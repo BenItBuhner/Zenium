@@ -1,11 +1,24 @@
-import readabilitySource from '@mozilla/readability/Readability.js?raw'
-import readerableSource from '@mozilla/readability/Readability-readerable.js?raw'
+import { readFileSync } from 'node:fs'
 import type { Tab } from '../../shared/types'
 import { newId } from '../../shared/ids'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 
 export const READER_URL_PREFIX = 'zen://reader'
+
+/**
+ * Mozilla's Readability is injected into pages as source text. The package is an externalised
+ * runtime dependency, so its files are read from `node_modules` (or the asar) on first use.
+ */
+const sources = new Map<string, string>()
+function readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string {
+  let src = sources.get(file)
+  if (!src) {
+    src = readFileSync(require.resolve(`@mozilla/readability/${file}`), 'utf8')
+    sources.set(file, src)
+  }
+  return src
+}
 
 export interface ReaderArticle {
   id: string
@@ -76,7 +89,7 @@ export class ReaderService {
     }
     try {
       const result = await wc.executeJavaScript(
-        `(() => { ${readerableSource}\n try { return isProbablyReaderable(document) } catch { return false } })()`,
+        `(() => { ${readabilitySource('Readability-readerable.js')}\n try { return isProbablyReaderable(document) } catch { return false } })()`,
         true
       )
       const current = this.browser.tabs.tab(tabId)
@@ -108,7 +121,7 @@ export class ReaderService {
     let raw: RawArticle | null = null
     try {
       raw = (await wc.executeJavaScript(
-        `(() => { ${readabilitySource}
+        `(() => { ${readabilitySource('Readability.js')}
           try {
             const doc = document.cloneNode(true)
             const article = new Readability(doc, { keepClasses: false }).parse()

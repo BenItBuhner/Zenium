@@ -202,7 +202,24 @@ export class TabManager {
       this.ensureLoaded(win.glance.tabId, win)
       if (this.claim(win.glance.tabId, win)) moved = true
     }
+    if (this.releaseHidden(win)) moved = true
     if (moved) this.browser.state.commitVolatile()
+  }
+
+  /**
+   * Pages `win` owns but no longer shows go to a window that does show them, so a preview only
+   * ever appears while two windows display the same tab at the same time.
+   */
+  private releaseHidden(win: ZenWindow): boolean {
+    const visible = new Set(this.visibleTabIds(win))
+    if (win.glance) visible.add(win.glance.tabId)
+    let moved = false
+    for (const [tabId] of this.viewsOwnedBy(win)) {
+      if (visible.has(tabId)) continue
+      const other = this.windowsShowing(tabId).find((w) => w !== win)
+      if (other && this.claim(tabId, other)) moved = true
+    }
+    return moved
   }
 
   private createView(tab: Tab, win: ZenWindow): WebContentsView {
@@ -607,6 +624,7 @@ export class TabManager {
       this.ensureLoaded(id, win)
       this.claim(id, win)
     }
+    this.releaseHidden(win)
     win.findResult = null
     this.browser.state.commit()
     win.focusContent()
@@ -640,6 +658,7 @@ export class TabManager {
       this.ensureLoaded(id, win)
       this.claim(id, win)
     }
+    this.releaseHidden(win)
     win.findResult = null
     this.browser.emit('space.switched', { fromIndex, toIndex }, win)
     this.browser.state.commit()
