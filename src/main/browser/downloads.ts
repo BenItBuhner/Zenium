@@ -27,17 +27,23 @@ function downloadDir(): string {
 }
 
 /** `file.txt` → `file(1).txt`, `file(2).txt`, … until the name is free (Firefox style). */
-export function uniquePath(dir: string, filename: string): string {
+export function uniquePath(
+  dir: string,
+  filename: string,
+  taken: (path: string) => boolean = existsSync
+): string {
   const ext = extname(filename)
   const stem = filename.slice(0, filename.length - ext.length)
   let candidate = join(dir, filename)
-  for (let n = 1; existsSync(candidate); n++) candidate = join(dir, `${stem}(${n})${ext}`)
+  for (let n = 1; taken(candidate); n++) candidate = join(dir, `${stem}(${n})${ext}`)
   return candidate
 }
 
 export class DownloadService {
   items: DownloadItem[] = []
   private readonly live = new Map<string, ElectronDownloadItem>()
+  private readonly tracked = new WeakSet<ElectronDownloadItem>()
+  private readonly reserved = new Set<string>()
   private readonly store: JsonStore<Persisted>
   private lastBroadcast = 0
 
@@ -64,9 +70,19 @@ export class DownloadService {
   }
 
   private track(item: ElectronDownloadItem): void {
+    if (this.tracked.has(item)) return
+    this.tracked.add(item)
     // Without a save path Electron shows the OS save dialog; Zen saves to Downloads by default.
+    // Paths of in-flight downloads are reserved so simultaneous downloads never share a file.
+    let reservedPath: string | null = null
     if (!this.askWhereToSave() && !item.getSavePath()) {
-      item.setSavePath(uniquePath(downloadDir(), item.getFilename() || 'download'))
+      reservedPath = uniquePath(
+        downloadDir(),
+        item.getFilename() || 'download',
+        (p) => existsSync(p) || this.reserved.has(p)
+      )
+      this.reserved.add(reservedPath)
+      item.setSavePath(reservedPath)
     }
     const id = newId('dl')
     const record: DownloadItem = {
@@ -100,6 +116,7 @@ export class DownloadService {
       }
     })
     item.once('done', (_e, state) => {
+      if (reservedPath) this.reserved.delete(reservedPath)
       record.receivedBytes = item.getReceivedBytes()
       record.totalBytes = item.getTotalBytes()
       record.savePath = item.getSavePath()

@@ -113,6 +113,9 @@ export class Browser {
    * opened only for the download; otherwise just make sure the keyboard keeps working.
    */
   private onDownloadStarted(source: WebContents | undefined): void {
+    // Firefox shows the downloads panel whenever a download begins. Let any tab switch paint
+    // first so the panel can dim a snapshot of the page behind it.
+    setTimeout(() => this.emit('overlay.open', { kind: 'downloads' }), 200)
     if (!source || source.isDestroyed()) return
     const tabId = this.tabs.tabIdForWebContents(source)
     const tab = tabId ? this.tabs.tab(tabId) : undefined
@@ -124,8 +127,6 @@ export class Browser {
     } else {
       this.window?.focusChrome()
     }
-    // Let the tab switch paint first so the panel can dim a snapshot of the page behind it.
-    setTimeout(() => this.emit('overlay.open', { kind: 'downloads' }), 200)
   }
 
   start(): void {

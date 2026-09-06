@@ -25,3 +25,15 @@ describe('uniquePath', () => {
     expect(uniquePath(dir, '.env')).toBe(join(dir, '.env(1)'))
   })
 })
+
+describe('uniquePath with reserved paths', () => {
+  it('skips names that are reserved by in-flight downloads', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zen-dl-'))
+    const reserved = new Set<string>([join(dir, 'a.png')])
+    const taken = (p: string): boolean => reserved.has(p)
+    const first = uniquePath(dir, 'a.png', taken)
+    expect(first).toBe(join(dir, 'a(1).png'))
+    reserved.add(first)
+    expect(uniquePath(dir, 'a.png', taken)).toBe(join(dir, 'a(2).png'))
+  })
+})

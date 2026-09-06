@@ -14,18 +14,18 @@ Zen's.
 | Vertical tabs sidebar (single / multiple / collapsed toolbar layouts, tabs on the right, resizable, collapsible to icons) | Done |
 | **Spaces** – icons, per-space gradient themes, default containers, slide animation, space switcher, Space Routing | Done |
 | **Essentials** – favicon tile grid at the top, container-specific, max count | Done |
-| Pinned tabs – reset to pinned URL, "close" resets/unloads/switches (all seven Zen behaviours), edit pinned URL, rename | Done |
+| Pinned tabs – reset to pinned URL, "close" resets/unloads/switches (all seven Zen behaviours), edit pinned URL, rename (double-click) | Done |
 | Folders – create, rename, collapse, unpack/delete, drag tabs in | Done |
 | **Split View** – grid / vertical / horizontal, up to 4 tabs, resizable gutters, unsplit one or all, drag a tab onto the page edge to split, "Split link in new tab" | Done |
-| **Compact Mode** – hide sidebar and/or toolbar, edge-hover reveal, persistent floating sidebar (Ctrl+Alt+S) | Done |
+| **Compact Mode** – hide sidebar and/or toolbar, edge-hover reveal (tracks the real cursor, so it works over pages and window borders), persistent floating sidebar (Ctrl+Alt+S) | Done |
 | **Glance** – Alt/Ctrl/Shift+click preview over the current page, close / expand (Ctrl+O) / split, third-party links on pinned tabs open their own tab | Done |
 | Zen URL bar – floating, inline autofill, history / bookmarks / open tabs ("Switch to Tab") / spaces / Command Bar actions / live search suggestions, `` ` `` space-only mode, `@engine` keywords, draft text remembered | Done |
 | Theme picker – colour wheel dots, harmony algorithms, monochrome, opacity, texture, rotation, presets | Done |
 | Keyboard shortcuts – Zen's default table (from `ZenKeyboardShortcuts.mjs`), fully rebindable with conflict detection | Done |
 | Tab unloading (inactivity timeout, excluded domains, unload tab / space / other spaces) | Done |
 | Containers – isolated cookie sessions per container, per-space defaults, "Open in New Container Tab" | Done |
-| History, bookmarks, downloads panels, find in page, screenshots, save page, print, view source, zoom, mute, PiP | Done |
-| Native context menus for pages, tabs, spaces, folders and the new-tab button | Done |
+| History, bookmarks, downloads (saved to the Downloads folder with Firefox-style unique names, or "always ask"), find in page, screenshots, save page, print, view source, zoom, mute, PiP | Done |
+| Native context menus for pages, tabs, spaces, folders and the new-tab button; permission prompts remembered per site; `window.open` popups | Done |
 | Onboarding – look, search engine (Google / DuckDuckGo / Ecosia), Essentials, shortcuts | Done |
 | Multiple windows / window sync, private windows, Mods & Boosts (custom CSS), Live Folders, reader view, extensions | Not yet |
 
