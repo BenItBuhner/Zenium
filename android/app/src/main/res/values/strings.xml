@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Zen</string>
+    <string name="permission_denied">Zen needs this permission to continue.</string>
+    <string name="leave_page_title">Leave page?</string>
+    <string name="leave_page_message">Information you’ve entered may not be saved.</string>
+    <string name="leave">Leave</string>
+    <string name="stay">Stay</string>
+</resources>

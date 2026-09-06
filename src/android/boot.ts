@@ -1,4 +1,12 @@
-import type { CommandArgs, CommandName, CommandResult, EventName, Events } from '@shared/types'
+import type {
+  CommandArgs,
+  CommandName,
+  CommandResult,
+  EventName,
+  Events,
+  UIState
+} from '@shared/types'
+import { resolveTheme, rgbToHex } from '@shared/theme'
 import { Browser } from '@core/browser'
 import type { KeyEventInput } from '@core/platform'
 import { handleSystemBack } from '@renderer/lib/ui'
@@ -50,6 +58,7 @@ export function bootAndroid(): { browser: Browser; api: ZenApi; preview: boolean
   const browser = new Browser(platform, ANDROID_CAPABILITIES)
   platform.bind(browser)
   platformRef.current = platform
+  syncNativeTheme(bridge, platform, browser)
   browser.start()
 
   // Shortcuts typed into the chrome itself go through the same table as page keys.
@@ -79,6 +88,30 @@ export function bootAndroid(): { browser: Browser; api: ZenApi; preview: boolean
     on: (name, listener) => platform.chrome.on(name, listener)
   }
   return { browser, api, preview }
+}
+
+/**
+ * Keep the system bars and the window background in step with the active space's theme, so the
+ * gradient reaches behind the status bar and its icons stay legible.
+ */
+function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Browser): void {
+  let last = ''
+  const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
+  const apply = (state: UIState): void => {
+    const space = state.spaces.find((s) => s.id === state.activeSpaceId) ?? state.spaces[0]
+    const dark =
+      state.settings.colorScheme === 'system'
+        ? systemDark.matches
+        : state.settings.colorScheme === 'dark'
+    const resolved = resolveTheme(space?.theme ?? null, dark)
+    const background = rgbToHex(resolved.averageColor)
+    const key = `${dark}|${background}`
+    if (key === last) return
+    last = key
+    bridge.send('chrome.setTheme', { dark, background })
+  }
+  platform.chrome.on('state', apply)
+  systemDark.addEventListener('change', () => apply(browser.state.snapshot()))
 }
 
 function installHostGlobal(bridge: Bridge, platformRef: { current: AndroidPlatform | null }): void {
