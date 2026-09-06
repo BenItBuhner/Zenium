@@ -13,7 +13,7 @@ import { createStore } from './store'
  *   space:<spaceId>              move to another space
  *   split:<left|right|top|bottom> split with the active tab (dropped on the content area)
  */
-export const dropStore = createStore<{ key: string | null }>({ key: null })
+export const dropStore = createStore<{ key: string | null }>({ key: null }, 'drop')
 
 const DRAG_THRESHOLD = 5
 

@@ -1,12 +1,12 @@
 import type { OverlayKind, UIState, UrlbarOpenMode } from '@shared/types'
-import { cmd, onEvent } from './api'
+import { cmd, onEvent, run } from './api'
 import { createStore } from './store'
 
 // ---------------------------------------------------------------------------
 // Browser state mirrored from the main process
 // ---------------------------------------------------------------------------
 
-export const browserStore = createStore<{ state: UIState | null }>({ state: null })
+export const browserStore = createStore<{ state: UIState | null }>({ state: null }, 'browser')
 
 export function useBrowser(): UIState {
   const state = browserStore.use((s) => s.state)
@@ -14,10 +14,10 @@ export function useBrowser(): UIState {
   return state
 }
 
-let started = false
 export function startBrowserSync(): void {
-  if (started) return
-  started = true
+  const flags = globalThis as unknown as { __zenSyncStarted?: boolean }
+  if (flags.__zenSyncStarted) return
+  flags.__zenSyncStarted = true
   onEvent('state', (state) => browserStore.set({ state }))
   void cmd('app.getState', undefined).then((state) => browserStore.set({ state }))
 }
@@ -70,24 +70,27 @@ export interface UiState {
   spaceSlideDirection: 1 | -1 | 0
 }
 
-export const uiStore = createStore<UiState>({
-  overlay: 'none',
-  overlaySpaceId: null,
-  urlbar: { open: false, mode: 'new-tab', tabId: null, initialText: undefined, attached: false },
-  findOpen: false,
-  findTabId: null,
-  snapshot: null,
-  snapshotTabId: null,
-  toasts: [],
-  statusText: '',
-  drag: null,
-  compactHover: false,
-  renamingTabId: null,
-  renamingFolderId: null,
-  glanceActive: false,
-  glanceReady: false,
-  spaceSlideDirection: 0
-})
+export const uiStore = createStore<UiState>(
+  {
+    overlay: 'none',
+    overlaySpaceId: null,
+    urlbar: { open: false, mode: 'new-tab', tabId: null, initialText: undefined, attached: false },
+    findOpen: false,
+    findTabId: null,
+    snapshot: null,
+    snapshotTabId: null,
+    toasts: [],
+    statusText: '',
+    drag: null,
+    compactHover: false,
+    renamingTabId: null,
+    renamingFolderId: null,
+    glanceActive: false,
+    glanceReady: false,
+    spaceSlideDirection: 0
+  },
+  'ui'
+)
 
 let toastSeq = 0
 export function pushToast(message: string, kind: 'info' | 'error' = 'info'): void {
@@ -113,12 +116,20 @@ export async function openOverlay(
   spaceId: string | null = null
 ): Promise<void> {
   await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
   uiStore.set({ overlay: kind, overlaySpaceId: spaceId })
 }
 
 export function closeOverlay(): void {
   uiStore.set({ overlay: 'none', overlaySpaceId: null })
   invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/** Once no chrome UI needs the keyboard, hand focus back to the active page. */
+export function returnFocusToPage(): void {
+  const ui = uiStore.get()
+  if (ui.overlay === 'none' && !ui.urlbar.open && !ui.findOpen) run('focus.content', undefined)
 }
 
 /** Drop the cached snapshot once nothing needs it, so the next overlay gets a fresh capture. */
@@ -135,6 +146,7 @@ export async function openUrlbar(
   opts: { text?: string; attached?: boolean } = {}
 ): Promise<void> {
   await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
   uiStore.set({
     urlbar: {
       open: true,
@@ -150,6 +162,7 @@ export function closeUrlbar(): void {
   if (!uiStore.get().urlbar.open) return
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   invalidateSnapshot()
+  returnFocusToPage()
 }
 
 /** True when a chrome overlay covers the content area (tab views must be hidden). */

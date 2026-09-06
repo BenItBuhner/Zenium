@@ -18,6 +18,7 @@ export class ZenWindow {
   win!: BrowserWindow
   private boundsTimer: NodeJS.Timeout | null = null
   private lastLayout: LayoutReport | null = null
+  private pendingContentFocus = false
 
   constructor(private readonly browser: Browser) {}
 
@@ -183,14 +184,23 @@ export class ZenWindow {
         if (!view.getVisible()) view.setVisible(true)
       }
     }
+    if (this.pendingContentFocus && !report.contentHidden) this.focusContent()
   }
 
-  /** Give keyboard focus to the active page (after the chrome handled an action). */
+  /**
+   * Give keyboard focus to the active page (after the chrome handled an action). If the page is
+   * still hidden behind chrome UI, the focus is applied once the next layout shows it again.
+   */
   focusContent(): void {
     const active = this.browser.tabs.activeTab
     if (!active) return
+    if (!this.lastLayout || this.lastLayout.contentHidden) {
+      this.pendingContentFocus = true
+      return
+    }
+    this.pendingContentFocus = false
     const wc = this.browser.tabs.webContents(active.id)
-    if (wc && !wc.isDestroyed() && this.lastLayout && !this.lastLayout.contentHidden) wc.focus()
+    if (wc && !wc.isDestroyed()) wc.focus()
   }
 
   focusChrome(): void {

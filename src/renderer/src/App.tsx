@@ -9,6 +9,7 @@ import {
   closeUrlbar,
   invalidateSnapshot,
   openUrlbar,
+  returnFocusToPage,
   uiStore,
   useBrowser
 } from '@renderer/lib/ui'
@@ -82,9 +83,12 @@ export function App(): JSX.Element {
       <main
         className="relative flex min-w-0 flex-1 flex-col"
         style={{
-          padding: 'var(--zen-padding)',
-          paddingLeft: sidebarSide === 'left' && !sidebarHidden ? 0 : undefined,
-          paddingRight: sidebarSide === 'right' && !sidebarHidden ? 0 : undefined
+          // Longhands only: mixing the `padding` shorthand with `paddingLeft` breaks React's
+          // style diffing when the sidebar toggles.
+          paddingTop: 'var(--zen-padding)',
+          paddingBottom: 'var(--zen-padding)',
+          paddingLeft: sidebarSide === 'left' && !sidebarHidden ? 0 : 'var(--zen-padding)',
+          paddingRight: sidebarSide === 'right' && !sidebarHidden ? 0 : 'var(--zen-padding)'
         }}
       >
         {showToolbar && <Toolbar state={state} tab={tab} />}
@@ -97,11 +101,11 @@ export function App(): JSX.Element {
         <>
           <div
             className={cn(
-              'absolute top-0 z-40 h-full w-1.5',
+              'absolute top-0 z-40 h-full w-3',
               sidebarSide === 'left' ? 'left-0' : 'right-0'
             )}
             onPointerEnter={reveal}
-            title="Show sidebar"
+            aria-label="Show sidebar"
           />
           {sidebarRevealed && (
             <div
@@ -173,6 +177,7 @@ function useGlobalKeys(state: UIState): void {
       if (ui.findOpen && ui.findTabId) {
         run('find.stop', { tabId: ui.findTabId, keepSelection: true })
         uiStore.set({ findOpen: false, findTabId: null })
+        returnFocusToPage()
       }
     }
     window.addEventListener('keydown', onKey)

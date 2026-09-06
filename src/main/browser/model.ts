@@ -182,6 +182,8 @@ export function moveTab(
 ): void {
   const targetSpace = target.spaceId ? getSpace(model, target.spaceId) : activeSpace(model)
   if (!targetSpace) return
+  // Removing from the lists clears `activeTabId`; restore it where the tab is still visible.
+  const wasActiveIn = model.spaces.filter((s) => s.activeTabId === tab.id).map((s) => s.id)
   removeTabFromLists(model, tab.id)
   if (target.section === 'essential') {
     if (model.essentialTabIds.length >= essentialsMax) {
@@ -190,24 +192,28 @@ export function moveTab(
       tab.pinned = true
       tab.pinnedUrl = tab.pinnedUrl ?? tab.url
       insertTabIntoSpace(model, targetSpace, tab, 0)
-      return
+    } else {
+      tab.essential = true
+      tab.pinned = false
+      tab.spaceId = null
+      tab.folderId = null
+      tab.pinnedUrl = tab.pinnedUrl ?? tab.url
+      tab.containerId = tab.containerId || targetSpace.containerId
+      const i = Math.max(0, Math.min(target.index, model.essentialTabIds.length))
+      model.essentialTabIds.splice(i, 0, tab.id)
     }
-    tab.essential = true
-    tab.pinned = false
-    tab.spaceId = null
-    tab.folderId = null
-    tab.pinnedUrl = tab.pinnedUrl ?? tab.url
-    tab.containerId = tab.containerId || targetSpace.containerId
-    const i = Math.max(0, Math.min(target.index, model.essentialTabIds.length))
-    model.essentialTabIds.splice(i, 0, tab.id)
-    return
+  } else {
+    tab.essential = false
+    tab.pinned = target.section === 'pinned'
+    if (tab.pinned) tab.pinnedUrl = tab.pinnedUrl ?? tab.url
+    else tab.pinnedUrl = null
+    if (tab.spaceId !== targetSpace.id) tab.folderId = null
+    insertTabIntoSpace(model, targetSpace, tab, target.index)
   }
-  tab.essential = false
-  tab.pinned = target.section === 'pinned'
-  if (tab.pinned) tab.pinnedUrl = tab.pinnedUrl ?? tab.url
-  else tab.pinnedUrl = null
-  if (tab.spaceId !== targetSpace.id) tab.folderId = null
-  insertTabIntoSpace(model, targetSpace, tab, target.index)
+  for (const spaceId of wasActiveIn) {
+    const space = getSpace(model, spaceId)
+    if (space && (tab.essential || tab.spaceId === spaceId)) space.activeTabId = tab.id
+  }
 }
 
 // ---------------------------------------------------------------------------

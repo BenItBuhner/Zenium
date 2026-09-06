@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, X } from 'lucide-react'
 import type { UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
-import { uiStore } from '@renderer/lib/ui'
+import { returnFocusToPage, uiStore } from '@renderer/lib/ui'
 
 /** Firefox-style find bar docked at the bottom of the content frame. */
 export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JSX.Element {
@@ -29,6 +29,7 @@ export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JS
   const close = (): void => {
     run('find.stop', { tabId, keepSelection: true })
     uiStore.set({ findOpen: false, findTabId: null })
+    returnFocusToPage()
   }
 
   const search = (value: string, forward = true, findNext = false): void => {

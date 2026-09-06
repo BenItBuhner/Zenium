@@ -255,7 +255,7 @@ export function Urlbar({ state, urlbar, area }: Props): JSX.Element {
             <kbd className="zen-kbd">Alt ↵</kbd> New tab
           </span>
           <span>
-            <kbd className="zen-kbd">`</kbd> Spaces
+            <kbd className="zen-kbd font-mono">` ␣</kbd> Spaces
           </span>
           <span>
             <kbd className="zen-kbd">@ddg</kbd> Engine

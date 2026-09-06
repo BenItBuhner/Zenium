@@ -8,7 +8,21 @@ export interface Store<T> {
   use: <S = T>(selector?: (state: T) => S) => S
 }
 
-export function createStore<T extends object>(initial: T): Store<T> {
+/**
+ * Create a store, or reuse the instance registered under `hmrKey` when Vite hot-reloads the
+ * defining module (otherwise components would keep subscriptions to a stale store).
+ */
+export function createStore<T extends object>(initial: T, hmrKey?: string): Store<T> {
+  const registry = ((
+    globalThis as unknown as { __zenStores?: Record<string, Store<object>> }
+  ).__zenStores ??= {})
+  if (hmrKey && registry[hmrKey]) return registry[hmrKey] as Store<T>
+  const store = buildStore(initial)
+  if (hmrKey) registry[hmrKey] = store as Store<object>
+  return store
+}
+
+function buildStore<T extends object>(initial: T): Store<T> {
   let state = initial
   const listeners = new Set<() => void>()
   const get = (): T => state

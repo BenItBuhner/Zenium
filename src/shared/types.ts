@@ -581,6 +581,10 @@ export interface Commands {
   'folder.contextMenu': { args: { folderId: string }; result: void }
   'newtab.contextMenu': { args: void; result: void }
   'app.menu': { args: void; result: void }
+  /** Renderer → main: chrome UI closed, give keyboard focus back to the active page. */
+  'focus.content': { args: void; result: void }
+  /** Renderer → main: chrome UI opened, take keyboard focus. */
+  'focus.chrome': { args: void; result: void }
   'media.toggle': { args: { tabId: string }; result: void }
 
   'split.create': { args: { tabIds: string[]; layout: SplitLayout }; result: void }

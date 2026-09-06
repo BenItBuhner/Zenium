@@ -10,18 +10,29 @@ export interface ZenApi {
   on<K extends EventName>(name: K, listener: (payload: Events[K]) => void): () => void
 }
 
+type Listener = (payload: unknown) => void
+const listeners = new Map<string, Set<Listener>>()
+
+// One IPC subscription fans out to every renderer listener (avoids MaxListeners warnings).
+ipcRenderer.on('zen:event', (_event, eventName: string, payload: unknown) => {
+  const set = listeners.get(eventName)
+  if (!set) return
+  for (const listener of [...set]) listener(payload)
+})
+
 const api: ZenApi = {
   invoke: (name, args) => ipcRenderer.invoke('zen:cmd', name, args),
   on: (name, listener) => {
-    const handler = (
-      _event: Electron.IpcRendererEvent,
-      eventName: string,
-      payload: unknown
-    ): void => {
-      if (eventName === name) listener(payload as Events[typeof name])
+    let set = listeners.get(name)
+    if (!set) {
+      set = new Set()
+      listeners.set(name, set)
     }
-    ipcRenderer.on('zen:event', handler)
-    return () => ipcRenderer.removeListener('zen:event', handler)
+    const wrapped = listener as Listener
+    set.add(wrapped)
+    return () => {
+      set?.delete(wrapped)
+    }
   }
 }
 

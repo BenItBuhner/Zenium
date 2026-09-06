@@ -34,6 +34,17 @@ type CommandHandlers = {
   [K in CommandName]: (args: CommandArgs<K>) => CommandResult<K> | Promise<CommandResult<K>>
 }
 
+const FOCUS_CHROME_EVENTS = new Set<EventName>([
+  'urlbar.toggle',
+  'overlay.open',
+  'find.open',
+  'theme.open',
+  'space.new',
+  'space.edit',
+  'tab.startRename',
+  'folder.startRename'
+])
+
 interface PageMessage {
   type: 'glance' | 'open-tab' | 'navigate'
   url: string
@@ -116,6 +127,8 @@ export class Browser {
   // ---------------------------------------------------------------------------
 
   emit<K extends EventName>(name: K, payload: Events[K]): void {
+    // Events that open chrome UI need keyboard focus in the chrome, not in the page.
+    if (FOCUS_CHROME_EVENTS.has(name)) this.window.focusChrome()
     this.window.send(name, payload)
   }
 
@@ -466,6 +479,8 @@ export class Browser {
       'folder.contextMenu': ({ folderId }) => this.menus.showFolderContextMenu(folderId),
       'newtab.contextMenu': () => this.menus.showNewTabContextMenu(),
       'app.menu': () => this.menus.showAppMenu(),
+      'focus.content': () => this.window.focusContent(),
+      'focus.chrome': () => this.window.focusChrome(),
       'media.toggle': ({ tabId }) => {
         const wc = tabs.webContents(tabId)
         if (!wc) return

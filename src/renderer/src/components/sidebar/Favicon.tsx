@@ -1,10 +1,13 @@
-import type { JSX } from 'react'
-import { useState } from 'react'
+import { useState, type JSX } from 'react'
 import { Globe } from 'lucide-react'
 import type { Tab } from '@shared/types'
+import { BLANK_URL, getHost } from '@shared/url'
 import { cn } from '@renderer/lib/utils'
 
-/** Favicon with graceful fallback (globe) and Zen's loading spinner. */
+/**
+ * Favicon with graceful fallbacks: Zen's loading spinner while loading, a letter tile for
+ * pages that never provided an icon (e.g. unloaded Essentials), and a globe for blank tabs.
+ */
 export function Favicon({
   tab,
   size = 16,
@@ -29,11 +32,27 @@ export function Favicon({
     )
   }
   if (!src) {
+    const host = getHost(tab.url).replace(/^www\./, '')
+    const letter = (tab.customTitle ?? (host || tab.title)).trim().charAt(0).toUpperCase()
+    if (!letter || tab.url === BLANK_URL || tab.url.startsWith('zen://')) {
+      return (
+        <Globe
+          className={cn('zen-tab-favicon shrink-0 opacity-60', className)}
+          style={{ width: size, height: size }}
+        />
+      )
+    }
     return (
-      <Globe
-        className={cn('zen-tab-favicon shrink-0 opacity-60', className)}
-        style={{ width: size, height: size }}
-      />
+      <span
+        className={cn(
+          'zen-tab-favicon inline-flex shrink-0 items-center justify-center rounded-[4px] bg-[var(--zen-element-bg-active)] font-semibold leading-none',
+          className
+        )}
+        style={{ width: size, height: size, fontSize: Math.max(9, Math.round(size * 0.55)) }}
+        aria-hidden
+      >
+        {letter}
+      </span>
     )
   }
   return (

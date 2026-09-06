@@ -48,7 +48,7 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
       <div className={cn('flex items-center gap-1', compact && 'flex-col')}>
         <div
           className={cn(
-            'flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto',
+            'flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overflow-y-hidden py-0.5 [scrollbar-width:none]',
             compact && 'flex-col'
           )}
         >
@@ -127,7 +127,7 @@ function SpaceIcon({
       )}
       {active && (
         <span
-          className="absolute -bottom-0.5 left-1/2 h-0.5 w-3 -translate-x-1/2 rounded-full"
+          className="absolute bottom-0 left-1/2 h-0.5 w-3 -translate-x-1/2 rounded-full"
           style={{ background: swatch ?? 'var(--zen-accent)' }}
         />
       )}
