@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain, shell, type Session } from 'electron'
+import { app, dialog, ipcMain, shell, type Session, type WebContents } from 'electron'
 import type {
   CommandArgs,
   CommandName,
@@ -79,10 +79,14 @@ export class Browser {
     this.sessions = new SessionManager(buildUserAgent())
     this.history = new HistoryService(userDataDir)
     this.bookmarks = new BookmarkService(this.state)
-    this.downloads = new DownloadService(userDataDir, () => {
-      this.state.downloads = this.downloads.items
-      this.state.commitVolatile()
-    })
+    this.downloads = new DownloadService(
+      userDataDir,
+      () => this.state.settings.askWhereToSave,
+      () => {
+        this.state.downloads = this.downloads.items
+        this.state.commitVolatile()
+      }
+    )
     this.state.downloads = this.downloads.items
     this.permissions = new PermissionService(userDataDir, () =>
       this.window?.win && !this.window.win.isDestroyed() ? this.window.win : null
@@ -97,10 +101,31 @@ export class Browser {
     this.sessions.configure((ses: Session) => {
       installZenProtocol(ses)
       this.permissions.attach(ses)
-      this.downloads.attach(ses)
+      this.downloads.attach(ses, (source) => this.onDownloadStarted(source))
       ses.setSpellCheckerLanguages(['en-US'])
     })
     this.sessions.get(DEFAULT_CONTAINER_ID)
+  }
+
+  /**
+   * A navigation that turned into a download leaves its tab without a committed document (and
+   * without a renderer to route shortcuts through). Like Chrome, close such a tab when it was
+   * opened only for the download; otherwise just make sure the keyboard keeps working.
+   */
+  private onDownloadStarted(source: WebContents | undefined): void {
+    if (!source || source.isDestroyed()) return
+    const tabId = this.tabs.tabIdForWebContents(source)
+    const tab = tabId ? this.tabs.tab(tabId) : undefined
+    if (!tab) return
+    const hasDocument = source.getURL() !== '' && source.getURL() !== 'about:blank'
+    if (hasDocument) return
+    if (!tab.pinned && !tab.essential && !source.navigationHistory.canGoBack()) {
+      this.tabs.closeTab(tab.id)
+    } else {
+      this.window?.focusChrome()
+    }
+    // Let the tab switch paint first so the panel can dim a snapshot of the page behind it.
+    setTimeout(() => this.emit('overlay.open', { kind: 'downloads' }), 200)
   }
 
   start(): void {

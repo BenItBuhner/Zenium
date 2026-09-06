@@ -363,6 +363,8 @@ export interface Settings {
   essentialsMax: number
   newTabPosition: NewTabPosition
   restoreSession: boolean
+  /** Firefox's "Always ask you where to save files"; off saves straight into the Downloads folder. */
+  askWhereToSave: boolean
   onboardingDone: boolean
   showTabSeparator: boolean
   ctrlTabCyclesWithinSection: boolean

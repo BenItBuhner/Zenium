@@ -335,6 +335,9 @@ function TabsSection({
         <Row label="Restore previous session on startup">
           <Switch checked={s.restoreSession} onCheckedChange={(v) => set({ restoreSession: v })} />
         </Row>
+        <Row label="Always ask where to save downloads">
+          <Switch checked={s.askWhereToSave} onCheckedChange={(v) => set({ askWhereToSave: v })} />
+        </Row>
       </Group>
       <Group title="Pinned Tabs & Essentials">
         <Row label="When closing a pinned tab">

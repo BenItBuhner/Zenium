@@ -283,7 +283,9 @@ export class ZenWindow {
     }
     this.pendingContentFocus = false
     const wc = this.browser.tabs.webContents(active.id)
-    if (wc && !wc.isDestroyed()) wc.focus()
+    // A view without a committed document has no renderer to deliver shortcuts through.
+    if (wc && !wc.isDestroyed() && wc.getURL() !== '') wc.focus()
+    else this.focusChrome()
   }
 
   focusChrome(): void {

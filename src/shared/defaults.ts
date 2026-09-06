@@ -30,6 +30,7 @@ export const DEFAULT_SETTINGS: Settings = {
   essentialsMax: 12,
   newTabPosition: 'end',
   restoreSession: true,
+  askWhereToSave: false,
   onboardingDone: false,
   showTabSeparator: true,
   ctrlTabCyclesWithinSection: false,
