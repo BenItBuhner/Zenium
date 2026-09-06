@@ -74,7 +74,6 @@ export class Menus {
         },
         {
           label: 'Split Link in New Tab',
-          enabled: !tab.essential,
           click: () => this.splitLink(tabId, params.linkURL)
         },
         {
@@ -256,8 +255,7 @@ export class Menus {
     const folders = Object.values(m.folders).filter(
       (f) => f.spaceId === (tab.spaceId ?? m.activeSpaceId)
     )
-    const canSplitWithActive =
-      Boolean(active) && active!.id !== tab.id && !active!.essential && !tab.essential
+    const canSplitWithActive = Boolean(active) && active!.id !== tab.id
     const pinnedChanged =
       (tab.pinned || tab.essential) && tab.pinnedUrl !== null && tab.url !== tab.pinnedUrl
 

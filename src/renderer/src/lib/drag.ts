@@ -142,7 +142,7 @@ function performDrop(tabId: string, key: string): void {
     }
     case 'split': {
       const active = activeTab(state)
-      if (!active || active.id === tabId || tab.essential || active.essential) return
+      if (!active || active.id === tabId) return
       const side = parts[1]
       const layout: SplitLayout = side === 'left' || side === 'right' ? 'vertical' : 'horizontal'
       if (active.splitGroupId) {

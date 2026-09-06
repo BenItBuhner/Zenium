@@ -456,6 +456,11 @@ export class TabManager {
     } else if (tab.spaceId && tab.spaceId !== space.id) {
       space = getSpace(m, tab.spaceId) ?? space
     }
+    if (tab.splitGroupId) {
+      // A split view belongs to one space; follow it there (matters for essentials).
+      const group = m.splitGroups[tab.splitGroupId]
+      if (group && group.spaceId !== space.id) space = getSpace(m, group.spaceId) ?? space
+    }
     const previousActive = this.tab(space.activeTabId)
     if (m.activeSpaceId !== space.id) {
       this.switchSpace(space.id, tabId)
@@ -739,7 +744,6 @@ export class TabManager {
         this.browser.toast(`You can have at most ${this.settings.essentialsMax} Essentials.`)
         return
       }
-      removeTabFromSplit(this.model, tabId)
       moveTab(
         this.model,
         tab,
@@ -798,8 +802,9 @@ export class TabManager {
     const tab = this.tab(tabId)
     if (!tab) return
     const before = { pinned: tab.pinned, essential: tab.essential, spaceId: tab.spaceId }
-    if (target.section !== 'regular' || target.spaceId !== tab.spaceId)
-      removeTabFromSplit(this.model, tabId)
+    const targetSpaceId = target.spaceId ?? this.model.activeSpaceId
+    const leavesSpace = target.section !== 'essential' && tab.spaceId !== targetSpaceId
+    if (leavesSpace) removeTabFromSplit(this.model, tabId)
     const previousSpace = tab.spaceId ? getSpace(this.model, tab.spaceId) : undefined
     const wasActiveInPrevious = previousSpace?.activeTabId === tabId
     moveTab(this.model, tab, target, this.settings.essentialsMax)
@@ -892,14 +897,12 @@ export class TabManager {
   createSplit(tabIds: string[], layout: SplitLayout): void {
     const m = this.model
     const space = this.activeSpace
-    const ids = tabIds.filter((id) => {
-      const t = this.tab(id)
-      return t && !t.essential
-    })
-    // All members must live in the active space – move them if needed (Zen splits within a space).
+    const ids = tabIds.filter((id) => Boolean(this.tab(id)))
+    // Space tabs must live in the active space – move them if needed (Zen splits within a space).
+    // Essentials are visible in every space and can join as they are.
     for (const id of ids) {
       const t = this.tab(id)
-      if (t && t.spaceId !== space.id)
+      if (t && !t.essential && t.spaceId !== space.id)
         moveTab(
           m,
           t,
@@ -932,9 +935,12 @@ export class TabManager {
       this.browser.state.commit()
       return
     }
-    if (active.essential) return
     const space = this.activeSpace
-    const list = space.tabIds.filter((id) => this.tab(id)?.pinned === active.pinned)
+    const list = orderedTabsForSpace(
+      this.model,
+      space,
+      this.settings.containerSpecificEssentials
+    ).map((t) => t.id)
     const idx = list.indexOf(active.id)
     const below = list[idx + 1] ?? list[idx - 1]
     if (!below) {
@@ -1085,7 +1091,7 @@ export class TabManager {
       tab,
       parent && !parent.essential ? sectionIndexOf(this.model, parent) + 1 : undefined
     )
-    if (parent && !parent.essential) this.createSplit([parent.id, tab.id], 'vertical')
+    if (parent) this.createSplit([parent.id, tab.id], 'vertical')
     else this.activateTab(tab.id)
     this.broadcastPageFlags()
   }
