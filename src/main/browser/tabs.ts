@@ -29,6 +29,7 @@ import {
 } from '../../shared/url'
 import type { Browser } from './browser'
 import { describeNetError } from './protocol'
+import { newId } from '../../shared/ids'
 
 const HTTP_FALLBACK_CODES = new Set([
   -102, -105, -107, -113, -118, -7, -100, -101, -109, -200, -201, -202, -203, -204, -205, -206,
@@ -242,10 +243,12 @@ export class TabManager {
     wc.on('enter-html-full-screen', () => {
       state.window.htmlFullscreenTabId = tabId
       state.commitVolatile()
+      this.browser.window.relayout()
     })
     wc.on('leave-html-full-screen', () => {
       if (state.window.htmlFullscreenTabId === tabId) state.window.htmlFullscreenTabId = null
       state.commitVolatile()
+      this.browser.window.relayout()
     })
     wc.on('devtools-opened', () => {
       state.devtoolsOpenFor.add(tabId)
@@ -572,7 +575,7 @@ export class TabManager {
       spaceId: closed.tab.essential ? null : space.id,
       discarded: true
     })
-    tab.id = closed.tab.id in m.tabs ? tab.id : closed.tab.id
+    if (m.tabs[tab.id]) tab.id = newId('tab')
     m.tabs[tab.id] = tab
     if (tab.essential && m.essentialTabIds.length < this.settings.essentialsMax) {
       m.essentialTabIds.splice(Math.min(closed.index, m.essentialTabIds.length), 0, tab.id)
@@ -633,12 +636,14 @@ export class TabManager {
     tab.url = url
     tab.title = titleForUrl(url)
     tab.errorCode = null
-    const view = this.ensureLoaded(tabId)
-    if (!view) return
     if (opts.upgradedFrom) this.httpsUpgraded.set(tabId, opts.upgradedFrom)
     else this.httpsUpgraded.delete(tabId)
+    const hadView = this.views.has(tabId) && !this.views.get(tabId)!.webContents.isDestroyed()
+    const view = this.ensureLoaded(tabId)
+    if (!view) return
     view.setBackgroundColor(this.backgroundFor(url))
-    void view.webContents.loadURL(url).catch(() => undefined)
+    // ensureLoaded() already loads `tab.url` when it has to create the view.
+    if (hadView) void view.webContents.loadURL(url).catch(() => undefined)
     this.browser.state.commit()
   }
 

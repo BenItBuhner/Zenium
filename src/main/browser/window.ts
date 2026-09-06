@@ -153,10 +153,31 @@ export class ZenWindow {
     this.win.contentView.removeChildView(view)
   }
 
+  /** Re-apply the last layout (used when main-process state such as HTML fullscreen changes). */
+  relayout(): void {
+    if (this.lastLayout) this.applyLayout(this.lastLayout)
+  }
+
   /** Position tab views exactly where the renderer laid the content area out. */
   applyLayout(report: LayoutReport): void {
     this.lastLayout = report
     if (!this.win || this.win.isDestroyed()) return
+    const fullscreenTabId = this.browser.state.window.htmlFullscreenTabId
+    if (fullscreenTabId && this.browser.tabs.view(fullscreenTabId)) {
+      // An element in HTML fullscreen covers the whole window, chrome included.
+      const [width, height] = this.win.getContentSize()
+      for (const [tabId, view] of this.browser.tabs.allViews()) {
+        if (tabId === fullscreenTabId) {
+          this.win.contentView.addChildView(view)
+          view.setBounds({ x: 0, y: 0, width, height })
+          view.setBorderRadius(0)
+          view.setVisible(true)
+        } else if (view.getVisible()) {
+          view.setVisible(false)
+        }
+      }
+      return
+    }
     const wanted = new Map<string, { rect: Rect; radius: number }>()
     if (!report.contentHidden) {
       for (const p of report.placements) wanted.set(p.tabId, { rect: p.rect, radius: p.radius })

@@ -26,13 +26,14 @@ interface Props {
 
 export function SidebarTop({ state, tab, compact, showToolbar }: Props): JSX.Element {
   const isMac = state.platform === 'darwin'
-  const controlsInSidebar = !state.window.fullscreen && state.settings.sidebarSide === 'left'
+  // Linux/Windows: Zen draws the window buttons at the top of the sidebar (macOS uses the
+  // native traffic lights, which need left padding instead).
+  const showControls = !isMac && !state.window.fullscreen
   return (
     <div className="zen-drag flex flex-col gap-1 px-2 pt-1.5">
-      <div className={cn('flex h-8 items-center', isMac ? 'justify-end pl-16' : 'justify-end')}>
-        {!compact && !isMac && controlsInSidebar && <WindowControls />}
-        {!compact && isMac && controlsInSidebar && <span className="flex-1" />}
-        {!controlsInSidebar && <span className="flex-1" />}
+      <div className={cn('flex h-8 items-center justify-end', isMac && 'pl-16')}>
+        {showControls && !compact && <WindowControls />}
+        {showControls && compact && <WindowControls compact />}
       </div>
       {showToolbar && <NavRow state={state} tab={tab} compact={compact} />}
     </div>

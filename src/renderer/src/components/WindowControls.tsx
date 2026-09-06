@@ -4,8 +4,22 @@ import { run } from '@renderer/lib/api'
 import { useBrowser } from '@renderer/lib/ui'
 
 /** Linux/Windows window buttons (macOS uses native traffic lights). */
-export function WindowControls(): JSX.Element {
+export function WindowControls({ compact = false }: { compact?: boolean }): JSX.Element {
   const state = useBrowser()
+  if (compact) {
+    return (
+      <div className="zen-no-drag flex items-center">
+        <button
+          type="button"
+          className="zen-toolbar-button h-7 w-7 hover:!bg-red-500 hover:!text-white"
+          title="Close"
+          onClick={() => run('window.close', undefined)}
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    )
+  }
   return (
     <div className="zen-no-drag flex items-center gap-0.5">
       <button
