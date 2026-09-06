@@ -651,7 +651,8 @@ export interface Commands {
   'download.clearCompleted': { args: void; result: void }
 
   'find.start': {
-    args: { tabId: string; text: string; forward: boolean; findNext: boolean }
+    /** `newSession` starts a fresh search for `text`; otherwise steps to the next/previous match. */
+    args: { tabId: string; text: string; forward: boolean; newSession: boolean }
     result: void
   }
   'find.stop': { args: { tabId: string; keepSelection: boolean }; result: void }

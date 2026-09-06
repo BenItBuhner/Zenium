@@ -185,6 +185,9 @@ export class ZenWindow {
       }
     }
     if (this.pendingContentFocus && !report.contentHidden) this.focusContent()
+    // With no page visible (empty space / chrome overlay) keyboard input must go to the chrome,
+    // otherwise shortcuts stop working after the focused view is hidden.
+    if (report.contentHidden || (report.placements.length === 0 && !glance)) this.focusChrome()
   }
 
   /**
@@ -193,7 +196,10 @@ export class ZenWindow {
    */
   focusContent(): void {
     const active = this.browser.tabs.activeTab
-    if (!active) return
+    if (!active) {
+      this.focusChrome()
+      return
+    }
     if (!this.lastLayout || this.lastLayout.contentHidden) {
       this.pendingContentFocus = true
       return

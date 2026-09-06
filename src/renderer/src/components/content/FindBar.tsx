@@ -20,7 +20,7 @@ export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JS
     const handler = (e: Event): void => {
       const dir = (e as CustomEvent<'next' | 'prev'>).detail
       inputRef.current?.focus()
-      if (text) run('find.start', { tabId, text, forward: dir === 'next', findNext: true })
+      if (text) run('find.start', { tabId, text, forward: dir === 'next', newSession: false })
     }
     window.addEventListener('zen-find-again', handler)
     return () => window.removeEventListener('zen-find-again', handler)
@@ -32,8 +32,8 @@ export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JS
     returnFocusToPage()
   }
 
-  const search = (value: string, forward = true, findNext = false): void => {
-    run('find.start', { tabId, text: value, forward, findNext })
+  const search = (value: string, forward = true, newSession = true): void => {
+    run('find.start', { tabId, text: value, forward, newSession })
   }
 
   return (
@@ -48,7 +48,7 @@ export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JS
           search(e.target.value)
         }}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') search(text, !e.shiftKey, true)
+          if (e.key === 'Enter') search(text, !e.shiftKey, false)
           if (e.key === 'Escape') close()
         }}
       />
@@ -63,7 +63,7 @@ export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JS
         type="button"
         className="zen-toolbar-button h-7 w-7"
         title="Previous (Shift+Enter)"
-        onClick={() => search(text, false, true)}
+        onClick={() => search(text, false, false)}
         disabled={!text}
       >
         <ChevronUp className="h-4 w-4" />
@@ -72,7 +72,7 @@ export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JS
         type="button"
         className="zen-toolbar-button h-7 w-7"
         title="Next (Enter)"
-        onClick={() => search(text, true, true)}
+        onClick={() => search(text, true, false)}
         disabled={!text}
       >
         <ChevronDown className="h-4 w-4" />

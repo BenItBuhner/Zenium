@@ -28,7 +28,7 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
 
   return (
     <div className="flex h-full w-full shrink-0 flex-col" aria-hidden={!isActive}>
-      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 pb-1">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden px-2 pb-1">
         {(pinned.length > 0 || Boolean(drag)) && (
           <>
             <SpaceHeader space={space} compact={compact} />

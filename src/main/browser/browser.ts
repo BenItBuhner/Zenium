@@ -569,7 +569,7 @@ export class Browser {
         state.commitVolatile()
       },
 
-      'find.start': ({ tabId, text, forward, findNext }) => {
+      'find.start': ({ tabId, text, forward, newSession }) => {
         const wc = tabs.webContents(tabId)
         if (!wc) return
         if (!text) {
@@ -578,7 +578,8 @@ export class Browser {
           state.commitVolatile()
           return
         }
-        wc.findInPage(text, { forward, findNext })
+        // Electron: findNext=true begins a new session, false continues the current one.
+        wc.findInPage(text, { forward, findNext: newSession })
       },
       'find.stop': ({ tabId, keepSelection }) => {
         tabs.webContents(tabId)?.stopFindInPage(keepSelection ? 'keepSelection' : 'clearSelection')

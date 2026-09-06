@@ -238,14 +238,15 @@ export const THEME_PRESETS: Array<{ name: string; theme: SpaceTheme }> = [
 
 export function themeCssVariables(resolved: ResolvedTheme): Record<string, string> {
   const fg: RGB = resolved.isDark ? [240, 240, 245] : [30, 30, 36]
-  const fgRgb = fg.join(', ')
+  // Space separated so `rgb(var(--zen-fg-rgb) / 0.1)` is valid modern colour syntax.
+  const fgRgb = fg.join(' ')
   return {
     '--zen-bg': resolved.background,
     '--zen-bg-solid': rgbToHex(resolved.averageColor),
     '--zen-fg': rgbToHex(fg),
     '--zen-fg-rgb': fgRgb,
     '--zen-accent': rgbToHex(resolved.accent),
-    '--zen-accent-rgb': resolved.accent.join(', '),
+    '--zen-accent-rgb': resolved.accent.join(' '),
     '--zen-texture': String(resolved.texture)
   }
 }
