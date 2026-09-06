@@ -156,6 +156,22 @@
     opacity: 0.55;
     filter: grayscale(0.4);
   }
+  /* Frozen (sleeping) pages: still loaded, but dimmed and cooled down. */
+  .zen-tab[data-frozen='true'] .zen-tab-title {
+    opacity: 0.75;
+  }
+  .zen-tab[data-frozen='true'] .zen-tab-favicon {
+    opacity: 0.8;
+    filter: saturate(0.5);
+  }
+  .zen-essential[data-frozen='true'] img {
+    opacity: 0.8;
+    filter: saturate(0.5);
+  }
+  .zen-frozen-dot {
+    background: #7cc4ff;
+    box-shadow: 0 0 0 1.5px var(--zen-bg-solid);
+  }
   .zen-tab .zen-tab-close {
     opacity: 0;
   }

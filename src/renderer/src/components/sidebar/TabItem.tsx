@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { RotateCcw, Volume2, VolumeX, X } from 'lucide-react'
+import { RotateCcw, Snowflake, Turtle, Volume2, VolumeX, X } from 'lucide-react'
 import type { Tab } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { dropStore, startTabDrag } from '@renderer/lib/drag'
@@ -67,8 +67,9 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
       )}
       data-active={active}
       data-discarded={tab.discarded}
+      data-frozen={tab.frozen}
       data-tab-id={tab.id}
-      title={compact ? title : undefined}
+      title={compact ? `${title}${tab.frozen ? ' (frozen)' : ''}` : undefined}
       onPointerDown={onPointerDown}
       onClick={onClick}
       onAuxClick={onAuxClick}
@@ -95,6 +96,32 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
             <RenameInput tab={tab} />
           ) : (
             <span className="zen-tab-title min-w-0 flex-1 truncate text-[13px]">{title}</span>
+          )}
+          {tab.frozen && !renaming && (
+            <button
+              type="button"
+              className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--zen-muted)]"
+              title="Frozen by the resource governor – click to wake"
+              onClick={(e) => {
+                e.stopPropagation()
+                run('tab.wake', { tabId: tab.id })
+              }}
+            >
+              <Snowflake className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {!tab.frozen && tab.cpuThrottle > 1 && !renaming && (
+            <button
+              type="button"
+              className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--zen-muted)]"
+              title={`CPU throttled ×${tab.cpuThrottle} by the resource governor – click to lift`}
+              onClick={(e) => {
+                e.stopPropagation()
+                run('tab.wake', { tabId: tab.id })
+              }}
+            >
+              <Turtle className="h-3.5 w-3.5" />
+            </button>
           )}
           {(tab.audible || tab.muted) && (
             <button

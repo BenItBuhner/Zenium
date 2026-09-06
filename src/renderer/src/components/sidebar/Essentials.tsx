@@ -73,7 +73,8 @@ function EssentialTile({
       className="zen-essential relative"
       data-active={active}
       data-discarded={tab.discarded}
-      title={tabTitle(tab)}
+      data-frozen={tab.frozen}
+      title={`${tabTitle(tab)}${tab.frozen ? ' (frozen)' : ''}`}
       onPointerDown={(e) => {
         if (e.button === 0) startTabDrag(tab, e)
       }}
@@ -109,6 +110,9 @@ function EssentialTile({
       <Favicon tab={tab} size={20} />
       {tab.audible && !tab.muted && (
         <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[var(--zen-accent)]" />
+      )}
+      {tab.frozen && (
+        <span className="zen-frozen-dot absolute bottom-1 right-1 h-2 w-2 rounded-full" />
       )}
     </div>
   )

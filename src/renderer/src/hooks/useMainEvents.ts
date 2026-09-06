@@ -27,14 +27,16 @@ export function useMainEvents(): void {
         void openUrlbar(mode, currentActiveTabId(), { text, attached })
       }),
       onEvent('urlbar.close', () => closeUrlbar()),
-      onEvent('overlay.open', ({ kind }) => {
+      onEvent('overlay.open', ({ kind, section }) => {
         const ui = uiStore.get()
         if (ui.overlay === kind) {
-          uiStore.set({ overlay: 'none' })
+          // Re-opening the same overlay toggles it, unless a specific section was requested.
+          if (section) uiStore.set({ overlaySection: section })
+          else uiStore.set({ overlay: 'none', overlaySection: null })
           return
         }
         closeUrlbar()
-        void openOverlay(kind, currentActiveTabId())
+        void openOverlay(kind, currentActiveTabId(), null, section ?? null)
       }),
       onEvent('theme.open', ({ spaceId }) => {
         closeUrlbar()

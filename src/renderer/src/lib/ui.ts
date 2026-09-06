@@ -51,6 +51,8 @@ export interface DragState {
 export interface UiState {
   overlay: OverlayKind
   overlaySpaceId: string | null
+  /** Settings section to open (e.g. `resources`), when the overlay was opened for one. */
+  overlaySection: string | null
   urlbar: UrlbarState
   findOpen: boolean
   findTabId: string | null
@@ -74,6 +76,7 @@ export const uiStore = createStore<UiState>(
   {
     overlay: 'none',
     overlaySpaceId: null,
+    overlaySection: null,
     urlbar: { open: false, mode: 'new-tab', tabId: null, initialText: undefined, attached: false },
     findOpen: false,
     findTabId: null,
@@ -113,15 +116,16 @@ export async function captureActiveTab(tabId: string | null): Promise<void> {
 export async function openOverlay(
   kind: OverlayKind,
   activeTabId: string | null,
-  spaceId: string | null = null
+  spaceId: string | null = null,
+  section: string | null = null
 ): Promise<void> {
   await captureActiveTab(activeTabId)
   run('focus.chrome', undefined)
-  uiStore.set({ overlay: kind, overlaySpaceId: spaceId })
+  uiStore.set({ overlay: kind, overlaySpaceId: spaceId, overlaySection: section })
 }
 
 export function closeOverlay(): void {
-  uiStore.set({ overlay: 'none', overlaySpaceId: null })
+  uiStore.set({ overlay: 'none', overlaySpaceId: null, overlaySection: null })
   invalidateSnapshot()
   returnFocusToPage()
 }
