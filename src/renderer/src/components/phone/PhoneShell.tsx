@@ -147,9 +147,11 @@ function PhoneBar({ state, ui }: { state: UIState; ui: UiState }): JSX.Element {
           {url || 'Search or enter address'}
         </span>
         {url && secure && <Lock className="h-3.5 w-3.5 shrink-0 opacity-50" />}
-        <span className="shrink-0 text-[11px] text-[var(--zen-muted)]">
-          {space.icon || `◦ ${space.name}`}
-        </span>
+        {state.spaces.length > 1 && (
+          <span className="max-w-[64px] shrink-0 truncate text-[11px] text-[var(--zen-muted)]">
+            {space.icon || space.name}
+          </span>
+        )}
       </button>
       <button
         type="button"

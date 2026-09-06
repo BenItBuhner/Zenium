@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { UIState } from '@shared/types'
 import { onEvent } from '@renderer/lib/api'
+import { isPhone } from '@renderer/lib/formFactor'
 import {
   closeMenu,
   closeUrlbar,
@@ -31,7 +32,8 @@ export function useMainEvents(): void {
         }
         if (ui.overlay === 'onboarding') return
         const state = browserStore.get().state
-        const attached = state?.settings.urlbarBehavior === 'normal'
+        // Phones always anchor the bar to the top: the keyboard owns the bottom half.
+        const attached = isPhone() || state?.settings.urlbarBehavior === 'normal'
         void openUrlbar(mode, currentActiveTabId(), { text, attached })
       }),
       onEvent('urlbar.close', () => closeUrlbar()),

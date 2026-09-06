@@ -2,7 +2,7 @@ import type { JSX } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 import type { UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
-import { useViewport } from '@renderer/lib/formFactor'
+import { isPhone, useViewport } from '@renderer/lib/formFactor'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   captureActiveTab,
@@ -257,7 +257,7 @@ function useNewTabEvent(state: UIState): void {
     const onNewTab = (): void => {
       closeUrlbar()
       void openUrlbar('new-tab', activeTab(state)?.id ?? null, {
-        attached: state.settings.urlbarBehavior === 'normal'
+        attached: isPhone() || state.settings.urlbarBehavior === 'normal'
       })
     }
     window.addEventListener('zen-new-tab', onNewTab)

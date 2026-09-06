@@ -1,4 +1,6 @@
 @import 'tailwindcss';
+/* The chrome is built from two roots (Electron renderer, Android WebView); always scan the UI. */
+@source '../';
 
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
@@ -378,9 +380,9 @@
  * comfortable target and hover-only affordances become permanent.
  */
 :root[data-pointer='coarse'] .zen-toolbar-button {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
 }
 :root[data-pointer='coarse'] .zen-tab {
   height: 42px;
@@ -391,9 +393,6 @@
 }
 :root[data-pointer='coarse'] .zen-essential {
   height: 48px;
-}
-:root[data-pointer='coarse'] .zen-touch-show {
-  display: flex;
 }
 :root[data-pointer='coarse'] .zen-kbd,
 :root[data-pointer='coarse'] .zen-kbd-hint {

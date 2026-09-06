@@ -1,10 +1,11 @@
 import type { JSX } from 'react'
 import { useEffect, useRef } from 'react'
+import { X } from 'lucide-react'
 import type { UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
-import { activeSpace, activeTab, essentialsFor } from '@renderer/lib/selectors'
-import { uiStore } from '@renderer/lib/ui'
+import { activeSpace, activeTab, essentialsFor, tabsOf } from '@renderer/lib/selectors'
+import { closeDrawer, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Essentials } from './Essentials'
 import { SidebarBottom } from './SidebarBottom'
@@ -56,7 +57,11 @@ export function Sidebar({
       onPointerLeave={onPointerLeave}
       data-side={side}
     >
-      <SidebarTop state={state} tab={tab} compact={compact} showToolbar={showToolbar} />
+      {hideNav ? (
+        <DrawerHeader state={state} />
+      ) : (
+        <SidebarTop state={state} tab={tab} compact={compact} showToolbar={showToolbar} />
+      )}
       <Essentials essentials={essentials} activeTabId={space.activeTabId} compact={compact} />
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <div
@@ -81,6 +86,39 @@ export function Sidebar({
       <SidebarBottom state={state} compact={compact} isDark={isDark} />
       {!compact && !floating && !coarse && <Resizer state={state} />}
     </aside>
+  )
+}
+
+/** Phone drawer header: which space this is, how many tabs it holds, and a way out. */
+function DrawerHeader({ state }: { state: UIState }): JSX.Element {
+  const space = activeSpace(state)
+  const count = tabsOf(state, space).length + essentialsFor(state, space).length
+  return (
+    <div className="flex h-12 items-center gap-2 px-3 pt-1">
+      <span className="text-base leading-none">{space.icon || '◦'}</span>
+      <button
+        type="button"
+        className="min-w-0 flex-1 truncate text-left text-[14px] font-semibold"
+        onClick={() => run('space.contextMenu', { spaceId: space.id })}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          run('space.contextMenu', { spaceId: space.id })
+        }}
+      >
+        {space.name}
+      </button>
+      <span className="text-[12px] text-[var(--zen-muted)]">
+        {count} tab{count === 1 ? '' : 's'}
+      </span>
+      <button
+        type="button"
+        className="zen-toolbar-button h-8 w-8"
+        aria-label="Close"
+        onClick={() => closeDrawer()}
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
   )
 }
 

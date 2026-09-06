@@ -5,3 +5,12 @@ out
 .eslintcache
 *.log*
 agent-tools/
+android/app/src/main/assets/www
+android/app/src/main/assets/page.js
+android/.gradle
+android/build
+android/app/build
+android/local.properties
+android/.kotlin
+*.apk
+*.aab

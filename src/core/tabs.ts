@@ -318,11 +318,14 @@ export class TabManager {
     afterTabId?: string
     folderId?: string | null
     load?: boolean
+    /** Preset id (hosts that must know the id before the tab exists, e.g. adopted popups). */
+    id?: string
   }): Tab {
     const m = this.model
     const space = (opts.spaceId ? getSpace(m, opts.spaceId) : undefined) ?? this.activeSpace
     const containerId = opts.containerId ?? space.containerId ?? DEFAULT_CONTAINER_ID
     const tab = createTabRecord({
+      id: opts.id && !m.tabs[opts.id] ? opts.id : undefined,
       spaceId: opts.essential ? null : space.id,
       containerId,
       url: opts.url ?? BLANK_URL,
@@ -366,10 +369,15 @@ export class TabManager {
   /**
    * Adopt a view the host created for a `window.open` popup that should become a tab (Android
    * hands us the WebView; Electron denies and creates a tab through `onOpenWindow` instead).
+   * The caller picks the tab id up front so the view can already be addressed by it.
    */
-  adoptView(view: TabView, opts: { parentTabId: string | null; active: boolean }): Tab {
+  adoptView(
+    view: TabView,
+    opts: { tabId: string; parentTabId: string | null; active: boolean }
+  ): { tab: Tab; events: TabViewEvents } {
     const parent = this.tab(opts.parentTabId)
     const tab = this.createTab({
+      id: opts.tabId,
       url: BLANK_URL,
       spaceId: parent?.spaceId ?? undefined,
       containerId: parent?.containerId,
@@ -384,12 +392,7 @@ export class TabManager {
     if (opts.active) this.activateTab(tab.id)
     this.browser.state.commit()
     this.browser.viewport.relayout()
-    return tab
-  }
-
-  /** Wire events for a view created by the host (see `adoptView`). */
-  eventsForAdopted(tabId: string): TabViewEvents {
-    return this.eventsFor(tabId)
+    return { tab, events: this.eventsFor(tab.id) }
   }
 
   activateTab(tabId: string): void {

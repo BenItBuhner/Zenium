@@ -120,7 +120,7 @@ export function NavRow({
             <span
               role="button"
               tabIndex={-1}
-              className="zen-touch-show hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex"
+              className="hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex"
               title="Copy URL (Ctrl+Shift+C)"
               onClick={(e) => {
                 e.stopPropagation()

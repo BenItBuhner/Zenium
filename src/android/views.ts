@@ -1,0 +1,358 @@
+import type { KeyBinding, Rect, Tab } from '@shared/types'
+import { zenPageHtml } from '@shared/zenPages'
+import type {
+  FindResultInfo,
+  KeyEventInput,
+  PageContextParams,
+  PageFlags,
+  PageMessage,
+  TabView,
+  TabViewEvents,
+  TabViewHost
+} from '@core/platform'
+import type { Bridge } from './bridge'
+
+/** Navigation state Kotlin mirrors into JS on every navigation event. */
+export interface ViewNavState {
+  url: string
+  title: string
+  canGoBack: boolean
+  canGoForward: boolean
+}
+
+/** Events Kotlin raises for one view (`__zenHost.viewEvent(tabId, name, payload)`). */
+export interface ViewEventPayloads {
+  startLoading: void
+  stopLoading: ViewNavState
+  navigated: ViewNavState & { inPage: boolean }
+  title: { title: string }
+  favicon: { url: string }
+  failLoad: { code: number; description: string; url: string }
+  crashed: { reason: string }
+  audio: { audible: boolean }
+  enterFullscreen: void
+  leaveFullscreen: void
+  found: FindResultInfo
+  contextMenu: Partial<PageContextParams>
+  pageMessage: PageMessage
+  destroyed: void
+}
+
+/**
+ * A page living in a Kotlin `WebView`. Every method is a bridge call; the read accessors answer
+ * from the mirror Kotlin keeps up to date, so the core never has to await a round trip.
+ */
+export class AndroidTabView implements TabView {
+  private nav: ViewNavState = { url: '', title: '', canGoBack: false, canGoForward: false }
+  private zoom = 1
+  private visible = false
+  private destroyed = false
+  private audible = false
+  private pendingHtml = false
+  events!: TabViewEvents
+
+  constructor(
+    readonly tabId: string,
+    private readonly bridge: Bridge
+  ) {}
+
+  /** Route a Kotlin event to the core. */
+  dispatch<K extends keyof ViewEventPayloads>(name: K, payload: ViewEventPayloads[K]): void {
+    if (this.destroyed && name !== 'destroyed') return
+    const ev = this.events
+    switch (name) {
+      case 'startLoading':
+        ev.onStartLoading()
+        return
+      case 'stopLoading':
+        this.nav = { ...this.nav, ...(payload as ViewNavState) }
+        ev.onStopLoading()
+        return
+      case 'navigated': {
+        const p = payload as ViewEventPayloads['navigated']
+        this.nav = {
+          url: p.url,
+          title: p.title,
+          canGoBack: p.canGoBack,
+          canGoForward: p.canGoForward
+        }
+        ev.onNavigated(p.url, p.inPage)
+        return
+      }
+      case 'title': {
+        const p = payload as ViewEventPayloads['title']
+        this.nav.title = p.title
+        ev.onTitleUpdated(p.title)
+        return
+      }
+      case 'favicon':
+        ev.onFaviconUpdated([(payload as ViewEventPayloads['favicon']).url])
+        return
+      case 'failLoad': {
+        const p = payload as ViewEventPayloads['failLoad']
+        ev.onFailLoad(p.code, p.description, p.url)
+        return
+      }
+      case 'crashed':
+        ev.onCrashed((payload as ViewEventPayloads['crashed']).reason)
+        return
+      case 'audio': {
+        const p = payload as ViewEventPayloads['audio']
+        this.audible = p.audible
+        ev.onAudioStateChanged(p.audible)
+        return
+      }
+      case 'enterFullscreen':
+        ev.onEnterHtmlFullscreen()
+        return
+      case 'leaveFullscreen':
+        ev.onLeaveHtmlFullscreen()
+        return
+      case 'found':
+        ev.onFoundInPage(payload as FindResultInfo)
+        return
+      case 'contextMenu': {
+        const p = payload as Partial<PageContextParams>
+        ev.onContextMenu({
+          x: p.x ?? 0,
+          y: p.y ?? 0,
+          linkURL: p.linkURL ?? '',
+          srcURL: p.srcURL ?? '',
+          mediaType: p.mediaType ?? (p.srcURL ? 'image' : 'none'),
+          selectionText: p.selectionText ?? '',
+          isEditable: false,
+          misspelledWord: '',
+          dictionarySuggestions: [],
+          editFlags: {
+            canUndo: false,
+            canRedo: false,
+            canCut: false,
+            canCopy: false,
+            canPaste: false,
+            canDelete: false,
+            canSelectAll: false
+          }
+        })
+        return
+      }
+      case 'pageMessage': {
+        const message = payload as PageMessage
+        if (message.type === 'media') this.audible = Boolean(message.playing)
+        ev.onPageMessage(message)
+        return
+      }
+      case 'destroyed':
+        this.destroyed = true
+        ev.onDestroyed()
+        return
+    }
+  }
+
+  /** Key events Kotlin pre-filtered against the shortcut table. */
+  key(input: KeyEventInput): boolean {
+    return this.events.onKey(input)
+  }
+
+  // --- navigation -----------------------------------------------------------
+
+  loadURL(url: string): void {
+    if (url.startsWith('zen://')) {
+      // Internal pages are rendered straight into the WebView; the URL stays `zen://…`.
+      this.pendingHtml = true
+      this.bridge.send('view.loadHtml', { tabId: this.tabId, url, html: zenPageHtml(url) })
+      return
+    }
+    this.pendingHtml = false
+    this.bridge.send('view.load', { tabId: this.tabId, url })
+  }
+
+  getURL(): string {
+    return this.nav.url
+  }
+
+  getTitle(): string {
+    return this.nav.title
+  }
+
+  canGoBack(): boolean {
+    return this.nav.canGoBack
+  }
+
+  canGoForward(): boolean {
+    return this.nav.canGoForward
+  }
+
+  goBack(): void {
+    this.bridge.send('view.back', { tabId: this.tabId })
+  }
+
+  goForward(): void {
+    this.bridge.send('view.forward', { tabId: this.tabId })
+  }
+
+  reload(ignoreCache: boolean): void {
+    this.bridge.send('view.reload', { tabId: this.tabId, ignoreCache })
+  }
+
+  stop(): void {
+    this.bridge.send('view.stop', { tabId: this.tabId })
+  }
+
+  hasDocument(): boolean {
+    return this.pendingHtml || (this.nav.url !== '' && this.nav.url !== 'about:blank')
+  }
+
+  // --- media / zoom / find ----------------------------------------------------
+
+  setMuted(muted: boolean): void {
+    this.bridge.send('view.setMuted', { tabId: this.tabId, muted })
+  }
+
+  isCurrentlyAudible(): boolean {
+    return this.audible
+  }
+
+  setZoom(factor: number): void {
+    this.zoom = factor
+    this.bridge.send('view.setZoom', { tabId: this.tabId, factor })
+  }
+
+  getZoom(): number {
+    return this.zoom
+  }
+
+  findInPage(text: string, forward: boolean, newSession: boolean): void {
+    this.bridge.send('view.find', { tabId: this.tabId, text, forward, newSession })
+  }
+
+  stopFind(action: 'clearSelection' | 'keepSelection'): void {
+    this.bridge.send('view.stopFind', {
+      tabId: this.tabId,
+      keepSelection: action === 'keepSelection'
+    })
+  }
+
+  executeJavaScript(code: string): Promise<unknown> {
+    return this.bridge.call<unknown>('view.eval', { tabId: this.tabId, code })
+  }
+
+  sendPageFlags(flags: PageFlags): void {
+    this.bridge.send('view.setFlags', { tabId: this.tabId, flags })
+  }
+
+  setBackgroundColor(color: string): void {
+    this.bridge.send('view.setBackground', { tabId: this.tabId, color })
+  }
+
+  focus(): void {
+    this.bridge.send('view.focus', { tabId: this.tabId })
+  }
+
+  isDestroyed(): boolean {
+    return this.destroyed
+  }
+
+  destroy(): void {
+    if (this.destroyed) return
+    this.destroyed = true
+    this.bridge.send('view.destroy', { tabId: this.tabId })
+  }
+
+  // --- placement ---------------------------------------------------------------
+
+  setBounds(rect: Rect): void {
+    this.bridge.send('view.setBounds', { tabId: this.tabId, rect })
+  }
+
+  setBorderRadius(radius: number): void {
+    this.bridge.send('view.setRadius', { tabId: this.tabId, radius })
+  }
+
+  setVisible(visible: boolean): void {
+    this.visible = visible
+    this.bridge.send('view.setVisible', { tabId: this.tabId, visible })
+  }
+
+  isVisible(): boolean {
+    return this.visible
+  }
+
+  bringToFront(): void {
+    this.bridge.send('view.bringToFront', { tabId: this.tabId })
+  }
+
+  // --- page operations -----------------------------------------------------------
+
+  openDevTools(): void {
+    // Android WebViews are inspected from desktop Chrome (chrome://inspect); nothing to open here.
+  }
+
+  downloadURL(url: string): void {
+    this.bridge.send('view.download', { tabId: this.tabId, url })
+  }
+
+  print(): void {
+    this.bridge.send('view.print', { tabId: this.tabId })
+  }
+
+  savePage(suggestedName: string): Promise<string | null> {
+    return this.bridge.call<string | null>('view.savePage', {
+      tabId: this.tabId,
+      name: suggestedName
+    })
+  }
+
+  snapshot(): Promise<string | null> {
+    return this.bridge.call<string | null>('view.snapshot', { tabId: this.tabId })
+  }
+
+  screenshot(fileName: string): Promise<string | null> {
+    return this.bridge.call<string | null>('view.screenshot', { tabId: this.tabId, name: fileName })
+  }
+
+  async copyImageAt(): Promise<boolean> {
+    return false
+  }
+
+  replaceMisspelling(): void {
+    // The system keyboard owns spelling on Android.
+  }
+
+  addWordToDictionary(): void {
+    // See above.
+  }
+}
+
+/** Creates and tracks the JS mirrors of Kotlin's tab WebViews. */
+export class AndroidTabViewHost implements TabViewHost {
+  private readonly views = new Map<string, AndroidTabView>()
+
+  constructor(private readonly bridge: Bridge) {}
+
+  createView(tab: Tab, events: TabViewEvents): TabView {
+    const view = new AndroidTabView(tab.id, this.bridge)
+    view.events = events
+    this.views.set(tab.id, view)
+    this.bridge.send('view.create', { tabId: tab.id, containerId: tab.containerId })
+    return view
+  }
+
+  /** Register a view Kotlin created itself (a `window.open` popup adopted as a tab). */
+  registerAdopted(tabId: string): AndroidTabView {
+    const view = new AndroidTabView(tabId, this.bridge)
+    this.views.set(tabId, view)
+    return view
+  }
+
+  get(tabId: string): AndroidTabView | undefined {
+    return this.views.get(tabId)
+  }
+
+  forget(tabId: string): void {
+    this.views.delete(tabId)
+  }
+
+  setShortcuts(bindings: KeyBinding[]): void {
+    this.bridge.send('keys.setShortcuts', { bindings })
+  }
+}
