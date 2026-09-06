@@ -131,7 +131,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        if (isFinishing) host.destroy()
+        // Also on configuration-driven recreation (density change): the new activity builds a new
+        // host and the core restores the session from disk.
+        host.destroy()
         super.onDestroy()
     }
 

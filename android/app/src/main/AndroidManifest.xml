@@ -55,7 +55,7 @@
             android:launchMode="singleTask"
             android:resizeableActivity="true"
             android:windowSoftInputMode="adjustResize"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|density|locale|layoutDirection|fontScale|colorMode">
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|locale|layoutDirection|fontScale|colorMode">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

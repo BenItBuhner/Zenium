@@ -231,9 +231,13 @@ export function pickMenuItem(itemId: string): void {
   const menu = uiStore.get().menu
   if (!menu) return
   uiStore.set({ menu: null })
-  run('menu.click', { menuId: menu.id, itemId })
   invalidateSnapshot()
   returnFocusToPage()
+  // Run the action once the sheet has been unpainted: hosts that snapshot the window for the
+  // dimmed overlay preview (Android's PixelCopy) would otherwise capture the menu itself.
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => run('menu.click', { menuId: menu.id, itemId }))
+  )
 }
 
 /** True when a chrome overlay covers the content area (tab views must be hidden). */
