@@ -11,6 +11,7 @@ import type {
   MediaState,
   Platform,
   Rect,
+  ResourceSnapshot,
   SearchEngine,
   Settings,
   Shortcut,
@@ -21,11 +22,12 @@ import type {
   WindowState
 } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
-import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS } from '../../shared/defaults'
+import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS, emptyResourceSnapshot } from '../../shared/defaults'
 import { DEFAULT_SEARCH_ENGINES } from '../../shared/search'
 import { applyShortcutOverrides, defaultShortcuts } from '../../shared/shortcuts'
 import { JsonStore } from '../store/JsonStore'
 import { createSpace, createTabRecord, type Model } from './model'
+import { sanitizeResourceSettings } from './resources/switches'
 import { BLANK_URL } from '../../shared/url'
 
 interface Persisted {
@@ -68,6 +70,7 @@ export class BrowserState {
   media: MediaState[] = []
   findResult: FindResult | null = null
   devtoolsOpenFor = new Set<string>()
+  resources: ResourceSnapshot = emptyResourceSnapshot()
   windowBounds: Rect | null = null
   searchEngines: SearchEngine[] = DEFAULT_SEARCH_ENGINES
   readonly version: string
@@ -109,6 +112,7 @@ export class BrowserState {
     this.settings.compactMode = { ...DEFAULT_SETTINGS.compactMode, ...data.settings?.compactMode }
     // Compact mode's "persistent sidebar" toggle is transient by design.
     this.settings.compactMode.sidebarPersistent = false
+    this.settings.resources = sanitizeResourceSettings(data.settings?.resources)
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     this.bookmarks = Array.isArray(data.bookmarks) ? data.bookmarks : []
     this.windowBounds = data.windowBounds ?? null
@@ -261,7 +265,8 @@ export class BrowserState {
       recentlyClosedCount: this.recentlyClosed.length,
       media: this.media,
       findResult: this.findResult,
-      devtoolsOpenFor: [...this.devtoolsOpenFor]
+      devtoolsOpenFor: [...this.devtoolsOpenFor],
+      resources: this.resources
     }
   }
 

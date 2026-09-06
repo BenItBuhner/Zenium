@@ -1,5 +1,58 @@
-import type { Container, Settings } from './types'
+import type { Container, ResourceSettings, ResourceSnapshot, Settings } from './types'
 import { DEFAULT_CONTAINER_ID } from './types'
+
+/**
+ * Aggressive out of the box: the browser as a whole may use about a third of the machine's RAM
+ * and half of its CPU; hidden tabs are frozen after five minutes and unloaded after twenty
+ * (`unloadTimeoutMinutes`), at most 24 pages stay alive, and pages cannot keep old documents or
+ * prerenders around.
+ */
+export const DEFAULT_RESOURCE_SETTINGS: ResourceSettings = {
+  enabled: true,
+  enforcement: 'strict',
+  memoryMb: 0,
+  memoryPercent: 35,
+  cpuPercent: 50,
+  gpuMemoryMb: 0,
+  gpuMode: 'auto',
+  freezeAfterMinutes: 5,
+  idleFreezeMinutes: 10,
+  maxLoadedTabs: 24,
+  maxConcurrentLoads: 3,
+  batteryFactor: 0.7,
+  protectPinned: false,
+  protectEssentials: false,
+  protectAudible: true,
+  process: {
+    rendererProcessLimit: 0,
+    rendererHeapMb: 0,
+    lowEndDeviceMode: false,
+    disableBackForwardCache: true,
+    disablePrerender: true,
+    rasterThreads: 0,
+    v8OptimizeForSize: false
+  }
+}
+
+export function emptyResourceSnapshot(): ResourceSnapshot {
+  const gauge = { used: 0, budget: 0, configured: 0 }
+  return {
+    sampledAt: 0,
+    memory: { ...gauge },
+    cpu: { ...gauge },
+    gpu: { ...gauge },
+    system: { totalMemoryMb: 0, cpuCount: 0, onBattery: false, idle: false },
+    tabs: [],
+    overheadMb: 0,
+    loadedTabs: 0,
+    frozenTabs: 0,
+    throttledTabs: 0,
+    queuedLoads: 0,
+    pressure: [],
+    recentActions: [],
+    restartRequired: false
+  }
+}
 
 export const DEFAULT_SETTINGS: Settings = {
   colorScheme: 'system',
@@ -34,7 +87,8 @@ export const DEFAULT_SETTINGS: Settings = {
   onboardingDone: false,
   showTabSeparator: true,
   ctrlTabCyclesWithinSection: false,
-  spaceRouting: {}
+  spaceRouting: {},
+  resources: structuredClone(DEFAULT_RESOURCE_SETTINGS)
 }
 
 /** Firefox's four default containers plus "No Container". */

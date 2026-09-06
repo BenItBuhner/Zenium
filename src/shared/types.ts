@@ -99,6 +99,10 @@ export interface Tab {
   muted: boolean
   /** True when the tab has no live WebContents (Zen calls these "pending"/unloaded tabs). */
   discarded: boolean
+  /** Page lifecycle frozen by the resource governor (no timers, no script) – Chromium tab freezing. */
+  frozen: boolean
+  /** CPU throttling factor the governor applied to the renderer (1 = none, 4 = four times slower). */
+  cpuThrottle: number
   zoom: number
   splitGroupId: string | null
   createdAt: number
@@ -369,6 +373,142 @@ export interface Settings {
   showTabSeparator: boolean
   ctrlTabCyclesWithinSection: boolean
   spaceRouting: Record<string, string>
+  resources: ResourceSettings
+}
+
+// ---------------------------------------------------------------------------
+// Resource governor (memory / CPU / GPU budgets)
+// ---------------------------------------------------------------------------
+
+/**
+ * How far the governor may go to stay under budget.
+ * - `balanced`: only hidden tabs are purged, throttled, frozen or discarded.
+ * - `strict`: hidden tabs as above; visible split panes may be throttled and purged, the active
+ *   tab may be purged.
+ * - `extreme`: everything in `strict`, plus the active tab is CPU-throttled under CPU pressure
+ *   and reloaded when it alone keeps the browser over the memory budget.
+ */
+export type ResourceEnforcement = 'balanced' | 'strict' | 'extreme'
+
+/**
+ * GPU usage profile (restart required).
+ * - `auto`: hardware acceleration as Chromium decides.
+ * - `low`: hardware compositing stays on, GPU rasterization / video decode / 2D canvas go to CPU.
+ * - `off`: hardware acceleration disabled entirely (software compositing).
+ */
+export type GpuMode = 'auto' | 'low' | 'off'
+
+/** Chromium / V8 switches applied at startup; changing them needs a relaunch. */
+export interface ResourceProcessProfile {
+  /** Maximum number of renderer processes Chromium may keep alive (0 = Chromium default). */
+  rendererProcessLimit: number
+  /** V8 old-space heap cap per renderer in MB (0 = default); pages exceeding it are unloaded. */
+  rendererHeapMb: number
+  /** Chromium's low-end-device mode: smaller caches and tile budgets everywhere. */
+  lowEndDeviceMode: boolean
+  /** Do not keep previous documents alive in the back/forward cache. */
+  disableBackForwardCache: boolean
+  /** Do not let pages prerender other pages in hidden renderers. */
+  disablePrerender: boolean
+  /** Raster worker threads per renderer (0 = default). */
+  rasterThreads: number
+  /** V8: favour a small memory footprint over peak speed. */
+  v8OptimizeForSize: boolean
+}
+
+export interface ResourceSettings {
+  enabled: boolean
+  enforcement: ResourceEnforcement
+  /** Memory budget for the whole browser (every Chromium process) in MB; 0 = use `memoryPercent`. */
+  memoryMb: number
+  /** Percentage of installed RAM used as the memory budget when `memoryMb` is 0. */
+  memoryPercent: number
+  /** CPU budget as a percentage of the whole machine (all cores together = 100). */
+  cpuPercent: number
+  /** GPU process memory budget in MB (0 = unlimited). */
+  gpuMemoryMb: number
+  gpuMode: GpuMode
+  /** Freeze hidden tabs this many minutes after they were last shown (0 = immediately). */
+  freezeAfterMinutes: number
+  /** Freeze every hidden tab once the system has been idle this long (minutes, 0 = off). */
+  idleFreezeMinutes: number
+  /** Hard cap on live pages (WebContents); 0 = unlimited. */
+  maxLoadedTabs: number
+  /** Background page loads allowed at the same time; the rest wait in a queue. */
+  maxConcurrentLoads: number
+  /** Budgets are multiplied by this factor while on battery power (0.25..1). */
+  batteryFactor: number
+  protectPinned: boolean
+  protectEssentials: boolean
+  protectAudible: boolean
+  process: ResourceProcessProfile
+}
+
+export type ResourceKind = 'memory' | 'cpu' | 'gpu'
+
+export interface ResourceGauge {
+  /** Current usage: MB for memory / GPU, percent of the whole machine for CPU. */
+  used: number
+  /** Effective budget after battery tightening (0 = unlimited). */
+  budget: number
+  /** Budget as configured, before battery tightening (0 = unlimited). */
+  configured: number
+}
+
+export interface TabResourceUsage {
+  tabId: string
+  memoryMb: number
+  /** Percent of the whole machine. */
+  cpuPercent: number
+  /** OS processes attributed to the tab (main renderer plus out-of-process iframes). */
+  processes: number
+}
+
+export type GovernorActionKind =
+  | 'purge'
+  | 'throttle'
+  | 'unthrottle'
+  | 'freeze'
+  | 'thaw'
+  | 'discard'
+  | 'reload'
+  | 'pause-media'
+  | 'defer'
+
+export interface GovernorAction {
+  at: number
+  kind: GovernorActionKind
+  tabId: string | null
+  /** Tab title at the time of the action (tabs may be gone by the time the UI renders it). */
+  title: string
+  reason: string
+}
+
+export interface ResourceSnapshot {
+  /** 0 until the governor has taken its first sample. */
+  sampledAt: number
+  memory: ResourceGauge
+  cpu: ResourceGauge
+  gpu: ResourceGauge
+  system: {
+    totalMemoryMb: number
+    cpuCount: number
+    onBattery: boolean
+    /** System idle long enough for the idle-freeze rule to apply. */
+    idle: boolean
+  }
+  tabs: TabResourceUsage[]
+  /** Memory (MB) of processes that are not attributable to a tab: browser, GPU, network, utility. */
+  overheadMb: number
+  loadedTabs: number
+  frozenTabs: number
+  throttledTabs: number
+  /** Background loads waiting for a free slot. */
+  queuedLoads: number
+  pressure: ResourceKind[]
+  recentActions: GovernorAction[]
+  /** Startup switches derived from the current settings differ from the ones this process runs with. */
+  restartRequired: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -436,6 +576,7 @@ export interface UIState {
   findResult: FindResult | null
   /** Tab id whose devtools are open (for the toolbar indicator). */
   devtoolsOpenFor: string[]
+  resources: ResourceSnapshot
 }
 
 export interface FindResult {
@@ -477,6 +618,10 @@ export interface CommandDescriptor {
     | 'history.open'
     | 'bookmarks.open'
     | 'downloads.open'
+    | 'tab.freezeOthers'
+    | 'tab.wakeAll'
+    | 'resources.trim'
+    | 'resources.open'
 }
 
 // ---------------------------------------------------------------------------
@@ -539,6 +684,8 @@ export interface Commands {
   'tab.rename': { args: { tabId: string; title: string | null }; result: void }
   'tab.duplicate': { args: { tabId: string }; result: void }
   'tab.unload': { args: { tabId: string }; result: void }
+  'tab.freeze': { args: { tabId: string }; result: void }
+  'tab.wake': { args: { tabId: string }; result: void }
   'tab.move': {
     args: { tabId: string; spaceId?: string; section: TabSection; index: number }
     result: void
@@ -629,6 +776,13 @@ export interface Commands {
 
   'overlay.snapshot': { args: { tabId: string }; result: string | null }
 
+  /** Take a fresh resource sample right now and return it. */
+  'resources.snapshot': { args: void; result: ResourceSnapshot }
+  /** Purge, freeze and discard as if every budget were exceeded ("free up memory now"). */
+  'resources.trim': { args: void; result: void }
+  /** Restart the browser so changed startup switches take effect. */
+  'resources.relaunch': { args: void; result: void }
+
   'settings.update': { args: Partial<Settings>; result: void }
   'shortcuts.update': { args: { id: string; binding: KeyBinding | null }; result: void }
   'shortcuts.reset': { args: void; result: void }
@@ -695,7 +849,7 @@ export interface Events {
   state: UIState
   'urlbar.toggle': { mode: UrlbarOpenMode; text?: string }
   'urlbar.close': void
-  'overlay.open': { kind: OverlayKind }
+  'overlay.open': { kind: OverlayKind; section?: string }
   'find.open': { tabId: string; again?: 'next' | 'prev' }
   toast: { message: string; kind?: 'info' | 'error' }
   /** Link hover status text (Firefox shows this in the bottom corner). */

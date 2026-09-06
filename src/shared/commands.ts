@@ -178,6 +178,30 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     label: 'View Page Source',
     keywords: ['source', 'html'],
     action: 'page.viewSource'
+  },
+  {
+    id: 'freeze-others',
+    label: 'Freeze Other Tabs',
+    keywords: ['freeze', 'sleep', 'suspend', 'tabs', 'background'],
+    action: 'tab.freezeOthers'
+  },
+  {
+    id: 'wake-all',
+    label: 'Wake All Tabs',
+    keywords: ['wake', 'thaw', 'unfreeze', 'resume', 'tabs'],
+    action: 'tab.wakeAll'
+  },
+  {
+    id: 'trim',
+    label: 'Free Up Memory Now',
+    keywords: ['memory', 'free', 'trim', 'unload', 'purge', 'ram', 'cpu'],
+    action: 'resources.trim'
+  },
+  {
+    id: 'resources',
+    label: 'Resource Budgets',
+    keywords: ['resources', 'memory', 'cpu', 'gpu', 'budget', 'limit', 'performance'],
+    action: 'resources.open'
   }
 ]
 

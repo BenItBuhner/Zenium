@@ -13,6 +13,10 @@ export type AnyAction =
   | 'history.open'
   | 'bookmarks.open'
   | 'downloads.open'
+  | 'tab.freezeOthers'
+  | 'tab.wakeAll'
+  | 'resources.trim'
+  | 'resources.open'
 
 interface ActionContext {
   /** Tab whose web contents produced the key event (null for the chrome). */
@@ -105,6 +109,19 @@ export class Actions {
         return
       case 'glance.expand':
         return tabs.expandGlance()
+
+      // --- resource governor ---
+      case 'tab.freezeOthers':
+        void this.browser.governor.freezeOthers()
+        return
+      case 'tab.wakeAll':
+        void this.browser.governor.wakeAll()
+        return
+      case 'resources.trim':
+        void this.browser.governor.trim()
+        return
+      case 'resources.open':
+        return this.browser.emit('overlay.open', { kind: 'settings', section: 'resources' })
 
       // --- navigation ---
       case 'nav.back':

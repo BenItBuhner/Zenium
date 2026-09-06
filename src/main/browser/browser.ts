@@ -23,6 +23,8 @@ import { Actions, type AnyAction } from './actions'
 import { KeyboardHandler } from './keys'
 import { Menus } from './menus'
 import { SuggestionService } from './suggestions'
+import { ResourceGovernor } from './resources/governor'
+import { sanitizeResourceSettings } from './resources/switches'
 import { createFolder, createSpace, deleteFolder, getSpace, reorderSpace } from './model'
 import { inputToUrl } from '../../shared/url'
 import { buildSearchUrl, matchEngineKeyword } from '../../shared/search'
@@ -69,7 +71,7 @@ export class Browser {
   readonly keys: KeyboardHandler
   readonly menus: Menus
   readonly suggestions: SuggestionService
-  private unloadTimer: NodeJS.Timeout | null = null
+  readonly governor: ResourceGovernor
   private quitting = false
 
   constructor(userDataDir: string) {
@@ -93,6 +95,7 @@ export class Browser {
     )
     this.tabs = new TabManager(this)
     this.window = new ZenWindow(this)
+    this.governor = new ResourceGovernor(this)
     this.actions = new Actions(this)
     this.keys = new KeyboardHandler(this)
     this.menus = new Menus(this)
@@ -144,7 +147,7 @@ export class Browser {
     if (this.state.settings.onboardingDone) {
       for (const id of this.tabs.visibleTabIds()) this.tabs.ensureLoaded(id)
     }
-    this.unloadTimer = setInterval(() => this.tabs.unloadInactive(), 60_000)
+    this.governor.start()
     this.state.commit()
   }
 
@@ -302,7 +305,7 @@ export class Browser {
   }
 
   onWindowClosed(): void {
-    if (this.unloadTimer) clearInterval(this.unloadTimer)
+    this.governor.stop()
     this.tabs.destroyAll()
     if (process.platform !== 'darwin') app.quit()
   }
@@ -435,6 +438,8 @@ export class Browser {
       'tab.rename': ({ tabId, title }) => tabs.rename(tabId, title),
       'tab.duplicate': ({ tabId }) => void tabs.duplicate(tabId),
       'tab.unload': ({ tabId }) => tabs.discard(tabId),
+      'tab.freeze': ({ tabId }) => this.governor.freezeTab(tabId),
+      'tab.wake': ({ tabId }) => this.governor.wakeTab(tabId),
       'tab.move': ({ tabId, spaceId, section, index }) =>
         tabs.moveTab(tabId, { spaceId, section, index }),
       'tab.moveToSpace': ({ tabId, spaceId }) => {
@@ -551,6 +556,10 @@ export class Browser {
       'urlbar.runCommand': ({ action }) => this.actions.run(action as AnyAction),
 
       'overlay.snapshot': ({ tabId }) => this.window.snapshot(tabId),
+
+      'resources.snapshot': () => this.governor.sample(),
+      'resources.trim': () => this.governor.trim(),
+      'resources.relaunch': () => this.governor.relaunch(),
 
       'settings.update': (patch) => this.updateSettings(patch),
       'shortcuts.update': ({ id, binding }) => {
@@ -675,12 +684,21 @@ export class Browser {
     const before = {
       glance: s.glanceEnabled,
       trigger: s.glanceTrigger,
-      thirdParty: s.thirdPartyOnPinned
+      thirdParty: s.thirdPartyOnPinned,
+      resources: JSON.stringify(s.resources),
+      unload: `${s.unloadEnabled}:${s.unloadTimeoutMinutes}:${s.unloadExcludedDomains.join(',')}`
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
       if (key === 'compactMode' && value && typeof value === 'object') {
         Object.assign(s.compactMode, value)
+      } else if (key === 'resources' && value && typeof value === 'object') {
+        const incoming = value as Partial<Settings['resources']>
+        s.resources = sanitizeResourceSettings({
+          ...s.resources,
+          ...incoming,
+          process: { ...s.resources.process, ...(incoming.process ?? {}) }
+        })
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }
@@ -694,6 +712,13 @@ export class Browser {
       before.thirdParty !== s.thirdPartyOnPinned
     ) {
       this.tabs.broadcastPageFlags()
+    }
+    if (
+      before.resources !== JSON.stringify(s.resources) ||
+      before.unload !==
+        `${s.unloadEnabled}:${s.unloadTimeoutMinutes}:${s.unloadExcludedDomains.join(',')}`
+    ) {
+      this.governor.onSettingsChanged()
     }
     this.state.commit()
   }

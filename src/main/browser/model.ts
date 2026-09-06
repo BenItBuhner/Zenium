@@ -65,6 +65,8 @@ export function createTabRecord(
     audible: false,
     muted: init.muted ?? false,
     discarded: init.discarded ?? true,
+    frozen: false,
+    cpuThrottle: 1,
     zoom: init.zoom ?? 1,
     splitGroupId: null,
     createdAt: init.createdAt ?? now,
