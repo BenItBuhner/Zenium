@@ -60,7 +60,9 @@ export function useMainEvents(): void {
       onEvent('space.switched', ({ fromIndex, toIndex }) => {
         uiStore.set({ spaceSlideDirection: toIndex > fromIndex ? 1 : toIndex < fromIndex ? -1 : 0 })
       }),
-      onEvent('compact.reveal', ({ revealed }) => uiStore.set({ compactHover: revealed }))
+      onEvent('compact.reveal', ({ revealed }) =>
+        window.dispatchEvent(new CustomEvent('zen-compact-reveal', { detail: revealed }))
+      )
     ]
     return () => offs.forEach((off) => off())
   }, [])

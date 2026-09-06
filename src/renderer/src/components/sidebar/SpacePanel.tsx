@@ -184,6 +184,7 @@ function FolderRow({
   dragging
 }: FolderRowProps): JSX.Element {
   const renaming = uiStore.use((s) => s.renamingFolderId === folder.id)
+  const lastClick = useRef(0)
   const containsActive = tabs.some((t) => t.id === activeTabId)
   const isDropTarget = dropKey === `folder:${folder.id}`
   return (
@@ -195,10 +196,16 @@ function FolderRow({
           compact && 'justify-center px-0'
         )}
         data-active={containsActive && folder.collapsed}
-        onClick={() =>
+        onClick={() => {
+          const now = performance.now()
+          if (now - lastClick.current < 400) {
+            lastClick.current = 0
+            uiStore.set({ renamingFolderId: folder.id })
+            return
+          }
+          lastClick.current = now
           run('folder.update', { folderId: folder.id, patch: { collapsed: !folder.collapsed } })
-        }
-        onDoubleClick={() => uiStore.set({ renamingFolderId: folder.id })}
+        }}
         onContextMenu={(e) => {
           e.preventDefault()
           run('folder.contextMenu', { folderId: folder.id })

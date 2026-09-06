@@ -34,9 +34,19 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
     startTabDrag(tab, e)
   }
 
+  // Activating a tab moves keyboard focus into the page, which resets Chromium's click counter,
+  // so a native `dblclick` never fires here. Detect the second click ourselves instead.
+  const lastClick = useRef(0)
   const onClick = (e: React.MouseEvent): void => {
     if ((e.target as HTMLElement).closest('button')) return
     if (dragging) return
+    const now = performance.now()
+    if (now - lastClick.current < 400 && !compact) {
+      lastClick.current = 0
+      uiStore.set({ renamingTabId: tab.id })
+      return
+    }
+    lastClick.current = now
     run('tab.activate', { tabId: tab.id })
   }
 
@@ -62,7 +72,6 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
       onPointerDown={onPointerDown}
       onClick={onClick}
       onAuxClick={onAuxClick}
-      onDoubleClick={() => uiStore.set({ renamingTabId: tab.id })}
       onContextMenu={(e) => {
         e.preventDefault()
         run('tab.contextMenu', { tabId: tab.id })

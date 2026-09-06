@@ -7,8 +7,13 @@ import { Browser } from './browser/browser'
 registerZenScheme()
 app.setName('Zen')
 
-// Ctrl+Shift+I etc. are handled by Zen's own shortcut table, not by menu accelerators.
-Menu.setApplicationMenu(null)
+// Shortcuts are handled by Zen's own table, not by menu accelerators. macOS still needs an
+// application menu for the standard Edit roles (Cmd+C/V/X/A only work through them there).
+if (process.platform === 'darwin') {
+  Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }]))
+} else {
+  Menu.setApplicationMenu(null)
+}
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {

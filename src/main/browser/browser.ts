@@ -352,7 +352,7 @@ export class Browser {
       const tabId = this.tabs.tabIdForWebContents(event.sender)
       if (!tabId) return
       const tab = this.tabs.tab(tabId)
-      if (!tab || typeof message?.url !== 'string') return
+      if (!tab || typeof message?.url !== 'string' || !/^https?:\/\//i.test(message.url)) return
       switch (message.type) {
         case 'glance':
           this.tabs.openGlance(

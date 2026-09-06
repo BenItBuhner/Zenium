@@ -8,6 +8,8 @@ import icon from '../../../resources/icon.png?asset'
 
 const MIN_WIDTH = 640
 const MIN_HEIGHT = 420
+/** Width (px) of the edge zone that reveals the sidebar in compact mode. */
+const COMPACT_REVEAL_ZONE = 14
 
 /**
  * The single browser window. Its own web contents render Zen's chrome (sidebar, toolbar,
@@ -19,6 +21,8 @@ export class ZenWindow {
   private boundsTimer: NodeJS.Timeout | null = null
   private lastLayout: LayoutReport | null = null
   private pendingContentFocus = false
+  private compactTimer: NodeJS.Timeout | null = null
+  private compactLastSent: boolean | null = null
 
   constructor(private readonly browser: Browser) {}
 
@@ -66,7 +70,11 @@ export class ZenWindow {
       this.saveBounds()
       this.browser.state.flushSync()
     })
-    this.win.on('closed', () => this.browser.onWindowClosed())
+    this.win.on('closed', () => {
+      this.stopCompactTracking()
+      this.browser.onWindowClosed()
+    })
+    this.startCompactTracking()
 
     const wc = this.win.webContents
     wc.on('before-input-event', (event, input) => this.browser.keys.handle(event, input, null))
@@ -136,6 +144,54 @@ export class ZenWindow {
     w.fullscreen = this.win.isFullScreen()
     w.focused = this.win.isFocused()
     this.browser.state.commitVolatile()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Compact mode: native cursor tracking
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Like Zen, reveal the hidden sidebar by tracking the real cursor position instead of relying
+   * on DOM hover: the page view and the frameless resize border never deliver mouse events to
+   * the chrome, so a DOM-only edge strip is unreliable.
+   */
+  startCompactTracking(): void {
+    if (this.compactTimer) return
+    this.compactTimer = setInterval(() => this.pollCompactCursor(), 120)
+  }
+
+  stopCompactTracking(): void {
+    if (this.compactTimer) clearInterval(this.compactTimer)
+    this.compactTimer = null
+  }
+
+  private pollCompactCursor(): void {
+    if (!this.win || this.win.isDestroyed() || !this.win.isVisible()) return
+    const state = this.browser.state
+    const cm = state.settings.compactMode
+    const hidden = cm.enabled && cm.hideSidebar && !cm.sidebarPersistent
+    if (!hidden || state.window.htmlFullscreenTabId) {
+      this.compactLastSent = null
+      return
+    }
+    if (!this.win.isFocused() && !state.compactSidebarRevealed) return
+    const bounds = this.win.getContentBounds()
+    const cursor = screen.getCursorScreenPoint()
+    const insideY = cursor.y >= bounds.y && cursor.y <= bounds.y + bounds.height
+    const side = state.settings.sidebarSide
+    const distance = side === 'left' ? cursor.x - bounds.x : bounds.x + bounds.width - cursor.x
+    const sidebarWidth = state.settings.sidebarExpanded ? state.settings.sidebarWidth : 56
+    const inRevealZone = insideY && distance >= -6 && distance <= COMPACT_REVEAL_ZONE
+    const outsideSidebar = !insideY || distance > sidebarWidth + 32 || distance < -48
+    // Each transition is sent once; re-sending "hide" would keep resetting the renderer's
+    // hide delay.
+    if (inRevealZone && this.compactLastSent !== true) {
+      this.compactLastSent = true
+      this.send('compact.reveal', { revealed: true })
+    } else if (outsideSidebar && this.compactLastSent !== false) {
+      this.compactLastSent = false
+      if (state.compactSidebarRevealed) this.send('compact.reveal', { revealed: false })
+    }
   }
 
   // ---------------------------------------------------------------------------

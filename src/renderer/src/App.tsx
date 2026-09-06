@@ -22,6 +22,9 @@ import { Onboarding } from './components/overlays/Onboarding'
 import { Sidebar } from './components/sidebar/Sidebar'
 import { Toolbar } from './components/Toolbar'
 
+/** Width of the compact-mode hover zone along the window edge (px). */
+const REVEAL_ZONE = 14
+
 export function App(): JSX.Element {
   const state = useBrowser()
   const theme = useTheme(state)
@@ -45,9 +48,13 @@ export function App(): JSX.Element {
 
   // Compact mode: hovering the window edge reveals the sidebar on top of a frozen page snapshot.
   const revealTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const revealing = useRef(false)
   const reveal = useCallback(() => {
     if (revealTimer.current) clearTimeout(revealTimer.current)
+    if (uiStore.get().compactHover || revealing.current) return
+    revealing.current = true
     void captureActiveTab(tab?.id ?? null).then(() => {
+      revealing.current = false
       uiStore.set({ compactHover: true })
       run('compact.setRevealed', { revealed: true })
     })
@@ -64,6 +71,16 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (!sidebarHidden && ui.compactHover) uiStore.set({ compactHover: false })
   }, [sidebarHidden, ui.compactHover])
+  // Main tracks the real cursor (works over the page view and the frameless resize border).
+  useEffect(() => {
+    const onReveal = (e: Event): void => {
+      if (!sidebarHidden) return
+      if ((e as CustomEvent<boolean>).detail) reveal()
+      else unreveal()
+    }
+    window.addEventListener('zen-compact-reveal', onReveal)
+    return () => window.removeEventListener('zen-compact-reveal', onReveal)
+  }, [sidebarHidden, reveal, unreveal])
 
   if (htmlFullscreen) {
     // The fullscreen view covers everything; keep the tree alive but paint nothing.
@@ -87,8 +104,12 @@ export function App(): JSX.Element {
           // style diffing when the sidebar toggles.
           paddingTop: 'var(--zen-padding)',
           paddingBottom: 'var(--zen-padding)',
-          paddingLeft: sidebarSide === 'left' && !sidebarHidden ? 0 : 'var(--zen-padding)',
-          paddingRight: sidebarSide === 'right' && !sidebarHidden ? 0 : 'var(--zen-padding)'
+          // The hidden-sidebar side keeps a wider gutter: it is the compact-mode reveal zone and
+          // must stay hoverable beyond a frameless window's resize border.
+          paddingLeft:
+            sidebarSide === 'left' ? (sidebarHidden ? REVEAL_ZONE : 0) : 'var(--zen-padding)',
+          paddingRight:
+            sidebarSide === 'right' ? (sidebarHidden ? REVEAL_ZONE : 0) : 'var(--zen-padding)'
         }}
       >
         {showToolbar && <Toolbar state={state} tab={tab} />}
@@ -101,10 +122,12 @@ export function App(): JSX.Element {
         <>
           <div
             className={cn(
-              'absolute top-0 z-40 h-full w-3',
+              'absolute top-0 z-40 h-full',
               sidebarSide === 'left' ? 'left-0' : 'right-0'
             )}
+            style={{ width: REVEAL_ZONE }}
             onPointerEnter={reveal}
+            onPointerMove={reveal}
             aria-label="Show sidebar"
           />
           {sidebarRevealed && (
