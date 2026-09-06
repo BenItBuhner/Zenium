@@ -11,8 +11,26 @@ const HOST_RE =
   /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:\d{1,5})?([/?#].*)?$/i
 const LOCALHOST_RE = /^localhost(:\d{1,5})?([/?#].*)?$/i
 
+const KNOWN_SCHEMES = [
+  'http',
+  'https',
+  'file',
+  'zen',
+  'about',
+  'ftp',
+  'data',
+  'view-source',
+  'chrome'
+]
+/** `host:port[/path]` – looks like a scheme but is a bare host with a port (dev servers). */
+const HOST_PORT_RE =
+  /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*:\d{1,5}([/?#].*)?$/i
+
+/** True when the input starts with a real, recognised URL scheme. */
 export function hasScheme(input: string): boolean {
-  return SCHEME_RE.test(input)
+  if (!SCHEME_RE.test(input)) return false
+  const scheme = input.slice(0, input.indexOf(':')).toLowerCase()
+  return KNOWN_SCHEMES.includes(scheme)
 }
 
 export function isInternalUrl(url: string): boolean {
@@ -26,23 +44,14 @@ export function isProbablyUrl(raw: string): boolean {
     // "example.com foo" is a search; "http://a b" is not a url either.
     return false
   }
-  if (hasScheme(input)) {
-    // "foo:bar" could be a search ("javascript:" etc. are blocked elsewhere).
-    const scheme = input.slice(0, input.indexOf(':')).toLowerCase()
-    return [
-      'http',
-      'https',
-      'file',
-      'zen',
-      'about',
-      'ftp',
-      'data',
-      'view-source',
-      'chrome'
-    ].includes(scheme)
-  }
+  if (hasScheme(input)) return true
   if (LOCALHOST_RE.test(input)) return true
   if (IPV4_RE.test(input)) return true
+  if (HOST_PORT_RE.test(input)) return true
+  if (SCHEME_RE.test(input)) {
+    // "foo:bar" with an unknown scheme is a search ("javascript:" etc. are blocked elsewhere).
+    return false
+  }
   if (HOST_RE.test(input)) {
     const tld =
       input
@@ -68,6 +77,10 @@ export function inputToUrl(raw: string): string | null {
       return BLANK_URL
     }
     return input
+  }
+  // Local dev servers and IPs are almost always plain http.
+  if (LOCALHOST_RE.test(input) || IPV4_RE.test(input) || HOST_PORT_RE.test(input)) {
+    return `http://${input}`
   }
   return `https://${input}`
 }
