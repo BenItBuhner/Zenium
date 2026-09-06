@@ -12,6 +12,7 @@ import {
   collectLocal,
   defaultScope,
   diffLocal,
+  hashData,
   metaFromRemote,
   newestByRecord,
   winningRemote,
@@ -169,12 +170,25 @@ export class SyncEngine {
   async confirmMerge(merge: boolean): Promise<void> {
     if (!this.data.pendingMerge) return
     this.data.pendingMerge = false
-    if (!merge) {
-      // Keep this device's data: make everything local "newer" and tombstone remote-only records.
+    if (merge) {
+      // Merge: records that exist on both sides (settings, shortcuts, ordering, shared ids)
+      // adopt the cloud copy; everything only this device has is added to it.
+      const remote = await this.readRemote()
+      const local = collectLocal(this.sources(), this.data.scope)
+      const meta: MetaMap = {}
+      for (const [id, { type, data }] of local) {
+        if (remote.has(id)) meta[id] = { type, hash: hashData(data), modified: -1, deleted: false }
+      }
+      this.data.meta = meta
+    } else {
+      // Keep this device's data: stamp every local record as freshly edited (so it beats the
+      // cloud copy) and tombstone records that only exist remotely.
       const remote = await this.readRemote()
       const local = collectLocal(this.sources(), this.data.scope)
       const now = Date.now()
       const meta: MetaMap = {}
+      for (const [id, { type }] of local)
+        meta[id] = { type, hash: '', modified: now, deleted: false }
       for (const [id, r] of remote) {
         if (!local.has(id)) meta[id] = { type: r.type, hash: '', modified: now, deleted: true }
       }
@@ -235,8 +249,21 @@ export class SyncEngine {
     setTimeout(() => void this.syncNow(), 1_500)
   }
 
+  /**
+   * Stamp local edits the moment they are committed (not when the next sync happens to run), so
+   * last-writer-wins reflects the real order of edits across devices.
+   */
   private onLocalChange(): void {
-    if (!this.data.enabled || this.applying) return
+    if (!this.data.enabled || this.applying || this.data.pendingMerge) return
+    const diff = diffLocal(
+      this.data.meta,
+      collectLocal(this.sources(), this.data.scope),
+      Date.now()
+    )
+    if (diff.changed) {
+      this.data.meta = diff.meta
+      this.persist()
+    }
     this.schedulePush()
   }
 

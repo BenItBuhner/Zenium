@@ -21,7 +21,16 @@ import type { Model } from '../browser/model'
  */
 
 export type RecordType =
-  'space' | 'folder' | 'tab' | 'container' | 'bookmark' | 'settings' | 'shortcuts' | 'boost'
+  | 'space'
+  | 'folder'
+  | 'tab'
+  | 'container'
+  | 'bookmark'
+  | 'settings'
+  | 'shortcuts'
+  | 'boost'
+  /** Ordering of spaces / containers / essentials / a space's tabs, separate from their content. */
+  | 'order'
 
 export interface SyncRecord {
   id: string
@@ -47,8 +56,19 @@ export interface SpaceData {
   containerId: string
   theme: SpaceTheme | null
   pinnedCollapsed: boolean
-  position: number
 }
+
+/** `order:spaces`, `order:containers`, `order:essentials` → `{ ids }`; `order:tabs:<spaceId>` → sections. */
+export interface OrderData {
+  ids?: string[]
+  pinned?: string[]
+  regular?: string[]
+}
+
+export const ORDER_SPACES = 'order:spaces'
+export const ORDER_CONTAINERS = 'order:containers'
+export const ORDER_ESSENTIALS = 'order:essentials'
+export const orderTabsId = (spaceId: string): string => `order:tabs:${spaceId}`
 
 export interface FolderData {
   spaceId: string
@@ -70,14 +90,12 @@ export interface TabData {
   folderId: string | null
   containerId: string
   muted: boolean
-  position: number
 }
 
 export interface ContainerData {
   name: string
   color: Container['color']
   icon: Container['icon']
-  position: number
 }
 
 export interface BookmarkData {
@@ -146,17 +164,18 @@ export function collectLocal(
   const out = new Map<string, { type: RecordType; data: unknown }>()
   const m = src.model
   if (scope.spaces) {
-    m.spaces.forEach((s, i) => {
+    for (const s of m.spaces) {
       const data: SpaceData = {
         name: s.name,
         icon: s.icon,
         containerId: s.containerId,
         theme: s.theme,
-        pinnedCollapsed: s.pinnedCollapsed,
-        position: i
+        pinnedCollapsed: s.pinnedCollapsed
       }
       out.set(s.id, { type: 'space', data })
-    })
+    }
+    const order: OrderData = { ids: m.spaces.map((s) => s.id) }
+    out.set(ORDER_SPACES, { type: 'order', data: order })
   }
   if (scope.folders) {
     for (const f of Object.values(m.folders)) {
@@ -171,22 +190,16 @@ export function collectLocal(
     }
   }
   if (scope.pinnedTabs || scope.essentials || scope.openTabs) {
-    const position = (t: Tab): number => {
-      if (t.essential) return m.essentialTabIds.indexOf(t.id)
-      const space = m.spaces.find((s) => s.id === t.spaceId)
-      if (!space) return 0
-      const list = space.tabIds.filter(
-        (id) => m.tabs[id]?.pinned === t.pinned && !m.tabs[id]?.windowId
-      )
-      return list.indexOf(t.id)
+    const synced = (t: Tab | undefined): t is Tab => {
+      if (!t || t.windowId) return false
+      if (t.spaceId && m.localSpaces[t.spaceId]) return false
+      if (!t.essential && (!t.spaceId || !m.spaces.some((s) => s.id === t.spaceId))) return false
+      const wanted = t.essential ? scope.essentials : t.pinned ? scope.pinnedTabs : scope.openTabs
+      if (!wanted) return false
+      return !(t.url.startsWith('zen://') && !t.pinnedUrl)
     }
     for (const t of Object.values(m.tabs)) {
-      if (t.windowId) continue
-      if (t.spaceId && m.localSpaces[t.spaceId]) continue
-      if (!t.essential && (!t.spaceId || !m.spaces.some((s) => s.id === t.spaceId))) continue
-      const wanted = t.essential ? scope.essentials : t.pinned ? scope.pinnedTabs : scope.openTabs
-      if (!wanted) continue
-      if (t.url.startsWith('zen://') && !t.pinnedUrl) continue
+      if (!synced(t)) continue
       const data: TabData = {
         url: t.url.startsWith('zen://') ? (t.pinnedUrl ?? t.url) : t.url,
         pinnedUrl: t.pinnedUrl,
@@ -199,18 +212,35 @@ export function collectLocal(
         spaceId: t.essential ? null : t.spaceId,
         folderId: t.folderId,
         containerId: t.containerId,
-        muted: t.muted,
-        position: position(t)
+        muted: t.muted
       }
       out.set(t.id, { type: 'tab', data })
     }
+    if (scope.essentials) {
+      const order: OrderData = { ids: m.essentialTabIds.filter((id) => synced(m.tabs[id])) }
+      out.set(ORDER_ESSENTIALS, { type: 'order', data: order })
+    }
+    for (const space of m.spaces) {
+      const order: OrderData = {
+        pinned: space.tabIds.filter((id) => synced(m.tabs[id]) && m.tabs[id].pinned),
+        regular: scope.openTabs
+          ? space.tabIds.filter((id) => synced(m.tabs[id]) && !m.tabs[id].pinned)
+          : []
+      }
+      if (order.pinned!.length || order.regular!.length)
+        out.set(orderTabsId(space.id), { type: 'order', data: order })
+    }
   }
   if (scope.containers) {
-    m.containers.forEach((c, i) => {
-      if (c.id === DEFAULT_CONTAINER_ID) return
-      const data: ContainerData = { name: c.name, color: c.color, icon: c.icon, position: i }
+    for (const c of m.containers) {
+      if (c.id === DEFAULT_CONTAINER_ID) continue
+      const data: ContainerData = { name: c.name, color: c.color, icon: c.icon }
       out.set(c.id, { type: 'container', data })
-    })
+    }
+    const order: OrderData = {
+      ids: m.containers.filter((c) => c.id !== DEFAULT_CONTAINER_ID).map((c) => c.id)
+    }
+    out.set(ORDER_CONTAINERS, { type: 'order', data: order })
   }
   if (scope.bookmarks) {
     for (const b of src.bookmarks) {
@@ -251,6 +281,10 @@ export interface DiffResult {
 /**
  * Compare the current local snapshot with the metadata of the last sync: changed records get a
  * fresh `modified`, vanished records become tombstones, everything else keeps its timestamp.
+ *
+ * Records seen for the first time get `modified = 0`: they still replicate to devices that lack
+ * them, but a copy that already exists elsewhere wins – so joining a sync folder merges *into*
+ * the existing data instead of a fresh device overwriting everyone's settings and ordering.
  */
 export function diffLocal(
   previous: MetaMap,
@@ -264,7 +298,10 @@ export function diffLocal(
   for (const [id, { type, data }] of current) {
     const hash = hashData(data)
     const prev = previous[id]
-    const modified = prev && prev.hash === hash && !prev.deleted ? prev.modified : now
+    let modified: number
+    if (!prev) modified = 0
+    else if (prev.hash === hash && !prev.deleted) modified = prev.modified
+    else modified = now
     if (!prev || prev.hash !== hash || prev.deleted) changed = true
     meta[id] = { type, hash, modified, deleted: false }
     records.push({ id, type, modified, deleted: false, data })
@@ -329,16 +366,16 @@ export function metaFromRemote(records: SyncRecord[]): MetaMap {
   return meta
 }
 
-/** Order helper: sort ids by the `position` in their payload, unknown positions last. */
-export function orderByPosition<T extends { position: number }>(
-  ids: string[],
-  lookup: (id: string) => T | undefined
-): string[] {
-  return [...ids].sort((a, b) => {
-    const pa = lookup(a)?.position ?? Number.MAX_SAFE_INTEGER
-    const pb = lookup(b)?.position ?? Number.MAX_SAFE_INTEGER
-    return pa - pb
-  })
+/**
+ * Apply a synced ordering: known ids in the synced order first, anything the list does not
+ * mention keeps its relative position after them.
+ */
+export function applyOrder(current: string[], wanted: string[] | undefined): string[] {
+  if (!wanted) return current
+  const present = new Set(current)
+  const head = wanted.filter((id) => present.has(id))
+  const mentioned = new Set(head)
+  return [...head, ...current.filter((id) => !mentioned.has(id))]
 }
 
 export type { Space, Folder }

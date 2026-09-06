@@ -9,11 +9,16 @@ import {
 } from '../browser/model'
 import type { Browser } from '../browser/browser'
 import {
+  ORDER_CONTAINERS,
+  ORDER_ESSENTIALS,
+  ORDER_SPACES,
   SETTINGS_RECORD_ID,
   SHORTCUTS_RECORD_ID,
+  applyOrder,
   type BookmarkData,
   type ContainerData,
   type FolderData,
+  type OrderData,
   type SettingsData,
   type ShortcutsData,
   type SpaceData,
@@ -29,12 +34,13 @@ const ORDER: Record<SyncRecord['type'], number> = {
   bookmark: 4,
   settings: 5,
   shortcuts: 6,
-  boost: 7
+  boost: 7,
+  order: 8
 }
 
 /**
  * Apply records that won the merge to the live browser state. Upserts run before deletes of the
- * same type so moved tabs are never closed by a stale tombstone.
+ * same type so moved tabs are never closed by a stale tombstone; ordering records go last.
  */
 export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
   const { state, tabs } = browser
@@ -42,7 +48,6 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
   const sorted = [...winners].sort(
     (a, b) => ORDER[a.type] - ORDER[b.type] || Number(a.deleted) - Number(b.deleted)
   )
-  const positions = new Map<string, number>()
 
   for (const r of sorted) {
     switch (r.type) {
@@ -66,7 +71,6 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
             color: data.color,
             icon: data.icon
           } as Container)
-        positions.set(r.id, data.position)
         break
       }
       case 'space': {
@@ -98,7 +102,6 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
           }
           m.spaces.push(space)
         }
-        positions.set(r.id, data.position)
         break
       }
       case 'folder': {
@@ -192,7 +195,6 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
           data.folderId && m.folders[data.folderId] && !tab.pinned && !tab.essential
             ? data.folderId
             : null
-        positions.set(tab.id, data.position)
         break
       }
       case 'bookmark': {
@@ -231,29 +233,36 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         else browser.boosts.put({ ...(r.data as Boost), domain })
         break
       }
+      case 'order': {
+        if (r.deleted) break
+        const data = r.data as OrderData
+        if (r.id === ORDER_SPACES) {
+          const ids = applyOrder(
+            m.spaces.map((s) => s.id),
+            data.ids
+          )
+          m.spaces = ids.map((id) => m.spaces.find((s) => s.id === id)!)
+        } else if (r.id === ORDER_CONTAINERS) {
+          const [first, ...rest] = m.containers
+          const ids = applyOrder(
+            rest.map((c) => c.id),
+            data.ids
+          )
+          m.containers = [first, ...ids.map((id) => rest.find((c) => c.id === id)!)]
+        } else if (r.id === ORDER_ESSENTIALS) {
+          m.essentialTabIds = applyOrder(m.essentialTabIds, data.ids)
+        } else if (r.id.startsWith('order:tabs:')) {
+          const space = m.spaces.find((s) => s.id === r.id.slice('order:tabs:'.length))
+          if (!space) break
+          const pinned = space.tabIds.filter((id) => m.tabs[id]?.pinned)
+          const regular = space.tabIds.filter((id) => m.tabs[id] && !m.tabs[id].pinned)
+          space.tabIds = [...applyOrder(pinned, data.pinned), ...applyOrder(regular, data.regular)]
+        }
+        break
+      }
     }
   }
 
-  // Positions: order spaces / containers / tab sections by the synced index, unknowns stay put.
-  const byPos = (ids: string[]): string[] =>
-    ids
-      .map((id, i) => ({ id, key: positions.has(id) ? positions.get(id)! : i + 0.5 }))
-      .sort((a, b) => a.key - b.key)
-      .map((x) => x.id)
-  m.spaces = byPos(m.spaces.map((s) => s.id))
-    .map((id) => m.spaces.find((s) => s.id === id)!)
-    .filter(Boolean)
-  const [first, ...others] = m.containers
-  m.containers = [
-    first,
-    ...byPos(others.map((c) => c.id)).map((id) => others.find((c) => c.id === id)!)
-  ]
-  m.essentialTabIds = byPos(m.essentialTabIds)
-  for (const space of m.spaces) {
-    const pinned = space.tabIds.filter((id) => m.tabs[id]?.pinned)
-    const regular = space.tabIds.filter((id) => m.tabs[id] && !m.tabs[id].pinned)
-    space.tabIds = [...byPos(pinned), ...byPos(regular)]
-  }
   state.repair()
   state.commit()
 }
