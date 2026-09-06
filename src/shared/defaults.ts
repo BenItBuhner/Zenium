@@ -98,4 +98,13 @@ export const SPACE_ICONS: string[] = [
   '🎓'
 ]
 
+/**
+ * Text label for a space ("💼 Work"). Symbolic icons (`sym:<name>`) are drawn as glyphs by the
+ * renderer and have no text form, so labels fall back to the plain name.
+ */
+export function spaceLabel(space: { icon: string; name: string }): string {
+  const emoji = space.icon && !space.icon.startsWith('sym:') ? `${space.icon} ` : ''
+  return `${emoji}${space.name}`
+}
+
 export const FOLDER_ICONS: string[] = ['📁', '📂', '🗂️', '📌', '🔖', '🧩', '🎉', '🛠️', '🧭', '🗃️']

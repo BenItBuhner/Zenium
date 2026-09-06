@@ -12,6 +12,7 @@ import {
 } from '@renderer/lib/selectors'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { SpaceGlyph } from '../SpaceGlyph'
 import { Essentials } from './Essentials'
 import { SidebarBottom } from './SidebarBottom'
 import { SidebarTop } from './SidebarTop'
@@ -172,7 +173,7 @@ function MoveTargets({ onPick }: { onPick: (spaceId: string) => void }): JSX.Ele
           className="zen-squircle flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[13px] hover:bg-[var(--zen-element-bg)]"
           onClick={() => onPick(s.id)}
         >
-          <span className="text-sm leading-none">{s.icon || '◦'}</span>
+          <SpaceGlyph icon={s.icon} size={14} />
           <span className="min-w-0 flex-1 truncate">{s.name}</span>
         </button>
       ))}

@@ -17,7 +17,7 @@ import type {
   WindowSyncMode
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
-import { CONTAINER_COLORS } from '@shared/defaults'
+import { CONTAINER_COLORS, spaceLabel } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
 import { activeTab } from '@renderer/lib/selectors'
 import { openOverlay } from '@renderer/lib/ui'
@@ -553,15 +553,7 @@ function SpaceRoutingSection({
         {Object.entries(routing).map(([d, sid]) => {
           const space = state.spaces.find((s) => s.id === sid)
           return (
-            <Row
-              key={d}
-              label={d}
-              hint={
-                space
-                  ? `${space.icon ? `${space.icon} ` : ''}${space.name}`
-                  : 'Space no longer exists'
-              }
-            >
+            <Row key={d} label={d} hint={space ? spaceLabel(space) : 'Space no longer exists'}>
               <button
                 type="button"
                 className="zen-toolbar-button h-7 w-7"
@@ -591,7 +583,7 @@ function SpaceRoutingSection({
             onChange={setSpaceId}
             options={state.spaces.map((s) => ({
               value: s.id,
-              label: `${s.icon ? `${s.icon} ` : ''}${s.name}`
+              label: spaceLabel(s)
             }))}
           />
           <Button onClick={add}>Add</Button>

@@ -7,6 +7,7 @@ import { dropStore } from '@renderer/lib/drag'
 import { pinnedOf, regularOf } from '@renderer/lib/selectors'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { SpaceGlyph } from '../SpaceGlyph'
 import { TabItem } from './TabItem'
 
 interface Props {
@@ -118,7 +119,7 @@ function SpaceHeader({ space, compact }: { space: Space; compact: boolean }): JS
         run('space.contextMenu', { spaceId: space.id })
       }}
     >
-      <span className="text-sm leading-none">{space.icon || '◦'}</span>
+      <SpaceGlyph icon={space.icon} size={14} />
       {!compact && <span className="min-w-0 flex-1 truncate text-left">{space.name}</span>}
       {!compact &&
         (space.pinnedCollapsed ? (

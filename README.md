@@ -129,6 +129,8 @@ Everything is editable in Settings → Keyboard Shortcuts.
   move windows; change the trigger in Settings → Look and Feel → Glance if that happens.
 - Ctrl+Alt+←/→ are also common desktop-workspace shortcuts on Linux; rebind them if your window
   manager grabs them first.
+- Zen 1.21 lets you drag the window from empty space at the top of a web page. Pages here are
+  native child views, so the chrome cannot intercept those drags; use the sidebar / toolbar.
 - Extensions use Electron's Chrome-extension support, which covers content scripts, `storage`,
   `webRequest`, `scripting`, `runtime` messaging and DevTools panels but not the full Chrome API;
   extensions that rely on unsupported APIs will report errors in the Add-ons manager.

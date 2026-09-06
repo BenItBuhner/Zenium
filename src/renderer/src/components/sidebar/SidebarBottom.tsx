@@ -7,6 +7,7 @@ import { dropStore } from '@renderer/lib/drag'
 import { activeTab, isLocalWindow, tabTitle } from '@renderer/lib/selectors'
 import { openOverlay, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { SpaceGlyph } from '../SpaceGlyph'
 import { Favicon } from './Favicon'
 
 interface Props {
@@ -124,14 +125,8 @@ function SpaceIcon({
       }}
     >
       {dragging && <span data-drop={`space:${space.id}`} className="absolute inset-0 z-10" />}
-      {space.icon ? (
-        <span>{space.icon}</span>
-      ) : (
-        <span
-          className="h-3 w-3 rounded-full border-2"
-          style={{ borderColor: swatch ?? 'var(--zen-fg)' }}
-        />
-      )}
+      <SpaceGlyph icon={space.icon} size={17} dotColor={swatch ?? undefined} />
+
       {active && (
         <span
           className="absolute bottom-0 left-1/2 h-0.5 w-3 -translate-x-1/2 rounded-full"

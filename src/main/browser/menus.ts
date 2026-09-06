@@ -12,6 +12,7 @@ import type { ZenWindow } from './window'
 import { buildSearchUrl } from '../../shared/search'
 import { displayUrl, getDomain, isNavigableUrl } from '../../shared/url'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
+import { spaceLabel } from '../../shared/defaults'
 
 type Template = MenuItemConstructorOptions[]
 
@@ -42,7 +43,7 @@ export class Menus {
     return this.browser.state.model.spaces
       .filter((s) => s.id !== exceptSpaceId)
       .map((s) => ({
-        label: `${s.icon ? `${s.icon} ` : ''}${s.name}`,
+        label: spaceLabel(s),
         click: () => onPick(s.id)
       }))
   }
@@ -398,7 +399,7 @@ export class Menus {
         label: local ? 'Move to Space…' : 'Move to Space',
         enabled: !tab.essential && otherSpaces.length > 0,
         submenu: otherSpaces.map((s) => ({
-          label: `${s.icon ? `${s.icon} ` : ''}${s.name}`,
+          label: spaceLabel(s),
           click: () =>
             tabs.moveTab(
               tabId,

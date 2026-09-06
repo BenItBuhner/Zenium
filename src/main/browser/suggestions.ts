@@ -7,6 +7,7 @@ import {
   parseSuggestResponse
 } from '../../shared/search'
 import { searchCommands } from '../../shared/commands'
+import { spaceLabel } from '../../shared/defaults'
 import { displayUrl, inputToUrl, isProbablyUrl } from '../../shared/url'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
@@ -47,7 +48,7 @@ export class SuggestionService {
         .map((s) => ({
           id: `space:${s.id}`,
           kind: 'space' as const,
-          title: `${s.icon ? `${s.icon} ` : ''}${s.name}`,
+          title: spaceLabel(s),
           subtitle: s.id === win.activeSpaceId ? 'Current space' : 'Switch to space',
           url: null,
           favicon: null,
@@ -122,7 +123,7 @@ export class SuggestionService {
           results.push({
             id: `space:${space.id}`,
             kind: 'space',
-            title: `${space.icon ? `${space.icon} ` : ''}${space.name}`,
+            title: spaceLabel(space),
             subtitle: 'Switch to space',
             url: null,
             favicon: null,
