@@ -1,7 +1,7 @@
 {
   "name": "zen-chromium",
   "version": "0.1.0",
-  "description": "Zen Browser ported to Chromium: Zen's Spaces, Essentials, Glance, Split View and Compact Mode on the Blink engine (Electron).",
+  "description": "Zen Browser ported to Chromium: Zen's Spaces, Essentials, Glance, Split View and Compact Mode on the Blink engine (Electron on desktop, the system WebView on Android).",
   "main": "./out/main/index.js",
   "author": "Zen Chromium contributors",
   "license": "MPL-2.0",
