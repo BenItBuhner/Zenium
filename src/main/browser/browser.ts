@@ -670,6 +670,8 @@ export class Browser {
       'tab.setIcon': ({ tabId, icon }) => tabs.setIcon(tabId, icon),
       'tab.addRoute': ({ tabId, spaceId }) => this.addRouteForTab(tabId, spaceId),
       'tab.altClick': ({ tabId }, win) => tabs.altClick(tabId, win),
+      'tab.selectionContextMenu': ({ tabIds }, win) =>
+        this.menus.showSelectionContextMenu(tabIds, win),
       'tab.duplicate': ({ tabId }, win) => void tabs.duplicate(tabId, win),
       'tab.unload': ({ tabId }) => tabs.discard(tabId),
       'tab.move': ({ tabId, spaceId, section, index }, win) =>

@@ -5,6 +5,7 @@ import { run } from '@renderer/lib/api'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   captureActiveTab,
+  clearTabSelection,
   closeOverlay,
   closeUrlbar,
   invalidateSnapshot,
@@ -210,6 +211,11 @@ function useGlobalKeys(state: UIState): void {
         run('glance.close', undefined)
         return
       }
+      if (ui.selectedTabIds.length) {
+        e.preventDefault()
+        clearTabSelection()
+        return
+      }
       if (ui.findOpen && ui.findTabId) {
         run('find.stop', { tabId: ui.findTabId, keepSelection: true })
         uiStore.set({ findOpen: false, findTabId: null })
@@ -219,6 +225,11 @@ function useGlobalKeys(state: UIState): void {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [state.glance])
+
+  // A multi-selection belongs to one space; drop it when the space changes.
+  useEffect(() => {
+    clearTabSelection()
+  }, [state.activeSpaceId])
 
   // Sidebar collapse toggle (Zen's "Toggle Sidebar" action).
   useEffect(() => {

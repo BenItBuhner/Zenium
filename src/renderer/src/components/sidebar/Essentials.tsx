@@ -2,8 +2,14 @@ import type { JSX } from 'react'
 import type { Tab } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { dropStore, startTabDrag } from '@renderer/lib/drag'
-import { tabTitle } from '@renderer/lib/selectors'
-import { uiStore } from '@renderer/lib/ui'
+import { activeTab, tabTitle } from '@renderer/lib/selectors'
+import {
+  browserStore,
+  clearTabSelection,
+  selectTabRange,
+  toggleTabSelection,
+  uiStore
+} from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from './Favicon'
 
@@ -68,23 +74,39 @@ function EssentialTile({
   showDropZones: boolean
   dropKey: string | null
 }): JSX.Element {
+  const selected = uiStore.use((s) => s.selectedTabIds.includes(tab.id))
   return (
     <div
       className="zen-essential relative"
       data-active={active}
+      data-selected={selected || undefined}
       data-discarded={tab.discarded}
+      data-tab-id={tab.id}
       title={tabTitle(tab)}
       onPointerDown={(e) => {
-        if (e.button === 0) startTabDrag(tab, e)
+        if (e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey)
+          startTabDrag(tab, e)
       }}
-      onClick={() => {
-        if (!uiStore.get().drag) run('tab.activate', { tabId: tab.id })
+      onClick={(e) => {
+        if (uiStore.get().drag) return
+        const current = browserStore.get().state
+        const activeId = current ? (activeTab(current)?.id ?? null) : null
+        if (e.ctrlKey || e.metaKey) return toggleTabSelection(tab.id, activeId)
+        if (e.shiftKey) return selectTabRange(tab.id, activeId)
+        if (e.altKey) return run('tab.altClick', { tabId: tab.id })
+        clearTabSelection()
+        uiStore.set({ selectionAnchorId: tab.id })
+        run('tab.activate', { tabId: tab.id })
       }}
       onAuxClick={(e) => {
         if (e.button === 1) run('tab.close', { tabId: tab.id })
       }}
       onContextMenu={(e) => {
         e.preventDefault()
+        const ids = uiStore.get().selectedTabIds
+        if (ids.length > 1 && ids.includes(tab.id))
+          return run('tab.selectionContextMenu', { tabIds: ids })
+        clearTabSelection()
         run('tab.contextMenu', { tabId: tab.id })
       }}
     >

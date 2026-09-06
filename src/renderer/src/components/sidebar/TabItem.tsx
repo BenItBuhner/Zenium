@@ -6,8 +6,14 @@ import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
 import { dropStore, startTabDrag } from '@renderer/lib/drag'
-import { containerOf, tabTitle } from '@renderer/lib/selectors'
-import { browserStore, uiStore } from '@renderer/lib/ui'
+import { activeTab, containerOf, tabTitle } from '@renderer/lib/selectors'
+import {
+  browserStore,
+  clearTabSelection,
+  selectTabRange,
+  toggleTabSelection,
+  uiStore
+} from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from './Favicon'
 
@@ -33,6 +39,7 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
     const c = containerOf(s.state, tab.containerId)
     return c ? CONTAINER_COLORS[c.color] : null
   })
+  const selected = uiStore.use((s) => s.selectedTabIds.includes(tab.id))
   const isDragSource = dragging?.tabId === tab.id
   const showDropZones = Boolean(dragging) && !isDragSource
   const title = tabTitle(tab)
@@ -44,7 +51,7 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
       e.preventDefault()
       return
     }
-    if (e.altKey) return
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
     startTabDrag(tab, e)
   }
 
@@ -60,6 +67,21 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
       run('tab.altClick', { tabId: tab.id })
       return
     }
+    const current = browserStore.get().state
+    const activeId = current ? (activeTab(current)?.id ?? null) : null
+    if (e.ctrlKey || e.metaKey) {
+      // Zen: Ctrl+click builds a multi-selection to split / move / close tabs together.
+      e.preventDefault()
+      toggleTabSelection(tab.id, activeId)
+      return
+    }
+    if (e.shiftKey) {
+      e.preventDefault()
+      selectTabRange(tab.id, activeId)
+      return
+    }
+    clearTabSelection()
+    uiStore.set({ selectionAnchorId: tab.id })
     const now = performance.now()
     if (now - lastClick.current < 400 && !compact) {
       lastClick.current = 0
@@ -68,6 +90,17 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
     }
     lastClick.current = now
     run('tab.activate', { tabId: tab.id })
+  }
+
+  const onContextMenu = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    const ids = uiStore.get().selectedTabIds
+    if (ids.length > 1 && ids.includes(tab.id)) {
+      run('tab.selectionContextMenu', { tabIds: ids })
+      return
+    }
+    clearTabSelection()
+    run('tab.contextMenu', { tabId: tab.id })
   }
 
   const onAuxClick = (e: React.MouseEvent): void => {
@@ -86,16 +119,14 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
         isDragSource && 'opacity-40'
       )}
       data-active={active}
+      data-selected={selected || undefined}
       data-discarded={tab.discarded}
       data-tab-id={tab.id}
       title={compact ? title : undefined}
       onPointerDown={onPointerDown}
       onClick={onClick}
       onAuxClick={onAuxClick}
-      onContextMenu={(e) => {
-        e.preventDefault()
-        run('tab.contextMenu', { tabId: tab.id })
-      }}
+      onContextMenu={onContextMenu}
     >
       {showDropZones && (
         <>

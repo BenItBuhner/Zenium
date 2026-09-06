@@ -491,6 +491,99 @@ export class Menus {
     this.popup(template, win)
   }
 
+  /** Zen: select several tabs (Ctrl / Shift+click) and act on all of them at once. */
+  showSelectionContextMenu(tabIds: string[], win: ZenWindow): void {
+    const { tabs, state } = this.browser
+    const m = state.model
+    const selected = tabIds
+      .map((id) => tabs.tab(id))
+      .filter((t): t is NonNullable<typeof t> => Boolean(t))
+    if (selected.length < 2) return
+    const n = selected.length
+    const space = win.activeSpace()
+    const local = Boolean(win.localSpace)
+    const nonEssential = selected.filter((t) => !t.essential)
+    const allPinned = nonEssential.length > 0 && nonEssential.every((t) => t.pinned)
+    const folders = Object.values(m.folders).filter((f) => f.spaceId === space.id)
+    this.popup(
+      [
+        {
+          label: `Open ${n} Tabs in Split View`,
+          enabled: n <= 4,
+          click: () =>
+            tabs.createSplit(
+              selected.map((t) => t.id),
+              n >= 3 ? 'grid' : 'vertical',
+              win
+            )
+        },
+        { type: 'separator' },
+        {
+          label: allPinned ? `Unpin ${n} Tabs` : `Pin ${n} Tabs`,
+          enabled: nonEssential.length > 0,
+          click: () => {
+            for (const t of nonEssential) if (t.pinned === allPinned) tabs.togglePin(t.id, win)
+          }
+        },
+        ...(local
+          ? []
+          : [
+              {
+                label: `Move ${n} Tabs to Space`,
+                enabled: nonEssential.length > 0 && m.spaces.length > 1,
+                submenu: this.spaceSubmenu(space.id, (sid) => {
+                  for (const t of nonEssential)
+                    tabs.moveTab(
+                      t.id,
+                      {
+                        spaceId: sid,
+                        section: t.pinned ? 'pinned' : 'regular',
+                        index: Number.MAX_SAFE_INTEGER
+                      },
+                      win
+                    )
+                })
+              },
+              {
+                label: `Add ${n} Tabs to Folder`,
+                enabled: nonEssential.some((t) => !t.pinned),
+                submenu: [
+                  ...folders.map((f) => ({
+                    label: `${f.icon} ${f.name}`,
+                    click: () => {
+                      for (const t of nonEssential) if (!t.pinned) tabs.moveToFolder(t.id, f.id)
+                    }
+                  })),
+                  ...(folders.length ? [{ type: 'separator' as const }] : []),
+                  {
+                    label: 'New Folder…',
+                    click: () => {
+                      const folder = this.browser.createFolder(space.id, 'New Folder', '📁', win)
+                      for (const t of nonEssential)
+                        if (!t.pinned) tabs.moveToFolder(t.id, folder.id)
+                    }
+                  }
+                ]
+              }
+            ]),
+        {
+          label: `Unload ${n} Tabs`,
+          click: () => {
+            for (const t of selected) if (!t.discarded) tabs.discard(t.id)
+          }
+        },
+        { type: 'separator' },
+        {
+          label: `Close ${n} Tabs`,
+          click: () => {
+            for (const t of selected) tabs.closeTab(t.id, false, win)
+          }
+        }
+      ],
+      win
+    )
+  }
+
   showNewTabContextMenu(win: ZenWindow): void {
     const { tabs, state } = this.browser
     const space = win.activeSpace()

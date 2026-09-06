@@ -171,6 +171,12 @@
     background: var(--zen-element-bg-active);
     box-shadow: inset 0 0 0 1px rgb(var(--zen-fg-rgb) / 0.05);
   }
+  /* Multi-selected tabs (Ctrl / Shift+click) get the accent outline Zen uses. */
+  .zen-tab[data-selected],
+  .zen-essential[data-selected] {
+    background: rgb(var(--zen-accent-rgb) / 0.16);
+    box-shadow: inset 0 0 0 1.5px rgb(var(--zen-accent-rgb) / 0.7);
+  }
   .zen-tab[data-discarded='true'] .zen-tab-title {
     opacity: 0.55;
   }

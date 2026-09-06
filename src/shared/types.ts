@@ -732,6 +732,8 @@ export interface Commands {
   'tab.addRoute': { args: { tabId: string; spaceId: string }; result: void }
   /** Alt+click on a sidebar tab: split it with (or separate it from) the active tab. */
   'tab.altClick': { args: { tabId: string }; result: void }
+  /** Context menu for several selected tabs (Ctrl / Shift+click in the sidebar). */
+  'tab.selectionContextMenu': { args: { tabIds: string[] }; result: void }
 
   'space.create': {
     args: { name: string; icon: string; containerId: string; theme: SpaceTheme | null }
