@@ -401,6 +401,10 @@
 :root[data-pointer='coarse'] .zen-suggestion {
   height: 44px;
 }
+:root[data-pointer='coarse'] button:focus-visible,
+:root[data-pointer='coarse'] [role='button']:focus-visible {
+  outline: none;
+}
 :root[data-pointer='coarse'] .group\/sep .zen-toolbar-button {
   opacity: 0.7;
 }

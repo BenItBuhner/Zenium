@@ -26,8 +26,11 @@ const PHONE_MAX_WIDTH = 600
 function compute(): ViewportInfo {
   const width = window.innerWidth
   const height = window.innerHeight
-  const coarse = window.matchMedia('(pointer: coarse)').matches
   const hover = window.matchMedia('(hover: hover)').matches
+  // Android's WebView reports `pointer: fine` on plain touch screens; a touch digitiser without
+  // hover is a finger. A mouse (DeX, tablet trackpad) brings hover back and gets desktop sizing.
+  const coarse =
+    window.matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints > 0 && !hover)
   const formFactor: FormFactor = width < PHONE_MAX_WIDTH ? 'phone' : coarse ? 'tablet' : 'desktop'
   return { formFactor, width, height, coarse, hover }
 }

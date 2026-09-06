@@ -107,6 +107,8 @@ class TabWebView(
             )
         }
         setOnLongClickListener { onLongPress() }
+        // Mouse right-click / stylus button (DeX, tablets) opens the same menu as a long-press.
+        setOnContextClickListener { onLongPress() }
         installPageScript()
     }
 
@@ -323,7 +325,7 @@ class TabWebView(
         }
     }
 
-    private fun navState(): JSONObject = json(
+    fun navState(): JSONObject = json(
         "url" to (url ?: ""),
         "title" to (title ?: ""),
         "canGoBack" to canGoBack(),

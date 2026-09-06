@@ -30,12 +30,12 @@ function BottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   return (
     <div
       className="fixed inset-0 z-[90] flex flex-col justify-end bg-black/40 zen-animate-fade"
-      onPointerDown={() => closeMenu()}
+      onClick={() => closeMenu()}
     >
       <div
         className="zen-panel zen-sheet-in mx-auto w-full max-w-[520px] rounded-b-none rounded-t-2xl border-b-0 pb-1"
         style={{ paddingBottom: Math.max(8, insets.bottom) }}
-        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
       >
         <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-[var(--zen-fg)]/20" />
         <div className="flex h-11 items-center gap-1 px-2">
@@ -137,8 +137,11 @@ function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
   return (
     <div
       className="fixed inset-0 z-[90]"
-      onPointerDown={() => closeMenu()}
-      onContextMenu={(e) => e.preventDefault()}
+      onClick={() => closeMenu()}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        closeMenu()
+      }}
     >
       <MenuList items={menu.items} x={anchor.x} y={anchor.y} depth={0} />
     </div>
@@ -177,7 +180,11 @@ function MenuList({
       ref={ref}
       className="zen-panel zen-animate-pop fixed select-none p-1.5"
       style={{ left: pos.left, top: pos.top, width: MENU_W, zIndex: 91 + depth }}
-      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+      }}
     >
       {items.map((item, index) => {
         const itemTop = tops[index]

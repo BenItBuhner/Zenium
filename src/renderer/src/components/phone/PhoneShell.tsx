@@ -57,7 +57,8 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           paddingTop: 'var(--zen-padding)',
           paddingLeft: 'var(--zen-padding)',
           paddingRight: 'var(--zen-padding)',
-          paddingBottom: barHidden ? 'var(--zen-padding)' : 0
+          // Without the bar the card must clear the gesture area / keyboard itself.
+          paddingBottom: barHidden ? 'calc(var(--zen-inset-bottom) + var(--zen-padding))' : 0
         }}
       >
         <div className="relative min-h-0 flex-1">
@@ -66,7 +67,8 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       </main>
       {!barHidden && <PhoneBar state={state} ui={ui} />}
       {ui.drawerOpen && (
-        <div className="absolute inset-0 z-40" onPointerDown={() => closeDrawer()}>
+        // Closing on click (not pointerdown) keeps the tap from falling through to the bar below.
+        <div className="absolute inset-0 z-40" onClick={() => closeDrawer()}>
           <div
             className={cn(
               'zen-drawer absolute inset-y-0 flex w-[min(320px,calc(100%-56px))] p-2',
@@ -76,7 +78,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
               paddingTop: 'calc(var(--zen-inset-top) + 8px)',
               paddingBottom: 'calc(var(--zen-inset-bottom) + 8px)'
             }}
-            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
           >
             <Sidebar state={state} isDark={isDark} floating hideNav className="w-full" />
           </div>

@@ -39,6 +39,9 @@ class TabHost(private val container: FrameLayout, private val host: Host) {
         val view = views.remove(viewId) ?: return
         view.tabId = tabId
         views[tabId] = view
+        // Whatever the popup loaded before the core knew its tab id is reported now.
+        host.chrome.viewEvent(tabId, "navigated", view.navState().put("inPage", false))
+        if (!view.title.isNullOrEmpty()) host.chrome.viewEvent(tabId, "title", json("title" to view.title))
     }
 
     fun destroy(tabId: String) {

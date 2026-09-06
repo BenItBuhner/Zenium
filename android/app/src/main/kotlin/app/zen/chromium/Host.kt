@@ -17,6 +17,7 @@ import android.print.PrintManager
 import android.provider.MediaStore
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.InputMethodManager
 import android.webkit.WebChromeClient
 import android.widget.FrameLayout
 import android.widget.Toast
@@ -124,6 +125,17 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
 
             // --- chrome / window / app -----------------------------------------------------------
             "chrome.focus" -> { chrome.requestFocus(); reply(null) }
+            "chrome.showKeyboard" -> {
+                chrome.requestFocus()
+                val imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.showSoftInput(chrome, InputMethodManager.SHOW_IMPLICIT)
+                reply(null)
+            }
+            "chrome.hideKeyboard" -> {
+                val imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.hideSoftInputFromWindow(chrome.windowToken, 0)
+                reply(null)
+            }
             "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("background")); reply(null) }
             "window.setFullscreen" -> { setImmersive(args.bool("fullscreen")); reply(null) }
             "app.quit" -> { activity.finishAndRemoveTask(); reply(null) }
