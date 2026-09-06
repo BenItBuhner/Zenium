@@ -4,6 +4,7 @@
 
 export const BLANK_URL = 'zen://blank'
 export const ERROR_URL_PREFIX = 'zen://error'
+export const READER_URL_PREFIX = 'zen://reader'
 
 const SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}(:\d+)?(\/.*)?$/
@@ -88,7 +89,8 @@ export function inputToUrl(raw: string): string | null {
 /** Strip the scheme and `www.` for display, like Firefox's `browser.urlbar.trimHttps`. */
 export function displayUrl(url: string): string {
   if (!url || url === BLANK_URL) return ''
-  if (url.startsWith(ERROR_URL_PREFIX)) {
+  // Error and Reader View pages show the address of the page they stand in for (like Firefox).
+  if (url.startsWith(ERROR_URL_PREFIX) || url.startsWith(READER_URL_PREFIX)) {
     try {
       const original = new URL(url).searchParams.get('url')
       return original ? displayUrl(original) : ''
