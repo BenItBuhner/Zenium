@@ -790,7 +790,7 @@ function AboutSection({ state }: { state: UIState }): JSX.Element {
       </Row>
       <Row
         label="Engine"
-        hint="Blink / V8 — the same engine as Chrome. UI reimplements Zen Browser's Spaces, Essentials, Glance, Split View and Compact Mode."
+        hint="Blink / V8 — the same engine as Chrome. The chrome reimplements Zen Browser 1.22: Spaces, Essentials, Glance, Split View, Compact Mode, window sync, Boosts, Live Folders, Reader View, Mods and cross-device sync."
       >
         <span />
       </Row>
