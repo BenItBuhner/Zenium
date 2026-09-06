@@ -124,11 +124,11 @@ export function ResourcesSection({
         </div>
       </Group>
 
-      {snap.tabs.length > 0 && (
+      {snap.tabs.some((u) => state.tabs[u.tabId] && !state.tabs[u.tabId].discarded) && (
         <Group title="Biggest pages">
           {snap.tabs.slice(0, 8).map((u) => {
             const tab = state.tabs[u.tabId]
-            if (!tab) return null
+            if (!tab || tab.discarded) return null
             return (
               <Row
                 key={u.tabId}

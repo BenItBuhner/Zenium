@@ -268,16 +268,32 @@ export class TabManager {
       if (details.reason === 'clean-exit') return
       const tab = this.tab(tabId)
       if (!tab) return
-      if (details.reason === 'oom' || details.reason === 'memory-eviction') {
-        // The renderer hit its heap cap (or the OS reclaimed it): keep the tab, drop the page.
-        const title = tab.customTitle ?? tab.title
-        this.browser.governor.record('discard', tabId, 'the page ran out of memory', title)
+      const title = tab.customTitle ?? tab.title
+      const outOfMemory = details.reason === 'oom' || details.reason === 'memory-eviction'
+      const glance = this.browser.state.glance
+      const visible =
+        this.visibleTabIds().includes(tabId) ||
+        glance?.tabId === tabId ||
+        glance?.parentTabId === tabId
+      // A V8 heap-cap OOM is reported as `oom` on Windows / Android but as a plain `crashed` on
+      // Linux. Either way a page nobody is looking at is better unloaded than replaced by an error
+      // page in a fresh renderer: keep the tab, drop the page, reload on activation.
+      if (outOfMemory || !visible) {
+        const reason = outOfMemory
+          ? 'the page ran out of memory'
+          : `the page crashed (${details.reason})`
+        this.browser.governor.record('discard', tabId, reason, title)
         this.discard(tabId)
-        this.browser.toast(`"${title}" ran out of memory and was unloaded.`, 'error')
+        this.browser.toast(
+          outOfMemory
+            ? `"${title}" ran out of memory and was unloaded.`
+            : `"${title}" crashed and was unloaded.`,
+          'error'
+        )
         return
       }
       const url = tab.url
-      this.browser.toast(`"${tab.title}" crashed (${details.reason}).`, 'error')
+      this.browser.toast(`"${title}" crashed (${details.reason}).`, 'error')
       void wc
         .loadURL(errorPageUrl(-1, `The page crashed (${details.reason})`, url))
         .catch(() => undefined)
@@ -419,10 +435,15 @@ export class TabManager {
     this.views.delete(tabId)
     this.httpsUpgraded.delete(tabId)
     this.browser.window.detachView(view)
-    this.browser.governor.onViewDestroyed(tabId, view.webContents)
-    if (!view.webContents.isDestroyed()) {
-      this.byWebContentsId.delete(view.webContents.id)
-      view.webContents.close({ waitForBeforeUnload: false })
+    const wc = view.webContents
+    if (!wc.isDestroyed()) {
+      // A frozen page never processes its close message; wake it so the renderer exits cleanly.
+      if (this.tab(tabId)?.frozen) void this.browser.governor.lifecycle.thaw(wc, true)
+      this.browser.governor.onViewDestroyed(tabId, wc)
+      this.byWebContentsId.delete(wc.id)
+      wc.close({ waitForBeforeUnload: false })
+    } else {
+      this.browser.governor.onViewDestroyed(tabId, wc)
     }
     this.browser.state.devtoolsOpenFor.delete(tabId)
   }

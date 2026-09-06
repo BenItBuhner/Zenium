@@ -426,6 +426,10 @@ export function plan(input: PlannerInput): Plan {
   if (pressure.includes('cpu') && !input.force) {
     const sustained = memory.overStreak.cpu >= 2 || cpu.used > cpu.budget * 2
     const reason = `CPU ${cpu.used.toFixed(0)}% over the ${cpu.budget}% budget`
+    // CPU throttling applies to a whole renderer process; never throttle a hidden page that
+    // shares its renderer with a visible one – freeze it instead (freezing is per page).
+    const visiblePids = new Set(visible.flatMap((t) => t.pids))
+    const sharesVisibleRenderer = (t: TabSample): boolean => t.pids.some((p) => visiblePids.has(p))
     const burning = hidden
       .filter((t) => !acted.has(t.id) && (usageById.get(t.id)?.cpuPercent ?? 0) >= NEGLIGIBLE_CPU)
       .sort(
@@ -439,8 +443,18 @@ export function plan(input: PlannerInput): Plan {
           act(tab, 'discard', `${reason}; still using ${share.toFixed(0)}% while frozen`)
         continue
       }
+      if (tab.loading) continue
+      // A single hidden page eating the whole budget is not worth throttling step by step.
+      if (sustained && share >= cpu.budget) {
+        act(tab, 'freeze', `${reason}; this page alone uses ${share.toFixed(0)}%`)
+        continue
+      }
+      if (sharesVisibleRenderer(tab)) {
+        if (sustained) act(tab, 'freeze', `${reason}; shares a process with a visible page`)
+        continue
+      }
       if (tab.cpuThrottle >= THROTTLE_STEPS[THROTTLE_STEPS.length - 1]) {
-        if (!tab.loading) act(tab, 'freeze', `${reason}; throttling was not enough`)
+        act(tab, 'freeze', `${reason}; throttling was not enough`)
         continue
       }
       if (now - tab.lastThrottledAt < THROTTLE_COOLDOWN_MS) continue

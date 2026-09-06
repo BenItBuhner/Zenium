@@ -33,6 +33,8 @@ const BASE_INTERVAL_MS = 5_000
 const PRESSURE_INTERVAL_MS = 2_000
 const IDLE_INTERVAL_MS = 15_000
 const PRESSURE_TOAST_COOLDOWN_MS = 60_000
+/** `ZEN_GOVERNOR_LOG=1` prints one line per sample plus every action to the console. */
+const DIAGNOSTICS = process.env['ZEN_GOVERNOR_LOG'] === '1'
 const PAUSE_MEDIA_SCRIPT = `(() => {
   let paused = 0
   for (const m of document.querySelectorAll('video,audio')) {
@@ -418,6 +420,13 @@ export class ResourceGovernor {
     let changed = false
     let pressureDiscards = 0
     const executed: PlannedAction[] = []
+    // One browser-wide pressure notification per cycle is enough; it is not per page.
+    const purging = actions.find((a) => a.kind === 'purge')
+    if (purging) {
+      const wc = this.browser.tabs.webContents(purging.tabId)
+      const critical = this.memory.overStreak.memory >= 2 || this.memory.overStreak.gpu >= 2
+      if (wc) await this.lifecycle.notifyMemoryPressure(wc, critical ? 'critical' : 'moderate')
+    }
     for (const action of actions) {
       const tab = this.browser.tabs.tab(action.tabId)
       if (!tab) continue
@@ -597,6 +606,19 @@ export class ResourceGovernor {
     state.resources = this.snapshot
     if (changedModel) state.commit()
     else state.commitVolatile()
+    if (DIAGNOSTICS) {
+      const g = this.snapshot
+      const fmt = (x: { used: number; budget: number }, unit: string): string =>
+        `${Math.round(x.used)}${x.budget ? `/${x.budget}` : ''}${unit}`
+      console.log(
+        `[zen governor] mem ${fmt(g.memory, 'MB')} cpu ${fmt(g.cpu, '%')} gpu ${fmt(g.gpu, 'MB')} · ` +
+          `${g.loadedTabs} live, ${g.frozenTabs} frozen, ${g.throttledTabs} throttled, ${g.queuedLoads} queued` +
+          (g.pressure.length ? ` · pressure: ${g.pressure.join(', ')}` : '') +
+          (this.lastExecuted.length
+            ? ` · ${this.lastExecuted.map((a) => `${a.kind} "${a.title}" (${a.reason})`).join('; ')}`
+            : '')
+      )
+    }
   }
 
   private publishCounts(): void {

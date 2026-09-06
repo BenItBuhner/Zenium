@@ -498,6 +498,32 @@ describe('plan – cpu ladder', () => {
     ])
   })
 
+  it('freezes a hidden page outright when it alone burns the whole budget', () => {
+    // miner at 200% of one core = 50% of the machine, against a 50% budget.
+    const hog = [proc(1, 100, 10), proc(2, 100, 200), proc(3, 100, 1)]
+    const first = plan(input({ processes: hog, tabs: cpuTabs() }))
+    expect(first.actions).toEqual([
+      expect.objectContaining({ kind: 'throttle', tabId: 'miner', rate: 4 })
+    ])
+    const sustained = plan(
+      input({ processes: hog, tabs: cpuTabs(), memory: memoryWith({ cpu: 1 }) })
+    )
+    expect(sustained.actions).toEqual([expect.objectContaining({ kind: 'freeze', tabId: 'miner' })])
+  })
+
+  it('freezes instead of throttling a hidden page that shares its renderer with a visible one', () => {
+    // One renderer at 250% of a core shared by both pages → 31% each, 63% of the machine in total.
+    const shared = [proc(1, 100, 250), proc(3, 100, 1)]
+    const tabs = (): TabSample[] => [
+      tab('shown', { visible: true, active: true, pids: [1] }),
+      tab('sibling', { pids: [1], lastActiveAt: NOW }),
+      tab('quiet', { pids: [3] })
+    ]
+    const p = plan(input({ processes: shared, tabs: tabs(), memory: memoryWith({ cpu: 3 }) }))
+    expect(kinds(p, 'throttle')).toEqual([])
+    expect(p.actions).toEqual([expect.objectContaining({ kind: 'freeze', tabId: 'sibling' })])
+  })
+
   it('throttles a single page right away when it alone burns more than half the budget', () => {
     // miner at 200% = half the machine, well over 25% (half of the 50% budget).
     const p = plan(

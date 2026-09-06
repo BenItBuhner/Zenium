@@ -28,8 +28,8 @@ export class TabLifecycle {
    * Always sends the command: the frozen flag lives on the WebContents, so it survives another
    * DevTools client detaching this session and wiping the local bookkeeping.
    */
-  async thaw(wc: WebContents): Promise<boolean> {
-    const ok = await this.send(wc, 'Page.setWebLifecycleState', { state: 'active' })
+  async thaw(wc: WebContents, quiet = false): Promise<boolean> {
+    const ok = await this.send(wc, 'Page.setWebLifecycleState', { state: 'active' }, quiet)
     if (ok) {
       const s = this.sessions.get(wc.id)
       if (s) s.frozen = false
@@ -78,15 +78,24 @@ export class TabLifecycle {
 
   /**
    * Make the renderer give memory back: a full V8 garbage collection with a low-memory
-   * notification (drops compiled code and shrinks the heap), plus Chromium's memory-pressure
-   * purge of image, font and resource caches where the protocol supports it.
+   * notification, which also flushes compiled code and shrinks the heap.
+   *
+   * `Memory.forciblyPurgeJavaScriptMemory` is deliberately not used – it simulates Chromium's
+   * OOM intervention, which can leave the page paused.
    */
   async purge(wc: WebContents): Promise<boolean> {
     const ok = await this.send(wc, 'HeapProfiler.collectGarbage')
-    if (ok) {
-      await this.send(wc, 'Memory.forciblyPurgeJavaScriptMemory', undefined, true)
-      await this.send(wc, 'Memory.simulatePressureNotification', { level: 'critical' }, true)
-    }
+    this.detachIfIdle(wc)
+    return ok
+  }
+
+  /**
+   * Raise a memory-pressure notification in the browser process (one call covers the whole
+   * browser: discardable memory, font and GPU caches, and anything Chromium forwards to its
+   * child processes). Best effort.
+   */
+  async notifyMemoryPressure(wc: WebContents, level: 'moderate' | 'critical'): Promise<boolean> {
+    const ok = await this.send(wc, 'Memory.simulatePressureNotification', { level }, true)
     this.detachIfIdle(wc)
     return ok
   }
