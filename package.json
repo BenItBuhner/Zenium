@@ -4,7 +4,7 @@
   "description": "Zen Browser ported to Chromium: Zen's Spaces, Essentials, Glance, Split View and Compact Mode on the Blink engine (Electron).",
   "main": "./out/main/index.js",
   "author": "Zen Chromium contributors",
-  "license": "MPL-2.0",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "format": "prettier --write .",
