@@ -389,6 +389,15 @@ export function ResourcesSection({
           />
         </Row>
         <Row
+          label="No spare renderer process"
+          hint="Chromium otherwise keeps a warm, empty renderer waiting for the next navigation."
+        >
+          <Switch
+            checked={r.process.disableSpareRenderer}
+            onCheckedChange={(v) => setP({ disableSpareRenderer: v })}
+          />
+        </Row>
+        <Row
           label="Drop the back/forward cache"
           hint="Chromium otherwise keeps up to six previous documents alive per tab."
         >

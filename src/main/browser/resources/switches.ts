@@ -43,6 +43,8 @@ export function deriveStartupProfile(settings: ResourceSettings): StartupProfile
   }
   if (p.v8OptimizeForSize) jsFlags.push('--optimize-for-size')
   if (p.lowEndDeviceMode) switches.push({ name: 'enable-low-end-device-mode' })
+  // Electron already disables the spare renderer; listing it keeps the intent explicit.
+  if (p.disableSpareRenderer) disabledFeatures.push('SpareRendererForSitePerProcess')
   if (p.disableBackForwardCache) disabledFeatures.push('BackForwardCache')
   if (p.disablePrerender) disabledFeatures.push('Prerender2')
   if (p.rasterThreads > 0) {
@@ -118,6 +120,7 @@ export function sanitizeResourceSettings(raw: unknown): ResourceSettings {
       ),
       rendererHeapMb: int(p.rendererHeapMb, d.process.rendererHeapMb, 0, MAX_RENDERER_HEAP_MB),
       lowEndDeviceMode: bool(p.lowEndDeviceMode, d.process.lowEndDeviceMode),
+      disableSpareRenderer: bool(p.disableSpareRenderer, d.process.disableSpareRenderer),
       disableBackForwardCache: bool(p.disableBackForwardCache, d.process.disableBackForwardCache),
       disablePrerender: bool(p.disablePrerender, d.process.disablePrerender),
       rasterThreads: int(p.rasterThreads, d.process.rasterThreads, 0, MAX_RASTER_THREADS),

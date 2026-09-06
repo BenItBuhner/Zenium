@@ -406,6 +406,8 @@ export interface ResourceProcessProfile {
   rendererHeapMb: number
   /** Chromium's low-end-device mode: smaller caches and tile budgets everywhere. */
   lowEndDeviceMode: boolean
+  /** Do not keep a warm spare renderer process waiting for the next navigation. */
+  disableSpareRenderer: boolean
   /** Do not keep previous documents alive in the back/forward cache. */
   disableBackForwardCache: boolean
   /** Do not let pages prerender other pages in hidden renderers. */

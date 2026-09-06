@@ -29,6 +29,7 @@ describe('deriveStartupProfile', () => {
           rendererProcessLimit: 6,
           rendererHeapMb: 512,
           lowEndDeviceMode: true,
+          disableSpareRenderer: true,
           disableBackForwardCache: true,
           disablePrerender: true,
           rasterThreads: 2,
@@ -41,7 +42,10 @@ describe('deriveStartupProfile', () => {
       { name: 'enable-low-end-device-mode' },
       { name: 'num-raster-threads', value: '2' },
       { name: 'js-flags', value: '--max-old-space-size=512 --optimize-for-size' },
-      { name: 'disable-features', value: 'BackForwardCache,Prerender2' }
+      {
+        name: 'disable-features',
+        value: 'SpareRendererForSitePerProcess,BackForwardCache,Prerender2'
+      }
     ])
     expect(profile.hardwareAcceleration).toBe(true)
   })

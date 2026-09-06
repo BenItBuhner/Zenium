@@ -27,6 +27,7 @@ export const DEFAULT_RESOURCE_SETTINGS: ResourceSettings = {
     rendererProcessLimit: 0,
     rendererHeapMb: 0,
     lowEndDeviceMode: false,
+    disableSpareRenderer: true,
     disableBackForwardCache: true,
     disablePrerender: true,
     rasterThreads: 0,
