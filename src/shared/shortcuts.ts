@@ -590,8 +590,7 @@ const DEFS: Def[] = [
     group: 'pageOperations',
     label: 'Toggle Reader View',
     key: 'r',
-    mods: { accel: true, alt: true },
-    unsupported: true
+    mods: { accel: true, alt: true }
   },
   {
     id: 'key_togglePictureInPicture',
@@ -733,8 +732,7 @@ const DEFS: Def[] = [
     group: 'devTools',
     label: 'Add-ons and Themes',
     key: 'a',
-    mods: { accel: true, shift: true },
-    unsupported: true
+    mods: { accel: true, shift: true }
   },
   {
     id: 'key_preferencesCmdMac',
