@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { uniquePath } from '../downloads'
+import { uniquePath } from '../uniquePath'
 
 describe('uniquePath', () => {
   it('keeps the name when it is free', () => {

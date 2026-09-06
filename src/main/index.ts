@@ -1,7 +1,8 @@
 import { app, BrowserWindow, Menu } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
-import { registerZenScheme } from './browser/protocol'
-import { Browser } from './browser/browser'
+import { registerZenScheme } from './platform/protocol'
+import { ElectronPlatform } from './platform'
+import type { Browser } from '../core/browser'
 
 // Must run before `ready`.
 registerZenScheme()
@@ -19,29 +20,33 @@ const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {
+  let platform: ElectronPlatform | null = null
   let browser: Browser | null = null
 
   app.on('second-instance', (_event, argv) => {
-    if (!browser) return
-    browser.window.win.show()
-    browser.window.win.focus()
+    if (!browser || !platform) return
+    platform.window.window?.show()
+    platform.window.window?.focus()
     const url = argv.find((a) => /^https?:\/\//.test(a))
-    if (url) browser.tabs.createTab({ url, active: true })
+    if (url) browser.openExternalUrl(url)
   })
 
   app.whenReady().then(() => {
     electronApp.setAppUserModelId('app.zen-browser.chromium')
     app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
-    browser = new Browser(app.getPath('userData'))
-    browser.start()
+    platform = new ElectronPlatform(app.getPath('userData'))
+    browser = platform.start()
 
     // Open a URL passed on the command line (e.g. `zen https://example.com`).
     const url = process.argv.slice(1).find((a) => /^https?:\/\//.test(a))
-    if (url) browser.tabs.createTab({ url, active: true })
+    if (url) browser.openExternalUrl(url)
 
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0 && browser) browser.window.create()
+      if (BrowserWindow.getAllWindows().length === 0 && platform) {
+        platform.window.create()
+        platform.browser.resume()
+      }
     })
   })
 

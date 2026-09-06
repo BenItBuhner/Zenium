@@ -1,7 +1,5 @@
-import { WebContentsView, clipboard, dialog, type WebContents } from 'electron'
-import { join } from 'node:path'
-import type { Settings, Space, SplitLayout, Tab, TabSection } from '../../shared/types'
-import { DEFAULT_CONTAINER_ID } from '../../shared/types'
+import type { Settings, Space, SplitLayout, Tab, TabSection } from '../shared/types'
+import { DEFAULT_CONTAINER_ID } from '../shared/types'
 import {
   activeSpace,
   addTabToSplit,
@@ -26,37 +24,24 @@ import {
   getDomain,
   isNavigableUrl,
   titleForUrl
-} from '../../shared/url'
+} from '../shared/url'
 import type { Browser } from './browser'
-import { describeNetError } from './protocol'
-import { newId } from '../../shared/ids'
+import { describeNetError, HTTP_FALLBACK_CODES } from '../shared/zenPages'
+import { newId } from '../shared/ids'
+import type { PageFlags, TabView, TabViewEvents } from './platform'
 
-const HTTP_FALLBACK_CODES = new Set([
-  -102, -105, -107, -113, -118, -7, -100, -101, -109, -200, -201, -202, -203, -204, -205, -206,
-  -207, -208, -210, -211, -212, -213, -324, -501
-])
-
-export interface PageFlags {
-  glanceEnabled: boolean
-  glanceTrigger: 'alt' | 'ctrl' | 'shift'
-  /** How plain clicks on third-party links behave on pinned/essential tabs (null = normal tab). */
-  thirdParty: 'new-tab' | 'glance' | 'same-tab' | null
-}
+export type { PageFlags } from './platform'
 
 /**
- * Owns the WebContentsView for every loaded tab and implements Zen's tab behaviours on top of
- * the pure model.
+ * Owns the live view for every loaded tab and implements Zen's tab behaviours on top of the pure
+ * model. Views are created through the host's `TabViewHost`; everything else is platform neutral.
  */
 export class TabManager {
-  private readonly views = new Map<string, WebContentsView>()
-  private readonly byWebContentsId = new Map<number, string>()
+  private readonly views = new Map<string, TabView>()
   /** Tabs whose current load came from typed input we upgraded to https:// (eligible for http fallback). */
   private readonly httpsUpgraded = new Map<string, string>()
-  private readonly pagePreload: string
 
-  constructor(private readonly browser: Browser) {
-    this.pagePreload = join(__dirname, '../preload/page.js')
-  }
+  constructor(private readonly browser: Browser) {}
 
   // ---------------------------------------------------------------------------
   // Lookup helpers
@@ -74,20 +59,13 @@ export class TabManager {
     return tabId ? this.model.tabs[tabId] : undefined
   }
 
-  view(tabId: string): WebContentsView | undefined {
-    return this.views.get(tabId)
-  }
-
-  webContents(tabId: string): WebContents | undefined {
+  /** The live view of a tab, if it is loaded and not destroyed. */
+  view(tabId: string): TabView | undefined {
     const view = this.views.get(tabId)
-    return view && !view.webContents.isDestroyed() ? view.webContents : undefined
+    return view && !view.isDestroyed() ? view : undefined
   }
 
-  tabIdForWebContents(wc: WebContents): string | undefined {
-    return this.byWebContentsId.get(wc.id)
-  }
-
-  allViews(): Iterable<[string, WebContentsView]> {
+  allViews(): Iterable<[string, TabView]> {
     return this.views.entries()
   }
 
@@ -115,11 +93,11 @@ export class TabManager {
   // View lifecycle
   // ---------------------------------------------------------------------------
 
-  ensureLoaded(tabId: string): WebContentsView | undefined {
+  ensureLoaded(tabId: string): TabView | undefined {
     const tab = this.tab(tabId)
     if (!tab) return undefined
     const existing = this.views.get(tabId)
-    if (existing && !existing.webContents.isDestroyed()) return existing
+    if (existing && !existing.isDestroyed()) return existing
     const view = this.createView(tab)
     tab.discarded = false
     let url = tab.url
@@ -131,37 +109,18 @@ export class TabManager {
       }
       tab.url = url
     }
-    void view.webContents.loadURL(url || BLANK_URL).catch(() => undefined)
+    view.loadURL(url || BLANK_URL)
     return view
   }
 
-  private createView(tab: Tab): WebContentsView {
-    const ses = this.browser.sessions.get(tab.containerId)
-    const view = new WebContentsView({
-      webPreferences: {
-        session: ses,
-        preload: this.pagePreload,
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-        webSecurity: true,
-        allowRunningInsecureContent: false,
-        spellcheck: true,
-        safeDialogs: true,
-        autoplayPolicy: 'document-user-activation-required',
-        backgroundThrottling: true,
-        scrollBounce: true,
-        enableWebSQL: false
-      }
-    })
+  private createView(tab: Tab): TabView {
+    const view = this.browser.platform.views.createView(tab, this.eventsFor(tab.id))
     view.setBackgroundColor(this.backgroundFor(tab.url))
     view.setVisible(false)
     this.views.set(tab.id, view)
-    this.byWebContentsId.set(view.webContents.id, tab.id)
-    this.wire(tab.id, view)
-    this.browser.window.attachView(view)
-    if (tab.muted) view.webContents.setAudioMuted(true)
-    if (tab.zoom !== 1) view.webContents.setZoomFactor(tab.zoom)
+    if (tab.muted) view.setMuted(true)
+    if (tab.zoom !== 1) view.setZoom(tab.zoom)
+    this.browser.viewport.relayout()
     return view
   }
 
@@ -169,8 +128,7 @@ export class TabManager {
     return url.startsWith('zen://') ? '#00000000' : '#ffffff'
   }
 
-  private wire(tabId: string, view: WebContentsView): void {
-    const wc = view.webContents
+  private eventsFor(tabId: string): TabViewEvents {
     const state = this.browser.state
     const update = (fn: (tab: Tab) => void, volatile = false): void => {
       const tab = this.tab(tabId)
@@ -179,150 +137,115 @@ export class TabManager {
       if (volatile) state.commitVolatile()
       else state.commit()
     }
+    const view = (): TabView | undefined => this.view(tabId)
 
-    wc.on('did-start-loading', () => update((t) => (t.loading = true), true))
-    wc.on('did-stop-loading', () =>
-      update((t) => {
-        t.loading = false
-        t.canGoBack = wc.navigationHistory.canGoBack()
-        t.canGoForward = wc.navigationHistory.canGoForward()
-      })
-    )
-    wc.on('did-navigate', (_e, url) => this.onNavigated(tabId, wc, url))
-    wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
-      if (isMainFrame) this.onNavigated(tabId, wc, url)
-    })
-    wc.on('page-title-updated', (_e, title) =>
-      update((t) => {
-        t.title = title || titleForUrl(t.url)
-        this.browser.history.updateTitle(t.url, t.title)
-      })
-    )
-    wc.on('page-favicon-updated', (_e, favicons) =>
-      update((t) => {
-        const icon = pickFavicon(favicons)
-        if (icon) {
-          t.favicon = icon
-          this.browser.history.updateFavicon(t.url, icon)
-        }
-      })
-    )
-    wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
-      if (!isMainFrame || code === -3 || wc.isDestroyed()) return
-      const upgradedFrom = this.httpsUpgraded.get(tabId)
-      if (upgradedFrom && url.startsWith('https://') && HTTP_FALLBACK_CODES.has(code)) {
-        this.httpsUpgraded.delete(tabId)
-        void wc.loadURL(`http://${upgradedFrom}`).catch(() => undefined)
-        return
-      }
-      this.httpsUpgraded.delete(tabId)
-      update((t) => {
-        t.errorCode = code
-        t.loading = false
-      })
-      void wc
-        .loadURL(errorPageUrl(code, description || describeNetError(code, ''), url))
-        .catch(() => undefined)
-    })
-    wc.on('render-process-gone', (_e, details) => {
-      if (details.reason === 'clean-exit') return
-      const tab = this.tab(tabId)
-      if (!tab) return
-      const url = tab.url
-      this.browser.toast(`"${tab.title}" crashed (${details.reason}).`, 'error')
-      void wc
-        .loadURL(errorPageUrl(-1, `The page crashed (${details.reason})`, url))
-        .catch(() => undefined)
-    })
-    wc.on('audio-state-changed', (e) => {
-      update((t) => (t.audible = e.audible), true)
-      this.browser.updateMedia()
-    })
-    wc.on('media-started-playing', () => this.browser.updateMedia())
-    wc.on('media-paused', () => this.browser.updateMedia())
-    wc.on('enter-html-full-screen', () => {
-      state.window.htmlFullscreenTabId = tabId
-      state.commitVolatile()
-      this.browser.window.relayout()
-    })
-    wc.on('leave-html-full-screen', () => {
-      if (state.window.htmlFullscreenTabId === tabId) state.window.htmlFullscreenTabId = null
-      state.commitVolatile()
-      this.browser.window.relayout()
-    })
-    wc.on('devtools-opened', () => {
-      state.devtoolsOpenFor.add(tabId)
-      state.commitVolatile()
-    })
-    wc.on('devtools-closed', () => {
-      state.devtoolsOpenFor.delete(tabId)
-      state.commitVolatile()
-    })
-    wc.on('found-in-page', (_e, result) => {
-      if (!result.finalUpdate) return
-      state.findResult = {
-        tabId,
-        activeMatchOrdinal: result.activeMatchOrdinal,
-        matches: result.matches
-      }
-      state.commitVolatile()
-    })
-    wc.on('zoom-changed', (_e, direction) => {
-      this.adjustZoom(tabId, direction === 'in' ? 1 : -1)
-    })
-    wc.on('context-menu', (_e, params) => {
-      this.browser.menus.showPageContextMenu(tabId, params)
-    })
-    wc.on('before-input-event', (event, input) => {
-      this.browser.keys.handle(event, input, tabId)
-    })
-    wc.on('update-target-url', (_e, url) => {
-      this.browser.emit('status', { text: url })
-    })
-    wc.on('will-prevent-unload', (event) => {
-      const tab = this.tab(tabId)
-      const choice = dialog.showMessageBoxSync(this.browser.window.win, {
-        type: 'question',
-        buttons: ['Leave Page', 'Stay on Page'],
-        defaultId: 0,
-        cancelId: 1,
-        message: `This page is asking you to confirm that you want to leave — ${tab?.title ?? ''}`,
-        detail: 'Information you’ve entered may not be saved.',
-        noLink: true
-      })
-      if (choice === 0) event.preventDefault()
-    })
-    wc.on('dom-ready', () => this.sendPageFlags(tabId))
-    wc.on('destroyed', () => {
-      this.byWebContentsId.delete(wc.id)
-    })
-    wc.setWindowOpenHandler(({ url, disposition }) => {
-      if (!isNavigableUrl(url) && !url.startsWith('mailto:')) return { action: 'deny' }
-      if (disposition === 'new-window') {
-        // window.open() with features → a real popup so `window.opener` keeps working (OAuth etc.).
-        return {
-          action: 'allow',
-          overrideBrowserWindowOptions: {
-            width: 720,
-            height: 640,
-            autoHideMenuBar: true,
-            webPreferences: { preload: undefined, sandbox: true, contextIsolation: true }
+    return {
+      onStartLoading: () => update((t) => (t.loading = true), true),
+      onStopLoading: () =>
+        update((t) => {
+          const v = view()
+          t.loading = false
+          t.canGoBack = v?.canGoBack() ?? false
+          t.canGoForward = v?.canGoForward() ?? false
+        }),
+      onNavigated: (url) => {
+        const v = view()
+        if (v) this.onNavigated(tabId, v, url)
+      },
+      onTitleUpdated: (title) =>
+        update((t) => {
+          t.title = title || titleForUrl(t.url)
+          this.browser.history.updateTitle(t.url, t.title)
+        }),
+      onFaviconUpdated: (favicons) =>
+        update((t) => {
+          const icon = pickFavicon(favicons)
+          if (icon) {
+            t.favicon = icon
+            this.browser.history.updateFavicon(t.url, icon)
           }
+        }),
+      onFailLoad: (code, description, url) => {
+        const v = view()
+        if (code === -3 || !v) return
+        const upgradedFrom = this.httpsUpgraded.get(tabId)
+        if (upgradedFrom && url.startsWith('https://') && HTTP_FALLBACK_CODES.has(code)) {
+          this.httpsUpgraded.delete(tabId)
+          v.loadURL(`http://${upgradedFrom}`)
+          return
         }
-      }
-      const parent = this.tab(tabId)
-      this.createTab({
-        url,
-        spaceId: parent?.spaceId ?? undefined,
-        containerId: parent?.containerId,
-        active: disposition !== 'background-tab',
-        afterTabId: parent && !parent.essential ? parent.id : undefined
-      })
-      return { action: 'deny' }
-    })
+        this.httpsUpgraded.delete(tabId)
+        update((t) => {
+          t.errorCode = code
+          t.loading = false
+        })
+        v.loadURL(errorPageUrl(code, description || describeNetError(code, ''), url))
+      },
+      onCrashed: (reason) => {
+        if (reason === 'clean-exit') return
+        const tab = this.tab(tabId)
+        const v = view()
+        if (!tab || !v) return
+        this.browser.toast(`"${tab.title}" crashed (${reason}).`, 'error')
+        v.loadURL(errorPageUrl(-1, `The page crashed (${reason})`, tab.url))
+      },
+      onAudioStateChanged: (audible) => {
+        update((t) => (t.audible = audible), true)
+        this.browser.updateMedia()
+      },
+      onMediaStateChanged: () => this.browser.updateMedia(),
+      onEnterHtmlFullscreen: () => {
+        state.window.htmlFullscreenTabId = tabId
+        state.commitVolatile()
+        this.browser.viewport.relayout()
+      },
+      onLeaveHtmlFullscreen: () => {
+        if (state.window.htmlFullscreenTabId === tabId) state.window.htmlFullscreenTabId = null
+        state.commitVolatile()
+        this.browser.viewport.relayout()
+      },
+      onDevtoolsOpened: () => {
+        state.devtoolsOpenFor.add(tabId)
+        state.commitVolatile()
+      },
+      onDevtoolsClosed: () => {
+        state.devtoolsOpenFor.delete(tabId)
+        state.commitVolatile()
+      },
+      onFoundInPage: (result) => {
+        if (!result.finalUpdate) return
+        state.findResult = {
+          tabId,
+          activeMatchOrdinal: result.activeMatchOrdinal,
+          matches: result.matches
+        }
+        state.commitVolatile()
+      },
+      onZoomChanged: (direction) => this.adjustZoom(tabId, direction === 'in' ? 1 : -1),
+      onContextMenu: (params) => this.browser.menus.showPageContextMenu(tabId, params),
+      onKey: (input) => this.browser.keys.handle(input, tabId),
+      onTargetUrl: (url) => this.browser.emit('status', { text: url }),
+      onDomReady: () => this.sendPageFlags(tabId),
+      onDestroyed: () => undefined,
+      onOpenWindow: (url, disposition) => {
+        if (!isNavigableUrl(url) && !url.startsWith('mailto:')) return 'deny'
+        // window.open() with features → a real popup so `window.opener` keeps working (OAuth etc.).
+        if (disposition === 'new-window') return 'popup'
+        const parent = this.tab(tabId)
+        this.createTab({
+          url,
+          spaceId: parent?.spaceId ?? undefined,
+          containerId: parent?.containerId,
+          active: disposition !== 'background-tab',
+          afterTabId: parent && !parent.essential ? parent.id : undefined
+        })
+        return 'tab'
+      },
+      onPageMessage: (message) => this.browser.handlePageMessage(tabId, message)
+    }
   }
 
-  private onNavigated(tabId: string, wc: WebContents, url: string): void {
+  private onNavigated(tabId: string, view: TabView, url: string): void {
     const tab = this.tab(tabId)
     if (!tab) return
     if (!url.startsWith(ERROR_URL_PREFIX)) {
@@ -330,13 +253,12 @@ export class TabManager {
       this.httpsUpgraded.delete(tabId)
     }
     tab.url = url
-    tab.title = wc.getTitle() || titleForUrl(url)
-    tab.canGoBack = wc.navigationHistory.canGoBack()
-    tab.canGoForward = wc.navigationHistory.canGoForward()
+    tab.title = view.getTitle() || titleForUrl(url)
+    tab.canGoBack = view.canGoBack()
+    tab.canGoForward = view.canGoForward()
     tab.bookmarked = this.browser.bookmarks.has(url)
-    tab.zoom = wc.getZoomFactor()
-    const view = this.views.get(tabId)
-    view?.setBackgroundColor(this.backgroundFor(url))
+    tab.zoom = view.getZoom()
+    view.setBackgroundColor(this.backgroundFor(url))
     this.browser.history.visit(url, tab.title, tab.favicon)
     if (this.browser.state.findResult?.tabId === tabId) this.browser.state.findResult = null
     this.sendPageFlags(tabId)
@@ -345,14 +267,14 @@ export class TabManager {
 
   sendPageFlags(tabId: string): void {
     const tab = this.tab(tabId)
-    const wc = this.webContents(tabId)
-    if (!tab || !wc) return
+    const view = this.view(tabId)
+    if (!tab || !view) return
     const flags: PageFlags = {
       glanceEnabled: this.settings.glanceEnabled && !this.browser.state.glance,
       glanceTrigger: this.settings.glanceTrigger,
       thirdParty: tab.pinned || tab.essential ? this.settings.thirdPartyOnPinned : null
     }
-    wc.send('zen:page-flags', flags)
+    view.sendPageFlags(flags)
   }
 
   broadcastPageFlags(): void {
@@ -364,15 +286,11 @@ export class TabManager {
     if (!view) return
     this.views.delete(tabId)
     this.httpsUpgraded.delete(tabId)
-    this.browser.window.detachView(view)
-    if (!view.webContents.isDestroyed()) {
-      this.byWebContentsId.delete(view.webContents.id)
-      view.webContents.close({ waitForBeforeUnload: false })
-    }
+    if (!view.isDestroyed()) view.destroy()
     this.browser.state.devtoolsOpenFor.delete(tabId)
   }
 
-  /** Unload a tab's WebContents while keeping it in the sidebar (Zen's "pending" tabs). */
+  /** Unload a tab's view while keeping it in the sidebar (Zen's "pending" tabs). */
   discard(tabId: string): void {
     const tab = this.tab(tabId)
     if (!tab) return
@@ -445,6 +363,35 @@ export class TabManager {
     return tab
   }
 
+  /**
+   * Adopt a view the host created for a `window.open` popup that should become a tab (Android
+   * hands us the WebView; Electron denies and creates a tab through `onOpenWindow` instead).
+   */
+  adoptView(view: TabView, opts: { parentTabId: string | null; active: boolean }): Tab {
+    const parent = this.tab(opts.parentTabId)
+    const tab = this.createTab({
+      url: BLANK_URL,
+      spaceId: parent?.spaceId ?? undefined,
+      containerId: parent?.containerId,
+      active: false,
+      afterTabId: parent && !parent.essential ? parent.id : undefined,
+      load: false
+    })
+    view.setBackgroundColor(this.backgroundFor(tab.url))
+    view.setVisible(false)
+    this.views.set(tab.id, view)
+    tab.discarded = false
+    if (opts.active) this.activateTab(tab.id)
+    this.browser.state.commit()
+    this.browser.viewport.relayout()
+    return tab
+  }
+
+  /** Wire events for a view created by the host (see `adoptView`). */
+  eventsForAdopted(tabId: string): TabViewEvents {
+    return this.eventsFor(tabId)
+  }
+
   activateTab(tabId: string): void {
     const m = this.model
     const tab = this.tab(tabId)
@@ -482,7 +429,7 @@ export class TabManager {
     for (const id of this.visibleTabIds()) this.ensureLoaded(id)
     this.browser.state.findResult = null
     this.browser.state.commit()
-    this.browser.window.focusContent()
+    this.browser.viewport.focusContent()
   }
 
   switchSpace(spaceId: string, activateTabId?: string): void {
@@ -638,23 +585,23 @@ export class TabManager {
     tab.errorCode = null
     if (opts.upgradedFrom) this.httpsUpgraded.set(tabId, opts.upgradedFrom)
     else this.httpsUpgraded.delete(tabId)
-    const hadView = this.views.has(tabId) && !this.views.get(tabId)!.webContents.isDestroyed()
+    const hadView = this.view(tabId) !== undefined
     const view = this.ensureLoaded(tabId)
     if (!view) return
     view.setBackgroundColor(this.backgroundFor(url))
     // ensureLoaded() already loads `tab.url` when it has to create the view.
-    if (hadView) void view.webContents.loadURL(url).catch(() => undefined)
+    if (hadView) view.loadURL(url)
     this.browser.state.commit()
   }
 
   goBack(tabId: string): void {
-    const wc = this.webContents(tabId)
-    if (wc?.navigationHistory.canGoBack()) wc.navigationHistory.goBack()
+    const view = this.view(tabId)
+    if (view?.canGoBack()) view.goBack()
   }
 
   goForward(tabId: string): void {
-    const wc = this.webContents(tabId)
-    if (wc?.navigationHistory.canGoForward()) wc.navigationHistory.goForward()
+    const view = this.view(tabId)
+    if (view?.canGoForward()) view.goForward()
   }
 
   reload(tabId: string, skipCache = false): void {
@@ -665,8 +612,8 @@ export class TabManager {
       this.browser.state.commit()
       return
     }
-    const wc = this.webContents(tabId)
-    if (!wc) return
+    const view = this.view(tabId)
+    if (!view) return
     if (tab.url.startsWith(ERROR_URL_PREFIX)) {
       const original = safeParam(tab.url, 'url')
       if (original) {
@@ -674,19 +621,18 @@ export class TabManager {
         return
       }
     }
-    if (skipCache) wc.reloadIgnoringCache()
-    else wc.reload()
+    view.reload(skipCache)
   }
 
   stop(tabId: string): void {
-    this.webContents(tabId)?.stop()
+    this.view(tabId)?.stop()
   }
 
   toggleMute(tabId: string): void {
     const tab = this.tab(tabId)
     if (!tab) return
     tab.muted = !tab.muted
-    this.webContents(tabId)?.setAudioMuted(tab.muted)
+    this.view(tabId)?.setMuted(tab.muted)
     this.browser.state.commit()
   }
 
@@ -695,7 +641,7 @@ export class TabManager {
     if (!tab) return
     const clamped = Math.min(5, Math.max(0.25, Math.round(factor * 100) / 100))
     tab.zoom = clamped
-    this.webContents(tabId)?.setZoomFactor(clamped)
+    this.view(tabId)?.setZoom(clamped)
     this.browser.state.commitVolatile()
   }
 
@@ -703,7 +649,7 @@ export class TabManager {
     const tab = this.tab(tabId)
     if (!tab) return
     const steps = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5]
-    const current = this.webContents(tabId)?.getZoomFactor() ?? tab.zoom
+    const current = this.view(tabId)?.getZoom() ?? tab.zoom
     let idx = steps.findIndex((s) => Math.abs(s - current) < 0.01)
     if (idx === -1) idx = steps.findIndex((s) => s > current) - (direction > 0 ? 1 : 0)
     const next = steps[Math.min(steps.length - 1, Math.max(0, idx + direction))]
@@ -971,7 +917,7 @@ export class TabManager {
     if (!id) return
     dissolveSplitGroup(this.model, id)
     this.browser.state.commit()
-    this.browser.window.focusContent()
+    this.browser.viewport.focusContent()
   }
 
   removeFromSplit(tabId: string, focus: boolean): void {
@@ -1049,7 +995,7 @@ export class TabManager {
     this.browser.state.glance = { tabId: tab.id, parentTabId: parent.id, originX, originY }
     this.ensureLoaded(tab.id)
     this.browser.state.commitVolatile()
-    this.browser.tabs.broadcastPageFlags()
+    this.broadcastPageFlags()
   }
 
   closeGlance(): void {
@@ -1060,7 +1006,7 @@ export class TabManager {
     delete this.model.tabs[glance.tabId]
     this.browser.state.commit()
     this.broadcastPageFlags()
-    this.browser.window.focusContent()
+    this.browser.viewport.focusContent()
   }
 
   /** Move the glance page into a real tab right after its parent. */
@@ -1111,19 +1057,18 @@ export class TabManager {
     const url = tab.url.startsWith(ERROR_URL_PREFIX)
       ? (safeParam(tab.url, 'url') ?? tab.url)
       : tab.url
-    clipboard.writeText(markdown ? `[${tab.customTitle ?? tab.title}](${url})` : url)
+    this.browser.platform.clipboard.writeText(
+      markdown ? `[${tab.customTitle ?? tab.title}](${url})` : url
+    )
     this.browser.toast(markdown ? 'Copied URL as Markdown' : 'Copied URL')
   }
 
   toggleDevtools(tabId: string, mode: 'toggle' | 'inspect' | 'console' = 'toggle'): void {
-    const wc = this.webContents(tabId)
-    if (!wc) return
-    if (mode === 'toggle' && wc.isDevToolsOpened()) {
-      wc.closeDevTools()
+    if (!this.browser.state.capabilities.devtools) {
+      this.browser.toast('Developer tools are not available on this device.')
       return
     }
-    wc.openDevTools({ mode: 'detach', activate: true })
-    if (mode === 'inspect') wc.inspectElement(0, 0)
+    this.view(tabId)?.openDevTools(mode)
   }
 
   /** Discard every loaded, invisible tab whose last activity is older than the unload timeout. */

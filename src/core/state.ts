@@ -1,4 +1,3 @@
-import { join } from 'node:path'
 import type {
   Bookmark,
   ClosedTab,
@@ -7,6 +6,7 @@ import type {
   FindResult,
   Folder,
   GlanceState,
+  HostCapabilities,
   KeyBinding,
   MediaState,
   Platform,
@@ -19,14 +19,15 @@ import type {
   Tab,
   UIState,
   WindowState
-} from '../../shared/types'
-import { DEFAULT_CONTAINER_ID } from '../../shared/types'
-import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS } from '../../shared/defaults'
-import { DEFAULT_SEARCH_ENGINES } from '../../shared/search'
-import { applyShortcutOverrides, defaultShortcuts } from '../../shared/shortcuts'
-import { JsonStore } from '../store/JsonStore'
+} from '../shared/types'
+import { DEFAULT_CONTAINER_ID } from '../shared/types'
+import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS } from '../shared/defaults'
+import { DEFAULT_SEARCH_ENGINES } from '../shared/search'
+import { applyShortcutOverrides, defaultShortcuts } from '../shared/shortcuts'
+import { JsonStore } from './store/JsonStore'
 import { createSpace, createTabRecord, type Model } from './model'
-import { BLANK_URL } from '../../shared/url'
+import { BLANK_URL } from '../shared/url'
+import { defer, type StoreIO } from './platform'
 
 interface Persisted {
   version: 1
@@ -78,12 +79,13 @@ export class BrowserState {
   private shortcutsCache: Shortcut[] | null = null
 
   constructor(
-    userDataDir: string,
+    io: StoreIO,
     readonly platform: Platform,
+    readonly capabilities: HostCapabilities,
     version: string
   ) {
     this.version = version
-    this.store = new JsonStore<Persisted>(join(userDataDir, 'zen', 'state.json'))
+    this.store = new JsonStore<Persisted>(io, 'state.json')
     this.model = {
       tabs: {},
       essentialTabIds: [],
@@ -242,6 +244,7 @@ export class BrowserState {
     const m = this.model
     return {
       platform: this.platform,
+      capabilities: this.capabilities,
       version: this.version,
       tabs: m.tabs,
       essentialTabIds: m.essentialTabIds,
@@ -269,7 +272,7 @@ export class BrowserState {
   commit(): void {
     if (this.scheduled) return
     this.scheduled = true
-    setImmediate(() => {
+    defer(() => {
       this.scheduled = false
       const snap = this.snapshot()
       for (const listener of this.listeners) listener(snap)
@@ -281,7 +284,7 @@ export class BrowserState {
   commitVolatile(): void {
     if (this.scheduled) return
     this.scheduled = true
-    setImmediate(() => {
+    defer(() => {
       this.scheduled = false
       const snap = this.snapshot()
       for (const listener of this.listeners) listener(snap)

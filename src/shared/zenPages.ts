@@ -1,19 +1,11 @@
-import { protocol, type Session } from 'electron'
-
 /**
  * `zen://` internal pages. Zen has no new-tab page (the URL bar replaces it), so `zen://blank` is
  * an empty page that picks up the theme; `zen://error` renders navigation failures.
+ *
+ * Pure HTML generation shared by every host: Electron serves these through a privileged protocol,
+ * Android loads them straight into the tab's WebView.
  */
 export const ZEN_SCHEME = 'zen'
-
-export function registerZenScheme(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: ZEN_SCHEME,
-      privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: false }
-    }
-  ])
-}
 
 const ERROR_MESSAGES: Record<number, string> = {
   [-105]: "We can't connect to the server at this address. Check the address for typing errors.",
@@ -36,6 +28,12 @@ const ERROR_MESSAGES: Record<number, string> = {
   [-21]: 'Network access was blocked.',
   [-3]: ''
 }
+
+/** Chromium `net::` error codes eligible for the https→http typed-input fallback. */
+export const HTTP_FALLBACK_CODES = new Set([
+  -102, -105, -107, -113, -118, -7, -100, -101, -109, -200, -201, -202, -203, -204, -205, -206,
+  -207, -208, -210, -211, -212, -213, -324, -501
+])
 
 export function describeNetError(code: number, fallback: string): string {
   return ERROR_MESSAGES[code] ?? fallback
@@ -60,16 +58,16 @@ const BASE_STYLE = `
   button:hover { background: light-dark(#fff, #ffffff22); }
 `
 
-function blankPage(): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><title>New Tab</title><style>${BASE_STYLE}</style></head><body></body></html>`
+export function blankPageHtml(): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>New Tab</title><style>${BASE_STYLE}</style></head><body></body></html>`
 }
 
-function errorPage(url: URL): string {
+export function errorPageHtml(url: URL): string {
   const code = Number(url.searchParams.get('code') ?? 0)
   const description = url.searchParams.get('description') ?? ''
   const target = url.searchParams.get('url') ?? ''
   const message = describeNetError(code, 'The page could not be loaded.')
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Problem loading page</title><style>${BASE_STYLE}</style></head>
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Problem loading page</title><style>${BASE_STYLE}</style></head>
 <body><div class="card">
   <h1>Hmm. We're having trouble finding that site.</h1>
   <p>${escapeHtml(message)}</p>
@@ -78,18 +76,18 @@ function errorPage(url: URL): string {
 </div></body></html>`
 }
 
-export function installZenProtocol(ses: Session): void {
-  if (ses.protocol.isProtocolHandled(ZEN_SCHEME)) return
-  ses.protocol.handle(ZEN_SCHEME, (request) => {
-    const url = new URL(request.url)
-    const headers = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
-    switch (url.hostname) {
-      case 'blank':
-        return new Response(blankPage(), { headers })
-      case 'error':
-        return new Response(errorPage(url), { headers })
-      default:
-        return new Response(blankPage(), { headers })
-    }
-  })
+/** HTML for any `zen://` URL (unknown hosts fall back to the blank page). */
+export function zenPageHtml(rawUrl: string): string {
+  let url: URL
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    return blankPageHtml()
+  }
+  switch (url.hostname) {
+    case 'error':
+      return errorPageHtml(url)
+    default:
+      return blankPageHtml()
+  }
 }

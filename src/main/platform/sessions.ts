@@ -1,11 +1,12 @@
 import { app, session, type Session } from 'electron'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
+import type { SessionHost } from '../../core/platform'
 
 /**
  * Each Zen container maps to a persistent Chromium session partition, which gives it its own
  * cookies, storage and cache – exactly what Firefox's Multi-Account Containers provide.
  */
-export class SessionManager {
+export class SessionManager implements SessionHost {
   private readonly sessions = new Map<string, Session>()
   private readonly onCreate: Array<(ses: Session, containerId: string) => void> = []
 

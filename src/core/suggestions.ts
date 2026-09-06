@@ -1,13 +1,12 @@
-import { net } from 'electron'
-import type { Suggestion } from '../../shared/types'
+import type { Suggestion } from '../shared/types'
 import {
   buildSearchUrl,
   buildSuggestUrl,
   matchEngineKeyword,
   parseSuggestResponse
-} from '../../shared/search'
-import { searchCommands } from '../../shared/commands'
-import { displayUrl, inputToUrl, isProbablyUrl } from '../../shared/url'
+} from '../shared/search'
+import { searchCommands } from '../shared/commands'
+import { displayUrl, inputToUrl, isProbablyUrl } from '../shared/url'
 import type { Browser } from './browser'
 import { orderedTabsForSpace } from './model'
 
@@ -225,13 +224,12 @@ export class SuggestionService {
     this.inFlight = controller
     const timer = setTimeout(() => controller.abort(), 900)
     try {
-      const res = await net.fetch(url, {
+      const res = await this.browser.platform.net.fetchText(url, {
         signal: controller.signal,
         headers: { accept: 'application/json' }
       })
       if (!res.ok) return []
-      const text = await res.text()
-      const body: unknown = JSON.parse(text)
+      const body: unknown = JSON.parse(res.text)
       const list = parseSuggestResponse(body)
       this.cache.set(cacheKey, list)
       if (this.cache.size > 200) this.cache.delete(this.cache.keys().next().value as string)

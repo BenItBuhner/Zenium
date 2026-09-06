@@ -1,5 +1,5 @@
-import type { Bookmark } from '../../shared/types'
-import { newId } from '../../shared/ids'
+import type { Bookmark } from '../shared/types'
+import { newId } from '../shared/ids'
 import type { BrowserState } from './state'
 
 /** Bookmarks live inside the main state file; this is a thin, indexed façade over that list. */

@@ -1,33 +1,26 @@
-import {
-  Menu,
-  clipboard,
-  nativeImage,
-  net,
-  type ContextMenuParams,
-  type MenuItemConstructorOptions
-} from 'electron'
 import type { Browser } from './browser'
-import { buildSearchUrl } from '../../shared/search'
-import { displayUrl, isNavigableUrl } from '../../shared/url'
-import { DEFAULT_CONTAINER_ID } from '../../shared/types'
+import { buildSearchUrl } from '../shared/search'
+import { displayUrl, isNavigableUrl } from '../shared/url'
+import { DEFAULT_CONTAINER_ID } from '../shared/types'
+import type { MenuItemTemplate, MenuPopupOptions, PageContextParams } from './platform'
 
-type Template = MenuItemConstructorOptions[]
+type Template = MenuItemTemplate[]
 
 /**
- * Native context menus. Zen (Firefox) uses native-styled menus everywhere, and native popups are
- * also the only thing that can draw above the tab views.
+ * Context menus. Zen (Firefox) uses native-styled menus everywhere; hosts decide how to show a
+ * template – Electron pops a native `Menu`, Android renders it in the chrome as a sheet/popover.
  */
 export class Menus {
   constructor(private readonly browser: Browser) {}
 
-  private popup(template: Template): void {
+  private popup(template: Template, options: MenuPopupOptions): void {
     const items = template.filter((item, i, arr) => {
       // Collapse duplicate / leading / trailing separators.
       if (item.type !== 'separator') return true
       const prev = arr[i - 1]
       return i > 0 && i < arr.length - 1 && prev?.type !== 'separator'
     })
-    Menu.buildFromTemplate(items).popup({ window: this.browser.window.win })
+    this.browser.platform.menus.popup(items, options)
   }
 
   private containerSubmenu(onPick: (containerId: string) => void): Template {
@@ -40,11 +33,11 @@ export class Menus {
   // Page
   // ---------------------------------------------------------------------------
 
-  showPageContextMenu(tabId: string, params: ContextMenuParams): void {
+  showPageContextMenu(tabId: string, params: PageContextParams): void {
     const { tabs, state } = this.browser
     const tab = tabs.tab(tabId)
-    const wc = tabs.webContents(tabId)
-    if (!tab || !wc) return
+    const view = tabs.view(tabId)
+    if (!tab || !view) return
     const engine =
       state.searchEngines.find((e) => e.id === state.settings.searchEngineId) ??
       state.searchEngines[0]
@@ -54,6 +47,7 @@ export class Menus {
     const isMedia =
       (params.mediaType === 'video' || params.mediaType === 'audio') && Boolean(params.srcURL)
     const selection = params.selectionText.trim()
+    const clipboard = this.browser.platform.clipboard
 
     if (hasLink) {
       template.push(
@@ -84,7 +78,7 @@ export class Menus {
         },
         { type: 'separator' },
         { label: 'Copy Link', click: () => clipboard.writeText(params.linkURL) },
-        { label: 'Save Link As…', click: () => wc.downloadURL(params.linkURL) },
+        { label: 'Save Link As…', click: () => view.downloadURL(params.linkURL) },
         { type: 'separator' }
       )
     }
@@ -102,10 +96,10 @@ export class Menus {
         },
         {
           label: 'Copy Image',
-          click: () => this.copyImage(params.srcURL, tabId, params.x, params.y)
+          click: () => void this.copyImage(params.srcURL, tabId, params.x, params.y)
         },
         { label: 'Copy Image Link', click: () => clipboard.writeText(params.srcURL) },
-        { label: 'Save Image As…', click: () => wc.downloadURL(params.srcURL) },
+        { label: 'Save Image As…', click: () => view.downloadURL(params.srcURL) },
         { type: 'separator' }
       )
     }
@@ -117,7 +111,7 @@ export class Menus {
         },
         {
           label: params.mediaType === 'video' ? 'Save Video As…' : 'Save Audio As…',
-          click: () => wc.downloadURL(params.srcURL)
+          click: () => view.downloadURL(params.srcURL)
         },
         { type: 'separator' }
       )
@@ -125,12 +119,12 @@ export class Menus {
     if (params.isEditable) {
       if (params.misspelledWord) {
         for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
-          template.push({ label: suggestion, click: () => wc.replaceMisspelling(suggestion) })
+          template.push({ label: suggestion, click: () => view.replaceMisspelling(suggestion) })
         }
         template.push(
           {
             label: 'Add to Dictionary',
-            click: () => wc.session.addWordToSpellCheckerDictionary(params.misspelledWord)
+            click: () => view.addWordToDictionary(params.misspelledWord)
           },
           { type: 'separator' }
         )
@@ -194,16 +188,18 @@ export class Menus {
         { type: 'separator' },
         {
           label: 'View Page Source',
-          enabled: !tab.url.startsWith('zen://'),
+          enabled: !tab.url.startsWith('zen://') && state.capabilities.viewSource,
           click: () => this.browser.actions.run('page.viewSource', { sourceTabId: tabId })
         }
       )
     }
-    template.push(
-      { type: 'separator' },
-      { label: 'Inspect Element', click: () => wc.inspectElement(params.x, params.y) }
-    )
-    this.popup(template)
+    if (state.capabilities.devtools) {
+      template.push(
+        { type: 'separator' },
+        { label: 'Inspect Element', click: () => view.openDevTools('inspect') }
+      )
+    }
+    this.popup(template, { source: 'page', x: params.x, y: params.y })
   }
 
   private splitLink(parentTabId: string, url: string): void {
@@ -221,22 +217,11 @@ export class Menus {
   }
 
   private async copyImage(srcUrl: string, tabId: string, x: number, y: number): Promise<void> {
-    const wc = this.browser.tabs.webContents(tabId)
-    if (!wc) return
-    if (srcUrl.startsWith('data:')) {
-      clipboard.writeImage(nativeImage.createFromDataURL(srcUrl))
-      return
-    }
-    try {
-      wc.copyImageAt(x, y)
-    } catch {
-      try {
-        const res = await net.fetch(srcUrl)
-        const buf = Buffer.from(await res.arrayBuffer())
-        clipboard.writeImage(nativeImage.createFromBuffer(buf))
-      } catch {
-        this.browser.toast('Could not copy image', 'error')
-      }
+    const view = this.browser.tabs.view(tabId)
+    if (!view) return
+    if (await view.copyImageAt(x, y)) return
+    if (!(await this.browser.platform.clipboard.writeImageFromUrl(srcUrl))) {
+      this.browser.toast('Could not copy image', 'error')
     }
   }
 
@@ -369,34 +354,43 @@ export class Menus {
         ? [{ label: 'Remove Tab', click: () => tabs.closeTab(tabId, true) }]
         : [])
     ]
-    this.popup(template)
+    this.popup(template, { source: 'tab' })
   }
 
   showNewTabContextMenu(): void {
     const { tabs, state } = this.browser
     const space = tabs.activeSpace
-    this.popup([
-      { label: 'New Tab', click: () => this.browser.emit('urlbar.toggle', { mode: 'new-tab' }) },
-      {
-        label: 'New Tab in Container',
-        submenu: [
-          {
-            label: 'No Container',
-            click: () => tabs.createTab({ containerId: DEFAULT_CONTAINER_ID, active: true })
-          },
-          ...this.containerSubmenu((cid) => tabs.createTab({ containerId: cid, active: true }))
-        ]
-      },
-      { type: 'separator' },
-      { label: 'New Folder', click: () => this.browser.createFolder(space.id, 'New Folder', '📁') },
-      { label: 'New Space…', click: () => this.browser.emit('space.new', undefined) },
-      { type: 'separator' },
-      {
-        label: 'Clear Unpinned Tabs',
-        enabled: space.tabIds.some((id) => !state.model.tabs[id]?.pinned),
-        click: () => tabs.closeUnpinned(space.id)
-      }
-    ])
+    this.popup(
+      [
+        {
+          label: 'New Tab',
+          click: () => this.browser.emit('urlbar.toggle', { mode: 'new-tab' })
+        },
+        {
+          label: 'New Tab in Container',
+          submenu: [
+            {
+              label: 'No Container',
+              click: () => tabs.createTab({ containerId: DEFAULT_CONTAINER_ID, active: true })
+            },
+            ...this.containerSubmenu((cid) => tabs.createTab({ containerId: cid, active: true }))
+          ]
+        },
+        { type: 'separator' },
+        {
+          label: 'New Folder',
+          click: () => this.browser.createFolder(space.id, 'New Folder', '📁')
+        },
+        { label: 'New Space…', click: () => this.browser.emit('space.new', undefined) },
+        { type: 'separator' },
+        {
+          label: 'Clear Unpinned Tabs',
+          enabled: space.tabIds.some((id) => !state.model.tabs[id]?.pinned),
+          click: () => tabs.closeUnpinned(space.id)
+        }
+      ],
+      { source: 'newtab' }
+    )
   }
 
   // ---------------------------------------------------------------------------
@@ -408,143 +402,173 @@ export class Menus {
     const space = state.model.spaces.find((s) => s.id === spaceId)
     if (!space) return
     const idx = state.model.spaces.indexOf(space)
-    this.popup([
-      { label: 'Edit Space…', click: () => this.browser.emit('space.edit', { spaceId }) },
-      { label: 'Change Theme…', click: () => this.browser.emit('theme.open', { spaceId }) },
-      { type: 'separator' },
-      {
-        label: 'Move Left',
-        enabled: idx > 0,
-        click: () => this.browser.reorderSpace(spaceId, idx - 1)
-      },
-      {
-        label: 'Move Right',
-        enabled: idx < state.model.spaces.length - 1,
-        click: () => this.browser.reorderSpace(spaceId, idx + 1)
-      },
-      { type: 'separator' },
-      { label: 'Unload Space', click: () => tabs.unloadSpace(spaceId) },
-      { label: 'Unload All Spaces Except Current', click: () => this.browser.unloadOtherSpaces() },
-      { label: 'Close Unpinned Tabs', click: () => tabs.closeUnpinned(spaceId) },
-      { type: 'separator' },
-      {
-        label: 'Space Routing Settings…',
-        click: () => this.browser.emit('overlay.open', { kind: 'settings' })
-      },
-      { type: 'separator' },
-      {
-        label: 'Delete Space',
-        enabled: state.model.spaces.length > 1,
-        click: () => this.browser.deleteSpace(spaceId)
-      }
-    ])
+    this.popup(
+      [
+        { label: 'Edit Space…', click: () => this.browser.emit('space.edit', { spaceId }) },
+        { label: 'Change Theme…', click: () => this.browser.emit('theme.open', { spaceId }) },
+        { type: 'separator' },
+        {
+          label: 'Move Left',
+          enabled: idx > 0,
+          click: () => this.browser.reorderSpace(spaceId, idx - 1)
+        },
+        {
+          label: 'Move Right',
+          enabled: idx < state.model.spaces.length - 1,
+          click: () => this.browser.reorderSpace(spaceId, idx + 1)
+        },
+        { type: 'separator' },
+        { label: 'Unload Space', click: () => tabs.unloadSpace(spaceId) },
+        {
+          label: 'Unload All Spaces Except Current',
+          click: () => this.browser.unloadOtherSpaces()
+        },
+        { label: 'Close Unpinned Tabs', click: () => tabs.closeUnpinned(spaceId) },
+        { type: 'separator' },
+        {
+          label: 'Space Routing Settings…',
+          click: () => this.browser.emit('overlay.open', { kind: 'settings' })
+        },
+        { type: 'separator' },
+        {
+          label: 'Delete Space',
+          enabled: state.model.spaces.length > 1,
+          click: () => void this.browser.deleteSpace(spaceId)
+        }
+      ],
+      { source: 'space' }
+    )
   }
 
   showFolderContextMenu(folderId: string): void {
     const { state } = this.browser
     const folder = state.model.folders[folderId]
     if (!folder) return
-    this.popup([
-      {
-        label: 'Rename Folder…',
-        click: () => this.browser.emit('folder.startRename', { folderId })
-      },
-      {
-        label: folder.collapsed ? 'Expand Folder' : 'Collapse Folder',
-        click: () => this.browser.updateFolder(folderId, { collapsed: !folder.collapsed })
-      },
-      { type: 'separator' },
-      { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
-      { label: 'Delete Folder', click: () => this.browser.deleteFolder(folderId, false) }
-    ])
+    this.popup(
+      [
+        {
+          label: 'Rename Folder…',
+          click: () => this.browser.emit('folder.startRename', { folderId })
+        },
+        {
+          label: folder.collapsed ? 'Expand Folder' : 'Collapse Folder',
+          click: () => this.browser.updateFolder(folderId, { collapsed: !folder.collapsed })
+        },
+        { type: 'separator' },
+        { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
+        { label: 'Delete Folder', click: () => this.browser.deleteFolder(folderId, false) }
+      ],
+      { source: 'folder' }
+    )
   }
 
   /** The "⋯" application menu in the toolbar (Firefox's hamburger menu). */
   showAppMenu(): void {
-    const { state, tabs } = this.browser
+    const { state, tabs, platform } = this.browser
     const active = tabs.activeTab
     const cm = state.settings.compactMode
-    this.popup([
-      { label: 'New Tab', click: () => this.browser.emit('urlbar.toggle', { mode: 'new-tab' }) },
-      { label: 'New Space…', click: () => this.browser.emit('space.new', undefined) },
-      { type: 'separator' },
-      { label: 'Bookmarks', click: () => this.browser.emit('overlay.open', { kind: 'bookmarks' }) },
-      { label: 'History', click: () => this.browser.emit('overlay.open', { kind: 'history' }) },
-      { label: 'Downloads', click: () => this.browser.emit('overlay.open', { kind: 'downloads' }) },
-      { type: 'separator' },
-      {
-        label: 'Compact Mode',
-        type: 'checkbox',
-        checked: cm.enabled,
-        click: () => this.browser.toggleCompactMode()
-      },
-      {
-        label: 'Change Theme…',
-        click: () => this.browser.emit('theme.open', { spaceId: state.model.activeSpaceId })
-      },
-      {
-        label: 'Zoom',
-        submenu: [
-          {
-            label: 'Zoom In',
-            enabled: Boolean(active),
-            click: () => active && tabs.adjustZoom(active.id, 1)
-          },
-          {
-            label: 'Zoom Out',
-            enabled: Boolean(active),
-            click: () => active && tabs.adjustZoom(active.id, -1)
-          },
-          {
-            label: 'Reset Zoom',
-            enabled: Boolean(active),
-            click: () => active && tabs.setZoom(active.id, 1)
-          }
-        ]
-      },
-      {
-        label: 'Fullscreen',
-        type: 'checkbox',
-        checked: this.browser.window.win.isFullScreen(),
-        click: () => this.browser.toggleFullscreen()
-      },
-      { type: 'separator' },
-      {
-        label: 'Find in Page…',
-        enabled: Boolean(active),
-        click: () => active && this.browser.emit('find.open', { tabId: active.id })
-      },
-      {
-        label: 'Print…',
-        enabled: Boolean(active),
-        click: () => active && this.browser.actions.run('page.print', { sourceTabId: active.id })
-      },
-      {
-        label: 'Save Page As…',
-        enabled: Boolean(active),
-        click: () => active && this.browser.actions.run('page.savePage', { sourceTabId: active.id })
-      },
-      {
-        label: 'Take Screenshot',
-        enabled: Boolean(active),
-        click: () =>
-          active && this.browser.actions.run('page.screenshot', { sourceTabId: active.id })
-      },
-      { type: 'separator' },
-      {
-        label: 'Keyboard Shortcuts',
-        click: () => this.browser.emit('overlay.open', { kind: 'shortcuts' })
-      },
-      { label: 'Settings', click: () => this.browser.emit('overlay.open', { kind: 'settings' }) },
-      {
-        label: 'Developer Tools',
-        enabled: Boolean(active),
-        click: () => active && tabs.toggleDevtools(active.id)
-      },
-      { type: 'separator' },
-      { label: `About Zen (Chromium) ${state.version}`, enabled: false },
-      { label: 'Quit', click: () => this.browser.actions.run('app.quit') }
-    ])
+    const caps = state.capabilities
+    this.popup(
+      [
+        {
+          label: 'New Tab',
+          click: () => this.browser.emit('urlbar.toggle', { mode: 'new-tab' })
+        },
+        { label: 'New Space…', click: () => this.browser.emit('space.new', undefined) },
+        { type: 'separator' },
+        {
+          label: 'Bookmarks',
+          click: () => this.browser.emit('overlay.open', { kind: 'bookmarks' })
+        },
+        { label: 'History', click: () => this.browser.emit('overlay.open', { kind: 'history' }) },
+        {
+          label: 'Downloads',
+          click: () => this.browser.emit('overlay.open', { kind: 'downloads' })
+        },
+        { type: 'separator' },
+        {
+          label: 'Compact Mode',
+          type: 'checkbox',
+          checked: cm.enabled,
+          click: () => this.browser.toggleCompactMode()
+        },
+        {
+          label: 'Change Theme…',
+          click: () => this.browser.emit('theme.open', { spaceId: state.model.activeSpaceId })
+        },
+        {
+          label: 'Zoom',
+          submenu: [
+            {
+              label: 'Zoom In',
+              enabled: Boolean(active),
+              click: () => active && tabs.adjustZoom(active.id, 1)
+            },
+            {
+              label: 'Zoom Out',
+              enabled: Boolean(active),
+              click: () => active && tabs.adjustZoom(active.id, -1)
+            },
+            {
+              label: 'Reset Zoom',
+              enabled: Boolean(active),
+              click: () => active && tabs.setZoom(active.id, 1)
+            }
+          ]
+        },
+        {
+          label: 'Fullscreen',
+          type: 'checkbox',
+          checked: platform.window.isFullScreen(),
+          click: () => this.browser.toggleFullscreen()
+        },
+        { type: 'separator' },
+        {
+          label: 'Find in Page…',
+          enabled: Boolean(active),
+          click: () => active && this.browser.emit('find.open', { tabId: active.id })
+        },
+        {
+          label: 'Print…',
+          enabled: Boolean(active),
+          click: () => active && this.browser.actions.run('page.print', { sourceTabId: active.id })
+        },
+        {
+          label: 'Save Page As…',
+          enabled: Boolean(active),
+          click: () =>
+            active && this.browser.actions.run('page.savePage', { sourceTabId: active.id })
+        },
+        {
+          label: 'Take Screenshot',
+          enabled: Boolean(active),
+          click: () =>
+            active && this.browser.actions.run('page.screenshot', { sourceTabId: active.id })
+        },
+        { type: 'separator' },
+        {
+          label: 'Keyboard Shortcuts',
+          click: () => this.browser.emit('overlay.open', { kind: 'shortcuts' })
+        },
+        {
+          label: 'Settings',
+          click: () => this.browser.emit('overlay.open', { kind: 'settings' })
+        },
+        ...(caps.devtools
+          ? [
+              {
+                label: 'Developer Tools',
+                enabled: Boolean(active),
+                click: () => active && tabs.toggleDevtools(active.id)
+              }
+            ]
+          : []),
+        { type: 'separator' },
+        { label: `About Zen (Chromium) ${state.version}`, enabled: false },
+        { label: 'Quit', click: () => this.browser.actions.run('app.quit') }
+      ],
+      { source: 'app' }
+    )
   }
 
   describe(url: string): string {

@@ -21,8 +21,8 @@ import {
   sectionIndexOf,
   type Model
 } from '../model'
-import { DEFAULT_CONTAINERS } from '../../../shared/defaults'
-import type { Tab } from '../../../shared/types'
+import { DEFAULT_CONTAINERS } from '../../shared/defaults'
+import type { Tab } from '../../shared/types'
 
 function makeModel(): Model {
   const space = createSpace('Default', '')

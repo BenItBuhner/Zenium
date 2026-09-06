@@ -1,4 +1,3 @@
-import { app, dialog, ipcMain, shell, type Session, type WebContents } from 'electron'
 import type {
   CommandArgs,
   CommandName,
@@ -6,29 +5,29 @@ import type {
   EventName,
   Events,
   Folder,
+  KeyBinding,
   MediaState,
-  Platform,
   Settings
-} from '../../shared/types'
+} from '../shared/types'
 import { BrowserState } from './state'
-import { SessionManager, buildUserAgent } from './sessions'
-import { installZenProtocol } from './protocol'
 import { HistoryService } from './history'
 import { BookmarkService } from './bookmarks'
 import { DownloadService } from './downloads'
 import { PermissionService } from './permissions'
 import { TabManager } from './tabs'
-import { ZenWindow } from './window'
+import { Viewport } from './viewport'
 import { Actions, type AnyAction } from './actions'
 import { KeyboardHandler } from './keys'
 import { Menus } from './menus'
 import { SuggestionService } from './suggestions'
 import { createFolder, createSpace, deleteFolder, getSpace, reorderSpace } from './model'
-import { inputToUrl } from '../../shared/url'
-import { buildSearchUrl, matchEngineKeyword } from '../../shared/search'
-import { DEFAULT_CONTAINER_ID } from '../../shared/types'
-import { ONBOARDING_ESSENTIALS } from '../../shared/defaults'
-import { newId } from '../../shared/ids'
+import { inputToUrl } from '../shared/url'
+import { buildSearchUrl, matchEngineKeyword } from '../shared/search'
+import { DEFAULT_CONTAINER_ID } from '../shared/types'
+import { ONBOARDING_ESSENTIALS } from '../shared/defaults'
+import { newId } from '../shared/ids'
+import type { HostCapabilities } from '../shared/types'
+import type { PageMessage, Platform } from './platform'
 
 type CommandHandlers = {
   [K in CommandName]: (args: CommandArgs<K>) => CommandResult<K> | Promise<CommandResult<K>>
@@ -42,69 +41,57 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'space.new',
   'space.edit',
   'tab.startRename',
-  'folder.startRename'
+  'folder.startRename',
+  'menu.show'
 ])
 
-interface PageMessage {
-  type: 'glance' | 'open-tab' | 'navigate'
-  url: string
-  x?: number
-  y?: number
-  background?: boolean
-}
-
 /**
- * The browser: wires every service together and implements the IPC command surface.
+ * The browser: wires every service together and implements the command surface the chrome talks
+ * to. Platform neutral – hosts plug in through `Platform` and call `handleCommand` /
+ * `handlePageMessage` / `keys.handle`.
  */
 export class Browser {
   readonly state: BrowserState
-  readonly sessions: SessionManager
   readonly history: HistoryService
   readonly bookmarks: BookmarkService
   readonly downloads: DownloadService
   readonly permissions: PermissionService
   readonly tabs: TabManager
-  readonly window: ZenWindow
+  readonly viewport: Viewport
   readonly actions: Actions
   readonly keys: KeyboardHandler
   readonly menus: Menus
   readonly suggestions: SuggestionService
-  private unloadTimer: NodeJS.Timeout | null = null
+  private readonly handlers: CommandHandlers
+  private unloadTimer: ReturnType<typeof setInterval> | null = null
   private quitting = false
 
-  constructor(userDataDir: string) {
-    const platform = process.platform as Platform
-    this.state = new BrowserState(userDataDir, platform, app.getVersion())
+  constructor(
+    readonly platform: Platform,
+    capabilities: HostCapabilities
+  ) {
+    this.state = new BrowserState(
+      platform.io,
+      platform.info.os,
+      capabilities,
+      platform.info.version
+    )
     this.state.load()
-    this.sessions = new SessionManager(buildUserAgent())
-    this.history = new HistoryService(userDataDir)
+    this.history = new HistoryService(platform.io)
     this.bookmarks = new BookmarkService(this.state)
-    this.downloads = new DownloadService(
-      userDataDir,
-      () => this.state.settings.askWhereToSave,
-      () => {
-        this.state.downloads = this.downloads.items
-        this.state.commitVolatile()
-      }
-    )
+    this.downloads = new DownloadService(platform.io, platform.downloads, () => {
+      this.state.downloads = this.downloads.items
+      this.state.commitVolatile()
+    })
     this.state.downloads = this.downloads.items
-    this.permissions = new PermissionService(userDataDir, () =>
-      this.window?.win && !this.window.win.isDestroyed() ? this.window.win : null
-    )
+    this.permissions = new PermissionService(platform.io, platform.dialogs)
     this.tabs = new TabManager(this)
-    this.window = new ZenWindow(this)
+    this.viewport = new Viewport(this)
     this.actions = new Actions(this)
     this.keys = new KeyboardHandler(this)
     this.menus = new Menus(this)
     this.suggestions = new SuggestionService(this)
-
-    this.sessions.configure((ses: Session) => {
-      installZenProtocol(ses)
-      this.permissions.attach(ses)
-      this.downloads.attach(ses, (source) => this.onDownloadStarted(source))
-      ses.setSpellCheckerLanguages(['en-US'])
-    })
-    this.sessions.get(DEFAULT_CONTAINER_ID)
+    this.handlers = this.commandHandlers()
   }
 
   /**
@@ -112,39 +99,45 @@ export class Browser {
    * without a renderer to route shortcuts through). Like Chrome, close such a tab when it was
    * opened only for the download; otherwise just make sure the keyboard keeps working.
    */
-  private onDownloadStarted(source: WebContents | undefined): void {
+  onDownloadStarted(sourceTabId: string | null): void {
     // Firefox shows the downloads panel whenever a download begins. Let any tab switch paint
     // first so the panel can dim a snapshot of the page behind it.
     setTimeout(() => this.emit('overlay.open', { kind: 'downloads' }), 200)
-    if (!source || source.isDestroyed()) return
-    const tabId = this.tabs.tabIdForWebContents(source)
-    const tab = tabId ? this.tabs.tab(tabId) : undefined
-    if (!tab) return
-    const hasDocument = source.getURL() !== '' && source.getURL() !== 'about:blank'
-    if (hasDocument) return
-    if (!tab.pinned && !tab.essential && !source.navigationHistory.canGoBack()) {
+    const tab = this.tabs.tab(sourceTabId)
+    const view = sourceTabId ? this.tabs.view(sourceTabId) : undefined
+    if (!tab || !view) return
+    if (view.hasDocument()) return
+    if (!tab.pinned && !tab.essential && !view.canGoBack()) {
       this.tabs.closeTab(tab.id)
     } else {
-      this.window?.focusChrome()
+      this.viewport.focusChrome()
     }
   }
 
   start(): void {
-    this.registerIpc()
     if (this.state.settings.pinnedResetOnStartup) {
       for (const tab of Object.values(this.state.model.tabs)) {
         if ((tab.pinned || tab.essential) && tab.pinnedUrl) tab.url = tab.pinnedUrl
       }
     }
-    this.window.create()
-    this.state.subscribe((snapshot) => this.window.send('state', snapshot))
-    this.window.win.webContents.on('did-finish-load', () => {
-      this.window.send('state', this.state.snapshot())
-    })
+    this.state.subscribe((snapshot) => this.platform.chrome.send('state', snapshot))
     if (this.state.settings.onboardingDone) {
       for (const id of this.tabs.visibleTabIds()) this.tabs.ensureLoaded(id)
     }
     this.unloadTimer = setInterval(() => this.tabs.unloadInactive(), 60_000)
+    this.syncShortcuts()
+    this.state.commit()
+  }
+
+  /** Send the current snapshot (hosts call this when the chrome finished loading). */
+  pushState(): void {
+    this.platform.chrome.send('state', this.state.snapshot())
+  }
+
+  /** The host re-created its window after `onWindowClosed()` (macOS dock activation). */
+  resume(): void {
+    for (const id of this.tabs.visibleTabIds()) this.tabs.ensureLoaded(id)
+    if (!this.unloadTimer) this.unloadTimer = setInterval(() => this.tabs.unloadInactive(), 60_000)
     this.state.commit()
   }
 
@@ -154,8 +147,8 @@ export class Browser {
 
   emit<K extends EventName>(name: K, payload: Events[K]): void {
     // Events that open chrome UI need keyboard focus in the chrome, not in the page.
-    if (FOCUS_CHROME_EVENTS.has(name)) this.window.focusChrome()
-    this.window.send(name, payload)
+    if (FOCUS_CHROME_EVENTS.has(name)) this.platform.chrome.focus()
+    this.platform.chrome.send(name, payload)
   }
 
   toast(message: string, kind: 'info' | 'error' = 'info'): void {
@@ -164,9 +157,8 @@ export class Browser {
 
   updateMedia(): void {
     const media: MediaState[] = []
-    for (const [tabId] of this.tabs.allViews()) {
-      const wc = this.tabs.webContents(tabId)
-      if (wc && wc.isCurrentlyAudible()) media.push({ tabId, playing: true })
+    for (const [tabId, view] of this.tabs.allViews()) {
+      if (!view.isDestroyed() && view.isCurrentlyAudible()) media.push({ tabId, playing: true })
     }
     const before = JSON.stringify(this.state.media)
     this.state.media = media
@@ -194,8 +186,7 @@ export class Browser {
   }
 
   toggleFullscreen(): void {
-    const win = this.window.win
-    win.setFullScreen(!win.isFullScreen())
+    this.platform.window.setFullScreen(!this.platform.window.isFullScreen())
   }
 
   toggleBookmark(tabId: string): void {
@@ -260,22 +251,22 @@ export class Browser {
     }
   }
 
-  deleteSpace(spaceId: string): void {
+  async deleteSpace(spaceId: string): Promise<void> {
     const m = this.state.model
     const space = getSpace(m, spaceId)
     if (!space || m.spaces.length <= 1) return
     const count = space.tabIds.length
     if (count > 0) {
-      const choice = dialog.showMessageBoxSync(this.window.win, {
-        type: 'warning',
-        buttons: ['Delete Space', 'Cancel'],
-        defaultId: 1,
-        cancelId: 1,
+      const ok = await this.platform.dialogs.confirm({
         message: `Delete “${space.name}”?`,
         detail: `${count} tab${count === 1 ? '' : 's'} in this space will be closed. Essentials are kept.`,
-        noLink: true
+        okLabel: 'Delete Space',
+        cancelLabel: 'Cancel',
+        danger: true
       })
-      if (choice !== 0) return
+      if (!ok) return
+      // The space may have gone away while the dialog was up.
+      if (!getSpace(m, spaceId) || m.spaces.length <= 1) return
     }
     for (const id of [...space.tabIds]) this.tabs.closeTab(id, true)
     for (const folder of Object.values(m.folders))
@@ -301,10 +292,18 @@ export class Browser {
     return null
   }
 
+  /** Open a URL from outside the browser (command line, Android intent, share sheet). */
+  openExternalUrl(url: string): void {
+    const routed = this.routeSpaceFor(url)
+    const tab = this.tabs.createTab({ url, active: true, spaceId: routed ?? undefined })
+    if (routed && routed !== this.state.model.activeSpaceId) this.tabs.switchSpace(routed, tab.id)
+  }
+
+  /** The host window went away: release every page. */
   onWindowClosed(): void {
     if (this.unloadTimer) clearInterval(this.unloadTimer)
+    this.unloadTimer = null
     this.tabs.destroyAll()
-    if (process.platform !== 'darwin') app.quit()
   }
 
   shutdown(): void {
@@ -313,6 +312,22 @@ export class Browser {
     this.state.flushSync()
     this.history.flushSync()
     this.downloads.flushSync()
+  }
+
+  /** Persist everything now (mobile hosts call this when the app is backgrounded). */
+  flushSync(): void {
+    this.state.flushSync()
+    this.history.flushSync()
+    this.downloads.flushSync()
+  }
+
+  private syncShortcuts(): void {
+    const bindings: KeyBinding[] = []
+    for (const s of this.state.shortcuts) {
+      if (s.binding) bindings.push(s.binding)
+      bindings.push(...s.extraBindings)
+    }
+    this.platform.views.setShortcuts?.(bindings)
   }
 
   // ---------------------------------------------------------------------------
@@ -363,58 +378,64 @@ export class Browser {
   }
 
   // ---------------------------------------------------------------------------
-  // IPC
+  // Command surface
   // ---------------------------------------------------------------------------
 
-  private registerIpc(): void {
-    const handlers = this.commandHandlers()
-    ipcMain.handle('zen:cmd', async (event, name: CommandName, args: unknown) => {
-      if (event.sender !== this.window.win.webContents) throw new Error('Unauthorised sender')
-      const handler = handlers[name] as ((a: unknown) => unknown) | undefined
-      if (!handler) throw new Error(`Unknown command: ${name}`)
-      return handler(args)
-    })
-    ipcMain.on('zen:page', (event, message: PageMessage) => {
-      const tabId = this.tabs.tabIdForWebContents(event.sender)
-      if (!tabId) return
-      const tab = this.tabs.tab(tabId)
-      if (!tab || typeof message?.url !== 'string' || !/^https?:\/\//i.test(message.url)) return
-      switch (message.type) {
-        case 'glance':
-          this.tabs.openGlance(
-            message.url,
-            tabId,
-            clamp01(message.x ?? 0.5),
-            clamp01(message.y ?? 0.5)
-          )
-          return
-        case 'open-tab': {
-          const routed = this.routeSpaceFor(message.url)
-          this.tabs.createTab({
-            url: message.url,
-            active: !message.background,
-            afterTabId: tab.essential ? undefined : tabId,
-            containerId: tab.containerId,
-            spaceId: routed ?? undefined
-          })
-          return
-        }
-        case 'navigate':
-          this.tabs.navigate(tabId, message.url)
-          return
+  /** Run a chrome command. Unknown names throw so misuse surfaces during development. */
+  handleCommand(name: string, args: unknown): unknown {
+    const handler = (this.handlers as Record<string, (a: unknown) => unknown>)[name]
+    if (!handler) throw new Error(`Unknown command: ${name}`)
+    return handler(args)
+  }
+
+  /** A page script asked for something (Glance, third-party link routing, media state). */
+  handlePageMessage(tabId: string, message: PageMessage): void {
+    const tab = this.tabs.tab(tabId)
+    if (!tab || !message || typeof message.type !== 'string') return
+    if (message.type === 'media') {
+      const view = this.tabs.view(tabId)
+      if (!view) return
+      tab.audible = Boolean(message.playing)
+      this.state.commitVolatile()
+      this.updateMedia()
+      return
+    }
+    if (typeof message.url !== 'string' || !/^https?:\/\//i.test(message.url)) return
+    switch (message.type) {
+      case 'glance':
+        this.tabs.openGlance(
+          message.url,
+          tabId,
+          clamp01(message.x ?? 0.5),
+          clamp01(message.y ?? 0.5)
+        )
+        return
+      case 'open-tab': {
+        const routed = this.routeSpaceFor(message.url)
+        this.tabs.createTab({
+          url: message.url,
+          active: !message.background,
+          afterTabId: tab.essential ? undefined : tabId,
+          containerId: tab.containerId,
+          spaceId: routed ?? undefined
+        })
+        return
       }
-    })
+      case 'navigate':
+        this.tabs.navigate(tabId, message.url)
+        return
+    }
   }
 
   private commandHandlers(): CommandHandlers {
-    const { tabs, state } = this
+    const { tabs, state, platform } = this
     return {
       'app.getState': () => state.snapshot(),
       'app.openExternal': ({ url }) => {
-        if (/^(https?|mailto):/.test(url)) void shell.openExternal(url)
+        if (/^(https?|mailto):/.test(url)) platform.shell.openExternal(url)
       },
-      'app.quit': () => app.quit(),
-      'layout.report': (report) => this.window.applyLayout(report),
+      'app.quit': () => platform.app.quit(),
+      'layout.report': (report) => this.viewport.applyLayout(report),
 
       'tab.create': (opts) => tabs.createTab(opts).id,
       'tab.activate': ({ tabId }) => tabs.activateTab(tabId),
@@ -505,15 +526,14 @@ export class Browser {
       'folder.contextMenu': ({ folderId }) => this.menus.showFolderContextMenu(folderId),
       'newtab.contextMenu': () => this.menus.showNewTabContextMenu(),
       'app.menu': () => this.menus.showAppMenu(),
-      'focus.content': () => this.window.focusContent(),
-      'focus.chrome': () => this.window.focusChrome(),
+      'focus.content': () => this.viewport.focusContent(),
+      'focus.chrome': () => this.viewport.focusChrome(),
       'media.toggle': ({ tabId }) => {
-        const wc = tabs.webContents(tabId)
-        if (!wc) return
-        void wc
+        const view = tabs.view(tabId)
+        if (!view) return
+        void view
           .executeJavaScript(
-            `(() => { const m = [...document.querySelectorAll('video,audio')].find(e => !e.paused) || document.querySelector('video,audio'); if (!m) return false; if (m.paused) { m.play().catch(() => {}); } else { m.pause(); } return true })()`,
-            true
+            `(() => { const m = [...document.querySelectorAll('video,audio')].find(e => !e.paused) || document.querySelector('video,audio'); if (!m) return false; if (m.paused) { m.play().catch(() => {}); } else { m.pause(); } return true })()`
           )
           .catch(() => undefined)
       },
@@ -550,16 +570,22 @@ export class Browser {
         this.submitUrlbar(input, newTab, tabId, background),
       'urlbar.runCommand': ({ action }) => this.actions.run(action as AnyAction),
 
-      'overlay.snapshot': ({ tabId }) => this.window.snapshot(tabId),
+      'overlay.snapshot': async ({ tabId }) => {
+        const view = tabs.view(tabId)
+        if (!view || !view.isVisible()) return null
+        return view.snapshot()
+      },
 
       'settings.update': (patch) => this.updateSettings(patch),
       'shortcuts.update': ({ id, binding }) => {
         state.setShortcutOverride(id, binding)
         state.commit()
+        this.syncShortcuts()
       },
       'shortcuts.reset': () => {
         state.resetShortcuts()
         state.commit()
+        this.syncShortcuts()
       },
       'sidebar.setWidth': ({ width }) => {
         state.settings.sidebarWidth = Math.max(160, Math.min(520, Math.round(width)))
@@ -596,19 +622,18 @@ export class Browser {
       },
 
       'find.start': ({ tabId, text, forward, newSession }) => {
-        const wc = tabs.webContents(tabId)
-        if (!wc) return
+        const view = tabs.view(tabId)
+        if (!view) return
         if (!text) {
-          wc.stopFindInPage('clearSelection')
+          view.stopFind('clearSelection')
           state.findResult = null
           state.commitVolatile()
           return
         }
-        // Electron: findNext=true begins a new session, false continues the current one.
-        wc.findInPage(text, { forward, findNext: newSession })
+        view.findInPage(text, forward, newSession)
       },
       'find.stop': ({ tabId, keepSelection }) => {
-        tabs.webContents(tabId)?.stopFindInPage(keepSelection ? 'keepSelection' : 'clearSelection')
+        tabs.view(tabId)?.stopFind(keepSelection ? 'keepSelection' : 'clearSelection')
         state.findResult = null
         state.commitVolatile()
       },
@@ -632,20 +657,44 @@ export class Browser {
           if (space.containerId === id) space.containerId = DEFAULT_CONTAINER_ID
         for (const tab of Object.values(state.model.tabs))
           if (tab.containerId === id) tab.containerId = DEFAULT_CONTAINER_ID
-        void this.sessions.clearContainerData(id)
+        void platform.sessions.clearContainerData(id)
         state.commit()
       },
 
-      'window.minimize': () => this.window.win.minimize(),
+      'window.minimize': () => platform.window.minimize(),
       'window.toggleMaximize': () =>
-        this.window.win.isMaximized() ? this.window.win.unmaximize() : this.window.win.maximize(),
-      'window.close': () => this.window.win.close(),
+        platform.window.isMaximized() ? platform.window.unmaximize() : platform.window.maximize(),
+      'window.close': () => platform.window.close(),
       'window.toggleFullscreen': () => this.toggleFullscreen(),
 
       'page.screenshot': ({ tabId }) => this.actions.run('page.screenshot', { sourceTabId: tabId }),
       'page.print': ({ tabId }) => this.actions.run('page.print', { sourceTabId: tabId }),
       'page.savePage': ({ tabId }) => this.actions.run('page.savePage', { sourceTabId: tabId }),
       'page.viewSource': ({ tabId }) => this.actions.run('page.viewSource', { sourceTabId: tabId }),
+      'page.contextMenu': ({ tabId, linkURL, srcURL, x, y }) =>
+        this.menus.showPageContextMenu(tabId, {
+          x,
+          y,
+          linkURL,
+          srcURL,
+          mediaType: srcURL ? 'image' : 'none',
+          selectionText: '',
+          isEditable: false,
+          misspelledWord: '',
+          dictionarySuggestions: [],
+          editFlags: {
+            canUndo: false,
+            canRedo: false,
+            canCut: false,
+            canCopy: false,
+            canPaste: false,
+            canDelete: false,
+            canSelectAll: false
+          }
+        }),
+
+      'menu.click': ({ menuId, itemId }) => platform.menus.activate?.(menuId, itemId),
+      'menu.close': ({ menuId }) => platform.menus.dismiss?.(menuId),
 
       'onboarding.complete': ({ searchEngineId, colorScheme, essentials }) => {
         if (state.searchEngines.some((e) => e.id === searchEngineId))

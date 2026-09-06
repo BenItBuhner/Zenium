@@ -1,7 +1,7 @@
-import { join } from 'node:path'
-import type { HistoryEntry } from '../../shared/types'
-import { JsonStore } from '../store/JsonStore'
-import { isInternalUrl } from '../../shared/url'
+import type { HistoryEntry } from '../shared/types'
+import { JsonStore } from './store/JsonStore'
+import { isInternalUrl } from '../shared/url'
+import type { StoreIO } from './platform'
 
 const MAX_ENTRIES = 10_000
 
@@ -14,8 +14,8 @@ export class HistoryService {
   private entries = new Map<string, HistoryEntry>()
   private readonly store: JsonStore<Persisted>
 
-  constructor(userDataDir: string) {
-    this.store = new JsonStore<Persisted>(join(userDataDir, 'zen', 'history.json'), 2000)
+  constructor(io: StoreIO) {
+    this.store = new JsonStore<Persisted>(io, 'history.json', 2000)
     const data = this.store.readSync()
     if (data?.version === 1 && Array.isArray(data.entries)) {
       for (const e of data.entries) {

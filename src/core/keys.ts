@@ -1,29 +1,28 @@
-import type { Event, Input } from 'electron'
-import { isModifierKey, matchShortcut } from '../../shared/shortcuts'
+import { isModifierKey, matchShortcut } from '../shared/shortcuts'
 import type { Browser } from './browser'
+import type { KeyEventInput } from './platform'
 
 /**
- * Routes `before-input-event` from every web contents (chrome and pages) through Zen's shortcut
- * table. Matching shortcuts are consumed so pages never see them – the same precedence Firefox
- * gives to browser keybindings.
+ * Routes key events from every web contents (chrome and pages) through Zen's shortcut table.
+ * Returns true when the event was consumed so hosts can stop pages from seeing it – the same
+ * precedence Firefox gives to browser keybindings.
  */
 export class KeyboardHandler {
   constructor(private readonly browser: Browser) {}
 
-  handle(event: Event, input: Input, sourceTabId: string | null): void {
-    if (input.type !== 'keyDown') return
-    if (isModifierKey(input.key)) return
+  handle(input: KeyEventInput, sourceTabId: string | null): boolean {
+    if (input.type !== 'keyDown' && input.type !== 'rawKeyDown') return false
+    if (isModifierKey(input.key)) return false
 
     const shortcut = matchShortcut(this.browser.state.shortcuts, input)
     if (shortcut) {
-      event.preventDefault()
-      if (input.isAutoRepeat && !REPEATABLE.has(shortcut.action)) return
+      if (input.isAutoRepeat && !REPEATABLE.has(shortcut.action)) return true
       if (shortcut.unsupported) {
         this.browser.toast(`"${shortcut.label}" is not available in this build yet.`)
-        return
+        return true
       }
       this.browser.actions.run(shortcut.action, { sourceTabId })
-      return
+      return true
     }
 
     if (
@@ -36,13 +35,13 @@ export class KeyboardHandler {
       // Escape inside a page: close Glance, else stop loading (Firefox behaviour).
       const state = this.browser.state
       if (state.glance) {
-        event.preventDefault()
         this.browser.tabs.closeGlance()
-        return
+        return true
       }
       const tab = this.browser.tabs.tab(sourceTabId)
       if (tab?.loading) this.browser.tabs.stop(sourceTabId)
     }
+    return false
   }
 }
 
