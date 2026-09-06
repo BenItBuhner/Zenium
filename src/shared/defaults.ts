@@ -34,7 +34,8 @@ export const DEFAULT_SETTINGS: Settings = {
   onboardingDone: false,
   showTabSeparator: true,
   ctrlTabCyclesWithinSection: false,
-  spaceRouting: {}
+  spaceRouting: {},
+  windowSync: 'all'
 }
 
 /** Firefox's four default containers plus "No Container". */

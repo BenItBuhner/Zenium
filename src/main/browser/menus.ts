@@ -3,12 +3,14 @@ import {
   clipboard,
   nativeImage,
   net,
+  shell,
   type ContextMenuParams,
   type MenuItemConstructorOptions
 } from 'electron'
 import type { Browser } from './browser'
+import type { ZenWindow } from './window'
 import { buildSearchUrl } from '../../shared/search'
-import { displayUrl, isNavigableUrl } from '../../shared/url'
+import { displayUrl, getDomain, isNavigableUrl } from '../../shared/url'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 
 type Template = MenuItemConstructorOptions[]
@@ -20,14 +22,14 @@ type Template = MenuItemConstructorOptions[]
 export class Menus {
   constructor(private readonly browser: Browser) {}
 
-  private popup(template: Template): void {
+  private popup(template: Template, win: ZenWindow): void {
     const items = template.filter((item, i, arr) => {
       // Collapse duplicate / leading / trailing separators.
       if (item.type !== 'separator') return true
       const prev = arr[i - 1]
       return i > 0 && i < arr.length - 1 && prev?.type !== 'separator'
     })
-    Menu.buildFromTemplate(items).popup({ window: this.browser.window.win })
+    Menu.buildFromTemplate(items).popup({ window: win.win })
   }
 
   private containerSubmenu(onPick: (containerId: string) => void): Template {
@@ -36,11 +38,20 @@ export class Menus {
       .map((c) => ({ label: c.name, click: () => onPick(c.id) }))
   }
 
+  private spaceSubmenu(exceptSpaceId: string | null, onPick: (spaceId: string) => void): Template {
+    return this.browser.state.model.spaces
+      .filter((s) => s.id !== exceptSpaceId)
+      .map((s) => ({
+        label: `${s.icon ? `${s.icon} ` : ''}${s.name}`,
+        click: () => onPick(s.id)
+      }))
+  }
+
   // ---------------------------------------------------------------------------
   // Page
   // ---------------------------------------------------------------------------
 
-  showPageContextMenu(tabId: string, params: ContextMenuParams): void {
+  showPageContextMenu(tabId: string, params: ContextMenuParams, win: ZenWindow): void {
     const { tabs, state } = this.browser
     const tab = tabs.tab(tabId)
     const wc = tabs.webContents(tabId)
@@ -54,33 +65,45 @@ export class Menus {
     const isMedia =
       (params.mediaType === 'video' || params.mediaType === 'audio') && Boolean(params.srcURL)
     const selection = params.selectionText.trim()
+    const glanceAllowed = state.settings.glanceEnabled && !win.glance
 
     if (hasLink) {
       template.push(
         {
           label: 'Open Link in New Tab',
           click: () =>
-            tabs.createTab({
-              url: params.linkURL,
-              active: false,
-              afterTabId: tab.essential ? undefined : tab.id,
-              containerId: tab.containerId
-            })
+            tabs.createTab(
+              {
+                url: params.linkURL,
+                active: false,
+                afterTabId: tab.essential ? undefined : tab.id,
+                containerId: tab.containerId
+              },
+              win
+            )
         },
         {
           label: 'Open Link in Glance',
-          enabled: state.settings.glanceEnabled && !state.glance,
-          click: () => tabs.openGlance(params.linkURL, tabId, 0.5, 0.5)
+          enabled: glanceAllowed,
+          click: () => tabs.openGlance(params.linkURL, tabId, 0.5, 0.5, win)
         },
         {
           label: 'Split Link in New Tab',
-          click: () => this.splitLink(tabId, params.linkURL)
+          click: () => this.splitLink(tabId, params.linkURL, win)
         },
         {
           label: 'Open Link in New Container Tab',
+          enabled: !win.isPrivate,
           submenu: this.containerSubmenu((cid) =>
-            tabs.createTab({ url: params.linkURL, active: true, containerId: cid })
+            tabs.createTab({ url: params.linkURL, active: true, containerId: cid }, win)
           )
+        },
+        {
+          label: 'Open Link in New Private Window',
+          click: () => {
+            const pw = this.browser.createWindow({ kind: 'private', from: win })
+            tabs.createTab({ url: params.linkURL, active: true }, pw)
+          }
         },
         { type: 'separator' },
         { label: 'Copy Link', click: () => clipboard.writeText(params.linkURL) },
@@ -93,16 +116,19 @@ export class Menus {
         {
           label: 'Open Image in New Tab',
           click: () =>
-            tabs.createTab({
-              url: params.srcURL,
-              active: false,
-              afterTabId: tab.id,
-              containerId: tab.containerId
-            })
+            tabs.createTab(
+              {
+                url: params.srcURL,
+                active: false,
+                afterTabId: tab.id,
+                containerId: tab.containerId
+              },
+              win
+            )
         },
         {
           label: 'Copy Image',
-          click: () => this.copyImage(params.srcURL, tabId, params.x, params.y)
+          click: () => this.copyImage(params.srcURL, tabId, params.x, params.y, win)
         },
         { label: 'Copy Image Link', click: () => clipboard.writeText(params.srcURL) },
         { label: 'Save Image As…', click: () => wc.downloadURL(params.srcURL) },
@@ -119,6 +145,14 @@ export class Menus {
           label: params.mediaType === 'video' ? 'Save Video As…' : 'Save Audio As…',
           click: () => wc.downloadURL(params.srcURL)
         },
+        ...(params.mediaType === 'video'
+          ? [
+              {
+                label: 'Picture-in-Picture',
+                click: () => this.browser.actions.run('page.pip', { sourceTabId: tabId, win })
+              }
+            ]
+          : []),
         { type: 'separator' }
       )
     }
@@ -161,8 +195,8 @@ export class Menus {
           label: `Search ${engine.name} for “${short}”`,
           click: () => {
             const url = buildSearchUrl(engine, selection)
-            if (state.settings.glanceEnabled && !state.glance) tabs.openGlance(url, tabId, 0.5, 0.5)
-            else tabs.createTab({ url, active: true, afterTabId: tab.id })
+            if (glanceAllowed) tabs.openGlance(url, tabId, 0.5, 0.5, win)
+            else tabs.createTab({ url, active: true, afterTabId: tab.id }, win)
           }
         },
         { type: 'separator' }
@@ -183,11 +217,18 @@ export class Menus {
         },
         {
           label: 'Save Page As…',
-          click: () => this.browser.actions.run('page.savePage', { sourceTabId: tabId })
+          click: () => this.browser.actions.run('page.savePage', { sourceTabId: tabId, win })
         },
         {
           label: 'Take Screenshot',
-          click: () => this.browser.actions.run('page.screenshot', { sourceTabId: tabId })
+          click: () => this.browser.actions.run('page.screenshot', { sourceTabId: tabId, win })
+        },
+        {
+          label: this.browser.reader.isReaderUrl(tab.url)
+            ? 'Exit Reader View'
+            : 'Enter Reader View',
+          enabled: this.browser.reader.isReaderUrl(tab.url) || this.browser.reader.canRead(tab),
+          click: () => this.browser.reader.toggle(tabId, win)
         },
         { type: 'separator' },
         { label: 'Select All', role: 'selectAll' },
@@ -195,32 +236,75 @@ export class Menus {
         {
           label: 'View Page Source',
           enabled: !tab.url.startsWith('zen://'),
-          click: () => this.browser.actions.run('page.viewSource', { sourceTabId: tabId })
+          click: () => this.browser.actions.run('page.viewSource', { sourceTabId: tabId, win })
         }
       )
     }
-    template.push(
-      { type: 'separator' },
-      { label: 'Inspect Element', click: () => wc.inspectElement(params.x, params.y) }
-    )
-    this.popup(template)
+    template.push({ type: 'separator' }, ...this.boostsSubmenu(tabId, win), { type: 'separator' })
+    template.push({ label: 'Inspect Element', click: () => wc.inspectElement(params.x, params.y) })
+    this.popup(template, win)
   }
 
-  private splitLink(parentTabId: string, url: string): void {
+  /** Zen 1.20: Boosts live in the page context menu (and the site control button). */
+  private boostsSubmenu(tabId: string, win: ZenWindow): Template {
+    const tab = this.browser.tabs.tab(tabId)
+    if (!tab || !/^https?:/.test(tab.url)) return []
+    const boosts = this.browser.boosts
+    const domain = getDomain(tab.url)
+    const boost = boosts.get(domain)
+    return [
+      {
+        label: 'Boosts',
+        submenu: [
+          {
+            label: boost ? `Edit Boost for ${domain}…` : `New Boost for ${domain}…`,
+            click: () => this.browser.emit('overlay.open', { kind: 'boosts' }, win)
+          },
+          { type: 'separator' },
+          {
+            label: 'Zap Element',
+            click: () => boosts.startZap(tabId)
+          },
+          {
+            label: 'Force Dark Mode',
+            type: 'checkbox',
+            checked: Boolean(boost?.darkMode),
+            click: () => boosts.update(domain, { darkMode: !boost?.darkMode })
+          },
+          ...(boost
+            ? [
+                { type: 'separator' as const },
+                {
+                  label: boost.enabled ? 'Disable Boost' : 'Enable Boost',
+                  click: () => boosts.update(domain, { enabled: !boost.enabled })
+                },
+                { label: 'Remove Boost', click: () => boosts.remove(domain) }
+              ]
+            : [])
+        ]
+      }
+    ]
+  }
+
+  private splitLink(parentTabId: string, url: string, win: ZenWindow): void {
     const { tabs } = this.browser
     const parent = tabs.tab(parentTabId)
     if (!parent) return
-    const tab = tabs.createTab({
-      url,
-      active: false,
-      afterTabId: parent.id,
-      containerId: parent.containerId
-    })
+    const tab = tabs.createTab(
+      { url, active: false, afterTabId: parent.id, containerId: parent.containerId },
+      win
+    )
     if (parent.splitGroupId) tabs.addToSplit(parent.splitGroupId, tab.id)
-    else tabs.createSplit([parent.id, tab.id], 'vertical')
+    else tabs.createSplit([parent.id, tab.id], 'vertical', win)
   }
 
-  private async copyImage(srcUrl: string, tabId: string, x: number, y: number): Promise<void> {
+  private async copyImage(
+    srcUrl: string,
+    tabId: string,
+    x: number,
+    y: number,
+    win: ZenWindow
+  ): Promise<void> {
     const wc = this.browser.tabs.webContents(tabId)
     if (!wc) return
     if (srcUrl.startsWith('data:')) {
@@ -235,7 +319,7 @@ export class Menus {
         const buf = Buffer.from(await res.arrayBuffer())
         clipboard.writeImage(nativeImage.createFromBuffer(buf))
       } catch {
-        this.browser.toast('Could not copy image', 'error')
+        this.browser.toast('Could not copy image', 'error', win)
       }
     }
   }
@@ -244,55 +328,60 @@ export class Menus {
   // Tabs
   // ---------------------------------------------------------------------------
 
-  showTabContextMenu(tabId: string): void {
+  showTabContextMenu(tabId: string, win: ZenWindow): void {
     const { tabs, state } = this.browser
     const tab = tabs.tab(tabId)
     if (!tab) return
     const m = state.model
-    const active = tabs.activeTab
-    const space = tabs.activeSpace
-    const otherSpaces = m.spaces.filter((s) => s.id !== (tab.spaceId ?? m.activeSpaceId))
+    const active = tabs.activeTabFor(win)
+    const space = win.activeSpace()
+    const local = Boolean(win.localSpace)
+    const otherSpaces = m.spaces.filter((s) => s.id !== (tab.spaceId ?? win.activeSpaceId))
     const folders = Object.values(m.folders).filter(
-      (f) => f.spaceId === (tab.spaceId ?? m.activeSpaceId)
+      (f) => f.spaceId === (tab.spaceId ?? win.activeSpaceId)
     )
     const canSplitWithActive = Boolean(active) && active!.id !== tab.id
     const pinnedChanged =
       (tab.pinned || tab.essential) && tab.pinnedUrl !== null && tab.url !== tab.pinnedUrl
+    const domain = getDomain(tab.url)
 
     const template: Template = [
       {
         label: 'New Tab Below',
         enabled: !tab.essential,
-        click: () => this.browser.newTabAfter(tabId)
+        click: () => this.browser.newTabAfter(tabId, win)
       },
       { type: 'separator' },
       { label: tab.discarded ? 'Load Tab' : 'Reload Tab', click: () => tabs.reload(tabId) },
       { label: tab.muted ? 'Unmute Tab' : 'Mute Tab', click: () => tabs.toggleMute(tabId) },
-      { label: 'Duplicate Tab', click: () => tabs.duplicate(tabId) },
-      { label: 'Rename Tab…', click: () => this.browser.emit('tab.startRename', { tabId }) },
-      { label: 'Change Icon…', enabled: false },
+      { label: 'Duplicate Tab', click: () => tabs.duplicate(tabId, win) },
+      { label: 'Rename Tab…', click: () => this.browser.emit('tab.startRename', { tabId }, win) },
+      { label: 'Change Icon…', click: () => this.browser.emit('tab.pickIcon', { tabId }, win) },
       { type: 'separator' },
+      ...(local
+        ? []
+        : [
+            tab.essential
+              ? { label: 'Remove from Essentials', click: () => tabs.toggleEssential(tabId, win) }
+              : {
+                  label: 'Add to Essentials',
+                  enabled: m.essentialTabIds.length < state.settings.essentialsMax,
+                  click: () => tabs.toggleEssential(tabId, win)
+                }
+          ]),
       tab.essential
-        ? { label: 'Remove from Essentials', click: () => tabs.toggleEssential(tabId) }
-        : {
-            label: 'Add to Essentials',
-            enabled: m.essentialTabIds.length < state.settings.essentialsMax,
-            click: () => tabs.toggleEssential(tabId)
-          },
-      tab.essential
-        ? { label: 'Unpin Tab', click: () => tabs.togglePin(tabId) }
-        : { label: tab.pinned ? 'Unpin Tab' : 'Pin Tab', click: () => tabs.togglePin(tabId) },
+        ? { label: 'Unpin Tab', click: () => tabs.togglePin(tabId, win) }
+        : { label: tab.pinned ? 'Unpin Tab' : 'Pin Tab', click: () => tabs.togglePin(tabId, win) },
       ...(tab.pinned || tab.essential
         ? [
             {
               label: 'Reset Pinned Tab',
               enabled: pinnedChanged,
-              click: () => tabs.resetPinned(tabId)
+              click: () => tabs.resetPinned(tabId, true, win)
             },
             {
-              label: 'Edit Pinned Tab (set current URL)',
-              enabled: pinnedChanged,
-              click: () => tabs.editPinnedUrl(tabId, tab.url)
+              label: 'Edit Pinned Tab…',
+              click: () => this.browser.emit('tab.editPinnedUrl', { tabId }, win)
             }
           ]
         : []),
@@ -300,45 +389,62 @@ export class Menus {
       {
         label: 'Split with Current Tab',
         enabled: canSplitWithActive,
-        click: () => active && tabs.createSplit([active.id, tab.id], 'vertical')
+        click: () => active && tabs.createSplit([active.id, tab.id], 'vertical', win)
       },
       ...(tab.splitGroupId
-        ? [{ label: 'Un-split Tab', click: () => tabs.removeFromSplit(tabId, true) }]
+        ? [{ label: 'Un-split Tab', click: () => tabs.removeFromSplit(tabId, true, win) }]
         : []),
       {
-        label: 'Move to Space',
+        label: local ? 'Move to Space…' : 'Move to Space',
         enabled: !tab.essential && otherSpaces.length > 0,
         submenu: otherSpaces.map((s) => ({
           label: `${s.icon ? `${s.icon} ` : ''}${s.name}`,
           click: () =>
-            tabs.moveTab(tabId, {
-              spaceId: s.id,
-              section: tab.pinned ? 'pinned' : 'regular',
-              index: Number.MAX_SAFE_INTEGER
-            })
+            tabs.moveTab(
+              tabId,
+              {
+                spaceId: s.id,
+                section: tab.pinned ? 'pinned' : 'regular',
+                index: Number.MAX_SAFE_INTEGER
+              },
+              win
+            )
         }))
       },
-      {
-        label: 'Move to Folder',
-        enabled: !tab.essential && !tab.pinned,
-        submenu: [
-          ...folders.map((f) => ({
-            label: `${f.icon} ${f.name}`,
-            type: 'checkbox' as const,
-            checked: tab.folderId === f.id,
-            click: () => tabs.moveToFolder(tabId, tab.folderId === f.id ? null : f.id)
-          })),
-          ...(folders.length ? [{ type: 'separator' as const }] : []),
-          { label: 'New Folder…', click: () => this.browser.newFolderWithTab(space.id, tabId) },
-          ...(tab.folderId
-            ? [{ label: 'Remove from Folder', click: () => tabs.moveToFolder(tabId, null) }]
-            : [])
-        ]
-      },
+      ...(local
+        ? []
+        : [
+            {
+              label: 'Move to Folder',
+              enabled: !tab.essential && !tab.pinned,
+              submenu: [
+                ...folders.map((f) => ({
+                  label: `${f.icon} ${f.name}`,
+                  type: 'checkbox' as const,
+                  checked: tab.folderId === f.id,
+                  click: () => tabs.moveToFolder(tabId, tab.folderId === f.id ? null : f.id)
+                })),
+                ...(folders.length ? [{ type: 'separator' as const }] : []),
+                {
+                  label: 'New Folder…',
+                  click: () => this.browser.newFolderWithTab(space.id, tabId, win)
+                },
+                ...(tab.folderId
+                  ? [{ label: 'Remove from Folder', click: () => tabs.moveToFolder(tabId, null) }]
+                  : [])
+              ]
+            },
+            {
+              label: 'Add Route for Domain',
+              enabled: Boolean(domain) && !state.settings.spaceRouting[domain],
+              submenu: this.spaceSubmenu(null, (sid) => this.browser.addRouteForTab(tabId, sid))
+            }
+          ]),
       {
         label: 'Open in New Container Tab',
+        enabled: !win.isPrivate,
         submenu: this.containerSubmenu((cid) =>
-          tabs.createTab({ url: tab.url, active: true, containerId: cid })
+          tabs.createTab({ url: tab.url, active: true, containerId: cid }, win)
         )
       },
       { type: 'separator' },
@@ -346,7 +452,20 @@ export class Menus {
         label: tab.bookmarked ? 'Remove Bookmark' : 'Bookmark Tab',
         click: () => this.browser.toggleBookmark(tabId)
       },
-      { label: 'Copy URL', click: () => tabs.copyUrl(tabId) },
+      {
+        label: 'Share',
+        submenu: [
+          { label: 'Copy Link', click: () => tabs.copyUrl(tabId) },
+          { label: 'Copy Link as Markdown', click: () => tabs.copyUrl(tabId, true) },
+          {
+            label: 'Email Link…',
+            click: () =>
+              void shell.openExternal(
+                `mailto:?subject=${encodeURIComponent(tab.customTitle ?? tab.title)}&body=${encodeURIComponent(tab.url)}`
+              )
+          }
+        ]
+      },
       {
         label: 'Unload Tab',
         enabled: !tab.discarded && active?.id !== tabId,
@@ -355,196 +474,321 @@ export class Menus {
       { type: 'separator' },
       ...(!tab.essential
         ? [
-            { label: 'Close Tabs Above', click: () => tabs.closeAbove(tabId) },
-            { label: 'Close Tabs Below', click: () => tabs.closeBelow(tabId) },
-            { label: 'Close Other Tabs', click: () => tabs.closeOthers(tabId) },
+            { label: 'Close Tabs Above', click: () => tabs.closeAbove(tabId, win) },
+            { label: 'Close Tabs Below', click: () => tabs.closeBelow(tabId, win) },
+            { label: 'Close Other Tabs', click: () => tabs.closeOthers(tabId, win) },
             { type: 'separator' as const }
           ]
         : []),
       {
         label: tab.pinned || tab.essential ? 'Close Tab (keep pinned)' : 'Close Tab',
-        click: () => tabs.closeTab(tabId)
+        click: () => tabs.closeTab(tabId, false, win)
       },
       ...(tab.pinned || tab.essential
-        ? [{ label: 'Remove Tab', click: () => tabs.closeTab(tabId, true) }]
+        ? [{ label: 'Remove Tab', click: () => tabs.closeTab(tabId, true, win) }]
         : [])
     ]
-    this.popup(template)
+    this.popup(template, win)
   }
 
-  showNewTabContextMenu(): void {
+  showNewTabContextMenu(win: ZenWindow): void {
     const { tabs, state } = this.browser
-    const space = tabs.activeSpace
-    this.popup([
-      { label: 'New Tab', click: () => this.browser.emit('urlbar.toggle', { mode: 'new-tab' }) },
-      {
-        label: 'New Tab in Container',
-        submenu: [
-          {
-            label: 'No Container',
-            click: () => tabs.createTab({ containerId: DEFAULT_CONTAINER_ID, active: true })
-          },
-          ...this.containerSubmenu((cid) => tabs.createTab({ containerId: cid, active: true }))
-        ]
-      },
-      { type: 'separator' },
-      { label: 'New Folder', click: () => this.browser.createFolder(space.id, 'New Folder', '📁') },
-      { label: 'New Space…', click: () => this.browser.emit('space.new', undefined) },
-      { type: 'separator' },
-      {
-        label: 'Clear Unpinned Tabs',
-        enabled: space.tabIds.some((id) => !state.model.tabs[id]?.pinned),
-        click: () => tabs.closeUnpinned(space.id)
-      }
-    ])
+    const space = win.activeSpace()
+    const local = Boolean(win.localSpace)
+    this.popup(
+      [
+        {
+          label: 'New Tab',
+          click: () => this.browser.emit('urlbar.toggle', { mode: 'new-tab' }, win)
+        },
+        {
+          label: 'New Tab in Container',
+          enabled: !win.isPrivate,
+          submenu: [
+            {
+              label: 'No Container',
+              click: () => tabs.createTab({ containerId: DEFAULT_CONTAINER_ID, active: true }, win)
+            },
+            ...this.containerSubmenu((cid) =>
+              tabs.createTab({ containerId: cid, active: true }, win)
+            )
+          ]
+        },
+        { type: 'separator' },
+        ...(local
+          ? []
+          : [
+              {
+                label: 'New Folder',
+                click: () => this.browser.createFolder(space.id, 'New Folder', '📁', win)
+              },
+              {
+                label: 'New Live Folder…',
+                click: () => this.browser.emit('overlay.open', { kind: 'live-folder' }, win)
+              },
+              { label: 'New Space…', click: () => this.browser.emit('space.new', undefined, win) },
+              { type: 'separator' as const }
+            ]),
+        {
+          label: 'Clear Unpinned Tabs',
+          enabled: space.tabIds.some((id) => !state.model.tabs[id]?.pinned),
+          click: () => tabs.closeUnpinned(space.id, win)
+        }
+      ],
+      win
+    )
   }
 
   // ---------------------------------------------------------------------------
   // Spaces & folders
   // ---------------------------------------------------------------------------
 
-  showSpaceContextMenu(spaceId: string): void {
+  showSpaceContextMenu(spaceId: string, win: ZenWindow): void {
     const { tabs, state } = this.browser
     const space = state.model.spaces.find((s) => s.id === spaceId)
     if (!space) return
     const idx = state.model.spaces.indexOf(space)
-    this.popup([
-      { label: 'Edit Space…', click: () => this.browser.emit('space.edit', { spaceId }) },
-      { label: 'Change Theme…', click: () => this.browser.emit('theme.open', { spaceId }) },
-      { type: 'separator' },
-      {
-        label: 'Move Left',
-        enabled: idx > 0,
-        click: () => this.browser.reorderSpace(spaceId, idx - 1)
-      },
-      {
-        label: 'Move Right',
-        enabled: idx < state.model.spaces.length - 1,
-        click: () => this.browser.reorderSpace(spaceId, idx + 1)
-      },
-      { type: 'separator' },
-      { label: 'Unload Space', click: () => tabs.unloadSpace(spaceId) },
-      { label: 'Unload All Spaces Except Current', click: () => this.browser.unloadOtherSpaces() },
-      { label: 'Close Unpinned Tabs', click: () => tabs.closeUnpinned(spaceId) },
-      { type: 'separator' },
-      {
-        label: 'Space Routing Settings…',
-        click: () => this.browser.emit('overlay.open', { kind: 'settings' })
-      },
-      { type: 'separator' },
-      {
-        label: 'Delete Space',
-        enabled: state.model.spaces.length > 1,
-        click: () => this.browser.deleteSpace(spaceId)
-      }
-    ])
+    this.popup(
+      [
+        { label: 'Edit Space…', click: () => this.browser.emit('space.edit', { spaceId }, win) },
+        { label: 'Change Theme…', click: () => this.browser.emit('theme.open', { spaceId }, win) },
+        { type: 'separator' },
+        {
+          label: 'Move Left',
+          enabled: idx > 0,
+          click: () => this.browser.reorderSpace(spaceId, idx - 1)
+        },
+        {
+          label: 'Move Right',
+          enabled: idx < state.model.spaces.length - 1,
+          click: () => this.browser.reorderSpace(spaceId, idx + 1)
+        },
+        { type: 'separator' },
+        { label: 'Open in New Window', click: () => this.openSpaceInNewWindow(spaceId, win) },
+        { type: 'separator' },
+        { label: 'Unload Space', click: () => tabs.unloadSpace(spaceId) },
+        {
+          label: 'Unload All Spaces Except Current',
+          click: () => this.browser.unloadOtherSpaces(win)
+        },
+        { label: 'Close Unpinned Tabs', click: () => tabs.closeUnpinned(spaceId, win) },
+        { type: 'separator' },
+        {
+          label: 'Space Routing Settings…',
+          click: () => this.browser.emit('overlay.open', { kind: 'settings' }, win)
+        },
+        { type: 'separator' },
+        {
+          label: 'Delete Space',
+          enabled: state.model.spaces.length > 1,
+          click: () => this.browser.deleteSpace(spaceId, win)
+        }
+      ],
+      win
+    )
   }
 
-  showFolderContextMenu(folderId: string): void {
+  private openSpaceInNewWindow(spaceId: string, from: ZenWindow): void {
+    const win = this.browser.createWindow({ kind: 'synced', from })
+    this.browser.tabs.switchSpace(spaceId, win)
+  }
+
+  showFolderContextMenu(folderId: string, win: ZenWindow): void {
     const { state } = this.browser
     const folder = state.model.folders[folderId]
     if (!folder) return
-    this.popup([
-      {
-        label: 'Rename Folder…',
-        click: () => this.browser.emit('folder.startRename', { folderId })
-      },
-      {
-        label: folder.collapsed ? 'Expand Folder' : 'Collapse Folder',
-        click: () => this.browser.updateFolder(folderId, { collapsed: !folder.collapsed })
-      },
-      { type: 'separator' },
-      { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
-      { label: 'Delete Folder', click: () => this.browser.deleteFolder(folderId, false) }
-    ])
+    const live = this.browser.liveFolders.get(folderId)
+    this.popup(
+      [
+        {
+          label: 'Rename Folder…',
+          click: () => this.browser.emit('folder.startRename', { folderId }, win)
+        },
+        {
+          label: folder.collapsed ? 'Expand Folder' : 'Collapse Folder',
+          click: () => this.browser.updateFolder(folderId, { collapsed: !folder.collapsed })
+        },
+        { type: 'separator' },
+        ...(live
+          ? [
+              {
+                label: 'Refresh Live Folder',
+                click: () => void this.browser.liveFolders.refresh(folderId, true)
+              },
+              {
+                label: 'Refresh Every',
+                submenu: [15, 30, 60, 120, 240, 480].map((minutes) => ({
+                  label:
+                    minutes < 60
+                      ? `${minutes} minutes`
+                      : `${minutes / 60} hour${minutes > 60 ? 's' : ''}`,
+                  type: 'radio' as const,
+                  checked: live.intervalMinutes === minutes,
+                  click: () => this.browser.liveFolders.setInterval(folderId, minutes)
+                }))
+              },
+              {
+                label: 'Live Folder Settings…',
+                click: () =>
+                  this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
+              },
+              {
+                label: 'Stop Updating (make static)',
+                click: () => this.browser.liveFolders.remove(folderId)
+              }
+            ]
+          : [
+              {
+                label: 'Make Live Folder…',
+                click: () =>
+                  this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
+              }
+            ]),
+        { type: 'separator' },
+        { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
+        { label: 'Delete Folder', click: () => this.browser.deleteFolder(folderId, false) }
+      ],
+      win
+    )
   }
 
   /** The "⋯" application menu in the toolbar (Firefox's hamburger menu). */
-  showAppMenu(): void {
+  showAppMenu(win: ZenWindow): void {
     const { state, tabs } = this.browser
-    const active = tabs.activeTab
-    const cm = state.settings.compactMode
-    this.popup([
-      { label: 'New Tab', click: () => this.browser.emit('urlbar.toggle', { mode: 'new-tab' }) },
-      { label: 'New Space…', click: () => this.browser.emit('space.new', undefined) },
-      { type: 'separator' },
-      { label: 'Bookmarks', click: () => this.browser.emit('overlay.open', { kind: 'bookmarks' }) },
-      { label: 'History', click: () => this.browser.emit('overlay.open', { kind: 'history' }) },
-      { label: 'Downloads', click: () => this.browser.emit('overlay.open', { kind: 'downloads' }) },
-      { type: 'separator' },
-      {
-        label: 'Compact Mode',
-        type: 'checkbox',
-        checked: cm.enabled,
-        click: () => this.browser.toggleCompactMode()
-      },
-      {
-        label: 'Change Theme…',
-        click: () => this.browser.emit('theme.open', { spaceId: state.model.activeSpaceId })
-      },
-      {
-        label: 'Zoom',
-        submenu: [
-          {
-            label: 'Zoom In',
-            enabled: Boolean(active),
-            click: () => active && tabs.adjustZoom(active.id, 1)
-          },
-          {
-            label: 'Zoom Out',
-            enabled: Boolean(active),
-            click: () => active && tabs.adjustZoom(active.id, -1)
-          },
-          {
-            label: 'Reset Zoom',
-            enabled: Boolean(active),
-            click: () => active && tabs.setZoom(active.id, 1)
-          }
-        ]
-      },
-      {
-        label: 'Fullscreen',
-        type: 'checkbox',
-        checked: this.browser.window.win.isFullScreen(),
-        click: () => this.browser.toggleFullscreen()
-      },
-      { type: 'separator' },
-      {
-        label: 'Find in Page…',
-        enabled: Boolean(active),
-        click: () => active && this.browser.emit('find.open', { tabId: active.id })
-      },
-      {
-        label: 'Print…',
-        enabled: Boolean(active),
-        click: () => active && this.browser.actions.run('page.print', { sourceTabId: active.id })
-      },
-      {
-        label: 'Save Page As…',
-        enabled: Boolean(active),
-        click: () => active && this.browser.actions.run('page.savePage', { sourceTabId: active.id })
-      },
-      {
-        label: 'Take Screenshot',
-        enabled: Boolean(active),
-        click: () =>
-          active && this.browser.actions.run('page.screenshot', { sourceTabId: active.id })
-      },
-      { type: 'separator' },
-      {
-        label: 'Keyboard Shortcuts',
-        click: () => this.browser.emit('overlay.open', { kind: 'shortcuts' })
-      },
-      { label: 'Settings', click: () => this.browser.emit('overlay.open', { kind: 'settings' }) },
-      {
-        label: 'Developer Tools',
-        enabled: Boolean(active),
-        click: () => active && tabs.toggleDevtools(active.id)
-      },
-      { type: 'separator' },
-      { label: `About Zen (Chromium) ${state.version}`, enabled: false },
-      { label: 'Quit', click: () => this.browser.actions.run('app.quit') }
-    ])
+    const active = tabs.activeTabFor(win)
+    const local = Boolean(win.localSpace)
+    this.popup(
+      [
+        {
+          label: 'New Tab',
+          click: () => this.browser.emit('urlbar.toggle', { mode: 'new-tab' }, win)
+        },
+        ...(local
+          ? []
+          : [{ label: 'New Space…', click: () => this.browser.emit('space.new', undefined, win) }]),
+        { type: 'separator' },
+        {
+          label: 'New Window',
+          click: () => this.browser.createWindow({ kind: 'synced', from: win })
+        },
+        {
+          label: 'New Blank Window',
+          click: () => this.browser.createWindow({ kind: 'unsynced', from: win })
+        },
+        {
+          label: 'New Private Window',
+          click: () => this.browser.createWindow({ kind: 'private', from: win })
+        },
+        { type: 'separator' },
+        {
+          label: 'Bookmarks',
+          click: () => this.browser.emit('overlay.open', { kind: 'bookmarks' }, win)
+        },
+        {
+          label: 'History',
+          click: () => this.browser.emit('overlay.open', { kind: 'history' }, win)
+        },
+        {
+          label: 'Downloads',
+          click: () => this.browser.emit('overlay.open', { kind: 'downloads' }, win)
+        },
+        {
+          label: 'Add-ons and Themes',
+          click: () => this.browser.emit('overlay.open', { kind: 'addons' }, win)
+        },
+        { type: 'separator' },
+        {
+          label: 'Compact Mode',
+          type: 'checkbox',
+          checked: win.compactEnabled,
+          click: () => this.browser.toggleCompactMode(win)
+        },
+        ...(local
+          ? []
+          : [
+              {
+                label: 'Change Theme…',
+                click: () => this.browser.emit('theme.open', { spaceId: win.activeSpaceId }, win)
+              }
+            ]),
+        {
+          label: 'Zoom',
+          submenu: [
+            {
+              label: 'Zoom In',
+              enabled: Boolean(active),
+              click: () => active && tabs.adjustZoom(active.id, 1)
+            },
+            {
+              label: 'Zoom Out',
+              enabled: Boolean(active),
+              click: () => active && tabs.adjustZoom(active.id, -1)
+            },
+            {
+              label: 'Reset Zoom',
+              enabled: Boolean(active),
+              click: () => active && tabs.setZoom(active.id, 1)
+            }
+          ]
+        },
+        {
+          label: 'Fullscreen',
+          type: 'checkbox',
+          checked: win.win.isFullScreen(),
+          click: () => this.browser.toggleFullscreen(win)
+        },
+        { type: 'separator' },
+        {
+          label: 'Find in Page…',
+          enabled: Boolean(active),
+          click: () => active && this.browser.emit('find.open', { tabId: active.id }, win)
+        },
+        {
+          label: 'Reader View',
+          enabled: Boolean(active) && this.browser.reader.canRead(active),
+          click: () => active && this.browser.reader.toggle(active.id, win)
+        },
+        {
+          label: 'Print…',
+          enabled: Boolean(active),
+          click: () =>
+            active && this.browser.actions.run('page.print', { sourceTabId: active.id, win })
+        },
+        {
+          label: 'Save Page As…',
+          enabled: Boolean(active),
+          click: () =>
+            active && this.browser.actions.run('page.savePage', { sourceTabId: active.id, win })
+        },
+        {
+          label: 'Take Screenshot',
+          enabled: Boolean(active),
+          click: () =>
+            active && this.browser.actions.run('page.screenshot', { sourceTabId: active.id, win })
+        },
+        { type: 'separator' },
+        {
+          label: 'Keyboard Shortcuts',
+          click: () => this.browser.emit('overlay.open', { kind: 'shortcuts' }, win)
+        },
+        {
+          label: 'Settings',
+          click: () => this.browser.emit('overlay.open', { kind: 'settings' }, win)
+        },
+        {
+          label: 'Developer Tools',
+          enabled: Boolean(active),
+          click: () => active && tabs.toggleDevtools(active.id)
+        },
+        { type: 'separator' },
+        { label: `About Zen (Chromium) ${state.version}`, enabled: false },
+        {
+          label: 'Quit',
+          click: () => this.browser.actions.run('app.quit', { sourceTabId: null, win })
+        }
+      ],
+      win
+    )
   }
 
   describe(url: string): string {

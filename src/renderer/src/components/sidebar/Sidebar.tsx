@@ -1,8 +1,15 @@
 import type { JSX } from 'react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { FolderInput, VenetianMask } from 'lucide-react'
 import type { UIState } from '@shared/types'
-import { run } from '@renderer/lib/api'
-import { activeSpace, activeTab, essentialsFor } from '@renderer/lib/selectors'
+import { cmd, run } from '@renderer/lib/api'
+import {
+  activeSpace,
+  activeTab,
+  essentialsFor,
+  isLocalWindow,
+  isPrivateWindow
+} from '@renderer/lib/selectors'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Essentials } from './Essentials'
@@ -24,12 +31,13 @@ export function Sidebar({ state, isDark, floating, onPointerLeave }: Props): JSX
   const space = activeSpace(state)
   const tab = activeTab(state)
   const compact = !state.settings.sidebarExpanded
+  const local = isLocalWindow(state)
   const width = compact ? COLLAPSED_WIDTH : 'var(--zen-sidebar-width)'
   const activeIndex = Math.max(
     0,
     state.spaces.findIndex((s) => s.id === state.activeSpaceId)
   )
-  const essentials = essentialsFor(state, space)
+  const essentials = local ? [] : essentialsFor(state, space)
   const showToolbar = state.settings.toolbarLayout !== 'multiple'
   const side = state.settings.sidebarSide
 
@@ -44,7 +52,11 @@ export function Sidebar({ state, isDark, floating, onPointerLeave }: Props): JSX
       data-side={side}
     >
       <SidebarTop state={state} tab={tab} compact={compact} showToolbar={showToolbar} />
-      <Essentials essentials={essentials} activeTabId={space.activeTabId} compact={compact} />
+      {local ? (
+        <LocalWindowHeader state={state} compact={compact} />
+      ) : (
+        <Essentials essentials={essentials} activeTabId={space.activeTabId} compact={compact} />
+      )}
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <div
           className="zen-space-strip h-full"
@@ -68,6 +80,103 @@ export function Sidebar({ state, isDark, floating, onPointerLeave }: Props): JSX
       <SidebarBottom state={state} compact={compact} isDark={isDark} />
       {!compact && !floating && <Resizer state={state} />}
     </aside>
+  )
+}
+
+/**
+ * Blank / private windows have no Essentials or spaces; Zen shows what the window is and a
+ * "Move to…" helper to bring the tabs back into a real space.
+ */
+function LocalWindowHeader({ state, compact }: { state: UIState; compact: boolean }): JSX.Element {
+  const isPrivate = isPrivateWindow(state)
+  const space = activeSpace(state)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (!open) return
+    const close = (e: MouseEvent): void => {
+      if (!menuRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  }, [open])
+  const canMove = space.tabIds.length > 0
+  return (
+    <div
+      className={cn(
+        'relative mx-2 mb-1 flex items-center gap-2 px-2 py-1.5 text-[12px] text-[var(--zen-muted)]',
+        compact && 'justify-center px-0'
+      )}
+    >
+      {isPrivate ? (
+        <VenetianMask className="h-4 w-4 shrink-0" />
+      ) : (
+        <span className="text-sm leading-none">◫</span>
+      )}
+      {!compact && (
+        <span className="min-w-0 flex-1 truncate font-medium">
+          {isPrivate ? 'Private Browsing' : 'Blank window'}
+        </span>
+      )}
+      {!compact && (
+        <button
+          type="button"
+          className="zen-toolbar-button h-6 w-6"
+          title="Move these tabs to a space…"
+          disabled={!canMove}
+          onClick={() => setOpen(!open)}
+        >
+          <FolderInput className="h-3.5 w-3.5" />
+        </button>
+      )}
+      {open && (
+        <div
+          ref={menuRef}
+          className="zen-panel zen-animate-in absolute right-0 top-full z-30 mt-1 w-56 p-1"
+        >
+          <div className="px-2 py-1 text-[11px] uppercase tracking-wide text-[var(--zen-muted)]">
+            Move tabs to
+          </div>
+          <MoveTargets
+            onPick={(spaceId) => {
+              setOpen(false)
+              run('window.moveTabsToSpace', { spaceId })
+            }}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Blank windows only see their own space in the snapshot; the real spaces are fetched on demand. */
+function MoveTargets({ onPick }: { onPick: (spaceId: string) => void }): JSX.Element {
+  const [spaces, setSpaces] = useState<Array<{ id: string; name: string; icon: string }>>([])
+  useEffect(() => {
+    let cancelled = false
+    void cmd('app.listSpaces', undefined).then((list) => {
+      if (!cancelled) setSpaces(list)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  if (!spaces.length)
+    return <div className="px-2 py-2 text-[12px] text-[var(--zen-muted)]">No spaces</div>
+  return (
+    <>
+      {spaces.map((s) => (
+        <button
+          key={s.id}
+          type="button"
+          className="zen-squircle flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[13px] hover:bg-[var(--zen-element-bg)]"
+          onClick={() => onPick(s.id)}
+        >
+          <span className="text-sm leading-none">{s.icon || '◦'}</span>
+          <span className="min-w-0 flex-1 truncate">{s.name}</span>
+        </button>
+      ))}
+    </>
   )
 }
 

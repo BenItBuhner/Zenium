@@ -54,3 +54,17 @@ export function isDarkScheme(state: UIState): boolean {
 export function containerOf(state: UIState, id: string): Container | undefined {
   return state.containers.find((c) => c.id === id)
 }
+
+/** Blank and private windows own a temporary tab list without spaces / Essentials. */
+export function isLocalWindow(state: UIState): boolean {
+  return state.window.kind !== 'synced'
+}
+
+export function isPrivateWindow(state: UIState): boolean {
+  return state.window.kind === 'private'
+}
+
+/** The active tab's live page is currently shown in another window (Zen shows a dimmed preview). */
+export function isForeignTab(state: UIState, tabId: string | null | undefined): boolean {
+  return Boolean(tabId) && state.foreignTabIds.includes(tabId as string)
+}

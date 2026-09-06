@@ -226,6 +226,12 @@ export function makeTheme(primaryHex: string, extra: string[] = []): SpaceTheme 
   }
 }
 
+/** Zen's private-window look: a deep purple gradient regardless of the space theme. */
+export const PRIVATE_THEME: SpaceTheme = {
+  ...makeTheme('#5b3fa0', ['#2b1d4f', '#3f2c7a']),
+  opacity: 0.85
+}
+
 /** Preset gradients offered in the theme picker / onboarding. */
 export const THEME_PRESETS: Array<{ name: string; theme: SpaceTheme }> = [
   { name: 'Zen Purple', theme: makeTheme('#9d7cff', ['#ff8bd1']) },

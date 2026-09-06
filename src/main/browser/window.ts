@@ -1,8 +1,20 @@
 import { BrowserWindow, nativeImage, screen, shell, type WebContentsView } from 'electron'
 import { join } from 'node:path'
 import { is } from '@electron-toolkit/utils'
-import type { EventName, Events, LayoutReport, Rect } from '../../shared/types'
+import type {
+  EventName,
+  Events,
+  FindResult,
+  GlanceState,
+  LayoutReport,
+  Rect,
+  Space,
+  WindowKind,
+  WindowState
+} from '../../shared/types'
 import type { Browser } from './browser'
+import type { PersistedWindow } from './state'
+import { getSpace, tabVisibleIn } from './model'
 import { resolveTheme, rgbToHex } from '../../shared/theme'
 import icon from '../../../resources/icon.png?asset'
 
@@ -11,28 +23,156 @@ const MIN_HEIGHT = 420
 /** Width (px) of the edge zone that reveals the sidebar in compact mode. */
 const COMPACT_REVEAL_ZONE = 14
 
+export interface WindowInit {
+  id: string
+  kind: WindowKind
+  bounds: Rect | null
+  maximized: boolean
+  activeSpaceId: string
+  selection: Record<string, string>
+  compact: boolean
+  /** The private space of a blank / private window (already registered in the model). */
+  localSpace: Space | null
+  /** Window to offset the new one from (new windows cascade like Firefox). */
+  cascadeFrom?: ZenWindow
+}
+
 /**
- * The single browser window. Its own web contents render Zen's chrome (sidebar, toolbar,
- * overlays); tab pages are `WebContentsView` children positioned wherever the renderer reports
- * the content area to be.
+ * One browser window. Its own web contents render Zen's chrome (sidebar, toolbar, overlays);
+ * tab pages are `WebContentsView` children positioned wherever the renderer reports the content
+ * area to be.
+ *
+ * Windows share the tab model (Zen's window sync) but each keeps its own space / tab selection,
+ * Glance, find bar and compact-mode state. A tab's live page lives in one window at a time – the
+ * others show a dimmed preview until they are focused.
  */
 export class ZenWindow {
+  readonly id: string
+  readonly kind: WindowKind
   win!: BrowserWindow
+  activeSpaceId: string
+  /** Per-space selected tab of this window (falls back to the space's last selection). */
+  readonly selection = new Map<string, string | null>()
+  readonly localSpace: Space | null
+  glance: GlanceState | null = null
+  findResult: FindResult | null = null
+  compactSidebarRevealed = false
+  compactEnabled: boolean
+  compactSidebarPersistent = false
+  htmlFullscreenTabId: string | null = null
+  lastFocusedAt = 0
   private boundsTimer: NodeJS.Timeout | null = null
   private lastLayout: LayoutReport | null = null
   private pendingContentFocus = false
   private compactTimer: NodeJS.Timeout | null = null
   private compactLastSent: boolean | null = null
+  private initialBounds: Rect | null
+  private initialMaximized: boolean
+  private savedBounds: Rect | null
+  private closing = false
 
-  constructor(private readonly browser: Browser) {}
+  constructor(
+    private readonly browser: Browser,
+    init: WindowInit
+  ) {
+    this.id = init.id
+    this.kind = init.kind
+    this.activeSpaceId = init.activeSpaceId
+    this.localSpace = init.localSpace
+    this.compactEnabled = init.compact
+    for (const [spaceId, tabId] of Object.entries(init.selection))
+      this.selection.set(spaceId, tabId)
+    this.initialBounds = init.bounds
+    this.savedBounds = init.bounds
+    this.initialMaximized = init.maximized
+    if (init.cascadeFrom && !init.bounds) {
+      const b = init.cascadeFrom.win.getNormalBounds()
+      this.initialBounds = { x: b.x + 28, y: b.y + 28, width: b.width, height: b.height }
+    }
+  }
+
+  get isPrivate(): boolean {
+    return this.kind === 'private'
+  }
+
+  get alive(): boolean {
+    return Boolean(this.win) && !this.win.isDestroyed()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Selection
+  // ---------------------------------------------------------------------------
+
+  /** The space this window is showing. */
+  activeSpace(): Space {
+    if (this.localSpace) return this.localSpace
+    const m = this.browser.state.model
+    return getSpace(m, this.activeSpaceId) ?? m.spaces[0]
+  }
+
+  /** Tab selected in `space` by this window, validated against the tabs the window can show. */
+  selectedTabIn(space: Space): string | null {
+    const m = this.browser.state.model
+    const valid = (id: string | null | undefined): id is string => {
+      if (!id) return false
+      const tab = m.tabs[id]
+      if (!tab || !tabVisibleIn(tab, this.id)) return false
+      if (tab.essential) return !space.windowId
+      return tab.spaceId === space.id
+    }
+    const own = this.selection.get(space.id)
+    if (valid(own)) return own
+    if (valid(space.activeTabId)) return space.activeTabId
+    return null
+  }
+
+  select(space: Space, tabId: string | null): void {
+    this.selection.set(space.id, tabId)
+    if (tabId) space.activeTabId = tabId
+  }
+
+  windowState(): WindowState {
+    const alive = this.alive
+    return {
+      id: this.id,
+      kind: this.kind,
+      maximized: alive ? this.win.isMaximized() : this.initialMaximized,
+      fullscreen: alive ? this.win.isFullScreen() : false,
+      focused: alive ? this.win.isFocused() : false,
+      htmlFullscreenTabId: this.htmlFullscreenTabId
+    }
+  }
+
+  /** Visible tabs whose live page is attached to another window right now. */
+  foreignTabIds(): string[] {
+    const tabs = this.browser.tabs
+    return tabs.visibleTabIds(this).filter((id) => {
+      const owner = tabs.ownerOf(id)
+      return owner !== undefined && owner !== this
+    })
+  }
+
+  toPersisted(): PersistedWindow {
+    const selection: Record<string, string> = {}
+    for (const [spaceId, tabId] of this.selection) if (tabId) selection[spaceId] = tabId
+    return {
+      id: this.id,
+      bounds: this.savedBounds,
+      maximized: this.alive ? this.win.isMaximized() : this.initialMaximized,
+      activeSpaceId: this.activeSpaceId,
+      selection,
+      compact: this.compactEnabled
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Lifecycle
+  // ---------------------------------------------------------------------------
 
   create(): BrowserWindow {
     const state = this.browser.state
-    const bounds = this.sanitizeBounds(state.windowBounds)
-    const theme = resolveTheme(
-      this.browser.tabs.activeSpace.theme,
-      state.settings.colorScheme === 'dark'
-    )
+    const bounds = this.sanitizeBounds(this.initialBounds)
+    const theme = resolveTheme(this.activeSpace().theme, state.settings.colorScheme === 'dark')
     const isMac = process.platform === 'darwin'
     this.win = new BrowserWindow({
       ...bounds,
@@ -44,7 +184,7 @@ export class ZenWindow {
       trafficLightPosition: isMac ? { x: 14, y: 14 } : undefined,
       backgroundColor: rgbToHex(theme.averageColor),
       autoHideMenuBar: true,
-      title: 'Zen',
+      title: this.isPrivate ? 'Zen (Private Browsing)' : 'Zen',
       ...(process.platform === 'linux' ? { icon } : {}),
       webPreferences: {
         preload: join(__dirname, '../preload/index.js'),
@@ -55,35 +195,52 @@ export class ZenWindow {
         backgroundThrottling: false
       }
     })
-    if (state.window.maximized) this.win.maximize()
+    if (this.initialMaximized) this.win.maximize()
 
     this.win.once('ready-to-show', () => this.win.show())
     this.win.on('maximize', () => this.syncWindowState())
     this.win.on('unmaximize', () => this.syncWindowState())
     this.win.on('enter-full-screen', () => this.syncWindowState())
     this.win.on('leave-full-screen', () => this.syncWindowState())
-    this.win.on('focus', () => this.syncWindowState())
+    this.win.on('focus', () => {
+      this.lastFocusedAt = Date.now()
+      this.browser.onWindowFocused(this)
+      this.syncWindowState()
+    })
     this.win.on('blur', () => this.syncWindowState())
     this.win.on('resize', () => this.scheduleBoundsSave())
     this.win.on('move', () => this.scheduleBoundsSave())
+    this.win.on('swipe', (_e, direction) => {
+      // macOS three-finger swipe switches spaces like Zen's touchpad gesture.
+      if (this.kind !== 'synced') return
+      if (direction === 'left')
+        this.browser.actions.run('space.next', { sourceTabId: null, win: this })
+      if (direction === 'right')
+        this.browser.actions.run('space.prev', { sourceTabId: null, win: this })
+    })
     this.win.on('close', () => {
+      this.closing = true
       this.saveBounds()
+      this.browser.onWindowClosing(this)
       this.browser.state.flushSync()
     })
     this.win.on('closed', () => {
       this.stopCompactTracking()
-      this.browser.onWindowClosed()
+      this.browser.onWindowClosed(this)
     })
     this.startCompactTracking()
 
     const wc = this.win.webContents
-    wc.on('before-input-event', (event, input) => this.browser.keys.handle(event, input, null))
+    wc.on('before-input-event', (event, input) =>
+      this.browser.keys.handle(event, input, null, this)
+    )
     wc.setWindowOpenHandler(({ url }) => {
       if (/^https?:/.test(url)) void shell.openExternal(url)
       return { action: 'deny' }
     })
     wc.on('will-navigate', (event) => event.preventDefault())
     wc.on('context-menu', (event) => event.preventDefault())
+    wc.on('did-finish-load', () => this.send('state', this.browser.state.snapshot(this)))
 
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
       void this.win.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -91,6 +248,10 @@ export class ZenWindow {
       void this.win.loadFile(join(__dirname, '../renderer/index.html'))
     }
     return this.win
+  }
+
+  get isClosing(): boolean {
+    return this.closing
   }
 
   private sanitizeBounds(saved: Rect | null): Rect {
@@ -129,20 +290,15 @@ export class ZenWindow {
   }
 
   private saveBounds(): void {
-    if (!this.win || this.win.isDestroyed()) return
+    if (!this.alive) return
     if (!this.win.isMaximized() && !this.win.isFullScreen()) {
-      this.browser.state.windowBounds = this.win.getNormalBounds()
+      this.savedBounds = this.win.getNormalBounds()
     }
-    this.browser.state.window.maximized = this.win.isMaximized()
-    this.browser.state.commit()
+    if (this.kind === 'synced') this.browser.state.commit()
   }
 
   private syncWindowState(): void {
-    if (!this.win || this.win.isDestroyed()) return
-    const w = this.browser.state.window
-    w.maximized = this.win.isMaximized()
-    w.fullscreen = this.win.isFullScreen()
-    w.focused = this.win.isFocused()
+    if (!this.alive) return
     this.browser.state.commitVolatile()
   }
 
@@ -166,15 +322,15 @@ export class ZenWindow {
   }
 
   private pollCompactCursor(): void {
-    if (!this.win || this.win.isDestroyed() || !this.win.isVisible()) return
+    if (!this.alive || !this.win.isVisible()) return
     const state = this.browser.state
     const cm = state.settings.compactMode
-    const hidden = cm.enabled && cm.hideSidebar && !cm.sidebarPersistent
-    if (!hidden || state.window.htmlFullscreenTabId) {
+    const hidden = this.compactEnabled && cm.hideSidebar && !this.compactSidebarPersistent
+    if (!hidden || this.htmlFullscreenTabId) {
       this.compactLastSent = null
       return
     }
-    if (!this.win.isFocused() && !state.compactSidebarRevealed) return
+    if (!this.win.isFocused() && !this.compactSidebarRevealed) return
     const bounds = this.win.getContentBounds()
     const cursor = screen.getCursorScreenPoint()
     const insideY = cursor.y >= bounds.y && cursor.y <= bounds.y + bounds.height
@@ -190,7 +346,7 @@ export class ZenWindow {
       this.send('compact.reveal', { revealed: true })
     } else if (outsideSidebar && this.compactLastSent !== false) {
       this.compactLastSent = false
-      if (state.compactSidebarRevealed) this.send('compact.reveal', { revealed: false })
+      if (this.compactSidebarRevealed) this.send('compact.reveal', { revealed: false })
     }
   }
 
@@ -199,13 +355,13 @@ export class ZenWindow {
   // ---------------------------------------------------------------------------
 
   attachView(view: WebContentsView): void {
-    if (!this.win || this.win.isDestroyed()) return
+    if (!this.alive) return
     this.win.contentView.addChildView(view)
     if (this.lastLayout) this.applyLayout(this.lastLayout)
   }
 
   detachView(view: WebContentsView): void {
-    if (!this.win || this.win.isDestroyed()) return
+    if (!this.alive) return
     this.win.contentView.removeChildView(view)
   }
 
@@ -217,12 +373,14 @@ export class ZenWindow {
   /** Position tab views exactly where the renderer laid the content area out. */
   applyLayout(report: LayoutReport): void {
     this.lastLayout = report
-    if (!this.win || this.win.isDestroyed()) return
-    const fullscreenTabId = this.browser.state.window.htmlFullscreenTabId
-    if (fullscreenTabId && this.browser.tabs.view(fullscreenTabId)) {
+    if (!this.alive) return
+    const tabs = this.browser.tabs
+    const owned = tabs.viewsOwnedBy(this)
+    const fullscreenTabId = this.htmlFullscreenTabId
+    if (fullscreenTabId && owned.has(fullscreenTabId)) {
       // An element in HTML fullscreen covers the whole window, chrome included.
       const [width, height] = this.win.getContentSize()
-      for (const [tabId, view] of this.browser.tabs.allViews()) {
+      for (const [tabId, view] of owned) {
         if (tabId === fullscreenTabId) {
           this.win.contentView.addChildView(view)
           view.setBounds({ x: 0, y: 0, width, height })
@@ -239,7 +397,7 @@ export class ZenWindow {
       for (const p of report.placements) wanted.set(p.tabId, { rect: p.rect, radius: p.radius })
     }
     const glance = report.glance
-    for (const [tabId, view] of this.browser.tabs.allViews()) {
+    for (const [tabId, view] of owned) {
       const placement = wanted.get(tabId)
       const isGlance = glance?.tabId === tabId
       if (isGlance) continue
@@ -252,7 +410,7 @@ export class ZenWindow {
       }
     }
     if (glance) {
-      const view = this.browser.tabs.view(glance.tabId)
+      const view = owned.get(glance.tabId)
       if (view) {
         // Re-adding moves the view to the top of the z-order.
         this.win.contentView.addChildView(view)
@@ -262,9 +420,10 @@ export class ZenWindow {
       }
     }
     if (this.pendingContentFocus && !report.contentHidden) this.focusContent()
-    // With no page visible (empty space / chrome overlay) keyboard input must go to the chrome,
-    // otherwise shortcuts stop working after the focused view is hidden.
-    if (report.contentHidden || (report.placements.length === 0 && !glance)) this.focusChrome()
+    // With no page visible (empty space / chrome overlay / preview of a page shown in another
+    // window) keyboard input must go to the chrome, otherwise shortcuts stop working.
+    const showsOwnPage = [...wanted.keys()].some((id) => owned.has(id))
+    if (report.contentHidden || (!showsOwnPage && !glance)) this.focusChrome()
   }
 
   /**
@@ -272,7 +431,7 @@ export class ZenWindow {
    * still hidden behind chrome UI, the focus is applied once the next layout shows it again.
    */
   focusContent(): void {
-    const active = this.browser.tabs.activeTab
+    const active = this.browser.tabs.activeTabFor(this)
     if (!active) {
       this.focusChrome()
       return
@@ -283,21 +442,25 @@ export class ZenWindow {
     }
     this.pendingContentFocus = false
     const wc = this.browser.tabs.webContents(active.id)
+    const ownsView = this.browser.tabs.ownerOf(active.id) === this
     // A view without a committed document has no renderer to deliver shortcuts through.
-    if (wc && !wc.isDestroyed() && wc.getURL() !== '') wc.focus()
+    if (ownsView && wc && !wc.isDestroyed() && wc.getURL() !== '') wc.focus()
     else this.focusChrome()
   }
 
   focusChrome(): void {
-    if (this.win && !this.win.isDestroyed()) this.win.webContents.focus()
+    if (this.alive) this.win.webContents.focus()
   }
 
   send<K extends EventName>(name: K, payload: Events[K]): void {
-    if (!this.win || this.win.isDestroyed()) return
+    if (!this.alive) return
     this.win.webContents.send('zen:event', name, payload)
   }
 
-  /** JPEG snapshot of a tab, used to keep a dimmed preview behind overlays (URL bar, Glance). */
+  /**
+   * JPEG snapshot of a tab, used to keep a dimmed preview behind overlays (URL bar, Glance) and
+   * for tabs whose live page is shown in another window.
+   */
   async snapshot(tabId: string): Promise<string | null> {
     const wc = this.browser.tabs.webContents(tabId)
     const view = this.browser.tabs.view(tabId)

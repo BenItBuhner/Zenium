@@ -1,10 +1,10 @@
 import type { JSX } from 'react'
 import { useState, type ReactNode } from 'react'
-import { Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Sparkles, Trash2 } from 'lucide-react'
 import type {
   ColorScheme,
   ContainerColor,
-  ContainerIcon,
+  ContainerIcon as ContainerIconName,
   GlanceTrigger,
   NewTabPosition,
   PinnedCloseBehavior,
@@ -13,34 +13,55 @@ import type {
   ThirdPartyPinnedBehavior,
   ToolbarLayout,
   UIState,
-  UrlbarBehavior
+  UrlbarBehavior,
+  WindowSyncMode
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
-import { cn } from '@renderer/lib/utils'
+import { activeTab } from '@renderer/lib/selectors'
+import { openOverlay } from '@renderer/lib/ui'
+import { cn, relativeTime } from '@renderer/lib/utils'
+import { ContainerIcon } from '../ContainerIcon'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Switch } from '../ui/switch'
+import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { OverlayShell } from './OverlayShell'
 import { ShortcutsSection } from './ShortcutsSection'
+import { SyncSection } from './SyncSection'
 
-type Section =
-  'look' | 'compact' | 'tabs' | 'search' | 'spaces' | 'containers' | 'shortcuts' | 'about'
+export type SettingsSection =
+  | 'look'
+  | 'compact'
+  | 'tabs'
+  | 'search'
+  | 'spaces'
+  | 'containers'
+  | 'boosts'
+  | 'mods'
+  | 'extensions'
+  | 'sync'
+  | 'shortcuts'
+  | 'about'
 
-const SECTIONS: Array<{ id: Section; label: string }> = [
+const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'look', label: 'Look and Feel' },
   { id: 'compact', label: 'Compact Mode' },
   { id: 'tabs', label: 'Tab Management' },
   { id: 'search', label: 'Search' },
   { id: 'spaces', label: 'Space Routing' },
   { id: 'containers', label: 'Containers' },
+  { id: 'boosts', label: 'Boosts' },
+  { id: 'mods', label: 'Mods' },
+  { id: 'extensions', label: 'Extensions' },
+  { id: 'sync', label: 'Sync' },
   { id: 'shortcuts', label: 'Keyboard Shortcuts' },
   { id: 'about', label: 'About' }
 ]
 
-const CONTAINER_ICONS: ContainerIcon[] = [
+const CONTAINER_ICONS: ContainerIconName[] = [
   'fingerprint',
   'briefcase',
   'dollar',
@@ -61,22 +82,22 @@ export function SettingsPanel({
   initialSection = 'look'
 }: {
   state: UIState
-  initialSection?: Section
+  initialSection?: SettingsSection
 }): JSX.Element {
-  const [section, setSection] = useState<Section>(initialSection)
+  const [section, setSection] = useState<SettingsSection>(initialSection)
   const s = state.settings
   const set = (patch: Partial<Settings>): void => run('settings.update', patch)
 
   return (
     <OverlayShell title="Settings" variant="full">
       <div className="flex h-full">
-        <nav className="w-52 shrink-0 border-r border-[var(--zen-border)] p-2">
+        <nav className="w-52 shrink-0 overflow-y-auto border-r border-[var(--zen-border)] p-2">
           {SECTIONS.map((item) => (
             <button
               key={item.id}
               type="button"
               className={cn(
-                'flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
+                'zen-squircle flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
                 section === item.id && 'bg-[var(--zen-element-bg-active)] font-medium'
               )}
               onClick={() => setSection(item.id)}
@@ -93,6 +114,10 @@ export function SettingsPanel({
             {section === 'search' && <SearchSection state={state} set={set} />}
             {section === 'spaces' && <SpaceRoutingSection state={state} set={set} />}
             {section === 'containers' && <ContainersSection state={state} />}
+            {section === 'boosts' && <BoostsSection state={state} />}
+            {section === 'mods' && <ModsSection state={state} />}
+            {section === 'extensions' && <ExtensionsSection state={state} />}
+            {section === 'sync' && <SyncSection state={state} />}
             {section === 'shortcuts' && <ShortcutsSection state={state} />}
             {section === 'about' && <AboutSection state={state} />}
           </div>
@@ -339,6 +364,34 @@ function TabsSection({
           <Switch checked={s.askWhereToSave} onCheckedChange={(v) => set({ askWhereToSave: v })} />
         </Row>
       </Group>
+      <Group title="Window Sync">
+        <Row
+          label="Tabs across windows"
+          hint="Zen mirrors your spaces and tabs in every window. Choose 'pinned only' to keep unpinned tabs per window."
+        >
+          <Choice<WindowSyncMode>
+            value={s.windowSync}
+            onChange={(v) => set({ windowSync: v })}
+            options={[
+              { value: 'all', label: 'Sync all tabs' },
+              { value: 'pinned', label: 'Sync only pinned tabs in spaces' },
+              { value: 'off', label: 'Off – windows are independent' }
+            ]}
+          />
+        </Row>
+        <Row
+          label="Blank windows"
+          hint="Ctrl+Shift+N opens a window without spaces, pinned tabs or Essentials. Its tabs are temporary."
+        >
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => run('window.newUnsynced', undefined)}
+          >
+            Open one
+          </Button>
+        </Row>
+      </Group>
       <Group title="Pinned Tabs & Essentials">
         <Row label="When closing a pinned tab">
           <Choice<PinnedCloseBehavior>
@@ -551,26 +604,23 @@ function SpaceRoutingSection({
 function ContainersSection({ state }: { state: UIState }): JSX.Element {
   const [name, setName] = useState('')
   const [color, setColor] = useState<ContainerColor>('blue')
-  const [icon, setIcon] = useState<ContainerIcon>('circle')
+  const [icon, setIcon] = useState<ContainerIconName>('circle')
+  const editable = state.containers.filter((c) => c.id !== DEFAULT_CONTAINER_ID)
   return (
     <>
       <p className="text-[13px] text-[var(--zen-muted)]">
         Containers keep cookies and site data separate, so you can stay logged into several accounts
-        on the same site. Assign a container to a space to isolate it.
+        on the same site. Assign a container to a space to isolate it. The order here is used
+        wherever containers are listed.
       </p>
       <Group title="Containers">
-        {state.containers.map((c) => (
+        {state.containers.map((c, i) => (
           <Row
             key={c.id}
             label={c.name}
-            hint={
-              c.id === DEFAULT_CONTAINER_ID ? 'Tabs without a container' : `${c.icon} · ${c.color}`
-            }
+            hint={c.id === DEFAULT_CONTAINER_ID ? 'Tabs without a container' : undefined}
           >
-            <span
-              className="h-3 w-3 rounded-full"
-              style={{ background: CONTAINER_COLORS[c.color] }}
-            />
+            <ContainerIcon container={c} size={16} />
             {c.id !== DEFAULT_CONTAINER_ID && (
               <>
                 <Choice<ContainerColor>
@@ -581,6 +631,29 @@ function ContainersSection({ state }: { state: UIState }): JSX.Element {
                     label: k
                   }))}
                 />
+                <Choice<ContainerIconName>
+                  value={c.icon}
+                  onChange={(v) => run('container.update', { id: c.id, patch: { icon: v } })}
+                  options={CONTAINER_ICONS.map((k) => ({ value: k, label: k }))}
+                />
+                <button
+                  type="button"
+                  className="zen-toolbar-button h-7 w-7"
+                  title="Move up"
+                  disabled={i <= 1}
+                  onClick={() => run('container.reorder', { id: c.id, index: i - 1 })}
+                >
+                  <ArrowUp className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  className="zen-toolbar-button h-7 w-7"
+                  title="Move down"
+                  disabled={i >= state.containers.length - 1}
+                  onClick={() => run('container.reorder', { id: c.id, index: i + 1 })}
+                >
+                  <ArrowDown className="h-3.5 w-3.5" />
+                </button>
                 <button
                   type="button"
                   className="zen-toolbar-button h-7 w-7"
@@ -593,6 +666,11 @@ function ContainersSection({ state }: { state: UIState }): JSX.Element {
             )}
           </Row>
         ))}
+        {editable.length === 0 && (
+          <div className="px-4 py-4 text-center text-[12.5px] text-[var(--zen-muted)]">
+            Only the default container exists.
+          </div>
+        )}
       </Group>
       <Group title="New container">
         <div className="flex flex-wrap items-center gap-2 p-3">
@@ -610,11 +688,12 @@ function ContainersSection({ state }: { state: UIState }): JSX.Element {
               label: k
             }))}
           />
-          <Choice<ContainerIcon>
+          <Choice<ContainerIconName>
             value={icon}
             onChange={setIcon}
             options={CONTAINER_ICONS.map((i) => ({ value: i, label: i }))}
           />
+          <ContainerIcon container={{ color, icon }} size={18} />
           <Button
             disabled={!name.trim()}
             onClick={() => {
@@ -625,6 +704,76 @@ function ContainersSection({ state }: { state: UIState }): JSX.Element {
             Create
           </Button>
         </div>
+      </Group>
+    </>
+  )
+}
+
+/** Zen's about:preferences#zen-boosts: every active Boost, with edit / delete. */
+function BoostsSection({ state }: { state: UIState }): JSX.Element {
+  const tab = activeTab(state)
+  const canBoostCurrent = Boolean(
+    tab && /^https?:/.test(tab.url) && state.window.kind !== 'private'
+  )
+  return (
+    <>
+      <div className="flex items-start justify-between gap-4">
+        <p className="text-[13px] text-[var(--zen-muted)]">
+          Boosts change how a website looks: tint its colours, swap fonts, zap elements away or
+          force dark mode. They apply to every page of the site and stay until you remove them.
+        </p>
+        <Button
+          size="sm"
+          disabled={!canBoostCurrent}
+          onClick={() => tab && void openOverlay('boosts', tab.id)}
+        >
+          <Sparkles className="mr-1.5 h-3.5 w-3.5" /> Boost current site
+        </Button>
+      </div>
+      <Group title="Active boosts">
+        {state.boosts.length === 0 && (
+          <div className="px-4 py-6 text-center text-[12.5px] text-[var(--zen-muted)]">
+            No boosts yet. Open a site and click the sparkle in the address bar.
+          </div>
+        )}
+        {state.boosts.map((b) => {
+          const parts = [
+            b.tint && 'tint',
+            b.font && 'font',
+            b.fontSize !== 100 && `${b.fontSize}% text`,
+            b.darkMode && 'dark mode',
+            b.zapped.length > 0 && `${b.zapped.length} zapped`,
+            b.css.trim() && 'custom CSS'
+          ].filter(Boolean)
+          return (
+            <Row
+              key={b.domain}
+              label={b.domain}
+              hint={`${parts.join(' · ') || 'Nothing configured'} · ${relativeTime(b.updatedAt)}`}
+            >
+              {b.tint && (
+                <span
+                  className="h-3 w-3 rounded-full ring-1 ring-black/10"
+                  style={{ background: b.tint }}
+                />
+              )}
+              <Switch
+                checked={b.enabled}
+                onCheckedChange={(v) =>
+                  run('boost.update', { domain: b.domain, patch: { enabled: v } })
+                }
+              />
+              <button
+                type="button"
+                className="zen-toolbar-button h-7 w-7"
+                title="Remove boost"
+                onClick={() => run('boost.remove', { domain: b.domain })}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </Row>
+          )
+        })}
       </Group>
     </>
   )

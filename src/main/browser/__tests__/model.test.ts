@@ -33,7 +33,8 @@ function makeModel(): Model {
     activeSpaceId: space.id,
     containers: structuredClone(DEFAULT_CONTAINERS),
     folders: {},
-    splitGroups: {}
+    splitGroups: {},
+    localSpaces: {}
   }
 }
 

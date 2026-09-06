@@ -206,6 +206,13 @@ const DEFS: Def[] = [
     key: 'k',
     mods: { accel: true, shift: true }
   },
+  {
+    // Added in Zen's shortcut schema v18; unbound by default like upstream.
+    id: 'zen-workspace-create',
+    action: 'space.new',
+    group: 'zen-workspace',
+    label: 'Create New Space'
+  },
 
   // --- Split view ------------------------------------------------------------
   {
@@ -298,10 +305,9 @@ const DEFS: Def[] = [
     id: 'zen-new-unsynced-window',
     action: 'window.newUnsynced',
     group: 'zen-other',
-    label: 'New Unsynced Window',
+    label: 'New Blank Window',
     key: 'n',
-    mods: { accel: true, shift: true },
-    unsupported: true
+    mods: { accel: true, shift: true }
   },
 
   // --- Window & tab management -----------------------------------------------
@@ -342,8 +348,7 @@ const DEFS: Def[] = [
     group: 'windowAndTabManagement',
     label: 'New Window',
     key: 'n',
-    mods: { accel: true },
-    unsupported: true
+    mods: { accel: true }
   },
   {
     id: 'key_privatebrowsing',
@@ -351,8 +356,7 @@ const DEFS: Def[] = [
     group: 'windowAndTabManagement',
     label: 'New Private Window',
     key: 'p',
-    mods: { accel: true, shift: true },
-    unsupported: true
+    mods: { accel: true, shift: true }
   },
   {
     id: 'key_closeWindow',

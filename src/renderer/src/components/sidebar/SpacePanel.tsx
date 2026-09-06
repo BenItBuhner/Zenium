@@ -28,7 +28,13 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
 
   return (
     <div className="flex h-full w-full shrink-0 flex-col" aria-hidden={!isActive}>
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden px-2 pb-1">
+      <div
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden px-2 pb-1"
+        onDoubleClick={(e) => {
+          // Zen: double-clicking empty sidebar space opens a new tab.
+          if (e.target === e.currentTarget) window.dispatchEvent(new CustomEvent('zen-new-tab'))
+        }}
+      >
         {(pinned.length > 0 || Boolean(drag)) && (
           <>
             <SpaceHeader space={space} compact={compact} />
@@ -78,6 +84,8 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
               compact={compact}
               dropKey={dropKey}
               dragging={Boolean(drag)}
+              live={Boolean(state.liveFolders[folder.id])}
+              liveError={state.liveFolders[folder.id]?.lastError ?? null}
             />
           ))}
           {regular
@@ -87,7 +95,10 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
             ))}
           <NewTabButton compact={compact} />
         </div>
-        <div className="relative min-h-6 flex-1">
+        <div
+          className="relative min-h-6 flex-1"
+          onDoubleClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
+        >
           {drag && <DropZone dropKey={`section:regular:${space.id}`} activeKey={dropKey} tall />}
         </div>
       </div>
@@ -173,6 +184,9 @@ interface FolderRowProps {
   compact: boolean
   dropKey: string | null
   dragging: boolean
+  /** Zen Live Folder: contents come from GitHub / RSS / a REST API. */
+  live: boolean
+  liveError: string | null
 }
 
 function FolderRow({
@@ -181,7 +195,9 @@ function FolderRow({
   activeTabId,
   compact,
   dropKey,
-  dragging
+  dragging,
+  live,
+  liveError
 }: FolderRowProps): JSX.Element {
   const renaming = uiStore.use((s) => s.renamingFolderId === folder.id)
   const lastClick = useRef(0)
@@ -219,7 +235,16 @@ function FolderRow({
             <FolderRename folder={folder} />
           ) : (
             <>
-              <span className="min-w-0 flex-1 truncate text-[13px]">{folder.name}</span>
+              <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+              {live && (
+                <span
+                  className={cn(
+                    'h-1.5 w-1.5 shrink-0 rounded-full',
+                    liveError ? 'bg-red-500' : 'zen-live-dot bg-[var(--zen-accent)]'
+                  )}
+                  title={liveError ?? 'Live folder – updates automatically'}
+                />
+              )}
               <span className="text-[11px] text-[var(--zen-muted)]">{tabs.length}</span>
               {folder.collapsed ? (
                 <ChevronRight className="h-3.5 w-3.5 opacity-60" />

@@ -1,10 +1,10 @@
 import type { JSX } from 'react'
 import { Palette, Pause, Play, Plus, Volume2, VolumeX } from 'lucide-react'
-import type { Space, UIState } from '@shared/types'
+import type { MediaState, Space, UIState } from '@shared/types'
 import { resolveTheme, rgbToHex } from '@shared/theme'
 import { run } from '@renderer/lib/api'
 import { dropStore } from '@renderer/lib/drag'
-import { activeTab, tabTitle } from '@renderer/lib/selectors'
+import { activeTab, isLocalWindow, tabTitle } from '@renderer/lib/selectors'
 import { openOverlay, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from './Favicon'
@@ -21,10 +21,15 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
   const status = uiStore.use((s) => s.statusText)
   const toasts = uiStore.use((s) => s.toasts)
   const current = activeTab(state)
+  const local = isLocalWindow(state)
+  // Zen 1.21.11: every playing tab gets its own media control.
+  const media = state.media.filter((m) => state.tabs[m.tabId]).slice(0, 3)
 
   return (
     <div className="flex flex-col gap-1 px-2 pb-2 pt-1">
-      {state.media.length > 0 && <MediaPlayer state={state} compact={compact} />}
+      {media.map((m) => (
+        <MediaPlayer key={m.tabId} state={state} media={m} compact={compact} />
+      ))}
       {toasts.length > 0 && (
         <div className="flex flex-col gap-1">
           {toasts.map((t) => (
@@ -45,41 +50,43 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
           {status}
         </div>
       )}
-      <div className={cn('flex items-center gap-1', compact && 'flex-col')}>
-        <div
-          className={cn(
-            'flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overflow-y-hidden py-0.5 [scrollbar-width:none]',
-            compact && 'flex-col'
-          )}
-        >
-          {state.spaces.map((space) => (
-            <SpaceIcon
-              key={space.id}
-              space={space}
-              active={space.id === state.activeSpaceId}
-              isDark={isDark}
-              dropKey={dropKey}
-              dragging={Boolean(drag)}
-            />
-          ))}
+      {!local && (
+        <div className={cn('flex items-center gap-1', compact && 'flex-col')}>
+          <div
+            className={cn(
+              'flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overflow-y-hidden py-0.5 [scrollbar-width:none]',
+              compact && 'flex-col'
+            )}
+          >
+            {state.spaces.map((space) => (
+              <SpaceIcon
+                key={space.id}
+                space={space}
+                active={space.id === state.activeSpaceId}
+                isDark={isDark}
+                dropKey={dropKey}
+                dragging={Boolean(drag)}
+              />
+            ))}
+            <button
+              type="button"
+              className="zen-toolbar-button h-7 w-7 opacity-50 hover:opacity-100"
+              title="New Space"
+              onClick={() => void openOverlay('space-editor', current?.id ?? null, null)}
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </div>
           <button
             type="button"
-            className="zen-toolbar-button h-7 w-7 opacity-50 hover:opacity-100"
-            title="New Space"
-            onClick={() => void openOverlay('space-editor', current?.id ?? null, null)}
+            className="zen-toolbar-button h-7 w-7"
+            title="Change theme"
+            onClick={() => void openOverlay('theme', current?.id ?? null, state.activeSpaceId)}
           >
-            <Plus className="h-3.5 w-3.5" />
+            <Palette className="h-4 w-4" />
           </button>
         </div>
-        <button
-          type="button"
-          className="zen-toolbar-button h-7 w-7"
-          title="Change theme"
-          onClick={() => void openOverlay('theme', current?.id ?? null, state.activeSpaceId)}
-        >
-          <Palette className="h-4 w-4" />
-        </button>
-      </div>
+      )}
     </div>
   )
 }
@@ -103,7 +110,7 @@ function SpaceIcon({
     <button
       type="button"
       className={cn(
-        'relative flex h-7 min-w-7 items-center justify-center rounded-lg px-1 text-[15px] leading-none transition-all',
+        'zen-squircle relative flex h-8 min-w-8 items-center justify-center rounded-[10px] px-1 text-[17px] leading-none transition-all',
         active
           ? 'bg-[var(--zen-element-bg-active)] opacity-100'
           : 'opacity-45 hover:opacity-90 hover:bg-[var(--zen-element-bg)]',
@@ -135,10 +142,17 @@ function SpaceIcon({
   )
 }
 
-function MediaPlayer({ state, compact }: { state: UIState; compact: boolean }): JSX.Element | null {
-  const media = state.media[0]
-  const tab = media ? state.tabs[media.tabId] : undefined
-  if (!media || !tab) return null
+function MediaPlayer({
+  state,
+  media,
+  compact
+}: {
+  state: UIState
+  media: MediaState
+  compact: boolean
+}): JSX.Element | null {
+  const tab = state.tabs[media.tabId]
+  if (!tab) return null
   return (
     <div className={cn('zen-panel flex items-center gap-2 px-2 py-1.5', compact && 'flex-col')}>
       <Favicon tab={tab} />

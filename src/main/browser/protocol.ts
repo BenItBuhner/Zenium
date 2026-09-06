@@ -1,10 +1,17 @@
 import { protocol, type Session } from 'electron'
+import type { ReaderService } from './reader'
+import { readerPage } from './readerPage'
 
 /**
  * `zen://` internal pages. Zen has no new-tab page (the URL bar replaces it), so `zen://blank` is
- * an empty page that picks up the theme; `zen://error` renders navigation failures.
+ * an empty page that picks up the theme; `zen://error` renders navigation failures and
+ * `zen://reader` shows Reader View articles.
  */
 export const ZEN_SCHEME = 'zen'
+
+export interface ZenProtocolHost {
+  reader: ReaderService
+}
 
 export function registerZenScheme(): void {
   protocol.registerSchemesAsPrivileged([
@@ -78,7 +85,16 @@ function errorPage(url: URL): string {
 </div></body></html>`
 }
 
-export function installZenProtocol(ses: Session): void {
+function readerMissingPage(original: string | null): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Reader View</title><style>${BASE_STYLE}</style></head>
+<body><div class="card">
+  <h1>This article is no longer available</h1>
+  <p>Reader View keeps articles only while the browser is open.</p>
+  ${original ? `<button onclick="location.replace(${JSON.stringify(original)})">Open the original page</button>` : ''}
+</div></body></html>`
+}
+
+export function installZenProtocol(ses: Session, host: ZenProtocolHost): void {
   if (ses.protocol.isProtocolHandled(ZEN_SCHEME)) return
   ses.protocol.handle(ZEN_SCHEME, (request) => {
     const url = new URL(request.url)
@@ -88,6 +104,13 @@ export function installZenProtocol(ses: Session): void {
         return new Response(blankPage(), { headers })
       case 'error':
         return new Response(errorPage(url), { headers })
+      case 'reader': {
+        const article = host.reader.article(url.searchParams.get('id') ?? '')
+        return new Response(
+          article ? readerPage(article) : readerMissingPage(url.searchParams.get('url')),
+          { headers }
+        )
+      }
       default:
         return new Response(blankPage(), { headers })
     }

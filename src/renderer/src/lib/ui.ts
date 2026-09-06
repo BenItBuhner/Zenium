@@ -51,6 +51,8 @@ export interface DragState {
 export interface UiState {
   overlay: OverlayKind
   overlaySpaceId: string | null
+  /** Folder the live-folder editor works on (null → create a new one). */
+  overlayFolderId: string | null
   urlbar: UrlbarState
   findOpen: boolean
   findTabId: string | null
@@ -63,6 +65,10 @@ export interface UiState {
   compactHover: boolean
   renamingTabId: string | null
   renamingFolderId: string | null
+  /** Tab whose pinned URL is being edited in the small prompt. */
+  editingPinnedUrlTabId: string | null
+  /** Tab whose icon picker is open. */
+  iconPickerTabId: string | null
   /** The glance parent has been captured and the card is animating in / shown. */
   glanceActive: boolean
   /** The card animation finished – the glance view may be placed. */
@@ -74,6 +80,7 @@ export const uiStore = createStore<UiState>(
   {
     overlay: 'none',
     overlaySpaceId: null,
+    overlayFolderId: null,
     urlbar: { open: false, mode: 'new-tab', tabId: null, initialText: undefined, attached: false },
     findOpen: false,
     findTabId: null,
@@ -85,6 +92,8 @@ export const uiStore = createStore<UiState>(
     compactHover: false,
     renamingTabId: null,
     renamingFolderId: null,
+    editingPinnedUrlTabId: null,
+    iconPickerTabId: null,
     glanceActive: false,
     glanceReady: false,
     spaceSlideDirection: 0
@@ -113,15 +122,16 @@ export async function captureActiveTab(tabId: string | null): Promise<void> {
 export async function openOverlay(
   kind: OverlayKind,
   activeTabId: string | null,
-  spaceId: string | null = null
+  spaceId: string | null = null,
+  folderId: string | null = null
 ): Promise<void> {
   await captureActiveTab(activeTabId)
   run('focus.chrome', undefined)
-  uiStore.set({ overlay: kind, overlaySpaceId: spaceId })
+  uiStore.set({ overlay: kind, overlaySpaceId: spaceId, overlayFolderId: folderId })
 }
 
 export function closeOverlay(): void {
-  uiStore.set({ overlay: 'none', overlaySpaceId: null })
+  uiStore.set({ overlay: 'none', overlaySpaceId: null, overlayFolderId: null })
   invalidateSnapshot()
   returnFocusToPage()
 }
