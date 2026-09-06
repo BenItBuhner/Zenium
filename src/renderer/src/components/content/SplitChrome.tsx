@@ -3,7 +3,8 @@ import { useRef } from 'react'
 import { Columns2, Grid2x2, Minus, Rows2 } from 'lucide-react'
 import type { Rect, SplitGroup, SplitLayout, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
-import { gutterRects, splitPaneRects } from '@renderer/lib/layout'
+import { useViewport } from '@renderer/lib/formFactor'
+import { gutterRects, splitPaneRects, SPLIT_GAP, SPLIT_GAP_TOUCH } from '@renderer/lib/layout'
 import { tabTitle } from '@renderer/lib/selectors'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from '../sidebar/Favicon'
@@ -29,8 +30,10 @@ const NEXT_LAYOUT: Record<SplitLayout, SplitLayout> = {
 
 /** Header strips and resize gutters for a split view (drawn in the gaps between the tab views). */
 export function SplitChrome({ state, group, area, activeTabId }: Props): JSX.Element | null {
-  const panes = splitPaneRects(area, group)
-  const gutters = gutterRects(area, group)
+  const { coarse } = useViewport()
+  const gap = coarse ? SPLIT_GAP_TOUCH : SPLIT_GAP
+  const panes = splitPaneRects(area, group, gap)
+  const gutters = gutterRects(area, group, gap)
   const Icon = LAYOUT_ICONS[group.layout]
   return (
     <>

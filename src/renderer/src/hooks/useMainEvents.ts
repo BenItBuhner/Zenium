@@ -1,7 +1,15 @@
 import { useEffect } from 'react'
 import type { UIState } from '@shared/types'
 import { onEvent } from '@renderer/lib/api'
-import { closeUrlbar, openOverlay, openUrlbar, pushToast, uiStore } from '@renderer/lib/ui'
+import {
+  closeMenu,
+  closeUrlbar,
+  openOverlay,
+  openUrlbar,
+  pushToast,
+  showMenu,
+  uiStore
+} from '@renderer/lib/ui'
 import { activeTab } from '@renderer/lib/selectors'
 import { browserStore } from '@renderer/lib/ui'
 
@@ -62,7 +70,19 @@ export function useMainEvents(): void {
       }),
       onEvent('compact.reveal', ({ revealed }) =>
         window.dispatchEvent(new CustomEvent('zen-compact-reveal', { detail: revealed }))
-      )
+      ),
+      onEvent('menu.show', (menu) => void showMenu(menu, currentActiveTabId())),
+      onEvent('menu.hide', ({ menuId }) => {
+        if (uiStore.get().menu?.id === menuId) closeMenu(false)
+      }),
+      onEvent('insets', (insets) => {
+        uiStore.set({ insets })
+        const root = document.documentElement.style
+        root.setProperty('--zen-inset-top', `${insets.top}px`)
+        root.setProperty('--zen-inset-right', `${insets.right}px`)
+        root.setProperty('--zen-inset-bottom', `${insets.bottom}px`)
+        root.setProperty('--zen-inset-left', `${insets.left}px`)
+      })
     ]
     return () => offs.forEach((off) => off())
   }, [])

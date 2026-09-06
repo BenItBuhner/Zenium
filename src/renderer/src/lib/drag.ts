@@ -19,6 +19,9 @@ const DRAG_THRESHOLD = 5
 
 export function startTabDrag(tab: Tab, e: React.PointerEvent): void {
   if (e.button !== 0) return
+  // A finger dragging a tab row is a scroll (and a long-press is the context menu); only a mouse
+  // drags tabs. Touch users move tabs through the tab menu (pin, essentials, space, split).
+  if (e.pointerType !== 'mouse') return
   const startX = e.clientX
   const startY = e.clientY
   let dragging = false

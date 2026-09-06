@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useEffect, useRef } from 'react'
 import type { UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
+import { useViewport } from '@renderer/lib/formFactor'
 import { activeSpace, activeTab, essentialsFor } from '@renderer/lib/selectors'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -13,33 +14,45 @@ import { SpacePanel } from './SpacePanel'
 interface Props {
   state: UIState
   isDark: boolean
-  /** Floating over the content (compact mode hover reveal). */
+  /** Floating over the content (compact mode hover reveal, phone drawer). */
   floating?: boolean
+  /** Phone drawer: navigation lives in the bottom bar, not in the sidebar. */
+  hideNav?: boolean
+  className?: string
   onPointerLeave?: () => void
 }
 
 const COLLAPSED_WIDTH = 56
 
-export function Sidebar({ state, isDark, floating, onPointerLeave }: Props): JSX.Element {
+export function Sidebar({
+  state,
+  isDark,
+  floating,
+  hideNav,
+  className,
+  onPointerLeave
+}: Props): JSX.Element {
   const space = activeSpace(state)
   const tab = activeTab(state)
-  const compact = !state.settings.sidebarExpanded
+  const { coarse } = useViewport()
+  const compact = !state.settings.sidebarExpanded && !hideNav
   const width = compact ? COLLAPSED_WIDTH : 'var(--zen-sidebar-width)'
   const activeIndex = Math.max(
     0,
     state.spaces.findIndex((s) => s.id === state.activeSpaceId)
   )
   const essentials = essentialsFor(state, space)
-  const showToolbar = state.settings.toolbarLayout !== 'multiple'
+  const showToolbar = state.settings.toolbarLayout !== 'multiple' && !hideNav
   const side = state.settings.sidebarSide
 
   return (
     <aside
       className={cn(
         'relative flex h-full shrink-0 flex-col',
-        floating && 'zen-panel zen-animate-in'
+        floating && 'zen-panel zen-animate-in',
+        className
       )}
-      style={{ width }}
+      style={className ? undefined : { width }}
       onPointerLeave={onPointerLeave}
       data-side={side}
     >
@@ -66,7 +79,7 @@ export function Sidebar({ state, isDark, floating, onPointerLeave }: Props): JSX
         </div>
       </div>
       <SidebarBottom state={state} compact={compact} isDark={isDark} />
-      {!compact && !floating && <Resizer state={state} />}
+      {!compact && !floating && !coarse && <Resizer state={state} />}
     </aside>
   )
 }

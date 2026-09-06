@@ -111,7 +111,7 @@ function EmptyState(): JSX.Element {
         onClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
       >
         <Plus className="h-4 w-4" /> New Tab
-        <kbd className="zen-kbd ml-1">Ctrl T</kbd>
+        <kbd className="zen-kbd zen-kbd-hint ml-1">Ctrl T</kbd>
       </button>
     </div>
   )

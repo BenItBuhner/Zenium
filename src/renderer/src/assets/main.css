@@ -31,6 +31,11 @@
   --zen-content-radius: 10px;
   --zen-sidebar-width: 240px;
   --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME). */
+  --zen-inset-top: 0px;
+  --zen-inset-right: 0px;
+  --zen-inset-bottom: 0px;
+  --zen-inset-left: 0px;
 }
 
 :root[data-theme='dark'] {
@@ -55,6 +60,10 @@
     -webkit-font-smoothing: antialiased;
     user-select: none;
     cursor: default;
+    /* Mobile WebViews: no tap highlight flashes, no pull-to-refresh / overscroll glow on the chrome. */
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+    touch-action: manipulation;
   }
 
   input,
@@ -303,6 +312,101 @@
     background: var(--zen-element-bg);
     border: 1px solid var(--zen-border);
   }
+}
+
+@keyframes zen-sheet-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes zen-drawer-left {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes zen-drawer-right {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes zen-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@layer components {
+  .zen-sheet-in {
+    animation: zen-sheet-in 220ms var(--zen-ease);
+  }
+  .zen-drawer-left {
+    animation: zen-drawer-left 200ms var(--zen-ease);
+  }
+  .zen-drawer-right {
+    animation: zen-drawer-right 200ms var(--zen-ease);
+  }
+  .zen-animate-fade {
+    animation: zen-fade 160ms var(--zen-ease);
+  }
+  .zen-drawer > aside {
+    height: 100%;
+  }
+  .zen-phone-bar {
+    background: transparent;
+  }
+}
+
+/*
+ * Touch adaptations. Unlayered so they win over Tailwind's utilities: every control grows to a
+ * comfortable target and hover-only affordances become permanent.
+ */
+:root[data-pointer='coarse'] .zen-toolbar-button {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+}
+:root[data-pointer='coarse'] .zen-tab {
+  height: 42px;
+  border-radius: 11px;
+}
+:root[data-pointer='coarse'] .zen-tab .zen-tab-close {
+  opacity: 1;
+}
+:root[data-pointer='coarse'] .zen-essential {
+  height: 48px;
+}
+:root[data-pointer='coarse'] .zen-touch-show {
+  display: flex;
+}
+:root[data-pointer='coarse'] .zen-kbd,
+:root[data-pointer='coarse'] .zen-kbd-hint {
+  display: none;
+}
+:root[data-pointer='coarse'] .zen-suggestion {
+  height: 44px;
+}
+:root[data-pointer='coarse'] .group\/sep .zen-toolbar-button {
+  opacity: 0.7;
+}
+:root[data-form-factor='phone'] .zen-space-strip {
+  transition-duration: 260ms;
 }
 
 @media (prefers-reduced-motion: reduce) {

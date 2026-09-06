@@ -2,12 +2,15 @@ import type { JSX } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 import type { UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
+import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   captureActiveTab,
+  closeMenu,
   closeOverlay,
   closeUrlbar,
   invalidateSnapshot,
+  lastPointer,
   openUrlbar,
   returnFocusToPage,
   uiStore,
@@ -18,7 +21,9 @@ import { useMainEvents } from '@renderer/hooks/useMainEvents'
 import { useTheme } from '@renderer/hooks/useTheme'
 import { ContentArea } from './components/content/ContentArea'
 import { DragGhost } from './components/DragGhost'
+import { MenuSheet } from './components/menus/MenuSheet'
 import { Onboarding } from './components/overlays/Onboarding'
+import { PhoneShell } from './components/phone/PhoneShell'
 import { Sidebar } from './components/sidebar/Sidebar'
 import { Toolbar } from './components/Toolbar'
 
@@ -27,8 +32,30 @@ const REVEAL_ZONE = 14
 
 export function App(): JSX.Element {
   const state = useBrowser()
-  const theme = useTheme(state)
+  const viewport = useViewport()
+  const theme = useTheme(state, viewport.formFactor)
   useMainEvents()
+  useGlobalKeys(state)
+  useNewTabEvent(state)
+  usePointerTracking()
+  const ui = uiStore.use()
+
+  const shell =
+    viewport.formFactor === 'phone' ? (
+      <PhoneShell state={state} ui={ui} isDark={theme.isDark} />
+    ) : (
+      <DesktopShell state={state} isDark={theme.isDark} />
+    )
+  return (
+    <>
+      {shell}
+      {ui.menu && <MenuSheet menu={ui.menu} />}
+    </>
+  )
+}
+
+/** Desktop, tablet and DeX: Zen's vertical sidebar next to the content card. */
+function DesktopShell({ state, isDark }: { state: UIState; isDark: boolean }): JSX.Element {
   const ui = uiStore.use()
   const tab = activeTab(state)
   const settings = state.settings
@@ -42,9 +69,6 @@ export function App(): JSX.Element {
     compact.enabled && compact.hideToolbar && settings.toolbarLayout !== 'single'
   const showToolbar = settings.toolbarLayout === 'multiple' && !toolbarHidden
   const sidebarRevealed = sidebarHidden && ui.compactHover
-
-  useGlobalKeys(state)
-  useNewTabEvent(state)
 
   // Compact mode: hovering the window edge reveals the sidebar on top of a frozen page snapshot.
   const revealTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -93,10 +117,16 @@ export function App(): JSX.Element {
         'zen-window relative flex h-full w-full overflow-hidden',
         sidebarSide === 'right' && 'flex-row-reverse'
       )}
-      data-dark={theme.isDark}
+      data-dark={isDark}
+      style={{
+        paddingTop: 'var(--zen-inset-top)',
+        paddingBottom: 'var(--zen-inset-bottom)',
+        paddingLeft: 'var(--zen-inset-left)',
+        paddingRight: 'var(--zen-inset-right)'
+      }}
     >
       <div className="zen-texture" />
-      {!sidebarHidden && <Sidebar state={state} isDark={theme.isDark} />}
+      {!sidebarHidden && <Sidebar state={state} isDark={isDark} />}
       <main
         className="relative flex min-w-0 flex-1 flex-col"
         style={{
@@ -128,6 +158,7 @@ export function App(): JSX.Element {
             style={{ width: REVEAL_ZONE }}
             onPointerEnter={reveal}
             onPointerMove={reveal}
+            onClick={reveal}
             aria-label="Show sidebar"
           />
           {sidebarRevealed && (
@@ -138,7 +169,7 @@ export function App(): JSX.Element {
               )}
               onPointerEnter={() => revealTimer.current && clearTimeout(revealTimer.current)}
             >
-              <Sidebar state={state} isDark={theme.isDark} floating onPointerLeave={unreveal} />
+              <Sidebar state={state} isDark={isDark} floating onPointerLeave={unreveal} />
             </div>
           )}
         </>
@@ -187,6 +218,11 @@ function useGlobalKeys(state: UIState): void {
       if (e.key !== 'Escape') return
       const ui = uiStore.get()
       if (ui.urlbar.open) return // handled by the URL bar input
+      if (ui.menu) {
+        e.preventDefault()
+        closeMenu()
+        return
+      }
       if (ui.overlay !== 'none') {
         e.preventDefault()
         closeOverlay()
@@ -227,4 +263,16 @@ function useNewTabEvent(state: UIState): void {
     window.addEventListener('zen-new-tab', onNewTab)
     return () => window.removeEventListener('zen-new-tab', onNewTab)
   }, [state])
+}
+
+/** Remember where the pointer went down so renderer-hosted menus can anchor there. */
+function usePointerTracking(): void {
+  useEffect(() => {
+    const onDown = (e: PointerEvent): void => {
+      lastPointer.x = e.clientX
+      lastPointer.y = e.clientY
+    }
+    window.addEventListener('pointerdown', onDown, true)
+    return () => window.removeEventListener('pointerdown', onDown, true)
+  }, [])
 }
