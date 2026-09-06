@@ -13,25 +13,25 @@ mouse, it is the desktop layout.
 
 ## What is ported
 
-| Zen feature                                                                                                                                                                                                             | Status in this port |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
-| Vertical tabs sidebar (single / multiple / collapsed toolbar layouts, tabs on the right, resizable, collapsible to icons)                                                                                               | Done                |
-| **Spaces** – icons, per-space gradient themes, default containers, slide animation, space switcher, Space Routing                                                                                                       | Done                |
-| **Essentials** – favicon tile grid at the top, container-specific, max count                                                                                                                                            | Done                |
-| Pinned tabs – reset to pinned URL, "close" resets/unloads/switches (all seven Zen behaviours), edit pinned URL, rename (double-click)                                                                                   | Done                |
-| Folders – create, rename, collapse, unpack/delete, drag tabs in                                                                                                                                                         | Done                |
-| **Split View** – grid / vertical / horizontal, up to 4 tabs, resizable gutters, unsplit one or all, drag a tab onto the page edge to split, "Split link in new tab"                                                     | Done                |
-| **Compact Mode** – hide sidebar and/or toolbar, edge-hover reveal (tracks the real cursor, so it works over pages and window borders), persistent floating sidebar (Ctrl+Alt+S)                                         | Done                |
-| **Glance** – Alt/Ctrl/Shift+click preview over the current page, close / expand (Ctrl+O) / split, third-party links on pinned tabs open their own tab                                                                   | Done                |
-| Zen URL bar – floating, inline autofill, history / bookmarks / open tabs ("Switch to Tab") / spaces / Command Bar actions / live search suggestions, `` ` `` space-only mode, `@engine` keywords, draft text remembered | Done                |
-| Theme picker – colour wheel dots, harmony algorithms, monochrome, opacity, texture, rotation, presets                                                                                                                   | Done                |
-| Keyboard shortcuts – Zen's default table (from `ZenKeyboardShortcuts.mjs`), fully rebindable with conflict detection                                                                                                    | Done                |
-| Tab unloading (inactivity timeout, excluded domains, unload tab / space / other spaces)                                                                                                                                 | Done                |
-| Containers – isolated cookie sessions per container, per-space defaults, "Open in New Container Tab"                                                                                                                    | Done                |
-| History, bookmarks, downloads (saved to the Downloads folder with Firefox-style unique names, or "always ask"), find in page, screenshots, save page, print, view source, zoom, mute, PiP                               | Done                |
-| Native context menus for pages, tabs, spaces, folders and the new-tab button; permission prompts remembered per site; `window.open` popups                                                                              | Done                |
-| Onboarding – look, search engine (Google / DuckDuckGo / Ecosia), Essentials, shortcuts                                                                                                                                  | Done                |
-| Multiple windows / window sync, private windows, Mods & Boosts (custom CSS), Live Folders, reader view, extensions                                                                                                      | Not yet             |
+| Zen feature | Status in this port |
+| --- | --- |
+| Vertical tabs sidebar (single / multiple / collapsed toolbar layouts, tabs on the right, resizable, collapsible to icons) | Done |
+| **Spaces** – icons, per-space gradient themes, default containers, slide animation, space switcher, Space Routing | Done |
+| **Essentials** – favicon tile grid at the top, container-specific, max count | Done |
+| Pinned tabs – reset to pinned URL, "close" resets/unloads/switches (all seven Zen behaviours), edit pinned URL, rename (double-click) | Done |
+| Folders – create, rename, collapse, unpack/delete, drag tabs in | Done |
+| **Split View** – grid / vertical / horizontal, up to 4 tabs, resizable gutters, unsplit one or all, drag a tab onto the page edge to split, "Split link in new tab" | Done |
+| **Compact Mode** – hide sidebar and/or toolbar, edge-hover reveal (tracks the real cursor, so it works over pages and window borders), persistent floating sidebar (Ctrl+Alt+S) | Done |
+| **Glance** – Alt/Ctrl/Shift+click preview over the current page, close / expand (Ctrl+O) / split, third-party links on pinned tabs open their own tab | Done |
+| Zen URL bar – floating, inline autofill, history / bookmarks / open tabs ("Switch to Tab") / spaces / Command Bar actions / live search suggestions, `` ` `` space-only mode, `@engine` keywords, draft text remembered | Done |
+| Theme picker – colour wheel dots, harmony algorithms, monochrome, opacity, texture, rotation, presets | Done |
+| Keyboard shortcuts – Zen's default table (from `ZenKeyboardShortcuts.mjs`), fully rebindable with conflict detection | Done |
+| Tab unloading (inactivity timeout, excluded domains, unload tab / space / other spaces) | Done |
+| Containers – isolated cookie sessions per container, per-space defaults, "Open in New Container Tab" | Done |
+| History, bookmarks, downloads (saved to the Downloads folder with Firefox-style unique names, or "always ask"), find in page, screenshots, save page, print, view source, zoom, mute, PiP | Done |
+| Native context menus for pages, tabs, spaces, folders and the new-tab button; permission prompts remembered per site; `window.open` popups | Done |
+| Onboarding – look, search engine (Google / DuckDuckGo / Ecosia), Essentials, shortcuts | Done |
+| Multiple windows / window sync, private windows, Mods & Boosts (custom CSS), Live Folders, reader view, extensions | Not yet |
 
 ## Architecture
 
@@ -120,11 +120,11 @@ Debug builds expose the chrome WebView (browser core + UI) and every tab in `chr
 
 ### How the layout adapts
 
-| Window                                                          | Layout                                                                                                                                                                                                                                                                                                    |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Width < 600 dp (phones)                                         | Bottom bar: back, address pill (favicon, lock, space badge – swipe sideways to change space), new tab, tab count, menu. Sidebar (Essentials, pinned, folders, spaces, theme) opens as a drawer; swiping the pill switches spaces. URL bar anchors to the top above the keyboard. Menus are bottom sheets. |
-| ≥ 600 dp with touch (tablets, phones in landscape)              | The desktop layout with touch-sized controls (permanent close buttons, wider split gutters); long-press for context menus.                                                                                                                                                                                |
-| Mouse / trackpad present (Samsung DeX, tablets with a keyboard) | The desktop layout as on Linux/Windows: hover affordances, tab drag & drop, popover menus, Zen's full shortcut table on the hardware keyboard, freeform window resizing.                                                                                                                                  |
+| Window | Layout |
+| --- | --- |
+| Width < 600 dp (phones) | Bottom bar: back, address pill (favicon, lock, space badge – swipe sideways to change space), new tab, tab count, menu. Sidebar (Essentials, pinned, folders, spaces, theme) opens as a drawer; swiping the pill switches spaces. URL bar anchors to the top above the keyboard. Menus are bottom sheets. |
+| ≥ 600 dp with touch (tablets, phones in landscape) | The desktop layout with touch-sized controls (permanent close buttons, wider split gutters); long-press for context menus. |
+| Mouse / trackpad present (Samsung DeX, tablets with a keyboard) | The desktop layout as on Linux/Windows: hover affordances, tab drag & drop, popover menus, Zen's full shortcut table on the hardware keyboard, freeform window resizing. |
 
 The decision is made from the viewport and pointer, so rotating a phone or docking it into DeX
 switches layouts live.
@@ -146,20 +146,20 @@ media elements).
 
 ## Default shortcuts (Linux/Windows – Cmd replaces Ctrl on macOS)
 
-| Action                                            | Shortcut                        |
-| ------------------------------------------------- | ------------------------------- |
-| New tab (opens the floating URL bar)              | Ctrl+T                          |
-| Toggle Compact Mode                               | Ctrl+S                          |
-| Toggle floating sidebar                           | Ctrl+Alt+S                      |
-| Next / previous space                             | Ctrl+Alt+→ / Ctrl+Alt+←         |
-| Split view grid / vertical / horizontal / unsplit | Ctrl+Alt+G / V / H / U          |
-| New empty split                                   | Ctrl+Shift+*                    |
-| Pin / unpin tab                                   | Ctrl+Shift+D                    |
-| Copy URL / as Markdown                            | Ctrl+Shift+C / Ctrl+Shift+Alt+C |
-| Expand Glance into a tab                          | Ctrl+O                          |
-| Close all unpinned tabs                           | Ctrl+Shift+K                    |
-| Glance a link                                     | Alt+click                       |
-| Save page                                         | Ctrl+Alt+Shift+S                |
+| Action | Shortcut |
+| --- | --- |
+| New tab (opens the floating URL bar) | Ctrl+T |
+| Toggle Compact Mode | Ctrl+S |
+| Toggle floating sidebar | Ctrl+Alt+S |
+| Next / previous space | Ctrl+Alt+→ / Ctrl+Alt+← |
+| Split view grid / vertical / horizontal / unsplit | Ctrl+Alt+G / V / H / U |
+| New empty split | Ctrl+Shift+* |
+| Pin / unpin tab | Ctrl+Shift+D |
+| Copy URL / as Markdown | Ctrl+Shift+C / Ctrl+Shift+Alt+C |
+| Expand Glance into a tab | Ctrl+O |
+| Close all unpinned tabs | Ctrl+Shift+K |
+| Glance a link | Alt+click |
+| Save page | Ctrl+Alt+Shift+S |
 
 Everything is editable in Settings → Keyboard Shortcuts.
 
