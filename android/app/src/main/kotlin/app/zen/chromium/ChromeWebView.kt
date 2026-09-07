@@ -63,6 +63,18 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
                 whenReady.forEach { it() }
                 whenReady.clear()
             }
+
+            /**
+             * The chrome's renderer died (OOM, system pressure). Returning false here would take the
+             * whole app down; instead the host rebuilds the chrome, which reboots the core from its
+             * persisted state.
+             */
+            override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
+                ready = false
+                Log.e("ZenChrome", "chrome renderer gone (crashed=${detail.didCrash()}); rebuilding the chrome")
+                host.onChromeGone(this@ChromeWebView)
+                return true
+            }
         }
         webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(message: ConsoleMessage): Boolean {

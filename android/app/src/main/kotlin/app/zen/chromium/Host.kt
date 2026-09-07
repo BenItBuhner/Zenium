@@ -41,7 +41,8 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     val keys = Keys()
     val permissions = Permissions(this)
     val downloads = Downloads(activity, this)
-    val chrome = ChromeWebView(activity, this)
+    var chrome = ChromeWebView(activity, this)
+        private set
     val tabs = TabHost(root, this)
     val pageToken: String = SecureRandom().let { r -> ByteArray(16).also(r::nextBytes).joinToString("") { "%02x".format(it) } }
     val pageScript: String = activity.assets.open("page.js").bufferedReader().readText().replace("__ZEN_TOKEN__", pageToken)
@@ -345,6 +346,27 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             }.getOrElse { json("ok" to false, "status" to 0, "text" to "") }
             main.post { reply(result) }
         }
+    }
+
+    /**
+     * The chrome WebView lost its renderer. The browser core ran inside it, so every tab page is
+     * orphaned: drop them, swap in a fresh chrome WebView and let it boot the core again from the
+     * persisted profile (the same path as a cold start).
+     */
+    fun onChromeGone(dead: ChromeWebView) {
+        if (dead !== chrome) return
+        tabs.destroyAll()
+        val index = root.indexOfChild(dead)
+        root.removeView(dead)
+        runCatching { dead.destroy() }
+        val fresh = ChromeWebView(activity, this)
+        root.addView(fresh, if (index >= 0) index else 0, dead.layoutParams ?: FrameLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        chrome = fresh
+        fresh.load()
+        fresh.requestFocus()
     }
 
     fun destroy() {

@@ -10,6 +10,7 @@ import { cn } from '@renderer/lib/utils'
 import { ContentArea } from '../content/ContentArea'
 import { Onboarding } from '../overlays/Onboarding'
 import { Favicon } from '../sidebar/Favicon'
+import { TabDialogs } from '../TabDialogs'
 import { DrawerSidebar } from './DrawerSidebar'
 
 interface Props {
@@ -85,6 +86,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         </div>
       )}
       <PhoneToasts ui={ui} barVisible={!barHidden} />
+      <TabDialogs state={state} />
       {onboarding && <Onboarding state={state} />}
     </div>
   )

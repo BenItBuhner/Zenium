@@ -683,7 +683,7 @@ export class Menus {
         {
           label: 'Delete Space',
           enabled: state.model.spaces.length > 1,
-          click: () => this.browser.deleteSpace(spaceId, win)
+          click: () => void this.browser.deleteSpace(spaceId, win)
         }
       ],
       win,
