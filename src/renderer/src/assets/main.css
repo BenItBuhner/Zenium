@@ -420,6 +420,27 @@
 :root[data-form-factor='phone'] .zen-space-strip {
   transition-duration: 260ms;
 }
+/* Settings on a phone: the section list becomes a row of chips above the content. */
+:root[data-form-factor='phone'] .zen-settings > div > div {
+  flex-direction: column;
+}
+:root[data-form-factor='phone'] .zen-settings nav {
+  display: flex;
+  width: auto;
+  gap: 4px;
+  overflow-x: auto;
+  border-right: 0;
+  border-bottom: 1px solid var(--zen-border);
+  scrollbar-width: none;
+}
+:root[data-form-factor='phone'] .zen-settings nav > button {
+  width: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+:root[data-form-factor='phone'] .zen-settings nav + div {
+  padding: 12px;
+}
 
 @media (prefers-reduced-motion: reduce) {
   * {

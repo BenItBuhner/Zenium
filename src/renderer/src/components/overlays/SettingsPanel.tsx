@@ -18,7 +18,6 @@ import type {
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
-import { useViewport } from '@renderer/lib/formFactor'
 import { cn } from '@renderer/lib/utils'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -67,24 +66,16 @@ export function SettingsPanel({
   const [section, setSection] = useState<Section>(initialSection)
   const s = state.settings
   const set = (patch: Partial<Settings>): void => run('settings.update', patch)
-  const phone = useViewport().formFactor === 'phone'
-
   return (
-    <OverlayShell title="Settings" variant="full">
-      <div className={cn('flex h-full', phone && 'flex-col')}>
-        <nav
-          className={cn(
-            'shrink-0 border-[var(--zen-border)] p-2',
-            phone ? 'flex gap-1 overflow-x-auto border-b [scrollbar-width:none]' : 'w-52 border-r'
-          )}
-        >
+    <OverlayShell title="Settings" variant="full" className="zen-settings">
+      <div className="flex h-full">
+        <nav className="w-52 shrink-0 border-r border-[var(--zen-border)] p-2">
           {SECTIONS.map((item) => (
             <button
               key={item.id}
               type="button"
               className={cn(
-                'flex h-9 items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
-                phone ? 'shrink-0 whitespace-nowrap' : 'w-full',
+                'flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
                 section === item.id && 'bg-[var(--zen-element-bg-active)] font-medium'
               )}
               onClick={() => setSection(item.id)}
@@ -93,7 +84,7 @@ export function SettingsPanel({
             </button>
           ))}
         </nav>
-        <div className={cn('min-w-0 flex-1 overflow-y-auto', phone ? 'p-3' : 'p-6')}>
+        <div className="min-w-0 flex-1 overflow-y-auto p-6">
           <div className="mx-auto flex max-w-2xl flex-col gap-6">
             {section === 'look' && <LookSection s={s} set={set} />}
             {section === 'compact' && <CompactSection s={s} set={set} />}

@@ -9,8 +9,8 @@ import { closeDrawer, openDrawer, openUrlbar, type UiState } from '@renderer/lib
 import { cn } from '@renderer/lib/utils'
 import { ContentArea } from '../content/ContentArea'
 import { Onboarding } from '../overlays/Onboarding'
-import { Sidebar } from '../sidebar/Sidebar'
 import { Favicon } from '../sidebar/Favicon'
+import { DrawerSidebar } from './DrawerSidebar'
 
 interface Props {
   state: UIState
@@ -80,7 +80,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <Sidebar state={state} isDark={isDark} floating hideNav className="w-full" />
+            <DrawerSidebar state={state} isDark={isDark} />
           </div>
         </div>
       )}
