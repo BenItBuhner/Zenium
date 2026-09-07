@@ -14,6 +14,18 @@ import { cn } from '@renderer/lib/utils'
 export function MenuSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const viewport = useViewport()
   const sheet = viewport.coarse
+  // Escape closes either variant (hardware keyboards exist on tablets and DeX too).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        closeMenu()
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
   return sheet ? <BottomSheet menu={menu} /> : <Popover menu={menu} />
 }
 
@@ -124,16 +136,6 @@ function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
     () => ({ x: menu.x ?? lastPointer.x, y: menu.y ?? lastPointer.y }),
     [menu.id, menu.x, menu.y] // eslint-disable-line react-hooks/exhaustive-deps
   )
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        closeMenu()
-      }
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
   return (
     <div
       className="fixed inset-0 z-[90]"

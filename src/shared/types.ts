@@ -627,6 +627,9 @@ export interface Commands {
   'folder.contextMenu': { args: { folderId: string }; result: void }
   'newtab.contextMenu': { args: void; result: void }
   'app.menu': { args: void; result: void }
+  /** Renderer-hosted menus: an item was picked / the menu was dismissed. */
+  'menu.click': { args: { menuId: string; itemId: string }; result: void }
+  'menu.close': { args: { menuId: string }; result: void }
   /** Renderer → main: chrome UI closed, give keyboard focus back to the active page. */
   'focus.content': { args: void; result: void }
   /** Renderer → main: chrome UI opened, take keyboard focus. */
@@ -722,18 +725,14 @@ export interface Commands {
   'page.print': { args: { tabId: string }; result: void }
   'page.savePage': { args: { tabId: string }; result: void }
   'page.viewSource': { args: { tabId: string }; result: void }
-
-  'onboarding.complete': {
-    args: { searchEngineId: string; colorScheme: ColorScheme; essentials: string[] }
-    result: void
-  }
-
-  /** Renderer-hosted menus: an item was picked / the menu was dismissed. */
-  'menu.click': { args: { menuId: string; itemId: string }; result: void }
-  'menu.close': { args: { menuId: string }; result: void }
   /** Page context menu requested from the chrome side (touch long-press forwarded by the host). */
   'page.contextMenu': {
     args: { tabId: string; linkURL: string; srcURL: string; x: number; y: number }
+    result: void
+  }
+
+  'onboarding.complete': {
+    args: { searchEngineId: string; colorScheme: ColorScheme; essentials: string[] }
     result: void
   }
 }

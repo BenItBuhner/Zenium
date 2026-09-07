@@ -68,8 +68,6 @@ export function SettingsPanel({
   const s = state.settings
   const set = (patch: Partial<Settings>): void => run('settings.update', patch)
   const phone = useViewport().formFactor === 'phone'
-  // Desktop/DeX: about-line mentions the engine host; phones run the system WebView.
-  const engineHost = state.platform === 'android' ? 'Android System WebView' : 'Electron'
 
   return (
     <OverlayShell title="Settings" variant="full">
@@ -104,7 +102,7 @@ export function SettingsPanel({
             {section === 'spaces' && <SpaceRoutingSection state={state} set={set} />}
             {section === 'containers' && <ContainersSection state={state} />}
             {section === 'shortcuts' && <ShortcutsSection state={state} />}
-            {section === 'about' && <AboutSection state={state} engineHost={engineHost} />}
+            {section === 'about' && <AboutSection state={state} />}
           </div>
         </div>
       </div>
@@ -640,7 +638,9 @@ function ContainersSection({ state }: { state: UIState }): JSX.Element {
   )
 }
 
-function AboutSection({ state, engineHost }: { state: UIState; engineHost: string }): JSX.Element {
+function AboutSection({ state }: { state: UIState }): JSX.Element {
+  // Desktop/DeX: the engine host is Electron; phones and tablets run the system WebView.
+  const engineHost = state.platform === 'android' ? 'Android System WebView' : 'Electron'
   return (
     <Group title="About">
       <Row

@@ -136,8 +136,10 @@ export async function openOverlay(
   spaceId: string | null = null
 ): Promise<void> {
   await captureActiveTab(activeTabId)
+  // Overlays render over the content area; a phone drawer would sit on top of them.
+  uiStore.set({ drawerOpen: false })
   run('focus.chrome', undefined)
-  uiStore.set({ overlay: kind, overlaySpaceId: spaceId, drawerOpen: false })
+  uiStore.set({ overlay: kind, overlaySpaceId: spaceId })
 }
 
 export function closeOverlay(): void {

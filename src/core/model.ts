@@ -1,8 +1,8 @@
 /**
  * Pure state model for the browser: spaces, tabs, essentials, split groups, folders.
  *
- * Everything here is free of host dependencies so it can be unit tested; the TabManager layers
- * tab-view lifecycle on top of these operations.
+ * Everything here is free of Electron dependencies so it can be unit tested; the TabManager
+ * layers WebContentsView lifecycle on top of these operations.
  */
 import { DEFAULT_CONTAINER_ID } from '../shared/types'
 import type {

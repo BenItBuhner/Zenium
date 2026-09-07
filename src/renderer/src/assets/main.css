@@ -33,16 +33,19 @@
   --zen-content-radius: 10px;
   --zen-sidebar-width: 240px;
   --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
-  /* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME). */
-  --zen-inset-top: 0px;
-  --zen-inset-right: 0px;
-  --zen-inset-bottom: 0px;
-  --zen-inset-left: 0px;
 }
 
 :root[data-theme='dark'] {
   --zen-panel-bg: rgb(28 28 34 / 0.82);
   --zen-shadow: 0 18px 50px rgb(0 0 0 / 0.55), 0 2px 8px rgb(0 0 0 / 0.35);
+}
+
+/* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME); zero on desktop. */
+:root {
+  --zen-inset-top: 0px;
+  --zen-inset-right: 0px;
+  --zen-inset-bottom: 0px;
+  --zen-inset-left: 0px;
 }
 
 @layer base {
@@ -373,6 +376,12 @@
   .zen-phone-bar {
     background: transparent;
   }
+}
+
+/* Mobile hosts: keep the chrome out of the status bar, cutouts, gesture bar and keyboard. */
+.zen-window {
+  padding: var(--zen-inset-top) var(--zen-inset-right) var(--zen-inset-bottom)
+    var(--zen-inset-left);
 }
 
 /*
