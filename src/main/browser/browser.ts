@@ -25,6 +25,8 @@ import { Actions, type AnyAction } from './actions'
 import { KeyboardHandler } from './keys'
 import { Menus } from './menus'
 import { SuggestionService } from './suggestions'
+import { ResourceGovernor } from './resources/governor'
+import { sanitizeResourceSettings } from './resources/switches'
 import { BoostService } from './boosts'
 import { ReaderService } from './reader'
 import { LiveFolderService } from './livefolders'
@@ -101,8 +103,8 @@ export class Browser {
   readonly extensions: ExtensionService
   readonly mods: ModService
   readonly sync: SyncEngine
+  readonly governor: ResourceGovernor
   readonly windows = new Map<string, ZenWindow>()
-  private unloadTimer: NodeJS.Timeout | null = null
   quitting = false
 
   constructor(userDataDir: string) {
@@ -127,6 +129,7 @@ export class Browser {
       return win?.alive ? win.win : null
     })
     this.tabs = new TabManager(this)
+    this.governor = new ResourceGovernor(this)
     this.actions = new Actions(this)
     this.keys = new KeyboardHandler(this)
     this.menus = new Menus(this)
@@ -219,6 +222,7 @@ export class Browser {
     })
     this.windows.set(id, win)
     win.create()
+    this.governor.watchWindow(win)
     if (localSpace) {
       // Blank / private windows start with an empty tab and the URL bar open.
       const tab = this.tabs.createTab({ active: true, load: false }, win)
@@ -248,8 +252,7 @@ export class Browser {
     if (win.isPrivate && !this.allWindows().some((w) => w.isPrivate))
       void this.sessions.clearPrivate()
     if (this.allWindows().length === 0) {
-      if (this.unloadTimer) clearInterval(this.unloadTimer)
-      this.unloadTimer = null
+      this.governor.stop()
       this.tabs.destroyAll()
       if (process.platform !== 'darwin') app.quit()
       return
@@ -295,16 +298,11 @@ export class Browser {
       : this.state.restoredWindows.slice(0, 1)
     if (restore.length === 0) this.createWindow({ kind: 'synced' })
     for (const persisted of restore) this.createWindow({ kind: 'synced', persisted })
-    this.startUnloadTimer()
+    this.governor.start()
     this.liveFolders.start()
     void this.extensions.start()
     this.sync.start()
     this.state.commit()
-  }
-
-  private startUnloadTimer(): void {
-    if (this.unloadTimer) return
-    this.unloadTimer = setInterval(() => this.tabs.unloadInactive(), 60_000)
   }
 
   // ---------------------------------------------------------------------------
@@ -674,6 +672,8 @@ export class Browser {
         this.menus.showSelectionContextMenu(tabIds, win),
       'tab.duplicate': ({ tabId }, win) => void tabs.duplicate(tabId, win),
       'tab.unload': ({ tabId }) => tabs.discard(tabId),
+      'tab.freeze': ({ tabId }) => this.governor.freezeTab(tabId),
+      'tab.wake': ({ tabId }) => this.governor.wakeTab(tabId),
       'tab.move': ({ tabId, spaceId, section, index }, win) =>
         tabs.moveTab(tabId, { spaceId, section, index }, win),
       'tab.moveToSpace': ({ tabId, spaceId }, win) => {
@@ -796,6 +796,10 @@ export class Browser {
         this.actions.run(action as AnyAction, { sourceTabId: null, win }),
 
       'overlay.snapshot': ({ tabId }, win) => win.snapshot(tabId),
+
+      'resources.snapshot': () => this.governor.sample(),
+      'resources.trim': () => this.governor.trim(),
+      'resources.relaunch': () => this.governor.relaunch(),
 
       'settings.update': (patch, win) => this.updateSettings(patch, win),
       'shortcuts.update': ({ id, binding }) => {
@@ -979,7 +983,9 @@ export class Browser {
       glance: s.glanceEnabled,
       trigger: s.glanceTrigger,
       thirdParty: s.thirdPartyOnPinned,
-      windowSync: s.windowSync
+      windowSync: s.windowSync,
+      resources: JSON.stringify(s.resources),
+      unload: `${s.unloadEnabled}:${s.unloadTimeoutMinutes}:${s.unloadExcludedDomains.join(',')}`
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -988,6 +994,13 @@ export class Browser {
         if (cm.enabled !== undefined && cm.enabled !== win.compactEnabled)
           this.setCompactMode(win, cm.enabled)
         Object.assign(s.compactMode, cm)
+      } else if (key === 'resources' && value && typeof value === 'object') {
+        const incoming = value as Partial<Settings['resources']>
+        s.resources = sanitizeResourceSettings({
+          ...s.resources,
+          ...incoming,
+          process: { ...s.resources.process, ...(incoming.process ?? {}) }
+        })
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }
@@ -1007,6 +1020,13 @@ export class Browser {
       if (s.windowSync !== 'pinned')
         for (const tab of Object.values(this.state.model.tabs))
           if (tab.spaceId && !this.state.model.localSpaces[tab.spaceId]) tab.windowId = null
+    }
+    if (
+      before.resources !== JSON.stringify(s.resources) ||
+      before.unload !==
+        `${s.unloadEnabled}:${s.unloadTimeoutMinutes}:${s.unloadExcludedDomains.join(',')}`
+    ) {
+      this.governor.onSettingsChanged()
     }
     this.state.commit()
   }

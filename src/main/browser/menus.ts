@@ -467,6 +467,17 @@ export class Menus {
           }
         ]
       },
+      { type: 'separator' },
+      tab.frozen || tab.cpuThrottle > 1
+        ? {
+            label: tab.frozen ? 'Wake Tab' : 'Remove CPU Throttling',
+            click: () => void this.browser.governor.wakeTab(tabId)
+          }
+        : {
+            label: 'Freeze Tab',
+            enabled: !tab.discarded && tabs.windowsShowing(tabId).length === 0,
+            click: () => void this.browser.governor.freezeTab(tabId)
+          },
       {
         label: 'Unload Tab',
         enabled: !tab.discarded && active?.id !== tabId,
@@ -665,6 +676,7 @@ export class Menus {
           label: 'Unload All Spaces Except Current',
           click: () => this.browser.unloadOtherSpaces(win)
         },
+        { label: 'Freeze Other Tabs', click: () => void this.browser.governor.freezeOthers() },
         { label: 'Close Unpinned Tabs', click: () => tabs.closeUnpinned(spaceId, win) },
         { type: 'separator' },
         {
@@ -861,6 +873,25 @@ export class Menus {
             active && this.browser.actions.run('page.screenshot', { sourceTabId: active.id, win })
         },
         { type: 'separator' },
+        {
+          label: 'Resources',
+          submenu: [
+            {
+              label: `Memory ${Math.round(state.resources.memory.used)} MB · CPU ${Math.round(state.resources.cpu.used)}% · ${state.resources.loadedTabs} live, ${state.resources.frozenTabs} frozen`,
+              enabled: false
+            },
+            { type: 'separator' },
+            { label: 'Free Up Memory Now', click: () => void this.browser.governor.trim() },
+            { label: 'Freeze Other Tabs', click: () => void this.browser.governor.freezeOthers() },
+            { label: 'Wake All Tabs', click: () => void this.browser.governor.wakeAll() },
+            { type: 'separator' },
+            {
+              label: 'Resource Settings…',
+              click: () =>
+                this.browser.emit('overlay.open', { kind: 'settings', section: 'resources' }, win)
+            }
+          ]
+        },
         {
           label: 'Keyboard Shortcuts',
           click: () => this.browser.emit('overlay.open', { kind: 'shortcuts' }, win)

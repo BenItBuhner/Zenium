@@ -23,7 +23,6 @@ import {
   BLANK_URL,
   ERROR_URL_PREFIX,
   errorPageUrl,
-  getDomain,
   isNavigableUrl,
   titleForUrl
 } from '../../shared/url'
@@ -141,7 +140,7 @@ export class TabManager {
   }
 
   /** Union of the tabs visible in any window (plus Glance pages and their parents). */
-  private allVisibleTabIds(): Set<string> {
+  allVisibleTabIds(): Set<string> {
     const visible = new Set<string>()
     for (const w of this.browser.allWindows()) {
       for (const id of this.visibleTabIds(w)) visible.add(id)
@@ -154,13 +153,41 @@ export class TabManager {
   // View lifecycle
   // ---------------------------------------------------------------------------
 
-  ensureLoaded(tabId: string, win?: ZenWindow): WebContentsView | undefined {
+  /**
+   * Make sure a tab has a live page. Visible tabs load right away (evicting a hidden page first
+   * when the live-page cap is reached); background loads go through the governor's queue and
+   * return `undefined` while they wait for a slot. `win` is the window that will own the page
+   * (default: the window showing the tab, else the focused one).
+   */
+  ensureLoaded(
+    tabId: string,
+    win?: ZenWindow,
+    opts: { background?: boolean } = {}
+  ): WebContentsView | undefined {
+    const tab = this.tab(tabId)
+    if (!tab) return undefined
+    const existing = this.views.get(tabId)
+    if (existing && !existing.webContents.isDestroyed()) return existing
+    if (opts.background) {
+      return this.browser.governor.scheduler.request(tabId, win?.id)
+        ? this.views.get(tabId)
+        : undefined
+    }
+    this.browser.governor.makeRoomFor(tabId)
+    return this.load(tabId, win)
+  }
+
+  /** Create the page in `win` and start loading it, unconditionally. */
+  load(tabId: string, win?: ZenWindow): WebContentsView | undefined {
     const tab = this.tab(tabId)
     if (!tab) return undefined
     const existing = this.views.get(tabId)
     if (existing && !existing.webContents.isDestroyed()) return existing
     const view = this.createView(tab, win ?? this.windowFor(tabId))
+    this.browser.governor.scheduler.track(tabId)
     tab.discarded = false
+    tab.frozen = false
+    tab.cpuThrottle = 1
     let url = tab.url
     if (url.startsWith(ERROR_URL_PREFIX)) {
       try {
@@ -172,6 +199,23 @@ export class TabManager {
     }
     void view.webContents.loadURL(url || BLANK_URL).catch(() => undefined)
     return view
+  }
+
+  loadedCount(): number {
+    let n = 0
+    for (const view of this.views.values()) if (!view.webContents.isDestroyed()) n += 1
+    return n
+  }
+
+  /**
+   * Re-assert a view's visibility. Freezing a page marks its WebContents hidden; after thawing a
+   * page that is on screen, Chromium only resumes painting once it is told the page is shown.
+   */
+  refreshVisibility(tabId: string): void {
+    const view = this.views.get(tabId)
+    if (!view || view.webContents.isDestroyed() || !view.getVisible()) return
+    view.setVisible(false)
+    view.setVisible(true)
   }
 
   /**
@@ -203,6 +247,7 @@ export class TabManager {
       if (this.claim(win.glance.tabId, win)) moved = true
     }
     if (this.releaseHidden(win)) moved = true
+    this.browser.governor.wakeVisible(win)
     if (moved) this.browser.state.commitVolatile()
   }
 
@@ -250,6 +295,7 @@ export class TabManager {
     win.attachView(view)
     if (tab.muted) view.webContents.setAudioMuted(true)
     if (tab.zoom !== 1) view.webContents.setZoomFactor(tab.zoom)
+    this.browser.governor.onViewCreated(tab.id, view.webContents)
     return view
   }
 
@@ -270,13 +316,14 @@ export class TabManager {
     const ownerWindow = (): ZenWindow => this.windowFor(tabId)
 
     wc.on('did-start-loading', () => update((t) => (t.loading = true), true))
-    wc.on('did-stop-loading', () =>
+    wc.on('did-stop-loading', () => {
+      this.browser.governor.onLoadFinished(tabId)
       update((t) => {
         t.loading = false
         t.canGoBack = wc.navigationHistory.canGoBack()
         t.canGoForward = wc.navigationHistory.canGoForward()
       })
-    )
+    })
     wc.on('did-navigate', (_e, url) => this.onNavigated(tabId, wc, url))
     wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
       if (isMainFrame) this.onNavigated(tabId, wc, url)
@@ -298,6 +345,7 @@ export class TabManager {
     )
     wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
       if (!isMainFrame || code === -3 || wc.isDestroyed()) return
+      this.browser.governor.onLoadFinished(tabId)
       const upgradedFrom = this.httpsUpgraded.get(tabId)
       if (upgradedFrom && url.startsWith('https://') && HTTP_FALLBACK_CODES.has(code)) {
         this.httpsUpgraded.delete(tabId)
@@ -317,8 +365,29 @@ export class TabManager {
       if (details.reason === 'clean-exit') return
       const tab = this.tab(tabId)
       if (!tab) return
+      const title = tab.customTitle ?? tab.title
+      const outOfMemory = details.reason === 'oom' || details.reason === 'memory-eviction'
+      const visible = this.allVisibleTabIds().has(tabId)
+      // A V8 heap-cap OOM is reported as `oom` on Windows / Android but as a plain `crashed` on
+      // Linux. Either way a page nobody is looking at is better unloaded than replaced by an error
+      // page in a fresh renderer: keep the tab, drop the page, reload on activation.
+      if (outOfMemory || !visible) {
+        const reason = outOfMemory
+          ? 'the page ran out of memory'
+          : `the page crashed (${details.reason})`
+        this.browser.governor.record('discard', tabId, reason, title)
+        this.discard(tabId)
+        this.browser.toast(
+          outOfMemory
+            ? `"${title}" ran out of memory and was unloaded.`
+            : `"${title}" crashed and was unloaded.`,
+          'error',
+          ownerWindow()
+        )
+        return
+      }
       const url = tab.url
-      this.browser.toast(`"${tab.title}" crashed (${details.reason}).`, 'error', ownerWindow())
+      this.browser.toast(`"${title}" crashed (${details.reason}).`, 'error', ownerWindow())
       void wc
         .loadURL(errorPageUrl(-1, `The page crashed (${details.reason})`, url))
         .catch(() => undefined)
@@ -327,8 +396,14 @@ export class TabManager {
       update((t) => (t.audible = e.audible), true)
       this.browser.updateMedia()
     })
-    wc.on('media-started-playing', () => this.browser.updateMedia())
-    wc.on('media-paused', () => this.browser.updateMedia())
+    wc.on('media-started-playing', () => {
+      this.browser.governor.onMedia(tabId, true)
+      this.browser.updateMedia()
+    })
+    wc.on('media-paused', () => {
+      this.browser.governor.onMedia(tabId, false)
+      this.browser.updateMedia()
+    })
     wc.on('enter-html-full-screen', () => {
       const win = ownerWindow()
       // Zen: going fullscreen inside a Glance page expands it into a real tab first.
@@ -477,9 +552,15 @@ export class TabManager {
     this.httpsUpgraded.delete(tabId)
     this.owners.get(tabId)?.detachView(view)
     this.owners.delete(tabId)
-    if (!view.webContents.isDestroyed()) {
-      this.byWebContentsId.delete(view.webContents.id)
-      view.webContents.close({ waitForBeforeUnload: false })
+    const wc = view.webContents
+    if (!wc.isDestroyed()) {
+      // A frozen page never processes its close message; wake it so the renderer exits cleanly.
+      if (this.tab(tabId)?.frozen) void this.browser.governor.lifecycle.thaw(wc, true)
+      this.browser.governor.onViewDestroyed(tabId, wc)
+      this.byWebContentsId.delete(wc.id)
+      wc.close({ waitForBeforeUnload: false })
+    } else {
+      this.browser.governor.onViewDestroyed(tabId, wc)
     }
     this.browser.state.devtoolsOpenFor.delete(tabId)
   }
@@ -490,12 +571,23 @@ export class TabManager {
     if (!tab) return
     this.destroyView(tabId)
     tab.discarded = true
+    tab.frozen = false
+    tab.cpuThrottle = 1
     tab.loading = false
     tab.audible = false
     tab.canGoBack = false
     tab.canGoForward = false
     this.browser.updateMedia()
     this.browser.state.commit()
+  }
+
+  /** A frozen page cannot navigate; wake it before touching its history or URL. */
+  private thawForNavigation(tabId: string): void {
+    const tab = this.tab(tabId)
+    const wc = this.webContents(tabId)
+    if (!tab || !wc || !tab.frozen) return
+    void this.browser.governor.lifecycle.thaw(wc)
+    tab.frozen = false
   }
 
   // ---------------------------------------------------------------------------
@@ -560,7 +652,7 @@ export class TabManager {
     if (opts.active !== false) {
       this.activateTab(tab.id, win)
     } else if (opts.load !== false && tab.url !== BLANK_URL) {
-      this.ensureLoaded(tab.id, win)
+      this.ensureLoaded(tab.id, win, { background: true })
     }
     this.browser.state.commit()
     return tab
@@ -625,6 +717,7 @@ export class TabManager {
       this.claim(id, win)
     }
     this.releaseHidden(win)
+    this.browser.governor.wakeVisible(win)
     win.findResult = null
     this.browser.state.commit()
     win.focusContent()
@@ -659,6 +752,7 @@ export class TabManager {
       this.claim(id, win)
     }
     this.releaseHidden(win)
+    this.browser.governor.wakeVisible(win)
     win.findResult = null
     this.browser.emit('space.switched', { fromIndex, toIndex }, win)
     this.browser.state.commit()
@@ -727,6 +821,7 @@ export class TabManager {
     removeTabFromLists(m, tabId)
     delete m.tabs[tabId]
     this.destroyView(tabId)
+    this.browser.governor.onTabRemoved(tabId)
     this.browser.liveFolders.onTabLeftFolder(tabId, tab.folderId)
     if (!this.isPrivate(tab)) {
       this.browser.state.recentlyClosed.unshift({
@@ -832,6 +927,7 @@ export class TabManager {
     if (opts.upgradedFrom) this.httpsUpgraded.set(tabId, opts.upgradedFrom)
     else this.httpsUpgraded.delete(tabId)
     const hadView = this.views.has(tabId) && !this.views.get(tabId)!.webContents.isDestroyed()
+    this.thawForNavigation(tabId)
     const view = this.ensureLoaded(tabId)
     if (!view) return
     view.setBackgroundColor(this.backgroundFor(url))
@@ -842,12 +938,16 @@ export class TabManager {
 
   goBack(tabId: string): void {
     const wc = this.webContents(tabId)
-    if (wc?.navigationHistory.canGoBack()) wc.navigationHistory.goBack()
+    if (!wc?.navigationHistory.canGoBack()) return
+    this.thawForNavigation(tabId)
+    wc.navigationHistory.goBack()
   }
 
   goForward(tabId: string): void {
     const wc = this.webContents(tabId)
-    if (wc?.navigationHistory.canGoForward()) wc.navigationHistory.goForward()
+    if (!wc?.navigationHistory.canGoForward()) return
+    this.thawForNavigation(tabId)
+    wc.navigationHistory.goForward()
   }
 
   reload(tabId: string, skipCache = false): void {
@@ -860,6 +960,7 @@ export class TabManager {
     }
     const wc = this.webContents(tabId)
     if (!wc) return
+    this.thawForNavigation(tabId)
     if (tab.url.startsWith(ERROR_URL_PREFIX)) {
       const original = safeParam(tab.url, 'url')
       if (original) {
@@ -1373,6 +1474,7 @@ export class TabManager {
     win.glance = null
     this.destroyView(glance.tabId)
     delete this.model.tabs[glance.tabId]
+    this.browser.governor.onTabRemoved(glance.tabId)
     this.browser.state.commit()
     this.broadcastPageFlags()
     win.focusContent()
@@ -1447,23 +1549,6 @@ export class TabManager {
     if (mode === 'inspect') wc.inspectElement(0, 0)
   }
 
-  /** Discard every loaded, invisible tab whose last activity is older than the unload timeout. */
-  unloadInactive(): void {
-    if (!this.settings.unloadEnabled) return
-    const timeout = this.settings.unloadTimeoutMinutes * 60_000
-    const now = Date.now()
-    const visible = this.allVisibleTabIds()
-    for (const [id] of this.views) {
-      const tab = this.tab(id)
-      if (!tab || visible.has(id) || tab.audible || tab.loading) continue
-      if (now - tab.lastActiveAt < timeout) continue
-      if (this.settings.unloadExcludedDomains.some((d) => getDomain(tab.url) === d.toLowerCase()))
-        continue
-      if (this.browser.state.devtoolsOpenFor.has(id)) continue
-      this.discard(id)
-    }
-  }
-
   unloadSpace(spaceId: string): void {
     const space = getSpace(this.model, spaceId)
     if (!space) return
@@ -1499,6 +1584,8 @@ export class TabManager {
         this.destroyView(tabId)
         if (tab) {
           tab.discarded = true
+          tab.frozen = false
+          tab.cpuThrottle = 1
           tab.loading = false
           tab.audible = false
         }

@@ -1,5 +1,5 @@
 import type { JSX } from 'react'
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import { ArrowDown, ArrowUp, Sparkles, Trash2 } from 'lucide-react'
 import type {
   ColorScheme,
@@ -20,15 +20,16 @@ import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS, spaceLabel } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
 import { activeTab } from '@renderer/lib/selectors'
-import { openOverlay } from '@renderer/lib/ui'
+import { openOverlay, uiStore } from '@renderer/lib/ui'
 import { cn, relativeTime } from '@renderer/lib/utils'
 import { ContainerIcon } from '../ContainerIcon'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Switch } from '../ui/switch'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { OverlayShell } from './OverlayShell'
+import { ResourcesSection } from './ResourcesSection'
+import { Choice, Group, Row } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
 import { SyncSection } from './SyncSection'
 
@@ -36,6 +37,7 @@ export type SettingsSection =
   | 'look'
   | 'compact'
   | 'tabs'
+  | 'resources'
   | 'search'
   | 'spaces'
   | 'containers'
@@ -50,6 +52,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'look', label: 'Look and Feel' },
   { id: 'compact', label: 'Compact Mode' },
   { id: 'tabs', label: 'Tab Management' },
+  { id: 'resources', label: 'Resources' },
   { id: 'search', label: 'Search' },
   { id: 'spaces', label: 'Space Routing' },
   { id: 'containers', label: 'Containers' },
@@ -60,6 +63,10 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'shortcuts', label: 'Keyboard Shortcuts' },
   { id: 'about', label: 'About' }
 ]
+
+function resolveSection(value: string | null | undefined): SettingsSection {
+  return SECTIONS.some((s) => s.id === value) ? (value as SettingsSection) : 'look'
+}
 
 const CONTAINER_ICONS: ContainerIconName[] = [
   'fingerprint',
@@ -79,12 +86,17 @@ const CONTAINER_ICONS: ContainerIconName[] = [
 
 export function SettingsPanel({
   state,
-  initialSection = 'look'
+  initialSection
 }: {
   state: UIState
+  /** Section to show when the UI store does not name one (e.g. the Shortcuts / Sync overlays). */
   initialSection?: SettingsSection
 }): JSX.Element {
-  const [section, setSection] = useState<SettingsSection>(initialSection)
+  // The open section lives in the UI store so main-process events can retarget the panel while
+  // it stays mounted (e.g. "Resource Settings…" from a menu).
+  const stored = uiStore.use((u) => u.overlaySection)
+  const section = resolveSection(stored ?? initialSection)
+  const setSection = (id: SettingsSection): void => uiStore.set({ overlaySection: id })
   const s = state.settings
   const set = (patch: Partial<Settings>): void => run('settings.update', patch)
 
@@ -111,6 +123,7 @@ export function SettingsPanel({
             {section === 'look' && <LookSection s={s} set={set} />}
             {section === 'compact' && <CompactSection s={s} set={set} />}
             {section === 'tabs' && <TabsSection s={s} set={set} />}
+            {section === 'resources' && <ResourcesSection state={state} set={set} />}
             {section === 'search' && <SearchSection state={state} set={set} />}
             {section === 'spaces' && <SpaceRoutingSection state={state} set={set} />}
             {section === 'containers' && <ContainersSection state={state} />}
@@ -124,66 +137,6 @@ export function SettingsPanel({
         </div>
       </div>
     </OverlayShell>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Building blocks
-// ---------------------------------------------------------------------------
-
-function Group({ title, children }: { title: string; children: ReactNode }): JSX.Element {
-  return (
-    <section>
-      <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-[var(--zen-muted)]">
-        {title}
-      </h3>
-      <div className="overflow-hidden rounded-xl border border-[var(--zen-border)]">{children}</div>
-    </section>
-  )
-}
-
-function Row({
-  label,
-  hint,
-  children
-}: {
-  label: string
-  hint?: string
-  children: ReactNode
-}): JSX.Element {
-  return (
-    <div className="flex min-h-12 items-center gap-4 border-b border-[var(--zen-border)] px-4 py-2 last:border-b-0">
-      <div className="min-w-0 flex-1">
-        <div className="text-[13px]">{label}</div>
-        {hint && <div className="text-[11.5px] text-[var(--zen-muted)]">{hint}</div>}
-      </div>
-      {children}
-    </div>
-  )
-}
-
-function Choice<T extends string>({
-  value,
-  options,
-  onChange
-}: {
-  value: T
-  options: Array<{ value: T; label: string }>
-  onChange: (v: T) => void
-}): JSX.Element {
-  return (
-    <Select value={value} onValueChange={(v) => onChange(v as T)}>
-      <SelectTrigger className="w-56">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {options.map((o) => (
-          <SelectItem key={o.value} value={o.value}>
-            {o.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
   )
 }
 
@@ -448,7 +401,7 @@ function TabsSection({
       <Group title="Tab Unloading">
         <Row
           label="Unload inactive tabs"
-          hint="Frees memory by unloading tabs you haven't used for a while."
+          hint="Frees memory by unloading tabs you haven't used for a while. Freezing, budgets and the live-page cap live under Resources."
         >
           <Switch checked={s.unloadEnabled} onCheckedChange={(v) => set({ unloadEnabled: v })} />
         </Row>

@@ -53,6 +53,8 @@ export interface UiState {
   overlaySpaceId: string | null
   /** Folder the live-folder editor works on (null → create a new one). */
   overlayFolderId: string | null
+  /** Settings section to open (e.g. `resources`), when the overlay was opened for one. */
+  overlaySection: string | null
   urlbar: UrlbarState
   findOpen: boolean
   findTabId: string | null
@@ -85,6 +87,7 @@ export const uiStore = createStore<UiState>(
     overlay: 'none',
     overlaySpaceId: null,
     overlayFolderId: null,
+    overlaySection: null,
     urlbar: { open: false, mode: 'new-tab', tabId: null, initialText: undefined, attached: false },
     findOpen: false,
     findTabId: null,
@@ -129,15 +132,26 @@ export async function openOverlay(
   kind: OverlayKind,
   activeTabId: string | null,
   spaceId: string | null = null,
-  folderId: string | null = null
+  folderId: string | null = null,
+  section: string | null = null
 ): Promise<void> {
   await captureActiveTab(activeTabId)
   run('focus.chrome', undefined)
-  uiStore.set({ overlay: kind, overlaySpaceId: spaceId, overlayFolderId: folderId })
+  uiStore.set({
+    overlay: kind,
+    overlaySpaceId: spaceId,
+    overlayFolderId: folderId,
+    overlaySection: section
+  })
 }
 
 export function closeOverlay(): void {
-  uiStore.set({ overlay: 'none', overlaySpaceId: null, overlayFolderId: null })
+  uiStore.set({
+    overlay: 'none',
+    overlaySpaceId: null,
+    overlayFolderId: null,
+    overlaySection: null
+  })
   invalidateSnapshot()
   returnFocusToPage()
 }

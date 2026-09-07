@@ -13,6 +13,7 @@ import type {
   Mod,
   Platform,
   Rect,
+  ResourceSnapshot,
   SearchEngine,
   Settings,
   Shortcut,
@@ -23,11 +24,12 @@ import type {
   UIState
 } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
-import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS } from '../../shared/defaults'
+import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS, emptyResourceSnapshot } from '../../shared/defaults'
 import { DEFAULT_SEARCH_ENGINES } from '../../shared/search'
 import { applyShortcutOverrides, defaultShortcuts } from '../../shared/shortcuts'
 import { JsonStore } from '../store/JsonStore'
 import { createSpace, createTabRecord, emptyModel, tabVisibleIn, type Model } from './model'
+import { sanitizeResourceSettings } from './resources/switches'
 import { BLANK_URL } from '../../shared/url'
 import type { ZenWindow } from './window'
 
@@ -87,6 +89,8 @@ export class BrowserState {
   recentlyClosed: ClosedTab[] = []
   media: MediaState[] = []
   devtoolsOpenFor = new Set<string>()
+  resources: ResourceSnapshot = emptyResourceSnapshot()
+  windowBounds: Rect | null = null
   /** Windows to restore on startup (from the previous session). */
   restoredWindows: PersistedWindow[] = []
   /** Live windows, registered by the Browser so persistence can capture them. */
@@ -158,6 +162,7 @@ export class BrowserState {
     this.settings.compactMode = { ...DEFAULT_SETTINGS.compactMode, ...data.settings?.compactMode }
     // Compact mode's "persistent sidebar" toggle is transient by design.
     this.settings.compactMode.sidebarPersistent = false
+    this.settings.resources = sanitizeResourceSettings(data.settings?.resources)
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     this.bookmarks = Array.isArray(data.bookmarks) ? data.bookmarks : []
     if (Array.isArray(data.windows) && data.windows.length) {
@@ -401,7 +406,8 @@ export class BrowserState {
       devtoolsOpenFor: [...this.devtoolsOpenFor],
       foreignTabIds: win.foreignTabIds(),
       windowCount: this.liveWindows().length,
-      ...this.extras()
+      ...this.extras(),
+      resources: this.resources
     }
   }
 

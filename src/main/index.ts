@@ -2,10 +2,14 @@ import { app, Menu } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { registerZenScheme } from './browser/protocol'
 import { Browser } from './browser/browser'
+import { applyResourceSwitches } from './browser/resources/startup'
 
 // Must run before `ready`.
 registerZenScheme()
 app.setName('Zen')
+// Renderer process limit, V8 heap caps, GPU profile … are Chromium command-line switches and can
+// only be applied before the browser process finishes starting up.
+applyResourceSwitches(app.getPath('userData'))
 
 // Shortcuts are handled by Zen's own table, not by menu accelerators. macOS still needs an
 // application menu for the standard Edit roles (Cmd+C/V/X/A only work through them there).

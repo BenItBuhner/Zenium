@@ -32,6 +32,7 @@ Zen's. The current reference is **Zen 1.22b** (September 2026).
 | Theme picker – colour wheel dots, harmony algorithms, monochrome, opacity, texture, rotation, presets                                                                                                                                                                                                                                                                                                                                                           | Done                |
 | Keyboard shortcuts – Zen's default table (from `ZenKeyboardShortcuts.mjs`, schema v20), fully rebindable with conflict detection                                                                                                                                                                                                                                                                                                                                | Done                |
 | Tab unloading (inactivity timeout, excluded domains, unload tab / space / other spaces)                                                                                                                                                                                                                                                                                                                                                                         | Done                |
+| **Resource governor** – memory / CPU / GPU budgets the browser never exceeds: purge → throttle → freeze → unload ladders, live-page cap, queued background loads, battery / idle / suspend awareness, Chromium & V8 startup switches, live meters in Settings                                                                                                                                                                                                   | Done (this port only) |
 | Containers – isolated cookie sessions per container, per-space defaults, "Open in New Container Tab", icons and colours, reorderable (1.22)                                                                                                                                                                                                                                                                                                                     | Done                |
 | History, bookmarks, downloads (saved to the Downloads folder with Firefox-style unique names, or "always ask"), find in page, screenshots, save page, print, view source, zoom (1.21 fine steps), mute, PiP, multiple media controls in the sidebar                                                                                                                                                                                                             | Done                |
 | Native context menus for pages, tabs (incl. Share ▸ Copy Link / Email Link), spaces, folders and the new-tab button; permission prompts remembered per site; `window.open` popups                                                                                                                                                                                                                                                                               | Done                |
@@ -49,6 +50,8 @@ src/
               zen:// pages (blank, error, reader), history, bookmarks, downloads, permissions,
               native menus, keyboard routing, URL-bar suggestions, Boosts, Reader View,
               Live Folders, extensions, Mods
+      resources/  The resource governor: planner (pure, unit tested), governor service,
+                  CDP tab lifecycle (freeze / throttle / purge), load scheduler, startup switches
     sync/     Cross-device sync: records + LWW merge (pure), crypto, folder transport, engine
   preload/    index.ts – typed IPC bridge for the chrome; page.ts – Glance / pinned-tab click rules,
               Boost "zap element" picker
@@ -65,6 +68,33 @@ All browser state lives in the main process and is shared by every synced window
 receives its own snapshot (its selection, Glance, find bar, compact state) and only sends
 commands. State is persisted atomically to `<userData>/zen/*.json`; blank and private windows
 are never persisted.
+
+### Resource governor
+
+Settings → Resources sets budgets for the whole browser (every Chromium process together):
+memory in MB or as a share of installed RAM, CPU as a share of all cores, and GPU-process memory.
+Every few seconds the governor samples `app.getAppMetrics()`, attributes each process to the tabs
+that own it (shared renderers are split evenly, out-of-process iframes count towards their tab)
+and, when a budget is exceeded, escalates cheapest-first through Chromium's own lifecycle
+machinery (reached over the DevTools protocol):
+
+- **memory** – V8 low-memory GC + browser-wide memory-pressure purge → unload hidden pages by
+  score (cost × time out of sight) → purge visible pages (strict) → reload the active page when it
+  alone busts the budget (extreme)
+- **CPU** – throttle hidden pages 4× / 8× / 16× (`Emulation.setCPUThrottlingRate`) → freeze
+  (`Page.setWebLifecycleState`) → unload pages that keep burning CPU while frozen; pages are also
+  told they have proportionally fewer cores (`navigator.hardwareConcurrency`)
+- **GPU** – pause muted background media → purge → unload one hidden page per cycle
+
+Independently of pressure, hidden pages are frozen after a timeout (and at once when the system is
+idle, the screen is locked or the machine suspends), unloaded after Zen's tab-unloading timeout,
+a hard cap on live pages is enforced, and background loads queue up instead of all starting at
+once. Budgets shrink on battery. Pages playing audio, excluded domains and pages with DevTools open
+are never touched; pinned tabs and Essentials can be protected too. The process profile (renderer
+process limit, per-page V8 heap cap, low-end-device mode, no back/forward cache, no prerendering,
+raster threads, GPU mode) becomes Chromium command-line switches at the next launch. A page that
+grows past its heap cap – or any hidden page whose renderer dies – is unloaded, not left as an error
+page. `ZEN_GOVERNOR_LOG=1` prints one diagnostic line per sample.
 
 ## Running it
 
