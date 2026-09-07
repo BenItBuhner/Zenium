@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import type { LayoutReport, Rect, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
-import { glanceRect, placementsFor } from '@renderer/lib/layout'
+import { useViewport } from '@renderer/lib/formFactor'
+import { glanceRect, placementsFor, SPLIT_GAP, SPLIT_GAP_TOUCH } from '@renderer/lib/layout'
 import { activeTab, visibleTabIds } from '@renderer/lib/selectors'
 import { overlayCoversContent, type UiState } from '@renderer/lib/ui'
 
@@ -23,6 +24,8 @@ export function useLayoutReporter(
 ): LayoutInfo {
   const [area, setArea] = useState<Rect | null>(null)
   const lastSent = useRef<string>('')
+  const { coarse, formFactor } = useViewport()
+  const gap = coarse ? SPLIT_GAP_TOUCH : SPLIT_GAP
 
   useLayoutEffect(() => {
     const el = viewportRef.current
@@ -50,6 +53,7 @@ export function useLayoutReporter(
     }
   }, [
     viewportRef,
+    formFactor,
     state.settings.sidebarSide,
     state.settings.toolbarLayout,
     state.settings.compactMode.enabled
@@ -81,7 +85,7 @@ export function useLayoutReporter(
         parseFloat(
           getComputedStyle(document.documentElement).getPropertyValue('--zen-content-radius')
         ) || 0
-      let placements = placementsFor(area, visibleTabIds(state), group, radius)
+      let placements = placementsFor(area, visibleTabIds(state), group, radius, gap)
       let glance: LayoutReport['glance'] = null
       if (state.glance) {
         // The parent is frozen behind the glance card; the card itself appears once its open
@@ -101,7 +105,7 @@ export function useLayoutReporter(
     if (key === lastSent.current) return
     lastSent.current = key
     run('layout.report', report)
-  }, [area, state, ui.glanceReady, glanceActive, contentHidden])
+  }, [area, state, ui.glanceReady, glanceActive, contentHidden, gap])
 
   return { area, contentHidden }
 }

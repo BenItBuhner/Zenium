@@ -14,7 +14,7 @@ import {
   type OrderData,
   type SyncRecord
 } from '../records'
-import { createSpace, createTabRecord, emptyModel, insertTabIntoSpace } from '../../browser/model'
+import { createSpace, createTabRecord, emptyModel, insertTabIntoSpace } from '../../../core/model'
 import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS } from '../../../shared/defaults'
 import type { Space, Tab } from '../../../shared/types'
 

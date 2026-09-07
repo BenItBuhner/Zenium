@@ -6,6 +6,7 @@ import type {
   ContainerColor,
   ContainerIcon as ContainerIconName,
   GlanceTrigger,
+  HostCapabilities,
   NewTabPosition,
   PinnedCloseBehavior,
   Settings,
@@ -64,8 +65,25 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'about', label: 'About' }
 ]
 
-function resolveSection(value: string | null | undefined): SettingsSection {
-  return SECTIONS.some((s) => s.id === value) ? (value as SettingsSection) : 'look'
+/** Sections that only make sense on hosts with the matching feature. */
+const SECTION_CAPABILITY: Partial<Record<SettingsSection, keyof HostCapabilities>> = {
+  resources: 'resourceGovernor',
+  extensions: 'extensions',
+  sync: 'sync'
+}
+
+function availableSections(caps: HostCapabilities): typeof SECTIONS {
+  return SECTIONS.filter((s) => {
+    const cap = SECTION_CAPABILITY[s.id]
+    return !cap || caps[cap]
+  })
+}
+
+function resolveSection(
+  value: string | null | undefined,
+  sections: typeof SECTIONS
+): SettingsSection {
+  return sections.some((s) => s.id === value) ? (value as SettingsSection) : 'look'
 }
 
 const CONTAINER_ICONS: ContainerIconName[] = [
@@ -95,16 +113,16 @@ export function SettingsPanel({
   // The open section lives in the UI store so main-process events can retarget the panel while
   // it stays mounted (e.g. "Resource Settings…" from a menu).
   const stored = uiStore.use((u) => u.overlaySection)
-  const section = resolveSection(stored ?? initialSection)
+  const sections = availableSections(state.capabilities)
+  const section = resolveSection(stored ?? initialSection, sections)
   const setSection = (id: SettingsSection): void => uiStore.set({ overlaySection: id })
   const s = state.settings
   const set = (patch: Partial<Settings>): void => run('settings.update', patch)
-
   return (
-    <OverlayShell title="Settings" variant="full">
+    <OverlayShell title="Settings" variant="full" className="zen-settings">
       <div className="flex h-full">
         <nav className="w-52 shrink-0 overflow-y-auto border-r border-[var(--zen-border)] p-2">
-          {SECTIONS.map((item) => (
+          {sections.map((item) => (
             <button
               key={item.id}
               type="button"
@@ -122,7 +140,9 @@ export function SettingsPanel({
           <div className="mx-auto flex max-w-2xl flex-col gap-6">
             {section === 'look' && <LookSection s={s} set={set} />}
             {section === 'compact' && <CompactSection s={s} set={set} />}
-            {section === 'tabs' && <TabsSection s={s} set={set} />}
+            {section === 'tabs' && (
+              <TabsSection s={s} set={set} windows={state.capabilities.windows} />
+            )}
             {section === 'resources' && <ResourcesSection state={state} set={set} />}
             {section === 'search' && <SearchSection state={state} set={set} />}
             {section === 'spaces' && <SpaceRoutingSection state={state} set={set} />}
@@ -279,10 +299,13 @@ function CompactSection({
 
 function TabsSection({
   s,
-  set
+  set,
+  windows
 }: {
   s: Settings
   set: (p: Partial<Settings>) => void
+  /** Whether the host can open more than one window. */
+  windows: boolean
 }): JSX.Element {
   const [domains, setDomains] = useState(s.unloadExcludedDomains.join(', '))
   return (
@@ -317,34 +340,36 @@ function TabsSection({
           <Switch checked={s.askWhereToSave} onCheckedChange={(v) => set({ askWhereToSave: v })} />
         </Row>
       </Group>
-      <Group title="Window Sync">
-        <Row
-          label="Tabs across windows"
-          hint="Zen mirrors your spaces and tabs in every window. Choose 'pinned only' to keep unpinned tabs per window."
-        >
-          <Choice<WindowSyncMode>
-            value={s.windowSync}
-            onChange={(v) => set({ windowSync: v })}
-            options={[
-              { value: 'all', label: 'Sync all tabs' },
-              { value: 'pinned', label: 'Sync only pinned tabs in spaces' },
-              { value: 'off', label: 'Off – windows are independent' }
-            ]}
-          />
-        </Row>
-        <Row
-          label="Blank windows"
-          hint="Ctrl+Shift+N opens a window without spaces, pinned tabs or Essentials. Its tabs are temporary."
-        >
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => run('window.newUnsynced', undefined)}
+      {windows && (
+        <Group title="Window Sync">
+          <Row
+            label="Tabs across windows"
+            hint="Zen mirrors your spaces and tabs in every window. Choose 'pinned only' to keep unpinned tabs per window."
           >
-            Open one
-          </Button>
-        </Row>
-      </Group>
+            <Choice<WindowSyncMode>
+              value={s.windowSync}
+              onChange={(v) => set({ windowSync: v })}
+              options={[
+                { value: 'all', label: 'Sync all tabs' },
+                { value: 'pinned', label: 'Sync only pinned tabs in spaces' },
+                { value: 'off', label: 'Off – windows are independent' }
+              ]}
+            />
+          </Row>
+          <Row
+            label="Blank windows"
+            hint="Ctrl+Shift+N opens a window without spaces, pinned tabs or Essentials. Its tabs are temporary."
+          >
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => run('window.newUnsynced', undefined)}
+            >
+              Open one
+            </Button>
+          </Row>
+        </Group>
+      )}
       <Group title="Pinned Tabs & Essentials">
         <Row label="When closing a pinned tab">
           <Choice<PinnedCloseBehavior>
@@ -725,11 +750,13 @@ function BoostsSection({ state }: { state: UIState }): JSX.Element {
 }
 
 function AboutSection({ state }: { state: UIState }): JSX.Element {
+  // Desktop/DeX: the engine host is Electron; phones and tablets run the system WebView.
+  const engineHost = state.platform === 'android' ? 'Android System WebView' : 'Electron'
   return (
     <Group title="About">
       <Row
         label="Zen (Chromium port)"
-        hint={`Version ${state.version} · running on Chromium via Electron`}
+        hint={`Version ${state.version} · running on Chromium via ${engineHost}`}
       >
         <span />
       </Row>

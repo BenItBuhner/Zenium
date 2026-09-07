@@ -1,4 +1,6 @@
 @import 'tailwindcss';
+/* The chrome is built from two roots (Electron renderer, Android WebView); always scan the UI. */
+@source '../';
 
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
@@ -42,6 +44,14 @@
   --zen-shadow: 0 18px 50px rgb(0 0 0 / 0.55), 0 2px 8px rgb(0 0 0 / 0.35);
 }
 
+/* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME); zero on desktop. */
+:root {
+  --zen-inset-top: 0px;
+  --zen-inset-right: 0px;
+  --zen-inset-bottom: 0px;
+  --zen-inset-left: 0px;
+}
+
 @layer base {
   html,
   body,
@@ -59,6 +69,10 @@
     -webkit-font-smoothing: antialiased;
     user-select: none;
     cursor: default;
+    /* Mobile WebViews: no tap highlight flashes, no pull-to-refresh / overscroll glow on the chrome. */
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+    touch-action: manipulation;
   }
 
   input,
@@ -394,6 +408,129 @@
     background: var(--zen-element-bg);
     border: 1px solid var(--zen-border);
   }
+}
+
+@keyframes zen-sheet-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes zen-drawer-left {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes zen-drawer-right {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes zen-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@layer components {
+  .zen-sheet-in {
+    animation: zen-sheet-in 220ms var(--zen-ease);
+  }
+  .zen-drawer-left {
+    animation: zen-drawer-left 200ms var(--zen-ease);
+  }
+  .zen-drawer-right {
+    animation: zen-drawer-right 200ms var(--zen-ease);
+  }
+  .zen-animate-fade {
+    animation: zen-fade 160ms var(--zen-ease);
+  }
+  .zen-drawer > aside {
+    height: 100%;
+  }
+  .zen-phone-bar {
+    background: transparent;
+  }
+}
+
+/* Mobile hosts: keep the chrome out of the status bar, cutouts, gesture bar and keyboard. */
+.zen-window {
+  padding: var(--zen-inset-top) var(--zen-inset-right) var(--zen-inset-bottom)
+    var(--zen-inset-left);
+}
+
+/*
+ * Touch adaptations. Unlayered so they win over Tailwind's utilities: every control grows to a
+ * comfortable target and hover-only affordances become permanent.
+ */
+:root[data-pointer='coarse'] .zen-toolbar-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+}
+:root[data-pointer='coarse'] .zen-tab {
+  height: 42px;
+  border-radius: 11px;
+}
+:root[data-pointer='coarse'] .zen-tab .zen-tab-close {
+  opacity: 1;
+}
+:root[data-pointer='coarse'] .zen-essential {
+  height: 48px;
+}
+:root[data-pointer='coarse'] .zen-kbd,
+:root[data-pointer='coarse'] .zen-kbd-hint {
+  display: none;
+}
+:root[data-pointer='coarse'] .zen-suggestion {
+  height: 44px;
+}
+:root[data-pointer='coarse'] button:focus-visible,
+:root[data-pointer='coarse'] [role='button']:focus-visible {
+  outline: none;
+}
+:root[data-pointer='coarse'] .group\/sep .zen-toolbar-button {
+  opacity: 0.7;
+}
+:root[data-form-factor='phone'] .zen-space-strip {
+  transition-duration: 260ms;
+}
+/* Settings on a phone: the section list becomes a row of chips above the content. */
+:root[data-form-factor='phone'] .zen-settings > div > div {
+  flex-direction: column;
+}
+:root[data-form-factor='phone'] .zen-settings nav {
+  display: flex;
+  width: auto;
+  gap: 4px;
+  overflow-x: auto;
+  border-right: 0;
+  border-bottom: 1px solid var(--zen-border);
+  scrollbar-width: none;
+}
+:root[data-form-factor='phone'] .zen-settings nav > button {
+  width: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+:root[data-form-factor='phone'] .zen-settings nav + div {
+  padding: 12px;
 }
 
 @media (prefers-reduced-motion: reduce) {

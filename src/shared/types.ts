@@ -3,7 +3,38 @@
  * Everything here must be JSON-serialisable (it crosses the IPC boundary).
  */
 
-export type Platform = 'linux' | 'win32' | 'darwin'
+export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
+
+/**
+ * What the host can do for the chrome. The renderer adapts its UI to these rather than to the
+ * platform name (e.g. a DeX desktop session is still `android`, but has a mouse and keyboard).
+ */
+export interface HostCapabilities {
+  /** Host draws its own window frame – no minimise / maximise / close buttons in the chrome. */
+  windowControls: boolean
+  /** Context menus are native popups; when false the renderer renders `menu.show` events. */
+  nativeMenus: boolean
+  /** The chrome can be dragged by `-webkit-app-region: drag` regions. */
+  windowDrag: boolean
+  /** Developer tools can be opened for pages. */
+  devtools: boolean
+  /** Compact-mode edge reveal works (the host tracks the pointer). */
+  compactReveal: boolean
+  /** Pages can be opened in Picture-in-Picture. */
+  pictureInPicture: boolean
+  /** The host can show a `view-source:` document. */
+  viewSource: boolean
+  /** More than one window can be open (new / blank / private windows). */
+  windows: boolean
+  /** Chromium extensions can be installed. */
+  extensions: boolean
+  /** The resource governor (budgets, freezing, process profile) runs on this host. */
+  resourceGovernor: boolean
+  /** Cross-device sync through a shared folder is available. */
+  sync: boolean
+  /** Pages can be printed. */
+  print: boolean
+}
 
 export interface Rect {
   x: number
@@ -717,6 +748,7 @@ export interface MediaState {
 
 export interface UIState {
   platform: Platform
+  capabilities: HostCapabilities
   version: string
   tabs: Record<string, Tab>
   /** Ordered essential tab ids (all containers – the UI filters by container). */
@@ -799,6 +831,28 @@ export interface CommandDescriptor {
     | 'tab.wakeAll'
     | 'resources.trim'
     | 'resources.open'
+}
+
+// ---------------------------------------------------------------------------
+// Renderer-hosted menus (hosts without native popup menus)
+// ---------------------------------------------------------------------------
+
+export interface MenuItemDescriptor {
+  id: string
+  type: 'normal' | 'separator' | 'checkbox' | 'radio'
+  label: string
+  enabled: boolean
+  checked: boolean
+  submenu: MenuItemDescriptor[] | null
+}
+
+export interface MenuDescriptor {
+  id: string
+  items: MenuItemDescriptor[]
+  source: 'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app'
+  /** Anchor in chrome CSS pixels, when known. */
+  x: number | null
+  y: number | null
 }
 
 // ---------------------------------------------------------------------------
@@ -915,6 +969,9 @@ export interface Commands {
   'folder.contextMenu': { args: { folderId: string }; result: void }
   'newtab.contextMenu': { args: void; result: void }
   'app.menu': { args: void; result: void }
+  /** Renderer-hosted menus: an item was picked / the menu was dismissed. */
+  'menu.click': { args: { menuId: string; itemId: string }; result: void }
+  'menu.close': { args: { menuId: string }; result: void }
   /** Renderer → main: chrome UI closed, give keyboard focus back to the active page. */
   'focus.content': { args: void; result: void }
   /** Renderer → main: chrome UI opened, take keyboard focus. */
@@ -1025,6 +1082,11 @@ export interface Commands {
   'page.print': { args: { tabId: string }; result: void }
   'page.savePage': { args: { tabId: string }; result: void }
   'page.viewSource': { args: { tabId: string }; result: void }
+  /** Page context menu requested from the chrome side (touch long-press forwarded by the host). */
+  'page.contextMenu': {
+    args: { tabId: string; linkURL: string; srcURL: string; x: number; y: number }
+    result: void
+  }
 
   'onboarding.complete': {
     args: { searchEngineId: string; colorScheme: ColorScheme; essentials: string[] }
@@ -1116,6 +1178,11 @@ export interface Events {
   'tab.pickIcon': { tabId: string }
   'space.edit': { spaceId: string }
   'space.switched': { fromIndex: number; toIndex: number }
+  /** Hosts without native menus ask the renderer to show one. */
+  'menu.show': MenuDescriptor
+  'menu.hide': { menuId: string }
+  /** Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts). */
+  insets: { top: number; right: number; bottom: number; left: number }
 }
 
 export type EventName = keyof Events

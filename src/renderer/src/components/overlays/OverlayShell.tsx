@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import type { ReactNode, JSX } from 'react'
+import { useViewport } from '@renderer/lib/formFactor'
 import { closeOverlay } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 
@@ -20,15 +21,19 @@ export function OverlayShell({
   actions,
   className
 }: Props): JSX.Element {
+  const phone = useViewport().formFactor === 'phone'
   return (
     <div className="absolute inset-0 z-30 flex" onMouseDown={() => closeOverlay()}>
       <div
         className={cn(
           'zen-panel zen-animate-in flex flex-col overflow-hidden',
-          variant === 'dock' && 'm-3 w-[380px] max-w-full',
+          // Docked panels take the whole content card on phones; dialogs hug the bottom edge.
+          variant === 'dock' && (phone ? 'm-2 flex-1' : 'm-3 w-[380px] max-w-full'),
           variant === 'dialog' &&
-            'm-auto w-[560px] max-w-[calc(100%-32px)] max-h-[calc(100%-32px)]',
-          variant === 'full' && 'm-3 flex-1',
+            (phone
+              ? 'mx-2 mb-2 mt-auto w-auto max-h-[calc(100%-16px)]'
+              : 'm-auto w-[560px] max-w-[calc(100%-32px)] max-h-[calc(100%-32px)]'),
+          variant === 'full' && (phone ? 'm-2 flex-1' : 'm-3 flex-1'),
           className
         )}
         onMouseDown={(e) => e.stopPropagation()}

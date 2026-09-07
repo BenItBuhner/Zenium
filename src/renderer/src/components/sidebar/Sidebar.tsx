@@ -1,3 +1,4 @@
+import { useViewport } from '@renderer/lib/formFactor'
 import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { FolderInput, VenetianMask } from 'lucide-react'
@@ -41,6 +42,8 @@ export function Sidebar({ state, isDark, floating, onPointerLeave }: Props): JSX
   const essentials = local ? [] : essentialsFor(state, space)
   const showToolbar = state.settings.toolbarLayout !== 'multiple'
   const side = state.settings.sidebarSide
+  // Touch screens have no hover target for the resize handle; the width is a setting there.
+  const { coarse } = useViewport()
 
   return (
     <aside
@@ -79,7 +82,7 @@ export function Sidebar({ state, isDark, floating, onPointerLeave }: Props): JSX
         </div>
       </div>
       <SidebarBottom state={state} compact={compact} isDark={isDark} />
-      {!compact && !floating && <Resizer state={state} />}
+      {!compact && !floating && !coarse && <Resizer state={state} />}
     </aside>
   )
 }

@@ -1,6 +1,8 @@
 import type { Rect, SplitGroup, SplitLayout, ViewPlacement } from '@shared/types'
 
 export const SPLIT_GAP = 6
+/** Wider gap on touch screens: the gutter between panes is the only place a finger can grab. */
+export const SPLIT_GAP_TOUCH = 12
 export const SPLIT_HEADER = 24
 
 /**
@@ -12,29 +14,30 @@ export const SPLIT_HEADER = 24
  */
 export function splitPaneRects(
   area: Rect,
-  group: SplitGroup
+  group: SplitGroup,
+  gap = SPLIT_GAP
 ): Array<{ tabId: string; rect: Rect; header: Rect }> {
   const n = group.tabIds.length
   const sizes = normalise(group.sizes, n)
   const cells: Rect[] = []
   if (group.layout === 'vertical') {
     let x = area.x
-    const usable = area.width - SPLIT_GAP * (n - 1)
+    const usable = area.width - gap * (n - 1)
     sizes.forEach((s) => {
       const w = usable * s
       cells.push({ x, y: area.y, width: w, height: area.height })
-      x += w + SPLIT_GAP
+      x += w + gap
     })
   } else if (group.layout === 'horizontal') {
     let y = area.y
-    const usable = area.height - SPLIT_GAP * (n - 1)
+    const usable = area.height - gap * (n - 1)
     sizes.forEach((s) => {
       const h = usable * s
       cells.push({ x: area.x, y, width: area.width, height: h })
-      y += h + SPLIT_GAP
+      y += h + gap
     })
   } else {
-    cells.push(...gridCells(area, n))
+    cells.push(...gridCells(area, n, gap))
   }
   return group.tabIds.map((tabId, i) => {
     const cell = cells[i]
@@ -51,20 +54,20 @@ export function splitPaneRects(
   })
 }
 
-function gridCells(area: Rect, n: number): Rect[] {
+function gridCells(area: Rect, n: number, gap: number): Rect[] {
   if (n <= 1) return [area]
   const cols = 2
   const rows = Math.ceil(n / cols)
-  const cellW = (area.width - SPLIT_GAP * (cols - 1)) / cols
-  const cellH = (area.height - SPLIT_GAP * (rows - 1)) / rows
+  const cellW = (area.width - gap * (cols - 1)) / cols
+  const cellH = (area.height - gap * (rows - 1)) / rows
   const cells: Rect[] = []
   for (let i = 0; i < n; i++) {
     const row = Math.floor(i / cols)
     const col = i % cols
     const lastRowSingle = row === rows - 1 && n % cols === 1
     cells.push({
-      x: area.x + col * (cellW + SPLIT_GAP),
-      y: area.y + row * (cellH + SPLIT_GAP),
+      x: area.x + col * (cellW + gap),
+      y: area.y + row * (cellH + gap),
       width: lastRowSingle ? area.width : cellW,
       height: cellH
     })
@@ -82,10 +85,11 @@ export function placementsFor(
   area: Rect,
   tabIds: string[],
   group: SplitGroup | null,
-  radius: number
+  radius: number,
+  gap = SPLIT_GAP
 ): ViewPlacement[] {
   if (group && tabIds.length > 1) {
-    return splitPaneRects(area, group).map((p) => ({ tabId: p.tabId, rect: p.rect, radius }))
+    return splitPaneRects(area, group, gap).map((p) => ({ tabId: p.tabId, rect: p.rect, radius }))
   }
   return tabIds.slice(0, 1).map((tabId) => ({ tabId, rect: area, radius }))
 }
@@ -104,10 +108,11 @@ export function glanceRect(area: Rect): Rect {
 
 export function gutterRects(
   area: Rect,
-  group: SplitGroup
+  group: SplitGroup,
+  gap = SPLIT_GAP
 ): Array<{ index: number; rect: Rect; axis: 'x' | 'y' }> {
   if (group.layout === 'grid') return []
-  const panes = splitPaneRects(area, group)
+  const panes = splitPaneRects(area, group, gap)
   const gutters: Array<{ index: number; rect: Rect; axis: 'x' | 'y' }> = []
   for (let i = 0; i < panes.length - 1; i++) {
     const a = panes[i].header
@@ -116,13 +121,13 @@ export function gutterRects(
       gutters.push({
         index: i,
         axis: 'x',
-        rect: { x: a.x + a.width, y: area.y, width: SPLIT_GAP, height: area.height }
+        rect: { x: a.x + a.width, y: area.y, width: gap, height: area.height }
       })
     } else {
       gutters.push({
         index: i,
         axis: 'y',
-        rect: { x: area.x, y: bRect.y - SPLIT_GAP, width: area.width, height: SPLIT_GAP }
+        rect: { x: area.x, y: bRect.y - gap, width: area.width, height: gap }
       })
     }
   }

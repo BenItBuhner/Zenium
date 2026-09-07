@@ -1,12 +1,24 @@
 import React, { type JSX } from 'react'
 import { App } from './App'
-import { browserStore } from './lib/ui'
+import { MenuSheet } from './components/menus/MenuSheet'
+import { browserStore, uiStore } from './lib/ui'
 
 /** Waits for the first state snapshot from the main process before rendering the browser UI. */
 export function Root(): JSX.Element {
   const loaded = browserStore.use((s) => s.state !== null)
   if (!loaded) return <div className="h-full w-full" />
-  return <App />
+  return (
+    <>
+      <App />
+      <MenuLayer />
+    </>
+  )
+}
+
+/** Renderer-hosted context menus (hosts without native popups) float above whichever shell is up. */
+function MenuLayer(): JSX.Element | null {
+  const menu = uiStore.use((s) => s.menu)
+  return menu ? <MenuSheet menu={menu} /> : null
 }
 
 interface ErrorBoundaryState {

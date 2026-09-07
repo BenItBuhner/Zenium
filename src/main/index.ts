@@ -1,8 +1,9 @@
 import { app, Menu } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
-import { registerZenScheme } from './browser/protocol'
-import { Browser } from './browser/browser'
-import { applyResourceSwitches } from './browser/resources/startup'
+import { registerZenScheme } from './platform/protocol'
+import { ElectronPlatform } from './platform'
+import { applyResourceSwitches } from './platform/resources/startup'
+import type { Browser } from '../core/browser'
 
 // Must run before `ready`.
 registerZenScheme()
@@ -34,10 +35,10 @@ if (!gotLock) {
       : argv.includes('--blank-window')
         ? 'unsynced'
         : null
-    const win = kind ? browser.createWindow({ kind }) : browser.focusedWindow()
+    const win = kind ? browser.createWindow({ kind }) : browser.ensureWindow()
     if (!kind) {
-      win.win.show()
-      win.win.focus()
+      win.host.show()
+      win.host.focus()
     }
     if (url) browser.tabs.createTab({ url, active: true }, win)
   }
@@ -48,13 +49,13 @@ if (!gotLock) {
     electronApp.setAppUserModelId('app.zen-browser.chromium')
     app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
-    browser = new Browser(app.getPath('userData'))
-    browser.start()
+    const platform = new ElectronPlatform(app.getPath('userData'))
+    browser = platform.start()
     if (process.argv.slice(1).some((a) => /^https?:\/\//.test(a) || a.startsWith('--')))
       openFromArgv(process.argv.slice(1))
 
     app.on('activate', () => {
-      if (browser && browser.allWindows().length === 0) browser.createWindow({ kind: 'synced' })
+      if (browser && browser.allWindows().length === 0) browser.ensureWindow()
     })
   })
 

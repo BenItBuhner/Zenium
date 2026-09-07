@@ -1,11 +1,12 @@
 import { dialog } from 'electron'
 import { hostname } from 'node:os'
-import { join } from 'node:path'
 import type { SyncScope, SyncStatus } from '../../shared/types'
 import { newId } from '../../shared/ids'
-import { JsonStore } from '../store/JsonStore'
-import type { Browser } from '../browser/browser'
-import type { ZenWindow } from '../browser/window'
+import { JsonStore } from '../../core/store/JsonStore'
+import type { Browser } from '../../core/browser'
+import type { ZenWindow } from '../../core/window'
+import type { SyncHost } from '../../core/platform'
+import type { ElectronWindow } from '../platform/window'
 import { applyRemote } from './apply'
 import { decryptJson, deriveKey, encryptJson, newSalt } from './crypto'
 import {
@@ -52,7 +53,7 @@ const POLL_MS = 45_000
  * through a folder they all see (cloud drive / Syncthing). Merge is last-writer-wins per record,
  * like Firefox Sync.
  */
-export class SyncEngine {
+export class SyncEngine implements SyncHost {
   private data: Persisted
   private readonly store: JsonStore<Persisted>
   private key: Buffer | null = null
@@ -64,11 +65,8 @@ export class SyncEngine {
   private syncing = false
   private lastError: string | null = null
 
-  constructor(
-    private readonly browser: Browser,
-    userDataDir: string
-  ) {
-    this.store = new JsonStore<Persisted>(join(userDataDir, 'zen', 'sync.json'), 300)
+  constructor(private readonly browser: Browser) {
+    this.store = new JsonStore<Persisted>(browser.platform.io, 'sync.json', 300)
     const saved = this.store.readSync()
     this.data = {
       version: 1,
@@ -114,7 +112,7 @@ export class SyncEngine {
   // ---------------------------------------------------------------------------
 
   async chooseFolder(win: ZenWindow): Promise<string | null> {
-    const result = await dialog.showOpenDialog(win.win, {
+    const result = await dialog.showOpenDialog((win.host as ElectronWindow).win, {
       title: 'Choose a folder that is synced between your devices',
       properties: ['openDirectory', 'createDirectory'],
       buttonLabel: 'Use this folder'

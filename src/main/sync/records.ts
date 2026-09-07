@@ -12,7 +12,7 @@ import type {
   Tab
 } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
-import type { Model } from '../browser/model'
+import type { Model } from '../../core/model'
 
 /**
  * Sync records: the unit of cross-device replication. Every syncable entity is flattened into

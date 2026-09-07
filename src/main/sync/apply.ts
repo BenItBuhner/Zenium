@@ -6,8 +6,8 @@ import {
   insertTabIntoSpace,
   removeTabFromLists,
   removeTabFromSplit
-} from '../browser/model'
-import type { Browser } from '../browser/browser'
+} from '../../core/model'
+import type { Browser } from '../../core/browser'
 import {
   ORDER_CONTAINERS,
   ORDER_ESSENTIALS,

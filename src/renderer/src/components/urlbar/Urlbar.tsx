@@ -190,13 +190,16 @@ export function Urlbar({ state, urlbar, area }: Props): JSX.Element {
 
   const floating = !urlbar.attached
   const width = Math.min(680, area.width - 32)
-  const style = useMemo(
-    () =>
-      floating
-        ? { left: (area.width - width) / 2, top: Math.max(24, area.height * 0.16), width }
-        : { left: 8, top: 8, width: area.width - 16 },
-    [floating, area.width, area.height, width]
-  )
+  const style = useMemo(() => {
+    const top = floating ? Math.max(24, area.height * 0.16) : 8
+    return {
+      left: floating ? (area.width - width) / 2 : 8,
+      top,
+      width: floating ? width : area.width - 16,
+      // Never grow past the content area – on phones the keyboard takes most of it.
+      maxHeight: Math.max(120, area.height - top - 8)
+    }
+  }, [floating, area.width, area.height, width])
 
   const placeholder =
     urlbar.mode === 'search' ? `Search with ${engine.name}` : 'Search or enter address'
@@ -205,13 +208,13 @@ export function Urlbar({ state, urlbar, area }: Props): JSX.Element {
     <div className="absolute inset-0 z-30" onMouseDown={() => close(true)}>
       <div
         className={cn(
-          'zen-panel zen-animate-in absolute overflow-hidden',
+          'zen-panel zen-animate-in absolute flex flex-col overflow-hidden',
           floating ? 'rounded-2xl' : 'rounded-xl'
         )}
         style={style}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="flex h-12 items-center gap-3 px-4">
+        <div className="flex h-12 shrink-0 items-center gap-3 px-4">
           <span
             className="flex h-6 w-6 items-center justify-center rounded-md bg-[var(--zen-element-bg)] text-[11px] font-semibold"
             title={`Search engine: ${engine.name}`}
@@ -235,7 +238,7 @@ export function Urlbar({ state, urlbar, area }: Props): JSX.Element {
           )}
         </div>
         {results.length > 0 && (
-          <ul className="max-h-[420px] overflow-y-auto border-t border-[var(--zen-border)] p-1.5">
+          <ul className="min-h-0 max-h-[420px] flex-1 overflow-y-auto border-t border-[var(--zen-border)] p-1.5">
             {results.map((item, i) => (
               <SuggestionRow
                 key={item.id}
@@ -247,7 +250,7 @@ export function Urlbar({ state, urlbar, area }: Props): JSX.Element {
             ))}
           </ul>
         )}
-        <div className="flex h-7 items-center gap-3 border-t border-[var(--zen-border)] px-4 text-[10.5px] text-[var(--zen-muted)]">
+        <div className="zen-kbd-hint flex h-7 shrink-0 items-center gap-3 border-t border-[var(--zen-border)] px-4 text-[10.5px] text-[var(--zen-muted)]">
           <span>
             <kbd className="zen-kbd">↵</kbd> Open
           </span>
@@ -279,6 +282,7 @@ function SuggestionRow({
   onHover: () => void
   onPick: (e: React.MouseEvent) => void
 }): JSX.Element {
+  const touch = useRef(false)
   const Icon =
     item.kind === 'search'
       ? Search
@@ -296,8 +300,16 @@ function SuggestionRow({
       className="zen-suggestion flex h-9 cursor-default items-center gap-3 rounded-lg px-2.5"
       data-selected={selected}
       onMouseEnter={onHover}
-      onMouseDown={(e) => {
+      onPointerDown={(e) => {
+        // Keep the input focused (no blur → no keyboard flicker on phones). A mouse picks on
+        // press like Firefox; a finger picks on tap so the list can still be scrolled.
         e.preventDefault()
+        if (e.pointerType === 'mouse') onPick(e)
+        else touch.current = true
+      }}
+      onClick={(e) => {
+        if (!touch.current) return
+        touch.current = false
         onPick(e)
       }}
     >
