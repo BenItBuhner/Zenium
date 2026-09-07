@@ -10,6 +10,8 @@ import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
+import { SPACE_SYMBOLS, SYMBOL_PREFIX } from '@renderer/lib/spaceIcons'
+import { SpaceGlyph } from '../SpaceGlyph'
 import { OverlayShell } from './OverlayShell'
 
 /** Create or edit a space: name, icon and default container (Zen's space settings). */
@@ -47,8 +49,8 @@ export function SpaceEditor({
         }}
       >
         <div className="flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--zen-element-bg)] text-2xl">
-            {icon || '◦'}
+          <div className="zen-squircle flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--zen-element-bg)]">
+            <SpaceGlyph icon={icon} size={24} />
           </div>
           <div className="flex flex-1 flex-col gap-1.5">
             <Label htmlFor="space-name">Name</Label>
@@ -88,6 +90,26 @@ export function SpaceEditor({
                 {e}
               </button>
             ))}
+          </div>
+          <Label className="mt-1 text-[11px] text-[var(--zen-muted)]">Symbols</Label>
+          <div className="grid grid-cols-9 gap-1">
+            {Object.keys(SPACE_SYMBOLS).map((name) => {
+              const value = `${SYMBOL_PREFIX}${name}`
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  title={name}
+                  className={cn(
+                    'zen-squircle flex h-9 items-center justify-center rounded-lg hover:bg-[var(--zen-element-bg)]',
+                    icon === value && 'bg-[var(--zen-element-bg-active)]'
+                  )}
+                  onClick={() => setIcon(value)}
+                >
+                  <SpaceGlyph icon={value} size={16} />
+                </button>
+              )
+            })}
           </div>
         </div>
         <div className="flex flex-col gap-1.5">

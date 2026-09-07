@@ -1,11 +1,12 @@
 import type { JSX } from 'react'
-import { useState, type ReactNode } from 'react'
-import { Trash2 } from 'lucide-react'
+import { useState } from 'react'
+import { ArrowDown, ArrowUp, Sparkles, Trash2 } from 'lucide-react'
 import type {
   ColorScheme,
   ContainerColor,
-  ContainerIcon,
+  ContainerIcon as ContainerIconName,
   GlanceTrigger,
+  HostCapabilities,
   NewTabPosition,
   PinnedCloseBehavior,
   Settings,
@@ -13,34 +14,79 @@ import type {
   ThirdPartyPinnedBehavior,
   ToolbarLayout,
   UIState,
-  UrlbarBehavior
+  UrlbarBehavior,
+  WindowSyncMode
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
-import { CONTAINER_COLORS } from '@shared/defaults'
+import { CONTAINER_COLORS, spaceLabel } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
-import { cn } from '@renderer/lib/utils'
+import { activeTab } from '@renderer/lib/selectors'
+import { openOverlay, uiStore } from '@renderer/lib/ui'
+import { cn, relativeTime } from '@renderer/lib/utils'
+import { ContainerIcon } from '../ContainerIcon'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Switch } from '../ui/switch'
+import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { OverlayShell } from './OverlayShell'
+import { ResourcesSection } from './ResourcesSection'
+import { Choice, Group, Row } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
+import { SyncSection } from './SyncSection'
 
-type Section =
-  'look' | 'compact' | 'tabs' | 'search' | 'spaces' | 'containers' | 'shortcuts' | 'about'
+export type SettingsSection =
+  | 'look'
+  | 'compact'
+  | 'tabs'
+  | 'resources'
+  | 'search'
+  | 'spaces'
+  | 'containers'
+  | 'boosts'
+  | 'mods'
+  | 'extensions'
+  | 'sync'
+  | 'shortcuts'
+  | 'about'
 
-const SECTIONS: Array<{ id: Section; label: string }> = [
+const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'look', label: 'Look and Feel' },
   { id: 'compact', label: 'Compact Mode' },
   { id: 'tabs', label: 'Tab Management' },
+  { id: 'resources', label: 'Resources' },
   { id: 'search', label: 'Search' },
   { id: 'spaces', label: 'Space Routing' },
   { id: 'containers', label: 'Containers' },
+  { id: 'boosts', label: 'Boosts' },
+  { id: 'mods', label: 'Mods' },
+  { id: 'extensions', label: 'Extensions' },
+  { id: 'sync', label: 'Sync' },
   { id: 'shortcuts', label: 'Keyboard Shortcuts' },
   { id: 'about', label: 'About' }
 ]
 
-const CONTAINER_ICONS: ContainerIcon[] = [
+/** Sections that only make sense on hosts with the matching feature. */
+const SECTION_CAPABILITY: Partial<Record<SettingsSection, keyof HostCapabilities>> = {
+  resources: 'resourceGovernor',
+  extensions: 'extensions',
+  sync: 'sync'
+}
+
+function availableSections(caps: HostCapabilities): typeof SECTIONS {
+  return SECTIONS.filter((s) => {
+    const cap = SECTION_CAPABILITY[s.id]
+    return !cap || caps[cap]
+  })
+}
+
+function resolveSection(
+  value: string | null | undefined,
+  sections: typeof SECTIONS
+): SettingsSection {
+  return sections.some((s) => s.id === value) ? (value as SettingsSection) : 'look'
+}
+
+const CONTAINER_ICONS: ContainerIconName[] = [
   'fingerprint',
   'briefcase',
   'dollar',
@@ -58,24 +104,30 @@ const CONTAINER_ICONS: ContainerIcon[] = [
 
 export function SettingsPanel({
   state,
-  initialSection = 'look'
+  initialSection
 }: {
   state: UIState
-  initialSection?: Section
+  /** Section to show when the UI store does not name one (e.g. the Shortcuts / Sync overlays). */
+  initialSection?: SettingsSection
 }): JSX.Element {
-  const [section, setSection] = useState<Section>(initialSection)
+  // The open section lives in the UI store so main-process events can retarget the panel while
+  // it stays mounted (e.g. "Resource Settings…" from a menu).
+  const stored = uiStore.use((u) => u.overlaySection)
+  const sections = availableSections(state.capabilities)
+  const section = resolveSection(stored ?? initialSection, sections)
+  const setSection = (id: SettingsSection): void => uiStore.set({ overlaySection: id })
   const s = state.settings
   const set = (patch: Partial<Settings>): void => run('settings.update', patch)
   return (
     <OverlayShell title="Settings" variant="full" className="zen-settings">
       <div className="flex h-full">
-        <nav className="w-52 shrink-0 border-r border-[var(--zen-border)] p-2">
-          {SECTIONS.map((item) => (
+        <nav className="w-52 shrink-0 overflow-y-auto border-r border-[var(--zen-border)] p-2">
+          {sections.map((item) => (
             <button
               key={item.id}
               type="button"
               className={cn(
-                'flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
+                'zen-squircle flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
                 section === item.id && 'bg-[var(--zen-element-bg-active)] font-medium'
               )}
               onClick={() => setSection(item.id)}
@@ -88,76 +140,23 @@ export function SettingsPanel({
           <div className="mx-auto flex max-w-2xl flex-col gap-6">
             {section === 'look' && <LookSection s={s} set={set} />}
             {section === 'compact' && <CompactSection s={s} set={set} />}
-            {section === 'tabs' && <TabsSection s={s} set={set} />}
+            {section === 'tabs' && (
+              <TabsSection s={s} set={set} windows={state.capabilities.windows} />
+            )}
+            {section === 'resources' && <ResourcesSection state={state} set={set} />}
             {section === 'search' && <SearchSection state={state} set={set} />}
             {section === 'spaces' && <SpaceRoutingSection state={state} set={set} />}
             {section === 'containers' && <ContainersSection state={state} />}
+            {section === 'boosts' && <BoostsSection state={state} />}
+            {section === 'mods' && <ModsSection state={state} />}
+            {section === 'extensions' && <ExtensionsSection state={state} />}
+            {section === 'sync' && <SyncSection state={state} />}
             {section === 'shortcuts' && <ShortcutsSection state={state} />}
             {section === 'about' && <AboutSection state={state} />}
           </div>
         </div>
       </div>
     </OverlayShell>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Building blocks
-// ---------------------------------------------------------------------------
-
-function Group({ title, children }: { title: string; children: ReactNode }): JSX.Element {
-  return (
-    <section>
-      <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-[var(--zen-muted)]">
-        {title}
-      </h3>
-      <div className="overflow-hidden rounded-xl border border-[var(--zen-border)]">{children}</div>
-    </section>
-  )
-}
-
-function Row({
-  label,
-  hint,
-  children
-}: {
-  label: string
-  hint?: string
-  children: ReactNode
-}): JSX.Element {
-  return (
-    <div className="flex min-h-12 items-center gap-4 border-b border-[var(--zen-border)] px-4 py-2 last:border-b-0">
-      <div className="min-w-0 flex-1">
-        <div className="text-[13px]">{label}</div>
-        {hint && <div className="text-[11.5px] text-[var(--zen-muted)]">{hint}</div>}
-      </div>
-      {children}
-    </div>
-  )
-}
-
-function Choice<T extends string>({
-  value,
-  options,
-  onChange
-}: {
-  value: T
-  options: Array<{ value: T; label: string }>
-  onChange: (v: T) => void
-}): JSX.Element {
-  return (
-    <Select value={value} onValueChange={(v) => onChange(v as T)}>
-      <SelectTrigger className="w-56">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {options.map((o) => (
-          <SelectItem key={o.value} value={o.value}>
-            {o.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
   )
 }
 
@@ -300,10 +299,13 @@ function CompactSection({
 
 function TabsSection({
   s,
-  set
+  set,
+  windows
 }: {
   s: Settings
   set: (p: Partial<Settings>) => void
+  /** Whether the host can open more than one window. */
+  windows: boolean
 }): JSX.Element {
   const [domains, setDomains] = useState(s.unloadExcludedDomains.join(', '))
   return (
@@ -338,6 +340,36 @@ function TabsSection({
           <Switch checked={s.askWhereToSave} onCheckedChange={(v) => set({ askWhereToSave: v })} />
         </Row>
       </Group>
+      {windows && (
+        <Group title="Window Sync">
+          <Row
+            label="Tabs across windows"
+            hint="Zen mirrors your spaces and tabs in every window. Choose 'pinned only' to keep unpinned tabs per window."
+          >
+            <Choice<WindowSyncMode>
+              value={s.windowSync}
+              onChange={(v) => set({ windowSync: v })}
+              options={[
+                { value: 'all', label: 'Sync all tabs' },
+                { value: 'pinned', label: 'Sync only pinned tabs in spaces' },
+                { value: 'off', label: 'Off – windows are independent' }
+              ]}
+            />
+          </Row>
+          <Row
+            label="Blank windows"
+            hint="Ctrl+Shift+N opens a window without spaces, pinned tabs or Essentials. Its tabs are temporary."
+          >
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => run('window.newUnsynced', undefined)}
+            >
+              Open one
+            </Button>
+          </Row>
+        </Group>
+      )}
       <Group title="Pinned Tabs & Essentials">
         <Row label="When closing a pinned tab">
           <Choice<PinnedCloseBehavior>
@@ -394,7 +426,7 @@ function TabsSection({
       <Group title="Tab Unloading">
         <Row
           label="Unload inactive tabs"
-          hint="Frees memory by unloading tabs you haven't used for a while."
+          hint="Frees memory by unloading tabs you haven't used for a while. Freezing, budgets and the live-page cap live under Resources."
         >
           <Switch checked={s.unloadEnabled} onCheckedChange={(v) => set({ unloadEnabled: v })} />
         </Row>
@@ -499,15 +531,7 @@ function SpaceRoutingSection({
         {Object.entries(routing).map(([d, sid]) => {
           const space = state.spaces.find((s) => s.id === sid)
           return (
-            <Row
-              key={d}
-              label={d}
-              hint={
-                space
-                  ? `${space.icon ? `${space.icon} ` : ''}${space.name}`
-                  : 'Space no longer exists'
-              }
-            >
+            <Row key={d} label={d} hint={space ? spaceLabel(space) : 'Space no longer exists'}>
               <button
                 type="button"
                 className="zen-toolbar-button h-7 w-7"
@@ -537,7 +561,7 @@ function SpaceRoutingSection({
             onChange={setSpaceId}
             options={state.spaces.map((s) => ({
               value: s.id,
-              label: `${s.icon ? `${s.icon} ` : ''}${s.name}`
+              label: spaceLabel(s)
             }))}
           />
           <Button onClick={add}>Add</Button>
@@ -550,26 +574,23 @@ function SpaceRoutingSection({
 function ContainersSection({ state }: { state: UIState }): JSX.Element {
   const [name, setName] = useState('')
   const [color, setColor] = useState<ContainerColor>('blue')
-  const [icon, setIcon] = useState<ContainerIcon>('circle')
+  const [icon, setIcon] = useState<ContainerIconName>('circle')
+  const editable = state.containers.filter((c) => c.id !== DEFAULT_CONTAINER_ID)
   return (
     <>
       <p className="text-[13px] text-[var(--zen-muted)]">
         Containers keep cookies and site data separate, so you can stay logged into several accounts
-        on the same site. Assign a container to a space to isolate it.
+        on the same site. Assign a container to a space to isolate it. The order here is used
+        wherever containers are listed.
       </p>
       <Group title="Containers">
-        {state.containers.map((c) => (
+        {state.containers.map((c, i) => (
           <Row
             key={c.id}
             label={c.name}
-            hint={
-              c.id === DEFAULT_CONTAINER_ID ? 'Tabs without a container' : `${c.icon} · ${c.color}`
-            }
+            hint={c.id === DEFAULT_CONTAINER_ID ? 'Tabs without a container' : undefined}
           >
-            <span
-              className="h-3 w-3 rounded-full"
-              style={{ background: CONTAINER_COLORS[c.color] }}
-            />
+            <ContainerIcon container={c} size={16} />
             {c.id !== DEFAULT_CONTAINER_ID && (
               <>
                 <Choice<ContainerColor>
@@ -580,6 +601,29 @@ function ContainersSection({ state }: { state: UIState }): JSX.Element {
                     label: k
                   }))}
                 />
+                <Choice<ContainerIconName>
+                  value={c.icon}
+                  onChange={(v) => run('container.update', { id: c.id, patch: { icon: v } })}
+                  options={CONTAINER_ICONS.map((k) => ({ value: k, label: k }))}
+                />
+                <button
+                  type="button"
+                  className="zen-toolbar-button h-7 w-7"
+                  title="Move up"
+                  disabled={i <= 1}
+                  onClick={() => run('container.reorder', { id: c.id, index: i - 1 })}
+                >
+                  <ArrowUp className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  className="zen-toolbar-button h-7 w-7"
+                  title="Move down"
+                  disabled={i >= state.containers.length - 1}
+                  onClick={() => run('container.reorder', { id: c.id, index: i + 1 })}
+                >
+                  <ArrowDown className="h-3.5 w-3.5" />
+                </button>
                 <button
                   type="button"
                   className="zen-toolbar-button h-7 w-7"
@@ -592,6 +636,11 @@ function ContainersSection({ state }: { state: UIState }): JSX.Element {
             )}
           </Row>
         ))}
+        {editable.length === 0 && (
+          <div className="px-4 py-4 text-center text-[12.5px] text-[var(--zen-muted)]">
+            Only the default container exists.
+          </div>
+        )}
       </Group>
       <Group title="New container">
         <div className="flex flex-wrap items-center gap-2 p-3">
@@ -609,11 +658,12 @@ function ContainersSection({ state }: { state: UIState }): JSX.Element {
               label: k
             }))}
           />
-          <Choice<ContainerIcon>
+          <Choice<ContainerIconName>
             value={icon}
             onChange={setIcon}
             options={CONTAINER_ICONS.map((i) => ({ value: i, label: i }))}
           />
+          <ContainerIcon container={{ color, icon }} size={18} />
           <Button
             disabled={!name.trim()}
             onClick={() => {
@@ -624,6 +674,76 @@ function ContainersSection({ state }: { state: UIState }): JSX.Element {
             Create
           </Button>
         </div>
+      </Group>
+    </>
+  )
+}
+
+/** Zen's about:preferences#zen-boosts: every active Boost, with edit / delete. */
+function BoostsSection({ state }: { state: UIState }): JSX.Element {
+  const tab = activeTab(state)
+  const canBoostCurrent = Boolean(
+    tab && /^https?:/.test(tab.url) && state.window.kind !== 'private'
+  )
+  return (
+    <>
+      <div className="flex items-start justify-between gap-4">
+        <p className="text-[13px] text-[var(--zen-muted)]">
+          Boosts change how a website looks: tint its colours, swap fonts, zap elements away or
+          force dark mode. They apply to every page of the site and stay until you remove them.
+        </p>
+        <Button
+          size="sm"
+          disabled={!canBoostCurrent}
+          onClick={() => tab && void openOverlay('boosts', tab.id)}
+        >
+          <Sparkles className="mr-1.5 h-3.5 w-3.5" /> Boost current site
+        </Button>
+      </div>
+      <Group title="Active boosts">
+        {state.boosts.length === 0 && (
+          <div className="px-4 py-6 text-center text-[12.5px] text-[var(--zen-muted)]">
+            No boosts yet. Open a site and click the sparkle in the address bar.
+          </div>
+        )}
+        {state.boosts.map((b) => {
+          const parts = [
+            b.tint && 'tint',
+            b.font && 'font',
+            b.fontSize !== 100 && `${b.fontSize}% text`,
+            b.darkMode && 'dark mode',
+            b.zapped.length > 0 && `${b.zapped.length} zapped`,
+            b.css.trim() && 'custom CSS'
+          ].filter(Boolean)
+          return (
+            <Row
+              key={b.domain}
+              label={b.domain}
+              hint={`${parts.join(' · ') || 'Nothing configured'} · ${relativeTime(b.updatedAt)}`}
+            >
+              {b.tint && (
+                <span
+                  className="h-3 w-3 rounded-full ring-1 ring-black/10"
+                  style={{ background: b.tint }}
+                />
+              )}
+              <Switch
+                checked={b.enabled}
+                onCheckedChange={(v) =>
+                  run('boost.update', { domain: b.domain, patch: { enabled: v } })
+                }
+              />
+              <button
+                type="button"
+                className="zen-toolbar-button h-7 w-7"
+                title="Remove boost"
+                onClick={() => run('boost.remove', { domain: b.domain })}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </Row>
+          )
+        })}
       </Group>
     </>
   )
@@ -642,7 +762,7 @@ function AboutSection({ state }: { state: UIState }): JSX.Element {
       </Row>
       <Row
         label="Engine"
-        hint="Blink / V8 — the same engine as Chrome. UI reimplements Zen Browser's Spaces, Essentials, Glance, Split View and Compact Mode."
+        hint="Blink / V8 — the same engine as Chrome. The chrome reimplements Zen Browser 1.22: Spaces, Essentials, Glance, Split View, Compact Mode, window sync, Boosts, Live Folders, Reader View, Mods and cross-device sync."
       >
         <span />
       </Row>

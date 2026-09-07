@@ -1,18 +1,24 @@
 import type { JSX } from 'react'
+import { useRef } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
+  BookOpenText,
   Copy,
   Lock,
   MoreHorizontal,
+  Puzzle,
   RotateCw,
   Search,
+  Sparkles,
+  VenetianMask,
   X
 } from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
-import { displayUrl } from '@shared/url'
+import { displayUrl, getDomain } from '@shared/url'
 import { run } from '@renderer/lib/api'
-import { openUrlbar } from '@renderer/lib/ui'
+import { isPrivateWindow } from '@renderer/lib/selectors'
+import { openOverlay, openUrlbar } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { WindowControls } from '../WindowControls'
 
@@ -56,6 +62,13 @@ export function NavRow({
 }): JSX.Element {
   const url = tab ? displayUrl(tab.url) : ''
   const secure = tab?.url.startsWith('https://')
+  const isPrivate = isPrivateWindow(state)
+  const isWebPage = Boolean(tab && /^https?:/.test(tab.url))
+  const isReader = Boolean(tab?.url.startsWith('zen://reader'))
+  const boosted = Boolean(
+    tab && isWebPage && state.boosts.some((b) => b.domain === getDomain(tab.url) && b.enabled)
+  )
+  const extensions = state.extensions.filter((e) => e.enabled && !e.error && e.popup)
   return (
     <div className={cn('zen-no-drag flex items-center gap-0.5', compact && 'flex-col', className)}>
       <button
@@ -91,7 +104,7 @@ export function NavRow({
       {!compact && (
         <button
           type="button"
-          className="group/pill mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg bg-[var(--zen-element-bg)] px-2.5 text-left hover:bg-[var(--zen-element-bg-hover)]"
+          className="zen-squircle group/pill mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--zen-element-bg)] px-2.5 text-left hover:bg-[var(--zen-element-bg-hover)]"
           title={tab?.url ?? 'Search or enter address'}
           onClick={() =>
             void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, {
@@ -99,7 +112,9 @@ export function NavRow({
             })
           }
         >
-          {url ? (
+          {isPrivate ? (
+            <VenetianMask className="h-3.5 w-3.5 shrink-0 opacity-70" />
+          ) : url ? (
             secure ? (
               <Lock className="h-3 w-3 shrink-0 opacity-60" />
             ) : (
@@ -116,6 +131,42 @@ export function NavRow({
           >
             {url || 'Search or enter address'}
           </span>
+          {tab && (tab.readerable || isReader) && (
+            <span
+              role="button"
+              tabIndex={-1}
+              className={cn(
+                'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                isReader && 'text-[var(--zen-accent)] opacity-100'
+              )}
+              title={isReader ? 'Exit Reader View (Ctrl+Alt+R)' : 'Enter Reader View (Ctrl+Alt+R)'}
+              onClick={(e) => {
+                e.stopPropagation()
+                run('reader.toggle', { tabId: tab.id })
+              }}
+            >
+              <BookOpenText className="h-3.5 w-3.5" />
+            </span>
+          )}
+          {tab && isWebPage && !isPrivate && (
+            <span
+              role="button"
+              tabIndex={-1}
+              className={cn(
+                'h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                boosted
+                  ? 'flex text-[var(--zen-accent)] opacity-100'
+                  : 'hidden group-hover/pill:flex'
+              )}
+              title={boosted ? 'Edit Boost for this site' : 'Boost this site'}
+              onClick={(e) => {
+                e.stopPropagation()
+                void openOverlay('boosts', tab.id)
+              }}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+            </span>
+          )}
           {url && (
             <span
               role="button"
@@ -132,6 +183,7 @@ export function NavRow({
           )}
         </button>
       )}
+      {!compact && extensions.slice(0, 4).map((ext) => <ExtensionButton key={ext.id} ext={ext} />)}
       <button
         type="button"
         className="zen-toolbar-button"
@@ -141,5 +193,32 @@ export function NavRow({
         <MoreHorizontal className="h-4 w-4" />
       </button>
     </div>
+  )
+}
+
+/** Browser-action button of a loaded extension; its popup opens anchored below the button. */
+function ExtensionButton({ ext }: { ext: UIState['extensions'][number] }): JSX.Element {
+  const ref = useRef<HTMLButtonElement>(null)
+  return (
+    <button
+      ref={ref}
+      type="button"
+      className="zen-toolbar-button"
+      title={ext.name}
+      onClick={() => {
+        const r = ref.current?.getBoundingClientRect()
+        if (!r) return
+        run('extension.openPopup', {
+          id: ext.id,
+          anchor: { x: r.left, y: r.top, width: r.width, height: r.height }
+        })
+      }}
+    >
+      {ext.icon ? (
+        <img src={ext.icon} alt="" className="h-4 w-4 rounded-[3px]" draggable={false} />
+      ) : (
+        <Puzzle className="h-4 w-4" />
+      )}
+    </button>
   )
 }

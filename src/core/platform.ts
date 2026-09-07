@@ -2,21 +2,29 @@
  * The seam between Zen's browser core and the host it runs on.
  *
  * The core (`src/core`) owns every behaviour the user can observe – tabs, spaces, split views,
- * Glance, shortcuts, history, downloads – and talks to the outside world only through the
- * interfaces in this file. Electron implements them with `WebContentsView`/`Menu`/`dialog`
- * (`src/main/platform`); Android implements them with a Kotlin host reached over a JS bridge
- * (`src/android`). Nothing in `src/core` may import from `electron`, `node:*` or the DOM.
+ * Glance, windows, shortcuts, history, downloads, Boosts, Reader View, Live Folders, Mods – and
+ * talks to the outside world only through the interfaces in this file. Electron implements them
+ * with `BrowserWindow`/`WebContentsView`/`Menu`/`dialog` (`src/main/platform`); Android implements
+ * them with a Kotlin host reached over a JS bridge (`src/android`). Nothing in `src/core` may
+ * import from `electron`, `node:*` or the DOM.
  */
 import type {
   DownloadItem,
   EventName,
   Events,
+  ExtensionInfo,
+  HostCapabilities,
   KeyBinding,
   Platform as PlatformOs,
   Rect,
+  ResourceSnapshot,
+  SyncScope,
+  SyncStatus,
   Tab
 } from '../shared/types'
 import type { KeyInput } from '../shared/shortcuts'
+import type { Browser } from './browser'
+import type { ZenWindow } from './window'
 
 export interface PlatformInfo {
   os: PlatformOs
@@ -51,13 +59,15 @@ export interface PageFlags {
 
 /** Messages the page script sends back to the browser. */
 export interface PageMessage {
-  type: 'glance' | 'open-tab' | 'navigate' | 'media'
+  type: 'glance' | 'open-tab' | 'navigate' | 'media' | 'zap'
   url?: string
   x?: number
   y?: number
   background?: boolean
   /** `media`: whether any media element is currently playing. */
   playing?: boolean
+  /** `zap`: CSS selector of the element the user picked in Boost zap mode. */
+  selector?: string
 }
 
 export interface PageContextParams {
@@ -95,7 +105,19 @@ export interface KeyEventInput extends KeyInput {
   isAutoRepeat: boolean
 }
 
-/** Callbacks a host fires for one tab view. All are optional to implement on the host side. */
+/** Why a page's renderer went away. */
+export type CrashReason =
+  | 'clean-exit'
+  | 'abnormal-exit'
+  | 'killed'
+  | 'crashed'
+  | 'oom'
+  | 'launch-failed'
+  | 'integrity-failure'
+  | 'memory-eviction'
+  | string
+
+/** Callbacks a host fires for one tab view. */
 export interface TabViewEvents {
   onStartLoading(): void
   onStopLoading(): void
@@ -105,9 +127,9 @@ export interface TabViewEvents {
   onFaviconUpdated(favicons: string[]): void
   /** Main-frame load failure (Chromium `net::` error code; hosts map their own codes). */
   onFailLoad(code: number, description: string, url: string): void
-  onCrashed(reason: string): void
+  onCrashed(reason: CrashReason): void
   onAudioStateChanged(audible: boolean): void
-  onMediaStateChanged(): void
+  onMediaStateChanged(playing: boolean): void
   onEnterHtmlFullscreen(): void
   onLeaveHtmlFullscreen(): void
   onDevtoolsOpened(): void
@@ -148,13 +170,20 @@ export interface TabView {
   findInPage(text: string, forward: boolean, newSession: boolean): void
   stopFind(action: 'clearSelection' | 'keepSelection'): void
   executeJavaScript(code: string): Promise<unknown>
+  /** Inject a stylesheet; resolves with a key for `removeInsertedCSS`. */
+  insertCSS(css: string): Promise<string>
+  removeInsertedCSS(key: string): Promise<void>
   sendPageFlags(flags: PageFlags): void
+  /** Boost "zap element" picker on/off. */
+  setZapMode(on: boolean): void
   setBackgroundColor(color: string): void
   focus(): void
   isDestroyed(): boolean
   destroy(): void
 
-  // Placement (driven by the renderer's layout reports).
+  // Placement (driven by the renderer's layout reports). A view belongs to one window at a time.
+  attachTo(host: WindowHost): void
+  detach(): void
   setBounds(rect: Rect): void
   setBorderRadius(radius: number): void
   setVisible(visible: boolean): void
@@ -177,30 +206,50 @@ export interface TabView {
 }
 
 export interface TabViewHost {
-  createView(tab: Tab, events: TabViewEvents): TabView
+  /** Create the live page for `tab`, attached to `host`'s window. */
+  createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView
   /** Shortcut table changed – hosts that pre-filter native key events refresh their copy. */
   setShortcuts?(bindings: KeyBinding[]): void
 }
 
 // ---------------------------------------------------------------------------
-// Chrome (the renderer) & window
+// Windows
 // ---------------------------------------------------------------------------
 
-export interface ChromeHost {
-  send<K extends EventName>(name: K, payload: Events[K]): void
-  focus(): void
-  openDevTools(): void
-}
-
+/** The host side of one browser window: its chrome web view and native frame. */
 export interface WindowHost {
+  readonly alive: boolean
+  send<K extends EventName>(name: K, payload: Events[K]): void
+  focusChrome(): void
+  openChromeDevTools(): void
   contentSize(): { width: number; height: number }
   isFullScreen(): boolean
   setFullScreen(fullscreen: boolean): void
   isMaximized(): boolean
+  isFocused(): boolean
+  isVisible(): boolean
   minimize(): void
   maximize(): void
   unmaximize(): void
+  show(): void
+  focus(): void
   close(): void
+  /** Bounds to remember for session restore (null when the host has no movable windows). */
+  normalBounds(): Rect | null
+}
+
+export interface WindowCreateInit {
+  bounds: Rect | null
+  maximized: boolean
+  /** Offset the new window from this one (new windows cascade like Firefox). */
+  cascadeFrom: ZenWindow | null
+  title: string
+  /** Solid colour approximating the space gradient, painted before the chrome loads. */
+  backgroundColor: string
+}
+
+export interface WindowHostFactory {
+  create(win: ZenWindow, init: WindowCreateInit): WindowHost
 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +260,7 @@ export type MenuRole =
   'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'pasteAndMatchStyle' | 'delete' | 'selectAll'
 
 export interface MenuItemTemplate {
-  type?: 'normal' | 'separator' | 'checkbox'
+  type?: 'normal' | 'separator' | 'checkbox' | 'radio'
   label?: string
   enabled?: boolean
   checked?: boolean
@@ -220,10 +269,11 @@ export interface MenuItemTemplate {
   click?: () => void
 }
 
-export type MenuSource = 'page' | 'tab' | 'space' | 'folder' | 'newtab' | 'app'
+export type MenuSource = 'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app'
 
 export interface MenuPopupOptions {
   source: MenuSource
+  win: ZenWindow
   /** Anchor in chrome CSS pixels (renderer-hosted menus); omitted for native menus. */
   x?: number
   y?: number
@@ -245,8 +295,18 @@ export interface ConfirmOptions {
   danger?: boolean
 }
 
+export interface PickedTextFile {
+  name: string
+  text: string
+}
+
 export interface DialogHost {
-  confirm(options: ConfirmOptions): Promise<boolean>
+  confirm(options: ConfirmOptions, win?: ZenWindow): Promise<boolean>
+  /** Let the user pick text files (e.g. CSS mods); resolves with their contents. */
+  pickTextFiles(
+    options: { title: string; extensions: string[] },
+    win?: ZenWindow
+  ): Promise<PickedTextFile[]>
 }
 
 export interface ClipboardHost {
@@ -265,7 +325,7 @@ export interface NetHost {
   fetchText(
     url: string,
     options: { signal?: AbortSignal; headers?: Record<string, string> }
-  ): Promise<{ ok: boolean; text: string }>
+  ): Promise<{ ok: boolean; status: number; text: string }>
 }
 
 /** Live-download control; the core keeps the records, the host owns the transfers. */
@@ -279,18 +339,94 @@ export interface DownloadHost {
 
 export interface SessionHost {
   clearContainerData(containerId: string): Promise<void>
+  /** Wipe the private-browsing session once its last window closed. */
+  clearPrivate(): Promise<void>
 }
 
 export interface AppHost {
   quit(): void
-  downloadsDirectory(): string
+  /** Quit and start again (after changing the process profile). */
+  relaunch(): void
+  /** The last browser window closed (desktop hosts quit here except on macOS). */
+  lastWindowClosed(): void
+}
+
+// ---------------------------------------------------------------------------
+// Host-backed services (Electron-only features expose a no-op on other hosts)
+// ---------------------------------------------------------------------------
+
+/**
+ * The resource governor keeps every Chromium process within the budgets from Settings →
+ * Resources. Only Electron can reach the lifecycle machinery (DevTools protocol), so the core
+ * talks to it through this interface; `NoopGovernor` loads pages straight away and never acts.
+ */
+export interface Governor {
+  start(): void
+  stop(): void
+  watchWindow(win: ZenWindow): void
+  /**
+   * Ask for a background load. Returns true when the page may load now; otherwise it is queued
+   * and the governor calls `TabManager.load` once a slot is free.
+   */
+  requestLoad(tabId: string, windowId: string | undefined): boolean
+  /** A page was created outside the queue (visible load); keep the scheduler's counts right. */
+  trackLoad(tabId: string): void
+  /** Evict a hidden page if the live-page cap would otherwise be exceeded by loading `tabId`. */
+  makeRoomFor(tabId: string): void
+  onViewCreated(tabId: string, view: TabView): void
+  onViewDestroyed(tabId: string, view: TabView): void
+  onTabRemoved(tabId: string): void
+  onLoadFinished(tabId: string): void
+  onMedia(tabId: string, playing: boolean): void
+  /** Visible pages of `win` (or every window) must not stay frozen / throttled. */
+  wakeVisible(win?: ZenWindow): void
+  onSettingsChanged(): void
+  /** A frozen page cannot navigate; wake it (quietly) before touching it. */
+  thaw(tabId: string, quiet?: boolean): Promise<void>
+  record(kind: string, tabId: string | null, reason: string, title?: string): void
+  freezeTab(tabId: string): Promise<void>
+  wakeTab(tabId: string): Promise<void>
+  freezeOthers(): Promise<void>
+  wakeAll(): Promise<void>
+  sample(): Promise<ResourceSnapshot>
+  trim(): Promise<void>
+  relaunch(): void
+}
+
+/** Browser extensions (Chromium extension API); Electron only. */
+export interface ExtensionHost {
+  start(): Promise<void>
+  list(): ExtensionInfo[]
+  addFromDialog(win: ZenWindow): Promise<void>
+  remove(id: string): void
+  setEnabled(id: string, enabled: boolean): Promise<void>
+  openPopup(id: string, anchor: Rect, win: ZenWindow): void
+  closePopup(): void
+  flushSync(): void
+}
+
+/** Cross-device sync through a shared folder; Electron only for now. */
+export interface SyncHost {
+  start(): void
+  status(): SyncStatus
+  chooseFolder(win: ZenWindow): Promise<string | null>
+  setup(
+    opts: { folder: string; passphrase: string; deviceName: string; scope: SyncScope },
+    win: ZenWindow
+  ): Promise<void>
+  setScope(patch: Partial<SyncScope>): void
+  setDeviceName(name: string): void
+  syncNow(): Promise<void>
+  confirmMerge(merge: boolean): Promise<void>
+  disconnect(wipeRemote: boolean): void
+  flushSync(): void
 }
 
 export interface Platform {
   readonly info: PlatformInfo
+  readonly capabilities: HostCapabilities
   readonly io: StoreIO
-  readonly chrome: ChromeHost
-  readonly window: WindowHost
+  readonly windows: WindowHostFactory
   readonly views: TabViewHost
   readonly menus: MenuHost
   readonly dialogs: DialogHost
@@ -300,6 +436,12 @@ export interface Platform {
   readonly downloads: DownloadHost
   readonly sessions: SessionHost
   readonly app: AppHost
+  /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
+  readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
+  /** Host-backed services; omit for the built-in no-op versions. */
+  createGovernor?(browser: Browser): Governor
+  createExtensions?(browser: Browser): ExtensionHost
+  createSync?(browser: Browser): SyncHost
 }
 
 /** Schedule work for the next macrotask in Node and browsers alike. */

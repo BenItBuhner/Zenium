@@ -37,14 +37,16 @@ export function useMainEvents(): void {
         void openUrlbar(mode, currentActiveTabId(), { text, attached })
       }),
       onEvent('urlbar.close', () => closeUrlbar()),
-      onEvent('overlay.open', ({ kind }) => {
+      onEvent('overlay.open', ({ kind, folderId, section }) => {
         const ui = uiStore.get()
-        if (ui.overlay === kind) {
-          uiStore.set({ overlay: 'none' })
+        if (ui.overlay === kind && !folderId) {
+          // Re-opening the same overlay toggles it, unless a specific section was requested.
+          if (section) uiStore.set({ overlaySection: section })
+          else uiStore.set({ overlay: 'none', overlayFolderId: null, overlaySection: null })
           return
         }
         closeUrlbar()
-        void openOverlay(kind, currentActiveTabId())
+        void openOverlay(kind, currentActiveTabId(), null, folderId ?? null, section ?? null)
       }),
       onEvent('theme.open', ({ spaceId }) => {
         closeUrlbar()
@@ -67,6 +69,8 @@ export function useMainEvents(): void {
       onEvent('sidebar.toggle', () => window.dispatchEvent(new CustomEvent('zen-sidebar-toggle'))),
       onEvent('tab.startRename', ({ tabId }) => uiStore.set({ renamingTabId: tabId })),
       onEvent('folder.startRename', ({ folderId }) => uiStore.set({ renamingFolderId: folderId })),
+      onEvent('tab.editPinnedUrl', ({ tabId }) => uiStore.set({ editingPinnedUrlTabId: tabId })),
+      onEvent('tab.pickIcon', ({ tabId }) => uiStore.set({ iconPickerTabId: tabId })),
       onEvent('space.switched', ({ fromIndex, toIndex }) => {
         uiStore.set({ spaceSlideDirection: toIndex > fromIndex ? 1 : toIndex < fromIndex ? -1 : 0 })
       }),

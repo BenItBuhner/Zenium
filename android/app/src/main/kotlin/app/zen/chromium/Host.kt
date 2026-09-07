@@ -105,6 +105,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
                 }
             }
             "view.setFlags" -> { tab?.setFlags(args.obj("flags")); reply(null) }
+            "view.setZap" -> { tab?.setZap(args.bool("on")); reply(null) }
             "view.setBackground" -> {
                 tab?.setBackgroundColor(parseColor(args.str("color", "#ffffff")))
                 reply(null)
@@ -146,6 +147,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
 
             // --- services --------------------------------------------------------------------------
             "dialog.confirm" -> confirm(args, reply)
+            "dialog.openText" -> activity.pickTextFiles(args.arr("extensions")) { files -> reply(files) }
             "clipboard.writeText" -> {
                 val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 cm.setPrimaryClip(ClipData.newPlainText("Zen", args.str("text")))
@@ -336,10 +338,11 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
                     readTimeout = 2500
                     for (key in headers.keys()) setRequestProperty(key, headers.str(key))
                 }
-                val ok = conn.responseCode in 200..299
+                val status = conn.responseCode
+                val ok = status in 200..299
                 val text = if (ok) conn.inputStream.bufferedReader().use { it.readText() } else ""
-                json("ok" to ok, "text" to text)
-            }.getOrElse { json("ok" to false, "text" to "") }
+                json("ok" to ok, "status" to status, "text" to text)
+            }.getOrElse { json("ok" to false, "status" to 0, "text" to "") }
             main.post { reply(result) }
         }
     }

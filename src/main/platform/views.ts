@@ -14,23 +14,30 @@ import type { Rect, Tab } from '../../shared/types'
 import type {
   KeyEventInput,
   PageFlags,
+  PageMessage,
   TabView,
   TabViewEvents,
   TabViewHost,
+  WindowHost,
   WindowOpenDisposition
 } from '../../core/platform'
 import type { SessionManager } from './sessions'
 import { downloadDir } from './downloads'
+import type { ElectronWindow } from './window'
 
 const pagePreload = join(__dirname, '../preload/page.js')
 
-/** A tab page hosted in a `WebContentsView` child of the browser window. */
+/**
+ * A tab page hosted in a `WebContentsView`. The view is a child of whichever window currently
+ * owns the tab's live page (Zen's window sync moves it between windows).
+ */
 export class ElectronTabView implements TabView {
   readonly view: WebContentsView
+  private host: ElectronWindow | null = null
   private visible = false
 
   constructor(
-    private readonly win: BrowserWindow,
+    host: ElectronWindow,
     tab: Tab,
     sessions: SessionManager,
     private readonly events: TabViewEvents,
@@ -55,11 +62,17 @@ export class ElectronTabView implements TabView {
     })
     this.view.setVisible(false)
     this.wire(tab)
-    if (!win.isDestroyed()) win.contentView.addChildView(this.view)
+    this.attachTo(host)
   }
 
   get webContents(): WebContents {
     return this.view.webContents
+  }
+
+  /** The window the view is currently a child of (null while detached). */
+  private get win(): BrowserWindow | null {
+    const bw = this.host?.win
+    return bw && !bw.isDestroyed() ? bw : null
   }
 
   private wire(tab: Tab): void {
@@ -79,8 +92,8 @@ export class ElectronTabView implements TabView {
     })
     wc.on('render-process-gone', (_e, details) => ev.onCrashed(details.reason))
     wc.on('audio-state-changed', (e) => ev.onAudioStateChanged(e.audible))
-    wc.on('media-started-playing', () => ev.onMediaStateChanged())
-    wc.on('media-paused', () => ev.onMediaStateChanged())
+    wc.on('media-started-playing', () => ev.onMediaStateChanged(true))
+    wc.on('media-paused', () => ev.onMediaStateChanged(false))
     wc.on('enter-html-full-screen', () => ev.onEnterHtmlFullscreen())
     wc.on('leave-html-full-screen', () => ev.onLeaveHtmlFullscreen())
     wc.on('devtools-opened', () => ev.onDevtoolsOpened())
@@ -102,15 +115,19 @@ export class ElectronTabView implements TabView {
     })
     wc.on('update-target-url', (_e, url) => ev.onTargetUrl(url))
     wc.on('will-prevent-unload', (event) => {
-      const choice = dialog.showMessageBoxSync(this.win, {
-        type: 'question',
+      const options = {
+        type: 'question' as const,
         buttons: ['Leave Page', 'Stay on Page'],
         defaultId: 0,
         cancelId: 1,
         message: `This page is asking you to confirm that you want to leave — ${wc.getTitle() || tab.title}`,
         detail: 'Information you’ve entered may not be saved.',
         noLink: true
-      })
+      }
+      const win = this.win
+      const choice = win
+        ? dialog.showMessageBoxSync(win, options)
+        : dialog.showMessageBoxSync(options)
       if (choice === 0) event.preventDefault()
     })
     wc.on('dom-ready', () => ev.onDomReady())
@@ -133,6 +150,11 @@ export class ElectronTabView implements TabView {
       }
       return { action: 'deny' }
     })
+  }
+
+  /** A message from the page script (routed here by the platform's IPC handler). */
+  dispatchPageMessage(message: PageMessage): void {
+    this.events.onPageMessage(message)
   }
 
   // --- navigation -----------------------------------------------------------
@@ -210,8 +232,20 @@ export class ElectronTabView implements TabView {
     return this.view.webContents.executeJavaScript(code, true)
   }
 
+  insertCSS(css: string): Promise<string> {
+    return this.view.webContents.insertCSS(css, { cssOrigin: 'user' })
+  }
+
+  removeInsertedCSS(key: string): Promise<void> {
+    return this.view.webContents.removeInsertedCSS(key)
+  }
+
   sendPageFlags(flags: PageFlags): void {
     this.view.webContents.send('zen:page-flags', flags)
+  }
+
+  setZapMode(on: boolean): void {
+    this.view.webContents.send('zen:zap', on)
   }
 
   setBackgroundColor(color: string): void {
@@ -227,13 +261,28 @@ export class ElectronTabView implements TabView {
   }
 
   destroy(): void {
-    if (!this.win.isDestroyed()) this.win.contentView.removeChildView(this.view)
+    this.detach()
     if (!this.view.webContents.isDestroyed()) {
       this.view.webContents.close({ waitForBeforeUnload: false })
     }
   }
 
   // --- placement ---------------------------------------------------------------
+
+  attachTo(host: WindowHost): void {
+    const target = host as ElectronWindow
+    if (this.host === target) return
+    this.detach()
+    this.host = target
+    const win = this.win
+    if (win) win.contentView.addChildView(this.view)
+  }
+
+  detach(): void {
+    const win = this.win
+    if (win) win.contentView.removeChildView(this.view)
+    this.host = null
+  }
 
   setBounds(rect: Rect): void {
     this.view.setBounds(rect)
@@ -254,7 +303,8 @@ export class ElectronTabView implements TabView {
 
   bringToFront(): void {
     // Re-adding moves the view to the top of the z-order.
-    if (!this.win.isDestroyed()) this.win.contentView.addChildView(this.view)
+    const win = this.win
+    if (win) win.contentView.addChildView(this.view)
   }
 
   // --- page operations -----------------------------------------------------------
@@ -278,11 +328,15 @@ export class ElectronTabView implements TabView {
   }
 
   async savePage(suggestedName: string): Promise<string | null> {
-    const result = await dialog.showSaveDialog(this.win, {
+    const options = {
       title: 'Save Page As',
       defaultPath: join(downloadDir(), suggestedName),
       filters: [{ name: 'Web Page, complete', extensions: ['html', 'htm'] }]
-    })
+    }
+    const win = this.win
+    const result = win
+      ? await dialog.showSaveDialog(win, options)
+      : await dialog.showSaveDialog(options)
     if (result.canceled || !result.filePath) return null
     await this.view.webContents.savePage(result.filePath, 'HTMLComplete')
     return result.filePath
@@ -331,32 +385,28 @@ export class ElectronTabView implements TabView {
   }
 }
 
-/** Creates `WebContentsView`s inside the (single) browser window. */
+/** Creates `WebContentsView`s and maps their web contents back to tabs. */
 export class ElectronTabViewHost implements TabViewHost {
-  private readonly byWebContentsId = new Map<number, string>()
-  private readonly views = new Set<ElectronTabView>()
-  private getWindow: () => BrowserWindow | null = () => null
+  private readonly byWebContentsId = new Map<number, ElectronTabView>()
+  private readonly tabIds = new Map<number, string>()
 
   constructor(private readonly sessions: SessionManager) {}
 
-  bindWindow(getWindow: () => BrowserWindow | null): void {
-    this.getWindow = getWindow
-  }
-
-  createView(tab: Tab, events: TabViewEvents): TabView {
-    const win = this.getWindow()
-    if (!win) throw new Error('Browser window not created yet')
-    const view = new ElectronTabView(win, tab, this.sessions, events, (v) => {
-      this.views.delete(v)
-      for (const [id, tabId] of this.byWebContentsId)
-        if (tabId === tab.id) this.byWebContentsId.delete(id)
+  createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView {
+    const view = new ElectronTabView(host as ElectronWindow, tab, this.sessions, events, (v) => {
+      this.byWebContentsId.delete(v.webContents.id)
+      this.tabIds.delete(v.webContents.id)
     })
-    this.views.add(view)
-    this.byWebContentsId.set(view.webContents.id, tab.id)
+    this.byWebContentsId.set(view.webContents.id, view)
+    this.tabIds.set(view.webContents.id, tab.id)
     return view
   }
 
   tabIdForWebContents(wc: WebContents): string | undefined {
+    return this.tabIds.get(wc.id)
+  }
+
+  viewForWebContents(wc: WebContents): ElectronTabView | undefined {
     return this.byWebContentsId.get(wc.id)
   }
 }

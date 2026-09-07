@@ -1,5 +1,5 @@
 import { protocol, type Session } from 'electron'
-import { ZEN_SCHEME, zenPageHtml } from '../../shared/zenPages'
+import { ZEN_SCHEME, zenPageHtml, type ReaderPageLookup } from '../../shared/zenPages'
 
 export { ZEN_SCHEME, describeNetError } from '../../shared/zenPages'
 
@@ -13,10 +13,11 @@ export function registerZenScheme(): void {
   ])
 }
 
-export function installZenProtocol(ses: Session): void {
+/** Serve `zen://blank`, `zen://error` and `zen://reader` (articles come from the core). */
+export function installZenProtocol(ses: Session, reader: ReaderPageLookup): void {
   if (ses.protocol.isProtocolHandled(ZEN_SCHEME)) return
   ses.protocol.handle(ZEN_SCHEME, (request) => {
     const headers = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
-    return new Response(zenPageHtml(request.url), { headers })
+    return new Response(zenPageHtml(request.url, reader), { headers })
   })
 }

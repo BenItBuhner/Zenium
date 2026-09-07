@@ -82,7 +82,9 @@ function BottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
                   }}
                 >
                   <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                  {item.type === 'checkbox' && item.checked && <Check className="h-4 w-4" />}
+                  {(item.type === 'checkbox' || item.type === 'radio') && item.checked && (
+                    <Check className="h-4 w-4" />
+                  )}
                   {item.submenu && <ChevronRight className="h-4 w-4 opacity-60" />}
                 </button>
               </li>
@@ -100,6 +102,8 @@ function sourceTitle(source: MenuDescriptor['source']): string {
       return 'Page'
     case 'tab':
       return 'Tab'
+    case 'selection':
+      return 'Selected Tabs'
     case 'space':
       return 'Space'
     case 'folder':

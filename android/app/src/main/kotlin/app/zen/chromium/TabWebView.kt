@@ -165,8 +165,17 @@ class TabWebView(
         sendFlags()
     }
 
+    /** Boost "zap element" picker on/off (handled by the injected page script). */
+    fun setZap(on: Boolean) {
+        postToPage(json("type" to "zap", "on" to on).toString())
+    }
+
     private fun sendFlags() {
-        val payload = json("type" to "flags", "flags" to currentFlags).toString()
+        postToPage(json("type" to "flags", "flags" to currentFlags).toString())
+    }
+
+    /** Deliver a browser → page message over the reply proxy (or the legacy bridge). */
+    private fun postToPage(payload: String) {
         val proxy = replyProxy
         if (proxy != null) {
             runCatching { proxy.postMessage(payload) }

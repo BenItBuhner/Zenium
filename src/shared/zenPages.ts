@@ -1,9 +1,11 @@
 /**
  * `zen://` internal pages. Zen has no new-tab page (the URL bar replaces it), so `zen://blank` is
- * an empty page that picks up the theme; `zen://error` renders navigation failures.
+ * an empty page that picks up the theme; `zen://error` renders navigation failures and
+ * `zen://reader` shows Reader View articles.
  *
  * Pure HTML generation shared by every host: Electron serves these through a privileged protocol,
- * Android loads them straight into the tab's WebView.
+ * Android loads them straight into the tab's WebView. Reader articles live in the core's
+ * `ReaderService`; hosts pass a lookup so this module stays free of state.
  */
 export const ZEN_SCHEME = 'zen'
 
@@ -76,8 +78,20 @@ export function errorPageHtml(url: URL): string {
 </div></body></html>`
 }
 
+export function readerMissingPageHtml(original: string | null): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Reader View</title><style>${BASE_STYLE}</style></head>
+<body><div class="card">
+  <h1>This article is no longer available</h1>
+  <p>Reader View keeps articles only while the browser is open.</p>
+  ${original ? `<button onclick="location.replace(${JSON.stringify(original)})">Open the original page</button>` : ''}
+</div></body></html>`
+}
+
+/** Resolves `zen://reader?id=…` to the article's HTML (null once the article is gone). */
+export type ReaderPageLookup = (id: string) => string | null
+
 /** HTML for any `zen://` URL (unknown hosts fall back to the blank page). */
-export function zenPageHtml(rawUrl: string): string {
+export function zenPageHtml(rawUrl: string, reader?: ReaderPageLookup): string {
   let url: URL
   try {
     url = new URL(rawUrl)
@@ -87,6 +101,11 @@ export function zenPageHtml(rawUrl: string): string {
   switch (url.hostname) {
     case 'error':
       return errorPageHtml(url)
+    case 'reader':
+      return (
+        reader?.(url.searchParams.get('id') ?? '') ??
+        readerMissingPageHtml(url.searchParams.get('url'))
+      )
     default:
       return blankPageHtml()
   }

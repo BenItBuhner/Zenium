@@ -1,22 +1,27 @@
 import type { EventName, Events, HostCapabilities } from '@shared/types'
+import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { newId } from '@shared/ids'
 import { Browser } from '@core/browser'
 import { RendererMenuHost } from '@core/rendererMenus'
+import type { ZenWindow } from '@core/window'
 import type {
   AppHost,
-  ChromeHost,
   ClipboardHost,
   DialogHost,
   DownloadHost,
   KeyEventInput,
   NetHost,
+  PickedTextFile,
   Platform,
   PlatformInfo,
   SessionHost,
   ShellHost,
   StoreIO,
-  WindowHost
+  WindowHost,
+  WindowHostFactory
 } from '@core/platform'
+import readabilityJs from '@mozilla/readability/Readability.js?raw'
+import readabilityReaderableJs from '@mozilla/readability/Readability-readerable.js?raw'
 import type { Bridge } from './bridge'
 import { AndroidTabViewHost, type ViewEventPayloads } from './views'
 
@@ -27,7 +32,12 @@ export const ANDROID_CAPABILITIES: HostCapabilities = {
   devtools: false,
   compactReveal: false,
   pictureInPicture: false,
-  viewSource: false
+  viewSource: false,
+  windows: false,
+  extensions: false,
+  resourceGovernor: false,
+  sync: false,
+  print: true
 }
 
 /** Everything Kotlin hands over synchronously before the chrome renders. */
@@ -74,10 +84,8 @@ export interface HostEventPayloads {
 type Listener = (payload: unknown) => void
 
 /** In-process event fan-out: the chrome runs in the same document as the core. */
-class InProcessChrome implements ChromeHost {
+export class InProcessEvents {
   private readonly listeners = new Map<string, Set<Listener>>()
-
-  constructor(private readonly bridge: Bridge) {}
 
   send<K extends EventName>(name: K, payload: Events[K]): void {
     const set = this.listeners.get(name)
@@ -103,13 +111,75 @@ class InProcessChrome implements ChromeHost {
       set?.delete(wrapped)
     }
   }
+}
 
-  focus(): void {
+/**
+ * The one window of the Android app. Its "chrome" is the document the core runs in, so events
+ * are delivered in-process; the frame (fullscreen, focus, backgrounding) is the Activity.
+ */
+export class AndroidWindowHost implements WindowHost {
+  focused = true
+  fullscreen = false
+  readonly alive = true
+
+  constructor(
+    private readonly bridge: Bridge,
+    private readonly events: InProcessEvents
+  ) {}
+
+  send<K extends EventName>(name: K, payload: Events[K]): void {
+    this.events.send(name, payload)
+  }
+
+  focusChrome(): void {
     this.bridge.send('chrome.focus')
   }
 
-  openDevTools(): void {
+  openChromeDevTools(): void {
     // Chrome's remote inspector (chrome://inspect) attaches to the chrome WebView.
+  }
+
+  contentSize(): { width: number; height: number } {
+    return { width: window.innerWidth, height: window.innerHeight }
+  }
+
+  isFullScreen(): boolean {
+    return this.fullscreen
+  }
+
+  setFullScreen(fullscreen: boolean): void {
+    this.bridge.send('window.setFullscreen', { fullscreen })
+  }
+
+  isMaximized(): boolean {
+    return true
+  }
+
+  isFocused(): boolean {
+    return this.focused
+  }
+
+  isVisible(): boolean {
+    return true
+  }
+
+  minimize(): void {
+    this.bridge.send('app.background')
+  }
+
+  /* eslint-disable @typescript-eslint/no-empty-function -- the Activity is always maximised */
+  maximize(): void {}
+  unmaximize(): void {}
+  show(): void {}
+  focus(): void {}
+  /* eslint-enable @typescript-eslint/no-empty-function */
+
+  close(): void {
+    this.bridge.send('app.quit')
+  }
+
+  normalBounds(): null {
+    return null
   }
 }
 
@@ -141,9 +211,10 @@ class AndroidStoreIO implements StoreIO {
  */
 export class AndroidPlatform implements Platform {
   readonly info: PlatformInfo
+  readonly capabilities = ANDROID_CAPABILITIES
   readonly io: AndroidStoreIO
-  readonly chrome: InProcessChrome
-  readonly window: WindowHost
+  readonly events = new InProcessEvents()
+  readonly windows: WindowHostFactory
   readonly views: AndroidTabViewHost
   readonly menus: RendererMenuHost
   readonly dialogs: DialogHost
@@ -154,7 +225,8 @@ export class AndroidPlatform implements Platform {
   readonly sessions: SessionHost
   readonly app: AppHost
   browser!: Browser
-  private fullscreen: boolean
+  private windowHost: AndroidWindowHost | null = null
+  private zenWindow: ZenWindow | null = null
   private readonly downloadTokens = new Map<string, string>()
 
   constructor(
@@ -162,23 +234,24 @@ export class AndroidPlatform implements Platform {
     boot: BootInfo
   ) {
     this.info = { os: 'android', version: boot.version }
-    this.fullscreen = boot.fullscreen
     this.io = new AndroidStoreIO(bridge, boot.files)
-    this.chrome = new InProcessChrome(bridge)
     this.views = new AndroidTabViewHost(bridge)
-    this.menus = new RendererMenuHost(this.chrome)
-    this.window = {
-      contentSize: () => ({ width: window.innerWidth, height: window.innerHeight }),
-      isFullScreen: () => this.fullscreen,
-      setFullScreen: (fullscreen) => bridge.send('window.setFullscreen', { fullscreen }),
-      isMaximized: () => true,
-      minimize: () => bridge.send('app.background'),
-      maximize: () => undefined,
-      unmaximize: () => undefined,
-      close: () => bridge.send('app.quit')
+    this.menus = new RendererMenuHost()
+    this.windows = {
+      create: (win: ZenWindow): WindowHost => {
+        if (this.windowHost) throw new Error('Android hosts a single window')
+        const host = new AndroidWindowHost(bridge, this.events)
+        host.fullscreen = boot.fullscreen
+        this.windowHost = host
+        this.zenWindow = win
+        // The chrome document is already running; report it ready once the core has the host.
+        queueMicrotask(() => win.onChromeReady())
+        return host
+      }
     }
     this.dialogs = {
-      confirm: (options) => bridge.call<boolean>('dialog.confirm', options)
+      confirm: (options) => bridge.call<boolean>('dialog.confirm', options),
+      pickTextFiles: (options) => bridge.call<PickedTextFile[]>('dialog.openText', options)
     }
     this.clipboard = {
       writeText: (text) => bridge.send('clipboard.writeText', { text }),
@@ -191,12 +264,12 @@ export class AndroidPlatform implements Platform {
     }
     this.net = {
       fetchText: async (url, options) => {
-        const result = await bridge.call<{ ok: boolean; text: string }>('net.fetch', {
-          url,
-          headers: options.headers ?? {}
-        })
+        const result = await bridge.call<{ ok: boolean; status?: number; text: string }>(
+          'net.fetch',
+          { url, headers: options.headers ?? {} }
+        )
         if (options.signal?.aborted) throw new Error('aborted')
-        return result
+        return { ok: result.ok, status: result.status ?? (result.ok ? 200 : 0), text: result.text }
       }
     }
     this.downloads = {
@@ -212,18 +285,31 @@ export class AndroidPlatform implements Platform {
       showInFolder: () => bridge.send('download.showAll')
     }
     this.sessions = {
-      clearContainerData: (containerId) => bridge.call('profile.clear', { containerId })
+      clearContainerData: (containerId) => bridge.call('profile.clear', { containerId }),
+      clearPrivate: () => bridge.call('profile.clear', { containerId: PRIVATE_CONTAINER_ID })
     }
     this.app = {
       quit: () => bridge.send('app.quit'),
-      downloadsDirectory: () => boot.downloadsDir
+      relaunch: () => bridge.send('app.quit'),
+      lastWindowClosed: () => undefined
     }
-    this.chrome.on('insets', () => undefined)
-    this.chrome.send('insets', boot.insets)
+    this.events.send('insets', boot.insets)
   }
 
   bind(browser: Browser): void {
     this.browser = browser
+    this.views.reader = (id) => browser.reader.pageHtml(id)
+  }
+
+  /** Mozilla's Readability, bundled with the chrome. */
+  readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string {
+    return file === 'Readability.js' ? readabilityJs : readabilityReaderableJs
+  }
+
+  /** The app's single window (created by `Browser.start`). */
+  get window(): ZenWindow {
+    if (!this.zenWindow) throw new Error('Browser not started')
+    return this.zenWindow
   }
 
   // ---------------------------------------------------------------------------
@@ -243,32 +329,34 @@ export class AndroidPlatform implements Platform {
 
   /** A physical key pressed while a page WebView had focus (already matched by Kotlin). */
   viewKey(tabId: string | null, input: KeyEventInput): boolean {
-    if (tabId === null) return this.browser.keys.handle(input, null)
+    if (tabId === null) return this.browser.keys.handle(input, null, this.window)
     const view = this.views.get(tabId)
-    return view ? view.key(input) : this.browser.keys.handle(input, null)
+    return view ? view.key(input) : this.browser.keys.handle(input, null, this.window)
   }
 
   hostEvent<K extends keyof HostEventPayloads>(name: K, payload: HostEventPayloads[K]): void {
     const { browser } = this
     switch (name) {
       case 'insets':
-        this.chrome.send('insets', payload as HostEventPayloads['insets'])
+        this.events.send('insets', payload as HostEventPayloads['insets'])
         return
       case 'focus': {
         const { focused } = payload as HostEventPayloads['focus']
-        browser.state.window.focused = focused
-        browser.state.commitVolatile()
+        if (!this.windowHost) return
+        this.windowHost.focused = focused
+        if (focused) this.window.onFocused()
+        else this.window.onWindowStateChanged()
         return
       }
       case 'fullscreen': {
         const { fullscreen } = payload as HostEventPayloads['fullscreen']
-        this.fullscreen = fullscreen
-        browser.state.window.fullscreen = fullscreen
-        browser.state.commitVolatile()
+        if (!this.windowHost) return
+        this.windowHost.fullscreen = fullscreen
+        this.window.onWindowStateChanged()
         return
       }
       case 'openUrl':
-        browser.openExternalUrl((payload as HostEventPayloads['openUrl']).url)
+        browser.openExternalUrl((payload as HostEventPayloads['openUrl']).url, this.window)
         return
       case 'pause':
         browser.flushSync()
@@ -321,11 +409,11 @@ export class AndroidPlatform implements Platform {
         const tabId = newId('tab')
         const view = this.views.registerAdopted(tabId)
         this.bridge.send('view.bind', { viewId: p.viewId, tabId })
-        const { events } = browser.tabs.adoptView(view, {
-          tabId,
-          parentTabId: p.parentTabId,
-          active: p.active
-        })
+        const { events } = browser.tabs.adoptView(
+          view,
+          { tabId, parentTabId: p.parentTabId, active: p.active },
+          this.window
+        )
         view.events = events
         return
       }

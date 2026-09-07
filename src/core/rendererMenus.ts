@@ -1,5 +1,6 @@
 import type { MenuDescriptor, MenuItemDescriptor } from '../shared/types'
-import type { ChromeHost, MenuHost, MenuItemTemplate, MenuPopupOptions } from './platform'
+import type { MenuHost, MenuItemTemplate, MenuPopupOptions } from './platform'
+import type { ZenWindow } from './window'
 
 /**
  * A `MenuHost` for platforms without native popup menus: the template is serialised and shown
@@ -7,12 +8,10 @@ import type { ChromeHost, MenuHost, MenuItemTemplate, MenuPopupOptions } from '.
  */
 export class RendererMenuHost implements MenuHost {
   private seq = 0
-  private open: { id: string; handlers: Map<string, () => void> } | null = null
-
-  constructor(private readonly chrome: ChromeHost) {}
+  private open: { id: string; win: ZenWindow; handlers: Map<string, () => void> } | null = null
 
   popup(items: MenuItemTemplate[], options: MenuPopupOptions): void {
-    if (this.open) this.chrome.send('menu.hide', { menuId: this.open.id })
+    if (this.open) this.open.win.send('menu.hide', { menuId: this.open.id })
     const id = `menu_${++this.seq}`
     const handlers = new Map<string, () => void>()
     let n = 0
@@ -36,8 +35,8 @@ export class RendererMenuHost implements MenuHost {
       x: options.x ?? null,
       y: options.y ?? null
     }
-    this.open = { id, handlers }
-    this.chrome.send('menu.show', descriptor)
+    this.open = { id, win: options.win, handlers }
+    options.win.send('menu.show', descriptor)
   }
 
   activate(menuId: string, itemId: string): void {

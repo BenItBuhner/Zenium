@@ -1,11 +1,19 @@
 import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { RotateCcw, Volume2, VolumeX, X } from 'lucide-react'
+import { MonitorSmartphone, RotateCcw, Snowflake, Turtle, Volume2, VolumeX, X } from 'lucide-react'
 import type { Tab } from '@shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
+import { CONTAINER_COLORS } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
 import { dropStore, startTabDrag } from '@renderer/lib/drag'
-import { tabTitle } from '@renderer/lib/selectors'
-import { uiStore } from '@renderer/lib/ui'
+import { activeTab, containerOf, tabTitle } from '@renderer/lib/selectors'
+import {
+  browserStore,
+  clearTabSelection,
+  selectTabRange,
+  toggleTabSelection,
+  uiStore
+} from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from './Favicon'
 
@@ -20,6 +28,18 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
   const dragging = uiStore.use((s) => s.drag)
   const renaming = uiStore.use((s) => s.renamingTabId === tab.id)
   const dropKey = dropStore.use((s) => s.key)
+  const foreign = browserStore.use((s) => s.state?.foreignTabIds.includes(tab.id) ?? false)
+  const containerColor = browserStore.use((s) => {
+    if (
+      !s.state ||
+      tab.containerId === DEFAULT_CONTAINER_ID ||
+      tab.containerId === PRIVATE_CONTAINER_ID
+    )
+      return null
+    const c = containerOf(s.state, tab.containerId)
+    return c ? CONTAINER_COLORS[c.color] : null
+  })
+  const selected = uiStore.use((s) => s.selectedTabIds.includes(tab.id))
   const isDragSource = dragging?.tabId === tab.id
   const showDropZones = Boolean(dragging) && !isDragSource
   const title = tabTitle(tab)
@@ -31,6 +51,7 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
       e.preventDefault()
       return
     }
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
     startTabDrag(tab, e)
   }
 
@@ -40,6 +61,27 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
   const onClick = (e: React.MouseEvent): void => {
     if ((e.target as HTMLElement).closest('button')) return
     if (dragging) return
+    if (e.altKey) {
+      // Zen 1.19: Alt+click splits the tab with the active one (again: separates it).
+      e.preventDefault()
+      run('tab.altClick', { tabId: tab.id })
+      return
+    }
+    const current = browserStore.get().state
+    const activeId = current ? (activeTab(current)?.id ?? null) : null
+    if (e.ctrlKey || e.metaKey) {
+      // Zen: Ctrl+click builds a multi-selection to split / move / close tabs together.
+      e.preventDefault()
+      toggleTabSelection(tab.id, activeId)
+      return
+    }
+    if (e.shiftKey) {
+      e.preventDefault()
+      selectTabRange(tab.id, activeId)
+      return
+    }
+    clearTabSelection()
+    uiStore.set({ selectionAnchorId: tab.id })
     const now = performance.now()
     if (now - lastClick.current < 400 && !compact) {
       lastClick.current = 0
@@ -48,6 +90,17 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
     }
     lastClick.current = now
     run('tab.activate', { tabId: tab.id })
+  }
+
+  const onContextMenu = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    const ids = uiStore.get().selectedTabIds
+    if (ids.length > 1 && ids.includes(tab.id)) {
+      run('tab.selectionContextMenu', { tabIds: ids })
+      return
+    }
+    clearTabSelection()
+    run('tab.contextMenu', { tabId: tab.id })
   }
 
   const onAuxClick = (e: React.MouseEvent): void => {
@@ -66,16 +119,15 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
         isDragSource && 'opacity-40'
       )}
       data-active={active}
+      data-selected={selected || undefined}
       data-discarded={tab.discarded}
+      data-frozen={tab.frozen}
       data-tab-id={tab.id}
-      title={compact ? title : undefined}
+      title={compact ? `${title}${tab.frozen ? ' (frozen)' : ''}` : undefined}
       onPointerDown={onPointerDown}
       onClick={onClick}
       onAuxClick={onAuxClick}
-      onContextMenu={(e) => {
-        e.preventDefault()
-        run('tab.contextMenu', { tabId: tab.id })
-      }}
+      onContextMenu={onContextMenu}
     >
       {showDropZones && (
         <>
@@ -88,13 +140,53 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
       )}
       {dropKey === `tab:${tab.id}:before` && <DropLine position="top" />}
       {dropKey === `tab:${tab.id}:after` && <DropLine position="bottom" />}
+      {containerColor && (
+        <span
+          className="pointer-events-none absolute inset-y-2 left-0 w-0.5 rounded-full"
+          style={{ background: containerColor }}
+          aria-hidden
+        />
+      )}
+      {tab.loading && !tab.discarded && <span className="zen-tab-progress" aria-hidden />}
       <Favicon tab={tab} />
       {!compact && (
         <>
           {renaming ? (
             <RenameInput tab={tab} />
           ) : (
-            <span className="zen-tab-title min-w-0 flex-1 truncate text-[13px]">{title}</span>
+            <span className="zen-tab-title min-w-0 flex-1 truncate">{title}</span>
+          )}
+          {foreign && active && (
+            <MonitorSmartphone
+              className="h-3.5 w-3.5 shrink-0 opacity-60"
+              aria-label="Shown in another window"
+            />
+          )}
+          {tab.frozen && !renaming && (
+            <button
+              type="button"
+              className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--zen-muted)]"
+              title="Frozen by the resource governor – click to wake"
+              onClick={(e) => {
+                e.stopPropagation()
+                run('tab.wake', { tabId: tab.id })
+              }}
+            >
+              <Snowflake className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {!tab.frozen && tab.cpuThrottle > 1 && !renaming && (
+            <button
+              type="button"
+              className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--zen-muted)]"
+              title={`CPU throttled ×${tab.cpuThrottle} by the resource governor – click to lift`}
+              onClick={(e) => {
+                e.stopPropagation()
+                run('tab.wake', { tabId: tab.id })
+              }}
+            >
+              <Turtle className="h-3.5 w-3.5" />
+            </button>
           )}
           {(tab.audible || tab.muted) && (
             <button
@@ -177,7 +269,7 @@ function RenameInput({ tab }: { tab: Tab }): JSX.Element {
         e.stopPropagation()
       }}
       onPointerDown={(e) => e.stopPropagation()}
-      className="zen-no-drag min-w-0 flex-1 rounded-md bg-[var(--zen-element-bg)] px-1.5 py-0.5 text-[13px] outline-none ring-1 ring-[var(--zen-accent)]"
+      className="zen-no-drag zen-squircle min-w-0 flex-1 rounded-md bg-[var(--zen-element-bg)] px-1.5 py-0.5 text-[13px] outline-none ring-1 ring-[var(--zen-accent)]"
     />
   )
 }

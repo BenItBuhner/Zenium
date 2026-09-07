@@ -49,10 +49,13 @@ describe('displayUrl', () => {
     expect(displayUrl(BLANK_URL)).toBe('')
   })
 
-  it('shows the original URL for error pages', () => {
+  it('shows the original URL for error and reader pages', () => {
     expect(displayUrl(errorPageUrl(-105, 'ERR_NAME_NOT_RESOLVED', 'https://nope.invalid/'))).toBe(
       'nope.invalid'
     )
+    expect(
+      displayUrl('zen://reader/?id=article_1&url=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FZen')
+    ).toBe('en.wikipedia.org/wiki/Zen')
   })
 })
 

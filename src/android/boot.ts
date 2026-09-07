@@ -11,12 +11,7 @@ import { Browser } from '@core/browser'
 import type { KeyEventInput } from '@core/platform'
 import { handleSystemBack } from '@renderer/lib/ui'
 import { Bridge, getNativeBridge } from './bridge'
-import {
-  ANDROID_CAPABILITIES,
-  AndroidPlatform,
-  type BootInfo,
-  type HostEventPayloads
-} from './platform'
+import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
 import type { ViewEventPayloads } from './views'
 
@@ -55,7 +50,7 @@ export function bootAndroid(): { browser: Browser; api: ZenApi; preview: boolean
 
   const boot = bridge.callSync<BootInfo>('boot', {})
   const platform = new AndroidPlatform(bridge, boot)
-  const browser = new Browser(platform, ANDROID_CAPABILITIES)
+  const browser = new Browser(platform)
   platform.bind(browser)
   platformRef.current = platform
   syncNativeTheme(bridge, platform, browser)
@@ -74,7 +69,7 @@ export function bootAndroid(): { browser: Browser; api: ZenApi; preview: boolean
         meta: e.metaKey,
         isAutoRepeat: e.repeat
       }
-      if (browser.keys.handle(input, null)) {
+      if (browser.keys.handle(input, null, platform.window)) {
         e.preventDefault()
         e.stopImmediatePropagation()
       }
@@ -98,8 +93,8 @@ export function bootAndroid(): { browser: Browser; api: ZenApi; preview: boolean
 
   const api: ZenApi = {
     invoke: (name, args) =>
-      Promise.resolve().then(() => browser.handleCommand(name, args) as never),
-    on: (name, listener) => platform.chrome.on(name, listener)
+      Promise.resolve().then(() => browser.handleCommand(platform.window, name, args) as never),
+    on: (name, listener) => platform.events.on(name, listener)
   }
   return { browser, api, preview }
 }
@@ -124,8 +119,8 @@ function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Bro
     last = key
     bridge.send('chrome.setTheme', { dark, background })
   }
-  platform.chrome.on('state', apply)
-  systemDark.addEventListener('change', () => apply(browser.state.snapshot()))
+  platform.events.on('state', apply)
+  systemDark.addEventListener('change', () => apply(browser.state.snapshot(platform.window)))
 }
 
 function installHostGlobal(bridge: Bridge, platformRef: { current: AndroidPlatform | null }): void {
@@ -148,7 +143,10 @@ function installHostGlobal(bridge: Bridge, platformRef: { current: AndroidPlatfo
     onKey: (tabId, json) =>
       platformRef.current?.viewKey(tabId, parse<KeyEventInput>(json)) ?? false,
     onBack: () => handleSystemBack(),
-    openUrl: (url) => platformRef.current?.browser.openExternalUrl(url)
+    openUrl: (url) => {
+      const platform = platformRef.current
+      platform?.browser.openExternalUrl(url, platform.window)
+    }
   }
   ;(window as unknown as { __zenHost: HostGlobal }).__zenHost = host
 }

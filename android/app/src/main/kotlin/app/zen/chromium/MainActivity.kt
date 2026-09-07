@@ -19,6 +19,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -34,6 +35,21 @@ class MainActivity : AppCompatActivity() {
     private var insets = JSONObject()
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var permissionCallback: ((Map<String, Boolean>) -> Unit)? = null
+    private var textFilesCallback: ((JSONArray) -> Unit)? = null
+
+    private val textFilePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        val callback = textFilesCallback ?: return@registerForActivityResult
+        textFilesCallback = null
+        val files = JSONArray()
+        for (uri in uris) {
+            val text = runCatching {
+                contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            }.getOrNull() ?: continue
+            if (text.length > 512 * 1024) continue
+            files.put(json("name" to displayNameOf(uri), "text" to text))
+        }
+        callback(files)
+    }
 
     private val fileChooser = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val callback = fileChooserCallback ?: return@registerForActivityResult
@@ -168,6 +184,36 @@ class MainActivity : AppCompatActivity() {
             fileChooserCallback = null
             false
         }
+    }
+
+    /** Let the user pick text files (CSS mods); answers with `[{ name, text }]`. */
+    fun pickTextFiles(extensions: JSONArray, callback: (JSONArray) -> Unit) {
+        textFilesCallback?.invoke(JSONArray())
+        textFilesCallback = callback
+        val mimes = (0 until extensions.length()).mapNotNull { i ->
+            when (extensions.optString(i)) {
+                "css" -> "text/css"
+                "json" -> "application/json"
+                "txt" -> "text/plain"
+                else -> null
+            }
+        }.ifEmpty { listOf("*/*") }
+        try {
+            textFilePicker.launch(mimes.toTypedArray())
+        } catch (e: Exception) {
+            textFilesCallback = null
+            callback(JSONArray())
+        }
+    }
+
+    private fun displayNameOf(uri: Uri): String {
+        contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val name = cursor.getString(0)
+                if (!name.isNullOrBlank()) return name
+            }
+        }
+        return uri.lastPathSegment?.substringAfterLast('/') ?: "mod.css"
     }
 
     fun requestRuntimePermissions(permissions: List<String>, callback: (Map<String, Boolean>) -> Unit) {

@@ -3,8 +3,13 @@ import { join } from 'node:path'
 import { is } from '@electron-toolkit/utils'
 import type { EventName, Events, Rect } from '../../shared/types'
 import type { Browser } from '../../core/browser'
-import type { ChromeHost, KeyEventInput, WindowHost } from '../../core/platform'
-import { resolveTheme, rgbToHex } from '../../shared/theme'
+import type { ZenWindow } from '../../core/window'
+import type {
+  KeyEventInput,
+  WindowCreateInit,
+  WindowHost,
+  WindowHostFactory
+} from '../../core/platform'
 import icon from '../../../resources/icon.png?asset'
 
 const MIN_WIDTH = 640
@@ -13,33 +18,29 @@ const MIN_HEIGHT = 420
 const COMPACT_REVEAL_ZONE = 14
 
 /**
- * The single browser window. Its own web contents render Zen's chrome (sidebar, toolbar,
- * overlays); tab pages are `WebContentsView` children the core positions through `Viewport`.
+ * The Electron side of one `ZenWindow`: a frameless `BrowserWindow` whose web contents render
+ * Zen's chrome. Tab pages are `WebContentsView` children the core positions through the window's
+ * layout reports. Frame events (focus, bounds, close) are forwarded to the core window.
  */
-export class ZenWindow implements ChromeHost, WindowHost {
-  win: BrowserWindow | null = null
-  private browser!: Browser
+export class ElectronWindow implements WindowHost {
+  readonly win: BrowserWindow
   private boundsTimer: ReturnType<typeof setTimeout> | null = null
   private compactTimer: ReturnType<typeof setInterval> | null = null
   private compactLastSent: boolean | null = null
 
-  bind(browser: Browser): void {
-    this.browser = browser
-  }
-
-  get window(): BrowserWindow | null {
-    return this.win && !this.win.isDestroyed() ? this.win : null
-  }
-
-  create(): BrowserWindow {
-    const state = this.browser.state
-    const bounds = this.sanitizeBounds(state.windowBounds)
-    const theme = resolveTheme(
-      this.browser.tabs.activeSpace.theme,
-      state.settings.colorScheme === 'dark'
-    )
+  constructor(
+    private readonly browser: Browser,
+    private readonly zen: ZenWindow,
+    init: WindowCreateInit
+  ) {
+    let initial = init.bounds
+    if (!initial && init.cascadeFrom?.alive) {
+      const b = (init.cascadeFrom.host as ElectronWindow).win.getNormalBounds()
+      initial = { x: b.x + 28, y: b.y + 28, width: b.width, height: b.height }
+    }
+    const bounds = sanitizeBounds(initial)
     const isMac = process.platform === 'darwin'
-    const win = new BrowserWindow({
+    this.win = new BrowserWindow({
       ...bounds,
       minWidth: MIN_WIDTH,
       minHeight: MIN_HEIGHT,
@@ -47,9 +48,9 @@ export class ZenWindow implements ChromeHost, WindowHost {
       frame: false,
       titleBarStyle: isMac ? 'hiddenInset' : undefined,
       trafficLightPosition: isMac ? { x: 14, y: 14 } : undefined,
-      backgroundColor: rgbToHex(theme.averageColor),
+      backgroundColor: init.backgroundColor,
       autoHideMenuBar: true,
-      title: 'Zen',
+      title: init.title,
       ...(process.platform === 'linux' ? { icon } : {}),
       webPreferences: {
         preload: join(__dirname, '../preload/index.js'),
@@ -60,26 +61,31 @@ export class ZenWindow implements ChromeHost, WindowHost {
         backgroundThrottling: false
       }
     })
-    this.win = win
-    if (state.window.maximized) win.maximize()
+    const win = this.win
+    if (init.maximized) win.maximize()
 
     win.once('ready-to-show', () => win.show())
-    win.on('maximize', () => this.syncWindowState())
-    win.on('unmaximize', () => this.syncWindowState())
-    win.on('enter-full-screen', () => this.syncWindowState())
-    win.on('leave-full-screen', () => this.syncWindowState())
-    win.on('focus', () => this.syncWindowState())
-    win.on('blur', () => this.syncWindowState())
+    win.on('maximize', () => zen.onWindowStateChanged())
+    win.on('unmaximize', () => zen.onWindowStateChanged())
+    win.on('enter-full-screen', () => zen.onWindowStateChanged())
+    win.on('leave-full-screen', () => zen.onWindowStateChanged())
+    win.on('focus', () => zen.onFocused())
+    win.on('blur', () => zen.onWindowStateChanged())
     win.on('resize', () => this.scheduleBoundsSave())
     win.on('move', () => this.scheduleBoundsSave())
+    win.on('swipe', (_e, direction) => {
+      // macOS three-finger swipe switches spaces like Zen's touchpad gesture.
+      if (zen.kind !== 'synced') return
+      if (direction === 'left') browser.actions.run('space.next', { sourceTabId: null, win: zen })
+      if (direction === 'right') browser.actions.run('space.prev', { sourceTabId: null, win: zen })
+    })
     win.on('close', () => {
-      this.saveBounds()
-      this.browser.state.flushSync()
+      if (this.boundsTimer) clearTimeout(this.boundsTimer)
+      zen.onClosing()
     })
     win.on('closed', () => {
       this.stopCompactTracking()
-      this.win = null
-      this.browser.onWindowClosed()
+      zen.onClosed()
     })
     this.startCompactTracking()
 
@@ -94,7 +100,7 @@ export class ZenWindow implements ChromeHost, WindowHost {
         meta: input.meta,
         isAutoRepeat: input.isAutoRepeat
       }
-      if (this.browser.keys.handle(key, null)) event.preventDefault()
+      if (browser.keys.handle(key, null, zen)) event.preventDefault()
     })
     wc.setWindowOpenHandler(({ url }) => {
       if (/^https?:/.test(url)) void shell.openExternal(url)
@@ -102,69 +108,95 @@ export class ZenWindow implements ChromeHost, WindowHost {
     })
     wc.on('will-navigate', (event) => event.preventDefault())
     wc.on('context-menu', (event) => event.preventDefault())
-    wc.on('did-finish-load', () => this.browser.pushState())
+    wc.on('did-finish-load', () => zen.onChromeReady())
 
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
       void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
     } else {
       void win.loadFile(join(__dirname, '../renderer/index.html'))
     }
-    return win
   }
 
-  private sanitizeBounds(saved: Rect | null): Rect {
-    const primary = screen.getPrimaryDisplay().workArea
-    const fallback: Rect = {
-      width: Math.min(1280, primary.width - 40),
-      height: Math.min(820, primary.height - 40),
-      x:
-        primary.x +
-        Math.max(0, Math.round((primary.width - Math.min(1280, primary.width - 40)) / 2)),
-      y:
-        primary.y +
-        Math.max(0, Math.round((primary.height - Math.min(820, primary.height - 40)) / 2))
-    }
-    if (!saved) return fallback
-    const width = Math.max(MIN_WIDTH, Math.min(saved.width, primary.width))
-    const height = Math.max(MIN_HEIGHT, Math.min(saved.height, primary.height))
-    // Make sure the window is visible on some display.
-    const visibleOnSomeDisplay = screen.getAllDisplays().some((d) => {
-      const a = d.workArea
-      return (
-        saved.x + 100 < a.x + a.width &&
-        saved.x + width - 100 > a.x &&
-        saved.y + 50 < a.y + a.height &&
-        saved.y >= a.y - 20
-      )
-    })
-    return visibleOnSomeDisplay
-      ? { x: saved.x, y: saved.y, width, height }
-      : { ...fallback, width, height }
+  get alive(): boolean {
+    return !this.win.isDestroyed()
   }
+
+  // ---------------------------------------------------------------------------
+  // WindowHost
+  // ---------------------------------------------------------------------------
+
+  send<K extends EventName>(name: K, payload: Events[K]): void {
+    if (this.alive) this.win.webContents.send('zen:event', name, payload)
+  }
+
+  focusChrome(): void {
+    if (this.alive) this.win.webContents.focus()
+  }
+
+  openChromeDevTools(): void {
+    if (this.alive) this.win.webContents.openDevTools({ mode: 'detach' })
+  }
+
+  contentSize(): { width: number; height: number } {
+    const [width, height] = this.win.getContentSize()
+    return { width, height }
+  }
+
+  isFullScreen(): boolean {
+    return this.alive && this.win.isFullScreen()
+  }
+
+  setFullScreen(fullscreen: boolean): void {
+    if (this.alive) this.win.setFullScreen(fullscreen)
+  }
+
+  isMaximized(): boolean {
+    return this.alive && this.win.isMaximized()
+  }
+
+  isFocused(): boolean {
+    return this.alive && this.win.isFocused()
+  }
+
+  isVisible(): boolean {
+    return this.alive && this.win.isVisible()
+  }
+
+  minimize(): void {
+    if (this.alive) this.win.minimize()
+  }
+
+  maximize(): void {
+    if (this.alive) this.win.maximize()
+  }
+
+  unmaximize(): void {
+    if (this.alive) this.win.unmaximize()
+  }
+
+  show(): void {
+    if (this.alive) this.win.show()
+  }
+
+  focus(): void {
+    if (this.alive) this.win.focus()
+  }
+
+  close(): void {
+    if (this.alive) this.win.close()
+  }
+
+  normalBounds(): Rect | null {
+    return this.alive ? this.win.getNormalBounds() : null
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bounds persistence
+  // ---------------------------------------------------------------------------
 
   private scheduleBoundsSave(): void {
     if (this.boundsTimer) clearTimeout(this.boundsTimer)
-    this.boundsTimer = setTimeout(() => this.saveBounds(), 500)
-  }
-
-  private saveBounds(): void {
-    const win = this.window
-    if (!win) return
-    if (!win.isMaximized() && !win.isFullScreen()) {
-      this.browser.state.windowBounds = win.getNormalBounds()
-    }
-    this.browser.state.window.maximized = win.isMaximized()
-    this.browser.state.commit()
-  }
-
-  private syncWindowState(): void {
-    const win = this.window
-    if (!win) return
-    const w = this.browser.state.window
-    w.maximized = win.isMaximized()
-    w.fullscreen = win.isFullScreen()
-    w.focused = win.isFocused()
-    this.browser.state.commitVolatile()
+    this.boundsTimer = setTimeout(() => this.zen.onBoundsChanged(), 500)
   }
 
   // ---------------------------------------------------------------------------
@@ -176,28 +208,28 @@ export class ZenWindow implements ChromeHost, WindowHost {
    * on DOM hover: the page view and the frameless resize border never deliver mouse events to
    * the chrome, so a DOM-only edge strip is unreliable.
    */
-  startCompactTracking(): void {
+  private startCompactTracking(): void {
     if (this.compactTimer) return
     this.compactTimer = setInterval(() => this.pollCompactCursor(), 120)
   }
 
-  stopCompactTracking(): void {
+  private stopCompactTracking(): void {
     if (this.compactTimer) clearInterval(this.compactTimer)
     this.compactTimer = null
   }
 
   private pollCompactCursor(): void {
-    const win = this.window
-    if (!win || !win.isVisible()) return
+    if (!this.alive || !this.win.isVisible()) return
     const state = this.browser.state
+    const zen = this.zen
     const cm = state.settings.compactMode
-    const hidden = cm.enabled && cm.hideSidebar && !cm.sidebarPersistent
-    if (!hidden || state.window.htmlFullscreenTabId) {
+    const hidden = zen.compactEnabled && cm.hideSidebar && !zen.compactSidebarPersistent
+    if (!hidden || zen.htmlFullscreenTabId) {
       this.compactLastSent = null
       return
     }
-    if (!win.isFocused() && !state.compactSidebarRevealed) return
-    const bounds = win.getContentBounds()
+    if (!this.win.isFocused() && !zen.compactSidebarRevealed) return
+    const bounds = this.win.getContentBounds()
     const cursor = screen.getCursorScreenPoint()
     const insideY = cursor.y >= bounds.y && cursor.y <= bounds.y + bounds.height
     const side = state.settings.sidebarSide
@@ -212,64 +244,58 @@ export class ZenWindow implements ChromeHost, WindowHost {
       this.send('compact.reveal', { revealed: true })
     } else if (outsideSidebar && this.compactLastSent !== false) {
       this.compactLastSent = false
-      if (state.compactSidebarRevealed) this.send('compact.reveal', { revealed: false })
+      if (zen.compactSidebarRevealed) this.send('compact.reveal', { revealed: false })
     }
   }
+}
 
-  // ---------------------------------------------------------------------------
-  // ChromeHost
-  // ---------------------------------------------------------------------------
+/** Creates `ElectronWindow`s for the core and maps chrome web contents back to their windows. */
+export class ElectronWindowFactory implements WindowHostFactory {
+  private readonly byWebContentsId = new Map<number, ZenWindow>()
+  private browser!: Browser
 
-  send<K extends EventName>(name: K, payload: Events[K]): void {
-    const win = this.window
-    if (!win) return
-    win.webContents.send('zen:event', name, payload)
+  bind(browser: Browser): void {
+    this.browser = browser
   }
 
-  focus(): void {
-    this.window?.webContents.focus()
+  create(win: ZenWindow, init: WindowCreateInit): WindowHost {
+    const host = new ElectronWindow(this.browser, win, init)
+    const id = host.win.webContents.id
+    this.byWebContentsId.set(id, win)
+    host.win.on('closed', () => this.byWebContentsId.delete(id))
+    return host
   }
 
-  openDevTools(): void {
-    this.window?.webContents.openDevTools({ mode: 'detach' })
+  windowForWebContents(id: number): ZenWindow | undefined {
+    const win = this.byWebContentsId.get(id)
+    return win?.alive ? win : undefined
   }
+}
 
-  // ---------------------------------------------------------------------------
-  // WindowHost
-  // ---------------------------------------------------------------------------
-
-  contentSize(): { width: number; height: number } {
-    const win = this.window
-    if (!win) return { width: 0, height: 0 }
-    const [width, height] = win.getContentSize()
-    return { width, height }
+function sanitizeBounds(saved: Rect | null): Rect {
+  const primary = screen.getPrimaryDisplay().workArea
+  const fallback: Rect = {
+    width: Math.min(1280, primary.width - 40),
+    height: Math.min(820, primary.height - 40),
+    x:
+      primary.x + Math.max(0, Math.round((primary.width - Math.min(1280, primary.width - 40)) / 2)),
+    y:
+      primary.y + Math.max(0, Math.round((primary.height - Math.min(820, primary.height - 40)) / 2))
   }
-
-  isFullScreen(): boolean {
-    return this.window?.isFullScreen() ?? false
-  }
-
-  setFullScreen(fullscreen: boolean): void {
-    this.window?.setFullScreen(fullscreen)
-  }
-
-  isMaximized(): boolean {
-    return this.window?.isMaximized() ?? false
-  }
-
-  minimize(): void {
-    this.window?.minimize()
-  }
-
-  maximize(): void {
-    this.window?.maximize()
-  }
-
-  unmaximize(): void {
-    this.window?.unmaximize()
-  }
-
-  close(): void {
-    this.window?.close()
-  }
+  if (!saved) return fallback
+  const width = Math.max(MIN_WIDTH, Math.min(saved.width, primary.width))
+  const height = Math.max(MIN_HEIGHT, Math.min(saved.height, primary.height))
+  // Make sure the window is visible on some display.
+  const visibleOnSomeDisplay = screen.getAllDisplays().some((d) => {
+    const a = d.workArea
+    return (
+      saved.x + 100 < a.x + a.width &&
+      saved.x + width - 100 > a.x &&
+      saved.y + 50 < a.y + a.height &&
+      saved.y >= a.y - 20
+    )
+  })
+  return visibleOnSomeDisplay
+    ? { x: saved.x, y: saved.y, width, height }
+    : { ...fallback, width, height }
 }

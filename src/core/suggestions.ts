@@ -6,9 +6,11 @@ import {
   parseSuggestResponse
 } from '../shared/search'
 import { searchCommands } from '../shared/commands'
+import { spaceLabel } from '../shared/defaults'
 import { displayUrl, inputToUrl, isProbablyUrl } from '../shared/url'
 import type { Browser } from './browser'
-import { orderedTabsForSpace } from './model'
+import type { ZenWindow } from './window'
+import { orderedTabsForSpace, tabVisibleIn } from './model'
 
 /**
  * Builds the URL bar result list the way Zen does: inline URL autofill, history, open tabs
@@ -21,25 +23,32 @@ export class SuggestionService {
 
   constructor(private readonly browser: Browser) {}
 
-  async suggest(rawQuery: string, currentTabId: string | null): Promise<Suggestion[]> {
+  async suggest(
+    rawQuery: string,
+    currentTabId: string | null,
+    win: ZenWindow = this.browser.focusedWindow()
+  ): Promise<Suggestion[]> {
     const query = rawQuery.trim()
     const state = this.browser.state
     const engines = state.searchEngines
     const defaultEngine = engines.find((e) => e.id === state.settings.searchEngineId) ?? engines[0]
     const results: Suggestion[] = []
+    const isPrivate = win.isPrivate
+    const local = Boolean(win.localSpace)
 
-    if (!query) return this.emptyState()
+    if (!query) return isPrivate ? [] : this.emptyState()
 
     // "` " prefix → spaces only (Zen's space-only search mode).
     if (query.startsWith('`')) {
+      if (local) return []
       const q = query.slice(1).trim().toLowerCase()
       return state.model.spaces
         .filter((s) => !q || s.name.toLowerCase().includes(q))
         .map((s) => ({
           id: `space:${s.id}`,
           kind: 'space' as const,
-          title: `${s.icon ? `${s.icon} ` : ''}${s.name}`,
-          subtitle: s.id === state.model.activeSpaceId ? 'Current space' : 'Switch to space',
+          title: spaceLabel(s),
+          subtitle: s.id === win.activeSpaceId ? 'Current space' : 'Switch to space',
           url: null,
           favicon: null,
           targetId: s.id,
@@ -107,27 +116,38 @@ export class SuggestionService {
     }
 
     const q = query.toLowerCase()
-    for (const space of state.model.spaces) {
-      if (space.id !== state.model.activeSpaceId && space.name.toLowerCase().includes(q)) {
-        results.push({
-          id: `space:${space.id}`,
-          kind: 'space',
-          title: `${space.icon ? `${space.icon} ` : ''}${space.name}`,
-          subtitle: 'Switch to space',
-          url: null,
-          favicon: null,
-          targetId: space.id,
-          fill: query
-        })
+    if (!local) {
+      for (const space of state.model.spaces) {
+        if (space.id !== win.activeSpaceId && space.name.toLowerCase().includes(q)) {
+          results.push({
+            id: `space:${space.id}`,
+            kind: 'space',
+            title: spaceLabel(space),
+            subtitle: 'Switch to space',
+            url: null,
+            favicon: null,
+            targetId: space.id,
+            fill: query
+          })
+        }
       }
     }
 
-    // Open tabs → "Switch to Tab".
+    // Open tabs → "Switch to Tab" (only tabs this window can show; private tabs stay private).
     const seenUrls = new Set<string>(results.map((r) => r.url ?? ''))
-    const space = this.browser.tabs.activeSpace
+    const space = win.activeSpace()
+    const m = state.model
     const openTabs = [
-      ...orderedTabsForSpace(state.model, space, state.settings.containerSpecificEssentials),
-      ...Object.values(state.model.tabs).filter((t) => t.spaceId && t.spaceId !== space.id)
+      ...orderedTabsForSpace(m, space, state.settings.containerSpecificEssentials, win.id),
+      ...(local
+        ? []
+        : Object.values(m.tabs).filter(
+            (t) =>
+              t.spaceId &&
+              t.spaceId !== space.id &&
+              !m.localSpaces[t.spaceId] &&
+              tabVisibleIn(t, win.id)
+          ))
     ]
     let tabHits = 0
     for (const tab of openTabs) {
@@ -148,7 +168,7 @@ export class SuggestionService {
       tabHits += 1
     }
 
-    for (const bm of this.browser.bookmarks.search(query, 3)) {
+    for (const bm of isPrivate ? [] : this.browser.bookmarks.search(query, 3)) {
       if (seenUrls.has(bm.url)) continue
       results.push({
         id: `bm:${bm.id}`,
@@ -163,7 +183,7 @@ export class SuggestionService {
       seenUrls.add(bm.url)
     }
 
-    for (const entry of this.browser.history.search(query, 6)) {
+    for (const entry of isPrivate ? [] : this.browser.history.search(query, 6)) {
       if (seenUrls.has(entry.url)) continue
       results.push({
         id: `hist:${entry.url}`,
@@ -178,7 +198,7 @@ export class SuggestionService {
       seenUrls.add(entry.url)
     }
 
-    if (state.settings.searchSuggestions && searchTerms.length >= 2 && !url) {
+    if (state.settings.searchSuggestions && !isPrivate && searchTerms.length >= 2 && !url) {
       const terms = await this.fetchSearchSuggestions(engine.id, searchTerms)
       for (const term of terms.slice(0, 4)) {
         if (term.toLowerCase() === searchTerms.toLowerCase()) continue

@@ -1,5 +1,5 @@
 import type { KeyBinding, Rect, Tab } from '@shared/types'
-import { zenPageHtml } from '@shared/zenPages'
+import { zenPageHtml, type ReaderPageLookup } from '@shared/zenPages'
 import type {
   FindResultInfo,
   KeyEventInput,
@@ -49,11 +49,13 @@ export class AndroidTabView implements TabView {
   private destroyed = false
   private audible = false
   private pendingHtml = false
+  private cssSeq = 0
   events!: TabViewEvents
 
   constructor(
     readonly tabId: string,
-    private readonly bridge: Bridge
+    private readonly bridge: Bridge,
+    private readonly reader: ReaderPageLookup
   ) {}
 
   /** Route a Kotlin event to the core. */
@@ -159,7 +161,11 @@ export class AndroidTabView implements TabView {
     if (url.startsWith('zen://')) {
       // Internal pages are rendered straight into the WebView; the URL stays `zen://…`.
       this.pendingHtml = true
-      this.bridge.send('view.loadHtml', { tabId: this.tabId, url, html: zenPageHtml(url) })
+      this.bridge.send('view.loadHtml', {
+        tabId: this.tabId,
+        url,
+        html: zenPageHtml(url, this.reader)
+      })
       return
     }
     this.pendingHtml = false
@@ -236,8 +242,27 @@ export class AndroidTabView implements TabView {
     return this.bridge.call<unknown>('view.eval', { tabId: this.tabId, code })
   }
 
+  /** Stylesheets are injected as `<style>` elements; the key is the element id. */
+  async insertCSS(css: string): Promise<string> {
+    const key = `zen-css-${this.tabId}-${++this.cssSeq}`
+    await this.executeJavaScript(
+      `(() => { const s = document.createElement('style'); s.id = ${JSON.stringify(key)}; s.textContent = ${JSON.stringify(css)}; (document.head || document.documentElement).appendChild(s); return true })()`
+    )
+    return key
+  }
+
+  async removeInsertedCSS(key: string): Promise<void> {
+    await this.executeJavaScript(
+      `(() => { const s = document.getElementById(${JSON.stringify(key)}); if (s) s.remove(); return true })()`
+    )
+  }
+
   sendPageFlags(flags: PageFlags): void {
     this.bridge.send('view.setFlags', { tabId: this.tabId, flags })
+  }
+
+  setZapMode(on: boolean): void {
+    this.bridge.send('view.setZap', { tabId: this.tabId, on })
   }
 
   setBackgroundColor(color: string): void {
@@ -259,6 +284,14 @@ export class AndroidTabView implements TabView {
   }
 
   // --- placement ---------------------------------------------------------------
+
+  attachTo(): void {
+    // One window on Android: every view already lives in it.
+  }
+
+  detach(): void {
+    // See attachTo().
+  }
 
   setBounds(rect: Rect): void {
     this.bridge.send('view.setBounds', { tabId: this.tabId, rect })
@@ -326,11 +359,13 @@ export class AndroidTabView implements TabView {
 /** Creates and tracks the JS mirrors of Kotlin's tab WebViews. */
 export class AndroidTabViewHost implements TabViewHost {
   private readonly views = new Map<string, AndroidTabView>()
+  /** Resolves `zen://reader` articles; bound once the core exists. */
+  reader: ReaderPageLookup = () => null
 
   constructor(private readonly bridge: Bridge) {}
 
   createView(tab: Tab, events: TabViewEvents): TabView {
-    const view = new AndroidTabView(tab.id, this.bridge)
+    const view = new AndroidTabView(tab.id, this.bridge, (id) => this.reader(id))
     view.events = events
     this.views.set(tab.id, view)
     this.bridge.send('view.create', { tabId: tab.id, containerId: tab.containerId })
@@ -339,7 +374,7 @@ export class AndroidTabViewHost implements TabViewHost {
 
   /** Register a view Kotlin created itself (a `window.open` popup adopted as a tab). */
   registerAdopted(tabId: string): AndroidTabView {
-    const view = new AndroidTabView(tabId, this.bridge)
+    const view = new AndroidTabView(tabId, this.bridge, (id) => this.reader(id))
     this.views.set(tabId, view)
     return view
   }

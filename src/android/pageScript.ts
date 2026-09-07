@@ -21,22 +21,34 @@ const TOKEN = '__ZEN_TOKEN__'
   const bridge = w.__zenPageBridge
   if (!bridge) return
 
+  let onFlags: ((flags: PageScriptFlags) => void) | null = null
+  let onZap: ((on: boolean) => void) | null = null
+  const onMessage = (event: { data: string }): void => {
+    try {
+      const data = JSON.parse(event.data) as {
+        type?: string
+        flags?: PageScriptFlags
+        on?: boolean
+      }
+      if (data.type === 'flags' && data.flags) onFlags?.(data.flags)
+      else if (data.type === 'zap') onZap?.(Boolean(data.on))
+    } catch {
+      /* ignore */
+    }
+  }
+  if (bridge.addEventListener) bridge.addEventListener('message', onMessage)
+  else bridge.onmessage = onMessage
+
   installPageScript({
     trackMedia: true,
     send: (message) => bridge.postMessage(JSON.stringify({ token: TOKEN, ...message })),
     onFlags: (listener) => {
-      const onMessage = (event: { data: string }): void => {
-        try {
-          const data = JSON.parse(event.data) as { type?: string; flags?: PageScriptFlags }
-          if (data.type === 'flags' && data.flags) listener(data.flags)
-        } catch {
-          /* ignore */
-        }
-      }
-      if (bridge.addEventListener) bridge.addEventListener('message', onMessage)
-      else bridge.onmessage = onMessage
+      onFlags = listener
       // Ask for the current flags; the reply arrives through the listener above.
       bridge.postMessage(JSON.stringify({ token: TOKEN, type: 'hello' }))
+    },
+    onZap: (listener) => {
+      onZap = listener
     }
   })
 })()

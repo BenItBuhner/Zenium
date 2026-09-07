@@ -174,10 +174,71 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
   },
   { id: 'print', label: 'Print Page', keywords: ['print'], action: 'page.print' },
   {
+    // Zen 1.20.1: type "New Boost" to boost the current site.
+    id: 'new-boost',
+    label: 'New Boost',
+    keywords: ['boost', 'tint', 'zap', 'dark mode', 'site style'],
+    action: 'boost.new'
+  },
+  {
+    id: 'reader',
+    label: 'Toggle Reader View',
+    keywords: ['reader', 'read', 'article'],
+    action: 'page.readerMode'
+  },
+  {
+    id: 'new-window',
+    label: 'New Window',
+    keywords: ['window', 'new'],
+    action: 'window.new'
+  },
+  {
+    id: 'new-blank-window',
+    label: 'New Blank Window',
+    keywords: ['window', 'blank', 'unsynced'],
+    action: 'window.newUnsynced'
+  },
+  {
+    id: 'new-private-window',
+    label: 'New Private Window',
+    keywords: ['window', 'private', 'incognito'],
+    action: 'window.newPrivate'
+  },
+  {
+    id: 'addons',
+    label: 'Add-ons and Themes',
+    keywords: ['addons', 'extensions', 'mods'],
+    action: 'addons.open'
+  },
+  {
     id: 'source',
     label: 'View Page Source',
     keywords: ['source', 'html'],
     action: 'page.viewSource'
+  },
+  {
+    id: 'freeze-others',
+    label: 'Freeze Other Tabs',
+    keywords: ['freeze', 'sleep', 'suspend', 'tabs', 'background'],
+    action: 'tab.freezeOthers'
+  },
+  {
+    id: 'wake-all',
+    label: 'Wake All Tabs',
+    keywords: ['wake', 'thaw', 'unfreeze', 'resume', 'tabs'],
+    action: 'tab.wakeAll'
+  },
+  {
+    id: 'trim',
+    label: 'Free Up Memory Now',
+    keywords: ['memory', 'free', 'trim', 'unload', 'purge', 'ram', 'cpu'],
+    action: 'resources.trim'
+  },
+  {
+    id: 'resources',
+    label: 'Resource Budgets',
+    keywords: ['resources', 'memory', 'cpu', 'gpu', 'budget', 'limit', 'performance'],
+    action: 'resources.open'
   }
 ]
 
