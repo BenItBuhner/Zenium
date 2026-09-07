@@ -1,6 +1,9 @@
 export interface SchedulerHost {
-  /** Create the page and start loading it. Returns false when the tab no longer exists. */
-  load(tabId: string): boolean
+  /**
+   * Create the page and start loading it, owned by the window `context` names when it is still
+   * around. Returns false when the tab no longer exists or nothing can host a page.
+   */
+  load(tabId: string, context: string | undefined): boolean
   tabExists(tabId: string): boolean
   liveCount(): number
   maxConcurrent(): number
@@ -22,18 +25,21 @@ const IN_FLIGHT_TIMEOUT_MS = 30_000
  * still occupy a slot.
  */
 export class LoadScheduler {
-  private readonly queue: string[] = []
+  private readonly queue: Array<{ tabId: string; context: string | undefined }> = []
   private readonly inFlight = new Map<string, number>()
 
   constructor(private readonly host: SchedulerHost) {}
 
-  /** Ask for a background load. Returns true when it started right away. */
-  request(tabId: string): boolean {
+  /**
+   * Ask for a background load on behalf of `context` (the requesting window's id). Returns true
+   * when it started right away.
+   */
+  request(tabId: string, context?: string): boolean {
     if (this.inFlight.has(tabId)) return true
     this.expireStale()
-    if (this.canStart()) return this.start(tabId)
-    if (!this.queue.includes(tabId)) {
-      this.queue.push(tabId)
+    if (this.canStart()) return this.start(tabId, context)
+    if (!this.queue.some((q) => q.tabId === tabId)) {
+      this.queue.push({ tabId, context })
       this.host.onDeferred(tabId)
       this.host.onChange()
     }
@@ -58,10 +64,10 @@ export class LoadScheduler {
     this.expireStale()
     let changed = false
     while (this.queue.length && this.canStart()) {
-      const id = this.queue.shift()!
+      const { tabId, context } = this.queue.shift()!
       changed = true
-      if (!this.host.tabExists(id)) continue
-      this.start(id)
+      if (!this.host.tabExists(tabId)) continue
+      this.start(tabId, context)
     }
     if (changed) this.host.onChange()
   }
@@ -71,7 +77,13 @@ export class LoadScheduler {
   }
 
   isQueued(tabId: string): boolean {
-    return this.queue.includes(tabId)
+    return this.queue.some((q) => q.tabId === tabId)
+  }
+
+  /** Forget every pending and in-flight load (shutdown). */
+  clear(): void {
+    this.queue.length = 0
+    this.inFlight.clear()
   }
 
   get loading(): number {
@@ -85,15 +97,15 @@ export class LoadScheduler {
     return true
   }
 
-  private start(tabId: string): boolean {
+  private start(tabId: string, context: string | undefined): boolean {
     this.inFlight.set(tabId, Date.now())
-    const ok = this.host.load(tabId)
+    const ok = this.host.load(tabId, context)
     if (!ok) this.inFlight.delete(tabId)
     return ok
   }
 
   private dequeue(tabId: string): boolean {
-    const idx = this.queue.indexOf(tabId)
+    const idx = this.queue.findIndex((q) => q.tabId === tabId)
     if (idx === -1) return false
     this.queue.splice(idx, 1)
     return true

@@ -1,8 +1,9 @@
 import type { JSX } from 'react'
-import { useEffect, useRef } from 'react'
-import { Plus } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { MonitorSmartphone, Plus } from 'lucide-react'
 import type { Rect, UIState } from '@shared/types'
-import { activeTab } from '@renderer/lib/selectors'
+import { cmd, run } from '@renderer/lib/api'
+import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import { captureActiveTab, uiStore, type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { dropStore } from '@renderer/lib/drag'
@@ -53,11 +54,13 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   const local: Rect | null = area ? { x: 0, y: 0, width: area.width, height: area.height } : null
   const showSnapshot = (contentHidden || glanceActive) && Boolean(tab)
   const dropKey = dropStore.use((s) => s.key)
+  const foreign = isForeignTab(state, tab?.id)
 
   return (
     <div className="zen-content-frame relative flex h-full min-h-0 flex-col overflow-hidden">
       <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden">
         {!tab && !ui.urlbar.open && ui.overlay === 'none' && <EmptyState />}
+        {tab && foreign && !contentHidden && !glanceActive && <ForeignTabPreview tabId={tab.id} />}
         {showSnapshot && (
           <div className="absolute inset-0">
             {ui.snapshot && ui.snapshotTabId === (glanceActive ? glanceParentId : tab?.id) ? (
@@ -96,6 +99,52 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
       {ui.findOpen && ui.findTabId && state.tabs[ui.findTabId] && (
         <FindBar state={state} tabId={ui.findTabId} />
       )}
+    </div>
+  )
+}
+
+/**
+ * Zen window sync: a tab selected in two windows keeps a single live page. The window that does
+ * not hold it shows a dimmed preview; focusing (or clicking) brings the page over.
+ */
+function ForeignTabPreview({ tabId }: { tabId: string }): JSX.Element {
+  const [snapshot, setSnapshot] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    const capture = (): void => {
+      void cmd('overlay.snapshot', { tabId })
+        .then((data) => {
+          if (!cancelled && data) setSnapshot(data)
+        })
+        .catch(() => undefined)
+    }
+    capture()
+    const timer = setInterval(capture, 2500)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [tabId])
+  return (
+    <div
+      className="absolute inset-0 z-10 cursor-pointer"
+      onClick={() => run('tab.activate', { tabId })}
+      title="Click to show this tab here"
+    >
+      {snapshot && (
+        <img
+          src={snapshot}
+          alt=""
+          className="h-full w-full object-cover object-top"
+          draggable={false}
+        />
+      )}
+      <div className="absolute inset-0 bg-black/40" />
+      <div className="zen-panel zen-animate-in absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2.5 px-4 py-2.5 text-[13px]">
+        <MonitorSmartphone className="h-4 w-4 opacity-70" />
+        <span>Open in another window</span>
+        <span className="text-[var(--zen-muted)]">· click to bring it here</span>
+      </div>
     </div>
   )
 }

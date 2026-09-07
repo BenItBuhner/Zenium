@@ -43,6 +43,20 @@ export interface Container {
 
 /** Id used for tabs that are not in any container ("No Container"). */
 export const DEFAULT_CONTAINER_ID = 'default'
+/** Pseudo container backing private windows: an in-memory session that is wiped when the last private window closes. */
+export const PRIVATE_CONTAINER_ID = 'private'
+
+// ---------------------------------------------------------------------------
+// Windows (Zen's window sync)
+// ---------------------------------------------------------------------------
+
+/**
+ * `synced` windows mirror the shared tabs/spaces (Zen's window sync). `unsynced` ("blank")
+ * windows and `private` windows own a temporary tab list that is never restored.
+ */
+export type WindowKind = 'synced' | 'unsynced' | 'private'
+/** Which tabs new synced windows share: everything, pinned/essential only, or nothing. */
+export type WindowSyncMode = 'all' | 'pinned' | 'off'
 
 // ---------------------------------------------------------------------------
 // Themes (Zen's gradient theme picker)
@@ -91,6 +105,13 @@ export interface Tab {
   pinnedUrl: string | null
   /** User-provided title (rename). */
   customTitle: string | null
+  /** User-picked emoji shown instead of the favicon ("Change Icon…"). */
+  customIcon: string | null
+  /**
+   * Window the tab is local to. `null` for tabs shared by every synced window; set for tabs of
+   * blank/private windows and, with "sync only pinned tabs", for unpinned tabs.
+   */
+  windowId: string | null
   folderId: string | null
   loading: boolean
   canGoBack: boolean
@@ -111,6 +132,8 @@ export interface Tab {
   errorCode: number | null
   /** Whether the current URL is bookmarked (denormalised for the UI). */
   bookmarked: boolean
+  /** The page looks like an article Reader View can render (Firefox's "reader mode" icon). */
+  readerable: boolean
 }
 
 export interface Folder {
@@ -130,8 +153,11 @@ export interface Space {
   theme: SpaceTheme | null
   /** Ordered tab ids (pinned tabs always precede regular tabs). */
   tabIds: string[]
+  /** Most recently selected tab in this space (each window keeps its own selection on top). */
   activeTabId: string | null
   pinnedCollapsed: boolean
+  /** Set for the private space of a blank / private window (never persisted). */
+  windowId?: string
 }
 
 export type SplitLayout = 'grid' | 'vertical' | 'horizontal'
@@ -143,6 +169,131 @@ export interface SplitGroup {
   layout: SplitLayout
   /** Normalised sizes (fractions summing to 1) for the panes – one per tab. */
   sizes: number[]
+}
+
+// ---------------------------------------------------------------------------
+// Boosts (Zen 1.20): per-site look customisation
+// ---------------------------------------------------------------------------
+
+export interface Boost {
+  /** Registrable domain the boost applies to (e.g. `github.com`). */
+  domain: string
+  enabled: boolean
+  /** Hex colour tinted over the page, `null` for none. */
+  tint: string | null
+  /** 0..1 strength of the tint. */
+  tintIntensity: number
+  /** Font family override, `null` keeps the site's fonts. */
+  font: string | null
+  /** Root font size in percent (100 = site default). */
+  fontSize: number
+  /** Force a dark rendering of light-only sites. */
+  darkMode: boolean
+  /** CSS selectors hidden with "Zap element". */
+  zapped: string[]
+  /** Additional user CSS for the site. */
+  css: string
+  updatedAt: number
+}
+
+// ---------------------------------------------------------------------------
+// Live Folders (Zen 1.19): folders filled from GitHub / RSS / REST sources
+// ---------------------------------------------------------------------------
+
+export type LiveFolderProvider = 'github-pulls' | 'github-issues' | 'rss' | 'rest'
+
+export interface LiveFolderMapping {
+  /** Dot path to the array of items (empty = the response itself). */
+  items: string
+  id: string
+  title: string
+  url: string
+}
+
+export interface LiveFolderConfig {
+  folderId: string
+  provider: LiveFolderProvider
+  /** GitHub: username (or a full search query); RSS: feed URL; REST: endpoint URL. */
+  source: string
+  /** GitHub: include draft pull requests (Zen 1.21.11 lets you filter them out). */
+  includeDrafts: boolean
+  /** GitHub: optional personal access token (private repositories, higher rate limits). */
+  token: string
+  /** REST: how to read items out of the JSON response. */
+  mapping: LiveFolderMapping | null
+  intervalMinutes: number
+  maxItems: number
+  lastFetched: number | null
+  lastError: string | null
+  /** Item ids the user closed or ungrouped – they never come back. */
+  dismissed: string[]
+  /** Item id → tab id currently representing it. */
+  items: Record<string, string>
+}
+
+// ---------------------------------------------------------------------------
+// Extensions (unpacked Chrome extensions) and Mods (custom chrome CSS)
+// ---------------------------------------------------------------------------
+
+export interface ExtensionInfo {
+  id: string
+  name: string
+  version: string
+  description: string
+  path: string
+  enabled: boolean
+  /** Data URL of the largest icon, when the manifest declares one. */
+  icon: string | null
+  /** `action.default_popup` (or the MV2 `browser_action` equivalent) if present. */
+  popup: string | null
+  /** Set when the extension could not be loaded (unsupported manifest, missing files…). */
+  error: string | null
+}
+
+export interface Mod {
+  id: string
+  name: string
+  /** Where the CSS was imported from (URL or file path) – informational. */
+  source: string | null
+  css: string
+  enabled: boolean
+  updatedAt: number
+}
+
+// ---------------------------------------------------------------------------
+// Cross-device sync (Zen 1.22: "Sync your Spaces across devices")
+// ---------------------------------------------------------------------------
+
+/** What gets synced; mirrors Zen's Sync engines. */
+export interface SyncScope {
+  spaces: boolean
+  folders: boolean
+  pinnedTabs: boolean
+  essentials: boolean
+  /** Unpinned tabs too (they arrive unloaded on other devices). */
+  openTabs: boolean
+  containers: boolean
+  bookmarks: boolean
+  settings: boolean
+  shortcuts: boolean
+  boosts: boolean
+}
+
+export interface SyncStatus {
+  /** Sync is configured (folder + key) and enabled. */
+  enabled: boolean
+  /** Folder every device writes its encrypted records to (any cloud-drive / Syncthing folder). */
+  folder: string | null
+  deviceId: string
+  deviceName: string
+  scope: SyncScope
+  lastSyncAt: number | null
+  lastError: string | null
+  syncing: boolean
+  /** Other devices seen in the sync folder. */
+  devices: Array<{ id: string; name: string; lastSeen: number }>
+  /** Set while the first sync waits for the user to confirm merging with existing cloud data. */
+  pendingMerge: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -248,6 +399,7 @@ export type ShortcutAction =
   | 'tab.duplicate'
   | 'sidebar.toggle'
   | 'glance.expand'
+  | 'space.new'
   | 'tab.new'
   | 'tab.close'
   | 'tab.reopenClosed'
@@ -304,6 +456,7 @@ export type ShortcutAction =
   | 'devtools.browserConsole'
   | 'settings.open'
   | 'addons.open'
+  | 'boost.new'
 
 export interface Shortcut {
   /** Zen's shortcut id (e.g. `zen-compact-mode-toggle`, `key_newNavigatorTab`). */
@@ -373,6 +526,8 @@ export interface Settings {
   showTabSeparator: boolean
   ctrlTabCyclesWithinSection: boolean
   spaceRouting: Record<string, string>
+  /** Zen's window sync: mirror all tabs across windows, only pinned tabs, or keep windows independent. */
+  windowSync: WindowSyncMode
   resources: ResourceSettings
 }
 
@@ -536,8 +691,14 @@ export type OverlayKind =
   | 'onboarding'
   | 'shortcuts'
   | 'space-editor'
+  | 'boosts'
+  | 'addons'
+  | 'live-folder'
+  | 'sync'
 
 export interface WindowState {
+  id: string
+  kind: WindowKind
   maximized: boolean
   fullscreen: boolean
   focused: boolean
@@ -579,6 +740,20 @@ export interface UIState {
   /** Tab id whose devtools are open (for the toolbar indicator). */
   devtoolsOpenFor: string[]
   resources: ResourceSnapshot
+  /**
+   * Visible tabs whose live page is currently shown in another window. Zen renders a dimmed
+   * preview for them; focusing this window moves the page here.
+   */
+  foreignTabIds: string[]
+  /** Number of open windows (Zen shows "Move to…" helpers only when it matters). */
+  windowCount: number
+  boosts: Boost[]
+  /** Tab whose page is in "zap element" mode, if any. */
+  zappingTabId: string | null
+  liveFolders: Record<string, LiveFolderConfig>
+  extensions: ExtensionInfo[]
+  mods: Mod[]
+  sync: SyncStatus
 }
 
 export interface FindResult {
@@ -651,6 +826,8 @@ export type TabSection = 'essential' | 'pinned' | 'regular'
 
 export interface Commands {
   'app.getState': { args: void; result: UIState }
+  /** Real spaces (blank / private windows only see their own space in the snapshot). */
+  'app.listSpaces': { args: void; result: Array<{ id: string; name: string; icon: string }> }
   'app.openExternal': { args: { url: string }; result: void }
   'app.quit': { args: void; result: void }
 
@@ -699,7 +876,13 @@ export interface Commands {
   'tab.contextMenu': { args: { tabId: string }; result: void }
   'tab.toggleDevtools': { args: { tabId: string }; result: void }
   'tab.copyUrl': { args: { tabId: string; markdown?: boolean }; result: void }
-  'tab.pickIcon': { args: { tabId: string }; result: void }
+  'tab.setIcon': { args: { tabId: string; icon: string | null }; result: void }
+  /** Zen's "Add Route for Domain": route the tab's domain to a space. */
+  'tab.addRoute': { args: { tabId: string; spaceId: string }; result: void }
+  /** Alt+click on a sidebar tab: split it with (or separate it from) the active tab. */
+  'tab.altClick': { args: { tabId: string }; result: void }
+  /** Context menu for several selected tabs (Ctrl / Shift+click in the sidebar). */
+  'tab.selectionContextMenu': { args: { tabIds: string[] }; result: void }
 
   'space.create': {
     args: { name: string; icon: string; containerId: string; theme: SpaceTheme | null }
@@ -824,11 +1007,19 @@ export interface Commands {
     result: void
   }
   'container.delete': { args: { id: string }; result: void }
+  'container.reorder': { args: { id: string; index: number }; result: void }
 
   'window.minimize': { args: void; result: void }
   'window.toggleMaximize': { args: void; result: void }
   'window.close': { args: void; result: void }
   'window.toggleFullscreen': { args: void; result: void }
+  /** Zen: a new synced window starts at the current space showing the same tabs. */
+  'window.new': { args: void; result: void }
+  /** Zen's "New blank window" (Ctrl+Shift+N): an independent, temporary tab list. */
+  'window.newUnsynced': { args: void; result: void }
+  'window.newPrivate': { args: void; result: void }
+  /** Blank windows: move every local tab back into one of the real spaces. */
+  'window.moveTabsToSpace': { args: { spaceId: string }; result: void }
 
   'page.screenshot': { args: { tabId: string }; result: void }
   'page.print': { args: { tabId: string }; result: void }
@@ -839,6 +1030,63 @@ export interface Commands {
     args: { searchEngineId: string; colorScheme: ColorScheme; essentials: string[] }
     result: void
   }
+
+  'boost.update': {
+    args: { domain: string; patch: Partial<Omit<Boost, 'domain' | 'updatedAt'>> }
+    result: void
+  }
+  'boost.remove': { args: { domain: string }; result: void }
+  'boost.startZap': { args: { tabId: string }; result: void }
+  'boost.stopZap': { args: { tabId: string }; result: void }
+
+  'reader.toggle': { args: { tabId: string }; result: void }
+
+  'liveFolder.save': {
+    args: {
+      /** Existing folder to convert, or `null` to create a new folder in the current space. */
+      folderId: string | null
+      name: string
+      config: Pick<
+        LiveFolderConfig,
+        | 'provider'
+        | 'source'
+        | 'includeDrafts'
+        | 'token'
+        | 'mapping'
+        | 'intervalMinutes'
+        | 'maxItems'
+      >
+    }
+    result: string
+  }
+  'liveFolder.refresh': { args: { folderId: string }; result: void }
+  'liveFolder.remove': { args: { folderId: string }; result: void }
+
+  'extension.add': { args: void; result: void }
+  'extension.remove': { args: { id: string }; result: void }
+  'extension.setEnabled': { args: { id: string; enabled: boolean }; result: void }
+  'extension.openPopup': { args: { id: string; anchor: Rect }; result: void }
+  'extension.closePopup': { args: void; result: void }
+
+  'mod.add': { args: { name: string; css: string; source?: string }; result: string }
+  'mod.update': {
+    args: { id: string; patch: Partial<Pick<Mod, 'name' | 'css' | 'enabled'>> }
+    result: void
+  }
+  'mod.remove': { args: { id: string }; result: void }
+  'mod.importFile': { args: void; result: void }
+  'mod.importUrl': { args: { url: string }; result: void }
+
+  'sync.chooseFolder': { args: void; result: string | null }
+  'sync.setup': {
+    args: { folder: string; passphrase: string; deviceName: string; scope: SyncScope }
+    result: void
+  }
+  'sync.setScope': { args: Partial<SyncScope>; result: void }
+  'sync.setDeviceName': { args: { name: string }; result: void }
+  'sync.now': { args: void; result: void }
+  'sync.confirmMerge': { args: { merge: boolean }; result: void }
+  'sync.disconnect': { args: { wipeRemote: boolean }; result: void }
 }
 
 export type CommandName = keyof Commands
@@ -851,7 +1099,7 @@ export interface Events {
   state: UIState
   'urlbar.toggle': { mode: UrlbarOpenMode; text?: string }
   'urlbar.close': void
-  'overlay.open': { kind: OverlayKind; section?: string }
+  'overlay.open': { kind: OverlayKind; folderId?: string; section?: string }
   'find.open': { tabId: string; again?: 'next' | 'prev' }
   toast: { message: string; kind?: 'info' | 'error' }
   /** Link hover status text (Firefox shows this in the bottom corner). */
@@ -862,6 +1110,10 @@ export interface Events {
   'space.new': void
   'tab.startRename': { tabId: string }
   'folder.startRename': { folderId: string }
+  /** Open the pinned-URL editor for a pinned/essential tab. */
+  'tab.editPinnedUrl': { tabId: string }
+  /** Open the emoji/icon picker for a tab. */
+  'tab.pickIcon': { tabId: string }
   'space.edit': { spaceId: string }
   'space.switched': { fromIndex: number; toIndex: number }
 }

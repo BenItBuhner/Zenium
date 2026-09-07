@@ -11,6 +11,7 @@ import type {
 import { emptyResourceSnapshot } from '../../../shared/defaults'
 import { getDomain } from '../../../shared/url'
 import type { Browser } from '../browser'
+import type { ZenWindow } from '../window'
 import { TabLifecycle } from './lifecycle'
 import { LoadScheduler } from './scheduler'
 import {
@@ -72,9 +73,18 @@ export class ResourceGovernor {
   private readonly startupProfile = appliedStartupProfile()
   private readonly cleanups: Array<() => void> = []
 
+  /** Windows whose minimise / restore events already feed the governor. */
+  private readonly watched = new WeakSet<ZenWindow>()
+
   constructor(private readonly browser: Browser) {
     this.scheduler = new LoadScheduler({
-      load: (tabId) => Boolean(this.browser.tabs.load(tabId)),
+      // The page is owned by the window that asked for it, if that window is still around; never
+      // start a load once the last window is gone (`focusedWindow()` would open a new one).
+      load: (tabId, windowId) => {
+        if (this.browser.allWindows().length === 0) return false
+        const win = windowId ? this.browser.windows.get(windowId) : undefined
+        return Boolean(this.browser.tabs.load(tabId, win?.alive ? win : undefined))
+      },
       tabExists: (tabId) => Boolean(this.browser.tabs.tab(tabId)),
       liveCount: () => this.browser.tabs.loadedCount(),
       maxConcurrent: () => this.settings.maxConcurrentLoads,
@@ -106,28 +116,37 @@ export class ResourceGovernor {
     listen('unlock-screen', () => this.wakeVisible())
     listen('on-battery', () => this.sampleSoon())
     listen('on-ac', () => this.sampleSoon())
-    const win = this.browser.window.win
+    for (const win of this.browser.allWindows()) this.watchWindow(win)
+    this.schedule(1_000)
+  }
+
+  /**
+   * Follow a window's minimise / restore state. Focus is covered by `TabManager.claimVisible`,
+   * which the Browser runs on every window focus and which wakes that window's visible pages.
+   */
+  watchWindow(win: ZenWindow): void {
+    if (this.watched.has(win) || !win.alive) return
+    this.watched.add(win)
+    const bw = win.win
     const onMinimize = (): void => this.sampleSoon()
     const onRestore = (): void => {
-      this.wakeVisible()
+      this.wakeVisible(win)
       this.sampleSoon()
     }
-    win.on('minimize', onMinimize)
-    win.on('restore', onRestore)
-    win.on('focus', onRestore)
+    bw.on('minimize', onMinimize)
+    bw.on('restore', onRestore)
     this.cleanups.push(() => {
-      if (win.isDestroyed()) return
-      win.removeListener('minimize', onMinimize)
-      win.removeListener('restore', onRestore)
-      win.removeListener('focus', onRestore)
+      if (bw.isDestroyed()) return
+      bw.removeListener('minimize', onMinimize)
+      bw.removeListener('restore', onRestore)
     })
-    this.schedule(1_000)
   }
 
   stop(): void {
     this.stopped = true
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
+    this.scheduler.clear()
     for (const cleanup of this.cleanups.splice(0)) cleanup()
   }
 
@@ -145,6 +164,7 @@ export class ResourceGovernor {
   /** Take a sample, execute the resulting plan and publish the snapshot. */
   async sample(force = false): Promise<ResourceSnapshot> {
     if (this.sampling || this.stopped) return this.snapshot
+    if (this.browser.allWindows().length === 0) return this.snapshot
     this.sampling = true
     try {
       const input = this.collect(force)
@@ -198,11 +218,14 @@ export class ResourceGovernor {
     else this.mediaPlaying.delete(tabId)
   }
 
-  /** Visible pages must be awake and unthrottled – applied right away, not at the next sample. */
-  wakeVisible(): void {
+  /**
+   * Visible pages must be awake and unthrottled – applied right away, not at the next sample.
+   * With a window, only the pages that window shows; otherwise every window's.
+   */
+  wakeVisible(win?: ZenWindow): void {
     const { tabs } = this.browser
     const now = Date.now()
-    for (const id of this.visibleIds()) {
+    for (const id of win ? this.visibleIdsIn(win) : this.visibleIds()) {
       this.lastVisibleAt.set(id, now)
       const tab = tabs.tab(id)
       const wc = tabs.webContents(id)
@@ -284,12 +307,13 @@ export class ResourceGovernor {
   async freezeOthers(): Promise<void> {
     const { tabs } = this.browser
     const visible = this.visibleIds()
+    const activeId = this.focusedTabId()
     let count = 0
     for (const [id] of [...tabs.allViews()]) {
       const tab = tabs.tab(id)
       const wc = tabs.webContents(id)
       if (!tab || !wc || visible.has(id) || tab.frozen) continue
-      if (protectionReason(this.sampleTab(tab, wc, visible), this.settings)) continue
+      if (protectionReason(this.sampleTab(tab, wc, visible, activeId), this.settings)) continue
       if (await this.lifecycle.freeze(wc)) {
         tab.frozen = true
         count += 1
@@ -348,10 +372,11 @@ export class ResourceGovernor {
       cpuPercent: m.cpu.percentCPUUsage
     }))
     const visible = this.visibleIds()
+    const activeId = this.focusedTabId()
     const samples: TabSample[] = []
     for (const tab of Object.values(state.model.tabs)) {
       if (visible.has(tab.id)) this.lastVisibleAt.set(tab.id, now)
-      samples.push(this.sampleTab(tab, tabs.webContents(tab.id), visible))
+      samples.push(this.sampleTab(tab, tabs.webContents(tab.id), visible, activeId))
     }
     return {
       now,
@@ -374,9 +399,18 @@ export class ResourceGovernor {
     }
   }
 
-  private sampleTab(tab: Tab, wc: WebContents | undefined, visible: Set<string>): TabSample {
+  /**
+   * `visible` is the union over every window; `activeId` is the page the user is looking at in
+   * the focused window – other windows' active tabs count as visible panes (strict mode may
+   * throttle or purge them, never reload them).
+   */
+  private sampleTab(
+    tab: Tab,
+    wc: WebContents | undefined,
+    visible: Set<string>,
+    activeId: string | null
+  ): TabSample {
     const { state } = this.browser
-    const activeId = this.browser.tabs.activeSpace.activeTabId
     return {
       id: tab.id,
       title: tab.customTitle ?? tab.title,
@@ -399,16 +433,29 @@ export class ResourceGovernor {
     }
   }
 
+  /** Tabs on screen in any window, plus Glance pages and their parents. */
   private visibleIds(): Set<string> {
-    const { tabs, state } = this.browser
-    const visible = new Set(tabs.visibleTabIds())
-    if (state.glance) visible.add(state.glance.tabId).add(state.glance.parentTabId)
+    return this.browser.tabs.allVisibleTabIds()
+  }
+
+  private visibleIdsIn(win: ZenWindow): Set<string> {
+    const visible = new Set(this.browser.tabs.visibleTabIds(win))
+    if (win.glance) visible.add(win.glance.tabId).add(win.glance.parentTabId)
     return visible
   }
 
+  /** The tab the user is looking at: the focused window's selected tab (null with no windows). */
+  private focusedTabId(): string | null {
+    const wins = this.browser.allWindows()
+    if (wins.length === 0) return null
+    const win = wins.find((w) => w.win.isFocused()) ?? this.browser.focusedWindow()
+    return win.selectedTabIn(win.activeSpace())
+  }
+
+  /** Nobody can see any page: every window is minimised. */
   private windowMinimized(): boolean {
-    const win = this.browser.window.win
-    return Boolean(win && !win.isDestroyed() && win.isMinimized())
+    const wins = this.browser.allWindows()
+    return wins.length > 0 && wins.every((w) => w.win.isMinimized())
   }
 
   // ---------------------------------------------------------------------------
@@ -464,12 +511,18 @@ export class ResourceGovernor {
         if (!wc) return false
         tabs.discard(tab.id)
         return true
-      case 'reload':
+      case 'reload': {
         if (!wc) return false
+        const win = tabs.windowFor(tab.id)
         tabs.discard(tab.id)
-        tabs.ensureLoaded(tab.id)
-        this.browser.toast(`"${tab.customTitle ?? tab.title}" was reloaded: ${action.reason}.`)
+        tabs.ensureLoaded(tab.id, win)
+        this.browser.toast(
+          `"${tab.customTitle ?? tab.title}" was reloaded: ${action.reason}.`,
+          'info',
+          win
+        )
         return true
+      }
       case 'freeze':
         if (!wc || !(await this.lifecycle.freeze(wc))) return false
         tab.frozen = true
@@ -512,13 +565,14 @@ export class ResourceGovernor {
   private evictOne(reason: string): boolean {
     const { tabs } = this.browser
     const visible = this.visibleIds()
+    const activeId = this.focusedTabId()
     const now = Date.now()
     let best: { tab: Tab; score: number } | null = null
     for (const [id] of tabs.allViews()) {
       const tab = tabs.tab(id)
       const wc = tabs.webContents(id)
       if (!tab || !wc || visible.has(id)) continue
-      const sample = this.sampleTab(tab, wc, visible)
+      const sample = this.sampleTab(tab, wc, visible, activeId)
       if (protectionReason(sample, this.settings)) continue
       const score = victimScore(sample, this.usage.get(id), 'memory', now)
       if (!best || score > best.score) best = { tab, score }

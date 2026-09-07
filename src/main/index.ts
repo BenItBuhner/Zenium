@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu } from 'electron'
+import { app, Menu } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { registerZenScheme } from './browser/protocol'
 import { Browser } from './browser/browser'
@@ -25,13 +25,24 @@ if (!gotLock) {
 } else {
   let browser: Browser | null = null
 
-  app.on('second-instance', (_event, argv) => {
+  /** `zen [--blank-window|--private-window] [url]` (Zen ships the same `--blank-window` flag). */
+  const openFromArgv = (argv: string[]): void => {
     if (!browser) return
-    browser.window.win.show()
-    browser.window.win.focus()
     const url = argv.find((a) => /^https?:\/\//.test(a))
-    if (url) browser.tabs.createTab({ url, active: true })
-  })
+    const kind = argv.includes('--private-window')
+      ? 'private'
+      : argv.includes('--blank-window')
+        ? 'unsynced'
+        : null
+    const win = kind ? browser.createWindow({ kind }) : browser.focusedWindow()
+    if (!kind) {
+      win.win.show()
+      win.win.focus()
+    }
+    if (url) browser.tabs.createTab({ url, active: true }, win)
+  }
+
+  app.on('second-instance', (_event, argv) => openFromArgv(argv))
 
   app.whenReady().then(() => {
     electronApp.setAppUserModelId('app.zen-browser.chromium')
@@ -39,13 +50,11 @@ if (!gotLock) {
 
     browser = new Browser(app.getPath('userData'))
     browser.start()
-
-    // Open a URL passed on the command line (e.g. `zen https://example.com`).
-    const url = process.argv.slice(1).find((a) => /^https?:\/\//.test(a))
-    if (url) browser.tabs.createTab({ url, active: true })
+    if (process.argv.slice(1).some((a) => /^https?:\/\//.test(a) || a.startsWith('--')))
+      openFromArgv(process.argv.slice(1))
 
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0 && browser) browser.window.create()
+      if (browser && browser.allWindows().length === 0) browser.createWindow({ kind: 'synced' })
     })
   })
 

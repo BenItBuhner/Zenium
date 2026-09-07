@@ -7,7 +7,7 @@
   --color-accent: var(--zen-accent);
   --font-sans:
     system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
-  --radius-zen: 10px;
+  --radius-zen: 12px;
 }
 
 :root {
@@ -25,16 +25,20 @@
   --zen-element-bg-active: rgb(var(--zen-fg-rgb) / 0.16);
   --zen-border: rgb(var(--zen-fg-rgb) / 0.12);
   --zen-muted: rgb(var(--zen-fg-rgb) / 0.6);
-  --zen-panel-bg: rgb(255 255 255 / 0.72);
+  --zen-panel-bg: rgb(255 255 255 / 0.74);
   --zen-shadow: 0 18px 50px rgb(0 0 0 / 0.22), 0 2px 8px rgb(0 0 0 / 0.12);
   --zen-padding: 8px;
-  --zen-content-radius: 10px;
+  --zen-content-radius: 12px;
   --zen-sidebar-width: 240px;
   --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* Zen 1.22: the chrome uses squircles (superellipse corners) instead of plain rounding. */
+  --zen-corner: squircle;
+  /* Zen 1.22: sidebar type got larger for readability. */
+  --zen-sidebar-font: 14px;
 }
 
 :root[data-theme='dark'] {
-  --zen-panel-bg: rgb(28 28 34 / 0.82);
+  --zen-panel-bg: rgb(28 28 34 / 0.84);
   --zen-shadow: 0 18px 50px rgb(0 0 0 / 0.55), 0 2px 8px rgb(0 0 0 / 0.35);
 }
 
@@ -88,10 +92,27 @@
     -webkit-app-region: no-drag;
   }
 
+  /* Opt-in squircle corners for anything with a border-radius (Chromium 139+). */
+  .zen-squircle,
+  .zen-tab,
+  .zen-essential,
+  .zen-panel,
+  .zen-content-frame,
+  .zen-toolbar-button,
+  .zen-kbd,
+  .zen-suggestion {
+    corner-shape: var(--zen-corner);
+  }
+
   /* The whole window background is the space gradient. */
   .zen-window {
     background: var(--zen-bg);
     transition: background 600ms var(--zen-ease);
+  }
+  /* Private windows: Zen tints the chrome purple and marks it with a mask. */
+  .zen-window[data-window-kind='private'] {
+    --zen-accent: #a98bff;
+    --zen-accent-rgb: 169 139 255;
   }
 
   .zen-texture {
@@ -109,7 +130,7 @@
     justify-content: center;
     width: 28px;
     height: 28px;
-    border-radius: 8px;
+    border-radius: 9px;
     color: var(--zen-fg);
     opacity: 0.85;
     transition:
@@ -133,11 +154,12 @@
     position: relative;
     display: flex;
     align-items: center;
-    gap: 8px;
-    height: 34px;
+    gap: 9px;
+    height: 36px;
     padding: 0 8px 0 10px;
-    border-radius: 9px;
+    border-radius: 11px;
     color: var(--zen-fg);
+    font-size: var(--zen-sidebar-font);
     transition:
       background 120ms var(--zen-ease),
       opacity 120ms var(--zen-ease);
@@ -148,6 +170,12 @@
   .zen-tab[data-active='true'] {
     background: var(--zen-element-bg-active);
     box-shadow: inset 0 0 0 1px rgb(var(--zen-fg-rgb) / 0.05);
+  }
+  /* Multi-selected tabs (Ctrl / Shift+click) get the accent outline Zen uses. */
+  .zen-tab[data-selected],
+  .zen-essential[data-selected] {
+    background: rgb(var(--zen-accent-rgb) / 0.16);
+    box-shadow: inset 0 0 0 1.5px rgb(var(--zen-accent-rgb) / 0.7);
   }
   .zen-tab[data-discarded='true'] .zen-tab-title {
     opacity: 0.55;
@@ -178,14 +206,34 @@
   .zen-tab:hover .zen-tab-close {
     opacity: 1;
   }
+  /* Zen 1.19: page-load progress runs along the bottom edge of the tab. */
+  .zen-tab-progress {
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: 3px;
+    height: 2px;
+    border-radius: 2px;
+    overflow: hidden;
+    background: rgb(var(--zen-accent-rgb) / 0.2);
+  }
+  .zen-tab-progress::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    width: 40%;
+    border-radius: 2px;
+    background: var(--zen-accent);
+    animation: zen-progress 1.1s var(--zen-ease) infinite;
+  }
 
   .zen-essential {
     position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 42px;
-    border-radius: 12px;
+    height: 44px;
+    border-radius: 14px;
     background: rgb(var(--zen-fg-rgb) / 0.1);
     box-shadow: inset 0 0 0 1px rgb(var(--zen-fg-rgb) / 0.06);
     transition:
@@ -194,6 +242,9 @@
   }
   .zen-essential:hover {
     background: var(--zen-element-bg-hover);
+  }
+  .zen-essential:active {
+    transform: scale(0.97);
   }
   .zen-essential[data-active='true'] {
     background: rgb(var(--zen-fg-rgb) / 0.22);
@@ -208,7 +259,7 @@
     background: var(--zen-panel-bg);
     backdrop-filter: blur(24px) saturate(1.2);
     border: 1px solid rgb(var(--zen-fg-rgb) / 0.1);
-    border-radius: 14px;
+    border-radius: 16px;
     box-shadow: var(--zen-shadow);
   }
 
@@ -222,7 +273,11 @@
 
   .zen-space-strip {
     display: flex;
-    transition: transform 320ms var(--zen-ease);
+    transition: transform 280ms var(--zen-ease);
+  }
+
+  .zen-live-dot {
+    animation: zen-pulse 2.4s var(--zen-ease) infinite;
   }
 }
 
@@ -261,12 +316,29 @@
     transform: none;
   }
 }
+@keyframes zen-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(260%);
+  }
+}
+@keyframes zen-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
 @layer components {
   .zen-animate-in {
-    animation: zen-fade-in 180ms var(--zen-ease);
+    animation: zen-fade-in 160ms var(--zen-ease);
   }
   .zen-animate-pop {
-    animation: zen-pop 200ms var(--zen-ease);
+    animation: zen-pop 180ms var(--zen-ease);
   }
   .zen-spin {
     animation: zen-spin 900ms linear infinite;
@@ -275,6 +347,9 @@
     animation: zen-toast-in 180ms var(--zen-ease);
   }
 
+  .zen-suggestion {
+    border-radius: 10px;
+  }
   .zen-suggestion[data-selected='true'] {
     background: var(--zen-element-bg-hover);
   }
@@ -313,7 +388,7 @@
     align-items: center;
     height: 20px;
     padding: 0 6px;
-    border-radius: 5px;
+    border-radius: 6px;
     font-size: 11px;
     font-family: var(--font-sans);
     background: var(--zen-element-bg);

@@ -567,7 +567,7 @@ function advanceStreaks(
 // ---------------------------------------------------------------------------
 
 export function fmtMb(mb: number): string {
-  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`
+  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`
   return `${Math.round(mb).toLocaleString('en-US')} MB`
 }
 
