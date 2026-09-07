@@ -1,6 +1,7 @@
 import type { Event, Input } from 'electron'
 import { isModifierKey, matchShortcut } from '../../shared/shortcuts'
 import type { Browser } from './browser'
+import type { ZenWindow } from './window'
 
 /**
  * Routes `before-input-event` from every web contents (chrome and pages) through Zen's shortcut
@@ -10,7 +11,7 @@ import type { Browser } from './browser'
 export class KeyboardHandler {
   constructor(private readonly browser: Browser) {}
 
-  handle(event: Event, input: Input, sourceTabId: string | null): void {
+  handle(event: Event, input: Input, sourceTabId: string | null, win: ZenWindow): void {
     if (input.type !== 'keyDown') return
     if (isModifierKey(input.key)) return
 
@@ -19,10 +20,10 @@ export class KeyboardHandler {
       event.preventDefault()
       if (input.isAutoRepeat && !REPEATABLE.has(shortcut.action)) return
       if (shortcut.unsupported) {
-        this.browser.toast(`"${shortcut.label}" is not available in this build yet.`)
+        this.browser.toast(`"${shortcut.label}" is not available in this build yet.`, 'info', win)
         return
       }
-      this.browser.actions.run(shortcut.action, { sourceTabId })
+      this.browser.actions.run(shortcut.action, { sourceTabId, win })
       return
     }
 
@@ -33,11 +34,15 @@ export class KeyboardHandler {
       !input.control &&
       !input.meta
     ) {
-      // Escape inside a page: close Glance, else stop loading (Firefox behaviour).
-      const state = this.browser.state
-      if (state.glance) {
+      // Escape inside a page: leave Boost zap mode / close Glance, else stop loading (Firefox).
+      if (this.browser.boosts.isZapping(sourceTabId)) {
         event.preventDefault()
-        this.browser.tabs.closeGlance()
+        this.browser.boosts.stopZap(sourceTabId)
+        return
+      }
+      if (win.glance) {
+        event.preventDefault()
+        this.browser.tabs.closeGlance(win)
         return
       }
       const tab = this.browser.tabs.tab(sourceTabId)

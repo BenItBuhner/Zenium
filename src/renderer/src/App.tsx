@@ -5,6 +5,7 @@ import { run } from '@renderer/lib/api'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   captureActiveTab,
+  clearTabSelection,
   closeOverlay,
   closeUrlbar,
   invalidateSnapshot,
@@ -18,8 +19,10 @@ import { useMainEvents } from '@renderer/hooks/useMainEvents'
 import { useTheme } from '@renderer/hooks/useTheme'
 import { ContentArea } from './components/content/ContentArea'
 import { DragGhost } from './components/DragGhost'
+import { ModStyles } from './components/ModStyles'
 import { Onboarding } from './components/overlays/Onboarding'
 import { Sidebar } from './components/sidebar/Sidebar'
+import { TabDialogs } from './components/TabDialogs'
 import { Toolbar } from './components/Toolbar'
 
 /** Width of the compact-mode hover zone along the window edge (px). */
@@ -34,7 +37,8 @@ export function App(): JSX.Element {
   const settings = state.settings
   const compact = settings.compactMode
   const sidebarSide = settings.sidebarSide
-  const onboarding = !settings.onboardingDone
+  // Blank / private windows never show onboarding (it belongs to the main profile window).
+  const onboarding = !settings.onboardingDone && state.window.kind === 'synced'
   const htmlFullscreen = state.window.htmlFullscreenTabId !== null
 
   const sidebarHidden = compact.enabled && compact.hideSidebar && !compact.sidebarPersistent
@@ -71,6 +75,13 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (!sidebarHidden && ui.compactHover) uiStore.set({ compactHover: false })
   }, [sidebarHidden, ui.compactHover])
+  // Any click in the chrome dismisses an open extension popup (it lives outside the DOM).
+  useEffect(() => {
+    if (!state.extensions.some((e) => e.enabled)) return
+    const onDown = (): void => run('extension.closePopup', undefined)
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [state.extensions])
   // Main tracks the real cursor (works over the page view and the frameless resize border).
   useEffect(() => {
     const onReveal = (e: Event): void => {
@@ -94,7 +105,9 @@ export function App(): JSX.Element {
         sidebarSide === 'right' && 'flex-row-reverse'
       )}
       data-dark={theme.isDark}
+      data-window-kind={state.window.kind}
     >
+      <ModStyles mods={state.mods} />
       <div className="zen-texture" />
       {!sidebarHidden && <Sidebar state={state} isDark={theme.isDark} />}
       <main
@@ -148,6 +161,7 @@ export function App(): JSX.Element {
       )}
 
       {ui.drag && <DragGhost state={state} drag={ui.drag} />}
+      <TabDialogs state={state} />
       {onboarding && <Onboarding state={state} />}
     </div>
   )
@@ -197,6 +211,11 @@ function useGlobalKeys(state: UIState): void {
         run('glance.close', undefined)
         return
       }
+      if (ui.selectedTabIds.length) {
+        e.preventDefault()
+        clearTabSelection()
+        return
+      }
       if (ui.findOpen && ui.findTabId) {
         run('find.stop', { tabId: ui.findTabId, keepSelection: true })
         uiStore.set({ findOpen: false, findTabId: null })
@@ -206,6 +225,11 @@ function useGlobalKeys(state: UIState): void {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [state.glance])
+
+  // A multi-selection belongs to one space; drop it when the space changes.
+  useEffect(() => {
+    clearTabSelection()
+  }, [state.activeSpaceId])
 
   // Sidebar collapse toggle (Zen's "Toggle Sidebar" action).
   useEffect(() => {

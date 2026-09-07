@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   addTabToSplit,
+  allSpaces,
   createFolder,
+  createLocalSpace,
   createSpace,
   createSplitGroup,
   createTabRecord,
@@ -9,6 +11,7 @@ import {
   deleteFolder,
   dissolveSplitGroup,
   essentialsForSpace,
+  getSpace,
   insertTabIntoSpace,
   moveTab,
   nextTabAfterClose,
@@ -17,6 +20,7 @@ import {
   regularTabs,
   removeTabFromLists,
   removeTabFromSplit,
+  reorderContainer,
   reorderSpace,
   sectionIndexOf,
   type Model
@@ -33,7 +37,8 @@ function makeModel(): Model {
     activeSpaceId: space.id,
     containers: structuredClone(DEFAULT_CONTAINERS),
     folders: {},
-    splitGroups: {}
+    splitGroups: {},
+    localSpaces: {}
   }
 }
 
@@ -208,6 +213,59 @@ describe('split groups', () => {
     expect(addTabToSplit(m, group.id, tabs[4].id)).toBe(false)
     dissolveSplitGroup(m, group.id)
     expect(tabs.every((t) => m.tabs[t.id].splitGroupId === null)).toBe(true)
+  })
+})
+
+describe('windows', () => {
+  it('filters window-local tabs per window and never for pinned tabs', () => {
+    const m = makeModel()
+    const shared = addTab(m, 'https://shared.test')
+    const local = addTab(m, 'https://local.test', { windowId: 'w1' })
+    expect(regularTabs(m, m.spaces[0], 'w1').map((t) => t.id)).toEqual([shared.id, local.id])
+    expect(regularTabs(m, m.spaces[0], 'w2').map((t) => t.id)).toEqual([shared.id])
+    expect(regularTabs(m, m.spaces[0]).map((t) => t.id)).toEqual([shared.id, local.id])
+    expect(nextTabAfterClose(m, m.spaces[0], shared.id, true, false, 'w2')).toBeNull()
+    expect(nextTabAfterClose(m, m.spaces[0], shared.id, true, false, 'w1')).toBe(local.id)
+    // Pinning a window-local tab shares it with every window.
+    moveTab(m, local, { section: 'pinned', index: 0 }, 12)
+    expect(local.windowId).toBeNull()
+  })
+
+  it('keeps blank-window spaces out of the space list and their tabs bound to the window', () => {
+    const m = makeModel()
+    const localSpace = createLocalSpace('w9', 'Blank Window', '', 'default', null)
+    m.localSpaces[localSpace.id] = localSpace
+    expect(getSpace(m, localSpace.id)).toBe(localSpace)
+    expect(allSpaces(m)).toHaveLength(2)
+    expect(m.spaces).toHaveLength(1)
+    const tab = createTabRecord({
+      spaceId: localSpace.id,
+      containerId: 'default',
+      url: 'https://b.test'
+    })
+    m.tabs[tab.id] = tab
+    insertTabIntoSpace(m, localSpace, tab)
+    expect(tab.windowId).toBe('w9')
+    expect(essentialsForSpace(m, localSpace, true)).toEqual([])
+    // Moving it back into a real space makes it shared again.
+    moveTab(m, tab, { spaceId: m.spaces[0].id, section: 'regular', index: 0 }, 12)
+    expect(tab.windowId).toBeNull()
+    expect(tab.spaceId).toBe(m.spaces[0].id)
+    expect(localSpace.tabIds).toEqual([])
+  })
+
+  it('cycles spaces relative to any window position and reorders containers', () => {
+    const m = makeModel()
+    const work = createSpace('Work', '💼')
+    const play = createSpace('Play', '🎮')
+    m.spaces.push(work, play)
+    expect(cycleSpace(m, 1, work.id).id).toBe(play.id)
+    expect(cycleSpace(m, 1, play.id).id).toBe(m.spaces[0].id)
+    reorderContainer(m, 'shopping', 1)
+    expect(m.containers.map((c) => c.id).slice(0, 3)).toEqual(['default', 'shopping', 'personal'])
+    // "No Container" is pinned to the first slot.
+    reorderContainer(m, 'default', 3)
+    expect(m.containers[0].id).toBe('default')
   })
 })
 

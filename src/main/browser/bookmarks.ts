@@ -38,6 +38,22 @@ export class BookmarkService {
     return bookmark
   }
 
+  /** Insert or update a bookmark keeping its id (used by sync). */
+  upsert(bookmark: Bookmark): void {
+    const existing = this.state.bookmarks.find((b) => b.id === bookmark.id)
+    if (existing) Object.assign(existing, bookmark)
+    else this.state.bookmarks.push(bookmark)
+    // One bookmark per URL: drop older duplicates that sync may have produced.
+    const seen = new Set<string>()
+    this.state.bookmarks = this.state.bookmarks.filter((b) => {
+      if (seen.has(b.url) && b.id !== bookmark.id) return false
+      seen.add(b.url)
+      return true
+    })
+    this.reindex()
+    this.syncTabs()
+  }
+
   removeByUrl(url: string): void {
     this.state.bookmarks = this.state.bookmarks.filter((b) => b.url !== url)
     this.reindex()

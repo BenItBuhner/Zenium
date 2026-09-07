@@ -51,6 +51,8 @@ export interface DragState {
 export interface UiState {
   overlay: OverlayKind
   overlaySpaceId: string | null
+  /** Folder the live-folder editor works on (null → create a new one). */
+  overlayFolderId: string | null
   urlbar: UrlbarState
   findOpen: boolean
   findTabId: string | null
@@ -63,6 +65,14 @@ export interface UiState {
   compactHover: boolean
   renamingTabId: string | null
   renamingFolderId: string | null
+  /** Tab whose pinned URL is being edited in the small prompt. */
+  editingPinnedUrlTabId: string | null
+  /** Tab whose icon picker is open. */
+  iconPickerTabId: string | null
+  /** Zen's multi-select: tabs picked with Ctrl / Shift+click (acted on together). */
+  selectedTabIds: string[]
+  /** Last plainly clicked / toggled tab – the anchor for Shift+click ranges. */
+  selectionAnchorId: string | null
   /** The glance parent has been captured and the card is animating in / shown. */
   glanceActive: boolean
   /** The card animation finished – the glance view may be placed. */
@@ -74,6 +84,7 @@ export const uiStore = createStore<UiState>(
   {
     overlay: 'none',
     overlaySpaceId: null,
+    overlayFolderId: null,
     urlbar: { open: false, mode: 'new-tab', tabId: null, initialText: undefined, attached: false },
     findOpen: false,
     findTabId: null,
@@ -85,6 +96,10 @@ export const uiStore = createStore<UiState>(
     compactHover: false,
     renamingTabId: null,
     renamingFolderId: null,
+    editingPinnedUrlTabId: null,
+    iconPickerTabId: null,
+    selectedTabIds: [],
+    selectionAnchorId: null,
     glanceActive: false,
     glanceReady: false,
     spaceSlideDirection: 0
@@ -113,15 +128,16 @@ export async function captureActiveTab(tabId: string | null): Promise<void> {
 export async function openOverlay(
   kind: OverlayKind,
   activeTabId: string | null,
-  spaceId: string | null = null
+  spaceId: string | null = null,
+  folderId: string | null = null
 ): Promise<void> {
   await captureActiveTab(activeTabId)
   run('focus.chrome', undefined)
-  uiStore.set({ overlay: kind, overlaySpaceId: spaceId })
+  uiStore.set({ overlay: kind, overlaySpaceId: spaceId, overlayFolderId: folderId })
 }
 
 export function closeOverlay(): void {
-  uiStore.set({ overlay: 'none', overlaySpaceId: null })
+  uiStore.set({ overlay: 'none', overlaySpaceId: null, overlayFolderId: null })
   invalidateSnapshot()
   returnFocusToPage()
 }
@@ -168,4 +184,43 @@ export function closeUrlbar(): void {
 /** True when a chrome overlay covers the content area (tab views must be hidden). */
 export function overlayCoversContent(ui: UiState): boolean {
   return ui.overlay !== 'none' || ui.urlbar.open || ui.drag !== null
+}
+
+// ---------------------------------------------------------------------------
+// Multi-select (Ctrl+click toggles, Shift+click extends from the anchor)
+// ---------------------------------------------------------------------------
+
+/** Sidebar order of the tabs currently rendered (essentials, pinned, folders, regular). */
+function renderedTabOrder(): string[] {
+  return [...document.querySelectorAll<HTMLElement>('[data-tab-id]')]
+    .map((el) => el.dataset.tabId ?? '')
+    .filter(Boolean)
+}
+
+export function toggleTabSelection(tabId: string, activeTabId: string | null): void {
+  const ui = uiStore.get()
+  const base = ui.selectedTabIds.length ? ui.selectedTabIds : activeTabId ? [activeTabId] : []
+  const next = base.includes(tabId) ? base.filter((id) => id !== tabId) : [...base, tabId]
+  uiStore.set({ selectedTabIds: next.length > 1 ? next : [], selectionAnchorId: tabId })
+}
+
+export function selectTabRange(tabId: string, activeTabId: string | null): void {
+  const ui = uiStore.get()
+  const anchor = ui.selectionAnchorId ?? activeTabId ?? tabId
+  const order = renderedTabOrder()
+  const a = order.indexOf(anchor)
+  const b = order.indexOf(tabId)
+  if (a === -1 || b === -1) {
+    toggleTabSelection(tabId, activeTabId)
+    return
+  }
+  const [from, to] = a < b ? [a, b] : [b, a]
+  const range = order.slice(from, to + 1)
+  const merged = [...new Set([...ui.selectedTabIds, ...range])]
+  uiStore.set({ selectedTabIds: merged.length > 1 ? merged : [], selectionAnchorId: anchor })
+}
+
+export function clearTabSelection(): void {
+  if (uiStore.get().selectedTabIds.length)
+    uiStore.set({ selectedTabIds: [], selectionAnchorId: null })
 }
