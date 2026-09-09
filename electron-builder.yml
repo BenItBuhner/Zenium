@@ -4,30 +4,47 @@ directories:
   buildResources: build
 files:
   - '!**/.vscode/*'
+  - '!.github/**'
+  - '!android/**'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!vite.android.config.{js,ts,mjs,cjs}'
   - '!vitest.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+# Every artifact name carries the CPU architecture so that the x64 and arm64 builds of one release
+# can sit next to each other on the GitHub release page (see .github/workflows/release.yml).
 win:
   executableName: zen
+  # One NSIS installer per architecture. Build one arch per electron-builder invocation
+  # (--x64 / --arm64); asking for both at once merges them into a single installer.
+  target:
+    - nsis
 nsis:
-  artifactName: ${name}-${version}-setup.${ext}
+  artifactName: ${name}-${version}-${arch}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
 mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSCameraUsageDescription: Zen requests access to the device's camera for websites that ask for it.
     - NSMicrophoneUsageDescription: Zen requests access to the device's microphone for websites that ask for it.
     - NSDownloadsFolderUsageDescription: Zen saves downloaded files to your Downloads folder.
-  notarize: false
+  # Notarization only runs after a successful code signature and only when the Apple credentials
+  # (APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID) are in the environment; without them
+  # electron-builder logs "skipped macOS notarization" and carries on.
+  notarize: true
 dmg:
-  artifactName: ${name}-${version}.${ext}
+  artifactName: ${name}-${version}-${arch}.${ext}
 linux:
   target:
     - AppImage
@@ -35,5 +52,5 @@ linux:
   maintainer: zen-chromium
   category: Network
 appImage:
-  artifactName: ${name}-${version}.${ext}
+  artifactName: ${name}-${version}-${arch}.${ext}
 npmRebuild: false
