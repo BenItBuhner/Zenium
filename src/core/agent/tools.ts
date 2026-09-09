@@ -650,7 +650,8 @@ const browserType: AgentTool = {
     let headline = `Typed ${JSON.stringify(value)} into ${describeElement(loc)}`
     if (bool(args, 'submit')) {
       await sleep(80)
-      if (wantTrustedInput(view)) await view.sendInput!({ type: 'key', key: 'Enter', modifiers: [] })
+      if (wantTrustedInput(view))
+        await view.sendInput!({ type: 'key', key: 'Enter', modifiers: [] })
       else await ctx.agents.evalPage(view, pageCall('submit', ctx.session.id, target))
       headline += ' and pressed Enter'
     }

@@ -27,6 +27,7 @@ import { ContainerIcon } from '../ContainerIcon'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
+import { AgentsSection } from './AgentsSection'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { OverlayShell } from './OverlayShell'
 import { ResourcesSection } from './ResourcesSection'
@@ -45,6 +46,7 @@ export type SettingsSection =
   | 'boosts'
   | 'mods'
   | 'extensions'
+  | 'agents'
   | 'sync'
   | 'shortcuts'
   | 'about'
@@ -60,6 +62,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'boosts', label: 'Boosts' },
   { id: 'mods', label: 'Mods' },
   { id: 'extensions', label: 'Extensions' },
+  { id: 'agents', label: 'AI Agents' },
   { id: 'sync', label: 'Sync' },
   { id: 'shortcuts', label: 'Keyboard Shortcuts' },
   { id: 'about', label: 'About' }
@@ -69,6 +72,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
 const SECTION_CAPABILITY: Partial<Record<SettingsSection, keyof HostCapabilities>> = {
   resources: 'resourceGovernor',
   extensions: 'extensions',
+  agents: 'agents',
   sync: 'sync'
 }
 
@@ -150,6 +154,7 @@ export function SettingsPanel({
             {section === 'boosts' && <BoostsSection state={state} />}
             {section === 'mods' && <ModsSection state={state} />}
             {section === 'extensions' && <ExtensionsSection state={state} />}
+            {section === 'agents' && <AgentsSection state={state} set={set} />}
             {section === 'sync' && <SyncSection state={state} />}
             {section === 'shortcuts' && <ShortcutsSection state={state} />}
             {section === 'about' && <AboutSection state={state} />}

@@ -1,7 +1,16 @@
 import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { MonitorSmartphone, RotateCcw, Snowflake, Turtle, Volume2, VolumeX, X } from 'lucide-react'
-import type { Tab } from '@shared/types'
+import {
+  Bot,
+  MonitorSmartphone,
+  RotateCcw,
+  Snowflake,
+  Turtle,
+  Volume2,
+  VolumeX,
+  X
+} from 'lucide-react'
+import type { AgentInfo, Tab } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
@@ -29,6 +38,9 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
   const renaming = uiStore.use((s) => s.renamingTabId === tab.id)
   const dropKey = dropStore.use((s) => s.key)
   const foreign = browserStore.use((s) => s.state?.foreignTabIds.includes(tab.id) ?? false)
+  const agent = browserStore.use(
+    (s) => s.state?.agents.find((a) => a.tabIds.includes(tab.id)) ?? null
+  )
   const containerColor = browserStore.use((s) => {
     if (
       !s.state ||
@@ -122,8 +134,14 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
       data-selected={selected || undefined}
       data-discarded={tab.discarded}
       data-frozen={tab.frozen}
+      data-agent={agent ? true : undefined}
       data-tab-id={tab.id}
-      title={compact ? `${title}${tab.frozen ? ' (frozen)' : ''}` : undefined}
+      style={agent ? { boxShadow: `inset 0 0 0 1.5px ${agent.color}80` } : undefined}
+      title={
+        compact
+          ? `${title}${agent ? ` — ${agent.name}` : ''}${tab.frozen ? ' (frozen)' : ''}`
+          : undefined
+      }
       onPointerDown={onPointerDown}
       onClick={onClick}
       onAuxClick={onAuxClick}
@@ -148,6 +166,13 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
         />
       )}
       {tab.loading && !tab.discarded && <span className="zen-tab-progress" aria-hidden />}
+      {agent && compact && (
+        <span
+          className="pointer-events-none absolute right-0.5 top-0.5 h-2 w-2 rounded-full ring-1 ring-white/70"
+          style={{ background: agent.color }}
+          aria-hidden
+        />
+      )}
       <Favicon tab={tab} />
       {!compact && (
         <>
@@ -156,6 +181,7 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
           ) : (
             <span className="zen-tab-title min-w-0 flex-1 truncate">{title}</span>
           )}
+          {agent && !renaming && <AgentBadge agent={agent} tabId={tab.id} />}
           {foreign && active && (
             <MonitorSmartphone
               className="h-3.5 w-3.5 shrink-0 opacity-60"
@@ -230,6 +256,24 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
         </>
       )}
     </div>
+  )
+}
+
+/** Marks a tab an AI agent is driving; click to take the tab back. */
+function AgentBadge({ agent, tabId }: { agent: AgentInfo; tabId: string }): JSX.Element {
+  return (
+    <button
+      type="button"
+      className="zen-toolbar-button flex h-5 shrink-0 items-center gap-1 rounded-full px-1.5 text-white"
+      style={{ background: agent.color }}
+      title={`Driven by ${agent.name} (${agent.mode} mode) — click to take this tab back`}
+      onClick={(e) => {
+        e.stopPropagation()
+        run('agent.releaseTab', { tabId })
+      }}
+    >
+      <Bot className="h-3 w-3" />
+    </button>
   )
 }
 
