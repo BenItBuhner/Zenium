@@ -98,7 +98,12 @@ export interface PageRuntime {
 export const PAGE_RUNTIME_GLOBAL = '__zenAgentRuntime_v1'
 
 export function zenAgentPageRuntime(): PageRuntime {
-  const REF_MAPS: Record<string, Map<string, Element>> = {}
+  interface RefState {
+    byId: Map<string, Element>
+    byEl: WeakMap<Element, string>
+    seq: number
+  }
+  const REF_STATES: Record<string, RefState> = {}
   const MARK = 'data-zen-agent'
   const SKIP = new Set([
     'SCRIPT',
@@ -208,13 +213,31 @@ export function zenAgentPageRuntime(): PageRuntime {
   const cut = (s: string, n: number): string => (s.length > n ? s.slice(0, n - 1) + '…' : s)
   const q = (s: string, n = 120): string => JSON.stringify(cut(collapse(s), n))
 
-  function refMap(agent: string): Map<string, Element> {
-    let m = REF_MAPS[agent]
-    if (!m) {
-      m = new Map()
-      REF_MAPS[agent] = m
+  function refState(agent: string): RefState {
+    let s = REF_STATES[agent]
+    if (!s) {
+      s = { byId: new Map(), byEl: new WeakMap(), seq: 0 }
+      REF_STATES[agent] = s
     }
-    return m
+    return s
+  }
+
+  /**
+   * A stable handle for an element: the same element keeps the same ref across snapshots, so a
+   * ref handed out earlier still resolves until the element leaves the page. Disconnected
+   * elements are pruned so ids do not leak.
+   */
+  function refFor(agent: string, el: Element): string {
+    const s = refState(agent)
+    const existing = s.byEl.get(el)
+    if (existing && s.byId.get(existing) === el) return existing
+    if (s.byId.size > 4000) {
+      for (const [id, ref] of s.byId) if (!ref.isConnected) s.byId.delete(id)
+    }
+    const id = `e${++s.seq}`
+    s.byId.set(id, el)
+    s.byEl.set(el, id)
+    return id
   }
 
   function isRendered(el: Element): boolean {
@@ -387,8 +410,6 @@ export function zenAgentPageRuntime(): PageRuntime {
   }
 
   function snapshot(opts: PageSnapshotOptions): PageSnapshot {
-    const refs = refMap(opts.agent)
-    refs.clear()
     const lines: string[] = []
     const maxChars = opts.maxChars ?? 30000
     const filter = opts.filter ? opts.filter.toLowerCase() : null
@@ -445,8 +466,7 @@ export function zenAgentPageRuntime(): PageRuntime {
       }
       const { name, fromContent } = nameOf(el, effectiveRole)
       n++
-      const ref = `e${n}`
-      refs.set(ref, el)
+      const ref = refFor(opts.agent, el)
       let line = `- ${effectiveRole}`
       if (name)
         line += ` ${q(name, effectiveRole === 'paragraph' || effectiveRole === 'listitem' || effectiveRole === 'code' || effectiveRole === 'blockquote' ? 400 : 120)}`
@@ -484,7 +504,6 @@ export function zenAgentPageRuntime(): PageRuntime {
       if (lines.length === before && !name && !interactive && !filter) {
         // An unnamed container with nothing inside adds noise – drop it again.
         lines.pop()
-        refs.delete(ref)
         n--
       }
     }
@@ -509,11 +528,24 @@ export function zenAgentPageRuntime(): PageRuntime {
     }
   }
 
+  /** A <label> is a poor click target: redirect to the control it labels. */
+  function preferControl(el: Element): Element {
+    if (el.tagName !== 'LABEL') return el
+    const label = el as HTMLLabelElement
+    if (label.control) return label.control
+    const forId = label.getAttribute('for')
+    if (forId) {
+      const target = el.ownerDocument.getElementById(forId)
+      if (target) return target
+    }
+    return el.querySelector('input,select,textarea,button,[role],a[href]') ?? el
+  }
+
   function resolve(agent: string, target: string): Element | { error: string } {
     const t = target.trim()
     if (!t) return { error: 'Empty target' }
     if (/^e\d+$/.test(t)) {
-      const el = refMap(agent).get(t)
+      const el = refState(agent).byId.get(t)
       if (!el) return { error: `Unknown ref ${t} – take a browser_snapshot first` }
       if (!el.isConnected)
         return {
@@ -523,24 +555,45 @@ export function zenAgentPageRuntime(): PageRuntime {
     }
     if (t.startsWith('text=')) {
       const needle = collapse(t.slice(5)).toLowerCase()
-      const candidates = Array.from(
-        document.querySelectorAll<HTMLElement>(
-          INTERACTIVE_SELECTOR + ',h1,h2,h3,h4,h5,h6,label,p,span,div,li,td'
-        )
-      )
-      let best: HTMLElement | null = null
-      for (const c of candidates) {
-        if (!isRendered(c) || !hasBox(c)) continue
-        const text = collapse(c.innerText ?? '').toLowerCase()
-        if (!text) continue
-        if (text === needle) return c
-        if (!best && text.includes(needle) && text.length < needle.length + 80) best = c
+      if (!needle) return { error: 'Empty text= target' }
+      // Match on the element's own direct text (not text that lives in a child) or its
+      // aria-label, so "Sign in" matches the innermost label bearer, not the containers around it.
+      const ownText = (c: HTMLElement): string => {
+        let direct = ''
+        for (const node of Array.from(c.childNodes))
+          if (node.nodeType === Node.TEXT_NODE) direct += node.textContent ?? ''
+        return collapse(direct).toLowerCase()
       }
-      return best ?? { error: `No visible element with text ${JSON.stringify(t.slice(5))}` }
+      // Resolve a text bearer to the thing you would actually click: itself if interactive, else
+      // the nearest interactive ancestor (a <span> inside a <button>), else a label's control.
+      const clickTarget = (c: Element): Element => {
+        let cur: Element | null = c
+        for (let i = 0; cur && i < 4; i++) {
+          if (isInteractive(cur)) return cur
+          if (cur.tagName === 'LABEL') return preferControl(cur)
+          cur = cur.parentElement
+        }
+        return preferControl(c)
+      }
+      let exact: Element | null = null
+      let partial: Element | null = null
+      for (const c of Array.from(document.querySelectorAll<HTMLElement>('*'))) {
+        if (SKIP.has(c.tagName) || !isRendered(c) || !hasBox(c)) continue
+        const aria = collapse(c.getAttribute('aria-label') ?? '').toLowerCase()
+        const text = aria || ownText(c)
+        if (!text) continue
+        // Later elements in document order are deeper / more specific, so keep the last match.
+        if (text === needle) exact = c
+        else if (!exact && text.includes(needle) && text.length < needle.length + 40) partial = c
+      }
+      const hit = exact ?? partial
+      return hit
+        ? clickTarget(hit)
+        : { error: `No visible element with text ${JSON.stringify(t.slice(5))}` }
     }
     try {
       const el = document.querySelector(t)
-      return el ?? { error: `No element matches selector ${JSON.stringify(t)}` }
+      return el ? preferControl(el) : { error: `No element matches selector ${JSON.stringify(t)}` }
     } catch {
       return {
         error: `${JSON.stringify(t)} is neither a ref (e12), text=… nor a valid CSS selector`
@@ -719,10 +772,17 @@ export function zenAgentPageRuntime(): PageRuntime {
     return { ok: true, value: sel.selectedOptions[0]?.label ?? '' }
   }
 
+  function inViewport(el: Element): boolean {
+    const r = el.getBoundingClientRect()
+    return r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth
+  }
+
   function clickJs(agent: string, target: string, count: number): PageActionResult {
     const el = resolve(agent, target)
     if (!(el instanceof Element)) return { ok: false, error: el.error }
     const h = el as HTMLElement
+    if (!inViewport(el) && typeof el.scrollIntoView === 'function')
+      el.scrollIntoView({ block: 'center', inline: 'center' })
     const { x, y } = centre(el)
     const init = {
       bubbles: true,
@@ -733,6 +793,15 @@ export function zenAgentPageRuntime(): PageRuntime {
       buttons: 1,
       view: window
     }
+    h.dispatchEvent(
+      new PointerEvent('pointerover', {
+        ...init,
+        pointerId: 1,
+        pointerType: 'mouse',
+        isPrimary: true
+      })
+    )
+    h.dispatchEvent(new MouseEvent('mouseover', init))
     h.dispatchEvent(
       new PointerEvent('pointerdown', {
         ...init,
@@ -753,7 +822,9 @@ export function zenAgentPageRuntime(): PageRuntime {
       })
     )
     h.dispatchEvent(new MouseEvent('mouseup', { ...init, buttons: 0 }))
-    h.dispatchEvent(new MouseEvent('click', { ...init, buttons: 0, detail: 1 }))
+    // The native method runs the default action (toggles checkboxes, follows links, submits
+    // forms) that a dispatched untrusted `click` event would not, and it works on hidden views.
+    h.click()
     if (count >= 2) h.dispatchEvent(new MouseEvent('dblclick', { ...init, buttons: 0, detail: 2 }))
     return { ok: true }
   }

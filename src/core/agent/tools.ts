@@ -179,7 +179,16 @@ async function settle(ctx: ToolContext, tabId: string): Promise<void> {
   else await sleep(150)
 }
 
-/** Trusted input when the host offers it, in-page events otherwise. */
+/**
+ * Trusted OS-level input when the tab is actually on screen (foreground), synthetic in-page
+ * input otherwise. Trusted events carry `isTrusted` and drive complex widgets, but Chromium only
+ * hit-tests a painted, visible view; a hidden background tab is driven through the page runtime,
+ * whose native `.click()` still performs default actions.
+ */
+function wantTrustedInput(view: TabView, loc?: PageLocation): boolean {
+  return Boolean(view.sendInput) && view.isVisible() && (!loc || !loc.covered)
+}
+
 async function clickAt(
   ctx: ToolContext,
   view: TabView,
@@ -187,8 +196,8 @@ async function clickAt(
   target: string,
   opts: { button: 'left' | 'right' | 'middle'; count: number; modifiers: InputModifier[] }
 ): Promise<'trusted' | 'synthetic'> {
-  if (view.sendInput && !loc.covered) {
-    await view.sendInput({
+  if (wantTrustedInput(view, loc)) {
+    await view.sendInput!({
       type: 'click',
       x: loc.x,
       y: loc.y,
@@ -212,8 +221,8 @@ async function pressKey(
   key: string,
   mods: InputModifier[]
 ): Promise<void> {
-  if (view.sendInput) {
-    await view.sendInput({ type: 'key', key, modifiers: mods })
+  if (wantTrustedInput(view)) {
+    await view.sendInput!({ type: 'key', key, modifiers: mods })
     return
   }
   const r = (await ctx.agents.evalPage(view, pageCall('keyJs', key, mods))) as PageActionResult
@@ -641,7 +650,7 @@ const browserType: AgentTool = {
     let headline = `Typed ${JSON.stringify(value)} into ${describeElement(loc)}`
     if (bool(args, 'submit')) {
       await sleep(80)
-      if (view.sendInput) await view.sendInput({ type: 'key', key: 'Enter', modifiers: [] })
+      if (wantTrustedInput(view)) await view.sendInput!({ type: 'key', key: 'Enter', modifiers: [] })
       else await ctx.agents.evalPage(view, pageCall('submit', ctx.session.id, target))
       headline += ' and pressed Enter'
     }

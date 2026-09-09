@@ -47,6 +47,8 @@ export const AGENT_COLORS = [
 const SESSION_IDLE_MS = 30 * 60 * 1000
 const SESSIONLESS_IDLE_MS = 10 * 60 * 1000
 const SERVER_NAME = 'zen-browser'
+/** Endpoint + token, read by the `zen --mcp` shim (see main/agent/shim.ts). */
+const AGENT_FILE = 'agent.json'
 
 /** One connected agent: its MCP session plus everything Zen knows about it. */
 export interface AgentSession extends McpSession {
@@ -200,7 +202,7 @@ export class AgentService implements SessionStore, McpHandlers {
 
   private loadToken(): string {
     try {
-      const raw = this.browser.platform.io.readSync('agent')
+      const raw = this.browser.platform.io.readSync(AGENT_FILE)
       const stored = raw ? (JSON.parse(raw) as StoredEndpoint) : null
       if (stored && typeof stored.token === 'string' && stored.token.length >= 32)
         return stored.token
@@ -208,7 +210,7 @@ export class AgentService implements SessionStore, McpHandlers {
       /* corrupt file: mint a new token */
     }
     const token = randomToken()
-    void this.browser.platform.io.write('agent', JSON.stringify({ token, running: false }))
+    void this.browser.platform.io.write(AGENT_FILE, JSON.stringify({ token, running: false }))
     return token
   }
 
@@ -219,7 +221,7 @@ export class AgentService implements SessionStore, McpHandlers {
       port: port ?? undefined,
       url: port ? endpointUrl('127.0.0.1', port) : null
     }
-    void this.browser.platform.io.write('agent', JSON.stringify(data, null, 2))
+    void this.browser.platform.io.write(AGENT_FILE, JSON.stringify(data, null, 2))
   }
 
   regenerateToken(): string {
@@ -488,13 +490,23 @@ export class AgentService implements SessionStore, McpHandlers {
     const ctx: ToolContext = { browser: this.browser, agents: this, session: s }
     try {
       const result = await tool.run(ctx, args)
-      this.browser.state.commitVolatile()
       return result
     } catch (error) {
-      this.browser.state.commitVolatile()
       if (error instanceof RpcError) return textError(error.message)
       return textError((error as Error).message || String(error))
+    } finally {
+      // A background agent may have focused one of its hidden pages; hand keyboard focus back
+      // to whatever the user is actually looking at.
+      if (s.mode === 'background') this.restoreUserFocus()
+      this.browser.state.commitVolatile()
     }
+  }
+
+  private restoreUserFocus(): void {
+    const win = this.browser.focusedWindow()
+    const active = this.browser.tabs.activeTabFor(win)
+    const view = active ? this.browser.tabs.view(active.id) : undefined
+    if (view && view.isVisible()) view.focus()
   }
 
   listResources(session: McpSession): ResourceDefinition[] {
