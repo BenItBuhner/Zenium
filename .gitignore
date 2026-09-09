@@ -14,3 +14,5 @@ android/local.properties
 android/.kotlin
 *.apk
 *.aab
+*.keystore
+*.jks

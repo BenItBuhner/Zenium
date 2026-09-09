@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Keeps the actions used by the CI and release workflows on supported versions.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+    groups:
+      github-actions:
+        patterns:
+          - '*'
