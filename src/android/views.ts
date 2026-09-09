@@ -1,6 +1,7 @@
 import type { KeyBinding, Rect, Tab } from '@shared/types'
 import { zenPageHtml, type ReaderPageLookup } from '@shared/zenPages'
 import type {
+  AgentInputEvent,
   FindResultInfo,
   KeyEventInput,
   PageContextParams,
@@ -240,6 +241,11 @@ export class AndroidTabView implements TabView {
 
   executeJavaScript(code: string): Promise<unknown> {
     return this.bridge.call<unknown>('view.eval', { tabId: this.tabId, code })
+  }
+
+  /** Trusted touch / key events synthesised by Kotlin on the tab's WebView. */
+  sendInput(event: AgentInputEvent): Promise<void> {
+    return this.bridge.call('view.input', { tabId: this.tabId, event })
   }
 
   /** Stylesheets are injected as `<style>` elements; the key is the element id. */

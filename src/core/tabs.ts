@@ -773,6 +773,7 @@ export class TabManager {
     delete m.tabs[tabId]
     this.destroyView(tabId)
     this.browser.governor.onTabRemoved(tabId)
+    this.browser.agents.onTabRemoved(tabId)
     this.browser.liveFolders.onTabLeftFolder(tabId, tab.folderId)
     if (!this.isPrivate(tab)) {
       this.browser.state.recentlyClosed.unshift({
@@ -1595,6 +1596,7 @@ export class TabManager {
       if (this.settings.unloadExcludedDomains.some((d) => domainOf(tab.url) === d.toLowerCase()))
         continue
       if (this.browser.state.devtoolsOpenFor.has(id)) continue
+      if (this.browser.agents.isDriving(id)) continue
       this.discard(id)
     }
   }

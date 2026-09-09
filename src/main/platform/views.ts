@@ -12,6 +12,8 @@ import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import type { Rect, Tab } from '../../shared/types'
 import type {
+  AgentInputEvent,
+  InputModifier,
   KeyEventInput,
   PageFlags,
   PageMessage,
@@ -382,6 +384,109 @@ export class ElectronTabView implements TabView {
 
   addWordToDictionary(word: string): void {
     this.view.webContents.session.addWordToSpellCheckerDictionary(word)
+  }
+
+  // --- AI agents -------------------------------------------------------------------
+
+  /** Trusted input events; coordinates arrive in CSS pixels and become DIPs via the zoom factor. */
+  async sendInput(event: AgentInputEvent): Promise<void> {
+    const wc = this.view.webContents
+    if (wc.isDestroyed()) return
+    const zoom = wc.getZoomFactor()
+    const px = (v: number): number => Math.round(v * zoom)
+    switch (event.type) {
+      case 'mouseMove':
+        wc.sendInputEvent({ type: 'mouseMove', x: px(event.x), y: px(event.y) })
+        return
+      case 'click': {
+        const modifiers = electronModifiers(event.modifiers)
+        const x = px(event.x)
+        const y = px(event.y)
+        wc.sendInputEvent({ type: 'mouseMove', x, y, modifiers })
+        await nextTick()
+        for (let i = 1; i <= Math.max(1, event.clickCount); i++) {
+          wc.sendInputEvent({
+            type: 'mouseDown',
+            x,
+            y,
+            button: event.button,
+            clickCount: i,
+            modifiers
+          })
+          wc.sendInputEvent({
+            type: 'mouseUp',
+            x,
+            y,
+            button: event.button,
+            clickCount: i,
+            modifiers
+          })
+          await nextTick()
+        }
+        return
+      }
+      case 'key': {
+        const keyCode = electronKeyCode(event.key)
+        const modifiers = electronModifiers(event.modifiers)
+        wc.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
+        if (event.key.length === 1 || event.key === 'Enter')
+          wc.sendInputEvent({ type: 'char', keyCode, modifiers })
+        wc.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
+        await nextTick()
+        return
+      }
+      case 'text':
+        await wc.insertText(event.text)
+    }
+  }
+
+  /** The preload's isolated world: pages cannot see the agent runtime or tamper with it. */
+  executeIsolatedJavaScript(code: string): Promise<unknown> {
+    return this.view.webContents.executeJavaScriptInIsolatedWorld(
+      ISOLATED_WORLD_ID,
+      [{ code }],
+      true
+    )
+  }
+
+  setBackgroundThrottling(allowed: boolean): void {
+    if (!this.view.webContents.isDestroyed()) this.view.webContents.setBackgroundThrottling(allowed)
+  }
+}
+
+/** Electron runs `contextIsolation` preloads in world 999. */
+const ISOLATED_WORLD_ID = 999
+
+function nextTick(): Promise<void> {
+  return new Promise((r) => setTimeout(r, 12))
+}
+
+function electronModifiers(mods: InputModifier[]): Array<'shift' | 'control' | 'alt' | 'meta'> {
+  const out: Array<'shift' | 'control' | 'alt' | 'meta'> = []
+  for (const m of mods) {
+    if (m === 'Shift') out.push('shift')
+    else if (m === 'Control') out.push('control')
+    else if (m === 'Alt') out.push('alt')
+    else if (m === 'Meta') out.push('meta')
+  }
+  return out
+}
+
+/** DOM key names → Electron accelerator key codes. */
+function electronKeyCode(key: string): string {
+  switch (key) {
+    case 'ArrowUp':
+      return 'Up'
+    case 'ArrowDown':
+      return 'Down'
+    case 'ArrowLeft':
+      return 'Left'
+    case 'ArrowRight':
+      return 'Right'
+    case ' ':
+      return 'Space'
+    default:
+      return key
   }
 }
 

@@ -34,6 +34,8 @@ export interface HostCapabilities {
   sync: boolean
   /** Pages can be printed. */
   print: boolean
+  /** The host can run the MCP server that lets AI agents control the browser. */
+  agents: boolean
 }
 
 export interface Rect {
@@ -560,6 +562,69 @@ export interface Settings {
   /** Zen's window sync: mirror all tabs across windows, only pinned tabs, or keep windows independent. */
   windowSync: WindowSyncMode
   resources: ResourceSettings
+  agents: AgentSettings
+}
+
+// ---------------------------------------------------------------------------
+// AI agents (the built-in MCP server)
+// ---------------------------------------------------------------------------
+
+/**
+ * How an agent works in the browser. In `foreground` its tab is brought to the front before every
+ * action so the user watches it work; in `background` it drives its tabs without ever changing
+ * what the user is looking at.
+ */
+export type AgentMode = 'foreground' | 'background'
+
+export interface AgentSettings {
+  /** Run the MCP server so AI agents can control the browser. */
+  enabled: boolean
+  /** TCP port of the Streamable HTTP endpoint (`http://127.0.0.1:<port>/mcp`). */
+  port: number
+  /** Also listen on the local network (lets an agent on another device drive this browser). */
+  lan: boolean
+  /** Ask before an unknown agent may connect; agents presenting the token are let in directly. */
+  approveNewAgents: boolean
+  /** Agent names the user has allowed (matched against the MCP client name). */
+  approvedNames: string[]
+  /** Mode agents start in. */
+  defaultMode: AgentMode
+  /** Allow `browser_evaluate` (arbitrary JavaScript in pages). */
+  allowScripts: boolean
+  /** Draw the agent's cursor and name tag in the pages it drives. */
+  showCursor: boolean
+}
+
+/** One connected agent (an MCP session). */
+export interface AgentInfo {
+  id: string
+  name: string
+  version: string
+  /** Accent colour used for its cursor and tab indicators. */
+  color: string
+  mode: AgentMode
+  transport: 'http' | 'stdio'
+  connectedAt: number
+  lastActiveAt: number
+  /** Tabs this agent drives (indicated in the sidebar). */
+  tabIds: string[]
+  /** The tab its page tools act on when no `tabId` is given. */
+  currentTabId: string | null
+  /** Waiting for the user to allow it. */
+  pending: boolean
+  /** Tool calls handled so far. */
+  calls: number
+}
+
+export interface AgentServerStatus {
+  running: boolean
+  /** Loopback endpoint, e.g. `http://127.0.0.1:41735/mcp`. */
+  url: string | null
+  /** Endpoints reachable from other devices (only when `lan` is on). */
+  lanUrls: string[]
+  /** Bearer token that lets an agent skip the approval prompt. */
+  token: string
+  error: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -786,6 +851,9 @@ export interface UIState {
   extensions: ExtensionInfo[]
   mods: Mod[]
   sync: SyncStatus
+  /** Connected AI agents (MCP sessions) and the tabs they drive. */
+  agents: AgentInfo[]
+  agentServer: AgentServerStatus
 }
 
 export interface FindResult {
@@ -1149,6 +1217,16 @@ export interface Commands {
   'sync.now': { args: void; result: void }
   'sync.confirmMerge': { args: { merge: boolean }; result: void }
   'sync.disconnect': { args: { wipeRemote: boolean }; result: void }
+
+  /** End an agent's session and release its tabs. */
+  'agent.disconnect': { args: { id: string }; result: void }
+  'agent.setMode': { args: { id: string; mode: AgentMode }; result: void }
+  /** Take a tab back from the agent driving it. */
+  'agent.releaseTab': { args: { tabId: string }; result: void }
+  /** Forget a previously approved agent name. */
+  'agent.forget': { args: { name: string }; result: void }
+  /** Issue a new token (existing HTTP sessions stay valid until they end). */
+  'agent.regenerateToken': { args: void; result: string }
 }
 
 export type CommandName = keyof Commands

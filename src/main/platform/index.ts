@@ -27,6 +27,7 @@ import { ElectronWindowFactory, type ElectronWindow } from './window'
 import { ExtensionService } from './extensions'
 import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
+import { ElectronAgentTransport } from '../agent/server'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
@@ -40,7 +41,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   extensions: true,
   resourceGovernor: true,
   sync: true,
-  print: true
+  print: true,
+  agents: true
 }
 
 /**
@@ -162,6 +164,10 @@ export class ElectronPlatform implements Platform {
 
   createSync(browser: Browser): SyncEngine {
     return new SyncEngine(browser)
+  }
+
+  createAgentTransport(): ElectronAgentTransport {
+    return new ElectronAgentTransport()
   }
 
   /** Build the browser, wire IPC and sessions, and restore the windows. */

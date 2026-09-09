@@ -1,4 +1,6 @@
 import type {
+  AgentInfo,
+  AgentServerStatus,
   Bookmark,
   Boost,
   ClosedTab,
@@ -24,12 +26,18 @@ import type {
   UIState
 } from '../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../shared/types'
-import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS, emptyResourceSnapshot } from '../shared/defaults'
+import {
+  DEFAULT_CONTAINERS,
+  DEFAULT_SETTINGS,
+  emptyAgentServerStatus,
+  emptyResourceSnapshot
+} from '../shared/defaults'
 import { DEFAULT_SEARCH_ENGINES } from '../shared/search'
 import { applyShortcutOverrides, defaultShortcuts } from '../shared/shortcuts'
 import { JsonStore } from './store/JsonStore'
 import { createSpace, createTabRecord, emptyModel, tabVisibleIn, type Model } from './model'
 import { sanitizeResourceSettings } from './resources/switches'
+import { sanitizeAgentSettings } from './agent/settings'
 import { BLANK_URL } from '../shared/url'
 import { defer, type StoreIO } from './platform'
 import type { ZenWindow } from './window'
@@ -74,6 +82,8 @@ export interface StateExtras {
   extensions: ExtensionInfo[]
   mods: Mod[]
   sync: SyncStatus
+  agents: AgentInfo[]
+  agentServer: AgentServerStatus
 }
 
 /**
@@ -125,7 +135,9 @@ export class BrowserState {
       syncing: false,
       devices: [],
       pendingMerge: false
-    }
+    },
+    agents: [],
+    agentServer: emptyAgentServerStatus()
   })
   searchEngines: SearchEngine[] = DEFAULT_SEARCH_ENGINES
   readonly version: string
@@ -165,6 +177,7 @@ export class BrowserState {
     // Compact mode's "persistent sidebar" toggle is transient by design.
     this.settings.compactMode.sidebarPersistent = false
     this.settings.resources = sanitizeResourceSettings(data.settings?.resources)
+    this.settings.agents = sanitizeAgentSettings(data.settings?.agents)
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     this.bookmarks = Array.isArray(data.bookmarks) ? data.bookmarks : []
     if (Array.isArray(data.windows) && data.windows.length) {

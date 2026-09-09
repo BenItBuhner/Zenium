@@ -44,6 +44,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     var chrome = ChromeWebView(activity, this)
         private set
     val tabs = TabHost(root, this)
+    val agentServer = AgentServer(this)
     val pageToken: String = SecureRandom().let { r -> ByteArray(16).also(r::nextBytes).joinToString("") { "%02x".format(it) } }
     val pageScript: String = activity.assets.open("page.js").bufferedReader().readText().replace("__ZEN_TOKEN__", pageToken)
     private val io = Executors.newCachedThreadPool { r -> Thread(r, "zen-io") }
@@ -105,6 +106,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
                     reply(RawJson(result ?: "null"))
                 }
             }
+            "view.input" -> { tab?.sendAgentInput(args.obj("event")); reply(null) }
             "view.setFlags" -> { tab?.setFlags(args.obj("flags")); reply(null) }
             "view.setZap" -> { tab?.setZap(args.bool("on")); reply(null) }
             "view.setBackground" -> {
@@ -163,6 +165,12 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             "download.showAll" -> { downloads.showAll(); reply(null) }
             "profile.clear" -> { Profiles.clear(args.str("containerId")); reply(null) }
             "permission.respond" -> { permissions.respond(args.str("requestId"), args.bool("allow")); reply(null) }
+
+            // --- AI agents (MCP server) ------------------------------------------------------------
+            "agent.start" -> reply(agentServer.start(args.num("port", 41735.0).toInt(), args.bool("lan")))
+            "agent.stop" -> { agentServer.stop(); reply(null) }
+            "agent.reply" -> { agentServer.reply(args.optInt("id"), args); reply(null) }
+
             else -> throw IllegalArgumentException("Unknown method: $method")
         }
     }
@@ -370,6 +378,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     }
 
     fun destroy() {
+        agentServer.stop()
         tabs.destroyAll()
         io.shutdownNow()
     }
