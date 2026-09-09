@@ -38,6 +38,7 @@ mouse, it is the desktop layout.
 | Keyboard shortcuts – Zen's default table (from `ZenKeyboardShortcuts.mjs`, schema v20), fully rebindable with conflict detection                                                                                                                                                                                                                                                                                                                                | Done                |
 | Tab unloading (inactivity timeout, excluded domains, unload tab / space / other spaces)                                                                                                                                                                                                                                                                                                                                                                         | Done                |
 | **Resource governor** – memory / CPU / GPU budgets the browser never exceeds: purge → throttle → freeze → unload ladders, live-page cap, queued background loads, battery / idle / suspend awareness, Chromium & V8 startup switches, live meters in Settings                                                                                                                                                                                                   | Done (this port only) |
+| **AI agents (MCP server)** – a built-in Model Context Protocol server lets any local AI agent drive the browser with no extension: Playwright-style tools plus `zen_*` tools, foreground (labelled cursor) and background modes, per-tab indicators, several agents at once, loopback-only with an approval prompt                                                                                                                                              | Done (this port only) |
 | Containers – isolated cookie sessions per container, per-space defaults, "Open in New Container Tab", icons and colours, reorderable (1.22)                                                                                                                                                                                                                                                                                                                     | Done                |
 | History, bookmarks, downloads (saved to the Downloads folder with Firefox-style unique names, or "always ask"), find in page, screenshots, save page, print, view source, zoom (1.21 fine steps), mute, PiP, multiple media controls in the sidebar                                                                                                                                                                                                             | Done                |
 | Native context menus for pages, tabs (incl. Share ▸ Copy Link / Email Link), spaces, folders and the new-tab button; permission prompts remembered per site; `window.open` popups                                                                                                                                                                                                                                                                               | Done                |
@@ -119,6 +120,45 @@ raster threads, GPU mode) becomes Chromium command-line switches at the next lau
 grows past its heap cap – or any hidden page whose renderer dies – is unloaded, not left as an error
 page. `ZEN_GOVERNOR_LOG=1` prints one diagnostic line per sample. The governor is desktop-only;
 Android relies on the system's own memory management.
+
+### AI agents (MCP server)
+
+Settings → AI Agents turns on a built-in [Model Context Protocol](https://modelcontextprotocol.io)
+server so any local AI agent can control the browser directly — no extension, plugin or CDP
+bridge. It reuses the same command surface the chrome uses, so it works identically on the desktop
+app and the Android WebView host.
+
+- **Connect over HTTP:** the server listens on `http://127.0.0.1:<port>/mcp` (Streamable HTTP, the
+  transport every modern MCP client speaks). Point a client at it:
+
+  ```json
+  { "mcpServers": { "zen": { "url": "http://127.0.0.1:41735/mcp" } } }
+  ```
+
+- **Connect over stdio:** clients that launch a command can use the shim, which relays to the
+  running browser:
+
+  ```json
+  { "mcpServers": { "zen": { "command": "zen", "args": ["--mcp"] } } }
+  ```
+
+- **Tools:** the vocabulary agents already know from Playwright MCP — `browser_navigate`,
+  `browser_snapshot` (an accessibility tree whose elements carry `[ref=eN]` handles),
+  `browser_click`, `browser_type`, `browser_press_key`, `browser_hover`, `browser_scroll`,
+  `browser_select_option`, `browser_wait_for`, `browser_take_screenshot`, `browser_tabs`,
+  `browser_evaluate` — plus a small Zen layer: `zen_status`, `zen_mode`, `zen_spaces`,
+  `zen_history`, and the `zenium://status` / `zenium://tabs` resources.
+- **Foreground / background:** each agent chooses a mode with `zen_mode`. Foreground brings its tab
+  in front of you before every action and shows a labelled, coloured cursor; background drives its
+  own tabs without changing what you are looking at. Agent-driven tabs are protected from the
+  resource governor while an agent holds them.
+- **Many agents, one browser:** every connection is its own session with a distinct colour and
+  identity; a coloured robot badge marks the tabs each one drives (and a pill shows how many are
+  active). An agent may only touch tabs it opened or was given — it cannot take another agent's.
+- **Security:** loopback-only by default (local-network access is opt-in); `Origin` and `Host` are
+  validated to defeat DNS-rebinding; a new agent triggers an allow/deny prompt unless it presents
+  the connection token; private windows are never exposed and running scripts in pages
+  (`browser_evaluate`) is a toggle. The endpoint and token are shown in Settings → AI Agents.
 
 ## Running it
 
