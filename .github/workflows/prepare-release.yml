@@ -1,0 +1,145 @@
+name: Prepare release
+
+# Bumps the version in package.json and package-lock.json, commits it on the branch this workflow
+# runs on, tags the commit vX.Y.Z and starts the Release workflow for that tag. Pushing a tag by
+# hand works too (npm version <bump> && git push --follow-tags); this is the one-click version.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump'
+        type: choice
+        required: true
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+          - prerelease
+          - prepatch
+          - preminor
+          - premajor
+          - custom
+      custom_version:
+        description: 'Exact version when bump is "custom", e.g. 1.2.0 or 1.2.0-beta.1'
+        type: string
+        default: ''
+      preid:
+        description: 'Pre-release identifier for pre* bumps (preminor with beta: 0.1.0 → 0.2.0-beta.0)'
+        type: string
+        default: beta
+      dry_run:
+        description: 'Compute the next version and run the checks without committing, tagging or releasing'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  bump:
+    name: Bump, tag and start the release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # tags, to refuse a version that was already released
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Compute the new version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          CUSTOM_VERSION: ${{ inputs.custom_version }}
+          PREID: ${{ inputs.preid }}
+        run: |
+          previous="$(node -p "require('./package.json').version")"
+          case "$BUMP" in
+            custom)
+              if [[ -z "$CUSTOM_VERSION" ]]; then
+                echo "::error::custom_version is required when bump is \"custom\""
+                exit 1
+              fi
+              npm version "$CUSTOM_VERSION" --no-git-tag-version
+              ;;
+            pre*)
+              npm version "$BUMP" --preid "$PREID" --no-git-tag-version
+              ;;
+            *)
+              npm version "$BUMP" --no-git-tag-version
+              ;;
+          esac
+          version="$(node -p "require('./package.json').version")"
+          tag="v$version"
+          if git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
+            echo "::error::Tag $tag already exists; pick another version"
+            exit 1
+          fi
+          {
+            echo "previous=$previous"
+            echo "version=$version"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
+          echo "Bumping $previous → $version ($tag)"
+      - name: Typecheck, lint, test
+        run: npm run check
+      - name: Dry run
+        if: ${{ inputs.dry_run }}
+        env:
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          {
+            echo "### Dry run"
+            echo
+            echo "Would bump \`$PREVIOUS\` → \`$VERSION\`, commit on \`$GITHUB_REF_NAME\`, tag \`$TAG\` and start the Release workflow."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Commit and tag
+        if: ${{ !inputs.dry_run }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "chore(release): $TAG"
+          git tag -a "$TAG" -m "Zen on Chromium $VERSION"
+          git push origin "HEAD:$GITHUB_REF_NAME"
+          git push origin "refs/tags/$TAG"
+      - name: Start the Release workflow
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          # Pushes made with the workflow token do not trigger "on: push", so start Release directly.
+          gh workflow run release.yml --ref "$TAG"
+          sleep 15
+          run_url="$(gh run list --workflow release.yml --branch "$TAG" --limit 1 --json url --jq '.[0].url // empty' || true)"
+          if [[ -z "$run_url" ]]; then
+            run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/release.yml"
+          fi
+          {
+            echo "### Release $TAG started"
+            echo
+            echo "Bumped \`$PREVIOUS\` → \`$VERSION\` on \`$GITHUB_REF_NAME\` and tagged \`$TAG\`."
+            echo
+            echo "Follow the build: $run_url"
+          } >> "$GITHUB_STEP_SUMMARY"
