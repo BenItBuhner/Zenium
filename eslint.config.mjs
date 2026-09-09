@@ -60,5 +60,12 @@ export default defineConfig(
       ]
     }
   },
+  {
+    // Plain Node scripts run by the GitHub Actions workflows; no TypeScript annotations available.
+    files: ['.github/scripts/**/*.mjs'],
+    rules: {
+      '@typescript-eslint/explicit-function-return-type': 'off'
+    }
+  },
   eslintConfigPrettier
 )

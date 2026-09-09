@@ -1,0 +1,312 @@
+name: Release
+
+# Builds every desktop package and the Android APK for a v* tag and publishes them as a GitHub
+# release. Start it by pushing a tag (or running "Prepare release", which pushes one for you), or
+# dispatch it by hand to rebuild an existing tag or to dry-run the pipeline from a branch.
+#
+# Optional repository secrets turn on code signing; without them the packages are built unsigned
+# and the release notes say so:
+#   MAC_CERTIFICATE_P12_BASE64, MAC_CERTIFICATE_PASSWORD      Developer ID Application certificate
+#   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID       notarization (needs the certificate)
+#   WINDOWS_CERTIFICATE_P12_BASE64, WINDOWS_CERTIFICATE_PASSWORD  Authenticode certificate
+#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
+#   ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD                    APK release keystore
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and publish (e.g. v0.2.0). Leave empty to use the ref this run starts from.'
+        required: false
+        type: string
+        default: ''
+      dry_run:
+        description: 'Build every package and keep them as workflow artifacts without creating a GitHub release'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  prepare:
+    name: Validate version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      ref: ${{ steps.meta.outputs.ref }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      publish: ${{ steps.meta.outputs.publish }}
+      title: ${{ steps.meta.outputs.title }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Check the tag against package.json
+        id: meta
+        run: node .github/scripts/release-meta.mjs
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+
+  check:
+    name: Typecheck, lint, test
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  desktop:
+    name: Desktop (${{ matrix.name }})
+    needs: [prepare, check]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-latest
+            args: --linux --x64
+          - name: linux-arm64
+            os: ubuntu-latest
+            args: --linux --arm64
+          - name: windows-x64
+            os: windows-latest
+            args: --win --x64
+          - name: windows-arm64
+            os: windows-latest
+            args: --win --arm64
+          - name: macos
+            os: macos-latest
+            args: --mac # x64 and arm64 disk images, see electron-builder.yml
+    defaults:
+      run:
+        shell: bash
+    env:
+      MAC_CSC_LINK: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
+      MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      WIN_CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE_P12_BASE64 }}
+      WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Bundle main, preload and renderer
+        run: npx electron-vite build
+      - name: Package
+        id: package
+        run: |
+          signed=false
+          notarized=false
+          case "${{ matrix.name }}" in
+            macos)
+              if [[ -n "$MAC_CSC_LINK" ]]; then
+                export CSC_LINK="$MAC_CSC_LINK" CSC_KEY_PASSWORD="$MAC_CSC_KEY_PASSWORD"
+                signed=true
+                if [[ -n "$APPLE_ID" ]]; then notarized=true; fi
+              else
+                # No certificate: do not search the runner keychain, ship the app unsigned.
+                export CSC_IDENTITY_AUTO_DISCOVERY=false
+                unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+              fi
+              ;;
+            windows-*)
+              if [[ -n "$WIN_CSC_LINK" ]]; then
+                signed=true
+              else
+                unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD
+              fi
+              ;;
+          esac
+          # --publish never: electron-builder would otherwise try to upload to GitHub itself.
+          npx electron-builder ${{ matrix.args }} --publish never
+          echo "signed=$signed" >> "$GITHUB_OUTPUT"
+          echo "notarized=$notarized" >> "$GITHUB_OUTPUT"
+      - name: Collect packages
+        run: |
+          mkdir -p release/assets release/meta
+          shopt -s nullglob
+          files=(dist/*.exe dist/*.dmg dist/*.AppImage dist/*.deb)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "::error::electron-builder produced no packages in dist/"
+            ls -la dist || true
+            exit 1
+          fi
+          cp "${files[@]}" release/assets/
+          printf '{"platform":"%s","signed":%s,"notarized":%s}\n' \
+            "${{ matrix.name }}" "${{ steps.package.outputs.signed }}" "${{ steps.package.outputs.notarized }}" \
+            > "release/meta/${{ matrix.name }}.json"
+          ls -l release/assets
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.name }}
+          path: release
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  android:
+    name: Android
+    needs: [prepare, check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ZEN_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ZEN_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ZEN_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools platforms;android-35 build-tools;35.0.0
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
+      - run: npm ci
+      - name: Build the chrome and page script
+        run: npm run build:android:web
+      - name: Release keystore
+        id: keystore
+        run: |
+          if [[ -n "$ANDROID_KEYSTORE_BASE64" ]]; then
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+            echo "ZEN_ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+            echo "signing=release" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::ANDROID_KEYSTORE_BASE64 is not configured; the release APK is signed with a debug key and will not upgrade other builds in place"
+            echo "signing=debug" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Assemble release APK
+        working-directory: android
+        run: ./gradlew assembleRelease -PskipWeb --no-daemon --stacktrace
+      - name: Collect and verify the APK
+        run: |
+          mkdir -p release/assets release/meta
+          shopt -s nullglob
+          apks=(android/app/build/outputs/apk/release/*.apk)
+          if [[ ${#apks[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly one release APK, found: ${apks[*]:-none}"
+            exit 1
+          fi
+          target="release/assets/zen-chromium-${{ needs.prepare.outputs.version }}.apk"
+          cp "${apks[0]}" "$target"
+          apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          "$apksigner" verify --print-certs "$target"
+          printf '{"platform":"android","signing":"%s"}\n' "${{ steps.keystore.outputs.signing }}" > release/meta/android.json
+          ls -l release/assets
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-android
+          path: release
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  publish:
+    name: Publish GitHub release
+    needs: [prepare, desktop, android]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TITLE: ${{ needs.prepare.outputs.title }}
+      PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+          fetch-depth: 0 # every tag, to pick the changelog range
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+      - name: Checksums
+        working-directory: release/assets
+        run: |
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Attest build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: release/assets/*
+      - name: Write release notes
+        run: node .github/scripts/release-notes.mjs
+        env:
+          RELEASE_TAG: ${{ env.TAG }}
+          RELEASE_VERSION: ${{ env.VERSION }}
+          GITHUB_TOKEN: ${{ github.token }}
+          NOTES_FILE: release/notes.md
+      - name: Create the draft release and upload the packages
+        run: |
+          if gh release view "$TAG" --json isDraft --jq .isDraft > "$RUNNER_TEMP/is-draft" 2>/dev/null; then
+            if [[ "$(cat "$RUNNER_TEMP/is-draft")" != "true" ]]; then
+              echo "::error::Release $TAG is already published. Delete it first to rebuild it, or bump the version."
+              exit 1
+            fi
+            gh release edit "$TAG" --title "$TITLE" --notes-file release/notes.md --prerelease="$PRERELEASE"
+          else
+            flags=()
+            if [[ "$PRERELEASE" == "true" ]]; then flags+=(--prerelease); fi
+            gh release create "$TAG" --draft --verify-tag --title "$TITLE" --notes-file release/notes.md "${flags[@]}"
+          fi
+          gh release upload "$TAG" release/assets/* --clobber
+      - name: Publish
+        run: |
+          gh release edit "$TAG" --draft=false
+          url="$(gh release view "$TAG" --json url --jq .url)"
+          echo "Published $url"
+          {
+            echo "## Released $TAG"
+            echo
+            echo "$url"
+          } >> "$GITHUB_STEP_SUMMARY"
