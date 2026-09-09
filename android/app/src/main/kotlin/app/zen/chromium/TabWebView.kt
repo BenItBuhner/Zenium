@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Message
 import android.util.Base64
+import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.PixelCopy
@@ -240,6 +241,58 @@ class TabWebView(
             }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    // --- AI agent input (trusted MotionEvent / KeyEvent synthesis) -------------------------------
+
+    /**
+     * Deliver a synthetic-but-trusted input event from an AI agent. Coordinates arrive in CSS
+     * pixels relative to the page; the WebView works in device pixels, so they scale by density.
+     */
+    fun sendAgentInput(event: JSONObject) {
+        val density = resources.displayMetrics.density
+        when (event.str("type")) {
+            "click" -> agentTap((event.num("x") * density).toFloat(), (event.num("y") * density).toFloat(), event.num("clickCount", 1.0).toInt())
+            "mouseMove" -> agentHover((event.num("x") * density).toFloat(), (event.num("y") * density).toFloat())
+            "key" -> agentKey(event.str("key"))
+        }
+    }
+
+    private fun agentTap(x: Float, y: Float, count: Int) {
+        repeat(count.coerceAtLeast(1)) {
+            val down = System.currentTimeMillis()
+            dispatchTouchEvent(MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0))
+            dispatchTouchEvent(MotionEvent.obtain(down, down + 20, MotionEvent.ACTION_UP, x, y, 0))
+        }
+    }
+
+    private fun agentHover(x: Float, y: Float) {
+        val now = System.currentTimeMillis()
+        dispatchGenericMotionEvent(MotionEvent.obtain(now, now, MotionEvent.ACTION_HOVER_MOVE, x, y, 0))
+    }
+
+    private fun agentKey(key: String) {
+        val code = when (key) {
+            "Enter" -> KeyEvent.KEYCODE_ENTER
+            "Tab" -> KeyEvent.KEYCODE_TAB
+            "Escape" -> KeyEvent.KEYCODE_ESCAPE
+            "Backspace" -> KeyEvent.KEYCODE_DEL
+            "Delete" -> KeyEvent.KEYCODE_FORWARD_DEL
+            "ArrowUp" -> KeyEvent.KEYCODE_DPAD_UP
+            "ArrowDown" -> KeyEvent.KEYCODE_DPAD_DOWN
+            "ArrowLeft" -> KeyEvent.KEYCODE_DPAD_LEFT
+            "ArrowRight" -> KeyEvent.KEYCODE_DPAD_RIGHT
+            " " -> KeyEvent.KEYCODE_SPACE
+            else -> null
+        }
+        if (code != null) {
+            dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+            dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+        } else if (key.length == 1) {
+            val chars = key.toCharArray()
+            val events = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(chars)
+            events?.forEach { dispatchKeyEvent(it) }
+        }
     }
 
     // --- operations used by the core -------------------------------------------------------------
