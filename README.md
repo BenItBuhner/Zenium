@@ -12,6 +12,27 @@ mouse, it is the desktop layout.
 
 > This is an independent port and is not affiliated with the Zen Browser team.
 
+## Download
+
+[![Latest release](https://img.shields.io/github/v/release/BenItBuhner/Zenium?label=latest&sort=semver)](https://github.com/BenItBuhner/Zenium/releases/latest)
+[![Release](https://github.com/BenItBuhner/Zenium/actions/workflows/release.yml/badge.svg)](https://github.com/BenItBuhner/Zenium/actions/workflows/release.yml)
+[![CI](https://github.com/BenItBuhner/Zenium/actions/workflows/ci.yml/badge.svg)](https://github.com/BenItBuhner/Zenium/actions/workflows/ci.yml)
+
+Every release on the [releases page](https://github.com/BenItBuhner/Zenium/releases) ships the
+same set of packages, built by GitHub Actions from the tagged commit:
+
+| Platform        | Packages                                                                                                        |
+| --------------- | --------------------------------------------------------------------------------------------------------------- |
+| Windows 10 / 11 | `zen-chromium-<version>-x64-setup.exe`, `…-arm64-setup.exe`                                                     |
+| macOS           | `zen-chromium-<version>-arm64.dmg` (Apple Silicon), `…-x64.dmg` (Intel)                                         |
+| Linux           | `zen-chromium-<version>-x86_64.AppImage`, `…-arm64.AppImage`, `zen-chromium_<version>_amd64.deb`, `…_arm64.deb` |
+| Android 8.0+    | `zen-chromium-<version>.apk`                                                                                    |
+
+Each release also carries `SHA256SUMS.txt` and a build provenance attestation for every file
+(`gh attestation verify <file> --repo BenItBuhner/Zenium`), and its notes explain the first-launch
+steps a platform needs when a package is not code-signed. Pre-releases (`x.y.z-beta.n`) are marked
+as such and never become the "latest" release.
+
 ## What is ported
 
 | Zen feature                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Status in this port |
@@ -163,11 +184,28 @@ WebView with multi-profile support (Chrome 111+).
 ```bash
 npm install
 npm run build:android            # web bundle + Gradle → android/app/build/outputs/apk/debug/
-npm run build:android:release    # unsigned release APK (R8) – add your signing config
+npm run build:android:release    # release APK (R8) → android/app/build/outputs/apk/release/
 ```
 
 Or use Android Studio: open `android/`; the Gradle build runs the Vite build first (pass
 `-PskipWeb` to skip it when the assets are already built).
+
+The APK is named after the version (`zen-chromium-<version>-release.apk`), its `versionName` is the
+`package.json` version and its `versionCode` is derived from it (`major·1000000 + minor·10000 +
+patch·100 + channel`, where a pre-release such as `-beta.2` sorts below the final release; pass
+`-PversionCode=…` or set `ZEN_ANDROID_VERSION_CODE` to override). A release build is signed with
+the keystore given by the environment or by Gradle properties (for example in
+`~/.gradle/gradle.properties`):
+
+| Environment variable            | Gradle property                |                                  |
+| ------------------------------- | ------------------------------ | -------------------------------- |
+| `ZEN_ANDROID_KEYSTORE_FILE`     | `zen.android.keystoreFile`     | path to the `.keystore` / `.jks` |
+| `ZEN_ANDROID_KEYSTORE_PASSWORD` | `zen.android.keystorePassword` |                                  |
+| `ZEN_ANDROID_KEY_ALIAS`         | `zen.android.keyAlias`         |                                  |
+| `ZEN_ANDROID_KEY_PASSWORD`      | `zen.android.keyPassword`      |                                  |
+
+Without a keystore the release APK is signed with the debug key: it installs, but it cannot
+upgrade an installation signed with another key in place.
 
 Developing the mobile chrome without a device:
 
@@ -227,6 +265,42 @@ media elements).
 | Save page                                          | Ctrl+Alt+Shift+S                     |
 
 Everything is editable in Settings → Keyboard Shortcuts.
+
+## Releasing
+
+The version in `package.json` is the single source of truth: the desktop About dialog reads it,
+the Android `versionName` / `versionCode` are derived from it, and a release tag must be `v` +
+that version (the Release workflow refuses anything else).
+
+1. Run the **Prepare release** workflow (Actions → Prepare release → Run workflow) and pick a
+   bump: `patch`, `minor`, `major`, a `pre*` bump with a pre-release identifier (`preminor` +
+   `beta` turns `0.1.0` into `0.2.0-beta.0`), or `custom` with an exact version. It runs the
+   checks, commits `chore(release): vX.Y.Z` with the updated `package.json` / `package-lock.json`,
+   tags the commit and starts the **Release** workflow. The manual equivalent from a checkout is
+   `npm version minor` followed by `git push --follow-tags`.
+2. **Release** validates the tag, runs `npm run check`, builds every package in parallel (Linux
+   x64 + arm64, Windows x64 + arm64, macOS x64 + arm64, Android) and publishes them as a GitHub
+   release with `SHA256SUMS.txt`, build provenance attestations and generated notes (download
+   table, per-platform install steps, changes since the previous release). The release is a draft
+   until every package is in place, so a failed job never leaves a half-published release: fix and
+   re-run the failed jobs, or dispatch **Release** again with the tag. Versions with a pre-release
+   suffix are published as pre-releases.
+3. Dispatching **Release** from a branch with _dry run_ enabled builds everything and keeps the
+   packages as workflow artifacts without publishing – the way to test packaging changes.
+
+**CI** (`.github/workflows/ci.yml`) runs on every push and pull request: typecheck, lint, tests,
+an unpacked Linux electron-builder run and an Android debug APK (kept as a workflow artifact for
+a week).
+
+Code signing is optional and switched on by adding repository secrets; without them the packages
+are built unsigned and the release notes tell users how to open them:
+
+| Secrets                                                                                             | Effect                                                                                                                                     |
+| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `MAC_CERTIFICATE_P12_BASE64`, `MAC_CERTIFICATE_PASSWORD`                                            | Sign the macOS app with a Developer ID Application certificate (`base64 -w0 certificate.p12`)                                              |
+| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`                                          | Notarize the signed macOS app                                                                                                              |
+| `WINDOWS_CERTIFICATE_P12_BASE64`, `WINDOWS_CERTIFICATE_PASSWORD`                                    | Authenticode-sign the Windows installers                                                                                                   |
+| `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | Sign the APK with a release keystore (`base64 -w0 release.keystore`); until then it is signed with a debug key and cannot upgrade in place |
 
 ## Notes
 
