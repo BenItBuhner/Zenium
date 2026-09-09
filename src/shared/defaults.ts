@@ -1,5 +1,28 @@
-import type { Container, ResourceSettings, ResourceSnapshot, Settings } from './types'
+import type {
+  AgentServerStatus,
+  AgentSettings,
+  Container,
+  ResourceSettings,
+  ResourceSnapshot,
+  Settings
+} from './types'
 import { DEFAULT_CONTAINER_ID } from './types'
+
+/** Off until the user turns it on in Settings → AI Agents; loopback only, approval required. */
+export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
+  enabled: false,
+  port: 41735,
+  lan: false,
+  approveNewAgents: true,
+  approvedNames: [],
+  defaultMode: 'foreground',
+  allowScripts: true,
+  showCursor: true
+}
+
+export function emptyAgentServerStatus(): AgentServerStatus {
+  return { running: false, url: null, lanUrls: [], token: '', error: null }
+}
 
 /**
  * Aggressive out of the box: the browser as a whole may use about a third of the machine's RAM
@@ -90,7 +113,8 @@ export const DEFAULT_SETTINGS: Settings = {
   ctrlTabCyclesWithinSection: false,
   spaceRouting: {},
   windowSync: 'all',
-  resources: structuredClone(DEFAULT_RESOURCE_SETTINGS)
+  resources: structuredClone(DEFAULT_RESOURCE_SETTINGS),
+  agents: structuredClone(DEFAULT_AGENT_SETTINGS)
 }
 
 /** Firefox's four default containers plus "No Container". */

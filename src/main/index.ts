@@ -3,27 +3,40 @@ import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { registerZenScheme } from './platform/protocol'
 import { ElectronPlatform } from './platform'
 import { applyResourceSwitches } from './platform/resources/startup'
+import { runStdioShim } from './agent/shim'
 import type { Browser } from '../core/browser'
 
-// Must run before `ready`.
-registerZenScheme()
 app.setName('Zen')
-// Renderer process limit, V8 heap caps, GPU profile … are Chromium command-line switches and can
-// only be applied before the browser process finishes starting up.
-applyResourceSwitches(app.getPath('userData'))
 
-// Shortcuts are handled by Zen's own table, not by menu accelerators. macOS still needs an
-// application menu for the standard Edit roles (Cmd+C/V/X/A only work through them there).
-if (process.platform === 'darwin') {
-  Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }]))
+// `zen --mcp`: relay stdio to the running browser's MCP server and exit – no windows, no lock.
+if (process.argv.slice(1).includes('--mcp')) {
+  app.disableHardwareAcceleration()
+  app.commandLine.appendSwitch('disable-gpu')
+  void runStdioShim(app.getPath('userData')).then((code) => app.exit(code))
 } else {
-  Menu.setApplicationMenu(null)
+  main()
 }
 
-const gotLock = app.requestSingleInstanceLock()
-if (!gotLock) {
-  app.quit()
-} else {
+function main(): void {
+  // Must run before `ready`.
+  registerZenScheme()
+  // Renderer process limit, V8 heap caps, GPU profile … are Chromium command-line switches and
+  // can only be applied before the browser process finishes starting up.
+  applyResourceSwitches(app.getPath('userData'))
+
+  // Shortcuts are handled by Zen's own table, not by menu accelerators. macOS still needs an
+  // application menu for the standard Edit roles (Cmd+C/V/X/A only work through them there).
+  if (process.platform === 'darwin') {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }]))
+  } else {
+    Menu.setApplicationMenu(null)
+  }
+
+  const gotLock = app.requestSingleInstanceLock()
+  if (!gotLock) {
+    app.quit()
+    return
+  }
   let browser: Browser | null = null
 
   /** `zen [--blank-window|--private-window] [url]` (Zen ships the same `--blank-window` flag). */

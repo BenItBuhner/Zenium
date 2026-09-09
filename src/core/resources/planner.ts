@@ -62,6 +62,8 @@ export interface TabSample {
   /** Domain listed under "never unload these domains". */
   excluded: boolean
   devtoolsOpen: boolean
+  /** An AI agent is driving the tab (its timers and script must keep running). */
+  agentDriven?: boolean
   frozen: boolean
   cpuThrottle: number
   lastActiveAt: number
@@ -245,6 +247,7 @@ export function attribute(
 export function protectionReason(tab: TabSample, settings: ResourceSettings): string | null {
   if (tab.excluded) return 'excluded domain'
   if (tab.devtoolsOpen) return 'devtools open'
+  if (tab.agentDriven) return 'driven by an AI agent'
   if (tab.audible && settings.protectAudible) return 'playing audio'
   if (tab.pinned && settings.protectPinned) return 'pinned'
   if (tab.essential && settings.protectEssentials) return 'essential'

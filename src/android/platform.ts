@@ -5,6 +5,7 @@ import { Browser } from '@core/browser'
 import { RendererMenuHost } from '@core/rendererMenus'
 import type { ZenWindow } from '@core/window'
 import type {
+  AgentTransport,
   AppHost,
   ClipboardHost,
   DialogHost,
@@ -22,6 +23,7 @@ import type {
 } from '@core/platform'
 import readabilityJs from '@mozilla/readability/Readability.js?raw'
 import readabilityReaderableJs from '@mozilla/readability/Readability-readerable.js?raw'
+import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
 import type { Bridge } from './bridge'
 import { AndroidTabViewHost, type ViewEventPayloads } from './views'
 
@@ -37,7 +39,8 @@ export const ANDROID_CAPABILITIES: HostCapabilities = {
   extensions: false,
   resourceGovernor: false,
   sync: false,
-  print: true
+  print: true,
+  agents: true
 }
 
 /** Everything Kotlin hands over synchronously before the chrome renders. */
@@ -79,6 +82,59 @@ export interface HostEventPayloads {
   }
   'permission.request': { requestId: string; permission: string; url: string }
   'view.adopt': { viewId: string; parentTabId: string | null; active: boolean }
+  /** An HTTP request reached the Kotlin MCP socket server; answered with `agent.reply`. */
+  'agent.request': { id: number } & AgentHttpRequest
+}
+
+/**
+ * The MCP server's socket lives in Kotlin (a foreground service keeps it alive while the app is
+ * in the background); requests are relayed into the core and answered through the bridge.
+ */
+class AndroidAgentTransport implements AgentTransport {
+  private onRequest: ((request: AgentHttpRequest) => Promise<AgentHttpResponse>) | null = null
+
+  constructor(private readonly bridge: Bridge) {}
+
+  async start(options: {
+    port: number
+    lan: boolean
+    onRequest: (request: AgentHttpRequest) => Promise<AgentHttpResponse>
+  }): Promise<{ port: number; lanAddresses: string[] }> {
+    this.onRequest = options.onRequest
+    return this.bridge.call<{ port: number; lanAddresses: string[] }>('agent.start', {
+      port: options.port,
+      lan: options.lan
+    })
+  }
+
+  async stop(): Promise<void> {
+    this.onRequest = null
+    await this.bridge.call('agent.stop')
+  }
+
+  handle(payload: HostEventPayloads['agent.request']): void {
+    const { id, ...request } = payload
+    const reply = (response: AgentHttpResponse): void => {
+      this.bridge.send('agent.reply', { id, ...response })
+    }
+    if (!this.onRequest) {
+      reply({ status: 503, headers: { 'content-type': 'text/plain' }, body: 'MCP server stopped' })
+      return
+    }
+    this.onRequest(request)
+      .then(reply)
+      .catch((error: Error) =>
+        reply({
+          status: 500,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: null,
+            error: { code: -32603, message: error.message }
+          })
+        })
+      )
+  }
 }
 
 type Listener = (payload: unknown) => void
@@ -228,6 +284,7 @@ export class AndroidPlatform implements Platform {
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
   private readonly downloadTokens = new Map<string, string>()
+  private readonly agentTransport: AndroidAgentTransport
 
   constructor(
     private readonly bridge: Bridge,
@@ -235,6 +292,7 @@ export class AndroidPlatform implements Platform {
   ) {
     this.info = { os: 'android', version: boot.version }
     this.io = new AndroidStoreIO(bridge, boot.files)
+    this.agentTransport = new AndroidAgentTransport(bridge)
     this.views = new AndroidTabViewHost(bridge)
     this.menus = new RendererMenuHost()
     this.windows = {
@@ -299,6 +357,10 @@ export class AndroidPlatform implements Platform {
   bind(browser: Browser): void {
     this.browser = browser
     this.views.reader = (id) => browser.reader.pageHtml(id)
+  }
+
+  createAgentTransport(): AgentTransport {
+    return this.agentTransport
   }
 
   /** Mozilla's Readability, bundled with the chrome. */
@@ -402,6 +464,9 @@ export class AndroidPlatform implements Platform {
           )
         return
       }
+      case 'agent.request':
+        this.agentTransport.handle(payload as HostEventPayloads['agent.request'])
+        return
       case 'view.adopt': {
         const p = payload as HostEventPayloads['view.adopt']
         // Kotlin created the WebView for a popup. Pick the tab id first and bind it before the

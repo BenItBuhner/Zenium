@@ -23,6 +23,8 @@ import { KeyboardHandler } from './keys'
 import { Menus } from './menus'
 import { SuggestionService } from './suggestions'
 import { sanitizeResourceSettings } from './resources/switches'
+import { AgentService } from './agent/service'
+import { sanitizeAgentSettings } from './agent/settings'
 import { BoostService } from './boosts'
 import { ReaderService } from './reader'
 import { LiveFolderService } from './livefolders'
@@ -93,6 +95,8 @@ export class Browser {
   readonly mods: ModService
   readonly sync: SyncHost
   readonly governor: Governor
+  /** The MCP server AI agents connect to. */
+  readonly agents: AgentService
   readonly windows = new Map<string, ZenWindow>()
   quitting = false
   private readonly handlers: CommandHandlers
@@ -126,13 +130,16 @@ export class Browser {
     this.extensions = platform.createExtensions?.(this) ?? new NoExtensions(this)
     this.mods = new ModService(this)
     this.sync = platform.createSync?.(this) ?? new NoSync(this)
+    this.agents = new AgentService(this)
     this.state.extras = () => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
       liveFolders: this.liveFolders.all(),
       extensions: this.extensions.list(),
       mods: this.mods.all(),
-      sync: this.sync.status()
+      sync: this.sync.status(),
+      agents: this.agents.list(),
+      agentServer: this.agents.serverStatus()
     })
     this.handlers = this.commandHandlers()
   }
@@ -297,6 +304,7 @@ export class Browser {
     this.liveFolders.start()
     void this.extensions.start()
     this.sync.start()
+    this.agents.start()
     this.syncShortcuts()
     this.state.commit()
   }
@@ -526,6 +534,7 @@ export class Browser {
   shutdown(): void {
     if (this.quitting) return
     this.quitting = true
+    void this.agents.stop()
     this.flushSync()
     this.state.freeze()
   }
@@ -1004,6 +1013,12 @@ export class Browser {
       'sync.confirmMerge': ({ merge }) => this.sync.confirmMerge(merge),
       'sync.disconnect': ({ wipeRemote }) => this.sync.disconnect(wipeRemote),
 
+      'agent.disconnect': ({ id }) => this.agents.disconnect(id),
+      'agent.setMode': ({ id, mode }) => this.agents.setMode(id, mode),
+      'agent.releaseTab': ({ tabId }) => this.agents.releaseTab(tabId),
+      'agent.forget': ({ name }) => this.agents.forget(name),
+      'agent.regenerateToken': () => this.agents.regenerateToken(),
+
       'onboarding.complete': ({ searchEngineId, colorScheme, essentials }, win) => {
         if (state.searchEngines.some((e) => e.id === searchEngineId))
           state.settings.searchEngineId = searchEngineId
@@ -1038,7 +1053,8 @@ export class Browser {
       thirdParty: s.thirdPartyOnPinned,
       windowSync: s.windowSync,
       resources: JSON.stringify(s.resources),
-      unload: `${s.unloadEnabled}:${s.unloadTimeoutMinutes}:${s.unloadExcludedDomains.join(',')}`
+      unload: `${s.unloadEnabled}:${s.unloadTimeoutMinutes}:${s.unloadExcludedDomains.join(',')}`,
+      agents: JSON.stringify(s.agents)
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -1054,6 +1070,8 @@ export class Browser {
           ...incoming,
           process: { ...s.resources.process, ...(incoming.process ?? {}) }
         })
+      } else if (key === 'agents' && value && typeof value === 'object') {
+        s.agents = sanitizeAgentSettings({ ...s.agents, ...(value as Partial<Settings['agents']>) })
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }
@@ -1081,6 +1099,7 @@ export class Browser {
     ) {
       this.governor.onSettingsChanged()
     }
+    if (before.agents !== JSON.stringify(s.agents)) this.agents.onSettingsChanged()
     this.state.commit()
   }
 

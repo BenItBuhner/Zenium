@@ -25,6 +25,7 @@ import type {
 import type { KeyInput } from '../shared/shortcuts'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
+import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
 
 export interface PlatformInfo {
   os: PlatformOs
@@ -117,6 +118,25 @@ export type CrashReason =
   | 'memory-eviction'
   | string
 
+export type InputModifier = 'Shift' | 'Control' | 'Alt' | 'Meta'
+
+/**
+ * Synthetic input an AI agent sends to a page, in view CSS pixels. Hosts turn it into trusted
+ * events (Electron: `sendInputEvent`; Android: `MotionEvent`/`KeyEvent` on the WebView).
+ */
+export type AgentInputEvent =
+  | { type: 'mouseMove'; x: number; y: number }
+  | {
+      type: 'click'
+      x: number
+      y: number
+      button: 'left' | 'right' | 'middle'
+      clickCount: number
+      modifiers: InputModifier[]
+    }
+  | { type: 'key'; key: string; modifiers: InputModifier[] }
+  | { type: 'text'; text: string }
+
 /** Callbacks a host fires for one tab view. */
 export interface TabViewEvents {
   onStartLoading(): void
@@ -203,6 +223,14 @@ export interface TabView {
   copyImageAt(x: number, y: number): Promise<boolean>
   replaceMisspelling(word: string): void
   addWordToDictionary(word: string): void
+
+  // AI agents (optional – the core falls back to in-page JavaScript when missing).
+  /** Deliver trusted input to the page. */
+  sendInput?(event: AgentInputEvent): Promise<void>
+  /** Run script in a world the page cannot observe (Electron's isolated world). */
+  executeIsolatedJavaScript?(code: string): Promise<unknown>
+  /** Let a hidden page keep running at full speed while an agent drives it. */
+  setBackgroundThrottling?(allowed: boolean): void
 }
 
 export interface TabViewHost {
@@ -422,6 +450,20 @@ export interface SyncHost {
   flushSync(): void
 }
 
+/**
+ * The byte transport of the MCP server for AI agents. The core owns the protocol (`agent/http.ts`
+ * turns HTTP requests into responses); hosts only listen on a socket and hand requests over.
+ */
+export interface AgentTransport {
+  /** Listen and resolve with the port actually bound plus the LAN addresses (when `lan`). */
+  start(options: {
+    port: number
+    lan: boolean
+    onRequest: (request: AgentHttpRequest) => Promise<AgentHttpResponse>
+  }): Promise<{ port: number; lanAddresses: string[] }>
+  stop(): Promise<void>
+}
+
 export interface Platform {
   readonly info: PlatformInfo
   readonly capabilities: HostCapabilities
@@ -442,6 +484,7 @@ export interface Platform {
   createGovernor?(browser: Browser): Governor
   createExtensions?(browser: Browser): ExtensionHost
   createSync?(browser: Browser): SyncHost
+  createAgentTransport?(browser: Browser): AgentTransport
 }
 
 /** Schedule work for the next macrotask in Node and browsers alike. */

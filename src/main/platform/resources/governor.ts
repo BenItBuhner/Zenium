@@ -452,6 +452,7 @@ export class ResourceGovernor implements Governor {
       essential: tab.essential,
       excluded: isExcluded(tab.url, state.settings.unloadExcludedDomains),
       devtoolsOpen: state.devtoolsOpenFor.has(tab.id),
+      agentDriven: this.browser.agents.isDriving(tab.id),
       frozen: tab.frozen,
       cpuThrottle: tab.cpuThrottle,
       lastActiveAt: Math.max(tab.lastActiveAt, this.lastVisibleAt.get(tab.id) ?? 0),
