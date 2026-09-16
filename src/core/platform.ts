@@ -137,6 +137,24 @@ export type AgentInputEvent =
   | { type: 'key'; key: string; modifiers: InputModifier[] }
   | { type: 'text'; text: string }
 
+/**
+ * What an agent wants captured: the visible viewport, the whole scrollable page, or a region
+ * given in CSS pixels relative to the document (viewport position plus scroll offset).
+ */
+export interface AgentCaptureOptions {
+  mode: 'viewport' | 'fullPage' | 'region'
+  region?: Rect
+  format: 'jpeg' | 'png'
+}
+
+export interface AgentCapture {
+  /** Base64 image data (no `data:` prefix). */
+  data: string
+  mimeType: string
+  width: number
+  height: number
+}
+
 /** Callbacks a host fires for one tab view. */
 export interface TabViewEvents {
   onStartLoading(): void
@@ -231,6 +249,11 @@ export interface TabView {
   executeIsolatedJavaScript?(code: string): Promise<unknown>
   /** Let a hidden page keep running at full speed while an agent drives it. */
   setBackgroundThrottling?(allowed: boolean): void
+  /**
+   * Screenshot for agents: the viewport, the full page or a region. Hosts without it fall back
+   * to `snapshot()` (viewport only).
+   */
+  capture?(options: AgentCaptureOptions): Promise<AgentCapture | null>
 }
 
 export interface TabViewHost {
