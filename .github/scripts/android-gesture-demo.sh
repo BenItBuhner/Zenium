@@ -47,6 +47,11 @@ monitor_pid=$!
 # snapshots and records through a software GPU, and every pixel costs.
 adb shell wm size 720x1600
 adb shell wm density 280
+# No "isn't responding" dialogs over the browser (the launcher re-inflating at the new density
+# is slow enough to trigger one); restart it cleanly instead.
+adb shell settings put global hide_error_dialogs 1 || true
+sleep 2
+adb shell am force-stop com.google.android.apps.nexuslauncher || true
 sleep 3
 # Three-button navigation: no system gesture zone under the bar, so no accidental home swipes.
 adb shell cmd overlay enable com.android.internal.systemui.navbar.threebutton || true

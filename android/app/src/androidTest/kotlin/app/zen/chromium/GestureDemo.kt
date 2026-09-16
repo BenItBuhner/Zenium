@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.Activity
 import android.app.UiAutomation
 import android.content.Context
 import android.content.Intent
@@ -12,6 +13,8 @@ import android.util.Log
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Test
@@ -45,6 +48,7 @@ class GestureDemo {
     private val app: Context = instrumentation.targetContext
     private val out = File(app.filesDir, "gesture-demo")
     private val density = app.resources.displayMetrics.density
+    private lateinit var activity: Activity
     private var width = 0
     private var height = 0
     private lateinit var pill: Rect
@@ -86,7 +90,7 @@ class GestureDemo {
         val intent = app.packageManager.getLaunchIntentForPackage(app.packageName)
             ?: error("no launcher activity for ${app.packageName}")
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        instrumentation.startActivitySync(intent)
+        activity = instrumentation.startActivitySync(intent)
         // The chrome is a WebView booting the browser core: wait for the address pill to show up.
         val deadline = SystemClock.uptimeMillis() + 30_000
         while (findByLabel(PILL_LABEL) == null && SystemClock.uptimeMillis() < deadline) {
@@ -95,40 +99,61 @@ class GestureDemo {
         SystemClock.sleep(4_000)
     }
 
+    /** A system dialog (an ANR of some other app, say) on top of the browser would take the touches. */
+    private fun ensureForeground() {
+        repeat(5) {
+            val top = ui.rootInActiveWindow?.packageName?.toString()
+            if (top == null || top == app.packageName) return
+            Log.w(TAG, "window of $top is in front; sending back")
+            ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+            SystemClock.sleep(1_000)
+        }
+    }
+
     private fun measure() {
-        val probe = ui.takeScreenshot() ?: error("could not take a screenshot")
-        width = probe.width
-        height = probe.height
-        probe.recycle()
+        ensureForeground()
+        val insets = windowInsets()
+        width = insets.windowWidth
+        height = insets.windowHeight
         val found = findByLabel(PILL_LABEL)?.takeIf { it.top > height * 0.6 && it.width() > 100 * density }
-        pill = found ?: computedPill()
+        pill = found ?: computedPill(insets.bottom)
         pillY = pill.exactCenterY()
         pillCenterX = pill.exactCenterX()
-        val statusBar = systemDimension("status_bar_height")
-        val navBar = systemDimension("navigation_bar_height")
-        overviewTravel = max(220 * density, 0.42f * (height - statusBar - navBar - 64 * density))
+        overviewTravel = max(220 * density, 0.42f * (height - insets.top - insets.bottom - 64 * density))
         Log.i(
             TAG,
-            "screen ${width}x${height} density $density pill $pill " +
+            "window ${width}x${height} density $density insets ${insets.top}/${insets.bottom} pill $pill " +
                 "(${if (found != null) "from accessibility" else "computed"}) overview travel $overviewTravel"
         )
     }
 
+    private class Insets(val windowWidth: Int, val windowHeight: Int, val top: Int, val bottom: Int)
+
+    /** The window and its system bar insets – the same numbers the chrome lays itself out with. */
+    private fun windowInsets(): Insets {
+        var result = Insets(0, 0, 0, 0)
+        instrumentation.runOnMainSync {
+            val root = activity.window.decorView
+            val bars = ViewCompat.getRootWindowInsets(root)?.getInsets(WindowInsetsCompat.Type.systemBars())
+            result = Insets(root.width, root.height, bars?.top ?: 0, bars?.bottom ?: 0)
+        }
+        if (result.windowWidth == 0 || result.windowHeight == 0) {
+            val probe = ui.takeScreenshot() ?: error("could not measure the window")
+            result = Insets(probe.width, probe.height, result.top, result.bottom)
+            probe.recycle()
+        }
+        return result
+    }
+
     /** Where the pill is when the accessibility tree does not say: below the page, between the buttons. */
-    private fun computedPill(): Rect {
-        val navBar = systemDimension("navigation_bar_height")
-        val centerY = height - navBar - 28 * density
+    private fun computedPill(bottomInset: Int): Rect {
+        val centerY = height - bottomInset - 28 * density
         return Rect(
             (56 * density).roundToInt(),
             (centerY - 22 * density).roundToInt(),
             (width - 152 * density).roundToInt(),
             (centerY + 22 * density).roundToInt()
         )
-    }
-
-    private fun systemDimension(name: String): Int {
-        val id = app.resources.getIdentifier(name, "dimen", "android")
-        return if (id != 0) app.resources.getDimensionPixelSize(id) else 0
     }
 
     // --- sequence --------------------------------------------------------------------------------
