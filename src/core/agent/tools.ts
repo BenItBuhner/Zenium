@@ -756,7 +756,7 @@ const browserTabs: AgentTool = {
       const tab = tabs.createTab({ url, spaceId, active: foreground, load: false }, win)
       ctx.agents.claim(s, tab.id)
       const view = await ctx.agents.prepare(s, tab.id, { activate: foreground })
-      if (url) await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS)
+      if (url) await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
       return pageResult(
         ctx,
         tab,
@@ -909,7 +909,7 @@ const browserNavigate: AgentTool = {
     }
     await ctx.agents.prepare(s, tab.id)
     ctx.browser.tabs.navigate(tab.id, url)
-    const loaded = await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS)
+    const loaded = await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
     const view = ctx.browser.tabs.view(tab.id)
     if (!view) throw new RpcError(-32002, 'The tab went away while loading')
     const pos = ctx.agents.cursorPosition(s, tab.id)
@@ -939,7 +939,7 @@ const browserNavigateBack: AgentTool = {
         `There is no previous page in tab ${tab.id} (it is at the start of its history)`
       )
     ctx.browser.tabs.goBack(tab.id)
-    await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS)
+    await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
     return pageResult(ctx, tab, ctx.browser.tabs.view(tab.id) ?? view, 'Went back.')
   }
 }
@@ -960,7 +960,7 @@ const browserNavigateForward: AgentTool = {
         `There is no next page in tab ${tab.id} – forward only works after going back`
       )
     ctx.browser.tabs.goForward(tab.id)
-    await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS)
+    await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
     return pageResult(ctx, tab, ctx.browser.tabs.view(tab.id) ?? view, 'Went forward.')
   }
 }
@@ -980,7 +980,7 @@ const browserReload: AgentTool = {
   async run(ctx, args) {
     const { tab, view } = await actOn(ctx, args)
     ctx.browser.tabs.reload(tab.id, bool(args, 'ignoreCache'))
-    await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS)
+    await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
     return pageResult(ctx, tab, ctx.browser.tabs.view(tab.id) ?? view, 'Reloaded.')
   }
 }
