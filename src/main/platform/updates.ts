@@ -93,8 +93,24 @@ export class ElectronUpdateHost implements UpdateHost {
       return
     }
     // Spawns the installer (NSIS: silent, relaunch), replaces the AppImage, runs dpkg through
-    // pkexec, or lets Squirrel.Mac swap the bundle – then quits.
-    autoUpdater.quitAndInstall(true, true)
+    // pkexec, or lets Squirrel.Mac swap the bundle – then quits. Failures (a dismissed password
+    // prompt, a read-only AppImage) only surface as an "error" event, so listen briefly.
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error): void => {
+        cleanup()
+        reject(error)
+      }
+      const timer = setTimeout(() => {
+        cleanup()
+        resolve()
+      }, 3000)
+      const cleanup = (): void => {
+        clearTimeout(timer)
+        autoUpdater.removeListener('error', onError)
+      }
+      autoUpdater.once('error', onError)
+      autoUpdater.quitAndInstall(true, true)
+    })
   }
 
   cancel(): void {
@@ -123,6 +139,8 @@ export class ElectronUpdateHost implements UpdateHost {
       })
     try {
       if (!this.configured) {
+        // Every failure is also rejected to the caller; without a listener the emitter would throw.
+        autoUpdater.on('error', (error: Error) => console.warn('[zen] updater:', error.message))
         autoUpdater.autoDownload = false
         autoUpdater.autoRunAppAfterInstall = true
         // Installing a deb at quit time would surface a password prompt out of nowhere.

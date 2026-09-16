@@ -429,7 +429,7 @@ export class AndroidPlatform implements Platform {
       fetchText: async (url, options) => {
         const result = await bridge.call<{ ok: boolean; status?: number; text: string }>(
           'net.fetch',
-          { url, headers: options.headers ?? {} }
+          { url, headers: options.headers ?? {}, timeoutMs: options.timeoutMs ?? 0 }
         )
         if (options.signal?.aborted) throw new Error('aborted')
         return { ok: result.ok, status: result.status ?? (result.ok ? 200 : 0), text: result.text }

@@ -353,7 +353,12 @@ export interface ShellHost {
 export interface NetHost {
   fetchText(
     url: string,
-    options: { signal?: AbortSignal; headers?: Record<string, string> }
+    options: {
+      signal?: AbortSignal
+      headers?: Record<string, string>
+      /** Overall time limit; hosts default to a few seconds (suggestions, Live Folders). */
+      timeoutMs?: number
+    }
   ): Promise<{ ok: boolean; status: number; text: string }>
 }
 

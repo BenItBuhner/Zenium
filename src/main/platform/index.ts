@@ -124,8 +124,13 @@ export class ElectronPlatform implements Platform {
     }
     this.net = {
       fetchText: async (url, options) => {
+        const signals = [
+          options.signal,
+          options.timeoutMs && AbortSignal.timeout(options.timeoutMs)
+        ]
+        const live = signals.filter((s): s is AbortSignal => Boolean(s))
         const res = await net.fetch(url, {
-          signal: options.signal,
+          signal: live.length > 0 ? AbortSignal.any(live) : undefined,
           headers: options.headers,
           cache: 'no-store'
         })

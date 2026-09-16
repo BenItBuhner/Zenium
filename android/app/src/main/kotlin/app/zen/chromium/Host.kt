@@ -159,7 +159,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
                 reply(null)
             }
             "clipboard.writeImage" -> copyImage(args.str("url"), reply)
-            "net.fetch" -> fetchText(args.str("url"), args.obj("headers"), reply)
+            "net.fetch" -> fetchText(args.str("url"), args.obj("headers"), args.num("timeoutMs").toInt(), reply)
             "download.bind" -> { downloads.bind(args.str("token"), args.str("id")); reply(null) }
             "download.cancel" -> { downloads.cancel(args.str("id")); reply(null) }
             "download.pause", "download.resume" -> reply(null)
@@ -348,12 +348,14 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
         }
     }
 
-    private fun fetchText(url: String, headers: JSONObject, reply: (Any?) -> Unit) {
+    /** `timeoutMs` ≤ 0 keeps the short default meant for suggestions and Live Folders. */
+    private fun fetchText(url: String, headers: JSONObject, timeoutMs: Int, reply: (Any?) -> Unit) {
         io.execute {
             val result = runCatching {
+                val timeout = if (timeoutMs > 0) timeoutMs else 2500
                 val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 2500
-                    readTimeout = 2500
+                    connectTimeout = timeout
+                    readTimeout = timeout
                     for (key in headers.keys()) setRequestProperty(key, headers.str(key))
                 }
                 val status = conn.responseCode

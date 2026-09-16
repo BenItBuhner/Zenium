@@ -24,6 +24,8 @@ import type { ZenWindow } from './window'
 
 /** Progress broadcasts to the chrome are rate-limited to this many milliseconds apart. */
 const PROGRESS_INTERVAL_MS = 250
+/** Manifest fetches go through a GitHub redirect to its CDN; mobile networks need more than the hosts' default. */
+const FETCH_TIMEOUT_MS = 15_000
 
 /**
  * Automatic updates, the host-neutral half. Periodically reads the update manifest of the newest
@@ -268,7 +270,8 @@ export class UpdateService {
     if (keys.length === 0) return { manifest, signature: 'unenforced' }
     if (!signatureUrl) throw new Error('the release manifest is not signed; refusing to update')
     const response = await this.browser.platform.net.fetchText(signatureUrl, {
-      headers: { Accept: 'application/json' }
+      headers: { Accept: 'application/json' },
+      timeoutMs: FETCH_TIMEOUT_MS
     })
     if (!response.ok) throw new Error('the release manifest is not signed; refusing to update')
     let envelope: unknown
@@ -284,7 +287,8 @@ export class UpdateService {
 
   private async fetchText(url: string, headers: Record<string, string> = {}): Promise<string> {
     const response = await this.browser.platform.net.fetchText(url, {
-      headers: { Accept: 'application/json', ...headers }
+      headers: { Accept: 'application/json', ...headers },
+      timeoutMs: FETCH_TIMEOUT_MS
     })
     if (response.ok) return response.text
     if (response.status === 404)

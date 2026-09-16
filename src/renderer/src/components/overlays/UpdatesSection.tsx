@@ -234,11 +234,13 @@ function detail(u: UpdateStatus): string {
           }`
         : 'Starting download…'
     case 'ready':
-      return u.mode === 'in-place'
-        ? 'Verified and staged. It installs when Zen restarts – now, or the next time you quit.'
-        : u.target.kind === 'apk'
-          ? 'Verified. Install hands the APK to Android, which asks you to confirm.'
-          : `Verified and saved to ${u.downloadedPath ?? 'Downloads'}. Install opens it.`
+      return u.target.kind === 'deb'
+        ? 'Verified and staged. Restart to update runs dpkg, which asks for your password.'
+        : u.mode === 'in-place'
+          ? 'Verified and staged. It installs when Zen restarts – now, or the next time you quit.'
+          : u.target.kind === 'apk'
+            ? 'Verified. Install hands the APK to Android, which asks you to confirm.'
+            : `Verified and saved to ${u.downloadedPath ?? 'Downloads'}. Install opens it.`
     case 'error':
       return `${u.error ?? 'Unknown error'}. ${checked}`
   }
