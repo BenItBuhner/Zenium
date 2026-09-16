@@ -75,6 +75,8 @@ export function usePillGestures({ edge, onTap }: PillGestureOptions): PillGestur
     if (e.button !== 0 || touch.current) return
     const state = browserStore.get().state
     if (!state) return
+    // A drag produces no click to swallow; a new touch must start with a clean slate.
+    swallowClick.current = false
     const tracker = new VelocityTracker()
     tracker.add(e.timeStamp, e.clientX, e.clientY)
     let mode: Mode = 'pending'

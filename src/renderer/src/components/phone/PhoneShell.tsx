@@ -163,7 +163,7 @@ function PhoneBar({ state }: { state: UIState }): JSX.Element {
         <span
           className={cn(
             'flex h-[22px] min-w-[22px] items-center justify-center rounded-[6px] border-2 border-current px-1 text-[11px] font-semibold leading-none transition-colors',
-            overviewOpen && 'bg-current text-[var(--zen-bg-solid)]'
+            overviewOpen && 'bg-[var(--zen-fg)] text-[var(--zen-bg-solid)]'
           )}
         >
           {count > 99 ? '∞' : count}

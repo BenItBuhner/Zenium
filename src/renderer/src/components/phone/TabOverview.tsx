@@ -81,7 +81,9 @@ export function TabOverview({ state, overview, area }: Props): JSX.Element {
   }
   useLayoutEffect(() => {
     const cell = heroTabId ? cells.current.get(heroTabId) : undefined
-    if (cell && phase === 'dragging' && progress < 0.05) cell.scrollIntoView({ block: 'nearest' })
+    // The page morphs out of / into its card: make sure that card is fully on screen first.
+    const morphing = (phase === 'dragging' && progress < 0.05) || phase === 'settling'
+    if (cell && morphing) cell.scrollIntoView({ block: 'nearest' })
     measure()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-measure when the layout inputs change
   }, [heroTabId, cardsKey, area.width, area.height, phase])

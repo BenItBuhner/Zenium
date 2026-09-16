@@ -497,6 +497,10 @@
   .zen-overview {
     will-change: transform, opacity;
   }
+  /* The hero is resized, not transformed: promoting it would only re-tile a layer each frame. */
+  .zen-overview-hero {
+    will-change: auto;
+  }
   /* While the stage draws the page's cards, the frame behind them gets out of the way. */
   .zen-content-frame[data-staged] {
     background: transparent;
