@@ -117,7 +117,10 @@ export function createPreviewBridge(): NativeBridge {
       const frame = views.get(String(tabId))
       if (frame) frame.style.background = String(color)
     },
-    'view.snapshot': () => null,
+    'view.snapshot': ({ tabId }) => {
+      const frame = views.get(String(tabId))
+      return frame && frame.style.display !== 'none' ? snapshotFrame(frame) : null
+    },
     'view.eval': () => {
       throw new Error('not available in the preview host')
     },
@@ -149,6 +152,71 @@ export function createPreviewBridge(): NativeBridge {
     const handler = handlers[call.method]
     if (!handler) return undefined
     return handler((call.args ?? {}) as Record<string, unknown>)
+  }
+
+  const snapshots = new WeakMap<HTMLIFrameElement, { key: string; data: string | null }>()
+
+  /**
+   * The preview's stand-in for the hosts' page capture: same-origin frames are serialised into an
+   * SVG `<foreignObject>` and rasterised (inline styles only – the image cannot fetch resources).
+   * Cross-origin frames cannot be read and yield `null`, like a hidden page on a real host.
+   * Rasterising is the expensive part, so an unchanged document reuses its last capture.
+   */
+  async function snapshotFrame(frame: HTMLIFrameElement): Promise<string | null> {
+    let doc: Document | null
+    try {
+      doc = frame.contentDocument
+    } catch {
+      return null
+    }
+    const root = doc?.documentElement
+    const width = frame.clientWidth
+    const height = frame.clientHeight
+    if (!root || !width || !height) return null
+    const clone = root.cloneNode(true) as HTMLElement
+    clone.querySelectorAll('script').forEach((s) => s.remove())
+    clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml')
+    const markup = new XMLSerializer().serializeToString(clone)
+    const key = `${width}x${height}:${markup}`
+    const cached = snapshots.get(frame)
+    if (cached && cached.key === key) return cached.data
+    const data = await rasterise(markup, width, height, frame.style.background)
+    snapshots.set(frame, { key, data })
+    return data
+  }
+
+  async function rasterise(
+    markup: string,
+    width: number,
+    height: number,
+    background: string
+  ): Promise<string | null> {
+    const svg =
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
+      `<foreignObject width="100%" height="100%">${markup}</foreignObject></svg>`
+    // A data: URL, not a blob: one – the chrome's CSP only lets images come from data:/http(s).
+    const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image()
+        img.onload = () => resolve(img)
+        img.onerror = () => reject(new Error('snapshot failed'))
+        img.src = url
+      })
+      const scale = width > 1400 ? 1400 / width : 0.5
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(width * scale))
+      canvas.height = Math.max(1, Math.round(height * scale))
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return null
+      ctx.fillStyle = background || '#fff'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.scale(scale, scale)
+      ctx.drawImage(image, 0, 0)
+      return canvas.toDataURL('image/jpeg', 0.7)
+    } catch {
+      return null
+    }
   }
 
   return {

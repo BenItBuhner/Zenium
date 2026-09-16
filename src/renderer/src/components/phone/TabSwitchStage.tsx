@@ -38,10 +38,7 @@ export function TabSwitchStage({ state, tabs, area }: Props): JSX.Element {
         }}
       >
         <TabPreview tab={tab} />
-        <div
-          className="pointer-events-none absolute inset-0 bg-black"
-          style={{ opacity: 0.22 * distance }}
-        />
+        <div className="zen-stage-dim absolute inset-0" style={{ opacity: 0.22 * distance }} />
       </div>
     )
   }

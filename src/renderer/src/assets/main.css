@@ -488,6 +488,15 @@
     will-change: transform;
     transform-origin: center;
   }
+  /* Animated per frame: its own layer, so fading it never repaints the card (image + shadow). */
+  .zen-stage-dim {
+    pointer-events: none;
+    background: #000;
+    will-change: opacity;
+  }
+  .zen-overview {
+    will-change: transform, opacity;
+  }
   /* While the stage draws the page's cards, the frame behind them gets out of the way. */
   .zen-content-frame[data-staged] {
     background: transparent;

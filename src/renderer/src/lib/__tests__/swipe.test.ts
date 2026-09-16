@@ -1,14 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { dragPosition, pageBlend, rubberBand, settleTarget } from '../gestures/swipe'
+import { dragPosition, rubberBand, settleTarget } from '../gestures/swipe'
 
 const extent = 400
-const track = { extent, min: 0, max: 4 }
+const track = { extent, min: 0, max: 4, origin: 1 }
 
 describe('settleTarget', () => {
   it('a slow release commits once the finger crossed the commit fraction', () => {
     expect(settleTarget({ ...track, position: 1.3, velocity: 0 })).toBe(1)
     expect(settleTarget({ ...track, position: 1.6, velocity: 0 })).toBe(2)
     expect(settleTarget({ ...track, position: 0.7, velocity: 0 })).toBe(1)
+  })
+
+  it('is symmetric: the same distance commits towards the previous tab', () => {
+    expect(settleTarget({ ...track, position: 0.5, velocity: 0 })).toBe(0)
+    expect(settleTarget({ ...track, position: 0.6, velocity: 0 })).toBe(1)
+    expect(settleTarget({ ...track, position: 1.5, velocity: 0 })).toBe(2)
   })
 
   it('projects a slow velocity into the decision', () => {
@@ -20,7 +26,7 @@ describe('settleTarget', () => {
 
   it('a fling commits regardless of distance – in its own direction', () => {
     expect(settleTarget({ ...track, position: 1.1, velocity: 900 })).toBe(2)
-    expect(settleTarget({ ...track, position: 1.9, velocity: -900 })).toBe(1)
+    expect(settleTarget({ ...track, position: 0.9, velocity: -900 })).toBe(0)
   })
 
   it('flinging back over the page you dragged towards cancels (mid-gesture reversal)', () => {
@@ -31,24 +37,35 @@ describe('settleTarget', () => {
   })
 
   it('a fling from rest on a page moves exactly one page', () => {
-    expect(settleTarget({ ...track, position: 2, velocity: 1200 })).toBe(3)
-    expect(settleTarget({ ...track, position: 2, velocity: -1200 })).toBe(1)
+    expect(settleTarget({ ...track, position: 1, velocity: 1200 })).toBe(2)
+    expect(settleTarget({ ...track, position: 1, velocity: -1200 })).toBe(0)
+  })
+
+  it('a drag caught mid-flight is measured from the page it was leaving', () => {
+    // Caught at 1.6 while settling towards 2 (origin 2), dragged back to 1.4, released slowly.
+    expect(settleTarget({ ...track, origin: 2, position: 1.4, velocity: 0 })).toBe(1)
+    expect(settleTarget({ ...track, origin: 2, position: 1.7, velocity: 0 })).toBe(2)
+    // Carried on past the next page: land on the page nearest to where the finger let go.
+    expect(settleTarget({ ...track, origin: 3, position: 1.2, velocity: 0 })).toBe(1)
   })
 
   it('never leaves the track', () => {
-    expect(settleTarget({ ...track, position: 4, velocity: 2000 })).toBe(4)
-    expect(settleTarget({ ...track, position: 0, velocity: -2000 })).toBe(0)
+    expect(settleTarget({ ...track, origin: 4, position: 4, velocity: 2000 })).toBe(4)
+    expect(settleTarget({ ...track, origin: 0, position: 0, velocity: -2000 })).toBe(0)
     // Rubber-banded past the end and released: snaps back to the last page.
-    expect(settleTarget({ ...track, position: 4.3, velocity: 100 })).toBe(4)
-    expect(settleTarget({ ...track, position: -0.2, velocity: 0 })).toBe(0)
+    expect(settleTarget({ ...track, origin: 4, position: 4.3, velocity: 100 })).toBe(4)
+    expect(settleTarget({ ...track, origin: 0, position: -0.2, velocity: 0 })).toBe(0)
   })
 
   it('the overview track (closed = 0, open = 1) follows the same rules', () => {
     const sheet = { extent: 320, min: 0, max: 1 }
-    expect(settleTarget({ ...sheet, position: 0.3, velocity: 0 })).toBe(0)
-    expect(settleTarget({ ...sheet, position: 0.3, velocity: 800 })).toBe(1)
-    expect(settleTarget({ ...sheet, position: 0.7, velocity: 0 })).toBe(1)
-    expect(settleTarget({ ...sheet, position: 0.7, velocity: -800 })).toBe(0)
+    expect(settleTarget({ ...sheet, origin: 0, position: 0.3, velocity: 0 })).toBe(0)
+    expect(settleTarget({ ...sheet, origin: 0, position: 0.3, velocity: 800 })).toBe(1)
+    expect(settleTarget({ ...sheet, origin: 0, position: 0.7, velocity: 0 })).toBe(1)
+    expect(settleTarget({ ...sheet, origin: 1, position: 0.7, velocity: -800 })).toBe(0)
+    // Pushing the open overview down by less than half brings it back.
+    expect(settleTarget({ ...sheet, origin: 1, position: 0.6, velocity: 0 })).toBe(1)
+    expect(settleTarget({ ...sheet, origin: 1, position: 0.5, velocity: 0 })).toBe(0)
   })
 })
 
@@ -83,13 +100,5 @@ describe('dragPosition', () => {
 
   it('a drag that started mid-flight continues from where the finger caught the track', () => {
     expect(dragPosition(1.6, -40, extent, 0, 4)).toBeCloseTo(1.5)
-  })
-})
-
-describe('pageBlend', () => {
-  it('is 0 on a page and 1 exactly between two pages', () => {
-    expect(pageBlend(2)).toBe(0)
-    expect(pageBlend(2.5)).toBe(1)
-    expect(pageBlend(2.25)).toBeCloseTo(0.5)
   })
 })

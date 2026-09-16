@@ -218,6 +218,7 @@ export function releaseTabSwitch(velocity: number): void {
   if (tabs.phase !== 'dragging') return
   const target = settleTarget({
     position: tabs.position,
+    origin: Math.round(tabDragStart),
     velocity,
     extent: tabs.advance,
     min: 0,
@@ -340,6 +341,7 @@ export function releaseOverview(velocity: number): void {
   if (overview.phase !== 'dragging') return
   const target = settleTarget({
     position: overview.progress,
+    origin: Math.round(overviewDragStart),
     velocity,
     extent: overviewTravel(),
     min: 0,

@@ -32,6 +32,16 @@ describe('VelocityTracker', () => {
     expect(tracker.velocity().vx).toBeLessThan(-1000)
   })
 
+  it('falls back to the last stretch when a busy main thread coalesced the recent moves', () => {
+    const tracker = new VelocityTracker(100)
+    tracker.add(0, 0, 0)
+    tracker.add(20, 20, 0)
+    // The thread stalled: one coalesced sample arrives 250 ms later, 100 px further on.
+    tracker.add(270, 120, 0)
+    const { vx } = tracker.velocity(275)
+    expect(vx).toBeCloseTo(400, 0)
+  })
+
   it('smooths out one jittery sample', () => {
     const tracker = new VelocityTracker()
     for (let i = 0; i <= 8; i++) tracker.add(i * 16, i * 5, 0)

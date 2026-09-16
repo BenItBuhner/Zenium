@@ -34,8 +34,15 @@ export class VelocityTracker {
 
   /** Velocity at time `now` (defaults to the last sample); a finger that paused reads as 0. */
   velocity(now?: number): { vx: number; vy: number } {
-    const end = now ?? this.samples[this.samples.length - 1]?.t ?? 0
-    const recent = this.samples.filter((s) => end - s.t <= this.windowMs)
+    const last = this.samples[this.samples.length - 1]
+    if (!last) return { vx: 0, vy: 0 }
+    const end = now ?? last.t
+    // Nothing recent at all means the finger held still before lifting.
+    if (end - last.t > this.windowMs) return { vx: 0, vy: 0 }
+    let recent = this.samples.filter((s) => end - s.t <= this.windowMs)
+    // Events coalesced by a busy main thread can leave a single sample in the window; the last
+    // stretch of movement is still the best estimate there is.
+    if (recent.length < 2) recent = this.samples.slice(-2)
     if (recent.length < 2) return { vx: 0, vy: 0 }
     const n = recent.length
     let meanT = 0

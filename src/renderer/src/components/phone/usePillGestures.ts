@@ -17,6 +17,20 @@ import { browserStore } from '@renderer/lib/ui'
 /** Movement (px) before a touch stops being a tap and its axis is locked. */
 const SLOP = 8
 
+/**
+ * Feed a move event to the tracker – including the samples the browser coalesced into it while
+ * the main thread was busy, so a fling is measured from the real finger path.
+ */
+function track(tracker: VelocityTracker, e: ReactPointerEvent<HTMLElement>): void {
+  const native = e.nativeEvent as PointerEvent & { getCoalescedEvents?: () => PointerEvent[] }
+  const coalesced = native.getCoalescedEvents?.() ?? []
+  if (coalesced.length > 0) {
+    for (const c of coalesced) tracker.add(c.timeStamp, c.clientX, c.clientY)
+  } else {
+    tracker.add(e.timeStamp, e.clientX, e.clientY)
+  }
+}
+
 type Mode = 'pending' | 'tabs' | 'overview' | 'none'
 
 interface Touch {
@@ -81,7 +95,7 @@ export function usePillGestures({ edge, onTap }: PillGestureOptions): PillGestur
   const onPointerMove = (e: ReactPointerEvent<HTMLElement>): void => {
     const t = touch.current
     if (!t || t.id !== e.pointerId) return
-    t.tracker.add(e.timeStamp, e.clientX, e.clientY)
+    track(t.tracker, e)
     let dx = e.clientX - t.x0
     let dy = e.clientY - t.y0
     if (t.mode === 'pending') {
@@ -172,7 +186,7 @@ export function useOverviewHandle({ edge }: { edge: 'bottom' | 'top' }): Overvie
     onPointerMove: (e) => {
       const t = touch.current
       if (!t || t.id !== e.pointerId) return
-      t.tracker.add(e.timeStamp, e.clientX, e.clientY)
+      track(t.tracker, e)
       dragOverview((e.clientY - t.y0) * inward)
     },
     onPointerUp: (e) => finish(e, false),
