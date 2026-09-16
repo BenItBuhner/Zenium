@@ -52,14 +52,19 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
 
   const { area, contentHidden } = useLayoutReporter(viewportRef, state, ui, glanceActive)
   const local: Rect | null = area ? { x: 0, y: 0, width: area.width, height: area.height } : null
-  const showSnapshot = (contentHidden || glanceActive) && Boolean(tab)
+  // The phone's gesture stage draws its own cards where the page was; nothing to dim behind it.
+  const staged = ui.stageActive && !overlayCoversContentBesidesStage(ui)
+  const showSnapshot = (contentHidden || glanceActive) && Boolean(tab) && !staged
   const dropKey = dropStore.use((s) => s.key)
   const foreign = isForeignTab(state, tab?.id)
 
   return (
-    <div className="zen-content-frame relative flex h-full min-h-0 flex-col overflow-hidden">
+    <div
+      className="zen-content-frame relative flex h-full min-h-0 flex-col overflow-hidden"
+      data-staged={staged || undefined}
+    >
       <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden">
-        {!tab && !ui.urlbar.open && ui.overlay === 'none' && <EmptyState />}
+        {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
         {tab && foreign && !contentHidden && !glanceActive && <ForeignTabPreview tabId={tab.id} />}
         {showSnapshot && (
           <div className="absolute inset-0">
@@ -100,6 +105,13 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
         <FindBar state={state} tabId={ui.findTabId} />
       )}
     </div>
+  )
+}
+
+/** Chrome that dims the page behind it and is not the gesture stage (URL bar, panels, drawer…). */
+function overlayCoversContentBesidesStage(ui: UiState): boolean {
+  return (
+    ui.overlay !== 'none' || ui.urlbar.open || ui.drag !== null || ui.drawerOpen || ui.menu !== null
   )
 }
 
