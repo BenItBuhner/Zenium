@@ -2,11 +2,12 @@ name: Android gesture demo
 
 # Records the phone chrome's URL-pill gestures (swipe to switch tabs, pull up for the tab
 # overview) on a hardware-accelerated Android emulator and uploads the video and screenshots.
-# Dispatch-only: it takes a quarter of an hour and has nothing to say about a change being correct.
+# Dispatch-only: it takes about ten minutes and has nothing to say about a change being correct.
+# The recording comes from an API 34 Google APIs image on a software GPU, so expect a handful of
+# frames per second and a pause of a second or two at the start of every gesture while the chrome
+# snapshots the live page; a phone does both in a frame.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/android-gesture-demo-b18c]
 
 permissions:
   contents: read
