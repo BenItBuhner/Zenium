@@ -291,7 +291,12 @@ jobs:
           "$apksigner" verify --print-certs "$target" | tee "$RUNNER_TEMP/certs.txt"
           # The signing certificate's digest goes into the update manifest: Android only upgrades
           # in place when it matches the installed app, and the app warns the user otherwise.
-          signer="$(sed -n 's/^Signer #1 certificate SHA-256 digest: *\([0-9a-fA-F]*\).*/\1/p' "$RUNNER_TEMP/certs.txt" | head -1 | tr 'A-F' 'a-f')"
+          # apksigner prints "Signer #1 certificate SHA-256 digest:" or, per scheme, "V2 Signer:
+          # certificate SHA-256 digest:"; every signer of one APK shares the certificate.
+          signer="$(sed -n 's/.*certificate SHA-256 digest: *\([0-9a-fA-F]\{64\}\).*/\1/p' "$RUNNER_TEMP/certs.txt" | head -1 | tr 'A-F' 'a-f')"
+          if [[ -z "$signer" ]]; then
+            echo "::warning::Could not read the APK signing certificate digest from apksigner; the manifest will not carry it"
+          fi
           printf '{"platform":"android","signing":"%s","signer":"%s"}\n' "${{ steps.keystore.outputs.signing }}" "$signer" > release/meta/android.json
           cat release/meta/android.json
           ls -l release/assets
@@ -336,11 +341,13 @@ jobs:
           sha256sum -- * > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - name: Release notes
+        # The "What's changed" API needs contents: write, which this read-only job does not have
+        # on purpose; here the notes fall back to a commit-history link and the publish job
+        # regenerates them with the full changelog.
         run: node .github/scripts/release-notes.mjs
         env:
           RELEASE_TAG: ${{ env.TAG }}
           RELEASE_VERSION: ${{ env.VERSION }}
-          GITHUB_TOKEN: ${{ github.token }}
           NOTES_FILE: release/notes.md
       - name: Dry-run summary
         if: needs.prepare.outputs.publish != 'true'
@@ -379,16 +386,28 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
       TITLE: ${{ needs.prepare.outputs.title }}
       PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.ref }}
+          fetch-depth: 0 # every tag, to pick the changelog range
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
       - uses: actions/download-artifact@v8
         with:
           name: release-bundle
           path: release
+      - name: Release notes with the generated changelog
+        run: node .github/scripts/release-notes.mjs
+        env:
+          RELEASE_TAG: ${{ env.TAG }}
+          RELEASE_VERSION: ${{ env.VERSION }}
+          GITHUB_TOKEN: ${{ github.token }}
+          NOTES_FILE: release/notes.md
       - name: Attest build provenance
         uses: actions/attest@v4
         with:
