@@ -128,6 +128,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             "view.savePage" -> if (tab == null) reply(null) else savePage(tab, args.str("name"), reply)
             "view.snapshot" -> if (tab == null) reply(null) else tab.snapshot(reply)
             "view.screenshot" -> if (tab == null) reply(null) else tab.screenshot { png -> saveToDownloads(args.str("name"), "image/png", png, reply) }
+            "view.capture" -> if (tab == null) reply(null) else tab.capture(args.str("mode", "viewport"), args.optJSONObject("region"), args.str("format", "jpeg"), reply)
 
             // --- chrome / window / app -----------------------------------------------------------
             "chrome.focus" -> { chrome.requestFocus(); reply(null) }

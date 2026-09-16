@@ -1,6 +1,8 @@
 import type { KeyBinding, Rect, Tab } from '@shared/types'
 import { zenPageHtml, type ReaderPageLookup } from '@shared/zenPages'
 import type {
+  AgentCapture,
+  AgentCaptureOptions,
   AgentInputEvent,
   FindResultInfo,
   KeyEventInput,
@@ -347,6 +349,19 @@ export class AndroidTabView implements TabView {
 
   screenshot(fileName: string): Promise<string | null> {
     return this.bridge.call<string | null>('view.screenshot', { tabId: this.tabId, name: fileName })
+  }
+
+  /**
+   * Agent screenshots beyond the viewport: Kotlin scrolls the page in viewport-sized steps and
+   * stitches the window pixels of each step (a WebView never paints what is off screen).
+   */
+  capture(options: AgentCaptureOptions): Promise<AgentCapture | null> {
+    return this.bridge.call<AgentCapture | null>('view.capture', {
+      tabId: this.tabId,
+      mode: options.mode,
+      region: options.mode === 'region' ? (options.region ?? null) : null,
+      format: options.format
+    })
   }
 
   async copyImageAt(): Promise<boolean> {

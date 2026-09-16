@@ -387,6 +387,14 @@ class TabWebView(
         }
     }
 
+    /**
+     * Agent screenshot: `mode` is `viewport`, `fullPage` or `region` (with `region` in CSS page
+     * px), `format` `jpeg` or `png`. Answers `{ data, mimeType, width, height }` or null.
+     */
+    fun capture(mode: String, region: JSONObject?, format: String, callback: (JSONObject?) -> Unit) {
+        PageCapture(this, host.activity.window, encoder).run(mode, PageCapture.parseRegion(region), format, callback)
+    }
+
     fun navState(): JSONObject = json(
         "url" to (url ?: ""),
         "title" to (title ?: ""),
