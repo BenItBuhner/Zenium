@@ -11,3 +11,16 @@ updates:
       github-actions:
         patterns:
           - '*'
+  # Electron tracks Chromium security releases; keep it and the toolchain moving. Minor and patch
+  # bumps arrive as one PR a week, majors (Electron, Vite, electron-builder) come on their own.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+    groups:
+      npm-minor-and-patch:
+        update-types:
+          - minor
+          - patch

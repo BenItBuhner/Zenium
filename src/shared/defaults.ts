@@ -7,6 +7,7 @@ import type {
   Settings
 } from './types'
 import { DEFAULT_CONTAINER_ID } from './types'
+import { DEFAULT_UPDATE_SETTINGS } from './updates'
 
 /** Off until the user turns it on in Settings → AI Agents; loopback only, approval required. */
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -114,7 +115,8 @@ export const DEFAULT_SETTINGS: Settings = {
   spaceRouting: {},
   windowSync: 'all',
   resources: structuredClone(DEFAULT_RESOURCE_SETTINGS),
-  agents: structuredClone(DEFAULT_AGENT_SETTINGS)
+  agents: structuredClone(DEFAULT_AGENT_SETTINGS),
+  updates: structuredClone(DEFAULT_UPDATE_SETTINGS)
 }
 
 /** Firefox's four default containers plus "No Container". */

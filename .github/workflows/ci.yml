@@ -30,6 +30,17 @@ jobs:
       - run: npm ci
       - run: npm run check
 
+  workflows:
+    name: Workflow lint (actionlint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      # Syntax, expression types, action inputs and shellcheck for every `run:` block.
+      - uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color
+
   desktop:
     name: Desktop package (smoke)
     runs-on: ubuntu-latest

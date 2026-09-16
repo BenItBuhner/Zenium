@@ -28,6 +28,7 @@ import { ExtensionService } from './extensions'
 import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
 import { ElectronAgentTransport } from '../agent/server'
+import { ElectronUpdateHost } from './updates'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
@@ -42,7 +43,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   resourceGovernor: true,
   sync: true,
   print: true,
-  agents: true
+  agents: true,
+  updates: true
 }
 
 /**
@@ -122,8 +124,13 @@ export class ElectronPlatform implements Platform {
     }
     this.net = {
       fetchText: async (url, options) => {
+        const signals = [
+          options.signal,
+          options.timeoutMs && AbortSignal.timeout(options.timeoutMs)
+        ]
+        const live = signals.filter((s): s is AbortSignal => Boolean(s))
         const res = await net.fetch(url, {
-          signal: options.signal,
+          signal: live.length > 0 ? AbortSignal.any(live) : undefined,
           headers: options.headers,
           cache: 'no-store'
         })
@@ -168,6 +175,10 @@ export class ElectronPlatform implements Platform {
 
   createAgentTransport(): ElectronAgentTransport {
     return new ElectronAgentTransport()
+  }
+
+  createUpdateHost(): ElectronUpdateHost {
+    return new ElectronUpdateHost()
   }
 
   /** Build the browser, wire IPC and sessions, and restore the windows. */

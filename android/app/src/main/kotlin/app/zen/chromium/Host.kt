@@ -45,6 +45,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
         private set
     val tabs = TabHost(root, this)
     val agentServer = AgentServer(this)
+    val updates = Updates(activity, this)
     val pageToken: String = SecureRandom().let { r -> ByteArray(16).also(r::nextBytes).joinToString("") { "%02x".format(it) } }
     val pageScript: String = activity.assets.open("page.js").bufferedReader().readText().replace("__ZEN_TOKEN__", pageToken)
     private val io = Executors.newCachedThreadPool { r -> Thread(r, "zen-io") }
@@ -62,6 +63,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     fun dispatchSync(method: String, args: JSONObject): Any? = when (method) {
         "boot" -> json(
             "version" to BuildConfig.VERSION_NAME,
+            "signer" to Updates.signerSha256(activity),
             "files" to storage.readAll(),
             "downloadsDir" to (Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)?.absolutePath ?: ""),
             "insets" to activity.currentInsets(),
@@ -157,7 +159,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
                 reply(null)
             }
             "clipboard.writeImage" -> copyImage(args.str("url"), reply)
-            "net.fetch" -> fetchText(args.str("url"), args.obj("headers"), reply)
+            "net.fetch" -> fetchText(args.str("url"), args.obj("headers"), args.num("timeoutMs").toInt(), reply)
             "download.bind" -> { downloads.bind(args.str("token"), args.str("id")); reply(null) }
             "download.cancel" -> { downloads.cancel(args.str("id")); reply(null) }
             "download.pause", "download.resume" -> reply(null)
@@ -170,6 +172,13 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             "agent.start" -> reply(agentServer.start(args.num("port", 41735.0).toInt(), args.bool("lan")))
             "agent.stop" -> { agentServer.stop(); reply(null) }
             "agent.reply" -> { agentServer.reply(args.optInt("id"), args); reply(null) }
+
+            // --- automatic updates -----------------------------------------------------------------
+            "update.download" -> updates.download(
+                args.str("token"), args.str("url"), args.str("name"), args.num("size").toLong(), args.str("sha256"), reply
+            )
+            "update.cancel" -> { updates.cancel(args.str("token")); reply(null) }
+            "update.install" -> reply(updates.install(args.str("path")))
 
             else -> throw IllegalArgumentException("Unknown method: $method")
         }
@@ -339,12 +348,14 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
         }
     }
 
-    private fun fetchText(url: String, headers: JSONObject, reply: (Any?) -> Unit) {
+    /** `timeoutMs` ≤ 0 keeps the short default meant for suggestions and Live Folders. */
+    private fun fetchText(url: String, headers: JSONObject, timeoutMs: Int, reply: (Any?) -> Unit) {
         io.execute {
             val result = runCatching {
+                val timeout = if (timeoutMs > 0) timeoutMs else 2500
                 val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 2500
-                    readTimeout = 2500
+                    connectTimeout = timeout
+                    readTimeout = timeout
                     for (key in headers.keys()) setRequestProperty(key, headers.str(key))
                 }
                 val status = conn.responseCode
@@ -379,6 +390,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
 
     fun destroy() {
         agentServer.stop()
+        updates.shutdown()
         tabs.destroyAll()
         io.shutdownNow()
     }

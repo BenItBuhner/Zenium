@@ -2,6 +2,7 @@
  * Types shared between the main process, the preload script and the renderer.
  * Everything here must be JSON-serialisable (it crosses the IPC boundary).
  */
+import type { UpdateSettings, UpdateStatus } from './updates'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -36,6 +37,8 @@ export interface HostCapabilities {
   print: boolean
   /** The host can run the MCP server that lets AI agents control the browser. */
   agents: boolean
+  /** The host checks GitHub Releases for new versions and can fetch / apply them. */
+  updates: boolean
 }
 
 export interface Rect {
@@ -563,6 +566,7 @@ export interface Settings {
   windowSync: WindowSyncMode
   resources: ResourceSettings
   agents: AgentSettings
+  updates: UpdateSettings
 }
 
 // ---------------------------------------------------------------------------
@@ -854,6 +858,8 @@ export interface UIState {
   /** Connected AI agents (MCP sessions) and the tabs they drive. */
   agents: AgentInfo[]
   agentServer: AgentServerStatus
+  /** Automatic updates: what the browser knows about the latest release and how far it got. */
+  updates: UpdateStatus
 }
 
 export interface FindResult {
@@ -1227,6 +1233,16 @@ export interface Commands {
   'agent.forget': { args: { name: string }; result: void }
   /** Issue a new token (existing HTTP sessions stay valid until they end). */
   'agent.regenerateToken': { args: void; result: string }
+
+  /** Look for a newer release now (Settings → Updates → "Check now"). */
+  'updates.check': { args: void; result: void }
+  /** Fetch and verify the release found by the last check. */
+  'updates.download': { args: void; result: void }
+  /** Apply a downloaded update: restart into it, open the installer, or hand it to the OS. */
+  'updates.install': { args: void; result: void }
+  'updates.cancel': { args: void; result: void }
+  /** Open the release notes on GitHub in a tab. */
+  'updates.openRelease': { args: void; result: void }
 }
 
 export type CommandName = keyof Commands

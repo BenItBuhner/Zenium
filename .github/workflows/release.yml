@@ -1,8 +1,11 @@
 name: Release
 
 # Builds every desktop package and the Android APK for a v* tag and publishes them as a GitHub
-# release. Start it by pushing a tag (or running "Prepare release", which pushes one for you), or
-# dispatch it by hand to rebuild an existing tag or to dry-run the pipeline from a branch.
+# release together with what the in-app updater needs: `update-manifest.json` (+ `.sig`), the
+# electron-updater feeds (`latest*.yml`, `*.blockmap`) and `SHA256SUMS.txt`. Start it by pushing a
+# tag (or running "Prepare release", which pushes one for you), or dispatch it by hand to rebuild
+# an existing tag or to dry-run the pipeline from a branch. Pull requests that touch the pipeline
+# itself run the whole build as a dry run (nothing is published) so changes are proven before merge.
 #
 # Optional repository secrets turn on code signing; without them the packages are built unsigned
 # and the release notes say so:
@@ -11,10 +14,20 @@ name: Release
 #   WINDOWS_CERTIFICATE_P12_BASE64, WINDOWS_CERTIFICATE_PASSWORD  Authenticode certificate
 #   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
 #   ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD                    APK release keystore
+#   UPDATE_MANIFEST_SIGNING_KEY                                ed25519 key (PKCS#8 PEM) that signs
+#                                                              update-manifest.json; its public key is
+#                                                              built into the apps of the same release
+#                                                              (node .github/scripts/update-manifest.mjs keygen)
 
 on:
   push:
     tags: ['v*']
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/scripts/**'
+      - 'electron-builder.yml'
+      - 'build/**'
   workflow_dispatch:
     inputs:
       tag:
@@ -33,7 +46,7 @@ permissions:
 
 concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   NODE_VERSION: 22
@@ -50,6 +63,7 @@ jobs:
       prerelease: ${{ steps.meta.outputs.prerelease }}
       publish: ${{ steps.meta.outputs.publish }}
       title: ${{ steps.meta.outputs.title }}
+      update_public_key: ${{ steps.signing.outputs.public_key }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -59,7 +73,24 @@ jobs:
         run: node .github/scripts/release-meta.mjs
         env:
           INPUT_TAG: ${{ inputs.tag }}
-          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_DRY_RUN: ${{ github.event_name == 'pull_request' || inputs.dry_run == true }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Update-manifest signing key
+        id: signing
+        env:
+          UPDATE_MANIFEST_SIGNING_KEY: ${{ secrets.UPDATE_MANIFEST_SIGNING_KEY }}
+        run: |
+          if [[ -n "$UPDATE_MANIFEST_SIGNING_KEY" ]]; then
+            key="$(node .github/scripts/update-manifest.mjs public-key)"
+            echo "public_key=$key" >> "$GITHUB_OUTPUT"
+            echo "Update manifests of this release are signed; the apps pin the public key $key"
+          else
+            echo "public_key=" >> "$GITHUB_OUTPUT"
+            echo "::notice::UPDATE_MANIFEST_SIGNING_KEY is not configured: the update manifest is published unsigned" \
+              "and the apps rely on HTTPS + per-file SHA-256 (node .github/scripts/update-manifest.mjs keygen creates a key)"
+          fi
 
   check:
     name: Typecheck, lint, test
@@ -100,7 +131,7 @@ jobs:
             args: --win --arm64
           - name: macos
             os: macos-latest
-            args: --mac # x64 and arm64 disk images, see electron-builder.yml
+            args: --mac # x64 and arm64 disk images + zips, see electron-builder.yml
     defaults:
       run:
         shell: bash
@@ -112,6 +143,8 @@ jobs:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       WIN_CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE_P12_BASE64 }}
       WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      # Built into the app: the key the update manifest must be signed with (empty = not enforced).
+      VITE_ZEN_UPDATE_PUBLIC_KEY: ${{ needs.prepare.outputs.update_public_key }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -121,19 +154,34 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - name: Bundle main, preload and renderer
-        run: npx electron-vite build
-      - name: Package
-        id: package
+      - name: Decide what gets signed
+        id: signing
         run: |
           signed=false
           notarized=false
           case "${{ matrix.name }}" in
             macos)
               if [[ -n "$MAC_CSC_LINK" ]]; then
-                export CSC_LINK="$MAC_CSC_LINK" CSC_KEY_PASSWORD="$MAC_CSC_KEY_PASSWORD"
                 signed=true
                 if [[ -n "$APPLE_ID" ]]; then notarized=true; fi
+              fi
+              ;;
+            windows-*)
+              if [[ -n "$WIN_CSC_LINK" ]]; then signed=true; fi
+              ;;
+          esac
+          # A signed macOS app can be swapped in place by Squirrel.Mac; the app needs to know.
+          echo "VITE_ZEN_MAC_SIGNED=$signed" >> "$GITHUB_ENV"
+          echo "signed=$signed" >> "$GITHUB_OUTPUT"
+          echo "notarized=$notarized" >> "$GITHUB_OUTPUT"
+      - name: Bundle main, preload and renderer
+        run: npx electron-vite build
+      - name: Package
+        run: |
+          case "${{ matrix.name }}" in
+            macos)
+              if [[ -n "$MAC_CSC_LINK" ]]; then
+                export CSC_LINK="$MAC_CSC_LINK" CSC_KEY_PASSWORD="$MAC_CSC_KEY_PASSWORD"
               else
                 # No certificate: do not search the runner keychain, ship the app unsigned.
                 export CSC_IDENTITY_AUTO_DISCOVERY=false
@@ -141,30 +189,36 @@ jobs:
               fi
               ;;
             windows-*)
-              if [[ -n "$WIN_CSC_LINK" ]]; then
-                signed=true
-              else
-                unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD
-              fi
+              if [[ -z "$WIN_CSC_LINK" ]]; then unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD; fi
               ;;
           esac
-          # --publish never: electron-builder would otherwise try to upload to GitHub itself.
+          # --publish never: electron-builder would otherwise try to upload to GitHub itself. It
+          # still writes the latest*.yml feeds because electron-builder.yml has a publish block.
           npx electron-builder ${{ matrix.args }} --publish never
-          echo "signed=$signed" >> "$GITHUB_OUTPUT"
-          echo "notarized=$notarized" >> "$GITHUB_OUTPUT"
-      - name: Collect packages
+      - name: Collect packages and updater feeds
         run: |
           mkdir -p release/assets release/meta
           shopt -s nullglob
-          files=(dist/*.exe dist/*.dmg dist/*.AppImage dist/*.deb)
+          files=(dist/*.exe dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb)
           if [[ ${#files[@]} -eq 0 ]]; then
             echo "::error::electron-builder produced no packages in dist/"
             ls -la dist || true
             exit 1
           fi
           cp "${files[@]}" release/assets/
+          feeds=(dist/latest*.yml dist/*.blockmap)
+          if [[ ${#feeds[@]} -eq 0 ]]; then
+            echo "::error::electron-builder wrote no latest*.yml feed (is the publish block in electron-builder.yml intact?)"
+            exit 1
+          fi
+          cp "${feeds[@]}" release/assets/
+          if [[ "${{ matrix.name }}" == windows-arm64 && -f release/assets/latest.yml ]]; then
+            # electron-builder names the Windows feed latest.yml for every arch; give arm64 its own
+            # so both can sit in one release (the app asks for latest-arm64.yml on ARM Windows).
+            mv release/assets/latest.yml release/assets/latest-arm64.yml
+          fi
           printf '{"platform":"%s","signed":%s,"notarized":%s}\n' \
-            "${{ matrix.name }}" "${{ steps.package.outputs.signed }}" "${{ steps.package.outputs.notarized }}" \
+            "${{ matrix.name }}" "${{ steps.signing.outputs.signed }}" "${{ steps.signing.outputs.notarized }}" \
             > "release/meta/${{ matrix.name }}.json"
           ls -l release/assets
       - uses: actions/upload-artifact@v7
@@ -185,6 +239,7 @@ jobs:
       ZEN_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ZEN_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ZEN_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      VITE_ZEN_UPDATE_PUBLIC_KEY: ${{ needs.prepare.outputs.update_public_key }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -233,8 +288,17 @@ jobs:
           target="release/assets/zen-chromium-${{ needs.prepare.outputs.version }}.apk"
           cp "${apks[0]}" "$target"
           apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
-          "$apksigner" verify --print-certs "$target"
-          printf '{"platform":"android","signing":"%s"}\n' "${{ steps.keystore.outputs.signing }}" > release/meta/android.json
+          "$apksigner" verify --print-certs "$target" | tee "$RUNNER_TEMP/certs.txt"
+          # The signing certificate's digest goes into the update manifest: Android only upgrades
+          # in place when it matches the installed app, and the app warns the user otherwise.
+          # apksigner prints "Signer #1 certificate SHA-256 digest:" or, per scheme, "V2 Signer:
+          # certificate SHA-256 digest:"; every signer of one APK shares the certificate.
+          signer="$(sed -n 's/.*certificate SHA-256 digest: *\([0-9a-fA-F]\{64\}\).*/\1/p' "$RUNNER_TEMP/certs.txt" | head -1 | tr 'A-F' 'a-f')"
+          if [[ -z "$signer" ]]; then
+            echo "::warning::Could not read the APK signing certificate digest from apksigner; the manifest will not carry it"
+          fi
+          printf '{"platform":"android","signing":"%s","signer":"%s"}\n' "${{ steps.keystore.outputs.signing }}" "$signer" > release/meta/android.json
+          cat release/meta/android.json
           ls -l release/assets
       - uses: actions/upload-artifact@v7
         with:
@@ -244,9 +308,74 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+  assemble:
+    name: Manifest, checksums, notes
+    needs: [prepare, desktop, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+          fetch-depth: 0 # every tag, to pick the changelog range
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+      - name: Update manifest
+        run: node .github/scripts/update-manifest.mjs build
+        env:
+          RELEASE_TAG: ${{ env.TAG }}
+          RELEASE_VERSION: ${{ env.VERSION }}
+          UPDATE_MANIFEST_SIGNING_KEY: ${{ secrets.UPDATE_MANIFEST_SIGNING_KEY }}
+      - name: Checksums
+        working-directory: release/assets
+        run: |
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Release notes
+        # The "What's changed" API needs contents: write, which this read-only job does not have
+        # on purpose; here the notes fall back to a commit-history link and the publish job
+        # regenerates them with the full changelog.
+        run: node .github/scripts/release-notes.mjs
+        env:
+          RELEASE_TAG: ${{ env.TAG }}
+          RELEASE_VERSION: ${{ env.VERSION }}
+          NOTES_FILE: release/notes.md
+      - name: Dry-run summary
+        if: needs.prepare.outputs.publish != 'true'
+        run: |
+          {
+            echo "### Dry run: nothing published"
+            echo
+            echo "The packages, feeds, manifest and notes below are attached to this run as the \`release-bundle\` artifact."
+            echo
+            echo '```'
+            ls -l release/assets
+            echo '```'
+            echo
+            cat release/notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-bundle
+          path: |
+            release/assets
+            release/notes.md
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
   publish:
     name: Publish GitHub release
-    needs: [prepare, desktop, android]
+    needs: [prepare, assemble]
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -265,27 +394,24 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.ref }}
           fetch-depth: 0 # every tag, to pick the changelog range
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
       - uses: actions/download-artifact@v8
         with:
-          pattern: release-*
+          name: release-bundle
           path: release
-          merge-multiple: true
-      - name: Checksums
-        working-directory: release/assets
-        run: |
-          sha256sum -- * > SHA256SUMS.txt
-          cat SHA256SUMS.txt
-      - name: Attest build provenance
-        uses: actions/attest@v4
-        with:
-          subject-path: release/assets/*
-      - name: Write release notes
+      - name: Release notes with the generated changelog
         run: node .github/scripts/release-notes.mjs
         env:
           RELEASE_TAG: ${{ env.TAG }}
           RELEASE_VERSION: ${{ env.VERSION }}
           GITHUB_TOKEN: ${{ github.token }}
           NOTES_FILE: release/notes.md
+      - name: Attest build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: release/assets/*
       - name: Create the draft release and upload the packages
         run: |
           if gh release view "$TAG" --json isDraft --jq .isDraft > "$RUNNER_TEMP/is-draft" 2>/dev/null; then
@@ -309,4 +435,6 @@ jobs:
             echo "## Released $TAG"
             echo
             echo "$url"
+            echo
+            echo "Update manifest: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG/update-manifest.json"
           } >> "$GITHUB_STEP_SUMMARY"

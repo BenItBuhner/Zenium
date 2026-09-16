@@ -23,6 +23,7 @@ import type {
   Tab
 } from '../shared/types'
 import type { KeyInput } from '../shared/shortcuts'
+import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '../shared/updates'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
@@ -352,7 +353,12 @@ export interface ShellHost {
 export interface NetHost {
   fetchText(
     url: string,
-    options: { signal?: AbortSignal; headers?: Record<string, string> }
+    options: {
+      signal?: AbortSignal
+      headers?: Record<string, string>
+      /** Overall time limit; hosts default to a few seconds (suggestions, Live Folders). */
+      timeoutMs?: number
+    }
   ): Promise<{ ok: boolean; status: number; text: string }>
 }
 
@@ -464,6 +470,34 @@ export interface AgentTransport {
   stop(): Promise<void>
 }
 
+/**
+ * The host side of automatic updates. The core (`updates.ts`) finds the release, validates the
+ * manifest and decides which package applies; the host knows how it was installed and does the
+ * platform-specific fetch and install: electron-updater on desktop installs that can be swapped
+ * in place, a checksummed download plus the system installer elsewhere.
+ */
+export interface UpdateHost {
+  /** How this app was installed (fixed for the lifetime of the process). */
+  target(): UpdateTarget
+  /** Base64 raw ed25519 public keys built into this app; empty = manifest signatures not enforced. */
+  publicKeys(): string[]
+  /** Android: hex SHA-256 of the certificate the running app is signed with. */
+  signer(): string | null
+  /**
+   * Fetch and verify `asset`. Resolves with the local file for `installer` mode (opened by
+   * `install`) or null when the update is staged for an in-place install. Rejects with an error
+   * named `AbortError` after `cancel()`.
+   */
+  download(
+    release: UpdateRelease,
+    asset: UpdateAsset,
+    onProgress: (progress: UpdateProgress) => void
+  ): Promise<string | null>
+  /** Apply the downloaded update: restart into it, or hand the file to the system installer. */
+  install(release: UpdateRelease, downloadedPath: string | null): Promise<void>
+  cancel(): void
+}
+
 export interface Platform {
   readonly info: PlatformInfo
   readonly capabilities: HostCapabilities
@@ -485,6 +519,7 @@ export interface Platform {
   createExtensions?(browser: Browser): ExtensionHost
   createSync?(browser: Browser): SyncHost
   createAgentTransport?(browser: Browser): AgentTransport
+  createUpdateHost?(browser: Browser): UpdateHost
 }
 
 /** Schedule work for the next macrotask in Node and browsers alike. */
