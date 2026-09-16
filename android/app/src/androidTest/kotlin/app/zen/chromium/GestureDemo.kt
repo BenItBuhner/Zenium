@@ -179,7 +179,7 @@ class GestureDemo {
             SystemClock.sleep(200)
         }
         Log.i(TAG, if (File(out, "recording").exists()) "recorder rolling" else "recorder never confirmed, going ahead")
-        SystemClock.sleep(2_500)
+        SystemClock.sleep(1_500)
     }
 
     private fun demo() {
@@ -223,7 +223,8 @@ class GestureDemo {
         f.settleIn(-n, 0f)
         f.moveBy(-0.40f * w, 0f, 120)
         f.up()
-        SystemClock.sleep(300)
+        // The snappy spring settles in ~300 ms; a touch this soon lands on a card still moving.
+        SystemClock.sleep(80)
         f.down(pillCenterX, pillY)
         f.moveBy(0.04f * w, 0f, 450)
         shot("02-caught-mid-flight")
@@ -410,6 +411,6 @@ class GestureDemo {
         private const val STEP_MS = 8L
         /** Past the 8 CSS px slop at any plausible density, hardly visible on the track. */
         private const val NUDGE = 30f
-        private const val STAGE_WAIT = 2_000L
+        private const val STAGE_WAIT = 2_400L
     }
 }
