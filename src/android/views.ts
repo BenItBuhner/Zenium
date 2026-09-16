@@ -13,6 +13,7 @@ import type {
   TabViewEvents,
   TabViewHost
 } from '@core/platform'
+import { looksLikeStatements } from '@core/agent/util'
 import type { Bridge } from './bridge'
 
 /** Navigation state Kotlin mirrors into JS on every navigation event. */
@@ -241,8 +242,15 @@ export class AndroidTabView implements TabView {
     })
   }
 
+  /**
+   * Like Electron's `executeJavaScript`: expressions and statement lists both run, and a returned
+   * Promise is awaited (Kotlin does that). A statement list is wrapped into a function so the
+   * Kotlin wrapper – which needs an expression – can take it; its completion value is lost, which
+   * no caller relies on.
+   */
   executeJavaScript(code: string): Promise<unknown> {
-    return this.bridge.call<unknown>('view.eval', { tabId: this.tabId, code })
+    const shaped = looksLikeStatements(code) ? `(() => { ${code}\n })()` : code
+    return this.bridge.call<unknown>('view.eval', { tabId: this.tabId, code: shaped })
   }
 
   /** Trusted touch / key events synthesised by Kotlin on the tab's WebView. */

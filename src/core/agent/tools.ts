@@ -8,7 +8,9 @@ import { RpcError } from './jsonrpc'
 import { pageCall, type PageActionResult, type PageLocation, type PageSnapshot } from './page'
 import type { JsonSchema, ToolDefinition, ToolResult } from './protocol'
 import type { AgentService, AgentSession } from './service'
-import { sleep, textError } from './util'
+import { looksLikeStatements, sleep, textError } from './util'
+
+export { looksLikeStatements }
 
 /**
  * The tools agents see. Page tools use the vocabulary agents already know from Playwright MCP
@@ -1303,7 +1305,7 @@ const browserTakeScreenshot: AgentTool = {
       ctx.agents
         .evalPage(
           view,
-          `for (const el of document.querySelectorAll('[data-zen-agent="cursor"],[data-zen-agent="ripple"]')) el.style.visibility = ${visible ? "''" : "'hidden'"}`
+          `(() => { for (const el of document.querySelectorAll('[data-zen-agent="cursor"],[data-zen-agent="ripple"]')) el.style.visibility = ${visible ? "''" : "'hidden'"}; return true })()`
         )
         .catch(() => undefined)
     await overlays(false)
@@ -1570,19 +1572,6 @@ export function wrapScript(
     return { error: (error as Error).message }
   }
   return { error: 'could not parse the script' }
-}
-
-/** Without a parser: does this read as a statement list rather than one expression? */
-export function looksLikeStatements(source: string): boolean {
-  const s = source.trim()
-  if (/^(const|let|var|if|for|while|do|switch|try|return|throw)\b/.test(s)) return true
-  // A function (arrow or classic) is one expression however many statements its body has; the
-  // wrapper calls it.
-  if (/^(async\s*)?(\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/.test(s) || /^(async\s+)?function\b/.test(s))
-    return false
-  if (/^\s*(return|const|let|var|if|for|while|try|throw)\b/m.test(s)) return true
-  // `a(); b()` – a semicolon followed by more code (one trailing `;` is still an expression).
-  return /;\s*\S/.test(s)
 }
 
 const zenHistory: AgentTool = {
