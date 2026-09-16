@@ -112,7 +112,11 @@ export class ElectronPlatform implements Platform {
       }
     }
     this.clipboard = {
-      writeText: (text) => clipboard.writeText(text),
+      // Asynchronous since Electron 44; the host contract stays fire-and-forget.
+      writeText: (text) =>
+        void clipboard
+          .writeText(text)
+          .catch((error: Error) => console.warn('[zen] clipboard:', error.message)),
       writeImageFromUrl: (url) => copyImageFromUrl(url)
     }
     this.shell = {
