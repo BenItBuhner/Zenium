@@ -79,7 +79,7 @@ class AgentServer(private val host: Host) {
 
     private fun handle(client: Socket) {
         client.use {
-            it.soTimeout = 30_000
+            it.soTimeout = REQUEST_TIMEOUT_MS
             val input = BufferedInputStream(it.getInputStream())
             val request = try {
                 parseRequest(input, it.inetAddress?.hostAddress ?: "")
@@ -93,7 +93,7 @@ class AgentServer(private val host: Host) {
             request.put("id", id)
             main.post { host.chrome.hostEvent("agent.request", request) }
             val response = try {
-                queue.poll(30, TimeUnit.SECONDS)
+                queue.poll(REQUEST_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
             } catch (e: InterruptedException) {
                 null
             }
@@ -212,6 +212,12 @@ class AgentServer(private val host: Host) {
     companion object {
         private const val TAG = "ZenAgent"
         private const val MAX_BODY = 8 * 1024 * 1024
+        /**
+         * How long one tool call may take before the client gets a 503. `browser_wait_for` alone
+         * may run for 30 s and a stitched full-page capture for several more; the desktop server
+         * keeps connections for 65 s, so the same budget applies here.
+         */
+        private const val REQUEST_TIMEOUT_MS = 65_000
         private val SERVER_STOPPED = JSONObject()
     }
 }
