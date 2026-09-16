@@ -26,7 +26,8 @@
     "dev:android": "vite -c vite.android.config.ts",
     "build:android:web": "vite build -c vite.android.config.ts && vite build -c vite.android.config.ts --mode page",
     "build:android": "npm run build:android:web && cd android && ./gradlew assembleDebug -PskipWeb",
-    "build:android:release": "npm run build:android:web && cd android && ./gradlew assembleRelease -PskipWeb"
+    "build:android:release": "npm run build:android:web && cd android && ./gradlew assembleRelease -PskipWeb",
+    "release": "node .github/scripts/cut-release.mjs"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",

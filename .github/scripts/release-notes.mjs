@@ -32,8 +32,15 @@ const allowIncomplete = (process.env.ALLOW_INCOMPLETE ?? 'false') === 'true'
 
 const downloadBase = `${serverUrl}/${repo}/releases/download/${tag}`
 const CHECKSUMS = 'SHA256SUMS.txt'
+const MANIFEST = 'update-manifest.json'
+const SIGNATURE = 'update-manifest.json.sig'
+/** Files the in-app updater consumes; listed under "Automatic updates" instead of the table. */
+const UPDATER_FILE = /(\.yml|\.blockmap)$/
 
-/** Every package a complete release ships, in the order shown on the release page. */
+/**
+ * Every package a complete release ships, in the order shown on the release page. `updaterOnly`
+ * packages are required but not offered for download (the macOS zips feed Squirrel.Mac).
+ */
 const CATALOG = [
   {
     key: 'windows-x64',
@@ -62,6 +69,22 @@ const CATALOG = [
     platform: 'macOS (Intel)',
     arch: 'x64',
     kind: 'Disk image'
+  },
+  {
+    key: 'macos-zip-arm64',
+    test: /-arm64\.zip$/,
+    platform: 'macOS (Apple Silicon)',
+    arch: 'arm64',
+    kind: 'Auto-update archive',
+    updaterOnly: true
+  },
+  {
+    key: 'macos-zip-x64',
+    test: /-x64\.zip$/,
+    platform: 'macOS (Intel)',
+    arch: 'x64',
+    kind: 'Auto-update archive',
+    updaterOnly: true
   },
   {
     key: 'linux-appimage-x64',
@@ -236,7 +259,16 @@ for (const entry of CATALOG) {
   matched.add(file)
   rows.push({ ...entry, file, size: statSync(join(assetsDir, file)).size })
 }
-const extras = files.filter((name) => !matched.has(name) && name !== CHECKSUMS)
+const extras = files.filter(
+  (name) =>
+    !matched.has(name) &&
+    name !== CHECKSUMS &&
+    name !== MANIFEST &&
+    name !== SIGNATURE &&
+    !UPDATER_FILE.test(name)
+)
+const manifestSigned = files.includes(SIGNATURE)
+const feeds = files.filter((name) => name.endsWith('.yml'))
 
 if (missing.length > 0) {
   const list = missing.map((entry) => `${entry.platform} ${entry.arch}`).join(', ')
@@ -269,9 +301,9 @@ const sampleFile = rows[0]?.file ?? appImageX64
 const table = [
   '| Platform | Architecture | Download | Size |',
   '| --- | --- | --- | --- |',
-  ...rows.map(
-    (row) => `| ${row.platform} | ${row.arch} | ${link(row.file)} | ${formatSize(row.size)} |`
-  )
+  ...rows
+    .filter((row) => !row.updaterOnly)
+    .map((row) => `| ${row.platform} | ${row.arch} | ${link(row.file)} | ${formatSize(row.size)} |`)
 ]
 if (extras.length > 0) {
   table.push(
@@ -343,6 +375,26 @@ const verifying = [
   '```'
 ]
 
+const updating = [
+  `Zen checks this release's [\`${MANIFEST}\`](${downloadBase}/${MANIFEST}) (version, per-package download URL, size and SHA-256${
+    manifestSigned ? ', signed with the project ed25519 key' : ''
+  }) on startup and every few hours – see *Settings → Updates*.`,
+  '',
+  '- **Windows** and **Linux** (AppImage, deb) download the update in the background and install it when Zen restarts.',
+  macSigned
+    ? '- **macOS** downloads the update in the background and installs it when Zen restarts.'
+    : '- **macOS**: this build is not signed by Apple, so macOS cannot swap it in place; Zen downloads the disk image, verifies it and opens it for you to drag over the old app.',
+  androidReleaseKey
+    ? '- **Android** downloads the APK, verifies it and hands it to the package installer.'
+    : '- **Android**: the APK is signed with a temporary CI key, so it cannot replace an earlier install in place; Zen tells you to uninstall first.',
+  manifestSigned
+    ? null
+    : '- The manifest is not signed yet (no `UPDATE_MANIFEST_SIGNING_KEY` configured); the app relies on HTTPS and the per-file SHA-256.',
+  feeds.length > 0
+    ? `- electron-updater feeds: ${feeds.map((f) => `[\`${f}\`](${downloadBase}/${f})`).join(', ')}.`
+    : null
+].filter((line) => line !== null)
+
 const previous = previousTag()
 const changes = await generatedNotes(previous)
 
@@ -360,6 +412,10 @@ const notes = [
   '## Verifying a download',
   '',
   ...verifying,
+  '',
+  '## Automatic updates',
+  '',
+  ...updating,
   '',
   "## What's changed",
   '',

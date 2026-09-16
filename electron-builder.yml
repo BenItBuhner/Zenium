@@ -15,6 +15,16 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+# Automatic updates (electron-updater). This block makes electron-builder write `app-update.yml`
+# into the packaged app and emit the `latest*.yml` feed files next to every installer, even with
+# `--publish never` (the Release workflow uploads them itself). The app never uses it to discover
+# releases: it reads the release's update-manifest.json first and then points electron-updater at
+# that exact release (src/main/platform/updates.ts).
+publish:
+  provider: github
+  owner: BenItBuhner
+  repo: Zenium
+  releaseType: release
 # Every artifact name carries the CPU architecture so that the x64 and arm64 builds of one release
 # can sit next to each other on the GitHub release page (see .github/workflows/release.yml).
 win:
@@ -34,6 +44,13 @@ mac:
       arch:
         - x64
         - arm64
+    # Squirrel.Mac (the updater behind electron-updater on macOS) installs from a zip, not a DMG.
+    # Only usable once the app is code-signed; unsigned builds fall back to opening the DMG.
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  artifactName: ${name}-${version}-${arch}.${ext}
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSCameraUsageDescription: Zen requests access to the device's camera for websites that ask for it.
