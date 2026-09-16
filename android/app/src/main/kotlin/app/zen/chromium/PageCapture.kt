@@ -46,13 +46,14 @@ class PageCapture(
             return
         }
         // The rounded corners of the tab view would otherwise be cut out of every copy (and show
-        // up once per strip in a stitched image).
+        // up once per strip in a stitched image). The new outline is drawn on the next frame and
+        // is in the window buffer one frame later.
         squareCorners(true)
         val finish: (JSONObject?) -> Unit = { result ->
             squareCorners(false)
             callback(result)
         }
-        awaitFrames(1) {
+        awaitFrames(2) {
             if (mode == CapturePlan.MODE_VIEWPORT) {
                 copyView { bitmap -> if (bitmap == null) finish(null) else encode(bitmap, format, finish) }
                 return@awaitFrames

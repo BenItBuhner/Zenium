@@ -719,7 +719,7 @@ export class AgentService implements SessionStore, McpHandlers {
     if (!view) {
       view = tabs.ensureLoaded(tabId, win)
       if (!view) throw new RpcError(-32002, `Tab ${tabId} could not be loaded`)
-      await this.waitForLoad(tabId, 15_000)
+      await this.waitForLoad(tabId, 15_000, { expectNavigation: true })
     }
     if (tab.frozen) await this.browser.governor.thaw(tabId, true)
     view.setBackgroundThrottling?.(false)
