@@ -145,6 +145,8 @@ export class BrowserState {
   private readonly store: JsonStore<Persisted>
   private readonly listeners = new Set<StateListener>()
   private scheduled = false
+  /** A persistent commit is waiting for the scheduled tick. */
+  private dirty = false
   private shortcutsCache: Shortcut[] | null = null
   /** The last set of synced windows written to disk (used once they are all closed). */
   private lastWindows: PersistedWindow[] = []
@@ -429,12 +431,23 @@ export class BrowserState {
 
   /** Broadcast + persist, coalesced to once per tick. */
   commit(): void {
+    this.dirty = true
+    this.schedule()
+  }
+
+  /**
+   * One deferred broadcast per tick, whichever kind of commit asked first. A volatile commit that
+   * gets in ahead of a persistent one in the same tick must not swallow the disk write.
+   */
+  private schedule(): void {
     if (this.scheduled) return
     this.scheduled = true
     defer(() => {
       this.scheduled = false
+      const persist = this.dirty
+      this.dirty = false
       for (const listener of this.listeners) listener()
-      if (!this.frozen) this.store.write(this.toPersisted())
+      if (persist && !this.frozen) this.store.write(this.toPersisted())
     })
   }
 
@@ -445,12 +458,7 @@ export class BrowserState {
 
   /** Update only volatile UI state (no disk write). */
   commitVolatile(): void {
-    if (this.scheduled) return
-    this.scheduled = true
-    defer(() => {
-      this.scheduled = false
-      for (const listener of this.listeners) listener()
-    })
+    this.schedule()
   }
 
   private toPersisted(): Persisted {
