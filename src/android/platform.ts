@@ -1,6 +1,7 @@
 import type { EventName, Events, HostCapabilities } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { newId } from '@shared/ids'
+import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '@shared/updates'
 import { Browser } from '@core/browser'
 import { RendererMenuHost } from '@core/rendererMenus'
 import type { ZenWindow } from '@core/window'
@@ -18,6 +19,7 @@ import type {
   SessionHost,
   ShellHost,
   StoreIO,
+  UpdateHost,
   WindowHost,
   WindowHostFactory
 } from '@core/platform'
@@ -40,12 +42,15 @@ export const ANDROID_CAPABILITIES: HostCapabilities = {
   resourceGovernor: false,
   sync: false,
   print: true,
-  agents: true
+  agents: true,
+  updates: true
 }
 
 /** Everything Kotlin hands over synchronously before the chrome renders. */
 export interface BootInfo {
   version: string
+  /** Hex SHA-256 of the certificate this APK is signed with (null in the preview host). */
+  signer: string | null
   /** Persisted JSON documents by name (state.json, history.json, …). */
   files: Record<string, string>
   downloadsDir: string
@@ -84,6 +89,104 @@ export interface HostEventPayloads {
   'view.adopt': { viewId: string; parentTabId: string | null; active: boolean }
   /** An HTTP request reached the Kotlin MCP socket server; answered with `agent.reply`. */
   'agent.request': { id: number } & AgentHttpRequest
+  /** Bytes of a release APK arriving (`update.download` in flight). */
+  'update.progress': { token: string; transferred: number; total: number; bytesPerSecond: number }
+}
+
+/**
+ * Updates on Android: Kotlin downloads the APK the core picked, verifies its SHA-256 and starts
+ * the package installer; Android itself asks the user to confirm.
+ */
+class AndroidUpdateHost implements UpdateHost {
+  private token: string | null = null
+  private cancelled = false
+  private progress: ((progress: UpdateProgress) => void) | null = null
+
+  constructor(
+    private readonly bridge: Bridge,
+    private readonly signerSha256: string | null
+  ) {}
+
+  target(): UpdateTarget {
+    return { os: 'android', arch: 'universal', kind: 'apk' }
+  }
+
+  publicKeys(): string[] {
+    return (import.meta.env.VITE_ZEN_UPDATE_PUBLIC_KEY ?? '')
+      .split(/[\s,]+/)
+      .map((key) => key.trim())
+      .filter(Boolean)
+  }
+
+  signer(): string | null {
+    return this.signerSha256
+  }
+
+  async download(
+    _release: UpdateRelease,
+    asset: UpdateAsset,
+    onProgress: (progress: UpdateProgress) => void
+  ): Promise<string> {
+    if (this.token) throw new Error('a download is already running')
+    const token = newId('update')
+    this.token = token
+    this.cancelled = false
+    this.progress = onProgress
+    try {
+      const result = await this.bridge.call<{
+        ok: boolean
+        path?: string
+        cancelled?: boolean
+        error?: string
+      }>('update.download', {
+        token,
+        url: asset.url,
+        name: asset.name,
+        size: asset.size,
+        sha256: asset.sha256
+      })
+      if (result.ok && result.path) return result.path
+      if (result.cancelled || this.cancelled) {
+        const error = new Error('cancelled')
+        error.name = 'AbortError'
+        throw error
+      }
+      throw new Error(result.error || 'download failed')
+    } finally {
+      this.token = null
+      this.progress = null
+    }
+  }
+
+  async install(_release: UpdateRelease, downloadedPath: string | null): Promise<void> {
+    if (!downloadedPath) throw new Error('nothing has been downloaded')
+    const result = await this.bridge.call<{ ok: boolean; reason?: string }>('update.install', {
+      path: downloadedPath
+    })
+    if (result.ok) return
+    if (result.reason === 'permission')
+      throw new Error(
+        'Android needs permission first: allow Zen to install apps in the screen that just opened, then tap Install again.'
+      )
+    throw new Error(result.reason || 'could not start the package installer')
+  }
+
+  cancel(): void {
+    if (!this.token) return
+    this.cancelled = true
+    this.bridge.send('update.cancel', { token: this.token })
+  }
+
+  onProgress(payload: HostEventPayloads['update.progress']): void {
+    if (payload.token !== this.token || !this.progress) return
+    const total = payload.total > 0 ? payload.total : 0
+    this.progress({
+      percent: total > 0 ? Math.min(100, (payload.transferred / total) * 100) : 0,
+      transferred: payload.transferred,
+      total,
+      bytesPerSecond: payload.bytesPerSecond
+    })
+  }
 }
 
 /**
@@ -285,6 +388,7 @@ export class AndroidPlatform implements Platform {
   private zenWindow: ZenWindow | null = null
   private readonly downloadTokens = new Map<string, string>()
   private readonly agentTransport: AndroidAgentTransport
+  private readonly updateHost: AndroidUpdateHost
 
   constructor(
     private readonly bridge: Bridge,
@@ -293,6 +397,7 @@ export class AndroidPlatform implements Platform {
     this.info = { os: 'android', version: boot.version }
     this.io = new AndroidStoreIO(bridge, boot.files)
     this.agentTransport = new AndroidAgentTransport(bridge)
+    this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null)
     this.views = new AndroidTabViewHost(bridge)
     this.menus = new RendererMenuHost()
     this.windows = {
@@ -361,6 +466,10 @@ export class AndroidPlatform implements Platform {
 
   createAgentTransport(): AgentTransport {
     return this.agentTransport
+  }
+
+  createUpdateHost(): UpdateHost {
+    return this.updateHost
   }
 
   /** Mozilla's Readability, bundled with the chrome. */
@@ -466,6 +575,9 @@ export class AndroidPlatform implements Platform {
       }
       case 'agent.request':
         this.agentTransport.handle(payload as HostEventPayloads['agent.request'])
+        return
+      case 'update.progress':
+        this.updateHost.onProgress(payload as HostEventPayloads['update.progress'])
         return
       case 'view.adopt': {
         const p = payload as HostEventPayloads['view.adopt']

@@ -42,6 +42,7 @@ export function createPreviewBridge(): NativeBridge {
   const handlers: Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>> = {
     boot: (): BootInfo => ({
       version: 'preview',
+      signer: null,
       files,
       downloadsDir: '/Downloads',
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
