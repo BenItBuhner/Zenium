@@ -146,13 +146,59 @@ class TabWebView(
         val data = message.data ?: return
         val obj = runCatching { JSONObject(data) }.getOrNull() ?: return
         if (obj.str("token") != host.pageToken) return
-        if (obj.str("type") == "hello") {
-            replyProxy = proxy
-            sendFlags()
-            return
+        when (obj.str("type")) {
+            "hello" -> {
+                replyProxy = proxy
+                sendFlags()
+                return
+            }
+            "evalResult" -> {
+                // The settled value of a Promise an evaluate() script returned (see evaluate()).
+                pendingEvals.remove(obj.optInt("id"))?.invoke(obj.strOrNull("value"))
+                return
+            }
         }
         obj.remove("token")
         host.chrome.viewEvent(tabId, "pageMessage", obj)
+    }
+
+    // --- script evaluation for the core (async-aware) --------------------------------------------
+
+    private val pendingEvals = HashMap<Int, (String?) -> Unit>()
+    private var evalSeq = 0
+
+    /**
+     * Run `code` in the page and answer with the JSON text of its value, like Electron's
+     * `executeJavaScript`: a returned Promise is awaited (WebView's `evaluateJavascript` would
+     * hand back `{}` for it at once), and a thrown or rejected error comes back as
+     * `{"__zenError": message}` so the bridge can reject the call. The async path reports through
+     * the page bridge, so the token the page script already carries is embedded in the wrapper.
+     */
+    fun evaluate(code: String, callback: (String?) -> Unit) {
+        val id = ++evalSeq
+        pendingEvals[id] = callback
+        val post = "window.__zenPageBridge&&__zenPageBridge.postMessage(JSON.stringify({token:${JSONObject.quote(host.pageToken)},type:'evalResult',id:$id,value:__s}))"
+        val wrapped = "(function(){var __e=function(e){return {__zenError:String((e&&e.message)||e)}};try{var __r=(" + code + "\n);" +
+            "if(__r&&typeof __r.then==='function'){__r.then(function(v){var __s;try{__s=JSON.stringify(v===undefined?null:v)}catch(x){__s=JSON.stringify(String(v))}$post}," +
+            "function(e){var __s=JSON.stringify(__e(e));$post});return '__zen_pending__'}return __r}catch(e){return __e(e)}})()"
+        evaluateJavascript(wrapped) { result ->
+            if (result == "\"__zen_pending__\"") {
+                // Settled later through onPageMessage; never leave the core hanging past its own budget.
+                Handler(Looper.getMainLooper()).postDelayed({
+                    pendingEvals.remove(id)?.invoke("{\"__zenError\":\"the script's promise did not settle in time\"}")
+                }, EVAL_TIMEOUT_MS)
+                return@evaluateJavascript
+            }
+            pendingEvals.remove(id)?.invoke(result)
+        }
+    }
+
+    /** A new document unloads whatever scripts were still pending. */
+    private fun failPendingEvals(reason: String) {
+        if (pendingEvals.isEmpty()) return
+        val waiting = pendingEvals.values.toList()
+        pendingEvals.clear()
+        for (cb in waiting) cb("{\"__zenError\":${JSONObject.quote(reason)}}")
     }
 
     private inner class LegacyPageBridge {
@@ -467,6 +513,7 @@ class TabWebView(
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             pageStarted = true
             loading = true
+            failPendingEvals("the page navigated away before the script finished")
             host.chrome.viewEvent(tabId, "startLoading", null)
             host.chrome.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", false))
             if (muted) setMuted(true)
@@ -578,6 +625,9 @@ class TabWebView(
 
     companion object {
         private val encoder = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-encode") }
+
+        /** Longer than any tool budget (browser_wait_for allows 30 s) but shorter than the socket's. */
+        private const val EVAL_TIMEOUT_MS = 45_000L
 
         /** Where the visual viewport sits in the layout viewport (non-zero only while pinch-zoomed). */
         private const val VISUAL_OFFSET_SCRIPT =

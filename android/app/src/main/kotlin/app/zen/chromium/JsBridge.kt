@@ -27,7 +27,9 @@ class JsBridge(private val host: Host) {
         val args = call.obj("args")
         main.post {
             try {
-                host.dispatch(method, args) { result -> host.chrome.resolve(id, result) }
+                host.dispatch(method, args) { result ->
+                    if (result is Host.Rejection) host.chrome.reject(id, result.message) else host.chrome.resolve(id, result)
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "native $method failed", e)
                 host.chrome.reject(id, e.message ?: e.javaClass.simpleName)

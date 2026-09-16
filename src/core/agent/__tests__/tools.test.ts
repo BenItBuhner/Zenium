@@ -9,6 +9,7 @@ import {
   acceptedArgs,
   agentInstructions,
   listTabs,
+  looksLikeStatements,
   normalizeKey,
   orderedTabs,
   resolveTabRef,
@@ -306,6 +307,31 @@ describe('wrapScript', () => {
       ok: false,
       error: 'nope'
     })
+  })
+
+  it('guesses the shape where the core itself may not compile code (CSP without unsafe-eval)', async () => {
+    const csp = (): void => {
+      throw new EvalError(
+        "Refused to evaluate a string as JavaScript because 'unsafe-eval' is not an allowed source"
+      )
+    }
+    const run = async (src: string): Promise<unknown> => {
+      const w = wrapScript(src, csp)
+      if ('error' in w) throw new Error(w.error)
+      return await new Function(`return ${w.code}`)()
+    }
+    expect(await run('1 + 1')).toEqual({ ok: true, value: '2' })
+    expect(await run('let n = 2; return n * 3')).toEqual({ ok: true, value: '6' })
+    expect(await run("const x = 'ab'; return x.length")).toEqual({ ok: true, value: '2' })
+    expect(await run('() => {\n  const a = [1, 2];\n  return a.length\n}')).toEqual({
+      ok: true,
+      value: '2'
+    })
+    expect(await run('function f() { return 5 }')).toEqual({ ok: true, value: '5' })
+    expect(await run('({ a: 1 })')).toEqual({ ok: true, value: '{"a":1}' })
+    expect(looksLikeStatements("history.forward(); 'forwarded'")).toBe(true)
+    expect(looksLikeStatements('document.title;')).toBe(false)
+    expect(looksLikeStatements('if (a) b()')).toBe(true)
   })
 })
 

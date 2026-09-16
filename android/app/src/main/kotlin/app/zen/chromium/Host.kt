@@ -103,9 +103,11 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             "view.stopFind" -> { tab?.stopFind(); reply(null) }
             "view.eval" -> {
                 if (tab == null) reply(null)
-                else tab.evaluateJavascript(args.str("code")) { result ->
-                    // WebView returns JSON text; pass it through so the core sees the real value.
-                    reply(RawJson(result ?: "null"))
+                else tab.evaluate(args.str("code")) { result ->
+                    // JSON text of the value; a thrown/rejected error rejects the bridge call,
+                    // which is what the core expects from Electron's executeJavaScript.
+                    val error = result?.let { r -> runCatching { JSONObject(r).strOrNull("__zenError") }.getOrNull() }
+                    if (error != null) reply(Rejection(error)) else reply(RawJson(result ?: "null"))
                 }
             }
             "view.input" -> if (tab == null) reply(null) else tab.sendAgentInput(args.obj("event")) { reply(null) }
@@ -189,6 +191,9 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     class RawJson(val json: String) {
         override fun toString(): String = json
     }
+
+    /** Answering with this rejects the bridge call instead of resolving it. */
+    class Rejection(val message: String)
 
     // ---------------------------------------------------------------------------------------------
     // Fullscreen (HTML element fullscreen and Zen's F11-style fullscreen)

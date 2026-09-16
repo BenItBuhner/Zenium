@@ -1509,7 +1509,13 @@ const browserEvaluate: AgentTool = {
     if ('error' in wrapped) return textError(`Script has a syntax error: ${wrapped.error}`)
     try {
       const result = (await view.executeJavaScript(wrapped.code)) as
-        { ok: true; value: string } | { ok: false; error: string }
+        { ok: true; value: string } | { ok: false; error: string } | null | undefined
+      // The wrapper always answers with an object; nothing at all means the host could not even
+      // parse the script (only possible where the shape had to be guessed, see wrapScript).
+      if (!result)
+        return textError(
+          'Script has a syntax error – give a single expression (document.title), an arrow function (() => …) or statements ending in a value'
+        )
       if (!result.ok) return textError(`Script threw: ${result.error}`)
       const out = result.value
       return text(
@@ -1526,27 +1532,57 @@ const browserEvaluate: AgentTool = {
  * lists (`history.forward(); 'done'`) alike. Work out which one parses (the main process speaks
  * the same JavaScript as the page) and wrap it so the page reports exceptions as data instead of
  * Electron's opaque "script failed to execute".
+ *
+ * `parse` only checks syntax. Where the core itself may not compile code – the Android chrome's
+ * Content-Security-Policy forbids eval – it throws an EvalError, and the shape is guessed from
+ * the source instead: statement keywords or several `;`-separated statements mean statements,
+ * anything else is an expression (the page tells us if that was wrong, see browser_evaluate).
  */
-export function wrapScript(source: string): { code: string } | { error: string } {
+export function wrapScript(
+  source: string,
+  parse: (code: string) => void = (code) => new Function(code)
+): { code: string } | { error: string } {
   const body = (inner: string): string =>
     `(async () => { try { ${inner} const __v = typeof __r === 'function' ? await __r() : await __r; let __s; try { __s = JSON.stringify(__v) } catch (e) { __s = String(__v) } return { ok: true, value: __s === undefined ? 'undefined' : __s } } catch (e) { return { ok: false, error: String((e && e.message) || e) } } })()`
   const asExpression = `const __r = (${source}\n);`
   const asStatements = `const __r = await (async () => { ${source}\n })();`
+  let canParse = true
   for (const inner of [asExpression, asStatements]) {
     try {
       // Parsing only: the function is never called here.
-      new Function(`return ${body(inner)}`)
+      parse(`return ${body(inner)}`)
       return { code: body(inner) }
-    } catch {
+    } catch (error) {
+      if (
+        error instanceof EvalError ||
+        /unsafe-eval|Content Security Policy/i.test(String(error))
+      ) {
+        canParse = false
+        break
+      }
       /* try the next shape */
     }
   }
+  if (!canParse) return { code: body(looksLikeStatements(source) ? asStatements : asExpression) }
   try {
-    new Function(source)
+    parse(source)
   } catch (error) {
     return { error: (error as Error).message }
   }
   return { error: 'could not parse the script' }
+}
+
+/** Without a parser: does this read as a statement list rather than one expression? */
+export function looksLikeStatements(source: string): boolean {
+  const s = source.trim()
+  if (/^(const|let|var|if|for|while|do|switch|try|return|throw)\b/.test(s)) return true
+  // A function (arrow or classic) is one expression however many statements its body has; the
+  // wrapper calls it.
+  if (/^(async\s*)?(\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/.test(s) || /^(async\s+)?function\b/.test(s))
+    return false
+  if (/^\s*(return|const|let|var|if|for|while|try|throw)\b/m.test(s)) return true
+  // `a(); b()` – a semicolon followed by more code (one trailing `;` is still an expression).
+  return /;\s*\S/.test(s)
 }
 
 const zenHistory: AgentTool = {
