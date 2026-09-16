@@ -31,6 +31,8 @@
   --zen-shadow: 0 18px 50px rgb(0 0 0 / 0.22), 0 2px 8px rgb(0 0 0 / 0.12);
   --zen-padding: 8px;
   --zen-content-radius: 12px;
+  /* Height of the phone's bottom bar without the gesture-bar inset. */
+  --zen-phone-bar: 56px;
   --zen-sidebar-width: 240px;
   --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   /* Zen 1.22: the chrome uses squircles (superellipse corners) instead of plain rounding. */
@@ -114,7 +116,10 @@
   .zen-content-frame,
   .zen-toolbar-button,
   .zen-kbd,
-  .zen-suggestion {
+  .zen-suggestion,
+  .zen-stage-card,
+  .zen-overview-card,
+  .zen-overview-new {
     corner-shape: var(--zen-corner);
   }
 
@@ -467,12 +472,90 @@
   .zen-phone-bar {
     background: transparent;
   }
+
+  /*
+   * The phone's gesture stage. Cards stand in for pages, so they wear the content frame's own
+   * radius and hairline; depth comes from elevation, never from extra borders.
+   */
+  .zen-stage-card {
+    overflow: hidden;
+    border-radius: var(--zen-content-radius);
+    background: var(--zen-bg-solid);
+    box-shadow:
+      0 0 0 1px rgb(var(--zen-fg-rgb) / 0.08),
+      0 2px 8px rgb(0 0 0 / 0.08),
+      0 16px 44px rgb(0 0 0 / 0.18);
+    will-change: transform;
+    transform-origin: center;
+  }
+  /* Animated per frame: its own layer, so fading it never repaints the card (image + shadow). */
+  .zen-stage-dim {
+    pointer-events: none;
+    background: #000;
+    will-change: opacity;
+  }
+  .zen-overview {
+    will-change: transform, opacity;
+  }
+  /* The hero is resized, not transformed: promoting it would only re-tile a layer each frame. */
+  .zen-overview-hero {
+    will-change: auto;
+  }
+  /* While the stage draws the page's cards, the frame behind them gets out of the way. */
+  .zen-content-frame[data-staged] {
+    background: transparent;
+    box-shadow: none;
+  }
+  .zen-tab-placeholder {
+    color: var(--zen-fg);
+    background: linear-gradient(
+      180deg,
+      rgb(var(--zen-fg-rgb) / 0.025) 0%,
+      rgb(var(--zen-fg-rgb) / 0.07) 100%
+    );
+  }
+
+  /* Tab overview cards: title row above the thumbnail, elevation marks the active one. */
+  .zen-overview-card {
+    border-radius: 14px;
+    background: var(--zen-bg-solid);
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.06),
+      0 8px 24px rgb(0 0 0 / 0.1);
+    transition:
+      transform 140ms var(--zen-ease),
+      box-shadow 200ms var(--zen-ease);
+  }
+  .zen-overview-card:active {
+    transform: scale(0.975);
+  }
+  .zen-overview-card[data-active='true'] {
+    box-shadow:
+      0 2px 4px rgb(0 0 0 / 0.08),
+      0 18px 44px rgb(0 0 0 / 0.18);
+  }
+  .zen-overview-card[data-active='true'] > header {
+    background: rgb(var(--zen-accent-rgb) / 0.14);
+  }
+  .zen-overview-new {
+    border-radius: 14px;
+    background: rgb(var(--zen-fg-rgb) / 0.06);
+    transition: background 140ms var(--zen-ease);
+  }
+  .zen-overview-new:active {
+    background: rgb(var(--zen-fg-rgb) / 0.12);
+  }
+  .zen-overview-strip {
+    scrollbar-width: none;
+  }
+  .zen-overview-strip::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 /* Mobile hosts: keep the chrome out of the status bar, cutouts, gesture bar and keyboard. */
 .zen-window {
-  padding: var(--zen-inset-top) var(--zen-inset-right) var(--zen-inset-bottom)
-    var(--zen-inset-left);
+  padding: var(--zen-inset-top) var(--zen-inset-right) var(--zen-inset-bottom) var(--zen-inset-left);
 }
 
 /*

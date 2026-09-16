@@ -34,6 +34,7 @@ import { ResourcesSection } from './ResourcesSection'
 import { Choice, Group, Row } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
 import { SyncSection } from './SyncSection'
+import { UpdatesSection } from './UpdatesSection'
 
 export type SettingsSection =
   | 'look'
@@ -49,6 +50,7 @@ export type SettingsSection =
   | 'agents'
   | 'sync'
   | 'shortcuts'
+  | 'updates'
   | 'about'
 
 const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
@@ -65,6 +67,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'agents', label: 'AI Agents' },
   { id: 'sync', label: 'Sync' },
   { id: 'shortcuts', label: 'Keyboard Shortcuts' },
+  { id: 'updates', label: 'Updates' },
   { id: 'about', label: 'About' }
 ]
 
@@ -73,7 +76,8 @@ const SECTION_CAPABILITY: Partial<Record<SettingsSection, keyof HostCapabilities
   resources: 'resourceGovernor',
   extensions: 'extensions',
   agents: 'agents',
-  sync: 'sync'
+  sync: 'sync',
+  updates: 'updates'
 }
 
 function availableSections(caps: HostCapabilities): typeof SECTIONS {
@@ -157,7 +161,8 @@ export function SettingsPanel({
             {section === 'agents' && <AgentsSection state={state} set={set} />}
             {section === 'sync' && <SyncSection state={state} />}
             {section === 'shortcuts' && <ShortcutsSection state={state} />}
-            {section === 'about' && <AboutSection state={state} />}
+            {section === 'updates' && <UpdatesSection state={state} set={set} />}
+            {section === 'about' && <AboutSection state={state} setSection={setSection} />}
           </div>
         </div>
       </div>
@@ -754,16 +759,39 @@ function BoostsSection({ state }: { state: UIState }): JSX.Element {
   )
 }
 
-function AboutSection({ state }: { state: UIState }): JSX.Element {
+function AboutSection({
+  state,
+  setSection
+}: {
+  state: UIState
+  setSection: (id: SettingsSection) => void
+}): JSX.Element {
   // Desktop/DeX: the engine host is Electron; phones and tablets run the system WebView.
   const engineHost = state.platform === 'android' ? 'Android System WebView' : 'Electron'
+  const update = state.updates
+  const newer = update.phase === 'available' || update.phase === 'ready' ? update.release : null
   return (
     <Group title="About">
       <Row
         label="Zen (Chromium port)"
-        hint={`Version ${state.version} · running on Chromium via ${engineHost}`}
+        hint={`Version ${state.version} · running on Chromium via ${engineHost}${
+          newer ? ` · ${newer.version} is available` : ''
+        }`}
       >
-        <span />
+        {state.capabilities.updates ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setSection('updates')
+              if (!newer) run('updates.check', undefined)
+            }}
+          >
+            {newer ? `Update to ${newer.version}` : 'Check for updates'}
+          </Button>
+        ) : (
+          <span />
+        )}
       </Row>
       <Row
         label="Engine"

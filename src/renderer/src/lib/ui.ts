@@ -1,7 +1,8 @@
-import type { MenuDescriptor, OverlayKind, UIState, UrlbarOpenMode } from '@shared/types'
+import type { MenuDescriptor, OverlayKind, Rect, UIState, UrlbarOpenMode } from '@shared/types'
 import { cmd, onEvent, run } from './api'
 import { activeTab } from './selectors'
 import { createStore } from './store'
+import { rememberThumbnail, thumbnailOf } from './thumbnails'
 
 // ---------------------------------------------------------------------------
 // Browser state mirrored from the main process
@@ -94,7 +95,15 @@ export interface UiState {
   menu: MenuDescriptor | null
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
+  /**
+   * Phone layout: the gesture stage (tab-switch cards, the tab overview) stands in for the live
+   * page, which must be hidden underneath it.
+   */
+  stageActive: boolean
 }
+
+/** Where the content area is, in window coordinates (measured by the layout reporter). */
+export const contentAreaStore = createStore<{ area: Rect | null }>({ area: null }, 'content-area')
 
 /** Last pointer-down position – anchors renderer-hosted menus that come without coordinates. */
 export const lastPointer = { x: 0, y: 0 }
@@ -125,7 +134,8 @@ export const uiStore = createStore<UiState>(
     spaceSlideDirection: 0,
     drawerOpen: false,
     menu: null,
-    insets: { top: 0, right: 0, bottom: 0, left: 0 }
+    insets: { top: 0, right: 0, bottom: 0, left: 0 },
+    stageActive: false
   },
   'ui'
 )
@@ -145,7 +155,10 @@ export async function captureActiveTab(tabId: string | null): Promise<void> {
   }
   if (uiStore.get().snapshotTabId === tabId && uiStore.get().snapshot) return
   const data = await cmd('overlay.snapshot', { tabId }).catch(() => null)
-  uiStore.set({ snapshot: data, snapshotTabId: tabId })
+  if (data) rememberThumbnail(tabId, data)
+  // A page that is already hidden (behind the gesture stage) cannot be captured: show what it
+  // looked like the last time it was.
+  uiStore.set({ snapshot: data ?? thumbnailOf(tabId), snapshotTabId: tabId })
 }
 
 export async function openOverlay(
@@ -181,7 +194,14 @@ export function closeOverlay(): void {
 /** Once no chrome UI needs the keyboard, hand focus back to the active page. */
 export function returnFocusToPage(): void {
   const ui = uiStore.get()
-  if (ui.overlay === 'none' && !ui.urlbar.open && !ui.findOpen && !ui.drawerOpen && !ui.menu)
+  if (
+    ui.overlay === 'none' &&
+    !ui.urlbar.open &&
+    !ui.findOpen &&
+    !ui.drawerOpen &&
+    !ui.menu &&
+    !ui.stageActive
+  )
     run('focus.content', undefined)
 }
 
@@ -194,7 +214,8 @@ export function invalidateSnapshot(): void {
     !ui.drag &&
     !ui.compactHover &&
     !ui.drawerOpen &&
-    !ui.menu
+    !ui.menu &&
+    !ui.stageActive
   ) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
   }
@@ -275,8 +296,25 @@ export function pickMenuItem(itemId: string): void {
 /** True when a chrome overlay covers the content area (tab views must be hidden). */
 export function overlayCoversContent(ui: UiState): boolean {
   return (
-    ui.overlay !== 'none' || ui.urlbar.open || ui.drag !== null || ui.drawerOpen || ui.menu !== null
+    ui.overlay !== 'none' ||
+    ui.urlbar.open ||
+    ui.drag !== null ||
+    ui.drawerOpen ||
+    ui.menu !== null ||
+    ui.stageActive
   )
+}
+
+type BackHandler = () => boolean
+const backHandlers: BackHandler[] = []
+
+/** Let a piece of chrome UI answer the system back gesture before the defaults below. */
+export function registerBackHandler(handler: BackHandler): () => void {
+  backHandlers.push(handler)
+  return () => {
+    const index = backHandlers.indexOf(handler)
+    if (index >= 0) backHandlers.splice(index, 1)
+  }
 }
 
 /**
@@ -302,6 +340,7 @@ export function handleSystemBack(): boolean {
     closeDrawer()
     return true
   }
+  for (const handler of backHandlers) if (handler()) return true
   if (state?.glance) {
     run('glance.close', undefined)
     return true

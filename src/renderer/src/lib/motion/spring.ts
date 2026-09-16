@@ -1,0 +1,168 @@
+/**
+ * Damped-spring motion for gesture-driven UI. Positions are in px, velocities in px/s, time in
+ * seconds. The step is the closed-form solution of the oscillator, so it is exact for any frame
+ * length and stays stable when the browser stalls; the state is just `{ x, v }`, which is what
+ * lets a finger "catch" a spring mid-flight and carry on from the very same motion.
+ */
+export interface SpringConfig {
+  stiffness: number
+  damping: number
+  mass: number
+  /** Displacement (px) and speed (px/s) under which the spring counts as at rest. */
+  restDelta: number
+  restSpeed: number
+}
+
+export interface SpringState {
+  x: number
+  v: number
+}
+
+/** Tab switching: fast, ends without visible overshoot (ζ ≈ 0.98). */
+export const SPRING_SNAPPY: SpringConfig = {
+  stiffness: 420,
+  damping: 40,
+  mass: 1,
+  restDelta: 0.4,
+  restSpeed: 8
+}
+
+/** Overview open/close: a touch softer, a hair of overshoot (ζ ≈ 0.9). */
+export const SPRING_GENTLE: SpringConfig = {
+  stiffness: 300,
+  damping: 31,
+  mass: 1,
+  restDelta: 0.4,
+  restSpeed: 8
+}
+
+/** Advance the spring towards `target` by `dt` seconds. */
+export function stepSpring(
+  state: SpringState,
+  target: number,
+  dt: number,
+  config: SpringConfig
+): SpringState {
+  const { stiffness: k, damping: c, mass: m } = config
+  const x0 = state.x - target
+  const v0 = state.v
+  const w0 = Math.sqrt(k / m)
+  const zeta = c / (2 * Math.sqrt(k * m))
+  let x: number
+  let v: number
+  if (Math.abs(zeta - 1) < 1e-4) {
+    // Critically damped: x = e^{-w0 t} (A + B t)
+    const a = x0
+    const b = v0 + w0 * x0
+    const decay = Math.exp(-w0 * dt)
+    x = decay * (a + b * dt)
+    v = decay * (b - w0 * (a + b * dt))
+  } else if (zeta < 1) {
+    // Underdamped: x = e^{-ζ w0 t} (A cos wd t + B sin wd t)
+    const wd = w0 * Math.sqrt(1 - zeta * zeta)
+    const a = x0
+    const b = (v0 + zeta * w0 * x0) / wd
+    const decay = Math.exp(-zeta * w0 * dt)
+    const cos = Math.cos(wd * dt)
+    const sin = Math.sin(wd * dt)
+    x = decay * (a * cos + b * sin)
+    v = decay * ((b * wd - zeta * w0 * a) * cos - (a * wd + zeta * w0 * b) * sin)
+  } else {
+    // Overdamped: x = C1 e^{r1 t} + C2 e^{r2 t}
+    const root = w0 * Math.sqrt(zeta * zeta - 1)
+    const r1 = -zeta * w0 + root
+    const r2 = -zeta * w0 - root
+    const c2 = (v0 - r1 * x0) / (r2 - r1)
+    const c1 = x0 - c2
+    const e1 = Math.exp(r1 * dt)
+    const e2 = Math.exp(r2 * dt)
+    x = c1 * e1 + c2 * e2
+    v = c1 * r1 * e1 + c2 * r2 * e2
+  }
+  if (Math.abs(x) < config.restDelta && Math.abs(v) < config.restSpeed) return { x: target, v: 0 }
+  return { x: x + target, v }
+}
+
+export function isAtRest(state: SpringState, target: number): boolean {
+  return state.x === target && state.v === 0
+}
+
+/**
+ * Runs a spring on the animation frame. `stop()` hands the live `{ x, v }` back so a new drag can
+ * start from exactly where the motion was – the basis of interruptible transitions.
+ */
+export class SpringAnimation {
+  private frame: number | null = null
+  private state: SpringState = { x: 0, v: 0 }
+  private target = 0
+  private last = 0
+
+  constructor(
+    private config: SpringConfig,
+    private readonly onFrame: (x: number, v: number) => void,
+    private readonly onRest: (x: number) => void
+  ) {}
+
+  get running(): boolean {
+    return this.frame !== null
+  }
+
+  get current(): SpringState {
+    return this.state
+  }
+
+  /** Start (or restart) from `from` moving at `velocity` px/s towards `to`. */
+  start(from: number, velocity: number, to: number, config?: SpringConfig): void {
+    if (config) this.config = config
+    this.state = { x: from, v: velocity }
+    this.target = to
+    if (reducedMotion()) {
+      this.cancelFrame()
+      this.state = { x: to, v: 0 }
+      this.onFrame(to, 0)
+      this.onRest(to)
+      return
+    }
+    this.last = performance.now()
+    if (this.frame === null) this.frame = requestAnimationFrame(this.tick)
+  }
+
+  /** Change the destination without disturbing the current motion. */
+  retarget(to: number): void {
+    this.target = to
+    if (this.frame === null) this.start(this.state.x, this.state.v, to)
+  }
+
+  /** Freeze the motion (a finger caught it) and report where it was. */
+  stop(): SpringState {
+    this.cancelFrame()
+    return this.state
+  }
+
+  private cancelFrame(): void {
+    if (this.frame !== null) cancelAnimationFrame(this.frame)
+    this.frame = null
+  }
+
+  private readonly tick = (now: number): void => {
+    this.frame = null
+    // A stalled tab must not turn into one huge step.
+    const dt = Math.min(0.064, Math.max(0.001, (now - this.last) / 1000))
+    this.last = now
+    this.state = stepSpring(this.state, this.target, dt, this.config)
+    this.onFrame(this.state.x, this.state.v)
+    if (isAtRest(this.state, this.target)) {
+      this.onRest(this.state.x)
+      return
+    }
+    this.frame = requestAnimationFrame(this.tick)
+  }
+}
+
+export function reducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  )
+}

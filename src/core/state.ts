@@ -38,6 +38,12 @@ import { JsonStore } from './store/JsonStore'
 import { createSpace, createTabRecord, emptyModel, tabVisibleIn, type Model } from './model'
 import { sanitizeResourceSettings } from './resources/switches'
 import { sanitizeAgentSettings } from './agent/settings'
+import {
+  emptyUpdateStatus,
+  sanitizeUpdateSettings,
+  updateOsOf,
+  type UpdateStatus
+} from '../shared/updates'
 import { BLANK_URL } from '../shared/url'
 import { defer, type StoreIO } from './platform'
 import type { ZenWindow } from './window'
@@ -84,6 +90,7 @@ export interface StateExtras {
   sync: SyncStatus
   agents: AgentInfo[]
   agentServer: AgentServerStatus
+  updates: UpdateStatus
 }
 
 /**
@@ -137,7 +144,12 @@ export class BrowserState {
       pendingMerge: false
     },
     agents: [],
-    agentServer: emptyAgentServerStatus()
+    agentServer: emptyAgentServerStatus(),
+    updates: emptyUpdateStatus(this.version, {
+      os: updateOsOf(this.platform),
+      arch: 'universal',
+      kind: 'dev'
+    })
   })
   searchEngines: SearchEngine[] = DEFAULT_SEARCH_ENGINES
   readonly version: string
@@ -180,6 +192,7 @@ export class BrowserState {
     this.settings.compactMode.sidebarPersistent = false
     this.settings.resources = sanitizeResourceSettings(data.settings?.resources)
     this.settings.agents = sanitizeAgentSettings(data.settings?.agents)
+    this.settings.updates = sanitizeUpdateSettings(data.settings?.updates)
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     this.bookmarks = Array.isArray(data.bookmarks) ? data.bookmarks : []
     if (Array.isArray(data.windows) && data.windows.length) {

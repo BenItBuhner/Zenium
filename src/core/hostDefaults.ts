@@ -1,8 +1,9 @@
 /* eslint-disable @typescript-eslint/no-empty-function -- deliberate no-op host services */
 import type { ExtensionInfo, Rect, ResourceSnapshot, SyncScope, SyncStatus } from '../shared/types'
 import { emptyResourceSnapshot } from '../shared/defaults'
+import { updateOsOf, type UpdateTarget } from '../shared/updates'
 import type { Browser } from './browser'
-import type { ExtensionHost, Governor, SyncHost, TabView } from './platform'
+import type { ExtensionHost, Governor, Platform, SyncHost, TabView, UpdateHost } from './platform'
 import type { ZenWindow } from './window'
 
 /**
@@ -141,6 +142,35 @@ export class NoSync implements SyncHost {
   async confirmMerge(): Promise<void> {}
   disconnect(): void {}
   flushSync(): void {}
+}
+
+/** Hosts without an installer: releases are only looked up, never fetched or applied. */
+export class NoUpdateHost implements UpdateHost {
+  constructor(private readonly platform: Platform) {}
+
+  target(): UpdateTarget {
+    return { os: updateOsOf(this.platform.info.os), arch: 'universal', kind: 'dev' }
+  }
+
+  publicKeys(): string[] {
+    return []
+  }
+
+  signer(): null {
+    return null
+  }
+
+  async download(): Promise<null> {
+    throw new Error(
+      'This build cannot download updates; get the new version from the release page.'
+    )
+  }
+
+  async install(): Promise<void> {
+    throw new Error('This build cannot install updates.')
+  }
+
+  cancel(): void {}
 }
 
 /** Type guard hosts can use to tell the real view from a stand-in. */

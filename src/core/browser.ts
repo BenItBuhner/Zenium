@@ -29,7 +29,8 @@ import { BoostService } from './boosts'
 import { ReaderService } from './reader'
 import { LiveFolderService } from './livefolders'
 import { ModService } from './mods'
-import { NoExtensions, NoSync, NoopGovernor } from './hostDefaults'
+import { UpdateService } from './updates'
+import { NoExtensions, NoSync, NoUpdateHost, NoopGovernor } from './hostDefaults'
 import {
   activeSpace,
   createFolder,
@@ -47,6 +48,7 @@ import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { ONBOARDING_ESSENTIALS } from '../shared/defaults'
 import { PRIVATE_THEME, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
+import { sanitizeUpdateSettings } from '../shared/updates'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 
 type CommandHandlers = {
@@ -97,6 +99,8 @@ export class Browser {
   readonly governor: Governor
   /** The MCP server AI agents connect to. */
   readonly agents: AgentService
+  /** Release checks against GitHub and the download / install flow. */
+  readonly updates: UpdateService
   readonly windows = new Map<string, ZenWindow>()
   quitting = false
   private readonly handlers: CommandHandlers
@@ -131,6 +135,10 @@ export class Browser {
     this.mods = new ModService(this)
     this.sync = platform.createSync?.(this) ?? new NoSync(this)
     this.agents = new AgentService(this)
+    this.updates = new UpdateService(
+      this,
+      platform.createUpdateHost?.(this) ?? new NoUpdateHost(platform)
+    )
     this.state.extras = () => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -139,7 +147,8 @@ export class Browser {
       mods: this.mods.all(),
       sync: this.sync.status(),
       agents: this.agents.list(),
-      agentServer: this.agents.serverStatus()
+      agentServer: this.agents.serverStatus(),
+      updates: this.updates.status()
     })
     this.handlers = this.commandHandlers()
   }
@@ -305,6 +314,7 @@ export class Browser {
     void this.extensions.start()
     this.sync.start()
     this.agents.start()
+    this.updates.start()
     this.syncShortcuts()
     this.state.commit()
   }
@@ -535,6 +545,7 @@ export class Browser {
     if (this.quitting) return
     this.quitting = true
     void this.agents.stop()
+    this.updates.stop()
     this.flushSync()
     this.state.freeze()
   }
@@ -1019,6 +1030,12 @@ export class Browser {
       'agent.forget': ({ name }) => this.agents.forget(name),
       'agent.regenerateToken': () => this.agents.regenerateToken(),
 
+      'updates.check': () => this.updates.check({ manual: true }),
+      'updates.download': () => this.updates.download(),
+      'updates.install': () => this.updates.install(),
+      'updates.cancel': () => this.updates.cancel(),
+      'updates.openRelease': (_a, win) => this.updates.openRelease(win),
+
       'onboarding.complete': ({ searchEngineId, colorScheme, essentials }, win) => {
         if (state.searchEngines.some((e) => e.id === searchEngineId))
           state.settings.searchEngineId = searchEngineId
@@ -1054,7 +1071,8 @@ export class Browser {
       windowSync: s.windowSync,
       resources: JSON.stringify(s.resources),
       unload: `${s.unloadEnabled}:${s.unloadTimeoutMinutes}:${s.unloadExcludedDomains.join(',')}`,
-      agents: JSON.stringify(s.agents)
+      agents: JSON.stringify(s.agents),
+      updates: JSON.stringify(s.updates)
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -1072,6 +1090,11 @@ export class Browser {
         })
       } else if (key === 'agents' && value && typeof value === 'object') {
         s.agents = sanitizeAgentSettings({ ...s.agents, ...(value as Partial<Settings['agents']>) })
+      } else if (key === 'updates' && value && typeof value === 'object') {
+        s.updates = sanitizeUpdateSettings({
+          ...s.updates,
+          ...(value as Partial<Settings['updates']>)
+        })
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }
@@ -1100,6 +1123,7 @@ export class Browser {
       this.governor.onSettingsChanged()
     }
     if (before.agents !== JSON.stringify(s.agents)) this.agents.onSettingsChanged()
+    if (before.updates !== JSON.stringify(s.updates)) this.updates.onSettingsChanged()
     this.state.commit()
   }
 
