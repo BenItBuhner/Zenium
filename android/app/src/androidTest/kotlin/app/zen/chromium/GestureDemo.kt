@@ -264,7 +264,7 @@ class GestureDemo {
     }
 
     /** Spring, tab activation and the first paint of a page that was never loaded. */
-    private fun settle() = SystemClock.sleep(2_500)
+    private fun settle() = SystemClock.sleep(3_000)
 
     private fun shot(name: String) {
         val bitmap = ui.takeScreenshot() ?: return

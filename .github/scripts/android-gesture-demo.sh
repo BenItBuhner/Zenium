@@ -17,13 +17,54 @@ video=android-gestures-device-demo.mp4
 mkdir -p "$out"
 
 adb wait-for-device
+nproc
+free -m
+df -h / /tmp
+
+# Host watchdog: memory every few seconds, and the kernel log the moment the emulator process
+# disappears (a silent death is most likely the OOM killer or a renderer crash).
+(
+  while true; do
+    {
+      date +%T
+      free -m | sed -n '2p'
+      ps -o pid=,rss=,pcpu=,comm= -C qemu-system-x86_64 || true
+    } >> "$out/host-monitor.txt"
+    if ! pgrep -f qemu-system-x86_64 > /dev/null; then
+      {
+        echo "EMULATOR PROCESS GONE"
+        sudo dmesg 2> /dev/null | tail -n 80 || true
+        ls -laR /tmp/android-runner 2>&1 || true
+      } >> "$out/host-monitor.txt"
+      break
+    fi
+    sleep 5
+  done
+) &
+monitor_pid=$!
+
 # Three-button navigation: no system gesture zone under the bar, so no accidental home swipes.
 adb shell cmd overlay enable com.android.internal.systemui.navbar.threebutton || true
 adb shell settings put system screen_off_timeout 2147483647 || true
 adb shell svc power stayon true || true
 adb shell input keyevent KEYCODE_WAKEUP || true
 adb shell wm dismiss-keyguard || true
-sleep 2
+
+# The Google APIs image spends its first minutes starting every bundled Google app; none of them
+# are needed and they fight the browser for the emulator's CPU and memory.
+for pkg in \
+  com.google.android.youtube com.google.android.apps.youtube.music com.google.android.gm \
+  com.google.android.apps.messaging com.android.chrome com.google.android.apps.maps \
+  com.google.android.videos com.google.android.apps.photos com.google.android.googlequicksearchbox \
+  com.google.android.calendar com.google.android.apps.docs com.google.android.apps.wellbeing \
+  com.google.android.projection.gearhead com.google.android.apps.tachyon com.google.android.talk \
+  com.google.android.music com.google.android.apps.podcasts com.google.android.apps.nbu.files; do
+  adb shell pm disable-user --user 0 "$pkg" > /dev/null 2>&1 || true
+done
+adb shell am kill-all || true
+echo "letting the system settle"
+sleep 45
+free -m
 
 apk=$(find android/app/build/outputs/apk/debug -name '*.apk' -print -quit)
 test_apk=$(find android/app/build/outputs/apk/androidTest/debug -name '*.apk' -print -quit)
@@ -53,7 +94,9 @@ done
 if [ "$ready" -ne 1 ]; then
   echo "::error::the gesture driver never reached the recording handshake"
   cat "$out/instrument.txt" || true
-  kill "$logcat_pid" 2>/dev/null || true
+  sleep 6
+  kill "$logcat_pid" "$monitor_pid" 2> /dev/null || true
+  cat "$out/host-monitor.txt" || true
   exit 1
 fi
 
@@ -78,7 +121,7 @@ adb shell pkill -INT screenrecord || adb shell "kill -2 \$(pidof screenrecord)" 
 wait "$recorder_pid" || true
 wait "$driver_pid" || true
 sleep 2
-kill "$logcat_pid" 2>/dev/null || true
+kill "$logcat_pid" "$monitor_pid" 2> /dev/null || true
 
 adb pull "/sdcard/$video" "$out/$video"
 for name in $(adb shell run-as "$app_id" ls files/gesture-demo | tr -d '\r'); do
