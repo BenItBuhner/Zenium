@@ -486,7 +486,7 @@ class TabWebView(
             radiusPx = if (on) 0f else radius
             invalidateOutline()
         }
-        PageCapture(this, host.activity.window, encoder, square).run(mode, PageCapture.parseRegion(region), format, callback)
+        PageCapture(this, host.activity.window, encoder, square, ::evaluate).run(mode, PageCapture.parseRegion(region), format, callback)
     }
 
     fun navState(): JSONObject = json(

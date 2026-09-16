@@ -36,7 +36,9 @@ class PageCapture(
     private val window: Window,
     private val encoder: Executor,
     /** Called before the first and after the last copy: the host squares the view's corners. */
-    private val squareCorners: (Boolean) -> Unit = {}
+    private val squareCorners: (Boolean) -> Unit = {},
+    /** Runs a script and awaits a returned Promise (`TabWebView.evaluate`); null → plain evaluate. */
+    private val evalAsync: ((String, (String?) -> Unit) -> Unit)? = null
 ) {
     private val main = Handler(Looper.getMainLooper())
 
@@ -46,8 +48,7 @@ class PageCapture(
             return
         }
         // The rounded corners of the tab view would otherwise be cut out of every copy (and show
-        // up once per strip in a stitched image). The new outline is drawn on the next frame and
-        // is in the window buffer one frame later; the same wait lets the page paint whatever the
+        // up once per strip in a stitched image). The same settle lets the page paint whatever the
         // core hid just before asking (the agent's cursor overlay), which a copy of the window
         // buffer would otherwise still show.
         squareCorners(true)
@@ -55,10 +56,10 @@ class PageCapture(
             squareCorners(false)
             callback(result)
         }
-        awaitFrames(SETTLE_FRAMES) {
+        settle {
             if (mode == CapturePlan.MODE_VIEWPORT) {
                 copyView { bitmap -> if (bitmap == null) finish(null) else encode(bitmap, format, finish) }
-                return@awaitFrames
+                return@settle
             }
             readMetrics { metrics ->
                 if (metrics == null) {
@@ -147,7 +148,7 @@ class PageCapture(
                 // plus pinch pan), so it also moves a visual viewport that is smaller than the
                 // layout viewport – window.scrollTo() cannot.
                 view.scrollTo((cell.first * deviceScale).roundToInt(), (cell.second * deviceScale).roundToInt())
-                awaitFrames(SETTLE_FRAMES) {
+                settle {
                     readMetrics { now ->
                         if (done) return@readMetrics
                         // Where the page actually ended up decides where the strip is blitted.
@@ -209,6 +210,21 @@ class PageCapture(
         }
     }
 
+    /**
+     * Wait until the page has produced a frame with its latest changes (two animation frames in
+     * the renderer – a fixed number of vsyncs is no measure of that on a software GPU) and the
+     * view has drawn it into the window buffer. Falls back to a plain frame wait when the host
+     * cannot await scripts.
+     */
+    private fun settle(then: () -> Unit) {
+        val eval = evalAsync
+        if (eval == null) {
+            awaitFrames(SETTLE_FRAMES, then)
+            return
+        }
+        eval(RAF_SCRIPT) { awaitFrames(DRAW_FRAMES, then) }
+    }
+
     private fun awaitFrames(count: Int, then: () -> Unit) {
         if (count <= 0) {
             then()
@@ -266,8 +282,14 @@ class PageCapture(
     companion object {
         private const val TAG = "ZenCapture"
         private const val JPEG_QUALITY = 75
-        /** Frames to let the WebView paint a new scroll position before its pixels are copied. */
+        /** Frames to let the WebView paint a new scroll position when scripts cannot be awaited. */
         private const val SETTLE_FRAMES = 3
+        /** Frames between the renderer's frame and its pixels being in the window buffer. */
+        private const val DRAW_FRAMES = 2
+
+        /** Resolves after two animation frames, or after 400 ms if the page is not animating. */
+        private const val RAF_SCRIPT = """new Promise(function(r){var d=false;var f=function(){if(!d){d=true;r(1)}};
+requestAnimationFrame(function(){requestAnimationFrame(f)});setTimeout(f,400)})"""
         private const val WATCHDOG_MS = 20_000L
 
         private const val METRICS_SCRIPT = """(function(){var v=window.visualViewport,d=document.documentElement,b=document.body;
