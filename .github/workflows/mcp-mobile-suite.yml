@@ -1,0 +1,81 @@
+name: MCP mobile suite (temporary)
+
+# TEMPORARY, removed before merge: boots the Android app on a hardware-accelerated emulator with
+# the MCP server enabled and exposes its socket through a free quick tunnel so a model harness
+# running elsewhere (with the inference key that must never reach this public repository) can
+# drive the phone browser. Two lanes so two model suites run at the same time.
+on:
+  push:
+    branches: [cursor/android-mcp-capture-mobile-suite-8b8f]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mcp-mobile-suite-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  serve:
+    name: Serve the Android MCP (lane ${{ matrix.lane }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [a, b]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools platforms;android-35 build-tools;35.0.0
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
+      - run: npm ci
+      - name: Build the chrome and page script
+        run: npm run build:android:web
+      - name: Assemble the debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug -PskipWeb --no-daemon --stacktrace
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
+      - name: Serve the MCP until the harness says shutdown
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          LANE: ${{ matrix.lane }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 3
+          ram-size: 4096M
+          heap-size: 512M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: bash .github/mcp-mobile/serve.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mcp-mobile-${{ matrix.lane }}
+          path: artifacts/mcp-mobile-${{ matrix.lane }}/
+          if-no-files-found: warn
+          retention-days: 7

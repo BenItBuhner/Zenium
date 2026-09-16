@@ -1,0 +1,29 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Long Fixture</title>
+<style>
+  body{font:16px system-ui;margin:0}
+  section{height:900px;padding:40px;box-sizing:border-box;border-bottom:1px solid #ccc}
+  section:nth-child(odd){background:#f4f6ff} section:nth-child(even){background:#fff6f0}
+  footer{padding:40px;background:#222;color:#fff;min-height:160px}
+</style></head>
+<body>
+<section><h1>Long page – section 1 of 5</h1><p>Scroll down to reach the footer. The footer only renders its code once it is scrolled into view.</p></section>
+<section><h2>Section 2</h2><p>Filler text for section two.</p></section>
+<section><h2>Section 3</h2><p>Filler text for section three.</p></section>
+<section><h2>Section 4</h2><p>Filler text for section four.</p></section>
+<section><h2>Section 5</h2><p>Almost there – the footer is right below.</p></section>
+<footer id="footer"><p id="footer-text">(footer content loads when scrolled into view)</p></footer>
+<script>
+  var shown = false;
+  function check() {
+    var r = document.getElementById('footer').getBoundingClientRect();
+    if (!shown && r.top < innerHeight) {
+      shown = true;
+      document.getElementById('footer-text').textContent = 'Footer code: FOOTER-CODE-9182';
+      document.title = 'Long Fixture [footer-visible]';
+    }
+  }
+  addEventListener('scroll', check);
+  setInterval(check, 300);
+</script>
+</body></html>
