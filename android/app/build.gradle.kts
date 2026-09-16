@@ -89,6 +89,8 @@ android {
         targetSdk = 35
         versionCode = appVersionCode
         versionName = appVersion
+        // Instrumentation (the gesture demo driver under src/androidTest); never part of the app.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Point the chrome at the Vite dev server: ./gradlew installDebug -PdevServer=http://10.0.2.2:41734/
         buildConfigField(
             "String",
@@ -144,6 +146,7 @@ android {
     }
 
     sourceSets["main"].java.srcDirs("src/main/kotlin")
+    sourceSets["androidTest"].java.srcDirs("src/androidTest/kotlin")
 
     packaging {
         resources.excludes += setOf("META-INF/*.version", "META-INF/LICENSE*")
@@ -163,4 +166,9 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("com.google.android.material:material:1.12.0")
+
+    // On-device driver for the gesture demo recording (.github/workflows/android-gesture-demo.yml).
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("junit:junit:4.13.2")
 }
