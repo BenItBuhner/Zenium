@@ -1,10 +1,15 @@
 version: 2
 updates:
-  # Keeps the actions used by the CI and release workflows on supported versions.
+  # Keeps the actions used by the CI and release workflows on supported versions; every action
+  # bump lands in one PR.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 2
     labels:
       - dependencies
     groups:
@@ -12,11 +17,17 @@ updates:
         patterns:
           - '*'
   # Electron tracks Chromium security releases; keep it and the toolchain moving. Minor and patch
-  # bumps arrive as one PR a week, majors (Electron, Vite, electron-builder) come on their own.
+  # bumps arrive as one PR a week. Majors come grouped per toolchain, so that packages which only
+  # work in lockstep move in one PR; Electron itself always comes alone because a new major needs
+  # its own verification (boot the app, package it, check the electron-updater feeds).
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
     labels:
       - dependencies
     groups:
@@ -24,3 +35,63 @@ updates:
         update-types:
           - minor
           - patch
+      # Vite, its React plugin, electron-vite and vitest peer-depend on each other's majors.
+      vite-toolchain:
+        patterns:
+          - vite
+          - '@vitejs/*'
+          - electron-vite
+          - vitest
+          - '@vitest/*'
+          - '@tailwindcss/vite'
+        update-types:
+          - major
+      eslint-toolchain:
+        patterns:
+          - eslint
+          - '@eslint/*'
+          - 'eslint-plugin-*'
+          - typescript-eslint
+          - '@typescript-eslint/*'
+          - '@electron-toolkit/eslint-config-*'
+        update-types:
+          - major
+      react:
+        patterns:
+          - react
+          - react-dom
+          - '@types/react'
+          - '@types/react-dom'
+        update-types:
+          - major
+      # Packaging, auto-update and the toolkit helpers; the electron package itself stays alone.
+      electron-tooling:
+        patterns:
+          - electron-builder
+          - electron-updater
+          - '@electron-toolkit/*'
+        exclude-patterns:
+          - '@electron-toolkit/eslint-config-*'
+        update-types:
+          - major
+    ignore:
+      # TypeScript 7 is the native compiler and ships no JS compiler API, which typescript-eslint
+      # needs ("typescript-eslint does not support TS 7.0"). TypeScript majors are moved by hand
+      # together with the lint toolchain; 6.0.x is the supported stepping stone and needs baseUrl
+      # dropped from the tsconfigs.
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
+      # Follows the Node.js bundled in Electron (Electron 44 ships Node 24); bumped by hand with
+      # each Electron major so the types never describe APIs the runtime does not have.
+      - dependency-name: '@types/node'
+        update-types:
+          - version-update:semver-major
+      # Vite 8 and @vitejs/plugin-react 6 (which requires Vite 8) wait for an electron-vite release
+      # that supports Vite 8; electron-vite 5 caps Vite at ^7. Lift both together when it ships.
+      - dependency-name: vite
+        versions:
+          - '>=8.0.0'
+      - dependency-name: '@vitejs/plugin-react'
+        versions:
+          - '>=6.0.0'
