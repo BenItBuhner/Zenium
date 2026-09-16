@@ -43,6 +43,11 @@ df -h / /tmp
 ) &
 monitor_pid=$!
 
+# The same 411 CSS px wide layout a Pixel 6 gets, at 2.3x fewer pixels: the emulator renders,
+# snapshots and records through a software GPU, and every pixel costs.
+adb shell wm size 720x1600
+adb shell wm density 280
+sleep 3
 # Three-button navigation: no system gesture zone under the bar, so no accidental home swipes.
 adb shell cmd overlay enable com.android.internal.systemui.navbar.threebutton || true
 adb shell settings put system screen_off_timeout 2147483647 || true
@@ -100,8 +105,7 @@ if [ "$ready" -ne 1 ]; then
   exit 1
 fi
 
-# The display is scaled to 720 px wide to keep the file small; the aspect ratio is the device's.
-adb shell screenrecord --size 720x1600 --bit-rate 6000000 --time-limit 170 "/sdcard/$video" &
+adb shell screenrecord --bit-rate 8000000 --time-limit 170 "/sdcard/$video" &
 recorder_pid=$!
 sleep 1
 adb shell run-as "$app_id" touch files/gesture-demo/recording

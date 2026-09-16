@@ -159,11 +159,13 @@ class GestureDemo {
 
     private fun demo() {
         val w = width.toFloat()
+        val n = NUDGE
         val f = Finger()
 
         // 1. Slow swipe to the next tab: the neighbour peeks in and tracks the finger.
         f.down(pill.right - 10f, pillY)
-        f.moveBy(-0.30f * w, 0f, 700)
+        f.settleIn(-n, 0f)
+        f.moveBy(-0.30f * w + n, 0f, 700)
         f.hold(600)
         shot("01-swipe-peek")
         f.moveBy(-0.28f * w, 0f, 500)
@@ -173,27 +175,30 @@ class GestureDemo {
 
         // 2. And back to the previous tab.
         f.down(pill.left + 10f, pillY)
-        f.moveBy(0.55f * w, 0f, 800)
+        f.settleIn(n, 0f)
+        f.moveBy(0.55f * w - n, 0f, 800)
         f.hold(250)
         f.up()
         beat()
 
         // 3. Reversal: head for the next tab, change your mind, drift past the start and let go.
         f.down(pill.right - 10f, pillY)
-        f.moveBy(-0.38f * w, 0f, 600)
+        f.settleIn(-n, 0f)
+        f.moveBy(-0.38f * w + n, 0f, 600)
         f.hold(400)
         f.moveBy(0.53f * w, 0f, 650)
         f.hold(300)
         f.up()
         beat()
 
-        // 4. Interrupt: fling to the next tab, catch the track while it is still moving, pull it back.
-        //    (The finger drifts while it holds the track – a touch that sits still on the pill would
-        //    be a long press.)
+        // 4. Interrupt: fling to the next tab, catch the track while it is still moving, pull it
+        //    back. A touch that catches a transition does not snapshot, so it shows up at once; it
+        //    drifts while holding the track because a finger sitting still would be a long press.
         f.down(pill.right - 10f, pillY)
+        f.settleIn(-n, 0f)
         f.moveBy(-0.40f * w, 0f, 120)
         f.up()
-        SystemClock.sleep(110)
+        SystemClock.sleep(300)
         f.down(pillCenterX, pillY)
         f.moveBy(0.04f * w, 0f, 450)
         shot("02-caught-mid-flight")
@@ -204,7 +209,8 @@ class GestureDemo {
 
         // 5. Pull the overview a third of the way in, look at it, let go: it springs back closed.
         f.down(pillCenterX, pillY)
-        f.moveBy(0f, -0.28f * overviewTravel, 600)
+        f.settleIn(0f, -n)
+        f.moveBy(0f, -0.28f * overviewTravel + n, 600)
         f.hold(600)
         shot("03-overview-drag")
         f.moveBy(0f, -0.05f * overviewTravel, 200)
@@ -214,7 +220,8 @@ class GestureDemo {
 
         // 6. Pull it most of the way and commit; pick a tab from the grid to leave.
         f.down(pillCenterX, pillY)
-        f.moveBy(0f, -0.75f * overviewTravel, 800)
+        f.settleIn(0f, -n)
+        f.moveBy(0f, -0.75f * overviewTravel + n, 800)
         f.hold(300)
         f.up()
         SystemClock.sleep(1_800)
@@ -234,6 +241,16 @@ class GestureDemo {
     }
 
     private fun beat() = SystemClock.sleep(1_500)
+
+    /**
+     * Cross the slop (so the axis is locked and no long press can start) and wait for the stage.
+     * The first touch on the pill snapshots the live page before the cards can replace it; on
+     * hardware that takes a frame, on the emulator's software GPU the better part of a second.
+     */
+    private fun Finger.settleIn(dx: Float, dy: Float) {
+        moveBy(dx, dy, 60)
+        hold(STAGE_WAIT)
+    }
 
     /** A quick fling from the right end of the pill: next tab. */
     private fun flingLeft() {
@@ -263,8 +280,11 @@ class GestureDemo {
         f.up()
     }
 
-    /** Spring, tab activation and the first paint of a page that was never loaded. */
-    private fun settle() = SystemClock.sleep(3_000)
+    /**
+     * Snapshot, spring, tab activation and the first paint of a page that was never loaded. Long
+     * enough that the next touch starts a fresh gesture (and snapshot) instead of catching this one.
+     */
+    private fun settle() = SystemClock.sleep(4_500)
 
     private fun shot(name: String) {
         val bitmap = ui.takeScreenshot() ?: return
@@ -363,5 +383,8 @@ class GestureDemo {
         private const val TAG = "GestureDemo"
         private const val PILL_LABEL = "Address"
         private const val STEP_MS = 8L
+        /** Past the 8 CSS px slop at any plausible density, hardly visible on the track. */
+        private const val NUDGE = 30f
+        private const val STAGE_WAIT = 2_000L
     }
 }
