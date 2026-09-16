@@ -1490,10 +1490,13 @@ const browserEvaluate: AgentTool = {
   async run(ctx, args) {
     const expression = need(args, 'expression', 'the JavaScript to run, e.g. "document.title"')
     const { tab, view } = await actOn(ctx, args)
-    const code = `(async () => { const __r = (${expression}); const __v = typeof __r === 'function' ? await __r() : await __r; try { return JSON.stringify(__v) ?? 'undefined' } catch (e) { return String(__v) } })()`
+    const wrapped = wrapScript(expression)
+    if ('error' in wrapped) return textError(`Script has a syntax error: ${wrapped.error}`)
     try {
-      const result = (await view.executeJavaScript(code)) as string
-      const out = typeof result === 'string' ? result : JSON.stringify(result)
+      const result = (await view.executeJavaScript(wrapped.code)) as
+        { ok: true; value: string } | { ok: false; error: string }
+      if (!result.ok) return textError(`Script threw: ${result.error}`)
+      const out = result.value
       return text(
         `Result (tab ${tab.id}):\n${out.length > 20_000 ? out.slice(0, 20_000) + '\n… truncated' : out}`
       )
@@ -1501,6 +1504,34 @@ const browserEvaluate: AgentTool = {
       return textError(`Script failed: ${(error as Error).message}`)
     }
   }
+}
+
+/**
+ * Agents send expressions (`document.title`), arrow functions (`() => …`) and plain statement
+ * lists (`history.forward(); 'done'`) alike. Work out which one parses (the main process speaks
+ * the same JavaScript as the page) and wrap it so the page reports exceptions as data instead of
+ * Electron's opaque "script failed to execute".
+ */
+export function wrapScript(source: string): { code: string } | { error: string } {
+  const body = (inner: string): string =>
+    `(async () => { try { ${inner} const __v = typeof __r === 'function' ? await __r() : await __r; let __s; try { __s = JSON.stringify(__v) } catch (e) { __s = String(__v) } return { ok: true, value: __s === undefined ? 'undefined' : __s } } catch (e) { return { ok: false, error: String((e && e.message) || e) } } })()`
+  const asExpression = `const __r = (${source}\n);`
+  const asStatements = `const __r = await (async () => { ${source}\n })();`
+  for (const inner of [asExpression, asStatements]) {
+    try {
+      // Parsing only: the function is never called here.
+      new Function(`return ${body(inner)}`)
+      return { code: body(inner) }
+    } catch {
+      /* try the next shape */
+    }
+  }
+  try {
+    new Function(source)
+  } catch (error) {
+    return { error: (error as Error).message }
+  }
+  return { error: 'could not parse the script' }
 }
 
 const zenHistory: AgentTool = {

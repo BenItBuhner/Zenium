@@ -12,6 +12,7 @@ import {
   normalizeKey,
   orderedTabs,
   resolveTabRef,
+  wrapScript,
   type ToolContext
 } from '../tools'
 
@@ -271,5 +272,39 @@ describe('zen_mode', () => {
     await expect(tool.run(fakeContext(), { mode: 'sideways' })).rejects.toThrow(
       /"foreground" or "background"/
     )
+  })
+})
+
+describe('wrapScript', () => {
+  it('wraps expressions, functions and statement lists, and reports syntax errors', () => {
+    for (const src of [
+      'document.title',
+      '() => 1 + 1',
+      "history.forward(); 'forwarded'",
+      'const a = 1; return a + 1'
+    ]) {
+      const w = wrapScript(src)
+      expect('code' in w, src).toBe(true)
+    }
+    const bad = wrapScript('this is not javascript')
+    expect('error' in bad && bad.error).toMatch(/Unexpected/)
+  })
+
+  it('produces code whose result carries ok/value or ok/error', async () => {
+    const run = async (src: string): Promise<unknown> => {
+      const w = wrapScript(src)
+      if ('error' in w) throw new Error(w.error)
+
+      return await new Function(`return ${w.code}`)()
+    }
+    expect(await run('1 + 1')).toEqual({ ok: true, value: '2' })
+    expect(await run('() => ({ a: [1, 2] })')).toEqual({ ok: true, value: '{"a":[1,2]}' })
+    expect(await run("const x = 'ab'; return x.length")).toEqual({ ok: true, value: '2' })
+    expect(await run('undefined')).toEqual({ ok: true, value: 'undefined' })
+    expect(await run("throw new Error('boom')")).toEqual({ ok: false, error: 'boom' })
+    expect(await run('(() => { throw new TypeError("nope") })()')).toEqual({
+      ok: false,
+      error: 'nope'
+    })
   })
 })
