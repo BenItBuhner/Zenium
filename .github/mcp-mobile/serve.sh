@@ -68,7 +68,7 @@ adb shell am kill-all || true
 echo "letting the system settle"
 sleep 30
 
-apk=$(find android/app/build/outputs/apk/debug -name '*.apk' -print -quit)
+apk=$(find "${APP_SRC:-.}/android/app/build/outputs/apk/debug" -name '*.apk' -print -quit)
 echo "app: $apk"
 adb install -r -g "$apk"
 adb shell am force-stop "$app_id" || true
