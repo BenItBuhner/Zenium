@@ -95,3 +95,8 @@ updates:
       - dependency-name: '@vitejs/plugin-react'
         versions:
           - '>=6.0.0'
+      # ESLint 10 waits for eslint-plugin-react to accept it (7.37 peers eslint ^9.7 at most; the
+      # other plugins and the toolkit configs already do). Lift when it does.
+      - dependency-name: eslint
+        versions:
+          - '>=10.0.0'
