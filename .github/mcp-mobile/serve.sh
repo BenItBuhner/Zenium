@@ -177,6 +177,14 @@ while true; do
         demo-start) recording=1 ;;
         demo-end) recording=0 ;;
         shutdown) shutdown=1 ;;
+        restart-app)
+          # Cold start with the persisted session, to look at what a restored tab does.
+          adb shell am force-stop "$app_id" || true
+          sleep 2
+          adb shell am start -n "$app_id/app.zen.chromium.MainActivity" || true
+          sleep 8
+          adb forward "tcp:$port" "tcp:$port" || true
+          ;;
       esac
       case "$ev" in
         task-*|demo-*|suite-*)
