@@ -34,7 +34,9 @@ import kotlin.math.roundToInt
 class PageCapture(
     private val view: WebView,
     private val window: Window,
-    private val encoder: Executor
+    private val encoder: Executor,
+    /** Called before the first and after the last copy: the host squares the view's corners. */
+    private val squareCorners: (Boolean) -> Unit = {}
 ) {
     private val main = Handler(Looper.getMainLooper())
 
@@ -43,18 +45,27 @@ class PageCapture(
             callback(null)
             return
         }
-        if (mode == CapturePlan.MODE_VIEWPORT) {
-            copyView { bitmap -> if (bitmap == null) callback(null) else encode(bitmap, format, callback) }
-            return
+        // The rounded corners of the tab view would otherwise be cut out of every copy (and show
+        // up once per strip in a stitched image).
+        squareCorners(true)
+        val finish: (JSONObject?) -> Unit = { result ->
+            squareCorners(false)
+            callback(result)
         }
-        readMetrics { metrics ->
-            if (metrics == null) {
-                // No page script access (about:blank before anything ran, a crashed renderer): the
-                // viewport is still worth returning.
-                copyView { bitmap -> if (bitmap == null) callback(null) else encode(bitmap, format, callback) }
-                return@readMetrics
+        awaitFrames(1) {
+            if (mode == CapturePlan.MODE_VIEWPORT) {
+                copyView { bitmap -> if (bitmap == null) finish(null) else encode(bitmap, format, finish) }
+                return@awaitFrames
             }
-            Stitch(mode, region, format, metrics, callback).start()
+            readMetrics { metrics ->
+                if (metrics == null) {
+                    // No page script access (about:blank before anything ran, a crashed renderer):
+                    // the viewport is still worth returning.
+                    copyView { bitmap -> if (bitmap == null) finish(null) else encode(bitmap, format, finish) }
+                    return@readMetrics
+                }
+                Stitch(mode, region, format, metrics, finish).start()
+            }
         }
     }
 

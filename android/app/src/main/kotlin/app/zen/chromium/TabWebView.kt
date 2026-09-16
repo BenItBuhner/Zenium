@@ -435,7 +435,12 @@ class TabWebView(
      * px), `format` `jpeg` or `png`. Answers `{ data, mimeType, width, height }` or null.
      */
     fun capture(mode: String, region: JSONObject?, format: String, callback: (JSONObject?) -> Unit) {
-        PageCapture(this, host.activity.window, encoder).run(mode, PageCapture.parseRegion(region), format, callback)
+        val radius = radiusPx
+        val square = { on: Boolean ->
+            radiusPx = if (on) 0f else radius
+            invalidateOutline()
+        }
+        PageCapture(this, host.activity.window, encoder, square).run(mode, PageCapture.parseRegion(region), format, callback)
     }
 
     fun navState(): JSONObject = json(
