@@ -1,17 +1,25 @@
 import type { JSX } from 'react'
 import { useEffect, useRef } from 'react'
 import { ArrowLeft, Lock, MoreHorizontal, Plus, Search } from 'lucide-react'
-import type { UIState } from '@shared/types'
+import type { Space, Tab, UIState } from '@shared/types'
 import { displayUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
+import {
+  closeOverview,
+  overviewIsOpen,
+  stageStore,
+  toggleOverview
+} from '@renderer/lib/gestures/stage'
 import { activeSpace, activeTab, essentialsFor, tabsOf } from '@renderer/lib/selectors'
-import { closeDrawer, openDrawer, openUrlbar, type UiState } from '@renderer/lib/ui'
+import { closeDrawer, openUrlbar, type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ContentArea } from '../content/ContentArea'
 import { Onboarding } from '../overlays/Onboarding'
 import { Favicon } from '../sidebar/Favicon'
 import { TabDialogs } from '../TabDialogs'
 import { DrawerSidebar } from './DrawerSidebar'
+import { PhoneStage } from './PhoneStage'
+import { usePillGestures } from './usePillGestures'
 
 interface Props {
   state: UIState
@@ -66,7 +74,8 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           <ContentArea state={state} ui={ui} />
         </div>
       </main>
-      {!barHidden && <PhoneBar state={state} ui={ui} />}
+      <PhoneStage state={state} />
+      {!barHidden && <PhoneBar state={state} />}
       {ui.drawerOpen && (
         // Closing on click (not pointerdown) keeps the tap from falling through to the bar below.
         <div className="absolute inset-0 z-40" onClick={() => closeDrawer()}>
@@ -92,14 +101,23 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   )
 }
 
-/** Back · address pill · new tab · tabs · menu. Swipe the pill sideways to change spaces. */
-function PhoneBar({ state, ui }: { state: UIState; ui: UiState }): JSX.Element {
+/**
+ * Back · address pill · new tab · tabs · menu. The pill is the gesture anchor: swipe it sideways
+ * to move to the previous / next tab (the neighbour's card follows the finger), pull it up
+ * towards the middle of the screen for the tab overview, tap it for the URL bar.
+ */
+function PhoneBar({ state }: { state: UIState }): JSX.Element {
   const tab = activeTab(state)
   const space = activeSpace(state)
   const count = tabsOf(state, space).length + essentialsFor(state, space).length
-  const url = tab ? displayUrl(tab.url) : ''
-  const secure = tab?.url.startsWith('https://')
-  const swipe = useRef<{ x: number; y: number; id: number } | null>(null)
+  const overviewOpen = stageStore.use((s) => s.overview.phase !== 'closed')
+  const pill = usePillGestures({
+    edge: 'bottom',
+    onTap: () => {
+      if (overviewIsOpen()) closeOverview()
+      else void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, { attached: true })
+    }
+  })
 
   return (
     <nav
@@ -117,45 +135,11 @@ function PhoneBar({ state, ui }: { state: UIState; ui: UiState }): JSX.Element {
       </button>
       <button
         type="button"
-        className="zen-phone-pill flex h-11 min-w-0 flex-1 items-center gap-2 rounded-full bg-[var(--zen-element-bg)] px-3.5 text-left active:bg-[var(--zen-element-bg-hover)]"
-        style={{ touchAction: 'pan-y' }}
-        onPointerDown={(e) => {
-          if (e.pointerType === 'mouse') return
-          swipe.current = { x: e.clientX, y: e.clientY, id: e.pointerId }
-        }}
-        onPointerUp={(e) => {
-          const start = swipe.current
-          swipe.current = null
-          if (!start || start.id !== e.pointerId) return
-          const dx = e.clientX - start.x
-          const dy = e.clientY - start.y
-          if (Math.abs(dx) > 56 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-            // A horizontal flick changes space; the click that follows must not open the URL bar.
-            e.preventDefault()
-            e.currentTarget.dataset.swiped = 'true'
-            run(dx < 0 ? 'space.next' : 'space.prev', undefined)
-          }
-        }}
-        onClick={(e) => {
-          if (e.currentTarget.dataset.swiped) {
-            delete e.currentTarget.dataset.swiped
-            return
-          }
-          void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, { attached: true })
-        }}
+        className="zen-phone-pill flex h-11 min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-full bg-[var(--zen-element-bg)] px-3.5 text-left active:bg-[var(--zen-element-bg-hover)]"
+        aria-label="Address"
+        {...pill}
       >
-        {tab ? <Favicon tab={tab} size={16} /> : <Search className="h-4 w-4 shrink-0 opacity-60" />}
-        <span
-          className={cn('min-w-0 flex-1 truncate text-[14px]', !url && 'text-[var(--zen-muted)]')}
-        >
-          {url || 'Search or enter address'}
-        </span>
-        {url && secure && <Lock className="h-3.5 w-3.5 shrink-0 opacity-50" />}
-        {state.spaces.length > 1 && (
-          <span className="max-w-[64px] shrink-0 truncate text-[11px] text-[var(--zen-muted)]">
-            {space.icon || space.name}
-          </span>
-        )}
+        <PillContent state={state} tab={tab} space={space} />
       </button>
       <button
         type="button"
@@ -173,9 +157,15 @@ function PhoneBar({ state, ui }: { state: UIState; ui: UiState }): JSX.Element {
         type="button"
         className="zen-toolbar-button h-11 w-11"
         aria-label={`Tabs (${count})`}
-        onClick={() => (ui.drawerOpen ? closeDrawer() : void openDrawer(tab?.id ?? null))}
+        aria-pressed={overviewOpen}
+        onClick={() => toggleOverview(state)}
       >
-        <span className="flex h-[22px] min-w-[22px] items-center justify-center rounded-[6px] border-2 border-current px-1 text-[11px] font-semibold leading-none">
+        <span
+          className={cn(
+            'flex h-[22px] min-w-[22px] items-center justify-center rounded-[6px] border-2 border-current px-1 text-[11px] font-semibold leading-none transition-colors',
+            overviewOpen && 'bg-current text-[var(--zen-bg-solid)]'
+          )}
+        >
           {count > 99 ? '∞' : count}
         </span>
       </button>
@@ -188,6 +178,56 @@ function PhoneBar({ state, ui }: { state: UIState; ui: UiState }): JSX.Element {
         <MoreHorizontal className="h-5 w-5" />
       </button>
     </nav>
+  )
+}
+
+/**
+ * What the pill says. While a swipe moves the tab track the pill follows the tab under the
+ * finger – its label slides a little with the cards and swaps as the nearest card changes.
+ */
+function PillContent({
+  state,
+  tab,
+  space
+}: {
+  state: UIState
+  tab: Tab | null
+  space: Space
+}): JSX.Element {
+  const underFinger = stageStore.use((s) => {
+    if (s.tabs.phase === 'idle') return null
+    return s.tabs.order[Math.round(s.tabs.position)] ?? null
+  })
+  const shift = stageStore.use((s) => {
+    if (s.tabs.phase === 'idle') return 0
+    return Math.round((Math.round(s.tabs.position) - s.tabs.position) * 16)
+  })
+  const shown = (underFinger && state.tabs[underFinger]) || tab
+  const url = shown ? displayUrl(shown.url) : ''
+  const secure = shown?.url.startsWith('https://')
+  return (
+    <span
+      key={shown?.id ?? 'empty'}
+      className="zen-animate-fade flex min-w-0 flex-1 items-center gap-2"
+      style={{ transform: shift ? `translateX(${shift}px)` : undefined }}
+    >
+      {shown ? (
+        <Favicon tab={shown} size={16} />
+      ) : (
+        <Search className="h-4 w-4 shrink-0 opacity-60" />
+      )}
+      <span
+        className={cn('min-w-0 flex-1 truncate text-[14px]', !url && 'text-[var(--zen-muted)]')}
+      >
+        {url || 'Search or enter address'}
+      </span>
+      {url && secure && <Lock className="h-3.5 w-3.5 shrink-0 opacity-50" />}
+      {state.spaces.length > 1 && (
+        <span className="max-w-[64px] shrink-0 truncate text-[11px] text-[var(--zen-muted)]">
+          {space.icon || space.name}
+        </span>
+      )}
+    </span>
   )
 }
 

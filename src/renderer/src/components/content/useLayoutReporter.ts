@@ -4,7 +4,7 @@ import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { glanceRect, placementsFor, SPLIT_GAP, SPLIT_GAP_TOUCH } from '@renderer/lib/layout'
 import { activeTab, visibleTabIds } from '@renderer/lib/selectors'
-import { overlayCoversContent, type UiState } from '@renderer/lib/ui'
+import { contentAreaStore, overlayCoversContent, type UiState } from '@renderer/lib/ui'
 
 export interface LayoutInfo {
   /** Viewport rect in window coordinates (null before first measure). */
@@ -33,15 +33,15 @@ export function useLayoutReporter(
     const measure = (): void => {
       const r = el.getBoundingClientRect()
       const next = { x: r.left, y: r.top, width: r.width, height: r.height }
-      setArea((prev) =>
-        prev &&
+      const same = (prev: Rect | null): boolean =>
+        prev !== null &&
         prev.x === next.x &&
         prev.y === next.y &&
         prev.width === next.width &&
         prev.height === next.height
-          ? prev
-          : next
-      )
+      // Chrome that stands in for the page (the phone's gesture stage) lays out against it.
+      if (!same(contentAreaStore.get().area)) contentAreaStore.set({ area: next })
+      setArea((prev) => (same(prev) ? prev : next))
     }
     measure()
     const ro = new ResizeObserver(measure)

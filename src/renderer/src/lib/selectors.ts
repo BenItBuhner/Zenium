@@ -30,6 +30,18 @@ export function regularOf(state: UIState, space: Space): Tab[] {
   return tabsOf(state, space).filter((t) => !t.pinned)
 }
 
+/**
+ * Every tab a space shows, in the order of the sidebar: Essentials, pinned tabs, the tabs of each
+ * folder, then the loose ones. This is the track the phone's swipe-to-switch moves along.
+ */
+export function tabOrderOf(state: UIState, space: Space): Tab[] {
+  const regular = regularOf(state, space)
+  const folders = Object.values(state.folders).filter((f) => f.spaceId === space.id)
+  const inFolders = folders.flatMap((f) => regular.filter((t) => t.folderId === f.id))
+  const loose = regular.filter((t) => !t.folderId || !state.folders[t.folderId])
+  return [...essentialsFor(state, space), ...pinnedOf(state, space), ...inFolders, ...loose]
+}
+
 /** Ids of the tabs that should be visible in the content area right now. */
 export function visibleTabIds(state: UIState): string[] {
   const tab = activeTab(state)
