@@ -12,7 +12,9 @@ import android.net.http.SslError
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
+import android.os.SystemClock
 import android.util.Base64
+import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -35,6 +37,7 @@ import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
@@ -143,13 +146,59 @@ class TabWebView(
         val data = message.data ?: return
         val obj = runCatching { JSONObject(data) }.getOrNull() ?: return
         if (obj.str("token") != host.pageToken) return
-        if (obj.str("type") == "hello") {
-            replyProxy = proxy
-            sendFlags()
-            return
+        when (obj.str("type")) {
+            "hello" -> {
+                replyProxy = proxy
+                sendFlags()
+                return
+            }
+            "evalResult" -> {
+                // The settled value of a Promise an evaluate() script returned (see evaluate()).
+                pendingEvals.remove(obj.optInt("id"))?.invoke(obj.strOrNull("value"))
+                return
+            }
         }
         obj.remove("token")
         host.chrome.viewEvent(tabId, "pageMessage", obj)
+    }
+
+    // --- script evaluation for the core (async-aware) --------------------------------------------
+
+    private val pendingEvals = HashMap<Int, (String?) -> Unit>()
+    private var evalSeq = 0
+
+    /**
+     * Run `code` in the page and answer with the JSON text of its value, like Electron's
+     * `executeJavaScript`: a returned Promise is awaited (WebView's `evaluateJavascript` would
+     * hand back `{}` for it at once), and a thrown or rejected error comes back as
+     * `{"__zenError": message}` so the bridge can reject the call. The async path reports through
+     * the page bridge, so the token the page script already carries is embedded in the wrapper.
+     */
+    fun evaluate(code: String, callback: (String?) -> Unit) {
+        val id = ++evalSeq
+        pendingEvals[id] = callback
+        val post = "window.__zenPageBridge&&__zenPageBridge.postMessage(JSON.stringify({token:${JSONObject.quote(host.pageToken)},type:'evalResult',id:$id,value:__s}))"
+        val wrapped = "(function(){var __e=function(e){return {__zenError:String((e&&e.message)||e)}};try{var __r=(" + code + "\n);" +
+            "if(__r&&typeof __r.then==='function'){__r.then(function(v){var __s;try{__s=JSON.stringify(v===undefined?null:v)}catch(x){__s=JSON.stringify(String(v))}$post}," +
+            "function(e){var __s=JSON.stringify(__e(e));$post});return '__zen_pending__'}return __r}catch(e){return __e(e)}})()"
+        evaluateJavascript(wrapped) { result ->
+            if (result == "\"__zen_pending__\"") {
+                // Settled later through onPageMessage; never leave the core hanging past its own budget.
+                Handler(Looper.getMainLooper()).postDelayed({
+                    pendingEvals.remove(id)?.invoke("{\"__zenError\":\"the script's promise did not settle in time\"}")
+                }, EVAL_TIMEOUT_MS)
+                return@evaluateJavascript
+            }
+            pendingEvals.remove(id)?.invoke(result)
+        }
+    }
+
+    /** A new document unloads whatever scripts were still pending. */
+    private fun failPendingEvals(reason: String) {
+        if (pendingEvals.isEmpty()) return
+        val waiting = pendingEvals.values.toList()
+        pendingEvals.clear()
+        for (cb in waiting) cb("{\"__zenError\":${JSONObject.quote(reason)}}")
     }
 
     private inner class LegacyPageBridge {
@@ -247,28 +296,68 @@ class TabWebView(
 
     /**
      * Deliver a synthetic-but-trusted input event from an AI agent. Coordinates arrive in CSS
-     * pixels relative to the page; the WebView works in device pixels, so they scale by density.
+     * pixels relative to the layout viewport (what `getBoundingClientRect` reports); on screen
+     * they are offset by the visual viewport (pinch pan) and scaled by the page scale × density –
+     * a desktop-layout page shown zoomed out has far fewer device pixels per CSS pixel than the
+     * density alone would suggest. `done` runs once the event has been dispatched.
      */
-    fun sendAgentInput(event: JSONObject) {
-        val density = resources.displayMetrics.density
+    fun sendAgentInput(event: JSONObject, done: () -> Unit) {
         when (event.str("type")) {
-            "click" -> agentTap((event.num("x") * density).toFloat(), (event.num("y") * density).toFloat(), event.num("clickCount", 1.0).toInt())
-            "mouseMove" -> agentHover((event.num("x") * density).toFloat(), (event.num("y") * density).toFloat())
-            "key" -> agentKey(event.str("key"))
+            "click" -> pageToView(event.num("x"), event.num("y")) { x, y ->
+                agentTap(x, y, event.num("clickCount", 1.0).toInt())
+                done()
+            }
+            "mouseMove" -> pageToView(event.num("x"), event.num("y")) { x, y ->
+                agentHover(x, y)
+                done()
+            }
+            "key" -> {
+                agentKey(event.str("key"))
+                done()
+            }
+            else -> done()
+        }
+    }
+
+    /** CSS px in the layout viewport → device px on this view. */
+    private fun pageToView(cssX: Double, cssY: Double, then: (Float, Float) -> Unit) {
+        @Suppress("DEPRECATION")
+        val scale = scale.toDouble() // device px per CSS px: density × current page scale
+        evaluateJavascript(VISUAL_OFFSET_SCRIPT) { result ->
+            val offset = runCatching { JSONArray(result ?: "") }.getOrNull()
+            val ox = offset?.optDouble(0, 0.0) ?: 0.0
+            val oy = offset?.optDouble(1, 0.0) ?: 0.0
+            then(((cssX - ox) * scale).toFloat(), ((cssY - oy) * scale).toFloat())
         }
     }
 
     private fun agentTap(x: Float, y: Float, count: Int) {
         repeat(count.coerceAtLeast(1)) {
-            val down = System.currentTimeMillis()
-            dispatchTouchEvent(MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0))
-            dispatchTouchEvent(MotionEvent.obtain(down, down + 20, MotionEvent.ACTION_UP, x, y, 0))
+            val down = SystemClock.uptimeMillis()
+            dispatchTouchEvent(pointerEvent(down, down, MotionEvent.ACTION_DOWN, x, y, MotionEvent.TOOL_TYPE_FINGER, InputDevice.SOURCE_TOUCHSCREEN))
+            dispatchTouchEvent(pointerEvent(down, down + 20, MotionEvent.ACTION_UP, x, y, MotionEvent.TOOL_TYPE_FINGER, InputDevice.SOURCE_TOUCHSCREEN))
         }
     }
 
+    /** A mouse hover: only pointer events from a mouse source reach the page as mouse moves. */
     private fun agentHover(x: Float, y: Float) {
-        val now = System.currentTimeMillis()
-        dispatchGenericMotionEvent(MotionEvent.obtain(now, now, MotionEvent.ACTION_HOVER_MOVE, x, y, 0))
+        val now = SystemClock.uptimeMillis()
+        dispatchGenericMotionEvent(pointerEvent(now, now, MotionEvent.ACTION_HOVER_ENTER, x, y, MotionEvent.TOOL_TYPE_MOUSE, InputDevice.SOURCE_MOUSE))
+        dispatchGenericMotionEvent(pointerEvent(now, now + 1, MotionEvent.ACTION_HOVER_MOVE, x, y, MotionEvent.TOOL_TYPE_MOUSE, InputDevice.SOURCE_MOUSE))
+    }
+
+    private fun pointerEvent(down: Long, time: Long, action: Int, x: Float, y: Float, toolType: Int, source: Int): MotionEvent {
+        val properties = MotionEvent.PointerProperties().apply {
+            id = 0
+            this.toolType = toolType
+        }
+        val coords = MotionEvent.PointerCoords().apply {
+            this.x = x
+            this.y = y
+            pressure = if (toolType == MotionEvent.TOOL_TYPE_MOUSE) 0f else 1f
+            size = if (toolType == MotionEvent.TOOL_TYPE_MOUSE) 0f else 1f
+        }
+        return MotionEvent.obtain(down, time, action, 1, arrayOf(properties), arrayOf(coords), 0, 0, 1f, 1f, 0, 0, source, 0)
     }
 
     private fun agentKey(key: String) {
@@ -387,6 +476,19 @@ class TabWebView(
         }
     }
 
+    /**
+     * Agent screenshot: `mode` is `viewport`, `fullPage` or `region` (with `region` in CSS page
+     * px), `format` `jpeg` or `png`. Answers `{ data, mimeType, width, height }` or null.
+     */
+    fun capture(mode: String, region: JSONObject?, format: String, callback: (JSONObject?) -> Unit) {
+        val radius = radiusPx
+        val square = { on: Boolean ->
+            radiusPx = if (on) 0f else radius
+            invalidateOutline()
+        }
+        PageCapture(this, host.activity.window, encoder, square, ::evaluate).run(mode, PageCapture.parseRegion(region), format, callback)
+    }
+
     fun navState(): JSONObject = json(
         "url" to (url ?: ""),
         "title" to (title ?: ""),
@@ -411,6 +513,7 @@ class TabWebView(
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             pageStarted = true
             loading = true
+            failPendingEvals("the page navigated away before the script finished")
             host.chrome.viewEvent(tabId, "startLoading", null)
             host.chrome.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", false))
             if (muted) setMuted(true)
@@ -522,6 +625,13 @@ class TabWebView(
 
     companion object {
         private val encoder = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-encode") }
+
+        /** Longer than any tool budget (browser_wait_for allows 30 s) but shorter than the socket's. */
+        private const val EVAL_TIMEOUT_MS = 45_000L
+
+        /** Where the visual viewport sits in the layout viewport (non-zero only while pinch-zoomed). */
+        private const val VISUAL_OFFSET_SCRIPT =
+            "(function(){var v=window.visualViewport;return v?[v.offsetLeft,v.offsetTop]:[0,0]})()"
 
         /** WebViewClient error codes → Chromium `net::` codes the core (and error page) understand. */
         fun netErrorCode(code: Int): Int = when (code) {

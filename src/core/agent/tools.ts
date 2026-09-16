@@ -8,7 +8,9 @@ import { RpcError } from './jsonrpc'
 import { pageCall, type PageActionResult, type PageLocation, type PageSnapshot } from './page'
 import type { JsonSchema, ToolDefinition, ToolResult } from './protocol'
 import type { AgentService, AgentSession } from './service'
-import { sleep, textError } from './util'
+import { looksLikeStatements, sleep, textError } from './util'
+
+export { looksLikeStatements }
 
 /**
  * The tools agents see. Page tools use the vocabulary agents already know from Playwright MCP
@@ -756,7 +758,7 @@ const browserTabs: AgentTool = {
       const tab = tabs.createTab({ url, spaceId, active: foreground, load: false }, win)
       ctx.agents.claim(s, tab.id)
       const view = await ctx.agents.prepare(s, tab.id, { activate: foreground })
-      if (url) await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS)
+      if (url) await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
       return pageResult(
         ctx,
         tab,
@@ -909,7 +911,7 @@ const browserNavigate: AgentTool = {
     }
     await ctx.agents.prepare(s, tab.id)
     ctx.browser.tabs.navigate(tab.id, url)
-    const loaded = await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS)
+    const loaded = await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
     const view = ctx.browser.tabs.view(tab.id)
     if (!view) throw new RpcError(-32002, 'The tab went away while loading')
     const pos = ctx.agents.cursorPosition(s, tab.id)
@@ -939,7 +941,7 @@ const browserNavigateBack: AgentTool = {
         `There is no previous page in tab ${tab.id} (it is at the start of its history)`
       )
     ctx.browser.tabs.goBack(tab.id)
-    await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS)
+    await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
     return pageResult(ctx, tab, ctx.browser.tabs.view(tab.id) ?? view, 'Went back.')
   }
 }
@@ -960,7 +962,7 @@ const browserNavigateForward: AgentTool = {
         `There is no next page in tab ${tab.id} – forward only works after going back`
       )
     ctx.browser.tabs.goForward(tab.id)
-    await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS)
+    await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
     return pageResult(ctx, tab, ctx.browser.tabs.view(tab.id) ?? view, 'Went forward.')
   }
 }
@@ -980,7 +982,7 @@ const browserReload: AgentTool = {
   async run(ctx, args) {
     const { tab, view } = await actOn(ctx, args)
     ctx.browser.tabs.reload(tab.id, bool(args, 'ignoreCache'))
-    await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS)
+    await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
     return pageResult(ctx, tab, ctx.browser.tabs.view(tab.id) ?? view, 'Reloaded.')
   }
 }
@@ -1303,7 +1305,7 @@ const browserTakeScreenshot: AgentTool = {
       ctx.agents
         .evalPage(
           view,
-          `for (const el of document.querySelectorAll('[data-zen-agent="cursor"],[data-zen-agent="ripple"]')) el.style.visibility = ${visible ? "''" : "'hidden'"}`
+          `(() => { for (const el of document.querySelectorAll('[data-zen-agent="cursor"],[data-zen-agent="ripple"]')) el.style.visibility = ${visible ? "''" : "'hidden'"}; return true })()`
         )
         .catch(() => undefined)
     await overlays(false)
@@ -1509,7 +1511,13 @@ const browserEvaluate: AgentTool = {
     if ('error' in wrapped) return textError(`Script has a syntax error: ${wrapped.error}`)
     try {
       const result = (await view.executeJavaScript(wrapped.code)) as
-        { ok: true; value: string } | { ok: false; error: string }
+        { ok: true; value: string } | { ok: false; error: string } | null | undefined
+      // The wrapper always answers with an object; nothing at all means the host could not even
+      // parse the script (only possible where the shape had to be guessed, see wrapScript).
+      if (!result)
+        return textError(
+          'Script has a syntax error – give a single expression (document.title), an arrow function (() => …) or statements ending in a value'
+        )
       if (!result.ok) return textError(`Script threw: ${result.error}`)
       const out = result.value
       return text(
@@ -1526,23 +1534,40 @@ const browserEvaluate: AgentTool = {
  * lists (`history.forward(); 'done'`) alike. Work out which one parses (the main process speaks
  * the same JavaScript as the page) and wrap it so the page reports exceptions as data instead of
  * Electron's opaque "script failed to execute".
+ *
+ * `parse` only checks syntax. Where the core itself may not compile code – the Android chrome's
+ * Content-Security-Policy forbids eval – it throws an EvalError, and the shape is guessed from
+ * the source instead: statement keywords or several `;`-separated statements mean statements,
+ * anything else is an expression (the page tells us if that was wrong, see browser_evaluate).
  */
-export function wrapScript(source: string): { code: string } | { error: string } {
+export function wrapScript(
+  source: string,
+  parse: (code: string) => void = (code) => new Function(code)
+): { code: string } | { error: string } {
   const body = (inner: string): string =>
     `(async () => { try { ${inner} const __v = typeof __r === 'function' ? await __r() : await __r; let __s; try { __s = JSON.stringify(__v) } catch (e) { __s = String(__v) } return { ok: true, value: __s === undefined ? 'undefined' : __s } } catch (e) { return { ok: false, error: String((e && e.message) || e) } } })()`
   const asExpression = `const __r = (${source}\n);`
   const asStatements = `const __r = await (async () => { ${source}\n })();`
+  let canParse = true
   for (const inner of [asExpression, asStatements]) {
     try {
       // Parsing only: the function is never called here.
-      new Function(`return ${body(inner)}`)
+      parse(`return ${body(inner)}`)
       return { code: body(inner) }
-    } catch {
+    } catch (error) {
+      if (
+        error instanceof EvalError ||
+        /unsafe-eval|Content Security Policy/i.test(String(error))
+      ) {
+        canParse = false
+        break
+      }
       /* try the next shape */
     }
   }
+  if (!canParse) return { code: body(looksLikeStatements(source) ? asStatements : asExpression) }
   try {
-    new Function(source)
+    parse(source)
   } catch (error) {
     return { error: (error as Error).message }
   }

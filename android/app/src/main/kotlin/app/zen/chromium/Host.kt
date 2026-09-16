@@ -103,12 +103,14 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             "view.stopFind" -> { tab?.stopFind(); reply(null) }
             "view.eval" -> {
                 if (tab == null) reply(null)
-                else tab.evaluateJavascript(args.str("code")) { result ->
-                    // WebView returns JSON text; pass it through so the core sees the real value.
-                    reply(RawJson(result ?: "null"))
+                else tab.evaluate(args.str("code")) { result ->
+                    // JSON text of the value; a thrown/rejected error rejects the bridge call,
+                    // which is what the core expects from Electron's executeJavaScript.
+                    val error = result?.let { r -> runCatching { JSONObject(r).strOrNull("__zenError") }.getOrNull() }
+                    if (error != null) reply(Rejection(error)) else reply(RawJson(result ?: "null"))
                 }
             }
-            "view.input" -> { tab?.sendAgentInput(args.obj("event")); reply(null) }
+            "view.input" -> if (tab == null) reply(null) else tab.sendAgentInput(args.obj("event")) { reply(null) }
             "view.setFlags" -> { tab?.setFlags(args.obj("flags")); reply(null) }
             "view.setZap" -> { tab?.setZap(args.bool("on")); reply(null) }
             "view.setBackground" -> {
@@ -128,6 +130,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             "view.savePage" -> if (tab == null) reply(null) else savePage(tab, args.str("name"), reply)
             "view.snapshot" -> if (tab == null) reply(null) else tab.snapshot(reply)
             "view.screenshot" -> if (tab == null) reply(null) else tab.screenshot { png -> saveToDownloads(args.str("name"), "image/png", png, reply) }
+            "view.capture" -> if (tab == null) reply(null) else tab.capture(args.str("mode", "viewport"), args.optJSONObject("region"), args.str("format", "jpeg"), reply)
 
             // --- chrome / window / app -----------------------------------------------------------
             "chrome.focus" -> { chrome.requestFocus(); reply(null) }
@@ -188,6 +191,9 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     class RawJson(val json: String) {
         override fun toString(): String = json
     }
+
+    /** Answering with this rejects the bridge call instead of resolving it. */
+    class Rejection(val message: String)
 
     // ---------------------------------------------------------------------------------------------
     // Fullscreen (HTML element fullscreen and Zen's F11-style fullscreen)

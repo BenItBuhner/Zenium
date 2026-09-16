@@ -52,6 +52,8 @@ export const AGENT_COLORS = [
 
 const SESSION_IDLE_MS = 30 * 60 * 1000
 const SESSIONLESS_IDLE_MS = 10 * 60 * 1000
+/** How long a requested navigation may take to report that it has started (see `waitForLoad`). */
+const NAVIGATION_START_GRACE_MS = 1500
 const SERVER_NAME = 'zen-browser'
 /** Endpoint + token, read by the `zen --mcp` shim (see main/agent/shim.ts). */
 const AGENT_FILE = 'agent.json'
@@ -717,16 +719,28 @@ export class AgentService implements SessionStore, McpHandlers {
     if (!view) {
       view = tabs.ensureLoaded(tabId, win)
       if (!view) throw new RpcError(-32002, `Tab ${tabId} could not be loaded`)
-      await this.waitForLoad(tabId, 15_000)
+      await this.waitForLoad(tabId, 15_000, { expectNavigation: true })
     }
     if (tab.frozen) await this.browser.governor.thaw(tabId, true)
     view.setBackgroundThrottling?.(false)
     return view
   }
 
-  /** Wait until the tab's main frame finished loading (or the timeout passed). */
-  async waitForLoad(tabId: string, timeoutMs: number): Promise<boolean> {
+  /**
+   * Wait until the tab's main frame finished loading (or the timeout passed). With
+   * `expectNavigation` a navigation was just requested: hosts report its start asynchronously –
+   * Android's WebView on a slow device well after the 120 ms below – so an idle tab whose URL has
+   * not changed yet is given a moment to begin before it counts as loaded, or the caller would
+   * snapshot the previous page.
+   */
+  async waitForLoad(
+    tabId: string,
+    timeoutMs: number,
+    opts: { expectNavigation?: boolean } = {}
+  ): Promise<boolean> {
     const started = Date.now()
+    const before = this.browser.tabs.tab(tabId)?.url
+    const graceUntil = opts.expectNavigation ? started + NAVIGATION_START_GRACE_MS : started
     // Navigation starts asynchronously: give `loading` a moment to flip on before we look at it.
     await sleep(120)
     for (;;) {
@@ -734,6 +748,10 @@ export class AgentService implements SessionStore, McpHandlers {
       const view = this.browser.tabs.view(tabId)
       if (!tab || !view || view.isDestroyed()) return false
       if (!tab.loading) {
+        if (Date.now() < graceUntil && tab.url === before) {
+          await sleep(50)
+          continue
+        }
         const ready = await this.evalPage(view, 'document.readyState').catch(() => 'complete')
         if (ready !== 'loading') {
           await sleep(150)

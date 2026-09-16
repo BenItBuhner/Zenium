@@ -1,6 +1,8 @@
 import type { KeyBinding, Rect, Tab } from '@shared/types'
 import { zenPageHtml, type ReaderPageLookup } from '@shared/zenPages'
 import type {
+  AgentCapture,
+  AgentCaptureOptions,
   AgentInputEvent,
   FindResultInfo,
   KeyEventInput,
@@ -11,6 +13,7 @@ import type {
   TabViewEvents,
   TabViewHost
 } from '@core/platform'
+import { looksLikeStatements } from '@core/agent/util'
 import type { Bridge } from './bridge'
 
 /** Navigation state Kotlin mirrors into JS on every navigation event. */
@@ -239,8 +242,15 @@ export class AndroidTabView implements TabView {
     })
   }
 
+  /**
+   * Like Electron's `executeJavaScript`: expressions and statement lists both run, and a returned
+   * Promise is awaited (Kotlin does that). A statement list is wrapped into a function so the
+   * Kotlin wrapper – which needs an expression – can take it; its completion value is lost, which
+   * no caller relies on.
+   */
   executeJavaScript(code: string): Promise<unknown> {
-    return this.bridge.call<unknown>('view.eval', { tabId: this.tabId, code })
+    const shaped = looksLikeStatements(code) ? `(() => { ${code}\n })()` : code
+    return this.bridge.call<unknown>('view.eval', { tabId: this.tabId, code: shaped })
   }
 
   /** Trusted touch / key events synthesised by Kotlin on the tab's WebView. */
@@ -347,6 +357,19 @@ export class AndroidTabView implements TabView {
 
   screenshot(fileName: string): Promise<string | null> {
     return this.bridge.call<string | null>('view.screenshot', { tabId: this.tabId, name: fileName })
+  }
+
+  /**
+   * Agent screenshots beyond the viewport: Kotlin scrolls the page in viewport-sized steps and
+   * stitches the window pixels of each step (a WebView never paints what is off screen).
+   */
+  capture(options: AgentCaptureOptions): Promise<AgentCapture | null> {
+    return this.bridge.call<AgentCapture | null>('view.capture', {
+      tabId: this.tabId,
+      mode: options.mode,
+      region: options.mode === 'region' ? (options.region ?? null) : null,
+      format: options.format
+    })
   }
 
   async copyImageAt(): Promise<boolean> {
