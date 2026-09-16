@@ -783,7 +783,16 @@ const browserTabs: AgentTool = {
           -32001,
           `Tab ${tabId} is being driven by agent "${driver.name}" – only your own tabs (or unclaimed ones) can be closed`
         )
-      if (!driver) ctx.agents.claim(s, tabId)
+      if (!driver) {
+        // Positions make it easy to hit the wrong tab: never close the user's curated tabs.
+        const t = tabs.tab(tabId)
+        if (t && (t.essential || t.pinned))
+          throw new RpcError(
+            -32001,
+            `Tab ${tabId} is ${t.essential ? 'an Essential' : 'a pinned tab'} of the user's, not one of yours – agents only close tabs they opened or ordinary tabs`
+          )
+        ctx.agents.claim(s, tabId)
+      }
       tabs.closeTab(tabId, true, ctx.agents.agentWindow())
       return text(
         `Closed tab ${tabId}. Your current tab is now ${s.currentTabId ?? 'none'}.\n\n${listing()}`

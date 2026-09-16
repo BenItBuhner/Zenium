@@ -308,3 +308,19 @@ describe('wrapScript', () => {
     })
   })
 })
+
+describe('browser_tabs close', () => {
+  const tool = AGENT_TOOLS.find((t) => t.definition.name === 'browser_tabs')!
+
+  it("refuses to close the user's Essential or pinned tabs", async () => {
+    await expect(tool.run(fakeContext(), { action: 'close', tabId: 'tab_ess' })).rejects.toThrow(
+      /an Essential of the user's/
+    )
+  })
+
+  it('refuses to close a tab another agent drives', async () => {
+    await expect(tool.run(fakeContext(), { action: 'close', tabId: 'tab_b1' })).rejects.toThrow(
+      /driven by agent "Other"/
+    )
+  })
+})
