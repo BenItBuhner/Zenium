@@ -182,11 +182,16 @@ app and the Android WebView host.
   ```
 
 - **Tools:** the vocabulary agents already know from Playwright MCP — `browser_navigate`,
-  `browser_snapshot` (an accessibility tree whose elements carry `[ref=eN]` handles),
-  `browser_click`, `browser_type`, `browser_press_key`, `browser_hover`, `browser_scroll`,
-  `browser_select_option`, `browser_wait_for`, `browser_take_screenshot`, `browser_tabs`,
+  `browser_navigate_back`, `browser_navigate_forward`, `browser_reload`, `browser_snapshot` (an
+  accessibility tree whose elements carry `[ref=eN]` handles), `browser_click` and
+  `browser_hover` (by ref, CSS selector, `text=…` or raw `x`/`y` viewport coordinates),
+  `browser_type`, `browser_press_key`, `browser_scroll`, `browser_select_option`,
+  `browser_wait_for`, `browser_take_screenshot` (viewport, `fullPage` or one element),
+  `browser_tabs` (list / new / select / close / move / group / ungroup), `browser_read_page`,
   `browser_evaluate` — plus a small Zen layer: `zen_status`, `zen_mode`, `zen_spaces`,
-  `zen_history`, and the `zenium://status` / `zenium://tabs` resources.
+  `zen_history`, and the `zenium://status` / `zenium://tabs` resources. Arguments accept the
+  usual synonyms (`ref`/`selector` for `target`, `function` for `expression`, a tab's list
+  position or id prefix for `tabId`), and every error says what would have worked.
 - **Foreground / background:** each agent chooses a mode with `zen_mode`. Foreground brings its tab
   in front of you before every action and shows a labelled, coloured cursor; background drives its
   own tabs without changing what you are looking at. Agent-driven tabs are protected from the

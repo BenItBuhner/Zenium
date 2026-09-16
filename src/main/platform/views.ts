@@ -13,6 +13,8 @@ import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import type { Rect, Tab } from '../../shared/types'
 import type {
+  AgentCapture,
+  AgentCaptureOptions,
   AgentInputEvent,
   InputModifier,
   KeyEventInput,
@@ -453,7 +455,103 @@ export class ElectronTabView implements TabView {
   setBackgroundThrottling(allowed: boolean): void {
     if (!this.view.webContents.isDestroyed()) this.view.webContents.setBackgroundThrottling(allowed)
   }
+
+  /**
+   * Full-page and region captures go through the DevTools protocol (`captureBeyondViewport`
+   * paints what is scrolled out of view); the viewport uses the cheaper `capturePage`. When the
+   * debugger cannot be attached (DevTools already open) regions fall back to cropping the
+   * viewport paint.
+   */
+  async capture(options: AgentCaptureOptions): Promise<AgentCapture | null> {
+    const wc = this.view.webContents
+    if (wc.isDestroyed()) return null
+    const format = options.format
+    const mimeType = format === 'png' ? 'image/png' : 'image/jpeg'
+    if (options.mode !== 'viewport') {
+      try {
+        return await this.captureWithDevtools(options, mimeType)
+      } catch {
+        /* fall through to capturePage */
+      }
+    }
+    try {
+      let image = await wc.capturePage()
+      if (image.isEmpty()) return null
+      if (options.mode === 'region' && options.region) {
+        // capturePage works in DIPs relative to the view: CSS px × zoom, minus the scroll offset.
+        const zoom = wc.getZoomFactor()
+        const scroll = (await wc
+          .executeJavaScript('({x: window.scrollX, y: window.scrollY})', true)
+          .catch(() => ({ x: 0, y: 0 }))) as { x: number; y: number }
+        const size = image.getSize()
+        const r = options.region
+        const x = Math.max(0, Math.round((r.x - scroll.x) * zoom))
+        const y = Math.max(0, Math.round((r.y - scroll.y) * zoom))
+        const width = Math.min(size.width - x, Math.round(r.width * zoom))
+        const height = Math.min(size.height - y, Math.round(r.height * zoom))
+        if (width <= 0 || height <= 0) return null
+        image = image.crop({ x, y, width, height })
+      }
+      const size = image.getSize()
+      const buffer = format === 'png' ? image.toPNG() : image.toJPEG(75)
+      return { data: buffer.toString('base64'), mimeType, width: size.width, height: size.height }
+    } catch {
+      return null
+    }
+  }
+
+  private async captureWithDevtools(
+    options: AgentCaptureOptions,
+    mimeType: string
+  ): Promise<AgentCapture> {
+    const wc = this.view.webContents
+    const dbg = wc.debugger
+    const attachedHere = !dbg.isAttached()
+    if (attachedHere) dbg.attach('1.3')
+    try {
+      const metrics = (await dbg.sendCommand('Page.getLayoutMetrics')) as {
+        cssContentSize?: { width: number; height: number }
+        contentSize?: { width: number; height: number }
+        cssLayoutViewport?: { clientWidth: number; clientHeight: number }
+      }
+      const content = metrics.cssContentSize ?? metrics.contentSize ?? { width: 0, height: 0 }
+      const clip =
+        options.mode === 'region' && options.region
+          ? { ...options.region, scale: 1 }
+          : {
+              x: 0,
+              y: 0,
+              width: Math.max(1, Math.round(content.width)),
+              height: Math.max(1, Math.min(Math.round(content.height), MAX_CAPTURE_HEIGHT)),
+              scale: 1
+            }
+      const result = (await dbg.sendCommand('Page.captureScreenshot', {
+        format: options.format,
+        quality: options.format === 'jpeg' ? 75 : undefined,
+        clip,
+        captureBeyondViewport: true,
+        fromSurface: true
+      })) as { data: string }
+      return {
+        data: result.data,
+        mimeType,
+        width: Math.round(clip.width),
+        height: Math.round(clip.height)
+      }
+    } finally {
+      if (attachedHere) {
+        try {
+          dbg.detach()
+        } catch {
+          /* already detached */
+        }
+      }
+    }
+  }
 }
+
+/** Chromium refuses textures much taller than this; very long pages are cut, not failed. */
+const MAX_CAPTURE_HEIGHT = 12_000
 
 /** Electron runs `contextIsolation` preloads in world 999. */
 const ISOLATED_WORLD_ID = 999

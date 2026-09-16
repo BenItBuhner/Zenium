@@ -29,7 +29,13 @@ import {
   type ToolDefinition,
   type ToolResult
 } from './protocol'
-import { AGENT_TOOLS, agentInstructions, type ToolContext } from './tools'
+import {
+  AGENT_TOOLS,
+  acceptedArgs,
+  agentInstructions,
+  orderedTabs,
+  type ToolContext
+} from './tools'
 import { randomToken, sleep, textError } from './util'
 
 /** Distinct, saturated colours that stay legible under white text (cursor tags, tab dots). */
@@ -490,7 +496,7 @@ export class AgentService implements SessionStore, McpHandlers {
     const ctx: ToolContext = { browser: this.browser, agents: this, session: s }
     try {
       const result = await tool.run(ctx, args)
-      return result
+      return withUnknownArgsNote(tool.definition, args, result)
     } catch (error) {
       if (error instanceof RpcError) return textError(error.message)
       return textError((error as Error).message || String(error))
@@ -541,11 +547,7 @@ export class AgentService implements SessionStore, McpHandlers {
         {
           uri,
           mimeType: 'application/json',
-          text: JSON.stringify(
-            this.visibleTabs(s).map((t) => this.tabJson(t)),
-            null,
-            2
-          )
+          text: JSON.stringify(this.orderedTabsJson(s), null, 2)
         }
       ]
     }
@@ -595,22 +597,30 @@ export class AgentService implements SessionStore, McpHandlers {
     return Object.values(m.tabs).filter((t) => !this.browser.tabs.isPrivate(t))
   }
 
-  tabJson(t: Tab): Record<string, unknown> {
+  tabJson(t: Tab, position?: number): Record<string, unknown> {
     const driver = this.driver(t.id)
-    const space = t.spaceId
-      ? this.browser.state.model.spaces.find((sp) => sp.id === t.spaceId)
-      : null
+    const m = this.browser.state.model
+    const space = t.spaceId ? m.spaces.find((sp) => sp.id === t.spaceId) : null
+    const folder = t.folderId ? m.folders[t.folderId] : null
     return {
+      ...(position !== undefined ? { position } : {}),
       id: t.id,
       title: t.customTitle ?? t.title,
       url: t.url,
       space: space ? { id: space.id, name: space.name } : null,
+      folder: folder ? { id: folder.id, name: folder.name } : null,
       essential: t.essential,
       pinned: t.pinned,
       loaded: !t.discarded,
       loading: t.loading,
       agent: driver ? { id: driver.id, name: driver.name } : null
     }
+  }
+
+  /** Tabs in sidebar order with their 1-based positions (the order `browser_tabs list` shows). */
+  private orderedTabsJson(s: AgentSession): Record<string, unknown>[] {
+    const ctx: ToolContext = { browser: this.browser, agents: this, session: s }
+    return orderedTabs(ctx).map((t, i) => this.tabJson(t, i + 1))
   }
 
   statusJson(s: AgentSession): Record<string, unknown> {
@@ -626,7 +636,7 @@ export class AgentService implements SessionStore, McpHandlers {
         tabs: sp.tabIds.length,
         active: sp.id === this.agentWindow().activeSpaceId
       })),
-      tabs: this.visibleTabs(s).map((t) => this.tabJson(t))
+      tabs: this.orderedTabsJson(s)
     }
   }
 
@@ -764,6 +774,28 @@ export class AgentService implements SessionStore, McpHandlers {
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * Arguments a tool does not know are ignored rather than refused (clients that validate strictly
+ * would otherwise turn every synonym into a failure), but the agent is told, so a typo like
+ * `selctor` does not silently do the wrong thing.
+ */
+export function withUnknownArgsNote(
+  def: ToolDefinition,
+  args: Record<string, unknown>,
+  result: ToolResult
+): ToolResult {
+  const known = acceptedArgs(def)
+  const unknown = Object.keys(args).filter((k) => !known.has(k))
+  if (!unknown.length) return result
+  const accepted = Object.keys(def.inputSchema.properties)
+  const note = `(Ignored unknown argument${unknown.length > 1 ? 's' : ''} ${unknown.map((k) => JSON.stringify(k)).join(', ')} – ${def.name} accepts: ${accepted.join(', ')}.)`
+  const content = [...result.content]
+  const i = content.findIndex((c) => c.type === 'text')
+  if (i === -1) content.unshift({ type: 'text', text: note })
+  else content[i] = { type: 'text', text: `${(content[i] as { text: string }).text}\n\n${note}` }
+  return { ...result, content }
+}
 
 function endpointUrl(host: string, port: number): string {
   const h = host.includes(':') ? `[${host}]` : host

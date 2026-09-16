@@ -70,6 +70,10 @@ export interface PageCursorOptions {
 export interface PageRuntime {
   snapshot(opts: PageSnapshotOptions): PageSnapshot
   locate(agent: string, target: string, scroll: boolean): PageLocation | { error: string }
+  /** The element under a viewport point (CSS px); the location keeps the given coordinates. */
+  locateAt(agent: string, x: number, y: number): PageLocation | { error: string }
+  /** Synthetic hover (pointer/mouse over + move) for pages that are not on screen. */
+  hoverJs(agent: string, target: string | null, x: number, y: number): PageActionResult
   fill(agent: string, target: string, text: string, clear: boolean): PageActionResult
   submit(agent: string, target: string): PageActionResult
   select(agent: string, target: string, values: string[]): PageActionResult
@@ -541,12 +545,32 @@ export function zenAgentPageRuntime(): PageRuntime {
     return el.querySelector('input,select,textarea,button,[role],a[href]') ?? el
   }
 
+  /**
+   * Agents copy refs in every shape the snapshot shows them: `e12`, `ref=e12`, `[ref=e12]`,
+   * `@e12`. Quotes around text targets are dropped as well.
+   */
+  function normalizeTarget(target: string): string {
+    let t = target.trim()
+    const bracket = /^\[(.*)\]$/.exec(t)
+    if (bracket) t = bracket[1].trim()
+    if (/^(ref=|ref:|@)/i.test(t)) t = t.replace(/^(ref=|ref:|@)/i, '').trim()
+    if (/^text\s*[=:]\s*/i.test(t)) {
+      let needle = t.replace(/^text\s*[=:]\s*/i, '').trim()
+      if (/^(["']).*\1$/.test(needle)) needle = needle.slice(1, -1)
+      return `text=${needle}`
+    }
+    return t
+  }
+
   function resolve(agent: string, target: string): Element | { error: string } {
-    const t = target.trim()
+    const t = normalizeTarget(target)
     if (!t) return { error: 'Empty target' }
     if (/^e\d+$/.test(t)) {
       const el = refState(agent).byId.get(t)
-      if (!el) return { error: `Unknown ref ${t} – take a browser_snapshot first` }
+      if (!el)
+        return {
+          error: `Unknown ref ${t} – refs come from your latest browser_snapshot (take one first, then use its [ref=eN] handles)`
+        }
       if (!el.isConnected)
         return {
           error: `Ref ${t} is stale (the element left the page) – take a new browser_snapshot`
@@ -593,12 +617,94 @@ export function zenAgentPageRuntime(): PageRuntime {
     }
     try {
       const el = document.querySelector(t)
-      return el ? preferControl(el) : { error: `No element matches selector ${JSON.stringify(t)}` }
+      return el
+        ? preferControl(el)
+        : {
+            error: `No element matches the CSS selector ${JSON.stringify(t)} – take a browser_snapshot and use a [ref=eN] handle, or try text=<visible label>`
+          }
     } catch {
       return {
-        error: `${JSON.stringify(t)} is neither a ref (e12), text=… nor a valid CSS selector`
+        error: `${JSON.stringify(t)} is not a ref (e12), a text=… label or a valid CSS selector`
       }
     }
+  }
+
+  function describeLocation(
+    el: Element,
+    x: number,
+    y: number,
+    r: DOMRect,
+    ref: string | null
+  ): PageLocation {
+    const role = roleOf(el) ?? (isInteractive(el) ? 'clickable' : 'generic')
+    const hit = document.elementFromPoint(x, y)
+    const covered = Boolean(hit && hit !== el && !el.contains(hit) && !hit.contains(el))
+    const input = el as HTMLInputElement
+    return {
+      ref,
+      x,
+      y,
+      width: Math.round(r.width),
+      height: Math.round(r.height),
+      tag: el.tagName.toLowerCase(),
+      role,
+      name: nameOf(el, role).name,
+      disabled: Boolean(input.disabled) || el.getAttribute('aria-disabled') === 'true',
+      editable:
+        el.tagName === 'TEXTAREA' ||
+        (el.tagName === 'INPUT' &&
+          !['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'range', 'color'].includes(
+            input.type
+          )) ||
+        (el as HTMLElement).isContentEditable,
+      covered,
+      inViewport: r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth
+    }
+  }
+
+  function locateAt(agent: string, x: number, y: number): PageLocation | { error: string } {
+    if (!Number.isFinite(x) || !Number.isFinite(y))
+      return { error: 'x and y must be numbers (CSS pixels from the top-left of the viewport)' }
+    if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight)
+      return {
+        error: `(${Math.round(x)}, ${Math.round(y)}) is outside the viewport, which is ${innerWidth}×${innerHeight} CSS px – scroll first or pick a point inside it`
+      }
+    let el = document.elementFromPoint(x, y)
+    while (el && (el.hasAttribute(MARK) || el.closest(`[${MARK}]`))) {
+      // Our own cursor overlay never counts as "what is under the pointer".
+      const overlay = el.closest(`[${MARK}]`) as HTMLElement | null
+      if (!overlay) break
+      overlay.style.display = 'none'
+      el = document.elementFromPoint(x, y)
+      overlay.style.display = ''
+    }
+    if (!el) return { error: `Nothing is rendered at (${Math.round(x)}, ${Math.round(y)})` }
+    const r = el.getBoundingClientRect()
+    const loc = describeLocation(el, Math.round(x), Math.round(y), r, null)
+    loc.ref = refFor(agent, el)
+    loc.covered = false
+    return loc
+  }
+
+  function hoverJs(agent: string, target: string | null, x: number, y: number): PageActionResult {
+    let el: Element | null
+    if (target) {
+      const found = resolve(agent, target)
+      if (!(found instanceof Element)) return { ok: false, error: found.error }
+      el = found
+    } else {
+      el = document.elementFromPoint(x, y)
+      if (!el) return { ok: false, error: `Nothing is rendered at (${x}, ${y})` }
+    }
+    const init = { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window }
+    const pointer = { ...init, pointerId: 1, pointerType: 'mouse', isPrimary: true }
+    el.dispatchEvent(new PointerEvent('pointerover', pointer))
+    el.dispatchEvent(new PointerEvent('pointerenter', { ...pointer, bubbles: false }))
+    el.dispatchEvent(new MouseEvent('mouseover', init))
+    el.dispatchEvent(new MouseEvent('mouseenter', { ...init, bubbles: false }))
+    el.dispatchEvent(new PointerEvent('pointermove', pointer))
+    el.dispatchEvent(new MouseEvent('mousemove', init))
+    return { ok: true }
   }
 
   function centre(el: Element): { x: number; y: number; r: DOMRect } {
@@ -623,30 +729,8 @@ export function zenAgentPageRuntime(): PageRuntime {
       el.scrollIntoView({ block: 'center', inline: 'center' })
       ;({ x, y, r } = centre(el))
     }
-    const role = roleOf(el) ?? (isInteractive(el) ? 'clickable' : 'generic')
-    const hit = document.elementFromPoint(x, y)
-    const covered = Boolean(hit && hit !== el && !el.contains(hit) && !hit.contains(el))
-    const input = el as HTMLInputElement
-    return {
-      ref: /^e\d+$/.test(target.trim()) ? target.trim() : null,
-      x,
-      y,
-      width: Math.round(r.width),
-      height: Math.round(r.height),
-      tag: el.tagName.toLowerCase(),
-      role,
-      name: nameOf(el, role).name,
-      disabled: Boolean(input.disabled) || el.getAttribute('aria-disabled') === 'true',
-      editable:
-        el.tagName === 'TEXTAREA' ||
-        (el.tagName === 'INPUT' &&
-          !['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'range', 'color'].includes(
-            input.type
-          )) ||
-        (el as HTMLElement).isContentEditable,
-      covered,
-      inViewport: r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth
-    }
+    const t = normalizeTarget(target)
+    return describeLocation(el, x, y, r, /^e\d+$/.test(t) ? t : refFor(agent, el))
   }
 
   function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
@@ -1064,6 +1148,8 @@ export function zenAgentPageRuntime(): PageRuntime {
   return {
     snapshot,
     locate,
+    locateAt,
+    hoverJs,
     fill,
     submit,
     select,
