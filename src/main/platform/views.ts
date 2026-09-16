@@ -1,4 +1,5 @@
 import {
+  ClipboardItem,
   WebContentsView,
   app,
   clipboard,
@@ -519,13 +520,19 @@ export class ElectronTabViewHost implements TabViewHost {
 /** Copy an image on the clipboard from a URL (data: or remote). */
 export async function copyImageFromUrl(url: string): Promise<boolean> {
   try {
+    let image: Electron.NativeImage
     if (url.startsWith('data:')) {
-      clipboard.writeImage(nativeImage.createFromDataURL(url))
-      return true
+      image = nativeImage.createFromDataURL(url)
+    } else {
+      const res = await net.fetch(url)
+      image = nativeImage.createFromBuffer(Buffer.from(await res.arrayBuffer()))
     }
-    const res = await net.fetch(url)
-    const buf = Buffer.from(await res.arrayBuffer())
-    clipboard.writeImage(nativeImage.createFromBuffer(buf))
+    if (image.isEmpty()) return false
+    // Electron 44 replaced clipboard.writeImage with the W3C-shaped clipboard.write(ClipboardItem[]).
+    const png = new Uint8Array(image.toPNG())
+    await clipboard.write([
+      new ClipboardItem({ 'image/png': new Blob([png], { type: 'image/png' }) })
+    ])
     return true
   } catch {
     return false
