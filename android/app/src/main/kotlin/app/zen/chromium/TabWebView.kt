@@ -12,7 +12,9 @@ import android.net.http.SslError
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
+import android.os.SystemClock
 import android.util.Base64
+import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -35,6 +37,7 @@ import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
@@ -247,28 +250,68 @@ class TabWebView(
 
     /**
      * Deliver a synthetic-but-trusted input event from an AI agent. Coordinates arrive in CSS
-     * pixels relative to the page; the WebView works in device pixels, so they scale by density.
+     * pixels relative to the layout viewport (what `getBoundingClientRect` reports); on screen
+     * they are offset by the visual viewport (pinch pan) and scaled by the page scale × density –
+     * a desktop-layout page shown zoomed out has far fewer device pixels per CSS pixel than the
+     * density alone would suggest. `done` runs once the event has been dispatched.
      */
-    fun sendAgentInput(event: JSONObject) {
-        val density = resources.displayMetrics.density
+    fun sendAgentInput(event: JSONObject, done: () -> Unit) {
         when (event.str("type")) {
-            "click" -> agentTap((event.num("x") * density).toFloat(), (event.num("y") * density).toFloat(), event.num("clickCount", 1.0).toInt())
-            "mouseMove" -> agentHover((event.num("x") * density).toFloat(), (event.num("y") * density).toFloat())
-            "key" -> agentKey(event.str("key"))
+            "click" -> pageToView(event.num("x"), event.num("y")) { x, y ->
+                agentTap(x, y, event.num("clickCount", 1.0).toInt())
+                done()
+            }
+            "mouseMove" -> pageToView(event.num("x"), event.num("y")) { x, y ->
+                agentHover(x, y)
+                done()
+            }
+            "key" -> {
+                agentKey(event.str("key"))
+                done()
+            }
+            else -> done()
+        }
+    }
+
+    /** CSS px in the layout viewport → device px on this view. */
+    private fun pageToView(cssX: Double, cssY: Double, then: (Float, Float) -> Unit) {
+        @Suppress("DEPRECATION")
+        val scale = scale.toDouble() // device px per CSS px: density × current page scale
+        evaluateJavascript(VISUAL_OFFSET_SCRIPT) { result ->
+            val offset = runCatching { JSONArray(result ?: "") }.getOrNull()
+            val ox = offset?.optDouble(0, 0.0) ?: 0.0
+            val oy = offset?.optDouble(1, 0.0) ?: 0.0
+            then(((cssX - ox) * scale).toFloat(), ((cssY - oy) * scale).toFloat())
         }
     }
 
     private fun agentTap(x: Float, y: Float, count: Int) {
         repeat(count.coerceAtLeast(1)) {
-            val down = System.currentTimeMillis()
-            dispatchTouchEvent(MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0))
-            dispatchTouchEvent(MotionEvent.obtain(down, down + 20, MotionEvent.ACTION_UP, x, y, 0))
+            val down = SystemClock.uptimeMillis()
+            dispatchTouchEvent(pointerEvent(down, down, MotionEvent.ACTION_DOWN, x, y, MotionEvent.TOOL_TYPE_FINGER, InputDevice.SOURCE_TOUCHSCREEN))
+            dispatchTouchEvent(pointerEvent(down, down + 20, MotionEvent.ACTION_UP, x, y, MotionEvent.TOOL_TYPE_FINGER, InputDevice.SOURCE_TOUCHSCREEN))
         }
     }
 
+    /** A mouse hover: only pointer events from a mouse source reach the page as mouse moves. */
     private fun agentHover(x: Float, y: Float) {
-        val now = System.currentTimeMillis()
-        dispatchGenericMotionEvent(MotionEvent.obtain(now, now, MotionEvent.ACTION_HOVER_MOVE, x, y, 0))
+        val now = SystemClock.uptimeMillis()
+        dispatchGenericMotionEvent(pointerEvent(now, now, MotionEvent.ACTION_HOVER_ENTER, x, y, MotionEvent.TOOL_TYPE_MOUSE, InputDevice.SOURCE_MOUSE))
+        dispatchGenericMotionEvent(pointerEvent(now, now + 1, MotionEvent.ACTION_HOVER_MOVE, x, y, MotionEvent.TOOL_TYPE_MOUSE, InputDevice.SOURCE_MOUSE))
+    }
+
+    private fun pointerEvent(down: Long, time: Long, action: Int, x: Float, y: Float, toolType: Int, source: Int): MotionEvent {
+        val properties = MotionEvent.PointerProperties().apply {
+            id = 0
+            this.toolType = toolType
+        }
+        val coords = MotionEvent.PointerCoords().apply {
+            this.x = x
+            this.y = y
+            pressure = if (toolType == MotionEvent.TOOL_TYPE_MOUSE) 0f else 1f
+            size = if (toolType == MotionEvent.TOOL_TYPE_MOUSE) 0f else 1f
+        }
+        return MotionEvent.obtain(down, time, action, 1, arrayOf(properties), arrayOf(coords), 0, 0, 1f, 1f, 0, 0, source, 0)
     }
 
     private fun agentKey(key: String) {
@@ -530,6 +573,10 @@ class TabWebView(
 
     companion object {
         private val encoder = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-encode") }
+
+        /** Where the visual viewport sits in the layout viewport (non-zero only while pinch-zoomed). */
+        private const val VISUAL_OFFSET_SCRIPT =
+            "(function(){var v=window.visualViewport;return v?[v.offsetLeft,v.offsetTop]:[0,0]})()"
 
         /** WebViewClient error codes → Chromium `net::` codes the core (and error page) understand. */
         fun netErrorCode(code: Int): Int = when (code) {

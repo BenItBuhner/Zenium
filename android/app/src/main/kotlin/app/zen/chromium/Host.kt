@@ -108,7 +108,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
                     reply(RawJson(result ?: "null"))
                 }
             }
-            "view.input" -> { tab?.sendAgentInput(args.obj("event")); reply(null) }
+            "view.input" -> if (tab == null) reply(null) else tab.sendAgentInput(args.obj("event")) { reply(null) }
             "view.setFlags" -> { tab?.setFlags(args.obj("flags")); reply(null) }
             "view.setZap" -> { tab?.setZap(args.bool("on")); reply(null) }
             "view.setBackground" -> {

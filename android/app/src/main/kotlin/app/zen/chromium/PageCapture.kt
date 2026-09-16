@@ -84,6 +84,9 @@ class PageCapture(
         private var done = false
         private val verticalBar = view.isVerticalScrollBarEnabled
         private val horizontalBar = view.isHorizontalScrollBarEnabled
+        /** The view's own scroll offset (device px, pinch pan included) to put back afterwards. */
+        private val originalScrollX = view.scrollX
+        private val originalScrollY = view.scrollY
         private val watchdog = Runnable {
             Log.w(TAG, "capture watchdog fired after ${index}/${cells.size} strips")
             finish()
@@ -126,13 +129,15 @@ class PageCapture(
             }
             val afterHide = {
                 scrolled = true
-                view.evaluateJavascript(scrollScript(cell.first, cell.second)) {
-                    awaitFrames(SETTLE_FRAMES) {
-                        readMetrics { now ->
-                            if (done) return@readMetrics
-                            // Where the page actually ended up decides where the strip is blitted.
-                            copyStrip(now?.visible ?: Box(cell.first, cell.second, metrics.viewportWidth, metrics.viewportHeight))
-                        }
+                // The view's scroll offset is the page's total scroll in device px (layout scroll
+                // plus pinch pan), so it also moves a visual viewport that is smaller than the
+                // layout viewport – window.scrollTo() cannot.
+                view.scrollTo((cell.first * deviceScale).roundToInt(), (cell.second * deviceScale).roundToInt())
+                awaitFrames(SETTLE_FRAMES) {
+                    readMetrics { now ->
+                        if (done) return@readMetrics
+                        // Where the page actually ended up decides where the strip is blitted.
+                        copyStrip(now?.visible ?: Box(cell.first, cell.second, metrics.viewportWidth, metrics.viewportHeight))
                     }
                 }
             }
@@ -172,7 +177,7 @@ class PageCapture(
                 view.isHorizontalScrollBarEnabled = horizontalBar
             }
             if (hidFixed) view.evaluateJavascript(SHOW_FIXED_SCRIPT, null)
-            if (scrolled) view.evaluateJavascript(scrollScript(metrics.scrollX, metrics.scrollY), null)
+            if (scrolled) view.scrollTo(originalScrollX, originalScrollY)
             val bitmap = output
             output = null
             canvas = null
@@ -262,9 +267,6 @@ e.setAttribute('data-zen-capture-hidden',e.style.visibility||'');e.style.visibil
 
         private const val SHOW_FIXED_SCRIPT = """(function(){var all=document.querySelectorAll('[data-zen-capture-hidden]');
 for(var i=0;i<all.length;i++){var e=all[i];e.style.visibility=e.getAttribute('data-zen-capture-hidden');e.removeAttribute('data-zen-capture-hidden')}return all.length})()"""
-
-        private fun scrollScript(x: Double, y: Double): String =
-            "window.scrollTo({left:${x.roundToInt()},top:${y.roundToInt()},behavior:'instant'})"
 
         fun parseMetrics(o: JSONObject): PageMetrics? {
             val vw = o.optDouble("vw", 0.0)
