@@ -816,9 +816,15 @@ const browserTabs: AgentTool = {
       )
     }
     if (action === 'group') {
-      const refs = strings(args, 'tabIds')
+      // Agents pass the members as an array, or as one comma-separated string in tabIds or tabId.
+      const refs = strings(args, 'tabIds').flatMap((r) => r.split(',').map((x) => x.trim()))
       const single = pick(args, 'tabId')
-      if (single !== undefined && !refs.length) refs.push(String(single))
+      if (single !== undefined && !refs.length)
+        refs.push(
+          ...String(single)
+            .split(',')
+            .map((x) => x.trim())
+        )
       if (!refs.length)
         throw new RpcError(
           -32602,
