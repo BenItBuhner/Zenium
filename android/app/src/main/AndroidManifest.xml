@@ -121,6 +121,15 @@
                 <data android:mimeType="text/plain" />
                 <data android:mimeType="image/*" />
             </intent-filter>
+            <!-- A Chrome extension package (.crx, which Android types as this) opened with or shared
+                 to Zenium installs as an extension (ext/ExtensionStore.kt); .zip files come through
+                 the picker instead, so Zenium does not offer itself for every archive. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/x-chrome-extension" />
+            </intent-filter>
         </activity>
 
         <!-- The aliases' target: hands over to MainActivity in its own task and finishes unseen, so
