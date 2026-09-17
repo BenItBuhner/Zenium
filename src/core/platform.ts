@@ -497,7 +497,11 @@ export interface ExtensionHost {
   resizePopup(bounds: Rect, visible: boolean): void
   /** Update checks across all extensions, for the management page's caption. */
   updateCheck(): ExtensionUpdateCheck
-  installFromStore(idOrUrl: string, win: ZenWindow): Promise<void>
+  installFromStore(
+    ref: string,
+    win: ZenWindow,
+    store?: 'chrome-web-store' | 'edge-add-ons'
+  ): Promise<void>
   installFromFile(win: ZenWindow): Promise<void>
   installFromDrop(paths: string[], win: ZenWindow): Promise<void>
   checkForUpdates(win: ZenWindow): Promise<void>

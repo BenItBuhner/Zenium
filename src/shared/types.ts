@@ -280,7 +280,8 @@ export interface LiveFolderConfig {
 /** Where an extension came from; decides the second line of its row and its update source. */
 export type ExtensionSource = 'chrome-web-store' | 'edge-add-ons' | 'crx' | 'zip' | 'unpacked'
 
-export type ExtensionUpdateState = 'up-to-date' | 'available' | 'updating' | 'error'
+/** What the last update check found (`unknown` until one ran or when the extension cannot update). */
+export type ExtensionUpdateState = 'unknown' | 'up-to-date' | 'available' | 'updating' | 'error'
 
 /** The toolbar action for the active tab (`chrome.action` state, merged with the manifest). */
 export interface ExtensionAction {
@@ -320,7 +321,12 @@ export interface ExtensionInfo {
   installedAt?: number
   updatedAt?: number
   updateState?: ExtensionUpdateState
-  updateError?: string
+  /** The version the last check offered, while `updateState` is `available` or `updating`. */
+  availableVersion?: string | null
+  /** Why the last update check or install failed, while `updateState` is `error`. */
+  updateError?: string | null
+  /** When this extension was last checked for updates, or null when never. */
+  updateCheckedAt?: number | null
   /** Chrome's install-prompt warning strings ("Read and change all your data on all websites"). */
   warnings?: string[]
   /** Total size on disk in bytes, when the installer recorded it. */
@@ -328,12 +334,18 @@ export interface ExtensionInfo {
   action?: ExtensionAction
 }
 
-/** A request main puts to the user before installing or granting permissions. */
+/**
+ * A request main puts to the user before installing, updating or granting permissions. Mirrors
+ * the store PR's `InstallConfirmation` plus the id the renderer answers with.
+ */
 export interface ExtensionPromptRequest {
   requestId: string
+  /** A fresh install, an update that added permissions, or a `permissions.request` at runtime. */
+  kind: 'install' | 'update' | 'permissions'
   name: string
   icon: string | null
   warnings: string[]
+  source?: ExtensionSource
 }
 
 /** Update checks across all extensions, for the caption on the management page. */
@@ -1290,7 +1302,12 @@ export interface Commands {
   'extension.closePopup': { args: void; result: void }
   // Extensions UI (W1-D): reconcile with the store/API PRs on rebase.
   'extension.resizePopup': { args: { bounds: Rect; visible: boolean }; result: void }
-  'extension.installFromStore': { args: { idOrUrl: string }; result: void }
+  /** Installs from the Chrome Web Store or Edge Add-ons by id or listing URL (the store PR's shape). */
+  'extension.installFromStore': {
+    args: { ref: string; store?: 'chrome-web-store' | 'edge-add-ons' }
+    result: void
+  }
+  /** Picks a `.crx` or `.zip` file and installs it. */
   'extension.installFromFile': { args: void; result: void }
   'extension.installFromDrop': { args: { paths: string[] }; result: void }
   'extension.checkForUpdates': { args: void; result: void }

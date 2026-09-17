@@ -102,7 +102,7 @@ export class NoExtensions implements ExtensionHost {
   updateCheck(): ExtensionUpdateCheck {
     return { lastCheckedAt: null, checking: false }
   }
-  async installFromStore(_idOrUrl: string, win: ZenWindow): Promise<void> {
+  async installFromStore(_ref: string, win: ZenWindow): Promise<void> {
     this.browser.toast('Extensions are not available on this device.', 'info', win)
   }
   async installFromFile(win: ZenWindow): Promise<void> {

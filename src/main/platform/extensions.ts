@@ -1,7 +1,12 @@
 import { WebContentsView, dialog, type Extension } from 'electron'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { extname, join } from 'node:path'
-import type { ExtensionInfo, ExtensionUpdateCheck, Rect } from '../../shared/types'
+import type {
+  ExtensionInfo,
+  ExtensionPromptRequest,
+  ExtensionUpdateCheck,
+  Rect
+} from '../../shared/types'
 import {
   buildMessageCatalog,
   localeFallbackChain,
@@ -240,10 +245,10 @@ export class ExtensionService implements ExtensionHost {
   // are complete here.
   // ---------------------------------------------------------------------------
 
-  async installFromStore(idOrUrl: string, win: ZenWindow): Promise<void> {
-    const text = idOrUrl.trim()
-    const ref = isExtensionId(text) ? { id: text } : parseStorePageUrl(text)
-    if (!ref) {
+  async installFromStore(ref: string, win: ZenWindow): Promise<void> {
+    const text = ref.trim()
+    const target = isExtensionId(text) ? { id: text } : parseStorePageUrl(text)
+    if (!target) {
       this.browser.toast('That is not a Chrome Web Store or Edge Add-ons link or id.', 'error', win)
       return
     }
@@ -340,14 +345,13 @@ export class ExtensionService implements ExtensionHost {
   }
 
   /**
-   * Put a question to the user through the renderer's dialog and wait for the answer. Callers
-   * (the store PR's install flow, `permissions.request`) pass the event they want raised.
+   * Put a question to the user through the renderer's dialog and wait for the answer. This is
+   * the store PR's `confirmInstall` hook: install and update prompts raise
+   * `extensionInstallRequest`, runtime `permissions.request` raises `extensionPermissionRequest`.
    */
-  ask(
-    event: 'extensionInstallRequest' | 'extensionPermissionRequest',
-    prompt: { name: string; icon: string | null; warnings: string[] },
-    win: ZenWindow
-  ): Promise<boolean> {
+  ask(prompt: Omit<ExtensionPromptRequest, 'requestId'>, win: ZenWindow): Promise<boolean> {
+    const event =
+      prompt.kind === 'permissions' ? 'extensionPermissionRequest' : 'extensionInstallRequest'
     const requestId = `${event}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`
     return new Promise<boolean>((resolve) => {
       this.prompts.set(requestId, resolve)

@@ -1030,8 +1030,8 @@ export class Browser {
       // Extensions UI (W1-D): reconcile with the store/API PRs on rebase.
       'extension.resizePopup': ({ bounds, visible }) =>
         this.extensions.resizePopup(bounds, visible),
-      'extension.installFromStore': ({ idOrUrl }, win) =>
-        this.extensions.installFromStore(idOrUrl, win),
+      'extension.installFromStore': ({ ref, store }, win) =>
+        this.extensions.installFromStore(ref, win, store),
       'extension.installFromFile': (_a, win) => this.extensions.installFromFile(win),
       'extension.installFromDrop': ({ paths }, win) => this.extensions.installFromDrop(paths, win),
       'extension.checkForUpdates': (_a, win) => this.extensions.checkForUpdates(win),
