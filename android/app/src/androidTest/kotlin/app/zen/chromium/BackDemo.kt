@@ -133,6 +133,10 @@ class BackDemo {
      * so each page leaves its snapshot behind for the back preview.
      */
     private fun buildHistory() {
+        instrumentation.runOnMainSync {
+            val tabs = activity.host.tabs
+            Log.i(TAG, "views: ${tabs.all().map { "${it.tabId}${if (it.isShown) "*" else ""}" }} (seeded id present: ${tabs.get(TAB_ID) != null})")
+        }
         awaitLoaded("example.com")
         SystemClock.sleep(1_500)
         follow("a[href]", "https://www.iana.org/help/example-domains")
