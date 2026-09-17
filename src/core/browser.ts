@@ -130,6 +130,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'newtab.shortcutDialog',
   'overlay.open',
   'find.open',
+  'zoom.open',
   'theme.open',
   'space.new',
   'space.edit',

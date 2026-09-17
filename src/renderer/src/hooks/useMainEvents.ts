@@ -16,6 +16,7 @@ import {
   openNewTabShortcutDialog,
   openOverlay,
   openUrlbar,
+  openZoom,
   pushToast,
   showExternalProtocol,
   showMenu,
@@ -107,6 +108,10 @@ export function useMainEvents(): void {
         const state: UIState | null = browserStore.get().state
         if (!state || state.capabilities.pageControls || tabId !== currentActiveTabId()) return
         void showZoomBubble(tabId, factor)
+      }),
+      onEvent('zoom.open', ({ tabId }) => {
+        closeUrlbar()
+        openZoom(tabId)
       }),
       onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
       onEvent('status', ({ text }) => uiStore.set({ statusText: text })),

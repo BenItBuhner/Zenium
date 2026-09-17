@@ -18,9 +18,10 @@
 //                      (history, bookmarks, downloads, settings, addons, …; `&section=<id>` picks
 //                      a Settings section, `&show=<text>` scrolls a row into view), `menu=app`
 //                      (`&show=<text>` scrolls an item into view), `find=<text>`, `pull=<n>`,
-//                      `error=<code>&url=<failed url>` (the zen://error page; see `previewSpec.ts`)
-//                      or the messages and the load bar: `toast=<text>&action=<label>`
-//                      (`&kind=error`), `banners=<n>`, `progress=<0…1>`, in any combination.
+//                      `zoom=<factor>` (the page zoom sheet), `error=<code>&url=<failed url>`
+//                      (the zen://error page; see `previewSpec.ts`) or the messages and the load
+//                      bar: `toast=<text>&action=<label>` (`&kind=error`), `banners=<n>`,
+//                      `progress=<0…1>`, in any combination.
 //                      The label defaults to the state with punctuation turned into dashes.
 //                      Default: history:overlay=history,bookmarks:overlay=bookmarks,
 //                               downloads:overlay=downloads,find:find=coffee

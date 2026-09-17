@@ -55,7 +55,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // DefaultBrowserSection.tsx, content/DefaultBrowserBanner.tsx): the flat card and its inks.
   ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {'],
   // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
-  ['.zen-message {', '.zen-suggestion {']
+  ['.zen-message {', '.zen-suggestion {'],
+  // The phone page zoom sheet, docked under the live page, and its own instance of the stepper
+  // (components/content/ZoomSheet.tsx, components/ZoomStepper.tsx).
+  ['.zen-zoom-sheet {', '\n@media (prefers-reduced-motion: reduce) {']
 ]
 
 /**
