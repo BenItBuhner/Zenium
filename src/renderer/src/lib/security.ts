@@ -1,6 +1,47 @@
-import type { BlockedPopup, SecurityPrompt, Tab, UIState } from '@shared/types'
+import type { BlockedPopup, PermissionRule, SecurityPrompt, Tab, UIState } from '@shared/types'
 import { activeTab } from '@renderer/lib/selectors'
 import { uiStore } from '@renderer/lib/ui'
+
+/** What a remembered per-site answer lets the site do, phrased after "may" / "may not". */
+const RULE_LABELS: Record<string, string> = {
+  popups: 'open pop-up windows',
+  media: 'use the camera and microphone',
+  camera: 'use the camera',
+  microphone: 'use the microphone',
+  geolocation: 'know your location',
+  notifications: 'send notifications',
+  midi: 'access MIDI devices',
+  'clipboard-read': 'read the clipboard',
+  mediaKeySystem: 'play protected (DRM) content',
+  'window-management': 'manage windows on all displays',
+  'idle-detection': 'know when you are active',
+  'top-level-storage-access': 'let embedded sites use their cookies',
+  fileSystem: 'write to files and folders you picked',
+  'storage-access': 'use its cookies while embedded'
+}
+
+/** One sentence for a stored rule: "may open links in Zoom", "may not use the camera". */
+export function describePermissionRule(rule: PermissionRule): string {
+  const [permission, qualifier] = splitQualifier(rule.permission)
+  const verb = rule.decision === 'allow' ? 'may' : 'may not'
+  if (permission === 'openExternal') {
+    return qualifier
+      ? `${verb} hand ${qualifier}: links to another app`
+      : `${verb} hand links to other apps`
+  }
+  if (permission === 'storage-access' && qualifier) {
+    return `${verb} use its cookies inside ${siteLabel(qualifier)}`
+  }
+  const label = RULE_LABELS[permission] ?? permission.replace(/[-_]/g, ' ')
+  return `${verb} ${label}`
+}
+
+function splitQualifier(permission: string): [string, string | null] {
+  const colon = permission.indexOf(':')
+  return colon === -1
+    ? [permission, null]
+    : [permission.slice(0, colon), permission.slice(colon + 1)]
+}
 
 export function originOf(url: string): string | null {
   try {
