@@ -1166,8 +1166,17 @@ export class Browser {
       'liveFolder.remove': ({ folderId }) => this.liveFolders.remove(folderId),
 
       'extension.add': (_a, win) => this.extensions.addFromDialog(win),
+      'extension.installFromFile': (_a, win) => this.extensions.installFromFileDialog(win),
+      'extension.installFromStore': ({ ref, store }, win) =>
+        this.extensions.installFromStore(ref, store ?? null, win),
       'extension.remove': ({ id }) => this.extensions.remove(id),
-      'extension.setEnabled': ({ id, enabled }) => this.extensions.setEnabled(id, enabled),
+      'extension.setEnabled': ({ id, enabled }, win) =>
+        this.extensions.setEnabled(id, enabled, win),
+      'extension.setPinned': ({ id, pinned }) => this.extensions.setPinned(id, pinned),
+      'extension.reload': ({ id }) => this.extensions.reload(id),
+      'extension.checkForUpdates': (_a, win) => this.extensions.checkForUpdates(win),
+      'extension.update': ({ id }, win) => this.extensions.update(id, win),
+      'extension.openOptions': ({ id }, win) => this.extensions.openOptions(id, win),
       'extension.openPopup': ({ id, anchor }, win) => this.extensions.openPopup(id, anchor, win),
       'extension.closePopup': () => this.extensions.closePopup(),
 

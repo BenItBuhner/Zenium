@@ -25,6 +25,7 @@ import { ElectronMenus } from './menus'
 import { ElectronTabViewHost, copyImageFromUrl } from './views'
 import { ElectronWindowFactory, type ElectronWindow } from './window'
 import { ExtensionService } from './extensions'
+import { WebstoreBridge } from './webstoreBridge'
 import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
 import { ElectronAgentTransport } from '../agent/server'
@@ -73,7 +74,7 @@ export class ElectronPlatform implements Platform {
   readonly siteData: ElectronSiteData
   browser!: Browser
 
-  constructor(userDataDir: string) {
+  constructor(private readonly userDataDir: string) {
     this.info = { os: process.platform as PlatformOs, version: app.getVersion() }
     this.io = new FileStoreIO(join(userDataDir, 'zen'))
     this.windows = new ElectronWindowFactory()
@@ -185,7 +186,7 @@ export class ElectronPlatform implements Platform {
   }
 
   createExtensions(browser: Browser): ExtensionService {
-    return new ExtensionService(browser, this.sessions)
+    return new ExtensionService(browser, this.sessions, this.userDataDir)
   }
 
   createSync(browser: Browser): SyncEngine {
@@ -206,6 +207,11 @@ export class ElectronPlatform implements Platform {
     this.browser = browser
     this.windows.bind(browser)
     this.downloads.bind(browser.downloads)
+    const webstore = new WebstoreBridge(browser.extensions as ExtensionService, (wc) => {
+      const tabId = this.views.tabIdForWebContents(wc)
+      return tabId ? browser.tabs.ownerOf(tabId) : undefined
+    })
+    webstore.install()
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
       this.attachPermissions(ses)
@@ -213,8 +219,10 @@ export class ElectronPlatform implements Platform {
         browser.onDownloadStarted(source ? (this.views.tabIdForWebContents(source) ?? null) : null)
       )
       ses.setSpellCheckerLanguages(['en-US'])
-      if (this.sessions.isPersistent(containerId))
+      if (this.sessions.isPersistent(containerId)) {
+        webstore.attach(ses)
         void (browser.extensions as ExtensionService).attachSession()
+      }
     })
     this.sessions.get(DEFAULT_CONTAINER_ID)
     this.registerIpc(browser)

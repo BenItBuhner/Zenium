@@ -80,14 +80,33 @@ export class NoExtensions implements ExtensionHost {
     return []
   }
 
-  async addFromDialog(win: ZenWindow): Promise<void> {
+  private unavailable(win?: ZenWindow): void {
     this.browser.toast('Extensions are not available on this device.', 'info', win)
   }
 
-  remove(): void {}
+  async addFromDialog(win: ZenWindow): Promise<void> {
+    this.unavailable(win)
+  }
+
+  async installFromFileDialog(win: ZenWindow): Promise<void> {
+    this.unavailable(win)
+  }
+
+  async installFromStore(_ref: string, _store: unknown, win?: ZenWindow): Promise<void> {
+    this.unavailable(win)
+  }
+
+  async remove(): Promise<void> {}
   async setEnabled(): Promise<void> {}
+  setPinned(): void {}
+  async reload(): Promise<void> {}
+  async checkForUpdates(): Promise<void> {}
+  async update(): Promise<void> {}
+  openOptions(_id: string, win: ZenWindow): void {
+    this.unavailable(win)
+  }
   openPopup(_id: string, _anchor: Rect, win: ZenWindow): void {
-    this.browser.toast('Extensions are not available on this device.', 'info', win)
+    this.unavailable(win)
   }
   closePopup(): void {}
   flushSync(): void {}
