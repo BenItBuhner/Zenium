@@ -1,4 +1,4 @@
-import type { JSX } from 'react'
+import type { JSX, MouseEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronLeft,
@@ -42,7 +42,6 @@ import {
   uiStore,
   type LocalMenuItem
 } from '@renderer/lib/ui'
-import { useBookmarkTree } from '../bookmarks/tree'
 import { EmptyNote, OverlayShell } from '../overlays/OverlayShell'
 import {
   PhoneHeader,
@@ -52,7 +51,7 @@ import {
   PhoneSelectionHeader,
   RowFavicon
 } from './PhoneList'
-import { removeWithUndo, usePanelStep, usePendingDeletes } from './phonePanel'
+import { removeWithUndo, useBookmarkTree, usePanelStep, usePendingDeletes } from './phonePanel'
 
 const SEARCH_LIMIT = 200
 
@@ -238,6 +237,13 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
     )
   }
 
+  // The panel's own menu (bookmark all tabs, import, export) is the core's: it goes out through
+  // `platform.menus.popup`, which on a phone comes back as the menu sheet.
+  const panelMenu = (event: MouseEvent<HTMLElement>): void => {
+    const r = event.currentTarget.getBoundingClientRect()
+    run('bookmark.menu', { x: Math.round(r.left), y: Math.round(r.bottom) })
+  }
+
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
@@ -269,6 +275,11 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
             <ChevronLeft className="h-5 w-5" strokeWidth={1.75} />
           </PhoneIconButton>
         ) : undefined
+      }
+      actions={
+        <PhoneIconButton label="More bookmark actions" onClick={panelMenu}>
+          <EllipsisVertical className="h-5 w-5" strokeWidth={1.75} />
+        </PhoneIconButton>
       }
       onClose={() => closeOverlay()}
     />

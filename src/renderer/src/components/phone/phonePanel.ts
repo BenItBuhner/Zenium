@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { UIState } from '@shared/types'
+import { BookmarkTree } from '@shared/bookmarks'
 import { useBackSurface } from '@renderer/lib/back'
 import { pushToast, uiStore } from '@renderer/lib/ui'
 import { undoableDeletes } from '@renderer/lib/undo'
@@ -53,4 +55,9 @@ export function usePanelStep(enabled: boolean, step: () => void): void {
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [enabled])
+}
+
+/** Index over the mirrored bookmark nodes; rebuilt when the core pushes a new list. */
+export function useBookmarkTree(state: UIState): BookmarkTree {
+  return useMemo(() => new BookmarkTree(state.bookmarks), [state.bookmarks])
 }

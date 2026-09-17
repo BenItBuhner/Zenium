@@ -1,20 +1,23 @@
-import type { BookmarkNodeType } from '@shared/types'
 import { defaultBookmarkFolderId } from '@shared/bookmarks'
 import { browserStore, pushToast, uiStore } from './ui'
 import type { BookmarkEditRequest } from './ui'
 
 export type { BookmarkEditRequest }
 
-/** Open the editor for an existing bookmark or folder; a node that is gone opens nothing. */
+/**
+ * Open the editor for a bookmark or folder. The node may not have reached the renderer yet (a
+ * `bookmark.star` that overtook the state push); the editor then waits for it rather than
+ * treating the gap as a deletion (design review of #38, item 1).
+ */
 export function editBookmark(id: string): void {
   const state = browserStore.get().state
-  const node = state?.bookmarks.find((n) => n.id === id)
-  if (!state || !node) return
+  if (!state) return
+  const node = state.bookmarks.find((n) => n.id === id)
   uiStore.set({
     bookmarkEdit: {
       id,
-      parentId: node.parentId ?? defaultBookmarkFolderId(state.platform),
-      type: node.type
+      parentId: node?.parentId ?? defaultBookmarkFolderId(state.platform),
+      type: node?.type ?? 'url'
     }
   })
 }

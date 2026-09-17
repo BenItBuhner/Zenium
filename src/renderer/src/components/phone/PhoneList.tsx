@@ -1,4 +1,4 @@
-import type { JSX, ReactNode, RefObject } from 'react'
+import type { JSX, MouseEvent, ReactNode, RefObject } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { Check, Search, Trash2, X } from 'lucide-react'
 import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
@@ -23,7 +23,7 @@ export function PhoneIconButton({
   children
 }: {
   label: string
-  onClick: () => void
+  onClick: (event: MouseEvent<HTMLButtonElement>) => void
   disabled?: boolean
   children: ReactNode
 }): JSX.Element {
