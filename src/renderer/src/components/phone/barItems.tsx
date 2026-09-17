@@ -10,11 +10,12 @@ import {
   PanelLeft,
   PanelRight,
   Plus,
+  Share2,
   Star,
   TextSearch
 } from 'lucide-react'
-import type { PhoneBarItemId, Tab, UIState } from '@shared/types'
-import { phoneBarItemEnabled } from '@shared/phoneBar'
+import type { PhoneBarItemId, PhoneBarLayout, Tab, UIState } from '@shared/types'
+import { phoneBarForHost, phoneBarItemEnabled, phoneBarOffered } from '@shared/phoneBar'
 import { BLANK_URL } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
@@ -87,6 +88,20 @@ export const BAR_ITEMS: Record<PhoneBarItemId, BarItem> = {
       if (tab && tab.url !== BLANK_URL) run('tab.navigate', { tabId: tab.id, input: BLANK_URL })
       void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, { text: '', attached: true })
     }
+  },
+  share: {
+    id: 'share',
+    label: 'Share',
+    glyph: () => <Share2 className={glyph} />,
+    // What the menu's Share… sends: the page's title and address, the favicon for the preview.
+    run: ({ tab }) =>
+      tab &&
+      run('app.share', {
+        title: tab.customTitle ?? tab.title,
+        url: tab.url,
+        tabId: tab.id,
+        favicon: tab.favicon ?? undefined
+      })
   },
   bookmark: {
     id: 'bookmark',
@@ -166,6 +181,16 @@ export const BAR_ITEMS: Record<PhoneBarItemId, BarItem> = {
 
 export function barItem(id: PhoneBarItemId): BarItem {
   return BAR_ITEMS[id]
+}
+
+/** The items this host offers, in catalogue order. */
+export function barCatalogue(state: UIState): PhoneBarItemId[] {
+  return phoneBarOffered(state.capabilities)
+}
+
+/** `settings.phoneBar` as this host draws it: without items whose command it lacks. */
+export function barLayout(state: UIState): PhoneBarLayout {
+  return phoneBarForHost(state.settings.phoneBar, barCatalogue(state))
 }
 
 /** Whether the item does anything right now. */

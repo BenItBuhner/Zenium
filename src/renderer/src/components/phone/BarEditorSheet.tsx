@@ -1,5 +1,5 @@
 import type { JSX, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { GripVertical, Minus, Plus, RotateCcw, Search } from 'lucide-react'
 import type { PhoneBarItemId, PhoneBarLayout, UIState } from '@shared/types'
 import {
@@ -9,8 +9,10 @@ import {
   phoneBarAvailable,
   phoneBarCapacity,
   phoneBarCount,
+  phoneBarForHost,
   phoneBarHas,
   phoneBarLayoutsEqual,
+  phoneBarOffered,
   phoneBarSequence,
   PILL,
   removePhoneBarItem,
@@ -91,8 +93,12 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
   const capacity = phoneBarCapacity(viewport.width - insets.left - insets.right)
 
   // The layout being edited lives here first, so an edit shows before the settings round trip;
-  // what the settings say is adopted whenever nothing of ours is still on its way.
-  const persisted = state.settings.phoneBar
+  // what the settings say is adopted whenever nothing of ours is still on its way. Both are the
+  // layout as this host offers it: an item it cannot run is neither listed nor kept.
+  const { capabilities } = state
+  const saved = state.settings.phoneBar
+  const catalogue = useMemo(() => phoneBarOffered(capabilities), [capabilities])
+  const persisted = useMemo(() => phoneBarForHost(saved, catalogue), [saved, catalogue])
   const [layout, setLayout] = useState(persisted)
   const latest = useRef(layout)
   useLayoutEffect(() => {
@@ -291,7 +297,7 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
    */
   const closeHole = (d: Drag): void => {
     const seq = phoneBarSequence(d.base)
-    const avail = phoneBarAvailable(d.base)
+    const avail = phoneBarAvailable(d.base, catalogue)
     if (d.from === 'bar') {
       const at = seq.indexOf(d.id)
       seq.forEach((key, i) => {
@@ -317,7 +323,7 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
     if (d.target.kind === 'bar') {
       y = d.barTop + d.target.position * ROW
     } else {
-      const avail = phoneBarAvailable(d.draft)
+      const avail = phoneBarAvailable(d.draft, catalogue)
       const at = avail.indexOf(d.id)
       y = d.availTop + (at < 0 ? avail.length : at) * ROW
     }
@@ -472,7 +478,7 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
   const full = phoneBarCount(layout) >= capacity
   const room = Math.max(0, capacity - phoneBarCount(layout))
   const sequence = phoneBarSequence(layout)
-  const available = phoneBarAvailable(layout)
+  const available = phoneBarAvailable(layout, catalogue)
   const add = (id: PhoneBarItemId): void => {
     if (full) {
       run('haptic', { kind: 'tick' })

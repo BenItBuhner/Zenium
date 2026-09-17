@@ -30,7 +30,7 @@ import { Favicon } from '../sidebar/Favicon'
 import { TabDialogs } from '../TabDialogs'
 import { Urlbar } from '../urlbar/Urlbar'
 import { BarButton } from './BarButton'
-import { barContext } from './barItems'
+import { barContext, barLayout } from './barItems'
 import { PhoneStage } from './PhoneStage'
 import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
@@ -215,7 +215,7 @@ function PhoneBar({
   const tab = activeTab(state)
   const space = activeSpace(state)
   const ctx = barContext(state, overviewOpen)
-  const layout = state.settings.phoneBar
+  const layout = barLayout(state)
   const inset = `var(--zen-inset-${edge})`
 
   return (

@@ -2,7 +2,13 @@ import type { JSX, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight, Bookmark, Clock, Globe, Layers, Search, Terminal, X } from 'lucide-react'
 import type { PhoneBarLayout, PhoneBarPosition, Rect, Suggestion, UIState } from '@shared/types'
-import { BAR_BUTTON, BAR_GAP, BAR_PADDING } from '@shared/phoneBar'
+import {
+  BAR_BUTTON,
+  BAR_GAP,
+  BAR_PADDING,
+  phoneBarForHost,
+  phoneBarOffered
+} from '@shared/phoneBar'
 import { ERROR_URL_PREFIX, BLANK_URL } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
@@ -292,7 +298,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
         field={
           <div
             className="zen-omnibox-field flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full pl-2 pr-1.5"
-            style={fieldGrowFrom(state.settings.phoneBar)}
+            style={fieldGrowFrom(
+              phoneBarForHost(state.settings.phoneBar, phoneBarOffered(state.capabilities))
+            )}
           >
             <span
               role="img"

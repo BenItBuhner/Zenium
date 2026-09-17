@@ -1,4 +1,4 @@
-import type { PhoneBarItemId, PhoneBarLayout, Tab } from './types'
+import type { HostCapabilities, PhoneBarItemId, PhoneBarLayout, Tab } from './types'
 import { BLANK_URL } from './url'
 
 /**
@@ -16,6 +16,7 @@ export const PHONE_BAR_ITEM_IDS: readonly PhoneBarItemId[] = [
   'forward',
   'reload',
   'home',
+  'share',
   'bookmark',
   'bookmarks',
   'history',
@@ -26,6 +27,39 @@ export const PHONE_BAR_ITEM_IDS: readonly PhoneBarItemId[] = [
   'spaces',
   'find'
 ]
+
+/** The host abilities an item can depend on. */
+type Requirement = keyof Pick<HostCapabilities, 'share'>
+/** What a host must be able to do for an item to be offered; items not listed are always offered. */
+const REQUIRES: Partial<Record<PhoneBarItemId, Requirement>> = {
+  share: 'share'
+}
+
+/**
+ * The catalogue as one host offers it: an item whose command the host lacks (Share without a
+ * system share sheet) is neither listed by the editor nor drawn if a synced layout carries it.
+ */
+export function phoneBarOffered(
+  capabilities: Pick<HostCapabilities, Requirement>
+): PhoneBarItemId[] {
+  return PHONE_BAR_ITEM_IDS.filter((id) => {
+    const needs = REQUIRES[id]
+    return needs === undefined || capabilities[needs]
+  })
+}
+
+/** `layout` without the items `offered` leaves out (the layout itself when it has none). */
+export function phoneBarForHost(
+  layout: PhoneBarLayout,
+  offered: readonly PhoneBarItemId[]
+): PhoneBarLayout {
+  const keep = (side: PhoneBarItemId[]): PhoneBarItemId[] =>
+    side.filter((id) => offered.includes(id))
+  const left = keep(layout.left)
+  const right = keep(layout.right)
+  if (left.length === layout.left.length && right.length === layout.right.length) return layout
+  return { left, right }
+}
 
 /** Today's bar: back, the pill, new tab, tabs, menu. */
 export const DEFAULT_PHONE_BAR: PhoneBarLayout = {
@@ -251,6 +285,7 @@ export function phoneBarItemEnabled(id: PhoneBarItemId, ctx: PhoneBarItemContext
     case 'find':
       return tab !== null && tab.url !== '' && tab.url !== BLANK_URL
     case 'bookmark':
+    case 'share':
       return tab !== null && /^https?:/i.test(tab.url)
     default:
       return true

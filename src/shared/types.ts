@@ -634,6 +634,7 @@ export type PhoneBarItemId =
   | 'forward'
   | 'reload'
   | 'home'
+  | 'share'
   | 'bookmark'
   | 'bookmarks'
   | 'history'
