@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { HINT_PALETTE } from '@shared/fullscreenHint'
@@ -45,6 +46,16 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {'],
   // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
   ['.zen-message {', '.zen-suggestion {']
+]
+
+/**
+ * Files outside main.css built on v2 (a surface's own stylesheet, a component with inline values),
+ * as paths under src/renderer/src. Add a file here when its surface is moved to v2 on purpose; any
+ * other renderer file reading a v2 token fails the last test.
+ */
+const V2_FILES: ReadonlyArray<string> = [
+  // The phone history and bookmarks panels, the bookmark editor and the phone toast.
+  'components/phone/phonePanels.css'
 ]
 
 /** The text of the first `selector {` block found after `from`. */
@@ -195,6 +206,21 @@ describe('design language v2 tokens', () => {
     )
     expect(inside).toMatch(/--zen-scrim: var\(--v2-scrim\)/)
     expect(inside).toMatch(/\[class\^='zen-v2-'\]:focus-visible/)
+  })
+
+  it('is read outside main.css only by the files deliberately moved to v2', () => {
+    const root = fileURLToPath(new URL('../../', import.meta.url))
+    const files = readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .map((f) => f.split('\\').join('/'))
+      .filter((f) => /\.(css|tsx?)$/.test(f) && !f.includes('__tests__'))
+      .filter((f) => f !== 'assets/main.css')
+    for (const file of V2_FILES) expect(files, `v2 file "${file}"`).toContain(file)
+    for (const file of files) {
+      const reads = readFileSync(join(root, file), 'utf8').match(/var\(--v2-/g) ?? []
+      if (V2_FILES.includes(file))
+        expect(reads.length, `${file} reads v2 tokens`).toBeGreaterThan(0)
+      else expect(reads, `${file} reads v2 tokens but is not listed in V2_FILES`).toHaveLength(0)
+    }
   })
 })
 
