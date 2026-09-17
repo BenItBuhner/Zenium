@@ -201,6 +201,50 @@ const tryShell = (command) => {
 }
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 const prop = (name) => tryShell(`getprop ${name}`).trim()
+const hostCommand = (file, args) => {
+  try {
+    return execFileSync(file, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+  } catch {
+    return ''
+  }
+}
+
+/** Whether adb still sees the emulator; a run cannot continue without it. */
+function deviceAlive() {
+  return hostCommand('adb', ['get-state']).trim() === 'device'
+}
+
+class EmulatorGone extends Error {
+  constructor() {
+    super('the emulator is gone')
+  }
+}
+
+/** Host watchdog: memory every few seconds, the kernel log the moment the emulator disappears. */
+function startHostMonitor() {
+  const file = path.join(OUT, 'host-monitor.txt')
+  appendFileSync(file, `${hostCommand('nproc', []).trim()} cores\n${hostCommand('free', ['-m'])}\n`)
+  let reported = false
+  return setInterval(() => {
+    const qemu = hostCommand('ps', [
+      '-o',
+      'pid=,rss=,pcpu=,comm=',
+      '-C',
+      'qemu-system-x86_64'
+    ]).trim()
+    appendFileSync(
+      file,
+      `${new Date().toISOString().slice(11, 19)} ${hostCommand('free', ['-m']).split('\n')[1]} | ${qemu || 'no qemu'}\n`
+    )
+    if (!qemu && !reported) {
+      reported = true
+      appendFileSync(
+        file,
+        `EMULATOR PROCESS GONE\n${hostCommand('sudo', ['dmesg']).split('\n').slice(-80).join('\n')}\n`
+      )
+    }
+  }, 5_000)
+}
 
 class Cdp {
   constructor(ws) {
@@ -529,6 +573,7 @@ async function runBrowser(browser, label) {
     try {
       results[page.id] = await record(session, page, name)
     } catch (e) {
+      if (!deviceAlive()) throw new EmulatorGone()
       log(`  !! ${page.id} failed: ${e.message}`)
       results[page.id] = { error: e.message }
       try {
@@ -561,6 +606,7 @@ async function runBrowser(browser, label) {
       results[`${home.id}-${variant}`] = data
       log(`  -> body ${data.bodyFontSize} html ${data.htmlFontSize} dark=${data.prefersDark}`)
     } catch (e) {
+      if (!deviceAlive()) throw new EmulatorGone()
       log(`  !! ${variant} failed: ${e.message}`)
       results[`${home.id}-${variant}`] = { error: e.message }
     } finally {
@@ -653,6 +699,7 @@ async function runVariants(session, fixed, label) {
         results[`${variant.id}/${page.id}`] = await record(session, page, name)
       }
     } catch (e) {
+      if (!deviceAlive()) throw new EmulatorGone()
       log(`  !! ${variant.id} failed: ${e.message}`)
       results[variant.id] = { error: e.message }
     } finally {
@@ -808,8 +855,15 @@ async function main() {
   log('letting the system settle')
   await sleep(30_000)
   tryShell('logcat -c')
+  const monitor = startHostMonitor()
 
   const summary = {}
+  const finish = () => {
+    clearInterval(monitor)
+    writeFileSync(path.join(OUT, 'summary.json'), JSON.stringify(summary, null, 2))
+    writeFileSync(path.join(OUT, 'logcat.txt'), tryShell('logcat -d -v time'))
+    echo.close()
+  }
   const runZen = async (apk, label) => {
     log(`[${label}] installing ${apk}`)
     installZen(apk)
@@ -817,6 +871,7 @@ async function main() {
     try {
       return await runBrowser(ZEN, label)
     } catch (e) {
+      if (e instanceof EmulatorGone) throw e
       log(`!! ${label} run failed: ${e.message}`)
       try {
         screencap(path.join(OUT, `${label}-failure-screen.png`))
@@ -827,44 +882,50 @@ async function main() {
     }
   }
 
-  if (beforeApk) {
-    const before = await runZen(beforeApk, 'zen-before')
-    summary['zen-before'] = before.results
-    before.session?.close()
+  try {
+    if (beforeApk) {
+      const before = await runZen(beforeApk, 'zen-before')
+      summary['zen-before'] = before.results
+      before.session?.close()
+      tryShell(`am force-stop ${APP}`)
+      await sleep(3_000)
+    }
+
+    const after = await runZen(afterApk, 'zen-after')
+    summary['zen-after'] = after.results
+    if (after.session && after.results['google-home'] && !after.results['google-home'].error) {
+      summary['zen-after-identities'] = await runVariants(
+        after.session,
+        after.results['google-home'],
+        'zen-after'
+      )
+    }
+    after.session?.close()
     tryShell(`am force-stop ${APP}`)
     await sleep(3_000)
-  }
 
-  const after = await runZen(afterApk, 'zen-after')
-  summary['zen-after'] = after.results
-  if (after.session && after.results['google-home'] && !after.results['google-home'].error) {
-    summary['zen-after-identities'] = await runVariants(
-      after.session,
-      after.results['google-home'],
-      'zen-after'
-    )
-  }
-  after.session?.close()
-  tryShell(`am force-stop ${APP}`)
-  await sleep(3_000)
-
-  try {
-    const chrome = await runBrowser(CHROME_BROWSER, 'chrome')
-    summary.chrome = chrome.results
-    chrome.session?.close()
-  } catch (e) {
-    log(`!! chrome run failed: ${e.message}`)
-    summary.chrome = { error: e.message }
     try {
-      screencap(path.join(OUT, 'chrome-failure-screen.png'))
-    } catch {
-      /* no screen */
+      const chrome = await runBrowser(CHROME_BROWSER, 'chrome')
+      summary.chrome = chrome.results
+      chrome.session?.close()
+    } catch (e) {
+      if (e instanceof EmulatorGone) throw e
+      log(`!! chrome run failed: ${e.message}`)
+      summary.chrome = { error: e.message }
+      try {
+        screencap(path.join(OUT, 'chrome-failure-screen.png'))
+      } catch {
+        /* no screen */
+      }
     }
+    tryShell(`am force-stop ${CHROME}`)
+  } catch (e) {
+    // The emulator process died under us (see host-monitor.txt); keep what was recorded.
+    summary.aborted = e.message
+    finish()
+    throw e
   }
-  tryShell(`am force-stop ${CHROME}`)
-  writeFileSync(path.join(OUT, 'summary.json'), JSON.stringify(summary, null, 2))
-  writeFileSync(path.join(OUT, 'logcat.txt'), tryShell('logcat -d -v time'))
-  echo.close()
+  finish()
   if (summary['zen-after'].error && summary.chrome.error) {
     throw new Error('neither browser could be driven')
   }
