@@ -50,6 +50,7 @@ class EngineProbe {
         result.put("device", device())
         result.put("webViewPackage", webViewPackage())
         result.put("androidxWebkitFeatures", features())
+        result.put("providerFeatures", providerFeatures())
         result.put("reflection", reflection())
         result.put("chromeExtensionUrl", chromeExtensionUrl())
         result.put("pageGlobals", pageGlobals())
@@ -86,6 +87,18 @@ class EngineProbe {
         }
         return features
     }
+
+    /**
+     * The feature strings the installed WebView provider itself advertises (what androidx.webkit
+     * consults in `isFeatureSupported`), independent of the androidx.webkit version this app is
+     * compiled against: newer Chromium features show up here before the library knows them.
+     */
+    private fun providerFeatures(): JSONArray = runCatching {
+        val communicator = Class.forName("androidx.webkit.internal.WebViewGlueCommunicator")
+        val factory = communicator.getMethod("getFactory").invoke(null) ?: error("no provider factory")
+        val features = factory.javaClass.getMethod("getWebViewFeatures").invoke(factory) as Array<*>
+        JSONArray(features.map { it.toString() }.sorted())
+    }.getOrElse { JSONArray().put("error: $it") }
 
     private fun reflection(): JSONObject {
         val classes = listOf(

@@ -146,9 +146,27 @@ declare const __zenExtBoot: Boot
   // --- isolation ---------------------------------------------------------------------------------
 
   /**
+   * The global's own keys and its prototype chain's at document start: everything the browser
+   * defines. A key the page adds later is a page global, which an isolated world would not see.
+   */
+  const builtins = new Set<PropertyKey>()
+  {
+    let obj: object | null = realWindow
+    while (obj) {
+      for (const key of Reflect.ownKeys(obj)) builtins.add(key)
+      obj = Object.getPrototypeOf(obj)
+    }
+  }
+
+  /**
    * A per-extension stand-in for `window`/`self`/`globalThis`: expandos land in a private store
-   * and never reach the page, reads fall through to the real window with native methods bound so
-   * `window.setTimeout(...)` keeps working, event handler and other setter properties are forwarded.
+   * and never reach the page, reads of browser globals fall through to the real window with
+   * native methods bound so `window.setTimeout(...)` keeps working, page globals read as
+   * undefined, event handler and other setter properties are forwarded. In `with` mode the same
+   * object is the scope object of the group function, so a bare `forTrusted(...)` finds the
+   * `globalThis.forTrusted = ...` another file wrote (Vimium's pattern); `has` answers for the
+   * store and the browser's globals only, so `'IntersectionObserver' in window` stays honest and
+   * undeclared identifiers still throw.
    */
   function shadowWindow(
     chrome: Record<string, unknown>,
@@ -177,6 +195,7 @@ declare const __zenExtBoot: Boot
         if (key === 'window' || key === 'self' || key === 'globalThis' || key === 'frames')
           return proxy
         if (key === 'chrome' || key === 'browser') return chrome
+        if (!builtins.has(key)) return undefined
         const value = win[key]
         if (typeof value === 'function' && typeof key === 'string') {
           const fn = value as { prototype?: unknown }
@@ -193,7 +212,7 @@ declare const __zenExtBoot: Boot
         return value
       },
       set(_t, key, value) {
-        if (!(key in store) && key in win && findSetter(key)) {
+        if (!(key in store) && builtins.has(key) && findSetter(key)) {
           win[key] = value
           return true
         }
@@ -201,7 +220,7 @@ declare const __zenExtBoot: Boot
         return true
       },
       has(_t, key) {
-        return key in store || key in win
+        return key in store || builtins.has(key)
       },
       deleteProperty(_t, key) {
         delete store[key]
@@ -214,11 +233,13 @@ declare const __zenExtBoot: Boot
       getOwnPropertyDescriptor(_t, key) {
         const own = Object.getOwnPropertyDescriptor(store, key)
         if (own) return own
+        if (!builtins.has(key)) return undefined
         const real = Object.getOwnPropertyDescriptor(win, key)
         return real ? { ...real, configurable: true } : undefined
       },
       ownKeys() {
-        const keys = new Set<string | symbol>(Reflect.ownKeys(win))
+        const keys = new Set<string | symbol>()
+        for (const key of Reflect.ownKeys(win)) if (builtins.has(key)) keys.add(key)
         for (const key of Reflect.ownKeys(store)) keys.add(key)
         return [...keys]
       }

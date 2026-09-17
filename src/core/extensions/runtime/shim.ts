@@ -245,12 +245,31 @@ export function createChromeShim(
   const notImplemented = (ns: string, method: string): Promise<never> =>
     Promise.reject(new Error(`chrome.${ns}.${method} is not implemented on Zenium for Android`))
 
+  const warned = new Set<string>()
+  const noop = (ns: string, method: string): Promise<undefined> => {
+    const key = `${ns}.${method}`
+    if (!warned.has(key)) {
+      warned.add(key)
+      primordials.error(`[Zenium] chrome.${key} is a no-op on Zenium for Android`)
+    }
+    return Promise.resolve(undefined)
+  }
+
   const methodImpl = (
     ns: string,
     method: string,
-    status: MemberStatus
+    status: MemberStatus,
+    stubResult: unknown
   ): ((...args: unknown[]) => unknown) => {
-    if (status === 'stub') return (...args) => withCallback(args, () => notImplemented(ns, method))
+    if (status === 'noop') return (...args) => withCallback(args, () => noop(ns, method))
+    if (status === 'stub') {
+      if (stubResult !== undefined)
+        return (...args) =>
+          withCallback(args, () =>
+            Promise.resolve(primordials.parse(primordials.stringify(stubResult)))
+          )
+      return (...args) => withCallback(args, () => notImplemented(ns, method))
+    }
     return (...args) => withCallback(args, (rest) => call(ns, method, rest))
   }
 
@@ -259,7 +278,7 @@ export function createChromeShim(
     const out: Record<string, unknown> = {}
     for (const [method, status] of Object.entries(schema.methods)) {
       if (status === 'local') continue
-      out[method] = methodImpl(ns, method, status)
+      out[method] = methodImpl(ns, method, status, schema.stubResults?.[method])
     }
     for (const event of schema.events) out[event] = eventFor(ns, event)
     if (schema.constants) Object.assign(out, schema.constants)

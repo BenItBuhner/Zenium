@@ -205,7 +205,7 @@ export class AndroidExtensionHost implements ExtensionHost {
             version: 1,
             disabled: saved.disabled ?? [],
             installed: saved.installed ?? {},
-            isolation: saved.isolation ?? 'shadow',
+            isolation: saved.isolation ?? 'with',
             dynamicRules: saved.dynamicRules ?? {},
             enabledRulesets: saved.enabledRulesets ?? {},
             alarms: saved.alarms ?? {},
@@ -215,7 +215,7 @@ export class AndroidExtensionHost implements ExtensionHost {
             version: 1,
             disabled: [],
             installed: {},
-            isolation: 'shadow',
+            isolation: 'with',
             dynamicRules: {},
             enabledRulesets: {},
             alarms: {},
@@ -231,9 +231,16 @@ export class AndroidExtensionHost implements ExtensionHost {
     })
   }
 
-  /** One shim message to one endpoint (a frame's or an extension page's reply proxy in Kotlin). */
+  /**
+   * One shim message to one endpoint (a frame's or an extension page's reply proxy in Kotlin).
+   * Frames host several endpoints (one per extension) on one transport, so the message carries
+   * the endpoint id; the bootstrap routes on it.
+   */
   private sendTo(endpointId: string, message: Record<string, unknown>): void {
-    this.bridge.send('ext.send', { ep: endpointId, message: JSON.stringify(message) })
+    this.bridge.send('ext.send', {
+      ep: endpointId,
+      message: JSON.stringify({ ...message, ep: endpointId })
+    })
   }
 
   // ---------------------------------------------------------------------------

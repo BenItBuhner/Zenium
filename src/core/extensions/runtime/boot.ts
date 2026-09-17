@@ -9,12 +9,13 @@ import { planInjection, type RegisteredContentScript } from './plan'
  * Isolation of content scripts in the page's (only) JavaScript world:
  *  - `shadow`: every file of a declaration runs inside one function whose `window`, `self` and
  *    `globalThis` parameters are a Proxy over the real window. Expandos land in a per-extension
- *    store, reads fall through to the real window; free identifiers still resolve to the real
- *    globals, so implicit globals leak and page globals are visible. Cheap: no dynamic scope.
- *  - `with`: the same function is defined inside `with (scope)` where `scope` is a Proxy whose
- *    `has` trap always answers true, so every free identifier – including implicit globals and
- *    reads of page globals – is routed through the extension's store. Faithful, but every free
- *    identifier lookup becomes a proxy trap.
+ *    store, reads of browser globals fall through to the real window, page globals read as
+ *    undefined; bare identifiers still resolve through the real global scope, so a file reading
+ *    `forTrusted` after another wrote `globalThis.forTrusted` throws (Vimium). Cheap: no dynamic
+ *    scope.
+ *  - `with`: the same function body sits inside `with (window)` where `window` is that Proxy, so
+ *    bare identifiers resolve through the store and the browser's globals first. Faithful for the
+ *    expando pattern; every free identifier lookup becomes a `has` plus a `get` trap. The default.
  *  - `none`: run against the real window (what `world: "MAIN"` declarations get).
  */
 export type IsolationMode = 'shadow' | 'with' | 'none'

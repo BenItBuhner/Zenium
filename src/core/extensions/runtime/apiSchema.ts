@@ -7,10 +7,15 @@
  * Status per member:
  *  - `ok`      implemented by the host (Kotlin) or the browser core;
  *  - `partial` implemented with a documented caveat;
- *  - `stub`    present, rejects with a "not implemented on Zenium for Android" error;
+ *  - `stub`    present, rejects with a "not implemented on Zenium for Android" error (or resolves
+ *              with the namespace's `stubResults` entry when one exists, for getters whose callers
+ *              cannot cope with an error);
+ *  - `noop`    present, resolves with nothing after one console warning: setters and
+ *              fire-and-forget calls extensions make during startup (`setUninstallURL`,
+ *              `userScripts.configureWorld`) must not abort their initialisation chains;
  *  - `local`   answered inside the shim without a host round-trip.
  */
-export type MemberStatus = 'ok' | 'partial' | 'stub' | 'local'
+export type MemberStatus = 'ok' | 'partial' | 'stub' | 'noop' | 'local'
 
 export interface NamespaceSchema {
   /** Available in content scripts too (everything is available in extension pages). */
@@ -21,6 +26,8 @@ export interface NamespaceSchema {
   events: string[]
   /** Plain constants copied onto the namespace object. */
   constants?: Record<string, unknown>
+  /** What `stub` methods resolve with instead of rejecting (JSON values only). */
+  stubResults?: Record<string, unknown>
 }
 
 export const API_SCHEMA: Record<string, NamespaceSchema> = {
@@ -35,7 +42,7 @@ export const API_SCHEMA: Record<string, NamespaceSchema> = {
       getPlatformInfo: 'local',
       openOptionsPage: 'ok',
       reload: 'ok',
-      setUninstallURL: 'stub',
+      setUninstallURL: 'noop',
       requestUpdateCheck: 'stub',
       getBackgroundPage: 'stub',
       getContexts: 'partial',
@@ -140,14 +147,14 @@ export const API_SCHEMA: Record<string, NamespaceSchema> = {
       insertCSS: 'partial',
       removeCSS: 'stub',
       duplicate: 'ok',
-      highlight: 'stub',
+      highlight: 'noop',
       move: 'stub',
       captureVisibleTab: 'partial',
       detectLanguage: 'stub',
       getZoom: 'ok',
       setZoom: 'ok',
       getZoomSettings: 'stub',
-      setZoomSettings: 'stub',
+      setZoomSettings: 'noop',
       discard: 'ok',
       goBack: 'ok',
       goForward: 'ok',
@@ -387,7 +394,7 @@ export const API_SCHEMA: Record<string, NamespaceSchema> = {
       getDisabledRuleIds: 'partial',
       getAvailableStaticRuleCount: 'local',
       getMatchedRules: 'stub',
-      setExtensionActionOptions: 'stub',
+      setExtensionActionOptions: 'noop',
       isRegexSupported: 'local',
       testMatchOutcome: 'stub'
     },
@@ -598,8 +605,8 @@ export const API_SCHEMA: Record<string, NamespaceSchema> = {
       getScripts: 'ok',
       unregister: 'ok',
       update: 'partial',
-      configureWorld: 'stub',
-      resetWorldConfiguration: 'stub',
+      configureWorld: 'noop',
+      resetWorldConfiguration: 'noop',
       getWorldConfigurations: 'stub',
       execute: 'stub'
     },
@@ -667,12 +674,14 @@ export const API_SCHEMA: Record<string, NamespaceSchema> = {
     methods: {
       getFontList: 'stub',
       getFont: 'stub',
-      setFont: 'stub',
-      clearFont: 'stub',
+      setFont: 'noop',
+      clearFont: 'noop',
       getDefaultFontSize: 'stub',
-      setDefaultFontSize: 'stub'
+      setDefaultFontSize: 'noop'
     },
-    events: []
+    events: [],
+    // No font list on Android; an empty list keeps settings pages (Dark Reader) rendering.
+    stubResults: { getFontList: [], getFont: { fontId: '', levelOfControl: 'not_controllable' } }
   },
   search: {
     contentScript: false,
