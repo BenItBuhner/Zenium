@@ -134,6 +134,10 @@ run_take() {
   adb logcat -b all -v time > "$dir/logcat.txt" &
   local logcat_pid=$!
 
+  # The previous take's handshake files would be read as this take's before its driver has even
+  # seeded its profile: an old `record` starts the recorder and an old `done` stops it at once.
+  adb shell run-as "$app_id" rm -rf files/wake-demo || true
+
   adb shell am instrument -w -e class app.zen.chromium.WakeDemo -e assert "$assert" "$runner" > "$dir/instrument.txt" 2>&1 &
   local driver_pid=$!
 

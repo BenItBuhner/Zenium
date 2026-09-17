@@ -27,6 +27,8 @@ on:
         options:
           - '34'
           - '35'
+  push:
+    branches: [cursor/android-wake-blank-chrome-b675]
 
 permissions:
   contents: read
