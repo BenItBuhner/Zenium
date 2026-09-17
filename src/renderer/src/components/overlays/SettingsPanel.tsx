@@ -54,19 +54,19 @@ export type SettingsSection =
   | 'about'
 
 const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
-  { id: 'look', label: 'Look and Feel' },
-  { id: 'compact', label: 'Compact Mode' },
-  { id: 'tabs', label: 'Tab Management' },
+  { id: 'look', label: 'Look and feel' },
+  { id: 'compact', label: 'Compact mode' },
+  { id: 'tabs', label: 'Tab management' },
   { id: 'resources', label: 'Resources' },
   { id: 'search', label: 'Search' },
-  { id: 'spaces', label: 'Space Routing' },
+  { id: 'spaces', label: 'Space routing' },
   { id: 'containers', label: 'Containers' },
   { id: 'boosts', label: 'Boosts' },
   { id: 'mods', label: 'Mods' },
   { id: 'extensions', label: 'Extensions' },
-  { id: 'agents', label: 'AI Agents' },
+  { id: 'agents', label: 'AI agents' },
   { id: 'sync', label: 'Sync' },
-  { id: 'shortcuts', label: 'Keyboard Shortcuts' },
+  { id: 'shortcuts', label: 'Keyboard shortcuts' },
   { id: 'updates', label: 'Updates' },
   { id: 'about', label: 'About' }
 ]
@@ -129,13 +129,14 @@ export function SettingsPanel({
   return (
     <OverlayShell title="Settings" variant="full" className="zen-settings">
       <div className="flex h-full">
-        <nav className="w-52 shrink-0 overflow-y-auto border-r border-[var(--zen-border)] p-2">
+        <nav className="w-52 shrink-0 overflow-y-auto p-2">
           {sections.map((item) => (
             <button
               key={item.id}
               type="button"
+              data-active={section === item.id}
               className={cn(
-                'zen-squircle flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
+                'flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
                 section === item.id && 'bg-[var(--zen-element-bg-active)] font-medium'
               )}
               onClick={() => setSection(item.id)}
@@ -145,7 +146,7 @@ export function SettingsPanel({
           ))}
         </nav>
         <div className="min-w-0 flex-1 overflow-y-auto p-6">
-          <div className="mx-auto flex max-w-2xl flex-col gap-6">
+          <div className="mx-auto flex max-w-2xl flex-col gap-4">
             {section === 'look' && <LookSection s={s} set={set} />}
             {section === 'compact' && <CompactSection s={s} set={set} />}
             {section === 'tabs' && (
@@ -228,7 +229,7 @@ function LookSection({
           <Switch checked={s.borderless} onCheckedChange={(v) => set({ borderless: v })} />
         </Row>
       </Group>
-      <Group title="URL Bar">
+      <Group title="URL bar">
         <Row label="Floating behaviour">
           <Choice<UrlbarBehavior>
             value={s.urlbarBehavior}
@@ -273,7 +274,7 @@ function CompactSection({
 }): JSX.Element {
   const cm = s.compactMode
   return (
-    <Group title="Compact Mode">
+    <Group title="Compact mode">
       <Row
         label="Enable compact mode"
         hint="Ctrl+S. Hidden bars reappear when you hover the window edge."
@@ -351,7 +352,7 @@ function TabsSection({
         </Row>
       </Group>
       {windows && (
-        <Group title="Window Sync">
+        <Group title="Window sync">
           <Row
             label="Tabs across windows"
             hint="Zenium mirrors your spaces and tabs in every window. Choose 'pinned only' to keep unpinned tabs per window."
@@ -380,7 +381,7 @@ function TabsSection({
           </Row>
         </Group>
       )}
-      <Group title="Pinned Tabs & Essentials">
+      <Group title="Pinned tabs and Essentials">
         <Row label="When closing a pinned tab">
           <Choice<PinnedCloseBehavior>
             value={s.pinnedCloseBehavior}
@@ -433,7 +434,7 @@ function TabsSection({
           />
         </Row>
       </Group>
-      <Group title="Tab Unloading">
+      <Group title="Tab unloading">
         <Row
           label="Unload inactive tabs"
           hint="Frees memory by unloading tabs you haven't used for a while. Freezing, budgets and the live-page cap live under Resources."

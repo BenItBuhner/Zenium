@@ -15,9 +15,9 @@ type Tab = 'extensions' | 'mods'
 export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
   const [tab, setTab] = useState<Tab>('extensions')
   return (
-    <OverlayShell title="Add-ons and Themes" variant="full">
+    <OverlayShell title="Add-ons and themes" variant="full" className="zen-settings">
       <div className="flex h-full">
-        <nav className="w-52 shrink-0 border-r border-[var(--zen-border)] p-2">
+        <nav className="w-52 shrink-0 p-2">
           {(
             [
               { id: 'extensions', label: 'Extensions' },
@@ -27,8 +27,9 @@ export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
             <button
               key={item.id}
               type="button"
+              data-active={tab === item.id}
               className={cn(
-                'zen-squircle flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
+                'flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
                 tab === item.id && 'bg-[var(--zen-element-bg-active)] font-medium'
               )}
               onClick={() => setTab(item.id)}
@@ -38,7 +39,7 @@ export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
           ))}
         </nav>
         <div className="min-w-0 flex-1 overflow-y-auto p-6">
-          <div className="mx-auto flex max-w-2xl flex-col gap-5">
+          <div className="mx-auto flex max-w-2xl flex-col gap-4">
             {tab === 'extensions' ? (
               <ExtensionsSection state={state} />
             ) : (
@@ -54,13 +55,13 @@ export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
 export function ExtensionsSection({ state }: { state: UIState }): JSX.Element {
   return (
     <>
-      <div className="flex items-start justify-between gap-4">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-[240px] flex-1">
           <h3 className="text-[15px] font-semibold">Extensions</h3>
           <p className="mt-1 text-[12.5px] text-[var(--zen-muted)]">
-            Load unpacked Chrome extensions (a folder with a <code>manifest.json</code>). Content
-            scripts, storage, webRequest, scripting and DevTools panels are supported; extensions
-            run in every container.
+            Load unpacked Chrome extensions (a folder with a manifest.json). Content scripts,
+            storage, webRequest, scripting and DevTools panels are supported; extensions run in
+            every container.
           </p>
         </div>
         <Button size="sm" onClick={() => run('extension.add', undefined)}>
@@ -70,11 +71,11 @@ export function ExtensionsSection({ state }: { state: UIState }): JSX.Element {
       {state.extensions.length === 0 ? (
         <EmptyNote>No extensions yet.</EmptyNote>
       ) : (
-        <ul className="zen-squircle overflow-hidden rounded-xl border border-[var(--zen-border)]">
+        <ul className="flex flex-col">
           {state.extensions.map((ext) => (
             <li
               key={ext.id}
-              className="flex items-center gap-3 border-b border-[var(--zen-border)] px-4 py-3 last:border-b-0"
+              className="flex min-h-12 items-center gap-3 rounded-[10px] px-3 py-2 hover:bg-[var(--zen-element-bg)]"
             >
               {ext.icon ? (
                 <img src={ext.icon} alt="" className="h-8 w-8 rounded-lg" draggable={false} />
@@ -92,7 +93,7 @@ export function ExtensionsSection({ state }: { state: UIState }): JSX.Element {
                 </div>
                 <div className="truncate text-[11.5px] text-[var(--zen-muted)]" title={ext.path}>
                   {ext.error ? (
-                    <span className="text-red-500">{ext.error}</span>
+                    <span className="text-[var(--zen-danger)]">{ext.error}</span>
                   ) : (
                     ext.description || ext.path
                   )}
@@ -123,8 +124,8 @@ export function ModsSection({ state }: { state: UIState }): JSX.Element {
   const [url, setUrl] = useState('')
   return (
     <>
-      <div className="flex items-start justify-between gap-4">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-[240px] flex-1">
           <h3 className="text-[15px] font-semibold">Mods</h3>
           <p className="mt-1 text-[12.5px] text-[var(--zen-muted)]">
             Custom CSS for the browser chrome, like Zen&apos;s mods and <code>userChrome.css</code>.
@@ -175,7 +176,7 @@ export function ModsSection({ state }: { state: UIState }): JSX.Element {
       {state.mods.length === 0 ? (
         <EmptyNote>No mods installed.</EmptyNote>
       ) : (
-        <ul className="zen-squircle overflow-hidden rounded-xl border border-[var(--zen-border)]">
+        <ul className="flex flex-col">
           {state.mods.map((mod) => (
             <ModRow
               key={mod.id}
@@ -202,8 +203,8 @@ function ModRow({
   const [css, setCss] = useState(mod.css)
   const [name, setName] = useState(mod.name)
   return (
-    <li className="border-b border-[var(--zen-border)] last:border-b-0">
-      <div className="flex items-center gap-3 px-4 py-3">
+    <li className="rounded-[10px] hover:bg-[var(--zen-element-bg)]">
+      <div className="flex min-h-12 items-center gap-3 px-3 py-2">
         <div className="min-w-0 flex-1">
           {editing ? (
             <Input
@@ -244,7 +245,7 @@ function ModRow({
         </button>
       </div>
       {editing && (
-        <div className="px-4 pb-3">
+        <div className="px-3 pb-3">
           <textarea
             value={css}
             spellCheck={false}

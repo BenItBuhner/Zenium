@@ -3,22 +3,28 @@ import { Slot } from 'radix-ui'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@renderer/lib/utils'
 
+/**
+ * Zen's buttons (design language §8.3): a fill of the ink, or the accent for the one primary
+ * action of a view; never an outline. Press shrinks to .98 and the fill answers in 120ms.
+ */
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-[13px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-40 outline-none focus-visible:ring-2 focus-visible:ring-[var(--zen-accent)]/50 [&_svg]:pointer-events-none [&_svg]:shrink-0',
+  'zen-control zen-button zen-press inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-[13px] font-medium disabled:pointer-events-none disabled:opacity-30 outline-none [&_svg]:pointer-events-none [&_svg]:shrink-0',
   {
     variants: {
       variant: {
-        default: 'bg-[var(--zen-accent)] text-white shadow-sm hover:brightness-110',
+        default:
+          'bg-[var(--zen-accent-fill)] font-semibold text-[var(--zen-on-accent)] hover:brightness-110',
         secondary: 'bg-[var(--zen-element-bg)] hover:bg-[var(--zen-element-bg-hover)]',
         ghost: 'hover:bg-[var(--zen-element-bg)]',
-        outline: 'border border-[var(--zen-border)] hover:bg-[var(--zen-element-bg)]',
-        destructive: 'bg-red-500/90 text-white hover:bg-red-500'
+        outline: 'bg-[var(--zen-element-bg)] hover:bg-[var(--zen-element-bg-hover)]',
+        destructive:
+          'bg-[var(--zen-element-bg)] text-[var(--zen-danger)] hover:bg-[var(--zen-element-bg-hover)]'
       },
       size: {
-        default: 'h-8 px-3.5',
-        sm: 'h-7 px-2.5 text-xs',
+        default: 'h-8 px-4',
+        sm: 'h-7 px-3 text-[12.5px]',
         lg: 'h-10 px-5 text-sm',
-        icon: 'h-8 w-8'
+        icon: 'zen-icon-button h-7 w-7 rounded-full'
       }
     },
     defaultVariants: { variant: 'default', size: 'default' }

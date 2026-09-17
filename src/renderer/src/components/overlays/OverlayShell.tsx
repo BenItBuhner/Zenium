@@ -55,13 +55,16 @@ export function OverlayShell({
         )}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--zen-border)] px-4">
-          <h2 className="flex-1 text-[14px] font-semibold">{title}</h2>
+        <header
+          className={cn('flex shrink-0 items-center gap-2 pl-4 pr-2', phone ? 'h-14 pl-3' : 'h-11')}
+        >
+          <h2 className="zen-header-title min-w-0 flex-1 truncate">{title}</h2>
           {actions}
           <button
             type="button"
-            className="zen-toolbar-button h-7 w-7"
+            className={cn('zen-toolbar-button', phone && 'h-11 w-11')}
             title="Close (Esc)"
+            aria-label="Close"
             onClick={() => closeOverlay()}
           >
             <X className="h-4 w-4" />

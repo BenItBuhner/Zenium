@@ -91,7 +91,9 @@
   --zen-shadow-2:
     0 2px 4px rgb(0 0 0 / 0.24), 0 18px 44px rgb(0 0 0 / 0.5),
     inset 0 0 0 1px rgb(255 255 255 / 0.06);
-  --zen-shadow: 0 18px 50px rgb(0 0 0 / 0.55), 0 2px 8px rgb(0 0 0 / 0.35);
+  --zen-shadow:
+    0 18px 50px rgb(0 0 0 / 0.55), 0 2px 8px rgb(0 0 0 / 0.35),
+    inset 0 0 0 1px rgb(255 255 255 / 0.08);
 }
 
 /* Zen clamps its primary colour's lightness before using it as ink or a fill; so does the chrome. */
@@ -334,12 +336,87 @@
     filter: grayscale(0.5);
   }
 
+  /* Panels lift off the window by tint and shadow alone; dark mode's inner hairline is in the shadow. */
   .zen-panel {
     background: var(--zen-panel-bg);
     backdrop-filter: var(--zen-blur-panel);
-    border: 1px solid rgb(var(--zen-fg-rgb) / 0.1);
     border-radius: 16px;
     box-shadow: var(--zen-shadow);
+  }
+
+  /*
+   * Settings primitives (§8.2, §8.5, §8.6): rows sit on the panel and light up on hover or
+   * press; a group is a heading and its rows, separated from the next by space alone.
+   */
+  .zen-group-title {
+    margin: 0 0 4px;
+    padding: 0 10px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.006em;
+    line-height: 1.25;
+  }
+  .zen-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 36px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-row:hover {
+    background: var(--zen-element-bg);
+  }
+  .zen-row-label {
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  .zen-row-hint {
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--zen-muted);
+  }
+  /* The accent focus ring: two pixels, two pixels out, so its corner is the control's plus four. */
+  .zen-control:focus-visible {
+    outline: 2px solid var(--zen-accent);
+    outline-offset: 2px;
+  }
+  .zen-control {
+    transition:
+      background 120ms var(--zen-ease),
+      opacity 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease),
+      filter 120ms var(--zen-ease);
+  }
+  .zen-press:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+  .zen-switch {
+    border-radius: 9999px;
+    background: var(--zen-element-bg-active);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-switch[data-state='checked'] {
+    background: var(--zen-accent-fill);
+  }
+  .zen-switch:disabled {
+    opacity: 0.3;
+  }
+  .zen-switch-thumb {
+    width: 22px;
+    height: 22px;
+    border-radius: 9999px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+    will-change: transform;
+  }
+  /* Header of a pushed or docked surface: title only, no rule beneath (§8.7). */
+  .zen-header-title {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
   }
 
   .zen-content-frame {
@@ -743,26 +820,89 @@
 :root[data-form-factor='phone'] .zen-space-strip {
   transition-duration: 260ms;
 }
-/* Settings on a phone: the section list becomes a row of chips above the content. */
+/* Settings on a phone: the section list becomes a strip of pills above the content (§8.4). */
 :root[data-form-factor='phone'] .zen-settings > div > div {
   flex-direction: column;
 }
 :root[data-form-factor='phone'] .zen-settings nav {
   display: flex;
   width: auto;
-  gap: 4px;
+  gap: 6px;
+  padding: 8px 12px;
   overflow-x: auto;
-  border-right: 0;
-  border-bottom: 1px solid var(--zen-border);
   scrollbar-width: none;
+  mask-image: linear-gradient(90deg, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+}
+:root[data-form-factor='phone'] .zen-settings nav::-webkit-scrollbar {
+  display: none;
 }
 :root[data-form-factor='phone'] .zen-settings nav > button {
   width: auto;
+  height: 36px;
   flex-shrink: 0;
+  padding: 0 14px;
+  border-radius: 9999px;
+  font-size: 13px;
+  font-weight: 500;
   white-space: nowrap;
+  background: var(--zen-element-bg);
+}
+:root[data-form-factor='phone'] .zen-settings nav > button[data-active='true'] {
+  background: rgb(var(--zen-accent-rgb) / 0.16);
 }
 :root[data-form-factor='phone'] .zen-settings nav + div {
   padding: 12px;
+}
+/* Phone rows and controls: 48 rows with a press fill, 40 inputs, 44 buttons (§8.11). */
+:root[data-form-factor='phone'] .zen-group-title {
+  padding: 0 12px;
+  font-size: 14px;
+}
+:root[data-form-factor='phone'] .zen-row {
+  min-height: 48px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  corner-shape: var(--zen-corner);
+}
+:root[data-form-factor='phone'] .zen-row:hover {
+  background: none;
+}
+:root[data-form-factor='phone'] .zen-row:active {
+  background: var(--zen-element-bg);
+}
+:root[data-form-factor='phone'] .zen-row-label {
+  font-size: 14px;
+}
+:root[data-form-factor='phone'] .zen-row-hint {
+  font-size: 12px;
+}
+/* A wide control (select, text field) starves the label on a phone: it moves below it instead. */
+:root[data-form-factor='phone'] .zen-row:has(> .zen-wide-control) {
+  flex-wrap: wrap;
+}
+:root[data-form-factor='phone'] .zen-row:has(> .zen-wide-control) > .zen-wide-control {
+  flex: 1 0 100%;
+  width: 100%;
+}
+:root[data-form-factor='phone'] .zen-input {
+  height: 40px;
+  border-radius: 10px;
+  corner-shape: var(--zen-corner);
+  font-size: 14px;
+}
+:root[data-form-factor='phone'] .zen-button:not(.zen-icon-button) {
+  height: 44px;
+  padding: 0 16px;
+  border-radius: 12px;
+  corner-shape: var(--zen-corner);
+  font-size: 14px;
+}
+:root[data-form-factor='phone'] .zen-icon-button {
+  width: 44px;
+  height: 44px;
+}
+:root[data-form-factor='phone'] .zen-header-title {
+  font-size: 17px;
 }
 
 @media (prefers-reduced-motion: reduce) {

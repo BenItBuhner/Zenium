@@ -1,15 +1,19 @@
 import type { JSX, ReactNode } from 'react'
+import { Children, isValidElement } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
+import { Switch } from '../ui/switch'
 
-/** Building blocks shared by the Settings sections. */
+/**
+ * Building blocks shared by the Settings sections (design language §8.2, §8.5, §8.6): rows sit
+ * directly on the panel, told apart by spacing and a press or hover fill, never by lines or
+ * boxes. Groups are a sentence-case heading followed by its rows.
+ */
 
 export function Group({ title, children }: { title: string; children: ReactNode }): JSX.Element {
   return (
-    <section>
-      <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-[var(--zen-muted)]">
-        {title}
-      </h3>
-      <div className="overflow-hidden rounded-xl border border-[var(--zen-border)]">{children}</div>
+    <section className="zen-group">
+      <h3 className="zen-group-title">{title}</h3>
+      <div className="flex flex-col">{children}</div>
     </section>
   )
 }
@@ -23,14 +27,18 @@ export function Row({
   hint?: string
   children: ReactNode
 }): JSX.Element {
+  // A row that carries a toggle is the toggle's hit area: the label element forwards its click
+  // to the first control inside it, so tapping the text flips the switch.
+  const toggles = Children.toArray(children).some((c) => isValidElement(c) && c.type === Switch)
+  const Tag = toggles ? 'label' : 'div'
   return (
-    <div className="flex min-h-12 items-center gap-4 border-b border-[var(--zen-border)] px-4 py-2 last:border-b-0">
+    <Tag className="zen-row">
       <div className="min-w-0 flex-1">
-        <div className="text-[13px]">{label}</div>
-        {hint && <div className="text-[11.5px] text-[var(--zen-muted)]">{hint}</div>}
+        <div className="zen-row-label truncate">{label}</div>
+        {hint && <div className="zen-row-hint">{hint}</div>}
       </div>
       {children}
-    </div>
+    </Tag>
   )
 }
 
@@ -45,7 +53,7 @@ export function Choice<T extends string>({
 }): JSX.Element {
   return (
     <Select value={value} onValueChange={(v) => onChange(v as T)}>
-      <SelectTrigger className="w-56">
+      <SelectTrigger>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
