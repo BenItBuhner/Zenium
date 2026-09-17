@@ -203,19 +203,30 @@ class ServicesHardeningDemo {
         shot("09-http-auth-dialog")
         fill(f, "Username", "zenium")
         fill(f, "Password", "wrong")
-        SystemClock.sleep(600)
-        pressKey(KeyEvent.KEYCODE_ENTER)
-        step("submitted with Enter")
+        submitSignIn()
         waitFor("The username or password was not accepted. Please try again.", 10_000)
         SystemClock.sleep(1_200)
         shot("10-http-auth-retry")
         fill(f, "Password", "secret")
-        SystemClock.sleep(600)
-        pressKey(KeyEvent.KEYCODE_ENTER)
-        step("submitted with Enter")
+        submitSignIn()
         waitFor("Signed in as zenium", 15_000)
         SystemClock.sleep(1_500)
         shot("11-http-auth-signed-in")
+    }
+
+    /**
+     * Enter from the password field submits the form. Should the dialog still be up after that
+     * (the key went elsewhere), the Sign in button is pressed through its accessibility action,
+     * which reaches it under the soft keyboard.
+     */
+    private fun submitSignIn() {
+        SystemClock.sleep(600)
+        pressKey(KeyEvent.KEYCODE_ENTER)
+        step("submitted with Enter")
+        SystemClock.sleep(1_500)
+        val button = findNodes("Sign in").firstOrNull { it.isClickable } ?: return
+        step("the dialog is still up; pressing Sign in")
+        button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
     }
 
     /**
