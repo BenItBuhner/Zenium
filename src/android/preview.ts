@@ -91,6 +91,12 @@ export function createPreviewBridge(): NativeBridge {
       frame.src = String(url)
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
     },
+    'view.reload': ({ tabId }) => {
+      const frame = views.get(String(tabId))
+      if (!frame) return
+      viewEvent(String(tabId), 'startLoading', null)
+      if (frame.dataset.url) frame.src = frame.dataset.url
+    },
     'view.loadHtml': ({ tabId, url, html }) => {
       const frame = views.get(String(tabId))
       if (!frame) return
