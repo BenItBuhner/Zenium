@@ -104,6 +104,8 @@ export function BottomSheet({
   const insetTop = useRef(0)
   /** Runs once a dismissal has finished (a picked row's action). A catch drops it. */
   const afterDismiss = useRef<(() => void) | null>(null)
+  /** The window changed size while the page stood receded behind the sheet. */
+  const resizedWhileUp = useRef(false)
   const latest = useRef({ onDismissed })
   const insets = uiStore.use((s) => s.insets)
 
@@ -117,10 +119,13 @@ export function BottomSheet({
         const scrim = scrimRef.current
         if (!sheet || !scrim) return
         const frame = motionRef.current!.frame()
-        const dark = document.documentElement.dataset.theme === 'dark'
+        const root = document.documentElement
+        const dark = root.dataset.theme === 'dark'
         sheet.style.height = `${frame.height}px`
         sheet.style.transform = `translate3d(0, ${frame.translateY}px, 0)`
         scrim.style.opacity = `${frame.scrim * (dark ? SCRIM_OPACITY.dark : SCRIM_OPACITY.light)}`
+        // The page behind recedes and the bottom bar fades with the same progress (main.css).
+        root.style.setProperty('--zen-recede', frame.scrim.toFixed(4))
         syncLock()
       },
       onClosed: () => {
@@ -173,11 +178,25 @@ export function BottomSheet({
     const observer = new ResizeObserver(() => {
       if (layer.clientHeight === last) return
       last = layer.clientHeight
+      resizedWhileUp.current = true
       measure()
     })
     observer.observe(layer)
     return () => observer.disconnect()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the observer reads the latest refs
+  }, [])
+
+  // The content frame is promoted while a sheet is up, and released – with the recede – after.
+  useEffect(() => {
+    const root = document.documentElement
+    root.dataset.receding = 'true'
+    return () => {
+      delete root.dataset.receding
+      root.style.removeProperty('--zen-recede')
+      // The layout reporter measures the content frame on resize; a measurement taken while the
+      // frame stood receded is 3 % small, so have it look again now that the frame is back.
+      if (resizedWhileUp.current) window.dispatchEvent(new Event('resize'))
+    }
   }, [])
 
   // The WebView must not turn a pull on the body into a scroll once the sheet has taken it.

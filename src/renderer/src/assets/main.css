@@ -829,6 +829,23 @@
   );
 }
 
+/*
+ * A sheet coming up pushes the page back: the content frame recedes (scale 1 → .97, its corner
+ * 14 → 20) and the bottom bar fades out, both from the sheet's own progress – `--zen-recede`,
+ * 0…1, written per frame by the sheet along with its scrim. The frame is promoted only while a
+ * sheet is up (`data-receding`).
+ */
+:root[data-form-factor='phone'] .zen-content-frame {
+  transform: scale(calc(1 - 0.03 * var(--zen-recede, 0)));
+  border-radius: calc(var(--zen-content-radius) + 6px * var(--zen-recede, 0));
+}
+:root[data-form-factor='phone'][data-receding] .zen-content-frame {
+  will-change: transform;
+}
+:root[data-form-factor='phone'] .zen-phone-bar {
+  opacity: calc(1 - var(--zen-recede, 0));
+}
+
 /* Mobile hosts: keep the chrome out of the status bar, cutouts, gesture bar and keyboard. */
 .zen-window {
   padding: var(--zen-inset-top) var(--zen-inset-right) var(--zen-inset-bottom) var(--zen-inset-left);
