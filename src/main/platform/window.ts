@@ -118,8 +118,9 @@ export class ElectronWindow implements WindowHost {
     wc.on('will-navigate', (event) => event.preventDefault())
     wc.on('context-menu', (event) => event.preventDefault())
     // The chrome document's <title> is a constant "Zenium"; keep Electron from copying it over the
-    // per-window title the core sets (active tab name) via setTitle.
-    wc.on('page-title-updated', (event) => event.preventDefault())
+    // per-window title the core sets (active tab name) via setTitle. This has to be the window's
+    // event: BrowserWindow applies the title right after emitting it unless it was prevented.
+    win.on('page-title-updated', (event) => event.preventDefault())
     wc.on('did-finish-load', () => zen.onChromeReady())
 
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {

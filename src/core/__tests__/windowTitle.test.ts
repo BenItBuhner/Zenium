@@ -166,6 +166,28 @@ describe('native window title', () => {
     expect(f.titles.get(win)?.at(-1)).toBe('Renamed - Zenium')
   })
 
+  it('names a second synced window after the shared active tab, also once the first closes', async () => {
+    const f = fixture()
+    const first = f.browser.focusedWindow()
+    f.browser.handleCommand(first, 'urlbar.submit', {
+      input: 'https://example.com',
+      newTab: true,
+      tabId: null,
+      background: false
+    })
+    f.views[0].events.onTitleUpdated('Example Domain')
+    const second = f.browser.openWindow('synced', first)
+    expect(second).not.toBeNull()
+    if (!second) return
+    await tick()
+    expect(f.titles.get(second)?.at(-1)).toBe('Example Domain - Zenium')
+
+    first.onClosing()
+    first.onClosed()
+    await tick()
+    expect(f.titles.get(second)?.at(-1)).toBe('Example Domain - Zenium')
+  })
+
   it('marks private windows', async () => {
     const f = fixture()
     const origin = f.browser.focusedWindow()
