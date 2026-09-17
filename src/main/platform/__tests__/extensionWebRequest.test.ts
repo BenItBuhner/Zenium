@@ -3,7 +3,7 @@ import type { Tab } from '../../../shared/types'
 import type { ZenWindow } from '../../../core/window'
 import type { EventDelivery } from '../../../core/extensions/api/shim'
 import { BLOCKING_PERMISSION_ERROR } from '../../../core/extensions/api/webRequest'
-import type { BlockingResponse, ListenerOptions, WebRequestDetails } from '../blocking'
+import type { ListenerOptions, WebRequestDetails } from '../blocking'
 import type { WebRequestEvent, WebRequestListener } from '../webRequest'
 import type { FrameContext, WorkerContext } from '../extensionApi/contexts'
 import { WebRequestApi, type WebRequestListenerHost } from '../extensionApi/webRequest'
@@ -48,7 +48,7 @@ class FakeListenerHost implements WebRequestListenerHost {
   fire(
     event: WebRequestEvent,
     details: Partial<WebRequestDetails>
-  ): Array<BlockingResponse | undefined | Promise<BlockingResponse | undefined>> {
+  ): ReturnType<WebRequestListener>[] {
     return this.live()
       .filter((h) => h.event === event)
       .map((h) => h.listener(fakeDetails(event, details)))
