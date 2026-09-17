@@ -12,6 +12,7 @@ import android.util.Log
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.inputmethod.InputMethodManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONObject
@@ -25,8 +26,9 @@ import kotlin.math.max
  * profile, launches the app, walks the active tab through two link navigations (so the history
  * has real snapshots), then hands over to the host recorder and swipes back from the screen edge
  * the way a thumb would – held and let go early (cancel), held and released (commit) – over the
- * page, the three-dot menu and the tab overview, and finally with nothing left to pop, which
- * hands the gesture to the system's own back-to-home animation.
+ * page (with and without a snapshot of the previous entry), the URL bar, the three-dot menu, a
+ * panel, the site information sheet, the tab overview and the drawer, and finally with nothing
+ * left to pop, which hands the gesture to the system's own back-to-home animation.
  *
  * Touches are injected through UiAutomation as real pointer events, so SystemUI's edge gesture
  * detector sees them exactly as it would a finger. It only ever asserts that it could run; what
@@ -217,41 +219,80 @@ class BackDemo {
         commitSwipe()
         SystemClock.sleep(2_800)
 
-        // 3. Again, one more entry back to where we started.
-        edgeSwipe(0.36f * w, hold = 350) { shot("02-page-preview-second") }
+        // 3. The same entry back without its snapshot: the neutral page with the site's favicon
+        //    and title stands in, then the commit takes us to where we started.
+        instrumentation.runOnMainSync { activity.host.snapshots.clear() }
+        edgeSwipe(0.34f * w, hold = 700) { shot("02-page-placeholder") }
+        cancelSwipe()
+        beat()
+        edgeSwipe(0.36f * w, hold = 350)
         commitSwipe()
         SystemClock.sleep(2_800)
 
-        // 4. The three-dot menu: dragged a third of the way and let go (springs back up), then
+        // 4. The URL bar: opened from the pill; the keyboard is put away first (a back with the
+        //    keyboard up goes to the keyboard), then the bar lifts away with the finger.
+        tapLabel("Address")
+        SystemClock.sleep(1_500)
+        hideKeyboard()
+        SystemClock.sleep(600)
+        dismissWithBack(0.30f * w, "03-urlbar-dragging")
+
+        // 5. The three-dot menu: dragged a third of the way and let go (springs back up), then
         //    dragged and committed (slides out).
         tapLabel("Menu")
         SystemClock.sleep(1_200)
-        edgeSwipe(0.30f * w, hold = 700) { shot("03-menu-dragging") }
-        cancelSwipe()
-        beat()
-        edgeSwipe(0.34f * w, hold = 300)
-        commitSwipe()
-        SystemClock.sleep(1_500)
+        dismissWithBack(0.30f * w, "04-menu-dragging")
 
-        // 5. The tab overview: the page grows back out of its card with the finger, springs back
+        // 6. A panel: History, from the menu.
+        tapLabel("Menu")
+        SystemClock.sleep(1_200)
+        tapLabel("History")
+        SystemClock.sleep(1_600)
+        dismissWithBack(0.30f * w, "05-panel-dragging")
+
+        // 7. The site information sheet, from the pill's site icon.
+        tapLabel("Site information")
+        SystemClock.sleep(1_800)
+        dismissWithBack(0.30f * w, "06-siteinfo-dragging")
+
+        // 8. The tab overview: the page grows back out of its card with the finger, springs back
         //    into the grid on cancel, and morphs home on commit.
         tapLabelPrefix("Tabs (")
         SystemClock.sleep(1_800)
-        edgeSwipe(0.32f * w, hold = 700) { shot("04-overview-dragging") }
-        cancelSwipe()
-        beat()
-        edgeSwipe(0.36f * w, hold = 300)
-        commitSwipe()
-        SystemClock.sleep(2_200)
+        dismissWithBack(0.32f * w, "07-overview-dragging", commitTravel = 0.36f * w, settle = 2_200)
 
-        // 6. Nothing left to pop: the app has no callback registered, so this swipe is the
-        //    system's own predictive back-to-home.
+        // 9. The sidebar drawer, from the overview's header.
+        tapLabelPrefix("Tabs (")
+        SystemClock.sleep(1_800)
+        tapLabel("Open sidebar")
+        SystemClock.sleep(1_400)
+        dismissWithBack(0.30f * w, "08-drawer-dragging")
+
+        // 10. Nothing left to pop: the app has no callback registered, so this swipe is the
+        //     system's own predictive back-to-home.
         edgeSwipe(0.36f * w, hold = 400)
         commitSwipe()
         SystemClock.sleep(2_500)
 
         File(out, "done").writeText("done\n")
         SystemClock.sleep(3_000)
+    }
+
+    /** Drag the open surface a third of the way and let go (it springs back), then drag and commit. */
+    private fun dismissWithBack(travel: Float, shotName: String, commitTravel: Float = travel + 0.04f * width, settle: Long = 1_500) {
+        edgeSwipe(travel, hold = 700) { shot(shotName) }
+        cancelSwipe()
+        beat()
+        edgeSwipe(commitTravel, hold = 300)
+        commitSwipe()
+        SystemClock.sleep(settle)
+    }
+
+    private fun hideKeyboard() {
+        instrumentation.runOnMainSync {
+            val imm = activity.getSystemService(InputMethodManager::class.java)
+            imm?.hideSoftInputFromWindow(activity.host.chrome.windowToken, 0)
+        }
     }
 
     private fun beat() = SystemClock.sleep(1_400)

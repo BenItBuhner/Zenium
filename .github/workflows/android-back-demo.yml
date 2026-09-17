@@ -8,6 +8,8 @@ name: Android back demo
 # second; a phone does all of this in a frame.
 on:
   workflow_dispatch:
+  push:
+    branches: [cursor/predictive-back-63ce]
 
 permissions:
   contents: read
