@@ -3,6 +3,7 @@ package app.zen.chromium.ext
 import android.annotation.SuppressLint
 import android.graphics.Color
 import android.webkit.ConsoleMessage
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -76,6 +77,13 @@ class ExtensionWebView(
 
         override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
             extensions.onDocumentGone(view, url)
+        }
+
+        override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+            val reason = if (detail.didCrash()) "crashed" else "killed"
+            android.util.Log.w(Extensions.TAG, "renderer of the ${served.id.take(8)}/$context view gone ($reason)")
+            extensions.onRendererGone(this@ExtensionWebView)
+            return true
         }
     }
 

@@ -725,6 +725,17 @@ class Extensions(private val host: Host) {
     /** Endpoints of a WebView are dropped when it is destroyed. */
     fun onWebViewDestroyed(view: WebView) = detach(view)
 
+    /**
+     * The renderer behind an extension view is gone (every WebView of the app shares it, so the
+     * chrome lost it too). A dead background view goes; the core that reboots with the chrome
+     * re-sends `ext.background.start`. A dead popup is closed.
+     */
+    fun onRendererGone(view: ExtensionWebView) {
+        val id = backgrounds.entries.firstOrNull { it.value === view }?.key
+        if (id != null) stopBackground(id)
+        if (popup?.webView === view) closePopup()
+    }
+
     fun pageScript(ext: Served, context: String): String {
         val config = runCatching { JSONObject(ext.pageConfig) }.getOrDefault(JSONObject())
         config.put("context", context)

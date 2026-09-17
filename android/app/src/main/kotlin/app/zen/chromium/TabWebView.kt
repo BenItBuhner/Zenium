@@ -14,6 +14,7 @@ import android.os.Looper
 import android.os.Message
 import android.os.SystemClock
 import android.util.Base64
+import android.util.Log
 import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
@@ -643,14 +644,20 @@ class TabWebView(
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val url = request.url
             return when (url.scheme?.lowercase()) {
-                "http", "https", "about", "data", "blob", "javascript" -> {
+                "http", "https" -> {
                     // A link (or script) is about to take the page elsewhere: the last moment it is
                     // whole on screen, and the best one for its back preview.
+                    if (request.isForMainFrame && !request.isRedirect) rememberCurrentPage()
+                    // A tap on another site whose app is installed may open the app instead.
+                    host.externalProtocols.appLink(this@TabWebView, request)
+                }
+                "about", "data", "blob", "javascript" -> {
                     if (request.isForMainFrame && !request.isRedirect) rememberCurrentPage()
                     false
                 }
                 else -> {
-                    host.openExternal(url.toString())
+                    // mailto:, tel:, intent://, a custom scheme: held until the core (and the user) agree.
+                    host.externalProtocols.request(this@TabWebView, url.toString(), request.hasGesture())
                     true
                 }
             }
@@ -728,8 +735,13 @@ class TabWebView(
 
         override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
             val reason = if (detail.didCrash()) "crashed" else "killed"
-            host.tabs.replaceCrashed(this@TabWebView)
-            host.chrome.viewEvent(tabId, "crashed", json("reason" to reason))
+            Log.w("ZenTab", "renderer of $tabId gone ($reason, priority at exit ${detail.rendererPriorityAtExit()})")
+            // Every WebView shares the one renderer. When the chrome lost it too, the host drops
+            // this view – before or after this call – and the rebooted core recreates the tab
+            // itself; only a view that was really swapped tells the chrome its page crashed.
+            if (host.tabs.replaceCrashed(this@TabWebView)) {
+                host.chrome.viewEvent(tabId, "crashed", json("reason" to reason))
+            }
             return true
         }
     }

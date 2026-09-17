@@ -21,7 +21,8 @@ const KNOWN_SCHEMES = [
   'ftp',
   'data',
   'view-source',
-  'chrome'
+  'chrome',
+  'chrome-extension'
 ]
 /** `host:port[/path]` – looks like a scheme but is a bare host with a port (dev servers). */
 const HOST_PORT_RE =
@@ -159,5 +160,15 @@ export function errorPageUrl(code: number, description: string, url: string): st
 export function isNavigableUrl(url: string): boolean {
   if (!url) return false
   const scheme = url.slice(0, url.indexOf(':')).toLowerCase()
-  return ['http', 'https', 'file', 'zen', 'view-source', 'data', 'blob', 'ftp'].includes(scheme)
+  return [
+    'http',
+    'https',
+    'file',
+    'zen',
+    'view-source',
+    'data',
+    'blob',
+    'ftp',
+    'chrome-extension'
+  ].includes(scheme)
 }

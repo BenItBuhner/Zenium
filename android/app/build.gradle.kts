@@ -193,6 +193,8 @@ dependencies {
     // 1.17 adds JS_INJECTION_IN_FRAME_AND_WORLD (isolated worlds for the extension layer, Chromium 146+ WebView).
     implementation("androidx.webkit:webkit:1.17.0")
     implementation("com.google.android.material:material:1.12.0")
+    // The share sheet's "QR code" action draws the link as a code (Share.kt); pure Java, no camera.
+    implementation("com.google.zxing:core:3.5.3")
 
     // JVM unit tests (src/test): pure logic such as the screenshot stitching geometry. The
     // extension tests build org.json documents, which android.jar only stubs.

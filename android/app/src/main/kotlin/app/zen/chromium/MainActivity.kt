@@ -1,14 +1,12 @@
 package app.zen.chromium
 
 import android.app.Activity
-import android.content.ComponentCallbacks2
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.util.Patterns
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
@@ -149,15 +147,12 @@ class MainActivity : AppCompatActivity() {
         intent ?: return
         when (intent.action) {
             Intent.ACTION_VIEW -> intent.dataString?.let { if (it.startsWith("http")) host.chrome.openUrl(it) }
-            Intent.ACTION_SEND -> {
-                val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
-                val url = Patterns.WEB_URL.matcher(text).let { m -> if (m.find()) m.group() else null }
-                host.chrome.openUrl(url ?: "https://www.google.com/search?q=${Uri.encode(text)}")
-            }
-            Intent.ACTION_WEB_SEARCH -> {
-                val q = intent.getStringExtra("query") ?: return
-                host.chrome.openUrl("https://www.google.com/search?q=${Uri.encode(q)}")
-            }
+            // Shared into Zenium: the core routes it (a link opens, text searches with the user's
+            // engine, an image gets a page) – see Share.kt and src/shared/shareTarget.ts.
+            Intent.ACTION_SEND -> host.share.onReceived(intent)
+            Intent.ACTION_WEB_SEARCH -> host.share.onWebSearch(intent)
+            // One of Zenium's own buttons in the system share sheet (Android 14).
+            Share.ACTION_BROWSER_ACTION -> host.share.onBrowserAction(intent)
         }
         // Consume so a configuration change does not re-open it.
         intent.action = null
@@ -165,12 +160,33 @@ class MainActivity : AppCompatActivity() {
 
     // --- lifecycle --------------------------------------------------------------------------
 
+    /**
+     * Set while the window is hidden (screen off, another app in front): the start and resume that
+     * follow are a return to the screen, not the launch, and the host checks that everything paints.
+     */
+    private var hidden = false
+
+    override fun onStart() {
+        super.onStart()
+        if (hidden) host.onStart()
+    }
+
+    override fun onStop() {
+        hidden = true
+        super.onStop()
+    }
+
     override fun onResume() {
         super.onResume()
         host.chrome.hostEvent("focus", json("focused" to true))
+        if (hidden) {
+            hidden = false
+            host.onResume()
+        }
     }
 
     override fun onPause() {
+        host.onPause()
         host.chrome.hostEvent("focus", json("focused" to false))
         // Give the core a chance to persist synchronously before the process may be frozen.
         host.chrome.hostEvent("pause", null)
@@ -193,8 +209,8 @@ class MainActivity : AppCompatActivity() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         // Backgrounded and on the system's LRU list: the back previews are the one cache worth
-        // dropping (UI_HIDDEN alone is not pressure – the user may be right back).
-        if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) host.snapshots.clear()
+        // dropping (see HostLifecycle for why UI_HIDDEN is not pressure).
+        if (HostLifecycle.trimDropsSnapshots(level)) host.snapshots.clear()
     }
 
     // --- keyboard --------------------------------------------------------------------------------

@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="clipboard" path="clipboard/" />
+    <!-- Images and favicons handed to the share sheet (Share.kt). -->
+    <cache-path name="share" path="share/" />
     <cache-path name="updates" path="updates/" />
     <external-files-path name="downloads" path="Download/" />
     <files-path name="pages" path="pages/" />

@@ -15,6 +15,10 @@ import {
 } from '@core/extensions/runtime/boot'
 import { normalizeRule, normalizeRuleset, type NetRule } from '@core/extensions/runtime/dnr'
 import {
+  permissionWarningLines,
+  type PermissionWarningSource
+} from '@core/extensions/permissionMessages'
+import {
   largestIcon,
   localeCandidates,
   ManifestError,
@@ -100,6 +104,10 @@ interface Persisted {
   disabled: string[]
   /** id → version, for `runtime.onInstalled` reasons. */
   installed: Record<string, string>
+  /** id → when the folder was first seen and when its version last changed. */
+  stamps: Record<string, { installedAt: number; updatedAt: number }>
+  /** Left out of update checks (there are none here yet; kept for the shared UI). */
+  pinned: string[]
   isolation: IsolationMode
   dynamicRules: Record<string, NetRule[]>
   enabledRulesets: Record<string, string[]>
@@ -121,6 +129,9 @@ interface ActionState {
 
 const STORE_NAME = 'extensions-android.json'
 const NOT_IMPLEMENTED = 'is not implemented on Zenium for Android'
+const SIDELOAD_ONLY =
+  'Zenium for Android loads unpacked extensions sideloaded into files/zen/extensions/<id>/ only.'
+const NO_UPDATES = 'Sideloaded extensions have no update source on Zenium for Android.'
 
 function emptyStorageDoc(): StorageDoc {
   return { local: {}, sync: {}, session: {}, managed: {} }
@@ -210,6 +221,8 @@ export class AndroidExtensionHost implements ExtensionHost {
             version: 1,
             disabled: saved.disabled ?? [],
             installed: saved.installed ?? {},
+            stamps: saved.stamps ?? {},
+            pinned: saved.pinned ?? [],
             isolation: saved.isolation ?? 'with',
             dynamicRules: saved.dynamicRules ?? {},
             enabledRulesets: saved.enabledRulesets ?? {},
@@ -220,6 +233,8 @@ export class AndroidExtensionHost implements ExtensionHost {
             version: 1,
             disabled: [],
             installed: {},
+            stamps: {},
+            pinned: [],
             isolation: 'with',
             dynamicRules: {},
             enabledRulesets: {},
@@ -258,18 +273,42 @@ export class AndroidExtensionHost implements ExtensionHost {
     await this.rescan()
   }
 
+  /**
+   * Every extension here is an unpacked folder sideloaded into the app's files: no store, no
+   * signer, no update source. The install/update fields say so rather than pretend.
+   */
   list(): ExtensionInfo[] {
-    return [...this.loaded.values()].map((ext) => ({
-      id: ext.id,
-      name: ext.manifest?.name ?? ext.id,
-      version: ext.manifest?.version ?? '',
-      description: ext.manifest?.description ?? '',
-      path: ext.path,
-      enabled: !this.data.disabled.includes(ext.id),
-      icon: ext.icon,
-      popup: this.actionFor(ext.id).popup,
-      error: ext.error
-    }))
+    return [...this.loaded.values()].map((ext) => {
+      const stamp = this.data.stamps[ext.id]
+      return {
+        id: ext.id,
+        name: ext.manifest?.name ?? ext.id,
+        version: ext.manifest?.version ?? '',
+        description: ext.manifest?.description ?? '',
+        path: ext.path,
+        enabled: !this.data.disabled.includes(ext.id),
+        icon: ext.icon,
+        popup: this.actionFor(ext.id).popup,
+        error: ext.error,
+        source: 'unpacked',
+        publisher: null,
+        updateUrl: null,
+        installedAt: stamp?.installedAt ?? 0,
+        updatedAt: stamp?.updatedAt ?? 0,
+        pinned: this.data.pinned.includes(ext.id),
+        allowFileAccess: false,
+        manifestVersion: ext.manifest?.manifestVersion ?? 0,
+        permissions: ext.manifest?.permissions ?? [],
+        hostPermissions: ext.manifest?.hostPermissions ?? [],
+        optionsPage: ext.manifest?.options?.page ?? null,
+        warnings: permissionWarningLines((ext.raw ?? {}) as PermissionWarningSource, 'other'),
+        pendingWarnings: null,
+        updateState: 'unknown',
+        availableVersion: null,
+        updateError: null,
+        updateCheckedAt: null
+      }
+    })
   }
 
   /** No directory picker on Android: unpacked extensions are sideloaded into the app's files. */
@@ -286,17 +325,67 @@ export class AndroidExtensionHost implements ExtensionHost {
     )
   }
 
-  remove(id: string): void {
+  /** Package installs (CRX/ZIP, stores) are desktop-only until Wave 2 brings the store core here. */
+  async installFromFileDialog(win: ZenWindow): Promise<void> {
+    this.browser.toast(SIDELOAD_ONLY, 'info', win)
+  }
+
+  async installFromStore(
+    _ref: string,
+    _store: 'chrome-web-store' | 'edge-add-ons' | null,
+    win?: ZenWindow
+  ): Promise<void> {
+    this.browser.toast(SIDELOAD_ONLY, 'info', win)
+  }
+
+  async remove(id: string): Promise<void> {
     this.loaded.delete(id)
     this.data.disabled = this.data.disabled.filter((d) => d !== id)
+    this.data.pinned = this.data.pinned.filter((p) => p !== id)
     delete this.data.installed[id]
+    delete this.data.stamps[id]
     delete this.data.dynamicRules[id]
     delete this.data.enabledRulesets[id]
     delete this.data.alarms[id]
     delete this.data.registered[id]
     this.save()
     this.bridge.send('ext.remove', { id })
-    void this.configure()
+    await this.configure()
+  }
+
+  setPinned(id: string, pinned: boolean): void {
+    const set = new Set(this.data.pinned)
+    if (pinned) set.add(id)
+    else set.delete(id)
+    this.data.pinned = [...set]
+    this.save()
+  }
+
+  /** Re-read the folder (a developer edited the sideloaded files) and reconfigure Kotlin. */
+  async reload(id: string): Promise<void> {
+    if (!this.loaded.has(id)) return
+    await this.rescan()
+  }
+
+  async checkForUpdates(win?: ZenWindow): Promise<void> {
+    this.browser.toast(NO_UPDATES, 'info', win)
+  }
+
+  async update(_id: string, win?: ZenWindow): Promise<void> {
+    this.browser.toast(NO_UPDATES, 'info', win)
+  }
+
+  openOptions(id: string, win: ZenWindow): void {
+    const ext = this.loaded.get(id)
+    const options = ext?.manifest?.options
+    if (!ext || !options) return
+    const url = extensionUrl(id, options.page)
+    if (options.openInTab) {
+      this.browser.tabs.createTab({ url, active: true }, win)
+      return
+    }
+    this.popupOpen = id
+    this.bridge.send('ext.popup.open', { id, url, context: 'options' })
   }
 
   async setEnabled(id: string, enabled: boolean): Promise<void> {
@@ -349,6 +438,14 @@ export class AndroidExtensionHost implements ExtensionHost {
     const next = new Map<string, Loaded>()
     for (const entry of result.extensions) next.set(entry.id, this.load(entry))
     this.loaded = next
+    const now = Date.now()
+    let stamped = false
+    for (const id of next.keys()) {
+      if (this.data.stamps[id]) continue
+      this.data.stamps[id] = { installedAt: now, updatedAt: now }
+      stamped = true
+    }
+    if (stamped) this.save()
     await this.configure()
   }
 
@@ -758,6 +855,7 @@ export class AndroidExtensionHost implements ExtensionHost {
     const previous = this.data.installed[id]
     if (previous !== ext.manifest.version) {
       this.data.installed[id] = ext.manifest.version
+      if (previous && this.data.stamps[id]) this.data.stamps[id].updatedAt = Date.now()
       this.save()
       this.emit(id, 'runtime', 'onInstalled', [
         previous ? { reason: 'update', previousVersion: previous } : { reason: 'install' }
@@ -1558,14 +1656,8 @@ export class AndroidExtensionHost implements ExtensionHost {
   private async runtimeCall(ext: Loaded, endpoint: Endpoint, method: string): Promise<unknown> {
     switch (method) {
       case 'openOptionsPage': {
-        const options = ext.manifest?.options
-        if (!options) throw new Error('Could not create an options page.')
-        this.popupOpen = ext.id
-        this.bridge.send('ext.popup.open', {
-          id: ext.id,
-          url: extensionUrl(ext.id, options.page),
-          context: 'options'
-        })
+        if (!ext.manifest?.options) throw new Error('Could not create an options page.')
+        this.openOptions(ext.id, this.windowOf())
         return undefined
       }
       case 'reload':
