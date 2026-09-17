@@ -45,7 +45,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   sync: true,
   print: true,
   agents: true,
-  updates: true
+  updates: true,
+  downloadFiles: true
 }
 
 /**
@@ -77,7 +78,7 @@ export class ElectronPlatform implements Platform {
     this.views = new ElectronTabViewHost(this.sessions)
     this.siteData = new ElectronSiteData(this.sessions)
     this.menus = new ElectronMenus()
-    this.downloads = new ElectronDownloads(() => this.browser.state.settings.askWhereToSave)
+    this.downloads = new ElectronDownloads(() => this.browser.state.settings)
     this.dialogs = {
       confirm: async (options: ConfirmOptions, win?: ZenWindow) => {
         const bw = browserWindowOf(win)

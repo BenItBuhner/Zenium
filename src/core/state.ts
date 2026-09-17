@@ -32,6 +32,7 @@ import {
   emptyAgentServerStatus,
   emptyResourceSnapshot
 } from '../shared/defaults'
+import { sanitizeDownloadSettings } from '../shared/downloads'
 import { DEFAULT_SEARCH_ENGINES } from '../shared/search'
 import { applyShortcutOverrides, defaultShortcuts } from '../shared/shortcuts'
 import { JsonStore } from './store/JsonStore'
@@ -91,6 +92,7 @@ export interface StateExtras {
   agents: AgentInfo[]
   agentServer: AgentServerStatus
   updates: UpdateStatus
+  downloadsDir: string
 }
 
 /**
@@ -149,7 +151,8 @@ export class BrowserState {
       os: updateOsOf(this.platform),
       arch: 'universal',
       kind: 'dev'
-    })
+    }),
+    downloadsDir: ''
   })
   searchEngines: SearchEngine[] = DEFAULT_SEARCH_ENGINES
   readonly version: string
@@ -193,6 +196,7 @@ export class BrowserState {
     this.settings.resources = sanitizeResourceSettings(data.settings?.resources)
     this.settings.agents = sanitizeAgentSettings(data.settings?.agents)
     this.settings.updates = sanitizeUpdateSettings(data.settings?.updates)
+    this.settings.downloads = sanitizeDownloadSettings(data.settings?.downloads)
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     this.bookmarks = Array.isArray(data.bookmarks) ? data.bookmarks : []
     if (Array.isArray(data.windows) && data.windows.length) {

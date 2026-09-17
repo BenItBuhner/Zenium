@@ -2,6 +2,7 @@ import type {
   CommandArgs,
   CommandName,
   CommandResult,
+  DownloadItem,
   EventName,
   Events,
   Folder,
@@ -15,7 +16,7 @@ import type {
 import { BrowserState, type PersistedWindow } from './state'
 import { HistoryService } from './history'
 import { BookmarkService } from './bookmarks'
-import { DownloadService } from './downloads'
+import { DownloadService, type DownloadChangeKind } from './downloads'
 import { PermissionService } from './permissions'
 import { TabManager } from './tabs'
 import { ZenWindow } from './window'
@@ -51,6 +52,7 @@ import { ONBOARDING_ESSENTIALS } from '../shared/defaults'
 import { PRIVATE_THEME, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
 import { sanitizeUpdateSettings } from '../shared/updates'
+import { sanitizeDownloadSettings } from '../shared/downloads'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 
 type CommandHandlers = {
@@ -71,7 +73,8 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'folder.startRename',
   'tab.editPinnedUrl',
   'tab.pickIcon',
-  'menu.show'
+  'menu.show',
+  'downloads.show'
 ])
 
 /**
@@ -108,6 +111,8 @@ export class Browser {
   readonly windows = new Map<string, ZenWindow>()
   quitting = false
   private readonly handlers: CommandHandlers
+  /** Downloads that finished while no window was focused (the dock badge count). */
+  private unseenDownloads = 0
 
   constructor(readonly platform: Platform) {
     this.state = new BrowserState(
@@ -120,10 +125,9 @@ export class Browser {
     this.state.load()
     this.history = new HistoryService(platform.io)
     this.bookmarks = new BookmarkService(this.state)
-    this.downloads = new DownloadService(platform.io, platform.downloads, () => {
-      this.state.downloads = this.downloads.items
-      this.state.commitVolatile()
-    })
+    this.downloads = new DownloadService(platform.io, platform.downloads, (item, kind) =>
+      this.onDownloadChange(item, kind)
+    )
     this.state.downloads = this.downloads.items
     this.permissions = new PermissionService(platform.io, platform.dialogs)
     this.tabs = new TabManager(this)
@@ -153,7 +157,8 @@ export class Browser {
       sync: this.sync.status(),
       agents: this.agents.list(),
       agentServer: this.agents.serverStatus(),
-      updates: this.updates.status()
+      updates: this.updates.status(),
+      downloadsDir: platform.downloads.defaultDirectory?.() ?? ''
     })
     this.handlers = this.commandHandlers()
   }
@@ -239,6 +244,9 @@ export class Browser {
       const tab = this.tabs.createTab({ active: true, load: false }, win)
       win.select(localSpace, tab.id)
     }
+    // A window opened mid-download shows the same taskbar progress as the others.
+    const progress = this.downloads.osProgress()
+    if (progress.mode !== 'idle') this.platform.downloads.setProgress?.(progress)
     this.state.commit()
     return win
   }
@@ -251,6 +259,10 @@ export class Browser {
 
   onWindowFocused(win: ZenWindow): void {
     if (this.state.settings.onboardingDone) this.tabs.claimVisible(win)
+    if (this.unseenDownloads > 0) {
+      this.unseenDownloads = 0
+      this.platform.downloads.clearBadge?.()
+    }
   }
 
   onWindowClosing(win: ZenWindow): void {
@@ -280,13 +292,10 @@ export class Browser {
   /**
    * A navigation that turned into a download leaves its tab without a committed document (and
    * without a renderer to route shortcuts through). Like Chrome, close such a tab when it was
-   * opened only for the download; otherwise just make sure the keyboard keeps working.
+   * opened only for the download; otherwise just make sure the keyboard keeps working. The
+   * toolbar button animates through `downloads.started`; no panel opens (Chrome 112+).
    */
   onDownloadStarted(sourceTabId: string | null): void {
-    // Firefox shows the downloads panel whenever a download begins. Let any tab switch paint
-    // first so the panel can dim a snapshot of the page behind it.
-    const win = sourceTabId ? this.tabs.windowFor(sourceTabId) : this.focusedWindow()
-    setTimeout(() => this.emit('overlay.open', { kind: 'downloads' }, win), 200)
     const tab = this.tabs.tab(sourceTabId)
     const view = sourceTabId ? this.tabs.view(sourceTabId) : undefined
     if (!tab || !view) return
@@ -294,8 +303,54 @@ export class Browser {
     if (!tab.pinned && !tab.essential && !view.canGoBack()) {
       this.tabs.closeTab(tab.id)
     } else {
-      win.focusChrome()
+      this.tabs.windowFor(tab.id).focusChrome()
     }
+  }
+
+  /** Where new downloads are saved: the folder from Settings, else the host's Downloads folder. */
+  downloadsDirectory(): string {
+    return (
+      this.state.settings.downloads.location || this.platform.downloads.defaultDirectory?.() || ''
+    )
+  }
+
+  /** Bring a window up and open the downloads bubble on `id` (a notification was clicked). */
+  showDownload(id: string | null): void {
+    const win = this.ensureWindow()
+    win.host.show()
+    win.host.focus()
+    this.emit('downloads.show', { id }, win)
+  }
+
+  private onDownloadChange(item: DownloadItem | null, kind: DownloadChangeKind): void {
+    this.state.downloads = this.downloads.items
+    this.state.commitVolatile()
+    if (!item) return
+    if (kind === 'started') this.broadcast('downloads.started', { id: item.id })
+    else if (kind === 'done') this.onDownloadFinished(item)
+  }
+
+  private onDownloadFinished(item: DownloadItem): void {
+    const { state } = item
+    if (state !== 'completed' && state !== 'cancelled' && state !== 'interrupted') return
+    this.broadcast('downloads.finished', { id: item.id, state })
+    if (state !== 'completed') return
+    const settings = this.state.settings.downloads
+    const focused = this.allWindows().some((w) => w.host.isFocused())
+    if (!focused) this.unseenDownloads++
+    // The bubble opening in a focused window already tells the user; notify otherwise.
+    const notify = settings.notifyOnComplete && !(focused && settings.showWhenDone)
+    const badge = focused ? 0 : this.unseenDownloads
+    if (!notify && badge === 0) return
+    this.platform.downloads.notifyCompleted?.(item, {
+      notify,
+      badge,
+      onActivate: () => this.showDownload(item.id)
+    })
+  }
+
+  private broadcast<K extends EventName>(name: K, payload: Events[K]): void {
+    for (const win of this.allWindows()) win.send(name, payload)
   }
 
   start(): void {
@@ -612,6 +667,11 @@ export class Browser {
       }
     }
     if (!url) return
+    // The downloads list is chrome, not a page: `zen://downloads` opens it over the content.
+    if (url.replace(/\/$/, '') === 'zen://downloads') {
+      this.emit('overlay.open', { kind: 'downloads' }, win)
+      return
+    }
     const routed = win.localSpace ? null : this.routeSpaceFor(url)
     const target = tabId ? this.tabs.tab(tabId) : undefined
     if (newTab || !target) {
@@ -895,18 +955,31 @@ export class Browser {
       'download.pause': ({ id }) => this.downloads.pause(id),
       'download.resume': ({ id }) => this.downloads.resume(id),
       'download.cancel': ({ id }) => this.downloads.cancel(id),
+      'download.retry': ({ id }) => this.downloads.retry(id),
       'download.showInFolder': ({ id }) => this.downloads.showInFolder(id),
       'download.open': ({ id }) => this.downloads.open(id),
-      'download.remove': ({ id }) => {
-        this.downloads.remove(id)
-        state.downloads = this.downloads.items
-        state.commitVolatile()
+      'download.remove': ({ id }) => this.downloads.remove(id),
+      'download.clearCompleted': () => this.downloads.clearCompleted(),
+      'download.keep': ({ id }) => this.downloads.keep(id),
+      'download.discard': ({ id }) => this.downloads.discard(id),
+      'download.openFolder': () => {
+        const dir = this.downloadsDirectory()
+        if (dir) platform.downloads.openDirectory?.(dir)
       },
-      'download.clearCompleted': () => {
-        this.downloads.clearCompleted()
-        state.downloads = this.downloads.items
-        state.commitVolatile()
+      'download.chooseLocation': async (_a, win) => {
+        const dir = (await platform.downloads.chooseDirectory?.(win)) ?? null
+        if (dir) {
+          state.settings.downloads = { ...state.settings.downloads, location: dir }
+          state.commit()
+        }
+        return dir
       },
+      'download.dragOut': ({ id }, win) => {
+        const item = this.downloads.get(id)
+        if (item?.state === 'completed' && item.savePath && item.dangerDecision !== 'discarded')
+          platform.downloads.startFileDrag?.(item, win)
+      },
+      'download.acknowledge': () => this.downloads.acknowledge(),
 
       'find.start': ({ tabId, text, forward, newSession }, win) => {
         const view = tabs.view(tabId)
@@ -1112,6 +1185,11 @@ export class Browser {
         s.updates = sanitizeUpdateSettings({
           ...s.updates,
           ...(value as Partial<Settings['updates']>)
+        })
+      } else if (key === 'downloads' && value && typeof value === 'object') {
+        s.downloads = sanitizeDownloadSettings({
+          ...s.downloads,
+          ...(value as Partial<Settings['downloads']>)
         })
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value

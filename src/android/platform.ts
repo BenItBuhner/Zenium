@@ -44,7 +44,8 @@ export const ANDROID_CAPABILITIES: HostCapabilities = {
   sync: false,
   print: true,
   agents: true,
-  updates: true
+  updates: true,
+  downloadFiles: false
 }
 
 /** Everything Kotlin hands over synchronously before the chrome renders. */

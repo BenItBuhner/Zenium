@@ -23,6 +23,7 @@ import type {
   SyncStatus,
   Tab
 } from '../shared/types'
+import type { AggregateProgress } from '../shared/downloads'
 import type { KeyInput } from '../shared/shortcuts'
 import type { SiteCertificate, SiteCookie } from '../shared/siteInfo'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '../shared/updates'
@@ -393,13 +394,48 @@ export interface NetHost {
   ): Promise<{ ok: boolean; status: number; text: string }>
 }
 
-/** Live-download control; the core keeps the records, the host owns the transfers. */
+/**
+ * Live-download control; the core keeps the records, the host owns the transfers. The optional
+ * members exist where the host manages the files itself (`HostCapabilities.downloadFiles`);
+ * a system download manager offers none of them.
+ */
 export interface DownloadHost {
   pause(id: string): void
   resume(id: string): void
   cancel(id: string): void
+  /**
+   * Start `item` again under the same record: resume the partial file when the record allows it
+   * (offset, ETag and Last-Modified are replayed), otherwise fetch it afresh into the same path.
+   * The host reports the new transfer through `DownloadService.restart` / `progress` / `finish`.
+   */
+  retry?(item: DownloadItem): void
   open(item: DownloadItem): Promise<void>
   showInFolder(item: DownloadItem): void
+  /**
+   * Move the file to the trash (or delete it); resolves once it is gone. Without it no file is
+   * ever flagged dangerous: a verdict the user cannot act on is noise.
+   */
+  deleteFile?(item: DownloadItem): Promise<void>
+  /** The folder downloads land in when Settings names no location. */
+  defaultDirectory?(): string
+  /** Open a folder in the system file manager. */
+  openDirectory?(path: string): void
+  /** Let the user pick a download folder; resolves with null when cancelled. */
+  chooseDirectory?(win: ZenWindow): Promise<string | null>
+  /** Begin a native drag of a finished file out of the chrome. */
+  startFileDrag?(item: DownloadItem, win: ZenWindow): void
+  /** Aggregate transfer progress for the taskbar / dock. */
+  setProgress?(progress: AggregateProgress): void
+  /**
+   * A download finished out of view: post a notification when `notify`, badge and bounce the
+   * dock when `badge` is above zero. `onActivate` runs when the user clicks the notification.
+   */
+  notifyCompleted?(
+    item: DownloadItem,
+    options: { notify: boolean; badge: number; onActivate: () => void }
+  ): void
+  /** A window took focus again: the badge has been seen. */
+  clearBadge?(): void
 }
 
 export interface SessionHost {

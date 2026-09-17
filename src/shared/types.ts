@@ -40,6 +40,11 @@ export interface HostCapabilities {
   agents: boolean
   /** The host checks GitHub Releases for new versions and can fetch / apply them. */
   updates: boolean
+  /**
+   * Downloads are files the chrome manages: retry, a chosen folder, keep / delete verdicts and
+   * dragging them out. False when the system download manager owns them.
+   */
+  downloadFiles: boolean
 }
 
 export interface Rect {
@@ -361,16 +366,53 @@ export interface Bookmark {
 
 export type DownloadState = 'progressing' | 'paused' | 'completed' | 'cancelled' | 'interrupted'
 
+/**
+ * Local file-type verdict (Chromium's `download_file_types` categories, no reputation service):
+ * `dangerous` executes on open, `uncommon` is a rarely downloaded type worth a look.
+ */
+export type DownloadDanger = 'safe' | 'dangerous' | 'uncommon'
+export type DownloadDangerDecision = 'kept' | 'discarded'
+/** Why a transfer stopped; hosts report what they know, `unknown` is the fallback. */
+export type DownloadInterruptReason = 'network' | 'server' | 'disk' | 'unknown'
+
 export interface DownloadItem {
   id: string
   url: string
+  /** Redirect chain ending in the address the bytes came from (replayed when resuming). */
+  urlChain: string[]
+  /** Page the download was started from ('' when unknown). */
+  referrer: string
   filename: string
   savePath: string
+  mimeType: string
   totalBytes: number
   receivedBytes: number
+  /** Smoothed transfer rate while in progress (0 otherwise). */
+  bytesPerSecond: number
   state: DownloadState
+  interruptReason?: DownloadInterruptReason
+  /** The partial file can be resumed (server supports ranges, or a fresh retry is possible). */
+  canResume: boolean
+  danger: DownloadDanger
+  /** Set once the user answered the dangerous-file prompt. */
+  dangerDecision?: DownloadDangerDecision
   startedAt: number
-  mimeType: string
+  endedAt?: number
+  etag?: string
+  lastModified?: string
+  /** The user opened the file from the list. */
+  opened?: boolean
+}
+
+export interface DownloadSettings {
+  /** Folder new downloads go to; '' means the system Downloads folder. */
+  location: string
+  /** Open the downloads bubble when the last in-progress download finishes. */
+  showWhenDone: boolean
+  /** Post a system notification when a download finishes. */
+  notifyOnComplete: boolean
+  /** Keep the downloads button in the toolbar even when nothing is downloading. */
+  alwaysShowButton: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -571,6 +613,7 @@ export interface Settings {
   restoreSession: boolean
   /** Firefox's "Always ask you where to save files"; off saves straight into the Downloads folder. */
   askWhereToSave: boolean
+  downloads: DownloadSettings
   onboardingDone: boolean
   showTabSeparator: boolean
   ctrlTabCyclesWithinSection: boolean
@@ -847,6 +890,8 @@ export interface UIState {
   compactSidebarRevealed: boolean
   window: WindowState
   downloads: DownloadItem[]
+  /** Where downloads land when no location is set (the host's Downloads folder). */
+  downloadsDir: string
   bookmarks: Bookmark[]
   recentlyClosedCount: number
   media: MediaState[]
@@ -1154,10 +1199,23 @@ export interface Commands {
   'download.pause': { args: { id: string }; result: void }
   'download.resume': { args: { id: string }; result: void }
   'download.cancel': { args: { id: string }; result: void }
+  /** Start an interrupted or cancelled download again (resumes the partial file when possible). */
+  'download.retry': { args: { id: string }; result: void }
   'download.showInFolder': { args: { id: string }; result: void }
   'download.open': { args: { id: string }; result: void }
   'download.remove': { args: { id: string }; result: void }
   'download.clearCompleted': { args: void; result: void }
+  /** Dangerous file: keep it (clears the warning) or delete it from disk. */
+  'download.keep': { args: { id: string }; result: void }
+  'download.discard': { args: { id: string }; result: void }
+  /** Open the folder new downloads are saved to. */
+  'download.openFolder': { args: void; result: void }
+  /** Pick a new download folder; resolves with the chosen path or null when cancelled. */
+  'download.chooseLocation': { args: void; result: string | null }
+  /** Begin an OS drag of a completed file out of the list (hosts without drag ignore it). */
+  'download.dragOut': { args: { id: string }; result: void }
+  /** The user looked at the list: failed transfers stop showing as an error on the taskbar. */
+  'download.acknowledge': { args: void; result: void }
 
   'find.start': {
     /** `newSession` starts a fresh search for `text`; otherwise steps to the next/previous match. */
@@ -1294,6 +1352,12 @@ export interface Events {
   'urlbar.close': void
   'overlay.open': { kind: OverlayKind; folderId?: string; section?: string }
   'find.open': { tabId: string; again?: 'next' | 'prev' }
+  /** A transfer began in this window (the toolbar button animates in). */
+  'downloads.started': { id: string }
+  /** A transfer ended; the renderer decides whether the bubble opens or the button gets a badge. */
+  'downloads.finished': { id: string; state: 'completed' | 'cancelled' | 'interrupted' }
+  /** Show the bubble with this item (a completion notification was clicked). */
+  'downloads.show': { id: string | null }
   toast: { message: string; kind?: 'info' | 'error' }
   /** Link hover status text (Firefox shows this in the bottom corner). */
   status: { text: string }
