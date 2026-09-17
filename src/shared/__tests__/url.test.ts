@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   BLANK_URL,
+  BOOKMARKS_URL,
   displayUrl,
   errorPageUrl,
   getDomain,
   inputToUrl,
   isNavigableUrl,
+  isNewTabUrl,
   isProbablyUrl,
   isSameSite,
   titleForUrl
@@ -37,6 +39,7 @@ describe('isProbablyUrl / inputToUrl', () => {
     expect(inputToUrl('devbox:8080')).toBe('http://devbox:8080')
     expect(inputToUrl('about:newtab')).toBe(BLANK_URL)
     expect(inputToUrl('about:preferences')).toBe('zen://settings')
+    expect(inputToUrl('about:bookmarks')).toBe(BOOKMARKS_URL)
     expect(inputToUrl('search terms')).toBeNull()
   })
 })
@@ -80,5 +83,16 @@ describe('misc', () => {
     expect(isNavigableUrl('https://a.b')).toBe(true)
     expect(isNavigableUrl('javascript:void 0')).toBe(false)
     expect(isNavigableUrl('')).toBe(false)
+  })
+})
+
+describe('isNewTabUrl', () => {
+  it('recognises the empty tab, a future zen://newtab and no tab at all', () => {
+    expect(isNewTabUrl(BLANK_URL)).toBe(true)
+    expect(isNewTabUrl('zen://newtab')).toBe(true)
+    expect(isNewTabUrl(null)).toBe(true)
+    expect(isNewTabUrl('')).toBe(true)
+    expect(isNewTabUrl('https://example.com/')).toBe(false)
+    expect(isNewTabUrl(BOOKMARKS_URL)).toBe(false)
   })
 })

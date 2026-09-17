@@ -5,6 +5,10 @@
 export const BLANK_URL = 'zen://blank'
 export const ERROR_URL_PREFIX = 'zen://error'
 export const READER_URL_PREFIX = 'zen://reader'
+/** Typed or linked, this opens the bookmark manager instead of navigating. */
+export const BOOKMARKS_URL = 'zen://bookmarks'
+/** The new tab page (Zen's empty tab); a dedicated `zen://newtab` counts once it exists. */
+const NEW_TAB_URLS = new Set([BLANK_URL, 'zen://newtab', 'about:newtab', 'about:blank', ''])
 
 const SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}(:\d+)?(\/.*)?$/
@@ -36,6 +40,11 @@ export function hasScheme(input: string): boolean {
 
 export function isInternalUrl(url: string): boolean {
   return url.startsWith('zen://') || url.startsWith('about:') || url.startsWith('chrome://')
+}
+
+/** The new tab page, where Edge shows the favorites bar even when it is hidden elsewhere. */
+export function isNewTabUrl(url: string | null | undefined): boolean {
+  return url === null || url === undefined || NEW_TAB_URLS.has(url)
 }
 
 /** Heuristic used by the URL bar: does the user most likely mean a URL rather than a search? */
@@ -75,6 +84,7 @@ export function inputToUrl(raw: string): string | null {
       const rest = input.slice('about:'.length)
       if (rest === 'blank' || rest === 'newtab' || rest === 'home') return BLANK_URL
       if (rest === 'preferences' || rest === 'settings') return 'zen://settings'
+      if (rest === 'bookmarks') return BOOKMARKS_URL
       return BLANK_URL
     }
     return input

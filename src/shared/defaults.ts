@@ -118,7 +118,8 @@ export const DEFAULT_SETTINGS: Settings = {
   windowSync: 'all',
   resources: structuredClone(DEFAULT_RESOURCE_SETTINGS),
   agents: structuredClone(DEFAULT_AGENT_SETTINGS),
-  updates: structuredClone(DEFAULT_UPDATE_SETTINGS)
+  updates: structuredClone(DEFAULT_UPDATE_SETTINGS),
+  bookmarksBar: 'newtab'
 }
 
 /** Firefox's four default containers plus "No Container". */

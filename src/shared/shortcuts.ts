@@ -672,6 +672,14 @@ const DEFS: Def[] = [
     mods: { accel: true }
   },
   {
+    id: 'viewBookmarksToolbarKb',
+    action: 'bookmark.toggleBar',
+    group: 'historyAndBookmarks',
+    label: 'Show / Hide Bookmarks Bar',
+    key: 'b',
+    mods: { accel: true, shift: true }
+  },
+  {
     id: 'manBookmarkKb',
     action: 'bookmark.library',
     group: 'historyAndBookmarks',

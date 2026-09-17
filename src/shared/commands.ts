@@ -159,6 +159,12 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     keywords: ['bookmarks', 'library', 'manager'],
     action: 'bookmarks.open'
   },
+  {
+    id: 'bookmarks-bar',
+    label: 'Show / Hide Bookmarks Bar',
+    keywords: ['bookmarks', 'bar', 'toolbar', 'favorites'],
+    action: 'bookmark.toggleBar'
+  },
   { id: 'history', label: 'Show History', keywords: ['history', 'recent'], action: 'history.open' },
   {
     id: 'downloads',

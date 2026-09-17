@@ -58,6 +58,8 @@ import { BLANK_URL } from '../shared/url'
 import { defer, type StoreIO } from './platform'
 import type { ZenWindow } from './window'
 
+const BOOKMARKS_BAR_MODES: ReadonlyArray<Settings['bookmarksBar']> = ['always', 'newtab', 'never']
+
 /** A synced window as remembered between sessions (blank / private windows are never restored). */
 export interface PersistedWindow {
   id: string
@@ -226,6 +228,9 @@ export class BrowserState {
     this.settings.resources = sanitizeResourceSettings(data.settings?.resources)
     this.settings.agents = sanitizeAgentSettings(data.settings?.agents)
     this.settings.updates = sanitizeUpdateSettings(data.settings?.updates)
+    if (!BOOKMARKS_BAR_MODES.includes(this.settings.bookmarksBar)) {
+      this.settings.bookmarksBar = DEFAULT_SETTINGS.bookmarksBar
+    }
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     this.bookmarks = this.loadBookmarks(data)
     if (Array.isArray(data.windows) && data.windows.length) {
