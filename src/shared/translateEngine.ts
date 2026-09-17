@@ -72,7 +72,8 @@ export interface EngineResults {
   init: { bergamotVersion: string }
   load: null
   unload: null
-  translate: string[]
+  /** One entry per input text; null where Bergamot rejected the fragment (it stays untranslated). */
+  translate: (string | null)[]
   detect: DetectionResult
 }
 

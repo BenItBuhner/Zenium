@@ -143,6 +143,7 @@ export function unpackModel(packed: PackedModel): ModelRecord {
  */
 export class ModelRegistry {
   private models = new Map<string, ModelRecord>()
+  private packedModels: PackedModel[] = []
   /** When the current contents were fetched (0 for the bundled snapshot). */
   fetchedAt = 0
 
@@ -161,7 +162,13 @@ export class ModelRegistry {
     }
     if (next.size === 0) return
     this.models = next
+    this.packedModels = packed
     this.fetchedAt = fetchedAt
+  }
+
+  /** The current contents in the compact form the cache and the snapshot use. */
+  packed(): PackedModel[] {
+    return this.packedModels
   }
 
   find(pair: LanguagePair): ModelRecord | null {
