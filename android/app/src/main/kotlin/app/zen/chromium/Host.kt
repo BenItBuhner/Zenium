@@ -15,6 +15,7 @@ import android.os.Looper
 import android.print.PrintAttributes
 import android.print.PrintManager
 import android.provider.MediaStore
+import android.provider.Settings
 import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
@@ -54,6 +55,10 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     val pageScript: String = activity.assets.open("page.js").bufferedReader().readText().replace("__ZEN_TOKEN__", pageToken)
     private val io = Executors.newCachedThreadPool { r -> Thread(r, "zen-io") }
     private val main = Handler(Looper.getMainLooper())
+    /** The share sheet, in both directions (after `io`: it fetches on it). */
+    val share = Share(this, io)
+    /** Links that leave the web: held here while the core (and the user) decide. */
+    val externalProtocols = ExternalProtocols(this)
     var fullscreenTab: TabWebView? = null
         private set
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
@@ -78,6 +83,8 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     fun dispatchSync(method: String, args: JSONObject): Any? = when (method) {
         "boot" -> json(
             "version" to BuildConfig.VERSION_NAME,
+            // The OS release decides a few capabilities (the clipboard chip, the share sheet's row).
+            "sdkInt" to Build.VERSION.SDK_INT,
             "signer" to Updates.signerSha256(activity),
             // The applicationId; a release whose APK carries another one installs as a new app.
             "packageName" to activity.packageName,
@@ -181,6 +188,9 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             "app.openExternal" -> { openExternal(args.str("url")); reply(null) }
             "app.openPath" -> { downloads.open(args.str("path"), ""); reply(null) }
             "app.setIcon" -> { launcherIcon.apply(args.str("id"), activity); reply(null) }
+            "app.share" -> share.share(args, reply)
+            "app.openAppLinkSettings" -> { openAppLinkSettings(); reply(null) }
+            "externalProtocol.respond" -> { externalProtocols.respond(args.str("requestId"), args.bool("allow")); reply(null) }
             "keys.setShortcuts" -> { keys.setShortcuts(args.arr("bindings")); reply(null) }
 
             // --- services --------------------------------------------------------------------------
@@ -296,6 +306,25 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
         }
     }
 
+    /**
+     * Android's "Open by default" screen for Zenium (which links open in it, Android 12+); older
+     * releases have it inside the app's details page.
+     */
+    private fun openAppLinkSettings() {
+        val app = Uri.parse("package:${activity.packageName}")
+        val screens = ArrayList<Intent>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) screens.add(Intent(Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS, app))
+        screens.add(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, app))
+        for (screen in screens) {
+            try {
+                activity.startActivity(screen)
+                return
+            } catch (e: ActivityNotFoundException) {
+                // The next screen down is on every device.
+            }
+        }
+    }
+
     private fun confirm(args: JSONObject, reply: (Any?) -> Unit) {
         var answered = false
         val done = { ok: Boolean -> if (!answered) { answered = true; reply(ok) } }
@@ -352,7 +381,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     }
 
     /** Store bytes as a file in the public Downloads collection; resolves with a path or URI. */
-    private fun saveToDownloads(name: String, mimeType: String, bytes: ByteArray?, reply: (Any?) -> Unit) {
+    fun saveToDownloads(name: String, mimeType: String, bytes: ByteArray?, reply: (Any?) -> Unit) {
         if (bytes == null) {
             reply(null)
             return

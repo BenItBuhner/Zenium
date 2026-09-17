@@ -8,7 +8,6 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.util.Patterns
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
@@ -149,15 +148,12 @@ class MainActivity : AppCompatActivity() {
         intent ?: return
         when (intent.action) {
             Intent.ACTION_VIEW -> intent.dataString?.let { if (it.startsWith("http")) host.chrome.openUrl(it) }
-            Intent.ACTION_SEND -> {
-                val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
-                val url = Patterns.WEB_URL.matcher(text).let { m -> if (m.find()) m.group() else null }
-                host.chrome.openUrl(url ?: "https://www.google.com/search?q=${Uri.encode(text)}")
-            }
-            Intent.ACTION_WEB_SEARCH -> {
-                val q = intent.getStringExtra("query") ?: return
-                host.chrome.openUrl("https://www.google.com/search?q=${Uri.encode(q)}")
-            }
+            // Shared into Zenium: the core routes it (a link opens, text searches with the user's
+            // engine, an image gets a page) – see Share.kt and src/shared/shareTarget.ts.
+            Intent.ACTION_SEND -> host.share.onReceived(intent)
+            Intent.ACTION_WEB_SEARCH -> host.share.onWebSearch(intent)
+            // One of Zenium's own buttons in the system share sheet (Android 14).
+            Share.ACTION_BROWSER_ACTION -> host.share.onBrowserAction(intent)
         }
         // Consume so a configuration change does not re-open it.
         intent.action = null

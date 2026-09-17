@@ -124,7 +124,7 @@ describe('AndroidTabView.certificate', () => {
         protocol: null
       }
     })
-    const view = new AndroidTabView('tab_1', bridge, () => null)
+    const view = new AndroidTabView('tab_1', bridge)
     expect(await view.certificate()).toEqual({
       subject: 'www.google.com',
       issuer: 'Google Trust Services',
@@ -133,12 +133,11 @@ describe('AndroidTabView.certificate', () => {
       protocol: null
     })
     expect(calls[0]).toEqual({ method: 'view.certificate', args: { tabId: 'tab_1' } })
-    const plain = new AndroidTabView('tab_2', fakeBridge().bridge, () => null)
+    const plain = new AndroidTabView('tab_2', fakeBridge().bridge)
     expect(await plain.certificate()).toBe(null)
     const odd = new AndroidTabView(
       'tab_3',
-      fakeBridge({ 'view.certificate': { validTo: 0 } }).bridge,
-      () => null
+      fakeBridge({ 'view.certificate': { validTo: 0 } }).bridge
     )
     expect(await odd.certificate()).toEqual({
       subject: '',
