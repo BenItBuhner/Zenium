@@ -173,6 +173,8 @@ function sourceTitle(source: MenuDescriptor['source']): string {
       return 'New Tab'
     case 'app':
       return 'Zenium'
+    case 'bookmark':
+      return 'Bookmark'
   }
 }
 
