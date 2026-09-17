@@ -164,13 +164,13 @@ function sourceTitle(source: MenuDescriptor['source']): string {
     case 'tab':
       return 'Tab'
     case 'selection':
-      return 'Selected Tabs'
+      return 'Selected tabs'
     case 'space':
       return 'Space'
     case 'folder':
       return 'Folder'
     case 'newtab':
-      return 'New Tab'
+      return 'New tab'
     case 'app':
       return 'Zenium'
   }
