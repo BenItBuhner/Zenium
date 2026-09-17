@@ -47,6 +47,7 @@ export class BookmarkService {
   private indexed: BookmarkTree | null = null
   private indexedFor: BookmarkNode[] | null = null
   private clipboard: { mode: 'cut' | 'copy'; ids: string[] } | null = null
+  private lastNow = 0
 
   constructor(private readonly state: BrowserState) {}
 
@@ -57,6 +58,16 @@ export class BookmarkService {
       this.indexedFor = this.state.bookmarks
     }
     return this.indexed
+  }
+
+  /**
+   * Strictly increasing timestamps: two writes in the same millisecond still have a definite
+   * "most recent" (the star dialog's recent folders, `recent()`), so recency never depends on
+   * array order.
+   */
+  private now(): number {
+    this.lastNow = Math.max(Date.now(), this.lastNow + 1)
+    return this.lastNow
   }
 
   // ---------------------------------------------------------------------------
@@ -139,7 +150,7 @@ export class BookmarkService {
 
   /** Replace the node list, repair invariants, refresh tabs' star state and persist. */
   private write(nodes: BookmarkNode[]): void {
-    this.state.bookmarks = normalizeBookmarkNodes(nodes, Date.now(), this.fallbackFolder())
+    this.state.bookmarks = normalizeBookmarkNodes(nodes, this.now(), this.fallbackFolder())
     this.syncTabs()
     this.state.commit()
   }
@@ -156,7 +167,7 @@ export class BookmarkService {
     const parent = this.folderOrDefault(options.parentId)
     const siblings = this.tree.children(parent.id)
     const at = clampIndex(options.index, siblings.length)
-    const now = Date.now()
+    const now = this.now()
     const node: BookmarkNode = {
       id: newId('bm'),
       parentId: parent.id,
@@ -224,7 +235,7 @@ export class BookmarkService {
     ]
     const placement = new Map<string, number>()
     ordered.forEach((n, i) => placement.set(n.id, i))
-    const now = Date.now()
+    const now = this.now()
     const touched = new Set<string>([parentId])
     for (const id of moving) {
       const from = this.tree.get(id)!.parentId
@@ -253,7 +264,7 @@ export class BookmarkService {
     const node = this.tree.get(id)
     if (!node || isBookmarkRoot(id)) return false
     const gone = new Set<string>([id, ...this.tree.descendants(id).map((n) => n.id)])
-    const now = Date.now()
+    const now = this.now()
     this.write(
       this.state.bookmarks
         .filter((n) => !gone.has(n.id))
@@ -278,7 +289,7 @@ export class BookmarkService {
     const node = this.tree.get(id)
     if (!node || node.type !== 'url') return
     this.write(
-      this.state.bookmarks.map((n) => (n.id === id ? { ...n, dateLastUsed: Date.now() } : n))
+      this.state.bookmarks.map((n) => (n.id === id ? { ...n, dateLastUsed: this.now() } : n))
     )
   }
 
@@ -320,7 +331,7 @@ export class BookmarkService {
     }
     const parent = this.tree.get(folderId)
     if (!parent || parent.type !== 'folder') return false
-    const now = Date.now()
+    const now = this.now()
     const siblings = this.tree.children(folderId)
     let at = clampIndex(index, siblings.length)
     const copies: BookmarkNode[] = []
@@ -358,7 +369,7 @@ export class BookmarkService {
     if (pages.length === 0) return null
     const folder = this.create({ parentId, title: folderTitle, type: 'folder' })
     if (!folder) return null
-    const now = Date.now()
+    const now = this.now()
     const nodes = pages.map((t, index): BookmarkNode => ({
       id: newId('bm'),
       parentId: folder.id,
@@ -385,11 +396,11 @@ export class BookmarkService {
       barIsEmpty: bar.length === 0,
       nextIndex: (parentId) => this.tree.children(parentId).length,
       newId: () => newId('bm'),
-      now: Date.now(),
+      now: this.now(),
       importedFolderTitle: importedTitle
     })
     if (plan.nodes.length === 0) return null
-    const now = Date.now()
+    const now = this.now()
     const parents = new Set(plan.nodes.map((n) => n.parentId))
     this.write([
       ...this.state.bookmarks.map((n) =>

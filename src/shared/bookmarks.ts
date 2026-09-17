@@ -215,8 +215,6 @@ export function normalizeBookmarkNodes(
   fallbackParentId: string = OTHER_BOOKMARKS_ID
 ): BookmarkNode[] {
   const byId = new Map<string, BookmarkNode>()
-  const order = new Map<string, number>()
-  let position = 0
   for (const raw of input) {
     if (!raw || typeof raw !== 'object') continue
     const r = raw as Record<string, unknown>
@@ -246,7 +244,6 @@ export function normalizeBookmarkNodes(
       if (modified > 0) node.dateGroupModified = modified
     }
     byId.set(node.id, node)
-    order.set(node.id, position++)
   }
 
   // Roots: always present, always folders, never moved or renamed.
@@ -262,7 +259,6 @@ export function normalizeBookmarkNodes(
       delete existing.dateLastUsed
     } else {
       byId.set(root.id, root)
-      order.set(root.id, -1)
     }
   }
   const fallback = byId.has(fallbackParentId) ? fallbackParentId : OTHER_BOOKMARKS_ID
@@ -289,7 +285,9 @@ export function normalizeBookmarkNodes(
     }
   }
 
-  // Contiguous indices per folder, keeping the stored order (ties broken by input position).
+  // Contiguous indices per folder, keeping the stored order. Index collisions (two devices filed
+  // into the same slot before syncing) resolve by creation date, then id, so every device settles
+  // on the same order without another round trip.
   const children = new Map<string, BookmarkNode[]>()
   for (const node of byId.values()) {
     if (node.parentId === null) continue
@@ -298,7 +296,10 @@ export function normalizeBookmarkNodes(
     else children.set(node.parentId, [node])
   }
   for (const list of children.values()) {
-    list.sort((a, b) => a.index - b.index || order.get(a.id)! - order.get(b.id)!)
+    list.sort(
+      (a, b) =>
+        a.index - b.index || a.dateAdded - b.dateAdded || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+    )
     list.forEach((node, i) => (node.index = i))
   }
 
@@ -383,7 +384,12 @@ export function searchBookmarks(
     if (isBookmarkRoot(node.id) || (type && node.type !== type)) continue
     const title = node.title.toLowerCase()
     const url = (node.url ?? '').toLowerCase()
-    const path = tree.pathLabel(node.id).toLowerCase()
+    // Folder names count, root titles do not ("bookmarks" must not match everything).
+    const path = tree
+      .path(node.id)
+      .filter((p) => !isBookmarkRoot(p.id))
+      .map((p) => p.title.toLowerCase())
+      .join(' ')
     const hay = `${title} ${url} ${path}`
     if (!terms.every((t) => hay.includes(t))) continue
     let score = 0
