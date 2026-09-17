@@ -324,7 +324,10 @@ export class Browser {
       }
     }
     this.state.subscribe(() => {
-      for (const win of this.allWindows()) win.send('state', this.state.snapshot(win))
+      for (const win of this.allWindows()) {
+        win.send('state', this.state.snapshot(win))
+        win.updateTitle()
+      }
     })
     // Zen restores every synced window (and the space each one was in).
     const restore =
@@ -890,19 +893,23 @@ export class Browser {
     const routed = win.localSpace ? null : this.routeSpaceFor(url)
     const target = tabId ? this.tabs.tab(tabId) : undefined
     if (newTab || !target) {
+      // An active tab is loaded once by `activateTab`; a background tab is loaded by `navigate`
+      // below. Loading here *and* navigating (the old flow) started the page twice, which raced
+      // the tab view's blank initial document into running its sandbox preload before the real
+      // navigation committed – the two startup console errors (WIN-009).
       const tab = this.tabs.createTab(
         {
           url,
           active: !background,
           spaceId: routed ?? undefined,
-          load: false
+          load: false,
+          upgradedFrom: background ? undefined : upgradedFrom
         },
         win
       )
       if (routed && routed !== win.activeSpaceId && !background)
         this.tabs.switchSpace(routed, win, tab.id)
-      if (upgradedFrom) this.tabs.navigate(tab.id, url, { upgradedFrom })
-      else this.tabs.navigate(tab.id, url)
+      if (background) this.tabs.navigate(tab.id, url, { upgradedFrom })
       return
     }
     this.tabs.navigate(target.id, url, { upgradedFrom })

@@ -60,10 +60,12 @@ mac:
         - arm64
   artifactName: ${name}-${version}-${arch}.${ext}
   entitlementsInherit: build/entitlements.mac.plist
+  # A mapping, not a list: electron-builder copies these keys straight into Info.plist. As a YAML
+  # list of one-key maps the plist got numeric keys ("0", "1", "2") plus "length" instead.
   extendInfo:
-    - NSCameraUsageDescription: Zenium requests access to the device's camera for websites that ask for it.
-    - NSMicrophoneUsageDescription: Zenium requests access to the device's microphone for websites that ask for it.
-    - NSDownloadsFolderUsageDescription: Zenium saves downloaded files to your Downloads folder.
+    NSCameraUsageDescription: Zenium requests access to the device's camera for websites that ask for it.
+    NSMicrophoneUsageDescription: Zenium requests access to the device's microphone for websites that ask for it.
+    NSDownloadsFolderUsageDescription: Zenium saves downloaded files to your Downloads folder.
   # Notarization only runs after a successful code signature and only when the Apple credentials
   # (APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID) are in the environment; without them
   # electron-builder logs "skipped macOS notarization" and carries on.

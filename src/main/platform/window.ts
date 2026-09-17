@@ -10,6 +10,7 @@ import type {
   WindowHost,
   WindowHostFactory
 } from '../../core/platform'
+import { TitleThrottle } from '../../shared/windowTitle'
 import { windowIcon } from './appIcon'
 
 const MIN_WIDTH = 640
@@ -27,6 +28,7 @@ export class ElectronWindow implements WindowHost {
   private boundsTimer: ReturnType<typeof setTimeout> | null = null
   private compactTimer: ReturnType<typeof setInterval> | null = null
   private compactLastSent: boolean | null = null
+  private readonly titles: TitleThrottle
 
   constructor(
     private readonly browser: Browser,
@@ -65,6 +67,9 @@ export class ElectronWindow implements WindowHost {
       }
     })
     const win = this.win
+    this.titles = new TitleThrottle((title) => {
+      if (this.alive) win.setTitle(title)
+    }, init.title)
     if (init.maximized) win.maximize()
 
     win.once('ready-to-show', () => win.show())
@@ -88,6 +93,7 @@ export class ElectronWindow implements WindowHost {
     })
     win.on('closed', () => {
       this.stopCompactTracking()
+      this.titles.cancel()
       zen.onClosed()
     })
     this.startCompactTracking()
@@ -111,6 +117,10 @@ export class ElectronWindow implements WindowHost {
     })
     wc.on('will-navigate', (event) => event.preventDefault())
     wc.on('context-menu', (event) => event.preventDefault())
+    // The chrome document's <title> is a constant "Zenium"; keep Electron from copying it over the
+    // per-window title the core sets (active tab name) via setTitle. This has to be the window's
+    // event: BrowserWindow applies the title right after emitting it unless it was prevented.
+    win.on('page-title-updated', (event) => event.preventDefault())
     wc.on('did-finish-load', () => zen.onChromeReady())
 
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -187,6 +197,11 @@ export class ElectronWindow implements WindowHost {
 
   close(): void {
     if (this.alive) this.win.close()
+  }
+
+  /** Rate limited to ten native title changes a second (`TitleThrottle`). */
+  setTitle(title: string): void {
+    if (this.alive) this.titles.set(title)
   }
 
   normalBounds(): Rect | null {
