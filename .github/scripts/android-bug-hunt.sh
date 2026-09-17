@@ -32,8 +32,55 @@ shot_n=0
 log() {
   printf '%s [%5ds] %s\n' "$(date +%T)" "$(( $(date +%s) - t0 ))" "$*" | tee -a "$out/timeline.txt"
 }
-step() { log "=== STEP $*"; }
-finding() { log "FINDING: $*"; }
+step() {
+  log "=== STEP $*"
+  check_emu "step $*" || true
+}
+# A finding recorded while the emulator is offline says nothing about the app.
+finding() {
+  if emu_alive; then log "FINDING: $*"; else log "UNVERIFIED (emulator offline): $*"; fi
+}
+
+# --- emulator watchdog --------------------------------------------------------------------------
+# The software-rendered emulator process itself has died mid-run on this runner (twice, both
+# times while a Google results page was rendering), taking every later step with it. When adb
+# loses the device, the emulator is started again from the same AVD (userdata persists without
+# -wipe-data, so the app and its state survive), prepared again, and the app relaunched.
+
+emu_alive() { [ "$(adb get-state 2> /dev/null | tr -d '\r')" = "device" ]; }
+emu_restarts=0
+restart_emulator() {
+  emu_restarts=$((emu_restarts + 1))
+  log "EMULATOR: the emulator process died during '$1' (qemu gone, host memory fine); restart #$emu_restarts"
+  pkill -f qemu-system-x86_64 || true
+  sleep 3
+  rm -rf "$HOME/.android/avd/${AVD_NAME:-test}.avd/"*.lock
+  local emu="${ANDROID_HOME:-/usr/local/lib/android/sdk}/emulator/emulator"
+  # The same command line the emulator runner action used, taken from its job log.
+  nohup "$emu" -port 5554 -avd "${AVD_NAME:-test}" -no-window -gpu swiftshader_indirect -no-snapshot \
+    -noaudio -no-boot-anim -camera-back none -camera-front none \
+    > "$out/emulator-restart-$emu_restarts.log" 2>&1 &
+  local waited=0
+  until [ "$(adb shell getprop sys.boot_completed 2> /dev/null | tr -d '\r')" = "1" ]; do
+    sleep 5
+    waited=$((waited + 5))
+    if [ $waited -ge 300 ]; then
+      log "EMULATOR: did not boot again within 300 s"
+      return 1
+    fi
+  done
+  log "EMULATOR: booted again after ${waited}s"
+  sleep 5
+  adb shell input keyevent 82 || true
+  prepare_device
+  adb shell am force-stop com.google.android.apps.nexuslauncher || true
+  sleep 2
+  adb shell am start -n "$activity" > /dev/null 2>&1 || true
+  sleep 6
+  shot "after-emulator-restart-$emu_restarts"
+}
+# Called wherever a dead emulator would otherwise turn the rest of the run into noise.
+check_emu() { emu_alive || restart_emulator "$1"; }
 
 shot() {
   shot_n=$((shot_n + 1))
@@ -42,6 +89,10 @@ shot() {
   if ! timeout 25 adb exec-out screencap -p > "$shots/$f" 2> /dev/null || [ ! -s "$shots/$f" ]; then
     log "screencap failed for $f"
     rm -f "$shots/$f"
+    if ! emu_alive; then
+      restart_emulator "shot $1" || true
+      return 0
+    fi
   fi
   log "shot $f"
 }
@@ -242,6 +293,7 @@ top_activity() {
 }
 app_in_front() { top_activity | grep -q "^$app_id/"; }
 ensure_app() {
+  check_emu "$1" || true
   if ! app_in_front; then
     log "app not in front before $1 (top: $(top_activity)); relaunching"
     adb shell am start -n "$activity" > /dev/null 2>&1 || true
@@ -463,43 +515,50 @@ adb wait-for-device
 nproc
 free -m
 df -h / /tmp
-adb reverse "tcp:$port" "tcp:$port"
 
 (
-  while true; do
+  gone=0
+  while [ ! -f "$out/stop-recording" ]; do
     {
       date +%T
       free -m | sed -n '2p'
       ps -o pid=,rss=,pcpu=,comm= -C qemu-system-x86_64 || true
     } >> "$out/host-monitor.txt"
-    if ! pgrep -f qemu-system-x86_64 > /dev/null; then
+    if pgrep -f qemu-system-x86_64 > /dev/null; then
+      gone=0
+    elif [ $gone -eq 0 ]; then
+      gone=1
       {
         echo "EMULATOR PROCESS GONE"
         sudo dmesg 2> /dev/null | tail -n 40 || true
       } >> "$out/host-monitor.txt"
-      break
     fi
     sleep 5
   done
 ) &
 monitor_pid=$!
 
-# The same 411 CSS px wide layout a Pixel 6 gets, at 2.3x fewer pixels: the emulator renders,
-# snapshots and records through a software GPU, and every pixel costs.
-adb shell wm size 720x1600
-adb shell wm density 280
-adb shell settings put global hide_error_dialogs 1 || true
-sleep 2
+# Everything the device needs before the app runs; also run after an emulator restart. The same
+# 411 CSS px wide layout a Pixel 6 gets, at 2.3x fewer pixels: the emulator renders, snapshots
+# and records through a software GPU, and every pixel costs.
+prepare_device() {
+  adb reverse "tcp:$port" "tcp:$port" || true
+  adb shell wm size 720x1600
+  adb shell wm density 280
+  adb shell settings put global hide_error_dialogs 1 || true
+  sleep 2
+  # Three-button navigation: no system gesture zone under the bar, so no accidental home swipes.
+  adb shell cmd overlay enable com.android.internal.systemui.navbar.threebutton || true
+  adb shell settings put system screen_off_timeout 2147483647 || true
+  adb shell svc power stayon true || true
+  adb shell input keyevent KEYCODE_WAKEUP || true
+  adb shell wm dismiss-keyguard || true
+  # Predictive back system animations are a developer option on API 34.
+  adb shell settings put global enable_back_animation 1 || true
+}
+prepare_device
 adb shell am force-stop com.google.android.apps.nexuslauncher || true
 sleep 3
-# Three-button navigation: no system gesture zone under the bar, so no accidental home swipes.
-adb shell cmd overlay enable com.android.internal.systemui.navbar.threebutton || true
-adb shell settings put system screen_off_timeout 2147483647 || true
-adb shell svc power stayon true || true
-adb shell input keyevent KEYCODE_WAKEUP || true
-adb shell wm dismiss-keyguard || true
-# Predictive back system animations are a developer option on API 34.
-adb shell settings put global enable_back_animation 1 || true
 
 for pkg in \
   com.google.android.youtube com.google.android.apps.youtube.music com.google.android.gm \
@@ -522,25 +581,42 @@ adb install -r -g "$apk"
 adb shell dumpsys package "$app_id" | grep -E 'versionName|firstInstallTime' | head -2 > "$out/dumpsys-package.txt" || true
 
 adb logcat -c || true
-adb logcat -v time > "$out/logcat.txt" &
+# logcat exits with the device; the loop picks it up again once the emulator is back.
+(
+  while [ ! -f "$out/stop-recording" ]; do
+    adb logcat -v time >> "$out/logcat.txt" 2> /dev/null || true
+    sleep 5
+  done
+) &
 logcat_pid=$!
 
 # --- recording: back-to-back 170-second segments until the stop file appears --------------------
-# Each finished segment is pulled straight away, so a dying emulator loses at most one segment.
+# Each finished segment is pulled straight away, so a dying emulator loses at most one segment,
+# and the loop waits out an emulator restart instead of giving up. Recorded at 3/4 of the
+# display's size: the encoder's frames go through the same software GPU as everything else.
 
 (
   n=0
   quick=0
-  while [ ! -f "$out/stop-recording" ] && [ $n -lt 30 ]; do
+  while [ ! -f "$out/stop-recording" ] && [ $n -lt 40 ]; do
+    if ! emu_alive; then
+      sleep 10
+      continue
+    fi
     n=$((n + 1))
     name=$(printf 'android-bughunt-seg%02d.mp4' "$n")
     started=$(date +%s)
     echo "$started $name" >> "$out/segments.txt"
-    adb shell screenrecord --bit-rate 2500000 --time-limit 170 "/sdcard/$name" || true
+    adb shell screenrecord --size 540x1200 --bit-rate 2000000 --time-limit 170 "/sdcard/$name" || true
     if [ $(( $(date +%s) - started )) -lt 5 ]; then
       quick=$((quick + 1))
-      [ $quick -ge 5 ] && { echo "screenrecord keeps failing; recorder stopped" >> "$out/segments.txt"; break; }
-      sleep 5
+      if [ $quick -ge 5 ]; then
+        echo "screenrecord failing on a live device; pausing 60 s" >> "$out/segments.txt"
+        sleep 60
+        quick=0
+      else
+        sleep 5
+      fi
     else
       quick=0
     fi
@@ -860,13 +936,17 @@ shot "05-menu-scrolled"
 xml=$(dump "05-menu-scrolled") || true
 menu_texts="$menu_texts | $(texts_in "$xml")"
 log "menu items after scroll: $(texts_in "$xml")"
-# Chrome and Edge menu items with no counterpart here.
-for want in 'Incognito' 'Share' 'Desktop site' 'Home screen' 'Translate' 'Recent tabs' 'Help' 'Refresh' 'Forward'; do
-  case ${menu_texts,,} in
-    *${want,,}*) ;;
-    *) finding "menu has no '$want' item (Chrome and Edge do)" ;;
-  esac
-done
+# Chrome and Edge menu items with no counterpart here (only judged from a menu that did open).
+if menu_open || [[ "$menu_texts" == *Settings* ]]; then
+  for want in 'Incognito' 'Share' 'Desktop site' 'Home screen' 'Translate' 'Recent tabs' 'Help' 'Refresh' 'Forward'; do
+    case ${menu_texts,,} in
+      *${want,,}*) ;;
+      *) finding "menu has no '$want' item (Chrome and Edge do)" ;;
+    esac
+  done
+else
+  log "menu did not open; skipping the missing-item comparison"
+fi
 # Submenu: Zoom.
 if tap_label exact 'Zoom'; then
   sleep 0.15; shot "05-menu-zoom-150ms"
@@ -1426,11 +1506,19 @@ touch "$out/stop-recording"
 adb shell pkill -INT screenrecord || adb shell "kill -2 \$(pidof screenrecord)" || true
 wait "$recorder_pid" 2> /dev/null || true
 sleep 2
+pkill -P "$logcat_pid" 2> /dev/null || true
 kill "$logcat_pid" "$monitor_pid" "$www_pid" 2> /dev/null || true
 
 for name in $(adb shell ls /sdcard/android-bughunt-seg*.mp4 2> /dev/null | tr -d '\r'); do
   adb pull "$name" "$out/video/" || true
 done
 rm -rf "$www"
+log "emulator restarts during the run: $emu_restarts"
+# The emulator's own crash reports, when small enough to ship.
+for db in /tmp/android-runner/emu-crash-*.db; do
+  [ -d "$db" ] || continue
+  if [ "$(du -sm "$db" | cut -f1)" -le 40 ]; then cp -r "$db" "$out/emu-crash" 2> /dev/null || true; fi
+  du -sh "$db" >> "$out/host-monitor.txt" 2> /dev/null || true
+done
 ls -la "$out" "$out/video" "$out/shots" | head -500
 du -sh "$out"
