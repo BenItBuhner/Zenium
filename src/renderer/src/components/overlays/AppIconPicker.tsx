@@ -15,7 +15,7 @@ import { Group, Row } from './SettingsPrimitives'
 /** What changing the icon does on this host, in one breath. */
 const HINT: Record<Platform, string> = {
   android:
-    'Changes the icon on your home screen and in the app list straight away. Some launchers take a moment to redraw it, and a shortcut you placed on the home screen may need adding again.',
+    'Changes the icon on your home screen and in the app list at once. Some launchers take a moment to redraw it, and a home screen shortcut may need adding again.',
   win32:
     'Applies to the window and the taskbar now. The Start menu and desktop shortcuts keep the icon the installer gave them until the next update, when they take this one.',
   darwin:

@@ -635,8 +635,11 @@
     color: var(--zen-muted);
     transition: background 120ms var(--zen-ease);
   }
-  .zen-app-icon:hover {
-    background: var(--zen-element-bg);
+  /* Hover only where a pointer hovers: a tap would otherwise leave the fill stuck on a phone. */
+  @media (hover: hover) {
+    .zen-app-icon:hover {
+      background: var(--zen-element-bg);
+    }
   }
   .zen-app-icon svg {
     width: 48px;
