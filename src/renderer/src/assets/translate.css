@@ -99,7 +99,10 @@
   height: var(--v2-icon);
   stroke-width: var(--v2-icon-stroke);
 }
-/* The popover: a --v2-panel at radius 12 and padding 6, 28 px rows at radius 6, a trailing check. */
+/*
+ * The popover: a --v2-panel at radius 12 and padding 6, 28 px rows at radius 6, a trailing check
+ * (§9.13); 320 wide whatever its rows hold (§9.20), placed by Menulist.tsx.
+ */
 .zen-translate-menulist-layer {
   position: fixed;
   inset: 0;
@@ -107,7 +110,7 @@
 }
 .zen-translate-menulist-popup {
   position: fixed;
-  max-width: min(360px, calc(100vw - 16px));
+  width: 320px;
   padding: 6px;
   margin: 0;
   overflow-y: auto;
@@ -172,7 +175,8 @@
 
 /*
  * A checkbox row (§6, §9.2): a 16 px box (20 on phones) at radius 2, accent-filled when checked,
- * aligned with the first text line; the whole label is the hit area and the row grows with it.
+ * aligned with the first text line – its top (line-height − box) / 2 below the line's top, 2 on
+ * the desktop and 0 on phones – the whole label is the hit area and the row grows with it.
  */
 .zen-translate-check {
   position: relative;
@@ -200,7 +204,7 @@
   justify-content: center;
   width: var(--v2-checkbox);
   height: var(--v2-checkbox);
-  margin-top: 2px;
+  margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
   border: 1px solid rgb(var(--v2-text-rgb) / 0.41);
   border-radius: var(--v2-radius-checkbox);
   background: var(--v2-fill);
@@ -336,10 +340,21 @@
   overflow-wrap: anywhere;
 }
 
-/* --- Selection translation: a panel where the user asked, a sheet on phones ---------------- */
+/* --- Selection translation: a popover where the user asked, a sheet on phones -------------- */
 
+/*
+ * A desktop popover (§9.20): 400 wide – it holds a row with a menulist and text that wraps –
+ * whatever the window, radius 8 on --v2-panel with a hairline and the panel shadow, at most 60%
+ * of the window tall (never taller than the window less 16); the title block and the footer stay
+ * put and the body between them scrolls.
+ */
 .zen-translate-panel {
-  padding: var(--v2-card-padding);
+  display: flex;
+  flex-direction: column;
+  width: 400px;
+  max-height: min(60vh, calc(100vh - 16px));
+  padding: 0;
+  overflow: hidden;
   border: 1px solid var(--v2-border);
   border-radius: var(--v2-radius-card);
   background: var(--v2-panel);
@@ -347,6 +362,52 @@
   color: var(--v2-text);
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
+  outline: none;
+}
+/*
+ * A title block (§9.23): padding 16, a 16 px glyph on the title's start with an 8 px gap – its
+ * top (line-height − glyph) / 2 below the title line's top – the title 17/600 at line-height 22,
+ * then 16 px to the body. No X: Escape, an outside click and the footer close the popover. When
+ * the body has scrolled under it, §9.7's hairline shows along its bottom edge.
+ */
+.zen-translate-title-block {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-start;
+  gap: 8px;
+  padding: var(--v2-card-padding);
+}
+.zen-translate-title-block[data-scrolled] {
+  box-shadow: 0 1px 0 var(--v2-border);
+}
+.zen-translate-title-block > svg {
+  flex-shrink: 0;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  margin-top: calc((22px - var(--v2-icon)) / 2);
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-translate-title {
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  font-size: var(--v2-font-heading);
+  font-weight: var(--v2-weight-heading);
+  line-height: 22px;
+}
+.zen-translate-panel-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 var(--v2-card-padding);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.zen-translate-panel > .zen-translate-footer {
+  flex-shrink: 0;
+  padding: 12px var(--v2-card-padding) var(--v2-card-padding);
 }
 /* The words that were selected: secondary to their translation, at most three lines. */
 .zen-translate-original {
@@ -367,8 +428,6 @@
 }
 .zen-translate-result {
   min-height: var(--v2-line-body);
-  max-height: 40vh;
-  overflow-y: auto;
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
   white-space: pre-wrap;
@@ -453,15 +512,18 @@ div:has(> .zen-sheet.zen-translate-sheet) > .zen-sheet-scrim {
   border-radius: var(--v2-radius-card);
   background: var(--v2-card);
 }
+/*
+ * A row holding a control (§9.21): the larger of the base row (32 / 44) and the control plus 8,
+ * the 4 above and below being the row's own padding – 40 around a 32 px menulist on the desktop,
+ * 48 around a 40 px one on a phone, 36 / 52 around an icon button – the control centred (§9.18).
+ * Rows touch: no gap, no hairline between them.
+ */
 .zen-translate-row {
   display: flex;
   align-items: center;
   gap: 8px;
   min-height: var(--v2-row);
   padding: 4px 0;
-}
-.zen-translate-row + .zen-translate-row {
-  border-top: 1px solid var(--v2-card-border);
 }
 /* An empty list (§9.17): one sentence at 15/400 and 69%, centred inside a 32 px gutter, top-anchored. */
 .zen-translate-empty {

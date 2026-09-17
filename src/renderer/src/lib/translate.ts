@@ -102,6 +102,78 @@ export function languageOptions(
 }
 
 // ---------------------------------------------------------------------------
+// Desktop popovers (v2 draft §9.20)
+// ---------------------------------------------------------------------------
+
+/** A popover keeps this much from the window's edges. */
+export const POPOVER_MARGIN = 8
+/** A popover is at most this share of the window tall. */
+const POPOVER_HEIGHT_SHARE = 0.6
+
+export interface Box {
+  left: number
+  right: number
+  top: number
+  bottom: number
+}
+
+export interface Placement {
+  left: number
+  top: number
+  maxHeight: number
+}
+
+/**
+ * Where a popover `width` wide goes for a trigger at `anchor` inside `bar`, in a window of
+ * `window` size, wanting to be `wanted` tall: its top border on the bar's bottom edge (gap 0 to
+ * the bar), start-aligned with the trigger – end-aligned when the trigger is in the trailing
+ * half of its bar – clamped 8 px inside the window; as tall as it wants up to 60% of the window
+ * (never the window less 16); above the bar only when the space under it has no room for
+ * `minHeight` and the space above has more.
+ */
+export function placePopover(
+  anchor: Box,
+  bar: Box,
+  window: { width: number; height: number },
+  size: { width: number; wanted: number; minHeight: number }
+): Placement {
+  const cap = Math.min(
+    Math.floor(window.height * POPOVER_HEIGHT_SHARE),
+    window.height - 2 * POPOVER_MARGIN
+  )
+  const below = window.height - bar.bottom - POPOVER_MARGIN
+  const above = bar.top - POPOVER_MARGIN
+  const flip = below < Math.min(size.wanted, size.minHeight) && above > below
+  const maxHeight = Math.max(size.minHeight, Math.min(size.wanted, cap, flip ? above : below))
+  const trailing = (anchor.left + anchor.right) / 2 > (bar.left + bar.right) / 2
+  const left = trailing ? anchor.right - size.width : anchor.left
+  return {
+    left: Math.max(POPOVER_MARGIN, Math.min(left, window.width - size.width - POPOVER_MARGIN)),
+    top: flip ? bar.top - maxHeight : bar.bottom,
+    maxHeight
+  }
+}
+
+/**
+ * Where a popover `width` wide and `height` tall goes for a request at the point (`x`, `y`) in
+ * window pixels (the selection popover, which opens from the page rather than a bar): its start
+ * edge on the point and its top edge under it – above it when there is no room below – clamped
+ * 8 px inside the window.
+ */
+export function placeAtPoint(
+  x: number,
+  y: number,
+  window: { width: number; height: number },
+  size: { width: number; height: number }
+): { left: number; top: number } {
+  const top = y + size.height > window.height - POPOVER_MARGIN ? y - size.height : y
+  return {
+    left: Math.max(POPOVER_MARGIN, Math.min(x, window.width - size.width - POPOVER_MARGIN)),
+    top: Math.max(POPOVER_MARGIN, Math.min(top, window.height - size.height - POPOVER_MARGIN))
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The selection popover
 // ---------------------------------------------------------------------------
 
