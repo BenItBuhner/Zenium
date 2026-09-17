@@ -1,37 +1,19 @@
 import type { JSX, ReactNode } from 'react'
-import { Input } from '../ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
-import { Switch } from '../ui/switch'
-import { rowControl, rowIsLabel, rowStacks, type ControlTypes } from './settingsRow'
 
-/**
- * Building blocks shared by the Settings sections. Rows sit directly on the panel; a group is a
- * sentence-case heading and the air around it, never a card or a rule (design-language.md §8.2).
- * The styles live under `.zen-settings-*` in main.css, with the phone metrics keyed on the form
- * factor there.
- */
+/** Building blocks shared by the Settings sections. */
 
 export function Group({ title, children }: { title: string; children: ReactNode }): JSX.Element {
   return (
-    <section className="zen-settings-group">
-      <h3 className="zen-settings-heading">{title}</h3>
-      <div className="zen-settings-rows">{children}</div>
+    <section>
+      <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-[var(--zen-muted)]">
+        {title}
+      </h3>
+      <div className="overflow-hidden rounded-xl border border-[var(--zen-border)]">{children}</div>
     </section>
   )
 }
 
-/** The controls a row recognises as its single child (see settingsRow.ts). */
-const CONTROL_TYPES: ControlTypes = [
-  [Switch, 'switch'],
-  [Choice, 'select'],
-  [Input, 'input'],
-  [Segmented, 'segmented']
-]
-
-/**
- * A row whose only child is a switch, a select or a field is labelled by its text, so the whole
- * row toggles, opens or focuses it; wide controls stack under the label in a narrow column.
- */
 export function Row({
   label,
   hint,
@@ -41,26 +23,15 @@ export function Row({
   hint?: string
   children: ReactNode
 }): JSX.Element {
-  const control = rowControl(children, CONTROL_TYPES)
-  const Tag = rowIsLabel(control) ? 'label' : 'div'
   return (
-    <Tag
-      className="zen-settings-row"
-      data-control={control ?? undefined}
-      data-stack={rowStacks(control, children) || undefined}
-    >
-      <div className="zen-settings-text">
-        <div className="zen-settings-label">{label}</div>
-        {hint && <div className="zen-settings-hint">{hint}</div>}
+    <div className="flex min-h-12 items-center gap-4 border-b border-[var(--zen-border)] px-4 py-2 last:border-b-0">
+      <div className="min-w-0 flex-1">
+        <div className="text-[13px]">{label}</div>
+        {hint && <div className="text-[11.5px] text-[var(--zen-muted)]">{hint}</div>}
       </div>
-      <div className="zen-settings-control">{children}</div>
-    </Tag>
+      {children}
+    </div>
   )
-}
-
-/** Centred muted text where a list would be: no routes yet, nothing to show. */
-export function Note({ children }: { children: ReactNode }): JSX.Element {
-  return <div className="zen-settings-note">{children}</div>
 }
 
 /** Two or three options as one pill; the picked one wears the accent tint. */
@@ -99,7 +70,6 @@ export function Segmented<T extends string>({
   )
 }
 
-/** A long list of options (engines, spaces, colours); short sets use `Segmented`. */
 export function Choice<T extends string>({
   value,
   options,
@@ -111,7 +81,7 @@ export function Choice<T extends string>({
 }): JSX.Element {
   return (
     <Select value={value} onValueChange={(v) => onChange(v as T)}>
-      <SelectTrigger>
+      <SelectTrigger className="w-56">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

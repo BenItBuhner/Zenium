@@ -24,7 +24,7 @@ import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { activeTab } from '@renderer/lib/selectors'
 import { openOverlay, uiStore } from '@renderer/lib/ui'
-import { relativeTime } from '@renderer/lib/utils'
+import { cn, relativeTime } from '@renderer/lib/utils'
 import { ContainerIcon } from '../ContainerIcon'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -33,7 +33,7 @@ import { AgentsSection } from './AgentsSection'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { OverlayShell } from './OverlayShell'
 import { ResourcesSection } from './ResourcesSection'
-import { Choice, Group, Note, Row, Segmented } from './SettingsPrimitives'
+import { Choice, Group, Row, Segmented } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
 import { SyncSection } from './SyncSection'
 import { UpdatesSection } from './UpdatesSection'
@@ -56,19 +56,19 @@ export type SettingsSection =
   | 'about'
 
 const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
-  { id: 'look', label: 'Look and feel' },
-  { id: 'compact', label: 'Compact mode' },
-  { id: 'tabs', label: 'Tab management' },
+  { id: 'look', label: 'Look and Feel' },
+  { id: 'compact', label: 'Compact Mode' },
+  { id: 'tabs', label: 'Tab Management' },
   { id: 'resources', label: 'Resources' },
   { id: 'search', label: 'Search' },
-  { id: 'spaces', label: 'Space routing' },
+  { id: 'spaces', label: 'Space Routing' },
   { id: 'containers', label: 'Containers' },
   { id: 'boosts', label: 'Boosts' },
   { id: 'mods', label: 'Mods' },
   { id: 'extensions', label: 'Extensions' },
-  { id: 'agents', label: 'AI agents' },
+  { id: 'agents', label: 'AI Agents' },
   { id: 'sync', label: 'Sync' },
-  { id: 'shortcuts', label: 'Keyboard shortcuts' },
+  { id: 'shortcuts', label: 'Keyboard Shortcuts' },
   { id: 'updates', label: 'Updates' },
   { id: 'about', label: 'About' }
 ]
@@ -133,23 +133,27 @@ export function SettingsPanel({
   const fadeContent = useFadeEdges<HTMLDivElement>({ axis: 'y' })
   return (
     <OverlayShell title="Settings" variant="full" className="zen-settings">
-      <div className="zen-settings-body">
-        <nav ref={fadeNav} className="zen-settings-nav" aria-label="Settings sections">
+      <div className="flex h-full">
+        <nav
+          ref={fadeNav}
+          className="w-52 shrink-0 overflow-y-auto border-r border-[var(--zen-border)] p-2"
+        >
           {sections.map((item) => (
             <button
               key={item.id}
               type="button"
-              className="zen-settings-nav-item"
-              data-active={section === item.id}
-              aria-current={section === item.id ? 'page' : undefined}
+              className={cn(
+                'zen-squircle flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
+                section === item.id && 'bg-[var(--zen-element-bg-active)] font-medium'
+              )}
               onClick={() => setSection(item.id)}
             >
               {item.label}
             </button>
           ))}
         </nav>
-        <div ref={fadeContent} className="zen-settings-content">
-          <div className="zen-settings-page">
+        <div ref={fadeContent} className="min-w-0 flex-1 overflow-y-auto p-6">
+          <div className="mx-auto flex max-w-2xl flex-col gap-6">
             {section === 'look' && <LookSection s={s} set={set} />}
             {section === 'compact' && <CompactSection s={s} set={set} />}
             {section === 'tabs' && (
@@ -189,12 +193,11 @@ function LookSection({
     <>
       <Group title="Appearance">
         <Row label="Colour scheme">
-          <Segmented<ColorScheme>
-            label="Colour scheme"
+          <Choice<ColorScheme>
             value={s.colorScheme}
             onChange={(v) => set({ colorScheme: v })}
             options={[
-              { value: 'system', label: 'System' },
+              { value: 'system', label: 'Follow system' },
               { value: 'light', label: 'Light' },
               { value: 'dark', label: 'Dark' }
             ]}
@@ -202,16 +205,15 @@ function LookSection({
         </Row>
         <Row
           label="Toolbar layout"
-          hint="Single: everything lives in the sidebar. Multiple: a top toolbar holds navigation. Collapsed: the toolbar folds away."
+          hint="Single: everything lives in the sidebar. Multiple: a top toolbar holds navigation."
         >
-          <Segmented<ToolbarLayout>
-            label="Toolbar layout"
+          <Choice<ToolbarLayout>
             value={s.toolbarLayout}
             onChange={(v) => set({ toolbarLayout: v })}
             options={[
-              { value: 'single', label: 'Single' },
-              { value: 'multiple', label: 'Multiple' },
-              { value: 'collapsed', label: 'Collapsed' }
+              { value: 'single', label: 'Single toolbar' },
+              { value: 'multiple', label: 'Multiple toolbars' },
+              { value: 'collapsed', label: 'Collapsed toolbar' }
             ]}
           />
         </Row>
@@ -234,19 +236,15 @@ function LookSection({
           <Switch checked={s.borderless} onCheckedChange={(v) => set({ borderless: v })} />
         </Row>
       </Group>
-      <Group title="URL bar">
-        <Row
-          label="Floating URL bar"
-          hint="Floating lifts the URL bar into a panel over the page; attached keeps it at the top."
-        >
-          <Segmented<UrlbarBehavior>
-            label="Floating URL bar"
+      <Group title="URL Bar">
+        <Row label="Floating behaviour">
+          <Choice<UrlbarBehavior>
             value={s.urlbarBehavior}
             onChange={(v) => set({ urlbarBehavior: v })}
             options={[
-              { value: 'float-typing', label: 'While typing' },
-              { value: 'always-float', label: 'Always' },
-              { value: 'normal', label: 'Attached' }
+              { value: 'float-typing', label: 'Floating only when typing' },
+              { value: 'always-float', label: 'Always floating' },
+              { value: 'normal', label: 'Normal (attached to top)' }
             ]}
           />
         </Row>
@@ -270,8 +268,7 @@ function LookSection({
           <Switch checked={s.glanceEnabled} onCheckedChange={(v) => set({ glanceEnabled: v })} />
         </Row>
         <Row label="Trigger">
-          <Segmented<GlanceTrigger>
-            label="Glance trigger"
+          <Choice<GlanceTrigger>
             value={s.glanceTrigger}
             onChange={(v) => set({ glanceTrigger: v })}
             options={[
@@ -295,7 +292,7 @@ function CompactSection({
 }): JSX.Element {
   const cm = s.compactMode
   return (
-    <Group title="Compact mode">
+    <Group title="Compact Mode">
       <Row
         label="Enable compact mode"
         hint="Ctrl+S. Hidden bars reappear when you hover the window edge."
@@ -344,13 +341,12 @@ function TabsSection({
     <>
       <Group title="Tabs">
         <Row label="Open new tabs">
-          <Segmented<NewTabPosition>
-            label="Where new tabs open"
+          <Choice<NewTabPosition>
             value={s.newTabPosition}
             onChange={(v) => set({ newTabPosition: v })}
             options={[
-              { value: 'end', label: 'At the end' },
-              { value: 'after-current', label: 'Below current tab' }
+              { value: 'end', label: 'At the end of the list' },
+              { value: 'after-current', label: 'Below the current tab' }
             ]}
           />
         </Row>
@@ -374,19 +370,18 @@ function TabsSection({
         </Row>
       </Group>
       {windows && (
-        <Group title="Window sync">
+        <Group title="Window Sync">
           <Row
             label="Tabs across windows"
-            hint="Zenium mirrors your spaces and tabs in every window. Pinned only keeps unpinned tabs per window; off makes windows independent."
+            hint="Zenium mirrors your spaces and tabs in every window. Choose 'pinned only' to keep unpinned tabs per window."
           >
-            <Segmented<WindowSyncMode>
-              label="Tabs across windows"
+            <Choice<WindowSyncMode>
               value={s.windowSync}
               onChange={(v) => set({ windowSync: v })}
               options={[
-                { value: 'all', label: 'All tabs' },
-                { value: 'pinned', label: 'Pinned only' },
-                { value: 'off', label: 'Off' }
+                { value: 'all', label: 'Sync all tabs' },
+                { value: 'pinned', label: 'Sync only pinned tabs in spaces' },
+                { value: 'off', label: 'Off – windows are independent' }
               ]}
             />
           </Row>
@@ -404,7 +399,7 @@ function TabsSection({
           </Row>
         </Group>
       )}
-      <Group title="Pinned tabs and Essentials">
+      <Group title="Pinned Tabs & Essentials">
         <Row label="When closing a pinned tab">
           <Choice<PinnedCloseBehavior>
             value={s.pinnedCloseBehavior}
@@ -426,18 +421,14 @@ function TabsSection({
             onCheckedChange={(v) => set({ pinnedResetOnStartup: v })}
           />
         </Row>
-        <Row
-          label="Links to other sites from pinned and essential tabs"
-          hint="Where a link that leaves the pinned site opens."
-        >
-          <Segmented<ThirdPartyPinnedBehavior>
-            label="Links to other sites from pinned tabs"
+        <Row label="Third-party links on pinned & essential tabs">
+          <Choice<ThirdPartyPinnedBehavior>
             value={s.thirdPartyOnPinned}
             onChange={(v) => set({ thirdPartyOnPinned: v })}
             options={[
-              { value: 'new-tab', label: 'New tab' },
-              { value: 'glance', label: 'Glance' },
-              { value: 'same-tab', label: 'Same tab' }
+              { value: 'new-tab', label: 'Open in their own tab' },
+              { value: 'glance', label: 'Open in Glance' },
+              { value: 'same-tab', label: 'Open in the same tab' }
             ]}
           />
         </Row>
@@ -461,7 +452,7 @@ function TabsSection({
           />
         </Row>
       </Group>
-      <Group title="Tab unloading">
+      <Group title="Tab Unloading">
         <Row
           label="Unload inactive tabs"
           hint="Frees memory by unloading tabs you haven't used for a while. Freezing, budgets and the live-page cap live under Resources."
@@ -556,12 +547,16 @@ function SpaceRoutingSection({
   }
   return (
     <>
-      <p className="zen-settings-hint px-2.5 text-[12.5px]">
-        Space routing opens links from the listed domains in a specific space, wherever you click
+      <p className="text-[13px] text-[var(--zen-muted)]">
+        Space Routing opens links from the listed domains in a specific space, wherever you click
         them.
       </p>
       <Group title="Routes">
-        {Object.keys(routing).length === 0 && <Note>No routes yet.</Note>}
+        {Object.keys(routing).length === 0 && (
+          <div className="px-4 py-6 text-center text-[12.5px] text-[var(--zen-muted)]">
+            No routes yet.
+          </div>
+        )}
         {Object.entries(routing).map(([d, sid]) => {
           const space = state.spaces.find((s) => s.id === sid)
           return (
@@ -583,7 +578,7 @@ function SpaceRoutingSection({
         })}
       </Group>
       <Group title="Add route">
-        <div className="flex items-center gap-2 px-2.5 py-1">
+        <div className="flex items-center gap-2 p-3">
           <Input
             placeholder="domain.com"
             value={domain}
@@ -612,7 +607,7 @@ function ContainersSection({ state }: { state: UIState }): JSX.Element {
   const editable = state.containers.filter((c) => c.id !== DEFAULT_CONTAINER_ID)
   return (
     <>
-      <p className="zen-settings-hint px-2.5 text-[12.5px]">
+      <p className="text-[13px] text-[var(--zen-muted)]">
         Containers keep cookies and site data separate, so you can stay logged into several accounts
         on the same site. Assign a container to a space to isolate it. The order here is used
         wherever containers are listed.
@@ -670,10 +665,14 @@ function ContainersSection({ state }: { state: UIState }): JSX.Element {
             )}
           </Row>
         ))}
-        {editable.length === 0 && <Note>Only the default container exists.</Note>}
+        {editable.length === 0 && (
+          <div className="px-4 py-4 text-center text-[12.5px] text-[var(--zen-muted)]">
+            Only the default container exists.
+          </div>
+        )}
       </Group>
       <Group title="New container">
-        <div className="flex flex-wrap items-center gap-2 px-2.5 py-1">
+        <div className="flex flex-wrap items-center gap-2 p-3">
           <Input
             placeholder="Name"
             value={name}
@@ -717,8 +716,8 @@ function BoostsSection({ state }: { state: UIState }): JSX.Element {
   )
   return (
     <>
-      <div className="zen-settings-lead">
-        <p className="zen-settings-hint text-[12.5px]">
+      <div className="flex items-start justify-between gap-4">
+        <p className="text-[13px] text-[var(--zen-muted)]">
           Boosts change how a website looks: tint its colours, swap fonts, zap elements away or
           force dark mode. They apply to every page of the site and stay until you remove them.
         </p>
@@ -727,12 +726,14 @@ function BoostsSection({ state }: { state: UIState }): JSX.Element {
           disabled={!canBoostCurrent}
           onClick={() => tab && void openOverlay('boosts', tab.id)}
         >
-          <Sparkles className="h-3.5 w-3.5" /> Boost current site
+          <Sparkles className="mr-1.5 h-3.5 w-3.5" /> Boost current site
         </Button>
       </div>
       <Group title="Active boosts">
         {state.boosts.length === 0 && (
-          <Note>No boosts yet. Open a site and click the sparkle in the address bar.</Note>
+          <div className="px-4 py-6 text-center text-[12.5px] text-[var(--zen-muted)]">
+            No boosts yet. Open a site and click the sparkle in the address bar.
+          </div>
         )}
         {state.boosts.map((b) => {
           const parts = [
@@ -751,7 +752,7 @@ function BoostsSection({ state }: { state: UIState }): JSX.Element {
             >
               {b.tint && (
                 <span
-                  className="h-3 w-3 rounded-full ring-1 ring-[rgb(var(--zen-fg-rgb)/0.12)]"
+                  className="h-3 w-3 rounded-full ring-1 ring-black/10"
                   style={{ background: b.tint }}
                 />
               )}

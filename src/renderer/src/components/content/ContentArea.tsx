@@ -83,8 +83,8 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
             ) : null}
             <div
               className={cn(
-                'zen-overlay-scrim absolute inset-0 transition-opacity',
-                ui.drag && 'opacity-60'
+                'absolute inset-0 bg-black/35 transition-opacity',
+                ui.drag && 'bg-black/20'
               )}
             />
           </div>

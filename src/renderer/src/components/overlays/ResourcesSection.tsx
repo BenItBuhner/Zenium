@@ -29,7 +29,7 @@ import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Slider } from '../ui/slider'
 import { Switch } from '../ui/switch'
-import { Choice, Group, Note, Row, Segmented } from './SettingsPrimitives'
+import { Choice, Group, Row } from './SettingsPrimitives'
 
 const ACTION_LABELS: Record<GovernorActionKind, string> = {
   purge: 'Purged memory of',
@@ -60,14 +60,14 @@ export function ResourcesSection({
 
   return (
     <>
-      <p className="zen-settings-hint px-2.5 text-[12.5px]">
+      <p className="text-[13px] text-[var(--zen-muted)]">
         The resource governor keeps every Chromium process of this browser under the budgets you
         set. Hidden pages are purged, CPU-throttled, frozen and finally unloaded – cheapest first –
         and background loads queue up instead of all starting at once.
       </p>
 
       <Group title="Live usage">
-        <div className="flex flex-col gap-4 px-2.5 py-1">
+        <div className="flex flex-col gap-4 p-4">
           <Meter
             icon={MemoryStick}
             label="Memory"
@@ -93,20 +93,20 @@ export function ResourcesSection({
             sub={r.gpuMode === 'off' ? 'Hardware acceleration is off.' : undefined}
           />
           {snap.system.onBattery && (
-            <div className="zen-settings-hint flex items-center gap-2 text-[var(--zen-warn)]">
+            <div className="flex items-center gap-2 text-[12px] text-amber-600 dark:text-amber-400">
               <BatteryCharging className="h-3.5 w-3.5" />
               On battery – budgets are tightened to {Math.round(r.batteryFactor * 100)}%.
             </div>
           )}
           {snap.system.idle && (
-            <div className="zen-settings-hint flex items-center gap-2">
+            <div className="flex items-center gap-2 text-[12px] text-[var(--zen-muted)]">
               <Snowflake className="h-3.5 w-3.5" />
               System idle – hidden pages are frozen.
             </div>
           )}
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={() => run('resources.trim', undefined)}>
-              <Zap className="h-3.5 w-3.5" />
+              <Zap className="mr-1.5 h-3.5 w-3.5" />
               Free up memory now
             </Button>
             <Button
@@ -114,10 +114,10 @@ export function ResourcesSection({
               variant="secondary"
               onClick={() => run('resources.snapshot', undefined)}
             >
-              <RefreshCw className="h-3.5 w-3.5" />
+              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
               Refresh
             </Button>
-            <span className="zen-settings-hint self-center">
+            <span className="self-center text-[11.5px] text-[var(--zen-muted)]">
               {snap.sampledAt ? `Sampled ${ago(snap.sampledAt)}` : 'Waiting for the first sample…'}
             </span>
           </div>
@@ -137,7 +137,7 @@ export function ResourcesSection({
               >
                 {tab.frozen && <Snowflake className="h-3.5 w-3.5 text-[var(--zen-muted)]" />}
                 {tab.cpuThrottle > 1 && (
-                  <span className="zen-settings-hint flex items-center gap-1 tabular-nums">
+                  <span className="flex items-center gap-1 text-[11.5px] text-[var(--zen-muted)]">
                     <Turtle className="h-3.5 w-3.5" />×{tab.cpuThrottle}
                   </span>
                 )}
@@ -154,7 +154,7 @@ export function ResourcesSection({
         </Group>
       )}
 
-      <Group title="Resource governor">
+      <Group title="Resource Governor">
         <Row
           label="Keep the browser within budgets"
           hint="Turning this off also drops the startup switches below after a relaunch."
@@ -165,14 +165,13 @@ export function ResourcesSection({
           label="Enforcement"
           hint="Balanced only touches hidden pages. Strict may also purge and throttle visible panes. Extreme may throttle and, as a last resort, reload the page you are looking at."
         >
-          <Segmented<ResourceEnforcement>
-            label="Enforcement"
+          <Choice<ResourceEnforcement>
             value={r.enforcement}
             onChange={(v) => setR({ enforcement: v })}
             options={[
-              { value: 'balanced', label: 'Balanced' },
-              { value: 'strict', label: 'Strict' },
-              { value: 'extreme', label: 'Extreme' }
+              { value: 'balanced', label: 'Balanced – hidden pages only' },
+              { value: 'strict', label: 'Strict – visible panes too' },
+              { value: 'extreme', label: 'Extreme – even the active page' }
             ]}
           />
         </Row>
@@ -244,7 +243,7 @@ export function ResourcesSection({
         </Row>
       </Group>
 
-      <Group title="Sleeping and unloading">
+      <Group title="Sleeping & unloading">
         <Row
           label="Freeze hidden pages after (minutes)"
           hint="A frozen page keeps its state but runs no script or timers, like Chrome's tab freezing. 0 freezes as soon as a page is hidden."
@@ -333,12 +332,12 @@ export function ResourcesSection({
 
       <Group title="Process profile (relaunch required)">
         {snap.restartRequired && (
-          <div className="zen-settings-row zen-settings-warn zen-squircle mb-2 py-2">
-            <span className="zen-settings-label flex-1">
+          <div className="flex items-center gap-3 border-b border-[var(--zen-border)] bg-amber-500/10 px-4 py-3 text-[12.5px]">
+            <span className="flex-1">
               These switches only take effect when the browser starts. Relaunch to apply them.
             </span>
             <Button size="sm" onClick={() => run('resources.relaunch', undefined)}>
-              <RotateCw className="h-3.5 w-3.5" />
+              <RotateCw className="mr-1.5 h-3.5 w-3.5" />
               Relaunch Zen
             </Button>
           </div>
@@ -347,14 +346,13 @@ export function ResourcesSection({
           label="GPU"
           hint="Low keeps compositing on the GPU but rasterises, decodes video and draws canvases on the CPU. Off disables hardware acceleration."
         >
-          <Segmented<GpuMode>
-            label="GPU"
+          <Choice<GpuMode>
             value={r.gpuMode}
             onChange={(v) => setR({ gpuMode: v })}
             options={[
               { value: 'auto', label: 'Automatic' },
-              { value: 'low', label: 'Low' },
-              { value: 'off', label: 'Off' }
+              { value: 'low', label: 'Low GPU usage' },
+              { value: 'off', label: 'Off – software rendering' }
             ]}
           />
         </Row>
@@ -435,7 +433,9 @@ export function ResourcesSection({
 
       <Group title="Recent actions">
         {snap.recentActions.length === 0 ? (
-          <Note>Nothing yet – the governor has not had to act.</Note>
+          <div className="px-4 py-6 text-center text-[12.5px] text-[var(--zen-muted)]">
+            Nothing yet – the governor has not had to act.
+          </div>
         ) : (
           snap.recentActions
             .slice(0, 15)
@@ -468,15 +468,15 @@ function Meter({
   const pct = max > 0 ? (gauge.used / max) * 100 : 0
   const tone =
     gauge.budget === 0
-      ? 'bg-[rgb(var(--zen-accent-rgb)/0.5)]'
+      ? 'bg-[var(--zen-accent)]/50'
       : pct >= 100
-        ? 'bg-[var(--zen-danger)]'
+        ? 'bg-red-500'
         : pct >= 85
-          ? 'bg-[var(--zen-warn)]'
-          : 'bg-[var(--zen-accent-fill)]'
+          ? 'bg-amber-500'
+          : 'bg-[var(--zen-accent)]'
   return (
     <div>
-      <div className="zen-settings-label mb-1 flex items-center justify-between">
+      <div className="mb-1 flex items-center justify-between text-[12.5px]">
         <span className="flex items-center gap-1.5">
           <Icon className="h-3.5 w-3.5 text-[var(--zen-muted)]" />
           {label}
@@ -495,7 +495,7 @@ function Meter({
           style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
         />
       </div>
-      {sub && <div className="zen-settings-hint mt-1">{sub}</div>}
+      {sub && <div className="mt-1 text-[11.5px] text-[var(--zen-muted)]">{sub}</div>}
     </div>
   )
 }
@@ -576,15 +576,17 @@ function PercentDraft({
         onValueChange={([v]) => setLocal(v)}
         onValueCommit={([v]) => onCommit(v)}
       />
-      <span className="zen-settings-label w-10 text-right tabular-nums">{local}%</span>
+      <span className="w-10 text-right text-[12.5px] tabular-nums">{local}%</span>
     </div>
   )
 }
 
 function ActionRow({ action }: { action: GovernorAction }): JSX.Element {
   return (
-    <div className="zen-settings-row gap-3 text-[12.5px]">
-      <span className="zen-settings-hint w-16 shrink-0 tabular-nums">{ago(action.at)}</span>
+    <div className="flex items-center gap-3 border-b border-[var(--zen-border)] px-4 py-2 text-[12.5px] last:border-b-0">
+      <span className="w-16 shrink-0 text-[11.5px] tabular-nums text-[var(--zen-muted)]">
+        {ago(action.at)}
+      </span>
       <span className="min-w-0 flex-1 truncate">
         {ACTION_LABELS[action.kind]} <span className="font-medium">{action.title || 'a tab'}</span>
         <span className="text-[var(--zen-muted)]"> – {action.reason}</span>
