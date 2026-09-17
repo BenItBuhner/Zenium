@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronLeft, ChevronRight } from 'lucide-react'
 import type { MenuDescriptor, MenuItemDescriptor } from '@shared/types'
+import { useBackDismissal, useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
 import { closeMenu, lastPointer, pickMenuItem, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -39,14 +40,31 @@ function BottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const insets = uiStore.use((s) => s.insets)
   const title = path.length ? path[path.length - 1].label : sourceTitle(menu.source)
 
+  // The system back gesture: the sheet follows the finger down, shrinking a little, while the
+  // scrim thins out; commit finishes the slide and closes, cancel springs it back up.
+  const scrimRef = useRef<HTMLDivElement>(null)
+  const sheetRef = useRef<HTMLDivElement>(null)
+  useBackDismissal('menu', {
+    travel: 360,
+    render: (v) => {
+      const sheet = sheetRef.current
+      const scrim = scrimRef.current
+      if (sheet) sheet.style.transform = `translateY(${v * 100}%) scale(${1 - 0.06 * v})`
+      if (scrim) scrim.style.backgroundColor = `rgb(0 0 0 / ${0.4 * (1 - v)})`
+    },
+    dismissed: () => closeMenu()
+  })
+
   return (
     <div
+      ref={scrimRef}
       className="fixed inset-0 z-[90] flex flex-col justify-end bg-black/40 zen-animate-fade"
       onClick={() => closeMenu()}
     >
       <div
+        ref={sheetRef}
         className="zen-panel zen-sheet-in mx-auto w-full max-w-[520px] rounded-b-none rounded-t-2xl border-b-0 pb-1"
-        style={{ paddingBottom: Math.max(8, insets.bottom) }}
+        style={{ paddingBottom: Math.max(8, insets.bottom), transformOrigin: '50% 100%' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-[var(--zen-fg)]/20" />
@@ -140,6 +158,8 @@ function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
     () => ({ x: menu.x ?? lastPointer.x, y: menu.y ?? lastPointer.y }),
     [menu.id, menu.x, menu.y] // eslint-disable-line react-hooks/exhaustive-deps
   )
+  // A popover has nothing to slide: the back gesture simply closes it.
+  useBackSurface({ name: 'menu', onCommit: () => closeMenu() })
   return (
     <div
       className="fixed inset-0 z-[90]"

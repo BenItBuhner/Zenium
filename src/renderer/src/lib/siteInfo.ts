@@ -1,13 +1,8 @@
 import type { Rect, Tab } from '@shared/types'
+import { pushBackSurface } from './back'
 import { SHEET_CLOSED, SheetMotion, type SheetState } from './motion/sheet'
 import { createStore } from './store'
-import {
-  captureActiveTab,
-  invalidateSnapshot,
-  registerBackHandler,
-  returnFocusToPage,
-  uiStore
-} from './ui'
+import { captureActiveTab, invalidateSnapshot, returnFocusToPage, uiStore } from './ui'
 import { run } from './api'
 
 export interface SiteInfoState {
@@ -84,9 +79,8 @@ export const siteInfoDrag = {
 }
 
 /**
- * Progress-driven dismissal for the system back gesture. A predictive-back registry drives the
- * sheet through these as the swipe advances; until one exists, `handleSystemBack` closes the
- * sheet outright through the back handler below.
+ * Progress-driven dismissal for the system back gesture: the back-surface registry (`back.ts`)
+ * drives the sheet through these as the swipe advances, for as long as the sheet is open.
  */
 export const siteInfoBack = {
   isOpen: (): boolean => siteInfoIsOpen(),
@@ -105,10 +99,21 @@ function finishClose(): void {
 const flags = globalThis as unknown as { __zenSiteInfoWired?: boolean }
 if (!flags.__zenSiteInfoWired) {
   flags.__zenSiteInfoWired = true
-  registerBackHandler(() => {
-    if (!siteInfoIsOpen()) return false
-    closeSiteInfo()
-    return true
+  // The open sheet is a back surface: the gesture peeks it away, commit dismisses, cancel presents.
+  let popBackSurface: (() => void) | null = null
+  siteInfoStore.subscribe(() => {
+    const open = siteInfoIsOpen()
+    if (open && !popBackSurface) {
+      popBackSurface = pushBackSurface({
+        name: 'site-info',
+        onProgress: siteInfoBack.progress,
+        onCommit: siteInfoBack.commit,
+        onCancel: siteInfoBack.cancel
+      })
+    } else if (!open && popBackSurface) {
+      popBackSurface()
+      popBackSurface = null
+    }
   })
   // Another chrome surface (URL bar, panel, drawer, menu) replaces the sheet outright.
   uiStore.subscribe(() => {

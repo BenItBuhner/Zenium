@@ -1,5 +1,7 @@
 import { X } from 'lucide-react'
 import type { ReactNode, JSX } from 'react'
+import { useRef } from 'react'
+import { useBackDismissal } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
 import { closeOverlay } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -22,9 +24,24 @@ export function OverlayShell({
   className
 }: Props): JSX.Element {
   const phone = useViewport().formFactor === 'phone'
+  // The system back gesture: the panel recedes towards the bottom edge, shrinking and fading
+  // with the finger; commit closes it, cancel springs it back.
+  const panelRef = useRef<HTMLDivElement>(null)
+  useBackDismissal('overlay', {
+    travel: 360,
+    render: (v) => {
+      const el = panelRef.current
+      if (!el) return
+      el.style.transform = `translateY(${30 * v}%) scale(${1 - 0.1 * v})`
+      el.style.opacity = String(1 - v)
+    },
+    dismissed: () => closeOverlay()
+  })
   return (
     <div className="absolute inset-0 z-30 flex" onMouseDown={() => closeOverlay()}>
       <div
+        ref={panelRef}
+        style={{ transformOrigin: '50% 100%' }}
         className={cn(
           'zen-panel zen-animate-in flex flex-col overflow-hidden',
           // Docked panels take the whole content card on phones; dialogs hug the bottom edge.

@@ -1,6 +1,7 @@
 package app.zen.chromium
 
 import android.app.Activity
+import android.content.ComponentCallbacks2
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
@@ -13,7 +14,6 @@ import android.view.ViewGroup
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.widget.FrameLayout
-import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
@@ -97,11 +97,8 @@ class MainActivity : AppCompatActivity() {
             WindowInsetsCompat.CONSUMED
         }
 
-        onBackPressedDispatcher.addCallback(this) {
-            if (host.handleBackInFullscreen()) return@addCallback
-            host.chrome.onBack { handled -> if (!handled) moveTaskToBack(true) }
-        }
-
+        // Back is the host's PredictiveBack: it registers itself only while there is something to
+        // pop, so an empty stack leaves the system's own back-to-home animation alone.
         host.chrome.load()
         handleIntent(intent)
     }
@@ -157,6 +154,13 @@ class MainActivity : AppCompatActivity() {
         super.onConfigurationChanged(newConfig)
         // The chrome re-measures itself; nothing to do but let WebViews relayout.
         root.requestLayout()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // Backgrounded and on the system's LRU list: the back previews are the one cache worth
+        // dropping (UI_HIDDEN alone is not pressure – the user may be right back).
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) host.snapshots.clear()
     }
 
     // --- keyboard --------------------------------------------------------------------------------

@@ -51,10 +51,18 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     val pageScript: String = activity.assets.open("page.js").bufferedReader().readText().replace("__ZEN_TOKEN__", pageToken)
     private val io = Executors.newCachedThreadPool { r -> Thread(r, "zen-io") }
     private val main = Handler(Looper.getMainLooper())
-    private var fullscreenTab: TabWebView? = null
+    var fullscreenTab: TabWebView? = null
+        private set
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
     var immersive = false
         private set
+    /** The chrome's colour scheme, so native pieces (the back preview) match it. */
+    var themeDark = false
+        private set
+    /** Previews of the pages a back gesture would return to. */
+    val snapshots = HistorySnapshots(activity)
+    /** Last: it reads the tabs and fullscreen state above when it decides what back would do. */
+    val back = PredictiveBack(activity, this)
 
     // ---------------------------------------------------------------------------------------------
     // Dispatch
@@ -158,6 +166,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
                 reply(null)
             }
             "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("background")); reply(null) }
+            "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId")); reply(null) }
             "window.setFullscreen" -> { setImmersive(args.bool("fullscreen")); reply(null) }
             "app.quit" -> { activity.finishAndRemoveTask(); reply(null) }
             "app.background" -> { activity.moveTaskToBack(true); reply(null) }
@@ -219,6 +228,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
         fullscreenLayer.visibility = View.VISIBLE
         setSystemBarsHidden(true)
         chrome.viewEvent(tab.tabId, "enterFullscreen", null)
+        back.refresh()
     }
 
     fun exitFullscreen(tab: TabWebView) {
@@ -230,6 +240,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
         fullscreenTab = null
         if (!immersive) setSystemBarsHidden(false)
         chrome.viewEvent(tab.tabId, "leaveFullscreen", null)
+        back.refresh()
     }
 
     /** Back gesture while a video is fullscreen: leave fullscreen first. */
@@ -289,6 +300,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     }
 
     private fun applyTheme(dark: Boolean, background: String) {
+        themeDark = dark
         val color = parseColor(background.ifEmpty { if (dark) "#16161b" else "#f2f1f5" })
         root.setBackgroundColor(color)
         activity.window.decorView.setBackgroundColor(color)
