@@ -349,6 +349,10 @@ export interface ExtensionInfo {
   hostPermissions: string[]
   /** `options_ui.page` or `options_page`, relative to the extension root. */
   optionsPage: string | null
+  /** `chrome_url_overrides.newtab`, relative to the extension root; null when not declared. */
+  newTabPage: string | null
+  /** New tabs open `newTabPage` (`extension.setNewTabOverride`); off by default, one at most. */
+  newTabOverride: boolean
   /** The install prompt's warning lines Chrome would show for this manifest. */
   warnings: string[]
   /** Warning lines an update added; the extension stays disabled until they are approved. */
@@ -1596,6 +1600,11 @@ export interface Commands {
 
   'layout.report': { args: LayoutReport; result: void }
 
+  /**
+   * The user asked for a new tab: the URL bar in new-tab mode, or the page an extension
+   * overrides new tabs with (`chrome_url_overrides.newtab`, opted in per extension).
+   */
+  'tab.new': { args: void; result: void }
   'tab.create': {
     args: {
       url?: string
@@ -1966,6 +1975,8 @@ export interface Commands {
   'extension.remove': { args: { id: string }; result: void }
   'extension.setEnabled': { args: { id: string; enabled: boolean }; result: void }
   'extension.setPinned': { args: { id: string; pinned: boolean }; result: void }
+  /** Lets (or stops letting) this extension's `chrome_url_overrides.newtab` page open new tabs. */
+  'extension.setNewTabOverride': { args: { id: string; enabled: boolean }; result: void }
   'extension.reload': { args: { id: string }; result: void }
   'extension.checkForUpdates': { args: void; result: void }
   'extension.update': { args: { id: string }; result: void }

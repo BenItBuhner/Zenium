@@ -37,6 +37,7 @@ import {
 import {
   migrateRegistry,
   newRecord,
+  setNewTabOverride,
   withManifest,
   type ExtensionRecord,
   type ExtensionRegistry
@@ -350,6 +351,8 @@ export class AndroidExtensions implements ExtensionHost {
         permissions: record.permissions,
         hostPermissions: record.hostPermissions,
         optionsPage: record.optionsPage,
+        newTabPage: record.newTabPage,
+        newTabOverride: record.newTabOverride,
         warnings: permissionWarningLines(manifest, 'other'),
         pendingWarnings: record.pendingWarnings,
         updateState: update.state,
@@ -691,6 +694,17 @@ export class AndroidExtensions implements ExtensionHost {
     this.persist()
     void this.reconfigure(record)
     this.browser.state.commitVolatile()
+  }
+
+  /** The flag is the desktop's registry schema; the Android host does not route new tabs yet. */
+  setNewTabOverride(id: string, enabled: boolean): void {
+    if (setNewTabOverride(this.registry.extensions, id, enabled).length === 0) return
+    this.persist()
+    this.browser.state.commitVolatile()
+  }
+
+  newTabUrl(): string | null {
+    return null
   }
 
   /** Stop and start again, re-reading the installed files. */

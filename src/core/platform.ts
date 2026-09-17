@@ -632,6 +632,10 @@ export interface ExtensionHost {
   remove(id: string): Promise<void>
   setEnabled(id: string, enabled: boolean, win?: ZenWindow): Promise<void>
   setPinned(id: string, pinned: boolean): void
+  /** Lets this extension's `chrome_url_overrides.newtab` page open new tabs (one at most), or stops it. */
+  setNewTabOverride(id: string, enabled: boolean): void
+  /** The page new tabs open with while an enabled extension holds the override, else null. */
+  newTabUrl(): string | null
   reload(id: string): Promise<void>
   checkForUpdates(win?: ZenWindow): Promise<void>
   update(id: string, win?: ZenWindow): Promise<void>

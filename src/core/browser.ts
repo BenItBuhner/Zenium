@@ -468,6 +468,21 @@ export class Browser {
     this.emit('toast', { message, kind }, win)
   }
 
+  /**
+   * The user asked for a new tab (Ctrl+T, the sidebar button, the menus). Zenium has no new-tab
+   * page: the URL bar opens in new-tab mode, unless an extension the user opted in holds the
+   * `chrome_url_overrides.newtab` override, in which case its page opens as the tab (never in
+   * private windows, which extensions do not run in).
+   */
+  openNewTab(win: ZenWindow = this.focusedWindow()): void {
+    const url = win.isPrivate ? null : this.extensions.newTabUrl()
+    if (url) {
+      this.tabs.createTab({ url, active: true }, win)
+      return
+    }
+    this.emit('urlbar.toggle', { mode: 'new-tab' }, win)
+  }
+
   /** Download events go to every window; private downloads only to private windows. */
   private emitDownload<K extends 'download.changed' | 'download.danger'>(
     name: K,
@@ -1136,6 +1151,7 @@ export class Browser {
         this.externalProtocols.respond(requestId, allow, always),
       'layout.report': (report, win) => win.applyLayout(report),
 
+      'tab.new': (_a, win) => this.openNewTab(win),
       'tab.create': (opts, win) => tabs.createTab(opts, win).id,
       'tab.activate': ({ tabId }, win) => tabs.activateTab(tabId, win),
       'tab.close': ({ tabId, force }, win) => tabs.closeTab(tabId, force, win),
@@ -1502,6 +1518,8 @@ export class Browser {
       'extension.setEnabled': ({ id, enabled }, win) =>
         this.extensions.setEnabled(id, enabled, win),
       'extension.setPinned': ({ id, pinned }) => this.extensions.setPinned(id, pinned),
+      'extension.setNewTabOverride': ({ id, enabled }) =>
+        this.extensions.setNewTabOverride(id, enabled),
       'extension.reload': ({ id }) => this.extensions.reload(id),
       'extension.checkForUpdates': (_a, win) => this.extensions.checkForUpdates(win),
       'extension.update': ({ id }, win) => this.extensions.update(id, win),

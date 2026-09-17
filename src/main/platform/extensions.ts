@@ -35,8 +35,11 @@ import {
   type WarningPlatform
 } from '../../core/extensions/permissionMessages'
 import {
+  manifestFields,
   migrateRegistry,
   newRecord,
+  newTabOverrideUrl,
+  setNewTabOverride,
   withManifest,
   type ExtensionRecord,
   type ExtensionRegistry
@@ -260,6 +263,7 @@ export class ExtensionService implements ExtensionHost {
           }))
         // Electron derives the id itself (from `manifest.key` or the path); trust what it says.
         if (ext.id !== record.id) this.rekey(record, ext.id)
+        this.backfillNewTabPage(record, ext.manifest)
         if (!this.loadedById.has(ext.id)) this.loadedById.set(ext.id, ext)
         for (const listener of this.loadedListeners) listener(ext, ses)
       } catch (error) {
@@ -280,6 +284,15 @@ export class ExtensionService implements ExtensionHost {
     }
     this.loadedById.delete(record.id)
     for (const listener of this.unloadedListeners) listener(record.id)
+  }
+
+  /** Records written before `newTabPage` existed learn theirs from the manifest Electron loaded. */
+  private backfillNewTabPage(record: ExtensionRecord, manifest: unknown): void {
+    if (record.newTabPage !== null) return
+    const page = manifestFields(manifest).newTabPage
+    if (!page) return
+    record.newTabPage = page
+    this.persist()
   }
 
   private rekey(record: ExtensionRecord, id: string): void {
@@ -329,6 +342,8 @@ export class ExtensionService implements ExtensionHost {
         permissions: record.permissions,
         hostPermissions: record.hostPermissions,
         optionsPage: record.optionsPage,
+        newTabPage: record.newTabPage,
+        newTabOverride: record.newTabOverride,
         warnings: permissionWarningLines(manifest ?? {}, warningPlatform()),
         pendingWarnings: record.pendingWarnings,
         updateState: update.state,
@@ -668,6 +683,21 @@ export class ExtensionService implements ExtensionHost {
     record.pinned = pinned
     this.persist()
     this.browser.state.commitVolatile()
+  }
+
+  setNewTabOverride(id: string, enabled: boolean): void {
+    if (setNewTabOverride(this.registry.extensions, id, enabled).length === 0) return
+    this.persist()
+    this.browser.state.commitVolatile()
+  }
+
+  newTabUrl(): string | null {
+    for (const record of this.registry.extensions) {
+      const url = newTabOverrideUrl(record)
+      // A record that failed to load has no page to show; the URL bar is better than an error.
+      if (url && this.loadedById.has(record.id)) return url
+    }
+    return null
   }
 
   /** Unload and load again, picking up changes an unpacked folder saw on disk. */

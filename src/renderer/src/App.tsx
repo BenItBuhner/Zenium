@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import type { UIState } from '@shared/types'
 import type { ResolvedTheme } from '@shared/theme'
 import { run } from '@renderer/lib/api'
-import { isPhone, useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
+import { useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   captureActiveTab,
@@ -12,7 +12,6 @@ import {
   closeUrlbar,
   invalidateSnapshot,
   lastPointer,
-  openUrlbar,
   returnFocusToPage,
   uiStore,
   useBrowser
@@ -39,7 +38,7 @@ export function App(): JSX.Element {
   useFormFactorReport(viewport.formFactor)
   useMainEvents()
   useGlobalKeys(state)
-  useNewTabEvent(state)
+  useNewTabEvent()
   usePointerTracking()
   const ui = uiStore.use()
 
@@ -257,18 +256,20 @@ function useGlobalKeys(state: UIState): void {
   }, [])
 }
 
-/** The "New Tab" button and empty state open Zen's floating URL bar instead of a new-tab page. */
-function useNewTabEvent(state: UIState): void {
+/**
+ * The "New Tab" button and empty state ask the core for a new tab: Zen's floating URL bar in
+ * new-tab mode (it comes back as `urlbar.toggle`), or the page an extension overrides new tabs
+ * with. Closing the bar first keeps the toggle from swallowing the request while it is open.
+ */
+function useNewTabEvent(): void {
   useEffect(() => {
     const onNewTab = (): void => {
       closeUrlbar()
-      void openUrlbar('new-tab', activeTab(state)?.id ?? null, {
-        attached: isPhone() || state.settings.urlbarBehavior === 'normal'
-      })
+      run('tab.new', undefined)
     }
     window.addEventListener('zen-new-tab', onNewTab)
     return () => window.removeEventListener('zen-new-tab', onNewTab)
-  }, [state])
+  }, [])
 }
 
 /** Remember where the pointer went down so renderer-hosted menus can anchor there. */

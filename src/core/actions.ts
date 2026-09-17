@@ -72,7 +72,7 @@ export class Actions {
 
       // --- tabs ---
       case 'tab.new':
-        return this.browser.emit('urlbar.toggle', { mode: 'new-tab' }, win)
+        return this.browser.openNewTab(win)
       case 'tab.close':
         if (glance && ctx.sourceTabId === glance.tabId) return tabs.closeGlance(win)
         if (active) tabs.closeTab(active.id, false, win)
