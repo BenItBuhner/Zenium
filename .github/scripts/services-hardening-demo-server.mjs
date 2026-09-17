@@ -112,13 +112,29 @@ const routes = {
           try { const d = await getScreenDetails(); say('Window management: allowed, ' + d.screens.length + ' screen(s)') } catch (e) { say('Window management: ' + e.message) }
         }
         document.getElementById('save').onclick = async () => {
-          try {
-            // Opening a file grants reading only; writing to it is what the browser must ask about.
-            const [h] = await showOpenFilePicker({ types: [{ description: 'Text', accept: { 'text/plain': ['.txt'] } }] })
+          // Opening a file grants reading only; writing to it is what the browser must ask about.
+          const writeOnce = async (h) => {
             const w = await h.createWritable()
             await w.write('Edited by the Zenium demo page.')
             await w.close()
-            say('File saved: ' + h.name)
+          }
+          try {
+            const [h] = await showOpenFilePicker({ types: [{ description: 'Text', accept: { 'text/plain': ['.txt'] } }] })
+            try {
+              await writeOnce(h)
+              say('File saved: ' + h.name)
+            } catch (first) {
+              if (first.name !== 'NotAllowedError') throw first
+              // The first write is refused while Zenium asks; once allowed, a retry goes through.
+              say('Zenium is asking to save changes to ' + h.name + '…')
+              for (let i = 0; i < 20; i++) {
+                await new Promise((r) => setTimeout(r, 500))
+                try { await writeOnce(h); say('File saved after you allowed it: ' + h.name); return } catch (retry) {
+                  if (retry.name !== 'NotAllowedError') throw retry
+                }
+              }
+              say('File System Access: still not allowed')
+            }
           } catch (e) { say('File System Access: ' + e.message) }
         }
       </script>`
