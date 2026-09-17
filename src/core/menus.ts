@@ -3,8 +3,9 @@ import type { ZenWindow } from './window'
 import type { MenuItemTemplate, MenuSource, PageContextParams } from './platform'
 import { buildSearchUrl } from '../shared/search'
 import { displayUrl, getDomain, isNavigableUrl } from '../shared/url'
-import { DEFAULT_CONTAINER_ID } from '../shared/types'
+import { DEFAULT_CONTAINER_ID, type BookmarkNode } from '../shared/types'
 import { spaceLabel } from '../shared/defaults'
+import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 
 type Template = MenuItemTemplate[]
 
@@ -16,14 +17,19 @@ type Template = MenuItemTemplate[]
 export class Menus {
   constructor(private readonly browser: Browser) {}
 
-  private popup(template: Template, win: ZenWindow, source: MenuSource): void {
+  private popup(
+    template: Template,
+    win: ZenWindow,
+    source: MenuSource,
+    anchor?: { x: number; y: number }
+  ): void {
     const items = template.filter((item, i, arr) => {
       // Collapse duplicate / leading / trailing separators.
       if (item.type !== 'separator') return true
       const prev = arr[i - 1]
       return i > 0 && i < arr.length - 1 && prev?.type !== 'separator'
     })
-    this.browser.platform.menus.popup(items, { source, win })
+    this.browser.platform.menus.popup(items, { source, win, ...anchor })
   }
 
   private containerSubmenu(onPick: (containerId: string) => void): Template {
@@ -217,8 +223,8 @@ export class Menus {
         },
         { type: 'separator' },
         {
-          label: tab.bookmarked ? 'Remove Bookmark' : 'Bookmark Page…',
-          click: () => this.browser.toggleBookmark(tabId)
+          label: tab.bookmarked ? 'Edit Bookmark…' : 'Bookmark Page…',
+          click: () => this.browser.starTab(tabId, win)
         },
         {
           label: 'Save Page As…',
@@ -444,8 +450,13 @@ export class Menus {
       },
       { type: 'separator' },
       {
-        label: tab.bookmarked ? 'Remove Bookmark' : 'Bookmark Tab',
-        click: () => this.browser.toggleBookmark(tabId)
+        label: tab.bookmarked ? 'Edit Bookmark…' : 'Bookmark Tab…',
+        enabled: !tab.url.startsWith('zen://'),
+        click: () => this.browser.starTab(tabId, win)
+      },
+      {
+        label: 'Bookmark All Tabs…',
+        click: () => this.browser.bookmarkTabs(win)
       },
       {
         label: 'Share',
@@ -577,6 +588,14 @@ export class Menus {
           click: () => {
             for (const t of selected) if (!t.discarded) tabs.discard(t.id)
           }
+        },
+        {
+          label: `Bookmark ${n} Tabs…`,
+          click: () =>
+            this.browser.bookmarkTabs(
+              win,
+              selected.map((t) => t.id)
+            )
         },
         { type: 'separator' },
         {
@@ -756,6 +775,113 @@ export class Menus {
     )
   }
 
+  // ---------------------------------------------------------------------------
+  // Bookmarks (the manager's item and background menus)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Chrome's bookmark manager menu. `ids` are the selected nodes (empty when the folder's empty
+   * space was clicked); `folderId` is the folder on screen – where pasted and new items go.
+   */
+  showBookmarkContextMenu(
+    ids: string[],
+    folderId: string,
+    anchor: { x: number; y: number },
+    win: ZenWindow
+  ): void {
+    const { bookmarks } = this.browser
+    const nodes = ids.map((id) => bookmarks.get(id)).filter((n): n is BookmarkNode => Boolean(n))
+    const single = nodes.length === 1 ? nodes[0] : null
+    const urls = bookmarkUrlCount(bookmarks.tree, ids)
+    const editable = nodes.length > 0 && nodes.every((n) => !isBookmarkRoot(n.id))
+    const template: Template = []
+    if (single?.type === 'url') {
+      template.push({
+        label: 'Open in New Tab',
+        click: () => this.browser.openBookmark(single.id, true, null, win)
+      })
+    } else if (nodes.length) {
+      template.push({
+        label: `Open All (${urls})`,
+        enabled: urls > 0,
+        click: () => this.browser.openBookmarks(ids, win)
+      })
+    }
+    if (nodes.length) {
+      template.push(
+        { type: 'separator' },
+        {
+          label: single?.type === 'url' ? 'Edit…' : 'Rename…',
+          enabled: Boolean(single) && editable,
+          click: () =>
+            single &&
+            this.browser.emit(
+              'bookmark.edit',
+              { id: single.id, parentId: single.parentId ?? folderId, type: single.type },
+              win
+            )
+        },
+        { type: 'separator' },
+        { label: 'Cut', enabled: editable, click: () => bookmarks.cut(ids) },
+        { label: 'Copy', enabled: editable, click: () => bookmarks.copy(ids) },
+        // Touch users have no drag and drop; the nested chooser moves the selection anywhere.
+        { label: 'Move to', enabled: editable, submenu: this.moveToSubmenu(ids) }
+      )
+    }
+    template.push({
+      label: 'Paste',
+      enabled: bookmarks.canPaste(),
+      click: () => void bookmarks.paste(folderId)
+    })
+    if (nodes.length) {
+      template.push(
+        { type: 'separator' },
+        {
+          label: nodes.length > 1 ? `Delete ${nodes.length} Items` : 'Delete',
+          enabled: editable,
+          click: () => void bookmarks.removeMany(ids)
+        }
+      )
+    }
+    template.push(
+      { type: 'separator' },
+      {
+        label: 'Add New Bookmark…',
+        click: () =>
+          this.browser.emit('bookmark.edit', { id: null, parentId: folderId, type: 'url' }, win)
+      },
+      {
+        label: 'Add New Folder',
+        click: () =>
+          this.browser.emit('bookmark.edit', { id: null, parentId: folderId, type: 'folder' }, win)
+      }
+    )
+    this.popup(template, win, 'bookmark', anchor)
+  }
+
+  /** Every folder as a nested submenu ("Move Here" first), minus the selection's own subtrees. */
+  private moveToSubmenu(ids: string[]): Template {
+    const { bookmarks } = this.browser
+    const excluded = new Set<string>()
+    for (const id of ids) {
+      const node = bookmarks.get(id)
+      if (node?.type !== 'folder') continue
+      excluded.add(id)
+      for (const n of bookmarks.tree.descendants(id)) excluded.add(n.id)
+    }
+    const build = (folderId: string): Template => {
+      const subfolders = bookmarks
+        .getChildren(folderId)
+        .filter((n) => n.type === 'folder' && !excluded.has(n.id))
+      return [
+        { label: 'Move Here', click: () => void bookmarks.move(ids, folderId) },
+        ...(subfolders.length ? [{ type: 'separator' as const }] : []),
+        ...subfolders.map((f) => ({ label: f.title, submenu: build(f.id) }))
+      ]
+    }
+    return bookmarks.roots().map((root) => ({ label: root.title, submenu: build(root.id) }))
+  }
+
   /** The "⋯" application menu in the toolbar (Firefox's hamburger menu). */
   showAppMenu(win: ZenWindow): void {
     const { state, tabs } = this.browser
@@ -788,7 +914,28 @@ export class Menus {
         { type: 'separator' },
         {
           label: 'Bookmarks',
-          click: () => this.browser.emit('overlay.open', { kind: 'bookmarks' }, win)
+          submenu: [
+            {
+              label: active?.bookmarked ? 'Edit Bookmark…' : 'Bookmark This Page…',
+              enabled: Boolean(active && !active.url.startsWith('zen://')),
+              click: () => active && this.browser.starTab(active.id, win)
+            },
+            { label: 'Bookmark All Tabs…', click: () => this.browser.bookmarkTabs(win) },
+            { type: 'separator' },
+            {
+              label: 'Bookmark Manager',
+              click: () => this.browser.emit('overlay.open', { kind: 'bookmarks' }, win)
+            },
+            { type: 'separator' },
+            {
+              label: 'Import Bookmarks…',
+              click: () => void this.browser.importBookmarks(win)
+            },
+            {
+              label: 'Export Bookmarks…',
+              click: () => void this.browser.exportBookmarks(win)
+            }
+          ]
         },
         {
           label: 'History',
