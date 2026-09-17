@@ -37,8 +37,8 @@ Up to v0.2.0 the browser was called **Zen** and its packages `zen-chromium-*`. Z
 an existing Zen profile on its first launch (the `Zen` user-data directory becomes `Zenium`, a
 `zen-sync` folder becomes `zenium-sync`); the Windows installer and the `.deb` remove the old Zen
 installation, macOS users delete the old `Zen.app` themselves, and on Android Zenium is a new app
-that installs alongside Zen (uninstall Zen afterwards). The `zen` command stays available as an
-alias of `zenium` on Linux for one release.
+that installs alongside Zen (uninstall Zen afterwards). On Linux the old `zen-chromium` command
+stays available as an alias of `zenium` for one release.
 
 ### Automatic updates
 
@@ -182,7 +182,7 @@ app and the Android WebView host.
   ```
 
 - **Connect over stdio:** clients that launch a command can use the shim, which relays to the
-  running browser (`zen --mcp` keeps working on Linux for one release):
+  running browser (the `.deb` keeps the old `zen-chromium` command as an alias for one release):
 
   ```json
   { "mcpServers": { "zenium": { "command": "zenium", "args": ["--mcp"] } } }

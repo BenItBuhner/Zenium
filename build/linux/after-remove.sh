@@ -1,6 +1,6 @@
 #!/bin/bash
 # electron-builder's after-remove.tpl (app-builder-lib/templates/linux) plus the removal of the
-# `zen` alias created by after-install.sh. electron-builder substitutes ${executable} and
+# `zen-chromium` alias created by after-install.sh. electron-builder substitutes ${executable} and
 # ${sanitizedProductName} when packaging, so bash variables here must not use the ${...} form.
 
 # Delete the link to the binary
@@ -12,9 +12,9 @@ else
     rm -f '/usr/bin/${executable}'
 fi
 
-# The `zen` alias, only when it is ours.
-if [ -L /usr/bin/zen ] && [ "`readlink /usr/bin/zen`" = '/opt/${sanitizedProductName}/${executable}' ]; then
-    rm -f /usr/bin/zen
+# The `zen-chromium` alias, only when it is ours.
+if [ -L /usr/bin/zen-chromium ] && [ "`readlink /usr/bin/zen-chromium`" = '/opt/${sanitizedProductName}/${executable}' ]; then
+    rm -f /usr/bin/zen-chromium
 fi
 
 APPARMOR_PROFILE_DEST='/etc/apparmor.d/${executable}'

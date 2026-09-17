@@ -83,8 +83,8 @@ deb:
     - zen-chromium
     - --provides
     - zen-chromium
-  # electron-builder's own scripts plus a `zen` command alias kept for one release
-  # (agent configs launch `zen --mcp`).
+  # electron-builder's own scripts plus a `zen-chromium` command alias (the old package's binary
+  # name) kept for one release so agent configs that launch it with --mcp keep working.
   afterInstall: build/linux/after-install.sh
   afterRemove: build/linux/after-remove.sh
 appImage:

@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 /**
- * `zenium --mcp` (also reachable as `zen --mcp` on Linux for one release): the stdio face of the
+ * `zenium --mcp` (the .deb also keeps `zen-chromium --mcp` for one release): the stdio face of the
  * MCP server, for agent clients that launch a command rather than connect to a URL. The running
  * browser owns the server; this process only relays each newline-delimited JSON-RPC message from
  * stdin to `http://127.0.0.1:<port>/mcp` (found in the profile's `zen/agent.json`, together with

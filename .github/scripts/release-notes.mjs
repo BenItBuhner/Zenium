@@ -381,7 +381,7 @@ const installing = [
   '',
   '- **Windows**: the installer removes the Zen installation (and its shortcuts) for you; the in-app updater of Zen 0.2.0 does the same when it installs this release.',
   '- **macOS**: drag Zenium into *Applications* and delete the old **Zen.app** yourself once Zenium has started.',
-  '- **Linux**: the `.deb` replaces the `zen-chromium` package (`apt install ./…deb` or `dpkg -i`); the AppImage simply replaces the old file, and the in-app updater does so on its own. The `zen` command keeps working as an alias of `zenium` for this release.',
+  '- **Linux**: the `.deb` replaces the `zen-chromium` package (`apt install ./…deb` or `dpkg -i`); the AppImage simply replaces the old file, and the in-app updater does so on its own. The old `zen-chromium` command keeps working as an alias of `zenium` for this release.',
   '- **Android**: Zenium is a new app and installs alongside Zen; nothing can move the old app’s data. Uninstall Zen once Zenium is installed.',
   '',
   '</details>'

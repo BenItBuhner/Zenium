@@ -1,6 +1,6 @@
 #!/bin/bash
-# electron-builder's after-install.tpl (app-builder-lib/templates/linux) plus the `zen` alias at
-# the end. electron-builder substitutes ${executable} and ${sanitizedProductName} when packaging,
+# electron-builder's after-install.tpl (app-builder-lib/templates/linux) plus the `zen-chromium`
+# alias at the end. electron-builder substitutes ${executable} and ${sanitizedProductName} when packaging,
 # so bash variables here must not use the ${...} form.
 
 if type update-alternatives >/dev/null 2>&1; then
@@ -59,9 +59,9 @@ if apparmor_status --enabled > /dev/null 2>&1; then
   fi
 fi
 
-# Zenium was the zen-chromium package with a /usr/bin/zen command, and agent configurations launch
-# `zen --mcp`. Keep `zen` working for one release, but only where the name is free or already
-# ours: the upstream Zen Browser installs a `zen` command of its own.
-if [ ! -e /usr/bin/zen ] || { [ -L /usr/bin/zen ] && [ "`readlink /usr/bin/zen`" = '/opt/${sanitizedProductName}/${executable}' ]; }; then
-    ln -sf '/opt/${sanitizedProductName}/${executable}' /usr/bin/zen
+# Zenium was the zen-chromium package, whose command was /usr/bin/zen-chromium (agent
+# configurations launch it with --mcp). Keep that name working for one release, but only where it
+# is free or already ours – never take it from another program.
+if [ ! -e /usr/bin/zen-chromium ] || { [ -L /usr/bin/zen-chromium ] && [ "`readlink /usr/bin/zen-chromium`" = '/opt/${sanitizedProductName}/${executable}' ]; }; then
+    ln -sf '/opt/${sanitizedProductName}/${executable}' /usr/bin/zen-chromium
 fi
