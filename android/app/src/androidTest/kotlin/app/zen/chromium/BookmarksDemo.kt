@@ -4,7 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.graphics.Rect
 import android.os.SystemClock
 import android.util.Log
-import android.view.KeyEvent
+import android.view.KeyCharacterMap
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Test
@@ -14,8 +14,8 @@ import org.junit.runner.RunWith
  * Records the bookmark tree on the phone chrome: a profile seeded with the pre-tree flat list
  * (migrated into Mobile bookmarks on first launch), the bookmarks panel from the menu, bookmarking
  * the current page, importing a Chrome export through the system document picker from the panel's
- * overflow menu (the file is pushed to Downloads by the workflow), searching across folders,
- * exporting through the picker, and the URL bar suggestion that carries a bookmark's folder path.
+ * overflow menu (the file is pushed to Downloads by the workflow), exporting through the picker,
+ * searching across folders, and the URL bar suggestion that carries a bookmark's folder path.
  *
  * Driven by the `android-services-bookmarks-demo` workflow. See [DemoHarness] for the plumbing.
  */
@@ -66,38 +66,35 @@ class BookmarksDemo : DemoHarness("bookmarks-demo-state.json", "bookmarks", "boo
         shot("05-imported")
         SystemClock.sleep(1_000)
 
-        // 4. Search across the tree (folder names count).
-        val search = searchField()
-        Finger().tap(search.exactCenterX(), search.exactCenterY())
-        SystemClock.sleep(1_500)
-        instrumentation.sendStringSync("docs")
-        SystemClock.sleep(2_000)
-        shot("06-search")
-        // Injected keys show no soft keyboard, so there is nothing for BACK to dismiss: a BACK here
-        // closes the panel instead. Clear the field key by key and carry on in the panel.
-        clearField(6)
-        SystemClock.sleep(1_200)
-
-        // 5. Export through the document picker: Downloads, then Save.
+        // 4. Export through the document picker (it reopens in Downloads), then Save.
         tap(MORE_LABEL)
         SystemClock.sleep(1_800)
         tap("Export Bookmarks…")
         SystemClock.sleep(3_500)
         openDownloads()
         val save = waitForText("Save", 8_000) ?: error("no Save button in the picker")
-        shot("07-export-picker")
+        shot("06-export-picker")
         Finger().tap(save.exactCenterX(), save.exactCenterY())
         SystemClock.sleep(4_000)
         ensureForeground()
-        shot("08-exported")
+        shot("07-exported")
         SystemClock.sleep(1_000)
 
-        // 6. Close the panel; a URL bar suggestion carries the bookmark's folder path.
+        // 5. Search across the tree (folder names count); the panel is closed from its header
+        // afterwards, which also drops the query.
+        val search = searchField()
+        Finger().tap(search.exactCenterX(), search.exactCenterY())
+        SystemClock.sleep(1_500)
+        typeText("docs")
+        SystemClock.sleep(2_000)
+        shot("08-search")
         closePanel()
         SystemClock.sleep(1_800)
+
+        // 6. A URL bar suggestion carries the bookmark's folder path.
         tap(PILL_LABEL)
-        SystemClock.sleep(2_000)
-        instrumentation.sendStringSync("mdn")
+        SystemClock.sleep(2_500)
+        typeText("mdn")
         SystemClock.sleep(3_000)
         shot("09-suggestions")
         ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
@@ -112,12 +109,15 @@ class BookmarksDemo : DemoHarness("bookmarks-demo-state.json", "bookmarks", "boo
         Finger().tap(target.exactCenterX(), target.exactCenterY())
     }
 
-    /** Delete up to [keys] characters from the focused field, one injected key at a time. */
-    private fun clearField(keys: Int) {
-        instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_MOVE_END)
-        repeat(keys) {
-            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DEL)
-            SystemClock.sleep(150)
+    /**
+     * Type through UiAutomation like GestureDemo does: Instrumentation.sendStringSync drops keys
+     * into the WebView while the soft keyboard is attaching ("docs" arrived as "doc").
+     */
+    private fun typeText(text: String) {
+        val events = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray()) ?: return
+        for (event in events) {
+            ui.injectInputEvent(event, true)
+            SystemClock.sleep(60)
         }
     }
 
@@ -129,11 +129,18 @@ class BookmarksDemo : DemoHarness("bookmarks-demo-state.json", "bookmarks", "boo
     }
 
     /**
-     * The picker opens on Recent; the file lives in Downloads. Open the roots drawer (its
-     * hamburger is labelled "Show roots") and pick Downloads. Both steps are optional: when the
-     * picker already shows Downloads there is nothing to do.
+     * The file lives in Downloads. The picker opens on Recent the first time and remembers the
+     * last location afterwards, so the export picker already shows Downloads: then the roots
+     * drawer must stay closed, since open it covers the Save button and swallows the tap. Only
+     * when Downloads is not the current location open the drawer (hamburger "Show roots") and
+     * pick it there.
      */
     private fun openDownloads() {
+        if (waitForText("Downloads", 3_000) != null && waitForText("Show roots", 500) != null) {
+            // "Downloads" with the hamburger still visible is the toolbar title: already there.
+            Log.i(tag, "picker already shows Downloads")
+            return
+        }
         val roots = waitForText("Show roots", 5_000)
         if (roots != null) {
             Finger().tap(roots.exactCenterX(), roots.exactCenterY())
