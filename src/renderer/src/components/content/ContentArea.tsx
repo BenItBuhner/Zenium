@@ -6,6 +6,7 @@ import { cmd, run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import { captureActiveTab, uiStore, type UiState } from '@renderer/lib/ui'
+import { extensionChromeScrim } from '@renderer/lib/extensions/scrim'
 import { cn } from '@renderer/lib/utils'
 import { dropStore } from '@renderer/lib/drag'
 import { Urlbar } from '../urlbar/Urlbar'
@@ -63,6 +64,17 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
     (contentHidden || glanceActive) && Boolean(tab) && !staged && !(phone && ui.urlbar.open)
   const dropKey = dropStore.use((s) => s.key)
   const foreign = isForeignTab(state, tab?.id)
+  // Only the extensions' own chrome over the page: no scrim behind a popover or the popup
+  // frame, the v2 dialog scrim (the sheet's on a phone) behind an install or permission prompt.
+  const extensionScrim = extensionChromeScrim(ui)
+  const dim =
+    extensionScrim === null
+      ? cn('bg-black/35', ui.drag && 'bg-black/20')
+      : extensionScrim === 'dialog'
+        ? phone
+          ? 'zen-ext-scrim-sheet'
+          : 'zen-ext-scrim-modal'
+        : 'bg-transparent'
 
   return (
     <div
@@ -83,12 +95,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                 draggable={false}
               />
             ) : null}
-            <div
-              className={cn(
-                'absolute inset-0 bg-black/35 transition-opacity',
-                ui.drag && 'bg-black/20'
-              )}
-            />
+            <div className={cn('absolute inset-0 transition-opacity', dim)} />
           </div>
         )}
         {group && local && !contentHidden && !glanceActive && (

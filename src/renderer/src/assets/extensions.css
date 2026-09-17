@@ -817,6 +817,17 @@
   }
 
   /*
+   * Behind a prompt (§9.5, §6): the content frame alone dims with the dialog scrim on a desktop
+   * and the sheet scrim on a phone; the sidebar and toolbar stay as they are.
+   */
+  .zen-ext-scrim-modal {
+    background: var(--v2-scrim-modal);
+  }
+  .zen-ext-scrim-sheet {
+    background: var(--v2-scrim);
+  }
+
+  /*
    * Install and permission prompts: a 440 dialog at radius 12 with 16 padding; the icon 32,
    * the title 17/600, what it can do as 32 rows with a glyph, and two buttons, the primary last.
    */
