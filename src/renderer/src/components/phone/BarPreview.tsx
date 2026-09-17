@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Search } from 'lucide-react'
 import type { PhoneBarItemId, PhoneBarLayout } from '@shared/types'
 import { BAR_BUTTON, PHONE_BAR_ITEM_IDS, phoneBarGeometry } from '@shared/phoneBar'
-import { displayUrl } from '@shared/url'
+import { displayHost } from '@shared/url'
 import { SPRING_SNAPPY, SpringAnimation, type SpringConfig } from '@renderer/lib/motion/spring'
 import { cn } from '@renderer/lib/utils'
 import { BarButton } from './BarButton'
@@ -65,7 +65,8 @@ export function BarPreview({
 
   useEffect(() => () => motion.current?.stop(), [])
 
-  const url = ctx.tab ? displayUrl(ctx.tab.url) : ''
+  // The site alone, as the bar's pill shows it at rest.
+  const url = ctx.tab ? displayHost(ctx.tab.url) : ''
 
   return (
     <div
