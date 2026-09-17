@@ -315,6 +315,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
               onChange={onChange}
               onKeyDown={onKeyDown}
               placeholder={placeholder}
+              data-testid="urlbar-input"
               spellCheck={false}
               autoComplete="off"
               autoCapitalize="off"
@@ -364,6 +365,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
             onChange={onChange}
             onKeyDown={onKeyDown}
             placeholder={placeholder}
+            data-testid="urlbar-input"
             spellCheck={false}
             autoComplete="off"
             className="h-full min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-[var(--zen-muted)]"

@@ -55,6 +55,7 @@ export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JS
         'zen-animate-in flex items-center bg-[var(--zen-bg-solid)] px-3',
         phone ? 'zen-find-phone h-14 gap-1' : 'h-10 gap-2 border-t border-[var(--zen-border)]'
       )}
+      data-testid="find-bar"
     >
       <div
         className={
@@ -68,6 +69,7 @@ export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JS
           value={text}
           placeholder="Find in page"
           aria-label="Find in page"
+          data-testid="find-input"
           inputMode="search"
           enterKeyHint="search"
           autoCapitalize="none"

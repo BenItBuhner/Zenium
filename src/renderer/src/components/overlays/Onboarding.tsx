@@ -102,6 +102,7 @@ export function Onboarding({ state }: { state: UIState }): JSX.Element {
     <div
       className="absolute inset-0 z-50 flex items-center justify-center"
       style={{ background: preview.background }}
+      data-testid="onboarding"
     >
       <div className="zen-texture" />
       <div className="zen-panel zen-animate-pop relative w-[640px] max-w-[calc(100%-32px)] p-8">

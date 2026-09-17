@@ -122,6 +122,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
       )}
       data-dark={theme.isDark}
       data-window-kind={state.window.kind}
+      data-testid="chrome-root"
     >
       <ModStyles mods={state.mods} />
       <div className="zen-texture" />
