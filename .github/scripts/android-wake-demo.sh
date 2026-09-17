@@ -1,28 +1,44 @@
 #!/usr/bin/env bash
-# Runs on the workflow runner once the emulator has booted: installs the debug APK and the wake
+# Runs on the workflow runner once the emulator has booted: installs a debug APK and the wake
 # driver (the WakeDemo instrumentation), records the screen while the driver turns the screen off
-# and on, swipes the lock screen away, sends the app home under memory trims, forces Doze and kills
-# the WebView renderer, and collects the recording, the screenshots, the driver's report and the
-# logs under artifacts/android-wake-demo/.
+# and on, swipes the lock screen away, sends the app home under memory trims, forces Doze, has the
+# WebView renderer killed and hangs it, and collects the recording, the screenshots, the driver's
+# report and the logs under artifacts/android-wake-demo/<take>/.
 #
-# WAKE_ASSERT=true makes the driver fail the run when the chrome is not painted after a scenario
-# (the regression check); anything else only reports.
+# Two takes when BEFORE_APK_DIR names a directory with the APK built from main: `before` (that
+# APK, report only) and `after` (this checkout's APK). WAKE_ASSERT=true makes the driver fail the
+# `after` take when the chrome is not painted or does not answer after a scenario (the regression
+# check); anything else only reports.
 #
 # Handshake with the driver, through files in the app's private storage (readable via run-as):
-#   files/wake-demo/record     – written by the driver once the browser is up
-#   files/wake-demo/recording  – written here once screenrecord is rolling
-#   files/wake-demo/done       – written by the driver when the sequence is over
+#   files/wake-demo/record             – written by the driver once the browser is up
+#   files/wake-demo/recording          – written here once screenrecord is rolling
+#   files/wake-demo/kill-renderer-N    – the driver asks for the WebView renderer to be killed
+#   files/wake-demo/renderer-killed-N  – written here once that is done (or could not be)
+#   files/wake-demo/done               – written by the driver when the sequence is over
 set -euo pipefail
 
 app_id=io.github.benitbuhner.zenium.debug
 runner=io.github.benitbuhner.zenium.debug.test/androidx.test.runner.AndroidJUnitRunner
 out=artifacts/android-wake-demo
-video=wake-sleep-wake-recovery.mp4
 mkdir -p "$out"
 
 adb wait-for-device
 nproc
 free -m
+
+# The WebView renderer is an isolated process of the WebView provider: only root can kill it the
+# way the low-memory killer does. Google APIs images allow it; without it the driver falls back to
+# the renderer's own chrome://kill.
+rooted=0
+if adb root 2>&1 | grep -qi "cannot run as root"; then
+  echo "adbd stays unprivileged: renderer kills fall back to chrome://kill"
+else
+  sleep 3
+  adb wait-for-device
+  rooted=1
+  echo "adbd running as root: $(adb shell id | tr -d '\r')"
+fi
 
 # Host watchdog: memory every few seconds, and the kernel log the moment the emulator process
 # disappears (a silent death is most likely the OOM killer or a renderer crash).
@@ -75,80 +91,128 @@ adb shell am kill-all || true
 echo "letting the system settle"
 sleep 45
 free -m
-adb shell dumpsys webviewupdate | grep -E "Current WebView package|version" | head -n 3 || true
+adb shell dumpsys webviewupdate | grep -E "Current WebView package" || true
 
-apk=$(find android/app/build/outputs/apk/debug -name '*.apk' -print -quit)
 test_apk=$(find android/app/build/outputs/apk/androidTest/debug -name '*.apk' -print -quit)
-echo "app: $apk"
 echo "driver: $test_apk"
-adb install -r -g "$apk"
-adb install -r -g "$test_apk"
 
-adb logcat -c || true
-# Every buffer: the events log carries the activity lifecycle (am_on_stop_called and friends) and
-# the process deaths that the scenarios are about.
-adb logcat -b all -v time > "$out/logcat.txt" &
-logcat_pid=$!
-
-adb shell am instrument -w -e class app.zen.chromium.WakeDemo -e assert "${WAKE_ASSERT:-false}" "$runner" > "$out/instrument.txt" 2>&1 &
-driver_pid=$!
-
-ready=0
-for _ in $(seq 1 1200); do
-  if adb shell run-as "$app_id" test -f files/wake-demo/record 2>/dev/null; then
-    ready=1
-    break
+# SIGKILL every sandboxed WebView renderer (isolated uid) and answer the driver's request `n`.
+kill_renderer() {
+  local n=$1 pids answer failed=0
+  pids=$(adb shell ps -A -o PID,USER,NAME | tr -d '\r' | awk '$3 ~ /sandboxed_process/ && $2 ~ /^u0_i/ { print $1 }')
+  if [ -z "$pids" ]; then
+    answer="no sandboxed renderer process found"
+  elif [ "$rooted" -ne 1 ]; then
+    answer="not root; cannot kill $(echo "$pids" | tr '\n' ' ')"
+  else
+    for pid in $pids; do
+      if adb shell kill -9 "$pid" 2>&1 | grep -q .; then failed=1; fi
+    done
+    if [ "$failed" -eq 0 ]; then answer="killed $(echo "$pids" | tr '\n' ' ')"; else answer="kill refused"; fi
   fi
-  if ! kill -0 "$driver_pid" 2>/dev/null; then
-    break
+  echo "renderer kill $n: $answer"
+  adb shell "echo '$answer' | run-as $app_id tee files/wake-demo/renderer-killed-$n > /dev/null"
+}
+
+# Install `apk`, run the driver with `assert` while recording into `take`'s directory.
+run_take() {
+  local take=$1 apk=$2 assert=$3
+  local dir="$out/$take" video="wake-$take.mp4"
+  mkdir -p "$dir"
+  echo "==== take $take: $apk (assert=$assert)"
+  adb install -r -g "$apk"
+  adb install -r -g "$test_apk"
+
+  adb logcat -c || true
+  # Every buffer: the events log carries the activity lifecycle (wm_on_stop_called and friends)
+  # and the process deaths the scenarios are about.
+  adb logcat -b all -v time > "$dir/logcat.txt" &
+  local logcat_pid=$!
+
+  adb shell am instrument -w -e class app.zen.chromium.WakeDemo -e assert "$assert" "$runner" > "$dir/instrument.txt" 2>&1 &
+  local driver_pid=$!
+
+  local ready=0
+  for _ in $(seq 1 1200); do
+    if adb shell run-as "$app_id" test -f files/wake-demo/record 2>/dev/null; then
+      ready=1
+      break
+    fi
+    if ! kill -0 "$driver_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.25
+  done
+  if [ "$ready" -ne 1 ]; then
+    echo "::error::the wake driver never reached the recording handshake ($take)"
+    cat "$dir/instrument.txt" || true
+    kill "$logcat_pid" 2> /dev/null || true
+    return 1
   fi
-  sleep 0.25
-done
-if [ "$ready" -ne 1 ]; then
-  echo "::error::the wake driver never reached the recording handshake"
-  cat "$out/instrument.txt" || true
-  sleep 6
-  kill "$logcat_pid" "$monitor_pid" 2> /dev/null || true
-  cat "$out/host-monitor.txt" || true
-  exit 1
+
+  adb shell screenrecord --bit-rate 8000000 --time-limit 175 "/sdcard/$video" &
+  local recorder_pid=$!
+  sleep 1
+  adb shell run-as "$app_id" touch files/wake-demo/recording
+
+  # Until the driver says it is done (it stays alive a little longer so the last frames are of the
+  # browser) or dies; renderer kills are served along the way.
+  local listing
+  for _ in $(seq 1 1000); do
+    listing=$(adb shell run-as "$app_id" ls files/wake-demo 2>/dev/null | tr -d '\r' || true)
+    if grep -qx done <<< "$listing"; then
+      break
+    fi
+    for request in $(grep -o 'kill-renderer-[0-9]*' <<< "$listing"); do
+      n=${request#kill-renderer-}
+      if ! grep -qx "renderer-killed-$n" <<< "$listing"; then
+        kill_renderer "$n"
+      fi
+    done
+    if ! kill -0 "$driver_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.25
+  done
+  adb shell pkill -INT screenrecord || adb shell "kill -2 \$(pidof screenrecord)" || true
+  wait "$recorder_pid" || true
+  local driver_status=0
+  wait "$driver_pid" || driver_status=$?
+  sleep 2
+  kill "$logcat_pid" 2> /dev/null || true
+
+  adb pull "/sdcard/$video" "$dir/$video" || true
+  for name in $(adb shell run-as "$app_id" ls files/wake-demo | tr -d '\r'); do
+    case "$name" in
+      *.png | *.txt) adb exec-out run-as "$app_id" cat "files/wake-demo/$name" > "$dir/$name" ;;
+    esac
+  done
+
+  # What the app, the WebView and the system saw, for the record.
+  grep -E "WakeDemo|ZenChrome|ZenHost|ZenTab|ZenBridge|chromium|cr_ChildProcess|RenderProcess|wm_on_(stop|start|resume|paused|restart|destroy|create)_called|LifecycleMonitor|am_kill|am_proc_died|am_proc_start|lowmemorykiller|Killing|zenium|deviceidle|DeviceIdle|screen_toggled|Keyguard" \
+    "$dir/logcat.txt" > "$dir/wake-logcat.txt" || true
+
+  echo "---- report ($take)"
+  cat "$dir/report.txt" || true
+  echo "---- instrumentation ($take)"
+  cat "$dir/instrument.txt"
+  ls -la "$dir"
+  return "$driver_status"
+}
+
+status=0
+if [ -n "${BEFORE_APK_DIR:-}" ]; then
+  before_apk=$(find "$BEFORE_APK_DIR" -name '*.apk' -print -quit)
+  echo "before: $before_apk"
+  run_take before "$before_apk" false || echo "the before take reported failures (expected where the bug reproduces)"
+  adb shell am force-stop "$app_id" || true
+  sleep 2
 fi
 
-adb shell screenrecord --bit-rate 8000000 --time-limit 170 "/sdcard/$video" &
-recorder_pid=$!
-sleep 1
-adb shell run-as "$app_id" touch files/wake-demo/recording
+apk=$(find android/app/build/outputs/apk/debug -name '*.apk' -print -quit)
+echo "app: $apk"
+run_take after "$apk" "${WAKE_ASSERT:-false}" || status=$?
 
-# Stop recording when the driver says it is done (it stays alive a little longer so the last
-# frames are of the browser), or when it dies.
-for _ in $(seq 1 720); do
-  if adb shell run-as "$app_id" test -f files/wake-demo/done 2>/dev/null; then
-    break
-  fi
-  if ! kill -0 "$driver_pid" 2>/dev/null; then
-    break
-  fi
-  sleep 0.25
-done
-adb shell pkill -INT screenrecord || adb shell "kill -2 \$(pidof screenrecord)" || true
-wait "$recorder_pid" || true
-wait "$driver_pid" || true
-sleep 2
-kill "$logcat_pid" "$monitor_pid" 2> /dev/null || true
-
-adb pull "/sdcard/$video" "$out/$video" || true
-for name in $(adb shell run-as "$app_id" ls files/wake-demo | tr -d '\r'); do
-  case "$name" in
-    *.png | *.txt) adb exec-out run-as "$app_id" cat "files/wake-demo/$name" > "$out/$name" ;;
-  esac
-done
-
-# What the app, the WebView and the system saw, for the record.
-grep -E "WakeDemo|ZenChrome|ZenBridge|ZenBack|chromium|cr_|RenderProcess|am_on_(stop|start|resume|pause|destroy|create)|am_kill|am_proc_died|am_proc_start|lowmemorykiller|Killing|zenium|deviceidle|DeviceIdle|PowerManagerService|Keyguard" \
-  "$out/logcat.txt" > "$out/wake-logcat.txt" || true
-
-echo "---- report"
-cat "$out/report.txt" || true
-echo "---- instrumentation"
-cat "$out/instrument.txt"
-ls -la "$out"
-grep -q '^OK (' "$out/instrument.txt"
+kill "$monitor_pid" 2> /dev/null || true
+grep -q '^OK (' "$out/after/instrument.txt"
+exit "$status"

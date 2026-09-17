@@ -2,14 +2,12 @@ package app.zen.chromium
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
-import android.app.ActivityManager
 import android.app.UiAutomation
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
-import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
@@ -32,21 +30,23 @@ import kotlin.math.roundToInt
 
 /**
  * Puts the browser through the ways a phone stops showing it and shows it again, and checks that
- * the chrome is still painted afterwards (`android-wake-demo` workflow): the screen turned off and
- * on, the lock screen swiped away, the app sent home and squeezed with `am send-trim-memory`,
- * Doze, and the WebView renderer killed while the screen is off (and once while it is on), which
- * is what the system does to a backgrounded browser under memory pressure.
+ * the chrome is still painted and answering afterwards (`android-wake-demo` workflow): the screen
+ * turned off and on through the lock screen (dismissed by command and by a swipe), the app sent
+ * home and squeezed with `am send-trim-memory`, Doze, the WebView renderer killed while the
+ * screen is off (and once while it is on) – what the system does to a backgrounded browser under
+ * memory pressure – and the renderer hung across a screen off and on.
  *
  * After every scenario it takes a screenshot and measures it: the share of the bottom bar's
  * pixels that are not its background (the address pill, its text and the buttons – "ink"), the
  * same for the content area, the difference from the baseline taken before the first scenario,
- * whether the accessibility tree still carries the address pill, and what the chrome WebView
- * itself reports (`document.visibilityState`, its size, whether its DOM answers at all). Everything
- * goes to `files/wake-demo/report.txt`, next to the screenshots; the phases also announce
- * themselves in logcat so the recording, the logs and the numbers line up.
+ * whether the accessibility tree still carries the address pill, whether the chrome WebView was
+ * rebuilt, and what the chrome document itself reports (`document.visibilityState`, its size,
+ * whether it answers at all). Everything goes to `files/wake-demo/report.txt`, next to the
+ * screenshots; the phases also announce themselves in logcat so the recording, the logs and the
+ * numbers line up. The renderer kills are asked of the workflow script (see `killRenderer`).
  *
- * With `-e assert true` a chrome that is not painted after any scenario fails the run
- * (the regression check); without it the run only reports.
+ * With `-e assert true` a chrome that is not painted, or does not answer, after any scenario
+ * fails the run (the regression check); without it the run only reports.
  */
 @RunWith(AndroidJUnit4::class)
 class WakeDemo {
@@ -80,12 +80,16 @@ class WakeDemo {
         baselineBarInk = barInk(first)
         check("baseline", first)
 
+        // A real lock screen from here on (the emulator ships with it disabled).
+        note("keyguard: ${shell("locksettings set-disabled false").trim()}")
         phase("sleep-wake") { sleepWake(dismiss = Dismiss.COMMAND) }
         phase("sleep-wake-keyguard-swipe") { sleepWake(dismiss = Dismiss.SWIPE) }
         phase("background-trim") { backgroundAndTrim() }
         phase("sleep-doze") { sleepDoze() }
         phase("sleep-renderer-killed") { sleepKillRenderer() }
         phase("renderer-killed-awake") { killRendererAwake() }
+        phase("sleep-renderer-hung") { sleepHangRenderer() }
+        shell("locksettings set-disabled true")
 
         File(out, "done").writeText("done\n")
         SystemClock.sleep(3_000)
@@ -142,18 +146,40 @@ class WakeDemo {
     private fun sleepKillRenderer() {
         goToSleep()
         SystemClock.sleep(2_000)
-        killRenderer()
+        note("renderer: ${killRenderer()}")
         SystemClock.sleep(3_000)
         wakeUp()
         SystemClock.sleep(1_500)
         dismissKeyguard(Dismiss.COMMAND)
-        SystemClock.sleep(6_000)
+        SystemClock.sleep(7_000)
     }
 
     /** The renderer killed while the browser is on screen: the recovery in plain sight. */
     private fun killRendererAwake() {
-        killRenderer()
-        SystemClock.sleep(7_000)
+        note("renderer: ${killRenderer()}")
+        SystemClock.sleep(8_000)
+    }
+
+    /**
+     * The renderer alive but not answering – its main thread, which every WebView shares, spun
+     * in a busy loop – across a screen off and on. The last frame stays on screen, so only the
+     * chrome's silence gives it away; the host's wake probe is what has to notice and rebuild.
+     */
+    private fun sleepHangRenderer() {
+        instrumentation.runOnMainSync {
+            activity.host.chrome.evaluateJavascript(
+                "setTimeout(function(){var end=Date.now()+${HANG_MS};while(Date.now()<end){}},0)",
+                null
+            )
+        }
+        SystemClock.sleep(800)
+        goToSleep()
+        SystemClock.sleep(2_000)
+        wakeUp()
+        SystemClock.sleep(1_500)
+        dismissKeyguard(Dismiss.COMMAND)
+        // The probe's delay, two deadlines and a chrome boot; the loop itself outlasts all of it.
+        SystemClock.sleep(18_000)
     }
 
     // --- power, keyguard, processes --------------------------------------------------------------
@@ -229,23 +255,29 @@ class WakeDemo {
         }
     }
 
+    private var killSeq = 0
+
     /**
-     * The WebView renderer is a sandboxed service process of this app (same uid, so the test –
-     * which runs in the app's process – may kill it). Nothing to kill means the WebView runs in
-     * process on this image; the scenario is then a no-op and says so.
+     * Kill the WebView renderer. It is an isolated process of the WebView provider (its own uid),
+     * out of this process's reach, so the workflow script does it from the host as root – asked
+     * through `kill-renderer-N`, answered through `renderer-killed-N` – exactly the SIGKILL the
+     * low-memory killer delivers. Without a host answer (no root), the renderer's own debug URL
+     * `chrome://kill` is loaded into the page WebView instead, which ends the process from within.
      */
-    private fun killRenderer() {
-        val am = app.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        val renderers = am.runningAppProcesses.orEmpty().filter { it.processName.contains("sandboxed_process") }
-        if (renderers.isEmpty()) {
-            note("renderer: no sandboxed renderer process found (${am.runningAppProcesses.orEmpty().map { it.processName }})")
-            return
+    private fun killRenderer(): String {
+        val n = ++killSeq
+        File(out, "kill-renderer-$n").writeText("please\n")
+        val ack = File(out, "renderer-killed-$n")
+        val deadline = SystemClock.uptimeMillis() + 8_000
+        while (!ack.exists() && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(200)
+        val answer = if (ack.exists()) ack.readText().trim() else "no answer from the host"
+        Log.i(TAG, "renderer kill $n: $answer")
+        if (answer.startsWith("killed")) return "host $answer"
+        instrumentation.runOnMainSync {
+            val tab = activity.host.tabs.all().firstOrNull { it.isShown }
+            (tab ?: activity.host.chrome).loadUrl("chrome://kill")
         }
-        for (proc in renderers) {
-            note("renderer: killing ${proc.processName} pid ${proc.pid}")
-            Log.i(TAG, "killing renderer ${proc.processName} (${proc.pid})")
-            Process.killProcess(proc.pid)
-        }
+        return "chrome://kill through the page WebView (host: $answer)"
     }
 
     // --- measurement -----------------------------------------------------------------------------
@@ -262,9 +294,12 @@ class WakeDemo {
         Log.i(TAG, "phase $name: end")
     }
 
+    private var lastChrome: ChromeWebView? = null
+
     /**
      * Screenshot metrics plus what the WebViews say about themselves. `ok` when the bottom bar has
-     * a fair share of its baseline ink and the accessibility tree still has the address pill.
+     * a fair share of its baseline ink, the accessibility tree still has the address pill, and
+     * the chrome document answers (a hung renderer leaves its last frame on screen).
      */
     private fun check(name: String, shot: Bitmap) {
         val pill = findByLabel(PILL_LABEL)
@@ -273,22 +308,27 @@ class WakeDemo {
         val diff = baseline?.let { b -> difference(shot, b) } ?: -1.0
         val views = describeViews()
         val chrome = askChrome()
+        var current: ChromeWebView? = null
+        instrumentation.runOnMainSync { current = activity.host.chrome }
+        val rebuilt = lastChrome != null && current !== lastChrome
+        lastChrome = current
         val painted = bar >= 0.004 && (baselineBarInk <= 0 || bar >= 0.35 * baselineBarInk)
-        val ok = painted && pill != null && pill.width() > 100 * density
+        val answers = chrome != null
+        val ok = painted && pill != null && pill.width() > 100 * density && answers
         note(
             "check=$name ok=$ok pill=${pill?.flattenToString() ?: "none"} barInk=${"%.4f".format(bar)} " +
                 "(baseline ${"%.4f".format(baselineBarInk)}) pageInk=${"%.4f".format(page)} diff=${"%.1f".format(diff)} " +
-                "top=${ui.rootInActiveWindow?.packageName} wakefulness=${wakefulness()}"
+                "chromeRebuilt=$rebuilt top=${ui.rootInActiveWindow?.packageName} wakefulness=${wakefulness()}"
         )
         note("views=$views")
-        note("chrome=$chrome")
+        note("chrome=${chrome ?: "no answer within ${ASK_TIMEOUT_MS} ms"}")
         if (!ok && name != "baseline") failures.add(name)
     }
 
-    /** The chrome WebView's own account: visibility state, viewport, DOM – or silence from a dead renderer. */
-    private fun askChrome(): String {
+    /** The chrome WebView's own account: visibility state, viewport, DOM – or null from a renderer that does not answer. */
+    private fun askChrome(): String? {
         val latch = CountDownLatch(1)
-        var answer = "no answer within 2500 ms"
+        var answer: String? = null
         instrumentation.runOnMainSync {
             val chrome = activity.host.chrome
             chrome.evaluateJavascript(
@@ -299,7 +339,7 @@ class WakeDemo {
                 latch.countDown()
             }
         }
-        latch.await(2_500, TimeUnit.MILLISECONDS)
+        latch.await(ASK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         return answer
     }
 
@@ -564,5 +604,9 @@ class WakeDemo {
         private const val TAG = "WakeDemo"
         private const val PILL_LABEL = "Address"
         private const val STEP_MS = 8L
+        /** A hung renderer answers nothing; how long a check waits before saying so. */
+        private const val ASK_TIMEOUT_MS = 3_000L
+        /** How long the hung-renderer scenario spins the renderer's main thread. */
+        private const val HANG_MS = 40_000L
     }
 }

@@ -1,18 +1,23 @@
 name: Android wake demo
 
-# Puts the browser through screen off and on (with the lock screen swiped away), the memory trims
-# of a backgrounded app, Doze and a killed WebView renderer on a hardware-accelerated Android
-# emulator, checks that the chrome is painted after each, and uploads the recording, the
-# screenshots and the driver's report (WakeDemo). Dispatch-only: it takes about ten minutes and
-# only regresses the wake path; the recording comes from an API 34 Google APIs image on a software
-# GPU, so expect a handful of frames per second.
+# Puts the browser through screen off and on (through the lock screen), the memory trims of a
+# backgrounded app, Doze, a killed WebView renderer and a hung one on a hardware-accelerated
+# Android emulator, checks that the chrome is painted and answering after each, and uploads the
+# recordings, the screenshots and the driver's report (WakeDemo). With `before` it first records
+# the same sequence on the APK built from main, so the two takes can be compared. Dispatch-only:
+# it takes fifteen to twenty minutes and only regresses the wake path; the recordings come from an
+# API 34 Google APIs image on a software GPU, so expect a handful of frames per second.
 on:
   workflow_dispatch:
     inputs:
       assert:
-        description: Fail when the chrome is not painted after a scenario
+        description: Fail when the chrome is not painted or does not answer after a scenario
         type: boolean
         default: true
+      before:
+        description: Also record the APK built from main first, for comparison
+        type: boolean
+        default: false
   push:
     branches: [cursor/android-wake-blank-chrome-b675]
 
@@ -26,12 +31,13 @@ concurrency:
 env:
   NODE_VERSION: 22
   WAKE_ASSERT: ${{ github.event_name == 'workflow_dispatch' && inputs.assert && 'true' || 'false' }}
+  WAKE_BEFORE: ${{ (github.event_name == 'push' || inputs.before) && 'true' || 'false' }}
 
 jobs:
   record:
     name: Record on an API 34 emulator
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -55,6 +61,19 @@ jobs:
       - name: Assemble the debug APK and the wake driver
         working-directory: android
         run: ./gradlew assembleDebug assembleDebugAndroidTest -PskipWeb --no-daemon --stacktrace
+      - name: Check out main for the "before" take
+        if: env.WAKE_BEFORE == 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          path: before
+      - name: Build the "before" APK
+        if: env.WAKE_BEFORE == 'true'
+        working-directory: before
+        run: |
+          npm ci
+          npm run build:android:web
+          cd android && ./gradlew assembleDebug -PskipWeb --no-daemon --stacktrace
       - name: Enable KVM for the emulator
         # https://github.blog/changelog/2023-02-23-hardware-accelerated-android-virtualization-on-actions-windows-and-linux-larger-hosted-runners/
         run: |
@@ -62,8 +81,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
           ls -la /dev/kvm
-      - name: Sleep, wake, trim, doze and kill the renderer
+      - name: Sleep, wake, trim, doze, kill and hang the renderer
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          BEFORE_APK_DIR: ${{ env.WAKE_BEFORE == 'true' && 'before/android/app/build/outputs/apk/debug' || '' }}
         with:
           api-level: 34
           target: google_apis
