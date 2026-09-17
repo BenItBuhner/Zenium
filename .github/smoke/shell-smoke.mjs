@@ -191,16 +191,43 @@ async function waitForTab(app, prefix, timeoutMs = 45000) {
   throw new Error(`tab ${prefix} missing; ${JSON.stringify(await tabs(app))}`)
 }
 
+async function press(app, combo) {
+  const parts = combo.split('+')
+  const key = parts.pop()
+  const modifiers = parts.map(
+    (m) => ({ Control: 'control', Meta: 'meta', Shift: 'shift', Alt: 'alt' })[m] || m.toLowerCase()
+  )
+  await app.evaluate(
+    ({ BrowserWindow }, payload) => {
+      const w = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+      if (!w) throw new Error('no window to send keys to')
+      w.focus()
+      w.webContents.focus()
+      w.webContents.sendInputEvent({
+        type: 'keyDown',
+        keyCode: payload.key,
+        modifiers: payload.modifiers
+      })
+      w.webContents.sendInputEvent({
+        type: 'keyUp',
+        keyCode: payload.key,
+        modifiers: payload.modifiers
+      })
+    },
+    { key, modifiers }
+  )
+}
+
 async function loadExample(app, chrome) {
   const input = chrome.locator(
-    'input[placeholder*="Search or enter address"], input[placeholder^="Search with"], input[type="text"]'
+    'input[placeholder*="Search or enter address"], input[placeholder^="Search with"]'
   )
   if (await input.first().isVisible().catch(() => false)) {
-    await chrome.keyboard.press('Escape')
+    await press(app, 'Escape')
     await sleep(200)
   }
-  await chrome.keyboard.press(`${ACCEL}+t`)
-  await input.first().waitFor({ state: 'visible', timeout: 10000 })
+  await press(app, `${ACCEL}+t`)
+  await input.first().waitFor({ state: 'visible', timeout: 12000 })
   await input.first().fill('https://example.com')
   await chrome.keyboard.press('Enter')
   return waitForTab(app, 'https://example.com')
