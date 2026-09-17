@@ -246,61 +246,7 @@
 
   /* --- Controls (§6) ---------------------------------------------------------------------- */
 
-  /*
-   * Buttons: 32 at radius 4 and weight 500 (40 at radius 6 under a finger); primary the
-   * accent, secondary the text at 10%, pressed at 24%.
-   */
-  .zen-v2-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    height: var(--v2-control);
-    padding: 0 12px;
-    border-radius: var(--v2-radius-control);
-    background: var(--v2-fill);
-    color: var(--v2-text);
-    font-size: var(--v2-font-body);
-    font-weight: var(--v2-weight-button);
-    line-height: 1;
-    white-space: nowrap;
-    transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
-  }
-  .zen-v2-button .lucide {
-    width: var(--v2-icon);
-    height: var(--v2-icon);
-    flex-shrink: 0;
-  }
-  .zen-v2-button:hover:not(:disabled) {
-    background: var(--v2-fill-hover);
-  }
-  .zen-v2-button:active:not(:disabled) {
-    background: rgb(var(--v2-text-rgb) / 0.24);
-    transform: scale(0.98);
-  }
-  .zen-v2-button:disabled {
-    opacity: 0.4;
-  }
-  .zen-v2-button[data-variant='primary'] {
-    background: var(--v2-accent);
-    color: var(--v2-on-accent);
-  }
-  .zen-v2-button[data-variant='primary']:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--v2-accent) 88%, var(--v2-text));
-  }
-  .zen-v2-button[data-variant='primary']:active:not(:disabled) {
-    background: color-mix(in srgb, var(--v2-accent) 76%, var(--v2-text));
-  }
-  .zen-v2-button[data-variant='danger'] {
-    color: var(--v2-danger);
-  }
-  /* The draft's phone value (§2, 6 under a finger); main.css keys its token on the pointer. */
-  [data-form-factor='phone'] .zen-v2-button {
-    padding: 0 16px;
-    border-radius: 6px;
-  }
+  /* Buttons: main.css owns `.zen-v2-button`'s base; the states and variants are at the end of this file. */
 
   /* Fields: 32 at radius 4 with a 1px border (the text at 30%) on the page colour. */
   .zen-v2-field {
@@ -938,4 +884,53 @@
   .zen-v2-fade {
     animation: zen-v2-fade 160ms var(--zen-ease);
   }
+}
+
+/*
+ * Buttons (§6): 32 at radius 4 and weight 500 (40 at radius 6 under a finger); primary the
+ * accent, secondary the text at 10%, pressed at 24%. main.css declares the secondary's base
+ * (`.zen-v2-button`, unlayered, after this import); these add the row layout, the hover and
+ * pressed fills, the disabled opacity and the variants. They stay outside `@layer components`:
+ * an unlayered base beats every layered rule whatever its specificity, and a primary would fall
+ * back to the 10% fill.
+ */
+.zen-v2-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.zen-v2-button .lucide {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+}
+.zen-v2-button:hover:not(:disabled) {
+  background: var(--v2-fill-hover);
+}
+.zen-v2-button:active:not(:disabled) {
+  background: rgb(var(--v2-text-rgb) / 0.24);
+}
+.zen-v2-button:disabled {
+  opacity: 0.4;
+}
+.zen-v2-button[data-variant='primary'] {
+  background: var(--v2-accent);
+  color: var(--v2-on-accent);
+}
+.zen-v2-button[data-variant='primary']:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--v2-accent) 88%, var(--v2-text));
+}
+.zen-v2-button[data-variant='primary']:active:not(:disabled) {
+  background: color-mix(in srgb, var(--v2-accent) 76%, var(--v2-text));
+}
+.zen-v2-button[data-variant='danger'] {
+  color: var(--v2-danger);
+}
+/* The draft's phone value (§2, 6 under a finger); main.css keys its token on the pointer. */
+[data-form-factor='phone'] .zen-v2-button {
+  padding: 0 16px;
+  border-radius: 6px;
 }
