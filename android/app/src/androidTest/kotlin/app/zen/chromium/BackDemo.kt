@@ -116,10 +116,12 @@ class BackDemo {
 
     // --- history ---------------------------------------------------------------------------------
 
-    private fun activeTab(): TabWebView? {
-        var tab: TabWebView? = null
-        instrumentation.runOnMainSync { tab = activity.host.tabs.get(TAB_ID) }
-        return tab
+    /** Run `block` on the main thread with the demo tab's view (null when it is gone). */
+    private fun <T> withTab(block: (TabWebView?) -> T): T {
+        var result: T? = null
+        instrumentation.runOnMainSync { result = block(activity.host.tabs.get(TAB_ID)) }
+        @Suppress("UNCHECKED_CAST")
+        return result as T
     }
 
     /**
@@ -136,17 +138,16 @@ class BackDemo {
         follow("a[href=\"/domains\"], a[href^=\"/domains/\"], nav a[href^=\"/\"]", "https://www.iana.org/domains/reserved")
         awaitLoaded("iana.org/domains")
         SystemClock.sleep(2_500)
-        var depth = 0
-        instrumentation.runOnMainSync { depth = activeTab()?.copyBackForwardList()?.size ?: 0 }
+        val depth = withTab { it?.copyBackForwardList()?.size ?: 0 }
         Log.i(TAG, "history built: $depth entries")
     }
 
     /** Click the first link matching `selector` in the active tab, or load `fallback`. */
     private fun follow(selector: String, fallback: String) {
-        val tab = activeTab() ?: error("the demo tab is gone")
         val script = "(function(){var a=document.querySelector(${JSONObject.quote(selector)});" +
             "if(!a){return false}a.click();return true})()"
-        instrumentation.runOnMainSync {
+        withTab { tab ->
+            tab ?: error("the demo tab is gone")
             tab.evaluate(script) { result ->
                 if (result != "true") {
                     Log.w(TAG, "no link for $selector; loading $fallback")
@@ -159,13 +160,7 @@ class BackDemo {
     private fun awaitLoaded(urlPart: String) {
         val deadline = SystemClock.uptimeMillis() + 25_000
         while (SystemClock.uptimeMillis() < deadline) {
-            var url = ""
-            var progress = 0
-            instrumentation.runOnMainSync {
-                val tab = activeTab()
-                url = tab?.url ?: ""
-                progress = tab?.progress ?: 0
-            }
+            val (url, progress) = withTab { tab -> (tab?.url ?: "") to (tab?.progress ?: 0) }
             if (url.contains(urlPart) && progress == 100) {
                 Log.i(TAG, "loaded $url")
                 return
