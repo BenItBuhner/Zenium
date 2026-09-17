@@ -5,8 +5,11 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * The customisable navigation bar (`settings.phoneBar`) with OS-level touch input: a hold on
@@ -17,8 +20,9 @@ import org.junit.runner.RunWith
  * the tab count rolling when a tab closes and counting up when one opens; the pill's swipe still
  * switching tabs; and the same bar carried to the top edge, where a hold opens the editor too.
  *
- * Every step is checked against the accessibility tree and logged (`check "..."`); the run fails
- * when a check does not hold. Driven by the `android-navbar-demo` workflow. See [DemoHarness].
+ * Every step is checked against the accessibility tree (the moment Reload shows Stop against the
+ * chrome's DOM, which answers in time) and logged (`check "..."`); the run fails when a check
+ * does not hold. Driven by the `android-navbar-demo` workflow. See [DemoHarness].
  */
 @RunWith(AndroidJUnit4::class)
 class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo") {
@@ -98,10 +102,11 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         expect("Forward returns to the second page", waitForAddress(12_000) { SECOND_HOST in it })
         SystemClock.sleep(2_500)
 
-        // 8. Reload becomes Stop while the page loads, and Reload again once it has. The second
-        //    page is an article, not example.com: its load is long enough to catch.
+        // 8. Reload becomes Stop while the page loads, and Reload again once it has. A cached
+        //    article reloads in well under a second, so the swap is read from the chrome's DOM
+        //    as it happens; the settled state comes from the accessibility tree as usual.
         tap("Reload")
-        val stopSeen = seenSoon("Stop", 6_000)
+        val stopSeen = seenSoon("reload", "Stop", 6_000)
         shot("10-stop-while-loading")
         expect("Reload swaps to Stop while loading", stopSeen)
         expect("Stop swaps back to Reload", waitFor("Reload", 30_000) != null)
@@ -279,13 +284,37 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         return false
     }
 
-    /** Like [waitFor] without pausing between polls: for a state that lasts a moment (Stop). */
-    private fun seenSoon(label: String, timeoutMs: Long): Boolean {
+    /**
+     * Poll the bar's `item` control until it is labelled `label`: for a state that lasts a
+     * moment (Stop). Walking the accessibility tree of an article page takes seconds, so this
+     * reads the label the tree would carry straight from the chrome's DOM, every few frames.
+     */
+    private fun seenSoon(item: String, label: String, timeoutMs: Long): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            if (findByLabel(label) != null) return true
+            if (barLabel(item) == label) return true
+            SystemClock.sleep(32)
         }
         return false
+    }
+
+    /** The `aria-label` of the live bar's `item` control, or null when the bar is not up. */
+    private fun barLabel(item: String): String? {
+        val chrome = (activity as MainActivity).host.chrome
+        val latch = CountDownLatch(1)
+        var answer: String? = null
+        instrumentation.runOnMainSync {
+            chrome.evaluateJavascript(
+                "(function(){var b=document.querySelector('.zen-phone-bar [data-bar-item=\"$item\"]');" +
+                    "return b?b.getAttribute('aria-label'):null})()"
+            ) {
+                answer = it
+                latch.countDown()
+            }
+        }
+        latch.await(2, TimeUnit.SECONDS)
+        // evaluateJavascript hands the value back as a JSON literal: a quoted string here.
+        return runCatching { JSONTokener(answer ?: "null").nextValue() as? String }.getOrNull()
     }
 
     /** Poll until the address pill is back on screen (the URL bar hides the bar while it is up). */
