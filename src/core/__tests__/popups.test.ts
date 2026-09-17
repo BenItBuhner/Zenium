@@ -155,6 +155,22 @@ describe('PopupBlocker.decide', () => {
     popups.onTabGone('t2')
     expect(popups.all()).toEqual({})
   })
+
+  it('knows whether any page of a site has been interacted with', () => {
+    const h = harness()
+    const popups = h.browser.popups
+    expect(popups.originHasBeenActive('https://opener.example/')).toBe(false)
+    popups.activate('t2')
+    expect(popups.originHasBeenActive('https://opener.example')).toBe(false)
+    expect(popups.originHasBeenActive('https://other.example')).toBe(true)
+    popups.activate('t1')
+    h.clock.now += ACTIVATION_LIFESPAN_MS * 2
+    // Sticky, unlike the pop-up gate: the gesture may be minutes old.
+    expect(popups.originHasBeenActive('https://opener.example/')).toBe(true)
+    popups.onNavigated('t1', false)
+    expect(popups.originHasBeenActive('https://opener.example/')).toBe(false)
+    expect(popups.originHasBeenActive('not a url')).toBe(false)
+  })
 })
 
 describe('PopupBlocker: the user opens what was blocked', () => {

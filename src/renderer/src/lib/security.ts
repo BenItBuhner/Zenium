@@ -36,6 +36,9 @@ export function describePermissionRule(rule: PermissionRule): string {
   if (permission === 'storage-access' && qualifier) {
     return `${verb} use its cookies inside ${siteLabel(qualifier)}`
   }
+  if (permission === 'fileSystem' && qualifier === 'read') {
+    return `${verb} view the folders you picked`
+  }
   const label = RULE_LABELS[permission] ?? permission.replace(/[-_]/g, ' ')
   return `${verb} ${label}`
 }

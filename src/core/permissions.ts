@@ -32,6 +32,13 @@ export interface PermissionRequestDetails {
   filePath?: string
   isDirectory?: boolean
   fileAccessType?: 'writable' | 'readable'
+  /** `fileSystem` checks: a page of the site has seen a gesture, so a refusal may come with a question. */
+  pageActivated?: boolean
+  /**
+   * `fileSystem` checks: the file was chosen in a save dialog a moment ago (the host recognises
+   * the file the engine emptied on the spot), which is the user's permission to write it.
+   */
+  pickedForSaving?: boolean
 }
 
 export interface PermissionPromptCopy {
@@ -96,6 +103,8 @@ export class PermissionService {
   private readonly store: JsonStore<Persisted>
   private readonly pending = new Map<string, Promise<boolean>>()
   private readonly listeners = new Set<(change: PermissionChange) => void>()
+  /** Files the user chose in a save dialog this session (`origin|path`): writable, as in Chrome. */
+  private readonly savedFiles = new Set<string>()
 
   constructor(
     io: StoreIO,
@@ -106,11 +115,38 @@ export class PermissionService {
     if (data?.version === 1 && data.decisions) this.decisions = data.decisions
   }
 
-  /** Synchronous check (e.g. `Notification.permission`); never prompts, unknown → false. */
+  /**
+   * Synchronous check (`Notification.permission`, or the engine's own status question before it
+   * would prompt); never prompts, unknown → false. File System Access is the one exception, see
+   * `checkFileSystem`.
+   */
   check(permission: string, requestingOrigin: string, details?: PermissionRequestDetails): boolean {
     if (ALWAYS_ALLOW.has(permission)) return true
     if (ALWAYS_DENY.has(permission)) return false
+    if (permission === 'fileSystem') return this.checkFileSystem(requestingOrigin, details ?? {})
     return this.stored(permission, requestingOrigin, details) === 'allow'
+  }
+
+  /**
+   * File System Access under Electron: Chromium asks this check for a handle's status and only
+   * prompts when the answer is "ask", which a yes-or-no check cannot say, so the request prompt is
+   * never reached for a file. Hence: reading what the user picked or dropped is granted (Chrome
+   * grants it the same way), a folder's read answer comes from the picker's prompt, a file chosen
+   * in a save dialog is writable for the session, and any other write is refused while the user is
+   * asked, once the page has been interacted with; the answer is remembered for the site and the
+   * page's next attempt gets it.
+   */
+  private checkFileSystem(requestingOrigin: string, details: PermissionRequestDetails): boolean {
+    const stored = this.stored('fileSystem', requestingOrigin, details)
+    if (details.fileAccessType === 'readable') return details.isDirectory ? stored !== 'deny' : true
+    if (stored) return stored === 'allow'
+    const origin = safeOrigin(requestingOrigin)
+    if (!origin || origin === 'null') return false
+    const file = details.filePath ? `${origin}|${details.filePath}` : null
+    if (file && details.pickedForSaving) this.savedFiles.add(file)
+    if (file && this.savedFiles.has(file)) return true
+    if (details.pageActivated) void this.decide('fileSystem', requestingOrigin, details)
+    return false
   }
 
   /**
@@ -214,6 +250,7 @@ export class PermissionService {
   reset(): void {
     const keys = Object.keys(this.decisions)
     this.decisions = {}
+    this.savedFiles.clear()
     this.store.write({ version: 1, decisions: this.decisions })
     for (const key of keys) this.notify(changeFor(key))
   }
@@ -304,6 +341,10 @@ export class PermissionService {
       delete this.decisions[key]
       removed.push(key)
     }
+    if (permission === undefined || permission === 'fileSystem') {
+      for (const file of this.savedFiles)
+        if (file.startsWith(`${origin}|`)) this.savedFiles.delete(file)
+    }
     if (removed.length === 0) return
     this.store.write({ version: 1, decisions: this.decisions })
     for (const key of removed) this.notify(changeFor(key))
@@ -337,6 +378,9 @@ export function qualifiedPermission(
     const embedder = safeOrigin(details?.embedderUrl ?? '')
     return embedder && embedder !== 'null' ? `storage-access:${embedder}` : permission
   }
+  // Viewing the folders a site is handed and editing what it is handed are separate answers.
+  if (permission === 'fileSystem' && details?.fileAccessType === 'readable')
+    return 'fileSystem:read'
   return permission
 }
 
@@ -371,9 +415,13 @@ export function permissionPromptCopy(
         details.fileAccessType === 'readable'
           ? `Allow ${site} to view ${details.isDirectory ? `the files in ${target}` : target}?`
           : `Allow ${site} to save changes to ${target}?`
+      const scope =
+        details.fileAccessType === 'readable'
+          ? 'read everything in the folders you pick on it'
+          : 'edit the files and folders you pick on it'
       return {
         message,
-        detail: `The site can ${details.fileAccessType === 'readable' ? 'read' : 'edit'} ${details.isDirectory ? 'everything in the folder' : 'the file'} until you take the permission away. ${remembered}`,
+        detail: `The site can ${scope} until you take the permission away. ${remembered}`,
         okLabel: details.fileAccessType === 'readable' ? 'View files' : 'Save changes',
         cancelLabel: 'Block'
       }

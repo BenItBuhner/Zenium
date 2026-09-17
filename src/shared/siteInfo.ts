@@ -211,6 +211,7 @@ export function permissionLabel(permission: string): string {
   const label = PERMISSION_LABELS[name] ?? name
   if (!qualifier) return label
   if (name === 'openExternal') return `Open ${qualifier}: links`
+  if (name === 'fileSystem' && qualifier === 'read') return 'View folders you picked'
   return `${label} (${qualifier.replace(/^https:\/\//, '')})`
 }
 

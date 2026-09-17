@@ -6,7 +6,8 @@ import {
   permissionPromptCopy,
   qualifiedPermission,
   schemeOf,
-  type PermissionChange
+  type PermissionChange,
+  type PermissionRequestDetails
 } from '../permissions'
 
 function fakeIo(initial: string | null = null): StoreIO & { writes: string[] } {
@@ -199,6 +200,14 @@ describe('PermissionService: qualified keys and prompt copy', () => {
     expect(read.okLabel).toBe('View files')
   })
 
+  it('keeps a folder view answer apart from the file editing answer', () => {
+    expect(qualifiedPermission('fileSystem', { fileAccessType: 'readable' })).toBe(
+      'fileSystem:read'
+    )
+    expect(qualifiedPermission('fileSystem', { fileAccessType: 'writable' })).toBe('fileSystem')
+    expect(qualifiedPermission('fileSystem')).toBe('fileSystem')
+  })
+
   it('has labels for the newly prompted permissions', () => {
     expect(permissionPromptCopy('window-management', 'https://a.example').message).toBe(
       'Allow a.example to manage windows on all your displays?'
@@ -212,6 +221,90 @@ describe('PermissionService: qualified keys and prompt copy', () => {
     expect(permissionPromptCopy('something-new', 'http://a.example').message).toBe(
       'Allow http://a.example to use "something-new"?'
     )
+  })
+})
+
+describe('PermissionService: File System Access status checks', () => {
+  const ORIGIN = 'https://editor.example/'
+  const file = (
+    fileAccessType: 'readable' | 'writable',
+    extra: PermissionRequestDetails = {}
+  ): PermissionRequestDetails => ({
+    filePath: '/home/me/notes.txt',
+    isDirectory: false,
+    fileAccessType,
+    ...extra
+  })
+  const folder = (fileAccessType: 'readable' | 'writable'): PermissionRequestDetails => ({
+    filePath: '/home/me/notes',
+    isDirectory: true,
+    fileAccessType
+  })
+
+  it('grants reading a picked file, and reading a folder unless the site was refused', async () => {
+    const d = dialogs(false)
+    const p = new PermissionService(fakeIo(), d)
+    expect(p.check('fileSystem', ORIGIN, file('readable'))).toBe(true)
+    expect(p.check('fileSystem', ORIGIN, folder('readable'))).toBe(true)
+    // The folder picker's prompt (request path) is refused: folders of this site stay unreadable.
+    expect(await p.decide('fileSystem', ORIGIN, folder('readable'))).toBe(false)
+    expect(p.check('fileSystem', ORIGIN, folder('readable'))).toBe(false)
+    expect(p.check('fileSystem', ORIGIN, file('readable'))).toBe(true)
+    expect(p.stored('fileSystem', ORIGIN, file('writable'))).toBeNull()
+    expect(p.rules()).toEqual([
+      { origin: 'https://editor.example', permission: 'fileSystem:read', decision: 'deny' }
+    ])
+  })
+
+  it('refuses a write it cannot ask about, and asks once the page has been interacted with', async () => {
+    const d = dialogs(true)
+    const p = new PermissionService(fakeIo(), d)
+    expect(p.check('fileSystem', ORIGIN, file('writable'))).toBe(false)
+    expect(d.asked).toEqual([])
+    expect(p.check('fileSystem', ORIGIN, file('writable', { pageActivated: true }))).toBe(false)
+    expect(p.check('fileSystem', ORIGIN, file('writable', { pageActivated: true }))).toBe(false)
+    await Promise.resolve()
+    expect(d.asked.length).toBe(1)
+    expect(d.asked[0].message).toBe('Allow editor.example to save changes to "notes.txt"?')
+    await new Promise((r) => setTimeout(r, 0))
+    // The user said yes: the page's next attempt, on any file it is handed, goes through.
+    expect(p.check('fileSystem', ORIGIN, file('writable'))).toBe(true)
+    expect(p.check('fileSystem', ORIGIN, folder('writable'))).toBe(true)
+    expect(p.stored('fileSystem', ORIGIN, file('writable'))).toBe('allow')
+    expect(
+      p.check('fileSystem', 'https://other.example', file('writable', { pageActivated: true }))
+    ).toBe(false)
+  })
+
+  it('lets a file chosen in a save dialog be written for the session, that file only', () => {
+    const d = dialogs(false)
+    const p = new PermissionService(fakeIo(), d)
+    const saved = file('writable', { pickedForSaving: true })
+    expect(p.check('fileSystem', ORIGIN, saved)).toBe(true)
+    // Later writes to it (the file is no longer empty) still pass without a question.
+    expect(p.check('fileSystem', ORIGIN, file('writable'))).toBe(true)
+    expect(
+      p.check('fileSystem', ORIGIN, { ...file('writable'), filePath: '/home/me/other.txt' })
+    ).toBe(false)
+    expect(p.check('fileSystem', 'https://other.example', file('writable'))).toBe(false)
+    expect(d.asked).toEqual([])
+    expect(p.rules()).toEqual([])
+    p.resetOrigin(ORIGIN)
+    expect(p.check('fileSystem', ORIGIN, file('writable'))).toBe(false)
+  })
+
+  it('honours a refusal over everything, and forgets session grants with the site', async () => {
+    const d = dialogs(false)
+    const p = new PermissionService(fakeIo(), d)
+    expect(await p.decide('fileSystem', ORIGIN, file('writable'))).toBe(false)
+    expect(p.check('fileSystem', ORIGIN, file('writable', { pickedForSaving: true }))).toBe(false)
+    expect(p.check('fileSystem', ORIGIN, file('writable', { pageActivated: true }))).toBe(false)
+    expect(p.check('fileSystem', ORIGIN, file('readable'))).toBe(true)
+    expect(d.asked.length).toBe(1)
+    p.resetOrigin(ORIGIN, 'fileSystem')
+    expect(p.check('fileSystem', ORIGIN, file('writable', { pickedForSaving: true }))).toBe(true)
+    p.reset()
+    expect(p.check('fileSystem', ORIGIN, file('writable'))).toBe(false)
   })
 })
 

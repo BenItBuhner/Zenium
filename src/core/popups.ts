@@ -72,6 +72,18 @@ export class PopupBlocker {
     this.activation(tabId).activate(this.now())
   }
 
+  /** Whether a page of `origin` has seen a gesture: a question about the site may follow its request. */
+  originHasBeenActive(origin: string): boolean {
+    const wanted = safeOrigin(origin)
+    if (!wanted || wanted === 'null') return false
+    for (const [tabId, activation] of this.activations) {
+      if (!activation.hasBeenActive()) continue
+      const tab = this.browser.tabs.tab(tabId)
+      if (tab && safeOrigin(tab.url) === wanted) return true
+    }
+    return false
+  }
+
   /** A new document: activation and the blocked list start over (Chrome forgets them as well). */
   onNavigated(tabId: string, inPage: boolean): void {
     if (inPage) return

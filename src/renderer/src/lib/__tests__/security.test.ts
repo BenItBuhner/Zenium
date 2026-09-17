@@ -70,6 +70,7 @@ describe('describePermissionRule', () => {
     expect(rule('popups')).toBe('may open pop-up windows')
     expect(rule('camera', 'deny')).toBe('may not use the camera')
     expect(rule('fileSystem')).toBe('may write to files and folders you picked')
+    expect(rule('fileSystem:read', 'deny')).toBe('may not view the folders you picked')
   })
 
   it('names the scheme of an external-app rule and the embedder of a storage-access rule', () => {

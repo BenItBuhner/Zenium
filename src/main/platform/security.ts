@@ -1,4 +1,5 @@
 import { app, type Certificate, type WebContents } from 'electron'
+import { statSync } from 'node:fs'
 import type { Browser } from '../../core/browser'
 import type { PermissionRequestDetails } from '../../core/permissions'
 import type { ClientCertificateInfo } from '../../shared/types'
@@ -7,6 +8,12 @@ import type { ElectronTabViewHost } from './views'
 type RequestDetails = Parameters<
   NonNullable<Parameters<Electron.Session['setPermissionRequestHandler']>[0]>
 >[3]
+type CheckDetails = Parameters<
+  NonNullable<Parameters<Electron.Session['setPermissionCheckHandler']>[0]>
+>[3]
+
+/** How long the empty file a save dialog leaves behind counts as "just chosen". */
+const FRESH_SAVE_MS = 30_000
 
 /**
  * What the core's prompt needs to know about an Electron permission request: the embedding page
@@ -27,6 +34,42 @@ export function permissionRequestDetails(
     out.fileAccessType = details.fileAccessType
   }
   return out
+}
+
+/**
+ * What the core's check needs to know: the embedding page for frames and, for a File System
+ * Access handle, the entry and direction plus two facts Electron does not pass on – whether a
+ * page of the site has seen a gesture (the check may then ask) and whether the file was just
+ * chosen in a save dialog (Chromium empties it on the spot, before the page can touch it).
+ */
+export function permissionCheckDetails(
+  permission: string,
+  requestingOrigin: string,
+  details: CheckDetails,
+  browser: Browser,
+  freshlyEmptied: (path: string) => boolean = isFreshlyEmptied
+): PermissionRequestDetails {
+  const out: PermissionRequestDetails = {}
+  if (details.embeddingOrigin) out.embedderUrl = details.embeddingOrigin
+  if (permission === 'fileSystem' && details.filePath !== undefined) {
+    out.filePath = details.filePath
+    out.isDirectory = details.isDirectory
+    out.fileAccessType = details.fileAccessType
+    out.pageActivated = browser.popups.originHasBeenActive(requestingOrigin)
+    if (details.fileAccessType === 'writable' && !details.isDirectory)
+      out.pickedForSaving = freshlyEmptied(details.filePath)
+  }
+  return out
+}
+
+/** An empty file written within the last moments: what a save dialog leaves behind. */
+export function isFreshlyEmptied(path: string, now: number = Date.now()): boolean {
+  try {
+    const stat = statSync(path)
+    return stat.isFile() && stat.size === 0 && now - stat.mtimeMs < FRESH_SAVE_MS
+  } catch {
+    return false
+  }
 }
 
 /**

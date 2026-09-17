@@ -142,5 +142,7 @@ describe('formatting', () => {
     expect(permissionLabel('storage-access:https://embedder.example')).toBe(
       'Cookies while embedded (embedder.example)'
     )
+    expect(permissionLabel('fileSystem')).toBe('Write to files you picked')
+    expect(permissionLabel('fileSystem:read')).toBe('View folders you picked')
   })
 })
