@@ -33,6 +33,7 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "@ghostery/adblocker": "^2.18.2",
     "@mozilla/readability": "^0.6.0",
     "@zxcvbn-ts/core": "^4.2.0",
     "@zxcvbn-ts/language-common": "^4.1.3",

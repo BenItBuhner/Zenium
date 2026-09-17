@@ -73,7 +73,8 @@ export function androidCapabilities(sdkInt: number): HostCapabilities {
     appLinkSettings: true,
     pullToRefresh: true,
     passwords: true,
-    defaultBrowser: true
+    defaultBrowser: true,
+    requestBlocking: true
   }
 }
 

@@ -32,6 +32,7 @@ import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '.
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
+import type { RuleSet } from './blocking/rules'
 
 export interface PlatformInfo {
   os: PlatformOs
@@ -50,6 +51,10 @@ export interface StoreIO {
   write(name: string, text: string): Promise<void>
   /** Synchronous write used when the process is about to go away. */
   writeSync(name: string, text: string): void
+  /** Delete a document (missing documents are not an error). Hosts without it get a `{}` tombstone. */
+  remove?(name: string): Promise<void>
+  /** Whether a document exists without reading it (large documents such as filter lists). */
+  exists?(name: string): boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -174,6 +179,8 @@ export interface TabViewEvents {
   onCrashed(reason: CrashReason): void
   onAudioStateChanged(audible: boolean): void
   onMediaStateChanged(playing: boolean): void
+  /** The host's own request engine blocked `count` more requests of this page (Android). */
+  onRequestsBlocked(count: number): void
   onEnterHtmlFullscreen(): void
   onLeaveHtmlFullscreen(): void
   onDevtoolsOpened(): void
@@ -727,6 +734,34 @@ export interface PasswordsHost {
   reauth: ReauthHost
 }
 
+/** A default filter list whose snapshot is built into the app (`resources/blocking/`). */
+export interface BundledFilterList {
+  id: string
+  /** `! Version:` of the snapshot, when the list has one. */
+  version: string | null
+  /** When the snapshot was built (ms since epoch). */
+  builtAt: number
+  filterCount: number
+}
+
+/**
+ * The host side of ad and tracker blocking. Matching itself is the core's `RuleEngine` plus the
+ * platform's text matcher (Ghostery's engine behind Electron's `webRequest`, the Kotlin engine
+ * inside `shouldInterceptRequest`); this interface only hands over the bundled snapshot of the
+ * default lists so the very first run is protected before any list has been downloaded.
+ */
+export interface BlockingHost {
+  /** The lists this build ships a snapshot of. */
+  bundledLists(): Promise<BundledFilterList[]>
+  /**
+   * Write the bundled snapshot of `set.id` to `file` (a path under the profile, as the
+   * `RuleSetStore` names it) as a complete rule-set document: `set` plus the snapshot's
+   * `filterText`. Copying host-side keeps megabytes of filter text out of the core. Resolves
+   * with the snapshot's metadata, or null when the build has no snapshot for the list.
+   */
+  installBundled(set: RuleSet, file: string): Promise<BundledFilterList | null>
+}
+
 export interface Platform {
   readonly info: PlatformInfo
   readonly capabilities: HostCapabilities
@@ -747,6 +782,8 @@ export interface Platform {
   readonly externalProtocols?: ExternalProtocolHost
   /** Key protection and re-authentication for the password vault; omit when `capabilities.passwords` is off. */
   readonly passwords?: PasswordsHost
+  /** Bundled filter-list snapshots; hosts without it start unprotected until the lists download. */
+  readonly blocking?: BlockingHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Host-backed services; omit for the built-in no-op versions. */

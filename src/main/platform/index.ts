@@ -37,6 +37,7 @@ import { ElectronSiteData } from './siteData'
 import { ElectronUpdateHost } from './updates'
 import { applyAppIcon } from './appIcon'
 import { createPasswordsHost } from './passwords'
+import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
@@ -59,7 +60,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   pullToRefresh: false,
   passwords: true,
   // The OS owns default-app choices on desktop; the desktop program decides if Zenium ever asks.
-  defaultBrowser: false
+  defaultBrowser: false,
+  requestBlocking: true
 }
 
 /**
@@ -82,11 +84,17 @@ export class ElectronPlatform implements Platform {
   readonly app: AppHost
   readonly siteData: ElectronSiteData
   readonly passwords: PasswordsHost
+  readonly blocking: ElectronBundledLists
+  /** The webRequest multiplexer and text matcher; created with the browser in `start`. */
+  requestBlocking!: ElectronBlocking
   browser!: Browser
+  private readonly profileDir: string
 
   constructor(private readonly userDataDir: string) {
     this.info = { os: process.platform as PlatformOs, version: app.getVersion() }
-    this.io = new FileStoreIO(join(userDataDir, 'zen'))
+    this.profileDir = join(userDataDir, 'zen')
+    this.io = new FileStoreIO(this.profileDir)
+    this.blocking = new ElectronBundledLists(bundledListsDirectory(), this.profileDir)
     this.windows = new ElectronWindowFactory()
     this.sessions = new SessionManager(buildUserAgent())
     this.views = new ElectronTabViewHost(this.sessions)
@@ -264,8 +272,12 @@ export class ElectronPlatform implements Platform {
     const extensionService = browser.extensions as ExtensionService
     extensionService.attachApi(extensionApi)
     extensionService.onChange((event) => extensionApi.registryChanged(event))
+    this.requestBlocking = new ElectronBlocking(browser, this.views, this.profileDir)
+    this.requestBlocking.start()
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
+      // The one webRequest listener set of the session; every request hook goes through it.
+      this.requestBlocking.attach(ses, containerId)
       this.attachPermissions(ses)
       this.downloads.attach(ses, containerId, (sourceTabId) =>
         browser.onDownloadStarted(sourceTabId)

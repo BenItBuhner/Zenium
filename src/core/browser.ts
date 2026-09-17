@@ -44,6 +44,7 @@ import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
 import { DefaultBrowserService } from './defaultBrowser'
+import { BlockingService } from './blocking/service'
 import { NoExtensions, NoSync, NoUpdateHost, NoopGovernor } from './hostDefaults'
 import {
   activeSpace,
@@ -71,6 +72,7 @@ import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
 import { sanitizePromoState } from '../shared/defaultBrowser'
+import { sanitizeBlockingSettings } from '../shared/blocking'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 
 type CommandHandlers = {
@@ -135,6 +137,8 @@ export class Browser {
   readonly passwords: PasswordService
   /** The system's browser role: are we the default, and should we be asking to become it. */
   readonly defaultBrowser: DefaultBrowserService
+  /** Ad and tracker blocking: the rule engine, its lists and the blocked-request counters. */
+  readonly blocking: BlockingService
   readonly windows = new Map<string, ZenWindow>()
   quitting = false
   private readonly handlers: CommandHandlers
@@ -198,6 +202,7 @@ export class Browser {
     this.externalProtocols = new ExternalProtocolService(this)
     this.passwords = new PasswordService(this, platform.passwords)
     this.defaultBrowser = new DefaultBrowserService(this)
+    this.blocking = new BlockingService(this)
     this.state.extras = () => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -209,7 +214,8 @@ export class Browser {
       agentServer: this.agents.serverStatus(),
       updates: this.updates.status(),
       passwords: this.passwords.status(),
-      defaultBrowser: this.defaultBrowser.status()
+      defaultBrowser: this.defaultBrowser.status(),
+      blocking: this.blocking.status()
     })
     this.handlers = this.commandHandlers()
   }
@@ -388,6 +394,8 @@ export class Browser {
         win.updateTitle()
       }
     })
+    // Rule sets load synchronously so the first page is protected.
+    this.blocking.start()
     // Zen restores every synced window (and the space each one was in). With "restore previous
     // session" off, the last session's tabs are forgotten and one window starts fresh.
     const { restoreSession } = this.state.settings
@@ -919,6 +927,7 @@ export class Browser {
     void this.agents.stop()
     this.updates.stop()
     this.downloads.shutdown()
+    this.blocking.stop()
     this.flushSync()
     this.state.freeze()
   }
@@ -934,6 +943,7 @@ export class Browser {
     this.mods.flushSync()
     this.sync.flushSync()
     this.passwords.flushSync()
+    this.blocking.flushSync()
   }
 
   private syncShortcuts(): void {
@@ -1500,6 +1510,9 @@ export class Browser {
       'passwords.checkupCancel': () => this.passwords.cancelCheckup(),
       'passwords.import': ({ conflict }, win) => this.passwords.import(conflict, win),
       'passwords.export': ({ passphrase }, win) => this.passwords.export(passphrase, win),
+      'blocking.updateLists': ({ id }) => this.blocking.updateLists(id),
+      'blocking.setSiteException': ({ site, excepted }) =>
+        this.blocking.setSiteException(site, excepted),
 
       'onboarding.complete': ({ searchEngineId, colorScheme, essentials }, win) => {
         if (state.searchEngines.some((e) => e.id === searchEngineId))
@@ -1543,7 +1556,8 @@ export class Browser {
       resources: JSON.stringify(s.resources),
       unload: `${s.unloadEnabled}:${s.unloadTimeoutMinutes}:${s.unloadExcludedDomains.join(',')}`,
       agents: JSON.stringify(s.agents),
-      updates: JSON.stringify(s.updates)
+      updates: JSON.stringify(s.updates),
+      blocking: s.blocking
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -1580,6 +1594,11 @@ export class Browser {
           ...s.defaultBrowserPromo,
           ...(value as Partial<Settings['defaultBrowserPromo']>)
         })
+      } else if (key === 'blocking' && value && typeof value === 'object') {
+        s.blocking = sanitizeBlockingSettings({
+          ...s.blocking,
+          ...(value as Partial<Settings['blocking']>)
+        })
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }
@@ -1610,6 +1629,7 @@ export class Browser {
     if (before.agents !== JSON.stringify(s.agents)) this.agents.onSettingsChanged()
     if (before.updates !== JSON.stringify(s.updates)) this.updates.onSettingsChanged()
     if (before.appIcon !== s.appIcon) this.platform.app.setAppIcon?.(s.appIcon)
+    if (before.blocking !== s.blocking) this.blocking.onSettingsChanged(before.blocking)
     this.state.commit()
   }
 
