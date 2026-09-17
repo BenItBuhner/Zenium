@@ -2,10 +2,10 @@
  * What the translator hands to Zenium's request-blocking engine, and what comes back.
  *
  * The types below are a structural mirror of the engine's rule contract in
- * `src/core/blocking/rules.ts` on the services branch (`cursor/services-blocking-24d1`, checked
- * at commit a9b8876), which is not on `main` yet. Each `Engine*` type is assignable to (and
- * from) its upstream namesake, so once that branch lands this file becomes re-exports and
- * nothing else in `dnr/` changes:
+ * `src/core/blocking/rules.ts`. Each `Engine*` type is assignable to (and from) its upstream
+ * namesake (`src/core/blocking/__tests__/engine.test.ts` feeds a `RuleEngine` as a `RuleSink`),
+ * so this file can become re-exports without anything else in `dnr/` changing; the priority
+ * constants already come from the engine's contract:
  *
  * | here                        | `src/core/blocking/rules.ts`                          |
  * | --------------------------- | ----------------------------------------------------- |
@@ -29,9 +29,11 @@
  *   redirected and no allow rule of equal or higher priority matched.
  * - `allowAllRequests` rules are also matched against the request's document (`documentUrl`,
  *   falling back to `initiator`), so a matched document allows everything under it.
- * - `RULE_SET_PRIORITY.dnr` (5) is the band reserved for extension rule sets; the next band
- *   (`user`, 10) starts five above it.
+ * - `RULE_SET_PRIORITY.dnr` (2000) is the band reserved for extension rule sets, `DNR_BAND_SIZE`
+ *   (1000) integer slots wide, and it sits above every band of Zenium's own sets: the global
+ *   switch and the per-site exceptions do not switch an extension's rules off.
  */
+import { DNR_BAND_SIZE, RULE_SET_PRIORITY } from '../../blocking/rules'
 
 /** Resource types as named by `chrome.declarativeNetRequest.ResourceType`. */
 export type EngineResourceType =
@@ -135,10 +137,10 @@ export interface EngineRuleSet {
 }
 
 /** The engine's `RULE_SET_PRIORITY.dnr`: the base of the band extension rule sets live in. */
-export const ENGINE_DNR_PRIORITY = 5
+export const ENGINE_DNR_PRIORITY: number = RULE_SET_PRIORITY.dnr
 
-/** Number of integer priorities in the band before the next consumer's band (`user`, 10). */
-export const ENGINE_DNR_BAND_SIZE = 5
+/** Number of integer priorities in the band (the engine's `DNR_BAND_SIZE`). */
+export const ENGINE_DNR_BAND_SIZE: number = DNR_BAND_SIZE
 
 /**
  * Where translated rule sets go. `RuleEngine` from `src/core/blocking/engine.ts` implements

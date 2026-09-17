@@ -280,10 +280,19 @@ export const RULE_SET_PRIORITY = {
   /** The global off switch. */
   globalOff: 1000,
   /**
-   * Rule sets translated from extensions' declarativeNetRequest rules: `dnr + n` for the n-th
-   * installed extension, so the most recently installed wins a conflict, as in Chromium.
+   * Rule sets translated from extensions' declarativeNetRequest rules
+   * (`src/core/extensions/dnr/translate.ts`): `dnr + slot` with the most recently installed
+   * extension in the highest of the band's {@link DNR_BAND_SIZE} slots, so it wins a conflict,
+   * as in Chromium. Nothing sits above this band.
    */
   dnr: 2000
 } as const
+
+/**
+ * Integer priorities in the declarativeNetRequest band, `RULE_SET_PRIORITY.dnr` up to but not
+ * including `dnr + DNR_BAND_SIZE`. The translator strictly orders that many extensions by
+ * install rank; anything older shares the band's floor.
+ */
+export const DNR_BAND_SIZE = 1000
 
 export const USER_RULE_SET_ID = 'user'

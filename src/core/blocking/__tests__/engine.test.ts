@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { RuleEngine, TEXT_MATCH_SET_ID, resourceTypeFromElectron, type TextMatch } from '../engine'
 import type { RequestContext, Rule, RuleSet, RuleSetChange } from '../rules'
-import { BUILTIN_RULE_SETS, RULE_SET_PRIORITY } from '../rules'
+import { BUILTIN_RULE_SETS, DNR_BAND_SIZE, RULE_SET_PRIORITY } from '../rules'
+import { compileRule } from '../../extensions/dnr/rules'
+import { routeDecision, type RuleSink } from '../../extensions/dnr/sink'
+import { translateRuleset } from '../../extensions/dnr/translate'
 
 function set(id: string, rules: Rule[], extra: Partial<RuleSet> = {}): RuleSet {
   return { id, source: 'dnr', priority: 5, enabled: true, rules, ...extra }
@@ -303,6 +306,40 @@ describe('RuleEngine priority resolution', () => {
       })
     )
     expect(e.decide(ctx)).toMatchObject({ action: 'allow', matched: { setId: 'dnr:newer' } })
+  })
+
+  it("is the declarativeNetRequest translator's sink: its sets land in the dnr band and decide", () => {
+    const e = new RuleEngine()
+    const sink: RuleSink = e
+    const extensionId = 'a'.repeat(32)
+    const compiled = compileRule(
+      {
+        id: 7,
+        action: { type: 'block' },
+        condition: { urlFilter: '||ads.example^', resourceTypes: ['script'] }
+      },
+      { source: 'static', extensionBaseUrl: `chrome-extension://${extensionId}/` }
+    )
+    if (!compiled.ok) throw new Error(compiled.message)
+    const { set: translated } = translateRuleset(
+      { extensionId, name: 'Example Blocker', installRank: 0, rulesets: [] },
+      { source: 'static', rulesetId: 'ads', path: 'rules/ads.json', rules: [compiled.compiled] }
+    )
+    expect(translated.priority).toBe(RULE_SET_PRIORITY.dnr + DNR_BAND_SIZE - 1)
+    sink.setRuleSet(translated)
+    // Zenium's own switch is off, yet the extension's rule still decides...
+    e.setRuleSet(
+      set(BUILTIN_RULE_SETS.globalOff, [allow(1, {})], {
+        source: 'builtin',
+        priority: RULE_SET_PRIORITY.globalOff
+      })
+    )
+    const decision = e.decide(req('https://ads.example/x.js'))
+    expect(decision.action).toBe('block')
+    // ...and the decision routes back to the extension and rule that made it.
+    expect(routeDecision(decision)).toEqual({ extensionId, ruleId: 7, rulesetId: 'ads' })
+    sink.removeRuleSet(translated.id)
+    expect(e.decide(req('https://ads.example/x.js')).action).toBe('allow')
   })
 
   it('applies modifyHeaders unless an allow of equal or higher priority matched', () => {

@@ -623,7 +623,7 @@ describe('WebRequestMultiplexer listeners', () => {
     )
     const out = ses.headersReceived({
       url: 'https://site.example/',
-      responseHeaders: { 'set-cookie': ['a=1', 'b=2'], 'content-type': 'text/html' }
+      responseHeaders: { 'set-cookie': ['a=1', 'b=2'], 'content-type': ['text/html'] }
     })
     expect(out).toEqual({
       responseHeaders: {
@@ -643,7 +643,7 @@ describe('WebRequestMultiplexer listeners', () => {
     expect(
       ses.headersReceived({
         url: 'https://site.example/go',
-        responseHeaders: { 'content-type': 'text/html', location: 'https://old.example/' }
+        responseHeaders: { 'content-type': ['text/html'], location: ['https://old.example/'] }
       })
     ).toEqual({
       statusLine: 'HTTP/1.1 302 Found',
