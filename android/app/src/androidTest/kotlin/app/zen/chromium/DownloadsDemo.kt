@@ -23,9 +23,9 @@ import org.junit.runner.RunWith
  * emulator), which generates every byte from the same formula as [expectedByte], so a resumed
  * file is checked byte for byte.
  *
- * Run through a caller of the shared `android-emulator-demo.yml` workflow with
- * `DEMO_CLASS=app.zen.chromium.DownloadsDemo` and the server started from `setup-script`.
- * See [DemoHarness] for the recorder handshake.
+ * Run from the dispatch-only workflow `.github/workflows/android-downloads-demo.yml`, a caller of
+ * the shared `android-emulator-demo.yml` that starts the server from `setup-script` and hands the
+ * driver `DEMO_CLASS=app.zen.chromium.DownloadsDemo`. See [DemoHarness] for the recorder handshake.
  */
 @RequiresApi(Build.VERSION_CODES.Q)
 @RunWith(AndroidJUnit4::class)

@@ -1,9 +1,10 @@
 // Range-capable test server behind the DownloadsDemo instrumentation test (android/app/src/androidTest).
 // Run it on the machine that hosts the emulator (`node .github/scripts/downloads-demo-server.mjs 18923`);
-// the emulator reaches it at 10.0.2.2:18923. A caller of android-emulator-demo.yml starts it from
-// `setup-script` with DEMO_CLASS=app.zen.chromium.DownloadsDemo. slow.bin is throttled so Pause and
-// Resume have something to hold; flaky.bin drops every full response at 1 MiB so only a Range
-// resume can finish it; the data: and blob: links are named from their anchors.
+// the emulator reaches it at 10.0.2.2:18923. The dispatch-only workflow
+// .github/workflows/android-downloads-demo.yml starts it from `setup-script` before the emulator
+// boots and runs DownloadsDemo against it. slow.bin is throttled so Pause and Resume have something
+// to hold; flaky.bin drops every full response at 1 MiB so only a Range resume can finish it; the
+// data: and blob: links are named from their anchors.
 import http from 'node:http'
 // Every payload byte comes from this formula; DownloadsDemo.expectedByte is the same one.
 const byteAt = (i) => (i * 31 + (i >> 8)) & 0xff
