@@ -10,6 +10,7 @@ import type {
   MediaState,
   SearchEngine,
   Settings,
+  ShareAction,
   SharePayload,
   Space,
   WindowKind
@@ -647,6 +648,26 @@ export class Browser {
       },
       win
     )
+  }
+
+  /**
+   * The browser's own row in the system share sheet (Android 14: Copy link, Screenshot, Print):
+   * the host reports the tap once the sheet has closed; the tab the share started from does it.
+   */
+  onShareAction(action: ShareAction, win: ZenWindow): void {
+    if (action.kind === 'copy') {
+      this.copyText(action.url, 'Link copied', win)
+      return
+    }
+    const tab = action.tabId ? this.tabs.tab(action.tabId) : undefined
+    if (!tab) {
+      this.toast('The page is no longer open', 'info', win)
+      return
+    }
+    this.actions.run(action.kind === 'print' ? 'page.print' : 'page.screenshot', {
+      sourceTabId: tab.id,
+      win
+    })
   }
 
   /** The system's screen for which links open in this app (Android's "Open by default"). */

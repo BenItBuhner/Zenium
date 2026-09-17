@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A printer with a sheet going in and one coming out: "Print" in the share sheet's action row. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M4,8 h16 a2,2 0 0 1 2,2 v7 a2,2 0 0 1 -2,2 h-2 v-2 h2 v-7 h-16 v7 h2 v2 h-2 a2,2 0 0 1 -2,-2 v-7 a2,2 0 0 1 2,-2 Z M7,3 h10 v5 h-2 v-3 h-6 v3 h-2 Z M18,12 h2 v2 h-2 Z" />
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="M7,14 h10 v8 h-10 Z M9,16 v4 h6 v-4 Z" />
+</vector>

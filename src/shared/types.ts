@@ -622,6 +622,16 @@ export interface SharePayload {
 }
 
 /**
+ * One of the browser's own buttons in the system share sheet (Android 14's action row): the
+ * host reports the tap, the core carries it out on the tab the share started from.
+ */
+export interface ShareAction {
+  kind: 'copy' | 'screenshot' | 'print'
+  url: string
+  tabId: string | null
+}
+
+/**
  * A page wants to leave the web (`mailto:`, `tel:`, `intent://`, a custom scheme) or a site's
  * native app could open the link: the chrome shows a confirm sheet and answers through
  * `externalProtocol.respond`.

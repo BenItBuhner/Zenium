@@ -1,4 +1,4 @@
-import type { EventName, Events, HapticKind, HostCapabilities } from '@shared/types'
+import type { EventName, Events, HapticKind, HostCapabilities, ShareAction } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { newId } from '@shared/ids'
 import type { SharedIntent } from '@shared/shareTarget'
@@ -87,6 +87,8 @@ export interface HostEventPayloads {
   intent: SharedIntent
   /** A page wants to open another app; Kotlin holds the navigation until `externalProtocol.respond`. */
   'externalProtocol.request': HostExternalRequest
+  /** A tap on one of Zenium's own buttons in the system share sheet (Android 14). */
+  'share.action': ShareAction
   pause: void
   'download.started': {
     token: string
@@ -581,6 +583,9 @@ export class AndroidPlatform implements Platform {
           payload as HostEventPayloads['externalProtocol.request'],
           this.window
         )
+        return
+      case 'share.action':
+        browser.onShareAction(payload as HostEventPayloads['share.action'], this.window)
         return
       case 'pause':
         browser.flushSync()
