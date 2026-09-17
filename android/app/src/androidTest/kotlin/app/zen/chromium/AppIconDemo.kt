@@ -58,11 +58,16 @@ class AppIconDemo : DemoHarness("appicon-demo-state.json", "appicon-$THEME", "ap
         SystemClock.sleep(1_200)
         shot("settings-indigo")
 
-        // 3. Pick Sunset: the ring moves, the row names it, the launcher alias flips underneath.
+        // 3. Pick Sunset: the ring moves, the row names it, the launcher alias flips underneath –
+        //    and the browser stays where it is (the system removes tasks rooted at a disabled
+        //    alias; ours is rooted at MainActivity, see LauncherIconActivity).
+        val task = activity.taskId
         if (!clickByLabel(swatch("Sunset"))) error("no Sunset swatch")
-        SystemClock.sleep(2_500)
+        SystemClock.sleep(3_000)
         shot("settings-sunset")
         Log.i(tag, "launcher icon after the pick: ${launcherIcon.current()}")
+        assertTrue("the browser closed on the icon switch", !activity.isFinishing && !activity.isDestroyed)
+        assertEquals("the browser is still in front", app.packageName, ui.rootInActiveWindow?.packageName?.toString())
 
         // 4. The launcher: home, then the app drawer scrolled to Zenium.
         ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
@@ -70,22 +75,32 @@ class AppIconDemo : DemoHarness("appicon-demo-state.json", "appicon-$THEME", "ap
         openAppDrawer(f)
         shot("launcher-drawer")
 
-        // 5. Android 13 themed icons: the monochrome layer, tinted by the launcher.
-        if (setThemedIcons(true)) {
-            SystemClock.sleep(3_500)
-            reveal("Zenium")
-            SystemClock.sleep(800)
-            shot("launcher-drawer-themed")
-            setThemedIcons(false)
-            SystemClock.sleep(2_000)
+        // 5. Themed icons (Android 13) only apply on the home screen: drag Zenium out of the
+        //    drawer onto it, then switch the launcher's themed icons on and off around a capture.
+        val zen = reveal("Zenium")
+        if (zen != null) {
+            f.press(zen.exactCenterX(), zen.exactCenterY())
+            f.moveBy(0f, -0.3f * height, 700)
+            f.hold(700)
+            f.up()
+            SystemClock.sleep(3_000)
+            ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+            SystemClock.sleep(2_500)
+            shot("home")
+            if (setThemedIcons(true)) {
+                SystemClock.sleep(4_000)
+                shot("home-themed")
+                setThemedIcons(false)
+                SystemClock.sleep(2_500)
+            }
         }
 
-        // 6. Recents, for the record (the task's card and its icon).
+        // 6. Recents: the browser's card is still there, under the new icon.
         ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_RECENTS)
         SystemClock.sleep(3_000)
         shot("recents")
 
-        // 7. Back into the app through whatever alias the launcher now resolves.
+        // 7. Back into the app through the alias the launcher now resolves: the same task returns.
         val intent = app.packageManager.getLaunchIntentForPackage(app.packageName) ?: error("no launcher entry")
         Log.i(tag, "launch intent now targets ${intent.component}")
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -97,6 +112,8 @@ class AppIconDemo : DemoHarness("appicon-demo-state.json", "appicon-$THEME", "ap
         assertTrue("Sunset alias enabled", launcherIcon.isEnabled("sunset"))
         assertTrue("Indigo alias disabled", !launcherIcon.isEnabled("indigo"))
         assertEquals("app.zen.chromium.icon.Sunset", intent.component?.className)
+        assertTrue("the browser was recreated", !activity.isDestroyed)
+        assertEquals("the launch came back to the same task", task, activity.taskId)
     }
 
     /** Swipe up from the bottom of the home screen, then bring Zenium (last alphabetically) into view. */

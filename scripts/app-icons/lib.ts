@@ -368,7 +368,9 @@ export function androidAdaptiveIconXml(variant: AppIconVariant): string {
 
 /**
  * One launcher alias per variant, only the default enabled in the manifest; `LauncherIcon.kt`
- * flips them at runtime. Deep links, share and search intents stay on `MainActivity` itself.
+ * flips them at runtime. They target `LauncherIconActivity`, which starts `MainActivity` in a
+ * task of its own: a task rooted at an alias would be removed the moment that alias is disabled.
+ * Deep links, share and search intents stay on `MainActivity` itself.
  */
 export function manifestAliasesBlock(
   variants: readonly AppIconVariant[],
@@ -382,7 +384,7 @@ ${indent}    android:enabled="${v.id === APP_ICON_DEFAULT}"
 ${indent}    android:exported="true"
 ${indent}    android:icon="@mipmap/${androidMipmapName(v)}"
 ${indent}    android:label="@string/app_name"
-${indent}    android:targetActivity=".MainActivity">
+${indent}    android:targetActivity=".LauncherIconActivity">
 ${indent}    <intent-filter>
 ${indent}        <action android:name="android.intent.action.MAIN" />
 ${indent}        <category android:name="android.intent.category.LAUNCHER" />

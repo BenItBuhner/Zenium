@@ -201,9 +201,11 @@ describe('planAppIcons', () => {
     const block = manifest.slice(begin, end)
     expect(block.match(/<activity-alias/g)).toHaveLength(APP_ICON_VARIANTS.length)
     expect(block.match(/android:enabled="true"/g)).toHaveLength(1)
-    expect(block.match(/android:targetActivity="\.MainActivity"/g)).toHaveLength(
+    expect(block.match(/android:targetActivity="\.LauncherIconActivity"/g)).toHaveLength(
       APP_ICON_VARIANTS.length
     )
+    // The trampoline itself is declared outside the generated block.
+    expect(manifest).toContain('android:name=".LauncherIconActivity"')
     expect(block.match(/android\.intent\.category\.LAUNCHER/g)).toHaveLength(
       APP_ICON_VARIANTS.length
     )
