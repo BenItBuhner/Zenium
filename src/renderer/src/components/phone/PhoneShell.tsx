@@ -2,7 +2,7 @@ import type { CSSProperties, JSX } from 'react'
 import { useEffect, useRef } from 'react'
 import { ArrowLeft, Lock, MoreHorizontal, Plus, Search } from 'lucide-react'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
-import { displayUrl } from '@shared/url'
+import { displayHost } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import {
   contentShift,
@@ -303,7 +303,8 @@ function PillContent({
     return Math.round((Math.round(s.tabs.position) - s.tabs.position) * 16)
   })
   const shown = (underFinger && state.tabs[underFinger]) || tab
-  const url = shown ? displayUrl(shown.url) : ''
+  // The site alone, as Chrome's omnibox shows it at rest: the path would only push it off the pill.
+  const url = shown ? displayHost(shown.url) : ''
   const secure = shown?.url.startsWith('https://')
   const Control = interactive ? 'button' : 'span'
   const controlProps = interactive ? { type: 'button' as const } : {}
