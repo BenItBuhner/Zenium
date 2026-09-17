@@ -194,6 +194,7 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
 
   const edit = (node: BookmarkNode): void => editBookmark(node.id)
 
+  // Menu items are Title Case (v2 draft 9.1), like the core's rows in the same sheet.
   const rowMenu = (node: BookmarkNode): void => {
     const urlCount = tree.urlsUnder(node.id).length
     const items: Array<LocalMenuItem | typeof MENU_GAP> =
@@ -201,7 +202,7 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
         ? [
             { label: 'Rename', onSelect: () => edit(node) },
             {
-              label: 'Open all in new tabs',
+              label: 'Open All in New Tabs',
               enabled: urlCount > 0,
               onSelect: () => openInNewTabs([node.id])
             },
@@ -210,8 +211,17 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
           ]
         : [
             { label: 'Edit', onSelect: () => edit(node) },
-            { label: 'Open in new tab', onSelect: () => openInNewTabs([node.id]) },
-            { label: 'Copy link', onSelect: () => copyLinks([node.id]) },
+            { label: 'Open in New Tab', onSelect: () => openInNewTabs([node.id]) },
+            { label: 'Copy Link', onSelect: () => copyLinks([node.id]) },
+            // The system share sheet, where the host has one (`app.share`, capabilities.share).
+            ...(state.capabilities.share
+              ? [
+                  {
+                    label: 'Share…',
+                    onSelect: () => void run('app.share', { title: node.title, url: node.url })
+                  }
+                ]
+              : []),
             MENU_GAP,
             { label: 'Delete', danger: true, onSelect: () => remove([node.id]) }
           ]
@@ -227,12 +237,12 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
       'selection',
       [
         {
-          label: urlCount === 1 ? 'Open in new tab' : 'Open in new tabs',
+          label: urlCount === 1 ? 'Open in New Tab' : 'Open in New Tabs',
           enabled: urlCount > 0,
           onSelect: () => openInNewTabs(ids)
         },
         {
-          label: urlCount === 1 ? 'Copy link' : 'Copy links',
+          label: urlCount === 1 ? 'Copy Link' : 'Copy Links',
           enabled: urlCount > 0,
           onSelect: () => copyLinks(ids)
         },

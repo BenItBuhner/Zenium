@@ -170,11 +170,12 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
     void showLocalMenu(
       'selection',
       [
+        // Menu items are Title Case (v2 draft 9.1).
         {
-          label: picked.length === 1 ? 'Open in new tab' : 'Open in new tabs',
+          label: picked.length === 1 ? 'Open in New Tab' : 'Open in New Tabs',
           onSelect: () => openAll(picked)
         },
-        { label: picked.length === 1 ? 'Copy link' : 'Copy links', onSelect: () => copy(picked) },
+        { label: picked.length === 1 ? 'Copy Link' : 'Copy Links', onSelect: () => copy(picked) },
         MENU_GAP,
         { label: 'Delete', danger: true, onSelect: () => remove(picked) }
       ],

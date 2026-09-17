@@ -127,7 +127,7 @@ export function PhoneSearchField({
         {value && (
           <button
             type="button"
-            className="zen-field-clear"
+            className="zen-field-clear zen-v2-field-clear"
             aria-label="Clear search"
             onClick={() => {
               onChange('')
@@ -223,7 +223,7 @@ export function PhoneListRow({
       tabIndex={0}
       data-selected={selected}
       data-two-line={Boolean(subtitle)}
-      className="zen-list-row select-none"
+      className="zen-list-row zen-v2-list-row select-none"
       style={{ touchAction: onSwipeDelete && !selecting ? 'pan-y' : undefined }}
       {...gestures}
     >

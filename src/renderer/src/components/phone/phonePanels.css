@@ -3,7 +3,10 @@
  * the design-language v2 draft (sections 1 to 3, 6 and 9) on the shared `--v2-*` tokens: neutral
  * panel surfaces with a hairline border, rows of 44 that grow with their content, rectangular
  * 40 px fields and buttons, 44 icon buttons with 20 px glyphs, colour only as ink. Motion stays
- * v1 section 7. Every value is a token so the surfaces re-tune with the block in main.css.
+ * v1 section 7. Every value is a token so the surfaces re-tune with the block in main.css. The
+ * focusable pieces (rows, sheet buttons, the toast action, the field's clear) also carry a
+ * `zen-v2-*` alias class, which is how main.css's one shared focus ring reaches them on coarse
+ * pointers; the field draws its own ring on :focus-within.
  */
 @layer components {
   /* A panel that takes the content card's place: the neutral panel with a hairline edge, no blur. */
@@ -207,6 +210,10 @@
     outline: 2px solid var(--v2-ring);
     outline-offset: 0;
   }
+  /* Like the shared `zen-v2-*` ring (main.css): the offset turns inward in dark. */
+  :root[data-theme='dark'] .zen-field:focus-within {
+    outline-offset: -2px;
+  }
   .zen-field > input {
     min-width: 0;
     flex: 1;
@@ -298,6 +305,10 @@
     backdrop-filter: none;
     box-shadow: var(--v2-shadow-sheet);
     color: var(--v2-text);
+  }
+  /* The chassis gives `.zen-sheet` a heavier dark shadow at this specificity; the token stays. */
+  :root[data-theme='dark'] .zen-phone-editor {
+    box-shadow: var(--v2-shadow-sheet);
   }
 
   /* The phone toast: a small panel (hairline, radius 8, the panel shadow); its action is accent ink. */

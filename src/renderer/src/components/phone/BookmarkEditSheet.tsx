@@ -60,13 +60,14 @@ export function BookmarkEditSheet({
 
   if (gone) return null
 
+  // A dialog title is Title Case (v2 draft 9.1); the labels and buttons below stay sentence case.
   const title = edit.id
     ? folder
-      ? 'Rename folder'
-      : 'Edit bookmark'
+      ? 'Rename Folder'
+      : 'Edit Bookmark'
     : folder
-      ? 'New folder'
-      : 'Add bookmark'
+      ? 'New Folder'
+      : 'Add Bookmark'
 
   return (
     <BottomSheet
@@ -189,7 +190,7 @@ function EditorForm({
         {node && !isBookmarkRoot(node.id) && (
           <button
             type="button"
-            className="zen-sheet-button shrink-0"
+            className="zen-sheet-button zen-v2-sheet-button shrink-0"
             data-variant="danger"
             onClick={remove}
           >
@@ -198,7 +199,7 @@ function EditorForm({
         )}
         <button
           type="submit"
-          className="zen-sheet-button flex-1"
+          className="zen-sheet-button zen-v2-sheet-button flex-1"
           data-variant="primary"
           disabled={!valid}
         >
