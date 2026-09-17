@@ -95,6 +95,19 @@ export interface ApiHost {
   ): Promise<boolean>
 }
 
+/**
+ * Run one of the core's binding-style validators: the `TypeError` Chrome's binding would throw at
+ * the caller becomes the call's error (a rejection / `runtime.lastError` on this side of the IPC).
+ */
+export function validated<T>(fn: () => T): T {
+  try {
+    return fn()
+  } catch (error) {
+    if (error instanceof ApiError) throw error
+    throw new ApiError(error instanceof Error ? error.message : String(error))
+  }
+}
+
 /** Chrome's `windows.WINDOW_ID_CURRENT` and `WINDOW_ID_NONE`. */
 export const WINDOW_ID_NONE = -1
 export const WINDOW_ID_CURRENT = -2

@@ -170,9 +170,20 @@ export const API_SPEC: ApiSpec = {
   runtime: {
     methods: {
       openOptionsPage: { params: [] },
-      setUninstallURL: { params: [string('url')] }
+      setUninstallURL: { params: [string('url')] },
+      getContexts: { params: [object('filter')] }
     },
-    events: { onInstalled: {}, onStartup: {} }
+    events: { onInstalled: {}, onStartup: {} },
+    constants: {
+      ContextType: {
+        TAB: 'TAB',
+        POPUP: 'POPUP',
+        BACKGROUND: 'BACKGROUND',
+        OFFSCREEN_DOCUMENT: 'OFFSCREEN_DOCUMENT',
+        SIDE_PANEL: 'SIDE_PANEL',
+        DEVELOPER_TOOLS: 'DEVELOPER_TOOLS'
+      }
+    }
   },
   action: { methods: ACTION_METHODS, events: { onClicked: {} }, manifestVersion: 3 },
   browserAction: { methods: ACTION_METHODS, events: { onClicked: {} }, manifestVersion: 2 },
