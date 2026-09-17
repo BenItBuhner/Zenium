@@ -1,7 +1,9 @@
 import type { JSX, ReactNode } from 'react'
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { registerBackHandler, uiStore } from '@renderer/lib/ui'
+import { useBackDismissal } from '@renderer/lib/back'
+import { SPRING_GENTLE } from '@renderer/lib/motion/spring'
+import { uiStore } from '@renderer/lib/ui'
 
 export interface SheetAction {
   id: string
@@ -28,17 +30,34 @@ const UNDERHANG = 48
  * A short sheet of actions for something in the tab overview (a held card, a group's header),
  * on the chrome's shared sheet surface (`.zen-sheet`): grabber, 56px title row, 48px rows that
  * nest concentrically inside the sheet's corner, under the space-tinted scrim. A tap on the
- * scrim, the system back or Escape puts it away.
+ * scrim or Escape puts it away; the system back gesture slides it down with the finger through
+ * the back-surface registry.
  *
  * Structure mirrors the phone menu's `BottomSheet` (title row as `header`, rows as children) so
- * it can move onto that primitive – drag, detents, predictive back – once it lands.
+ * it can move onto that primitive – drag, detents – once it lands.
  */
 export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.Element {
   const insets = uiStore.use((s) => s.insets)
+  const sheetRef = useRef<HTMLDivElement>(null)
+  const scrimRef = useRef<HTMLDivElement>(null)
   // The sheet appears under a finger that is still lifting off a card: the click that follows
   // that touch lands on the scrim and must not close what it just opened. Only a touch that
   // began on the scrim dismisses it.
   const armed = useRef(false)
+
+  // Predictive back: the sheet follows the gesture down and its scrim thins with it.
+  useBackDismissal('overview-sheet', {
+    travel: 320,
+    spring: SPRING_GENTLE,
+    render: (v) => {
+      const sheet = sheetRef.current
+      const scrim = scrimRef.current
+      if (sheet) sheet.style.transform = `translateY(${v * 100}%)`
+      if (scrim) scrim.style.opacity = `${1 - v}`
+    },
+    dismissed: onClose
+  })
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
@@ -48,14 +67,7 @@ export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.E
       }
     }
     window.addEventListener('keydown', onKey, true)
-    const unregister = registerBackHandler(() => {
-      onClose()
-      return true
-    })
-    return () => {
-      window.removeEventListener('keydown', onKey, true)
-      unregister()
-    }
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose])
 
   // Portalled out of the gesture stage's stacking context so it covers the bottom bar too.
@@ -69,8 +81,12 @@ export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.E
         if (e.target === e.currentTarget && armed.current) onClose()
       }}
     >
-      <div className="zen-overview-scrim zen-animate-fade pointer-events-none absolute inset-0 opacity-[0.28] dark:opacity-[0.45]" />
       <div
+        ref={scrimRef}
+        className="zen-overview-scrim zen-animate-fade pointer-events-none absolute inset-0"
+      />
+      <div
+        ref={sheetRef}
         className="zen-sheet zen-sheet-in relative mx-auto flex w-full max-w-[520px] flex-col pt-2"
         style={{
           marginBottom: -UNDERHANG,

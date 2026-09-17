@@ -136,7 +136,7 @@ export function SpacesDrawer({ state, isDark }: Props): JSX.Element {
     <div className="absolute inset-0 z-40" onClick={() => closeSpacesDrawer()}>
       <div
         className="zen-overview-scrim pointer-events-none absolute inset-0"
-        style={{ opacity: shown * (isDark ? 0.45 : 0.28) }}
+        style={{ opacity: shown }}
       />
       <div
         ref={panelRef}

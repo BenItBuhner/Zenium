@@ -8,17 +8,12 @@ import { cmd, run } from '@renderer/lib/api'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { closeOverview, type OverviewState } from '@renderer/lib/gestures/stage'
 import { groupColorHex, groupsOf, nextGroupColor } from '@renderer/lib/groups'
-import {
-  CARD_SHADOW,
-  FRAME_SHADOW,
-  LIFTED_SHADOW,
-  lerpShadow,
-  shadowCss
-} from '@renderer/lib/motion/elevation'
+import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import {
   activeSpace,
   activeTab,
   essentialsFor,
+  isDarkScheme,
   pinnedOf,
   regularOf,
   tabTitle
@@ -79,6 +74,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const p = Math.min(1, Math.max(0, progress))
   const interactive = phase === 'open'
   const side = state.settings.sidebarSide
+  const isDark = isDarkScheme(state)
 
   const rootRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -376,7 +372,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
             width: heroRect.width,
             height: heroRect.height,
             borderRadius: contentRadius + (CARD_RADIUS - contentRadius) * p,
-            boxShadow: shadowCss(lerpShadow(FRAME_SHADOW, CARD_SHADOW, p)),
+            boxShadow: shadowCss(lerpShadow(FRAME_SHADOW, cardShadow(isDark), p)),
             opacity: heroFades ? 1 - Math.max(0, (p - 0.55) / 0.45) : 1
           }}
         >
@@ -432,18 +428,17 @@ function LiftGhost({
   if (lift.phase === 'idle' || !lift.ghost || !lift.tabId) return null
   const tab = state.tabs[lift.tabId]
   if (!tab) return null
-  const raised = lift.phase === 'dropping' ? 0 : 1
   return (
     <div
       className="zen-overview-card zen-overview-ghost pointer-events-none fixed z-30 flex flex-col overflow-hidden"
       data-active={tab.id === activeTabId}
+      data-landing={lift.phase === 'dropping' || undefined}
       style={{
         left: lift.ghost.x,
         top: lift.ghost.y,
         width: lift.ghost.width,
         height: lift.ghost.height,
-        transform: `scale(${lift.scale})`,
-        boxShadow: shadowCss(lerpShadow(CARD_SHADOW, LIFTED_SHADOW, raised))
+        transform: `scale(${lift.scale})`
       }}
     >
       <CardBody tab={tab} closable={false} />

@@ -1,7 +1,8 @@
 import { run } from '../api'
+import { pushBackSurface } from '../back'
 import { SPRING_GENTLE, SpringAnimation } from '../motion/spring'
 import { createStore } from '../store'
-import { captureActiveTab, closeDrawer, registerBackHandler, uiStore } from '../ui'
+import { captureActiveTab, closeDrawer, uiStore } from '../ui'
 import { dragPosition, settleTarget } from './swipe'
 
 /**
@@ -122,9 +123,10 @@ export function releaseDrawer(velocity: number): void {
 }
 
 /**
- * The shape a predictive-back registry drives: `begin` claims the gesture when the drawer is
- * up, `progress` follows the system's 0…1 back progress (the drawer slides out with the finger),
- * `commit` finishes the dismissal with the spring, `cancel` springs it back in.
+ * The system back gesture, through the back-surface registry (`back.ts`): `begin` holds the
+ * drawer where it is, `progress` follows the finger (the drawer slides out as the gesture
+ * advances), `commit` finishes the dismissal with the spring, `cancel` springs it back in. A
+ * plain back press arrives as a bare `commit`.
  */
 export const drawerBackHandle = {
   begin(): boolean {
@@ -132,16 +134,20 @@ export const drawerBackHandle = {
     return beginDrawerDrag()
   },
   progress(backProgress: number): void {
-    if (drawerStore.get().phase !== 'dragging') return
+    const drawer = drawerStore.get()
+    if (drawer.phase === 'closed') return
+    if (drawer.phase !== 'dragging' && !beginDrawerDrag()) return
     const progress = 1 - Math.min(1, Math.max(0, backProgress))
     drawerStore.set({ progress })
   },
   commit(): void {
     if (drawerStore.get().phase === 'closed') return
+    if (drawerStore.get().phase === 'settling') spring.stop()
     settle(0)
   },
   cancel(): void {
     if (drawerStore.get().phase === 'closed') return
+    if (drawerStore.get().phase === 'settling') spring.stop()
     settle(1)
   }
 }
@@ -149,11 +155,23 @@ export const drawerBackHandle = {
 const flags = globalThis as unknown as { __zenDrawerWired?: boolean }
 if (!flags.__zenDrawerWired) {
   flags.__zenDrawerWired = true
-  // A plain (non-predictive) back closes the drawer with the spring instead of dropping it.
-  registerBackHandler(() => {
-    if (drawerStore.get().phase === 'closed') return false
-    closeSpacesDrawer()
-    return true
+  // The drawer is a back surface for as long as it is up: registered when it opens (on top of
+  // the overview it slides over), taken off once it has gone.
+  let popBackSurface: (() => void) | null = null
+  drawerStore.subscribe(() => {
+    const open = drawerStore.get().phase !== 'closed'
+    if (open && !popBackSurface) {
+      popBackSurface = pushBackSurface({
+        name: 'spaces-drawer',
+        onStart: () => void drawerBackHandle.begin(),
+        onProgress: drawerBackHandle.progress,
+        onCommit: drawerBackHandle.commit,
+        onCancel: drawerBackHandle.cancel
+      })
+    } else if (!open && popBackSurface) {
+      popBackSurface()
+      popBackSurface = null
+    }
   })
   // Something else took the drawer down (an overlay or the URL bar opened over it).
   uiStore.subscribe(() => {
