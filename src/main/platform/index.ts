@@ -1,7 +1,22 @@
-import { app, clipboard, dialog, ipcMain, net, shell, type Session } from 'electron'
+import {
+  app,
+  clipboard,
+  dialog,
+  ipcMain,
+  net,
+  shell,
+  type IpcMainEvent,
+  type Session
+} from 'electron'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
+import type {
+  HostCapabilities,
+  NewTabPageAction,
+  NewTabPageState,
+  Platform as PlatformOs
+} from '../../shared/types'
+import { isNewTabUrl } from '../../shared/url'
 import { Browser } from '../../core/browser'
 import type {
   AppHost,
@@ -26,6 +41,7 @@ import { ElectronDownloads } from './downloads'
 import { ElectronMenus } from './menus'
 import { ElectronTabViewHost, copyImageFromUrl } from './views'
 import { ElectronWindowFactory, type ElectronWindow } from './window'
+import { ElectronNewTabBackground } from './newTabBackground'
 import { ExtensionService } from './extensions'
 import { WebstoreBridge } from './webstoreBridge'
 import { ExtensionApiHost } from './extensionApi'
@@ -97,6 +113,7 @@ export class ElectronPlatform implements Platform {
   /** The webRequest multiplexer and text matcher; created with the browser in `start`. */
   requestBlocking!: ElectronBlocking
   readonly translate: ElectronTranslateHost
+  readonly newTabBackground: ElectronNewTabBackground
   browser!: Browser
   private readonly profileDir: string
 
@@ -105,6 +122,7 @@ export class ElectronPlatform implements Platform {
     this.profileDir = join(userDataDir, 'zen')
     this.io = new FileStoreIO(this.profileDir)
     this.blocking = new ElectronBundledLists(bundledListsDirectory(), this.profileDir)
+    this.newTabBackground = new ElectronNewTabBackground(join(this.profileDir, 'newtab'))
     this.windows = new ElectronWindowFactory()
     this.translate = new ElectronTranslateHost(userDataDir, () =>
       focusedChromeWebContents((id) => this.windows.windowForWebContents(id) !== undefined)
@@ -303,7 +321,11 @@ export class ElectronPlatform implements Platform {
     this.requestBlocking.registerHeaderRewrite(webstoreClientHints, { persistentOnly: true })
     this.requestBlocking.registerHeaderRewrite(edgeStoreUserAgent, { persistentOnly: true })
     this.sessions.configure((ses: Session, containerId: string) => {
-      installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
+      installZenProtocol(
+        ses,
+        (id) => browser.reader.pageHtml(id),
+        () => this.newTabBackground.response()
+      )
       extensionResources.install(ses)
       // The one webRequest listener set of the session; every request hook goes through it.
       this.requestBlocking.attach(ses, containerId)
@@ -358,6 +380,26 @@ export class ElectronPlatform implements Platform {
     ipcMain.on('zen:page', (event, message: PageMessage) => {
       this.views.viewForWebContents(event.sender)?.dispatchPageMessage(message)
     })
+    // The new tab page: its preload fetches the first state synchronously (before the first
+    // paint) and sends actions. Only the main frame of a tab view showing `zen://newtab` is heard.
+    ipcMain.on('zen:newtab-state', (event) => {
+      const tabId = this.newTabSender(event)
+      const state: NewTabPageState | null = tabId ? browser.newTab.stateFor(tabId) : null
+      event.returnValue = state
+    })
+    ipcMain.on('zen:newtab', (event, action: NewTabPageAction) => {
+      const tabId = this.newTabSender(event)
+      if (!tabId || !action || typeof action.type !== 'string') return
+      if (!isNewTabUrl(event.senderFrame?.url ?? event.sender.getURL())) return
+      browser.newTab.handleAction(tabId, action)
+    })
+  }
+
+  /** The tab (or preloaded placeholder) whose main frame sent a new tab page message. */
+  private newTabSender(event: IpcMainEvent): string | undefined {
+    if (!this.views.viewForWebContents(event.sender)) return undefined
+    if (event.senderFrame && event.senderFrame !== event.sender.mainFrame) return undefined
+    return this.views.tabIdForWebContents(event.sender)
   }
 }
 

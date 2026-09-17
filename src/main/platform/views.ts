@@ -11,7 +11,7 @@ import {
 } from 'electron'
 import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
-import type { NavigationSnapshot, Rect, Tab } from '../../shared/types'
+import type { NavigationSnapshot, NewTabPageState, Rect, Tab } from '../../shared/types'
 import type { SiteCertificate } from '../../shared/siteInfo'
 import type {
   AgentCapture,
@@ -382,6 +382,11 @@ export class ElectronTabView implements TabView {
 
   setZapMode(on: boolean): void {
     this.wc.send('zen:zap', on)
+  }
+
+  /** Fresh `NewTabPageState` for a `zen://newtab` page (its preload listens on this channel). */
+  sendNewTabState(state: NewTabPageState): void {
+    if (!this.wc.isDestroyed()) this.wc.send('zen:newtab-state', state)
   }
 
   setBackgroundColor(color: string): void {
@@ -813,6 +818,13 @@ export class ElectronTabViewHost implements TabViewHost {
     this.viewListeners.add(listener)
     for (const view of this.byWebContentsId.values()) listener(view)
     return () => this.viewListeners.delete(listener)
+  }
+
+  /** A preloaded new tab page became a real tab: its messages now route to that tab. */
+  retargetView(view: TabView, tabId: string): void {
+    const target = view as ElectronTabView
+    if (this.byWebContentsId.get(target.webContentsId) === target)
+      this.tabIds.set(target.webContentsId, tabId)
   }
 
   tabIdForWebContents(wc: WebContents): string | undefined {
