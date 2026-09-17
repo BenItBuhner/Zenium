@@ -333,15 +333,16 @@ class TabWebView(
 
     /**
      * A touch landing on a covered strip is the chrome's: the message card drawn there wants it.
-     * The card's whole gesture (down, moves, up) is handed to the chrome WebView, the view's
-     * sibling underneath, in its own coordinates; the page never sees it.
+     * The card's whole gesture (down, moves, up) is handed to the view under the page (the chrome
+     * WebView, [PageHost.underlay]) in its own coordinates; the page never sees it. A host with
+     * nothing under the page (a custom tab) covers nothing, so its pages keep every touch.
      */
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        val chrome = host.underlay
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            coverTouch = cover.active && (event.y < visibleTop() || event.y >= visibleBottom())
+            coverTouch = chrome != null && cover.active && (event.y < visibleTop() || event.y >= visibleBottom())
         }
-        if (!coverTouch) return super.dispatchTouchEvent(event)
-        val chrome = host.chrome
+        if (!coverTouch || chrome == null) return super.dispatchTouchEvent(event)
         val copy = MotionEvent.obtain(event)
         copy.offsetLocation((left - chrome.left).toFloat(), (top - chrome.top).toFloat())
         val handled = chrome.dispatchTouchEvent(copy)
