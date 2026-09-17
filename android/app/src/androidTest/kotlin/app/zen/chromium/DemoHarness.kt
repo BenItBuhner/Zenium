@@ -230,7 +230,10 @@ abstract class DemoHarness(
     }
 
     /** Breadth-first search of the active window for a node labelled `label` (aria-label or text). */
-    protected fun findByLabel(label: String): Rect? {
+    protected fun findByLabel(label: String): Rect? =
+        findNode(label)?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+
+    private fun findNode(label: String): AccessibilityNodeInfo? {
         val root = ui.rootInActiveWindow ?: return null
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)
@@ -238,9 +241,7 @@ abstract class DemoHarness(
         while (queue.isNotEmpty() && visited < 6_000) {
             val node = queue.removeFirst()
             visited++
-            if (node.contentDescription?.toString() == label || node.text?.toString() == label) {
-                return Rect().also { node.getBoundsInScreen(it) }
-            }
+            if (node.contentDescription?.toString() == label || node.text?.toString() == label) return node
             for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
         }
         return null
@@ -248,6 +249,17 @@ abstract class DemoHarness(
 
     /** The first of several labels that is on screen (a tab's title changes once its page loads). */
     protected fun findAny(vararg labels: String): Rect? = labels.firstNotNullOfOrNull { findByLabel(it) }
+
+    /**
+     * Scroll the first of these labels fully into view (the chrome scrolls its grid the least it
+     * has to) and return where it is then; null when none exists.
+     */
+    protected fun reveal(vararg labels: String): Rect? {
+        val label = labels.firstOrNull { findNode(it) != null } ?: return null
+        findNode(label)?.performAction(AccessibilityNodeInfo.ACTION_SHOW_ON_SCREEN)
+        SystemClock.sleep(1_500)
+        return findByLabel(label)
+    }
 
     /** Poll for a label for up to `timeoutMs`. */
     protected fun waitFor(label: String, timeoutMs: Long = 5_000): Rect? {

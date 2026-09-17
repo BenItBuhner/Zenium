@@ -88,10 +88,10 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         SystemClock.sleep(2_000)
 
         // 5. Drag a card onto another: the merge preview, then a group of the two. The loose
-        //    cards sit below the fold now: scroll to the bottom first.
-        scrollGrid(-0.55f * height)
-        val example = find("Example Domain", "example.com")
-        val tea = find("Tea - Wikipedia")
+        //    cards sit below the fold now: bring the target (the lower row) into view first, the
+        //    source is the row above it.
+        val tea = show("Tea - Wikipedia")
+        val example = show("Example Domain", "example.com")
         f.press(example.exactCenterX(), example.exactCenterY())
         f.moveBy(0f, -n, 120)
         f.moveBy(tea.exactCenterX() - example.exactCenterX(), tea.exactCenterY() - example.exactCenterY() + n, 1_000)
@@ -100,11 +100,9 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         f.up()
         SystemClock.sleep(3_000)
 
-        // 6. Move a tab between groups: Tea out of the new group onto the News group, back at
-        //    the top of the grid.
-        scrollGrid(0.6f * height)
-        val teaAgain = find("Tea - Wikipedia")
-        val news = find("Group News")
+        // 6. Move a tab between groups: Tea out of the new group onto the News group above it.
+        val news = show("Group News")
+        val teaAgain = show("Tea - Wikipedia")
         f.press(teaAgain.exactCenterX(), teaAgain.exactCenterY())
         f.moveBy(0f, -n, 120)
         f.moveBy(news.exactCenterX() - teaAgain.exactCenterX(), news.exactCenterY() - teaAgain.exactCenterY() + n, 1_000)
@@ -138,20 +136,14 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
     private fun find(vararg labels: String): Rect =
         findAny(*labels) ?: error("none of ${labels.joinToString()} is on screen")
 
-    /**
-     * Fling the grid by `dy` px (negative scrolls towards the bottom) and let it come to rest.
-     * The finger starts near the edge it moves away from, so the whole stroke stays on screen.
-     */
-    private fun scrollGrid(dy: Float) {
-        val f = Finger()
-        f.down(width * 0.5f, if (dy < 0) height * 0.78f else height * 0.22f)
-        f.moveBy(0f, dy, 260)
-        f.up()
-        SystemClock.sleep(1_800)
-    }
+    /** Like [find], after scrolling the element fully into the grid's viewport. */
+    private fun show(vararg labels: String): Rect =
+        reveal(*labels) ?: error("none of ${labels.joinToString()} exists")
 
+    /** Tap the element with this label once it exists, scrolled into view if it is in the grid. */
     private fun tap(label: String) {
-        val target = waitFor(label) ?: error("no $label to tap")
+        waitFor(label) ?: error("no $label to tap")
+        val target = show(label)
         Finger().tap(target.exactCenterX(), target.exactCenterY())
     }
 }
