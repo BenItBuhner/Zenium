@@ -9,6 +9,7 @@ import type {
   UIState
 } from '@shared/types'
 import { run } from '@renderer/lib/api'
+import { useBackSurface } from '@renderer/lib/back'
 import {
   closeSecurityPrompt,
   currentSecurityPrompt,
@@ -57,6 +58,8 @@ function SecurityPromptDialog({ prompt }: { prompt: SecurityPrompt }): JSX.Eleme
     run('security.respond', { id: prompt.id, response })
   }
 
+  // Escape, and the system back gesture or button on Android, are Cancel.
+  useBackSurface({ name: 'security-prompt', onCommit: () => respond(null) })
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
