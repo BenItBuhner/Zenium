@@ -95,6 +95,7 @@ describe('externalScheme', () => {
   it('names the scheme of links another application handles', () => {
     expect(externalScheme('mailto:a@b.c')).toBe('mailto')
     expect(externalScheme('TEL:+123')).toBe('tel')
+    expect(externalScheme('sms:+123?body=hi')).toBe('sms')
     expect(externalScheme('magnet:?xt=urn:btih:abc')).toBe('magnet')
     expect(externalScheme('ms-settings:defaultapps')).toBe('ms-settings')
     expect(externalScheme('zenium-test://x')).toBe('zenium-test')

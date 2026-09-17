@@ -1,4 +1,11 @@
-import type { EventName, Events, HapticKind, HostCapabilities, ShareAction } from '@shared/types'
+import type {
+  DefaultBrowserOutcome,
+  EventName,
+  Events,
+  HapticKind,
+  HostCapabilities,
+  ShareAction
+} from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { newId } from '@shared/ids'
 import type { SharedIntent } from '@shared/shareTarget'
@@ -11,6 +18,7 @@ import type {
   AgentTransport,
   AppHost,
   ClipboardHost,
+  DefaultBrowserHost,
   DialogHost,
   DownloadHost,
   ExternalProtocolHost,
@@ -275,6 +283,16 @@ class AndroidAgentTransport implements AgentTransport {
 
 type Listener = (payload: unknown) => void
 
+class AndroidDefaultBrowser implements DefaultBrowserHost {
+  async isDefault(): Promise<boolean> {
+    return false
+  }
+
+  async makeDefault(): Promise<DefaultBrowserOutcome> {
+    return 'failed'
+  }
+}
+
 /** In-process event fan-out: the chrome runs in the same document as the core. */
 export class InProcessEvents {
   private readonly listeners = new Map<string, Set<Listener>>()
@@ -422,6 +440,7 @@ export class AndroidPlatform implements Platform {
   readonly app: AppHost
   readonly siteData: AndroidSiteData
   readonly externalProtocols: ExternalProtocolHost
+  readonly defaultBrowser = new AndroidDefaultBrowser()
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null

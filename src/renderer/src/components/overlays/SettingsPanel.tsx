@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { useState } from 'react'
-import { ArrowDown, ArrowUp, Check, Globe, Sparkles, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, Sparkles, Trash2 } from 'lucide-react'
 import type {
   ColorScheme,
   ContainerColor,
@@ -65,7 +65,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'tabs', label: 'Tab Management' },
   { id: 'resources', label: 'Resources' },
   { id: 'search', label: 'Search' },
-  { id: 'default-browser', label: 'Default browser' },
+  { id: 'default-browser', label: 'Default Browser' },
   { id: 'spaces', label: 'Space Routing' },
   { id: 'containers', label: 'Containers' },
   { id: 'boosts', label: 'Boosts' },
@@ -544,36 +544,35 @@ function DefaultBrowserSection({ state }: { state: UIState }): JSX.Element {
       : 'Zenium may not be your default browser'
   const hint =
     !isDefault && state.platform === 'win32'
-      ? 'Windows will open Settings so you can choose Zenium.'
+      ? 'Windows will open Settings → Apps → Default apps. Choose Zenium, then Set default.'
       : undefined
   return (
     <Group title="Default browser">
-      <Row label={label} hint={hint} icon={<StatusGlyph ok={isDefault === true} />}>
+      <Row label={label} hint={hint} icon={isDefault === true ? <StatusGlyph /> : undefined}>
         {isDefault ? (
           <span />
         ) : (
-          <Button size="sm" className="rounded-full" onClick={() => void requestDefaultBrowser()}>
+          <button
+            type="button"
+            className="zen-protocol-btn zen-protocol-btn-primary"
+            onClick={() => void requestDefaultBrowser()}
+          >
             Make default
-          </Button>
+          </button>
         )}
       </Row>
     </Group>
   )
 }
 
-/** A 24px status pill: the OK ink on its tint when the state is good, a muted globe otherwise. */
-function StatusGlyph({ ok }: { ok: boolean }): JSX.Element {
+/** Ink-only ok mark; status colour is never a filled surface (v2). */
+function StatusGlyph(): JSX.Element {
   return (
     <span
       aria-hidden
-      className={cn(
-        'flex h-6 w-6 shrink-0 items-center justify-center rounded-full',
-        ok
-          ? 'bg-[rgb(var(--zen-ok-rgb)/0.14)] text-[var(--zen-ok)]'
-          : 'bg-[var(--zen-element-bg)] text-[var(--zen-muted)]'
-      )}
+      className="flex h-4 w-4 shrink-0 items-center justify-center text-[var(--zen-ok)]"
     >
-      {ok ? <Check className="h-3.5 w-3.5" /> : <Globe className="h-3.5 w-3.5" />}
+      <Check className="h-4 w-4" />
     </span>
   )
 }

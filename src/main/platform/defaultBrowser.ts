@@ -68,6 +68,10 @@ async function windowsIsDefault(): Promise<boolean> {
 
 async function windowsMakeDefault(): Promise<DefaultBrowserOutcome> {
   if (await windowsIsDefault()) return 'done'
+  // Windows 10+ ignores this for the user's choice, but it still writes the legacy http/https
+  // class keys some older Settings pages look at; the real picker is opened next.
+  app.setAsDefaultProtocolClient('http')
+  app.setAsDefaultProtocolClient('https')
   if (!(await windowsIsRegistered())) {
     console.warn('[zen] default browser: Zenium is not registered with Windows (run the installer)')
     return 'failed'

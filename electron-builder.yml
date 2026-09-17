@@ -115,6 +115,9 @@ dmg:
   artifactName: ${name}-${version}-${arch}.${ext}
 linux:
   executableName: zenium
+  # desktopName in package.json is zenium.desktop; this makes the installed file match so
+  # StartupWMClass, Electron's app id and xdg-settings all use the same name.
+  syncDesktopName: true
   target:
     - AppImage
     - deb

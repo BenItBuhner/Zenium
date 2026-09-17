@@ -22,7 +22,7 @@ export function Row({
 }: {
   label: string
   hint?: string
-  /** A leading status glyph (a 24px pill), for rows that report a state. */
+  /** A leading status glyph, for rows that report a state. */
   icon?: ReactNode
   children: ReactNode
 }): JSX.Element {

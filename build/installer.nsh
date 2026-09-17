@@ -1,5 +1,6 @@
-; electron-builder's NSIS include for Zenium: (1) removes the installation of the app's former
-; name, (2) registers Zenium as a web browser with Windows (further down).
+; electron-builder's NSIS include for Zenium: (1) re-points Start-menu and desktop shortcuts at
+; the app-icon colour the user last picked, (2) removes the installation of the app's former
+; name, (3) registers Zenium as a web browser with Windows.
 ;
 ; Zenium shipped as "Zen" up to v0.2.0 (appId app.zen-browser.chromium). electron-builder derives
 ; the NSIS GUID – the uninstall registry key, the install-info key and the "Apps" entry – from the

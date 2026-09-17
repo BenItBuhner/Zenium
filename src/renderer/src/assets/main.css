@@ -328,7 +328,6 @@
   .zen-tab,
   .zen-essential,
   .zen-panel,
-  .zen-dialog,
   .zen-omnibox-sheet,
   .zen-toolbar-button,
   .zen-kbd,
@@ -494,20 +493,77 @@
     border-radius: 16px;
     box-shadow: var(--zen-shadow);
   }
-  /* A centred dialog: the panel surface at level 3 with the dark theme's inner light hairline. */
+  /* A centred dialog: opaque v2 panel (no space tint). Dims only the content frame. */
   .zen-dialog {
-    background: var(--zen-panel-bg);
-    backdrop-filter: var(--zen-blur-panel);
-    border-radius: 16px;
-    box-shadow: var(--zen-shadow);
+    background: #f4f4f4;
+    border: 1px solid rgb(0 0 0 / 0.15);
+    border-radius: 12px;
+    box-shadow: 0 10px 8px rgb(0 0 0 / 0.15);
   }
   :root[data-theme='dark'] .zen-dialog {
-    box-shadow:
-      var(--zen-shadow),
-      inset 0 0 0 1px rgb(255 255 255 / 0.08);
+    background: #1f1f1f;
+    border-color: rgb(255 255 255 / 0.12);
+    box-shadow: 0 10px 8px rgb(0 0 0 / 0.15);
   }
   .zen-dialog-scrim {
-    background: var(--zen-scrim);
+    background: rgb(21 20 26 / 0.45);
+  }
+  :root[data-theme='dark'] .zen-dialog-scrim {
+    background: rgb(0 0 0 / 0.55);
+  }
+  .zen-protocol-check {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    accent-color: color-mix(in srgb, var(--zen-accent) 40%, #000);
+  }
+  :root[data-theme='dark'] .zen-protocol-check {
+    accent-color: color-mix(in srgb, var(--zen-accent) 40%, #fff);
+  }
+  .zen-protocol-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 32px;
+    min-height: 32px;
+    padding: 0 12px;
+    border-radius: 4px;
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 1;
+    border: 0;
+    cursor: pointer;
+  }
+  .zen-default-browser-strip .zen-protocol-btn {
+    height: 24px;
+    min-height: 24px;
+    padding: 0 10px;
+    font-size: 13px;
+  }
+  .zen-protocol-btn-primary {
+    background: color-mix(in srgb, var(--zen-accent) 40%, #000);
+    color: #fff;
+  }
+  .zen-protocol-btn-primary:hover {
+    filter: brightness(1.08);
+  }
+  :root[data-theme='dark'] .zen-protocol-btn-primary {
+    background: color-mix(in srgb, var(--zen-accent) 40%, #fff);
+    color: #15141a;
+  }
+  .zen-protocol-btn-secondary {
+    background: color-mix(in srgb, var(--zen-fg) 10%, transparent);
+    color: var(--zen-fg);
+  }
+  .zen-default-browser-strip {
+    background: #f4f4f7;
+    border-bottom: 1px solid #e7e7e8;
+    color: #15141a;
+  }
+  :root[data-theme='dark'] .zen-default-browser-strip {
+    background: #19181f;
+    border-bottom-color: #302f38;
+    color: #fbfbfe;
   }
 
   /* The 1px outline is a spread shadow: its corners are the page's radius plus 1px, concentric. */
