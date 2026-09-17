@@ -85,12 +85,12 @@ export function LoginDetail({
               <Title>{credential.domain}</Title>
               <button
                 type="button"
-                className="zen-v2-pw-description zen-v2-pw-link flex min-w-0 max-w-full items-center gap-1 text-left hover:text-[var(--v2-text)]"
+                className="zen-v2-pw-link flex min-w-0 max-w-full items-center gap-1 text-left"
                 onClick={() => openSite(state, credential)}
                 title="Open the site"
               >
                 <span className="truncate">{credential.url || credential.origin}</span>
-                <ExternalLink className="size-3 shrink-0" />
+                <ExternalLink className="size-4 shrink-0" />
               </button>
             </span>
           </span>
@@ -194,7 +194,7 @@ export function LoginDetail({
                   <FieldRow label="HTTP authentication realm" value={credential.realm} />
                 )}
               </div>
-              <div className="flex flex-col gap-0.5">
+              <div className="zen-v2-pw-meta flex flex-col gap-0.5">
                 <Description>Saved {formatDate(credential.createdAt)}</Description>
                 <Description>Changed {relativeTimeInSentence(credential.updatedAt)}</Description>
                 <Description>

@@ -120,7 +120,7 @@ export function Generator({
               max={64}
               step={1}
               aria-label="Length"
-              className="w-40"
+              className="zen-v2-pw-slider w-40"
               value={[options.length]}
               onValueChange={([v]) => v !== undefined && set({ length: v })}
             />
@@ -155,7 +155,7 @@ export function Generator({
               max={10}
               step={1}
               aria-label="Words"
-              className="w-40"
+              className="zen-v2-pw-slider w-40"
               value={[options.words]}
               onValueChange={([v]) => v !== undefined && set({ words: v })}
             />

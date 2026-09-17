@@ -178,11 +178,13 @@ function IssueRow({
       <SiteIcon domain={credential.domain} favicon={credential.favicon} />
       <button
         type="button"
-        className="min-w-0 flex-1 self-stretch text-left"
+        className="zen-v2-pw-list-row-open min-w-0 flex-1 text-left"
         onClick={() => onShow(credential.id)}
       >
         <div className="truncate">{credential.domain}</div>
-        <Description className="truncate">{credential.username || 'No username'}</Description>
+        <div className="zen-v2-pw-row-description truncate" data-clamp="false">
+          {credential.username || 'No username'}
+        </div>
       </button>
       <Btn onClick={() => openSite(state, credential)}>
         <ExternalLink /> Change

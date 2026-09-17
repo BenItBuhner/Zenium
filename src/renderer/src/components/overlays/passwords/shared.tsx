@@ -356,7 +356,7 @@ export function Heading({
   )
 }
 
-/** Deemphasised 13/18 copy under a heading, a row or a field. */
+/** Deemphasised copy: the body size on its own, 13/18 inside a row, a meta block or a field label. */
 export function Description({
   children,
   className
