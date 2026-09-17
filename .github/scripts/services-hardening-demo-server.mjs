@@ -99,7 +99,7 @@ const routes = {
       <p>Each button requests something the browser used to grant without a word.</p>
       <button id="idle">Detect when I step away (Idle Detection)</button>
       <button id="screens">See all my screens (Window Management)</button>
-      <button id="save">Save a text file (File System Access)</button>
+      <button id="save">Edit a text file (File System Access)</button>
       <div class="card"><p id="result">Nothing requested yet.</p></div>
       <p>Embedded from another origin:</p>
       <iframe src="http://127.0.0.1:${port}/embed" style="width:100%;height:150px;border:0;border-radius:14px;background:rgba(127,127,127,0.12)"></iframe>
@@ -113,9 +113,10 @@ const routes = {
         }
         document.getElementById('save').onclick = async () => {
           try {
-            const h = await showSaveFilePicker({ suggestedName: 'zenium-demo.txt' })
+            // Opening a file grants reading only; writing to it is what the browser must ask about.
+            const [h] = await showOpenFilePicker({ types: [{ description: 'Text', accept: { 'text/plain': ['.txt'] } }] })
             const w = await h.createWritable()
-            await w.write('Saved by the Zenium demo page.')
+            await w.write('Edited by the Zenium demo page.')
             await w.close()
             say('File saved: ' + h.name)
           } catch (e) { say('File System Access: ' + e.message) }
