@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Rect
+import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
@@ -32,9 +33,11 @@ import kotlin.math.roundToInt
  *    workflow creates after starting `screenrecord`;
  *  - it writes `done` when the sequence is over, so the recording stops before the process does;
  *  - screenshots land next to them as `<shotPrefix>-<name>.png`.
+ *
+ * `stateAsset` is the profile to seed; `null` leaves the profile empty (the first run).
  */
 abstract class DemoHarness(
-    private val stateAsset: String,
+    private val stateAsset: String?,
     private val shotPrefix: String,
     handshakeDir: String
 ) {
@@ -89,8 +92,10 @@ abstract class DemoHarness(
     private fun seedProfile() {
         val zen = File(app.filesDir, "zen").apply { mkdirs() }
         zen.listFiles()?.forEach { it.delete() }
-        File(zen, "state.json").writeText(patchState(readAsset(stateAsset)))
-        seedMore(zen)
+        if (stateAsset != null) {
+            File(zen, "state.json").writeText(patchState(readAsset(stateAsset)))
+            seedMore(zen)
+        }
         out.deleteRecursively()
         out.mkdirs()
     }
@@ -101,9 +106,12 @@ abstract class DemoHarness(
     protected fun readAsset(name: String): String =
         instrumentation.context.assets.open(name).use { it.bufferedReader().readText() }
 
-    private fun launch() {
-        // The launcher entry is an icon alias that hands over to MainActivity and finishes at
-        // once; the demo needs the browser's own activity, so it starts that directly.
+    /**
+     * Start the app (again: a fresh activity, so the chrome and the core boot into a new session).
+     * The launcher entry is an icon alias that hands over to MainActivity and finishes at once;
+     * the demo needs the browser's own activity, so it starts that directly.
+     */
+    protected fun launch() {
         val intent = Intent(app, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         activity = instrumentation.startActivitySync(intent)
@@ -251,9 +259,16 @@ abstract class DemoHarness(
     private fun findNode(label: String): AccessibilityNodeInfo? = findNode { it == label }
 
     /** The first node (breadth-first) whose label or text satisfies `matches`, with its state. */
-    protected fun findNode(matches: (String) -> Boolean): AccessibilityNodeInfo? {
-        val root = ui.rootInActiveWindow ?: return null
+    protected fun findNode(matches: (String) -> Boolean): AccessibilityNodeInfo? =
+        findNodes(matches).firstOrNull()
+
+    /** Every node in the active window labelled `label`, breadth first. */
+    private fun findNodes(label: String): List<AccessibilityNodeInfo> = findNodes { it == label }
+
+    private fun findNodes(matches: (String) -> Boolean): List<AccessibilityNodeInfo> {
+        val root = ui.rootInActiveWindow ?: return emptyList()
         val queue = ArrayDeque<AccessibilityNodeInfo>()
+        val found = ArrayList<AccessibilityNodeInfo>()
         queue.add(root)
         var visited = 0
         while (queue.isNotEmpty() && visited < 6_000) {
@@ -261,10 +276,10 @@ abstract class DemoHarness(
             visited++
             val description = node.contentDescription?.toString()
             val text = node.text?.toString()
-            if ((description != null && matches(description)) || (text != null && matches(text))) return node
+            if ((description != null && matches(description)) || (text != null && matches(text))) found += node
             for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
         }
-        return null
+        return found
     }
 
     /** The first of several labels that is on screen (a tab's title changes once its page loads). */
@@ -284,12 +299,16 @@ abstract class DemoHarness(
     /**
      * Click the nearest clickable ancestor of a labelled node through the accessibility tree – the
      * bounds it reports for content inside a scrolled list lag behind on the emulator, so a touch
-     * at them would miss. False when the label is not on screen.
+     * at them would miss. Every node carrying the label is tried (a heading and a row can share
+     * one). False when none of them has a clickable ancestor.
      */
     protected fun clickByLabel(label: String): Boolean {
-        var node = findNode(label) ?: return false
-        while (!node.isClickable) node = node.parent ?: return false
-        return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        for (match in findNodes(label)) {
+            var node: AccessibilityNodeInfo? = match
+            while (node != null && !node.isClickable) node = node.parent
+            if (node != null) return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        }
+        return false
     }
 
     /** Poll for a label for up to `timeoutMs`. */
@@ -300,6 +319,64 @@ abstract class DemoHarness(
             SystemClock.sleep(200)
         }
         return null
+    }
+
+    // Shared by the drivers (moved here from the first-run driver): the API 34 emulator renders
+    // in software and the WebView's accessibility tree trails a transition by seconds, so touches
+    // wait generously for their label and window changes are polled for, not slept for.
+
+    /**
+     * A real touch on the middle of the node labelled `label`, waiting for it to show. The wait
+     * is generous because the tree trails the screen by seconds after a transition on the
+     * software-rendered emulator, and it only runs its course when the label never comes.
+     */
+    protected fun tapLabel(f: Finger, label: String, timeoutMs: Long = 8_000): Boolean {
+        val target = waitFor(label, timeoutMs) ?: run {
+            Log.w(tag, "no node labelled '$label'")
+            return false
+        }
+        f.tap(target.exactCenterX(), target.exactCenterY())
+        return true
+    }
+
+    /** The system's back action (what the gesture ends in), through UiAutomation. */
+    protected fun back() {
+        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+    }
+
+    /** Another app's window (a system dialog) is in front; false when none comes within the time. */
+    protected fun awaitSystemWindow(timeoutMs: Long = 8_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val top = ui.rootInActiveWindow?.packageName?.toString()
+            if (top != null && top != app.packageName) {
+                Log.i(tag, "window of $top is in front")
+                return true
+            }
+            SystemClock.sleep(200)
+        }
+        return false
+    }
+
+    /** A link handed to the browser by another app: MainActivity is singleTask and opens it in a tab. */
+    protected fun openLink(url: String) {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).setClass(app, MainActivity::class.java)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        app.startActivity(intent)
+    }
+
+    /**
+     * Close the urlbar when it is open (the first run ends in it, with the keyboard up, hiding the
+     * page, the bar and the menu button). Back takes the keyboard first, then the field; the bar's
+     * address pill coming back is the sign it is gone.
+     */
+    protected fun closeUrlbar() {
+        repeat(3) {
+            if (findByLabelPrefix(PILL_LABEL) != null) return
+            back()
+            SystemClock.sleep(1_200)
+        }
+        if (findByLabelPrefix(PILL_LABEL) == null) Log.w(tag, "the urlbar stayed open")
     }
 
     /**

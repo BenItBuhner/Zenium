@@ -1,6 +1,5 @@
 package app.zen.chromium
 
-import android.accessibilityservice.AccessibilityService
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
@@ -341,10 +340,6 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
     private fun tap(label: String) {
         val r = waitFor(label, 5_000) ?: error("nothing labelled \"$label\" on screen")
         Finger().tap(r.exactCenterX(), r.exactCenterY())
-    }
-
-    private fun back() {
-        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
     }
 
     private companion object {

@@ -283,9 +283,6 @@
   .zen-v2-field[data-lead] {
     padding-left: 34px;
   }
-  [data-form-factor='phone'] .zen-v2-field {
-    border-radius: 6px;
-  }
 
   /* Menulist: rectangular, 32 (40 on a phone) with a 1px border and a 16 chevron. */
   .zen-v2-menulist-wrap {
@@ -319,9 +316,6 @@
     height: var(--v2-icon);
     transform: translateY(-50%);
     pointer-events: none;
-  }
-  [data-form-factor='phone'] .zen-v2-menulist {
-    border-radius: 6px;
   }
 
   /* Checkbox: 16 at radius 2 (20 on a phone), the accent with an on-accent check when on. */
@@ -855,20 +849,15 @@
     justify-content: flex-end;
     gap: 8px;
   }
-  .zen-ext-dialog .zen-v2-button {
-    min-width: 96px;
-  }
   /*
    * The phone sheet variant has the sheet's own padding; its buttons keep the row, right-aligned
-   * at the sheet's end at 40 and their natural width, the primary last (Firefox Android, §6).
+   * at the sheet's end at 40 and their natural width (see the end of this file), the primary
+   * last (Firefox Android, §6).
    */
   [data-form-factor='phone'] .zen-ext-dialog {
     width: auto;
     max-width: none;
     padding: 4px 16px 8px;
-  }
-  [data-form-factor='phone'] .zen-ext-dialog .zen-v2-button {
-    min-width: 0;
   }
 }
 
@@ -887,20 +876,14 @@
 }
 
 /*
- * Buttons (§6): 32 at radius 4 and weight 500 (40 at radius 6 under a finger); primary the
- * accent, secondary the text at 10%, pressed at 24%. main.css declares the secondary's base
- * (`.zen-v2-button`, unlayered, after this import); these add the row layout, the hover and
- * pressed fills, the disabled opacity and the variants. They stay outside `@layer components`:
- * an unlayered base beats every layered rule whatever its specificity, and a primary would fall
- * back to the 10% fill.
+ * Buttons (§6). main.css owns `.zen-v2-button` (the secondary, `[data-primary]` for the accent
+ * fill, the pressed fill, the disabled opacity; unlayered, after this import). These add what
+ * the extension surfaces need on top: a gap and glyph size for buttons with an icon, a hover
+ * fill on a mouse, the danger ink. They stay outside `@layer components`, where the unlayered
+ * base would beat them whatever their specificity.
  */
 .zen-v2-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   gap: 8px;
-  line-height: 1;
-  white-space: nowrap;
 }
 .zen-v2-button .lucide {
   width: var(--v2-icon);
@@ -910,27 +893,14 @@
 .zen-v2-button:hover:not(:disabled) {
   background: var(--v2-fill-hover);
 }
-.zen-v2-button:active:not(:disabled) {
-  background: rgb(var(--v2-text-rgb) / 0.24);
-}
-.zen-v2-button:disabled {
-  opacity: 0.4;
-}
-.zen-v2-button[data-variant='primary'] {
-  background: var(--v2-accent);
-  color: var(--v2-on-accent);
-}
-.zen-v2-button[data-variant='primary']:hover:not(:disabled) {
+.zen-v2-button[data-primary]:hover:not(:disabled) {
   background: color-mix(in srgb, var(--v2-accent) 88%, var(--v2-text));
-}
-.zen-v2-button[data-variant='primary']:active:not(:disabled) {
-  background: color-mix(in srgb, var(--v2-accent) 76%, var(--v2-text));
 }
 .zen-v2-button[data-variant='danger'] {
   color: var(--v2-danger);
 }
-/* The draft's phone value (§2, 6 under a finger); main.css keys its token on the pointer. */
-[data-form-factor='phone'] .zen-v2-button {
-  padding: 0 16px;
-  border-radius: 6px;
+/* A toast's action and a phone sheet's buttons sit at their natural width, not the dialog's 96. */
+.zen-toast .zen-v2-button,
+[data-form-factor='phone'] .zen-ext-dialog .zen-v2-button {
+  min-width: 0;
 }

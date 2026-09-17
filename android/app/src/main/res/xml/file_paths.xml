@@ -5,5 +5,7 @@
     <cache-path name="share" path="share/" />
     <cache-path name="updates" path="updates/" />
     <external-files-path name="downloads" path="Download/" />
+    <!-- Downloads on Android 8–9 land in the public directory (Android 10+ uses MediaStore). -->
+    <external-path name="public-downloads" path="Download/" />
     <files-path name="pages" path="pages/" />
 </paths>

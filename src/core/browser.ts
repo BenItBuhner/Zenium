@@ -11,6 +11,7 @@ import type {
   KeyBinding,
   MediaState,
   SearchEngine,
+  Rect,
   Settings,
   ShareAction,
   SharePayload,
@@ -20,8 +21,10 @@ import type {
 } from '../shared/types'
 import { BrowserState, type PersistedWindow } from './state'
 import { HistoryService } from './history'
+import { SessionService } from './session'
 import { BookmarkService } from './bookmarks'
 import { DownloadService } from './downloads'
+import { resolveDownloadSettings } from '../shared/downloads'
 import { PermissionService } from './permissions'
 import { TabManager } from './tabs'
 import { ZenWindow } from './window'
@@ -40,6 +43,7 @@ import { SiteInfoService } from './siteInfo'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
+import { DefaultBrowserService } from './defaultBrowser'
 import { NoExtensions, NoSync, NoUpdateHost, NoopGovernor } from './hostDefaults'
 import {
   activeSpace,
@@ -54,6 +58,7 @@ import {
   reorderSpace
 } from './model'
 import { getDomain, inputToUrl } from '../shared/url'
+import { overlayForUrl } from '../shared/zenPages'
 import { buildSearchUrl, matchEngineKeyword } from '../shared/search'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
@@ -65,6 +70,7 @@ import { PRIVATE_THEME, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
+import { sanitizePromoState } from '../shared/defaultBrowser'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 
 type CommandHandlers = {
@@ -104,6 +110,8 @@ export class Browser {
   readonly downloads: DownloadService
   readonly permissions: PermissionService
   readonly tabs: TabManager
+  /** Recently closed tabs and windows (Ctrl+Shift+T, the app menu's submenu, the history page). */
+  readonly session: SessionService
   readonly actions: Actions
   readonly keys: KeyboardHandler
   readonly menus: Menus
@@ -125,11 +133,15 @@ export class Browser {
   readonly externalProtocols: ExternalProtocolService
   /** The encrypted credential vault and everything the password manager does with it. */
   readonly passwords: PasswordService
+  /** The system's browser role: are we the default, and should we be asking to become it. */
+  readonly defaultBrowser: DefaultBrowserService
   readonly windows = new Map<string, ZenWindow>()
   quitting = false
   private readonly handlers: CommandHandlers
   /** Images shared into the browser, shown by `zen://image?id=…` while the app runs. */
   private readonly sharedImages = new Map<string, string>()
+  /** Windows whose chrome should come up with the URL bar open (fresh windows with a blank tab). */
+  private readonly urlbarOnReady = new Set<string>()
 
   constructor(readonly platform: Platform) {
     this.state = new BrowserState(
@@ -142,13 +154,30 @@ export class Browser {
     this.state.load()
     this.history = new HistoryService(platform.io)
     this.bookmarks = new BookmarkService(this.state)
-    this.downloads = new DownloadService(platform.io, platform.downloads, () => {
-      this.state.downloads = this.downloads.items
-      this.state.commitVolatile()
+    this.downloads = new DownloadService(
+      platform.io,
+      platform.downloads,
+      (item, kind) => {
+        this.state.commitVolatile()
+        this.emitDownload('download.changed', { item, kind }, item.private)
+      },
+      {
+        os: platform.info.os,
+        settings: () => resolveDownloadSettings(this.state.settings),
+        referrerFamiliar: (referrer) => this.history.visitedBeforeToday(referrer),
+        onDanger: (item) => this.emitDownload('download.danger', { id: item.id }, item.private)
+      }
+    )
+    this.state.downloadsFor = (win) => ({
+      downloads: this.downloads.visibleTo(win.isPrivate),
+      downloadsProgress: this.downloads.aggregateProgress(win.isPrivate ? {} : { private: false })
     })
-    this.state.downloads = this.downloads.items
     this.permissions = new PermissionService(platform.io, platform.dialogs)
     this.tabs = new TabManager(this)
+    this.session = new SessionService(this)
+    this.history.onChange((kind) => {
+      for (const w of this.allWindows()) w.send('history.changed', { kind })
+    })
     this.governor = platform.createGovernor?.(this) ?? new NoopGovernor(this)
     this.actions = new Actions(this)
     this.keys = new KeyboardHandler(this)
@@ -168,6 +197,7 @@ export class Browser {
     this.siteInfo = new SiteInfoService(this)
     this.externalProtocols = new ExternalProtocolService(this)
     this.passwords = new PasswordService(this, platform.passwords)
+    this.defaultBrowser = new DefaultBrowserService(this)
     this.state.extras = () => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -179,7 +209,8 @@ export class Browser {
       agents: this.agents.list(),
       agentServer: this.agents.serverStatus(),
       updates: this.updates.status(),
-      passwords: this.passwords.status()
+      passwords: this.passwords.status(),
+      defaultBrowser: this.defaultBrowser.status()
     })
     this.handlers = this.commandHandlers()
   }
@@ -210,10 +241,25 @@ export class Browser {
     return this.createWindow({ kind, from })
   }
 
+  /** "Open in New Window" / "Open in New Private Window": a window of `kind` showing `url`. */
+  openUrlInWindow(url: string, kind: WindowKind, from?: ZenWindow): void {
+    if (!this.state.capabilities.windows) {
+      // One window only: the next best thing is a new tab.
+      this.tabs.createTab({ url, active: true }, from)
+      return
+    }
+    const win = this.createWindow({ kind, from, empty: true })
+    this.tabs.createTab({ url, active: true }, win)
+  }
+
   createWindow(opts: {
     kind: WindowKind
     from?: ZenWindow
     persisted?: PersistedWindow
+    /** Where to place the window (a reopened window comes back where it was). */
+    bounds?: Rect | null
+    /** Start without the starter tab of blank / private windows (the caller adds the tabs). */
+    empty?: boolean
   }): ZenWindow {
     const m = this.state.model
     const id = opts.persisted?.id ?? newId('window')
@@ -241,7 +287,7 @@ export class Browser {
     const win = new ZenWindow(this, {
       id,
       kind: opts.kind,
-      bounds: opts.persisted?.bounds ?? null,
+      bounds: opts.persisted?.bounds ?? opts.bounds ?? null,
       maximized: opts.persisted?.maximized ?? false,
       activeSpaceId,
       selection: opts.persisted?.selection ?? {},
@@ -260,10 +306,11 @@ export class Browser {
       backgroundColor: rgbToHex(theme.averageColor)
     })
     this.governor.watchWindow(win)
-    if (localSpace) {
+    if (localSpace && !opts.empty) {
       // Blank / private windows start with an empty tab and the URL bar open.
       const tab = this.tabs.createTab({ active: true, load: false }, win)
       win.select(localSpace, tab.id)
+      this.urlbarOnReady.add(win.id)
     }
     this.state.commit()
     return win
@@ -272,11 +319,13 @@ export class Browser {
   /** The chrome of `win` finished loading for the first time. */
   onChromeReady(win: ZenWindow): void {
     if (this.state.settings.onboardingDone) this.tabs.claimVisible(win)
-    if (win.localSpace) setTimeout(() => this.emit('urlbar.toggle', { mode: 'new-tab' }, win), 150)
+    if (this.urlbarOnReady.delete(win.id))
+      setTimeout(() => this.emit('urlbar.toggle', { mode: 'new-tab' }, win), 150)
   }
 
   onWindowFocused(win: ZenWindow): void {
     if (this.state.settings.onboardingDone) this.tabs.claimVisible(win)
+    this.defaultBrowser.onForeground()
   }
 
   onWindowClosing(win: ZenWindow): void {
@@ -286,8 +335,10 @@ export class Browser {
   onWindowClosed(win: ZenWindow): void {
     this.windows.delete(win.id)
     for (const w of this.allWindows()) w.selection.delete(win.localSpace?.id ?? '')
-    if (win.isPrivate && !this.allWindows().some((w) => w.isPrivate))
+    if (win.isPrivate && !this.allWindows().some((w) => w.isPrivate)) {
+      this.downloads.endPrivateSession()
       void this.platform.sessions.clearPrivate()
+    }
     if (this.allWindows().length === 0) {
       this.governor.stop()
       this.tabs.destroyAll()
@@ -309,10 +360,12 @@ export class Browser {
    * opened only for the download; otherwise just make sure the keyboard keeps working.
    */
   onDownloadStarted(sourceTabId: string | null): void {
-    // Firefox shows the downloads panel whenever a download begins. Let any tab switch paint
-    // first so the panel can dim a snapshot of the page behind it.
+    // Firefox shows the downloads panel whenever a download begins; Chrome only animates its
+    // toolbar button. The setting decides. Let any tab switch paint first so the panel can dim a
+    // snapshot of the page behind it.
     const win = sourceTabId ? this.tabs.windowFor(sourceTabId) : this.focusedWindow()
-    setTimeout(() => this.emit('overlay.open', { kind: 'downloads' }, win), 200)
+    if (resolveDownloadSettings(this.state.settings).openPanelOnStart)
+      setTimeout(() => this.emit('overlay.open', { kind: 'downloads' }, win), 200)
     const tab = this.tabs.tab(sourceTabId)
     const view = sourceTabId ? this.tabs.view(sourceTabId) : undefined
     if (!tab || !view) return
@@ -336,13 +389,23 @@ export class Browser {
         win.updateTitle()
       }
     })
-    // Zen restores every synced window (and the space each one was in).
+    // Zen restores every synced window (and the space each one was in). With "restore previous
+    // session" off, the last session's tabs are forgotten and one window starts fresh.
+    const { restoreSession } = this.state.settings
+    if (!restoreSession) this.state.forgetSession()
     const restore =
-      this.state.settings.restoreSession && this.state.capabilities.windows
+      restoreSession && this.state.capabilities.windows
         ? this.state.restoredWindows
         : this.state.restoredWindows.slice(0, 1)
     if (restore.length === 0) this.createWindow({ kind: 'synced' })
     for (const persisted of restore) this.createWindow({ kind: 'synced', persisted })
+    if (!restoreSession) {
+      const win = this.allWindows()[0]
+      if (win) {
+        this.tabs.createTab({ active: true, load: false }, win)
+        this.urlbarOnReady.add(win.id)
+      }
+    }
     // The host may have come up under another icon (a fresh install with a restored profile,
     // a launcher alias flipped back by an update); the persisted choice wins.
     this.platform.app.setAppIcon?.(this.state.settings.appIcon)
@@ -353,6 +416,7 @@ export class Browser {
     this.agents.start()
     this.updates.start()
     this.passwords.start()
+    this.defaultBrowser.start()
     this.syncShortcuts()
     this.state.commit()
   }
@@ -373,6 +437,18 @@ export class Browser {
 
   toast(message: string, kind: 'info' | 'error' = 'info', win?: ZenWindow): void {
     this.emit('toast', { message, kind }, win)
+  }
+
+  /** Download events go to every window; private downloads only to private windows. */
+  private emitDownload<K extends 'download.changed' | 'download.danger'>(
+    name: K,
+    payload: Events[K],
+    isPrivate: boolean
+  ): void {
+    for (const win of this.allWindows()) {
+      if (isPrivate && !win.isPrivate) continue
+      win.send(name, payload)
+    }
   }
 
   /** A page's DOM is ready: inject its Boost and check whether Reader View applies. */
@@ -843,6 +919,7 @@ export class Browser {
     this.quitting = true
     void this.agents.stop()
     this.updates.stop()
+    this.downloads.shutdown()
     this.flushSync()
     this.state.freeze()
   }
@@ -899,6 +976,12 @@ export class Browser {
       }
     }
     if (!url) return
+    const overlay = overlayForUrl(url)
+    if (overlay) {
+      // `zen://history` / `zen://settings` open their chrome surface; no tab is spent on them.
+      this.emit('overlay.open', { kind: overlay }, win)
+      return
+    }
     const routed = win.localSpace ? null : this.routeSpaceFor(url)
     const target = tabId ? this.tabs.tab(tabId) : undefined
     if (newTab || !target) {
@@ -1041,7 +1124,10 @@ export class Browser {
           )
       },
       'tab.moveToFolder': ({ tabId, folderId }) => tabs.moveToFolder(tabId, folderId),
-      'tab.reopenClosed': (_a, win) => tabs.reopenClosed(win),
+      'tab.reopenClosed': (_a, win) => this.session.reopenClosed(win),
+      'tab.navigationEntries': ({ tabId }) => tabs.navigationEntries(tabId),
+      'tab.goToIndex': ({ tabId, index }) => tabs.goToIndex(tabId, index),
+      'tab.navigationMenu': ({ tabId }, win) => this.menus.showNavigationMenu(tabId, win),
       'tab.setZoom': ({ tabId, delta }) =>
         delta === null ? tabs.setZoom(tabId, 1) : tabs.adjustZoom(tabId, delta),
       'tab.contextMenu': ({ tabId }, win) => this.menus.showTabContextMenu(tabId, win),
@@ -1182,6 +1268,25 @@ export class Browser {
       'history.recent': ({ limit }) => this.history.recent(limit),
       'history.delete': ({ url }) => this.history.delete(url),
       'history.clear': () => this.history.clear(),
+      'history.visits': ({ query }) => this.history.visits(query),
+      'history.grouped': ({ query }) => this.history.groupedByDay(query),
+      'history.topSites': ({ n, excludedHosts }) => this.history.topSites(n, excludedHosts ?? []),
+      'history.count': ({ fromMs, toMs }) => this.history.count(fromMs, toMs),
+      'history.deleteVisits': ({ ids }) => this.history.deleteVisits(ids),
+      'history.deleteUrls': ({ urls }) => this.history.deleteUrls(urls),
+      'history.deleteDay': ({ dayKey }) => this.history.deleteDay(dayKey),
+      'history.deleteRange': ({ fromMs, toMs }) => this.history.deleteRange(fromMs, toMs),
+      'history.open': (_a, win) => this.emit('overlay.open', { kind: 'history' }, win),
+      'history.contextMenu': ({ visitId, url }, win) =>
+        this.menus.showHistoryContextMenu(visitId, url, win),
+      'history.dayMenu': ({ dayKey, count }, win) =>
+        this.menus.showHistoryDayMenu(dayKey, count, win),
+
+      'session.recentlyClosed': () => this.session.summaries(),
+      'session.restoreClosed': ({ id }, win) => this.session.restoreClosed(id, win),
+      'session.clearRecentlyClosed': () => this.session.clearRecentlyClosed(),
+
+      'clipboard.writeText': ({ text }) => platform.clipboard.writeText(text),
 
       'bookmark.toggle': ({ tabId }, win) => this.toggleBookmark(tabId, win),
       'bookmark.star': ({ tabId }, win) => this.starTab(tabId, win),
@@ -1207,16 +1312,15 @@ export class Browser {
       'download.cancel': ({ id }) => this.downloads.cancel(id),
       'download.showInFolder': ({ id }) => this.downloads.showInFolder(id),
       'download.open': ({ id }) => this.downloads.open(id),
-      'download.remove': ({ id }) => {
-        this.downloads.remove(id)
-        state.downloads = this.downloads.items
-        state.commitVolatile()
-      },
-      'download.clearCompleted': () => {
-        this.downloads.clearCompleted()
-        state.downloads = this.downloads.items
-        state.commitVolatile()
-      },
+      'download.remove': ({ id }) => this.downloads.remove(id),
+      'download.removeCompleted': () => this.downloads.removeCompleted(),
+      'download.clearCompleted': () => this.downloads.removeCompleted(),
+      'download.retry': ({ id }) => this.downloads.retry(id),
+      'download.acceptDanger': ({ id }) => this.downloads.acceptDanger(id),
+      'download.discard': ({ id }) => this.downloads.discard(id),
+      'download.setOpenWhenDone': ({ id, on }) => this.downloads.setOpenWhenDone(id, on),
+      'download.chooseDirectory': (_args, win) => this.downloads.chooseDirectory(win),
+      'download.openPanel': (_args, win) => this.emit('overlay.open', { kind: 'downloads' }, win),
 
       'find.start': ({ tabId, text, forward, newSession }, win) => {
         const view = tabs.view(tabId)
@@ -1273,6 +1377,7 @@ export class Browser {
       'window.new': (_a, win) => void this.openWindow('synced', win),
       'window.newUnsynced': (_a, win) => void this.openWindow('unsynced', win),
       'window.newPrivate': (_a, win) => void this.openWindow('private', win),
+      'window.openUrl': ({ url, kind }, win) => this.openUrlInWindow(url, kind, win),
       'window.moveTabsToSpace': ({ spaceId }, win) => tabs.moveLocalTabsToSpace(win, spaceId),
 
       'page.screenshot': ({ tabId }, win) =>
@@ -1434,9 +1539,14 @@ export class Browser {
           )
           tab.title = known.title
         }
+        this.defaultBrowser.onOnboardingDone()
         state.commit()
         this.emit('urlbar.toggle', { mode: 'new-tab' }, win)
-      }
+      },
+
+      'defaultBrowser.request': ({ source }) => this.defaultBrowser.request(source),
+      'defaultBrowser.dismiss': ({ prompt }) => this.defaultBrowser.dismiss(prompt),
+      'defaultBrowser.refresh': () => this.defaultBrowser.refresh()
     }
   }
 
@@ -1482,6 +1592,11 @@ export class Browser {
         s.passwords = sanitizePasswordSettings({
           ...s.passwords,
           ...(value as Partial<Settings['passwords']>)
+        })
+      } else if (key === 'defaultBrowserPromo' && value && typeof value === 'object') {
+        s.defaultBrowserPromo = sanitizePromoState({
+          ...s.defaultBrowserPromo,
+          ...(value as Partial<Settings['defaultBrowserPromo']>)
         })
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value

@@ -1,4 +1,5 @@
 import { installPageScript, type PageScriptFlags } from '@shared/pageScript'
+import { downloadNameOf, rememberDownloadName, type DownloadNames } from './downloadNames'
 
 /**
  * Injected by Kotlin into every page WebView (document-start). Transport is the
@@ -14,10 +15,55 @@ interface PageBridge {
 
 const TOKEN = '__ZEN_TOKEN__'
 
+/**
+ * Keep the `download` attribute of clicked anchors where Kotlin can read it
+ * (`window.__zeniumDownloadNames`, keyed as in `downloadNames.ts`): the WebView's download
+ * callback never carries it, and it is the only name a `blob:` or `data:` download has. Real
+ * clicks are seen in the capture phase; programmatic `a.click()` on a detached anchor (the
+ * common save-a-blob pattern) is seen through the prototype.
+ */
+function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadNames }): void {
+  const names: DownloadNames = {}
+  w.__zeniumDownloadNames = names
+  const remember = (anchor: HTMLAnchorElement): void => {
+    const hit = downloadNameOf(anchor)
+    if (hit) rememberDownloadName(names, hit.href, hit.name)
+  }
+  w.addEventListener(
+    'click',
+    (event) => {
+      const target = event.target
+      if (!(target instanceof Element)) return
+      const anchor = target.closest('a[download]')
+      if (anchor instanceof HTMLAnchorElement) remember(anchor)
+    },
+    true
+  )
+  const proto = HTMLAnchorElement.prototype as HTMLAnchorElement & { click(): void }
+  const nativeClick = proto.click
+  proto.click = function (this: HTMLAnchorElement): void {
+    try {
+      remember(this)
+    } catch {
+      /* a page's own subclass may throw on attribute access */
+    }
+    nativeClick.call(this)
+  }
+}
+
 ;(() => {
-  const w = window as unknown as { __zenPageBridge?: PageBridge; __zenPageInstalled?: boolean }
+  const w = window as unknown as Window & {
+    __zenPageBridge?: PageBridge
+    __zenPageInstalled?: boolean
+    __zeniumDownloadNames?: DownloadNames
+  }
   if (w.__zenPageInstalled) return
   w.__zenPageInstalled = true
+  try {
+    installDownloadNames(w)
+  } catch {
+    /* pages that freeze the anchor prototype keep their downloads, just without the name */
+  }
   const bridge = w.__zenPageBridge
   if (!bridge) return
 

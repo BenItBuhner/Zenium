@@ -1,6 +1,5 @@
 package app.zen.chromium
 
-import android.accessibilityservice.AccessibilityService
 import android.graphics.PointF
 import android.graphics.Rect
 import android.os.ParcelFileDescriptor
@@ -162,10 +161,6 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         (width - 52 * density).toInt(), (pill.centerY() - 22 * density).toInt(),
         (width - 8 * density).toInt(), (pill.centerY() + 22 * density).toInt()
     )
-
-    private fun back() {
-        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-    }
 
     /** Take down whatever a step left up: another app's window (the chooser), then an open menu. */
     private fun dismiss() {

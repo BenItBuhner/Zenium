@@ -11,6 +11,10 @@ import { cn } from '@renderer/lib/utils'
 
 type Variant = 'primary' | 'secondary' | 'danger'
 
+/**
+ * main.css's `.zen-v2-button` (the secondary; `data-primary` for the accent fill) plus a danger
+ * variant, the hover fills and icon sizing from `extensions.css`.
+ */
 export function V2Button({
   variant = 'secondary',
   className,
@@ -26,7 +30,8 @@ export function V2Button({
       ref={ref}
       type={type}
       className={cn('zen-v2-button', className)}
-      data-variant={variant === 'secondary' ? undefined : variant}
+      data-primary={variant === 'primary' || undefined}
+      data-variant={variant === 'danger' ? 'danger' : undefined}
       {...props}
     />
   )

@@ -11,6 +11,8 @@
 #   DEMO_VIDEO  – file name of the recording
 #   DEMO_THEME  – colour scheme a driver seeds its profile with (`light` or `dark`), passed to
 #                 the instrumentation as the `theme` argument; drivers without a theme ignore it
+#   DEMO_KEEP   – bundled packages (space separated) to leave enabled; the rest of the Google
+#                 apps are disabled so they do not compete with the browser for the emulator
 #
 # Handshake with the driver, through files in the app's private storage (readable via run-as):
 #   files/<DEMO_DIR>/record     – written by the driver once its warm-up is done
@@ -81,6 +83,7 @@ for pkg in \
   com.google.android.calendar com.google.android.apps.docs com.google.android.apps.wellbeing \
   com.google.android.projection.gearhead com.google.android.apps.tachyon com.google.android.talk \
   com.google.android.music com.google.android.apps.podcasts com.google.android.apps.nbu.files; do
+  case " ${DEMO_KEEP:-} " in *" $pkg "*) continue ;; esac
   adb shell pm disable-user --user 0 "$pkg" > /dev/null 2>&1 || true
 done
 adb shell am kill-all || true

@@ -1,36 +1,283 @@
-import type { HistoryEntry } from '../shared/types'
+import type {
+  HistoryDayGroup,
+  HistoryEntry,
+  HistoryQuery,
+  HistoryTransition,
+  HistoryVisit,
+  TopSite
+} from '../shared/types'
 import { JsonStore } from './store/JsonStore'
-import { getDomain, isInternalUrl } from '../shared/url'
+import { getDomain, getHost, isInternalUrl } from '../shared/url'
+import { dayKeyOf } from '../shared/dayKey'
+import { newId } from '../shared/ids'
 import type { StoreIO } from './platform'
 
-const MAX_ENTRIES = 10_000
+/** Aggregates (one per URL) kept at most. */
+export const MAX_ENTRIES = 10_000
+/** Visits kept at most. */
+export const MAX_VISITS = 50_000
+/** Visits older than this are expired. */
+export const RETENTION_MS = 90 * 86_400_000
 
-interface Persisted {
+const DAY_MS = 86_400_000
+
+interface PersistedV1 {
   version: 1
   entries: HistoryEntry[]
 }
 
-export class HistoryService {
-  private entries = new Map<string, HistoryEntry>()
-  private readonly store: JsonStore<Persisted>
+interface PersistedV2 {
+  version: 2
+  entries: HistoryEntry[]
+  visits: HistoryVisit[]
+}
 
-  constructor(io: StoreIO) {
-    this.store = new JsonStore<Persisted>(io, 'history.json', 2000)
-    const data = this.store.readSync()
-    if (data?.version === 1 && Array.isArray(data.entries)) {
-      for (const e of data.entries) {
-        if (e && typeof e.url === 'string') this.entries.set(e.url, e)
+export type PersistedHistory = PersistedV1 | PersistedV2
+
+export interface HistoryData {
+  entries: HistoryEntry[]
+  visits: HistoryVisit[]
+}
+
+export { dayKeyOf }
+
+export type HistoryChangeKind = 'visit' | 'delete' | 'clear'
+export type HistoryChangeListener = (kind: HistoryChangeKind) => void
+
+export interface VisitOptions {
+  transition?: HistoryTransition
+  tabId?: string
+}
+
+// ---------------------------------------------------------------------------
+// Pure helpers (importable by the renderer, the core and the hosts)
+// ---------------------------------------------------------------------------
+
+/** Pages that never enter history: chrome, view-source and inline documents. */
+export function isRecordableUrl(url: string): boolean {
+  if (!url) return false
+  if (isInternalUrl(url)) return false
+  return !url.startsWith('view-source:') && !url.startsWith('data:')
+}
+
+/**
+ * Bring a stored document (any version, possibly corrupt) up to the current shape. A v1 file
+ * had aggregates only: each becomes one synthetic `restored` visit at its last visit time, the
+ * visit count stays as it was.
+ */
+export function migrateHistory(data: unknown): HistoryData {
+  if (!data || typeof data !== 'object') return { entries: [], visits: [] }
+  const doc = data as { version?: unknown; entries?: unknown; visits?: unknown }
+  const entries = (Array.isArray(doc.entries) ? doc.entries : []).filter(isEntry).map((e) => ({
+    ...e,
+    firstVisit: e.firstVisit ?? e.lastVisit,
+    typedCount: e.typedCount ?? 0
+  }))
+  if (doc.version === 1) {
+    const visits: HistoryVisit[] = entries.map((e) => ({
+      id: newId('visit'),
+      url: e.url,
+      title: e.title,
+      favicon: e.favicon,
+      visitTime: e.lastVisit,
+      transition: 'restored'
+    }))
+    return { entries, visits: sortByTime(visits) }
+  }
+  if (doc.version === 2) {
+    const visits = (Array.isArray(doc.visits) ? doc.visits : []).filter(isVisit)
+    return { entries, visits: sortByTime(visits) }
+  }
+  return { entries: [], visits: [] }
+}
+
+function isEntry(e: unknown): e is HistoryEntry {
+  if (!e || typeof e !== 'object') return false
+  const x = e as Partial<HistoryEntry>
+  return typeof x.url === 'string' && typeof x.lastVisit === 'number'
+}
+
+function isVisit(v: unknown): v is HistoryVisit {
+  if (!v || typeof v !== 'object') return false
+  const x = v as Partial<HistoryVisit>
+  return typeof x.id === 'string' && typeof x.url === 'string' && typeof x.visitTime === 'number'
+}
+
+function sortByTime(visits: HistoryVisit[]): HistoryVisit[] {
+  return [...visits].sort((a, b) => a.visitTime - b.visitTime)
+}
+
+/**
+ * Retention: expire visits older than 90 days, keep at most 50 000 visits and 10 000
+ * aggregates (the newest of each). Aggregates that lost their last visit go too.
+ */
+export function prune(visits: HistoryVisit[], entries: HistoryEntry[], nowMs: number): HistoryData {
+  const cutoff = nowMs - RETENTION_MS
+  let kept = sortByTime(visits).filter((v) => v.visitTime >= cutoff)
+  if (kept.length > MAX_VISITS) kept = kept.slice(kept.length - MAX_VISITS)
+  const urls = new Set(kept.map((v) => v.url))
+  const keptEntries = entries
+    .filter((e) => urls.has(e.url))
+    .sort((a, b) => b.lastVisit - a.lastVisit)
+    .slice(0, MAX_ENTRIES)
+  // Visits of aggregates that fell off the cap go with them.
+  if (keptEntries.length < urls.size) {
+    const remaining = new Set(keptEntries.map((e) => e.url))
+    kept = kept.filter((v) => remaining.has(v.url))
+  }
+  return { visits: kept, entries: keptEntries }
+}
+
+/**
+ * Frecency (Firefox's frequency + recency): visits weigh by how recently the page was last
+ * seen; typed visits count double.
+ */
+export function scoreFrecency(entry: HistoryEntry, nowMs: number): number {
+  const ageDays = Math.max(0, nowMs - entry.lastVisit) / DAY_MS
+  const weight =
+    ageDays <= 4 ? 100 : ageDays <= 14 ? 70 : ageDays <= 31 ? 50 : ageDays <= 90 ? 30 : 10
+  return (entry.visitCount + 2 * (entry.typedCount ?? 0)) * weight
+}
+
+/** Visits with `fromMs <= visitTime < toMs`, newest first. */
+export function selectRange(visits: HistoryVisit[], fromMs: number, toMs: number): HistoryVisit[] {
+  return visits
+    .filter((v) => v.visitTime >= fromMs && v.visitTime < toMs)
+    .sort((a, b) => b.visitTime - a.visitTime)
+}
+
+/** Whitespace-separated terms of a query, lower-cased. */
+export function queryTerms(text: string | undefined): string[] {
+  return (text ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean)
+}
+
+/**
+ * Visits matching a query (every term in title or URL, host, time range), newest first, then
+ * `offset` / `limit` applied.
+ */
+export function searchVisits(visits: HistoryVisit[], query: HistoryQuery): HistoryVisit[] {
+  const terms = queryTerms(query.text)
+  const host = query.host?.toLowerCase().replace(/^www\./, '') ?? null
+  const from = query.fromMs ?? -Infinity
+  const to = query.toMs ?? Infinity
+  const matched = visits.filter((v) => {
+    if (v.visitTime < from || v.visitTime >= to) return false
+    if (host !== null && !hostMatches(v.url, host)) return false
+    if (terms.length === 0) return true
+    const hay = `${v.title} ${v.url}`.toLowerCase()
+    return terms.every((t) => hay.includes(t))
+  })
+  matched.sort((a, b) => b.visitTime - a.visitTime)
+  const offset = Math.max(0, query.offset ?? 0)
+  return matched.slice(offset, offset + Math.max(0, query.limit))
+}
+
+function hostMatches(url: string, host: string): boolean {
+  const h = getHost(url)
+    .toLowerCase()
+    .replace(/^www\./, '')
+  return h === host || h.endsWith(`.${host}`)
+}
+
+/** Visits grouped by local day, newest day first, newest visit first inside a day. */
+export function groupByDay(visits: HistoryVisit[], timeZone?: string): HistoryDayGroup[] {
+  const groups = new Map<string, HistoryVisit[]>()
+  for (const v of [...visits].sort((a, b) => b.visitTime - a.visitTime)) {
+    const key = dayKeyOf(v.visitTime, timeZone)
+    const list = groups.get(key)
+    if (list) list.push(v)
+    else groups.set(key, [v])
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => (a < b ? 1 : a > b ? -1 : 0))
+    .map(([dayKey, list]) => ({ dayKey, visits: list }))
+}
+
+/**
+ * Most visited sites: aggregates folded by host, the best-scoring page of each host standing
+ * for it, ordered by summed frecency. `excludedHosts` (with or without `www.`) are skipped, as
+ * is anything that is not an http(s) page.
+ */
+export function topSites(
+  entries: HistoryEntry[],
+  n: number,
+  excludedHosts: string[] = [],
+  nowMs: number = Date.now()
+): TopSite[] {
+  const excluded = new Set(excludedHosts.map((h) => h.toLowerCase().replace(/^www\./, '')))
+  const byHost = new Map<string, { best: HistoryEntry; bestScore: number; score: number }>()
+  for (const e of entries) {
+    if (!/^https?:\/\//i.test(e.url)) continue
+    const host = getHost(e.url)
+      .toLowerCase()
+      .replace(/^www\./, '')
+    if (!host || excluded.has(host)) continue
+    const score = scoreFrecency(e, nowMs)
+    const site = byHost.get(host)
+    if (!site) byHost.set(host, { best: e, bestScore: score, score })
+    else {
+      site.score += score
+      if (score > site.bestScore) {
+        site.best = e
+        site.bestScore = score
       }
     }
   }
+  return [...byHost.values()]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(0, n))
+    .map(({ best, score }) => ({
+      url: best.url,
+      title: best.title,
+      favicon: best.favicon,
+      score
+    }))
+}
 
-  visit(url: string, title: string, favicon: string | null): void {
-    if (!url || isInternalUrl(url) || url.startsWith('view-source:') || url.startsWith('data:'))
-      return
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
+
+/** How often at most `history.changed` fires for visits. */
+const VISIT_NOTIFY_MS = 500
+
+/**
+ * Browsing history: every visit of a page plus a per-URL aggregate for ranking. Persisted as
+ * `history.json` (version 2); chrome pages, `view-source:` and `data:` URLs are never recorded.
+ */
+export class HistoryService {
+  private entries = new Map<string, HistoryEntry>()
+  /** Chronological (oldest first). */
+  private visitList: HistoryVisit[] = []
+  private readonly store: JsonStore<PersistedHistory>
+  private readonly listeners = new Set<HistoryChangeListener>()
+  private visitNotifyTimer: ReturnType<typeof setTimeout> | null = null
+
+  constructor(
+    io: StoreIO,
+    private readonly now: () => number = () => Date.now()
+  ) {
+    this.store = new JsonStore<PersistedHistory>(io, 'history.json', 2000)
+    const raw = this.store.readSync()
+    const loaded = migrateHistory(raw)
+    const pruned = prune(loaded.visits, loaded.entries, this.now())
+    for (const e of pruned.entries) this.entries.set(e.url, e)
+    this.visitList = pruned.visits
+    // A migrated or pruned document is written back in its new shape right away.
+    const storedVisits = raw?.version === 2 && Array.isArray(raw.visits) ? raw.visits.length : -1
+    if (raw && pruned.visits.length !== storedVisits) this.persist()
+  }
+
+  /** Record a visit and update the page's aggregate. */
+  visit(url: string, title: string, favicon: string | null, opts: VisitOptions = {}): void {
+    if (!isRecordableUrl(url)) return
+    const now = this.now()
+    const transition = opts.transition ?? 'link'
     const existing = this.entries.get(url)
     if (existing) {
       existing.visitCount += 1
-      existing.lastVisit = Date.now()
+      existing.lastVisit = now
+      if (transition === 'typed') existing.typedCount = (existing.typedCount ?? 0) + 1
       if (title) existing.title = title
       if (favicon) existing.favicon = favicon
       // Re-insert to keep the map in recency order.
@@ -41,22 +288,53 @@ export class HistoryService {
         url,
         title: title || url,
         visitCount: 1,
-        lastVisit: Date.now(),
+        lastVisit: now,
+        firstVisit: now,
+        typedCount: transition === 'typed' ? 1 : 0,
         favicon
       })
-      if (this.entries.size > MAX_ENTRIES) {
-        const oldest = this.entries.keys().next().value
-        if (oldest) this.entries.delete(oldest)
-      }
     }
+    this.visitList.push({
+      id: newId('visit'),
+      url,
+      title: title || url,
+      favicon: null,
+      visitTime: now,
+      transition,
+      ...(opts.tabId ? { tabId: opts.tabId } : {})
+    })
+    this.enforceRetention(now)
     this.persist()
+    this.notify('visit')
+  }
+
+  /** Expire and cap cheaply on the hot path: only when something is actually over the line. */
+  private enforceRetention(now: number): void {
+    const oldest = this.visitList[0]
+    const overCap = this.visitList.length > MAX_VISITS || this.entries.size > MAX_ENTRIES
+    if (!overCap && (!oldest || oldest.visitTime >= now - RETENTION_MS)) return
+    const pruned = prune(this.visitList, [...this.entries.values()], now)
+    this.visitList = pruned.visits
+    this.entries = new Map(pruned.entries.map((e) => [e.url, e]))
   }
 
   updateTitle(url: string, title: string): void {
+    if (!title) return
     const e = this.entries.get(url)
-    if (e && title && e.title !== title) {
+    let changed = false
+    if (e && e.title !== title) {
       e.title = title
+      changed = true
+    }
+    for (const v of this.visitList) {
+      if (v.url === url && v.title !== title) {
+        v.title = title
+        changed = true
+      }
+    }
+    if (changed) {
       this.persist()
+      this.notify('visit')
     }
   }
 
@@ -65,6 +343,7 @@ export class HistoryService {
     if (e && favicon && e.favicon !== favicon) {
       e.favicon = favicon
       this.persist()
+      this.notify('visit')
     }
   }
 
@@ -75,11 +354,17 @@ export class HistoryService {
   /** The most recently seen favicon per registrable domain (the password manager's site icons). */
   faviconsByDomain(): Map<string, string> {
     const out = new Map<string, string>()
-    // Entries are kept in visit order, so later ones win by overwriting.
+    // The most recently visited page of a domain wins; the map's order is not relied on because
+    // `prune` rebuilds it newest first while `visit` appends newest last.
+    const newest = new Map<string, number>()
     for (const e of this.entries.values()) {
       if (!e.favicon) continue
       const domain = getDomain(e.url)
-      if (domain) out.set(domain, e.favicon)
+      if (!domain) continue
+      const seen = newest.get(domain)
+      if (seen !== undefined && seen > e.lastVisit) continue
+      newest.set(domain, e.lastVisit)
+      out.set(domain, e.favicon)
     }
     return out
   }
@@ -89,12 +374,12 @@ export class HistoryService {
     const q = query.trim().toLowerCase()
     if (!q) return this.recent(limit)
     const terms = q.split(/\s+/)
-    const now = Date.now()
+    const now = this.now()
     const scored: Array<{ e: HistoryEntry; score: number }> = []
     for (const e of this.entries.values()) {
       const hay = `${e.title} ${e.url}`.toLowerCase()
       if (!terms.every((t) => hay.includes(t))) continue
-      const ageDays = (now - e.lastVisit) / 86_400_000
+      const ageDays = (now - e.lastVisit) / DAY_MS
       const recency = 1 / (1 + ageDays)
       const hostMatch = e.url
         .toLowerCase()
@@ -130,17 +415,162 @@ export class HistoryService {
     return best ? `${best.host}/` : null
   }
 
+  /**
+   * A page of `url`'s site was visited on an earlier day, or more than once. Chromium's download
+   * warnings treat such a site as familiar and skip the file-type warning for installers it serves.
+   */
+  visitedBeforeToday(url: string): boolean {
+    let host: string
+    try {
+      host = new URL(url).host.toLowerCase()
+    } catch {
+      return false
+    }
+    if (!host) return false
+    const midnight = new Date()
+    midnight.setHours(0, 0, 0, 0)
+    const today = midnight.getTime()
+    for (const e of this.entries.values()) {
+      let entryHost: string
+      try {
+        entryHost = new URL(e.url).host.toLowerCase()
+      } catch {
+        continue
+      }
+      if (entryHost === host && (e.lastVisit < today || e.visitCount > 1)) return true
+    }
+    return false
+  }
+
+  // --- visits -----------------------------------------------------------------
+
+  /** Matching visits, newest first; favicons come from the page's aggregate. */
+  visits(query: HistoryQuery): HistoryVisit[] {
+    return searchVisits(this.visitList, query).map((v) => this.withFavicon(v))
+  }
+
+  groupedByDay(query: HistoryQuery): HistoryDayGroup[] {
+    return groupByDay(this.visits(query))
+  }
+
+  topSites(n: number, excludedHosts: string[] = []): TopSite[] {
+    return topSites([...this.entries.values()], n, excludedHosts, this.now())
+  }
+
+  /** Visits with `fromMs <= visitTime < toMs`. */
+  count(fromMs: number, toMs: number): number {
+    let n = 0
+    for (const v of this.visitList) if (v.visitTime >= fromMs && v.visitTime < toMs) n += 1
+    return n
+  }
+
+  private withFavicon(v: HistoryVisit): HistoryVisit {
+    const favicon = this.entries.get(v.url)?.favicon ?? v.favicon
+    return favicon === v.favicon ? v : { ...v, favicon }
+  }
+
+  /** Last known favicon of a URL (the back/forward list decorates its rows with it). */
+  faviconFor(url: string): string | null {
+    return this.entries.get(url)?.favicon ?? null
+  }
+
+  // --- deletion ---------------------------------------------------------------
+
+  deleteVisits(ids: string[]): void {
+    const gone = new Set(ids)
+    this.removeVisits((v) => gone.has(v.id))
+  }
+
+  deleteUrls(urls: string[]): void {
+    const gone = new Set(urls)
+    let changed = false
+    for (const url of gone) if (this.entries.delete(url)) changed = true
+    // removeVisits() persists and notifies itself; an aggregate without visits needs it done here.
+    if (this.removeVisits((v) => gone.has(v.url)) === 0 && changed) {
+      this.persist()
+      this.notify('delete')
+    }
+  }
+
+  deleteDay(dayKey: string): void {
+    this.removeVisits((v) => dayKeyOf(v.visitTime) === dayKey)
+  }
+
+  /** Remove the visits in `[fromMs, toMs)`; returns how many went. */
+  deleteRange(fromMs: number, toMs: number): number {
+    return this.removeVisits((v) => v.visitTime >= fromMs && v.visitTime < toMs)
+  }
+
   delete(url: string): void {
-    if (this.entries.delete(url)) this.persist()
+    this.deleteUrls([url])
   }
 
   clear(): void {
     this.entries.clear()
+    this.visitList = []
     this.persist()
+    this.notify('clear')
   }
 
+  /**
+   * Drop the visits matching `gone` and bring the aggregates of the affected pages in line
+   * (visit count and last visit recomputed; a page without visits left is forgotten).
+   */
+  private removeVisits(gone: (v: HistoryVisit) => boolean): number {
+    const affected = new Set<string>()
+    const kept: HistoryVisit[] = []
+    for (const v of this.visitList) {
+      if (gone(v)) affected.add(v.url)
+      else kept.push(v)
+    }
+    const removed = this.visitList.length - kept.length
+    if (removed === 0) return 0
+    this.visitList = kept
+    for (const url of affected) {
+      const entry = this.entries.get(url)
+      if (!entry) continue
+      const remaining = kept.filter((v) => v.url === url)
+      if (remaining.length === 0) {
+        this.entries.delete(url)
+        continue
+      }
+      entry.visitCount = remaining.length
+      entry.lastVisit = remaining[remaining.length - 1].visitTime
+      entry.firstVisit = remaining[0].visitTime
+      entry.typedCount = remaining.filter((v) => v.transition === 'typed').length
+    }
+    this.persist()
+    this.notify('delete')
+    return removed
+  }
+
+  // --- change notification ----------------------------------------------------
+
+  onChange(listener: HistoryChangeListener): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  private notify(kind: HistoryChangeKind): void {
+    if (kind !== 'visit') {
+      if (this.visitNotifyTimer) {
+        clearTimeout(this.visitNotifyTimer)
+        this.visitNotifyTimer = null
+      }
+      for (const listener of this.listeners) listener(kind)
+      return
+    }
+    if (this.visitNotifyTimer) return
+    this.visitNotifyTimer = setTimeout(() => {
+      this.visitNotifyTimer = null
+      for (const listener of this.listeners) listener('visit')
+    }, VISIT_NOTIFY_MS)
+  }
+
+  // --- persistence ------------------------------------------------------------
+
   private persist(): void {
-    this.store.write({ version: 1, entries: [...this.entries.values()] })
+    this.store.write({ version: 2, entries: [...this.entries.values()], visits: this.visitList })
   }
 
   flushSync(): void {

@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { useState } from 'react'
-import { ArrowDown, ArrowUp, Sparkles, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, Sparkles, Trash2 } from 'lucide-react'
 import type {
   ColorScheme,
   ContainerColor,
@@ -823,6 +823,38 @@ function BoostsSection({ state }: { state: UIState }): JSX.Element {
   )
 }
 
+/**
+ * The browser role (DEF-03), on hosts that have one to give: either the fact that Zenium holds it
+ * or the button that asks the system for it. `null` is a host that has not answered yet; the
+ * button is offered then too, and the request re-reads the role afterwards.
+ */
+function DefaultBrowserRow({ isDefault }: { isDefault: boolean | null }): JSX.Element {
+  if (isDefault) {
+    return (
+      <Row label="Default browser" hint="Zenium is your default browser.">
+        <span
+          className="flex h-8 w-8 items-center justify-center text-[var(--zen-ok)]"
+          aria-label="Zenium is the default browser"
+          role="img"
+        >
+          <Check className="h-5 w-5" strokeWidth={2} />
+        </span>
+      </Row>
+    )
+  }
+  return (
+    <Row label="Default browser" hint="Open links from other apps in Zenium.">
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => run('defaultBrowser.request', { source: 'settings' })}
+      >
+        Set as default
+      </Button>
+    </Row>
+  )
+}
+
 function AboutSection({
   state,
   setSection
@@ -857,6 +889,9 @@ function AboutSection({
           <span />
         )}
       </Row>
+      {state.capabilities.defaultBrowser && (
+        <DefaultBrowserRow isDefault={state.defaultBrowser.isDefault} />
+      )}
       <Row
         label="Engine"
         hint="Blink / V8 — the same engine as Chrome. The chrome reimplements Zen Browser 1.22: Spaces, Essentials, Glance, Split View, Compact Mode, window sync, Boosts, Live Folders, Reader View, Mods and cross-device sync."
