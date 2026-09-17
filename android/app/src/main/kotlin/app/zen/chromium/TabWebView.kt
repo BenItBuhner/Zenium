@@ -14,7 +14,6 @@ import android.os.Looper
 import android.os.Message
 import android.os.SystemClock
 import android.util.Base64
-import android.util.Log
 import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
@@ -655,7 +654,6 @@ class TabWebView(
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.FINISHED)
             host.chrome.viewEvent(tabId, "stopLoading", navState())
             if (muted) setMuted(true)
-            Log.v("ZenBack", "$tabId finished $url canGoBack=${canGoBack()} entries=${copyBackForwardList().size}")
             host.back.refresh()
         }
 

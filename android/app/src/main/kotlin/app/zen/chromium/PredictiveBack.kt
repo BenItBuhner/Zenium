@@ -103,7 +103,6 @@ class PredictiveBack(private val activity: MainActivity, private val host: Host)
         if (inFlight) return
         val next = currentTarget()
         val enabled = next != Target.NONE || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
-        Log.v(TAG, "refresh: $next (chrome=$chromeHandles tab=$pageTabId view=${pageTab() != null} canGoBack=${pageTab()?.canGoBack()}) registered=$registered")
         if (enabled != registered) Log.d(TAG, "back would $next (chrome=$chromeHandles tab=$pageTabId): callback ${if (enabled) "on" else "off"}")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             setRegistered(enabled)

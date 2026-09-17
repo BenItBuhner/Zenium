@@ -128,9 +128,11 @@ class BackDemo {
     }
 
     /**
-     * Two link clicks inside the seeded example.com tab: a script-driven `a.click()` is a real
-     * navigation as far as the WebView is concerned (it goes through shouldOverrideUrlLoading),
-     * so each page leaves its snapshot behind for the back preview.
+     * Two link taps inside the seeded example.com tab, as real touches: a navigation the page
+     * starts without user activation (a scripted `a.click()`) is marked skippable by Chromium's
+     * history-manipulation intervention and `canGoBack()` stays false, exactly as it would in
+     * Chrome. A tapped link carries activation, goes through shouldOverrideUrlLoading and leaves
+     * its page's snapshot behind for the back preview.
      */
     private fun buildHistory() {
         instrumentation.runOnMainSync {
@@ -149,17 +151,28 @@ class BackDemo {
         Log.i(TAG, "history built: $depth entries")
     }
 
-    /** Click the first link matching `selector` in the active tab, or load `fallback`. */
+    /**
+     * Tap the first link matching `selector` in the active tab (scrolled into view first; the tap
+     * is a trusted touch on the WebView, in CSS coordinates like an agent's click), or load
+     * `fallback` when the page has no such link.
+     */
     private fun follow(selector: String, fallback: String) {
         val script = "(function(){var a=document.querySelector(${JSONObject.quote(selector)});" +
-            "if(!a){return false}a.click();return true})()"
+            "if(!a){return null}a.scrollIntoView({block:'center'});var r=a.getBoundingClientRect();" +
+            "return [r.left+r.width/2,r.top+r.height/2]})()"
         withTab { tab ->
             tab ?: error("the demo tab is gone")
             tab.evaluate(script) { result ->
-                if (result != "true") {
+                val point = runCatching { org.json.JSONArray(result ?: "") }.getOrNull()
+                if (point == null || point.length() != 2) {
                     Log.w(TAG, "no link for $selector; loading $fallback")
                     tab.loadUrl(fallback)
+                    return@evaluate
                 }
+                // Let the scroll settle before the tap lands.
+                tab.postDelayed({
+                    tab.sendAgentInput(json("type" to "click", "x" to point.optDouble(0), "y" to point.optDouble(1))) {}
+                }, 400)
             }
         }
     }
