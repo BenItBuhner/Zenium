@@ -13,6 +13,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import android.view.KeyCharacterMap
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -174,7 +175,8 @@ class ServicesHardeningDemo {
         shot("08-intent-fallback-page")
 
         // 3. HTTP sign-in: the dialog, a wrong password (asked again, with the notice), then the
-        //    right one.
+        //    right one. The form is submitted from the password field with Enter, the way a user
+        //    would with the soft keyboard up (it covers the dialog's buttons).
         openInApp("http://$SERVER/protected")
         waitFor("Sign in", 12_000)
         SystemClock.sleep(1_200)
@@ -182,20 +184,24 @@ class ServicesHardeningDemo {
         fill(f, "Username", "zenium")
         fill(f, "Password", "wrong")
         SystemClock.sleep(600)
-        tapLabel(f, "Sign in")
+        pressKey(KeyEvent.KEYCODE_ENTER)
+        step("submitted with Enter")
         waitFor("The username or password was not accepted. Please try again.", 10_000)
         SystemClock.sleep(1_200)
         shot("10-http-auth-retry")
-        fill(f, "Username", "zenium")
         fill(f, "Password", "secret")
         SystemClock.sleep(600)
-        tapLabel(f, "Sign in")
+        pressKey(KeyEvent.KEYCODE_ENTER)
+        step("submitted with Enter")
         waitFor("Signed in as zenium", 10_000)
         SystemClock.sleep(1_500)
         shot("11-http-auth-signed-in")
     }
 
-    /** Focus the field under `label` and type into it (the field is the label's own child). */
+    /**
+     * Focus the field under `label` and type into it (the field is the label's own child),
+     * replacing whatever it holds.
+     */
     private fun fill(f: Finger, label: String, text: String) {
         val field = findAllByLabel(label).filter { it.width() > 0 }.maxByOrNull { it.height() }
         if (field == null) {
@@ -205,6 +211,8 @@ class ServicesHardeningDemo {
         // The input sits below the caption inside the label; aim at its lower half.
         f.tap(field.exactCenterX(), field.bottom - field.height() * 0.28f)
         SystemClock.sleep(700)
+        pressKey(KeyEvent.KEYCODE_A, KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON)
+        SystemClock.sleep(150)
         type(text)
         SystemClock.sleep(400)
         step("filled '$label'")
@@ -219,6 +227,18 @@ class ServicesHardeningDemo {
         for (event in events) {
             ui.injectInputEvent(event, true)
             SystemClock.sleep(25)
+        }
+    }
+
+    private fun pressKey(keyCode: Int, metaState: Int = 0) {
+        val now = SystemClock.uptimeMillis()
+        for (action in intArrayOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) {
+            val event = KeyEvent(
+                now, SystemClock.uptimeMillis(), action, keyCode, 0, metaState,
+                KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, InputDevice.SOURCE_KEYBOARD
+            )
+            ui.injectInputEvent(event, true)
+            SystemClock.sleep(30)
         }
     }
 
