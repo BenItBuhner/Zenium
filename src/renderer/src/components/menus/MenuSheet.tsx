@@ -48,10 +48,10 @@ interface MenuNav {
 }
 
 /**
- * The menu as a draggable sheet: sections are groups of rows set apart by spacing and a faint
- * lift instead of rules, with radii nested concentrically (sheet 28 − 12 padding = group 16,
- * group 16 − 4 padding = row 12). Picking a row slides the sheet away first, so the host never
- * snapshots the menu when it dims the page for whatever the row opens.
+ * The menu as a draggable sheet: sections are `.zen-sheet-card` groups of rows set apart by
+ * spacing and a faint lift instead of rules, with radii nested concentrically (sheet 28 − 12
+ * padding = card 16, card 16 − 4 padding = row 12). Picking a row slides the sheet away first,
+ * so the host never snapshots the menu when it dims the page for whatever the row opens.
  */
 function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const [nav, setNav] = useState<MenuNav>({ path: [], direction: 0 })
@@ -80,7 +80,7 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
       contentKey={`${menu.id}:${path.map((item) => item.id).join('/')}`}
       handleLabel="Resize menu"
       header={
-        <div className="flex h-11 items-center gap-1 px-3">
+        <div className="flex h-11 items-center gap-1">
           {path.length > 0 && (
             <button
               type="button"
@@ -98,13 +98,13 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
       <div
         key={path.length}
         className={cn(
-          'flex flex-col gap-2 px-3 pb-2 pt-1',
+          'flex flex-col gap-2 pb-2 pt-1',
           nav.direction > 0 && 'zen-drawer-right',
           nav.direction < 0 && 'zen-drawer-left'
         )}
       >
         {groups.map((group, index) => (
-          <ul key={index} className="zen-sheet-group">
+          <ul key={index} className="zen-sheet-card p-1">
             {group.map((item) => (
               <li key={item.id}>
                 <button

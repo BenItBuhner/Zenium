@@ -1,27 +1,11 @@
 import type { JSX, PointerEvent as ReactPointerEvent, ReactNode, Ref } from 'react'
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
-import {
-  computeDetents,
-  settleDetent,
-  sheetBackPosition,
-  sheetDragPosition,
-  sheetFrame,
-  type SheetDetents
-} from '@renderer/lib/gestures/sheet'
-import { SpringAnimation, type SpringConfig } from '@renderer/lib/motion/spring'
+import { computeDetents, SheetMotion, type SheetDetents } from '@renderer/lib/motion/sheet'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 
-/** Open, close and settle: soft, with a hair of overshoot so a detent reads as a place the sheet came to rest (ζ ≈ 0.92). */
-const SPRING_SHEET: SpringConfig = {
-  stiffness: 340,
-  damping: 34,
-  mass: 1,
-  restDelta: 0.4,
-  restSpeed: 8
-}
 /** Opacity of the scrim behind a sheet at (or above) its peek detent. */
 const SCRIM_OPACITY = 0.42
 /**
@@ -57,152 +41,6 @@ interface Props {
   className?: string
 }
 
-type Detent = 'collapsed' | 'expanded'
-
-/**
- * The sheet's motion, kept out of React because it changes every frame: one position on the
- * track (visible height in px), the spring that carries it between detents, and the DOM writes
- * that show it. Stopping the spring hands the live position to a finger, which is what makes
- * every transition catchable.
- */
-class SheetMotion {
-  position = 0
-  detents: SheetDetents = { collapsed: 0, expanded: 0 }
-  /** Detent the sheet rests at, or is heading for. */
-  resting: Detent = 'collapsed'
-  /** A finger is dragging the sheet. */
-  dragging = false
-  /** Where the sheet stood when a predictive back gesture took hold of it. */
-  backOrigin: number | null = null
-  /** Status-bar inset (px) the expanded sheet keeps clear. */
-  insetTop = 0
-  sheet: HTMLElement | null = null
-  scrim: HTMLElement | null = null
-  onDismissed: (() => void) | null = null
-  /** The sheet came to rest on a detent. */
-  onRest: (() => void) | null = null
-  private target = 0
-  private afterDismiss: (() => void) | null = null
-  private readonly spring = new SpringAnimation(
-    SPRING_SHEET,
-    (x) => this.apply(x),
-    () => this.rest()
-  )
-
-  get running(): boolean {
-    return this.spring.running
-  }
-
-  get dismissing(): boolean {
-    return this.spring.running && this.target === 0
-  }
-
-  /** At rest on the expanded detent: the only state in which the body scrolls natively. */
-  get restingExpanded(): boolean {
-    return !this.spring.running && this.position >= this.detents.expanded - 1
-  }
-
-  /** Lay the sheet out at `position` px of visible height. */
-  apply(position: number): void {
-    this.position = position
-    if (!this.sheet || !this.scrim) return
-    const frame = sheetFrame(position, this.detents)
-    this.sheet.style.height = `${frame.height}px`
-    this.sheet.style.transform = `translate3d(0, ${frame.translateY}px, 0)`
-    this.scrim.style.opacity = `${frame.scrim * SCRIM_OPACITY}`
-  }
-
-  /** Head for `target` px with the spring, carrying `velocity` px/s. */
-  settleTo(target: number, velocity = 0): void {
-    this.afterDismiss = null
-    // A sheet with one detent keeps the intent it had; only a real choice changes it.
-    if (target > 0 && this.detents.collapsed !== this.detents.expanded)
-      this.resting = target >= this.detents.expanded ? 'expanded' : 'collapsed'
-    this.go(target, velocity)
-  }
-
-  /** Slide off the screen, then run `then` (a picked menu item) and report the dismissal. */
-  dismiss(then?: () => void, velocity = 0): void {
-    // Already on its way out with nothing new to do at the end: let it carry its momentum.
-    if (this.dismissing && !then) return
-    this.afterDismiss = then ?? null
-    this.go(0, velocity)
-  }
-
-  private go(target: number, velocity: number): void {
-    this.target = target
-    this.backOrigin = null
-    // Everything is in place before the spring starts: with reduced motion it rests at once.
-    this.spring.start(this.position, velocity, target)
-  }
-
-  /** A finger landed while the sheet was moving: freeze it there. Returns false when it was at rest. */
-  catch(): boolean {
-    if (!this.spring.running) return false
-    this.spring.stop()
-    // Whatever the motion was about to do (a pick, a dismissal) is off: the finger decides now.
-    this.afterDismiss = null
-    this.backOrigin = null
-    return true
-  }
-
-  /** The detents changed (first measurement, new content, a resize): follow them. */
-  remeasured(detents: SheetDetents, first: boolean): void {
-    this.detents = detents
-    this.apply(this.position)
-    if (first) {
-      this.resting = 'collapsed'
-      this.settleTo(detents.collapsed)
-      return
-    }
-    // A finger holding the sheet decides where it goes; the spring stays out of it.
-    if (this.dragging || this.dismissing) return
-    const to = detents[this.resting]
-    if (this.spring.running) {
-      this.target = to
-      this.spring.retarget(to)
-    } else if (this.position !== to) {
-      this.settleTo(to)
-    }
-  }
-
-  backProgress(progress: number): void {
-    if (this.dismissing) return
-    if (this.backOrigin === null) {
-      if (this.spring.running) this.spring.stop()
-      this.backOrigin = this.position
-    }
-    this.apply(sheetBackPosition(this.backOrigin, progress))
-  }
-
-  commitBack(): void {
-    this.dismiss()
-  }
-
-  cancelBack(): void {
-    if (this.backOrigin === null) return
-    const origin = this.backOrigin
-    this.backOrigin = null
-    this.settleTo(origin)
-  }
-
-  destroy(): void {
-    this.spring.stop()
-    this.afterDismiss = null
-  }
-
-  private rest(): void {
-    if (this.target === 0) {
-      const then = this.afterDismiss
-      this.afterDismiss = null
-      then?.()
-      this.onDismissed?.()
-      return
-    }
-    this.onRest?.()
-  }
-}
-
 type Zone = 'grip' | 'body' | 'scrim'
 type Mode = 'pending' | 'sheet' | 'none'
 
@@ -212,8 +50,6 @@ interface Touch {
   y0: number
   zone: Zone
   mode: Mode
-  /** Sheet position when the drag began. */
-  dragStart: number
   /** The touch grabbed a moving sheet: never a tap. */
   caught: boolean
   tracker: VelocityTracker
@@ -234,12 +70,14 @@ function track(tracker: VelocityTracker, e: ReactPointerEvent<HTMLElement>): voi
 }
 
 /**
- * A bottom sheet that is a real object on the screen. It springs up to a peek detent (about
- * half the screen; a short sheet simply shows all of itself) and is dragged by its handle, its
- * title row or its body: up to expand, down to collapse or fling away. Release velocity picks
- * the detent, a finger landing during any motion catches the sheet where it is, the scrim fades
- * with the sheet's position, and content never jumps – between detents the sheet changes height
- * with its content anchored to the top edge, below the peek it slides down whole.
+ * A bottom sheet with a peek and an expanded detent, on the `SheetMotion` the site-information
+ * sheet runs on. It springs up to the peek (about half the screen; a short sheet simply shows
+ * all of itself) and is dragged by its handle, its title row or its body: up to expand, down to
+ * collapse or fling away. Release velocity picks the detent, a finger landing during any motion
+ * catches the sheet where it is, the scrim fades with the sheet's position, and content never
+ * jumps – between detents the sheet changes height with its content anchored to the top edge,
+ * below the peek it slides down whole. The motion writes to the DOM straight from its frames;
+ * React only renders the content.
  *
  * The body scrolls natively only while the sheet rests expanded; pulling down on a body that
  * sits at its top drags the sheet instead. Everything else (Escape, system back, a picked item)
@@ -255,9 +93,6 @@ export function BottomSheet({
   handleLabel = 'Resize sheet',
   className
 }: Props): JSX.Element {
-  // The motion lives in a ref and is only ever touched from effects and event handlers.
-  const motionRef = useRef<SheetMotion | null>(null)
-  const motion = (): SheetMotion => (motionRef.current ??= new SheetMotion())
   const layerRef = useRef<HTMLDivElement>(null)
   const sheetRef = useRef<HTMLDivElement>(null)
   const scrimRef = useRef<HTMLDivElement>(null)
@@ -265,8 +100,35 @@ export function BottomSheet({
   const fadeRef = useFadeEdges<HTMLDivElement>({ axis: 'y' })
   const touch = useRef<Touch | null>(null)
   const swallowClick = useRef(false)
-  const measured = useRef(false)
+  const detents = useRef<SheetDetents>({ collapsed: 0, expanded: 0 })
+  const insetTop = useRef(0)
+  /** Runs once a dismissal has finished (a picked row's action). A catch drops it. */
+  const afterDismiss = useRef<(() => void) | null>(null)
+  const latest = useRef({ onDismissed })
   const insets = uiStore.use((s) => s.insets)
+
+  // The motion lives in a ref and is only ever touched from effects and event handlers.
+  const motionRef = useRef<SheetMotion | null>(null)
+  const motion = (): SheetMotion =>
+    (motionRef.current ??= new SheetMotion({
+      detents: () => detents.current,
+      onChange: () => {
+        const sheet = sheetRef.current
+        const scrim = scrimRef.current
+        if (!sheet || !scrim) return
+        const frame = motionRef.current!.frame()
+        sheet.style.height = `${frame.height}px`
+        sheet.style.transform = `translate3d(0, ${frame.translateY}px, 0)`
+        scrim.style.opacity = `${frame.scrim * SCRIM_OPACITY}`
+        syncLock()
+      },
+      onClosed: () => {
+        const then = afterDismiss.current
+        afterDismiss.current = null
+        then?.()
+        latest.current.onDismissed()
+      }
+    }))
 
   /** Native scrolling only while the sheet rests fully expanded; otherwise every pan is a sheet drag. */
   const syncLock = (): void => {
@@ -283,25 +145,19 @@ export function BottomSheet({
     sheet.style.height = 'auto'
     const intrinsic = sheet.offsetHeight
     sheet.style.height = height
-    const first = !measured.current
-    measured.current = true
+    detents.current = computeDetents(intrinsic, layer.clientHeight, insetTop.current)
     const m = motion()
-    m.remeasured(computeDetents(intrinsic, layer.clientHeight, m.insetTop), first)
+    if (m.isOpen) m.refresh()
+    else m.present()
     sheet.style.visibility = 'visible'
-    syncLock()
   }
 
   useEffect(() => {
-    const m = motion()
-    m.onDismissed = onDismissed
-    m.onRest = syncLock
+    latest.current = { onDismissed }
   })
 
   useLayoutEffect(() => {
-    const m = motion()
-    m.sheet = sheetRef.current
-    m.scrim = scrimRef.current
-    m.insetTop = insets.top
+    insetTop.current = insets.top
     // New content starts at its top; the old scroll offset belonged to what was there before.
     if (scrollRef.current) scrollRef.current.scrollTop = 0
     measure()
@@ -341,28 +197,46 @@ export function BottomSheet({
     return () => layer.removeEventListener('touchmove', onTouchMove)
   }, [])
 
-  useEffect(() => () => motion().destroy(), [])
+  // Unmounted mid-motion (the host hid the menu): stop the spring without reporting a close.
+  useEffect(
+    () => () => {
+      const m = motionRef.current
+      if (!m) return
+      afterDismiss.current = null
+      latest.current = { onDismissed: () => undefined }
+      m.close()
+    },
+    []
+  )
+
+  const dismiss = (then?: () => void): void => {
+    const m = motion()
+    if (!m.isOpen) return
+    if (then) afterDismiss.current = then
+    m.dismiss()
+  }
 
   useImperativeHandle(
     ref,
     () => ({
-      dismiss: (then) => motion().dismiss(then),
+      dismiss,
       backProgress: (progress) => {
         if (!touch.current) motion().backProgress(progress)
       },
-      commitBack: () => motion().commitBack(),
-      cancelBack: () => motion().cancelBack()
+      commitBack: () => motion().backCommit(),
+      cancelBack: () => motion().backCancel()
     }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the handle only reaches through refs
     []
   )
 
   const beginDrag = (t: Touch, e: ReactPointerEvent<HTMLDivElement>): void => {
-    const m = motion()
     t.mode = 'sheet'
     t.caught = true
     t.y0 = e.clientY
-    t.dragStart = m.position
-    m.dragging = true
+    // Whatever the motion was about to do (a pick, a dismissal) is off: the finger decides now.
+    afterDismiss.current = null
+    motion().beginDrag()
     // Captured only now: a capture from pointerdown on would retarget the click of a plain tap
     // away from the row that was tapped.
     e.currentTarget.setPointerCapture(e.pointerId)
@@ -380,10 +254,9 @@ export function BottomSheet({
         : 'body'
     // A drag produces no click to swallow; a new touch must start with a clean slate.
     swallowClick.current = false
-    const m = motion()
-    const caught = m.catch()
+    const moving = motion().current.phase === 'settling'
     // A resting sheet's scrim is only a tap target.
-    if (!caught && zone === 'scrim') return
+    if (!moving && zone === 'scrim') return
     const tracker = new VelocityTracker()
     tracker.add(e.timeStamp, e.clientX, e.clientY)
     const t: Touch = {
@@ -392,13 +265,12 @@ export function BottomSheet({
       y0: e.clientY,
       zone,
       mode: 'pending',
-      dragStart: m.position,
-      caught,
+      caught: moving,
       tracker
     }
     touch.current = t
     // A finger that caught the sheet mid-flight holds it: the drag is on from the first move.
-    if (caught) beginDrag(t, e)
+    if (moving) beginDrag(t, e)
   }
 
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>): void => {
@@ -423,16 +295,14 @@ export function BottomSheet({
       }
     }
     if (t.mode !== 'sheet') return
-    const m = motion()
-    m.apply(sheetDragPosition(t.dragStart, t.y0 - e.clientY, m.detents))
+    // The track counts towards dismissal; the finger's y runs down the screen too.
+    motion().drag(e.clientY - t.y0)
   }
 
   const finish = (e: ReactPointerEvent<HTMLDivElement>, cancelled: boolean): void => {
     const t = touch.current
     if (!t || t.id !== e.pointerId) return
     touch.current = null
-    const m = motion()
-    m.dragging = false
     sheetRef.current?.removeAttribute('data-dragging')
     if (t.mode !== 'sheet') {
       if (t.caught) swallowClick.current = true
@@ -441,24 +311,19 @@ export function BottomSheet({
     }
     swallowClick.current = true
     const { vy } = cancelled ? { vy: 0 } : t.tracker.velocity(e.timeStamp)
-    // The track runs upwards; the finger's y runs down the screen.
-    const velocity = -vy
-    const target = settleDetent(m.position, velocity, m.detents)
-    if (target === 0) m.dismiss(undefined, velocity)
-    else m.settleTo(target, velocity)
+    motion().release(vy)
     syncLock()
   }
 
   /** The handle as a button: a tap moves to the other detent, or closes a sheet that has only one. */
   const onHandleTap = (): void => {
     const m = motion()
-    const { collapsed, expanded } = m.detents
+    const { collapsed, expanded } = detents.current
     if (collapsed === expanded) {
-      m.dismiss()
+      dismiss()
       return
     }
-    m.settleTo(m.resting === 'expanded' ? collapsed : expanded)
-    syncLock()
+    m.settleTo(m.restingDetent === 'expanded' ? 'collapsed' : 'expanded')
   }
 
   return (
@@ -480,13 +345,13 @@ export function BottomSheet({
         ref={scrimRef}
         className="zen-sheet-scrim absolute inset-0"
         style={{ opacity: 0 }}
-        onClick={() => motion().dismiss()}
+        onClick={() => dismiss()}
       />
       <div
         ref={sheetRef}
         role="dialog"
         className={cn(
-          'zen-sheet absolute inset-x-0 bottom-0 mx-auto flex w-full max-w-[520px] flex-col',
+          'zen-sheet zen-sheet-detents absolute inset-x-0 bottom-0 mx-auto flex w-full max-w-[520px] flex-col',
           className
         )}
         style={{ paddingBottom: Math.max(8, insets.bottom), visibility: 'hidden' }}

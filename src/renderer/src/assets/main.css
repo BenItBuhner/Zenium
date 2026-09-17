@@ -704,32 +704,19 @@
 
 @layer components {
   /*
-   * The draggable bottom sheet (`BottomSheet`). Height and transform are written per frame by
-   * the sheet's spring; the top edge carries a hairline of light instead of a border and the
-   * depth comes from the shadow. Radii nest concentrically: sheet 28, groups 16, rows 12.
+   * A `.zen-sheet` with two detents (`BottomSheet`): height and transform are written per frame
+   * by the sheet's motion, so it starts at nothing and every pan on it is the sheet's. Rows nest
+   * inside `.zen-sheet-card` groups with the sheet's concentric radii (card corner minus padding).
    */
   .zen-sheet-scrim {
     background: #000;
     touch-action: none;
     will-change: opacity;
   }
-  .zen-sheet {
+  .zen-sheet-detents {
     height: 0;
-    background: var(--zen-panel-bg);
-    backdrop-filter: blur(24px) saturate(1.2);
-    border-radius: 28px 28px 0 0;
-    corner-shape: var(--zen-corner);
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.4),
-      var(--zen-shadow);
     touch-action: none;
-    will-change: transform;
     transform: translate3d(0, 0, 0);
-  }
-  :root[data-theme='dark'] .zen-sheet {
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.08),
-      var(--zen-shadow);
   }
   .zen-sheet-handle-hit {
     display: flex;
@@ -760,12 +747,6 @@
   .zen-sheet[data-locked='true'] .zen-sheet-scroll {
     touch-action: none;
   }
-  .zen-sheet-group {
-    padding: 4px;
-    border-radius: 16px;
-    corner-shape: var(--zen-corner);
-    background: rgb(var(--zen-fg-rgb) / 0.045);
-  }
   .zen-sheet-item {
     display: flex;
     width: 100%;
@@ -773,7 +754,7 @@
     align-items: center;
     gap: 12px;
     padding: 0 14px;
-    border-radius: 12px;
+    border-radius: calc(var(--zen-sheet-inner) - 4px);
     corner-shape: var(--zen-corner);
     text-align: left;
     font-size: 15px;

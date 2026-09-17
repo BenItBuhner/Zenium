@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BACK_PEEK, SHEET_CLOSED, SheetMotion, type SheetState } from '../motion/sheet'
 import {
-  SHEET_BACK_TRAVEL,
   SHEET_OVERDRAG,
   computeDetents,
   settleDetent,
@@ -9,7 +8,7 @@ import {
   sheetDragPosition,
   sheetFrame,
   sheetMaxHeight
-} from '../gestures/sheet'
+} from '../motion/sheet'
 
 /**
  * A hand-cranked animation frame: `frames(n)` advances the clock 16 ms at a time and runs the
@@ -166,6 +165,94 @@ describe('SheetMotion', () => {
     expect(closed).toBe(1)
   })
 
+  describe('with two detents', () => {
+    const detents = { collapsed: 400, expanded: 800 }
+    let two: SheetMotion
+
+    beforeEach(() => {
+      states = []
+      two = new SheetMotion({
+        detents: () => detents,
+        onChange: (s) => states.push(s),
+        onClosed: () => closed++
+      })
+    })
+
+    it('presents to the peek and lays itself out at that height', () => {
+      two.present()
+      frames.run(120)
+      expect(two.current).toEqual({ phase: 'open', progress: 0 })
+      expect(two.frame()).toEqual({ height: 400, translateY: 0, scrim: 1 })
+      expect(two.restingDetent).toBe('collapsed')
+      expect(two.restingExpanded).toBe(false)
+    })
+
+    it('a drag up past the commit point expands; the body grows instead of moving', () => {
+      two.present()
+      frames.run(120)
+      two.beginDrag()
+      two.drag(-250)
+      expect(two.frame()).toEqual({ height: 650, translateY: 0, scrim: 1 })
+      expect(two.current.progress).toBeLessThan(0)
+      two.release(0)
+      frames.run(120)
+      expect(two.restingDetent).toBe('expanded')
+      expect(two.restingExpanded).toBe(true)
+      expect(two.frame().height).toBe(800)
+    })
+
+    it('a short drag up from the peek comes back; a fling down from expanded stops at the peek', () => {
+      two.present()
+      frames.run(120)
+      two.beginDrag()
+      two.drag(-100)
+      two.release(0)
+      frames.run(120)
+      expect(two.restingDetent).toBe('collapsed')
+      two.settleTo('expanded')
+      frames.run(120)
+      expect(two.frame().height).toBe(800)
+      two.beginDrag()
+      two.drag(30)
+      two.release(1500)
+      frames.run(120)
+      expect(two.current).toEqual({ phase: 'open', progress: 0 })
+      expect(two.frame().height).toBe(400)
+      expect(closed).toBe(0)
+    })
+
+    it('below the peek the sheet slides down whole and the scrim thins', () => {
+      two.present()
+      frames.run(120)
+      two.beginDrag()
+      two.drag(100)
+      expect(two.frame()).toEqual({ height: 400, translateY: 100, scrim: 0.75 })
+      expect(two.current.progress).toBe(0.25)
+    })
+
+    it('follows re-measured detents unless a finger holds it', () => {
+      const live = { collapsed: 400, expanded: 800 }
+      const sheet = new SheetMotion({
+        detents: () => live,
+        onChange: (s) => states.push(s),
+        onClosed: () => closed++
+      })
+      sheet.present()
+      frames.run(120)
+      live.collapsed = 300
+      live.expanded = 300
+      sheet.refresh()
+      expect(sheet.current.phase).toBe('settling')
+      frames.run(120)
+      expect(sheet.frame().height).toBe(300)
+      sheet.beginDrag()
+      live.collapsed = 500
+      live.expanded = 900
+      sheet.refresh()
+      expect(sheet.current.phase).toBe('dragging')
+    })
+  })
+
   it('ignores gestures while closed and closes at once on demand', () => {
     expect(motion.beginDrag()).toBe(false)
     motion.drag(50)
@@ -305,8 +392,8 @@ describe('settleDetent', () => {
 describe('sheetBackPosition', () => {
   it('pulls the sheet down with the gesture but keeps it on screen', () => {
     expect(sheetBackPosition(500, 0)).toBe(500)
-    expect(sheetBackPosition(500, 0.5)).toBe(500 * (1 - SHEET_BACK_TRAVEL / 2))
-    expect(sheetBackPosition(500, 1)).toBe(500 * (1 - SHEET_BACK_TRAVEL))
+    expect(sheetBackPosition(500, 0.5)).toBe(500 * (1 - BACK_PEEK / 2))
+    expect(sheetBackPosition(500, 1)).toBe(500 * (1 - BACK_PEEK))
     expect(sheetBackPosition(500, 1)).toBeGreaterThan(250)
   })
 
