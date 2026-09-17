@@ -2543,6 +2543,7 @@ export interface CommandDescriptor {
     | 'resources.trim'
     | 'resources.open'
     | 'passwords.open'
+    | 'translate.open'
   /** The host capability the command needs; not offered where it is false. */
   requires?: keyof HostCapabilities
   /** The layouts the command does something in; absent means all of them. */
@@ -2582,6 +2583,7 @@ export interface MenuDescriptor {
     | 'history'
     | 'download'
     | 'urlbar'
+    | 'translate'
   /** What the phone sheet calls the menu (a bookmark's name, "3 selected"); the source's generic name when absent. */
   title?: string
   /** Anchor in chrome CSS pixels, when known. */
@@ -3484,6 +3486,25 @@ export interface Commands {
   'translate.revert': { args: { tabId: string }; result: void }
   /** Close the translation offer for this page load. */
   'translate.dismiss': { args: { tabId: string }; result: void }
+  /**
+   * The user asked for the translation UI (a menu item, the address pill's button): put the
+   * offer up for the tab, identifying the page language first when it is not known yet. A
+   * running or finished translation only gets its bar shown again.
+   */
+  'translate.offer': { args: { tabId: string }; result: void }
+  /** Change the languages the tab's offer would translate from or into, without translating. */
+  'translate.retarget': {
+    args: { tabId: string; source?: string; target?: string }
+    result: void
+  }
+  /**
+   * The translation options menu of a tab (always or never translate its language, never this
+   * site, offer to translate, the Languages settings), anchored at `x`,`y` in chrome pixels
+   * where the host draws its own menus.
+   */
+  'translate.menu': { args: { tabId: string; x?: number; y?: number }; result: void }
+  /** Put the selection-translation popover up for `text` (the tab's selection when omitted). */
+  'translate.showSelection': { args: { tabId: string; text?: string }; result: void }
   /** Translate the tab's selection (or `text`); null when nothing is selected. */
   'translate.selection': {
     args: { tabId: string; text?: string; target?: string }
@@ -3626,6 +3647,11 @@ export interface Events {
    * the payload carries `ArrayBuffer`s, so it is structured-cloned rather than JSON).
    */
   'translate.engine': EngineRelayRequest
+  /**
+   * Show the selection-translation popover for `text` in the tab. `x`,`y` is where the user
+   * asked, in CSS pixels of the page view, when known.
+   */
+  'translate.selection': { tabId: string; text: string; x: number | null; y: number | null }
   // ---- PROVISIONAL: extensions UI (PR #68), see the matching block in `Commands` --------------
   /** The popup's document asked for this size (CSS px); the renderer fits its frame around it. */
   'extension.popupSize': { id: string; width: number; height: number }

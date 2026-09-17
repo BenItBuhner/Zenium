@@ -133,15 +133,28 @@ interface Harness {
   browser: Browser
   written: Map<string, string>
   fetched: string[]
+  /** Events the service sent to the chrome (`browser.emit`). */
+  emitted: Array<{ name: string; payload: unknown }>
+  toasts: string[]
 }
+
+const WINDOW = { id: 'win-1' }
 
 function harness(options: { locales?: string[]; stored?: string; url?: string } = {}): Harness {
   const host = new FakeHost(options.locales)
   const view = new FakeView(options.url ?? PAGE_URL)
   const written = new Map<string, string>()
   const fetched: string[] = []
+  const emitted: Array<{ name: string; payload: unknown }> = []
+  const toasts: string[] = []
   let present = true
   const browser = {
+    emit: (name: string, payload: unknown) => {
+      emitted.push({ name, payload })
+    },
+    toast: (message: string) => {
+      toasts.push(message)
+    },
     platform: {
       translate: host,
       io: {
@@ -163,6 +176,7 @@ function harness(options: { locales?: string[]; stored?: string; url?: string } 
     tabs: {
       tab: (id: string) => (id === TAB && present ? { id, url: view.url } : null),
       view: (id: string) => (id === TAB && present ? (view as unknown as TabView) : null),
+      windowFor: () => WINDOW,
       close: () => {
         present = false
       }
@@ -170,7 +184,16 @@ function harness(options: { locales?: string[]; stored?: string; url?: string } 
     state: { commitVolatile: vi.fn() }
   }
   const service = new TranslateService(browser as unknown as Browser)
-  return { service, host, view, browser: browser as unknown as Browser, written, fetched }
+  return {
+    service,
+    host,
+    view,
+    browser: browser as unknown as Browser,
+    written,
+    fetched,
+    emitted,
+    toasts
+  }
 }
 
 const SPANISH = `
@@ -494,6 +517,102 @@ describe('TranslateService', () => {
     expect(h.fetched[0]).toMatch(/^https:\/\/firefox\.settings\.services\.mozilla\.com\//)
     expect(h.service.registry.fetchedAt).toBe(0)
     expect(h.service.uiState().registryDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
+  it('puts the offer up on request, ignoring the never rules, and only re-shows a running one', async () => {
+    const h = harness()
+    active = h.service
+    // A page in a never-translate language stays idle on load; the user asks anyway.
+    h.service.setLanguageRule('es', 'never')
+    h.service.onPageReady(TAB)
+    await until(() => state(h).status !== 'detecting', 'decision')
+    expect(state(h).status).toBe('idle')
+    await h.service.offer(TAB)
+    expect(state(h)).toMatchObject({ status: 'offered', source: 'es', target: 'en', auto: false })
+    // Dismissed, then asked again: the bar comes back.
+    h.service.dismiss(TAB)
+    await h.service.offer(TAB)
+    expect(state(h).dismissed).toBe(false)
+    // A finished translation only gets its bar shown again.
+    h.service.setLanguageRule('es', 'ask')
+    await h.service.translatePage(TAB)
+    h.service.dismiss(TAB)
+    await h.service.offer(TAB)
+    expect(state(h)).toMatchObject({ status: 'translated', dismissed: false })
+  })
+
+  it('offers without a source for a page whose language it cannot tell', async () => {
+    const h = harness()
+    active = h.service
+    h.service.setPreferences({ autoOffer: false })
+    h.host.detection = { language: 'xx', confidence: 0.2 }
+    document.body.innerHTML = '<p>ab</p>'
+    document.documentElement.removeAttribute('lang')
+    await h.service.offer(TAB)
+    expect(state(h)).toMatchObject({ status: 'offered', source: null, target: 'en' })
+    h.service.retarget(TAB, { source: 'fr' })
+    expect(state(h)).toMatchObject({ source: 'fr', confidence: null })
+  })
+
+  it('open() answers other pages with a toast instead of an error', async () => {
+    const h = harness({ url: 'zen://newtab' })
+    active = h.service
+    await expect(h.service.offer(TAB)).rejects.toThrow(/cannot be translated/)
+    await h.service.open(TAB)
+    expect(h.toasts).toEqual(['This page cannot be translated.'])
+    expect(h.service.tabState(TAB)).toBeNull()
+    expect(h.service.canTranslate(TAB)).toBe(false)
+  })
+
+  it('retargets an offer to supported languages only', async () => {
+    const h = harness()
+    active = h.service
+    h.service.onPageReady(TAB)
+    await until(() => state(h).status === 'offered', 'offer')
+    h.service.retarget(TAB, { target: 'de' })
+    expect(state(h).target).toBe('de')
+    h.service.retarget(TAB, { target: 'xx', source: 'yy' })
+    expect(state(h)).toMatchObject({ source: 'es', target: 'de' })
+    expect(state(h).confidence).toBeGreaterThan(0.9)
+    h.service.retarget(TAB, { source: 'pt' })
+    expect(state(h)).toMatchObject({ source: 'pt', confidence: null, target: 'de' })
+  })
+
+  it('takes an offer down when its language is put on the never list', async () => {
+    const h = harness()
+    active = h.service
+    h.service.onPageReady(TAB)
+    await until(() => state(h).status === 'offered', 'offer')
+    h.service.setLanguageRule('de', 'never')
+    expect(state(h).status).toBe('offered')
+    h.service.setLanguageRule('es', 'never')
+    expect(state(h).status).toBe('idle')
+    expect(h.service.languageRule('es')).toBe('never')
+    expect(h.service.siteOf(TAB)).toBe('ejemplo.es')
+    expect(h.service.canTranslate(TAB)).toBe(true)
+  })
+
+  it('asks the chrome to show the selection popover with the text or the page selection', async () => {
+    const h = harness()
+    active = h.service
+    await h.service.showSelection(TAB, '  Hola \n mundo  ', { x: 10, y: 20 })
+    expect(h.emitted).toEqual([
+      {
+        name: 'translate.selection',
+        payload: { tabId: TAB, text: 'Hola mundo', x: 10, y: 20 }
+      }
+    ])
+    // Nothing selected on the page and no text given: nothing to show.
+    await h.service.showSelection(TAB)
+    expect(h.emitted).toHaveLength(1)
+    const range = document.createRange()
+    range.selectNodeContents(document.querySelector('h1') as Node)
+    document.getSelection()?.addRange(range)
+    await h.service.showSelection(TAB)
+    expect(h.emitted[1]).toEqual({
+      name: 'translate.selection',
+      payload: { tabId: TAB, text: 'Bienvenidos a la página', x: null, y: null }
+    })
   })
 
   it('drops the engine on stop and starts a fresh one afterwards', async () => {

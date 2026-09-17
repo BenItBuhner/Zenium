@@ -27,6 +27,7 @@ import { spaceLabel } from '../shared/defaults'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
 import { canRetryDownload, deleteFileToast, displayName } from '../shared/downloadsShell'
+import { languageName, sortedByName } from '../shared/languageNames'
 import { isInFlight, isQuarantined } from './downloads'
 import { mayAutoOpen } from './downloads/danger'
 import { applicationMenu, menuSignature, runFromMenuBar } from './menuBar'
@@ -187,7 +188,7 @@ export class Menus {
         selection && !params.misspelledWord ? this.selectionGroup(tab, selection, win).slice(1) : []
       groups.push(this.editGroup(params, { tail }))
     } else if (selection) {
-      groups.push(this.selectionGroup(tab, selection, win))
+      groups.push(this.selectionGroup(tab, selection, win, { x: params.x, y: params.y }))
     }
     if (plainPage) groups.push(this.navigationGroup(tab, view, win), this.pageGroup(tab, win))
     // Extension items sit where Chrome puts them: after the browser's own entries, before the
@@ -575,9 +576,15 @@ export class Menus {
 
   /**
    * Selected text: Copy, then either "Go to <url>" when the selection reads as an address or
-   * `Search <engine> for "…"` (a new tab next to this one, like Chrome).
+   * `Search <engine> for "…"` (a new tab next to this one, like Chrome), Translate Selection
+   * where the click landed (`at`; the page's own selection, not a text field's), Share.
    */
-  private selectionGroup(tab: Tab, selection: string, win: ZenWindow): Template {
+  private selectionGroup(
+    tab: Tab,
+    selection: string,
+    win: ZenWindow,
+    at?: { x: number; y: number }
+  ): Template {
     const { tabs, state } = this.browser
     const engine =
       state.searchEngines.find((e) => e.id === state.settings.searchEngineId) ??
@@ -599,6 +606,12 @@ export class Menus {
       items.push({
         label: `Search ${engine.name} for “${short}”`,
         click: () => open(buildSearchUrl(engine, selection))
+      })
+    }
+    if (at && this.browser.translate.available) {
+      items.push({
+        label: 'Translate Selection',
+        click: () => void this.browser.translate.showSelection(tab.id, selection, at, win)
       })
     }
     if (state.capabilities.share) {
@@ -646,9 +659,9 @@ export class Menus {
     return items
   }
 
-  /** The page's own actions: bookmark, save, print, screenshot, Reader View. */
+  /** The page's own actions: bookmark, save, print, screenshot, Reader View, Translate Page. */
   private pageGroup(tab: Tab, win: ZenWindow): Template {
-    const { state, reader } = this.browser
+    const { state, reader, translate } = this.browser
     const run = (action: 'page.savePage' | 'page.print' | 'page.screenshot'): void =>
       this.browser.actions.run(action, { sourceTabId: tab.id, win })
     const readerOpen = reader.isReaderUrl(tab.url)
@@ -668,7 +681,16 @@ export class Menus {
         enabled: readerOpen || reader.canRead(tab),
         action: 'page.readerMode',
         click: () => reader.toggle(tab.id, win)
-      }
+      },
+      ...(translate.available
+        ? [
+            {
+              label: 'Translate Page',
+              enabled: translate.canTranslate(tab.id),
+              click: () => void translate.open(tab.id, win)
+            }
+          ]
+        : [])
     ]
   }
 
@@ -2078,6 +2100,11 @@ export class Menus {
           enabled: Boolean(active) && this.browser.reader.canRead(active),
           click: () => active && this.browser.reader.toggle(active.id, win)
         },
+        ...when(this.browser.translate.available, {
+          label: 'Translate Page…',
+          enabled: Boolean(active) && this.browser.translate.canTranslate(active!.id),
+          click: () => active && void this.browser.translate.open(active.id, win)
+        }),
         ...when(caps.share, {
           label: 'Share…',
           enabled: Boolean(active) && /^https?:/i.test(active!.url),
@@ -2204,6 +2231,102 @@ export class Menus {
         click: () => active && this.browser.emit('zoom.open', { tabId: active.id }, win)
       }
     ]
+  }
+
+  /**
+   * The translation options of a tab, from the bar's "⋯" button (Firefox's gear menu, Chrome's
+   * "⋮"): the languages to translate from and into – the bar has menulists for these on the
+   * desktop, the phone's bar leaves them to this menu – the always / never rules for the page's
+   * language and its site, the auto-offer switch and the Languages settings.
+   */
+  showTranslateMenu(
+    tabId: string,
+    anchor: { x: number; y: number } | undefined,
+    win: ZenWindow
+  ): void {
+    const { translate } = this.browser
+    const tab = this.browser.tabs.tab(tabId)
+    if (!tab || !translate.available) return
+    const state = translate.tabState(tabId)
+    const prefs = translate.preferences
+    const source = state?.source ?? null
+    const target = state?.target ?? null
+    const site = translate.siteOf(tabId)
+    const rule = source ? translate.languageRule(source) : 'ask'
+    const languages = sortedByName(translate.uiState().languages)
+    const running = state?.status === 'translating' || state?.status === 'translated'
+    /** Re-translate right away while a translation shows; otherwise only change the offer. */
+    const retarget = (patch: { source?: string; target?: string }): void => {
+      if (running) void translate.translatePage(tabId, patch).catch(() => undefined)
+      else translate.retarget(tabId, patch)
+    }
+    const languageMenu = (
+      current: string | null,
+      except: string | null,
+      pick: (code: string) => void
+    ): Template =>
+      languages
+        .filter((code) => code !== except)
+        .map((code) => ({
+          label: languageName(code),
+          type: 'radio' as const,
+          checked: code === current,
+          click: () => pick(code)
+        }))
+    const template: Template = [
+      {
+        label: 'Translate To',
+        submenu: languageMenu(target, source, (code) => retarget({ target: code }))
+      },
+      {
+        label: source ? `Page Is in ${languageName(source)}` : 'Page Language',
+        submenu: languageMenu(source, target, (code) => retarget({ source: code }))
+      },
+      { type: 'separator' },
+      ...(source
+        ? [
+            {
+              label: `Always Translate ${languageName(source)}`,
+              type: 'checkbox' as const,
+              checked: rule === 'always',
+              click: () => {
+                translate.setLanguageRule(source, rule === 'always' ? 'ask' : 'always')
+                if (rule !== 'always' && !running)
+                  void translate.translatePage(tabId).catch(() => undefined)
+              }
+            },
+            {
+              label: `Never Translate ${languageName(source)}`,
+              type: 'checkbox' as const,
+              checked: rule === 'never',
+              click: () => translate.setLanguageRule(source, rule === 'never' ? 'ask' : 'never')
+            }
+          ]
+        : []),
+      ...(site
+        ? [
+            {
+              label: 'Never Translate This Site',
+              type: 'checkbox' as const,
+              checked: prefs.neverTranslateSites.includes(site),
+              click: () => translate.setSiteRule(tabId, !prefs.neverTranslateSites.includes(site))
+            }
+          ]
+        : []),
+      { type: 'separator' },
+      {
+        label: 'Offer to Translate Pages',
+        type: 'checkbox',
+        checked: prefs.autoOffer,
+        click: () => translate.setPreferences({ autoOffer: !prefs.autoOffer })
+      },
+      { type: 'separator' },
+      {
+        label: 'Language Settings…',
+        click: () => void this.browser.pages.open('settings', 'languages', win)
+      }
+    ]
+    this.popup(template, win, 'translate', anchor)
   }
 
   describe(url: string): string {

@@ -228,6 +228,12 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     action: 'page.readerMode'
   },
   {
+    id: 'translate',
+    label: 'Translate Page',
+    keywords: ['translate', 'translation', 'language'],
+    action: 'translate.open'
+  },
+  {
     id: 'new-window',
     label: 'New Window',
     keywords: ['window', 'new'],
