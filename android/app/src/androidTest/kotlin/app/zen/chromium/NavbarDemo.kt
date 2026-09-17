@@ -124,19 +124,22 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         expect("the count rolled down", waitFor("Tabs (${before - 1})", 4_000) != null)
         SystemClock.sleep(1_500)
         tap("New tab")
-        typeAddress("example.org")
+        typeAddress(NEW_TAB_HOST)
         expect("the bar is back after the new tab", waitForBar())
         SystemClock.sleep(2_000)
         expect("the count is up again", waitFor("Tabs ($before)", 4_000) != null)
         shot("13-new-tab-count")
 
-        // 10. The pill still switches tabs.
+        // 10. The pill still switches tabs: the new tab is last in the space, so a fling from the
+        //     pill's left end goes to the previous tab (an article) and one from its right end back.
         remeasurePill()
-        flingLeft()
-        SystemClock.sleep(3_500)
-        shot("14-swiped")
         flingRight()
-        SystemClock.sleep(3_500)
+        expect("the pill's swipe switches to the previous tab", waitForAddress(12_000) { SECOND_HOST in it })
+        SystemClock.sleep(2_500)
+        shot("14-swiped")
+        flingLeft()
+        expect("the pill's swipe switches back", waitForAddress(12_000) { NEW_TAB_HOST in it })
+        SystemClock.sleep(2_500)
 
         // 11. The pill's hold carries the bar to the top: the same controls there, the editor from a
         //     hold on the top bar, and the swipe.
@@ -151,8 +154,9 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         back()
         SystemClock.sleep(2_500)
         remeasurePill()
-        flingLeft()
-        SystemClock.sleep(3_500)
+        flingRight()
+        expect("the pill's swipe switches tabs at the top", waitForAddress(12_000) { SECOND_HOST in it })
+        SystemClock.sleep(2_500)
         shot("17-top-swiped")
     }
 
@@ -347,6 +351,9 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         /** The seeded active tab's host and the page the demo leaves it for. */
         const val FIRST_HOST = "example.com"
         const val SECOND_PAGE = "en.wikipedia.org/wiki/Damping"
+        /** Also the host of the seeded space's last tab (an article), the previous tab of the new one. */
         const val SECOND_HOST = "wikipedia.org"
+        /** The page the new tab of step 9 is sent to. */
+        const val NEW_TAB_HOST = "example.org"
     }
 }
