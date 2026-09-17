@@ -509,33 +509,39 @@ export interface Governor {
 export interface ExtensionHost {
   start(): Promise<void>
   list(): ExtensionInfo[]
+  /** Load an unpacked folder picked in a native dialog. */
   addFromDialog(win: ZenWindow): Promise<void>
-  remove(id: string): void
-  setEnabled(id: string, enabled: boolean): Promise<void>
-  /** `frame` is where the renderer's popup panel wants the view (see `extension.openPopup`). */
-  openPopup(id: string, anchor: Rect, win: ZenWindow, frame?: PopupFrame): void
-  closePopup(): void
-  flushSync(): void
-  // Extensions UI (W1-D): reconcile with the store/API PRs on rebase.
-  /** Move the open popup view (and show it once the renderer's frame has popped in). */
-  resizePopup(bounds: Rect, visible: boolean): void
-  /** Update checks across all extensions, for the management page's caption. */
-  updateCheck(): ExtensionUpdateCheck
+  /** Install a `.crx` or `.zip` picked in a native dialog. */
+  installFromFileDialog(win: ZenWindow): Promise<void>
+  /** Install from a store by extension id or listing URL. */
   installFromStore(
     ref: string,
-    win: ZenWindow,
-    store?: 'chrome-web-store' | 'edge-add-ons'
+    store: 'chrome-web-store' | 'edge-add-ons' | null,
+    win?: ZenWindow
   ): Promise<void>
-  installFromFile(win: ZenWindow): Promise<void>
+  /** Paths dropped on the management page: packages install, folders load unpacked after a prompt. */
   installFromDrop(paths: string[], win: ZenWindow): Promise<void>
-  checkForUpdates(win: ZenWindow): Promise<void>
-  update(id: string, win: ZenWindow): Promise<void>
-  reload(id: string): Promise<void>
-  openOptions(id: string, win: ZenWindow): void
+  remove(id: string): Promise<void>
+  setEnabled(id: string, enabled: boolean, win?: ZenWindow): Promise<void>
+  /** Pin to a version: left out of update checks. */
   setPinned(id: string, pinned: boolean): void
+  /** Show as a toolbar button. */
+  setToolbarPinned(id: string, pinned: boolean): void
   setAllowFileAccess(id: string, allow: boolean): Promise<void>
+  reload(id: string): Promise<void>
+  checkForUpdates(win?: ZenWindow): Promise<void>
+  update(id: string, win?: ZenWindow): Promise<void>
+  /** The last update check across all extensions, for the management page's caption. */
+  updateCheck(): ExtensionUpdateCheck
+  openOptions(id: string, win: ZenWindow): void
+  /** `frame` is where the renderer's popup panel wants the view (see `extension.openPopup`). */
+  openPopup(id: string, anchor: Rect, win: ZenWindow, frame?: PopupFrame): void
+  /** Move the open popup view (and show it once the renderer's frame has popped in). */
+  resizePopup(bounds: Rect, visible: boolean): void
+  closePopup(): void
   /** The user answered an install or permission prompt the host raised. */
   respondPrompt(requestId: string, accept: boolean): void
+  flushSync(): void
 }
 
 /** Where the renderer's popup frame puts the popup view: exact bounds and the inner corner. */

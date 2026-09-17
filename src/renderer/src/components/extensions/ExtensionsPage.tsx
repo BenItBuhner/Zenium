@@ -228,10 +228,10 @@ function UpdateCaption({ state }: { state: UIState }): JSX.Element | null {
   const now = useNow()
   const check = state.extensionUpdates
   const latest = state.extensions.reduce<number | null>((acc, e) => {
-    const t = e.updateCheckedAt ?? null
+    const t = e.updateCheckedAt
     return t !== null && (acc === null || t > acc) ? t : acc
-  }, check?.lastCheckedAt ?? null)
-  const text = check?.checking
+  }, check.lastCheckedAt)
+  const text = check.checking
     ? 'Checking for updates…'
     : latest !== null
       ? `Checked for updates ${relativeTime(latest, now)}`
@@ -402,10 +402,10 @@ function rowMenu(
   }
   items.push({
     id: 'pin',
-    label: ext.pinned ? 'Unpin from Toolbar' : 'Pin to Toolbar',
-    icon: ext.pinned ? PinOff : Pin,
+    label: ext.toolbarPinned ? 'Unpin from Toolbar' : 'Pin to Toolbar',
+    icon: ext.toolbarPinned ? PinOff : Pin,
     disabled: Boolean(ext.error),
-    onSelect: () => run('extension.setPinned', { id: ext.id, pinned: !ext.pinned })
+    onSelect: () => run('extension.setToolbarPinned', { id: ext.id, pinned: !ext.toolbarPinned })
   })
   items.push({
     id: 'details',

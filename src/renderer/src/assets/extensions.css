@@ -3,46 +3,24 @@
  * §6 components, §9 settled rules; v1 §7 for motion) while the shipped surfaces wait for the
  * v2 pass. Nothing here touches a shipped class.
  *
- * Tokens: the names and values below are the ones the design-tokens-v2 PR defines in main.css
- * (same vocabulary, so this block is deleted when that PR is on main and the rules keep
- * reading the tokens from the theme). The three that PR does not define yet are marked; they
- * are proposed for its block.
+ * Every colour, radius, size and weight reads main.css's `--v2-*` block; the density tokens
+ * carry the phone's 44/64 rows, 40 controls, 20 glyphs at stroke 1.75 and 44 icon buttons, so
+ * a form-factor override below exists only where the draft's phone value has no token yet.
  */
-:root {
-  --v2-page: #fbfbfe;
-  --v2-card: #f4f4f7;
-  --v2-card-border: #e7e7e8;
-  --v2-panel: #f4f4f4;
-  --v2-border: rgb(0 0 0 / 0.15);
-  --v2-text: #15141a;
-  --v2-text-deemphasized: rgb(21 20 26 / 0.69);
-  --v2-fill: rgb(21 20 26 / 0.1);
-  --v2-fill-hover: rgb(21 20 26 / 0.16);
-  --v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #000);
-  --v2-on-accent: #fff;
-  --v2-shadow-panel: 0 2px 6px rgb(0 0 0 / 0.2);
-  --v2-shadow-sheet: 0 10px 8px rgb(0 0 0 / 0.15);
-  /* Proposed additions: the pressed fill of Zen's in-content button scale, the field border
-     (text at 30%), and the focus ring's offset (outside in light, inset in dark). */
-  --v2-fill-active: rgb(21 20 26 / 0.24);
-  --v2-field-border: rgb(21 20 26 / 0.3);
-  --v2-focus-offset: 0px;
+
+/*
+ * The focus ring main.css draws for every `zen-v2-*` control, extended to the extension-only
+ * classes (a card's main button, a panel row). Unlayered like main's so the generic
+ * `button:focus-visible { outline: none }` does not take it away.
+ */
+.zen-v2 [class^='zen-ext-']:focus-visible,
+.zen-v2 [class*=' zen-ext-']:focus-visible {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: 0;
 }
-:root[data-theme='dark'] {
-  --v2-page: #1c1b22;
-  --v2-card: #19181f;
-  --v2-card-border: #302f38;
-  --v2-panel: #1f1f1f;
-  --v2-border: rgb(255 255 255 / 0.12);
-  --v2-text: #fbfbfe;
-  --v2-text-deemphasized: rgb(251 251 254 / 0.69);
-  --v2-fill: rgb(251 251 254 / 0.1);
-  --v2-fill-hover: rgb(251 251 254 / 0.16);
-  --v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #fff);
-  --v2-on-accent: #15141a;
-  --v2-fill-active: rgb(251 251 254 / 0.24);
-  --v2-field-border: rgb(251 251 254 / 0.3);
-  --v2-focus-offset: -2px;
+:root[data-theme='dark'] .zen-v2 [class^='zen-ext-']:focus-visible,
+:root[data-theme='dark'] .zen-v2 [class*=' zen-ext-']:focus-visible {
+  outline-offset: -2px;
 }
 
 @layer components {
@@ -51,27 +29,20 @@
     color: var(--v2-text);
   }
   .zen-v2 .lucide {
-    stroke-width: 1.5;
-  }
-  [data-form-factor='phone'] .zen-v2 .lucide {
-    stroke-width: 1.75;
-  }
-  .zen-v2 :focus-visible {
-    outline: 2px solid var(--v2-accent);
-    outline-offset: var(--v2-focus-offset);
+    stroke-width: var(--v2-icon-stroke);
   }
 
   /* --- Page ------------------------------------------------------------------------------- */
 
   .zen-v2-page {
     background: var(--v2-page);
-    font-size: 15px;
-    line-height: 20px;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
   }
   /* The content column (§5): 664 at most, 32 aside; the phone keeps a 16 gutter. */
   .zen-v2-column {
     width: 100%;
-    max-width: calc(664px + 2 * 32px);
+    max-width: calc(var(--v2-content-max) + 2 * 32px);
     margin: 0 auto;
     padding: 0 32px;
   }
@@ -108,7 +79,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    min-height: 32px;
+    min-height: var(--v2-control);
   }
   .zen-v2-title {
     flex: 1;
@@ -117,8 +88,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 22px;
-    font-weight: 600;
+    font-size: var(--v2-font-title);
+    font-weight: var(--v2-weight-heading);
     line-height: 28px;
   }
   .zen-v2-deemphasized {
@@ -126,21 +97,21 @@
   }
   .zen-v2-caption {
     margin: 0;
-    font-size: 13px;
-    line-height: 18px;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
     color: var(--v2-text-deemphasized);
     font-variant-numeric: tabular-nums;
   }
   .zen-v2-caption[data-tone='warn'] {
-    color: var(--zen-warn);
+    color: var(--v2-warn);
   }
   .zen-v2-caption[data-tone='danger'] {
-    color: var(--zen-danger);
+    color: var(--v2-danger);
   }
   .zen-v2-body {
     margin: 0;
-    font-size: 15px;
-    line-height: 20px;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
   }
 
   /* --- Cards (§6) ------------------------------------------------------------------------- */
@@ -148,9 +119,9 @@
   .zen-v2-card {
     background: var(--v2-card);
     border: 1px solid var(--v2-card-border);
-    border-radius: 8px;
+    border-radius: var(--v2-radius-card);
     corner-shape: var(--zen-corner);
-    padding: 16px;
+    padding: var(--v2-card-padding);
     color: var(--v2-text);
   }
   .zen-v2-card-title {
@@ -158,37 +129,33 @@
     align-items: center;
     gap: 8px;
     margin: 0 0 8px;
-    font-size: 17px;
-    font-weight: 600;
+    font-size: var(--v2-font-heading);
+    font-weight: var(--v2-weight-heading);
     line-height: 24px;
   }
   .zen-v2-card-title .lucide {
-    width: 16px;
-    height: 16px;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
     flex-shrink: 0;
   }
 
   /*
    * Two-line rows (§9.2): 32 for one line, 52 with a description, growing with content; the
-   * phone's are 44 and 64. A leading glyph sits on the first text line, 2px down. Rows inside
-   * a card are separated by hairlines (Zen's add-on detail rows).
+   * phone's are 44 and 64 through the density tokens. A leading glyph sits on the first text
+   * line, 2px down. Rows inside a card are separated by hairlines (Zen's add-on detail rows).
    */
   .zen-v2-row {
     display: flex;
     align-items: flex-start;
     gap: 12px;
-    min-height: 32px;
+    min-height: var(--v2-row);
     padding: 6px 0;
   }
   .zen-v2-row[data-lines='2'] {
-    min-height: 52px;
+    min-height: var(--v2-row-two-line);
   }
   [data-form-factor='phone'] .zen-v2-row {
-    min-height: 44px;
     padding: 12px 0;
-  }
-  [data-form-factor='phone'] .zen-v2-row[data-lines='2'] {
-    min-height: 64px;
   }
   .zen-v2-rows > .zen-v2-row + .zen-v2-row {
     border-top: 1px solid var(--v2-card-border);
@@ -200,13 +167,10 @@
   }
   .zen-v2-row-lead.lucide,
   .zen-v2-row-lead .lucide {
-    width: 16px;
-    height: 16px;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
   }
-  [data-form-factor='phone'] .zen-v2-row-lead.lucide,
-  [data-form-factor='phone'] .zen-v2-row-lead .lucide {
-    width: 20px;
-    height: 20px;
+  [data-form-factor='phone'] .zen-v2-row-lead {
     margin-top: 0;
   }
   .zen-v2-row-text {
@@ -216,13 +180,13 @@
     flex-direction: column;
   }
   .zen-v2-label {
-    font-size: 15px;
-    line-height: 20px;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
     overflow-wrap: anywhere;
   }
   .zen-v2-description {
-    font-size: 13px;
-    line-height: 18px;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
     color: var(--v2-text-deemphasized);
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -232,8 +196,8 @@
   /* A value at the row's end: the same size, deemphasised. */
   .zen-v2-value {
     max-width: 60%;
-    font-size: 15px;
-    line-height: 20px;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
     color: var(--v2-text-deemphasized);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -245,7 +209,7 @@
     align-items: center;
     gap: 4px;
     /* Centred on the first text line rather than the row. */
-    height: 20px;
+    height: var(--v2-line-body);
   }
   /* In-content links are the accent (Firefox's link colour), underlined on hover only. */
   .zen-v2-link {
@@ -260,25 +224,28 @@
     text-underline-offset: 3px;
   }
   .zen-v2-link .lucide {
-    width: 16px;
-    height: 16px;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
   }
 
   /* --- Controls (§6) ---------------------------------------------------------------------- */
 
-  /* Buttons: 32 at radius 4 and weight 500; primary the accent, secondary text at 10%. */
+  /*
+   * Buttons: 32 at radius 4 and weight 500 (40 at radius 6 under a finger); primary the
+   * accent, secondary the text at 10%, pressed at 24%.
+   */
   .zen-v2-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
-    height: 32px;
+    height: var(--v2-control);
     padding: 0 12px;
-    border-radius: 4px;
+    border-radius: var(--v2-radius-control);
     background: var(--v2-fill);
     color: var(--v2-text);
-    font-size: 15px;
-    font-weight: 500;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-button);
     line-height: 1;
     white-space: nowrap;
     transition:
@@ -286,15 +253,15 @@
       transform 120ms var(--zen-ease);
   }
   .zen-v2-button .lucide {
-    width: 16px;
-    height: 16px;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
     flex-shrink: 0;
   }
   .zen-v2-button:hover:not(:disabled) {
     background: var(--v2-fill-hover);
   }
   .zen-v2-button:active:not(:disabled) {
-    background: var(--v2-fill-active);
+    background: rgb(var(--v2-text-rgb) / 0.24);
     transform: scale(0.98);
   }
   .zen-v2-button:disabled {
@@ -311,45 +278,42 @@
     background: color-mix(in srgb, var(--v2-accent) 76%, var(--v2-text));
   }
   .zen-v2-button[data-variant='danger'] {
-    color: var(--zen-danger);
+    color: var(--v2-danger);
   }
+  /* The draft's phone value (§2, 6 under a finger); main.css keys its token on the pointer. */
   [data-form-factor='phone'] .zen-v2-button {
-    height: 40px;
     padding: 0 16px;
     border-radius: 6px;
   }
 
-  /* Fields: 32 at radius 4 with a 1px border on the page colour; the focus ring is the accent. */
+  /* Fields: 32 at radius 4 with a 1px border (the text at 30%) on the page colour. */
   .zen-v2-field {
     display: block;
     width: 100%;
-    height: 32px;
+    height: var(--v2-control);
     padding: 0 12px;
-    border: 1px solid var(--v2-field-border);
-    border-radius: 4px;
+    border: 1px solid rgb(var(--v2-text-rgb) / 0.3);
+    border-radius: var(--v2-radius-control);
     background: var(--v2-page);
     color: var(--v2-text);
-    font-size: 15px;
-    line-height: 20px;
-    outline: none;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
   }
   .zen-v2-field::placeholder {
     color: var(--v2-text-deemphasized);
   }
   .zen-v2-field:focus-visible {
     border-color: var(--v2-accent);
-    outline: 2px solid var(--v2-accent);
-    outline-offset: var(--v2-focus-offset);
   }
   .zen-v2-field[aria-invalid='true'] {
-    border-color: var(--zen-danger);
+    border-color: var(--v2-danger);
   }
   .zen-v2-field-lead {
     position: absolute;
     left: 10px;
     top: 50%;
-    width: 16px;
-    height: 16px;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
     transform: translateY(-50%);
     pointer-events: none;
     color: var(--v2-text-deemphasized);
@@ -358,7 +322,6 @@
     padding-left: 34px;
   }
   [data-form-factor='phone'] .zen-v2-field {
-    height: 40px;
     border-radius: 6px;
   }
 
@@ -371,35 +334,31 @@
     appearance: none;
     display: block;
     width: 100%;
-    height: 32px;
+    height: var(--v2-control);
     padding: 0 36px 0 12px;
-    border: 1px solid var(--v2-field-border);
-    border-radius: 4px;
+    border: 1px solid rgb(var(--v2-text-rgb) / 0.3);
+    border-radius: var(--v2-radius-control);
     background: var(--v2-page);
     color: var(--v2-text);
-    font-size: 15px;
-    line-height: 20px;
-    outline: none;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
   }
   .zen-v2-menulist:hover {
     background: color-mix(in srgb, var(--v2-page), var(--v2-text) 7%);
   }
   .zen-v2-menulist:focus-visible {
     border-color: var(--v2-accent);
-    outline: 2px solid var(--v2-accent);
-    outline-offset: var(--v2-focus-offset);
   }
   .zen-v2-menulist-wrap .lucide {
     position: absolute;
     right: 12px;
     top: 50%;
-    width: 16px;
-    height: 16px;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
     transform: translateY(-50%);
     pointer-events: none;
   }
   [data-form-factor='phone'] .zen-v2-menulist {
-    height: 40px;
     border-radius: 6px;
   }
 
@@ -407,11 +366,11 @@
   .zen-v2-checkbox {
     appearance: none;
     flex-shrink: 0;
-    width: 16px;
-    height: 16px;
+    width: var(--v2-checkbox);
+    height: var(--v2-checkbox);
     margin: 2px 0 0;
-    border: 1px solid var(--v2-field-border);
-    border-radius: 2px;
+    border: 1px solid rgb(var(--v2-text-rgb) / 0.3);
+    border-radius: var(--v2-radius-checkbox);
     background: var(--v2-page);
     display: grid;
     place-items: center;
@@ -428,8 +387,8 @@
   }
   .zen-v2-checkbox:checked::after {
     content: '';
-    width: 12px;
-    height: 12px;
+    width: calc(var(--v2-checkbox) - 4px);
+    height: calc(var(--v2-checkbox) - 4px);
     background: var(--v2-on-accent);
     mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
       center / contain no-repeat;
@@ -444,13 +403,7 @@
     color: var(--v2-text-deemphasized);
   }
   [data-form-factor='phone'] .zen-v2-checkbox {
-    width: 20px;
-    height: 20px;
     margin-top: 0;
-  }
-  [data-form-factor='phone'] .zen-v2-checkbox:checked::after {
-    width: 14px;
-    height: 14px;
   }
 
   /*
@@ -463,7 +416,7 @@
     align-items: center;
     justify-content: center;
     width: 32px;
-    height: 28px;
+    height: var(--v2-icon-button);
     border-radius: 6px;
   }
   .zen-v2-switch:disabled {
@@ -475,7 +428,7 @@
     width: 26px;
     height: 14px;
     border-radius: 7px;
-    border: 1px solid var(--v2-field-border);
+    border: 1px solid rgb(var(--v2-text-rgb) / 0.3);
     background: var(--v2-fill);
     transition:
       background 120ms var(--zen-ease),
@@ -509,26 +462,25 @@
     background: var(--v2-on-accent);
   }
   [data-form-factor='phone'] .zen-v2-switch {
-    width: 44px;
-    height: 44px;
+    width: var(--v2-icon-button);
     border-radius: 8px;
   }
 
-  /* Icon buttons (§9.3): 28 box, 16 glyph, radius 6; phone 44/20/8; tablet 40/20. */
+  /* Icon buttons (§9.3): 28 box, 16 glyph, radius 6; the phone's 44/20 box and glyph are tokens, its radius 8 is not. */
   .zen-v2-icon-button {
     display: inline-flex;
     flex-shrink: 0;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: var(--v2-icon-button);
+    height: var(--v2-icon-button);
     border-radius: 6px;
     color: var(--v2-text);
     transition: background 120ms var(--zen-ease);
   }
   .zen-v2-icon-button .lucide {
-    width: 16px;
-    height: 16px;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
   }
   .zen-v2-icon-button:hover:not(:disabled),
   .zen-v2-icon-button[aria-expanded='true'] {
@@ -543,19 +495,8 @@
   .zen-v2-icon-button[aria-pressed='true'] {
     color: var(--v2-accent);
   }
-  [data-form-factor='tablet'] .zen-v2-icon-button {
-    width: 40px;
-    height: 40px;
-  }
   [data-form-factor='phone'] .zen-v2-icon-button {
-    width: 44px;
-    height: 44px;
     border-radius: 8px;
-  }
-  [data-form-factor='tablet'] .zen-v2-icon-button .lucide,
-  [data-form-factor='phone'] .zen-v2-icon-button .lucide {
-    width: 20px;
-    height: 20px;
   }
 
   /* --- Panels, menus, dialogs (§1, §3, §6) ------------------------------------------------ */
@@ -563,7 +504,7 @@
   .zen-v2-panel {
     background: var(--v2-panel);
     border: 1px solid var(--v2-border);
-    border-radius: 8px;
+    border-radius: var(--v2-radius-card);
     corner-shape: var(--zen-corner);
     box-shadow: var(--v2-shadow-panel);
     color: var(--v2-text);
@@ -571,7 +512,7 @@
   .zen-v2-dialog {
     background: var(--v2-panel);
     border: 1px solid var(--v2-border);
-    border-radius: 12px;
+    border-radius: var(--v2-radius-sheet);
     corner-shape: var(--zen-corner);
     box-shadow: var(--v2-shadow-sheet);
     color: var(--v2-text);
@@ -591,18 +532,18 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    height: 31px;
+    height: var(--v2-menu-row);
     margin: 0 4px;
     padding: 0 8px;
-    border-radius: 4px;
+    border-radius: var(--v2-radius-control);
     color: inherit;
     text-align: left;
     white-space: nowrap;
     transition: background 120ms var(--zen-ease);
   }
   .zen-v2-menu-item .lucide {
-    width: 16px;
-    height: 16px;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
     flex-shrink: 0;
   }
   .zen-v2-menu-item:hover:not(:disabled) {
@@ -615,7 +556,7 @@
     opacity: 0.4;
   }
   .zen-v2-menu-item[data-danger] {
-    color: var(--zen-danger);
+    color: var(--v2-danger);
   }
   .zen-v2-menu-separator {
     height: 1px;
@@ -633,19 +574,19 @@
   .zen-v2-sheet-row {
     display: flex;
     width: 100%;
-    height: 44px;
+    height: var(--v2-row);
     align-items: center;
     gap: 12px;
     padding: 0 16px;
     color: var(--v2-text);
     text-align: left;
-    font-size: 15px;
-    line-height: 20px;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
     transition: background 120ms var(--zen-ease);
   }
   .zen-v2-sheet-row .lucide {
-    width: 20px;
-    height: 20px;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
     flex-shrink: 0;
   }
   .zen-v2-sheet-row:active:not(:disabled) {
@@ -655,7 +596,7 @@
     opacity: 0.4;
   }
   .zen-v2-sheet-row[data-danger] {
-    color: var(--zen-danger);
+    color: var(--v2-danger);
   }
   .zen-v2-sheet-separator {
     height: 1px;
@@ -667,8 +608,8 @@
     align-items: center;
     min-height: 40px;
     padding: 0 16px;
-    font-size: 17px;
-    font-weight: 600;
+    font-size: var(--v2-font-heading);
+    font-weight: var(--v2-weight-heading);
     line-height: 24px;
   }
 
@@ -679,11 +620,11 @@
     display: flex;
     align-items: flex-start;
     gap: 12px;
-    padding: 16px;
+    padding: var(--v2-card-padding);
     transition: border-color 120ms var(--zen-ease);
   }
   .zen-ext-card:has(> .zen-ext-card-main:hover) {
-    border-color: var(--v2-field-border);
+    border-color: rgb(var(--v2-text-rgb) / 0.3);
   }
   .zen-ext-card-main {
     display: flex;
@@ -699,8 +640,8 @@
   }
   .zen-ext-name {
     display: block;
-    font-size: 17px;
-    font-weight: 600;
+    font-size: var(--v2-font-heading);
+    font-weight: var(--v2-weight-heading);
     line-height: 22px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -708,8 +649,8 @@
   }
   .zen-ext-sub {
     display: block;
-    font-size: 13px;
-    line-height: 18px;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
     color: var(--v2-text-deemphasized);
     font-variant-numeric: tabular-nums;
     overflow: hidden;
@@ -717,12 +658,12 @@
     white-space: nowrap;
   }
   .zen-ext-sub[data-tone='danger'] {
-    color: var(--zen-danger);
+    color: var(--v2-danger);
     white-space: normal;
     overflow-wrap: anywhere;
   }
   .zen-ext-sub[data-tone='warn'] {
-    color: var(--zen-warn);
+    color: var(--v2-warn);
   }
   /* A disabled extension's icon and name recede; its controls stay at full strength. */
   .zen-ext-card[data-disabled] .zen-ext-fade {
@@ -761,8 +702,8 @@
   .zen-ext-empty p {
     margin: 0;
     max-width: 360px;
-    font-size: 15px;
-    line-height: 20px;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
   }
   /*
    * Dropping a package on the page (§9.4 drop-into target): the page keeps its size and gains
@@ -776,19 +717,19 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    border-radius: 8px;
+    border-radius: var(--v2-radius-card);
     corner-shape: var(--zen-corner);
     background: var(--v2-fill);
     outline: 2px solid var(--v2-accent);
     outline-offset: -2px;
     color: var(--v2-accent);
-    font-size: 15px;
-    font-weight: 500;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-button);
     pointer-events: none;
   }
   .zen-ext-drop .lucide {
-    width: 16px;
-    height: 16px;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
   }
 
   /* --- Extensions: toolbar, panel, popup, dialog ------------------------------------------ */
@@ -809,7 +750,7 @@
     padding: 0 3px;
     border-radius: 9999px;
     font-size: 10px;
-    font-weight: 600;
+    font-weight: var(--v2-weight-heading);
     line-height: 1;
     font-variant-numeric: tabular-nums;
     box-shadow: 0 0 0 2px var(--zen-bg-solid);
@@ -826,16 +767,16 @@
     padding: 4px 0;
     overflow-y: auto;
     font-size: 14px;
-    line-height: 20px;
+    line-height: var(--v2-line-body);
   }
   .zen-ext-panel-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    height: 32px;
+    height: var(--v2-row);
     margin: 0 4px;
     padding: 0 4px 0 8px;
-    border-radius: 4px;
+    border-radius: var(--v2-radius-control);
     color: inherit;
     text-align: left;
     transition: background 120ms var(--zen-ease);
@@ -850,8 +791,8 @@
     height: 100%;
   }
   .zen-ext-panel-row .lucide {
-    width: 16px;
-    height: 16px;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
     flex-shrink: 0;
   }
 
@@ -863,7 +804,7 @@
   .zen-ext-popup-frame {
     position: fixed;
     z-index: 80;
-    border-radius: 8px;
+    border-radius: var(--v2-radius-card);
     background: var(--v2-panel);
     box-shadow:
       0 0 0 1px var(--v2-border),
@@ -886,7 +827,7 @@
     width: 440px;
     max-width: calc(100vw - 32px);
     max-height: calc(100vh - 32px);
-    padding: 16px;
+    padding: var(--v2-card-padding);
     overflow-y: auto;
   }
   .zen-ext-dialog-head {
@@ -900,15 +841,15 @@
   }
   .zen-ext-dialog-title {
     margin: 0;
-    font-size: 17px;
-    font-weight: 600;
+    font-size: var(--v2-font-heading);
+    font-weight: var(--v2-weight-heading);
     line-height: 24px;
     overflow-wrap: anywhere;
   }
   .zen-ext-dialog-sub {
     margin: 0;
-    font-size: 13px;
-    line-height: 18px;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
     color: var(--v2-text-deemphasized);
   }
   .zen-ext-dialog-buttons {

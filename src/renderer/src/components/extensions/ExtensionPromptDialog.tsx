@@ -42,19 +42,26 @@ interface Copy {
   accept: string
 }
 
+/** The same words as the store service's native fallback prompt, per kind. */
 function copyFor(prompt: ExtensionPromptRequest): Copy {
   switch (prompt.kind) {
-    case 'permissions':
+    case 'request':
       return {
         title: `"${prompt.name}" wants additional permissions`,
         subtitle: null,
         accept: 'Allow'
       }
+    case 'permissions':
+      return {
+        title: `"${prompt.name}" needs new permissions`,
+        subtitle: 'It was updated and stays off until you allow them',
+        accept: 'Allow'
+      }
     case 'update':
       return {
         title: `Update "${prompt.name}"?`,
-        subtitle: 'The new version needs more permissions',
-        accept: 'Update'
+        subtitle: prompt.source ? `From ${sourceLabel(prompt.source)}` : null,
+        accept: 'Update extension'
       }
     default:
       return {
@@ -91,7 +98,7 @@ function PromptBody({
             <V2Row
               label={
                 <span className="zen-v2-deemphasized">
-                  {prompt.kind === 'permissions'
+                  {prompt.kind === 'permissions' || prompt.kind === 'request'
                     ? 'No new permissions are needed'
                     : 'This extension requires no special permissions'}
                 </span>

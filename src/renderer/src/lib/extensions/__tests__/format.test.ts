@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatBytes, formatDate, relativeTime } from '../format'
+import { formatDate, relativeTime } from '../format'
 import { warningGlyph } from '../warningGlyph'
 
 const NOW = Date.UTC(2026, 8, 17, 12, 0, 0)
@@ -18,17 +18,6 @@ describe('relativeTime', () => {
   it('falls back to the date after a week and never goes negative', () => {
     expect(relativeTime(NOW - 9 * 86_400_000, NOW)).toBe(formatDate(NOW - 9 * 86_400_000))
     expect(relativeTime(NOW + 60_000, NOW)).toBe('just now')
-  })
-})
-
-describe('formatBytes', () => {
-  it('uses one decimal under 10 and none above', () => {
-    expect(formatBytes(512)).toBe('512 B')
-    expect(formatBytes(1536)).toBe('1.5 KB')
-    expect(formatBytes(840 * 1024)).toBe('840 KB')
-    expect(formatBytes(1.2 * 1024 * 1024)).toBe('1.2 MB')
-    expect(formatBytes(24 * 1024 * 1024)).toBe('24 MB')
-    expect(formatBytes(-1)).toBe('')
   })
 })
 

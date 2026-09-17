@@ -172,7 +172,7 @@ function actionMenu(ext: ExtensionInfo, state: UIState): LocalMenuEntry[] {
     id: 'unpin',
     label: 'Unpin from Toolbar',
     icon: PinOff,
-    onSelect: () => run('extension.setPinned', { id: ext.id, pinned: false })
+    onSelect: () => run('extension.setToolbarPinned', { id: ext.id, pinned: false })
   })
   items.push({
     id: 'manage',
@@ -270,11 +270,13 @@ function ExtensionsPanel({
                 <span className="min-w-0 flex-1 truncate">{ext.name}</span>
               </button>
               <V2IconButton
-                icon={ext.pinned ? PinOff : Pin}
-                label={ext.pinned ? `Unpin ${ext.name}` : `Pin ${ext.name} to toolbar`}
-                title={ext.pinned ? 'Unpin from toolbar' : 'Pin to toolbar'}
-                aria-pressed={Boolean(ext.pinned)}
-                onClick={() => run('extension.setPinned', { id: ext.id, pinned: !ext.pinned })}
+                icon={ext.toolbarPinned ? PinOff : Pin}
+                label={ext.toolbarPinned ? `Unpin ${ext.name}` : `Pin ${ext.name} to toolbar`}
+                title={ext.toolbarPinned ? 'Unpin from toolbar' : 'Pin to toolbar'}
+                aria-pressed={ext.toolbarPinned}
+                onClick={() =>
+                  run('extension.setToolbarPinned', { id: ext.id, pinned: !ext.toolbarPinned })
+                }
               />
             </li>
           ))}

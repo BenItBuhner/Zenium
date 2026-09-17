@@ -1167,8 +1167,22 @@ export class Browser {
       'liveFolder.remove': ({ folderId }) => this.liveFolders.remove(folderId),
 
       'extension.add': (_a, win) => this.extensions.addFromDialog(win),
+      'extension.installFromFile': (_a, win) => this.extensions.installFromFileDialog(win),
+      'extension.installFromStore': ({ ref, store }, win) =>
+        this.extensions.installFromStore(ref, store ?? null, win),
+      'extension.installFromDrop': ({ paths }, win) => this.extensions.installFromDrop(paths, win),
       'extension.remove': ({ id }) => this.extensions.remove(id),
-      'extension.setEnabled': ({ id, enabled }) => this.extensions.setEnabled(id, enabled),
+      'extension.setEnabled': ({ id, enabled }, win) =>
+        this.extensions.setEnabled(id, enabled, win),
+      'extension.setPinned': ({ id, pinned }) => this.extensions.setPinned(id, pinned),
+      'extension.setToolbarPinned': ({ id, pinned }) =>
+        this.extensions.setToolbarPinned(id, pinned),
+      'extension.setAllowFileAccess': ({ id, allow }) =>
+        this.extensions.setAllowFileAccess(id, allow),
+      'extension.reload': ({ id }) => this.extensions.reload(id),
+      'extension.checkForUpdates': (_a, win) => this.extensions.checkForUpdates(win),
+      'extension.update': ({ id }, win) => this.extensions.update(id, win),
+      'extension.openOptions': ({ id }, win) => this.extensions.openOptions(id, win),
       'extension.openPopup': ({ id, anchor, bounds, radius }, win) =>
         this.extensions.openPopup(
           id,
@@ -1176,21 +1190,9 @@ export class Browser {
           win,
           bounds ? { bounds, radius: radius ?? 12 } : undefined
         ),
-      'extension.closePopup': () => this.extensions.closePopup(),
-      // Extensions UI (W1-D): reconcile with the store/API PRs on rebase.
       'extension.resizePopup': ({ bounds, visible }) =>
         this.extensions.resizePopup(bounds, visible),
-      'extension.installFromStore': ({ ref, store }, win) =>
-        this.extensions.installFromStore(ref, win, store),
-      'extension.installFromFile': (_a, win) => this.extensions.installFromFile(win),
-      'extension.installFromDrop': ({ paths }, win) => this.extensions.installFromDrop(paths, win),
-      'extension.checkForUpdates': (_a, win) => this.extensions.checkForUpdates(win),
-      'extension.update': ({ id }, win) => this.extensions.update(id, win),
-      'extension.reload': ({ id }) => this.extensions.reload(id),
-      'extension.openOptions': ({ id }, win) => this.extensions.openOptions(id, win),
-      'extension.setPinned': ({ id, pinned }) => this.extensions.setPinned(id, pinned),
-      'extension.setAllowFileAccess': ({ id, allow }) =>
-        this.extensions.setAllowFileAccess(id, allow),
+      'extension.closePopup': () => this.extensions.closePopup(),
       'extension.confirmInstall': ({ requestId, accept }) =>
         this.extensions.respondPrompt(requestId, accept),
       'extension.respondPermissionRequest': ({ requestId, accept }) =>

@@ -1,40 +1,77 @@
-import { WebContentsView, dialog, type Extension } from 'electron'
-import { existsSync, readFileSync, statSync } from 'node:fs'
-import { extname, join } from 'node:path'
+import {
+  WebContentsView,
+  app,
+  dialog,
+  nativeImage,
+  net,
+  type Extension,
+  type Session
+} from 'electron'
+import { existsSync, promises as fs, readFileSync } from 'node:fs'
+import { basename, extname, join } from 'node:path'
 import type {
   ExtensionInfo,
   ExtensionPromptRequest,
+  ExtensionSource,
   ExtensionUpdateCheck,
+  ExtensionUpdateState,
   Rect
 } from '../../shared/types'
-import {
-  buildMessageCatalog,
-  localeFallbackChain,
-  localizeManifest,
-  type LocaleMessages
-} from '../../core/extensions/manifest'
-import { isExtensionId, parseStorePageUrl } from '../../core/extensions/store'
 import { JsonStore } from '../../core/store/JsonStore'
 import type { Browser } from '../../core/browser'
 import type { ExtensionHost, PopupFrame } from '../../core/platform'
 import type { ZenWindow } from '../../core/window'
+import {
+  checkForUpdates,
+  installFromCrx,
+  type ExtensionPackage,
+  type UpdateCheckResult
+} from '../../core/extensions/install'
+import { isManagedPath } from '../../core/extensions/installLayout'
+import {
+  buildMessageCatalog,
+  localeFallbackChain,
+  localizeManifest,
+  stripJsonComments,
+  type LocaleMessages
+} from '../../core/extensions/manifest'
+import {
+  newWarnings,
+  permissionWarningLines,
+  permissionWarnings,
+  type WarningPlatform
+} from '../../core/extensions/permissionMessages'
+import {
+  migrateRegistry,
+  newRecord,
+  withManifest,
+  type ExtensionRecord,
+  type ExtensionRegistry
+} from '../../core/extensions/registry'
+import { STORE_UPDATE_URLS, isExtensionId, type StoreId } from '../../core/extensions/store'
+import {
+  NO_PREVIOUS_BEGIN_INSTALL_ERROR,
+  USER_CANCELLED_ERROR,
+  installStatusFor,
+  type BeginInstallDetails,
+  type WebstoreBeginInstallOutcome,
+  type WebstoreInstallStatus
+} from '../../core/extensions/webstorePrivate'
+import {
+  downloadFromStores,
+  downloadUpdate,
+  electronStoreFetch,
+  idForUnpackedPath,
+  packageFromFile,
+  parseStoreRef,
+  pruneOldVersions,
+  removeInstalledFiles,
+  storeLabel,
+  sweepStagingDirs,
+  writePackage
+} from './extensionStore'
 import type { SessionManager } from './sessions'
 import type { ElectronWindow } from './window'
-
-interface Entry {
-  path: string
-  enabled: boolean
-  // Extensions UI (W1-D): reconcile with the store PR on rebase.
-  pinned?: boolean
-  allowFileAccess?: boolean
-  installedAt?: number
-}
-
-interface Persisted {
-  version: 1
-  extensions: Entry[]
-  lastUpdateCheckAt?: number | null
-}
 
 interface Manifest {
   name?: string
@@ -43,10 +80,6 @@ interface Manifest {
   default_locale?: string
   manifest_version?: number
   icons?: Record<string, string>
-  permissions?: unknown[]
-  host_permissions?: unknown[]
-  options_page?: string
-  options_ui?: { page?: string; open_in_tab?: boolean }
   action?: { default_popup?: string; default_icon?: string | Record<string, string> }
   browser_action?: { default_popup?: string; default_icon?: string | Record<string, string> }
 }
@@ -57,70 +90,195 @@ const POPUP_MAX = { width: 800, height: 600 }
 /** Width and height of the popup view before its document has asked for a size. */
 const POPUP_INITIAL = { width: 380, height: 200 }
 
+/** Chrome checks about every five hours; the first check waits for the browser to settle. */
+const UPDATE_CHECK_STARTUP_DELAY_MS = 45_000
+const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 60 * 1000
+/** How long an approval from the store page's prompt stays valid for the install that follows. */
+const WEBSTORE_APPROVAL_TTL_MS = 10 * 60 * 1000
+const ICON_FETCH_TIMEOUT_MS = 5_000
+
+/** What the install prompt shows; the UI layer replaces `confirmInstall` to draw its own panel. */
+export interface InstallConfirmation {
+  /** A fresh install, a reinstall over an existing version, or approving an update's new permissions. */
+  kind: 'install' | 'update' | 'permissions'
+  name: string
+  /** Data URL of the extension's icon when one is available. */
+  icon: string | null
+  /** Chrome's warning lines for the manifest, in Chrome's order. */
+  warnings: string[]
+  source: ExtensionSource
+}
+
+export type ConfirmInstall = (request: InstallConfirmation, win?: ZenWindow) => Promise<boolean>
+
+export type InstallOutcome =
+  | { status: 'installed'; record: ExtensionRecord }
+  | { status: 'cancelled' }
+  | { status: 'in-progress' }
+
+export interface InstallMeta {
+  source: ExtensionSource
+  publisher: ExtensionRecord['publisher']
+  updateUrl: string | null
+}
+
+export type RegistryEvent =
+  | { type: 'installed'; id: string }
+  | { type: 'updated'; id: string }
+  | { type: 'uninstalled'; id: string }
+  | { type: 'enabled'; id: string }
+  | { type: 'disabled'; id: string }
+
+interface UpdateInfo {
+  state: ExtensionUpdateState
+  availableVersion: string | null
+  error: string | null
+  checkedAt: number | null
+}
+
+const NO_UPDATE_INFO: UpdateInfo = {
+  state: 'unknown',
+  availableVersion: null,
+  error: null,
+  checkedAt: null
+}
+
 /**
- * Unpacked Chrome extensions (Electron supports a subset of the extension APIs – content
- * scripts, storage, webRequest, scripting, devtools panels). Extensions are loaded into every
- * persistent container session and remembered across restarts; browser-action popups are shown
- * from the toolbar since Electron has no extension UI of its own.
+ * Chrome extensions in Electron: installed from the Chrome Web Store or Edge Add-ons (verified
+ * CRX3 packages unpacked under `<userData>/extensions/<id>/<version>/`), sideloaded from `.crx`
+ * and `.zip` files, or loaded unpacked from a folder. Every extension is loaded into every
+ * persistent container session so content scripts run in all containers; the registry
+ * (`extensions.json`) remembers them across restarts, and store installs update through their
+ * store on Chrome's schedule. Browser-action popups are shown from the toolbar since Electron has
+ * no extension UI of its own.
  *
  * The popup is a `WebContentsView` owned here, but the renderer draws the panel it sits in: it
  * hands over the exact bounds for the view (`extension.openPopup`), this service reports the
  * document's preferred size back (`extension.popupSize`) and moves or shows the view when the
  * renderer answers with `extension.resizePopup`. The view stays hidden until the frame has popped
- * in, so both appear as one surface.
+ * in, so both appear as one surface. Install and permission prompts go to the renderer's dialog
+ * the same way (`extensionInstallRequest` / `extensionPermissionRequest`, answered through
+ * `respondPrompt`); the native message box is the fallback when no window can show one.
+ *
+ * Hook points for the chrome.* API layer: `onLoaded` / `onUnloaded` fire per session, and
+ * `loaded(id)` looks up a running extension.
  */
 export class ExtensionService implements ExtensionHost {
-  private entries: Entry[] = []
-  private readonly loaded = new Map<string, Extension>()
+  /** `<userData>/extensions`: where store and file installs live. */
+  readonly root: string
+  private registry: ExtensionRegistry
+  private readonly store: JsonStore<ExtensionRegistry>
+  private readonly loadedById = new Map<string, Extension>()
   private readonly errors = new Map<string, string>()
-  private readonly store: JsonStore<Persisted>
+  private readonly updates = new Map<string, UpdateInfo>()
+  /** Ids with an install or update in flight. */
+  private readonly busy = new Set<string>()
+  /** Approvals the store page's prompt produced, consumed by `completeInstall`. */
+  private readonly approvals = new Map<string, { warnings: string[]; expires: number }>()
+  private readonly loadedListeners = new Set<(ext: Extension, ses: Session) => void>()
+  private readonly unloadedListeners = new Set<(id: string) => void>()
+  private readonly changeListeners = new Set<(event: RegistryEvent) => void>()
+  private readonly iconCache = new Map<string, string | null>()
   private popup: { id: string; view: WebContentsView; win: ZenWindow } | null = null
-  private lastUpdateCheckAt: number | null = null
-  private checking = false
+  private checking: Promise<void> | null = null
+  private updateTimer: ReturnType<typeof setInterval> | null = null
   /** Install and permission prompts waiting for the renderer's answer, by request id. */
   private readonly prompts = new Map<string, (accept: boolean) => void>()
 
+  /**
+   * Shows the install prompt and resolves with the user's decision: the chrome's dialog when a
+   * window can show it, else a native message box. Reassignable so a host can swap the prompt
+   * without touching the install flow.
+   */
+  confirmInstall: ConfirmInstall = (request, win) =>
+    win?.alive ? this.ask(request, win) : this.nativeConfirm(request, win)
+
   constructor(
     private readonly browser: Browser,
-    private readonly sessions: SessionManager
+    private readonly sessions: SessionManager,
+    userDataDir: string
   ) {
-    this.store = new JsonStore<Persisted>(browser.platform.io, 'extensions.json', 300)
-    const data = this.store.readSync()
-    if (data?.version === 1 && Array.isArray(data.extensions)) {
-      this.entries = data.extensions.filter((e) => e && typeof e.path === 'string')
-      this.lastUpdateCheckAt = data.lastUpdateCheckAt ?? null
-    }
+    this.root = join(userDataDir, 'extensions')
+    this.store = new JsonStore<ExtensionRegistry>(browser.platform.io, 'extensions.json', 300)
+    this.registry = migrateRegistry(
+      this.store.readSync(),
+      { idForPath: idForUnpackedPath, readManifest },
+      Date.now()
+    )
   }
 
   async start(): Promise<void> {
-    for (const entry of this.entries) if (entry.enabled) await this.load(entry)
+    await sweepStagingDirs(this.root).catch(() => [])
+    for (const record of this.registry.extensions) if (record.enabled) await this.load(record)
     this.browser.state.commitVolatile()
+    this.scheduleUpdateChecks()
   }
 
+  // ---------------------------------------------------------------------------
+  // Hook points for the chrome.* API layer
+  // ---------------------------------------------------------------------------
+
+  /** The running extension with this id (in the first persistent session), if loaded. */
+  loaded(id: string): Extension | undefined {
+    return this.loadedById.get(id)
+  }
+
+  /** Fires once per session an extension is loaded into; returns the unsubscribe function. */
+  onLoaded(listener: (ext: Extension, ses: Session) => void): () => void {
+    this.loadedListeners.add(listener)
+    return () => this.loadedListeners.delete(listener)
+  }
+
+  /** Fires once when an extension is removed from its sessions; returns the unsubscribe function. */
+  onUnloaded(listener: (id: string) => void): () => void {
+    this.unloadedListeners.add(listener)
+    return () => this.unloadedListeners.delete(listener)
+  }
+
+  /** Registry changes (install, update, uninstall, enable, disable); returns the unsubscribe function. */
+  onChange(listener: (event: RegistryEvent) => void): () => void {
+    this.changeListeners.add(listener)
+    return () => this.changeListeners.delete(listener)
+  }
+
+  record(id: string): ExtensionRecord | undefined {
+    return this.registry.extensions.find((r) => r.id === id)
+  }
+
+  records(): readonly ExtensionRecord[] {
+    return this.registry.extensions
+  }
+
+  // ---------------------------------------------------------------------------
+  // Loading into sessions
+  // ---------------------------------------------------------------------------
+
   /** Load into every persistent session so content scripts run in all containers. */
-  private async load(entry: Entry): Promise<void> {
-    const { path } = entry
-    this.errors.delete(path)
-    if (!existsSync(join(path, 'manifest.json'))) {
-      this.errors.set(path, 'manifest.json not found')
+  private async load(record: ExtensionRecord): Promise<void> {
+    this.errors.delete(record.id)
+    if (!existsSync(join(record.path, 'manifest.json'))) {
+      this.errors.set(record.id, 'manifest.json not found')
       return
     }
     for (const [, ses] of this.sessions.persistent()) {
       try {
         const ext =
-          ses.extensions.getAllExtensions().find((e) => e.path === path) ??
-          (await ses.extensions.loadExtension(path, {
-            allowFileAccess: entry.allowFileAccess ?? false
+          ses.extensions.getAllExtensions().find((e) => e.path === record.path) ??
+          (await ses.extensions.loadExtension(record.path, {
+            allowFileAccess: record.allowFileAccess
           }))
-        if (!this.loaded.has(path)) this.loaded.set(path, ext)
+        // Electron derives the id itself (from `manifest.key` or the path); trust what it says.
+        if (ext.id !== record.id) this.rekey(record, ext.id)
+        if (!this.loadedById.has(ext.id)) this.loadedById.set(ext.id, ext)
+        for (const listener of this.loadedListeners) listener(ext, ses)
       } catch (error) {
-        this.errors.set(path, (error as Error).message)
+        this.errors.set(record.id, (error as Error).message)
       }
     }
   }
 
-  private unload(path: string): void {
-    const ext = this.loaded.get(path)
+  private unload(record: ExtensionRecord): void {
+    const ext = this.loadedById.get(record.id)
     if (!ext) return
     for (const [, ses] of this.sessions.persistent()) {
       try {
@@ -129,51 +287,80 @@ export class ExtensionService implements ExtensionHost {
         /* not loaded in this session */
       }
     }
-    this.loaded.delete(path)
+    this.loadedById.delete(record.id)
+    for (const listener of this.unloadedListeners) listener(record.id)
+  }
+
+  private rekey(record: ExtensionRecord, id: string): void {
+    console.warn(`[zen] extensions: ${record.id} loads as ${id} (${record.path})`)
+    for (const map of [this.errors, this.updates] as Array<Map<string, unknown>>) {
+      const value = map.get(record.id)
+      map.delete(record.id)
+      if (value !== undefined) map.set(id, value)
+    }
+    record.id = id
+    this.persist()
   }
 
   /** A new container session appeared: bring the enabled extensions along. */
   async attachSession(): Promise<void> {
-    for (const entry of this.entries) if (entry.enabled) await this.load(entry)
+    for (const record of this.registry.extensions) if (record.enabled) await this.load(record)
   }
 
+  // ---------------------------------------------------------------------------
+  // What the chrome sees
+  // ---------------------------------------------------------------------------
+
   list(): ExtensionInfo[] {
-    return this.entries.map((entry) => {
-      const manifest = readManifest(entry.path)
-      const ext = this.loaded.get(entry.path)
-      const action = manifest?.action ?? manifest?.browser_action
-      const optionsPage = manifest?.options_ui?.page ?? manifest?.options_page ?? null
+    return this.registry.extensions.map((record) => {
+      const ext = this.loadedById.get(record.id)
+      const manifest = (ext?.manifest as Manifest | undefined) ?? readManifest(record.path)
+      const update = this.updates.get(record.id) ?? NO_UPDATE_INFO
       return {
-        id: ext?.id ?? entry.path,
-        name: ext?.name ?? manifest?.name ?? entry.path.split(/[\\/]/).pop() ?? 'Extension',
-        version: ext?.version ?? manifest?.version ?? '',
-        description: manifest?.description ?? '',
-        path: entry.path,
-        enabled: entry.enabled,
-        icon: iconDataUrl(entry.path, manifest),
-        popup: action?.default_popup ?? null,
-        error: this.errors.get(entry.path) ?? null,
-        source: 'unpacked',
-        manifestVersion: manifest?.manifest_version,
-        permissions: strings(manifest?.permissions),
-        hostPermissions: strings(manifest?.host_permissions),
-        optionsPage,
-        pinned: entry.pinned ?? false,
-        allowFileAccess: entry.allowFileAccess ?? false,
-        installedAt: entry.installedAt,
-        updateState: 'up-to-date',
-        warnings: permissionWarnings(manifest)
+        id: record.id,
+        name: ext?.name || record.name || manifest?.name || basename(record.path) || 'Extension',
+        version: ext?.version ?? record.version,
+        description: manifest?.description ?? record.description,
+        path: record.path,
+        enabled: record.enabled,
+        icon: this.icon(record.path, record.version, manifest),
+        popup: record.popup,
+        error: this.errors.get(record.id) ?? null,
+        source: record.source,
+        publisher: record.publisher,
+        updateUrl: record.updateUrl,
+        installedAt: record.installedAt,
+        updatedAt: record.updatedAt,
+        pinned: record.pinned,
+        toolbarPinned: record.toolbarPinned,
+        allowFileAccess: record.allowFileAccess,
+        manifestVersion: record.manifestVersion,
+        permissions: record.permissions,
+        hostPermissions: record.hostPermissions,
+        optionsPage: record.optionsPage,
+        warnings: permissionWarningLines(manifest ?? {}, warningPlatform()),
+        pendingWarnings: record.pendingWarnings,
+        updateState: update.state,
+        availableVersion: update.availableVersion,
+        updateError: update.error,
+        updateCheckedAt: update.checkedAt
       }
     })
   }
 
-  updateCheck(): ExtensionUpdateCheck {
-    return { lastCheckedAt: this.lastUpdateCheckAt, checking: this.checking }
+  private icon(path: string, version: string, manifest: Manifest | null): string | null {
+    const key = `${path}\u0000${version}`
+    let icon = this.iconCache.get(key)
+    if (icon === undefined) {
+      icon = iconDataUrl(path, manifest)
+      this.iconCache.set(key, icon)
+    }
+    return icon
   }
 
-  private entryFor(idOrPath: string): Entry | undefined {
-    return this.entries.find((e) => e.path === idOrPath || this.loaded.get(e.path)?.id === idOrPath)
-  }
+  // ---------------------------------------------------------------------------
+  // Unpacked folders
+  // ---------------------------------------------------------------------------
 
   async addFromDialog(win: ZenWindow): Promise<void> {
     const result = await dialog.showOpenDialog((win.host as ElectronWindow).win, {
@@ -186,96 +373,42 @@ export class ExtensionService implements ExtensionHost {
   }
 
   async add(path: string, win?: ZenWindow): Promise<void> {
-    if (this.entries.some((e) => e.path === path)) {
+    if (this.registry.extensions.some((e) => e.path === path)) {
       this.browser.toast('This extension is already installed.', 'info', win)
       return
     }
-    if (!existsSync(join(path, 'manifest.json'))) {
+    const manifest = readManifest(path)
+    if (!manifest) {
       this.browser.toast('That folder has no manifest.json.', 'error', win)
       return
     }
-    const entry: Entry = { path, enabled: true, pinned: false, installedAt: Date.now() }
-    this.entries.push(entry)
-    await this.load(entry)
-    this.persist()
-    const error = this.errors.get(path)
-    if (error) {
-      this.browser.toast(`Could not load extension: ${error}`, 'error', win)
-    } else {
-      const ext = this.loaded.get(path)
-      this.browser.emit(
-        'extension.installed',
-        {
-          id: ext?.id ?? path,
-          name: ext?.name ?? readManifest(path)?.name ?? 'Extension',
-          pinned: false
-        },
-        win
-      )
-    }
-    this.browser.state.commitVolatile()
-  }
-
-  remove(idOrPath: string): void {
-    const entry = this.entryFor(idOrPath)
-    if (!entry) return
-    if (this.popup?.id === this.loaded.get(entry.path)?.id) this.closePopup()
-    this.unload(entry.path)
-    this.entries = this.entries.filter((e) => e !== entry)
-    this.errors.delete(entry.path)
-    this.persist()
-    this.browser.state.commitVolatile()
-  }
-
-  async setEnabled(idOrPath: string, enabled: boolean): Promise<void> {
-    const entry = this.entryFor(idOrPath)
-    if (!entry || entry.enabled === enabled) return
-    entry.enabled = enabled
-    if (enabled) await this.load(entry)
-    else {
-      if (this.popup?.id === this.loaded.get(entry.path)?.id) this.closePopup()
-      this.unload(entry.path)
-    }
-    this.persist()
-    this.browser.state.commitVolatile()
-  }
-
-  // ---------------------------------------------------------------------------
-  // Extensions UI (W1-D): management commands. The store PR replaces the install and update
-  // stubs with the real download / verify / install flow; reload, options, pin and file access
-  // are complete here.
-  // ---------------------------------------------------------------------------
-
-  async installFromStore(ref: string, win: ZenWindow): Promise<void> {
-    const text = ref.trim()
-    const target = isExtensionId(text) ? { id: text } : parseStorePageUrl(text)
-    if (!target) {
-      this.browser.toast('That is not a Chrome Web Store or Edge Add-ons link or id.', 'error', win)
-      return
-    }
-    this.browser.toast('Installing from the store is not available yet.', 'info', win)
-  }
-
-  async installFromFile(win: ZenWindow): Promise<void> {
-    const result = await dialog.showOpenDialog((win.host as ElectronWindow).win, {
-      title: 'Install extension from file',
-      properties: ['openFile'],
-      filters: [{ name: 'Extension packages', extensions: ['crx', 'zip'] }],
-      buttonLabel: 'Install'
+    const record = newRecord({
+      id: idForUnpackedPath(path),
+      source: 'unpacked',
+      path,
+      manifest,
+      now: Date.now()
     })
-    if (result.canceled || !result.filePaths[0]) return
-    await this.installFromDrop([result.filePaths[0]], win)
+    this.registry.extensions.push(record)
+    await this.load(record)
+    this.persist()
+    const error = this.errors.get(record.id)
+    if (error) this.browser.toast(`Could not load extension: ${error}`, 'error', win)
+    else this.announceInstalled(record, win)
+    this.emit({ type: 'installed', id: record.id })
+    this.browser.state.commitVolatile()
   }
 
   /**
-   * Dropped or picked paths: a folder with a manifest is confirmed like a store install and then
-   * loaded unpacked; packages wait for the store PR.
+   * Dropped or picked paths: `.crx` and `.zip` packages install like a file pick; a folder with a
+   * manifest is confirmed like a store install (a drop is not the explicit intent a dialog is)
+   * and then loaded unpacked.
    */
   async installFromDrop(paths: string[], win: ZenWindow): Promise<void> {
     for (const path of paths) {
-      const stat = statOf(path)
+      const stat = await fs.stat(path).catch(() => null)
       if (stat?.isDirectory()) {
-        if (this.entries.some((e) => e.path === path)) {
+        if (this.registry.extensions.some((e) => e.path === path)) {
           this.browser.toast('This extension is already installed.', 'info', win)
           continue
         }
@@ -284,12 +417,12 @@ export class ExtensionService implements ExtensionHost {
           this.browser.toast('That folder has no manifest.json.', 'error', win)
           continue
         }
-        const accepted = await this.ask(
+        const accepted = await this.confirmInstall(
           {
             kind: 'install',
-            name: manifest.name ?? path.split(/[\\/]/).pop() ?? 'Extension',
+            name: manifest.name ?? basename(path) ?? 'Extension',
             icon: iconDataUrl(path, manifest),
-            warnings: permissionWarnings(manifest),
+            warnings: permissionWarningLines(manifest, warningPlatform()),
             source: 'unpacked'
           },
           win
@@ -297,84 +430,600 @@ export class ExtensionService implements ExtensionHost {
         if (accepted) await this.add(path, win)
         continue
       }
-      const ext = extname(path).toLowerCase()
-      if (ext === '.crx' || ext === '.zip') {
-        this.browser.toast('Installing packaged extensions is not available yet.', 'info', win)
-      } else {
+      const kind = extname(path).toLowerCase()
+      if (kind === '.crx' || kind === '.zip') await this.installFromFile(path, win)
+      else
         this.browser.toast(
           'Drop a .crx or .zip package, or an unpacked extension folder.',
           'error',
           win
         )
-      }
     }
   }
 
-  /** Unpacked extensions have no update source; this records the check for the caption. */
-  async checkForUpdates(): Promise<void> {
-    this.checking = true
-    this.browser.state.commitVolatile()
-    this.lastUpdateCheckAt = Date.now()
-    this.checking = false
-    this.persist()
-    this.browser.state.commitVolatile()
+  /** "<name> was added to Zenium" with a Pin action, drawn by the renderer's toast. */
+  private announceInstalled(record: ExtensionRecord, win?: ZenWindow): void {
+    const payload = {
+      id: record.id,
+      name: record.name || 'Extension',
+      toolbarPinned: record.toolbarPinned
+    }
+    if (win?.alive) this.browser.emit('extension.installed', payload, win)
+    else this.browser.toast(`Added ${payload.name}`, 'info', win)
   }
 
-  async update(id: string, win: ZenWindow): Promise<void> {
-    if (!this.entryFor(id)) return
-    this.browser.toast('Updating extensions is not available yet.', 'info', win)
+  // ---------------------------------------------------------------------------
+  // Installing packages (store, .crx, .zip)
+  // ---------------------------------------------------------------------------
+
+  async installFromFileDialog(win: ZenWindow): Promise<void> {
+    const result = await dialog.showOpenDialog((win.host as ElectronWindow).win, {
+      title: 'Install extension from file',
+      properties: ['openFile'],
+      filters: [{ name: 'Extension packages', extensions: ['crx', 'zip'] }],
+      buttonLabel: 'Install'
+    })
+    if (result.canceled || !result.filePaths[0]) return
+    await this.installFromFile(result.filePaths[0], win)
   }
 
-  async reload(id: string): Promise<void> {
-    const entry = this.entryFor(id)
-    if (!entry) return
-    if (this.popup?.id === this.loaded.get(entry.path)?.id) this.closePopup()
-    this.unload(entry.path)
-    if (entry.enabled) await this.load(entry)
-    this.browser.state.commitVolatile()
+  /** Installs a `.crx` (verified; unsigned or tampered packages are refused) or an unsigned `.zip`. */
+  async installFromFile(path: string, win?: ZenWindow): Promise<void> {
+    const name = basename(path)
+    const started = Date.now()
+    try {
+      const bytes = new Uint8Array(await fs.readFile(path))
+      const { pkg, kind } = await packageFromFile(name, bytes, { locale: app.getLocale() })
+      console.log(
+        `[zen] extensions: read ${name} as ${pkg.id} ${pkg.version} (${kind}, ${pkg.files.length} files, ${elapsed(started)})`
+      )
+      const outcome = await this.installPackage(
+        pkg,
+        {
+          source: kind,
+          publisher: pkg.signed ? pkg.publisher : null,
+          updateUrl: pkg.manifest.update_url ?? null
+        },
+        { confirm: true, win }
+      )
+      this.toastOutcome(outcome, pkg, win)
+    } catch (error) {
+      const message = (error as Error).message
+      console.warn(`[zen] extensions: could not install ${name}:`, message)
+      this.browser.toast(`Could not install ${name}: ${message}`, 'error', win)
+    }
   }
 
-  openOptions(id: string, win: ZenWindow): void {
-    const entry = this.entryFor(id)
-    const ext = entry ? this.loaded.get(entry.path) : undefined
-    const manifest = entry ? readManifest(entry.path) : null
-    const page = manifest?.options_ui?.page ?? manifest?.options_page
-    if (!ext || !page) return
-    this.closePopup()
-    this.browser.tabs.createTab(
-      { url: `chrome-extension://${ext.id}/${page.replace(/^\/+/, '')}`, active: true },
+  /** Installs from the Chrome Web Store or Edge Add-ons by id or listing URL. */
+  async installFromStore(ref: string, store: StoreId | null, win?: ZenWindow): Promise<void> {
+    const parsed = parseStoreRef(ref)
+    if (!parsed) {
+      this.browser.toast('Enter an extension id or a store listing URL.', 'error', win)
+      return
+    }
+    const existing = this.record(parsed.id)
+    if (existing) {
+      this.browser.toast(`${existing.name || 'This extension'} is already installed.`, 'info', win)
+      return
+    }
+    try {
+      const { pkg, store: from } = await this.downloadPackage(parsed.id, store ?? parsed.store)
+      const outcome = await this.installPackage(
+        pkg,
+        { source: from, publisher: pkg.publisher, updateUrl: STORE_UPDATE_URLS[from] },
+        { confirm: true, win }
+      )
+      this.toastOutcome(outcome, pkg, win)
+    } catch (error) {
+      const message = (error as Error).message
+      console.warn(`[zen] extensions: could not install ${parsed.id}:`, message)
+      this.browser.toast(`Could not install extension: ${message}`, 'error', win)
+    }
+  }
+
+  private async downloadPackage(
+    id: string,
+    preferred: StoreId | null
+  ): Promise<{ pkg: ExtensionPackage; store: StoreId }> {
+    const started = Date.now()
+    const download = await downloadFromStores(
+      electronStoreFetch,
+      id,
+      preferred,
+      process.versions.chrome
+    )
+    const downloaded = Date.now()
+    const pkg = await installFromCrx(download.bytes, { expectedId: id, locale: app.getLocale() })
+    const skipped = download.skipped
+      .map((s) => ` (${storeLabel(s.store)}: HTTP ${s.status})`)
+      .join('')
+    console.log(
+      `[zen] extensions: downloaded ${id} ${pkg.version} from ${storeLabel(download.store)}${skipped}: ${download.bytes.length} bytes in ${elapsed(started, downloaded)}, verified ${pkg.publisher} signature and unpacked ${pkg.files.length} files in ${elapsed(downloaded)}`
+    )
+    return { pkg, store: download.store }
+  }
+
+  private toastOutcome(outcome: InstallOutcome, pkg: ExtensionPackage, win?: ZenWindow): void {
+    if (outcome.status === 'in-progress')
+      this.browser.toast(`${pkg.manifest.name} is already being installed.`, 'info', win)
+    else if (outcome.status === 'installed') {
+      const error = this.errors.get(outcome.record.id)
+      if (error)
+        this.browser.toast(
+          `Installed ${pkg.manifest.name}, but it could not be loaded: ${error}`,
+          'error',
+          win
+        )
+      else this.announceInstalled(outcome.record, win)
+    }
+  }
+
+  /**
+   * The one install path: confirm (unless already approved), write the version directory, swap
+   * the registry record, load, prune older versions. A failed load of an update rolls back to the
+   * version that was running.
+   */
+  async installPackage(
+    pkg: ExtensionPackage,
+    meta: InstallMeta,
+    options: { confirm: boolean; win?: ZenWindow }
+  ): Promise<InstallOutcome> {
+    if (this.busy.has(pkg.id)) return { status: 'in-progress' }
+    this.busy.add(pkg.id)
+    try {
+      const existing = this.record(pkg.id)
+      if (options.confirm) {
+        const ok = await this.confirmInstall(
+          {
+            kind: existing ? 'update' : 'install',
+            name: pkg.manifest.name,
+            icon: await packageIcon(pkg),
+            warnings: permissionWarningLines(pkg.manifest, warningPlatform()),
+            source: meta.source
+          },
+          options.win
+        )
+        if (!ok) return { status: 'cancelled' }
+      }
+      const started = Date.now()
+      const dir = await writePackage(this.root, pkg)
+      console.log(
+        `[zen] extensions: wrote ${pkg.id} ${pkg.version} to ${dir} in ${elapsed(started)}`
+      )
+      const now = Date.now()
+      const record = existing
+        ? withManifest(existing, pkg.manifest, {
+            source: meta.source,
+            path: dir,
+            publisher: meta.publisher,
+            updateUrl: meta.updateUrl,
+            updatedAt: now
+          })
+        : newRecord({
+            id: pkg.id,
+            source: meta.source,
+            path: dir,
+            manifest: pkg.manifest,
+            now,
+            publisher: meta.publisher,
+            updateUrl: meta.updateUrl
+          })
+      if (existing) this.unload(existing)
+      this.replace(record)
+      if (record.enabled) await this.load(record)
+      const error = this.errors.get(record.id)
+      if (error && existing && existing.path !== dir) {
+        console.warn(
+          `[zen] extensions: ${pkg.id} ${pkg.version} failed to load, keeping ${existing.version}:`,
+          error
+        )
+        this.replace(existing)
+        await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined)
+        if (existing.enabled) await this.load(existing)
+        this.persist()
+        this.browser.state.commitVolatile()
+        throw new Error(error)
+      }
+      if (existing && isManagedPath(this.root, existing.path) && existing.path !== dir) {
+        const pruned = await pruneOldVersions(this.root, record.id, dir).catch(() => [])
+        if (pruned.length > 0) console.log(`[zen] extensions: pruned ${pruned.join(', ')}`)
+      }
+      this.persist()
+      this.emit({ type: existing ? 'updated' : 'installed', id: record.id })
+      this.browser.state.commitVolatile()
+      return { status: 'installed', record }
+    } finally {
+      this.busy.delete(pkg.id)
+    }
+  }
+
+  private replace(record: ExtensionRecord): void {
+    const index = this.registry.extensions.findIndex((r) => r.id === record.id)
+    if (index >= 0) this.registry.extensions[index] = record
+    else this.registry.extensions.push(record)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Management
+  // ---------------------------------------------------------------------------
+
+  /** Chrome's "Remove <name>?" question, asked before a page (the store) may uninstall. */
+  confirmUninstall(record: ExtensionRecord, win?: ZenWindow): Promise<boolean> {
+    return this.browser.platform.dialogs.confirm(
+      {
+        message: `Remove "${record.name || 'this extension'}"?`,
+        okLabel: 'Remove',
+        cancelLabel: 'Cancel',
+        danger: true
+      },
       win
     )
   }
 
+  async remove(id: string): Promise<void> {
+    const record = this.record(id) ?? this.registry.extensions.find((r) => r.path === id)
+    if (!record) return
+    if (this.popup?.id === record.id) this.closePopup()
+    this.unload(record)
+    this.registry.extensions = this.registry.extensions.filter((r) => r !== record)
+    this.errors.delete(record.id)
+    this.updates.delete(record.id)
+    if (record.source !== 'unpacked' && isManagedPath(this.root, record.path))
+      await removeInstalledFiles(this.root, record.id).catch((error: Error) =>
+        console.warn(`[zen] extensions: could not delete ${record.path}:`, error.message)
+      )
+    this.persist()
+    this.emit({ type: 'uninstalled', id: record.id })
+    this.browser.state.commitVolatile()
+  }
+
+  async setEnabled(id: string, enabled: boolean, win?: ZenWindow): Promise<void> {
+    const record = this.record(id)
+    if (!record || record.enabled === enabled) return
+    if (enabled && record.pendingWarnings && record.pendingWarnings.length > 0) {
+      const ok = await this.confirmInstall(
+        {
+          kind: 'permissions',
+          name: record.name,
+          icon: this.icon(record.path, record.version, readManifest(record.path)),
+          warnings: record.pendingWarnings,
+          source: record.source
+        },
+        win
+      )
+      if (!ok) return
+      record.pendingWarnings = null
+    }
+    record.enabled = enabled
+    if (enabled) await this.load(record)
+    else {
+      if (this.popup?.id === record.id) this.closePopup()
+      this.unload(record)
+    }
+    this.persist()
+    this.emit({ type: enabled ? 'enabled' : 'disabled', id: record.id })
+    this.browser.state.commitVolatile()
+  }
+
   setPinned(id: string, pinned: boolean): void {
-    const entry = this.entryFor(id)
-    if (!entry || (entry.pinned ?? false) === pinned) return
-    entry.pinned = pinned
+    const record = this.record(id)
+    if (!record || record.pinned === pinned) return
+    record.pinned = pinned
     this.persist()
     this.browser.state.commitVolatile()
   }
 
-  async setAllowFileAccess(id: string, allow: boolean): Promise<void> {
-    const entry = this.entryFor(id)
-    if (!entry || (entry.allowFileAccess ?? false) === allow) return
-    entry.allowFileAccess = allow
+  setToolbarPinned(id: string, pinned: boolean): void {
+    const record = this.record(id)
+    if (!record || record.toolbarPinned === pinned) return
+    record.toolbarPinned = pinned
     this.persist()
-    if (entry.enabled) {
-      this.unload(entry.path)
-      await this.load(entry)
+    this.browser.state.commitVolatile()
+  }
+
+  /** Chrome applies the file-URL toggle by reloading the extension; so does this. */
+  async setAllowFileAccess(id: string, allow: boolean): Promise<void> {
+    const record = this.record(id)
+    if (!record || record.allowFileAccess === allow) return
+    record.allowFileAccess = allow
+    this.persist()
+    if (record.enabled) {
+      if (this.popup?.id === record.id) this.closePopup()
+      this.unload(record)
+      await this.load(record)
     }
     this.browser.state.commitVolatile()
   }
 
+  /** Unload and load again, picking up changes an unpacked folder saw on disk. */
+  async reload(id: string): Promise<void> {
+    const record = this.record(id)
+    if (!record) return
+    if (this.popup?.id === record.id) this.closePopup()
+    this.unload(record)
+    if (record.source === 'unpacked') {
+      const manifest = readManifest(record.path)
+      if (manifest) this.replace(withManifest(record, manifest))
+    }
+    this.iconCache.delete(`${record.path}\u0000${record.version}`)
+    const current = this.record(id) ?? record
+    if (current.enabled) await this.load(current)
+    this.persist()
+    this.browser.state.commitVolatile()
+  }
+
+  openOptions(id: string, win: ZenWindow): void {
+    const record = this.record(id)
+    if (!record) return
+    if (!record.optionsPage) {
+      this.browser.toast(`${record.name || 'This extension'} has no options page.`, 'info', win)
+      return
+    }
+    this.browser.tabs.createTab(
+      { url: `chrome-extension://${record.id}/${record.optionsPage}`, active: true },
+      win
+    )
+  }
+
+  // ---------------------------------------------------------------------------
+  // Updates
+  // ---------------------------------------------------------------------------
+
+  private scheduleUpdateChecks(): void {
+    const first = setTimeout(() => void this.checkForUpdates(), UPDATE_CHECK_STARTUP_DELAY_MS)
+    first.unref?.()
+    this.updateTimer = setInterval(() => void this.checkForUpdates(), UPDATE_CHECK_INTERVAL_MS)
+    this.updateTimer.unref?.()
+  }
+
+  /** Extensions that update: store installs and packages with an `update_url`, unless pinned. */
+  private updatable(): ExtensionRecord[] {
+    return this.registry.extensions.filter(
+      (r) => !r.pinned && r.source !== 'unpacked' && r.updateUrl !== null && isExtensionId(r.id)
+    )
+  }
+
+  /** Checks every updatable extension and installs what the update servers offer. */
+  checkForUpdates(win?: ZenWindow): Promise<void> {
+    if (this.checking) return this.checking
+    this.checking = this.runUpdateCheck(this.updatable(), win).finally(() => {
+      this.checking = null
+      this.browser.state.commitVolatile()
+    })
+    this.browser.state.commitVolatile()
+    return this.checking
+  }
+
+  updateCheck(): ExtensionUpdateCheck {
+    return { lastCheckedAt: this.registry.lastUpdateCheck, checking: this.checking !== null }
+  }
+
+  /** Checks (and installs) an update for one extension. */
+  async update(id: string, win?: ZenWindow): Promise<void> {
+    const record = this.record(id)
+    if (!record) return
+    if (!this.updatable().includes(record)) {
+      this.browser.toast(
+        record.pinned
+          ? `${record.name} is pinned to version ${record.version}.`
+          : `${record.name} has no update source.`,
+        'info',
+        win
+      )
+      return
+    }
+    await this.runUpdateCheck([record], win)
+  }
+
+  private async runUpdateCheck(records: ExtensionRecord[], win?: ZenWindow): Promise<void> {
+    const interactive = win !== undefined
+    const started = Date.now()
+    if (records.length === 0) {
+      this.registry.lastUpdateCheck = started
+      this.persist()
+      if (interactive) this.browser.toast('No installed extension can be updated.', 'info', win)
+      return
+    }
+    const results = await checkForUpdates(
+      electronStoreFetch,
+      records.map((r) => ({
+        id: r.id,
+        version: r.version,
+        updateUrl: r.updateUrl,
+        store: storeOf(r.source)
+      })),
+      { chromiumVersion: process.versions.chrome }
+    )
+    const checkedAt = Date.now()
+    this.registry.lastUpdateCheck = checkedAt
+    let installed = 0
+    let failed = 0
+    for (const record of records) {
+      const result = results.get(record.id) ?? { status: 'error' as const, reason: 'no-response' }
+      console.log(
+        `[zen] extensions: update check ${record.id} ${record.version} (${record.source}): ${describe(result)}`
+      )
+      if (result.status === 'update-available') {
+        this.updates.set(record.id, {
+          state: 'updating',
+          availableVersion: result.version,
+          error: null,
+          checkedAt
+        })
+        this.browser.state.commitVolatile()
+        try {
+          await this.applyUpdate(record, result)
+          installed += 1
+          this.updates.set(record.id, {
+            state: 'up-to-date',
+            availableVersion: null,
+            error: null,
+            checkedAt
+          })
+        } catch (error) {
+          failed += 1
+          const message = (error as Error).message
+          console.warn(`[zen] extensions: update of ${record.id} failed:`, message)
+          this.updates.set(record.id, {
+            state: 'error',
+            availableVersion: result.version,
+            error: message,
+            checkedAt
+          })
+        }
+      } else if (result.status === 'up-to-date') {
+        this.updates.set(record.id, {
+          state: 'up-to-date',
+          availableVersion: null,
+          error: null,
+          checkedAt
+        })
+      } else {
+        this.updates.set(record.id, {
+          state: 'error',
+          availableVersion: null,
+          error: result.reason,
+          checkedAt
+        })
+      }
+    }
+    console.log(
+      `[zen] extensions: checked ${records.length} extension(s) for updates in ${elapsed(started)}: ${installed} updated, ${failed} failed`
+    )
+    this.persist()
+    this.browser.state.commitVolatile()
+    if (interactive) {
+      const summary =
+        installed > 0
+          ? `Updated ${installed} extension${installed === 1 ? '' : 's'}.`
+          : failed > 0
+            ? 'An extension update failed.'
+            : 'All extensions are up to date.'
+      this.browser.toast(summary, failed > 0 && installed === 0 ? 'error' : 'info', win)
+    }
+  }
+
   /**
-   * Put a question to the user through the renderer's dialog and wait for the answer. This is
-   * the store PR's `confirmInstall` hook: install and update prompts raise
-   * `extensionInstallRequest`, runtime `permissions.request` raises `extensionPermissionRequest`.
+   * Downloads and installs an update. Like Chrome, an update that asks for more than the user
+   * approved is installed but left disabled until the new permissions are accepted.
+   */
+  private async applyUpdate(
+    record: ExtensionRecord,
+    update: Extract<UpdateCheckResult, { status: 'update-available' }>
+  ): Promise<void> {
+    const started = Date.now()
+    const bytes = await downloadUpdate(electronStoreFetch, update)
+    const pkg = await installFromCrx(bytes, { expectedId: record.id, locale: app.getLocale() })
+    console.log(
+      `[zen] extensions: downloaded update ${record.id} ${record.version} -> ${pkg.version} (${bytes.length} bytes, sha256 ${update.sha256 ? 'verified' : 'not announced'}) in ${elapsed(started)}`
+    )
+    const before = permissionWarnings(readManifest(record.path) ?? {}, warningPlatform())
+    const after = permissionWarnings(pkg.manifest, warningPlatform())
+    const added = newWarnings(before, after).map((w) => w.message)
+    const outcome = await this.installPackage(
+      pkg,
+      { source: record.source, publisher: pkg.publisher, updateUrl: record.updateUrl },
+      { confirm: false }
+    )
+    if (outcome.status !== 'installed') throw new Error(`Update ${outcome.status}`)
+    if (added.length > 0) {
+      console.log(
+        `[zen] extensions: ${record.id} ${pkg.version} asks for new permissions; disabled until approved`
+      )
+      outcome.record.pendingWarnings = added
+      outcome.record.enabled = false
+      this.unload(outcome.record)
+      this.persist()
+      this.emit({ type: 'disabled', id: record.id })
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // The store page (chrome.webstorePrivate)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * `beginInstallWithManifest3`: prompt with the manifest the page attached and remember the
+   * approval; the page follows up with `completeInstall`, which does the download.
+   */
+  async webstoreBeginInstall(
+    details: BeginInstallDetails,
+    win?: ZenWindow
+  ): Promise<WebstoreBeginInstallOutcome> {
+    if (this.record(details.id))
+      return { result: 'already_installed', message: 'This item is already installed.' }
+    if (this.busy.has(details.id))
+      return { result: 'install_in_progress', message: 'This item is already being installed.' }
+    const manifest = details.manifest ?? {}
+    const warnings = permissionWarningLines(manifest, warningPlatform())
+    const name =
+      details.localizedName ??
+      (typeof manifest.name === 'string' ? manifest.name : null) ??
+      details.id
+    const ok = await this.confirmInstall(
+      {
+        kind: 'install',
+        name,
+        icon: await fetchIconDataUrl(details.iconUrl),
+        warnings,
+        source: 'chrome-web-store'
+      },
+      win
+    )
+    if (!ok) return { result: 'user_cancelled', message: USER_CANCELLED_ERROR }
+    this.approvals.set(details.id, { warnings, expires: Date.now() + WEBSTORE_APPROVAL_TTL_MS })
+    return { result: '' }
+  }
+
+  /** `completeInstall`: download, verify and load what the user approved. */
+  async webstoreCompleteInstall(id: string, win?: ZenWindow): Promise<{ error?: string }> {
+    const approval = this.approvals.get(id)
+    this.approvals.delete(id)
+    if (!approval || approval.expires < Date.now())
+      return { error: `${id}${NO_PREVIOUS_BEGIN_INSTALL_ERROR}` }
+    if (this.record(id)) return { error: 'This item is already installed.' }
+    try {
+      const { pkg, store } = await this.downloadPackage(id, 'chrome-web-store')
+      // The page's manifest is what the user approved; a package that asks for more is shown again.
+      const actual = permissionWarningLines(pkg.manifest, warningPlatform())
+      const increased = actual.some((w) => !approval.warnings.includes(w))
+      const outcome = await this.installPackage(
+        pkg,
+        { source: store, publisher: pkg.publisher, updateUrl: STORE_UPDATE_URLS[store] },
+        { confirm: increased, win }
+      )
+      if (outcome.status === 'cancelled') return { error: USER_CANCELLED_ERROR }
+      if (outcome.status === 'in-progress')
+        return { error: 'This item is already being installed.' }
+      const loadError = this.errors.get(id)
+      if (loadError) return { error: loadError }
+      if (outcome.status === 'installed') this.announceInstalled(outcome.record, win)
+      return {}
+    } catch (error) {
+      const message = (error as Error).message
+      console.warn(`[zen] extensions: store page install of ${id} failed:`, message)
+      return { error: message }
+    }
+  }
+
+  webstoreInstallStatus(id: string): WebstoreInstallStatus {
+    return installStatusFor(this.record(id))
+  }
+
+  // ---------------------------------------------------------------------------
+  // Install prompt
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Put a question to the user through the renderer's dialog and wait for the answer: install
+   * and update prompts raise `extensionInstallRequest`, permission prompts raise
+   * `extensionPermissionRequest`.
    */
   ask(prompt: Omit<ExtensionPromptRequest, 'requestId'>, win: ZenWindow): Promise<boolean> {
     const event =
-      prompt.kind === 'permissions' ? 'extensionPermissionRequest' : 'extensionInstallRequest'
+      prompt.kind === 'permissions' || prompt.kind === 'request'
+        ? 'extensionPermissionRequest'
+        : 'extensionInstallRequest'
     const requestId = `${event}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`
     return new Promise<boolean>((resolve) => {
       this.prompts.set(requestId, resolve)
@@ -389,17 +1038,50 @@ export class ExtensionService implements ExtensionHost {
     resolve(accept)
   }
 
+  private async nativeConfirm(request: InstallConfirmation, win?: ZenWindow): Promise<boolean> {
+    const lines = request.warnings.map((w) => `\u2022 ${w}`)
+    const message =
+      request.kind === 'permissions'
+        ? `"${request.name}" needs new permissions`
+        : request.kind === 'update'
+          ? `Update "${request.name}"?`
+          : `Add "${request.name}"?`
+    const detail =
+      lines.length > 0 ? `It can:\n${lines.join('\n')}` : 'It needs no special permissions.'
+    const buttons =
+      request.kind === 'permissions'
+        ? ['Allow', 'Cancel']
+        : request.kind === 'update'
+          ? ['Update extension', 'Cancel']
+          : ['Add extension', 'Cancel']
+    const options: Electron.MessageBoxOptions = {
+      type: 'question',
+      title: 'Zenium',
+      message,
+      detail,
+      buttons,
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+      icon: request.icon ? nativeImage.createFromDataURL(request.icon) : undefined
+    }
+    const bw = browserWindowOf(win)
+    const result = bw
+      ? await dialog.showMessageBox(bw, options)
+      : await dialog.showMessageBox(options)
+    return result.response === 0
+  }
+
   // ---------------------------------------------------------------------------
   // Browser-action popups
   // ---------------------------------------------------------------------------
 
   openPopup(id: string, anchor: Rect, win: ZenWindow, frame?: PopupFrame): void {
     this.closePopup()
-    const entry = this.entryFor(id)
-    const ext = entry ? this.loaded.get(entry.path) : undefined
-    const info = entry ? this.list().find((e) => e.path === entry.path) : undefined
+    const record = this.record(id) ?? this.registry.extensions.find((r) => r.path === id)
+    const ext = record ? this.loadedById.get(record.id) : undefined
     // No popup: Chrome fires `action.onClicked` instead (the API-layer PR dispatches it).
-    if (!entry || !ext || !info?.popup) return
+    if (!record || !ext || !record.popup) return
     const ses = this.sessions.persistent()[0]?.[1]
     if (!ses) return
     const view = new WebContentsView({
@@ -438,7 +1120,7 @@ export class ExtensionService implements ExtensionHost {
       })
     }
     bw.contentView.addChildView(view)
-    this.popup = { id: ext.id, view, win }
+    this.popup = { id: record.id, view, win }
     const wc = view.webContents
     const report = (width: number, height: number): void => {
       if (this.popup?.view !== view) return
@@ -446,7 +1128,7 @@ export class ExtensionService implements ExtensionHost {
         width: Math.round(Math.max(POPUP_MIN.width, Math.min(POPUP_MAX.width, width))),
         height: Math.round(Math.max(POPUP_MIN.height, Math.min(POPUP_MAX.height, height)))
       }
-      if (frame) this.browser.emit('extension.popupSize', { id: ext.id, ...size }, win)
+      if (frame) this.browser.emit('extension.popupSize', { id: record.id, ...size }, win)
       else {
         const b = view.getBounds()
         view.setBounds({
@@ -490,12 +1172,14 @@ export class ExtensionService implements ExtensionHost {
       }
     })
     wc.setWindowOpenHandler(({ url }) => {
-      if (/^https?:/.test(url)) this.browser.tabs.createTab({ url, active: true }, win)
+      // Extension pages (options, dashboards) open as tabs like any site the popup links to.
+      if (/^(https?|chrome-extension):/.test(url))
+        this.browser.tabs.createTab({ url, active: true }, win)
       this.closePopup()
       return { action: 'deny' }
     })
     void wc
-      .loadURL(`chrome-extension://${ext.id}/${info.popup.replace(/^\/+/, '')}`)
+      .loadURL(`chrome-extension://${ext.id}/${record.popup.replace(/^\/+/, '')}`)
       .catch(() => undefined)
   }
 
@@ -518,17 +1202,42 @@ export class ExtensionService implements ExtensionHost {
     if (!view.webContents.isDestroyed()) view.webContents.close()
   }
 
+  // ---------------------------------------------------------------------------
+  // Persistence
+  // ---------------------------------------------------------------------------
+
+  private emit(event: RegistryEvent): void {
+    for (const listener of this.changeListeners) listener(event)
+  }
+
   private persist(): void {
-    this.store.write({
-      version: 1,
-      extensions: this.entries,
-      lastUpdateCheckAt: this.lastUpdateCheckAt
-    })
+    this.store.write(this.registry)
   }
 
   flushSync(): void {
+    if (this.updateTimer) clearInterval(this.updateTimer)
+    this.updateTimer = null
     this.store.flushSync()
   }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function storeOf(source: ExtensionSource): StoreId | null {
+  return source === 'chrome-web-store' || source === 'edge-add-ons' ? source : null
+}
+
+function describe(result: UpdateCheckResult): string {
+  if (result.status === 'update-available')
+    return `${result.version} available (${result.size ?? '?'} bytes, sha256 ${result.sha256 ?? 'none'}) at ${result.codebase}`
+  if (result.status === 'up-to-date') return 'up to date'
+  return `error (${result.reason})`
+}
+
+function elapsed(from: number, to = Date.now()): string {
+  return `${to - from} ms`
 }
 
 function roundRect(r: Rect): Rect {
@@ -540,83 +1249,33 @@ function roundRect(r: Rect): Rect {
   }
 }
 
-function strings(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
-}
-
-// Extensions UI (W1-D): reconcile with the store PR on rebase – its `permissionMessages.ts`
-// owns the full table; this is the handful of Chrome's install-warning strings the UI needs to
-// show real rows until then.
-const PERMISSION_WARNINGS: Record<string, string> = {
-  tabs: 'Read your browsing history',
-  history: 'Read and change your browsing history on all your signed-in devices',
-  bookmarks: 'Read and change your bookmarks',
-  downloads: 'Manage your downloads',
-  clipboardRead: 'Read data you copy and paste',
-  clipboardWrite: 'Modify data you copy and paste',
-  notifications: 'Display notifications',
-  geolocation: 'Detect your physical location',
-  management: 'Manage your apps, extensions, and themes',
-  nativeMessaging: 'Communicate with cooperating native applications',
-  privacy: 'Change your privacy-related settings',
-  topSites: 'Read a list of your most frequently visited websites',
-  webNavigation: 'Read your browsing history',
-  sessions: 'Read your recently closed tabs',
-  contentSettings: 'Change your settings that control websites’ access to features',
-  debugger: 'Access the page debugger backend',
-  proxy: 'Read and change your proxy settings',
-  pageCapture: 'Save the content of pages you visit',
-  desktopCapture: 'Capture content of your screen',
-  tabCapture: 'Capture content of your tabs',
-  identity: 'Know your email address',
-  declarativeNetRequestFeedback: 'Read your browsing history',
-  ttsEngine: 'Read all text spoken using synthesized speech',
-  browsingData: 'Clear browsing data'
-}
-const ALL_HOSTS = /^(<all_urls>|\*:\/\/\*\/|https?:\/\/\*\/|file:\/\/\/\*)/
-
-function permissionWarnings(manifest: Manifest | null): string[] {
-  if (!manifest) return []
-  const permissions = strings(manifest.permissions)
-  const hosts = [
-    ...strings(manifest.host_permissions),
-    ...permissions.filter((p) => p.includes('/'))
-  ]
-  const out: string[] = []
-  if (hosts.some((h) => ALL_HOSTS.test(h)))
-    out.push('Read and change all your data on all websites')
-  else {
-    const named = hosts
-      .map((h) => h.replace(/^\*:\/\/|^https?:\/\//, '').replace(/\/.*$/, ''))
-      .filter((h) => h.length > 0 && h !== '*')
-    const unique = [...new Set(named)]
-    if (unique.length > 0)
-      out.push(
-        unique.length <= 3
-          ? `Read and change your data on ${unique.join(', ')}`
-          : 'Read and change your data on a number of websites'
-      )
+export function warningPlatform(): WarningPlatform {
+  switch (process.platform) {
+    case 'win32':
+      return 'win'
+    case 'darwin':
+      return 'mac'
+    case 'linux':
+      return 'linux'
+    default:
+      return 'other'
   }
-  for (const permission of permissions) {
-    const message = PERMISSION_WARNINGS[permission]
-    if (message && !out.includes(message)) out.push(message)
-  }
-  return out
 }
 
-function statOf(path: string): ReturnType<typeof statSync> | null {
+function browserWindowOf(win: ZenWindow | undefined): Electron.BrowserWindow | undefined {
+  const host = win?.host as ElectronWindow | undefined
+  return host?.alive ? host.win : undefined
+}
+
+/**
+ * The manifest with its `__MSG_` strings resolved from `_locales` (so a disabled extension still
+ * has its name), comments stripped like Chrome does.
+ */
+export function readManifest(path: string): Manifest | null {
   try {
-    return statSync(path)
-  } catch {
-    return null
-  }
-}
-
-/** The manifest with its `__MSG_` strings resolved from `_locales`, so a disabled extension still has its name. */
-function readManifest(path: string): Manifest | null {
-  try {
-    const raw = JSON.parse(readFileSync(join(path, 'manifest.json'), 'utf8')) as Manifest &
-      Record<string, unknown>
+    const raw = JSON.parse(
+      stripJsonComments(readFileSync(join(path, 'manifest.json'), 'utf8'))
+    ) as Manifest & Record<string, unknown>
     if (!raw.default_locale) return raw
     const bundles = localeFallbackChain(null, raw.default_locale).map((locale) => {
       try {
@@ -627,14 +1286,22 @@ function readManifest(path: string): Manifest | null {
         return null
       }
     })
-    return localizeManifest(raw, buildMessageCatalog(bundles)).manifest
+    return localizeManifest(raw, buildMessageCatalog(bundles)).manifest as Manifest
   } catch {
     return null
   }
 }
 
-function iconDataUrl(path: string, manifest: Manifest | null): string | null {
-  if (!manifest) return null
+const IMAGE_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp'
+}
+
+/** The manifest's icon candidates, largest first: the action icon, then the extension icons. */
+function iconCandidates(manifest: Manifest): string[] {
   const action = manifest.action ?? manifest.browser_action
   const candidates: Record<string, string> = {}
   if (typeof action?.default_icon === 'string') candidates['0'] = action.default_icon
@@ -647,18 +1314,47 @@ function iconDataUrl(path: string, manifest: Manifest | null): string | null {
     .sort((a, b) => a - b)
   const pick = sizes.find((s) => s >= 32) ?? sizes[sizes.length - 1]
   const rel = pick === undefined ? Object.values(candidates)[0] : candidates[String(pick)]
-  if (!rel) return null
+  return rel ? [rel.replace(/^\/+/, '')] : []
+}
+
+function iconDataUrl(path: string, manifest: Manifest | null): string | null {
+  if (!manifest) return null
+  for (const rel of iconCandidates(manifest)) {
+    try {
+      const file = join(path, rel)
+      const mime = IMAGE_MIME[extname(file).toLowerCase()] ?? 'image/png'
+      return `data:${mime};base64,${readFileSync(file).toString('base64')}`
+    } catch {
+      /* try the next candidate */
+    }
+  }
+  return null
+}
+
+/** The icon of a package that is not on disk yet, read from its files. */
+async function packageIcon(pkg: ExtensionPackage): Promise<string | null> {
+  for (const rel of iconCandidates(pkg.manifest as Manifest)) {
+    const file = pkg.files.find((f) => f.path === rel)
+    if (!file) continue
+    try {
+      const mime = IMAGE_MIME[extname(rel).toLowerCase()] ?? 'image/png'
+      return `data:${mime};base64,${Buffer.from(await file.bytes()).toString('base64')}`
+    } catch {
+      /* try the next candidate */
+    }
+  }
+  return null
+}
+
+/** The store page's icon URL for the prompt; failures just leave the prompt without an icon. */
+async function fetchIconDataUrl(url: string | null): Promise<string | null> {
+  if (!url || !/^https:/.test(url)) return null
   try {
-    const file = join(path, rel)
-    const mime =
-      {
-        '.png': 'image/png',
-        '.svg': 'image/svg+xml',
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.webp': 'image/webp'
-      }[extname(file).toLowerCase()] ?? 'image/png'
-    return `data:${mime};base64,${readFileSync(file).toString('base64')}`
+    const response = await net.fetch(url, { signal: AbortSignal.timeout(ICON_FETCH_TIMEOUT_MS) })
+    if (!response.ok) return null
+    const mime = response.headers.get('content-type')?.split(';')[0] ?? 'image/png'
+    if (!mime.startsWith('image/')) return null
+    return `data:${mime};base64,${Buffer.from(await response.arrayBuffer()).toString('base64')}`
   } catch {
     return null
   }

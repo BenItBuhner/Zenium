@@ -97,13 +97,16 @@ export function useMainEvents(): void {
         'extensionPermissionRequest',
         (prompt) => void enqueueExtensionPrompt(prompt, currentActiveTabId())
       ),
-      onEvent('extension.installed', ({ id, name, pinned }) =>
+      onEvent('extension.installed', ({ id, name, toolbarPinned }) =>
         pushToast(
           `${name} was added to Zenium`,
           'info',
-          pinned
+          toolbarPinned
             ? undefined
-            : { label: 'Pin', run: () => run('extension.setPinned', { id, pinned: true }) }
+            : {
+                label: 'Pin',
+                run: () => run('extension.setToolbarPinned', { id, pinned: true })
+              }
         )
       ),
       onEvent('menu.show', (menu) => void showMenu(menu, currentActiveTabId())),

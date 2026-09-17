@@ -59,7 +59,7 @@ export function actionable(extensions: readonly ExtensionInfo[]): ExtensionInfo[
 
 /** The toolbar's pinned actions, in list order (the puzzle panel holds the rest). */
 export function pinnedActions(extensions: readonly ExtensionInfo[]): ExtensionInfo[] {
-  return actionable(extensions).filter((e) => e.pinned)
+  return actionable(extensions).filter((e) => e.toolbarPinned)
 }
 
 /** The icon the toolbar shows: the action's own icon first, then the manifest icon. */

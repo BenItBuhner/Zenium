@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.util.Log
 import android.webkit.ConsoleMessage
@@ -58,6 +59,17 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
                 return true
             }
 
+            override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                // A document after the first: the chrome reloaded itself (its error screen offers
+                // that). Everything queued was for the core in the old document; the host drops the
+                // tab views that core owned, and the new one recreates them.
+                if (!ready) return
+                ready = false
+                whenReady.clear()
+                Log.w("ZenChrome", "the chrome document is being replaced ($url); dropping the old core's tab views")
+                host.onChromeDocumentReplaced()
+            }
+
             override fun onPageFinished(view: WebView, url: String) {
                 ready = true
                 whenReady.forEach { it() }
@@ -71,7 +83,12 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
              */
             override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
                 ready = false
-                Log.e("ZenChrome", "chrome renderer gone (crashed=${detail.didCrash()}); rebuilding the chrome")
+                whenReady.clear()
+                Log.e(
+                    "ZenChrome",
+                    "chrome renderer gone (${if (detail.didCrash()) "crashed" else "killed"}, priority at exit " +
+                        "${detail.rendererPriorityAtExit()}); rebuilding the chrome"
+                )
                 host.onChromeGone(this@ChromeWebView)
                 return true
             }

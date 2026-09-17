@@ -288,16 +288,14 @@ export interface LiveFolderConfig {
 // Extensions (unpacked Chrome extensions) and Mods (custom chrome CSS)
 // ---------------------------------------------------------------------------
 
-// Extensions UI (W1-D): reconcile with the store/API PRs on rebase. Every field and command in
-// this block is provisional: the store PR owns the install/update fields and commands, the API
-// PR owns `action`; the UI only needs the shapes. Once both land, drop the duplicates here and
-// make the fields required again where those PRs define them so.
-
-/** Where an extension came from; decides the second line of its row and its update source. */
+/** Where an extension came from; store installs update through their store. */
 export type ExtensionSource = 'chrome-web-store' | 'edge-add-ons' | 'crx' | 'zip' | 'unpacked'
 
-/** What the last update check found (`unknown` until one ran or when the extension cannot update). */
+/** What the last update check found for an extension (`unknown` until one ran or when it cannot update). */
 export type ExtensionUpdateState = 'unknown' | 'up-to-date' | 'available' | 'updating' | 'error'
+
+// Extensions UI (W1-D): reconcile with the API-layer PR on rebase. `ExtensionAction` and
+// `ExtensionInfo.action` are the shapes that PR produces per active tab; the UI only reads them.
 
 /** The toolbar action for the active tab (`chrome.action` state, merged with the manifest). */
 export interface ExtensionAction {
@@ -325,39 +323,52 @@ export interface ExtensionInfo {
   popup: string | null
   /** Set when the extension could not be loaded (unsupported manifest, missing files…). */
   error: string | null
-  source?: ExtensionSource
-  manifestVersion?: number
-  permissions?: string[]
-  hostPermissions?: string[]
+  source: ExtensionSource
+  /** Who signed the package: a store, or `unknown` for other signed CRX files; null when unsigned. */
+  publisher: 'chrome-web-store' | 'edge-add-ons' | 'unknown' | null
+  /** Where updates come from (the store endpoint or `manifest.update_url`); null when it cannot update. */
+  updateUrl: string | null
+  installedAt: number
+  updatedAt: number
+  /** Pinned extensions are left out of update checks. */
+  pinned: boolean
+  /** Shown as a toolbar button; other extensions live in the puzzle-piece panel. */
+  toolbarPinned: boolean
+  /** Chrome's "Allow access to file URLs"; off by default. */
+  allowFileAccess: boolean
+  manifestVersion: number
+  permissions: string[]
+  hostPermissions: string[]
   /** `options_ui.page` or `options_page`, relative to the extension root. */
-  optionsPage?: string | null
-  /** Shown as a toolbar button; unpinned extensions live in the puzzle-piece menu. */
-  pinned?: boolean
-  allowFileAccess?: boolean
-  installedAt?: number
-  updatedAt?: number
-  updateState?: ExtensionUpdateState
+  optionsPage: string | null
+  /** The install prompt's warning lines Chrome would show for this manifest. */
+  warnings: string[]
+  /** Warning lines an update added; the extension stays disabled until they are approved. */
+  pendingWarnings: string[] | null
+  updateState: ExtensionUpdateState
   /** The version the last check offered, while `updateState` is `available` or `updating`. */
-  availableVersion?: string | null
+  availableVersion: string | null
   /** Why the last update check or install failed, while `updateState` is `error`. */
-  updateError?: string | null
+  updateError: string | null
   /** When this extension was last checked for updates, or null when never. */
-  updateCheckedAt?: number | null
-  /** Chrome's install-prompt warning strings ("Read and change all your data on all websites"). */
-  warnings?: string[]
-  /** Total size on disk in bytes, when the installer recorded it. */
-  sizeBytes?: number
+  updateCheckedAt: number | null
+  /** Extensions UI (W1-D): reconcile with the API-layer PR on rebase; absent until it lands. */
   action?: ExtensionAction
 }
 
 /**
- * A request main puts to the user before installing, updating or granting permissions. Mirrors
- * the store PR's `InstallConfirmation` plus the id the renderer answers with.
+ * A question main puts to the user through the chrome's dialog: the store service's
+ * `InstallConfirmation` plus the id the renderer answers with (`extension.confirmInstall` or
+ * `extension.respondPermissionRequest`).
  */
 export interface ExtensionPromptRequest {
   requestId: string
-  /** A fresh install, an update that added permissions, or a `permissions.request` at runtime. */
-  kind: 'install' | 'update' | 'permissions'
+  /**
+   * `install`: a fresh install or a reinstall; `update`: an update that added permissions;
+   * `permissions`: approving those before an updated extension is enabled again; `request`: a
+   * running extension's `permissions.request` (raised by the API layer once it lands).
+   */
+  kind: 'install' | 'update' | 'permissions' | 'request'
   name: string
   icon: string | null
   warnings: string[]
@@ -369,7 +380,6 @@ export interface ExtensionUpdateCheck {
   lastCheckedAt: number | null
   checking: boolean
 }
-// End of the provisional extensions block (more of it in Commands and Events below).
 
 export interface Mod {
   id: string
@@ -1002,8 +1012,8 @@ export interface UIState {
   zappingTabId: string | null
   liveFolders: Record<string, LiveFolderConfig>
   extensions: ExtensionInfo[]
-  /** Extensions UI (W1-D): reconcile with the store PR on rebase. */
-  extensionUpdates?: ExtensionUpdateCheck
+  /** The last update check across all extensions, for the management page's caption. */
+  extensionUpdates: ExtensionUpdateCheck
   mods: Mod[]
   sync: SyncStatus
   /** Connected AI agents (MCP sessions) and the tabs they drive. */
@@ -1383,8 +1393,21 @@ export interface Commands {
   'liveFolder.remove': { args: { folderId: string }; result: void }
 
   'extension.add': { args: void; result: void }
+  /** Picks a `.crx` or `.zip` file and installs it. */
+  'extension.installFromFile': { args: void; result: void }
+  /** Installs from the Chrome Web Store or Edge Add-ons by id or listing URL. */
+  'extension.installFromStore': {
+    args: { ref: string; store?: 'chrome-web-store' | 'edge-add-ons' }
+    result: void
+  }
   'extension.remove': { args: { id: string }; result: void }
   'extension.setEnabled': { args: { id: string; enabled: boolean }; result: void }
+  /** Pin to a version: left out of update checks. */
+  'extension.setPinned': { args: { id: string; pinned: boolean }; result: void }
+  'extension.reload': { args: { id: string }; result: void }
+  'extension.checkForUpdates': { args: void; result: void }
+  'extension.update': { args: { id: string }; result: void }
+  'extension.openOptions': { args: { id: string }; result: void }
   /**
    * Open the action popup (or fire `action.onClicked` when the extension has none). `bounds` are
    * the exact window-content coordinates for the popup view inside the frame the renderer draws,
@@ -1396,23 +1419,16 @@ export interface Commands {
     result: void
   }
   'extension.closePopup': { args: void; result: void }
-  // Extensions UI (W1-D): reconcile with the store/API PRs on rebase.
+  /** Move the open popup view to where the renderer's frame has settled, and show it. */
   'extension.resizePopup': { args: { bounds: Rect; visible: boolean }; result: void }
-  /** Installs from the Chrome Web Store or Edge Add-ons by id or listing URL (the store PR's shape). */
-  'extension.installFromStore': {
-    args: { ref: string; store?: 'chrome-web-store' | 'edge-add-ons' }
-    result: void
-  }
-  /** Picks a `.crx` or `.zip` file and installs it. */
-  'extension.installFromFile': { args: void; result: void }
+  /** Paths dropped on the management page: `.crx` / `.zip` packages or unpacked folders. */
   'extension.installFromDrop': { args: { paths: string[] }; result: void }
-  'extension.checkForUpdates': { args: void; result: void }
-  'extension.update': { args: { id: string }; result: void }
-  'extension.reload': { args: { id: string }; result: void }
-  'extension.openOptions': { args: { id: string }; result: void }
-  'extension.setPinned': { args: { id: string; pinned: boolean }; result: void }
+  /** Show as a toolbar button (or move back into the puzzle-piece panel). */
+  'extension.setToolbarPinned': { args: { id: string; pinned: boolean }; result: void }
   'extension.setAllowFileAccess': { args: { id: string; allow: boolean }; result: void }
+  /** The answer to an `extensionInstallRequest`. */
   'extension.confirmInstall': { args: { requestId: string; accept: boolean }; result: void }
+  /** The answer to an `extensionPermissionRequest`. */
   'extension.respondPermissionRequest': {
     args: { requestId: string; accept: boolean }
     result: void
@@ -1495,17 +1511,16 @@ export interface Events {
   'externalProtocol.cancel': { requestId: string }
   /** Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts). */
   insets: { top: number; right: number; bottom: number; left: number }
-  // Extensions UI (W1-D): reconcile with the store/API PRs on rebase.
   /** The popup's document asked for this size (CSS px); the renderer fits its frame around it. */
   'extension.popupSize': { id: string; width: number; height: number }
   /** Main closed the popup itself (blur, Escape inside it, a link opened a tab). */
   'extension.popupClosed': { id: string }
-  /** Ask before installing; the renderer answers with `extension.confirmInstall`. */
+  /** Ask before an install or update; the renderer answers with `extension.confirmInstall`. */
   extensionInstallRequest: ExtensionPromptRequest
-  /** `permissions.request` from a running extension; answered with `extension.respondPermissionRequest`. */
+  /** Ask before granting permissions; the renderer answers with `extension.respondPermissionRequest`. */
   extensionPermissionRequest: ExtensionPromptRequest
-  /** An install finished; the renderer toasts it with a Pin action while the extension is unpinned. */
-  'extension.installed': { id: string; name: string; pinned: boolean }
+  /** An install finished; the renderer toasts it with a Pin action while it is not in the toolbar. */
+  'extension.installed': { id: string; name: string; toolbarPinned: boolean }
 }
 
 export type EventName = keyof Events

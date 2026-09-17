@@ -87,37 +87,47 @@ export class NoExtensions implements ExtensionHost {
     return []
   }
 
-  async addFromDialog(win: ZenWindow): Promise<void> {
+  private unavailable(win?: ZenWindow): void {
     this.browser.toast('Extensions are not available on this device.', 'info', win)
   }
 
-  remove(): void {}
-  async setEnabled(): Promise<void> {}
-  openPopup(_id: string, _anchor: Rect, win: ZenWindow): void {
-    this.browser.toast('Extensions are not available on this device.', 'info', win)
+  async addFromDialog(win: ZenWindow): Promise<void> {
+    this.unavailable(win)
   }
-  closePopup(): void {}
-  flushSync(): void {}
-  resizePopup(): void {}
+
+  async installFromFileDialog(win: ZenWindow): Promise<void> {
+    this.unavailable(win)
+  }
+
+  async installFromStore(_ref: string, _store: unknown, win?: ZenWindow): Promise<void> {
+    this.unavailable(win)
+  }
+
+  async installFromDrop(_paths: string[], win: ZenWindow): Promise<void> {
+    this.unavailable(win)
+  }
+
+  async remove(): Promise<void> {}
+  async setEnabled(): Promise<void> {}
+  setPinned(): void {}
+  setToolbarPinned(): void {}
+  async setAllowFileAccess(): Promise<void> {}
+  async reload(): Promise<void> {}
+  async checkForUpdates(): Promise<void> {}
+  async update(): Promise<void> {}
   updateCheck(): ExtensionUpdateCheck {
     return { lastCheckedAt: null, checking: false }
   }
-  async installFromStore(_ref: string, win: ZenWindow): Promise<void> {
-    this.browser.toast('Extensions are not available on this device.', 'info', win)
+  openOptions(_id: string, win: ZenWindow): void {
+    this.unavailable(win)
   }
-  async installFromFile(win: ZenWindow): Promise<void> {
-    this.browser.toast('Extensions are not available on this device.', 'info', win)
+  openPopup(_id: string, _anchor: Rect, win: ZenWindow): void {
+    this.unavailable(win)
   }
-  async installFromDrop(_paths: string[], win: ZenWindow): Promise<void> {
-    this.browser.toast('Extensions are not available on this device.', 'info', win)
-  }
-  async checkForUpdates(): Promise<void> {}
-  async update(): Promise<void> {}
-  async reload(): Promise<void> {}
-  openOptions(): void {}
-  setPinned(): void {}
-  async setAllowFileAccess(): Promise<void> {}
+  resizePopup(): void {}
+  closePopup(): void {}
   respondPrompt(): void {}
+  flushSync(): void {}
 }
 
 const DEFAULT_SCOPE: SyncScope = {

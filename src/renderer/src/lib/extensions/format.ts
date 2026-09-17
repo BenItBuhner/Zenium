@@ -29,18 +29,3 @@ export function formatDate(timestamp: number, locale?: string): string {
     new Date(timestamp)
   )
 }
-
-/** "1.2 MB", "840 KB", "512 B". */
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return ''
-  if (bytes < 1024) return `${Math.round(bytes)} B`
-  const units = ['KB', 'MB', 'GB']
-  let value = bytes / 1024
-  let unit = 0
-  while (value >= 1000 && unit < units.length - 1) {
-    value /= 1024
-    unit++
-  }
-  const digits = value < 10 ? 1 : 0
-  return `${value.toFixed(digits)} ${units[unit]}`
-}

@@ -10,7 +10,7 @@ import {
 import type { ExtensionInfo, Rect } from '@shared/types'
 import { anchorOf } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
-import { formatBytes, formatDate } from '@renderer/lib/extensions/format'
+import { formatDate } from '@renderer/lib/extensions/format'
 import { sourceLabel, storePageUrl } from '@renderer/lib/extensions/storeInput'
 import { closeOverlay } from '@renderer/lib/ui'
 import { ExtensionIcon } from './ExtensionIcon'
@@ -34,7 +34,8 @@ export function ExtensionDetails({
   onBack: () => void
   onMenu: (anchor: Rect) => void
 }): JSX.Element {
-  const warnings = ext.warnings ?? []
+  const warnings = ext.warnings
+  const pending = ext.pendingWarnings ?? []
   const store = storePageUrl(ext.source, ext.id)
   return (
     <>
@@ -80,6 +81,12 @@ export function ExtensionDetails({
               warnings.map((warning) => <WarningRow key={warning} warning={warning} />)
             )}
           </div>
+          {pending.length > 0 && (
+            <p className="zen-v2-caption mt-3" data-tone="warn">
+              The last update added {pending.length === 1 ? 'a permission' : 'permissions'}; turn
+              the extension on to review {pending.length === 1 ? 'it' : 'them'}.
+            </p>
+          )}
         </V2Card>
 
         <V2Card title="Source" icon={Info}>
@@ -109,14 +116,12 @@ export function ExtensionDetails({
             <V2Row label="Version">
               <Value tabular>{ext.version}</Value>
             </V2Row>
-            {ext.installedAt !== undefined && (
-              <V2Row label="Installed">
-                <Value>{formatDate(ext.installedAt)}</Value>
-              </V2Row>
-            )}
-            {ext.sizeBytes !== undefined && ext.sizeBytes > 0 && (
-              <V2Row label="Size">
-                <Value tabular>{formatBytes(ext.sizeBytes)}</Value>
+            <V2Row label="Installed">
+              <Value>{formatDate(ext.installedAt)}</Value>
+            </V2Row>
+            {ext.updatedAt > ext.installedAt && (
+              <V2Row label="Updated">
+                <Value>{formatDate(ext.updatedAt)}</Value>
               </V2Row>
             )}
           </div>

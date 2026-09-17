@@ -21,7 +21,24 @@ const ext = (over: Partial<ExtensionInfo>): ExtensionInfo => ({
   icon: 'data:manifest',
   popup: 'popup.html',
   error: null,
-  pinned: true,
+  source: 'unpacked',
+  publisher: null,
+  updateUrl: null,
+  installedAt: 0,
+  updatedAt: 0,
+  pinned: false,
+  toolbarPinned: true,
+  allowFileAccess: false,
+  manifestVersion: 3,
+  permissions: [],
+  hostPermissions: [],
+  optionsPage: null,
+  warnings: [],
+  pendingWarnings: null,
+  updateState: 'unknown',
+  availableVersion: null,
+  updateError: null,
+  updateCheckedAt: null,
   ...over
 })
 
@@ -93,7 +110,7 @@ describe('action selectors', () => {
   })
 
   it('pinnedActions keeps list order and unpinned ones out', () => {
-    const list = [ext({ id: '1', pinned: false }), ext({ id: '2' }), ext({ id: '3' })]
+    const list = [ext({ id: '1', toolbarPinned: false }), ext({ id: '2' }), ext({ id: '3' })]
     expect(pinnedActions(list).map((e) => e.id)).toEqual(['2', '3'])
   })
 
