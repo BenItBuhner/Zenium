@@ -241,6 +241,12 @@ tap_label() {
   fi
   # shellcheck disable=SC2086
   set -- $pos
+  # A control the tree places under the portrait navigation bar cannot be tapped: the system
+  # bar takes the touch (a menu item there sent the app home in run 3). The caller may scroll.
+  if [ "${guard_navbar:-0}" = 1 ] && [ "$2" -ge $((H - NAV)) ] && [ "$6" -le $((H + 1)) ]; then
+    log "'$needle' sits under the system navigation bar (y=$2, bar from $((H - NAV))); not tapping"
+    return 1
+  fi
   log "tap '$needle' at $1,$2"
   tap "$1" "$2"
 }
@@ -373,8 +379,15 @@ ctx_menu_in() {
 navigate() {
   local url=$1 name=$2
   ensure_app "navigate $name"
-  tap_pill
-  sleep 1.5
+  # An omnibox left open (its engine chip is in the tree) would be closed by a tap on the pill's
+  # spot, which is scrim by then; its text is selected, so typing replaces it.
+  if has_label prefix 'Search engine:'; then
+    log "omnibox already open; typing into it"
+    adb shell input keycombination 113 29 > /dev/null 2>&1 || true
+  else
+    tap_pill
+    sleep 1.5
+  fi
   shot "$name-omnibox-open"
   if ! has_label exact 'Address' && [ -z "$(adb shell dumpsys input_method | grep -o 'mInputShown=true')" ]; then
     log "omnibox did not open on the first tap; tapping the pill again"
@@ -423,17 +436,21 @@ recover() {
 
 # Pick an item in the three-dot menu (scrolling the sheet when the item is below the fold).
 menu_pick() {
-  local item=$1 name=$2
+  local item=$1 name=$2 mode=${menu_pick_mode:-exact}
   ensure_app "menu $name"
   if ! menu_open; then
     tap_menu
     sleep 1.5
   fi
-  if ! tap_label exact "$item"; then
+  if ! guard_navbar=1 tap_label "$mode" "$item"; then
     swipe $((W / 2)) $((H - 300)) $((W / 2)) $((H - 900)) 400
     sleep 1
-    if ! tap_label exact "$item"; then
-      finding "menu item '$item' not reachable"
+    if ! guard_navbar=1 tap_label "$mode" "$item"; then
+      if find_in "$(dump "menu-$name")" "$mode" "$item" > /dev/null 2>&1; then
+        finding "menu item '$item' stays under the system navigation bar even with the sheet scrolled to its end (unreachable by touch)"
+      else
+        finding "menu item '$item' not reachable"
+      fi
       shot "menu-missing-${name}"
       close_menu
       return 1
@@ -974,27 +991,20 @@ sleep 0.25; shot "05-menu-scrim-dismiss-350ms"
 sleep 1; shot "05-menu-dismissed"
 log "after scrim tap: menu open=$(menu_open && echo yes || echo no)"
 
-for entry in \
-  'New Tab|newtab' 'New Space…|newspace' 'Bookmarks|bookmarks' 'History|history' 'Downloads|downloads' \
-  'Add-ons and Themes|addons' 'Compact Mode|compact' 'Change Theme…|theme' \
-  'Find in Page…|find' 'Reader View|reader' 'Print…|print' 'Save Page As…|savepage' \
-  'Take Screenshot|screenshot' 'Keyboard Shortcuts|shortcuts' 'About Zen|about' 'Fullscreen|fullscreen'; do
+# Opens each 'Label|name' menu item in turn, records what it did and returns to the page. The
+# items that leave the app's own windows (Reader View, Print, Fullscreen) run last in the walk:
+# in run 3 the print dialog left the chrome deaf to touch for the rest of the run.
+walk_menu_items() {
+local entry item name xml
+for entry in "$@"; do
   item=${entry%%|*}; name=${entry##*|}
   if [ "$name" = about ]; then
     menu_pick_mode=prefix
   else
     menu_pick_mode=exact
   fi
-  if [ "$menu_pick_mode" = prefix ]; then
-    ensure_app "menu $name"
-    if ! menu_open; then tap_menu; sleep 1.5; fi
-    if ! tap_label prefix "$item"; then
-      swipe $((W / 2)) $((H - 300)) $((W / 2)) $((H - 900)) 400; sleep 1
-      tap_label prefix "$item" || { finding "menu item '$item' not reachable"; close_menu; continue; }
-    fi
-  else
-    menu_pick "$item" "$name" || continue
-  fi
+  menu_pick "$item" "$name" || continue
+  menu_pick_mode=exact
   sleep 0.3; shot "05-$name-300ms"
   sleep 2; shot "05-$name-settled"
   xml=$(dump "05-$name") || true
@@ -1035,6 +1045,41 @@ for entry in \
       key KEYCODE_BACK
       sleep 2; shot "05-$name-after-back"
       ensure_app "$name"
+      # Run 3: after the print dialog the bar, pill and menu no longer reacted to touch.
+      tap_menu
+      sleep 1.5
+      shot "05-$name-menu-after"
+      if menu_open; then
+        log "the chrome still responds after $name"
+        close_menu
+      else
+        finding "after the $name dialog the chrome no longer responds to touch (menu button dead; only a restart recovers)"
+        # What is on top of the app and where does input go? (The a11y tree still listed the bar.)
+        adb shell dumpsys window windows > "$out/dumpsys-window-after-$name.txt" 2> /dev/null || true
+        adb shell dumpsys input > "$out/dumpsys-input-after-$name.txt" 2> /dev/null || true
+        adb shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp|mTopIsFullscreen|imeInputTarget' \
+          > "$out/dumpsys-focus-after-$name.txt" 2> /dev/null || true
+        log "focus after $name: $(tr '\n' ' ' < "$out/dumpsys-focus-after-$name.txt" | tr -s ' ' | cut -c1-300)"
+        # Does the page WebView still take touches? Scroll it and compare screenshots.
+        shot "05-$name-page-before-scroll"
+        swipe $((W / 2)) $((H / 2 + 200)) $((W / 2)) $((H / 2 - 200)) 300
+        sleep 1.5
+        shot "05-$name-page-after-scroll"
+        # Does a second back, or a tap on the page, revive the chrome?
+        key KEYCODE_BACK; sleep 1.5
+        ensure_app "$name"
+        tap_menu; sleep 1.5
+        if menu_open; then
+          log "a second back revived the chrome after $name"
+          close_menu
+          continue
+        fi
+        adb shell am force-stop "$app_id"
+        sleep 1
+        adb shell am start -n "$activity" > /dev/null 2>&1 || true
+        sleep 6
+        shot "05-$name-after-restart"
+      fi
       continue
       ;;
     screenshot)
@@ -1064,6 +1109,13 @@ for entry in \
   esac
   recover "$name"
 done
+}
+
+walk_menu_items \
+  'New Tab|newtab' 'New Space…|newspace' 'Bookmarks|bookmarks' 'History|history' 'Downloads|downloads' \
+  'Add-ons and Themes|addons' 'Compact Mode|compact' 'Change Theme…|theme' \
+  'Find in Page…|find' 'Save Page As…|savepage' 'Take Screenshot|screenshot' \
+  'Keyboard Shortcuts|shortcuts' 'About Zen|about'
 
 # ==============================================================================================
 # 6. Settings: every section, theme toggles, phone layout
@@ -1490,7 +1542,15 @@ key KEYCODE_BACK; sleep 1.2
 key KEYCODE_BACK; sleep 1.2
 shot "16-final"
 log "final tabs: $(tabs_count) top=$(top_activity)"
+
+# The menu items that hand over to other windows, on a real article so Reader View is enabled.
+step "16b menu items that leave the app"
+navigate "https://en.wikipedia.org/wiki/Android_(operating_system)" "16-wikipedia"
+sleep 12; shot "16-wikipedia-loaded"
+walk_menu_items 'Reader View|reader' 'Print…|print' 'Fullscreen|fullscreen'
+
 # Last: what does the menu's Quit do on a phone (Chrome has no such item)?
+ensure_app quit
 if menu_pick 'Quit' quit; then
   sleep 0.5; shot "16-after-quit-500ms"
   sleep 2; shot "16-after-quit"
