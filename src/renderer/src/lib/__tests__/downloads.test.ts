@@ -59,7 +59,13 @@ describe('downloads chrome state', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     dismissDownloadBubble()
-    downloadsUi.set({ unseen: [], pulse: 0, lingerUntil: 0, highlightId: null })
+    downloadsUi.set({
+      unseen: [],
+      pulse: 0,
+      lingerUntil: 0,
+      highlightId: null,
+      sessionHadDownload: false
+    })
     uiStore.set({ overlay: 'none', downloadsOpen: false })
     browserStore.set({ state: state([]) })
   })
@@ -75,6 +81,7 @@ describe('downloads chrome state', () => {
     expect(downloadButtonVisible(state([]), { ...ui, unseen: ['a'] })).toBe(true)
     expect(downloadButtonVisible(state([]), { ...ui, lingerUntil: 5 })).toBe(true)
     expect(downloadButtonVisible(state([]), { ...ui, open: true })).toBe(true)
+    expect(downloadButtonVisible(state([]), { ...ui, sessionHadDownload: true })).toBe(true)
     expect(downloadButtonVisible(state([], { settings: { alwaysShowButton: true } }), ui)).toBe(
       true
     )
@@ -86,6 +93,26 @@ describe('downloads chrome state', () => {
     expect(downloadsUi.get().pulse).toBe(1)
     expect(downloadsUi.get().lingerUntil).toBe(0)
     expect(downloadsUi.get().open).toBe(false)
+  })
+
+  it('keeps the button for the rest of the session once a download has happened', async () => {
+    const running = item({ id: 'a', state: 'progressing', receivedBytes: 1 })
+    handleDownloadChange(change('started', running), state([running]))
+    const done = item({ id: 'a' })
+    const s = state([done], { settings: { openPanelOnComplete: false } })
+    handleDownloadChange(change('done', done), s)
+    await flush()
+    // Seen, closed, linger over: the button is still there, as Chrome's is.
+    void openDownloadBubble()
+    await flush()
+    dismissDownloadBubble()
+    vi.advanceTimersByTime(DOWNLOAD_LINGER_MS + 1)
+    const ui = downloadsUi.get()
+    expect(ui.unseen).toEqual([])
+    expect(ui.lingerUntil).toBe(0)
+    expect(downloadButtonVisible(s, ui)).toBe(true)
+    // The list at startup does not count: nothing happened in this session yet.
+    expect(downloadButtonVisible(s, { ...ui, sessionHadDownload: false })).toBe(false)
   })
 
   it('the last completion auto-opens the partial bubble, which closes after five seconds', async () => {

@@ -41,6 +41,8 @@ export interface DownloadsUi {
   pulse: number
   /** The button stays until this time after the last transfer finished (0: no hold). */
   lingerUntil: number
+  /** A download happened while this window was up: the button stays for the session (Chrome). */
+  sessionHadDownload: boolean
 }
 
 export const downloadsUi = createStore<DownloadsUi>(
@@ -52,7 +54,8 @@ export const downloadsUi = createStore<DownloadsUi>(
     highlightId: null,
     unseen: [],
     pulse: 0,
-    lingerUntil: 0
+    lingerUntil: 0,
+    sessionHadDownload: false
   },
   'downloads-ui'
 )
@@ -156,11 +159,11 @@ export function revealDownload(id: string | null): void {
 }
 
 /**
- * One `download.changed` event. A start makes the button appear and pulse (and opens the bubble
- * when Settings ask for the Firefox behaviour). Finished items count on the badge while the
- * bubble is closed; when nothing is left in flight the button lingers for five seconds and, if
- * Settings say so and this window has focus, the partial bubble opens with the items that
- * finished since the user last looked (Chrome 112+).
+ * One `download.changed` event. A start makes the button appear for the rest of the session and
+ * pulse (and opens the bubble when Settings ask for the Firefox behaviour). Finished items count
+ * on the badge while the bubble is closed; when nothing is left in flight the button lingers
+ * for five seconds and, if Settings say so and this window has focus, the partial bubble opens
+ * with the items that finished since the user last looked (Chrome 112+).
  */
 export function handleDownloadChange(change: DownloadChange, state: UIState): void {
   const { item, kind } = change
@@ -168,6 +171,7 @@ export function handleDownloadChange(change: DownloadChange, state: UIState): vo
   const desktop = !isPhone()
   const focused = state.window.focused
   const clear = (): boolean => uiStore.get().overlay === 'none' && !bubbleIsOpen()
+  if (kind === 'started' || kind === 'done') downloadsUi.set({ sessionHadDownload: true })
   switch (kind) {
     case 'started':
       holdButton(0)
@@ -219,10 +223,14 @@ function holdButton(until: number): void {
   )
 }
 
-/** Whether the toolbar shows the downloads button right now. */
+/**
+ * Whether the toolbar shows the downloads button right now: from the first download of the
+ * session on (Chrome), while anything is in flight or unseen, or always when Settings keep it.
+ */
 export function downloadButtonVisible(state: UIState, ui: DownloadsUi): boolean {
   return (
     state.settings.downloads.alwaysShowButton ||
+    ui.sessionHadDownload ||
     state.downloads.some(isActiveDownload) ||
     ui.open ||
     ui.unseen.length > 0 ||
