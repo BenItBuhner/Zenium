@@ -99,7 +99,9 @@
   --zen-shadow-2:
     0 2px 4px rgb(0 0 0 / 0.24), 0 18px 44px rgb(0 0 0 / 0.5),
     inset 0 0 0 1px rgb(255 255 255 / 0.06);
-  --zen-shadow: 0 18px 50px rgb(0 0 0 / 0.55), 0 2px 8px rgb(0 0 0 / 0.35);
+  --zen-shadow:
+    0 18px 50px rgb(0 0 0 / 0.55), 0 2px 8px rgb(0 0 0 / 0.35),
+    inset 0 0 0 1px rgb(255 255 255 / 0.08);
 }
 
 /* Zen clamps its primary colour's lightness before using it as ink or a fill; so does the chrome. */
@@ -189,6 +191,7 @@
   .zen-omnibox-sheet,
   .zen-toolbar-button,
   .zen-kbd,
+  .zen-select-content,
   .zen-suggestion {
     corner-shape: var(--zen-corner);
   }
@@ -344,10 +347,10 @@
     filter: grayscale(0.5);
   }
 
+  /* Level 3: tint, blur and shadow only; in dark the shadow carries the inner light hairline. */
   .zen-panel {
     background: var(--zen-panel-bg);
     backdrop-filter: var(--zen-blur-panel);
-    border: 1px solid rgb(var(--zen-fg-rgb) / 0.1);
     border-radius: 16px;
     box-shadow: var(--zen-shadow);
   }
@@ -480,7 +483,407 @@
     font-size: 11px;
     font-family: var(--font-sans);
     background: var(--zen-element-bg);
-    border: 1px solid var(--zen-border);
+  }
+}
+
+@layer components {
+  /*
+   * Overlay panels (Settings, Add-ons, History, Bookmarks, Downloads). The header is 44 tall on
+   * desktop and 56 on phones with the title at the left and one trailing icon button; nothing
+   * underlines it. A `full` panel is the content frame itself, the way Zen's preferences are a
+   * page in the content area – the frame's own corner and hairline are the only edge it has.
+   */
+  .zen-overlay-header {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+    height: 44px;
+    padding: 0 8px 0 16px;
+  }
+  .zen-overlay-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+  }
+  .zen-overlay-fill {
+    border-radius: 0;
+    box-shadow: none;
+  }
+  /* What shows through a panel: the page it opened over, under the space's own scrim. */
+  .zen-overlay-scrim {
+    background: var(--zen-scrim);
+  }
+
+  /*
+   * Quiet controls (design-language.md §8.3, §8.5, §8.6): a fill of the ink, never a border.
+   * The focus ring is the one hairline, 2px out – on an 8px control that puts it at 12.
+   */
+  .zen-input,
+  .zen-select-trigger,
+  .zen-button {
+    height: 28px;
+    border-radius: 8px;
+    background: var(--zen-element-bg);
+    color: var(--zen-fg);
+    font-size: 13px;
+    outline: none;
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease),
+      opacity 120ms var(--zen-ease);
+  }
+  .zen-input:focus-visible,
+  .zen-select-trigger:focus-visible,
+  .zen-button:focus-visible,
+  .zen-switch:focus-visible,
+  .zen-segment:focus-visible,
+  .zen-kbd-button:focus-visible {
+    outline: 2px solid var(--zen-accent);
+    outline-offset: 2px;
+  }
+  .zen-input:disabled,
+  .zen-select-trigger:disabled,
+  .zen-switch:disabled {
+    opacity: 0.4;
+  }
+  .zen-input::selection,
+  .zen-input *::selection {
+    background: rgb(var(--zen-accent-rgb) / 0.3);
+  }
+
+  .zen-input {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    padding: 0 10px;
+  }
+  .zen-input::placeholder {
+    color: var(--zen-faint);
+  }
+  /* Numbers are typed or nudged with the arrow keys; the spinner is a form-control idiom. */
+  .zen-input[type='number'] {
+    appearance: textfield;
+    font-variant-numeric: tabular-nums;
+  }
+  .zen-input[type='number']::-webkit-inner-spin-button,
+  .zen-input[type='number']::-webkit-outer-spin-button {
+    appearance: none;
+    margin: 0;
+  }
+
+  .zen-select-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 160px;
+    max-width: 100%;
+    padding: 0 8px 0 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    text-align: left;
+  }
+  .zen-select-trigger:hover:not(:disabled),
+  .zen-select-trigger[data-state='open'] {
+    background: var(--zen-element-bg-hover);
+  }
+  .zen-select-trigger:active:not(:disabled) {
+    background: var(--zen-element-bg-active);
+    transform: scale(0.98);
+  }
+  .zen-select-value {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .zen-select-icon {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    opacity: 0.6;
+  }
+  /* The menu: a level-3 panel at the menu radius; rows are concentric with its padding. */
+  .zen-select-content {
+    padding: 6px;
+    border-radius: 12px;
+    font-size: 12.5px;
+  }
+  .zen-select-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 28px;
+    padding: 0 8px 0 10px;
+    border-radius: 6px;
+    outline: none;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .zen-select-item[data-highlighted] {
+    background: var(--zen-element-bg-hover);
+  }
+  .zen-select-item[data-disabled] {
+    opacity: 0.4;
+  }
+  .zen-select-item[data-state='checked'] {
+    font-weight: 500;
+  }
+  .zen-select-check {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    margin-left: auto;
+    color: var(--zen-accent-ink);
+  }
+
+  /* Toggle: 44×26 track, 22 thumb; the thumb is moved from JS on SPRING_SNAPPY (ui/switch.tsx). */
+  .zen-switch {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+    width: 44px;
+    height: 26px;
+    border-radius: 9999px;
+    background: rgb(var(--zen-fg-rgb) / 0.16);
+    outline: none;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-switch[data-state='checked'] {
+    background: var(--zen-accent-fill);
+  }
+  .zen-switch-thumb {
+    position: absolute;
+    top: 2px;
+    left: 0;
+    display: block;
+    width: 22px;
+    height: 22px;
+    border-radius: 9999px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+    transform: translateX(2px);
+  }
+
+  /* Buttons: default is the ink fill at 500; the one primary per view is the accent fill at 600. */
+  .zen-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 16px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .zen-button:hover:not(:disabled) {
+    background: var(--zen-element-bg-hover);
+  }
+  .zen-button:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+  .zen-button:disabled {
+    opacity: 0.4;
+    pointer-events: none;
+  }
+  .zen-button svg {
+    flex-shrink: 0;
+    pointer-events: none;
+  }
+  .zen-button[data-variant='primary'] {
+    background: var(--zen-accent-fill);
+    color: var(--zen-on-accent);
+    font-weight: 600;
+  }
+  .zen-button[data-variant='primary']:hover:not(:disabled) {
+    background: var(--zen-accent-fill);
+    filter: brightness(1.08);
+  }
+  .zen-button[data-variant='ghost'] {
+    background: transparent;
+  }
+  .zen-button[data-variant='ghost']:hover:not(:disabled) {
+    background: var(--zen-element-bg);
+  }
+  .zen-button[data-variant='danger'] {
+    color: var(--zen-danger);
+  }
+  .zen-button[data-size='sm'] {
+    height: 28px;
+    padding: 0 12px;
+    font-size: 12.5px;
+  }
+  .zen-button[data-size='lg'] {
+    height: 40px;
+    padding: 0 20px;
+    font-size: 14px;
+  }
+  .zen-button[data-size='icon'] {
+    width: 32px;
+    padding: 0;
+    border-radius: 9999px;
+  }
+
+  /*
+   * Settings (design-language.md §8.2). Rows sit directly on the panel; a group is a sentence-case
+   * heading and 16px of air, never a card or a rule, so the controls are the one tinted level
+   * inside the panel. `--zen-row-radius` is 6 on desktop and 10 on phones.
+   */
+  .zen-settings {
+    --zen-row-radius: 6px;
+  }
+  .zen-settings-body {
+    display: flex;
+    height: 100%;
+  }
+  .zen-settings-nav {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    gap: 1px;
+    width: 200px;
+    overflow-y: auto;
+    padding: 4px 8px 12px 12px;
+  }
+  .zen-settings-nav-item {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: 8px;
+    color: var(--zen-fg);
+    font-size: 13px;
+    text-align: left;
+    white-space: nowrap;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-settings-nav-item:hover {
+    background: var(--zen-element-bg);
+  }
+  .zen-settings-nav-item[data-active='true'] {
+    background: var(--zen-element-bg-active);
+    box-shadow: inset 0 0 0 1px rgb(var(--zen-fg-rgb) / 0.05);
+    font-weight: 500;
+  }
+  .zen-settings-content {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    padding: 4px 24px 24px;
+  }
+  .zen-settings-page {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    max-width: 672px;
+    margin: 0 auto;
+    container-type: inline-size;
+  }
+  .zen-settings-heading {
+    margin: 0 0 2px;
+    padding: 0 10px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.006em;
+    line-height: 1.25;
+  }
+  .zen-settings-rows {
+    display: flex;
+    flex-direction: column;
+  }
+  .zen-settings-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-height: 36px;
+    padding: 4px 10px;
+    border-radius: var(--zen-row-radius);
+    transition: background 120ms var(--zen-ease);
+  }
+  /* A toggle row is one hit area: the label toggles, and the row shows it the way a menu row does. */
+  @media (hover: hover) {
+    .zen-settings-row[data-control='switch']:hover {
+      background: var(--zen-element-bg);
+    }
+  }
+  .zen-settings-row[data-control='switch']:active {
+    background: var(--zen-element-bg-hover);
+  }
+  .zen-settings-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .zen-settings-label {
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  .zen-settings-hint {
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--zen-muted);
+  }
+  .zen-settings-control {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+    max-width: 60%;
+  }
+  .zen-settings-note {
+    padding: 16px 10px;
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--zen-muted);
+  }
+  /* A page's lead: heading and description at the left, its one action at the right. */
+  .zen-settings-lead {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 0 10px;
+  }
+  .zen-settings-lead > :last-child {
+    flex-shrink: 0;
+  }
+  /* Addresses, headers and versions mentioned inline are values, not code: sans, tabular. */
+  .zen-settings code:not(pre code) {
+    font-family: var(--font-sans);
+    font-variant-numeric: tabular-nums;
+  }
+  /* A status tint: ink plus at most 16% of its colour, never a filled surface. */
+  .zen-settings-warn {
+    color: var(--zen-warn);
+    background: rgb(var(--zen-warn-rgb) / 0.14);
+  }
+  /* A shortcut's binding: the kbd look grown into a 28 control. */
+  .zen-kbd-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    min-width: 110px;
+    padding: 0 10px;
+    border-radius: 8px;
+    background: var(--zen-element-bg);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-kbd-button:hover {
+    background: var(--zen-element-bg-hover);
+  }
+  .zen-kbd-button[data-editing='true'] {
+    outline: 2px solid var(--zen-accent);
+    outline-offset: 2px;
   }
 }
 
@@ -1092,26 +1495,182 @@
 :root[data-form-factor='phone'] .zen-space-strip {
   transition-duration: 260ms;
 }
-/* Settings on a phone: the section list becomes a row of chips above the content. */
-:root[data-form-factor='phone'] .zen-settings > div > div {
+/*
+ * Touch-sized controls (§8.11): inputs and selects 40 tall at radius 10, menu rows 44 at 10 in a
+ * 16 panel, buttons 44 at 12 inside Settings; every radius from 10 up is a squircle.
+ */
+:root[data-pointer='coarse'] .zen-input,
+:root[data-pointer='coarse'] .zen-select-trigger {
+  height: 40px;
+  border-radius: 10px;
+  font-size: 14px;
+  corner-shape: var(--zen-corner);
+}
+:root[data-pointer='coarse'] .zen-input {
+  padding: 0 12px;
+}
+:root[data-pointer='coarse'] .zen-select-trigger {
+  padding: 0 10px 0 14px;
+}
+:root[data-pointer='coarse'] .zen-select-content {
+  border-radius: 16px;
+  font-size: 14px;
+  corner-shape: var(--zen-corner);
+}
+:root[data-pointer='coarse'] .zen-select-item {
+  height: 44px;
+  padding: 0 12px 0 14px;
+  border-radius: 10px;
+  corner-shape: var(--zen-corner);
+}
+:root[data-pointer='coarse'] .zen-select-check {
+  width: 16px;
+  height: 16px;
+}
+:root[data-pointer='coarse'] .zen-settings .zen-button,
+:root[data-pointer='coarse'] .zen-settings .zen-kbd-button {
+  height: 44px;
+  padding: 0 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  corner-shape: var(--zen-corner);
+}
+:root[data-pointer='coarse'] .zen-settings .zen-button[data-size='icon'] {
+  width: 44px;
+  padding: 0;
+  border-radius: 9999px;
+}
+/* Overlay headers on phones: 56 tall, 17 title, a 44 pill for the close button. */
+:root[data-form-factor='phone'] .zen-overlay-header {
+  height: 56px;
+  padding: 0 6px 0 16px;
+}
+:root[data-form-factor='phone'] .zen-overlay-title {
+  font-size: 17px;
+}
+:root[data-form-factor='phone'] .zen-overlay-header .zen-toolbar-button {
+  width: 44px;
+  height: 44px;
+  border-radius: 9999px;
+}
+:root[data-form-factor='phone'] .zen-overlay-header .zen-toolbar-button svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.75;
+}
+/*
+ * Touch rows (§8.11): 48 tall at a 10 squircle with type one step larger, on phones and on any
+ * coarse pointer – a tablet keeps the desktop layout but gets the touch metrics.
+ */
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-settings {
+  --zen-row-radius: 10px;
+}
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-settings-heading {
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-settings-row {
+  gap: 12px;
+  min-height: 48px;
+  padding: 6px 12px;
+  corner-shape: var(--zen-corner);
+}
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-settings-label {
+  font-size: 14px;
+}
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-settings-hint {
+  font-size: 12px;
+}
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-settings-note {
+  font-size: 13px;
+}
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-settings-nav-item {
+  height: 36px;
+}
+/*
+ * Settings on a phone: the section list is a strip of chips over the content (§8.4), and a row
+ * whose control is a field or a select stacks it under the label (the container query below).
+ */
+:root[data-form-factor='phone'] .zen-settings-body {
   flex-direction: column;
 }
-:root[data-form-factor='phone'] .zen-settings nav {
-  display: flex;
+:root[data-form-factor='phone'] .zen-settings-nav {
+  flex-direction: row;
+  gap: 6px;
   width: auto;
-  gap: 4px;
   overflow-x: auto;
-  border-right: 0;
-  border-bottom: 1px solid var(--zen-border);
+  overflow-y: hidden;
+  padding: 2px 12px 10px;
+  scroll-snap-type: x proximity;
   scrollbar-width: none;
 }
-:root[data-form-factor='phone'] .zen-settings nav > button {
-  width: auto;
-  flex-shrink: 0;
-  white-space: nowrap;
+:root[data-form-factor='phone'] .zen-settings-nav::-webkit-scrollbar {
+  display: none;
 }
-:root[data-form-factor='phone'] .zen-settings nav + div {
-  padding: 12px;
+:root[data-form-factor='phone'] .zen-settings-nav-item {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 9999px;
+  background: var(--zen-element-bg);
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 500;
+  scroll-snap-align: start;
+}
+:root[data-form-factor='phone'] .zen-settings-nav-item[data-active='true'] {
+  background: rgb(var(--zen-accent-rgb) / 0.16);
+  color: var(--zen-fg);
+}
+:root[data-form-factor='phone'] .zen-settings-content {
+  padding: 4px 12px 12px;
+}
+:root[data-form-factor='phone'] .zen-settings-heading {
+  padding: 0 12px;
+}
+/* Inside a lead the block itself carries the gutter; its heading lines up with its description. */
+.zen-settings .zen-settings-lead .zen-settings-heading {
+  padding: 0;
+}
+:root[data-pointer='coarse'] .zen-settings .zen-segment {
+  height: 40px;
+  font-size: 14px;
+}
+/*
+ * A narrow settings column (a phone, a slim window): a field, a select or a three-way pill
+ * stacks under its label so neither starves the other for width.
+ */
+@container (max-width: 520px) {
+  .zen-settings-row[data-stack] {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding-bottom: 10px;
+  }
+  .zen-settings-lead {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 0 12px;
+  }
+  .zen-settings-lead > :last-child {
+    align-self: flex-start;
+  }
+  .zen-settings-row[data-stack] .zen-settings-control {
+    max-width: none;
+  }
+  .zen-settings-row[data-stack] .zen-select-trigger,
+  .zen-settings-row[data-stack] .zen-input,
+  .zen-settings-row[data-stack] .zen-segmented {
+    width: 100%;
+    max-width: none;
+  }
+  .zen-settings-row[data-stack] .zen-segment {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

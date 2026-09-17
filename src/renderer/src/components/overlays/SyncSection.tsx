@@ -8,6 +8,7 @@ import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { Switch } from '../ui/switch'
+import { Group, Row } from './SettingsPrimitives'
 
 const SCOPE_LABELS: Array<{ key: keyof SyncScope; label: string; hint?: string }> = [
   { key: 'spaces', label: 'Spaces', hint: 'Names, icons, themes and order' },
@@ -31,9 +32,9 @@ export function SyncSection({ state }: { state: UIState }): JSX.Element {
   const sync = state.sync
   return (
     <>
-      <section>
-        <h3 className="mb-1 text-[15px] font-semibold">Sync</h3>
-        <p className="text-[12.5px] text-[var(--zen-muted)]">
+      <section className="px-2.5">
+        <h3 className="zen-settings-heading px-0">Sync</h3>
+        <p className="zen-settings-hint">
           Keep your Spaces, folders, pinned tabs, Essentials and settings the same on every
           computer. Pick a folder that is already synced between your devices (Dropbox, iCloud
           Drive, Google Drive, OneDrive, Nextcloud, Syncthing…) and a passphrase. Everything is
@@ -54,11 +55,11 @@ function Setup({ state }: { state: UIState }): JSX.Element {
   const mismatch = confirm.length > 0 && confirm !== passphrase
   const ready = Boolean(folder) && passphrase.length >= 8 && confirm === passphrase && !busy
   return (
-    <div className="zen-squircle flex flex-col gap-4 rounded-xl border border-[var(--zen-border)] p-4">
+    <div className="flex flex-col gap-4 px-2.5">
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
           <Label>Sync folder</Label>
-          <div className="truncate text-[12px] text-[var(--zen-muted)]">
+          <div className="zen-settings-hint truncate">
             {folder ?? 'Choose a folder that your cloud drive keeps in sync'}
           </div>
         </div>
@@ -67,7 +68,7 @@ function Setup({ state }: { state: UIState }): JSX.Element {
           size="sm"
           onClick={() => void cmd('sync.chooseFolder', undefined).then((f) => f && setFolder(f))}
         >
-          <FolderOpen className="mr-1.5 h-3.5 w-3.5" /> Choose…
+          <FolderOpen className="h-3.5 w-3.5" /> Choose…
         </Button>
       </div>
       <div className="grid grid-cols-2 gap-3">
@@ -90,11 +91,14 @@ function Setup({ state }: { state: UIState }): JSX.Element {
             autoComplete="new-password"
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
-            className={mismatch ? 'ring-1 ring-red-500' : undefined}
+            aria-invalid={mismatch || undefined}
+            className={
+              mismatch ? 'outline-2 outline-offset-2 outline-[var(--zen-danger)]' : undefined
+            }
           />
         </div>
       </div>
-      <p className="text-[11.5px] text-[var(--zen-muted)]">
+      <p className="zen-settings-hint">
         Use the same passphrase on every device. It is never stored in the folder and cannot be
         recovered – without it the synced data is unreadable.
       </p>
@@ -133,9 +137,11 @@ function Connected({ state }: { state: UIState }): JSX.Element {
   return (
     <>
       {sync.pendingMerge && (
-        <div className="zen-squircle flex flex-col gap-3 rounded-xl border border-[var(--zen-accent)]/50 bg-[var(--zen-accent)]/10 p-4">
-          <div className="text-[13.5px] font-medium">This folder already contains synced data</div>
-          <p className="text-[12.5px] text-[var(--zen-muted)]">
+        <div className="zen-squircle flex flex-col gap-3 rounded-[12px] bg-[rgb(var(--zen-accent-rgb)/0.16)] p-4">
+          <div className="zen-settings-label font-medium">
+            This folder already contains synced data
+          </div>
+          <p className="zen-settings-hint">
             Merge it with the Spaces on this device, or keep only this device&apos;s data and
             replace what the other devices have.
           </p>
@@ -153,22 +159,19 @@ function Connected({ state }: { state: UIState }): JSX.Element {
           </div>
         </div>
       )}
-      <section className="zen-squircle overflow-hidden rounded-xl border border-[var(--zen-border)]">
-        <div className="flex items-center gap-3 border-b border-[var(--zen-border)] px-4 py-3">
-          <div className="min-w-0 flex-1">
-            <div className="text-[13px]">
+      <Group title="This device">
+        <div className="zen-settings-row">
+          <div className="zen-settings-text">
+            <div className="zen-settings-label">
               {sync.syncing
                 ? 'Syncing…'
                 : sync.lastSyncAt
                   ? `Last synced ${relativeTime(sync.lastSyncAt)}`
                   : 'Waiting for first sync'}
             </div>
-            <div
-              className="truncate text-[11.5px] text-[var(--zen-muted)]"
-              title={sync.folder ?? ''}
-            >
+            <div className="zen-settings-hint truncate" title={sync.folder ?? ''}>
               {sync.lastError ? (
-                <span className="text-red-500">{sync.lastError}</span>
+                <span className="text-[var(--zen-danger)]">{sync.lastError}</span>
               ) : (
                 sync.folder
               )}
@@ -180,17 +183,12 @@ function Connected({ state }: { state: UIState }): JSX.Element {
             disabled={sync.syncing || sync.pendingMerge}
             onClick={() => run('sync.now', undefined)}
           >
-            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${sync.syncing ? 'zen-spin' : ''}`} /> Sync
-            now
+            <RefreshCw className={`h-3.5 w-3.5 ${sync.syncing ? 'zen-spin' : ''}`} /> Sync now
           </Button>
         </div>
-        <div className="flex items-center gap-3 border-b border-[var(--zen-border)] px-4 py-3">
-          <Label htmlFor="sync-device-name" className="w-28 shrink-0">
-            This device
-          </Label>
+        <Row label="Device name">
           <Input
             id="sync-device-name"
-            className="h-8"
             value={deviceName}
             onChange={(e) => setDeviceName(e.target.value)}
             onBlur={() =>
@@ -198,66 +196,43 @@ function Connected({ state }: { state: UIState }): JSX.Element {
               run('sync.setDeviceName', { name: deviceName })
             }
           />
-        </div>
-        <div className="px-4 py-3">
-          <div className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-[var(--zen-muted)]">
-            Devices
+        </Row>
+      </Group>
+      <Group title="Other devices">
+        {sync.devices.length === 0 ? (
+          <div className="zen-settings-hint px-2.5 py-1">
+            No other device has synced to this folder yet. Set up sync there with the same folder
+            and passphrase.
           </div>
-          {sync.devices.length === 0 ? (
-            <div className="text-[12.5px] text-[var(--zen-muted)]">
-              No other device has synced to this folder yet. Set up sync there with the same folder
-              and passphrase.
-            </div>
-          ) : (
-            <ul className="flex flex-col gap-1 text-[12.5px]">
-              {sync.devices.map((d) => (
-                <li key={d.id} className="flex items-center justify-between gap-3">
-                  <span className="truncate">{d.name}</span>
-                  <span className="shrink-0 text-[var(--zen-muted)]">
-                    {relativeTime(d.lastSeen)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
-      <section>
-        <h4 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-[var(--zen-muted)]">
-          What to sync
-        </h4>
-        <div className="zen-squircle overflow-hidden rounded-xl border border-[var(--zen-border)]">
-          {SCOPE_LABELS.map((item) => (
-            <div
-              key={item.key}
-              className="flex min-h-11 items-center gap-4 border-b border-[var(--zen-border)] px-4 py-2 last:border-b-0"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="text-[13px]">{item.label}</div>
-                {item.hint && (
-                  <div className="text-[11.5px] text-[var(--zen-muted)]">{item.hint}</div>
-                )}
-              </div>
-              <Switch
-                checked={sync.scope[item.key]}
-                onCheckedChange={(v) => run('sync.setScope', { [item.key]: v })}
-              />
-            </div>
-          ))}
-        </div>
-      </section>
+        ) : (
+          sync.devices.map((d) => (
+            <Row key={d.id} label={d.name}>
+              <span className="zen-settings-hint tabular-nums">{relativeTime(d.lastSeen)}</span>
+            </Row>
+          ))
+        )}
+      </Group>
+      <Group title="What to sync">
+        {SCOPE_LABELS.map((item) => (
+          <Row key={item.key} label={item.label} hint={item.hint}>
+            <Switch
+              checked={sync.scope[item.key]}
+              onCheckedChange={(v) => run('sync.setScope', { [item.key]: v })}
+            />
+          </Row>
+        ))}
+      </Group>
       <div className="flex justify-end gap-2">
         <Button
           variant="ghost"
           size="sm"
           onClick={() => run('sync.disconnect', { wipeRemote: false })}
         >
-          <CloudOff className="mr-1.5 h-3.5 w-3.5" /> Turn off sync
+          <CloudOff className="h-3.5 w-3.5" /> Turn off sync
         </Button>
         <Button
-          variant="ghost"
+          variant="destructive"
           size="sm"
-          className="text-red-500"
           onClick={() => run('sync.disconnect', { wipeRemote: true })}
         >
           Turn off and remove this device&apos;s data

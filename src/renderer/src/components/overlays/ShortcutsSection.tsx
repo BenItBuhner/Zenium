@@ -12,6 +12,7 @@ import { run } from '@renderer/lib/api'
 import { cn } from '@renderer/lib/utils'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
+import { Group } from './SettingsPrimitives'
 
 const GROUP_ORDER: ShortcutGroup[] = [
   'zen-compact-mode',
@@ -68,7 +69,7 @@ export function ShortcutsSection({ state }: { state: UIState }): JSX.Element | n
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 px-2.5">
         <Input
           placeholder="Filter shortcuts"
           value={filter}
@@ -80,8 +81,8 @@ export function ShortcutsSection({ state }: { state: UIState }): JSX.Element | n
           Reset to defaults
         </Button>
       </div>
-      <p className="text-[12px] text-[var(--zen-muted)]">
-        Click a shortcut to change it. Press Backspace while editing to unbind, Esc to cancel.
+      <p className="zen-settings-hint px-2.5">
+        Choose a shortcut to change it. Press Backspace while editing to unbind, Esc to cancel.
       </p>
       {GROUP_ORDER.map((group) => {
         const items = state.shortcuts.filter(
@@ -93,22 +94,17 @@ export function ShortcutsSection({ state }: { state: UIState }): JSX.Element | n
         )
         if (items.length === 0) return null
         return (
-          <section key={group}>
-            <h3 className="mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-[var(--zen-muted)]">
-              {SHORTCUT_GROUP_LABELS[group]}
-            </h3>
-            <div className="overflow-hidden rounded-xl border border-[var(--zen-border)]">
-              {items.map((s) => (
-                <ShortcutRow
-                  key={s.id}
-                  shortcut={s}
-                  state={state}
-                  editing={editing === s.id}
-                  onEdit={() => setEditing(editing === s.id ? null : s.id)}
-                />
-              ))}
-            </div>
-          </section>
+          <Group key={group} title={SHORTCUT_GROUP_LABELS[group]}>
+            {items.map((s) => (
+              <ShortcutRow
+                key={s.id}
+                shortcut={s}
+                state={state}
+                editing={editing === s.id}
+                onEdit={() => setEditing(editing === s.id ? null : s.id)}
+              />
+            ))}
+          </Group>
         )
       })}
     </div>
@@ -130,40 +126,30 @@ function ShortcutRow({
     ? findConflicts(state.shortcuts, shortcut.binding, shortcut.id)
     : []
   return (
-    <div
-      className={cn(
-        'flex h-10 items-center gap-3 border-b border-[var(--zen-border)] px-3 last:border-b-0',
-        shortcut.unsupported && 'opacity-60'
-      )}
-    >
-      <span className="min-w-0 flex-1 truncate text-[13px]">
+    <div className={cn('zen-settings-row', shortcut.unsupported && 'opacity-60')}>
+      <span className="zen-settings-label min-w-0 flex-1 truncate">
         {shortcut.label}
         {shortcut.unsupported && (
-          <span className="ml-2 text-[11px] text-[var(--zen-muted)]">
-            not available in this build
-          </span>
+          <span className="zen-settings-hint ml-2 inline">not available in this build</span>
         )}
       </span>
       {shortcut.extraBindings.length > 0 && !editing && (
-        <span className="hidden text-[11px] text-[var(--zen-muted)] md:inline">
+        <span className="zen-settings-hint hidden md:inline">
           {shortcut.extraBindings.map((b) => formatBinding(b, state.platform)).join(', ')}
         </span>
       )}
       {conflicts.length > 0 && !editing && (
         <span
-          className="text-[11px] text-amber-500"
+          className="zen-settings-hint text-[var(--zen-warn)]"
           title={`Also used by: ${conflicts.map((c) => c.label).join(', ')}`}
         >
-          conflict
+          Conflict
         </span>
       )}
       <button
         type="button"
-        className={cn(
-          'zen-kbd h-7 min-w-[110px] justify-center px-2.5 text-[12px] hover:bg-[var(--zen-element-bg-hover)]',
-          editing && 'ring-2 ring-[var(--zen-accent)]',
-          !shortcut.binding && 'text-[var(--zen-muted)]'
-        )}
+        className={cn('zen-kbd-button', !shortcut.binding && 'text-[var(--zen-muted)]')}
+        data-editing={editing || undefined}
         onClick={onEdit}
       >
         {editing ? 'Press keys…' : formatBinding(shortcut.binding, state.platform)}

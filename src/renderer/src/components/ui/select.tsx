@@ -6,21 +6,15 @@ import { cn } from '@renderer/lib/utils'
 const Select = SelectPrimitive.Root
 const SelectValue = SelectPrimitive.Value
 
+/** A quiet control: a fill of the ink sized by its content, no border; styles in main.css. */
 const SelectTrigger = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Trigger>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>
 >(({ className, children, ...props }, ref) => (
-  <SelectPrimitive.Trigger
-    ref={ref}
-    className={cn(
-      'flex h-8 min-w-[160px] items-center justify-between gap-2 rounded-lg border border-[var(--zen-border)] bg-[var(--zen-element-bg)] px-2.5 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--zen-accent)]/30 disabled:opacity-50 [&>span]:truncate',
-      className
-    )}
-    {...props}
-  >
-    {children}
+  <SelectPrimitive.Trigger ref={ref} className={cn('zen-select-trigger', className)} {...props}>
+    <span className="zen-select-value">{children}</span>
     <SelectPrimitive.Icon asChild>
-      <ChevronDown className="h-4 w-4 opacity-60" />
+      <ChevronDown className="zen-select-icon" />
     </SelectPrimitive.Icon>
   </SelectPrimitive.Trigger>
 ))
@@ -34,8 +28,9 @@ const SelectContent = React.forwardRef<
     <SelectPrimitive.Content
       ref={ref}
       position={position}
+      sideOffset={4}
       className={cn(
-        'zen-panel zen-animate-pop relative z-50 max-h-72 min-w-[var(--radix-select-trigger-width)] overflow-hidden p-1 text-[13px]',
+        'zen-panel zen-select-content zen-animate-pop relative z-50 max-h-72 min-w-[var(--radix-select-trigger-width)] overflow-hidden',
         className
       )}
       {...props}
@@ -46,24 +41,16 @@ const SelectContent = React.forwardRef<
 ))
 SelectContent.displayName = 'SelectContent'
 
+/** A menu row; the chosen one reads heavier and carries a check in the accent ink at its end. */
 const SelectItem = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Item>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item>
 >(({ className, children, ...props }, ref) => (
-  <SelectPrimitive.Item
-    ref={ref}
-    className={cn(
-      'relative flex cursor-default select-none items-center rounded-md py-1.5 pl-7 pr-2 outline-none data-[highlighted]:bg-[var(--zen-element-bg-hover)] data-[disabled]:opacity-40',
-      className
-    )}
-    {...props}
-  >
-    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
-      <SelectPrimitive.ItemIndicator>
-        <Check className="h-3.5 w-3.5" />
-      </SelectPrimitive.ItemIndicator>
-    </span>
+  <SelectPrimitive.Item ref={ref} className={cn('zen-select-item', className)} {...props}>
     <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+    <SelectPrimitive.ItemIndicator asChild>
+      <Check className="zen-select-check" />
+    </SelectPrimitive.ItemIndicator>
   </SelectPrimitive.Item>
 ))
 SelectItem.displayName = 'SelectItem'

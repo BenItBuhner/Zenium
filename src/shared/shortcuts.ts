@@ -125,17 +125,17 @@ export function formatBinding(b: KeyBinding | null, platform: Platform): string 
 }
 
 export const SHORTCUT_GROUP_LABELS: Record<ShortcutGroup, string> = {
-  'zen-compact-mode': 'Compact Mode',
+  'zen-compact-mode': 'Compact mode',
   'zen-workspace': 'Spaces',
-  'zen-split-view': 'Split View',
-  'zen-other': 'Zenium Features',
-  windowAndTabManagement: 'Window & Tab Management',
+  'zen-split-view': 'Split view',
+  'zen-other': 'Zenium features',
+  windowAndTabManagement: 'Window and tab management',
   navigation: 'Navigation',
-  searchAndFind: 'Search & Find',
-  pageOperations: 'Page Operations',
-  historyAndBookmarks: 'History & Bookmarks',
-  mediaAndDisplay: 'Media & Display',
-  devTools: 'Developer Tools'
+  searchAndFind: 'Search and find',
+  pageOperations: 'Page operations',
+  historyAndBookmarks: 'History and bookmarks',
+  mediaAndDisplay: 'Media and display',
+  devTools: 'Developer tools'
 }
 
 interface Def {
@@ -159,7 +159,7 @@ const DEFS: Def[] = [
     id: 'zen-compact-mode-toggle',
     action: 'compact.toggle',
     group: 'zen-compact-mode',
-    label: 'Toggle Compact Mode',
+    label: 'Toggle compact mode',
     key: 's',
     mods: { accel: true }
   },
@@ -167,7 +167,7 @@ const DEFS: Def[] = [
     id: 'zen-compact-mode-show-sidebar',
     action: 'compact.toggleSidebar',
     group: 'zen-compact-mode',
-    label: 'Toggle Floating Sidebar',
+    label: 'Toggle floating sidebar',
     key: 's',
     mods: { accel: true, alt: true }
   },
@@ -177,7 +177,7 @@ const DEFS: Def[] = [
     id: `zen-workspace-switch-${n}`,
     action: `space.switch${n}` as ShortcutAction,
     group: 'zen-workspace',
-    label: `Switch to Space ${n}`,
+    label: `Switch to space ${n}`,
     key: n === 10 ? '0' : String(n),
     mods: { ctrl: true },
     platforms: ['darwin']
@@ -186,7 +186,7 @@ const DEFS: Def[] = [
     id: 'zen-workspace-forward',
     action: 'space.next',
     group: 'zen-workspace',
-    label: 'Next Space',
+    label: 'Next space',
     key: 'ArrowRight',
     mods: { accel: true, alt: true }
   },
@@ -194,7 +194,7 @@ const DEFS: Def[] = [
     id: 'zen-workspace-backward',
     action: 'space.prev',
     group: 'zen-workspace',
-    label: 'Previous Space',
+    label: 'Previous space',
     key: 'ArrowLeft',
     mods: { accel: true, alt: true }
   },
@@ -202,7 +202,7 @@ const DEFS: Def[] = [
     id: 'zen-close-all-unpinned-tabs',
     action: 'space.closeUnpinned',
     group: 'zen-workspace',
-    label: 'Close All Unpinned Tabs',
+    label: 'Close all unpinned tabs',
     key: 'k',
     mods: { accel: true, shift: true }
   },
@@ -211,7 +211,7 @@ const DEFS: Def[] = [
     id: 'zen-workspace-create',
     action: 'space.new',
     group: 'zen-workspace',
-    label: 'Create New Space'
+    label: 'Create new space'
   },
 
   // --- Split view ------------------------------------------------------------
@@ -219,7 +219,7 @@ const DEFS: Def[] = [
     id: 'zen-split-view-grid',
     action: 'split.grid',
     group: 'zen-split-view',
-    label: 'Toggle Split View Grid',
+    label: 'Toggle split view grid',
     key: 'g',
     mods: { accel: true, alt: true }
   },
@@ -227,7 +227,7 @@ const DEFS: Def[] = [
     id: 'zen-split-view-vertical',
     action: 'split.vertical',
     group: 'zen-split-view',
-    label: 'Toggle Split View Vertical',
+    label: 'Toggle split view vertical',
     key: 'v',
     mods: { accel: true, alt: true }
   },
@@ -235,7 +235,7 @@ const DEFS: Def[] = [
     id: 'zen-split-view-horizontal',
     action: 'split.horizontal',
     group: 'zen-split-view',
-    label: 'Toggle Split View Horizontal',
+    label: 'Toggle split view horizontal',
     key: 'h',
     mods: { accel: true, alt: true }
   },
@@ -243,7 +243,7 @@ const DEFS: Def[] = [
     id: 'zen-split-view-unsplit',
     action: 'split.unsplit',
     group: 'zen-split-view',
-    label: 'Unsplit View',
+    label: 'Unsplit view',
     key: 'u',
     mods: { accel: true, alt: true }
   },
@@ -251,7 +251,7 @@ const DEFS: Def[] = [
     id: 'zen-new-empty-split-view',
     action: 'split.newEmpty',
     group: 'zen-split-view',
-    label: 'New Empty Split View',
+    label: 'New empty split view',
     key: '*',
     mods: { accel: true, shift: true }
   },
@@ -261,7 +261,7 @@ const DEFS: Def[] = [
     id: 'zen-copy-url',
     action: 'tab.copyUrl',
     group: 'zen-other',
-    label: 'Copy Current URL',
+    label: 'Copy current URL',
     key: 'c',
     mods: { accel: true, shift: true }
   },
@@ -269,7 +269,7 @@ const DEFS: Def[] = [
     id: 'zen-copy-url-markdown',
     action: 'tab.copyUrlMarkdown',
     group: 'zen-other',
-    label: 'Copy Current URL as Markdown',
+    label: 'Copy current URL as Markdown',
     key: 'c',
     mods: { accel: true, shift: true, alt: true }
   },
@@ -277,7 +277,7 @@ const DEFS: Def[] = [
     id: 'zen-toggle-pin-tab',
     action: 'tab.togglePin',
     group: 'zen-other',
-    label: 'Pin / Unpin Tab',
+    label: 'Pin / unpin tab',
     key: 'd',
     mods: { accel: true, shift: true }
   },
@@ -285,13 +285,13 @@ const DEFS: Def[] = [
     id: 'zen-pinned-tab-reset-shortcut',
     action: 'tab.resetPinned',
     group: 'zen-other',
-    label: 'Reset Pinned Tab'
+    label: 'Reset pinned tab'
   },
   {
     id: 'zen-toggle-sidebar',
     action: 'sidebar.toggle',
     group: 'zen-other',
-    label: 'Toggle Sidebar'
+    label: 'Toggle sidebar'
   },
   {
     id: 'zen-glance-expand',
@@ -305,7 +305,7 @@ const DEFS: Def[] = [
     id: 'zen-new-unsynced-window',
     action: 'window.newUnsynced',
     group: 'zen-other',
-    label: 'New Blank Window',
+    label: 'New blank window',
     key: 'n',
     mods: { accel: true, shift: true }
   },
@@ -315,7 +315,7 @@ const DEFS: Def[] = [
     id: 'key_newNavigatorTab',
     action: 'tab.new',
     group: 'windowAndTabManagement',
-    label: 'New Tab',
+    label: 'New tab',
     key: 't',
     mods: { accel: true }
   },
@@ -323,7 +323,7 @@ const DEFS: Def[] = [
     id: 'key_close',
     action: 'tab.close',
     group: 'windowAndTabManagement',
-    label: 'Close Tab',
+    label: 'Close tab',
     key: 'w',
     mods: { accel: true },
     extra: [{ key: 'F4', mods: { accel: true } }]
@@ -332,7 +332,7 @@ const DEFS: Def[] = [
     id: 'key_undoCloseTab',
     action: 'tab.reopenClosed',
     group: 'windowAndTabManagement',
-    label: 'Reopen Closed Tab',
+    label: 'Reopen closed tab',
     key: 't',
     mods: { accel: true, shift: true }
   },
@@ -340,13 +340,13 @@ const DEFS: Def[] = [
     id: 'zen-duplicate-tab',
     action: 'tab.duplicate',
     group: 'windowAndTabManagement',
-    label: 'Duplicate Tab'
+    label: 'Duplicate tab'
   },
   {
     id: 'key_newNavigator',
     action: 'window.new',
     group: 'windowAndTabManagement',
-    label: 'New Window',
+    label: 'New window',
     key: 'n',
     mods: { accel: true }
   },
@@ -354,7 +354,7 @@ const DEFS: Def[] = [
     id: 'key_privatebrowsing',
     action: 'window.newPrivate',
     group: 'windowAndTabManagement',
-    label: 'New Private Window',
+    label: 'New private window',
     key: 'p',
     mods: { accel: true, shift: true }
   },
@@ -362,7 +362,7 @@ const DEFS: Def[] = [
     id: 'key_closeWindow',
     action: 'window.close',
     group: 'windowAndTabManagement',
-    label: 'Close Window',
+    label: 'Close window',
     key: 'w',
     mods: { accel: true, shift: true }
   },
@@ -378,7 +378,7 @@ const DEFS: Def[] = [
     id: 'key_nextTab',
     action: 'tab.next',
     group: 'windowAndTabManagement',
-    label: 'Next Tab',
+    label: 'Next tab',
     key: 'Tab',
     mods: { ctrl: true },
     extra: [{ key: 'PageDown', mods: { accel: true } }]
@@ -387,7 +387,7 @@ const DEFS: Def[] = [
     id: 'key_prevTab',
     action: 'tab.prev',
     group: 'windowAndTabManagement',
-    label: 'Previous Tab',
+    label: 'Previous tab',
     key: 'Tab',
     mods: { ctrl: true, shift: true },
     extra: [{ key: 'PageUp', mods: { accel: true } }]
@@ -408,7 +408,7 @@ const DEFS: Def[] = [
     id: 'key_selectLastTab',
     action: 'tab.selectLast',
     group: 'windowAndTabManagement',
-    label: 'Select Last Tab',
+    label: 'Select last tab',
     key: '9',
     mods: { alt: true },
     perPlatform: {
@@ -420,7 +420,7 @@ const DEFS: Def[] = [
     id: 'key_moveTabBackward',
     action: 'tab.moveBackward',
     group: 'windowAndTabManagement',
-    label: 'Move Tab Up',
+    label: 'Move tab up',
     key: 'PageUp',
     mods: { accel: true, shift: true }
   },
@@ -428,7 +428,7 @@ const DEFS: Def[] = [
     id: 'key_moveTabForward',
     action: 'tab.moveForward',
     group: 'windowAndTabManagement',
-    label: 'Move Tab Down',
+    label: 'Move tab down',
     key: 'PageDown',
     mods: { accel: true, shift: true }
   },
@@ -436,7 +436,7 @@ const DEFS: Def[] = [
     id: 'key_moveTabToStart',
     action: 'tab.moveToStart',
     group: 'windowAndTabManagement',
-    label: 'Move Tab to Start',
+    label: 'Move tab to start',
     key: 'Home',
     mods: { accel: true, shift: true }
   },
@@ -444,7 +444,7 @@ const DEFS: Def[] = [
     id: 'key_moveTabToEnd',
     action: 'tab.moveToEnd',
     group: 'windowAndTabManagement',
-    label: 'Move Tab to End',
+    label: 'Move tab to end',
     key: 'End',
     mods: { accel: true, shift: true }
   },
@@ -481,7 +481,7 @@ const DEFS: Def[] = [
     id: 'key_reload_skip_cache',
     action: 'nav.reloadSkipCache',
     group: 'navigation',
-    label: 'Reload (Override Cache)',
+    label: 'Reload (override cache)',
     key: 'r',
     mods: { accel: true, shift: true },
     extra: [{ key: 'F5', mods: { accel: true } }]
@@ -506,7 +506,7 @@ const DEFS: Def[] = [
     id: 'focusURLBar',
     action: 'urlbar.focus',
     group: 'searchAndFind',
-    label: 'Focus Address Bar',
+    label: 'Focus address bar',
     key: 'l',
     mods: { accel: true },
     extra: [
@@ -518,7 +518,7 @@ const DEFS: Def[] = [
     id: 'key_search',
     action: 'urlbar.search',
     group: 'searchAndFind',
-    label: 'Web Search',
+    label: 'Web search',
     key: 'k',
     mods: { accel: true },
     extra: [{ key: 'e', mods: { accel: true } }]
@@ -527,7 +527,7 @@ const DEFS: Def[] = [
     id: 'key_find',
     action: 'find.open',
     group: 'searchAndFind',
-    label: 'Find in Page',
+    label: 'Find in page',
     key: 'f',
     mods: { accel: true }
   },
@@ -535,7 +535,7 @@ const DEFS: Def[] = [
     id: 'key_findAgain',
     action: 'find.next',
     group: 'searchAndFind',
-    label: 'Find Next',
+    label: 'Find next',
     key: 'g',
     mods: { accel: true },
     extra: [{ key: 'F3', mods: {} }]
@@ -544,7 +544,7 @@ const DEFS: Def[] = [
     id: 'key_findPrevious',
     action: 'find.prev',
     group: 'searchAndFind',
-    label: 'Find Previous',
+    label: 'Find previous',
     key: 'g',
     mods: { accel: true, shift: true },
     extra: [{ key: 'F3', mods: { shift: true } }]
@@ -555,7 +555,7 @@ const DEFS: Def[] = [
     id: 'key_savePage',
     action: 'page.savePage',
     group: 'pageOperations',
-    label: 'Save Page As…',
+    label: 'Save page as…',
     key: 's',
     mods: { accel: true, alt: true, shift: true }
   },
@@ -571,7 +571,7 @@ const DEFS: Def[] = [
     id: 'key_viewSource',
     action: 'page.viewSource',
     group: 'pageOperations',
-    label: 'View Page Source',
+    label: 'View page source',
     key: 'u',
     mods: { accel: true }
   },
@@ -579,7 +579,7 @@ const DEFS: Def[] = [
     id: 'key_fullScreen',
     action: 'page.fullscreen',
     group: 'pageOperations',
-    label: 'Toggle Fullscreen',
+    label: 'Toggle fullscreen',
     key: 'F11',
     mods: {},
     perPlatform: { darwin: { key: 'f', mods: { meta: true, ctrl: true } } }
@@ -588,7 +588,7 @@ const DEFS: Def[] = [
     id: 'key_toggleReaderMode',
     action: 'page.readerMode',
     group: 'pageOperations',
-    label: 'Toggle Reader View',
+    label: 'Toggle reader view',
     key: 'r',
     mods: { accel: true, alt: true }
   },
@@ -596,7 +596,7 @@ const DEFS: Def[] = [
     id: 'key_togglePictureInPicture',
     action: 'page.pip',
     group: 'pageOperations',
-    label: 'Toggle Picture-in-Picture',
+    label: 'Toggle picture-in-picture',
     key: ']',
     mods: { accel: true, shift: true }
   },
@@ -604,7 +604,7 @@ const DEFS: Def[] = [
     id: 'key_screenshot',
     action: 'page.screenshot',
     group: 'pageOperations',
-    label: 'Take Screenshot',
+    label: 'Take screenshot',
     key: 's',
     mods: { accel: true, shift: true }
   },
@@ -612,7 +612,7 @@ const DEFS: Def[] = [
     id: 'key_toggleMute',
     action: 'page.toggleMute',
     group: 'pageOperations',
-    label: 'Mute / Unmute Tab',
+    label: 'Mute / unmute tab',
     key: 'm',
     mods: { accel: true }
   },
@@ -622,7 +622,7 @@ const DEFS: Def[] = [
     id: 'key_fullZoomEnlarge',
     action: 'zoom.in',
     group: 'mediaAndDisplay',
-    label: 'Zoom In',
+    label: 'Zoom in',
     key: '=',
     mods: { accel: true },
     extra: [
@@ -634,7 +634,7 @@ const DEFS: Def[] = [
     id: 'key_fullZoomReduce',
     action: 'zoom.out',
     group: 'mediaAndDisplay',
-    label: 'Zoom Out',
+    label: 'Zoom out',
     key: '-',
     mods: { accel: true }
   },
@@ -642,7 +642,7 @@ const DEFS: Def[] = [
     id: 'key_fullZoomReset',
     action: 'zoom.reset',
     group: 'mediaAndDisplay',
-    label: 'Reset Zoom',
+    label: 'Reset zoom',
     key: '0',
     mods: { accel: true }
   },
@@ -652,7 +652,7 @@ const DEFS: Def[] = [
     id: 'addBookmarkAsKb',
     action: 'bookmark.add',
     group: 'historyAndBookmarks',
-    label: 'Bookmark This Page',
+    label: 'Bookmark this page',
     key: 'd',
     mods: { accel: true }
   },
@@ -660,7 +660,7 @@ const DEFS: Def[] = [
     id: 'viewBookmarksSidebarKb',
     action: 'bookmark.sidebar',
     group: 'historyAndBookmarks',
-    label: 'Show Bookmarks',
+    label: 'Show bookmarks',
     key: 'b',
     mods: { accel: true }
   },
@@ -668,7 +668,7 @@ const DEFS: Def[] = [
     id: 'manBookmarkKb',
     action: 'bookmark.library',
     group: 'historyAndBookmarks',
-    label: 'Manage Bookmarks',
+    label: 'Manage bookmarks',
     key: 'o',
     mods: { accel: true, shift: true }
   },
@@ -676,7 +676,7 @@ const DEFS: Def[] = [
     id: 'key_gotoHistory',
     action: 'history.sidebar',
     group: 'historyAndBookmarks',
-    label: 'Show History',
+    label: 'Show history',
     key: 'h',
     mods: { accel: true },
     perPlatform: { darwin: { key: 'y', mods: { meta: true } } }
@@ -685,7 +685,7 @@ const DEFS: Def[] = [
     id: 'key_openDownloads',
     action: 'downloads.open',
     group: 'historyAndBookmarks',
-    label: 'Show Downloads',
+    label: 'Show downloads',
     key: 'y',
     mods: { accel: true, shift: true },
     perPlatform: {
@@ -699,7 +699,7 @@ const DEFS: Def[] = [
     id: 'key_toggleToolbox',
     action: 'devtools.toggle',
     group: 'devTools',
-    label: 'Toggle Developer Tools',
+    label: 'Toggle developer tools',
     key: 'i',
     mods: { accel: true, shift: true },
     extra: [{ key: 'F12', mods: {} }]
@@ -716,13 +716,13 @@ const DEFS: Def[] = [
     id: 'key_webconsole',
     action: 'devtools.console',
     group: 'devTools',
-    label: 'Web Console'
+    label: 'Web console'
   },
   {
     id: 'key_browserConsole',
     action: 'devtools.browserConsole',
     group: 'devTools',
-    label: 'Browser Console',
+    label: 'Browser console',
     key: 'j',
     mods: { accel: true, shift: true }
   },
@@ -730,7 +730,7 @@ const DEFS: Def[] = [
     id: 'key_openAddons',
     action: 'addons.open',
     group: 'devTools',
-    label: 'Add-ons and Themes',
+    label: 'Add-ons and themes',
     key: 'a',
     mods: { accel: true, shift: true }
   },
