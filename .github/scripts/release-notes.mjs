@@ -243,7 +243,17 @@ async function generatedNotes(previous) {
 
 function readMeta() {
   const meta = {}
-  if (!existsSync(metaDir)) return meta
+  if (!existsSync(metaDir)) {
+    // Without the build-info files every platform would be described as unsigned / legacy-keyed.
+    if (!allowIncomplete) {
+      console.error(
+        `::error::${metaDir} does not exist; the release notes need the per-platform build info`
+      )
+      process.exit(1)
+    }
+    console.warn(`::warning::${metaDir} does not exist; describing every platform as unsigned`)
+    return meta
+  }
   for (const file of readdirSync(metaDir)) {
     if (!file.endsWith('.json')) continue
     const info = JSON.parse(readFileSync(join(metaDir, file), 'utf8'))
@@ -369,7 +379,7 @@ const installing = [
   androidReleaseKey
     ? 'The APK is signed with the project release key, so it upgrades earlier releases in place.'
     : androidCiDebugKey
-      ? "The APK is signed with the repository's CI debug key (`android/ci-debug.keystore`, the same key for every release built without the project keystore), so it upgrades other CI-debug-keyed builds in place, including through the in-app updater. Android treats it like any debug-signed app. Installs from before this key (v0.2.0 and earlier) must be uninstalled once; switching to the project release key later will need one more uninstall."
+      ? "Upgrades from 0.3.0 onward install in place – open the new APK over the installed app, or let the in-app updater apply it (*Settings → Updates*). Every release since 0.3.0 is signed with the repository's CI debug key (`android/ci-debug.keystore`, the same key on every build); Android treats it like any debug-signed app. Only when coming from 0.2.0 or earlier does the old build have to be uninstalled once. Switching to the project release key later will need one more uninstall."
       : '**This APK is signed with a temporary CI key.** It installs fine, but Android will refuse to upgrade an installation from another release over it (and vice versa): uninstall the previous version first. Once the maintainers configure a release keystore, upgrades become seamless.',
   '',
   '</details>',
@@ -408,7 +418,7 @@ const updating = [
   androidReleaseKey
     ? '- **Android** downloads the APK, verifies it and hands it to the package installer.'
     : androidCiDebugKey
-      ? '- **Android** downloads the APK, verifies it and hands it to the package installer; it upgrades any build signed with the CI debug key in place (older installs: uninstall once).'
+      ? '- **Android** downloads the APK, verifies it and hands it to the package installer, which upgrades the installed app in place (every release from 0.3.0 onward carries the same signing key). Only installs of 0.2.0 or earlier need to be uninstalled once.'
       : '- **Android**: the APK is signed with a temporary CI key, so it cannot replace an earlier install in place; Zenium tells you to uninstall first.',
   manifestSigned
     ? null

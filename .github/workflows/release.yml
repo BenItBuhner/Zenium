@@ -389,8 +389,11 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: release-bundle
+          # The publish job regenerates the notes (with the changelog); it needs the per-platform
+          # signing facts in release/meta as much as the packages.
           path: |
             release/assets
+            release/meta
             release/notes.md
           if-no-files-found: error
           retention-days: 7
