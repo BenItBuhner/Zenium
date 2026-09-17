@@ -21,10 +21,6 @@ on:
           - engine
           - ui
         default: engine
-  # TEMPORARY: one recorded run of the ui sequence for the translate UI PR; removed once it has run.
-  push:
-    branches:
-      - cursor/services-translate-ui-24d1
 
 permissions:
   contents: read
@@ -39,7 +35,7 @@ jobs:
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-translate-demo.sh
-      script-env: TRANSLATE_SEQUENCE=${{ inputs.sequence || 'ui' }}
+      script-env: TRANSLATE_SEQUENCE=${{ inputs.sequence }}
       artifact-name: android-translate-demo
       artifact-path: artifacts/android-translate-demo/
       timeout-minutes: 50
