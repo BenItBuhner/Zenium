@@ -46,6 +46,9 @@ import { useEscapeTrap } from './escape'
 
 const SEARCH_LIMIT = 200
 const DRAG_THRESHOLD = 5
+/** The drag ghost: a compact copy of the row, drawn a little to the side of the pointer. */
+const GHOST_MAX_WIDTH = 320
+const GHOST_GAP = 14
 
 /**
  * The folder the manager opens on: the bookmarks bar on desktop (Chrome), the platform's own
@@ -815,6 +818,14 @@ function DragGhost({
 }): JSX.Element | null {
   const first = tree.get(drag.ids[0] ?? '')
   if (!first) return null
+  // The hook moves this frame as if the whole row followed the pointer; what is drawn is a
+  // compact copy beside the pointer (on the side with room), so the row under it – the drop
+  // target and its outline – stays in view.
+  const room = window.innerWidth - (drag.originX + drag.dx)
+  const beside =
+    room > GHOST_MAX_WIDTH + GHOST_GAP * 2
+      ? { left: drag.dx + GHOST_GAP }
+      : { right: drag.width - drag.dx + GHOST_GAP }
   return (
     <div
       ref={ghostRef}
@@ -822,9 +833,12 @@ function DragGhost({
       className="pointer-events-none fixed top-0 left-0 z-[60] will-change-transform"
       style={{ width: drag.width }}
     >
-      <div className="zen-bm-lift flex h-[52px] items-center gap-3 rounded-[4px] px-2.5">
+      <div
+        className="zen-bm-lift absolute flex h-8 items-center gap-2 rounded-[4px] px-2.5"
+        style={{ ...beside, top: drag.dy - 16, maxWidth: GHOST_MAX_WIDTH }}
+      >
         <BookmarkIcon node={first} className="h-4 w-4 shrink-0" />
-        <span className="min-w-0 flex-1 truncate text-[15px]">{nodeLabel(first)}</span>
+        <span className="min-w-0 flex-1 truncate text-[13px]">{nodeLabel(first)}</span>
         {drag.ids.length > 1 && (
           <span className="rounded-full bg-[var(--zen-v2-accent)] px-2 py-0.5 text-[11px] font-semibold text-[var(--zen-v2-accent-ink)] tabular-nums">
             {drag.ids.length}

@@ -1461,12 +1461,19 @@
     z-index: 100;
     pointer-events: none;
     will-change: transform;
+    transition: opacity 120ms var(--zen-ease);
+  }
+  /* Resting on a folder chip, the chip in the hand thins out so the target's fill and outline read through it. */
+  .zen-bm-ghost[data-into='true'] {
+    opacity: 0.45;
   }
   .zen-bm-lift {
     background: var(--zen-v2-panel);
-    border: 1px solid var(--zen-v2-panel-border);
     opacity: 0.9;
-    box-shadow: var(--zen-shadow-2);
+    /* The hairline is an inset ring: a border would take 2px off the copied item's width. */
+    box-shadow:
+      inset 0 0 0 1px var(--zen-v2-panel-border),
+      var(--zen-shadow-2);
     scale: 1.02;
   }
   /* The list's empty space is the append target of a drag. */
