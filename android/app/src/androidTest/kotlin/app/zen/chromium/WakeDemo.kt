@@ -170,8 +170,9 @@ class WakeDemo : DemoHarness("gesture-demo-state.json", "wake", "wake-demo") {
         wakeUp()
         SystemClock.sleep(1_500)
         dismissKeyguard(Dismiss.COMMAND)
-        // The probe's delay, two deadlines and a chrome boot; the loop itself outlasts all of it.
-        SystemClock.sleep(20_000)
+        // The probe's delay and two deadlines; the loop itself outlasts all of it, so only ending
+        // the renderer gets the chrome back (the settle wait in `phase` covers its boot).
+        SystemClock.sleep(13_000)
     }
 
     // --- power, keyguard, processes --------------------------------------------------------------
@@ -327,10 +328,29 @@ class WakeDemo : DemoHarness("gesture-demo-state.json", "wake", "wake-demo") {
         body()
         bringToFront()
         refreshActivity()
+        awaitChromeSettled()
         val shot = capture(name)
         check(name, shot)
         shot.recycle()
         Log.i(TAG, "phase $name: end")
+    }
+
+    /**
+     * A recovery in progress (a chrome rebooting after its renderer went) is not a verdict: give
+     * the chrome up to [SETTLE_TIMEOUT_MS] to be loaded and show its address pill, and record how
+     * long that took. The recording still shows the blank stretch in between.
+     */
+    private fun awaitChromeSettled() {
+        val start = SystemClock.uptimeMillis()
+        val deadline = start + SETTLE_TIMEOUT_MS
+        while (SystemClock.uptimeMillis() < deadline) {
+            var ready = false
+            instrumentation.runOnMainSync { ready = browser.host.chrome.ready }
+            if (ready && findByLabelPrefix(PILL_LABEL) != null) break
+            SystemClock.sleep(250)
+        }
+        val waited = SystemClock.uptimeMillis() - start
+        note("settled: after $waited ms${if (waited >= SETTLE_TIMEOUT_MS) " (gave up waiting)" else ""}")
     }
 
     /**
@@ -525,5 +545,7 @@ class WakeDemo : DemoHarness("gesture-demo-state.json", "wake", "wake-demo") {
         private const val ASK_TIMEOUT_MS = 3_000L
         /** How long the hung-renderer scenario spins the renderer's main thread. */
         private const val HANG_MS = 40_000L
+        /** How long a check waits for a chrome that is rebooting before measuring. */
+        private const val SETTLE_TIMEOUT_MS = 15_000L
     }
 }

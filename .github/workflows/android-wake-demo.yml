@@ -5,10 +5,10 @@ name: Android wake demo
 # Android emulator, checks that the chrome is painted and answering after each, and uploads the
 # recordings, the screenshots and the driver's report (WakeDemo). With `before` it first records
 # the same sequence on an APK built from main, so the two takes can be compared. Dispatch-only:
-# it takes fifteen to twenty minutes and only regresses the wake path; the recordings come from an
-# API 34 Google APIs image on a software GPU, so expect a handful of frames per second. The build,
-# the emulator and its caches live in android-emulator-demo.yml; this file picks the driver, the
-# assertion and the comparison take.
+# it takes fifteen to twenty minutes and only regresses the wake path; the recordings come from a
+# Google APIs image on a software GPU, so expect a handful of frames per second. The build, the
+# emulator and its caches live in android-emulator-demo.yml; this file picks the driver, the system
+# image, the assertion and the comparison take.
 on:
   workflow_dispatch:
     inputs:
@@ -20,6 +20,13 @@ on:
         description: Also record an APK built from main first, for comparison
         type: boolean
         default: false
+      api-level:
+        description: System image (35 is Android 15, the wake path most phones run)
+        type: choice
+        default: '35'
+        options:
+          - '34'
+          - '35'
   push:
     branches: [cursor/android-wake-blank-chrome-b675]
 
@@ -36,6 +43,7 @@ jobs:
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-wake-demo.sh
+      api-level: ${{ inputs.api-level || '35' }}
       script-env: |
         WAKE_ASSERT=${{ github.event_name == 'workflow_dispatch' && inputs.assert && 'true' || 'false' }}
         BEFORE_APK_DIR=${{ (github.event_name == 'push' || inputs.before) && 'before/android/app/build/outputs/apk/debug' || '' }}
