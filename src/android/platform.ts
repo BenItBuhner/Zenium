@@ -52,6 +52,8 @@ export interface BootInfo {
   version: string
   /** Hex SHA-256 of the certificate this APK is signed with (null in the preview host). */
   signer: string | null
+  /** The applicationId this APK was installed under (null in the preview host). */
+  packageName: string | null
   /** Persisted JSON documents by name (state.json, history.json, …). */
   files: Record<string, string>
   downloadsDir: string
@@ -105,7 +107,8 @@ class AndroidUpdateHost implements UpdateHost {
 
   constructor(
     private readonly bridge: Bridge,
-    private readonly signerSha256: string | null
+    private readonly signerSha256: string | null,
+    private readonly installedPackage: string | null
   ) {}
 
   target(): UpdateTarget {
@@ -121,6 +124,10 @@ class AndroidUpdateHost implements UpdateHost {
 
   signer(): string | null {
     return this.signerSha256
+  }
+
+  packageName(): string | null {
+    return this.installedPackage
   }
 
   async download(
@@ -167,7 +174,7 @@ class AndroidUpdateHost implements UpdateHost {
     if (result.ok) return
     if (result.reason === 'permission')
       throw new Error(
-        'Android needs permission first: allow Zen to install apps in the screen that just opened, then tap Install again.'
+        'Android needs permission first: allow Zenium to install apps in the screen that just opened, then tap Install again.'
       )
     throw new Error(result.reason || 'could not start the package installer')
   }
@@ -399,7 +406,7 @@ export class AndroidPlatform implements Platform {
     this.info = { os: 'android', version: boot.version }
     this.io = new AndroidStoreIO(bridge, boot.files)
     this.agentTransport = new AndroidAgentTransport(bridge)
-    this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null)
+    this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null, boot.packageName ?? null)
     this.views = new AndroidTabViewHost(bridge)
     this.siteData = new AndroidSiteData(bridge)
     this.menus = new RendererMenuHost()

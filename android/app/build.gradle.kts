@@ -11,7 +11,7 @@ val webRoot = rootProject.projectDir.parentFile
 val skipWeb = project.hasProperty("skipWeb")
 val buildWeb = tasks.register<Exec>("buildWeb") {
     group = "build"
-    description = "Builds the Zen chrome and page script into app/src/main/assets"
+    description = "Builds the Zenium chrome and page script into app/src/main/assets"
     workingDir = webRoot
     val npm = if (System.getProperty("os.name").lowercase().contains("win")) "npm.cmd" else "npm"
     commandLine(npm, "run", "build:android:web")
@@ -93,11 +93,15 @@ val ciDebugAlias = "zenium-ci-debug"
 val ciDebugPassword = "zenium-ci-debug"
 
 android {
+    // The code package (R, BuildConfig, relative class names in the manifest). It moves together
+    // with the Kotlin sources in a later pass; the app's identity on the device is applicationId.
     namespace = "app.zen.chromium"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "app.zen.chromium"
+        // Zenium is a new app to Android: it installs alongside the old app.zen.chromium "Zen"
+        // (v0.2.0 and earlier), which nothing can migrate; the updater says so (src/core/updates.ts).
+        applicationId = "io.github.benitbuhner.zenium"
         minSdk = 26
         targetSdk = 35
         versionCode = appVersionCode
@@ -173,9 +177,9 @@ android {
     }
 }
 
-// app/build/outputs/apk/<type>/zen-chromium-<version>-<type>.apk instead of app-<type>.apk
+// app/build/outputs/apk/<type>/zenium-<version>-<type>.apk instead of app-<type>.apk
 base {
-    archivesName.set("zen-chromium-$appVersion")
+    archivesName.set("zenium-$appVersion")
 }
 
 tasks.named("preBuild") { dependsOn(buildWeb) }

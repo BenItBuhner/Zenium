@@ -76,7 +76,8 @@ export class UpdateService {
         error: null,
         progress: null,
         downloadedPath: null,
-        signerMismatch: false
+        signerMismatch: false,
+        packageChange: false
       })
     }
     this.schedule(settings.autoCheck ? 1_000 : 0)
@@ -105,7 +106,7 @@ export class UpdateService {
     }
     if (this.current.signerMismatch) {
       this.browser.toast(
-        'This release is signed with a different key than the installed app. Uninstall Zen, then install the new APK.',
+        'This release is signed with a different key than the installed app. Uninstall Zenium, then install the new APK.',
         'error'
       )
       return
@@ -129,8 +130,10 @@ export class UpdateService {
       })
       this.browser.toast(
         mode === 'in-place'
-          ? `Zen ${release.version} is ready – restart to update.`
-          : `Zen ${release.version} downloaded – install it from Settings → Updates.`
+          ? `Zenium ${release.version} is ready – restart to update.`
+          : this.current.packageChange
+            ? `Zenium ${release.version} downloaded – install it from Settings → Updates; it installs alongside this app, which you can then uninstall.`
+            : `Zenium ${release.version} downloaded – install it from Settings → Updates.`
       )
     } catch (error) {
       if (this.cancelRequested || (error as Error)?.name === 'AbortError') {
@@ -164,7 +167,7 @@ export class UpdateService {
     this.host.cancel()
   }
 
-  /** The release notes on GitHub, in a Zen tab. */
+  /** The release notes on GitHub, in a Zenium tab. */
   openRelease(win?: ZenWindow): void {
     const url = this.current.release?.notesUrl ?? `https://github.com/${UPDATE_REPOSITORY}/releases`
     this.browser.openExternalUrl(url, win)
@@ -197,10 +200,11 @@ export class UpdateService {
           progress: null,
           downloadedPath: null,
           signerMismatch: false,
+          packageChange: false,
           lastCheckedAt,
           signature
         })
-        if (opts.manual) this.browser.toast(`Zen ${version} is up to date.`)
+        if (opts.manual) this.browser.toast(`Zenium ${version} is up to date.`)
         return
       }
       if (this.current.phase === 'ready' && this.current.release?.version === manifest.version) {
@@ -219,7 +223,14 @@ export class UpdateService {
         notesUrl: manifest.notesUrl,
         asset
       }
-      const installedSigner = target.kind === 'apk' ? this.host.signer() : null
+      // Android accepts an APK over the installed app only from the same signing key – unless the
+      // APK carries another applicationId, in which case it is a new app that installs alongside
+      // whatever key it has (the way Zen became Zenium), and the key comparison says nothing.
+      const installedPackage = target.kind === 'apk' ? this.host.packageName() : null
+      const packageChange = Boolean(
+        installedPackage && asset?.packageName && asset.packageName !== installedPackage
+      )
+      const installedSigner = target.kind === 'apk' && !packageChange ? this.host.signer() : null
       const signerMismatch = Boolean(
         installedSigner && asset?.signer && asset.signer !== installedSigner
       )
@@ -229,6 +240,7 @@ export class UpdateService {
         progress: null,
         downloadedPath: null,
         signerMismatch,
+        packageChange,
         lastCheckedAt,
         signature
       })
@@ -236,7 +248,11 @@ export class UpdateService {
       if (settings.autoDownload && mode === 'in-place' && asset && !signerMismatch) {
         void this.download()
       } else if (!opts.manual) {
-        this.browser.toast(`Zen ${manifest.version} is available – see Settings → Updates.`)
+        this.browser.toast(
+          packageChange
+            ? `Zenium ${manifest.version} is available as a new app – see Settings → Updates.`
+            : `Zenium ${manifest.version} is available – see Settings → Updates.`
+        )
       }
     } catch (error) {
       const message = describeError(error)

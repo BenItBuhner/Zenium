@@ -11,7 +11,7 @@ import { Choice, Group, Row } from './SettingsPrimitives'
 /**
  * Settings → Updates. One status card driven by the core's `UpdateStatus` (check → available →
  * downloading → ready), plus the automatic-check preferences. Releases come from GitHub; how an
- * update is applied depends on how this copy of Zen was installed (`describeUpdateTarget`).
+ * update is applied depends on how this copy of Zenium was installed (`describeUpdateTarget`).
  */
 export function UpdatesSection({
   state,
@@ -40,7 +40,7 @@ export function UpdatesSection({
         {inPlace && (
           <Row
             label="Download updates in the background"
-            hint="Fetch a new version as soon as it is found; it installs when you restart Zen."
+            hint="Fetch a new version as soon as it is found; it installs when you restart Zenium."
           >
             <Switch
               checked={prefs.autoDownload}
@@ -192,17 +192,17 @@ function StatusCard({
 function headline(u: UpdateStatus): string {
   switch (u.phase) {
     case 'idle':
-      return `Zen ${u.currentVersion}`
+      return `Zenium ${u.currentVersion}`
     case 'checking':
       return 'Checking for updates…'
     case 'up-to-date':
-      return `Zen ${u.currentVersion} is up to date`
+      return `Zenium ${u.currentVersion} is up to date`
     case 'available':
-      return `Zen ${u.release?.version ?? ''} is available`
+      return `Zenium ${u.release?.version ?? ''} is available`
     case 'downloading':
-      return `Downloading Zen ${u.release?.version ?? ''}…`
+      return `Downloading Zenium ${u.release?.version ?? ''}…`
     case 'ready':
-      return `Zen ${u.release?.version ?? ''} is ready to install`
+      return `Zenium ${u.release?.version ?? ''} is ready to install`
     case 'error':
       return 'Could not update'
   }
@@ -221,11 +221,13 @@ function detail(u: UpdateStatus): string {
       return `You are on the newest ${u.channel === 'beta' ? 'beta' : 'stable'} release. ${checked}`
     case 'available':
       if (u.signerMismatch)
-        return 'This release is signed with a different key than the installed app: uninstall Zen first, then install the new APK from the release page.'
+        return 'This release is signed with a different key than the installed app: uninstall Zenium first, then install the new APK from the release page.'
       if (u.mode === 'manual' || !u.release?.asset)
         return 'This build cannot update itself – get the new version from the release page.'
+      if (u.packageChange)
+        return `This release is a new app (${u.release.asset.packageName}): Android installs it alongside this one instead of replacing it. Install it, then uninstall this app. ${checked}`
       return u.mode === 'in-place'
-        ? `Downloading installs it in the background; Zen switches over when it restarts. ${checked}`
+        ? `Downloading installs it in the background; Zenium switches over when it restarts. ${checked}`
         : `${describeUpdateTarget(u.target)} ${checked}`
     case 'downloading':
       return u.progress
@@ -237,9 +239,11 @@ function detail(u: UpdateStatus): string {
       return u.target.kind === 'deb'
         ? 'Verified and staged. Restart to update runs dpkg, which asks for your password.'
         : u.mode === 'in-place'
-          ? 'Verified and staged. It installs when Zen restarts – now, or the next time you quit.'
+          ? 'Verified and staged. It installs when Zenium restarts – now, or the next time you quit.'
           : u.target.kind === 'apk'
-            ? 'Verified. Install hands the APK to Android, which asks you to confirm.'
+            ? u.packageChange
+              ? 'Verified. Install hands the APK to Android; it installs as a new app next to this one, and this app can be uninstalled afterwards.'
+              : 'Verified. Install hands the APK to Android, which asks you to confirm.'
             : `Verified and saved to ${u.downloadedPath ?? 'Downloads'}. Install opens it.`
     case 'error':
       return `${u.error ?? 'Unknown error'}. ${checked}`

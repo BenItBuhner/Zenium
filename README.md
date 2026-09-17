@@ -1,9 +1,9 @@
-# Zen on Chromium
+# Zenium
 
-A port of [Zen Browser](https://zen-browser.app)'s user experience to the Chromium engine.
-Zen itself is a Firefox (Gecko) fork; this project rebuilds its distinctive UI and behaviours on
-Blink/V8, so pages render exactly as they do in Chrome while the browser chrome is Zen's. The
-current reference is **Zen 1.22b** (September 2026).
+Zenium is a port of [Zen Browser](https://zen-browser.app)'s user experience to the Chromium
+engine. Zen itself is a Firefox (Gecko) fork; this project rebuilds its distinctive UI and
+behaviours on Blink/V8, so pages render exactly as they do in Chrome while the browser chrome is
+Zen's. The current reference is **Zen 1.22b** (September 2026).
 
 It ships as a desktop app (Electron, Linux/Windows/macOS) and as an Android app (the system
 WebView) that share the browser core and the whole React chrome. On a phone the chrome becomes a
@@ -21,31 +21,38 @@ mouse, it is the desktop layout.
 Every release on the [releases page](https://github.com/BenItBuhner/Zenium/releases) ships the
 same set of packages, built by GitHub Actions from the tagged commit:
 
-| Platform        | Packages                                                                                                        |
-| --------------- | --------------------------------------------------------------------------------------------------------------- |
-| Windows 10 / 11 | `zen-chromium-<version>-x64-setup.exe`, `…-arm64-setup.exe`                                                     |
-| macOS           | `zen-chromium-<version>-arm64.dmg` (Apple Silicon), `…-x64.dmg` (Intel)                                         |
-| Linux           | `zen-chromium-<version>-x86_64.AppImage`, `…-arm64.AppImage`, `zen-chromium_<version>_amd64.deb`, `…_arm64.deb` |
-| Android 8.0+    | `zen-chromium-<version>.apk`                                                                                    |
+| Platform        | Packages                                                                                            |
+| --------------- | --------------------------------------------------------------------------------------------------- |
+| Windows 10 / 11 | `zenium-<version>-x64-setup.exe`, `…-arm64-setup.exe`                                               |
+| macOS           | `zenium-<version>-arm64.dmg` (Apple Silicon), `…-x64.dmg` (Intel)                                   |
+| Linux           | `zenium-<version>-x86_64.AppImage`, `…-arm64.AppImage`, `zenium_<version>_amd64.deb`, `…_arm64.deb` |
+| Android 8.0+    | `zenium-<version>.apk`                                                                              |
 
 Each release also carries `SHA256SUMS.txt` and a build provenance attestation for every file
 (`gh attestation verify <file> --repo BenItBuhner/Zenium`), and its notes explain the first-launch
 steps a platform needs when a package is not code-signed. Pre-releases (`x.y.z-beta.n`) are marked
 as such and never become the "latest" release.
 
+Up to v0.2.0 the browser was called **Zen** and its packages `zen-chromium-*`. Zenium takes over
+an existing Zen profile on its first launch (the `Zen` user-data directory becomes `Zenium`, a
+`zen-sync` folder becomes `zenium-sync`); the Windows installer and the `.deb` remove the old Zen
+installation, macOS users delete the old `Zen.app` themselves, and on Android Zenium is a new app
+that installs alongside Zen (uninstall Zen afterwards). The `zen` command stays available as an
+alias of `zenium` on Linux for one release.
+
 ### Automatic updates
 
-Zen checks for new releases on startup and every six hours (Settings → Updates: check now, pick
+Zenium checks for new releases on startup and every six hours (Settings → Updates: check now, pick
 the stable or beta channel, turn background downloads off). Each release publishes an
 `update-manifest.json` – version, one entry per package with URL, size and SHA-256 – plus the
 `latest*.yml` feeds electron-updater reads. How the update is applied depends on the install:
 
-| Install                     | Behaviour                                                                                                                                               |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Windows installer, AppImage | Downloaded in the background (delta where possible), installed when Zen restarts                                                                        |
-| Debian package              | Downloaded in the background; installing runs `dpkg` through `pkexec` and asks for your password                                                        |
-| macOS                       | Unsigned builds cannot be swapped by Squirrel.Mac: Zen downloads and verifies the DMG and opens it for you to drag over. Signed builds install in place |
-| Android                     | Zen downloads and verifies the APK and hands it to the package installer; upgrades in place only with the same signing key                              |
+| Install                     | Behaviour                                                                                                                                                  |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows installer, AppImage | Downloaded in the background (delta where possible), installed when Zenium restarts                                                                        |
+| Debian package              | Downloaded in the background; installing runs `dpkg` through `pkexec` and asks for your password                                                           |
+| macOS                       | Unsigned builds cannot be swapped by Squirrel.Mac: Zenium downloads and verifies the DMG and opens it for you to drag over. Signed builds install in place |
+| Android                     | Zenium downloads and verifies the APK and hands it to the package installer; upgrades in place only with the same signing key and applicationId            |
 
 Every download is checked against the manifest's SHA-256 (electron-updater additionally checks its
 own SHA-512). When the maintainers configure `UPDATE_MANIFEST_SIGNING_KEY`, manifests are signed
@@ -171,14 +178,14 @@ app and the Android WebView host.
   transport every modern MCP client speaks). Point a client at it:
 
   ```json
-  { "mcpServers": { "zen": { "url": "http://127.0.0.1:41735/mcp" } } }
+  { "mcpServers": { "zenium": { "url": "http://127.0.0.1:41735/mcp" } } }
   ```
 
 - **Connect over stdio:** clients that launch a command can use the shim, which relays to the
-  running browser:
+  running browser (`zen --mcp` keeps working on Linux for one release):
 
   ```json
-  { "mcpServers": { "zen": { "command": "zen", "args": ["--mcp"] } } }
+  { "mcpServers": { "zenium": { "command": "zenium", "args": ["--mcp"] } } }
   ```
 
 - **Tools:** the vocabulary agents already know from Playwright MCP — `browser_navigate`,
@@ -225,14 +232,14 @@ npm run build:linux  # packaged app via electron-builder (also build:win / build
 ```
 
 On a headless Linux box run with a display, e.g. `xvfb-run -a npm run dev`. Command-line flags:
-`zen https://example.com`, `zen --blank-window`, `zen --private-window`.
+`zenium https://example.com`, `zenium --blank-window`, `zenium --private-window`.
 
 ## Setting up sync
 
 Zen syncs Spaces through a Mozilla account. A Chromium port has no access to Firefox Sync, so
 this build brings its own transport: Settings → Sync → choose a folder that is already synced
 between your computers (Dropbox, iCloud Drive, Google Drive, OneDrive, Nextcloud, Syncthing…) and
-a passphrase. Each device writes one AES-256-GCM encrypted file (`zen-sync/<device>.zensync`) into
+a passphrase. Each device writes one AES-256-GCM encrypted file (`zenium-sync/<device>.zensync`) into
 that folder; the folder never holds anything readable without the passphrase. Joining a folder
 that already has data asks whether to merge or keep only the joining device's data, just like Zen
 1.22. Conflicts resolve last-writer-wins per record (a space, a folder, a pinned tab, the settings
@@ -253,7 +260,8 @@ npm run build:android:release    # release APK (R8) → android/app/build/output
 Or use Android Studio: open `android/`; the Gradle build runs the Vite build first (pass
 `-PskipWeb` to skip it when the assets are already built).
 
-The APK is named after the version (`zen-chromium-<version>-release.apk`), its `versionName` is the
+The APK (applicationId `io.github.benitbuhner.zenium`) is named after the version
+(`zenium-<version>-release.apk`), its `versionName` is the
 `package.json` version and its `versionCode` is derived from it (`major·1000000 + minor·10000 +
 patch·100 + channel`, where a pre-release such as `-beta.2` sorts below the final release; pass
 `-PversionCode=…` or set `ZEN_ANDROID_VERSION_CODE` to override). A release build is signed with

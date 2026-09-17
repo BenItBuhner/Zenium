@@ -65,6 +65,8 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
         "boot" -> json(
             "version" to BuildConfig.VERSION_NAME,
             "signer" to Updates.signerSha256(activity),
+            // The applicationId; a release whose APK carries another one installs as a new app.
+            "packageName" to activity.packageName,
             "files" to storage.readAll(),
             "downloadsDir" to (Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)?.absolutePath ?: ""),
             "insets" to activity.currentInsets(),

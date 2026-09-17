@@ -300,10 +300,9 @@ const androidReleaseKey = meta.android?.signing === 'release'
 const androidCiDebugKey = meta.android?.signing === 'ci-debug'
 
 const appImageX64 =
-  rows.find((row) => row.key === 'linux-appimage-x64')?.file ??
-  `zen-chromium-${version}-x86_64.AppImage`
+  rows.find((row) => row.key === 'linux-appimage-x64')?.file ?? `zenium-${version}-x86_64.AppImage`
 const debX64 =
-  rows.find((row) => row.key === 'linux-deb-x64')?.file ?? `zen-chromium_${version}_amd64.deb`
+  rows.find((row) => row.key === 'linux-deb-x64')?.file ?? `zenium_${version}_amd64.deb`
 const sampleFile = rows[0]?.file ?? appImageX64
 
 const table = [
@@ -326,7 +325,7 @@ const installing = [
   '<details>',
   '<summary><b>Windows</b></summary>',
   '',
-  'Run the installer; it installs Zen for the current user and creates a desktop shortcut. Pick the `arm64` installer on a Windows-on-ARM device (Snapdragon X and similar), otherwise `x64`.',
+  'Run the installer; it installs Zenium for the current user and creates a desktop shortcut. Pick the `arm64` installer on a Windows-on-ARM device (Snapdragon X and similar), otherwise `x64`.',
   windowsSigned
     ? null
     : 'The installer is not code-signed yet, so SmartScreen shows "Windows protected your PC" on first run: choose **More info → Run anyway**.',
@@ -336,12 +335,12 @@ const installing = [
   '<details>',
   '<summary><b>macOS</b></summary>',
   '',
-  'Open the disk image and drag **Zen** into *Applications*. Apple Silicon Macs (M1 and later) use the `arm64` image, Intel Macs the `x64` image.',
+  'Open the disk image and drag **Zenium** into *Applications*. Apple Silicon Macs (M1 and later) use the `arm64` image, Intel Macs the `x64` image.',
   macNotarized
     ? null
     : macSigned
-      ? 'The app is signed but not notarized by Apple, so the first launch is blocked: choose **Open Anyway** under *System Settings → Privacy & Security*, or run `xattr -dr com.apple.quarantine /Applications/Zen.app`.'
-      : 'This build is not signed or notarized by Apple, so macOS blocks the first launch ("Apple could not verify…"). Choose **Open Anyway** under *System Settings → Privacy & Security*, or run `xattr -dr com.apple.quarantine /Applications/Zen.app` once.',
+      ? 'The app is signed but not notarized by Apple, so the first launch is blocked: choose **Open Anyway** under *System Settings → Privacy & Security*, or run `xattr -dr com.apple.quarantine /Applications/Zenium.app`.'
+      : 'This build is not signed or notarized by Apple, so macOS blocks the first launch ("Apple could not verify…"). Choose **Open Anyway** under *System Settings → Privacy & Security*, or run `xattr -dr com.apple.quarantine /Applications/Zenium.app` once.',
   '',
   '</details>',
   '',
@@ -373,6 +372,18 @@ const installing = [
       ? "The APK is signed with the repository's CI debug key (`android/ci-debug.keystore`, the same key for every release built without the project keystore), so it upgrades other CI-debug-keyed builds in place, including through the in-app updater. Android treats it like any debug-signed app. Installs from before this key (v0.2.0 and earlier) must be uninstalled once; switching to the project release key later will need one more uninstall."
       : '**This APK is signed with a temporary CI key.** It installs fine, but Android will refuse to upgrade an installation from another release over it (and vice versa): uninstall the previous version first. Once the maintainers configure a release keystore, upgrades become seamless.',
   '',
+  '</details>',
+  '',
+  '<details>',
+  '<summary><b>Coming from Zen (v0.2.0 and earlier)</b></summary>',
+  '',
+  'The browser is now called Zenium, and its packages, app id (`io.github.benitbuhner.zenium`) and install locations carry the new name. Your profile moves with you: on first launch Zenium takes over the `Zen` user-data directory (tabs, spaces, settings, cookies), and a `zen-sync` folder becomes `zenium-sync`.',
+  '',
+  '- **Windows**: the installer removes the Zen installation (and its shortcuts) for you; the in-app updater of Zen 0.2.0 does the same when it installs this release.',
+  '- **macOS**: drag Zenium into *Applications* and delete the old **Zen.app** yourself once Zenium has started.',
+  '- **Linux**: the `.deb` replaces the `zen-chromium` package (`apt install ./…deb` or `dpkg -i`); the AppImage simply replaces the old file, and the in-app updater does so on its own. The `zen` command keeps working as an alias of `zenium` for this release.',
+  '- **Android**: Zenium is a new app and installs alongside Zen; nothing can move the old app’s data. Uninstall Zen once Zenium is installed.',
+  '',
   '</details>'
 ].filter((line) => line !== null)
 
@@ -386,19 +397,19 @@ const verifying = [
 ]
 
 const updating = [
-  `Zen checks this release's [\`${MANIFEST}\`](${downloadBase}/${MANIFEST}) (version, per-package download URL, size and SHA-256${
+  `Zenium checks this release's [\`${MANIFEST}\`](${downloadBase}/${MANIFEST}) (version, per-package download URL, size and SHA-256${
     manifestSigned ? ', signed with the project ed25519 key' : ''
   }) on startup and every few hours – see *Settings → Updates*.`,
   '',
-  '- **Windows** and **Linux** (AppImage, deb) download the update in the background and install it when Zen restarts.',
+  '- **Windows** and **Linux** (AppImage, deb) download the update in the background and install it when Zenium restarts.',
   macSigned
-    ? '- **macOS** downloads the update in the background and installs it when Zen restarts.'
-    : '- **macOS**: this build is not signed by Apple, so macOS cannot swap it in place; Zen downloads the disk image, verifies it and opens it for you to drag over the old app.',
+    ? '- **macOS** downloads the update in the background and installs it when Zenium restarts.'
+    : '- **macOS**: this build is not signed by Apple, so macOS cannot swap it in place; Zenium downloads the disk image, verifies it and opens it for you to drag over the old app.',
   androidReleaseKey
     ? '- **Android** downloads the APK, verifies it and hands it to the package installer.'
     : androidCiDebugKey
       ? '- **Android** downloads the APK, verifies it and hands it to the package installer; it upgrades any build signed with the CI debug key in place (older installs: uninstall once).'
-      : '- **Android**: the APK is signed with a temporary CI key, so it cannot replace an earlier install in place; Zen tells you to uninstall first.',
+      : '- **Android**: the APK is signed with a temporary CI key, so it cannot replace an earlier install in place; Zenium tells you to uninstall first.',
   manifestSigned
     ? null
     : '- The manifest is not signed yet (no `UPDATE_MANIFEST_SIGNING_KEY` configured); the app relies on HTTPS and the per-file SHA-256.',
@@ -411,7 +422,7 @@ const previous = previousTag()
 const changes = await generatedNotes(previous)
 
 const notes = [
-  `Zen on Chromium **${version}** for Windows, macOS, Linux and Android. Pick the package for your device below.`,
+  `Zenium **${version}** for Windows, macOS, Linux and Android. Pick the package for your device below.`,
   '',
   '## Downloads',
   '',

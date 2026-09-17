@@ -287,8 +287,18 @@ jobs:
             echo "::error::Expected exactly one release APK, found: ${apks[*]:-none}"
             exit 1
           fi
-          target="release/assets/zen-chromium-${{ needs.prepare.outputs.version }}.apk"
+          target="release/assets/zenium-${{ needs.prepare.outputs.version }}.apk"
           cp "${apks[0]}" "$target"
+          # The applicationId goes into the update manifest: an installed app with another id
+          # (app.zen.chromium, before the rename) gets this APK installed alongside, not over it,
+          # and the app explains that instead of comparing signing keys.
+          aapt="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)"
+          package="$("$aapt" dump badging "$target" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
+          if [[ -z "$package" ]]; then
+            echo "::error::Could not read the applicationId from the APK (aapt dump badging)"
+            exit 1
+          fi
+          echo "APK applicationId: $package"
           apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
           "$apksigner" verify --print-certs "$target" | tee "$RUNNER_TEMP/certs.txt"
           # The signing certificate's digest goes into the update manifest: Android only upgrades
@@ -309,7 +319,8 @@ jobs:
             fi
             echo "APK signed with the committed CI debug key $expected"
           fi
-          printf '{"platform":"android","signing":"%s","signer":"%s"}\n' "${{ steps.keystore.outputs.signing }}" "$signer" > release/meta/android.json
+          printf '{"platform":"android","signing":"%s","signer":"%s","packageName":"%s"}\n' \
+            "${{ steps.keystore.outputs.signing }}" "$signer" "$package" > release/meta/android.json
           cat release/meta/android.json
           ls -l release/assets
       - uses: actions/upload-artifact@v7

@@ -101,7 +101,7 @@ jobs:
           echo "debug APK signed with the committed CI debug key $expected"
       - uses: actions/upload-artifact@v7
         with:
-          name: zen-chromium-android-debug
+          name: zenium-android-debug
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 7

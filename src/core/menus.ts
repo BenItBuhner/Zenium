@@ -921,7 +921,7 @@ export class Menus {
             ]
           : []),
         { type: 'separator' },
-        { label: `About Zen (Chromium) ${state.version}`, enabled: false },
+        { label: `About Zenium ${state.version}`, enabled: false },
         {
           label: 'Quit',
           click: () => this.browser.actions.run('app.quit', { sourceTabId: null, win })

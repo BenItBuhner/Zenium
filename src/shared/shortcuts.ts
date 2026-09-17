@@ -128,7 +128,7 @@ export const SHORTCUT_GROUP_LABELS: Record<ShortcutGroup, string> = {
   'zen-compact-mode': 'Compact Mode',
   'zen-workspace': 'Spaces',
   'zen-split-view': 'Split View',
-  'zen-other': 'Zen Features',
+  'zen-other': 'Zenium Features',
   windowAndTabManagement: 'Window & Tab Management',
   navigation: 'Navigation',
   searchAndFind: 'Search & Find',

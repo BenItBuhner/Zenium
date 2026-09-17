@@ -111,7 +111,7 @@ function sourceTitle(source: MenuDescriptor['source']): string {
     case 'newtab':
       return 'New Tab'
     case 'app':
-      return 'Zen'
+      return 'Zenium'
   }
 }
 
