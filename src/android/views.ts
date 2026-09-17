@@ -1,4 +1,5 @@
 import type { KeyBinding, Rect, Tab } from '@shared/types'
+import type { SiteCertificate } from '@shared/siteInfo'
 import { zenPageHtml, type ReaderPageLookup } from '@shared/zenPages'
 import type {
   AgentCapture,
@@ -374,6 +375,22 @@ export class AndroidTabView implements TabView {
 
   async copyImageAt(): Promise<boolean> {
     return false
+  }
+
+  /** `WebView.getCertificate()` of the main frame (null on http pages). */
+  async certificate(): Promise<SiteCertificate | null> {
+    const raw = await this.bridge.call<Partial<SiteCertificate> | null>('view.certificate', {
+      tabId: this.tabId
+    })
+    if (!raw || typeof raw !== 'object') return null
+    const time = (v: unknown): number | null => (typeof v === 'number' && v > 0 ? v : null)
+    return {
+      subject: typeof raw.subject === 'string' ? raw.subject : '',
+      issuer: typeof raw.issuer === 'string' ? raw.issuer : '',
+      validFrom: time(raw.validFrom),
+      validTo: time(raw.validTo),
+      protocol: typeof raw.protocol === 'string' && raw.protocol ? raw.protocol : null
+    }
   }
 
   replaceMisspelling(): void {

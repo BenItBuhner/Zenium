@@ -27,6 +27,7 @@ import readabilityJs from '@mozilla/readability/Readability.js?raw'
 import readabilityReaderableJs from '@mozilla/readability/Readability-readerable.js?raw'
 import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
 import type { Bridge } from './bridge'
+import { AndroidSiteData } from './siteData'
 import { AndroidTabViewHost, type ViewEventPayloads } from './views'
 
 export const ANDROID_CAPABILITIES: HostCapabilities = {
@@ -383,6 +384,7 @@ export class AndroidPlatform implements Platform {
   readonly downloads: DownloadHost
   readonly sessions: SessionHost
   readonly app: AppHost
+  readonly siteData: AndroidSiteData
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
@@ -399,6 +401,7 @@ export class AndroidPlatform implements Platform {
     this.agentTransport = new AndroidAgentTransport(bridge)
     this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null)
     this.views = new AndroidTabViewHost(bridge)
+    this.siteData = new AndroidSiteData(bridge)
     this.menus = new RendererMenuHost()
     this.windows = {
       create: (win: ZenWindow): WindowHost => {

@@ -32,6 +32,20 @@ object Profiles {
         }
     }
 
+    /** The cookie jar of a container (the default one for the default container and old WebViews). */
+    fun cookieManager(containerId: String): CookieManager {
+        if (containerId == DEFAULT_CONTAINER || !supported) return CookieManager.getInstance()
+        return runCatching { ProfileStore.getInstance().getProfile(nameFor(containerId))?.cookieManager }.getOrNull()
+            ?: CookieManager.getInstance()
+    }
+
+    /** The storage (quota manager) of a container, see [cookieManager]. */
+    fun webStorage(containerId: String): WebStorage {
+        if (containerId == DEFAULT_CONTAINER || !supported) return WebStorage.getInstance()
+        return runCatching { ProfileStore.getInstance().getProfile(nameFor(containerId))?.webStorage }.getOrNull()
+            ?: WebStorage.getInstance()
+    }
+
     /** Wipe a container's data (the container was deleted). */
     fun clear(containerId: String) {
         if (containerId == DEFAULT_CONTAINER || !supported) {

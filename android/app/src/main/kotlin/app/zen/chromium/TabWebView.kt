@@ -496,6 +496,20 @@ class TabWebView(
         "canGoForward" to canGoForward()
     )
 
+    /** The main frame's certificate for the site-information sheet, or null on an insecure page. */
+    fun certificateInfo(): JSONObject? {
+        val cert = certificate ?: return null
+        val subject = cert.issuedTo
+        val issuer = cert.issuedBy
+        return json(
+            "subject" to (subject?.cName?.ifEmpty { null } ?: subject?.oName ?: ""),
+            "issuer" to (issuer?.oName?.ifEmpty { null } ?: issuer?.cName ?: ""),
+            "validFrom" to cert.validNotBeforeDate?.time,
+            "validTo" to cert.validNotAfterDate?.time,
+            "protocol" to null
+        )
+    }
+
     // --- WebViewClient ------------------------------------------------------------------------
 
     private inner class Client : WebViewClient() {

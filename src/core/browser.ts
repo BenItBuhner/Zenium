@@ -29,6 +29,7 @@ import { BoostService } from './boosts'
 import { ReaderService } from './reader'
 import { LiveFolderService } from './livefolders'
 import { ModService } from './mods'
+import { SiteInfoService } from './siteInfo'
 import { UpdateService } from './updates'
 import { NoExtensions, NoSync, NoUpdateHost, NoopGovernor } from './hostDefaults'
 import {
@@ -101,6 +102,8 @@ export class Browser {
   readonly agents: AgentService
   /** Release checks against GitHub and the download / install flow. */
   readonly updates: UpdateService
+  /** Connection, cookies, storage and permissions of a tab's site (the site-information sheet). */
+  readonly siteInfo: SiteInfoService
   readonly windows = new Map<string, ZenWindow>()
   quitting = false
   private readonly handlers: CommandHandlers
@@ -139,6 +142,7 @@ export class Browser {
       this,
       platform.createUpdateHost?.(this) ?? new NoUpdateHost(platform)
     )
+    this.siteInfo = new SiteInfoService(this)
     this.state.extras = () => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -840,6 +844,12 @@ export class Browser {
         this.actions.run(action as AnyAction, { sourceTabId: null, win }),
 
       'overlay.snapshot': ({ tabId }, win) => win.snapshot(tabId),
+
+      'site.info': ({ tabId }) => this.siteInfo.info(tabId),
+      'site.clearCookies': ({ tabId }) => this.siteInfo.clearCookies(tabId),
+      'site.clearData': ({ tabId }) => this.siteInfo.clearData(tabId),
+      'site.resetPermissions': ({ tabId, permission }) =>
+        this.siteInfo.resetPermissions(tabId, permission),
 
       'resources.snapshot': () => this.governor.sample(),
       'resources.trim': () => this.governor.trim(),
