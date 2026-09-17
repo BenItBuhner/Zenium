@@ -10,6 +10,8 @@ interface HostGlobal {
 }
 
 const STORAGE_PREFIX = 'zen-preview:'
+/** How long a reload takes to begin in this stand-in host (see `view.reload`). */
+const RELOAD_DELAY_MS = 3000
 
 /**
  * A stand-in for the Kotlin host so the Android chrome can run in an ordinary desktop browser
@@ -95,7 +97,10 @@ export function createPreviewBridge(): NativeBridge {
       const frame = views.get(String(tabId))
       if (!frame) return
       viewEvent(String(tabId), 'startLoading', null)
-      if (frame.dataset.url) frame.src = frame.dataset.url
+      // Deliberately unhurried, like a reload over a slow connection: what the chrome shows while
+      // a page is loading (the pull-to-refresh disc spinning) stays up long enough to be looked at.
+      const url = frame.dataset.url
+      if (url) window.setTimeout(() => (frame.src = url), RELOAD_DELAY_MS)
     },
     'view.loadHtml': ({ tabId, url, html }) => {
       const frame = views.get(String(tabId))

@@ -272,7 +272,11 @@ function LookSection({
       {caps.pullToRefresh && (
         <Group title="Pages">
           <Row label="Pull to refresh" hint="Drag down from the top of a page to reload it.">
-            <Switch checked={s.pullToRefresh} onCheckedChange={(v) => set({ pullToRefresh: v })} />
+            <Switch
+              aria-label="Pull to refresh"
+              checked={s.pullToRefresh}
+              onCheckedChange={(v) => set({ pullToRefresh: v })}
+            />
           </Row>
         </Group>
       )}

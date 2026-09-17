@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PREVIEW_OVERLAYS, parsePreviewSpec } from '../previewSpec'
+import { PREVIEW_OVERLAYS, PREVIEW_PULL_MAX, parsePreviewSpec } from '../previewSpec'
 
 describe('parsePreviewSpec', () => {
   it('opens a known overlay by name', () => {
@@ -31,5 +31,38 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('')).toEqual({ kind: 'idle' })
     expect(parsePreviewSpec('overlay=kitchen-sink')).toEqual({ kind: 'idle' })
     expect(parsePreviewSpec('nonsense&more=1')).toEqual({ kind: 'idle' })
+  })
+
+  it('scrolls a row of an overlay into view when asked', () => {
+    expect(parsePreviewSpec('overlay=settings&show=Pull%20to%20refresh')).toEqual({
+      kind: 'overlay',
+      overlay: 'settings',
+      show: 'Pull to refresh'
+    })
+    expect(parsePreviewSpec('overlay=settings&show=')).toEqual({
+      kind: 'overlay',
+      overlay: 'settings'
+    })
+  })
+
+  it('holds a pull at a percentage of the threshold, or lets go past it', () => {
+    expect(parsePreviewSpec('pull=40')).toEqual({ kind: 'pull', progress: 0.4, released: false })
+    expect(parsePreviewSpec('pull=100')).toEqual({ kind: 'pull', progress: 1, released: false })
+    expect(parsePreviewSpec('pull=refresh')).toEqual({
+      kind: 'pull',
+      progress: PREVIEW_PULL_MAX,
+      released: true
+    })
+    // Clamped to what the page can show, and never negative.
+    expect(parsePreviewSpec('pull=900')).toEqual({
+      kind: 'pull',
+      progress: PREVIEW_PULL_MAX,
+      released: false
+    })
+    expect(parsePreviewSpec('pull=-5')).toEqual({ kind: 'pull', progress: 0, released: false })
+    expect(parsePreviewSpec('pull=')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('pull=lots')).toEqual({ kind: 'idle' })
+    // The find bar and overlays come first.
+    expect(parsePreviewSpec('find=x&pull=40')).toEqual({ kind: 'find', text: 'x' })
   })
 })
