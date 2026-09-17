@@ -65,6 +65,7 @@ import {
 } from './model'
 import { getDomain, inputToUrl } from '../shared/url'
 import { overlayForUrl } from '../shared/zenPages'
+import { toggledBookmarksBarMode } from '../shared/bookmarks'
 import { buildSearchUrl, matchEngineKeyword } from '../shared/search'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
@@ -584,22 +585,46 @@ export class Browser {
     this.state.afterBroadcast(() => this.emit('bookmark.star', payload, win))
   }
 
-  /** "Bookmark all tabs": the window's current space (or the given tabs) into one new folder. */
+  /**
+   * "Bookmark all tabs": Chrome asks for the new folder's name and place first. The dialog comes
+   * back through `createBookmarksFromTabs`. The window's current space, or the given tabs.
+   */
   bookmarkTabs(win: ZenWindow, tabIds?: readonly string[]): void {
-    const space = win.activeSpace()
     const list = tabIds
       ? tabIds.map((id) => this.tabs.tab(id)).filter((t): t is Tab => Boolean(t))
       : orderedTabsForSpace(
           this.state.model,
-          space,
+          win.activeSpace(),
           this.state.settings.containerSpecificEssentials,
           win.id
         )
-    const title = tabIds ? `${list.length} tabs` : spaceLabel(space)
-    const folder = this.bookmarks.bookmarkTabs(list, title)
-    if (!folder) {
+    const pages = list.filter((t) => t.url && !t.url.startsWith('zen://'))
+    if (pages.length === 0) {
       this.toast('There are no pages to bookmark.', 'info', win)
       return
+    }
+    this.emit(
+      'bookmark.allTabs',
+      { tabIds: pages.map((t) => t.id), defaultTitle: `${pages.length} tabs` },
+      win
+    )
+  }
+
+  createBookmarksFromTabs(
+    tabIds: readonly string[],
+    title: string,
+    parentId: string,
+    win: ZenWindow
+  ): BookmarkNode | null {
+    const list = tabIds.map((id) => this.tabs.tab(id)).filter((t): t is Tab => Boolean(t))
+    const folder = this.bookmarks.bookmarkTabs(
+      list,
+      title.trim() || `${list.length} tabs`,
+      parentId
+    )
+    if (!folder) {
+      this.toast('There are no pages to bookmark.', 'info', win)
+      return null
     }
     const count = this.bookmarks.getChildren(folder.id).length
     this.toast(
@@ -607,8 +632,46 @@ export class Browser {
       'info',
       win
     )
-    const folderId = folder.id
-    this.state.afterBroadcast(() => this.emit('overlay.open', { kind: 'bookmarks', folderId }, win))
+    return folder
+  }
+
+  /** Ctrl+Shift+B, the bar's own menu, the app menu: show the bar for good or hide it for good. */
+  toggleBookmarksBar(win: ZenWindow): void {
+    const tab = this.tabs.activeTabFor(win)
+    const mode = toggledBookmarksBarMode(this.state.settings.bookmarksBar, tab?.url ?? null)
+    this.setBookmarksBarMode(mode, win)
+  }
+
+  setBookmarksBarMode(mode: Settings['bookmarksBar'], win: ZenWindow): void {
+    this.updateSettings({ bookmarksBar: mode }, win)
+  }
+
+  /** The bar folder menu's "Sort by name": folders first, then bookmarks, A to Z. */
+  sortBookmarkFolder(folderId: string): void {
+    this.bookmarks.sortByName(folderId)
+  }
+
+  /** Open the bookmarks below the given nodes in a new window (private when asked). */
+  openBookmarksInWindow(ids: readonly string[], isPrivate: boolean, win: ZenWindow): void {
+    const urls = this.collectBookmarkUrls(ids)
+    if (urls.length === 0) return
+    const target = this.openWindow(isPrivate ? 'private' : 'synced', win)
+    if (!target) return
+    urls.forEach((url, i) => this.tabs.createTab({ url, active: i === 0 }, target))
+  }
+
+  private collectBookmarkUrls(ids: readonly string[]): string[] {
+    const seen = new Set<string>()
+    const urls: string[] = []
+    for (const id of ids) {
+      for (const node of this.bookmarks.tree.urlsUnder(id)) {
+        if (!node.url || seen.has(node.id)) continue
+        seen.add(node.id)
+        urls.push(node.url)
+        this.bookmarks.touch(node.id)
+      }
+    }
+    return urls
   }
 
   /** Open a bookmark in the given tab (or a new one) and remember that it was used. */
@@ -622,16 +685,7 @@ export class Browser {
 
   /** Open every bookmark below the given nodes in new tabs (the first one becomes active). */
   openBookmarks(ids: readonly string[], win: ZenWindow): void {
-    const seen = new Set<string>()
-    const urls: string[] = []
-    for (const id of ids) {
-      for (const node of this.bookmarks.tree.urlsUnder(id)) {
-        if (!node.url || seen.has(node.id)) continue
-        seen.add(node.id)
-        urls.push(node.url)
-        this.bookmarks.touch(node.id)
-      }
-    }
+    const urls = this.collectBookmarkUrls(ids)
     urls.forEach((url, i) => this.tabs.createTab({ url, active: i === 0 }, win))
   }
 
@@ -1353,17 +1407,22 @@ export class Browser {
 
       'bookmark.toggle': ({ tabId }, win) => this.toggleBookmark(tabId, win),
       'bookmark.star': ({ tabId }, win) => this.starTab(tabId, win),
-      'bookmark.create': ({ parentId, index, title, url, type }) =>
-        this.bookmarks.create({ parentId, index, title, url, type }),
+      'bookmark.create': ({ parentId, index, title, url, type, favicon }) =>
+        this.bookmarks.create({ parentId, index, title, url, type, favicon }),
       'bookmark.update': ({ id, title, url }) => void this.bookmarks.update(id, { title, url }),
       'bookmark.move': ({ ids, parentId, index }) => void this.bookmarks.move(ids, parentId, index),
       'bookmark.remove': ({ ids }) => void this.bookmarks.removeMany(ids),
       'bookmark.open': ({ id, newTab, tabId }, win) => this.openBookmark(id, newTab, tabId, win),
       'bookmark.openAll': ({ ids }, win) => this.openBookmarks(ids, win),
+      'bookmark.openInWindow': ({ ids, private: isPrivate }, win) =>
+        this.openBookmarksInWindow(ids, isPrivate, win),
       'bookmark.allTabs': (_a, win) => this.bookmarkTabs(win),
-      'bookmark.contextMenu': ({ ids, folderId, x, y }, win) =>
-        this.menus.showBookmarkContextMenu(ids, folderId, { x, y }, win),
+      'bookmark.createFromTabs': ({ tabIds, title, parentId }, win) =>
+        this.createBookmarksFromTabs(tabIds, title, parentId, win),
+      'bookmark.contextMenu': ({ ids, folderId, x, y, surface }, win) =>
+        this.menus.showBookmarkContextMenu(ids, folderId, { x, y }, win, surface ?? 'manager'),
       'bookmark.menu': ({ x, y }, win) => this.menus.showBookmarksMenu({ x, y }, win),
+      'bookmark.toggleBar': (_a, win) => this.toggleBookmarksBar(win),
       'bookmark.cut': ({ ids }) => this.bookmarks.cut(ids),
       'bookmark.copy': ({ ids }) => this.bookmarks.copy(ids),
       'bookmark.paste': ({ folderId, index }) => void this.bookmarks.paste(folderId, index),

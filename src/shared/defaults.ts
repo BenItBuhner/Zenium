@@ -188,7 +188,8 @@ export const DEFAULT_SETTINGS: Settings = {
   passwords: structuredClone(DEFAULT_PASSWORD_SETTINGS),
   defaultBrowserPromo: structuredClone(DEFAULT_PROMO_STATE),
   blocking: structuredClone(DEFAULT_BLOCKING_SETTINGS),
-  pageControls: structuredClone(DEFAULT_PAGE_CONTROLS)
+  pageControls: structuredClone(DEFAULT_PAGE_CONTROLS),
+  bookmarksBar: 'newtab'
 }
 
 /** Firefox's four default containers plus "No Container". */

@@ -6,6 +6,7 @@ import {
   BookmarkTree,
   MOBILE_BOOKMARKS_ID,
   OTHER_BOOKMARKS_ID,
+  bookmarksBarVisible,
   createBookmarkRoots,
   defaultBookmarkFolderId,
   isBookmarkRoot,
@@ -15,8 +16,10 @@ import {
   recentFolders,
   searchBookmarks,
   sortBookmarkNodes,
+  toggledBookmarksBarMode,
   topLevelSelection
 } from '../bookmarks'
+import { BLANK_URL } from '../url'
 
 const NOW = 1_700_000_000_000
 
@@ -361,6 +364,24 @@ describe('sorting, searching and recency', () => {
     expect(sortBookmarkNodes(items, 'name').map((n) => n.title)).toEqual(['Item 2', 'Item 10'])
   })
 
+  it('sorts by URL with folders first in their manual order', () => {
+    const items = [
+      url('z', '2', 0, 'Zed', 'https://zed.example/'),
+      folder('g', '2', 1, 'Later folder'),
+      url('a', '2', 2, 'Alpha', 'https://alpha.example/'),
+      folder('f', '2', 3, 'Earlier folder'),
+      url('m', '2', 4, 'Mid', 'https://mid.example/')
+    ]
+    expect(sortBookmarkNodes(items, 'url').map((n) => n.id)).toEqual(['g', 'f', 'a', 'm', 'z'])
+    expect(sortBookmarkNodes(items, 'url', true).map((n) => n.id)).toEqual([
+      'g',
+      'f',
+      'z',
+      'm',
+      'a'
+    ])
+  })
+
   it('searches titles, URLs and folder paths across every folder, best match first', () => {
     expect(searchBookmarks(tree, 'ma').map((n) => n.id)).toEqual(['mail'])
     // Path match: "work" finds the folder and everything inside it.
@@ -403,5 +424,23 @@ describe('sorting, searching and recency', () => {
       'work',
       'blog'
     ])
+  })
+})
+
+describe('bookmarks bar visibility', () => {
+  it('follows the mode: always, never, or only on the new tab page', () => {
+    expect(bookmarksBarVisible('always', 'https://example.com/')).toBe(true)
+    expect(bookmarksBarVisible('never', BLANK_URL)).toBe(false)
+    expect(bookmarksBarVisible('newtab', BLANK_URL)).toBe(true)
+    expect(bookmarksBarVisible('newtab', 'zen://newtab')).toBe(true)
+    expect(bookmarksBarVisible('newtab', null)).toBe(true)
+    expect(bookmarksBarVisible('newtab', 'https://example.com/')).toBe(false)
+  })
+
+  it('Ctrl+Shift+B hides a visible bar and pins a hidden one', () => {
+    expect(toggledBookmarksBarMode('always', 'https://example.com/')).toBe('never')
+    expect(toggledBookmarksBarMode('never', 'https://example.com/')).toBe('always')
+    expect(toggledBookmarksBarMode('newtab', 'https://example.com/')).toBe('always')
+    expect(toggledBookmarksBarMode('newtab', BLANK_URL)).toBe('never')
   })
 })
