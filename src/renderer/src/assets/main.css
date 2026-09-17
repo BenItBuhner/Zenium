@@ -4208,8 +4208,10 @@
  * The page zoom sheet (design language v2 draft §1–§3, §6, §9), docked under the page, and its
  * own instance of the zoom stepper (the Accessibility rows' instance keeps the Settings look).
  * One block, every value a --v2-* token, so the set re-tunes once; unlayered so the slider's own
- * utility classes give way. Icon buttons are the plain `zen-toolbar-button` (§9.3 sizes them
- * app-wide); the focusable controls carry a `zen-v2-` class for the shared focus ring.
+ * utility classes give way. Icon buttons are the plain `zen-toolbar-button` (§9.3 sizes the
+ * boxes app-wide); their glyphs take the phone's icon size and stroke here, the way the
+ * pull-to-refresh disc's does; the focusable controls carry a `zen-v2-` class for the shared
+ * focus ring.
  */
 .zen-zoom-sheet {
   background: var(--v2-panel);
@@ -4220,6 +4222,11 @@
   line-height: var(--v2-line-body);
   font-weight: var(--v2-weight-body);
   will-change: transform;
+}
+.zen-zoom-sheet .zen-toolbar-button svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
 }
 .zen-zoom-row {
   min-height: var(--v2-row);
