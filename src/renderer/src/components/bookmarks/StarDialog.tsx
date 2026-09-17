@@ -1,26 +1,30 @@
 import type { JSX } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, Folder, Star } from 'lucide-react'
-import type { UIState } from '@shared/types'
-import { recentFolders } from '@shared/bookmarks'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { Star } from 'lucide-react'
+import type { Rect, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
-import { uiStore } from '@renderer/lib/ui'
+import { closeBookmarkChrome } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { Button } from '../ui/button'
-import { Input } from '../ui/input'
-import { FolderChooser } from './FolderChooser'
+import { FolderField } from './FolderField'
 import { useBookmarkTree } from './tree'
 
 export interface StarTarget {
   tabId: string
   nodeId: string
   created: boolean
+  /** The star chip the bubble hangs from; null when the pill is not on screen. */
+  anchor: Rect | null
 }
+
+const WIDTH = 340
+const MARGIN = 8
 
 /**
  * Chrome's star bubble: the page was bookmarked the moment the star was pressed; this names and
- * files it. "Remove" takes the bookmark back, "Done" (or Escape, or a click outside) keeps it.
+ * files it. "Remove" takes the bookmark back; "Done", Escape, a click outside or the star itself
+ * keep it, with whatever name is in the field.
  */
 export function StarDialog({
   state,
@@ -33,167 +37,169 @@ export function StarDialog({
   const node = tree.get(star.nodeId)
   const phone = useViewport().formFactor === 'phone'
   const [name, setName] = useState(node?.title ?? '')
-  const [pickerOpen, setPickerOpen] = useState(false)
-  const [chooser, setChooser] = useState(false)
+  const [nested, setNested] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
-  const recent = useMemo(() => recentFolders(tree, 5), [tree])
+  const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     nameRef.current?.focus()
     nameRef.current?.select()
   }, [])
 
+  // Whatever closes the bubble, the name in the field is kept: a rename is committed as the
+  // bubble unmounts, unless the bookmark itself was removed.
+  const pending = useRef<{ id: string; title: string; original: string } | null>(null)
+  useEffect(() => {
+    pending.current = node ? { id: node.id, title: name, original: node.title } : null
+  }, [name, node])
+  const removed = useRef(false)
+  useEffect(
+    () => () => {
+      const p = pending.current
+      if (!p || removed.current) return
+      const title = p.title.trim()
+      if (title && title !== p.original) run('bookmark.update', { id: p.id, title })
+    },
+    []
+  )
+
+  const close = useCallback((): void => closeBookmarkChrome({ starDialog: null }), [])
+
   // Removed elsewhere (another window, sync) while open: nothing left to edit.
   useEffect(() => {
-    if (!node) uiStore.set({ starDialog: null })
-  }, [node])
+    if (!node) {
+      removed.current = true
+      close()
+    }
+  }, [close, node])
+
+  // A click anywhere else keeps the bookmark and puts the bubble away; the star chip toggles
+  // the bubble itself.
+  useEffect(() => {
+    if (phone) return
+    const onDown = (e: PointerEvent): void => {
+      const target = e.target as Element | null
+      if (!target || panelRef.current?.contains(target) || target.closest('[data-bm-star]')) return
+      close()
+    }
+    window.addEventListener('pointerdown', onDown, true)
+    return () => window.removeEventListener('pointerdown', onDown, true)
+  }, [close, phone])
+
   if (!node) return null
 
-  const close = (): void => {
-    const title = name.trim()
-    if (title && title !== node.title) run('bookmark.update', { id: node.id, title })
-    uiStore.set({ starDialog: null })
-  }
   const remove = (): void => {
+    removed.current = true
     run('bookmark.remove', { ids: [node.id] })
-    uiStore.set({ starDialog: null })
+    close()
   }
   const moveTo = (folderId: string): void => {
     if (folderId !== node.parentId) run('bookmark.move', { ids: [node.id], parentId: folderId })
-    setPickerOpen(false)
   }
 
-  const parent = node.parentId ? tree.get(node.parentId) : null
-  const folderOptions =
-    parent && !recent.some((f) => f.id === parent.id) ? [parent, ...recent] : recent
+  const onKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.key !== 'Escape') return
+    e.preventDefault()
+    e.stopPropagation()
+    // A nested level (the folder list or tree) closes first.
+    if (!nested) close()
+  }
 
-  return (
-    <div
-      className={cn(
-        'absolute inset-0 z-50 flex bg-black/25',
-        phone ? 'items-end' : 'items-start justify-end'
-      )}
-      onMouseDown={close}
-    >
-      <div
-        role="dialog"
-        aria-label={star.created ? 'Bookmark added' : 'Edit bookmark'}
-        className={cn(
-          'zen-panel zen-animate-pop flex max-h-[calc(100%-24px)] flex-col p-4',
-          phone
-            ? 'mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] w-auto flex-1'
-            : 'mr-4 mt-14 w-[360px] max-w-[calc(100%-32px)]'
-        )}
-        onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            e.preventDefault()
-            e.stopPropagation()
-            if (chooser || pickerOpen) {
-              setChooser(false)
-              setPickerOpen(false)
-            } else close()
-          }
+  const body = (
+    <>
+      <div className="flex items-center gap-2.5">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[rgb(var(--zen-accent-rgb)/0.16)] text-[var(--zen-accent-ink)]">
+          <Star className="h-4 w-4" fill="currentColor" />
+        </span>
+        <h2 className="zen-bm-dialog-title">{star.created ? 'Bookmark added' : 'Edit bookmark'}</h2>
+      </div>
+      <form
+        className="mt-3 flex min-h-0 flex-col gap-3"
+        onSubmit={(e) => {
+          e.preventDefault()
+          close()
         }}
       >
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[var(--zen-accent)]/15 text-[var(--zen-accent)]">
-            <Star className="h-4 w-4" fill="currentColor" />
-          </span>
-          <h2 className="text-[14px] font-semibold">
-            {star.created ? 'Bookmark added' : 'Edit bookmark'}
-          </h2>
+        <label className="zen-bm-label">
+          Name
+          <input
+            ref={nameRef}
+            className="zen-field"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            spellCheck={false}
+            autoComplete="off"
+          />
+        </label>
+        <div className="zen-bm-label">
+          Folder
+          <FolderField
+            tree={tree}
+            value={node.parentId ?? ''}
+            onChange={moveTo}
+            onNestedChange={setNested}
+          />
         </div>
+        <div className="mt-1 flex items-center gap-2">
+          <button
+            type="button"
+            className="zen-button mr-auto"
+            data-variant="danger"
+            onClick={remove}
+          >
+            Remove
+          </button>
+          <button type="submit" className="zen-button" data-variant="primary">
+            Done
+          </button>
+        </div>
+      </form>
+    </>
+  )
 
-        <form
-          className="mt-4 flex min-h-0 flex-col gap-3"
-          onSubmit={(e) => {
-            e.preventDefault()
-            close()
-          }}
+  if (phone) {
+    return (
+      <div
+        className="zen-animate-in absolute inset-0 z-50 flex items-end bg-[var(--zen-scrim)]"
+        onMouseDown={close}
+      >
+        <div
+          ref={panelRef}
+          role="dialog"
+          aria-label={star.created ? 'Bookmark added' : 'Edit bookmark'}
+          className="zen-panel zen-animate-pop zen-bm-dialog mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] flex max-h-[calc(100%-24px)] w-auto flex-1 flex-col"
+          onMouseDown={(e) => e.stopPropagation()}
+          onKeyDown={onKeyDown}
         >
-          <label className="flex flex-col gap-1.5 text-[12px] text-[var(--zen-muted)]">
-            Name
-            <Input
-              ref={nameRef}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              spellCheck={false}
-              className="text-[var(--zen-fg)]"
-            />
-          </label>
-
-          <div className="flex flex-col gap-1.5 text-[12px] text-[var(--zen-muted)]">
-            Folder
-            {chooser ? (
-              <FolderChooser
-                tree={tree}
-                selectedId={node.parentId ?? ''}
-                onSelect={moveTo}
-                allowCreate
-                className="max-h-[260px] rounded-xl bg-[var(--zen-element-bg)] p-1 text-[var(--zen-fg)]"
-              />
-            ) : (
-              <div className="relative">
-                <button
-                  type="button"
-                  aria-haspopup="listbox"
-                  aria-expanded={pickerOpen}
-                  className="flex h-8 w-full items-center gap-2 rounded-lg border border-[var(--zen-border)] bg-[var(--zen-element-bg)] px-2.5 text-[13px] text-[var(--zen-fg)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--zen-accent)]/30"
-                  onClick={() => setPickerOpen((v) => !v)}
-                >
-                  <Folder className="h-4 w-4 shrink-0 opacity-70" />
-                  <span className="min-w-0 flex-1 truncate text-left">{parent?.title ?? ''}</span>
-                  <ChevronDown className="h-4 w-4 opacity-60" />
-                </button>
-                {pickerOpen && (
-                  <ul
-                    role="listbox"
-                    className="zen-panel zen-animate-pop absolute inset-x-0 top-[calc(100%+4px)] z-10 p-1 text-[13px] text-[var(--zen-fg)]"
-                  >
-                    {folderOptions.map((f) => (
-                      <li key={f.id}>
-                        <button
-                          type="button"
-                          role="option"
-                          aria-selected={f.id === node.parentId}
-                          className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-[var(--zen-element-bg-hover)]"
-                          onClick={() => moveTo(f.id)}
-                        >
-                          <Folder className="h-4 w-4 shrink-0 opacity-70" />
-                          <span className="min-w-0 flex-1 truncate">{f.title}</span>
-                          {f.id === node.parentId && <Check className="h-3.5 w-3.5" />}
-                        </button>
-                      </li>
-                    ))}
-                    <li className="mt-1 pt-1">
-                      <button
-                        type="button"
-                        className="flex h-8 w-full items-center rounded-lg px-2 text-left hover:bg-[var(--zen-element-bg-hover)]"
-                        onClick={() => {
-                          setPickerOpen(false)
-                          setChooser(true)
-                        }}
-                      >
-                        Choose another folder…
-                      </button>
-                    </li>
-                  </ul>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="mt-1 flex items-center gap-2">
-            <Button type="button" variant="ghost" size="sm" className="mr-auto" onClick={remove}>
-              Remove
-            </Button>
-            <Button type="submit" size="sm">
-              Done
-            </Button>
-          </div>
-        </form>
+          {body}
+        </div>
       </div>
-    </div>
+    )
+  }
+
+  // 8px under the star, the star's centre inside the panel's first 40px – or its last 40px when
+  // the panel would otherwise leave the window on the right.
+  const a = star.anchor
+  const centre = a ? a.x + a.width / 2 : window.innerWidth - MARGIN - 20
+  let left = centre - 32
+  if (left + WIDTH > window.innerWidth - MARGIN) left = centre + 32 - WIDTH
+  left = Math.min(Math.max(MARGIN, left), window.innerWidth - WIDTH - MARGIN)
+  const top = a ? a.y + a.height + 8 : 56
+
+  return createPortal(
+    <div
+      ref={panelRef}
+      role="dialog"
+      aria-label={star.created ? 'Bookmark added' : 'Edit bookmark'}
+      className={cn(
+        'zen-panel zen-animate-pop zen-bm-dialog fixed z-[70] flex flex-col',
+        'max-h-[calc(100vh-72px)]'
+      )}
+      style={{ left, top, width: WIDTH }}
+      onKeyDown={onKeyDown}
+    >
+      {body}
+    </div>,
+    document.body
   )
 }

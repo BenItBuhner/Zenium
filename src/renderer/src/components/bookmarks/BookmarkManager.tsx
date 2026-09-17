@@ -777,12 +777,7 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
       {drag &&
         createPortal(<DragGhost drag={drag} tree={tree} ghostRef={ghostRef} />, document.body)}
       {edit?.type === 'url' && (
-        <EditBookmarkDialog
-          key={edit.id ?? 'new'}
-          state={state}
-          id={edit.id}
-          parentId={edit.parentId}
-        />
+        <EditBookmarkDialog key={edit.id ?? 'new'} state={state} edit={edit} />
       )}
     </>
   )

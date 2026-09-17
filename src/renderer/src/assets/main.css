@@ -1155,29 +1155,66 @@
   .zen-bm-menu-level {
     will-change: transform;
   }
-  /* A panel leaves the way it came: the pop, played backwards. */
+  /* A panel leaves the way it came: the pop, played backwards; a scrim fades back out. */
   .zen-animate-pop-out {
     animation: zen-pop 180ms var(--zen-ease) reverse forwards;
+    pointer-events: none;
+  }
+  .zen-animate-out {
+    animation: zen-fade-in 160ms var(--zen-ease) reverse forwards;
+    pointer-events: none;
   }
 
-  /* The star in the address pill: the outline fills in 120 ms, then pops once it is filled. */
+  /* The star in the address pill: the outline fills in 120 ms (the pop follows in script). */
   .zen-bm-star svg {
     fill: currentColor;
     fill-opacity: 0;
     transition: fill-opacity 120ms var(--zen-ease);
   }
-  .zen-bm-star[data-filled='true'] {
-    color: var(--zen-accent-ink);
-    opacity: 1;
-  }
   .zen-bm-star[data-filled='true'] svg {
     fill-opacity: 1;
   }
-  .zen-bm-star[data-pop='true'] svg {
-    animation: zen-star-pop 180ms var(--zen-ease) 120ms;
+
+  /* The star bubble and the bookmark dialogs: info panels (§8.1), padding 12, title 15/600. */
+  .zen-bm-dialog {
+    padding: 12px;
+  }
+  .zen-bm-dialog-title {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+  }
+  .zen-bm-label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: var(--zen-muted);
+    font-size: 12.5px;
   }
 
   /* Fields and buttons of the bookmark dialogs (§8.6, §8.3): fills without borders. */
+  .zen-select {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 8px;
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 8px;
+    background: var(--zen-element-bg);
+    color: var(--zen-fg);
+    font-size: 13px;
+    outline: none;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-select:hover {
+    background: var(--zen-element-bg-hover);
+  }
+  .zen-select:focus-visible {
+    outline: 2px solid var(--zen-accent);
+    outline-offset: 2px;
+  }
   .zen-field {
     display: block;
     width: 100%;

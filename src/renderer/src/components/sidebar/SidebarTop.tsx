@@ -21,6 +21,8 @@ import { isPrivateWindow } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { openOverlay, openUrlbar } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { StarChip } from '../bookmarks/StarChip'
+import { useBookmarkTree } from '../bookmarks/tree'
 import { WindowControls } from '../WindowControls'
 
 interface Props {
@@ -70,6 +72,8 @@ export function NavRow({
     tab && isWebPage && state.boosts.some((b) => b.domain === getDomain(tab.url) && b.enabled)
   )
   const extensions = state.extensions.filter((e) => e.enabled && !e.error && e.popup)
+  const tree = useBookmarkTree(state)
+  const bookmarked = Boolean(tab && isWebPage && tree.hasUrl(tab.url))
   return (
     <div className={cn('zen-no-drag flex items-center gap-0.5', compact && 'flex-col', className)}>
       <button
@@ -192,6 +196,7 @@ export function NavRow({
               <Copy className="h-3 w-3" />
             </span>
           )}
+          {tab && isWebPage && <StarChip tab={tab} filled={bookmarked} />}
         </button>
       )}
       {!compact && extensions.slice(0, 4).map((ext) => <ExtensionButton key={ext.id} ext={ext} />)}

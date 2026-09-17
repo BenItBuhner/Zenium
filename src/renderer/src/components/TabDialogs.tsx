@@ -4,10 +4,13 @@ import type { UIState } from '@shared/types'
 import { SPACE_ICONS } from '@shared/defaults'
 import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
+import { activeTab, tabTitle } from '@renderer/lib/selectors'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
+import { BookmarkAllTabsDialog } from './bookmarks/BookmarkAllTabsDialog'
+import { EditBookmarkDialog } from './bookmarks/EditBookmarkDialog'
 import { StarDialog } from './bookmarks/StarDialog'
 
 const TAB_ICONS = [
@@ -26,14 +29,38 @@ const TAB_ICONS = [
   '🏷️'
 ]
 
-/** Small dialogs opened from tabs: the star dialog, the pinned-URL editor and the icon picker. */
+/**
+ * Small dialogs over the window: the star bubble, "Bookmark all tabs", a bookmark or folder
+ * edit requested outside the manager (the manager hosts its own), the pinned-URL editor and
+ * the icon picker.
+ */
 export function TabDialogs({ state }: { state: UIState }): JSX.Element | null {
   const pinnedTabId = uiStore.use((s) => s.editingPinnedUrlTabId)
   const iconTabId = uiStore.use((s) => s.iconPickerTabId)
   const star = uiStore.use((s) => s.starDialog)
+  const allTabs = uiStore.use((s) => s.bookmarkAllTabs)
+  const edit = uiStore.use((s) => s.bookmarkEdit)
+  const managerOpen = uiStore.use((s) => s.overlay === 'bookmarks')
   const pinnedTab = pinnedTabId ? state.tabs[pinnedTabId] : undefined
   const iconTab = iconTabId ? state.tabs[iconTabId] : undefined
   if (star) return <StarDialog key={star.nodeId} state={state} star={star} />
+  if (allTabs) return <BookmarkAllTabsDialog state={state} request={allTabs} />
+  if (edit && !managerOpen) {
+    // "Add page…" on the bar starts from the page on screen, like Chrome.
+    const tab = edit.id === null && edit.type === 'url' ? activeTab(state) : null
+    const prefill =
+      tab && tab.url && !tab.url.startsWith('zen://')
+        ? { title: tabTitle(tab), url: tab.url }
+        : null
+    return (
+      <EditBookmarkDialog
+        key={edit.id ?? `new-${edit.type}`}
+        state={state}
+        edit={edit}
+        prefill={prefill}
+      />
+    )
+  }
   if (pinnedTab) return <PinnedUrlDialog tab={pinnedTab} />
   if (iconTab) return <IconPickerDialog tab={iconTab} />
   return null

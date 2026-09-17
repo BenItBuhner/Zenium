@@ -431,7 +431,7 @@ export function BookmarksBar({
           aria-label={`${hidden.length} more ${hidden.length === 1 ? 'bookmark' : 'bookmarks'}`}
           aria-haspopup="menu"
           aria-expanded={menu?.anchorId === OVERFLOW_ANCHOR}
-          className="zen-bm-chip !px-1.5"
+          className="zen-bm-chip px-1.5"
           onFocus={() => setFocusIndex(visibleCount)}
           onPointerEnter={() => {
             if (menu && menu.anchorId !== OVERFLOW_ANCHOR && !drag) openMenu(OVERFLOW_ANCHOR)

@@ -86,8 +86,11 @@ export interface UiState {
   editingPinnedUrlTabId: string | null
   /** Tab whose icon picker is open. */
   iconPickerTabId: string | null
-  /** The star dialog (Ctrl+D): the tab that was starred and its bookmark. */
-  starDialog: { tabId: string; nodeId: string; created: boolean } | null
+  /**
+   * The star bubble (Ctrl+D): the tab that was starred, its bookmark, and where the star it
+   * hangs from was when it opened (null when the pill is not on screen).
+   */
+  starDialog: { tabId: string; nodeId: string; created: boolean; anchor: Rect | null } | null
   /** A bookmark the manager should edit, or create (`id: null`) inside `parentId`. */
   bookmarkEdit: { id: string | null; parentId: string; type: BookmarkNodeType } | null
   /** "Bookmark all tabs": the pages to file and the folder name Chrome would suggest. */
