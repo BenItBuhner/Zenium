@@ -15,6 +15,10 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+# macOS without a Developer ID: ad-hoc sign the bundle so it carries a resource seal (otherwise
+# Apple Silicon reports it as "damaged" with no Open Anyway). No-op on other platforms and when a
+# certificate is configured.
+afterPack: ./build/after-pack.mjs
 # Automatic updates (electron-updater). This block makes electron-builder write `app-update.yml`
 # into the packaged app and emit the `latest*.yml` feed files next to every installer, even with
 # `--publish never` (the Release workflow uploads them itself). The app never uses it to discover

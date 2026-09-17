@@ -61,8 +61,9 @@ export default defineConfig(
     }
   },
   {
-    // Plain Node scripts run by the GitHub Actions workflows; no TypeScript annotations available.
-    files: ['.github/scripts/**/*.mjs'],
+    // Plain Node scripts run by the GitHub Actions workflows and electron-builder hooks; no
+    // TypeScript annotations available.
+    files: ['.github/scripts/**/*.mjs', 'build/**/*.mjs'],
     rules: {
       '@typescript-eslint/explicit-function-return-type': 'off'
     }
