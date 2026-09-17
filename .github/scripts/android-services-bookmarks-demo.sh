@@ -39,8 +39,27 @@ cat > /tmp/chrome-bookmarks.html <<'EOF'
     <DT><A HREF="https://en.wikipedia.org/" ADD_DATE="1700000095">Wikipedia</A>
 </DL><p>
 EOF
-adb push /tmp/chrome-bookmarks.html /sdcard/Download/chrome-bookmarks.html
+# wait-for-device returns before the shared storage is mounted; a push then fails with "remote
+# couldn't create file: Operation not permitted". Wait for the boot to finish and retry.
+for _ in $(seq 1 60); do
+  [ "$(adb shell getprop sys.boot_completed 2> /dev/null | tr -d '\r')" = "1" ] && break
+  sleep 2
+done
+pushed=0
+for _ in $(seq 1 20); do
+  if adb push /tmp/chrome-bookmarks.html /sdcard/Download/chrome-bookmarks.html \
+    && adb shell ls /sdcard/Download/chrome-bookmarks.html > /dev/null 2>&1; then
+    pushed=1
+    break
+  fi
+  sleep 3
+done
+if [ "$pushed" != 1 ]; then
+  echo "::error::could not place the import fixture in the emulator's Downloads"
+  exit 1
+fi
 adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///sdcard/Download/chrome-bookmarks.html || true
+adb shell content call --uri content://media/external/file --method scan_volume --arg external_primary > /dev/null 2>&1 || true
 
 status=0
 bash .github/scripts/android-gesture-demo.sh || status=$?
