@@ -436,6 +436,11 @@ const MULTI_LABEL_SUFFIXES = new Set([
 /** Two-letter TLDs where any of these labels is a public suffix (generic pattern `<sld>.<cc>`). */
 const GENERIC_CC_SLDS = new Set(['co', 'com', 'org', 'net', 'gov', 'edu', 'ac', 'or', 'ne', 'go'])
 
+/** The suffix tables, exposed so a test can hold the Kotlin mirror to them. */
+export function publicSuffixTables(): { multiLabel: string[]; genericCcSlds: string[] } {
+  return { multiLabel: [...MULTI_LABEL_SUFFIXES], genericCcSlds: [...GENERIC_CC_SLDS] }
+}
+
 const IPV4_RE = /^\d{1,3}(?:\.\d{1,3}){3}$/
 
 /** Hostname of `url` lowercased and without a trailing dot; `null` when it has none. */

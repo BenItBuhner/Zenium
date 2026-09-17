@@ -178,6 +178,8 @@ describe('GhosteryTextMatcher', () => {
     '||tracker.example^$third-party',
     '||evil.example^$redirect=noopjs,script',
     "||csp.example^$csp=script-src 'none'",
+    '||phish.example^$all',
+    '@@||trusted.example^$document',
     'example.com##.ad-banner',
     ''
   ].join('\n')
@@ -240,6 +242,25 @@ describe('GhosteryTextMatcher', () => {
     )
     expect(matcher.cspDirectives(ctx('https://clean.example/', { type: 'main_frame' }))).toBeNull()
 
+    // Navigations: untyped filters never block the page itself, `$all` / `$document` ones do.
+    expect(matcher.match(ctx('https://ad.doubleclick.net/', { type: 'main_frame' }))).toBeNull()
+    expect(matcher.match(ctx('https://phish.example/login', { type: 'main_frame' }))).toMatchObject(
+      {
+        action: 'block',
+        filter: '||phish.example^$all'
+      }
+    )
+    expect(matcher.match(ctx('https://phish.example/a.js'))).toMatchObject({ action: 'block' })
+    // A `$document` exception switches the lists off for everything the page loads.
+    expect(
+      matcher.match(
+        ctx('https://ad.doubleclick.net/x', { documentUrl: 'https://trusted.example/p' })
+      )
+    ).toMatchObject({ action: 'allow', filter: '@@||trusted.example^$document' })
+    expect(
+      matcher.match(ctx('https://ad.doubleclick.net/x', { documentUrl: 'https://other.example/p' }))
+    ).toMatchObject({ action: 'block' })
+
     // Wired into the core engine, a text match is a decision at the filter-list priority.
     s.engine.setTextMatcher(matcher)
     expect(s.engine.decide(ctx('https://ad.doubleclick.net/x'))).toMatchObject({
@@ -295,8 +316,11 @@ describe('GhosteryTextMatcher', () => {
     first.rebuild()
     expect(first.fromCache).toBe(false)
     expect(existsSync(join(cacheDir, 'engine.bin'))).toBe(true)
+    expect(readFileSync(join(cacheDir, 'documents.txt'), 'utf8')).toBe(
+      '||phish.example^$all\n@@||trusted.example^$document'
+    )
     expect(JSON.parse(readFileSync(join(cacheDir, 'engine.json'), 'utf8'))).toEqual({
-      fingerprint: 'excerpt:1000:8',
+      fingerprint: 'excerpt:1000:10',
       version: 'v1'
     })
 
@@ -304,12 +328,15 @@ describe('GhosteryTextMatcher', () => {
     const s2 = source()
     s2.engine.setRuleSet(
       { id: 'excerpt', source: 'filter-list', priority: 1, enabled: true, updatedAt: 1000 },
-      { persisted: true, hasFilterText: true, filterCount: 8 }
+      { persisted: true, hasFilterText: true, filterCount: 10 }
     )
     const second = new GhosteryTextMatcher(s2, cacheDir, 'v1', 0)
     second.rebuild()
     expect(second.fromCache).toBe(true)
     expect(second.match(ctx('https://ad.doubleclick.net/x'))).toMatchObject({ action: 'block' })
+    expect(second.match(ctx('https://phish.example/', { type: 'main_frame' }))).toMatchObject({
+      action: 'block'
+    })
 
     // A different app version or set fingerprint rebuilds from text.
     const third = new GhosteryTextMatcher(s, cacheDir, 'v2', 0)

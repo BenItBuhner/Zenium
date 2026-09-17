@@ -7,7 +7,9 @@
  * matched by Ghostery's `FiltersEngine` (MPL-2.0), which parses EasyList syntax natively and
  * answers in microseconds through its token index. It is faster and more complete than a matcher
  * written here would be, and it already handles `$redirect`, `$csp`, `$important` and
- * `$badfilter`. Its serialised form is cached so later starts skip parsing.
+ * `$badfilter`. Its serialised form is cached so later starts skip parsing. Top-level documents
+ * are the one thing it is not asked about: the core's `DocumentFilters` decides navigations with
+ * uBlock Origin's rule (only `$document` / `$all` filters block a page), as the Kotlin engine does.
  */
 import { FiltersEngine, Request } from '@ghostery/adblocker'
 import { app, type Session } from 'electron'
@@ -22,6 +24,7 @@ import {
 import { gunzipSync } from 'node:zlib'
 import { dirname, join } from 'node:path'
 import type { Browser } from '../../core/browser'
+import { DocumentFilters } from '../../core/blocking/documentFilters'
 import {
   TEXT_MATCH_SET_ID,
   type RuleEngine,
@@ -143,6 +146,8 @@ export interface TextSource {
  */
 export class GhosteryTextMatcher implements TextMatcher, CspSource {
   private engine: FiltersEngine | null = null
+  /** The lists' document-level filters, decided here rather than by Ghostery. */
+  private documents: DocumentFilters = DocumentFilters.EMPTY
   private rebuildTimer: ReturnType<typeof setTimeout> | null = null
   private building = false
   private dirty = false
@@ -188,6 +193,16 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
   match(ctx: RequestContext): TextMatch | null {
     const engine = this.engine
     if (!engine) return null
+    if (ctx.type === 'main_frame') {
+      const document = this.documents.decide(ctx.url)
+      return document ? { action: document.action, filter: document.filter } : null
+    }
+    // An `@@…$document` exception on the page switches the lists off for everything it loads.
+    const page = ctx.documentUrl ?? ctx.initiator
+    if (page) {
+      const exception = this.documents.exception(page)
+      if (exception) return { action: 'allow', filter: exception }
+    }
     const result = engine.match(this.requestFor(ctx))
     if (result.exception) return { action: 'allow', filter: result.exception.toString() }
     if (result.redirect)
@@ -238,7 +253,8 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
     try {
       const cached = this.readCache(fingerprint)
       if (cached) {
-        this.engine = cached
+        this.engine = cached.engine
+        this.documents = cached.documents
         this.fromCache = true
         this.pendingText.clear()
         return
@@ -255,10 +271,12 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
         enableOptimizations: true,
         debug: false
       })
+      const documents = DocumentFilters.parse(parts)
       this.engine = engine
+      this.documents = documents
       this.fromCache = false
       this.pendingText.clear()
-      this.writeCache(fingerprint, engine)
+      this.writeCache(fingerprint, engine, documents)
     } catch (error) {
       console.error('[zenium] filter engine build failed', error)
     } finally {
@@ -268,33 +286,43 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
     }
   }
 
-  private cachePaths(): { bin: string; meta: string } {
-    return { bin: join(this.cacheDir, 'engine.bin'), meta: join(this.cacheDir, 'engine.json') }
+  private cachePaths(): { bin: string; meta: string; documents: string } {
+    return {
+      bin: join(this.cacheDir, 'engine.bin'),
+      meta: join(this.cacheDir, 'engine.json'),
+      documents: join(this.cacheDir, 'documents.txt')
+    }
   }
 
-  private readCache(fingerprint: string): FiltersEngine | null {
-    const { bin, meta } = this.cachePaths()
+  private readCache(
+    fingerprint: string
+  ): { engine: FiltersEngine; documents: DocumentFilters } | null {
+    const { bin, meta, documents } = this.cachePaths()
     try {
-      if (!existsSync(bin) || !existsSync(meta)) return null
+      if (!existsSync(bin) || !existsSync(meta) || !existsSync(documents)) return null
       const info = JSON.parse(readFileSync(meta, 'utf8')) as {
         fingerprint?: unknown
         version?: unknown
       }
       if (info.fingerprint !== fingerprint || info.version !== this.cacheVersion) return null
-      return FiltersEngine.deserialize(new Uint8Array(readFileSync(bin)))
+      return {
+        engine: FiltersEngine.deserialize(new Uint8Array(readFileSync(bin))),
+        documents: DocumentFilters.parse([readFileSync(documents, 'utf8')])
+      }
     } catch {
       return null
     }
   }
 
-  private writeCache(fingerprint: string, engine: FiltersEngine): void {
-    const { bin, meta } = this.cachePaths()
+  private writeCache(fingerprint: string, engine: FiltersEngine, documents: DocumentFilters): void {
+    const paths = this.cachePaths()
     try {
       mkdirSync(this.cacheDir, { recursive: true })
-      const tmp = `${bin}.${process.pid}.tmp`
+      const tmp = `${paths.bin}.${process.pid}.tmp`
       writeFileSync(tmp, engine.serialize())
-      renameSync(tmp, bin)
-      writeFileSync(meta, JSON.stringify({ fingerprint, version: this.cacheVersion }))
+      renameSync(tmp, paths.bin)
+      writeFileSync(paths.documents, documents.lines.join('\n'))
+      writeFileSync(paths.meta, JSON.stringify({ fingerprint, version: this.cacheVersion }))
     } catch (error) {
       console.warn('[zenium] filter engine cache not written', error)
     }
