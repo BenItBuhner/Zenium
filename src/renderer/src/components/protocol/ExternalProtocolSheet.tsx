@@ -115,18 +115,24 @@ function Header({ request }: { request: ExternalProtocolRequest }): JSX.Element 
   )
 }
 
+/** §8.3: 44 tall, radius 12 on the phone; the primitive's own 32 / 8 under a mouse. */
+const PHONE_BUTTON = 'h-11 rounded-xl px-5 text-sm'
+
 function Body({
   request,
   always,
   onAlways,
-  onAnswer
+  onAnswer,
+  phone
 }: {
   request: ExternalProtocolRequest
   always: boolean
   onAlways: (always: boolean) => void
   onAnswer: (allow: boolean) => void
+  phone: boolean
 }): JSX.Element {
   const words = wordsFor(request.scheme)
+  const buttonClass = phone ? PHONE_BUTTON : undefined
   return (
     <div className="flex flex-col gap-4 pb-1 pt-1">
       <div className="zen-protocol-address" title={request.url}>
@@ -143,11 +149,11 @@ function Body({
           <Switch checked={always} onCheckedChange={onAlways} aria-label="Always allow" />
         </label>
       )}
-      <div className="zen-protocol-actions flex justify-end gap-2 px-3">
-        <Button variant="secondary" onClick={() => onAnswer(false)}>
+      <div className="flex justify-end gap-2 px-3">
+        <Button variant="secondary" className={buttonClass} onClick={() => onAnswer(false)}>
           Not now
         </Button>
-        <Button variant="default" onClick={() => onAnswer(true)}>
+        <Button variant="default" className={buttonClass} onClick={() => onAnswer(true)}>
           Open
         </Button>
       </div>
@@ -208,6 +214,7 @@ function ProtocolSheet({ request }: { request: ExternalProtocolRequest }): JSX.E
         onAlways={setAlways}
         // The sheet leaves first, so the host never captures it when the other app comes up.
         onAnswer={(allow) => sheet.current?.dismiss(() => answer(allow))}
+        phone
       />
     </BottomSheet>
   )
@@ -232,7 +239,13 @@ function ProtocolPanel({ request }: { request: ExternalProtocolRequest }): JSX.E
         className="zen-panel zen-animate-pop zen-protocol-sheet relative w-full max-w-[400px] px-3 pb-3 pt-2"
       >
         <Header request={request} />
-        <Body request={request} always={always} onAlways={setAlways} onAnswer={answer} />
+        <Body
+          request={request}
+          always={always}
+          onAlways={setAlways}
+          onAnswer={answer}
+          phone={false}
+        />
       </div>
     </div>
   )
