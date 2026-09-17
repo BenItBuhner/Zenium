@@ -178,7 +178,7 @@ export class WebRequestApi {
     } catch (error) {
       throw new ApiError(error instanceof Error ? error.message : String(error))
     }
-    if (spec.blocking && !this.mayBlock(ctx)) throw new ApiError(BLOCKING_PERMISSION_ERROR)
+    if (spec.blocking && !this.mayBlock(ctx, event)) throw new ApiError(BLOCKING_PERMISSION_ERROR)
     if (!isInteger(rawId) || rawId <= 0) throw new ApiError('Invalid listener id.')
     const context = this.contextOf(ctx)
     const byContext =
@@ -216,10 +216,16 @@ export class WebRequestApi {
     this.drop(registration)
   }
 
-  /** Chrome's rule: blocking listeners for MV2 extensions with `webRequestBlocking` only. */
-  private mayBlock(ctx: ApiContext): boolean {
+  /**
+   * Chrome's rule: blocking listeners for MV2 extensions with `webRequestBlocking`, and
+   * `onAuthRequired` for any extension with `webRequestAuthProvider` (the MV3 way for password
+   * managers to answer proxy and server challenges).
+   */
+  private mayBlock(ctx: ApiContext, event: WebRequestEventName): boolean {
+    const permissions = this.host.grants(ctx.extensionId).permissions
+    if (event === 'onAuthRequired' && permissions.includes('webRequestAuthProvider')) return true
     if (ctx.extension.manifest.manifest_version !== 2) return false
-    return this.host.grants(ctx.extensionId).permissions.includes('webRequestBlocking')
+    return permissions.includes('webRequestBlocking')
   }
 
   private contextOf(ctx: ApiContext): Context {

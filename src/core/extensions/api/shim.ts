@@ -642,8 +642,12 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   /** `webRequest.<event>` → listener → its registration with the host. */
   const webRequestListeners = new Map<string, Map<Listener, WebRequestRegistration>>()
   let webRequestIds = 0
-  /** Chrome allows blocking listeners to MV2 extensions holding `webRequestBlocking`. */
+  /**
+   * Chrome allows blocking listeners to MV2 extensions holding `webRequestBlocking`, and
+   * blocking `onAuthRequired` listeners to any extension holding `webRequestAuthProvider`.
+   */
   const canBlockRequests = manifestVersion === 2 && permissions.includes('webRequestBlocking')
+  const canBlockAuth = canBlockRequests || permissions.includes('webRequestAuthProvider')
   const BLOCKING_PERMISSION_ERROR =
     'You do not have permission to use blocking webRequest listeners. Be sure to declare the webRequestBlocking permission in your manifest.'
 
@@ -738,7 +742,9 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
           })
         }
         const blocking = spec.includes('blocking') || spec.includes('asyncBlocking')
-        if (blocking && !canBlockRequests) throw new Error(BLOCKING_PERMISSION_ERROR)
+        if (blocking && !(name === 'onAuthRequired' ? canBlockAuth : canBlockRequests)) {
+          throw new Error(BLOCKING_PERMISSION_ERROR)
+        }
         webRequestIds += 1
         const registration: WebRequestRegistration = {
           id: webRequestIds,

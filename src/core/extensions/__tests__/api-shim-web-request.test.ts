@@ -153,8 +153,23 @@ describe('chrome.webRequest in the shim', () => {
     expect(() => event.addListener(fn, { urls: [] }, ['blocking'])).toThrow(
       BLOCKING_PERMISSION_ERROR
     )
+    expect(() =>
+      chrome.webRequest.onAuthRequired.addListener(fn, { urls: [] }, ['asyncBlocking'])
+    ).toThrow(BLOCKING_PERMISSION_ERROR)
     expect(host.calls).toEqual([])
     expect(event.hasListener(fn)).toBe(false)
+  })
+
+  it('lets webRequestAuthProvider holders block onAuthRequired and nothing else', () => {
+    const { chrome, host } = install({ permissions: ['webRequest', 'webRequestAuthProvider'] })
+    const fn = (): undefined => undefined
+    chrome.webRequest.onAuthRequired.addListener(fn, { urls: [] }, ['asyncBlocking'])
+    expect(() =>
+      chrome.webRequest.onBeforeRequest.addListener(fn, { urls: [] }, ['blocking'])
+    ).toThrow(BLOCKING_PERMISSION_ERROR)
+    expect(host.calls.map((c) => c.args)).toEqual([
+      ['onAuthRequired', { urls: [] }, ['asyncBlocking'], 1]
+    ])
   })
 
   it('registers each listener once with the host under its own id and removes it again', async () => {

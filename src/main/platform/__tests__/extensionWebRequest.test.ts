@@ -157,7 +157,7 @@ function world(options: { timeoutMs?: number; attach?: boolean } = {}): World {
         extensionId === MV2
           ? ['webRequest', 'webRequestBlocking', '<all_urls>']
           : extensionId === MV3
-            ? ['webRequest', 'webRequestBlocking']
+            ? ['webRequest', 'webRequestBlocking', 'webRequestAuthProvider']
             : ['storage'],
       origins: []
     }),
@@ -244,18 +244,26 @@ describe('WebRequestApi registration', () => {
     expect(() => add(w, mv3, 'onBeforeRequest', { urls: [] }, ['blocking'], 1)).toThrow(
       BLOCKING_PERMISSION_ERROR
     )
-    expect(() => add(w, mv3, 'onAuthRequired', { urls: [] }, ['asyncBlocking'], 1)).toThrow(
+    expect(() => add(w, mv3, 'onHeadersReceived', { urls: [] }, ['blocking'], 1)).toThrow(
       BLOCKING_PERMISSION_ERROR
     )
     add(w, mv3, 'onBeforeRequest', { urls: [] }, [], 1)
+    // webRequestAuthProvider lets an MV3 password manager answer onAuthRequired (which never
+    // fires here, but the registration must not fail).
+    add(w, mv3, 'onAuthRequired', { urls: [] }, ['asyncBlocking'], 2)
     const mv2 = w.frame(MV2)
     add(w, mv2, 'onBeforeRequest', { urls: [] }, ['blocking'], 1)
-    expect(w.api.listenerCount(MV3)).toBe(1)
-    expect(w.api.listenerCount(MV2)).toBe(1)
+    add(w, mv2, 'onAuthRequired', { urls: [] }, ['blocking'], 2)
+    expect(w.api.listenerCount(MV3)).toBe(2)
+    expect(w.api.listenerCount(MV2)).toBe(2)
     expect(w.pipeline.hooked.map((h) => h.options)).toEqual([
       { registrant: MV3, priority: 3000, blocking: false },
       { registrant: MV2, priority: 2000, blocking: true }
     ])
+    const noProvider = w.worker(NO_PERMISSION)
+    expect(() => add(w, noProvider, 'onAuthRequired', { urls: [] }, ['asyncBlocking'], 1)).toThrow(
+      "The 'webRequest' permission is required."
+    )
   })
 
   it('hooks what registered before the pipeline existed, except onAuthRequired', () => {
