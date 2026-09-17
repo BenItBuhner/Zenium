@@ -1,22 +1,19 @@
 name: Android render fidelity
 
 # Loads the same pages in the debug build and in the emulator's Chrome and records how each page
-# was served and laid out (user-agent string and client hints, request headers, viewport, fonts,
-# the computed style of Google's "Sign in" control) next to screenshots of both, so a rendering
-# difference on a phone can be pinned on the WebView setup or on the site. Dispatch-only: it takes
-# about fifteen minutes and produces evidence to read, not a verdict.
+# was served and laid out (user-agent string and client hints, request headers, viewport, the fonts
+# text was drawn with, the computed style of Google's "Sign in" control) next to screenshots of
+# both, so a rendering difference on a phone can be pinned on the WebView setup or on the site. When
+# main's CI has a debug APK, that build runs first so the change shows side by side. Dispatch-only:
+# it takes about twenty minutes and produces evidence to read, not a verdict.
 on:
   workflow_dispatch:
-    inputs:
-      label:
-        description: Prefix for the recorded files (e.g. before, after)
-        default: run
-        type: string
   push:
     branches: [cursor/android-render-fidelity-7c1b]
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: android-render-fidelity-${{ github.ref }}
@@ -53,11 +50,21 @@ jobs:
       - name: Assemble the debug APK
         working-directory: android
         run: ./gradlew assembleDebug -PskipWeb --no-daemon --stacktrace
-      - name: Locate the APK
+      - name: Locate the APK and fetch main's for comparison
         id: apk
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           apk=$(find android/app/build/outputs/apk/debug -name '*.apk' -print -quit)
           echo "path=$apk" >> "$GITHUB_OUTPUT"
+          run_id=$(gh run list --workflow ci.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$run_id" ] && gh run download "$run_id" --name zen-chromium-android-debug --dir artifacts/main-apk; then
+            before=$(find artifacts/main-apk -name '*.apk' -print -quit)
+            echo "main's debug APK from run $run_id: $before"
+            echo "before=$before" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::no debug APK from main's CI to compare against; recording this build only"
+          fi
       - name: Enable KVM for the emulator
         # https://github.blog/changelog/2023-02-23-hardware-accelerated-android-virtualization-on-actions-windows-and-linux-larger-hosted-runners/
         run: |
@@ -69,8 +76,8 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         env:
           RENDER_APK: ${{ steps.apk.outputs.path }}
+          RENDER_BEFORE_APK: ${{ steps.apk.outputs.before }}
           RENDER_OUT: artifacts/render-fidelity
-          RENDER_PREFIX: ${{ inputs.label || 'before' }}
         with:
           api-level: 34
           target: google_apis
