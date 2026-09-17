@@ -80,6 +80,8 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         @Volatile var control = Control.RUN
         @Volatile var running = false
         var lastReport = 0L
+        /** Network failures retried on our own since the last byte arrived. */
+        @Volatile var autoResumes = 0
     }
 
     private class Cancelled : Exception()
@@ -128,13 +130,29 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
             l.total = contentLength
         }
         l.mimeType = mime
-        l.filename = DownloadLogic.filenameFor(url, contentDisposition, mime.ifEmpty { null }, DownloadSink::extensionFor)
+        val serverName = DownloadLogic.dispositionFilename(contentDisposition)
+        if (tab != null && serverName.isNullOrEmpty() && (kind != Kind.HTTP || DownloadLogic.sameOrigin(url, l.referrer))) {
+            // The anchor's `download` attribute is the only name a blob: or data: URL has; the
+            // page script keeps it for us (src/android/pageScript.ts). Like Blink, it counts for
+            // http(s) links only on the page's own origin.
+            val key = JSONObject.quote(DownloadLogic.downloadNameKey(url))
+            tab.evaluate("(function(){var r=window.__zeniumDownloadNames;return (r&&r[$key])||null})()") { result ->
+                val suggested = result?.takeIf { it.startsWith("\"") }?.let { runCatching { JSONTokener(it).nextValue() as? String }.getOrNull() }
+                announce(l, contentDisposition, suggested)
+            }
+        } else {
+            announce(l, contentDisposition, null)
+        }
+    }
+
+    private fun announce(l: Live, contentDisposition: String?, suggestedName: String?) {
+        l.filename = DownloadLogic.filenameFor(l.url, contentDisposition, l.mimeType.ifEmpty { null }, DownloadSink::extensionFor, suggestedName)
         live[l.token] = l
         emit(
             "download.started",
             json(
-                "token" to l.token, "url" to url, "referrer" to l.referrer, "filename" to l.filename,
-                "totalBytes" to l.total.coerceAtLeast(0), "mimeType" to mime, "sourceTabId" to sourceTabId
+                "token" to l.token, "url" to l.url, "referrer" to l.referrer, "filename" to l.filename,
+                "totalBytes" to l.total.coerceAtLeast(0), "mimeType" to l.mimeType, "sourceTabId" to l.sourceTabId
             )
         )
     }
@@ -172,7 +190,9 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
     fun pause(coreId: String) {
         val l = byCoreId[coreId] ?: return
         if (l.kind != Kind.HTTP) return
-        if (l.running) l.control = Control.PAUSE
+        l.control = Control.PAUSE
+        // Not running: waiting out the back-off before an automatic retry; hold there.
+        if (!l.running && l.sink != null) paused(l)
     }
 
     /**
@@ -349,13 +369,30 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
             l.sink?.delete()
             main.post { done(l, "cancelled") }
         } catch (e: Exception) {
-            val reason = DownloadLogic.failureReason(e)
-            main.post { interrupted(l, reason, resumable = l.kind == Kind.HTTP && l.canResume && l.sink != null) }
+            fail(l, DownloadLogic.failureReason(e), resumable = l.kind == Kind.HTTP && l.canResume && l.sink != null)
         } finally {
             l.running = false
             // Resume pressed while the loop was still winding down after Pause: pick up again.
             if (pausedExit && l.control == Control.RUN) main.post { launch(l) }
         }
+    }
+
+    /**
+     * A transfer stopped short. Network failures on a resumable transfer are retried on our own
+     * a few times with a growing pause (Chromium's `kMaxAutoResumeAttempts`), so a flaky
+     * connection never reaches the user; anything else, or the sixth failure in a row, is reported
+     * as interrupted.
+     */
+    private fun fail(l: Live, reason: String, resumable: Boolean) {
+        val canRetry = resumable && l.kind == Kind.HTTP && l.canResume && l.sink != null
+        if (!DownloadLogic.shouldAutoResume(reason, canRetry, l.autoResumes, userStopped = l.control != Control.RUN)) {
+            main.post { interrupted(l, reason, resumable) }
+            return
+        }
+        l.autoResumes++
+        main.postDelayed({
+            if (live[l.token] === l && l.control == Control.RUN && !l.running) launch(l)
+        }, DownloadLogic.autoResumeDelayMs(l.autoResumes))
     }
 
     /** Returns true when the transfer stopped because it was paused. */
@@ -368,7 +405,7 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
             var append = false
             when (decision) {
                 is DownloadLogic.Continuation.Fail -> {
-                    main.post { interrupted(l, decision.reason, resumable = offset > 0 && l.canResume && l.sink != null) }
+                    fail(l, decision.reason, resumable = offset > 0 && l.canResume && l.sink != null)
                     return false
                 }
                 DownloadLogic.Continuation.AlreadyComplete -> {
@@ -398,7 +435,7 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
                 Control.RUN -> {}
             }
             if (l.total > 0 && l.received < l.total) {
-                main.post { interrupted(l, "network-failed", resumable = l.canResume) }
+                fail(l, "network-failed", resumable = l.canResume)
                 return false
             }
             main.post { completed(l) }
@@ -464,6 +501,7 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
                     if (n < 0) break
                     out.write(buffer, 0, n)
                     l.received += n
+                    if (l.autoResumes != 0) l.autoResumes = 0
                     report(l, "in-progress")
                 }
                 out.flush()

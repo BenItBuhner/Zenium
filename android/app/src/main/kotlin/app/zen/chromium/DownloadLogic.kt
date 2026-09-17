@@ -88,16 +88,54 @@ object DownloadLogic {
         return date.ifEmpty { null }
     }
 
+    // --- automatic retries -----------------------------------------------------------------------
+
+    /** Consecutive network failures retried without telling the user (Chromium's `kMaxAutoResumeAttempts`). */
+    const val MAX_AUTO_RESUMES = 5
+
+    /**
+     * Whether a failed transfer should quietly try again: only network-class failures of a
+     * resumable transfer, a bounded number of times in a row, and never over a user's pause or
+     * cancel. Anything else surfaces as interrupted.
+     */
+    fun shouldAutoResume(reason: String, resumable: Boolean, attemptsSoFar: Int, userStopped: Boolean): Boolean =
+        resumable && !userStopped && reason.startsWith("network-") && attemptsSoFar < MAX_AUTO_RESUMES
+
+    /** Back-off before automatic retry number [attempt] (1-based): 1 s, 2 s, 4 s, then 8 s. */
+    fun autoResumeDelayMs(attempt: Int): Long = 1000L shl (attempt - 1).coerceIn(0, 3)
+
     // --- naming ----------------------------------------------------------------------------------
 
     /**
-     * The file name for a download, in Chromium's order: the `Content-Disposition` header
-     * (`filename*` first, then `filename`), the last path segment of the URL, then `download`.
-     * A name without an extension gets one from the MIME type (`extensionFor`), and every name is
-     * made safe for a file system.
+     * Key under which the page script remembers an anchor's `download` attribute
+     * (`window.__zeniumDownloadNames`, see src/android/downloadNames.ts): the first 200 characters
+     * of the href and its length, so multi-megabyte `data:` URLs never travel twice.
      */
-    fun filenameFor(url: String, contentDisposition: String?, mimeType: String?, extensionFor: (String) -> String?): String {
+    fun downloadNameKey(href: String): String = "${href.take(200)}#${href.length}"
+
+    /** Same scheme, host and port (the `download` attribute of a cross-origin http link is ignored, as in Blink). */
+    fun sameOrigin(a: String, b: String): Boolean {
+        val ua = runCatching { java.net.URI(a) }.getOrNull() ?: return false
+        val ub = runCatching { java.net.URI(b) }.getOrNull() ?: return false
+        if (ua.scheme == null || ua.host == null || ub.scheme == null || ub.host == null) return false
+        fun port(u: java.net.URI) = if (u.port >= 0) u.port else if (u.scheme.equals("https", true)) 443 else 80
+        return ua.scheme.equals(ub.scheme, true) && ua.host.equals(ub.host, true) && port(ua) == port(ub)
+    }
+
+    /**
+     * The file name Chromium would pick: the Content-Disposition name (RFC 6266, `filename*`
+     * first), else the anchor's `download` attribute when the page remembered one, else the last
+     * URL path segment; sanitised, and given an extension for its MIME type when it has none.
+     */
+    fun filenameFor(
+        url: String,
+        contentDisposition: String?,
+        mimeType: String?,
+        extensionFor: (String) -> String?,
+        suggestedName: String? = null
+    ): String {
         var name = dispositionFilename(contentDisposition)
+        if (name.isNullOrEmpty() && !suggestedName.isNullOrBlank()) name = suggestedName
         if (name.isNullOrEmpty() && (url.startsWith("http:") || url.startsWith("https:") || url.startsWith("ftp:"))) {
             name = urlFilename(url)
         }

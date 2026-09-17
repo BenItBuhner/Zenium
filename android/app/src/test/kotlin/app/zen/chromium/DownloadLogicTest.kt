@@ -81,6 +81,35 @@ class DownloadLogicTest {
         assertNull(DownloadLogic.strongValidator("W/\"weak\"", ""))
     }
 
+    // --- automatic retries -----------------------------------------------------------------------
+
+    @Test
+    fun flakyConnectionsRetryQuietlyABoundedNumberOfTimes() {
+        for (attempt in 0 until DownloadLogic.MAX_AUTO_RESUMES) {
+            assertTrue("attempt $attempt", DownloadLogic.shouldAutoResume("network-failed", true, attempt, false))
+            assertTrue("attempt $attempt", DownloadLogic.shouldAutoResume("network-timeout", true, attempt, false))
+        }
+        // The sixth failure in a row reaches the user.
+        assertFalse(DownloadLogic.shouldAutoResume("network-failed", true, DownloadLogic.MAX_AUTO_RESUMES, false))
+        // Server answers and local problems are never retried on their own.
+        assertFalse(DownloadLogic.shouldAutoResume("server-bad-content", true, 0, false))
+        assertFalse(DownloadLogic.shouldAutoResume("server-precondition", true, 0, false))
+        assertFalse(DownloadLogic.shouldAutoResume("file-failed", true, 0, false))
+        // Nor a transfer that cannot append, or one the user paused or cancelled meanwhile.
+        assertFalse(DownloadLogic.shouldAutoResume("network-failed", false, 0, false))
+        assertFalse(DownloadLogic.shouldAutoResume("network-failed", true, 0, true))
+    }
+
+    @Test
+    fun retryBackoffGrowsThenPlateaus() {
+        assertEquals(1000L, DownloadLogic.autoResumeDelayMs(1))
+        assertEquals(2000L, DownloadLogic.autoResumeDelayMs(2))
+        assertEquals(4000L, DownloadLogic.autoResumeDelayMs(3))
+        assertEquals(8000L, DownloadLogic.autoResumeDelayMs(4))
+        assertEquals(8000L, DownloadLogic.autoResumeDelayMs(5))
+        assertEquals(1000L, DownloadLogic.autoResumeDelayMs(0))
+    }
+
     // --- naming ----------------------------------------------------------------------------------
 
     @Test
@@ -101,6 +130,34 @@ class DownloadLogicTest {
         assertEquals("download", DownloadLogic.filenameFor("blob:https://x/uuid", null, null, ext))
         assertEquals("image.jpg", DownloadLogic.filenameFor("blob:https://x/uuid", "attachment; filename=image.jpg", "image/jpeg", ext))
         assertEquals("image.jpg", DownloadLogic.filenameFor("https://x/image", null, "image/jpeg", ext))
+    }
+
+    @Test
+    fun theAnchorsDownloadAttributeNamesBlobsAndDataUrls() {
+        // The page remembered `<a download="hello-blob.txt">`; it beats the URL but not the server.
+        assertEquals("hello-blob.txt", DownloadLogic.filenameFor("blob:https://x/uuid", null, "text/plain", ext, "hello-blob.txt"))
+        assertEquals("notes.txt", DownloadLogic.filenameFor("data:text/plain;base64,AAAA", null, "text/plain", ext, "notes"))
+        assertEquals("attribute.bin", DownloadLogic.filenameFor("https://x/path/file.bin", null, null, ext, "attribute.bin"))
+        assertEquals("server.bin", DownloadLogic.filenameFor("https://x/y", "attachment; filename=server.bin", null, ext, "attribute.bin"))
+        assertEquals("y.bin", DownloadLogic.filenameFor("https://x/y.bin", null, null, ext, "  "))
+        // A hostile attribute cannot climb out of the folder: separators become underscores.
+        assertEquals("_.._etc_passwd", DownloadLogic.filenameFor("blob:https://x/uuid", null, null, ext, "../../etc/passwd"))
+    }
+
+    @Test
+    fun registryKeysAndOrigins() {
+        val short = "blob:https://x/3f1a"
+        assertEquals("$short#${short.length}", DownloadLogic.downloadNameKey(short))
+        val long = "data:application/octet-stream;base64," + "A".repeat(5000)
+        val key = DownloadLogic.downloadNameKey(long)
+        assertEquals(200 + 1 + long.length.toString().length, key.length)
+        assertTrue(key.endsWith("#5037"))
+        assertTrue(DownloadLogic.sameOrigin("https://x.example/a", "https://x.example:443/b"))
+        assertTrue(DownloadLogic.sameOrigin("http://10.0.2.2:18923/file", "http://10.0.2.2:18923/page.html"))
+        assertFalse(DownloadLogic.sameOrigin("https://x.example/a", "http://x.example/a"))
+        assertFalse(DownloadLogic.sameOrigin("https://cdn.example/a", "https://x.example/a"))
+        assertFalse(DownloadLogic.sameOrigin("https://x.example/a", ""))
+        assertFalse(DownloadLogic.sameOrigin("blob:https://x/uuid", "https://x/"))
     }
 
     @Test
