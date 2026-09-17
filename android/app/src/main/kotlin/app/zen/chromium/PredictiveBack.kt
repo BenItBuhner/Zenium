@@ -68,6 +68,9 @@ class PredictiveBack(private val activity: MainActivity, private val host: Host)
     private var registered = false
     private var animated: AnimatedCallback? = null
 
+    /** Whether the chrome currently has a surface a back would dismiss (instrumentation reads this). */
+    val chromeSurfaceUp: Boolean get() = chromeHandles
+
     /** Below API 34 there is no gesture progress: back is one event, handled when it fires. */
     private val plain = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() = commit()

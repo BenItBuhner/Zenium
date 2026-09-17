@@ -279,14 +279,36 @@ class BackDemo {
         SystemClock.sleep(3_000)
     }
 
-    /** Drag the open surface a third of the way and let go (it springs back), then drag and commit. */
-    private fun dismissWithBack(travel: Float, shotName: String, commitTravel: Float = travel + 0.04f * width, settle: Long = 1_500) {
+    /**
+     * Drag the open surface a third of the way and let go (it springs back), then drag and
+     * commit. Waits on the app's own word that a surface is up before swiping – a swipe with
+     * nothing to pop would hand the app to the launcher – and that it is gone afterwards: on the
+     * emulator's software GPU a dismissal spring can take well over a second.
+     */
+    private fun dismissWithBack(travel: Float, shotName: String, commitTravel: Float = travel + 0.04f * width, settle: Long = 800) {
+        if (!awaitSurface(up = true, timeoutMs = 5_000)) {
+            Log.w(TAG, "no chrome surface up for $shotName; skipping its gestures")
+            return
+        }
         edgeSwipe(travel, hold = 700) { shot(shotName) }
         cancelSwipe()
         beat()
         edgeSwipe(commitTravel, hold = 300)
         commitSwipe()
+        if (!awaitSurface(up = false, timeoutMs = 10_000)) Log.w(TAG, "the surface behind $shotName did not close")
         SystemClock.sleep(settle)
+    }
+
+    /** Poll the host for whether the chrome reports a dismissable surface. */
+    private fun awaitSurface(up: Boolean, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            var state = false
+            instrumentation.runOnMainSync { state = activity.host.back.chromeSurfaceUp }
+            if (state == up) return true
+            SystemClock.sleep(150)
+        }
+        return false
     }
 
     /**
