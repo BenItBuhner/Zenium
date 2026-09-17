@@ -2008,6 +2008,10 @@ export class Menus {
           action: 'downloads.open',
           click: () => this.browser.emit('overlay.open', { kind: 'downloads' }, win)
         },
+        ...when(caps.passwords, {
+          label: 'Passwords',
+          click: () => this.browser.emit('overlay.open', { kind: 'passwords' }, win)
+        }),
         ...when(caps.extensions, {
           label: 'Add-ons and Themes',
           action: 'addons.open',

@@ -48,6 +48,7 @@ import {
   SiteZoomsGroup,
   SitesGroups
 } from './PageControlsSettings'
+import { PasswordsSection } from './PasswordsSection'
 import { ResourcesSection } from './ResourcesSection'
 import { Choice, Group, MENULIST_HEIGHT, Row, SWITCH_HEIGHT, Segmented } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
@@ -69,6 +70,7 @@ export type SettingsSection =
   | 'mods'
   | 'extensions'
   | 'agents'
+  | 'passwords'
   | 'sync'
   | 'shortcuts'
   | 'default-browser'
@@ -90,6 +92,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'mods', label: 'Mods' },
   { id: 'extensions', label: 'Extensions' },
   { id: 'agents', label: 'AI Agents' },
+  { id: 'passwords', label: 'Passwords' },
   { id: 'sync', label: 'Sync' },
   { id: 'shortcuts', label: 'Keyboard Shortcuts' },
   { id: 'default-browser', label: 'Default Browser' },
@@ -104,6 +107,7 @@ const SECTION_CAPABILITY: Partial<Record<SettingsSection, keyof HostCapabilities
   resources: 'resourceGovernor',
   extensions: 'extensions',
   agents: 'agents',
+  passwords: 'passwords',
   sync: 'sync',
   'default-browser': 'defaultBrowser',
   updates: 'updates'
@@ -217,6 +221,7 @@ export function SettingsBody({
           {section === 'mods' && <ModsSection state={state} />}
           {section === 'extensions' && <ExtensionsSection state={state} />}
           {section === 'agents' && <AgentsSection state={state} set={set} />}
+          {section === 'passwords' && <PasswordsSection state={state} set={set} />}
           {section === 'sync' && <SyncSection state={state} />}
           {section === 'shortcuts' && <ShortcutsSection state={state} />}
           {section === 'default-browser' && <DefaultBrowserSection state={state} />}
