@@ -1,0 +1,28 @@
+{
+  "about": "Known failures the desktop smoke (.github/smoke/smoke.mjs) tolerates. A failure matching an entry is reported under its id and does not fail the job; everything else does. The PR that fixes a bug removes its entry; this list is normally empty. Fields: id, kind (one of FAILURE_KINDS in known-failures.mjs, or an array), pattern (case-insensitive regex over the failure message and source), optional platforms/archs/labels/scenarios/steps filters, fixedBy, note.",
+  "entries": [
+    {
+      "id": "WIN-001",
+      "kind": "main-exception",
+      "pattern": "ElectronTabView\\.onDestroyed|onDestroyed[\\s\\S]*ElectronTabView",
+      "fixedBy": "cursor/desktop-hotfix-quit-crash-55a2",
+      "note": "Main-process TypeError from ElectronTabView.onDestroyed when a window with a loaded tab closes or the app quits; the stock app shows Electron's modal error dialog."
+    },
+    {
+      "id": "WIN-009",
+      "kind": ["view-console-error", "preload-error"],
+      "pattern": "sandboxed_renderer\\.bundle\\.js script failed to run|Cannot destructure property 'preloadScripts'",
+      "fixedBy": "cursor/desktop-hotfix-quit-crash-55a2",
+      "note": "Two console errors from the first tab view at startup: the sandboxed renderer's preload bootstrap runs before the view has a URL."
+    },
+    {
+      "id": "WIN-002",
+      "kind": "install",
+      "pattern": "zenium\\.exe",
+      "platforms": ["win32"],
+      "archs": ["arm64"],
+      "fixedBy": "cursor/desktop-arm64-nsis-fix-76ee",
+      "note": "The ARM64 NSIS installer completes without writing zenium.exe, so the installed build cannot be launched."
+    }
+  ]
+}

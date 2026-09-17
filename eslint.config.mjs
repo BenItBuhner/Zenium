@@ -100,9 +100,14 @@ export default defineConfig(
     }
   },
   {
-    // Plain Node scripts run by the GitHub Actions workflows, electron-builder hooks and
-    // maintenance tasks; no TypeScript annotations available.
-    files: ['.github/scripts/**/*.mjs', 'build/**/*.mjs', 'scripts/**/*.mjs'],
+    // Plain Node scripts run by the GitHub Actions workflows, the desktop smoke harness,
+    // electron-builder hooks and maintenance tasks; no TypeScript annotations available.
+    files: [
+      '.github/scripts/**/*.mjs',
+      '.github/smoke/**/*.mjs',
+      'build/**/*.mjs',
+      'scripts/**/*.mjs'
+    ],
     rules: {
       '@typescript-eslint/explicit-function-return-type': 'off'
     }
