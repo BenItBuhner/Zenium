@@ -6,8 +6,6 @@ import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 
-/** Opacity of the scrim behind a sheet at (or above) its peek detent, per colour scheme. */
-const SCRIM_OPACITY = { light: 0.28, dark: 0.45 }
 /**
  * Movement (px) before a touch on the body stops being a tap and its axis is decided. Kept
  * under the WebView's own scroll slop, so a downward pull on a list that sits at its top is
@@ -119,13 +117,12 @@ export function BottomSheet({
         const scrim = scrimRef.current
         if (!sheet || !scrim) return
         const frame = motionRef.current!.frame()
-        const root = document.documentElement
-        const dark = root.dataset.theme === 'dark'
         sheet.style.height = `${frame.height}px`
         sheet.style.transform = `translate3d(0, ${frame.translateY}px, 0)`
-        scrim.style.opacity = `${frame.scrim * (dark ? SCRIM_OPACITY.dark : SCRIM_OPACITY.light)}`
+        // The scrim's colour and full opacity are the `--zen-scrim` token's; only its share moves.
+        scrim.style.opacity = frame.scrim.toFixed(4)
         // The page behind recedes and the bottom bar fades with the same progress (main.css).
-        root.style.setProperty('--zen-recede', frame.scrim.toFixed(4))
+        document.documentElement.style.setProperty('--zen-recede', frame.scrim.toFixed(4))
         syncLock()
       },
       onClosed: () => {

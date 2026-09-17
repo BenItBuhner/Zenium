@@ -623,7 +623,7 @@
     padding-right: 12px;
     border-radius: 28px 28px 0 0;
     background: var(--zen-panel-bg);
-    backdrop-filter: blur(24px) saturate(1.2);
+    backdrop-filter: var(--zen-blur-panel);
     box-shadow:
       0 -1px 0 rgb(255 255 255 / 0.35) inset,
       0 -12px 48px rgb(0 0 0 / 0.22);
@@ -711,7 +711,7 @@
    */
   /* The scrim is the space's own dark, never flat black; the sheet fades it in with its position. */
   .zen-sheet-scrim {
-    background: color-mix(in srgb, var(--zen-bg-solid) 30%, #000 70%);
+    background: var(--zen-scrim);
     touch-action: none;
     will-change: opacity;
   }
