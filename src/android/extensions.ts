@@ -1,3 +1,4 @@
+import type { BookmarkTreeNode } from '@shared/bookmarks'
 import type { ExtensionInfo, Rect, Tab } from '@shared/types'
 import type { Browser } from '@core/browser'
 import type { ExtensionHost } from '@core/platform'
@@ -1913,77 +1914,92 @@ export class AndroidExtensionHost implements ExtensionHost {
     throw new Error(`chrome.history.${method} ${NOT_IMPLEMENTED}`)
   }
 
+  /** Over the core's Chrome-shaped bookmark tree (three roots with fixed ids, `dateAdded`, folders). */
   private bookmarksCall(method: string, args: unknown[]): unknown {
     const bookmarks = this.browser.bookmarks
-    const node = (
-      b: { id: string; url: string; title: string; createdAt: number },
-      index: number
-    ): Record<string, unknown> => ({
-      id: b.id,
-      parentId: '1',
-      index,
-      url: b.url,
-      title: b.title,
-      dateAdded: b.createdAt
-    })
+    const node = (b: BookmarkTreeNode): Record<string, unknown> => {
+      const out: Record<string, unknown> = {
+        id: b.id,
+        parentId: b.parentId ?? '0',
+        index: b.index,
+        title: b.title,
+        dateAdded: b.dateAdded
+      }
+      if (b.type === 'url') out.url = b.url
+      else {
+        if (b.dateGroupModified !== undefined) out.dateGroupModified = b.dateGroupModified
+        if (b.children) out.children = b.children.map(node)
+      }
+      return out
+    }
     const root = (): Record<string, unknown> => ({
       id: '0',
       title: '',
-      children: [
-        {
-          id: '1',
-          parentId: '0',
-          index: 0,
-          title: 'Bookmarks',
-          children: bookmarks.all().map(node)
-        }
-      ]
+      children: bookmarks.getTree().map(node)
     })
+    const ids = (raw: unknown): string[] => (Array.isArray(raw) ? raw : [raw]).map(String)
     switch (method) {
       case 'getTree':
         return [root()]
-      case 'getSubTree':
-      case 'getChildren':
-        return String(args[0]) === '0' ? [root()] : bookmarks.all().map(node)
-      case 'getRecent':
-        return bookmarks
-          .all()
-          .sort((a, b) => b.createdAt - a.createdAt)
-          .slice(0, asNumber(args[0]) ?? 20)
-          .map(node)
-      case 'get': {
-        const ids = new Set((Array.isArray(args[0]) ? args[0] : [args[0]]).map(String))
-        return bookmarks
-          .all()
-          .filter((b) => ids.has(b.id))
-          .map(node)
+      case 'getSubTree': {
+        const id = String(args[0])
+        if (id === '0') return [root()]
+        const sub = bookmarks.getSubTree(id)
+        if (!sub) throw new Error("Can't find bookmark for id.")
+        return [node(sub)]
       }
+      case 'getChildren':
+        return String(args[0]) === '0'
+          ? bookmarks.roots().map(node)
+          : bookmarks.getChildren(String(args[0])).map(node)
+      case 'getRecent':
+        return bookmarks.recent(asNumber(args[0]) ?? 20).map(node)
+      case 'get':
+        return ids(args[0]).map((id) => {
+          const found = bookmarks.get(id)
+          if (!found) throw new Error("Can't find bookmark for id.")
+          return node(found)
+        })
       case 'search': {
         const query = typeof args[0] === 'string' ? args[0] : String(asRecord(args[0]).query ?? '')
         return bookmarks.search(query, 100).map(node)
       }
       case 'create': {
         const props = asRecord(args[0])
-        const created =
-          typeof props.url === 'string'
-            ? bookmarks.add(props.url, String(props.title ?? props.url))
-            : null
+        const created = bookmarks.create({
+          parentId: typeof props.parentId === 'string' ? props.parentId : undefined,
+          index: asNumber(props.index) ?? undefined,
+          title: String(props.title ?? props.url ?? ''),
+          url: typeof props.url === 'string' ? props.url : undefined,
+          type: typeof props.url === 'string' ? 'url' : 'folder'
+        })
         if (!created) throw new Error('Could not create bookmark.')
-        return node(created, bookmarks.all().length - 1)
+        return node(created)
       }
       case 'update': {
-        const existing = bookmarks.all().find((b) => b.id === String(args[0]))
-        if (!existing) throw new Error("Can't find bookmark for id.")
         const changes = asRecord(args[1])
-        bookmarks.upsert({
-          ...existing,
-          title: typeof changes.title === 'string' ? changes.title : existing.title,
-          url: typeof changes.url === 'string' ? changes.url : existing.url
+        const updated = bookmarks.update(String(args[0]), {
+          title: typeof changes.title === 'string' ? changes.title : undefined,
+          url: typeof changes.url === 'string' ? changes.url : undefined
         })
-        return node(existing, 0)
+        if (!updated) throw new Error("Can't find bookmark for id.")
+        return node(updated)
+      }
+      case 'move': {
+        const destination = asRecord(args[1])
+        const current = bookmarks.get(String(args[0]))
+        if (!current) throw new Error("Can't find bookmark for id.")
+        const parentId =
+          typeof destination.parentId === 'string' ? destination.parentId : (current.parentId ?? '')
+        if (!bookmarks.move([current.id], parentId, asNumber(destination.index) ?? undefined))
+          throw new Error('Could not move bookmark.')
+        return node(bookmarks.get(current.id) ?? current)
       }
       case 'remove':
-        bookmarks.remove(String(args[0]))
+        if (!bookmarks.remove(String(args[0]))) throw new Error("Can't find bookmark for id.")
+        return undefined
+      case 'removeTree':
+        if (!bookmarks.removeTree(String(args[0]))) throw new Error("Can't find bookmark for id.")
         return undefined
     }
     throw new Error(`chrome.bookmarks.${method} ${NOT_IMPLEMENTED}`)
