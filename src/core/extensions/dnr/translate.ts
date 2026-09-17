@@ -22,10 +22,11 @@
  * the cross-ruleset full tie, which the engine resolves by set id order. Step 2 is approximated
  * by giving more recently installed extensions a higher set priority inside the engine's DNR
  * band: the newest extension's rules beat every rule of older extensions. The band has
- * `ENGINE_DNR_BAND_SIZE` integer slots, so only the four most recently installed extensions are
- * strictly ordered and everything older shares the lowest slot. Chrome's class-first rule
- * (another extension's `block` beats this extension's `allow`) cannot be expressed in the
- * engine's model; see the dnr-translator report for the engine changes that would close both gaps.
+ * `ENGINE_DNR_BAND_SIZE` integer slots, so the `ENGINE_DNR_BAND_SIZE - 1` most recently installed
+ * extensions are strictly ordered and everything older shares the lowest slot. Chrome's
+ * class-first rule (another extension's `block` beats this extension's `allow`) cannot be
+ * expressed in the engine's model; see the dnr-translator report for the engine changes that
+ * would close both gaps.
  *
  * Rules the engine cannot evaluate yet are left out of the set and reported: response header
  * conditions (they need a headers-received stage) and `topDomains`. `redirect.transform` rules

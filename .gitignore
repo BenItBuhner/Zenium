@@ -8,6 +8,7 @@ agent-tools/
 android/app/src/main/assets/www
 android/app/src/main/assets/page.js
 android/app/src/main/assets/ext.js
+android/app/src/main/assets/blocking
 android/.gradle
 android/build
 android/app/build

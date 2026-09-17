@@ -22,6 +22,17 @@ val buildWeb = tasks.register<Exec>("buildWeb") {
     onlyIf { !skipWeb }
 }
 
+// The bundled snapshot of the default filter lists (resources/blocking, refreshed with
+// `npm run blocking:snapshot`) ships as assets so the first run blocks ads before any download.
+// The asset merger inflates the `.txt.gz` files and drops the extension on the way into the APK;
+// `Blocking.readBundledText` opens them by either name.
+val copyBlockingSnapshot = tasks.register<Copy>("copyBlockingSnapshot") {
+    group = "build"
+    description = "Copies the bundled filter-list snapshot into app/src/main/assets/blocking"
+    from(webRoot.resolve("resources/blocking"))
+    into(projectDir.resolve("src/main/assets/blocking"))
+}
+
 val versionProps = Properties().apply {
     // Mirror the npm package version so About shows the same number on every platform.
     val pkg = webRoot.resolve("package.json").readText()
@@ -183,7 +194,7 @@ base {
     archivesName.set("zenium-$appVersion")
 }
 
-tasks.named("preBuild") { dependsOn(buildWeb) }
+tasks.named("preBuild") { dependsOn(buildWeb, copyBlockingSnapshot) }
 
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
@@ -205,6 +216,8 @@ dependencies {
     // vault key wrapping format. The extension and vault tests build org.json documents, which
     // android.jar only stubs.
     testImplementation("junit:junit:4.13.2")
+    // The request engine's rule sets are org.json documents; the real library stands in for the
+    // android.jar stubs (which throw) so the blocking tests can parse them on the JVM.
     testImplementation("org.json:json:20250107")
 
     // On-device driver for the gesture demo recording (.github/workflows/android-gesture-demo.yml).

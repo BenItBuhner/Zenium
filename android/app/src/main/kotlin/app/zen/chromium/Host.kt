@@ -31,6 +31,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import app.zen.chromium.ext.Extensions
+import app.zen.chromium.blocking.Blocking
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.json.JSONObject
 import java.io.File
@@ -45,6 +46,8 @@ import java.util.concurrent.Executors
  */
 class Host(override val activity: MainActivity, private val root: FrameLayout, private val fullscreenLayer: FrameLayout) : PageHost {
     val storage = Storage(activity)
+    /** The process's request engine, built from the rule sets the core persists, before any tab exists. */
+    override val blocking = Blocking.shared(activity)
     override val keys = Keys()
     override val permissions = Permissions(this)
     override val downloads = Downloads(activity, this)
@@ -121,6 +124,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             storage.writeSync(args.str("name"), args.str("text"))
             null
         }
+        // Documents outside the boot payload (the rule-set files under blocking/).
+        "storage.read" -> storage.read(args.str("name"))
+        "storage.exists" -> storage.exists(args.str("name"))
         else -> throw IllegalArgumentException("Unknown sync method: $method")
     }
 
@@ -130,6 +136,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         val tab = tabId?.let { tabs.get(it) }
         when (method) {
             "storage.write" -> storage.write(args.str("name"), args.str("text")) { main.post { reply(null) } }
+            "storage.remove" -> storage.remove(args.str("name")) { main.post { reply(null) } }
+
+            // --- request blocking (the BlockingHost contract and diagnostics) ----------------------
+            "blocking.bundled" -> reply(blocking.bundledLists())
+            "blocking.install" -> blocking.installBundled(args.obj("set"), args.str("file")) { main.post { reply(it) } }
+            "blocking.stats" -> reply(blocking.stats())
 
             // --- views -----------------------------------------------------------------------
             "view.create" -> { tabs.create(args.str("tabId"), args.str("containerId", Profiles.DEFAULT_CONTAINER)); reply(null) }
@@ -720,6 +732,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         downloads.destroy()
         updates.shutdown()
         tabs.destroyAll()
+        // Not the request engine: it is the process's, and a custom tab may still be using it.
         // The chrome too: a WebView that outlives its activity keeps its document – and the
         // browser core inside it – running against a host that is gone, and would even rebuild
         // itself if its renderer died.
