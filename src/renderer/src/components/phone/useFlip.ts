@@ -14,6 +14,13 @@ export function useFlip(
   useLayoutEffect(() => {
     tracker.commit(cells.current, scroller.current, enabled && !layoutAnimations.any())
   })
-  useEffect(() => () => tracker.stop(), [tracker])
+  useEffect(() => {
+    // A group finished changing height: the cards below it are where they are now.
+    const unsubscribe = layoutAnimations.onSettled(() => tracker.rebaseline())
+    return () => {
+      unsubscribe()
+      tracker.stop()
+    }
+  }, [tracker])
   return tracker
 }

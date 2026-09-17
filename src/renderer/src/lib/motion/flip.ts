@@ -3,12 +3,27 @@ import { SPRING_SNAPPY, SpringAnimation } from './spring'
 /**
  * Layout animations in flight (a group card changing height), by owner. While any is running
  * the elements below it move by layout every frame, which is not a re-layout the FLIP tracker
- * should chase.
+ * should chase – and once it ends, the positions the tracker last recorded are stale, so it is
+ * told to take them again.
  */
+const settledListeners = new Set<() => void>()
+
 export const layoutAnimations = {
   active: new Set<string>(),
   any(): boolean {
     return layoutAnimations.active.size > 0
+  },
+  start(owner: string): void {
+    layoutAnimations.active.add(owner)
+  },
+  /** The owner's animation is over: trackers re-measure once nothing else is moving. */
+  end(owner: string): void {
+    layoutAnimations.active.delete(owner)
+    if (layoutAnimations.active.size === 0) for (const listener of settledListeners) listener()
+  },
+  onSettled(listener: () => void): () => void {
+    settledListeners.add(listener)
+    return () => settledListeners.delete(listener)
   }
 }
 
@@ -36,6 +51,7 @@ interface ScrollOffset {
 export class FlipTracker {
   private tracked = new Map<string, Tracked>()
   private elements = new Map<string, HTMLElement>()
+  private lastScroll: ScrollOffset | null = null
   private progress = 0
   private readonly spring = new SpringAnimation(
     SPRING_SNAPPY,
@@ -59,6 +75,7 @@ export class FlipTracker {
    */
   commit(elements: Map<string, HTMLElement>, scroll: ScrollOffset | null, animate: boolean): void {
     this.elements = new Map(elements)
+    this.lastScroll = scroll
     const t = this.progress
     const next = new Map<string, Tracked>()
     let moved = false
@@ -87,6 +104,14 @@ export class FlipTracker {
       this.draw()
       this.spring.start(1, 0, 0)
     }
+  }
+
+  /**
+   * Take the current positions as the baseline without animating anything (the elements moved by
+   * a layout animation that already showed the motion).
+   */
+  rebaseline(): void {
+    this.commit(this.elements, this.lastScroll, false)
   }
 
   /** Where `id` will come to rest, in window coordinates (its in-flight translation removed). */

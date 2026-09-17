@@ -89,7 +89,7 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
 
         // 5. Drag a card onto another: the merge preview, then a group of the two. The loose
         //    cards sit below the fold now: scroll to the bottom first.
-        scrollGrid(-0.6f * height)
+        scrollGrid(-0.55f * height)
         val example = find("Example Domain", "example.com")
         val tea = find("Tea - Wikipedia")
         f.press(example.exactCenterX(), example.exactCenterY())
@@ -102,7 +102,7 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
 
         // 6. Move a tab between groups: Tea out of the new group onto the News group, back at
         //    the top of the grid.
-        scrollGrid(0.8f * height)
+        scrollGrid(0.6f * height)
         val teaAgain = find("Tea - Wikipedia")
         val news = find("Group News")
         f.press(teaAgain.exactCenterX(), teaAgain.exactCenterY())
@@ -138,10 +138,13 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
     private fun find(vararg labels: String): Rect =
         findAny(*labels) ?: error("none of ${labels.joinToString()} is on screen")
 
-    /** Fling the grid by `dy` px (negative scrolls towards the bottom) and let it come to rest. */
+    /**
+     * Fling the grid by `dy` px (negative scrolls towards the bottom) and let it come to rest.
+     * The finger starts near the edge it moves away from, so the whole stroke stays on screen.
+     */
     private fun scrollGrid(dy: Float) {
         val f = Finger()
-        f.down(width * 0.5f, height * 0.55f)
+        f.down(width * 0.5f, if (dy < 0) height * 0.78f else height * 0.22f)
         f.moveBy(0f, dy, 260)
         f.up()
         SystemClock.sleep(1_800)

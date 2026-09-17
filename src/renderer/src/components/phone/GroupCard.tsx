@@ -53,16 +53,16 @@ export function GroupCard({ folder, tabs, card, onMenu, ref }: Props): JSX.Eleme
         if (shellRef.current) shellRef.current.style.height = `${Math.max(GROUP_HEADER, h)}px`
       },
       () => {
-        layoutAnimations.active.delete(folder.id)
         const shell = shellRef.current
         if (shell) shell.style.height = shell.dataset.collapsed ? `${GROUP_HEADER}px` : ''
+        layoutAnimations.end(folder.id)
       }
     )
     spring.current = anim
     return () => {
       anim.stop()
       spring.current = null
-      layoutAnimations.active.delete(folder.id)
+      layoutAnimations.end(folder.id)
     }
   }, [folder.id])
 
@@ -83,7 +83,7 @@ export function GroupCard({ folder, tabs, card, onMenu, ref }: Props): JSX.Eleme
     const from = shell.getBoundingClientRect().height
     const to = collapsed ? GROUP_HEADER : GROUP_HEADER + body.offsetHeight
     const velocity = anim.running ? anim.current.v : 0
-    layoutAnimations.active.add(folder.id)
+    layoutAnimations.start(folder.id)
     shell.style.height = `${from}px`
     anim.start(from, velocity, to)
   }, [collapsed, folder.id])
