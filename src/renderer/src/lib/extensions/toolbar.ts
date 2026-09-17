@@ -6,10 +6,11 @@ export const TOOLBAR_GAP = 2
 
 /**
  * Narrowest address pill worth keeping before actions start folding into the puzzle menu: the
- * site icon and about ten characters of host. A 240 sidebar is under it with no actions at all,
- * so there every action lives in the panel until the sidebar is widened.
+ * site icon and about eight characters of host, close to where Firefox lets its toolbar overflow.
+ * The default 240 sidebar leaves the pill under this with no actions at all, so there every
+ * pinned action lives in the puzzle panel until the sidebar is widened past about 290.
  */
-export const MIN_PILL_WIDTH = 120
+export const MIN_PILL_WIDTH = 100
 
 export interface ToolbarFit {
   /** Pinned actions that get their own 28 button, in pin order. */

@@ -456,20 +456,31 @@ export class ExtensionService implements ExtensionHost {
         })
       }
     }
-    wc.on('preferred-size-changed', (_event, size) => report(size.width, size.height))
+    // Chromium's preferred size is what Chrome sizes its popups by (the document's minimum width
+    // and its height); a document that never reports one is measured once instead, a moment
+    // after it is ready. The measurement must not overwrite a real report: `scrollWidth` is
+    // only ever the view's own width.
+    let preferredSeen = false
+    wc.on('preferred-size-changed', (_event, size) => {
+      preferredSeen = true
+      report(size.width, size.height)
+    })
     wc.on('dom-ready', () => {
-      void wc
-        .executeJavaScript(
-          '[document.documentElement.scrollWidth, Math.min(document.documentElement.scrollHeight, document.body.scrollHeight || 1e9)]',
-          true
-        )
-        .then((size) => {
-          const [w, h] = size as [number, number]
-          // Fallback for documents that never trigger a preferred-size report.
-          if (Number.isFinite(h) && h > 0) report(Number(w) || POPUP_INITIAL.width, Number(h) + 8)
-        })
-        .catch(() => undefined)
       wc.focus()
+      setTimeout(() => {
+        if (preferredSeen || this.popup?.view !== view || wc.isDestroyed()) return
+        void wc
+          .executeJavaScript(
+            '[document.body ? document.body.scrollWidth : 0, Math.min(document.documentElement.scrollHeight, (document.body && document.body.scrollHeight) || 1e9)]',
+            true
+          )
+          .then((size) => {
+            if (preferredSeen) return
+            const [w, h] = size as [number, number]
+            if (Number.isFinite(h) && h > 0) report(Number(w) || POPUP_INITIAL.width, Number(h))
+          })
+          .catch(() => undefined)
+      }, 400)
     })
     wc.on('blur', () => setTimeout(() => this.popup?.view === view && this.closePopup(), 120))
     wc.on('before-input-event', (event, input) => {
