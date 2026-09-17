@@ -348,7 +348,7 @@ async function main() {
         await dialog.page.screenshot({ path: path.join(outDir, '06-dialog-always-allow.png') }).catch(() => undefined)
         screenshotOs('dialog-always-allow')
       }
-      await dialog.page.locator('.zen-protocol-btn-primary').click()
+      await dialog.page.locator('.zen-dialog').getByRole('button', { name: 'Open' }).click()
       await sleep(800)
       result.checks.permissionsAfterAllow = readPermissions()
     }
@@ -371,7 +371,7 @@ async function main() {
     if (dialog) {
       await dialog.page.screenshot({ path: path.join(outDir, '07-dialog-custom.png') }).catch(() => undefined)
       screenshotOs('dialog-custom')
-      await dialog.page.locator('.zen-protocol-btn-secondary').click()
+      await dialog.page.locator('.zen-dialog').getByRole('button', { name: 'Cancel' }).click()
       await sleep(400)
     }
   }
@@ -409,7 +409,7 @@ async function main() {
       await dialog.page.screenshot({ path: path.join(outDir, '08-dialog-private.png') }).catch(() => undefined)
       screenshotOs('dialog-private')
       result.checks.privateHasRemember = (await dialog.page.locator('.zen-protocol-check').count()) > 0
-      await dialog.page.locator('.zen-protocol-btn-primary').click()
+      await dialog.page.locator('.zen-dialog').getByRole('button', { name: 'Open' }).click()
       await sleep(500)
     }
   }

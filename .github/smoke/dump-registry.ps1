@@ -7,28 +7,18 @@ param(
 $ErrorActionPreference = 'Continue'
 New-Item -ItemType Directory -Path $Out -Force | Out-Null
 $log = Join-Path $Out "$Label.txt"
-
-function Dump-Key([string]$Path) {
-  "---- $Path ----"
-  if (Test-Path $Path) {
-    Get-ItemProperty -Path $Path -ErrorAction SilentlyContinue | Format-List | Out-String
-    Get-ChildItem -Path $Path -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-      "  $($_.PSPath -replace '^Microsoft\.PowerShell\.Core\\Registry::', '')"
-      Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue | Format-List | Out-String
-    }
-  } else {
-    "(missing)"
-  }
-}
-
-$blocks = @(
-  (Dump-Key 'HKCU:\Software\RegisteredApplications'),
-  (Dump-Key 'HKCU:\Software\Clients\StartMenuInternet\Zenium'),
-  (Dump-Key 'HKCU:\Software\Classes\ZeniumHTML'),
-  (Dump-Key 'HKCU:\Software\Classes\.htm\OpenWithProgids'),
-  (Dump-Key 'HKCU:\Software\Classes\.html\OpenWithProgids'),
-  (Dump-Key 'HKCU:\Software\Classes\.pdf\OpenWithProgids')
+$keys = @(
+  'HKCU\Software\RegisteredApplications',
+  'HKCU\Software\Clients\StartMenuInternet\Zenium',
+  'HKCU\Software\Classes\ZeniumHTML',
+  'HKCU\Software\Classes\.htm\OpenWithProgids',
+  'HKCU\Software\Classes\.html\OpenWithProgids',
+  'HKCU\Software\Classes\.pdf\OpenWithProgids'
 )
-$blocks -join "`n" | Set-Content -Path $log -Encoding UTF8
+$chunks = foreach ($k in $keys) {
+  "==== $k ===="
+  & reg.exe query $k /s 2>&1 | Out-String
+}
+Set-Content -Path $log -Value ($chunks -join "`n") -Encoding UTF8
 Write-Output $log
 Get-Content $log
