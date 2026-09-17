@@ -1,6 +1,7 @@
 import type { BlockedPopup, PermissionRule, SecurityPrompt, Tab, UIState } from '@shared/types'
+import { run } from '@renderer/lib/api'
 import { activeTab } from '@renderer/lib/selectors'
-import { uiStore } from '@renderer/lib/ui'
+import { captureActiveTab, invalidateSnapshot, returnFocusToPage, uiStore } from '@renderer/lib/ui'
 
 /** What a remembered per-site answer lets the site do, phrased after "may" / "may not". */
 const RULE_LABELS: Record<string, string> = {
@@ -71,8 +72,14 @@ export function blockedPopupsOf(state: UIState, tabId: string | null | undefined
   return (tabId && state.blockedPopups[tabId]) || []
 }
 
-/** Show the list for a tab; `anchor` is where the address pill's indicator is (window px). */
-export function openBlockedPopups(tabId: string, anchor: DOMRect | null): void {
+/**
+ * Show the list for a tab; `anchor` is where the address pill's indicator is (window px). Hosts
+ * hide page views under chrome overlays, so the page is captured first and its snapshot stands in
+ * behind the panel.
+ */
+export async function openBlockedPopups(tabId: string, anchor: DOMRect | null): Promise<void> {
+  await captureActiveTab(tabId)
+  run('focus.chrome', undefined)
   uiStore.set({
     blockedPopupsPanel: {
       tabId,
@@ -81,6 +88,26 @@ export function openBlockedPopups(tabId: string, anchor: DOMRect | null): void {
         : null
     }
   })
+}
+
+/** The panel has left the screen: show the live page again. */
+export function closeBlockedPopups(): void {
+  if (uiStore.get().blockedPopupsPanel) uiStore.set({ blockedPopupsPanel: null })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/** A security dialog is about to show over `tabId` (null for a proxy challenge with no page). */
+export async function openSecurityPrompt(tabId: string | null): Promise<void> {
+  await captureActiveTab(tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ securityPromptOpen: true })
+}
+
+export function closeSecurityPrompt(): void {
+  if (uiStore.get().securityPromptOpen) uiStore.set({ securityPromptOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
 }
 
 /** The prompt this window should show now: its active tab's, or one that belongs to no page. */

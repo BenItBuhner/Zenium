@@ -169,7 +169,7 @@ export function NavRow({
               title={blocked.length === 1 ? 'Pop-up blocked' : `${blocked.length} pop-ups blocked`}
               onClick={(e) => {
                 e.stopPropagation()
-                openBlockedPopups(tab.id, e.currentTarget.getBoundingClientRect())
+                void openBlockedPopups(tab.id, e.currentTarget.getBoundingClientRect())
               }}
             >
               <AppWindow className="h-3.5 w-3.5" />

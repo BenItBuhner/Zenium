@@ -9,8 +9,11 @@ import type {
   UIState
 } from '@shared/types'
 import { run } from '@renderer/lib/api'
-import { currentSecurityPrompt } from '@renderer/lib/security'
-import { returnFocusToPage } from '@renderer/lib/ui'
+import {
+  closeSecurityPrompt,
+  currentSecurityPrompt,
+  openSecurityPrompt
+} from '@renderer/lib/security'
 import { cn } from '@renderer/lib/utils'
 import { useSpringPresence } from '@renderer/hooks/useSpringPresence'
 import { Button } from '../ui/button'
@@ -57,10 +60,17 @@ function SecurityPromptDialog({
   const { style, close, closing } = useSpringPresence(onGone, '50% 40%')
   const answered = useRef(false)
 
+  // The page's views hide under chrome overlays; its snapshot stands in while the dialog is up.
   useEffect(() => {
-    run('focus.chrome', undefined)
-    return () => returnFocusToPage()
-  }, [])
+    let gone = false
+    void openSecurityPrompt(prompt.tabId).then(() => {
+      if (gone) closeSecurityPrompt()
+    })
+    return () => {
+      gone = true
+      closeSecurityPrompt()
+    }
+  }, [prompt.tabId])
 
   // The core dropped the prompt (answered elsewhere, tab navigated or closed): leave quietly.
   useEffect(() => {
@@ -86,7 +96,7 @@ function SecurityPromptDialog({
 
   return (
     <div
-      className={cn('absolute inset-0 z-50 flex items-center justify-center bg-black/25')}
+      className={cn('absolute inset-0 z-50 flex items-center justify-center')}
       style={{ opacity: style.opacity, pointerEvents: closing ? 'none' : undefined }}
       role="presentation"
     >

@@ -5,6 +5,7 @@ import type { UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import {
   blockedPopupsOf,
+  closeBlockedPopups,
   openBlockedPopups,
   originOf,
   popupsAllowedFor,
@@ -43,7 +44,7 @@ export function BlockedPopupsPanel({
     : { left, right: 12, bottom: 'calc(var(--zen-inset-bottom) + 72px)' }
   // Grow out of the indicator that was tapped (or up out of the phone's bar).
   const { style, close } = useSpringPresence(
-    () => uiStore.set({ blockedPopupsPanel: null }),
+    closeBlockedPopups,
     anchored ? `${anchored.x + anchored.width / 2 - left}px 0%` : '50% 100%'
   )
 
@@ -152,30 +153,31 @@ export function BlockedPopupsPanel({
 }
 
 /**
- * Phones have no room for an indicator in the address pill: a chip above the bar says a pop-up
- * was blocked and opens the list.
+ * Phones have no room for an indicator in the address pill: a chip in its own row between the
+ * page and the bar says a pop-up was blocked and opens the list. It takes a row of its own (the
+ * page above shrinks) because the host draws the page over anything the chrome puts on top of it.
  */
 export function BlockedPopupsChip({
   state,
-  tabId
+  tabId,
+  className
 }: {
   state: UIState
   tabId: string
+  className?: string
 }): JSX.Element | null {
   const entries = blockedPopupsOf(state, tabId)
   if (entries.length === 0) return null
+  const label = entries.length === 1 ? 'Pop-up blocked' : `${entries.length} pop-ups blocked`
   return (
-    <div
-      className="pointer-events-none absolute inset-x-0 z-40 flex justify-center px-4"
-      style={{ bottom: 'calc(var(--zen-inset-bottom) + 64px)' }}
-    >
+    <div className={cn('flex shrink-0 justify-center px-4 py-2', className)}>
       <button
         type="button"
-        className="zen-panel zen-animate-pop pointer-events-auto flex h-9 items-center gap-2 rounded-full px-3.5 text-[13px]"
-        onClick={() => openBlockedPopups(tabId, null)}
+        className="zen-panel zen-animate-pop flex h-9 items-center gap-2 rounded-full px-3.5 text-[13px]"
+        onClick={() => void openBlockedPopups(tabId, null)}
       >
         <AppWindow className="h-4 w-4" />
-        <span>{entries.length === 1 ? 'Pop-up blocked' : `${entries.length} pop-ups blocked`}</span>
+        <span>{label}</span>
         <span className="font-medium text-[var(--zen-accent)]">Show</span>
       </button>
     </div>

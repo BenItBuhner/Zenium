@@ -4,11 +4,9 @@ import type { UIState } from '@shared/types'
 import { SPACE_ICONS } from '@shared/defaults'
 import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
-import { useViewport } from '@renderer/lib/formFactor'
-import { activeTab } from '@renderer/lib/selectors'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { BlockedPopupsChip, BlockedPopupsPanel } from './security/BlockedPopupsPanel'
+import { BlockedPopupsPanel } from './security/BlockedPopupsPanel'
 import { SecurityPrompts } from './security/SecurityPromptDialog'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
@@ -38,10 +36,8 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const pinnedTabId = uiStore.use((s) => s.editingPinnedUrlTabId)
   const iconTabId = uiStore.use((s) => s.iconPickerTabId)
   const popups = uiStore.use((s) => s.blockedPopupsPanel)
-  const phone = useViewport().formFactor === 'phone'
   const pinnedTab = pinnedTabId ? state.tabs[pinnedTabId] : undefined
   const iconTab = iconTabId ? state.tabs[iconTabId] : undefined
-  const active = activeTab(state)
   return (
     <>
       {pinnedTab ? (
@@ -50,7 +46,6 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
         <IconPickerDialog tab={iconTab} />
       ) : null}
       {popups && <BlockedPopupsPanel state={state} panel={popups} />}
-      {phone && !popups && active && <BlockedPopupsChip state={state} tabId={active.id} />}
       <SecurityPrompts state={state} />
     </>
   )

@@ -26,6 +26,7 @@ import {
 import { cn } from '@renderer/lib/utils'
 import { ContentArea } from '../content/ContentArea'
 import { Onboarding } from '../overlays/Onboarding'
+import { BlockedPopupsChip } from '../security/BlockedPopupsPanel'
 import { Favicon } from '../sidebar/Favicon'
 import { TabDialogs } from '../TabDialogs'
 import { Urlbar } from '../urlbar/Urlbar'
@@ -135,6 +136,13 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         <div className="relative min-h-0 flex-1">
           <ContentArea state={state} ui={ui} />
         </div>
+        {!barHidden && tab && (
+          <BlockedPopupsChip
+            state={state}
+            tabId={tab.id}
+            className={edge === 'top' ? 'order-first' : ''}
+          />
+        )}
       </main>
       <PhoneStage state={state} />
       {!barHidden && (
