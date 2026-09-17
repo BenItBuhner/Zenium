@@ -54,6 +54,7 @@ import type { Bridge } from './bridge'
 import { AndroidExtensions } from './extensionHost'
 import { AndroidExtensionStoreIo } from './extensionStoreIo'
 import { AndroidSiteData } from './siteData'
+import { AndroidTranslateHost, type TranslateProgressEvent } from './translate'
 import { AndroidTabViewHost, type ViewEventPayloads } from './views'
 
 /** Android 13 (Tiramisu): the first release whose clipboard shows its own "copied" chip. */
@@ -248,6 +249,8 @@ export interface HostEventPayloads {
    * chrome is still booting is not lost: the store collects the queue when it starts, too.
    */
   'extension.sideload': { count: number }
+  /** Bytes of a translation model file arriving (`translate.download` in flight). */
+  'translate.progress': TranslateProgressEvent
 }
 
 /**
@@ -613,6 +616,7 @@ export class AndroidPlatform implements Platform {
   readonly externalProtocols: ExternalProtocolHost
   readonly passwords: PasswordsHost
   readonly blocking: BlockingHost
+  readonly translate: AndroidTranslateHost
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
@@ -639,6 +643,7 @@ export class AndroidPlatform implements Platform {
     this.views = new AndroidTabViewHost(bridge)
     this.siteData = new AndroidSiteData(bridge)
     this.blocking = new AndroidBlockingHost(bridge)
+    this.translate = new AndroidTranslateHost(bridge)
     this.menus = new RendererMenuHost()
     this.windows = {
       create: (win: ZenWindow): WindowHost => {
@@ -966,6 +971,9 @@ export class AndroidPlatform implements Platform {
         // Without a store (the preview host) the packages stay queued in Kotlin's cache and are
         // swept with the next start.
         if (this.extensions) void this.extensions.installPending(this.window)
+        return
+      case 'translate.progress':
+        this.translate.onProgress(payload as HostEventPayloads['translate.progress'])
         return
       case 'view.adopt': {
         const p = payload as HostEventPayloads['view.adopt']

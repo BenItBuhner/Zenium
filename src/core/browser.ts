@@ -43,6 +43,7 @@ import { ReaderService } from './reader'
 import { LiveFolderService } from './livefolders'
 import { ModService } from './mods'
 import { SiteInfoService } from './siteInfo'
+import { TranslateService } from './translate/service'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
@@ -148,6 +149,8 @@ export class Browser {
   readonly defaultBrowser: DefaultBrowserService
   /** Ad and tracker blocking: the rule engine, its lists and the blocked-request counters. */
   readonly blocking: BlockingService
+  /** Offline page translation: detection, offers, the engine and its models. */
+  readonly translate: TranslateService
   readonly windows = new Map<string, ZenWindow>()
   quitting = false
   private readonly handlers: CommandHandlers
@@ -216,6 +219,7 @@ export class Browser {
     this.passwords = new PasswordService(this, platform.passwords)
     this.defaultBrowser = new DefaultBrowserService(this)
     this.blocking = new BlockingService(this)
+    this.translate = new TranslateService(this)
     this.state.extras = () => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -231,7 +235,8 @@ export class Browser {
       blockedPopups: this.popups.all(),
       permissionRules: this.permissions.rules(),
       securityPrompts: this.security.list(),
-      blocking: this.blocking.status()
+      blocking: this.blocking.status(),
+      translate: this.translate.uiState()
     })
     this.handlers = this.commandHandlers()
   }
@@ -440,6 +445,7 @@ export class Browser {
     this.updates.start()
     this.passwords.start()
     this.defaultBrowser.start()
+    this.translate.start()
     this.syncShortcuts()
     this.state.commit()
   }
@@ -478,12 +484,14 @@ export class Browser {
   onPageReady(tabId: string): void {
     this.boosts.apply(tabId)
     void this.reader.detect(tabId)
+    this.translate.onPageReady(tabId)
   }
 
   onNavigated(tabId: string): void {
     const tab = this.tabs.tab(tabId)
     if (tab) tab.readerable = false
     this.extensions.closePopup()
+    this.translate.onNavigated(tabId)
   }
 
   updateMedia(): void {
@@ -944,6 +952,7 @@ export class Browser {
     this.updates.stop()
     this.downloads.shutdown()
     this.blocking.stop()
+    this.translate.stop()
     this.flushSync()
     this.state.freeze()
   }
@@ -960,6 +969,7 @@ export class Browser {
     this.sync.flushSync()
     this.passwords.flushSync()
     this.blocking.flushSync()
+    this.translate.flushSync()
   }
 
   private syncShortcuts(): void {
@@ -1555,6 +1565,19 @@ export class Browser {
       'blocking.setEnabled': ({ enabled }) => this.blocking.setEnabled(enabled),
       'blocking.setSiteException': ({ site, excepted }) =>
         this.blocking.setSiteException(site, excepted),
+      'translate.page': ({ tabId, target, source }) =>
+        this.translate.translatePage(tabId, { target, source }),
+      'translate.revert': ({ tabId }) => this.translate.revert(tabId),
+      'translate.dismiss': ({ tabId }) => this.translate.dismiss(tabId),
+      'translate.selection': ({ tabId, text, target }) =>
+        this.translate.translateSelection(tabId, { text, target }),
+      'translate.setPreferences': (patch) => this.translate.setPreferences(patch),
+      'translate.setLanguageRule': ({ language, rule }) =>
+        this.translate.setLanguageRule(language, rule),
+      'translate.setSiteRule': ({ tabId, never }) => this.translate.setSiteRule(tabId, never),
+      'translate.downloadModel': ({ from, to }) => this.translate.downloadModel({ from, to }),
+      'translate.removeModel': ({ from, to }) => this.translate.removeModel({ from, to }),
+      'translate.engineResponse': (response) => this.translate.onRelayResponse(response),
 
       'onboarding.complete': ({ searchEngineId, colorScheme, essentials }, win) => {
         if (state.searchEngines.some((e) => e.id === searchEngineId))

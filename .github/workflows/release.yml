@@ -532,7 +532,25 @@ jobs:
             if [[ "$PRERELEASE" == "true" ]]; then flags+=(--prerelease); fi
             gh release create "$TAG" --draft --verify-tag --title "$TITLE" --notes-file release/notes.md "${flags[@]}"
           fi
-          gh release upload "$TAG" release/assets/* --clobber
+          # One file per call with retries: a single transient HTTP 500 from uploads.github.com
+          # used to fail the whole step halfway through (v0.3.19, first attempt).
+          for file in release/assets/*; do
+            for attempt in 1 2 3 4; do
+              if gh release upload "$TAG" "$file" --clobber; then break; fi
+              if [[ "$attempt" -eq 4 ]]; then
+                echo "::error::Uploading $(basename "$file") failed after $attempt attempts"
+                exit 1
+              fi
+              echo "::warning::Uploading $(basename "$file") failed (attempt $attempt); retrying"
+              sleep $((10 * attempt))
+            done
+          done
+          uploaded="$(gh release view "$TAG" --json assets --jq '.assets | length')"
+          expected="$(find release/assets -type f | wc -l | tr -d ' ')"
+          if [[ "$uploaded" != "$expected" ]]; then
+            echo "::error::Release $TAG has $uploaded assets, expected $expected"
+            exit 1
+          fi
       - name: Publish
         run: |
           gh release edit "$TAG" --draft=false
