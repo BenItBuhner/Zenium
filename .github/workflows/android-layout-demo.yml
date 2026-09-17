@@ -1,0 +1,39 @@
+name: Android layout demo
+
+# Records the phone chrome's layout and menu fixes on a hardware-accelerated Android emulator with
+# three-button navigation: the phone turned to landscape and back (the bar and pill stay, no
+# desktop sidebar), the tab overview with eight tabs in landscape scrolled to its end, the app menu
+# at its last detent with its last row tapped by a real touch above the navigation bar, a long URL
+# loaded and the pill naming the site alone, and the pill tapped so editing starts at the origin
+# with everything selected. The run fails when the chrome is not the phone chrome after a rotation
+# or the menu row cannot be tapped. Dispatch-only, like the gesture demo: it takes about ten
+# minutes and says nothing about a change being correct. The build, the emulator and the Gradle
+# cache live in android-emulator-demo.yml; this file only picks the driver.
+on:
+  workflow_dispatch:
+  # TEMPORARY: one recording of the fix branch; removed before review.
+  push:
+    branches:
+      - cursor/android-phone-layout-menu-fixes-cda4
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-layout-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Layout demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.LayoutDemo
+        DEMO_DIR=layout-demo
+        DEMO_OUT=artifacts/android-layout-demo
+        DEMO_VIDEO=android-layout-demo.mp4
+      artifact-name: android-layout-demo
+      artifact-path: artifacts/android-layout-demo/

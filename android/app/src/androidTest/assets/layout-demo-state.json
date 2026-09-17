@@ -1,0 +1,162 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_browse",
+  "spaces": [
+    {
+      "id": "space_browse",
+      "name": "Browse",
+      "icon": "🧭",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          {
+            "c": [
+              96,
+              110,
+              235
+            ],
+            "x": 0.3,
+            "y": 0.35,
+            "isPrimary": true
+          },
+          {
+            "c": [
+              214,
+              92,
+              160
+            ],
+            "x": 0.7,
+            "y": 0.65
+          }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 40
+      },
+      "tabIds": [
+        "tab_example",
+        "tab_long",
+        "tab_wiki",
+        "tab_hn",
+        "tab_mdn",
+        "tab_cern",
+        "tab_gh",
+        "tab_rfc"
+      ],
+      "activeTabId": "tab_example",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [],
+  "tabs": [
+    {
+      "id": "tab_example",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://example.com/",
+      "title": "Example Domain",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_long",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://www.google.com/search?q=android+webview+client+hints+and+a+long+query+string+abcdefghijabcdefghij&sei=abcdefghijabcdefghijabcdefghij&oq=android",
+      "title": "android webview client hints - Google Search",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_wiki",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://en.wikipedia.org/wiki/Android_(operating_system)",
+      "title": "Android (operating system) - Wikipedia",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_hn",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://news.ycombinator.com/",
+      "title": "Hacker News",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_mdn",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://developer.mozilla.org/en-US/docs/Web/CSS/corner-shape",
+      "title": "corner-shape - CSS | MDN",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_cern",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://info.cern.ch/hypertext/WWW/TheProject.html",
+      "title": "World Wide Web",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_gh",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://github.com/BenItBuhner/Zenium",
+      "title": "BenItBuhner/Zenium",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_rfc",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://www.rfc-editor.org/rfc/rfc2324.html",
+      "title": "RFC 2324: HTCPCP/1.0",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "updates": {
+      "autoCheck": false,
+      "autoDownload": false,
+      "channel": "stable"
+    }
+  },
+  "shortcutOverrides": {},
+  "bookmarks": [],
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_browse",
+      "selection": {
+        "space_browse": "tab_example"
+      },
+      "compact": false
+    }
+  ]
+}
