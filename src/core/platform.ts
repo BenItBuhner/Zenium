@@ -300,6 +300,11 @@ export interface WindowHost {
   normalBounds(): Rect | null
   /** Brief vibration for a gesture landmark; hosts without haptics leave this out. */
   haptic?(kind: HapticKind): void
+  /**
+   * Download progress on the window's taskbar button or dock icon: 0–1, `-1` to clear it, any
+   * value above 1 for an indeterminate bar (Electron's `setProgressBar` contract).
+   */
+  setProgressBar?(value: number, mode?: 'normal' | 'indeterminate' | 'paused'): void
 }
 
 export interface WindowCreateInit {
@@ -426,13 +431,28 @@ export interface NetHost {
   ): Promise<{ ok: boolean; status: number; text: string }>
 }
 
-/** Live-download control; the core keeps the records, the host owns the transfers. */
+/**
+ * Live-download control; the core keeps the records, the host owns the transfers. Hosts write
+ * in-flight files under `PARTIAL_SUFFIX` and hand the final name over only in `release`, which
+ * is how flagged files stay quarantined until the user keeps them.
+ */
 export interface DownloadHost {
   pause(id: string): void
-  resume(id: string): void
+  /** Continue a paused or resumable interrupted transfer; after a restart only the record is known. */
+  resume(item: DownloadItem): void
   cancel(id: string): void
+  /** A fresh request for the same URL and referrer; it reports through `begin` like any download. */
+  retry(item: DownloadItem): void
+  /** Rename the finished partial file to `item.filename`; resolves with where it ended up. */
+  release(item: DownloadItem): Promise<{ savePath: string; filename: string } | null>
+  /** Delete the partial or quarantined file (nothing to do when it is already gone). */
+  discard(item: DownloadItem): Promise<void>
   open(item: DownloadItem): Promise<void>
   showInFolder(item: DownloadItem): void
+  /** System notification for a completed download; clicking it opens the file. */
+  notifyCompleted?(item: DownloadItem): void
+  /** Folder picker for Settings › Downloads; resolves with the chosen location or null. */
+  chooseLocation?(win?: ZenWindow): Promise<string | null>
 }
 
 export interface SessionHost {

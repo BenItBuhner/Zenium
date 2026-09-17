@@ -12,7 +12,7 @@ export function DownloadsPanel({ state }: { state: UIState }): JSX.Element {
     <OverlayShell
       title="Downloads"
       actions={
-        items.some((i) => i.state !== 'progressing' && i.state !== 'paused') ? (
+        items.some((i) => i.state !== 'in-progress' && i.state !== 'paused') ? (
           <Button
             variant="ghost"
             size="sm"
@@ -37,7 +37,7 @@ export function DownloadsPanel({ state }: { state: UIState }): JSX.Element {
 }
 
 function DownloadRow({ item }: { item: DownloadItem }): JSX.Element {
-  const inFlight = item.state === 'progressing' || item.state === 'paused'
+  const inFlight = item.state === 'in-progress' || item.state === 'paused'
   const pct =
     item.totalBytes > 0
       ? Math.min(100, Math.round((item.receivedBytes / item.totalBytes) * 100))
@@ -75,7 +75,7 @@ function DownloadRow({ item }: { item: DownloadItem }): JSX.Element {
           </div>
         )}
       </div>
-      {item.state === 'progressing' && (
+      {item.state === 'in-progress' && (
         <button
           type="button"
           className="zen-toolbar-button h-7 w-7"

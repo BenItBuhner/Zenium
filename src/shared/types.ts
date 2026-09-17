@@ -587,18 +587,71 @@ export interface BookmarkImportResult {
   folderId: string
 }
 
-export type DownloadState = 'progressing' | 'paused' | 'completed' | 'cancelled' | 'interrupted'
+export type DownloadState = 'in-progress' | 'paused' | 'completed' | 'cancelled' | 'interrupted'
+
+export type DownloadDangerLevel = 'safe' | 'suspicious' | 'dangerous'
+
+/**
+ * Why a download is flagged: `file-type` (the extension can run code or hide it, after Chromium's
+ * download_file_types list), `insecure` (an http download from an https page), `url` (a verdict
+ * from a `DangerVerdictProvider`, e.g. Safe Browsing).
+ */
+export type DownloadDangerReason = 'none' | 'file-type' | 'insecure' | 'url'
+
+export interface DownloadDanger {
+  level: DownloadDangerLevel
+  reason: DownloadDangerReason
+  /** The user chose "Keep": the file left quarantine and may be opened. */
+  kept?: boolean
+}
 
 export interface DownloadItem {
   id: string
   url: string
+  /** Page the download came from (empty when unknown); a retry sends it as the Referer again. */
+  referrer: string
+  /** Display name and the final file name (what the user asked for or the server suggested). */
   filename: string
+  /**
+   * Where the bytes are right now: the partial file while in progress, the final file once
+   * completed. On Android this can be a `content:` URI.
+   */
   savePath: string
   totalBytes: number
   receivedBytes: number
   state: DownloadState
   startedAt: number
+  /** When the transfer completed, was cancelled or broke; null while it runs. */
+  endedAt: number | null
   mimeType: string
+  /** The server honours Range requests, so paused and interrupted transfers can continue. */
+  canResume: boolean
+  /** Why an interrupted download stopped (Chromium's `net::` error name or a short reason). */
+  error: string | null
+  danger: DownloadDanger
+  /** Open the file as soon as the download completes (Chrome's "Open when done"). */
+  openWhenDone: boolean
+  /** Recent transfer rate; 0 while paused or unknown. */
+  bytesPerSecond: number
+  /** Estimated time to completion; null without a size or a rate. */
+  etaMs: number | null
+  /** HTTP validators the host uses for `If-Range` on resume (empty when the server sent none). */
+  etag: string
+  lastModified: string
+}
+
+export interface DownloadSettings {
+  /** Folder new downloads go to; empty means the platform's Downloads folder. */
+  location: string
+  /**
+   * Lower-case extensions opened automatically once downloaded (Chrome's "Open certain file
+   * types automatically"); dangerous types never auto-open.
+   */
+  autoOpen: string[]
+  /** Completion notifications (desktop: the system notification centre). */
+  showNotifications: boolean
+  /** Open the downloads panel whenever a download starts; off shows the toolbar indicator only. */
+  openPanelOnStart: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -830,6 +883,8 @@ export interface Settings {
   restoreSession: boolean
   /** Firefox's "Always ask you where to save files"; off saves straight into the Downloads folder. */
   askWhereToSave: boolean
+  /** Downloads location, auto-open types and notifications; absent in profiles from before it existed. */
+  downloads?: Partial<DownloadSettings>
   onboardingDone: boolean
   showTabSeparator: boolean
   ctrlTabCyclesWithinSection: boolean
@@ -1528,6 +1583,15 @@ export interface Commands {
   'download.open': { args: { id: string }; result: void }
   'download.remove': { args: { id: string }; result: void }
   'download.clearCompleted': { args: void; result: void }
+  /** Start over: a new request for the same URL with the same referrer. */
+  'download.retry': { args: { id: string }; result: void }
+  /** Release a flagged file from quarantine ("Keep"). */
+  'download.keep': { args: { id: string }; result: void }
+  /** Delete a flagged file ("Discard"); also deletes the partial file of a failed download. */
+  'download.discard': { args: { id: string }; result: void }
+  'download.setOpenWhenDone': { args: { id: string; open: boolean }; result: void }
+  /** Let the user pick the default downloads folder; resolves with it (or null when dismissed). */
+  'download.chooseLocation': { args: void; result: string | null }
 
   'find.start': {
     /** `newSession` starts a fresh search for `text`; otherwise steps to the next/previous match. */

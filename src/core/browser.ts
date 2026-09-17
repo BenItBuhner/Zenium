@@ -22,6 +22,7 @@ import { BrowserState, type PersistedWindow } from './state'
 import { HistoryService } from './history'
 import { BookmarkService } from './bookmarks'
 import { DownloadService } from './downloads'
+import { resolveDownloadSettings } from '../shared/downloads'
 import { PermissionService } from './permissions'
 import { TabManager } from './tabs'
 import { ZenWindow } from './window'
@@ -142,10 +143,21 @@ export class Browser {
     this.state.load()
     this.history = new HistoryService(platform.io)
     this.bookmarks = new BookmarkService(this.state)
-    this.downloads = new DownloadService(platform.io, platform.downloads, () => {
-      this.state.downloads = this.downloads.items
-      this.state.commitVolatile()
-    })
+    this.downloads = new DownloadService(
+      platform.io,
+      platform.downloads,
+      () => {
+        this.state.downloads = this.downloads.items
+        this.state.commitVolatile()
+      },
+      {
+        os: platform.info.os,
+        settings: () => resolveDownloadSettings(this.state.settings),
+        windowForTab: (tabId) => (tabId ? this.tabs.windowFor(tabId) : this.focusedWindow()),
+        windows: () => this.allWindows(),
+        referrerFamiliar: (referrer) => this.history.visitedBeforeToday(referrer)
+      }
+    )
     this.state.downloads = this.downloads.items
     this.permissions = new PermissionService(platform.io, platform.dialogs)
     this.tabs = new TabManager(this)
@@ -1216,6 +1228,11 @@ export class Browser {
         state.downloads = this.downloads.items
         state.commitVolatile()
       },
+      'download.retry': ({ id }) => this.downloads.retry(id),
+      'download.keep': ({ id }) => this.downloads.keep(id),
+      'download.discard': ({ id }) => this.downloads.discard(id),
+      'download.setOpenWhenDone': ({ id, open }) => this.downloads.setOpenWhenDone(id, open),
+      'download.chooseLocation': (_args, win) => this.downloads.chooseLocation(win),
 
       'find.start': ({ tabId, text, forward, newSession }, win) => {
         const view = tabs.view(tabId)
