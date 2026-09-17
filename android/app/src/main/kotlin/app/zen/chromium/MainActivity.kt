@@ -1,7 +1,6 @@
 package app.zen.chromium
 
 import android.app.Activity
-import android.content.ComponentCallbacks2
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
@@ -161,12 +160,33 @@ class MainActivity : AppCompatActivity() {
 
     // --- lifecycle --------------------------------------------------------------------------
 
+    /**
+     * Set while the window is hidden (screen off, another app in front): the start and resume that
+     * follow are a return to the screen, not the launch, and the host checks that everything paints.
+     */
+    private var hidden = false
+
+    override fun onStart() {
+        super.onStart()
+        if (hidden) host.onStart()
+    }
+
+    override fun onStop() {
+        hidden = true
+        super.onStop()
+    }
+
     override fun onResume() {
         super.onResume()
         host.chrome.hostEvent("focus", json("focused" to true))
+        if (hidden) {
+            hidden = false
+            host.onResume()
+        }
     }
 
     override fun onPause() {
+        host.onPause()
         host.chrome.hostEvent("focus", json("focused" to false))
         // Give the core a chance to persist synchronously before the process may be frozen.
         host.chrome.hostEvent("pause", null)
@@ -189,8 +209,8 @@ class MainActivity : AppCompatActivity() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         // Backgrounded and on the system's LRU list: the back previews are the one cache worth
-        // dropping (UI_HIDDEN alone is not pressure – the user may be right back).
-        if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) host.snapshots.clear()
+        // dropping (see HostLifecycle for why UI_HIDDEN is not pressure).
+        if (HostLifecycle.trimDropsSnapshots(level)) host.snapshots.clear()
     }
 
     // --- keyboard --------------------------------------------------------------------------------

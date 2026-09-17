@@ -16,6 +16,7 @@ import android.print.PrintAttributes
 import android.print.PrintManager
 import android.provider.MediaStore
 import android.provider.Settings
+import android.util.Log
 import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
@@ -26,6 +27,7 @@ import android.widget.Toast
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.json.JSONObject
 import java.io.File
@@ -74,6 +76,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     val snapshots = HistorySnapshots(activity)
     /** Last: it reads the tabs and fullscreen state above when it decides what back would do. */
     val back = PredictiveBack(activity, this)
+    val lifecycle = HostLifecycle()
 
     // ---------------------------------------------------------------------------------------------
     // Dispatch
@@ -453,25 +456,168 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
         }
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Lifecycle: coming back on screen, and a lost renderer
+    // ---------------------------------------------------------------------------------------------
+
     /**
-     * The chrome WebView lost its renderer. The browser core ran inside it, so every tab page is
-     * orphaned: drop them, swap in a fresh chrome WebView and let it boot the core again from the
-     * persisted profile (the same path as a cold start).
+     * The window is about to be shown again after being hidden (screen turned back on, back from
+     * the launcher or the lock screen). Nothing was paused on the way out (see [HostLifecycle]),
+     * so nothing is resumed; what comes back needs a fresh frame from every WebView on screen –
+     * a compositor may have dropped its last one under a memory trim while hidden – and the
+     * chrome gets to lay itself out against the window it returns to. `resumeTimers` is a global
+     * no-op unless something paused them; it costs nothing to be certain.
+     */
+    fun onStart() {
+        chrome.resumeTimers()
+        chrome.hostEvent("resume", null)
+        repaint()
+    }
+
+    /** Back in the foreground after being hidden: check, a moment later, that the chrome paints. */
+    fun onResume() {
+        scheduleProbe(attempt = 0, delayMs = HostLifecycle.PROBE_DELAY_MS)
+    }
+
+    /** Leaving the foreground: a probe answered while hidden would only mislead. */
+    fun onPause() {
+        cancelProbe()
+    }
+
+    /** Ask every WebView on screen for a fresh frame at its current size. */
+    fun repaint() {
+        root.requestLayout()
+        chrome.invalidate()
+        for (tab in tabs.all()) if (tab.visibility == View.VISIBLE) tab.invalidate()
+    }
+
+    private var probeRun: Runnable? = null
+    private var probeDeadline: Runnable? = null
+
+    private fun scheduleProbe(attempt: Int, delayMs: Long) {
+        cancelProbe()
+        val run = Runnable { probe(attempt) }
+        probeRun = run
+        main.postDelayed(run, delayMs)
+    }
+
+    private fun cancelProbe() {
+        probeRun?.let(main::removeCallbacks)
+        probeRun = null
+        probeDeadline?.let(main::removeCallbacks)
+        probeDeadline = null
+    }
+
+    /**
+     * The wake watchdog. A WebView whose window is resumed but whose contents the platform left
+     * hidden paints nothing, and a renderer that was frozen with the app and never thawed answers
+     * nothing; both look the same from the outside – a blank browser – and neither reports itself.
+     * So the chrome document is asked how it is doing (`document.visibilityState`), and
+     * [HostLifecycle.repairAfterProbe] decides what that calls for.
+     */
+    private fun probe(attempt: Int) {
+        probeRun = null
+        val target = chrome
+        // A chrome still booting (fresh from a rebuild) has nothing to answer with yet; its load
+        // is the repair in progress.
+        if (!target.ready) return
+        var settled = false
+        val deadline = Runnable {
+            if (settled) return@Runnable
+            settled = true
+            probeDeadline = null
+            onProbeAnswer(target, null, attempt)
+        }
+        probeDeadline = deadline
+        main.postDelayed(deadline, HostLifecycle.PROBE_TIMEOUT_MS)
+        target.evaluateJavascript("document.visibilityState") { result ->
+            if (settled) return@evaluateJavascript
+            settled = true
+            main.removeCallbacks(deadline)
+            probeDeadline = null
+            onProbeAnswer(target, result?.trim('"'), attempt)
+        }
+    }
+
+    private fun onProbeAnswer(target: ChromeWebView, answer: String?, attempt: Int) {
+        if (target !== chrome || !activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
+        when (lifecycle.repairAfterProbe(answer, attempt)) {
+            HostLifecycle.Repair.NONE -> Log.d(TAG, "wake probe: chrome visible")
+            HostLifecycle.Repair.RETRY -> {
+                Log.w(TAG, "wake probe: no answer from the chrome renderer; asking once more")
+                scheduleProbe(attempt + 1, 0)
+            }
+            HostLifecycle.Repair.REATTACH -> {
+                Log.w(TAG, "wake probe: chrome document is $answer while resumed; re-attaching the WebViews")
+                reattach(target)
+                for (tab in tabs.all()) if (tab.visibility == View.VISIBLE) reattach(tab)
+                scheduleProbe(attempt + 1, HostLifecycle.PROBE_DELAY_MS)
+            }
+            HostLifecycle.Repair.REBUILD -> {
+                Log.e(TAG, "wake probe: chrome ${if (answer == null) "renderer unresponsive" else "document still $answer"}; rebuilding the chrome")
+                rebuildChrome(target)
+            }
+        }
+    }
+
+    /**
+     * Take a WebView off the window and put it straight back where it was: the WebView drops and
+     * re-creates its hardware renderer and re-announces its visibility to the renderer, the
+     * platform's own way of re-attaching compositing that was lost while the window was away.
+     */
+    private fun reattach(view: View) {
+        val index = root.indexOfChild(view)
+        if (index < 0) return
+        val params = view.layoutParams
+        val focused = view.hasFocus()
+        root.removeView(view)
+        root.addView(view, index, params)
+        if (focused) view.requestFocus()
+        view.invalidate()
+    }
+
+    /**
+     * The chrome WebView lost its renderer (killed in the background under memory pressure, or a
+     * crash). The browser core ran inside it, so every tab page is orphaned – they share the
+     * renderer, and their own `onRenderProcessGone` may arrive before or after this one. Drop them
+     * without a word to a chrome that is gone, swap in a fresh chrome WebView in the same place
+     * and let it boot the core again from the persisted profile: the same path as a cold start,
+     * which recreates every tab from `state.json` and reloads the pages on screen. A chrome that
+     * dies again right away is retried with a growing delay rather than in a tight loop.
      */
     fun onChromeGone(dead: ChromeWebView) {
-        if (dead !== chrome) return
-        tabs.destroyAll()
+        cancelProbe()
+        rebuildChrome(dead)
+    }
+
+    /**
+     * Replace the chrome WebView (and every tab, which shares its renderer) with a fresh one that
+     * boots the core again – for a renderer that is gone, and for one that is there but not
+     * painting or answering. Destroying every WebView releases the renderer process; the fresh
+     * chrome starts a new one.
+     */
+    private fun rebuildChrome(dead: ChromeWebView) {
+        if (dead !== chrome || activity.isFinishing || activity.isDestroyed) return
+        cancelProbe()
+        tabs.dropAll()
         val index = root.indexOfChild(dead)
+        val params = dead.layoutParams ?: FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        )
         root.removeView(dead)
         runCatching { dead.destroy() }
         val fresh = ChromeWebView(activity, this)
-        root.addView(fresh, if (index >= 0) index else 0, dead.layoutParams ?: FrameLayout.LayoutParams(
-            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-            android.view.ViewGroup.LayoutParams.MATCH_PARENT
-        ))
+        root.addView(fresh, if (index >= 0) index else 0, params)
         chrome = fresh
-        fresh.load()
-        fresh.requestFocus()
+        val delay = lifecycle.chromeRebuildDelayMs()
+        if (delay > 0) Log.w(TAG, "the rebuilt chrome died again (${lifecycle.consecutiveRapidRebuilds}x in a row); loading it in $delay ms")
+        val load = Runnable {
+            if (chrome !== fresh || activity.isFinishing || activity.isDestroyed) return@Runnable
+            fresh.load()
+            if (activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) fresh.requestFocus()
+        }
+        if (delay > 0) main.postDelayed(load, delay) else load.run()
     }
 
     fun destroy() {
@@ -482,6 +628,8 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     }
 
     companion object {
+        private const val TAG = "ZenHost"
+
         /** The chrome's base light scrim (`--zen-scrim` before any space theme is applied). */
         private const val DEFAULT_SCRIM = "#49484a47"
 

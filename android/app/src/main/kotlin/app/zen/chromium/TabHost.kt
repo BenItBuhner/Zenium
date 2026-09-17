@@ -59,9 +59,33 @@ class TabHost(private val container: FrameLayout, private val host: Host) {
         for (id in views.keys.toList()) destroy(id)
     }
 
-    /** The renderer process behind a tab died: swap in a fresh WebView with the same identity. */
-    fun replaceCrashed(dead: TabWebView) {
+    /**
+     * Every view, without a word to the chrome: for a chrome whose renderer is gone and which is
+     * about to be rebuilt. The core that boots in its place recreates the tabs from the persisted
+     * state, so nothing here must survive under a tab id it will ask for.
+     */
+    fun dropAll() {
+        for (view in views.values.toList()) {
+            host.exitFullscreen(view)
+            view.backTransition?.abort()
+            (view.parent as? ViewGroup)?.removeView(view)
+            view.stopLoading()
+            runCatching { view.destroy() }
+        }
+        views.clear()
+        host.snapshots.clear()
+    }
+
+    /**
+     * The renderer process behind a tab died: swap in a fresh WebView with the same identity, and
+     * answer whether that happened. A view that is no longer the one registered for its tab – the
+     * chrome lost the same renderer and dropped it while being rebuilt, or it was replaced already
+     * – is left alone: registering a stand-in under a tab id the rebooted core is about to create
+     * would hand that tab a view the core knows nothing about.
+     */
+    fun replaceCrashed(dead: TabWebView): Boolean {
         val tabId = dead.tabId
+        if (views[tabId] !== dead) return false
         val lp = dead.layoutParams as? FrameLayout.LayoutParams
         val visible = dead.visibility == View.VISIBLE
         dead.backTransition?.abort()
@@ -73,6 +97,7 @@ class TabHost(private val container: FrameLayout, private val host: Host) {
         fresh.visibility = if (visible) View.VISIBLE else View.GONE
         container.addView(fresh, if (index >= 0) index else -1, lp ?: FrameLayout.LayoutParams(0, 0))
         views[tabId] = fresh
+        return true
     }
 
     fun setBounds(tabId: String, rect: JSONObject) {

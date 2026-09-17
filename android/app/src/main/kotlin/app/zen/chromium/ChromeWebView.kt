@@ -71,7 +71,12 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
              */
             override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
                 ready = false
-                Log.e("ZenChrome", "chrome renderer gone (crashed=${detail.didCrash()}); rebuilding the chrome")
+                whenReady.clear()
+                Log.e(
+                    "ZenChrome",
+                    "chrome renderer gone (${if (detail.didCrash()) "crashed" else "killed"}, priority at exit " +
+                        "${detail.rendererPriorityAtExit()}); rebuilding the chrome"
+                )
                 host.onChromeGone(this@ChromeWebView)
                 return true
             }
