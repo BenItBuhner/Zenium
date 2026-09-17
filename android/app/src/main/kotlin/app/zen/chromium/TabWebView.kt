@@ -159,6 +159,7 @@ class TabWebView(
     private val refusedCertificates = HashMap<String, RefusedCertificate>()
 
     private class RefusedCertificate(val code: Int, val certificate: JSONObject?)
+    private var lastProgressAt = 0L
 
     init {
         Profiles.apply(this, containerId)
@@ -1173,6 +1174,7 @@ class TabWebView(
             userAgentStale = false
             // Darkening for the page that is coming, before its first paint; the core confirms.
             if (PageRules.isWebPage(url)) setDarkening(host.pageRules.darken(url))
+            lastProgressAt = 0L
             failPendingEvals("the page navigated away before the script finished")
             host.extensions?.onDocumentGone(this@TabWebView, url)
             host.viewEvent(tabId, "startLoading", null)
@@ -1317,7 +1319,18 @@ class TabWebView(
             host.viewEvent(tabId, "title", json("title" to (title ?: "")))
         }
 
+        /**
+         * The page's load progress for the host's bar (the chrome's on the frame edge, a custom
+         * tab's under its toolbar). WebView reports it in bursts (a dozen steps within a few
+         * milliseconds on a fast page); a bar springs towards each target anyway, so one report
+         * per hundred milliseconds carries all it can show – except 100, which always goes
+         * through so the bar fills before it fades.
+         */
         override fun onProgressChanged(view: WebView, newProgress: Int) {
+            if (!loading) return
+            val now = SystemClock.uptimeMillis()
+            if (newProgress < 100 && now - lastProgressAt < PROGRESS_THROTTLE_MS) return
+            lastProgressAt = now
             host.progress(tabId, newProgress)
         }
 
@@ -1439,6 +1452,9 @@ class TabWebView(
 
         /** Well inside the core's 5 s activation window, so a tap is never missed for long. */
         private const val ACTIVATION_REPORT_INTERVAL_MS = 400L
+
+        /** Progress reports between the first and the last (see `Chrome.onProgressChanged`). */
+        private const val PROGRESS_THROTTLE_MS = 100L
 
         /** Where the visual viewport sits in the layout viewport (non-zero only while pinch-zoomed). */
         private const val VISUAL_OFFSET_SCRIPT =

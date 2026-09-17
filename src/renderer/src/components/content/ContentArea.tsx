@@ -18,6 +18,7 @@ import { CrashRestoreBanner } from './CrashRestoreBanner'
 import { DefaultBrowserBanner } from './DefaultBrowserBanner'
 import { FindBar } from './FindBar'
 import { GlanceFrame } from './GlanceFrame'
+import { LoadProgress } from './LoadProgress'
 import { PullIndicator } from './PullIndicator'
 import { SplitChrome } from './SplitChrome'
 import { useLayoutReporter } from './useLayoutReporter'
@@ -155,6 +156,8 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
           <FindBar state={state} tabId={ui.findTabId} ui={ui} docked="content" />
         )}
       </div>
+      {/* The bar is the frame's edge: it recedes with the frame, and overlays cover both. */}
+      <LoadProgress tab={tab} hidden={contentHidden || glanceActive || foreign} />
       {ui.overlay !== 'none' && <OverlayHost state={state} ui={ui} />}
     </div>
   )

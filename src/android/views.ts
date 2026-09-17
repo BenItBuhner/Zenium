@@ -38,6 +38,8 @@ export interface ViewEventPayloads {
    */
   domReady: void
   stopLoading: ViewNavState
+  /** `WebChromeClient.onProgressChanged`, throttled by Kotlin, as a fraction. */
+  progress: { progress: number }
   navigated: ViewNavState & { inPage: boolean }
   title: { title: string }
   favicon: { url: string }
@@ -95,6 +97,9 @@ export class AndroidTabView implements TabView {
       case 'stopLoading':
         this.nav = { ...this.nav, ...(payload as ViewNavState) }
         ev.onStopLoading()
+        return
+      case 'progress':
+        ev.onProgress((payload as ViewEventPayloads['progress']).progress)
         return
       case 'navigated': {
         const p = payload as ViewEventPayloads['navigated']

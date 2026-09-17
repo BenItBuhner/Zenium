@@ -423,6 +423,7 @@ export class BrowserState {
       })
       tab.splitGroupId = raw.splitGroupId ?? null
       tab.loading = false
+      tab.progress = 0
       tab.audible = false
       tab.errorCode = null
       tabs[tab.id] = tab
@@ -742,6 +743,7 @@ export class BrowserState {
         .map((t) => ({
           ...t,
           loading: false,
+          progress: 0,
           audible: false,
           errorCode: null,
           // A certificate proceeded past is a decision of the session, not of the tab.

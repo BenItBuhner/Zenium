@@ -224,6 +224,12 @@ export interface Tab {
   windowId: string | null
   folderId: string | null
   loading: boolean
+  /**
+   * How far the current load has come, 0…1, for the progress bar. Hosts that measure it
+   * (Android's `onProgressChanged`) report it as it grows; others only mark 0 at the start and
+   * 1 at the end.
+   */
+  progress: number
   canGoBack: boolean
   canGoForward: boolean
   audible: boolean

@@ -309,6 +309,8 @@ export interface AgentCapture {
 export interface TabViewEvents {
   onStartLoading(): void
   onStopLoading(): void
+  /** Load progress 0…1 from hosts that measure it (Android); optional between start and stop. */
+  onProgress(progress: number): void
   /** Main-frame navigation committed (`inPage` for pushState / hash changes). */
   onNavigated(url: string, inPage: boolean): void
   onTitleUpdated(title: string): void

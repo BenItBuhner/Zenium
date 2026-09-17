@@ -13,6 +13,7 @@ import {
   essentialsForSpace,
   getSpace,
   insertTabIntoSpace,
+  loadProgressAfter,
   moveTab,
   nextTabAfterClose,
   orderedTabsForSpace,
@@ -292,5 +293,24 @@ describe('spaces & folders', () => {
     b.folderId = folder2.id
     expect(deleteFolder(m, folder2.id, false)).toEqual([b.id])
     expect(m.folders[folder2.id]).toBeUndefined()
+  })
+})
+
+describe('loadProgressAfter', () => {
+  it('moves forward with what the host reports, clamped to the end', () => {
+    expect(loadProgressAfter({ loading: true, progress: 0 }, 0.3)).toBe(0.3)
+    expect(loadProgressAfter({ loading: true, progress: 0.3 }, 0.8)).toBe(0.8)
+    expect(loadProgressAfter({ loading: true, progress: 0.8 }, 1.4)).toBe(1)
+  })
+
+  it('never goes backwards within one load', () => {
+    expect(loadProgressAfter({ loading: true, progress: 0.6 }, 0.2)).toBe(0.6)
+    expect(loadProgressAfter({ loading: true, progress: 0.6 }, -1)).toBe(0.6)
+  })
+
+  it('ignores reports outside a load and nonsense', () => {
+    // A late report from a page that already finished must not pull the filled bar back.
+    expect(loadProgressAfter({ loading: false, progress: 1 }, 0.4)).toBe(1)
+    expect(loadProgressAfter({ loading: true, progress: 0.5 }, Number.NaN)).toBe(0.5)
   })
 })
