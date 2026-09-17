@@ -107,6 +107,7 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
     <BottomSheet
       ref={sheet}
       className="zen-v2-sheet"
+      fadeEdges={false}
       onDismissed={closeCustomize}
       handleLabel="Resize sheet"
       header={

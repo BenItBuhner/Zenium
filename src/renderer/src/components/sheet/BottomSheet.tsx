@@ -37,6 +37,11 @@ interface Props {
   contentKey?: string
   /** Accessible name of the handle. */
   handleLabel?: string
+  /**
+   * Fade the body's scroll edges (the default). A sheet that marks scrolled content with a line
+   * under its header instead (`data-scrolled` on the sheet) turns this off.
+   */
+  fadeEdges?: boolean
   className?: string
 }
 
@@ -90,6 +95,7 @@ export function BottomSheet({
   children,
   contentKey,
   handleLabel = 'Resize sheet',
+  fadeEdges = true,
   className
 }: Props): JSX.Element {
   const layerRef = useRef<HTMLDivElement>(null)
@@ -180,6 +186,22 @@ export function BottomSheet({
     measure()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-measure when the content or the insets change
   }, [contentKey, insets.top, insets.bottom])
+
+  // The sheet says when its content has scrolled under the header (`data-scrolled`), so a
+  // stylesheet can draw a line there; the chassis itself shows nothing for it.
+  useEffect(() => {
+    const scroller = scrollRef.current
+    if (!scroller) return
+    const update = (): void => {
+      const sheet = sheetRef.current
+      if (!sheet) return
+      if (scroller.scrollTop > 0) sheet.setAttribute('data-scrolled', 'true')
+      else sheet.removeAttribute('data-scrolled')
+    }
+    update()
+    scroller.addEventListener('scroll', update, { passive: true })
+    return () => scroller.removeEventListener('scroll', update)
+  }, [])
 
   // The layer shrinks when the keyboard comes up and grows back; the detents follow.
   useEffect(() => {
@@ -405,7 +427,7 @@ export function BottomSheet({
         <div
           ref={(el) => {
             scrollRef.current = el
-            return fadeRef(el)
+            return fadeEdges ? fadeRef(el) : undefined
           }}
           className="zen-sheet-scroll min-h-0 flex-1 overflow-y-auto"
         >

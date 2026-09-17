@@ -135,8 +135,9 @@
   --v2-shadow-panel: 0 2px 6px rgb(0 0 0 / 0.2);
   --v2-shadow-sheet: 0 10px 8px rgb(0 0 0 / 0.15);
   --v2-shadow-urlbar: 0 30px 140px -15px rgb(0 0 0 / 0.6);
-  /* Radii: controls 4 (6 under a finger), cards 8, the floating URL bar and phone sheets 12. */
+  /* Radii: controls 4 (6 under a finger), inner boxes and context menus 6, cards 8, the floating URL bar and phone sheets 12. */
   --v2-radius-control: 4px;
+  --v2-radius-inner: 6px;
   --v2-radius-card: 8px;
   --v2-radius-sheet: 12px;
   /* A tile or chip sitting on the window itself (an Essentials tile): an alpha of the window's ink. */
@@ -2648,6 +2649,28 @@
   .zen-v2-button[data-danger] {
     color: var(--zen-danger);
   }
+  /* Focus (v2 section 1): a 2 px accent ring, drawn inside the edge on the dark surface. */
+  .zen-v2-row:focus-visible,
+  .zen-v2-button:focus-visible,
+  .zen-v2-image-radio:focus-visible,
+  .zen-ntp-site-button:focus-visible {
+    outline: 2px solid var(--v2-accent);
+    outline-offset: 0;
+  }
+  :root[data-theme='dark'] .zen-v2-row:focus-visible,
+  :root[data-theme='dark'] .zen-v2-button:focus-visible,
+  :root[data-theme='dark'] .zen-v2-image-radio:focus-visible,
+  :root[data-theme='dark'] .zen-ntp-site-button:focus-visible {
+    outline-offset: -2px;
+  }
+  /* Section 9.7: content scrolled under the header shows as a 1 px line at the grip's bottom edge. */
+  .zen-v2-sheet .zen-sheet-grip {
+    position: relative;
+    transition: box-shadow 120ms var(--zen-ease);
+  }
+  .zen-v2-sheet[data-scrolled] .zen-sheet-grip {
+    box-shadow: 0 1px 0 var(--v2-border);
+  }
 }
 
 @layer components {
@@ -2693,7 +2716,8 @@
     border-radius: var(--v2-radius-sheet);
     corner-shape: var(--zen-corner);
     background: var(--v2-urlbar);
-    box-shadow: var(--v2-shadow-urlbar);
+    /* The panel's shadow, not the URL bar's halo: a resting field on a gradient must not darken the tiles. */
+    box-shadow: var(--v2-shadow-panel);
     color: var(--v2-text);
     --zen-fg: var(--v2-text);
     --zen-fg-rgb: var(--v2-text-rgb);

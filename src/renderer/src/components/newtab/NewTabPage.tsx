@@ -3,7 +3,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { Camera, Globe, Mic, Search, Settings } from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
 import { getHost } from '@shared/url'
-import { MAX_TOP_SITES, newTabSections } from '@shared/newtab'
+import {
+  MAX_TOP_SITES,
+  VISUAL_SEARCH_AVAILABLE,
+  VOICE_SEARCH_AVAILABLE,
+  newTabSections
+} from '@shared/newtab'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { topSites, type TopSite } from '@renderer/lib/historyAdapter'
@@ -94,17 +99,25 @@ export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
 }
 
 /**
- * The search field: the floating URL bar's field with a placeholder, the search glyph and the
- * two trailing icon buttons for voice and visual search. A tap opens the omnibox for this tab –
- * the field itself never takes input, so what is typed goes where every other address does.
+ * The search field: the floating URL bar's field with a placeholder, the search glyph and, once
+ * their handlers exist, the trailing icon buttons for voice and visual search. A tap opens the
+ * omnibox for this tab – the field itself never takes input, so what is typed goes where every
+ * other address does.
  */
 function SearchField({ tab }: { tab: Tab }): JSX.Element {
   const open = (): void => void openUrlbar('edit', tab.id, { attached: true })
+  const trailing = VOICE_SEARCH_AVAILABLE || VISUAL_SEARCH_AVAILABLE
+  const dispatch = (name: 'zen-voice-search' | 'zen-visual-search'): void => {
+    window.dispatchEvent(new CustomEvent(name, { detail: { tabId: tab.id } }))
+  }
   return (
     <div role="group" aria-label="Search" className="zen-ntp-field flex w-full max-w-[520px]">
       <button
         type="button"
-        className="zen-ntp-field-main flex h-full min-w-0 flex-1 items-center gap-3 pl-4 text-left"
+        className={cn(
+          'zen-ntp-field-main flex h-full min-w-0 flex-1 items-center gap-3 pl-4 text-left',
+          !trailing && 'pr-4'
+        )}
         onClick={open}
       >
         <Search className="zen-ntp-placeholder h-5 w-5 shrink-0" strokeWidth={1.75} />
@@ -112,30 +125,30 @@ function SearchField({ tab }: { tab: Tab }): JSX.Element {
           Search or type URL
         </span>
       </button>
-      <span className="flex shrink-0 items-center gap-0.5 pr-1.5">
-        <button
-          type="button"
-          className="zen-toolbar-button h-11 w-11"
-          aria-label="Search by voice"
-          onClick={() =>
-            window.dispatchEvent(new CustomEvent('zen-voice-search', { detail: { tabId: tab.id } }))
-          }
-        >
-          <Mic className="h-5 w-5" strokeWidth={1.75} />
-        </button>
-        <button
-          type="button"
-          className="zen-toolbar-button h-11 w-11"
-          aria-label="Search with your camera"
-          onClick={() =>
-            window.dispatchEvent(
-              new CustomEvent('zen-visual-search', { detail: { tabId: tab.id } })
-            )
-          }
-        >
-          <Camera className="h-5 w-5" strokeWidth={1.75} />
-        </button>
-      </span>
+      {trailing && (
+        <span className="flex shrink-0 items-center gap-0.5 pr-1.5">
+          {VOICE_SEARCH_AVAILABLE && (
+            <button
+              type="button"
+              className="zen-toolbar-button h-11 w-11"
+              aria-label="Search by voice"
+              onClick={() => dispatch('zen-voice-search')}
+            >
+              <Mic className="h-5 w-5" strokeWidth={1.75} />
+            </button>
+          )}
+          {VISUAL_SEARCH_AVAILABLE && (
+            <button
+              type="button"
+              className="zen-toolbar-button h-11 w-11"
+              aria-label="Search with your camera"
+              onClick={() => dispatch('zen-visual-search')}
+            >
+              <Camera className="h-5 w-5" strokeWidth={1.75} />
+            </button>
+          )}
+        </span>
+      )}
     </div>
   )
 }
