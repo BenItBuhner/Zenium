@@ -18,7 +18,7 @@ import {
   pinnedActions
 } from '@renderer/lib/extensions/toolbar'
 import { activeTab } from '@renderer/lib/selectors'
-import { openOverlay, uiStore } from '@renderer/lib/ui'
+import { closeOverlay, openOverlay, uiStore } from '@renderer/lib/ui'
 import { LocalMenu, type LocalMenuEntry } from '../menus/LocalMenu'
 import { ExtensionIcon } from './ExtensionIcon'
 import { V2IconButton } from './v2'
@@ -170,7 +170,11 @@ function actionMenu(ext: ExtensionInfo, state: UIState): LocalMenuEntry[] {
       id: 'options',
       label: 'Options',
       icon: SlidersHorizontal,
-      onSelect: () => run('extension.openOptions', { id: ext.id })
+      // The options page opens in a tab; an overlay that is up (Add-ons, Settings) would hide it.
+      onSelect: () => {
+        closeOverlay()
+        run('extension.openOptions', { id: ext.id })
+      }
     })
   }
   items.push({

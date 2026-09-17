@@ -19,6 +19,7 @@ import { anchorOf } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { relativeTime } from '@renderer/lib/extensions/format'
 import { parseStoreInput, versionAndSource } from '@renderer/lib/extensions/storeInput'
+import { closeOverlay } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { LocalMenu, type LocalMenuEntry } from '../menus/LocalMenu'
 import { ExtensionDetails } from './ExtensionDetails'
@@ -397,7 +398,11 @@ function rowMenu(
       id: 'options',
       label: 'Options',
       icon: SlidersHorizontal,
-      onSelect: () => run('extension.openOptions', { id: ext.id })
+      // The options page opens in a tab; the overlay would hide it (as the Source link does).
+      onSelect: () => {
+        closeOverlay()
+        run('extension.openOptions', { id: ext.id })
+      }
     })
   }
   items.push({
