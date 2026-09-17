@@ -242,6 +242,21 @@ export const THEME_PRESETS: Array<{ name: string; theme: SpaceTheme }> = [
   { name: 'Slate', theme: makeTheme('#7d8ba1', ['#a9b8cf']) }
 ]
 
+/**
+ * Base colour of panels, sheets and popovers: paper (or near-black) carrying the space's own
+ * colour, the way Zen's popups are a few percent of the primary colour over white or `#101010`.
+ */
+export function panelBase(resolved: ResolvedTheme): RGB {
+  return resolved.isDark
+    ? mix(resolved.averageColor, [16, 16, 16], 0.45)
+    : mix(resolved.averageColor, [255, 255, 255], 0.7)
+}
+
+/** Base colour of the scrim under sheets and drawers: the space darkened, never flat black. */
+export function scrimBase(resolved: ResolvedTheme): RGB {
+  return mix(resolved.averageColor, [0, 0, 0], 0.7)
+}
+
 export function themeCssVariables(resolved: ResolvedTheme): Record<string, string> {
   const fg: RGB = resolved.isDark ? [240, 240, 245] : [30, 30, 36]
   // Space separated so `rgb(var(--zen-fg-rgb) / 0.1)` is valid modern colour syntax.
@@ -253,6 +268,8 @@ export function themeCssVariables(resolved: ResolvedTheme): Record<string, strin
     '--zen-fg-rgb': fgRgb,
     '--zen-accent': rgbToHex(resolved.accent),
     '--zen-accent-rgb': resolved.accent.join(' '),
+    '--zen-panel-rgb': panelBase(resolved).join(' '),
+    '--zen-scrim-rgb': scrimBase(resolved).join(' '),
     '--zen-texture': String(resolved.texture)
   }
 }
