@@ -417,7 +417,8 @@ function BarDockLayer({
   const gutter = cssPx('--zen-padding', 8)
   const dir = dock.from === 'bottom' ? -1 : 1
   const { slot } = dock
-  const cy = slot.y + slot.height / 2 + dock.progress * dock.travel * dir
+  // Per frame only transforms move: the card slides, the ghost translates and scales in place.
+  const dy = dock.progress * dock.travel * dir
   const scale = 1 + 0.04 * dock.lift
   const { style: pillStyle, ...pillHandlers } = pill
   return (
@@ -427,9 +428,10 @@ function BarDockLayer({
           className="zen-stage-card absolute"
           style={{
             left: area.x,
-            top: area.y + contentShift(dock.from, dock.progress, bar, gutter),
+            top: area.y,
             width: area.width,
-            height: area.height
+            height: area.height,
+            transform: `translate3d(0, ${contentShift(dock.from, dock.progress, bar, gutter)}px, 0)`
           }}
         >
           <TabPreview tab={hero} />
@@ -438,15 +440,14 @@ function BarDockLayer({
       <div
         className="zen-phone-pill zen-pill-ghost pointer-events-auto absolute flex items-center gap-2 overflow-hidden rounded-full px-3.5 text-left"
         aria-hidden
+        data-lifted={dock.phase === 'lifted' || dock.phase === 'settling'}
         style={{
           ...pillStyle,
-          left: slot.x + dock.drift,
-          top: cy - slot.height / 2,
+          left: slot.x,
+          top: slot.y,
           width: slot.width,
           height: slot.height,
-          transform: `scale(${scale})`,
-          // Elevation grows with the lift; the flat ghost is the pill itself.
-          boxShadow: `0 ${1 + 5 * dock.lift}px ${2 + 10 * dock.lift}px rgb(0 0 0 / ${0.05 + 0.1 * dock.lift}), 0 ${4 + 18 * dock.lift}px ${8 + 36 * dock.lift}px rgb(0 0 0 / ${0.06 + 0.16 * dock.lift})`
+          transform: `translate3d(${dock.drift}px, ${dy}px, 0) scale(${scale})`
         }}
         {...pillHandlers}
       >

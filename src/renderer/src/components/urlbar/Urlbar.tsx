@@ -6,7 +6,8 @@ import { ERROR_URL_PREFIX, BLANK_URL } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
-import { closeUrlbar, type UrlbarState } from '@renderer/lib/ui'
+import { viewportStore } from '@renderer/lib/formFactor'
+import { closeUrlbar, uiStore, type UrlbarState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 
 interface Props {
@@ -247,13 +248,13 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   const placeholder =
     urlbar.mode === 'search' ? `Search with ${engine.name}` : 'Search or enter address'
 
-  const rows = (className?: string): JSX.Element[] =>
+  const rows = (sheet: boolean): JSX.Element[] =>
     results.map((item, i) => (
       <SuggestionRow
         key={item.id}
         item={item}
         selected={i === selected}
-        className={className}
+        sheet={sheet}
         onHover={() => setSelected(i)}
         onPick={(e) => submit(item, { newTab: e.altKey || e.button === 1 })}
       />
@@ -266,10 +267,13 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
         sheetRef={sheetRef}
         fieldRef={fieldRef}
         onDismiss={() => close(true)}
-        rows={rows('zen-suggestion-sheet')}
+        rows={rows(true)}
         hint={results.length === 0 && !text ? placeholder : null}
         field={
-          <div className="zen-omnibox-field flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full pl-2 pr-1.5">
+          <div
+            className="zen-omnibox-field flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full pl-2 pr-1.5"
+            style={fieldGrowFrom()}
+          >
             <span
               role="img"
               aria-label={`Search engine: ${engine.name}`}
@@ -347,7 +351,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
             ref={fadeResults}
             className="min-h-0 max-h-[420px] flex-1 overflow-y-auto border-t border-[var(--zen-border)] p-1.5"
           >
-            {rows()}
+            {rows(false)}
           </ul>
         )}
         <div className="zen-kbd-hint flex h-7 shrink-0 items-center gap-3 border-t border-[var(--zen-border)] px-4 text-[10.5px] text-[var(--zen-muted)]">
@@ -457,16 +461,37 @@ function PhoneSheet({
   )
 }
 
+/** Width of the bar's buttons either side of the pill: back (44) + gap, and 3 × (gap + 44). */
+const PILL_SLOT_LEFT = 48
+const PILL_SLOT_RIGHT = 144
+
+/**
+ * Where the grow animation starts: the pill's slot as a shift and a scale of the band's inner
+ * width, so the field's backdrop sets out exactly from where the pill was.
+ */
+function fieldGrowFrom(): React.CSSProperties {
+  const { width } = viewportStore.get()
+  const { left, right } = uiStore.get().insets
+  const band = width - left - right - 16
+  const scale =
+    band > PILL_SLOT_LEFT + PILL_SLOT_RIGHT ? (band - PILL_SLOT_LEFT - PILL_SLOT_RIGHT) / band : 0.5
+  return {
+    '--zen-field-shift': `${PILL_SLOT_LEFT}px`,
+    '--zen-field-scale': scale.toFixed(3)
+  } as React.CSSProperties
+}
+
 function SuggestionRow({
   item,
   selected,
-  className,
+  sheet,
   onHover,
   onPick
 }: {
   item: Suggestion
   selected: boolean
-  className?: string
+  /** A row of the phone sheet: touch height (44), the desktop list keeps 36. */
+  sheet: boolean
   onHover: () => void
   onPick: (e: React.MouseEvent) => void
 }): JSX.Element {
@@ -486,8 +511,8 @@ function SuggestionRow({
   return (
     <li
       className={cn(
-        'zen-suggestion flex h-9 shrink-0 cursor-default items-center gap-3 rounded-lg px-2.5',
-        className
+        'zen-suggestion flex shrink-0 cursor-default items-center gap-3 px-2.5',
+        sheet ? 'h-11' : 'h-9'
       )}
       data-selected={selected}
       onMouseEnter={onHover}

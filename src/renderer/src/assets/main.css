@@ -514,15 +514,17 @@
     opacity: 1;
   }
 }
-/* The address pill growing into the omnibox field as the bar's buttons make room. */
+/*
+ * The address pill growing into the omnibox field as the bar's buttons make room: the field's
+ * backdrop starts over the pill's slot (shifted past the back button, scaled to the pill's
+ * width) and stretches to the whole band – transform only, no layout per frame.
+ */
 @keyframes zen-field-grow {
   from {
-    margin-left: 48px;
-    margin-right: 144px;
+    transform: translateX(var(--zen-field-shift, 48px)) scaleX(var(--zen-field-scale, 0.5));
   }
   to {
-    margin-left: 0;
-    margin-right: 0;
+    transform: none;
   }
 }
 @layer components {
@@ -556,10 +558,21 @@
   .zen-pill-well-target {
     background: rgb(var(--zen-fg-rgb) / 0.09);
   }
-  /* The carried pill: the pill's own look, elevation added per frame from the lift. */
+  /*
+   * The carried pill: the pill's own look, moved with transforms only. Picking it up is a level
+   * swap – flat in the bar, panel elevation once lifted – on a fixed transition, never a shadow
+   * animated per frame.
+   */
   .zen-pill-ghost {
     background: var(--zen-bg-solid);
-    will-change: transform, top, left;
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.05),
+      0 4px 8px rgb(0 0 0 / 0.06);
+    transition: box-shadow 200ms var(--zen-ease);
+    will-change: transform;
+  }
+  .zen-pill-ghost[data-lifted='true'] {
+    box-shadow: var(--zen-shadow);
   }
   /*
    * The phone's omnibox: the content frame becomes the suggestions surface, the field a raised
@@ -574,16 +587,30 @@
     will-change: transform, opacity;
   }
   .zen-omnibox-field {
+    position: relative;
+  }
+  /* The field's backdrop is its own layer so the grow animation scales it, not the content. */
+  .zen-omnibox-field::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
     background: var(--zen-panel-bg);
     box-shadow:
       0 0 0 1px rgb(var(--zen-fg-rgb) / 0.06),
       0 1px 2px rgb(0 0 0 / 0.06),
       0 6px 20px rgb(0 0 0 / 0.1);
+    transform-origin: 0 50%;
     animation: zen-field-grow 220ms var(--zen-ease);
   }
-  /* Concentric with the sheet's 12 px corners at the list's 4 px inset. */
-  .zen-suggestion-sheet {
-    border-radius: 8px;
+  .zen-omnibox-field > * {
+    position: relative;
+    animation: zen-fade 220ms var(--zen-ease);
+  }
+  /* Selected text in the chrome takes the space's accent, never the browser's default blue. */
+  .zen-omnibox-field input::selection {
+    background: rgb(var(--zen-accent-rgb) / 0.3);
+    color: var(--zen-fg);
   }
 
   /*
