@@ -1,12 +1,13 @@
 import { JsonStore } from './store/JsonStore'
 import type { DialogHost, StoreIO } from './platform'
+import type { PermissionRule } from '../shared/types'
 
-export type PermissionDecision = 'allow' | 'deny'
+export type PermissionDecision = PermissionRule['decision']
 type Decision = PermissionDecision
 
 interface Persisted {
   version: 1
-  decisions: Record<string, Decision>
+  decisions: Record<string, PermissionDecision>
 }
 
 /** A decision changed: `origin` is null when it was a permission's default. */
@@ -21,20 +22,42 @@ export interface PermissionChange {
  */
 const DEFAULT_ORIGIN = '*'
 
+/** Facts about one request that shape the prompt, or the key the answer is remembered under. */
+export interface PermissionRequestDetails {
+  /** Top-level page the request happens in, when the requesting frame is embedded in another site. */
+  embedderUrl?: string
+  /** `openExternal`: the URL that would be handed to another application. */
+  externalUrl?: string
+  /** `openExternal`: the application that would receive it, when the host knows. */
+  targetApp?: string
+  /** `fileSystem`: the file or directory the page wants and how it wants it. */
+  filePath?: string
+  isDirectory?: boolean
+  fileAccessType?: 'writable' | 'readable'
+}
+
+export interface PermissionPromptCopy {
+  message: string
+  detail: string
+  okLabel: string
+  cancelLabel: string
+}
+
+/**
+ * Pages get these without asking: they are either harmless or already gated by the engine on a
+ * user gesture (fullscreen, pointer lock, keyboard lock, sanitised clipboard writes).
+ */
 const ALWAYS_ALLOW = new Set([
   'fullscreen',
   'clipboard-sanitized-write',
   'pointerLock',
   'keyboardLock',
-  'window-management',
   'speaker-selection',
-  'fileSystem',
-  'idle-detection',
-  'storage-access',
-  'top-level-storage-access',
   'background-sync'
 ])
 const ALWAYS_DENY = new Set(['midiSysex', 'hid', 'serial', 'usb', 'display-capture', 'unknown'])
+
+/** Permissions the user is asked about; a blocked pop-up is never a question, only a stored allow. */
 const PROMPT_LABELS: Record<string, string> = {
   media: 'use your camera and/or microphone',
   camera: 'use your camera',
@@ -42,21 +65,36 @@ const PROMPT_LABELS: Record<string, string> = {
   geolocation: 'know your location',
   notifications: 'send you notifications',
   midi: 'access MIDI devices',
-  openExternal: 'open an external application',
   'clipboard-read': 'read from your clipboard',
-  mediaKeySystem: 'play protected (DRM) content'
+  mediaKeySystem: 'play protected (DRM) content',
+  'window-management': 'manage windows on all your displays',
+  'idle-detection': 'know when you are actively using this device',
+  'top-level-storage-access': 'let the sites embedded in it use their cookies and site data'
 }
+
+/**
+ * A "Block" for these is a one-time answer: the site can ask again. Refusing to hand a link to
+ * another application once should not silence that application on the site for good.
+ */
+const ONE_SHOT_DENY = new Set(['openExternal'])
+
+/** Longest URL or path shown inside a prompt. */
+const MAX_SHOWN = 80
 
 /**
  * Chromium-style permission prompts with per-origin persistence. Zen (Firefox) asks the user for
  * camera/microphone/location/notifications; everything exotic is denied by default.
+ *
+ * Keys are `${origin}|${permission}` where the permission may carry a qualifier after a colon
+ * (`openExternal:zoommtg`, `storage-access:https://embedder.example`), so one answer never covers
+ * a different scheme or a different embedding site.
  *
  * `permissions.json` is also the store of record for content settings the user sets without a
  * prompt (ad and tracker blocking per site, and its default): the same `origin|permission` keys,
  * so the site-information sheet lists and resets them like any other decision.
  */
 export class PermissionService {
-  private decisions: Record<string, Decision> = {}
+  private decisions: Record<string, PermissionDecision> = {}
   private readonly store: JsonStore<Persisted>
   private readonly pending = new Map<string, Promise<boolean>>()
   private readonly listeners = new Set<(change: PermissionChange) => void>()
@@ -71,25 +109,90 @@ export class PermissionService {
   }
 
   /** Synchronous check (e.g. `Notification.permission`); never prompts, unknown → false. */
-  check(permission: string, requestingOrigin: string): boolean {
+  check(permission: string, requestingOrigin: string, details?: PermissionRequestDetails): boolean {
     if (ALWAYS_ALLOW.has(permission)) return true
     if (ALWAYS_DENY.has(permission)) return false
-    const origin = safeOrigin(requestingOrigin)
-    return (this.decisions[`${origin}|${permission}`] ?? this.defaultFor(permission)) === 'allow'
+    return this.stored(permission, requestingOrigin, details) === 'allow'
   }
 
-  /** Decide a permission request, prompting the user once per origin+permission. */
-  async decide(permission: string, requestingUrl: string): Promise<boolean> {
+  /**
+   * The remembered answer for origin + permission (or the permission's default, see `defaultFor`),
+   * or null when the site would be asked.
+   */
+  stored(
+    permission: string,
+    requestingUrl: string,
+    details?: PermissionRequestDetails
+  ): PermissionDecision | null {
+    const origin = safeOrigin(requestingUrl)
+    if (!origin || origin === 'null') return null
+    return (
+      this.decisions[decisionKey(origin, permission, details)] ??
+      this.defaultFor(permission) ??
+      null
+    )
+  }
+
+  /** Remember an answer without prompting ("Always allow pop-ups on this site"). */
+  remember(
+    permission: string,
+    requestingUrl: string,
+    decision: PermissionDecision,
+    details?: PermissionRequestDetails
+  ): void {
+    const origin = safeOrigin(requestingUrl)
+    if (!origin || origin === 'null') return
+    const key = decisionKey(origin, permission, details)
+    this.update(key, decision, changeFor(key))
+  }
+
+  /** Forget one origin's answer for a permission: the site is asked (or blocked) again. */
+  forget(permission: string, requestingUrl: string, details?: PermissionRequestDetails): void {
+    const origin = safeOrigin(requestingUrl)
+    if (!origin) return
+    const key = decisionKey(origin, permission, details)
+    this.update(key, null, changeFor(key))
+  }
+
+  /** Every remembered per-site answer (Settings lists and revokes them); defaults are not sites. */
+  rules(): PermissionRule[] {
+    const out: PermissionRule[] = []
+    for (const [key, decision] of Object.entries(this.decisions)) {
+      const split = key.lastIndexOf('|')
+      if (split < 0) continue
+      const origin = key.slice(0, split)
+      if (origin === DEFAULT_ORIGIN) continue
+      out.push({ origin, permission: key.slice(split + 1), decision })
+    }
+    return out.sort(
+      (a, b) => a.permission.localeCompare(b.permission) || a.origin.localeCompare(b.origin)
+    )
+  }
+
+  /** Forget one rule as Settings lists it (`permission` is the stored, qualified name). */
+  forgetRule(origin: string, permission: string): void {
+    const key = `${origin}|${permission}`
+    this.update(key, null, changeFor(key))
+  }
+
+  /** Decide a permission request, prompting the user once per origin + permission. */
+  async decide(
+    permission: string,
+    requestingUrl: string,
+    details: PermissionRequestDetails = {}
+  ): Promise<boolean> {
     if (ALWAYS_ALLOW.has(permission)) return true
     if (ALWAYS_DENY.has(permission)) return false
+    // Pop-ups are decided by the blocker from the user's gesture; there is nothing to ask.
+    if (permission === 'popups') return this.stored(permission, requestingUrl) === 'allow'
     const origin = safeOrigin(requestingUrl)
     if (!origin || origin === 'null') return false
-    const key = `${origin}|${permission}`
+    const key = decisionKey(origin, permission, details)
     const stored = this.decisions[key] ?? this.defaultFor(permission)
     if (stored) return stored === 'allow'
     const inFlight = this.pending.get(key)
     if (inFlight) return inFlight
-    const promise = this.prompt(permission, origin, key)
+    const promise = this.prompt(permission, origin, key, details)
     this.pending.set(key, promise)
     try {
       return await promise
@@ -98,15 +201,15 @@ export class PermissionService {
     }
   }
 
-  private async prompt(permission: string, origin: string, key: string): Promise<boolean> {
-    const label = PROMPT_LABELS[permission] ?? `use "${permission}"`
-    const allowed = await this.dialogs.confirm({
-      message: `Allow ${origin} to ${label}?`,
-      detail: 'Your choice is remembered for this site.',
-      okLabel: 'Allow',
-      cancelLabel: 'Block'
-    })
-    this.update(key, allowed ? 'allow' : 'deny', { permission, origin })
+  private async prompt(
+    permission: string,
+    origin: string,
+    key: string,
+    details: PermissionRequestDetails
+  ): Promise<boolean> {
+    const allowed = await this.dialogs.confirm(permissionPromptCopy(permission, origin, details))
+    if (allowed || !ONE_SHOT_DENY.has(permission))
+      this.update(key, allowed ? 'allow' : 'deny', changeFor(key))
     return allowed
   }
 
@@ -213,7 +316,116 @@ function changeFor(key: string): PermissionChange {
   return { permission: key.slice(split + 1), origin: origin === DEFAULT_ORIGIN ? null : origin }
 }
 
-function safeOrigin(url: string): string {
+/** The stored key for a request; qualifiers keep unrelated answers apart. */
+export function decisionKey(
+  origin: string,
+  permission: string,
+  details?: PermissionRequestDetails
+): string {
+  return `${origin}|${qualifiedPermission(permission, details)}`
+}
+
+export function qualifiedPermission(
+  permission: string,
+  details?: PermissionRequestDetails
+): string {
+  if (permission === 'openExternal') {
+    const scheme = schemeOf(details?.externalUrl ?? '')
+    return scheme ? `openExternal:${scheme}` : permission
+  }
+  if (permission === 'storage-access') {
+    const embedder = safeOrigin(details?.embedderUrl ?? '')
+    return embedder && embedder !== 'null' ? `storage-access:${embedder}` : permission
+  }
+  return permission
+}
+
+/** The words of a permission prompt, shared by every host so the copy matches everywhere. */
+export function permissionPromptCopy(
+  permission: string,
+  origin: string,
+  details: PermissionRequestDetails = {}
+): PermissionPromptCopy {
+  const site = displayOrigin(origin)
+  const remembered = 'Your choice is remembered for this site.'
+  switch (permission) {
+    case 'openExternal': {
+      const scheme = schemeOf(details.externalUrl ?? '')
+      const what = details.targetApp
+        ? details.targetApp
+        : scheme
+          ? `${scheme}: links in another app`
+          : 'another app'
+      const link = details.externalUrl ? `\n${shorten(details.externalUrl)}` : ''
+      const scope = scheme ? `${scheme}: links on this site` : 'this site'
+      return {
+        message: `Allow ${site} to open ${what}?`,
+        detail: `Zenium hands the link to an application outside the browser.${link}\nChoosing Open is remembered for ${scope}.`,
+        okLabel: 'Open',
+        cancelLabel: 'Cancel'
+      }
+    }
+    case 'fileSystem': {
+      const target = details.filePath
+        ? `"${shorten(basename(details.filePath))}"`
+        : details.isDirectory
+          ? 'this folder'
+          : 'this file'
+      const message =
+        details.fileAccessType === 'readable'
+          ? `Allow ${site} to view ${details.isDirectory ? `the files in ${target}` : target}?`
+          : `Allow ${site} to save changes to ${target}?`
+      return {
+        message,
+        detail: `The site can ${details.fileAccessType === 'readable' ? 'read' : 'edit'} ${details.isDirectory ? 'everything in the folder' : 'the file'} until you take the permission away. ${remembered}`,
+        okLabel: details.fileAccessType === 'readable' ? 'View files' : 'Save changes',
+        cancelLabel: 'Block'
+      }
+    }
+    case 'storage-access': {
+      const embedder = safeOrigin(details.embedderUrl ?? '')
+      const where =
+        embedder && embedder !== 'null' ? ` while you are on ${displayOrigin(embedder)}` : ''
+      return {
+        message: `Allow ${site} to use cookies and site data it has stored${where}?`,
+        detail: `${site} is embedded in the page and wants to see you as signed in there. ${remembered}`,
+        okLabel: 'Allow',
+        cancelLabel: 'Block'
+      }
+    }
+    default: {
+      const label = PROMPT_LABELS[permission] ?? `use "${permission}"`
+      return {
+        message: `Allow ${site} to ${label}?`,
+        detail: remembered,
+        okLabel: 'Allow',
+        cancelLabel: 'Block'
+      }
+    }
+  }
+}
+
+/** `https://example.com` → `example.com`; other schemes keep their prefix so they stay honest. */
+export function displayOrigin(origin: string): string {
+  return origin.replace(/^https:\/\//, '')
+}
+
+export function schemeOf(url: string): string {
+  const m = /^([a-z][a-z0-9+.-]*):/i.exec(url.trim())
+  return m ? m[1].toLowerCase() : ''
+}
+
+function basename(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, '')
+  const i = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  return i >= 0 ? trimmed.slice(i + 1) || trimmed : trimmed
+}
+
+function shorten(text: string): string {
+  return text.length > MAX_SHOWN ? `${text.slice(0, MAX_SHOWN - 1)}…` : text
+}
+
+export function safeOrigin(url: string): string {
   try {
     return new URL(url).origin
   } catch {

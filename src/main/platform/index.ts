@@ -38,6 +38,7 @@ import { ElectronUpdateHost } from './updates'
 import { applyAppIcon } from './appIcon'
 import { createPasswordsHost } from './passwords'
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
+import { attachSecurityHandlers, permissionRequestDetails } from './security'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
@@ -294,6 +295,7 @@ export class ElectronPlatform implements Platform {
     })
     this.sessions.get(DEFAULT_CONTAINER_ID)
     this.registerIpc(browser)
+    attachSecurityHandlers(browser, this.views)
     browser.start()
     return browser
   }
@@ -302,10 +304,12 @@ export class ElectronPlatform implements Platform {
     const { permissions } = this.browser
     ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
       const url = details.requestingUrl || webContents?.getURL() || ''
-      void permissions.decide(permission, url).then(callback)
+      void permissions
+        .decide(permission, url, permissionRequestDetails(webContents, details))
+        .then(callback)
     })
-    ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) =>
-      permissions.check(permission, requestingOrigin)
+    ses.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) =>
+      permissions.check(permission, requestingOrigin, { embedderUrl: details.embeddingOrigin })
     )
   }
 

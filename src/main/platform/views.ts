@@ -33,6 +33,33 @@ import type { ElectronWindow } from './window'
 
 const pagePreload = join(__dirname, '../preload/page.js')
 
+/** Keys that never count as a gesture in Chromium's user-activation model. */
+const NON_ACTIVATING_KEYS = new Set(['Escape', 'Shift', 'Control', 'Alt', 'Meta', 'AltGr'])
+
+/**
+ * Whether an input event on its way to the page grants it user activation: mouse and touch
+ * presses, taps and key presses other than Escape and bare modifiers (as in Chromium).
+ */
+export function isActivatingInput(input: Electron.InputEvent): boolean {
+  switch (input.type) {
+    case 'mouseDown':
+    case 'pointerDown':
+    case 'touchEnd':
+    case 'gestureTap':
+      return true
+    case 'rawKeyDown':
+    case 'keyDown': {
+      // Electron hands keyboard events over in the `before-input-event` shape (`key`); the typed
+      // structure says `keyCode`. Accept either.
+      const k = input as Partial<Electron.KeyboardInputEvent> & { key?: string }
+      const key = k.key ?? k.keyCode ?? ''
+      return !NON_ACTIVATING_KEYS.has(key)
+    }
+    default:
+      return false
+  }
+}
+
 /**
  * A tab page hosted in a `WebContentsView`. The view is a child of whichever window currently
  * owns the tab's live page (Zen's window sync moves it between windows).
@@ -158,8 +185,13 @@ export class ElectronTabView implements TabView {
       ev.onDestroyed()
       this.onDestroyed(this)
     })
+    // Trusted input on its way to the page: the core's user-activation clock for pop-ups.
+    wc.on('input-event', (_e, input) => {
+      if (isActivatingInput(input)) ev.onUserActivation()
+    })
     wc.setWindowOpenHandler(({ url, disposition }) => {
-      const verdict = ev.onOpenWindow(url, disposition as WindowOpenDisposition)
+      // Electron does not say whether the user asked; the core knows from the activation clock.
+      const verdict = ev.onOpenWindow(url, disposition as WindowOpenDisposition, null)
       if (verdict === 'popup') {
         return {
           action: 'allow',

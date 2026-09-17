@@ -215,6 +215,16 @@ export interface HostEventPayloads {
   /** Pause / Resume / Cancel pressed on the download's system notification. */
   'download.action': { id: string; op: 'pause' | 'resume' | 'cancel' }
   'permission.request': { requestId: string; permission: string; url: string }
+  /** A page wants to hand a link to another app; answered with `external.respond`. */
+  'external.request': {
+    requestId: string
+    tabId: string
+    url: string
+    hasGesture: boolean
+    targetApp: string | null
+  }
+  /** A server asked for HTTP credentials; answered with `auth.respond`. */
+  'auth.request': { requestId: string; tabId: string; host: string; realm: string; url: string }
   'view.adopt': { viewId: string; parentTabId: string | null; active: boolean }
   /** An HTTP request reached the Kotlin MCP socket server; answered with `agent.reply`. */
   'agent.request': { id: number } & AgentHttpRequest
@@ -878,6 +888,38 @@ export class AndroidPlatform implements Platform {
           .decide(p.permission, p.url)
           .then((allow) =>
             this.bridge.send('permission.respond', { requestId: p.requestId, allow })
+          )
+        return
+      }
+      case 'external.request': {
+        const p = payload as HostEventPayloads['external.request']
+        void browser.external
+          .request(p.tabId, p.url, p.hasGesture, p.targetApp ?? undefined)
+          .then((allow) => this.bridge.send('external.respond', { requestId: p.requestId, allow }))
+        return
+      }
+      case 'auth.request': {
+        const p = payload as HostEventPayloads['auth.request']
+        let port = 0
+        let secure = false
+        try {
+          const u = new URL(p.url)
+          secure = u.protocol === 'https:'
+          port = u.port ? Number(u.port) : secure ? 443 : 80
+        } catch {
+          /* the host string is all we show */
+        }
+        void browser.security
+          .httpAuth(
+            { host: p.host, port, realm: p.realm, scheme: '', isProxy: false, secure },
+            p.tabId
+          )
+          .then((credentials) =>
+            this.bridge.send('auth.respond', {
+              requestId: p.requestId,
+              username: credentials?.username ?? null,
+              password: credentials?.password ?? null
+            })
           )
         return
       }
