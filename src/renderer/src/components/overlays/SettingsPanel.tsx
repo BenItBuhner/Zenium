@@ -156,7 +156,9 @@ export function SettingsPanel({
         </nav>
         <div ref={fadeContent} className="min-w-0 flex-1 overflow-y-auto p-6">
           <div className="mx-auto flex max-w-2xl flex-col gap-6">
-            {section === 'look' && <LookSection s={s} set={set} platform={state.platform} />}
+            {section === 'look' && (
+              <LookSection s={s} set={set} platform={state.platform} caps={state.capabilities} />
+            )}
             {section === 'compact' && <CompactSection s={s} set={set} />}
             {section === 'tabs' && (
               <TabsSection s={s} set={set} windows={state.capabilities.windows} />
@@ -187,11 +189,13 @@ export function SettingsPanel({
 function LookSection({
   s,
   set,
-  platform
+  platform,
+  caps
 }: {
   s: Settings
   set: (p: Partial<Settings>) => void
   platform: Platform
+  caps: HostCapabilities
 }): JSX.Element {
   return (
     <>
@@ -265,6 +269,17 @@ function LookSection({
           />
         </Row>
       </Group>
+      {caps.pullToRefresh && (
+        <Group title="Pages">
+          <Row label="Pull to refresh" hint="Drag down from the top of a page to reload it.">
+            <Switch
+              aria-label="Pull to refresh"
+              checked={s.pullToRefresh}
+              onCheckedChange={(v) => set({ pullToRefresh: v })}
+            />
+          </Row>
+        </Group>
+      )}
       <Group title="Glance">
         <Row
           label="Enable Glance"

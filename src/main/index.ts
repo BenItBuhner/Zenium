@@ -12,6 +12,10 @@ app.setName('Zenium')
 /** The product name up to v0.2.0; its userData directory is taken over on the first launch. */
 const LEGACY_APP_NAME = 'Zen'
 
+// Last resort: with no listener Electron shows a modal "A JavaScript error occurred in the main
+// process" dialog and blocks the main process (a quit never completes). Log to stderr instead.
+process.on('uncaughtException', (error) => console.error('[zenium] uncaught', error))
+
 // `zenium --mcp`: relay stdio to the running browser's MCP server and exit – no windows, no lock.
 if (process.argv.slice(1).includes('--mcp')) {
   app.disableHardwareAcceleration()

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type {
-  Bookmark,
+  BookmarkNode,
+  BookmarkNodeType,
   Boost,
   Container,
   Folder,
@@ -13,6 +14,7 @@ import type {
   Tab
 } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
+import { OTHER_BOOKMARKS_ID, isBookmarkRoot } from '../../shared/bookmarks'
 import type { Model } from '../../core/model'
 
 /**
@@ -101,11 +103,65 @@ export interface ContainerData {
   icon: Container['icon']
 }
 
+/**
+ * One bookmark tree node (roots are fixed on every device and never replicate). Position is part
+ * of the record: a move is a change of `parentId` / `index`, resolved last-writer-wins per node;
+ * the receiving tree repairs index collisions and orphans (`normalizeBookmarkNodes`).
+ */
 export interface BookmarkData {
+  parentId: string
+  index: number
+  type: BookmarkNodeType
+  title: string
+  url?: string
+  favicon?: string
+  dateAdded: number
+}
+
+/** Pre-tree devices (state.json v1–v2) sent flat bookmarks. */
+interface LegacyBookmarkData {
   url: string
   title: string
   favicon: string | null
   createdAt: number
+}
+
+/**
+ * Read a bookmark record from any device generation: tree records as they are, flat legacy
+ * records as bookmarks appended to "Other bookmarks". Null for garbage.
+ */
+export function readBookmarkData(data: unknown): BookmarkData | null {
+  if (!data || typeof data !== 'object') return null
+  const r = data as Partial<BookmarkData & LegacyBookmarkData>
+  if (typeof r.parentId === 'string' && (r.type === 'url' || r.type === 'folder')) {
+    if (r.type === 'url' && typeof r.url !== 'string') return null
+    const out: BookmarkData = {
+      parentId: r.parentId,
+      index:
+        typeof r.index === 'number' && Number.isFinite(r.index) ? r.index : Number.MAX_SAFE_INTEGER,
+      type: r.type,
+      title: typeof r.title === 'string' ? r.title : (r.url ?? ''),
+      dateAdded: typeof r.dateAdded === 'number' ? r.dateAdded : Date.now()
+    }
+    if (r.type === 'url') {
+      out.url = r.url
+      if (typeof r.favicon === 'string' && r.favicon) out.favicon = r.favicon
+    }
+    return out
+  }
+  if (typeof r.url === 'string' && r.url) {
+    const out: BookmarkData = {
+      parentId: OTHER_BOOKMARKS_ID,
+      index: Number.MAX_SAFE_INTEGER,
+      type: 'url',
+      title: typeof r.title === 'string' && r.title ? r.title : r.url,
+      url: r.url,
+      dateAdded: typeof r.createdAt === 'number' ? r.createdAt : Date.now()
+    }
+    if (typeof r.favicon === 'string' && r.favicon) out.favicon = r.favicon
+    return out
+  }
+  return null
 }
 
 export type SettingsData = Omit<Settings, 'onboardingDone'>
@@ -155,7 +211,7 @@ export interface LocalSources {
   model: Model
   settings: Settings
   shortcutOverrides: Record<string, KeyBinding | null>
-  bookmarks: Bookmark[]
+  bookmarks: BookmarkNode[]
   boosts: Boost[]
 }
 
@@ -248,11 +304,17 @@ export function collectLocal(
   }
   if (scope.bookmarks) {
     for (const b of src.bookmarks) {
+      if (isBookmarkRoot(b.id) || b.parentId === null) continue
       const data: BookmarkData = {
-        url: b.url,
+        parentId: b.parentId,
+        index: b.index,
+        type: b.type,
         title: b.title,
-        favicon: b.favicon,
-        createdAt: b.createdAt
+        dateAdded: b.dateAdded
+      }
+      if (b.type === 'url') {
+        data.url = b.url
+        if (b.favicon) data.favicon = b.favicon
       }
       out.set(b.id, { type: 'bookmark', data })
     }

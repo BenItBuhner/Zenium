@@ -41,6 +41,13 @@ export class ElectronTabView implements TabView {
   readonly view: WebContentsView
   /** Captured up front: on Electron 44 `view.webContents` is already undefined when `destroyed` fires. */
   readonly webContentsId: number
+  /**
+   * The page's `WebContents`, captured at creation. `WebContentsView.webContents` stops returning
+   * the object once the contents are destroyed (a page closing itself, window close, quit), so
+   * every method reads this stable reference instead – the object stays usable for
+   * `isDestroyed()` and its id after teardown, and the core's late calls cannot throw.
+   */
+  private readonly wc: WebContents
   private host: ElectronWindow | null = null
   private visible = false
 
@@ -68,14 +75,15 @@ export class ElectronTabView implements TabView {
         enableWebSQL: false
       }
     })
-    this.webContentsId = this.view.webContents.id
+    this.wc = this.view.webContents
+    this.webContentsId = this.wc.id
     this.view.setVisible(false)
     this.wire(tab)
     this.attachTo(host)
   }
 
   get webContents(): WebContents {
-    return this.view.webContents
+    return this.wc
   }
 
   /** The window the view is currently a child of (null while detached). */
@@ -85,7 +93,7 @@ export class ElectronTabView implements TabView {
   }
 
   private wire(tab: Tab): void {
-    const wc = this.view.webContents
+    const wc = this.wc
     const ev = this.events
     wc.on('did-start-loading', () => ev.onStartLoading())
     wc.on('did-stop-loading', () => ev.onStopLoading())
@@ -140,6 +148,8 @@ export class ElectronTabView implements TabView {
       if (choice === 0) event.preventDefault()
     })
     wc.on('dom-ready', () => ev.onDomReady())
+    // By the time this fires `this.view.webContents` no longer returns the object (Electron drops
+    // the view's reference before emitting), which is why the captured `wc` is used throughout.
     wc.on('destroyed', () => {
       ev.onDestroyed()
       this.onDestroyed(this)
@@ -169,92 +179,92 @@ export class ElectronTabView implements TabView {
   // --- navigation -----------------------------------------------------------
 
   loadURL(url: string): void {
-    void this.view.webContents.loadURL(url).catch(() => undefined)
+    void this.wc.loadURL(url).catch(() => undefined)
   }
 
   getURL(): string {
-    return this.view.webContents.getURL()
+    return this.wc.getURL()
   }
 
   getTitle(): string {
-    return this.view.webContents.getTitle()
+    return this.wc.getTitle()
   }
 
   canGoBack(): boolean {
-    return this.view.webContents.navigationHistory.canGoBack()
+    return this.wc.navigationHistory.canGoBack()
   }
 
   canGoForward(): boolean {
-    return this.view.webContents.navigationHistory.canGoForward()
+    return this.wc.navigationHistory.canGoForward()
   }
 
   goBack(): void {
-    this.view.webContents.navigationHistory.goBack()
+    this.wc.navigationHistory.goBack()
   }
 
   goForward(): void {
-    this.view.webContents.navigationHistory.goForward()
+    this.wc.navigationHistory.goForward()
   }
 
   reload(ignoreCache: boolean): void {
-    if (ignoreCache) this.view.webContents.reloadIgnoringCache()
-    else this.view.webContents.reload()
+    if (ignoreCache) this.wc.reloadIgnoringCache()
+    else this.wc.reload()
   }
 
   stop(): void {
-    this.view.webContents.stop()
+    this.wc.stop()
   }
 
   hasDocument(): boolean {
-    const url = this.view.webContents.getURL()
+    const url = this.wc.getURL()
     return url !== '' && url !== 'about:blank'
   }
 
   // --- media / zoom / find ----------------------------------------------------
 
   setMuted(muted: boolean): void {
-    this.view.webContents.setAudioMuted(muted)
+    this.wc.setAudioMuted(muted)
   }
 
   isCurrentlyAudible(): boolean {
-    return this.view.webContents.isCurrentlyAudible()
+    return this.wc.isCurrentlyAudible()
   }
 
   setZoom(factor: number): void {
-    this.view.webContents.setZoomFactor(factor)
+    this.wc.setZoomFactor(factor)
   }
 
   getZoom(): number {
-    return this.view.webContents.getZoomFactor()
+    return this.wc.getZoomFactor()
   }
 
   findInPage(text: string, forward: boolean, newSession: boolean): void {
     // Electron: findNext=true begins a new session, false continues the current one.
-    this.view.webContents.findInPage(text, { forward, findNext: newSession })
+    this.wc.findInPage(text, { forward, findNext: newSession })
   }
 
   stopFind(action: 'clearSelection' | 'keepSelection'): void {
-    this.view.webContents.stopFindInPage(action)
+    this.wc.stopFindInPage(action)
   }
 
   executeJavaScript(code: string): Promise<unknown> {
-    return this.view.webContents.executeJavaScript(code, true)
+    return this.wc.executeJavaScript(code, true)
   }
 
   insertCSS(css: string): Promise<string> {
-    return this.view.webContents.insertCSS(css, { cssOrigin: 'user' })
+    return this.wc.insertCSS(css, { cssOrigin: 'user' })
   }
 
   removeInsertedCSS(key: string): Promise<void> {
-    return this.view.webContents.removeInsertedCSS(key)
+    return this.wc.removeInsertedCSS(key)
   }
 
   sendPageFlags(flags: PageFlags): void {
-    this.view.webContents.send('zen:page-flags', flags)
+    this.wc.send('zen:page-flags', flags)
   }
 
   setZapMode(on: boolean): void {
-    this.view.webContents.send('zen:zap', on)
+    this.wc.send('zen:zap', on)
   }
 
   setBackgroundColor(color: string): void {
@@ -262,19 +272,17 @@ export class ElectronTabView implements TabView {
   }
 
   focus(): void {
-    this.view.webContents.focus()
+    this.wc.focus()
   }
 
   isDestroyed(): boolean {
-    // The view drops its web contents once they are destroyed.
-    const wc = this.view.webContents as WebContents | null
-    return !wc || wc.isDestroyed()
+    return this.wc.isDestroyed()
   }
 
   destroy(): void {
     this.detach()
-    if (!this.view.webContents.isDestroyed()) {
-      this.view.webContents.close({ waitForBeforeUnload: false })
+    if (!this.wc.isDestroyed()) {
+      this.wc.close({ waitForBeforeUnload: false })
     }
   }
 
@@ -321,7 +329,7 @@ export class ElectronTabView implements TabView {
   // --- page operations -----------------------------------------------------------
 
   openDevTools(mode: 'toggle' | 'inspect' | 'console'): void {
-    const wc = this.view.webContents
+    const wc = this.wc
     if (mode === 'toggle' && wc.isDevToolsOpened()) {
       wc.closeDevTools()
       return
@@ -331,11 +339,11 @@ export class ElectronTabView implements TabView {
   }
 
   downloadURL(url: string): void {
-    this.view.webContents.downloadURL(url)
+    this.wc.downloadURL(url)
   }
 
   print(): void {
-    this.view.webContents.print()
+    this.wc.print()
   }
 
   async savePage(suggestedName: string): Promise<string | null> {
@@ -349,14 +357,14 @@ export class ElectronTabView implements TabView {
       ? await dialog.showSaveDialog(win, options)
       : await dialog.showSaveDialog(options)
     if (result.canceled || !result.filePath) return null
-    await this.view.webContents.savePage(result.filePath, 'HTMLComplete')
+    await this.wc.savePage(result.filePath, 'HTMLComplete')
     return result.filePath
   }
 
   /** JPEG snapshot of the page, used to keep a dimmed preview behind overlays (URL bar, Glance). */
   async snapshot(): Promise<string | null> {
     try {
-      const image = await this.view.webContents.capturePage()
+      const image = await this.wc.capturePage()
       if (image.isEmpty()) return null
       const size = image.getSize()
       const scaled = size.width > 1400 ? image.resize({ width: 1400 }) : image
@@ -368,7 +376,7 @@ export class ElectronTabView implements TabView {
 
   async screenshot(fileName: string): Promise<string | null> {
     try {
-      const image = await this.view.webContents.capturePage()
+      const image = await this.wc.capturePage()
       if (image.isEmpty()) return null
       const filePath = join(downloadDir(), fileName)
       await writeFile(filePath, nativeImage.createFromBuffer(image.toPNG()).toPNG())
@@ -380,7 +388,7 @@ export class ElectronTabView implements TabView {
 
   async copyImageAt(x: number, y: number): Promise<boolean> {
     try {
-      this.view.webContents.copyImageAt(x, y)
+      this.wc.copyImageAt(x, y)
       return true
     } catch {
       return false
@@ -388,18 +396,18 @@ export class ElectronTabView implements TabView {
   }
 
   replaceMisspelling(word: string): void {
-    this.view.webContents.replaceMisspelling(word)
+    this.wc.replaceMisspelling(word)
   }
 
   addWordToDictionary(word: string): void {
-    this.view.webContents.session.addWordToSpellCheckerDictionary(word)
+    this.wc.session.addWordToSpellCheckerDictionary(word)
   }
 
   // --- AI agents -------------------------------------------------------------------
 
   /** Trusted input events; coordinates arrive in CSS pixels and become DIPs via the zoom factor. */
   async sendInput(event: AgentInputEvent): Promise<void> {
-    const wc = this.view.webContents
+    const wc = this.wc
     if (wc.isDestroyed()) return
     const zoom = wc.getZoomFactor()
     const px = (v: number): number => Math.round(v * zoom)
@@ -451,15 +459,11 @@ export class ElectronTabView implements TabView {
 
   /** The preload's isolated world: pages cannot see the agent runtime or tamper with it. */
   executeIsolatedJavaScript(code: string): Promise<unknown> {
-    return this.view.webContents.executeJavaScriptInIsolatedWorld(
-      ISOLATED_WORLD_ID,
-      [{ code }],
-      true
-    )
+    return this.wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code }], true)
   }
 
   setBackgroundThrottling(allowed: boolean): void {
-    if (!this.view.webContents.isDestroyed()) this.view.webContents.setBackgroundThrottling(allowed)
+    if (!this.wc.isDestroyed()) this.wc.setBackgroundThrottling(allowed)
   }
 
   /**
@@ -469,7 +473,7 @@ export class ElectronTabView implements TabView {
    * viewport paint.
    */
   async capture(options: AgentCaptureOptions): Promise<AgentCapture | null> {
-    const wc = this.view.webContents
+    const wc = this.wc
     if (wc.isDestroyed()) return null
     const format = options.format
     const mimeType = format === 'png' ? 'image/png' : 'image/jpeg'
@@ -512,7 +516,7 @@ export class ElectronTabView implements TabView {
    * taken (DevTools open).
    */
   async certificate(): Promise<SiteCertificate | null> {
-    const wc = this.view.webContents
+    const wc = this.wc
     if (wc.isDestroyed() || !wc.getURL().startsWith('https:')) return null
     const dbg = wc.debugger
     const attachedHere = !dbg.isAttached()
@@ -558,7 +562,7 @@ export class ElectronTabView implements TabView {
     options: AgentCaptureOptions,
     mimeType: string
   ): Promise<AgentCapture> {
-    const wc = this.view.webContents
+    const wc = this.wc
     const dbg = wc.debugger
     const attachedHere = !dbg.isAttached()
     if (attachedHere) dbg.attach('1.3')

@@ -15,7 +15,7 @@ import {
   SETTINGS_RECORD_ID,
   SHORTCUTS_RECORD_ID,
   applyOrder,
-  type BookmarkData,
+  readBookmarkData,
   type ContainerData,
   type FolderData,
   type OrderData,
@@ -200,18 +200,13 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         break
       }
       case 'bookmark': {
+        // Nodes land one by one; `state.repair()` below re-homes orphans and fixes indices once.
         if (r.deleted) {
-          browser.bookmarks.remove(r.id)
+          browser.bookmarks.removeSynced(r.id)
           break
         }
-        const data = r.data as BookmarkData
-        browser.bookmarks.upsert({
-          id: r.id,
-          url: data.url,
-          title: data.title,
-          favicon: data.favicon,
-          createdAt: data.createdAt
-        })
+        const data = readBookmarkData(r.data)
+        if (data) browser.bookmarks.applySynced(r.id, data)
         break
       }
       case 'settings': {

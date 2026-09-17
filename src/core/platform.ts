@@ -294,6 +294,8 @@ export interface WindowHost {
   show(): void
   focus(): void
   close(): void
+  /** Set the native window title (Alt+Tab / taskbar / Dock); hosts throttle rapid updates. */
+  setTitle(title: string): void
   /** Bounds to remember for session restore (null when the host has no movable windows). */
   normalBounds(): Rect | null
   /** Brief vibration for a gesture landmark; hosts without haptics leave this out. */
@@ -331,7 +333,8 @@ export interface MenuItemTemplate {
   click?: () => void
 }
 
-export type MenuSource = 'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app'
+export type MenuSource =
+  'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app' | 'bookmark'
 
 export interface MenuPopupOptions {
   source: MenuSource
@@ -362,6 +365,16 @@ export interface PickedTextFile {
   text: string
 }
 
+export interface SaveTextFileOptions {
+  title: string
+  /** Suggested file name, extension included (e.g. `bookmarks.html`). */
+  defaultName: string
+  extensions: string[]
+  /** MIME type for hosts whose pickers filter by type (Android's document picker). */
+  mimeType: string
+  text: string
+}
+
 export interface DialogHost {
   confirm(options: ConfirmOptions, win?: ZenWindow): Promise<boolean>
   /** Let the user pick text files (e.g. CSS mods); resolves with their contents. */
@@ -369,6 +382,8 @@ export interface DialogHost {
     options: { title: string; extensions: string[] },
     win?: ZenWindow
   ): Promise<PickedTextFile[]>
+  /** Save text where the user chooses (bookmark export); false when cancelled or failed. */
+  saveTextFile(options: SaveTextFileOptions, win?: ZenWindow): Promise<boolean>
 }
 
 export interface ClipboardHost {

@@ -16,21 +16,49 @@ export const PREVIEW_OVERLAYS: readonly OverlayKind[] = [
   'sync'
 ]
 
+/** The furthest a held pull goes, as a multiple of the threshold (the disc is well out by then). */
+export const PREVIEW_PULL_MAX = 2.5
+
 export type PreviewState =
-  { kind: 'idle' } | { kind: 'overlay'; overlay: OverlayKind } | { kind: 'find'; text: string }
+  | { kind: 'idle' }
+  | {
+      kind: 'overlay'
+      overlay: OverlayKind
+      /** Text of an element in the overlay to scroll into view once it is open. */
+      show?: string
+    }
+  | { kind: 'find'; text: string }
+  | {
+      kind: 'pull'
+      /** How far the page is pulled: 1 is the threshold at which letting go refreshes. */
+      progress: number
+      /** Let go (past the threshold): the page reloads under the spinning disc. */
+      released: boolean
+    }
 
 /**
  * A preview state spec is a query string: `idle` (or anything unrecognised), `overlay=<kind>` for
- * one of PREVIEW_OVERLAYS, or `find=<text>` for the find bar with that text typed (`find=` opens
- * it empty). `overlay` wins when both are given. A leading `#` (the URL hash as read) is ignored.
+ * one of PREVIEW_OVERLAYS (with `show=<text>` to scroll a row of the overlay into view),
+ * `find=<text>` for the find bar with that text typed (`find=` opens it empty), or `pull=<n>` for
+ * the active page held pulled down at n percent of the refresh threshold (`pull=refresh` pulls
+ * past it and lets go). `overlay` wins over `find`, and `find` over `pull`, when several are
+ * given. A leading `#` (the URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
   const overlay = params.get('overlay')
   if (overlay !== null && (PREVIEW_OVERLAYS as readonly string[]).includes(overlay)) {
-    return { kind: 'overlay', overlay: overlay as OverlayKind }
+    const kind = overlay as OverlayKind
+    const show = params.get('show')
+    return show ? { kind: 'overlay', overlay: kind, show } : { kind: 'overlay', overlay: kind }
   }
   const find = params.get('find')
   if (find !== null) return { kind: 'find', text: find }
+  const pull = params.get('pull')
+  if (pull === 'refresh') return { kind: 'pull', progress: PREVIEW_PULL_MAX, released: true }
+  if (pull !== null && pull !== '' && Number.isFinite(Number(pull))) {
+    const progress = Math.min(PREVIEW_PULL_MAX, Math.max(0, Number(pull) / 100))
+    return { kind: 'pull', progress, released: false }
+  }
   return { kind: 'idle' }
 }

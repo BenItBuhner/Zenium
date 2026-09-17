@@ -55,7 +55,8 @@ export function androidCapabilities(sdkInt: number): HostCapabilities {
     updates: true,
     share: true,
     clipboardChip: sdkInt >= CLIPBOARD_CHIP_SDK,
-    appLinkSettings: true
+    appLinkSettings: true,
+    pullToRefresh: true
   }
 }
 
@@ -367,6 +368,8 @@ export class AndroidWindowHost implements WindowHost {
   unmaximize(): void {}
   show(): void {}
   focus(): void {}
+  // Android has a single Activity with no window switcher, so the native title is never shown.
+  setTitle(): void {}
   /* eslint-enable @typescript-eslint/no-empty-function */
 
   close(): void {
@@ -454,7 +457,8 @@ export class AndroidPlatform implements Platform {
     }
     this.dialogs = {
       confirm: (options) => bridge.call<boolean>('dialog.confirm', options),
-      pickTextFiles: (options) => bridge.call<PickedTextFile[]>('dialog.openText', options)
+      pickTextFiles: (options) => bridge.call<PickedTextFile[]>('dialog.openText', options),
+      saveTextFile: (options) => bridge.call<boolean>('dialog.saveText', options)
     }
     this.clipboard = {
       writeText: (text) => bridge.send('clipboard.writeText', { text }),
