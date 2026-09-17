@@ -121,7 +121,8 @@ export const DEFAULT_SETTINGS: Settings = {
   resources: structuredClone(DEFAULT_RESOURCE_SETTINGS),
   agents: structuredClone(DEFAULT_AGENT_SETTINGS),
   updates: structuredClone(DEFAULT_UPDATE_SETTINGS),
-  externalProtocols: {}
+  externalProtocols: {},
+  defaultBrowserPromptDismissed: null
 }
 
 /** Firefox's four default containers plus "No Container". */

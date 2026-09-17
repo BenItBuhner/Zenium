@@ -34,6 +34,9 @@ const ERROR_MESSAGES: Record<number, string> = {
   [-3]: ''
 }
 
+/** Chromium `net::ERR_UNKNOWN_URL_SCHEME`: nothing in the browser handles this scheme. */
+export const UNKNOWN_URL_SCHEME = -302
+
 /** Chromium `net::` error codes eligible for the https→http typed-input fallback. */
 export const HTTP_FALLBACK_CODES = new Set([
   -102, -105, -107, -113, -118, -7, -100, -101, -109, -200, -201, -202, -203, -204, -205, -206,

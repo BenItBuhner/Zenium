@@ -5,6 +5,7 @@
  * feed their raw readings through.
  */
 import { BLANK_URL, ERROR_URL_PREFIX, READER_URL_PREFIX, getDomain, getHost } from './url'
+import { externalPermissionLabel } from './externalProtocols'
 
 export type SecurityState = 'secure' | 'insecure' | 'internal' | 'local' | 'unknown'
 
@@ -194,7 +195,7 @@ export const PERMISSION_LABELS: Record<string, string> = {
 }
 
 export function permissionLabel(permission: string): string {
-  return PERMISSION_LABELS[permission] ?? permission
+  return PERMISSION_LABELS[permission] ?? externalPermissionLabel(permission) ?? permission
 }
 
 /** `1.2 MB`-style sizes; bytes below a kilobyte read as a plain count. */

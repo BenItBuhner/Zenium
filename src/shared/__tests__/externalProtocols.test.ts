@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
   classifyExternalUrl,
+  externalPermission,
+  externalPermissionLabel,
+  externalPermissionScheme,
+  externalScheme,
   intentFallbackUrl,
   intentPackage,
+  isExternalUrl,
   schemeOf
 } from '../externalProtocols'
+import { permissionLabel } from '../siteInfo'
+import { shouldShowDefaultBrowserPrompt } from '../defaultBrowser'
 
 describe('schemeOf', () => {
   it('reads the scheme case-insensitively and ignores surrounding space', () => {
@@ -84,6 +91,36 @@ describe('classifyExternalUrl', () => {
   })
 })
 
+describe('externalScheme', () => {
+  it('names the scheme of links another application handles', () => {
+    expect(externalScheme('mailto:a@b.c')).toBe('mailto')
+    expect(externalScheme('TEL:+123')).toBe('tel')
+    expect(externalScheme('magnet:?xt=urn:btih:abc')).toBe('magnet')
+    expect(externalScheme('ms-settings:defaultapps')).toBe('ms-settings')
+    expect(externalScheme('zenium-test://x')).toBe('zenium-test')
+  })
+
+  it('leaves everything the browser shows itself alone', () => {
+    for (const url of [
+      'https://example.org',
+      'http://example.org',
+      'file:///tmp/a.html',
+      'zen://settings',
+      'about:blank',
+      'view-source:https://example.org',
+      'data:text/html,hi',
+      'blob:https://example.org/uuid',
+      'javascript:void 0',
+      'chrome://gpu',
+      'no scheme here',
+      ''
+    ]) {
+      expect(externalScheme(url)).toBeNull()
+      expect(isExternalUrl(url)).toBe(false)
+    }
+  })
+})
+
 describe('intentFallbackUrl', () => {
   it('reads the browser fallback of an intent URL', () => {
     expect(
@@ -119,5 +156,32 @@ describe('intentPackage', () => {
   it('has none for intents without a package, or other schemes', () => {
     expect(intentPackage('intent://x/#Intent;scheme=y;end')).toBeNull()
     expect(intentPackage('market://details?id=com.x')).toBeNull()
+  })
+})
+
+describe('external permission keys', () => {
+  it('maps schemes to permission names and back', () => {
+    expect(externalPermission('mailto')).toBe('external:mailto')
+    expect(externalPermission('MS-Settings')).toBe('external:ms-settings')
+    expect(externalPermissionScheme('external:tel')).toBe('tel')
+    expect(externalPermissionScheme('external:')).toBeNull()
+    expect(externalPermissionScheme('camera')).toBeNull()
+  })
+
+  it('labels them for the site-information sheet without touching other permissions', () => {
+    expect(externalPermissionLabel('external:mailto')).toBe('Open mailto links')
+    expect(externalPermissionLabel('geolocation')).toBeNull()
+    expect(permissionLabel('external:magnet')).toBe('Open magnet links')
+    expect(permissionLabel('camera')).toBe('Camera')
+  })
+})
+
+describe('shouldShowDefaultBrowserPrompt', () => {
+  it('shows until dismissed, then again on the next feature release', () => {
+    expect(shouldShowDefaultBrowserPrompt(null, '0.3.5')).toBe(true)
+    expect(shouldShowDefaultBrowserPrompt('0.3.5', '0.3.5')).toBe(false)
+    expect(shouldShowDefaultBrowserPrompt('0.3.5', '0.3.9')).toBe(false)
+    expect(shouldShowDefaultBrowserPrompt('0.3.5', '0.4.0')).toBe(true)
+    expect(shouldShowDefaultBrowserPrompt('v0.3.5', '1.0.0-beta.1')).toBe(true)
   })
 })

@@ -50,6 +50,8 @@ export interface HostCapabilities {
   clipboardChip: boolean
   /** The host has a system screen for which links open in this app (Android's Open by default). */
   appLinkSettings: boolean
+  /** The host can tell whether Zenium is the system's default browser and ask to become it. */
+  defaultBrowser: boolean
 }
 
 export interface Rect {
@@ -628,12 +630,18 @@ export interface Settings {
   /**
    * Non-web schemes (`mailto`, `tel`, `sms`, `market`, …) the user chose "Always allow" for in the
    * external-protocol sheet: pages may hand links of that scheme to the app without asking again.
+   * Desktop also stores origin-scoped decisions in permissions.json as `origin|external:<scheme>`.
    */
   externalProtocols: Record<string, boolean>
+  /**
+   * Version in which "Make Zenium your default browser" was dismissed (null = never). The strip
+   * returns with the next feature release (`shared/defaultBrowser.ts`).
+   */
+  defaultBrowserPromptDismissed: string | null
 }
 
 // ---------------------------------------------------------------------------
-// Sharing and external protocols
+// Sharing, default browser and external protocols
 // ---------------------------------------------------------------------------
 
 /** What `app.share` hands to the system share sheet. */
@@ -665,6 +673,17 @@ export interface ShareAction {
 }
 
 /**
+ * What asking the OS to make Zenium the default browser led to. `settings-opened`: Windows only
+ * lets the user pick in Settings, which is now open on the Default apps page.
+ */
+export type DefaultBrowserOutcome = 'done' | 'settings-opened' | 'failed'
+
+export interface DefaultBrowserStatus {
+  /** null until the host answered (or on hosts without the capability). */
+  isDefault: boolean | null
+}
+
+/**
  * A page wants to leave the web (`mailto:`, `tel:`, `intent://`, a custom scheme) or a site's
  * native app could open the link: the chrome shows a confirm sheet and answers through
  * `externalProtocol.respond`.
@@ -679,6 +698,8 @@ export interface ExternalProtocolRequest {
   appName: string | null
   /** Host of the page that asked; empty when unknown. */
   site: string
+  /** The tab that asked (null for popups and the chrome); omitted by hosts that do not track it. */
+  tabId?: string | null
   /** Whether the sheet offers to remember the choice for this scheme. */
   canRemember: boolean
 }
@@ -974,6 +995,8 @@ export interface UIState {
   agentServer: AgentServerStatus
   /** Automatic updates: what the browser knows about the latest release and how far it got. */
   updates: UpdateStatus
+  /** Whether Zenium is the system's default browser (drives the Settings row and the strip). */
+  defaultBrowser: DefaultBrowserStatus
 }
 
 export interface FindResult {
@@ -1402,6 +1425,13 @@ export interface Commands {
   'updates.cancel': { args: void; result: void }
   /** Open the release notes on GitHub in a tab. */
   'updates.openRelease': { args: void; result: void }
+
+  /** Ask the OS to make Zenium the default browser (Windows: opens Settings → Default apps). */
+  'defaultBrowser.makeDefault': { args: void; result: DefaultBrowserOutcome }
+  /** Ask the OS again whether Zenium is the default (Settings opened, window focused). */
+  'defaultBrowser.refresh': { args: void; result: boolean | null }
+  /** "Not now" on the strip: remember the dismissal for this feature release. */
+  'defaultBrowser.dismissPrompt': { args: void; result: void }
 }
 
 export type CommandName = keyof Commands

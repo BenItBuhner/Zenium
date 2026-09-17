@@ -1,7 +1,11 @@
 /**
- * Links that leave the web. A page may hand `mailto:`, `tel:`, `market:` or a custom scheme to
- * the app registered for it – after the user agreed in the external-protocol sheet – but must
- * never reach the schemes that name the browser's own or the device's private resources.
+ * Links that leave the web. A page may hand `mailto:`, `tel:`, `magnet:`, `ms-*`, `market:` or a
+ * custom scheme to the app registered for it – after the user agreed – but must never reach the
+ * schemes that name the browser's own or the device's private resources.
+ *
+ * Desktop stores an "Always allow" decision next to camera / location in permissions.json as
+ * `<origin>|external:<scheme>` (private windows never persist). Android remembers at scheme
+ * level in `settings.externalProtocols`.
  */
 
 export type ExternalUrlClass =
@@ -20,8 +24,10 @@ const BLOCKED_SCHEMES = new Set([
   'chrome-extension',
   'content',
   'data',
+  'devtools',
   'file',
   'filesystem',
+  'ftp',
   'javascript',
   'view-source',
   'ws',
@@ -68,6 +74,39 @@ export function classifyExternalUrl(url: string): ExternalUrlClass {
     label: SCHEME_LABELS[scheme] ?? null,
     canRemember: !NEVER_REMEMBER.has(scheme)
   }
+}
+
+/** The scheme (lower-case, no colon) when `url` belongs to another application, else null. */
+export function externalScheme(url: string): string | null {
+  const cls = classifyExternalUrl(url)
+  return cls.kind === 'external' ? cls.scheme : null
+}
+
+export function isExternalUrl(url: string): boolean {
+  return classifyExternalUrl(url).kind === 'external'
+}
+
+export const EXTERNAL_PERMISSION_PREFIX = 'external:'
+
+/**
+ * The permission an "Always allow" decision is stored under, next to camera / location in
+ * permissions.json: `<origin>|external:<scheme>`.
+ */
+export function externalPermission(scheme: string): string {
+  return `${EXTERNAL_PERMISSION_PREFIX}${scheme.toLowerCase()}`
+}
+
+/** Inverse of `externalPermission`; null for ordinary permissions. */
+export function externalPermissionScheme(permission: string): string | null {
+  if (!permission.startsWith(EXTERNAL_PERMISSION_PREFIX)) return null
+  const scheme = permission.slice(EXTERNAL_PERMISSION_PREFIX.length)
+  return scheme ? scheme : null
+}
+
+/** "Open mailto links" for the site-information sheet; null for ordinary permissions. */
+export function externalPermissionLabel(permission: string): string | null {
+  const scheme = externalPermissionScheme(permission)
+  return scheme ? `Open ${scheme} links` : null
 }
 
 /** The `S.browser_fallback_url` an `intent://` URL carries, when it is a web address. */
