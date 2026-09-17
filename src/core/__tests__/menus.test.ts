@@ -41,7 +41,8 @@ const DESKTOP: HostCapabilities = {
   pullToRefresh: false,
   passwords: true,
   defaultBrowser: false,
-  requestBlocking: true
+  requestBlocking: true,
+  reducedExtensionIsolation: false
 }
 
 /**
@@ -71,7 +72,8 @@ const ANDROID: HostCapabilities = {
   pullToRefresh: true,
   passwords: true,
   defaultBrowser: true,
-  requestBlocking: true
+  requestBlocking: true,
+  reducedExtensionIsolation: false
 }
 
 function memoryIo(): StoreIO {

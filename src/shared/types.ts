@@ -72,6 +72,12 @@ export interface HostCapabilities {
   defaultBrowser: boolean
   /** The host runs a request engine that blocks ads and trackers (Settings → Privacy and security). */
   requestBlocking: boolean
+  /**
+   * Extensions run, but their content scripts share the page's world (an Android WebView below
+   * Chromium 146 has no isolated worlds; the emulation layer falls back to a scope proxy). Pages
+   * can then observe the scripts' DOM work; the extensions UI says so.
+   */
+  reducedExtensionIsolation: boolean
 }
 
 export interface Rect {
