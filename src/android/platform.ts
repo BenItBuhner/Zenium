@@ -368,6 +368,8 @@ export class AndroidWindowHost implements WindowHost {
   unmaximize(): void {}
   show(): void {}
   focus(): void {}
+  // Android has a single Activity with no window switcher, so the native title is never shown.
+  setTitle(): void {}
   /* eslint-enable @typescript-eslint/no-empty-function */
 
   close(): void {

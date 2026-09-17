@@ -324,7 +324,10 @@ export class Browser {
       }
     }
     this.state.subscribe(() => {
-      for (const win of this.allWindows()) win.send('state', this.state.snapshot(win))
+      for (const win of this.allWindows()) {
+        win.send('state', this.state.snapshot(win))
+        win.updateTitle()
+      }
     })
     // Zen restores every synced window (and the space each one was in).
     const restore =

@@ -96,6 +96,13 @@ export class TabManager {
     return this.tab(win.selectedTabIn(win.activeSpace()))
   }
 
+  /** The title a window shows for its active tab (the custom name wins), or null when it has none. */
+  activeTitleFor(win: ZenWindow): string | null {
+    const tab = this.activeTabFor(win)
+    if (!tab) return null
+    return tab.customTitle ?? tab.title
+  }
+
   /** Tabs currently shown in a window's content area (active tab, or every tab of its split group). */
   visibleTabIds(win: ZenWindow): string[] {
     const active = this.activeTabFor(win)
