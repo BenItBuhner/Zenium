@@ -347,7 +347,8 @@ export class TabManager {
           t.canGoForward = v?.canGoForward() ?? false
         })
       },
-      onNavigated: (url) => {
+      onNavigated: (url, inPage) => {
+        if (!inPage) this.browser.blocking.onNavigated(tabId)
         const v = view()
         if (v) this.onNavigated(tabId, v, url)
       },
@@ -418,6 +419,7 @@ export class TabManager {
         this.browser.governor.onMedia(tabId, playing)
         this.browser.updateMedia()
       },
+      onRequestsBlocked: (count) => this.browser.blocking.recordBlocked(tabId, count),
       onEnterHtmlFullscreen: () => {
         const win = ownerWindow()
         // Zen: going fullscreen inside a Glance page expands it into a real tab first.

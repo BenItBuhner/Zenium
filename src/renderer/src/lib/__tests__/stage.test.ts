@@ -60,7 +60,8 @@ function tab(id: string): UIState['tabs'][string] {
     lastActiveAt: 0,
     errorCode: null,
     bookmarked: false,
-    readerable: false
+    readerable: false,
+    blockedCount: 0
   }
 }
 
