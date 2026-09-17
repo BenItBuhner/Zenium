@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { APP_ICON_DEFAULT, type AppIconId } from '../../shared/appIcon'
 import { Browser } from '../browser'
-import type { Platform, StoreIO } from '../platform'
+import type { AppHost, Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
 import type { ZenWindow } from '../window'
 import { BrowserState } from '../state'
 
@@ -42,7 +42,7 @@ function fakePlatform(io: StoreIO): Platform & { icons: AppIconId[] } {
     io,
     windows: {
       create: () =>
-        stub({
+        stub<WindowHost>({
           alive: true,
           contentSize: () => ({ width: 1280, height: 800 }),
           normalBounds: () => null,
@@ -52,7 +52,9 @@ function fakePlatform(io: StoreIO): Platform & { icons: AppIconId[] } {
           isVisible: () => true
         })
     },
-    views: stub({ createView: () => stub({ isDestroyed: () => false, isVisible: () => false }) }),
+    views: stub<TabViewHost>({
+      createView: () => stub<TabView>({ isDestroyed: () => false, isVisible: () => false })
+    }),
     menus: stub(),
     dialogs: stub(),
     clipboard: stub(),
@@ -60,7 +62,7 @@ function fakePlatform(io: StoreIO): Platform & { icons: AppIconId[] } {
     net: stub(),
     downloads: stub(),
     sessions: stub(),
-    app: stub({ setAppIcon: (id: AppIconId) => void icons.push(id) }),
+    app: stub<AppHost>({ setAppIcon: (id: AppIconId) => void icons.push(id) }),
     readabilitySource: () => null
   }
 }
@@ -110,7 +112,7 @@ describe('the app icon setting', () => {
       const io = memoryIo({
         'state.json': JSON.stringify({ version: 2, settings: { appIcon }, tabs: [], spaces: [] })
       })
-      const state = new BrowserState(io, {} as Platform, {} as HostCapabilities, '0.0')
+      const state = new BrowserState(io, 'linux', {} as HostCapabilities, '0.0')
       state.load()
       return state
     }
