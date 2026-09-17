@@ -56,6 +56,8 @@ class ExtensionDemo {
     private var height = 0
     /** The seeded probe tab; every measurement targets it explicitly (other tabs come and go). */
     private var probeTab = ""
+    /** Whether content scripts run in real isolated worlds on this WebView (`Extensions.isolatedWorlds`). */
+    private var worlds = false
 
     @Test
     fun record() {
@@ -64,7 +66,6 @@ class ExtensionDemo {
         val loaded = waitForExtensions()
         results.put("extensions", loaded)
         results.put("scriptUnits", scriptUnits())
-        var worlds = false
         instrumentation.runOnMainSync { worlds = host.extensions.isolatedWorlds }
         results.put("isolatedWorlds", worlds)
         results.put("webView", WebViewCompat.getCurrentWebViewPackage(app)?.let { "${it.packageName} ${it.versionName}" })
@@ -136,9 +137,19 @@ class ExtensionDemo {
             val units = scriptUnitsCount()
             if (list.length() >= 2 && units > 0) true else null
         }
-        // Rules and background pages come after the units; give them a moment.
-        SystemClock.sleep(6_000)
         results.put("configureMs", SystemClock.uptimeMillis() - started)
+        // Rules and background pages come after the units. The probe's background adds its dynamic
+        // rule on startup and `updateDynamicRules` resolves once Kotlin has the compiled rule set
+        // (Chrome semantics); the dyn=1 pixel of the probe page is graded against that rule, so
+        // the demo waits for the background to report it instead of a fixed grace period (on a
+        // slow runner the rule set came 16 s after the units and the pixel had loaded before it).
+        val rulesStarted = SystemClock.uptimeMillis()
+        val dynamicReady = waitFor(90_000, 500) {
+            val bg = backgroundView(PROBE_ID) ?: return@waitFor null
+            if (tabEval(bg, "String(typeof report === 'object' && report.dynamicRules >= 1)") == "true") true else null
+        }
+        results.put("dynamicRuleReadyMs", if (dynamicReady == true) SystemClock.uptimeMillis() - rulesStarted else -1)
+        SystemClock.sleep(2_000)
         for (i in 0 until list.length()) {
             val ext = list.getJSONObject(i)
             stage(ext.getString("id"), "load", if (ext.isNull("error")) "PASS" else "FAIL", if (ext.isNull("error")) ext.optString("name") else ext.optString("error"))
@@ -168,6 +179,7 @@ class ExtensionDemo {
         SystemClock.sleep(2_500)
         shot("01-probe-page-dark-reader")
         val probe = json(tabEval(probeView, PROBE_REPORT))
+        if (worlds) mergeWorldReports(probeView, probe)
         results.put("probePage", probe)
         gradeProbe(probe)
         val dark = json(tabEval(probeView, DARK_READER_REPORT))
@@ -175,7 +187,9 @@ class ExtensionDemo {
         stage(
             DARK_READER, "coreFunction",
             if (dark.optInt("styles") > 0 && dark.optString("bodyBackground") != "rgb(255, 255, 255)") "PASS" else "FAIL",
-            "styles=${dark.optInt("styles")} mode=${dark.optString("mode")} body=${dark.optString("bodyBackground")}"
+            "styles=${dark.optInt("styles")} mode=${dark.optString("mode")} body=${dark.optString("bodyBackground")} " +
+                "styleSheetsGetter=${if (dark.optBoolean("styleSheetsGetterNative")) "native" else "patched by its proxy.js"} " +
+                "drSheetsVisible=${dark.optInt("drSheetsVisible")} wasEnabledForHost=${dark.optString("wasEnabledForHost")}"
         )
 
         // 2. Vimium: focus the page, press f, expect link hints.
@@ -504,6 +518,31 @@ class ExtensionDemo {
         )
     }
 
+    /**
+     * On a WebView with isolated worlds the probe's document expandos (`__zenProbeStart/Idle`)
+     * and every extension's bootstrap statistics (`__zenExtStats`) live in their worlds, where
+     * `evaluateJavascript` cannot see them. Read them through the reply proxies and merge them into
+     * the main-world report, which keeps the page's own view (`window.__page`) and the groups of
+     * `world: "MAIN"` declarations.
+     */
+    private fun mergeWorldReports(view: TabWebView, probe: JSONObject) {
+        val perWorld = JSONObject()
+        val groups = probe.optJSONObject("stats")?.optJSONArray("groups") ?: JSONArray()
+        for (id in listOf(PROBE_ID, DARK_READER, VIMIUM, RYD, STYLUS, UBOL)) {
+            val raw = worldEval(view, id, WORLD_REPORT) ?: continue
+            val report = json(raw)
+            perWorld.put(id, report)
+            report.optJSONObject("stats")?.optJSONArray("groups")?.let { for (i in 0 until it.length()) groups.put(it.get(i)) }
+            if (id == PROBE_ID) {
+                if (!report.isNull("start")) probe.put("start", report.opt("start"))
+                if (!report.isNull("idle")) probe.put("idle", report.opt("idle"))
+            }
+        }
+        val stats = probe.optJSONObject("stats") ?: JSONObject().also { probe.put("stats", it) }
+        stats.put("groups", groups)
+        probe.put("worlds", perWorld)
+    }
+
     private fun stage(id: String, stage: String, verdict: String, detail: String) {
         val ext = stages.optJSONObject(id) ?: JSONObject().also { stages.put(id, it) }
         ext.put(stage, JSONObject().put("verdict", verdict).put("detail", detail))
@@ -552,6 +591,12 @@ class ExtensionDemo {
     private fun popupView(): ExtensionWebView? {
         var v: ExtensionWebView? = null
         instrumentation.runOnMainSync { v = host.extensions.popupView() }
+        return v
+    }
+
+    private fun backgroundView(id: String): ExtensionWebView? {
+        var v: ExtensionWebView? = null
+        instrumentation.runOnMainSync { v = host.extensions.backgroundView(id) }
         return v
     }
 
@@ -640,6 +685,23 @@ class ExtensionDemo {
         return value
     }
 
+    /**
+     * `script` in `ext`'s isolated world on `view` through its reply proxy (main thread); null when
+     * the extension has no world endpoint in that frame. Decodes JSON strings like [tabEval].
+     */
+    private fun worldEval(view: WebView, ext: String, script: String, timeoutSeconds: Long = 10): String? {
+        val latch = CountDownLatch(1)
+        var value: String? = null
+        instrumentation.runOnMainSync {
+            host.extensions.evalInWorld(view, ext, script) { raw ->
+                value = raw?.let { if (it.startsWith("\"")) runCatching { JSONObject("{\"v\":$it}").getString("v") }.getOrDefault(it) else it }
+                latch.countDown()
+            }
+        }
+        latch.await(timeoutSeconds, TimeUnit.SECONDS)
+        return value
+    }
+
     private fun json(text: String): JSONObject = runCatching { JSONObject(text) }.getOrElse { JSONObject().put("raw", text) }
 
     private fun <T> waitFor(timeoutMs: Long, pollMs: Long = 250, probe: () -> T?): T? {
@@ -717,10 +779,21 @@ class ExtensionDemo {
         private const val PROBE_DONE = "String(document.documentElement.getAttribute('data-zen-probe-done') === '1')"
         private const val PROBE_REPORT =
             "JSON.stringify({start: document.__zenProbeStart || null, idle: document.__zenProbeIdle || null, page: window.__page || null, stats: window.__zenExtStats || null, readyState: document.readyState, url: location.href})"
+        /** What one extension's world sees: the probe's document expandos, the bootstrap's stats, and the world/page boundary. */
+        private const val WORLD_REPORT =
+            "JSON.stringify({start: document.__zenProbeStart || null, idle: document.__zenProbeIdle || null, stats: window.__zenExtStats || null, " +
+                "pageGlobal: typeof pageGlobal, page: typeof window.__page, chrome: typeof chrome, runtimeId: (typeof chrome === 'object' && chrome && chrome.runtime) ? chrome.runtime.id : null})"
         private const val DARK_READER_REPORT =
             "JSON.stringify({mode: document.documentElement.getAttribute('data-darkreader-mode'), scheme: document.documentElement.getAttribute('data-darkreader-scheme'), " +
                 "styles: document.querySelectorAll('style.darkreader, style[class*=darkreader], link.darkreader').length, bodyBackground: getComputedStyle(document.body).backgroundColor, " +
-                "htmlBackground: getComputedStyle(document.documentElement).backgroundColor, color: getComputedStyle(document.body).color})"
+                "htmlBackground: getComputedStyle(document.documentElement).backgroundColor, color: getComputedStyle(document.body).color, " +
+                // Root-cause evidence for the same-realm failure: Dark Reader's MAIN-world proxy.js
+                // replaces Document.prototype.styleSheets with a list that hides its own sheets; its
+                // dark-theme detector (isolated world in Chrome) disables those sheets through that
+                // getter before sampling colours. In one realm the getter is the patched one.
+                "styleSheetsGetterNative: /native code/.test(String((Object.getOwnPropertyDescriptor(Document.prototype, 'styleSheets') || {}).get)), " +
+                "drSheetsVisible: Array.prototype.filter.call(document.styleSheets, function (s) { return s.ownerNode && s.ownerNode.classList && s.ownerNode.classList.contains('darkreader') }).length, " +
+                "colorScheme: getComputedStyle(document.documentElement).colorScheme, wasEnabledForHost: sessionStorage.getItem('__darkreader__wasEnabledForHost')})"
         private const val VIMIUM_REPORT =
             "(function(){var n=document.querySelectorAll('.vimiumHintMarker').length,roots=0;document.querySelectorAll('*').forEach(function(el){if(el.shadowRoot){roots++;n+=el.shadowRoot.querySelectorAll('.vimiumHintMarker').length}});" +
                 "return JSON.stringify({hints:n,shadowRoots:roots,ui:document.querySelectorAll('.vimiumUIComponent,iframe[src*=\"vimium\"],[class*=\"vimium\"]').length})})()"

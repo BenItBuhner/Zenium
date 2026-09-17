@@ -414,6 +414,29 @@ class Extensions(private val host: Host) {
     fun traceSnapshot(extensionId: String): List<String> =
         synchronized(bridgeTrace) { bridgeTrace.filter { it.contains(" ${extensionId.take(8)}/") } }
 
+    /**
+     * Instrumentation only: run `script` in the isolated world of `extensionId`'s main-frame
+     * content endpoint on `view` and hand back the JSON-encoded result, or null when the
+     * extension has no world endpoint there (or worlds are off). `evaluateJavascript` only sees
+     * the main world; the reply proxy is the way into a world. Main thread.
+     */
+    fun evalInWorld(view: WebView, extensionId: String, script: String, callback: (String?) -> Unit) {
+        val endpoint = endpoints.values.firstOrNull {
+            it.view === view && it.extensionId == extensionId && it.context == "content" && it.isMainFrame && it.world
+        }
+        if (endpoint == null) {
+            callback(null)
+            return
+        }
+        val delivered = runCatching {
+            endpoint.proxy.executeJavaScript(script, object : androidx.webkit.WebViewOutcomeReceiver<String, androidx.webkit.JavaScriptExecutionException> {
+                override fun onResult(result: String?) { callback(result) }
+                override fun onError(error: androidx.webkit.JavaScriptExecutionException) { callback(null) }
+            })
+        }.isSuccess
+        if (!delivered) callback(null)
+    }
+
     private fun exec(args: JSONObject, reply: (Any?) -> Unit) {
         val tab = host.tabs.get(args.str("tabId"))
         if (tab == null) {
