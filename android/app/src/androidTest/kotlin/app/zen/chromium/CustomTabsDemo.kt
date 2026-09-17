@@ -18,6 +18,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
 import androidx.browser.customtabs.CustomTabColorSchemeParams
 import androidx.browser.customtabs.CustomTabsCallback
@@ -130,6 +131,10 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         }
         beat()
 
+        // 7b. Find in page: the bar takes the toolbar's row and counts matches as the query goes in.
+        openMenu()
+        findInPage("07b-find-light")
+
         // 8. Open in Zenium: the live page moves into the browser window.
         openMenu()
         if (clickByLabel(OPEN_IN_ZENIUM_LABEL)) {
@@ -151,7 +156,7 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         openMenu()
         shot("10-menu-dark")
         beat()
-        dismissSheet()
+        findInPage("10b-find-dark")
 
         // 10. X closes the tab, with the caller's exit animation, back into the caller.
         clickByLabel(CLOSE_LABEL)
@@ -335,6 +340,32 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         }
     }
 
+    /**
+     * From the open menu: Find in Page, a query into the bar's field (set through the focused
+     * node, the way an IME would; keys if there is none), a shot of the counted matches, then
+     * the bar's own close.
+     */
+    private fun findInPage(name: String) {
+        if (!clickByLabel(FIND_LABEL)) {
+            Log.w(tag, "no $FIND_LABEL in the menu")
+            dismissSheet()
+            return
+        }
+        assertTrue("the find bar came up", waitFor(FIND_CLOSE_LABEL, 5_000) != null)
+        SystemClock.sleep(800)
+        val field = ui.rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        val typed = field?.performAction(
+            AccessibilityNodeInfo.ACTION_SET_TEXT,
+            Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, FIND_QUERY) }
+        ) ?: false
+        if (!typed) instrumentation.sendStringSync(FIND_QUERY)
+        SystemClock.sleep(1_800)
+        shot(name)
+        beat()
+        clickByLabel(FIND_CLOSE_LABEL)
+        SystemClock.sleep(1_000)
+    }
+
     private fun back() {
         ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
     }
@@ -428,6 +459,9 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         private const val CLOSE_LABEL = "Close"
         private const val MENU_LABEL = "Menu"
         private const val OPEN_IN_ZENIUM_LABEL = "Open in Zenium"
+        private const val FIND_LABEL = "Find in Page"
+        private const val FIND_CLOSE_LABEL = "Close find bar"
+        private const val FIND_QUERY = "damping"
 
         private const val PAGE_STATE_JS = "location.host + ':' + document.readyState"
 

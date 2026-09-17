@@ -50,6 +50,8 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
     private lateinit var shell: FrameLayout
     private lateinit var pageContainer: FrameLayout
     private lateinit var fullscreenLayer: FrameLayout
+    /** The status bar strip in the toolbar's colour; the toolbar slides up behind it when hiding. */
+    private lateinit var statusStrip: View
     private var divider: View? = null
     private var findBar: CustomTabFindBar? = null
     private var topInset = 0
@@ -84,8 +86,10 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
         }
         host = CustomTabHost(this, pageContainer, fullscreenLayer, config.scheme.dark)
         toolbar = CustomTabToolbar(this, config, this)
+        statusStrip = View(this).apply { setBackgroundColor(config.scheme.toolbar) }
         shell.addView(pageContainer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         shell.addView(toolbar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
+        shell.addView(statusStrip, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, Gravity.TOP))
         shell.addView(fullscreenLayer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(shell)
         applyScheme()
@@ -97,6 +101,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
             bottomInset = maxOf(bars.bottom, ime.bottom)
             shell.setPadding(bars.left, 0, bars.right, 0)
             toolbar.setTopInset(bars.top)
+            statusStrip.layoutParams = (statusStrip.layoutParams as FrameLayout.LayoutParams).apply { height = bars.top }
             layoutPage()
             WindowInsetsCompat.CONSUMED
         }
@@ -214,9 +219,10 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
     }
 
     /**
-     * The toolbar slides up and the page follows it: the page is first grown by the bar's height
-     * behind it (one relayout, drawn where it was), then both translate together so nothing
-     * jumps and no gap opens at the bottom.
+     * The toolbar slides up behind the status bar strip ([statusStrip], drawn over it in the same
+     * colour) and the page follows it: the page is first grown by the bar's height behind it (one
+     * relayout, drawn where it was), then both translate together so nothing jumps and no gap
+     * opens at the bottom.
      */
     private fun hideToolbar() {
         if (!toolbarShown || toolbarAnimating) return
