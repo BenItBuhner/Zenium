@@ -16,13 +16,23 @@ import java.util.Locale
  * `urlFilter` must occur in the URL before its regex is tried, so a request against tens of
  * thousands of rules costs mostly `indexOf`. The shared request-blocking engine replaces this.
  */
-class NetRules(rulesJson: JSONArray) {
+class NetRules(val rules: List<Rule>) {
+    constructor(rulesJson: JSONArray) : this(
+        buildList {
+            for (i in 0 until rulesJson.length()) {
+                val o = rulesJson.optJSONObject(i) ?: continue
+                runCatching { add(parse(o)) }
+            }
+        }
+    )
+
     class Rule(
         val id: Int,
         val priority: Int,
         val action: String,
         val redirectUrl: String?,
-        val urlRegex: Regex?,
+        /** Regex source (null when the rule has no URL condition); compiled on first use. */
+        val regexSource: String?,
         /** Lower-cased literal that must appear in the (lower-cased) URL when the filter is case-insensitive. */
         val requiredLiteral: String?,
         val caseSensitive: Boolean,
@@ -35,20 +45,21 @@ class NetRules(rulesJson: JSONArray) {
         val requestMethods: Set<String>,
         val excludedRequestMethods: Set<String>,
         val domainType: String?
-    )
+    ) {
+        /**
+         * Compiling tens of thousands of patterns up front cost seconds on ART; the literal
+         * prefilter rejects almost every (rule, request) pair, so most rules never compile.
+         */
+        val urlRegex: Regex? by lazy(LazyThreadSafetyMode.PUBLICATION) {
+            regexSource?.let { runCatching { Regex(it, if (caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE)) }.getOrNull() }
+        }
+    }
 
     sealed class Decision {
         object Allow : Decision()
         object Block : Decision()
         object UpgradeScheme : Decision()
         class Redirect(val url: String) : Decision()
-    }
-
-    val rules: List<Rule> = buildList {
-        for (i in 0 until rulesJson.length()) {
-            val o = rulesJson.optJSONObject(i) ?: continue
-            runCatching { add(parse(o)) }
-        }
     }
 
     fun decide(url: String, initiator: String?, type: String, method: String): Decision? {
@@ -93,10 +104,10 @@ class NetRules(rulesJson: JSONArray) {
             if (rule.domainType == "firstParty" && !firstParty) return false
             if (rule.domainType == "thirdParty" && firstParty) return false
         }
-        val regex = rule.urlRegex
-        if (regex != null) {
+        if (rule.regexSource != null) {
             val literal = rule.requiredLiteral
             if (literal != null && !(if (rule.caseSensitive) url.contains(literal) else lowerUrl.contains(literal))) return false
+            val regex = rule.urlRegex ?: return false
             if (!regex.containsMatchIn(url)) return false
         }
         return true
@@ -116,10 +127,9 @@ class NetRules(rulesJson: JSONArray) {
             val caseSensitive = o.optBoolean("caseSensitive", false)
             val urlFilter = o.optString("urlFilter", "").takeIf { o.has("urlFilter") && !o.isNull("urlFilter") }
             val regexFilter = o.optString("regexFilter", "").takeIf { o.has("regexFilter") && !o.isNull("regexFilter") }
-            val options = if (caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE)
-            val regex = when {
-                urlFilter != null -> Regex(urlFilterToRegex(urlFilter), options)
-                regexFilter != null -> Regex(regexFilter, options)
+            val source = when {
+                urlFilter != null -> urlFilterToRegex(urlFilter)
+                regexFilter != null -> regexFilter
                 else -> null
             }
             val literal = urlFilter?.let(::longestLiteral)?.let { if (caseSensitive) it else it.lowercase(Locale.ROOT) }
@@ -128,7 +138,7 @@ class NetRules(rulesJson: JSONArray) {
                 priority = o.optInt("priority", 1),
                 action = o.optString("action", "block"),
                 redirectUrl = o.optString("redirectUrl", "").takeIf { o.has("redirectUrl") && !o.isNull("redirectUrl") },
-                urlRegex = regex,
+                regexSource = source,
                 requiredLiteral = literal?.takeIf { it.length >= 3 },
                 caseSensitive = caseSensitive,
                 requestDomains = strings(o.optJSONArray("requestDomains")),
@@ -242,6 +252,11 @@ class NetRules(rulesJson: JSONArray) {
          * A non-main-frame request whose Accept asks for HTML is a subframe navigation: WebView has
          * no flag for it.
          */
+        private val FONT_EXT = Regex("\\.(woff2?|ttf|otf|eot)$")
+        private val SCRIPT_EXT = Regex("\\.(js|mjs)$")
+        private val IMAGE_EXT = Regex("\\.(png|jpe?g|gif|webp|avif|svg|ico|bmp)$")
+        private val MEDIA_EXT = Regex("\\.(mp4|webm|m4s|mp3|ogg|m3u8|ts)$")
+
         fun guessResourceType(url: String, accept: String?, isMainFrame: Boolean, isSubFrame: Boolean): String {
             if (isMainFrame) return "main_frame"
             if (isSubFrame) return "sub_frame"
@@ -252,11 +267,11 @@ class NetRules(rulesJson: JSONArray) {
                 a.startsWith("text/css") -> "stylesheet"
                 a.startsWith("image/") -> "image"
                 a.contains("video/") || a.contains("audio/") -> "media"
-                a.contains("font") || Regex("\\.(woff2?|ttf|otf|eot)$").containsMatchIn(path) -> "font"
-                Regex("\\.(js|mjs)$").containsMatchIn(path) -> "script"
+                a.contains("font") || FONT_EXT.containsMatchIn(path) -> "font"
+                SCRIPT_EXT.containsMatchIn(path) -> "script"
                 path.endsWith(".css") -> "stylesheet"
-                Regex("\\.(png|jpe?g|gif|webp|avif|svg|ico|bmp)$").containsMatchIn(path) -> "image"
-                Regex("\\.(mp4|webm|m4s|mp3|ogg|m3u8|ts)$").containsMatchIn(path) -> "media"
+                IMAGE_EXT.containsMatchIn(path) -> "image"
+                MEDIA_EXT.containsMatchIn(path) -> "media"
                 a == "*/*" || a.contains("application/json") -> "xmlhttprequest"
                 else -> "other"
             }

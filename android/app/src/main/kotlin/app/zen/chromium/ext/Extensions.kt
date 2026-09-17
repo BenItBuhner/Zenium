@@ -56,8 +56,11 @@ class Extensions(private val host: Host) {
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-ext") }
 
-    /** One document-start script, injected into frames whose origin matches `origins`. */
-    class ScriptUnit(val origins: Set<String>, val script: String)
+    /**
+     * One document-start script, injected into frames whose origin matches `origins`; into the
+     * named isolated world when `world` is set (only when the WebView has isolated worlds).
+     */
+    class ScriptUnit(val origins: Set<String>, val script: String, val world: String?)
 
     /** What the core configured for one enabled extension. */
     class Served(
@@ -72,7 +75,18 @@ class Extensions(private val host: Host) {
         val pageConfig: String
     )
 
-    class Endpoint(val view: WebView, val proxy: JavaScriptReplyProxy, val context: String, val extensionId: String)
+    class Endpoint(val view: WebView, val proxy: JavaScriptReplyProxy, val context: String, val extensionId: String, val isMainFrame: Boolean)
+
+    /**
+     * Real isolated worlds: `JS_INJECTION_IN_FRAME_AND_WORLD` (androidx.webkit 1.17, Chromium 146+
+     * WebView). Content-script units then run in a per-extension world and the emulation proxy is
+     * off. Resolved once, on the main thread, when the core first scans.
+     */
+    val isolatedWorlds: Boolean by lazy {
+        runCatching { WebViewFeature.isFeatureSupported(WebViewFeature.JS_INJECTION_IN_FRAME_AND_WORLD) }.getOrDefault(false)
+    }
+    /** Worlds (by name) whose bridge listener is already registered on a WebView. */
+    private val worldListeners = WeakHashMap<WebView, MutableSet<String>>()
 
     @Volatile private var units: List<ScriptUnit> = emptyList()
     @Volatile private var served: Map<String, Served> = emptyMap()
@@ -95,7 +109,15 @@ class Extensions(private val host: Host) {
 
     fun handle(method: String, args: JSONObject, reply: (Any?) -> Unit) {
         when (method) {
-            "ext.scan" -> io.execute { val list = scan(); main.post { reply(json("token" to token, "extensions" to list, "uiLanguage" to Locale.getDefault().toLanguageTag())) } }
+            "ext.scan" -> {
+                val worlds = isolatedWorlds
+                io.execute {
+                    val list = scan()
+                    main.post {
+                        reply(json("token" to token, "extensions" to list, "uiLanguage" to Locale.getDefault().toLanguageTag(), "isolatedWorlds" to worlds))
+                    }
+                }
+            }
             "ext.configure" -> configure(args, reply)
             "ext.setRules" -> setRules(args, reply)
             "ext.observeRequests" -> { observeRequests = args.bool("on"); reply(null) }
@@ -196,7 +218,8 @@ class Extensions(private val host: Host) {
                     css["${c.str("ext")}/${c.str("path").trimStart('/')}"] = text
                 }
                 val origins = u.arr("origins").let { a -> List(a.length()) { k -> a.optString(k, "*") } }.toSet().ifEmpty { setOf("*") }
-                unitsNow.add(ScriptUnit(origins, ExtensionScripts.documentStart(bootstrapText, u.str("config", "{}"), groups, css, debug)))
+                val world = u.strOrNull("world")?.takeIf { it.isNotEmpty() && isolatedWorlds }
+                unitsNow.add(ScriptUnit(origins, ExtensionScripts.documentStart(bootstrapText, u.str("config", "{}"), groups, css, debug), world))
             }
             main.post {
                 this.debug = debug
@@ -220,33 +243,69 @@ class Extensions(private val host: Host) {
     private fun setRules(args: JSONObject, reply: (Any?) -> Unit) {
         io.execute {
             val started = System.nanoTime()
-            val all = JSONArray()
+            val all = ArrayList<NetRules.Rule>()
             val statics = args.arr("static")
             var files = 0
+            var cached = 0
             for (i in 0 until statics.length()) {
                 val s = statics.optJSONObject(i) ?: continue
                 val ext = s.str("ext")
                 val paths = s.arr("paths")
                 for (j in 0 until paths.length()) {
-                    val text = runCatching { fileFor(ext, paths.optString(j, ""))?.readText() }.getOrNull() ?: continue
-                    val raw = runCatching { JSONArray(text) }.getOrNull() ?: continue
+                    val file = fileFor(ext, paths.optString(j, "")) ?: continue
+                    if (!file.isFile) continue
+                    val loaded = loadStaticRuleset(ext, file) ?: continue
                     files++
-                    for (k in 0 until raw.length()) {
-                        val normalised = NetRules.fromChromeRule(raw.optJSONObject(k) ?: continue, "https://$ext$ORIGIN_SUFFIX") ?: continue
-                        all.put(normalised)
-                    }
+                    if (loaded.second) cached++
+                    all.addAll(loaded.first)
                 }
             }
             val dynamic = args.arr("dynamic")
-            for (i in 0 until dynamic.length()) dynamic.optJSONObject(i)?.let(all::put)
-            val compiled = if (all.length() == 0) null else NetRules(all)
+            for (i in 0 until dynamic.length()) {
+                val o = dynamic.optJSONObject(i) ?: continue
+                runCatching { NetRules.parse(o) }.getOrNull()?.let(all::add)
+            }
+            val compiled = if (all.isEmpty()) null else NetRules(all)
             val ms = (System.nanoTime() - started) / 1_000_000
             main.post {
                 rules = compiled
-                Log.i(TAG, "rules: ${compiled?.rules?.size ?: 0} from $files file(s) in $ms ms")
-                reply(json("rules" to (compiled?.rules?.size ?: 0), "files" to files, "ms" to ms))
+                Log.i(TAG, "rules: ${compiled?.rules?.size ?: 0} from $files file(s) ($cached cached) in $ms ms")
+                reply(json("rules" to (compiled?.rules?.size ?: 0), "files" to files, "cached" to cached, "ms" to ms))
             }
         }
+    }
+
+    /**
+     * One static ruleset: Chrome's rule format normalised to the model `NetRules.parse` reads.
+     * The normalised form is cached next to the app's storage keyed by the file's size and mtime,
+     * so warm starts skip the Chrome→model conversion (regexes compile lazily either way).
+     * Returns the rules and whether they came from the cache.
+     */
+    private fun loadStaticRuleset(ext: String, file: File): Pair<List<NetRules.Rule>, Boolean>? {
+        val cacheDir = File(host.activity.cacheDir, "ext-rules/$ext").apply { mkdirs() }
+        val cacheFile = File(cacheDir, "${file.name}.${file.length()}.${file.lastModified()}.json")
+        runCatching {
+            if (cacheFile.isFile) {
+                val arr = JSONArray(cacheFile.readText())
+                val rules = ArrayList<NetRules.Rule>(arr.length())
+                for (k in 0 until arr.length()) arr.optJSONObject(k)?.let { rules.add(NetRules.parse(it)) }
+                return rules to true
+            }
+        }
+        val text = runCatching { file.readText() }.getOrNull() ?: return null
+        val raw = runCatching { JSONArray(text) }.getOrNull() ?: return null
+        val normalised = JSONArray()
+        val rules = ArrayList<NetRules.Rule>(raw.length())
+        for (k in 0 until raw.length()) {
+            val o = NetRules.fromChromeRule(raw.optJSONObject(k) ?: continue, "https://$ext$ORIGIN_SUFFIX") ?: continue
+            normalised.put(o)
+            runCatching { NetRules.parse(o) }.getOrNull()?.let(rules::add)
+        }
+        runCatching {
+            cacheDir.listFiles()?.filter { it.name.startsWith(file.name + ".") }?.forEach { it.delete() }
+            cacheFile.writeText(normalised.toString())
+        }
+        return rules to false
     }
 
     /** Host → endpoint: the reply proxy of the frame that said hello. A dead frame reports `ext.gone`. */
@@ -262,10 +321,28 @@ class Extensions(private val host: Host) {
             reply(Host.Rejection("No tab with that id"))
             return
         }
+        val ext = args.str("ext")
         val script = ExtensionScripts.exec(
-            token, args.str("ext"), args.str("kind", "js"), args.obj("payload"),
+            token, ext, args.str("kind", "js"), args.obj("payload"),
             args.strOrNull("code"), args.strOrNull("funcSource"), args.optJSONArray("args")?.toString()
         )
+        if (isolatedWorlds) {
+            // `__zenExtExec` lives in the extension's world, out of `evaluateJavascript`'s reach; the
+            // main frame's reply proxy executes in the frame and world it came from.
+            val endpoint = endpoints.values.firstOrNull { it.view === tab && it.extensionId == ext && it.context == "content" && it.isMainFrame }
+            if (endpoint == null) {
+                reply(Host.Rejection("The extension has no content-script world in that tab yet"))
+                return
+            }
+            val delivered = runCatching {
+                endpoint.proxy.executeJavaScript(script, object : androidx.webkit.WebViewOutcomeReceiver<String, androidx.webkit.JavaScriptExecutionException> {
+                    override fun onResult(result: String?) { main.post { reply(Host.RawJson(result ?: "null")) } }
+                    override fun onError(error: androidx.webkit.JavaScriptExecutionException) { main.post { reply(Host.Rejection(error.message ?: "script failed")) } }
+                })
+            }.isSuccess
+            if (!delivered) reply(Host.Rejection("The frame's world is gone"))
+            return
+        }
         tab.evaluateJavascript(script) { result -> reply(Host.RawJson(result ?: "null")) }
     }
 
@@ -288,14 +365,31 @@ class Extensions(private val host: Host) {
         handlers.remove(view)?.forEach { runCatching { it.remove() } }
         val list = ArrayList<ScriptHandler>()
         for (unit in units) {
-            val handler = runCatching { WebViewCompat.addDocumentStartJavaScript(view, unit.script, unit.origins) }
+            val handler = runCatching { addUnit(view, unit, unit.origins) }
                 .recoverCatching {
                     // An origin rule the WebView rejects: fall back to every origin (the bootstrap matches anyway).
-                    WebViewCompat.addDocumentStartJavaScript(view, unit.script, setOf("*"))
+                    addUnit(view, unit, setOf("*"))
                 }.getOrNull() ?: continue
             list.add(handler)
         }
         handlers[view] = list
+    }
+
+    /**
+     * Main world: `addDocumentStartJavaScript`. Isolated world: the world's own bridge listener
+     * (once per WebView and world; the injected object is world-scoped and comes first) and
+     * `addJavaScriptOnEvent(DOCUMENT_START)` in that world.
+     */
+    private fun addUnit(view: WebView, unit: ScriptUnit, origins: Set<String>): ScriptHandler {
+        val worldName = unit.world ?: return WebViewCompat.addDocumentStartJavaScript(view, unit.script, origins)
+        val world = WebViewCompat.getExecutionWorld(view, worldName)
+        val registered = worldListeners.getOrPut(view) { HashSet() }
+        if (registered.add(worldName)) {
+            WebViewCompat.addWebMessageListener(view, BRIDGE, setOf("*"), world) { v, message, origin, isMainFrame, proxy ->
+                onBridgeMessage(v, message.data, origin, isMainFrame, proxy, "content")
+            }
+        }
+        return WebViewCompat.addJavaScriptOnEvent(view, unit.script, WebViewCompat.INJECTION_EVENT_DOCUMENT_START, origins, world)
     }
 
     /** The main frame of a tab navigated or the tab died: every endpoint in it is gone. */
@@ -307,6 +401,7 @@ class Extensions(private val host: Host) {
     fun detach(view: WebView) {
         onDocumentGone(view)
         handlers.remove(view)
+        worldListeners.remove(view)
     }
 
     private fun gone(eps: List<String>) {
@@ -324,7 +419,7 @@ class Extensions(private val host: Host) {
         when (message.str("t")) {
             "hello" -> {
                 val context = message.str("ctx", kind)
-                endpoints[ep] = Endpoint(view, proxy, context, message.str("ext"))
+                endpoints[ep] = Endpoint(view, proxy, context, message.str("ext"), isMainFrame)
             }
             "popupSize" -> {
                 popup?.resize(message.optInt("width"), message.optInt("height"))
@@ -386,9 +481,62 @@ class Extensions(private val host: Host) {
             null, NetRules.Decision.Allow -> null
             NetRules.Decision.Block -> blocked()
             NetRules.Decision.UpgradeScheme ->
-                if (url.scheme == "http") redirect(url.buildUpon().scheme("https").build().toString()) else null
-            is NetRules.Decision.Redirect -> redirect(decision.url)
+                if (url.scheme == "http") redirect(url.buildUpon().scheme("https").build().toString(), request, type) else null
+            is NetRules.Decision.Redirect -> redirect(decision.url, request, type)
         }
+    }
+
+    /**
+     * WebView cannot answer an intercepted request with a real redirect: `WebResourceResponse`
+     * throws for any status in 300..399 (measured; it took the process down). Redirects are
+     * therefore emulated: documents get a page that replaces itself with the target, targets on an
+     * extension origin are served in place, and other subresources are fetched here on the
+     * intercept thread and their body substituted. Non-GET requests are let through unchanged.
+     */
+    private fun redirect(location: String, request: WebResourceRequest, type: String): WebResourceResponse? {
+        if (type == "main_frame" || type == "sub_frame") {
+            val html = "<!doctype html><meta charset=\"utf-8\"><script>location.replace(${JSONObject.quote(location)})</script>"
+            return response("text/html", 200, "OK", html.toByteArray())
+        }
+        val target = Uri.parse(location)
+        val targetHost = target.host ?: return null
+        if (targetHost.endsWith(ORIGIN_SUFFIX)) {
+            val ext = served[targetHost.removeSuffix(ORIGIN_SUFFIX)] ?: return notFound()
+            return serve(ext, (target.path ?: "/").trimStart('/'))
+        }
+        return fetchSubstitute(location, request)
+    }
+
+    /** A blocking fetch of `location` whose response stands in for the intercepted request. */
+    private fun fetchSubstitute(location: String, request: WebResourceRequest): WebResourceResponse? {
+        val method = request.method ?: "GET"
+        if (method != "GET" && method != "HEAD") return null
+        return runCatching {
+            val connection = java.net.URL(location).openConnection() as java.net.HttpURLConnection
+            connection.requestMethod = method
+            connection.instanceFollowRedirects = true
+            connection.connectTimeout = 10_000
+            connection.readTimeout = 15_000
+            request.requestHeaders?.forEach { (name, value) ->
+                // Host is the target's; Accept-Encoding stays with HttpURLConnection so it decodes transparently.
+                if (!name.equals("Host", true) && !name.equals("Accept-Encoding", true)) connection.setRequestProperty(name, value)
+            }
+            val status = connection.responseCode
+            if (status < 100 || status in 300..399 || status > 599) return null
+            val body = (if (status >= 400) connection.errorStream else connection.inputStream) ?: ByteArrayInputStream(ByteArray(0))
+            val contentType = connection.contentType ?: "application/octet-stream"
+            val mime = contentType.substringBefore(';').trim().ifEmpty { "application/octet-stream" }
+            val charset = contentType.substringAfter("charset=", "").substringBefore(';').trim().ifEmpty { null }
+            val headers = HashMap<String, String>()
+            for ((name, values) in connection.headerFields) {
+                if (name == null || values.isNullOrEmpty()) continue
+                // Body arrives decoded and re-framed; the length and encoding headers would lie.
+                if (name.equals("Content-Length", true) || name.equals("Content-Encoding", true) || name.equals("Transfer-Encoding", true)) continue
+                headers[name] = values.joinToString(", ")
+            }
+            headers["X-Zenium-Redirected-From"] = request.url.toString()
+            WebResourceResponse(mime, charset, status, connection.responseMessage?.ifEmpty { null } ?: "OK", headers, body)
+        }.getOrNull()
     }
 
     private fun serve(ext: Served, path: String): WebResourceResponse {
@@ -414,8 +562,6 @@ class Extensions(private val host: Host) {
 
     /** Chrome answers a blocked request with net::ERR_BLOCKED_BY_CLIENT; the closest WebView has is an empty 403. */
     private fun blocked() = response("text/plain", 403, "Blocked by extension", ByteArray(0))
-
-    private fun redirect(location: String) = response("text/plain", 302, "Found", ByteArray(0), mapOf("Location" to location))
 
     private fun decisionName(decision: NetRules.Decision?): String = when (decision) {
         null -> "none"

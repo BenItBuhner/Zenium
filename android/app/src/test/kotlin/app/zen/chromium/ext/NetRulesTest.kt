@@ -39,6 +39,25 @@ class NetRulesTest {
     }
 
     @Test
+    fun `regexes compile lazily and a malformed regexFilter only disables its own rule`() {
+        val rules = rulesOf(
+            """{"id":1,"action":{"type":"block"},"condition":{"regexFilter":"(unclosed","resourceTypes":["script"]}}""",
+            """{"id":2,"action":{"type":"block"},"condition":{"urlFilter":"||ads.test^","resourceTypes":["script"]}}"""
+        )
+        assertEquals(2, rules.rules.size)
+        assertNull(rules.rules[0].urlRegex)
+        assertEquals(NetRules.Decision.Block, rules.decide("https://ads.test/a.js", null, "script", "GET"))
+        assertNull(rules.decide("https://x.test/(unclosed", null, "script", "GET"))
+    }
+
+    @Test
+    fun `the literal prefilter rejects without touching the regex`() {
+        val rules = rulesOf("""{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"||ads.test^","resourceTypes":["script"]}}""")
+        assertNull(rules.decide("https://x.test/a.js", null, "script", "GET"))
+        assertEquals("ads.test", rules.rules[0].requiredLiteral)
+    }
+
+    @Test
     fun `resource types default to everything but main_frame`() {
         val rules = rulesOf("""{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"tracker"}}""")
         assertEquals(NetRules.Decision.Block, rules.decide("https://x.test/tracker.js", null, "script", "GET"))

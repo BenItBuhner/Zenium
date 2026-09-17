@@ -86,6 +86,8 @@ class ExtensionDemo {
         val probe = File(zen, "extensions/$PROBE_ID")
         probe.deleteRecursively()
         copyAssets("ext-probe", probe)
+        // AAPT drops asset directories whose name starts with `_`, so the probe ships `locales/`.
+        File(probe, "locales").renameTo(File(probe, "_locales"))
         out.deleteRecursively()
         out.mkdirs()
     }

@@ -173,6 +173,14 @@ declare const __zenExtBoot: Boot
     mode: IsolationMode
   ): Record<string, unknown> {
     if (mode === 'none') return realWindow as unknown as Record<string, unknown>
+    if (mode === 'world') {
+      // This script already runs in the extension's own isolated world: its global is the
+      // content scripts' window, exactly as in Chrome, and `chrome` simply lives on it.
+      const world = realWindow as unknown as Record<string, unknown>
+      world.chrome = chrome
+      world.browser = chrome
+      return world
+    }
     const store: Record<PropertyKey, unknown> = Object.create(null)
     const bound = new Map<PropertyKey, unknown>()
     const target = Object.create(Object.getPrototypeOf(realWindow) as object) as Record<

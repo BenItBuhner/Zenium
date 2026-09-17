@@ -17,8 +17,15 @@ import { planInjection, type RegisteredContentScript } from './plan'
  *    bare identifiers resolve through the store and the browser's globals first. Faithful for the
  *    expando pattern; every free identifier lookup becomes a `has` plus a `get` trap. The default.
  *  - `none`: run against the real window (what `world: "MAIN"` declarations get).
+ *  - `world`: the host injects the unit into a real Chromium isolated world (androidx.webkit
+ *    `JS_INJECTION_IN_FRAME_AND_WORLD`, Chromium 146+ WebView). The world's own global is the
+ *    content scripts' `window`; the bootstrap adds `chrome` to it and no proxy is involved. Used
+ *    when the host reports the capability, otherwise `with`.
  */
-export type IsolationMode = 'shadow' | 'with' | 'none'
+export type IsolationMode = 'shadow' | 'with' | 'none' | 'world'
+
+/** The isolated world an extension's content scripts run in on hosts that have real worlds. */
+export const worldNameFor = (extensionId: string): string => `zenium-ext-${extensionId}`
 
 export interface BootGroup {
   index: number

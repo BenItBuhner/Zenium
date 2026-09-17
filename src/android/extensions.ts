@@ -10,7 +10,8 @@ import {
   type ExtensionBoot,
   type IsolationMode,
   type PageBootConfig,
-  type PageContext
+  type PageContext,
+  worldNameFor
 } from '@core/extensions/runtime/boot'
 import { normalizeRule, normalizeRuleset, type NetRule } from '@core/extensions/runtime/dnr'
 import {
@@ -56,6 +57,8 @@ interface ScanResult {
   token: string
   uiLanguage: string
   extensions: Scanned[]
+  /** The WebView can inject into named isolated worlds (Chromium 146+ via androidx.webkit 1.17). */
+  isolatedWorlds?: boolean
 }
 
 export interface ExtMessageEvent {
@@ -191,6 +194,8 @@ export class AndroidExtensionHost implements ExtensionHost {
   private activeTabId: string | null = null
   private knownTabIds = new Set<string>()
   private observing = false
+  /** Reported by Kotlin: real isolated worlds are available, so the emulation proxy is not used. */
+  private isolatedWorlds = false
 
   constructor(
     private readonly bridge: Bridge,
@@ -340,6 +345,7 @@ export class AndroidExtensionHost implements ExtensionHost {
     const result = await this.bridge.call<ScanResult>('ext.scan')
     this.token = result.token
     this.uiLanguage = result.uiLanguage || navigator.language || 'en'
+    this.isolatedWorlds = result.isolatedWorlds === true
     const next = new Map<string, Loaded>()
     for (const entry of result.extensions) next.set(entry.id, this.load(entry))
     this.loaded = next
@@ -403,7 +409,7 @@ export class AndroidExtensionHost implements ExtensionHost {
       ext.manifest,
       ext.messages,
       this.data.registered[ext.id] ?? [],
-      this.data.isolation
+      this.isolatedWorlds ? 'world' : this.data.isolation
     )
   }
 
@@ -425,10 +431,15 @@ export class AndroidExtensionHost implements ExtensionHost {
   /**
    * Tell Kotlin what to inject and serve. Extensions with identical origin rules share one
    * document-start unit; the bootstrap inside each unit still evaluates the full match patterns.
+   * With real isolated worlds every extension gets its own unit in its own world (plus a
+   * main-world unit when it declares `world: "MAIN"` scripts), since a world holds one extension.
    */
   private async configure(): Promise<void> {
     if (!this.started) return
-    const units = new Map<string, { origins: string[]; extensions: ExtensionBoot[] }>()
+    const units = new Map<
+      string,
+      { origins: string[]; extensions: ExtensionBoot[]; world: string | null }
+    >()
     const served: Record<string, unknown> = {}
     const enabled = this.enabled()
     for (const ext of enabled) {
@@ -437,10 +448,26 @@ export class AndroidExtensionHost implements ExtensionHost {
       const boot = this.bootFor(ext)
       const origins = this.originsFor(ext, boot)
       if (origins.size > 0) {
-        const key = [...origins].sort().join(' ')
-        const unit = units.get(key) ?? { origins: [...origins], extensions: [] }
-        unit.extensions.push(boot)
-        units.set(key, unit)
+        if (this.isolatedWorlds) {
+          const isolated = boot.groups.filter((g) => g.world !== 'MAIN')
+          const main = boot.groups.filter((g) => g.world === 'MAIN')
+          units.set(`${ext.id}/isolated`, {
+            origins: [...origins],
+            extensions: [{ ...boot, groups: isolated }],
+            world: worldNameFor(ext.id)
+          })
+          if (main.length > 0)
+            units.set(`${ext.id}/main`, {
+              origins: [...origins],
+              extensions: [{ ...boot, groups: main, isolation: 'none' }],
+              world: null
+            })
+        } else {
+          const key = [...origins].sort().join(' ')
+          const unit = units.get(key) ?? { origins: [...origins], extensions: [], world: null }
+          unit.extensions.push(boot)
+          units.set(key, unit)
+        }
       }
       const background = manifest.background
       const pageConfig: Omit<PageBootConfig, 'context'> = {
@@ -483,7 +510,13 @@ export class AndroidExtensionHost implements ExtensionHost {
           for (const path of group.css) css.push({ ext: ext.id, path })
         }
       }
-      return { origins: unit.origins, config: JSON.stringify(config), groups, css }
+      return {
+        origins: unit.origins,
+        config: JSON.stringify(config),
+        groups,
+        css,
+        world: unit.world
+      }
     })
     await this.bridge.call('ext.configure', { units: unitList, extensions: served, debug: true })
     await this.pushRules()

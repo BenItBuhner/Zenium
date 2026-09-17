@@ -47,16 +47,100 @@ class EngineProbe {
         out.deleteRecursively()
         out.mkdirs()
         val result = JSONObject()
-        result.put("device", device())
-        result.put("webViewPackage", webViewPackage())
-        result.put("androidxWebkitFeatures", features())
-        result.put("providerFeatures", providerFeatures())
-        result.put("reflection", reflection())
-        result.put("chromeExtensionUrl", chromeExtensionUrl())
-        result.put("pageGlobals", pageGlobals())
-        result.put("fakeOrigin", fakeOrigin())
-        File(out, "engine-probe.json").writeText(result.toString(2))
+        // Every step is independent evidence: one failing must not lose the others.
+        val steps = listOf<Pair<String, () -> Any>>(
+            "device" to ::device,
+            "webViewPackage" to ::webViewPackage,
+            "androidxWebkitFeatures" to ::features,
+            "providerFeatures" to ::providerFeatures,
+            "reflection" to ::reflection,
+            "chromeExtensionUrl" to ::chromeExtensionUrl,
+            "pageGlobals" to ::pageGlobals,
+            "redirectResponse" to ::redirectResponse,
+            "isolatedWorld" to ::isolatedWorld,
+            "fakeOrigin" to ::fakeOrigin
+        )
+        for ((name, step) in steps) {
+            val value = runCatching(step).getOrElse { JSONObject().put("error", it.toString()) }
+            result.put(name, value)
+            File(out, "engine-probe.json").writeText(result.toString(2))
+        }
         Log.i(TAG, "engine probe: ${result.toString()}")
+    }
+
+    /**
+     * Can `shouldInterceptRequest` answer with a redirect? `WebResourceResponse` validates its
+     * status code in the constructor: 3xx is rejected outright (this is what took the process
+     * down in the first prototype run), so redirects have to be emulated by substitution.
+     */
+    private fun redirectResponse(): JSONObject {
+        val result = JSONObject()
+        for (status in listOf(301, 302, 303, 307, 308)) {
+            val outcome = runCatching {
+                WebResourceResponse("text/plain", "utf-8", status, "Redirect", mapOf("Location" to "/x"), ByteArrayInputStream(ByteArray(0)))
+                "constructed"
+            }.getOrElse { it.toString() }
+            result.put(status.toString(), outcome)
+        }
+        result.put("200", runCatching { WebResourceResponse("text/plain", "utf-8", 200, "OK", emptyMap(), ByteArrayInputStream(ByteArray(0))); "constructed" }.getOrElse { it.toString() })
+        result.put("204", runCatching { WebResourceResponse("text/plain", "utf-8", 204, "No Content", emptyMap(), ByteArrayInputStream(ByteArray(0))); "constructed" }.getOrElse { it.toString() })
+        return result
+    }
+
+    /**
+     * Real isolated worlds (androidx.webkit 1.17 `JS_INJECTION_IN_FRAME_AND_WORLD`): when the
+     * provider has them, inject a document-start script into a named world of a page that defines
+     * a page global, and record what each side can see of the other.
+     */
+    private fun isolatedWorld(): JSONObject {
+        val result = JSONObject()
+        val supported = WebViewFeature.isFeatureSupported(WebViewFeature.JS_INJECTION_IN_FRAME_AND_WORLD)
+        result.put("featureSupported", supported)
+        if (!supported) return result
+        val fromWorld = JSONArray()
+        val latch = CountDownLatch(1)
+        lateinit var view: WebView
+        instrumentation.runOnMainSync {
+            view = WebView(app)
+            view.settings.javaScriptEnabled = true
+            val world = WebViewCompat.getExecutionWorld(view, "zenium-probe")
+            WebViewCompat.addWebMessageListener(view, "probeBridge", setOf("*"), world) { _, message, _, _, _ ->
+                synchronized(fromWorld) { fromWorld.put(message.data) }
+            }
+            WebViewCompat.addJavaScriptOnEvent(
+                view,
+                """
+                window.__worldVar = 'isolated';
+                var report = function (phase) {
+                  probeBridge.postMessage(JSON.stringify({
+                    phase: phase, chrome: typeof chrome, pageVar: typeof window.pageVar, bareBridge: typeof probeBridge,
+                    sameDocument: document === window.document, title: document.title, readyState: document.readyState,
+                    arrayIsPageArray: Array === window.Array, worldVar: window.__worldVar
+                  }));
+                };
+                report('document_start');
+                document.addEventListener('DOMContentLoaded', function () { report('document_end'); });
+                """.trimIndent(),
+                WebViewCompat.INJECTION_EVENT_DOCUMENT_START,
+                setOf("*"),
+                world
+            )
+            view.webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(v: WebView, request: WebResourceRequest): WebResourceResponse? =
+                    if (request.url.host == "world$ORIGIN_SUFFIX")
+                        text("text/html", "<title>world-probe</title><script>window.pageVar = 42; window.__pageSeesWorld = typeof window.__worldVar; window.__pageSeesBridge = typeof probeBridge;</script><p>hi</p>")
+                    else null
+
+                override fun onPageFinished(v: WebView, url: String) { latch.countDown() }
+            }
+            view.loadUrl("https://world$ORIGIN_SUFFIX/")
+        }
+        result.put("pageFinished", latch.await(15, TimeUnit.SECONDS))
+        Thread.sleep(500)
+        result.put("mainWorld", runCatching { JSONObject(evaluate(view, "JSON.stringify({ pageVar: typeof window.pageVar, worldVar: typeof window.__worldVar, pageSawWorldVar: window.__pageSeesWorld, pageSawBridge: window.__pageSeesBridge, bridge: typeof probeBridge })")) }.getOrElse { JSONObject().put("error", it.toString()) })
+        synchronized(fromWorld) { result.put("isolatedWorld", JSONArray(fromWorld.toString())) }
+        instrumentation.runOnMainSync { view.destroy() }
+        return result
     }
 
     private fun device(): JSONObject = JSONObject()
@@ -260,9 +344,31 @@ class EngineProbe {
         mapOf("Access-Control-Allow-Origin" to "*", "Cache-Control" to "no-cache"), ByteArrayInputStream(body)
     )
 
-    private fun redirect(location: String) = WebResourceResponse(
-        "text/plain", "utf-8", 302, "Found", mapOf("Location" to location), ByteArrayInputStream(ByteArray(0))
-    )
+    /**
+     * A 302 cannot be returned (see `redirectResponse`); the fake origin substitutes the target's
+     * body and marks the response, so the page-side step records `redirected: false` and the
+     * original URL, which is exactly the limitation the emulation layer must live with.
+     */
+    private fun redirect(location: String): WebResourceResponse {
+        val attempted = runCatching {
+            WebResourceResponse("text/plain", "utf-8", 302, "Found", mapOf("Location" to location), ByteArrayInputStream(ByteArray(0)))
+        }
+        val body = when (location) {
+            "/index.html" -> INDEX_HTML
+            "/redirected.txt" -> "landed"
+            else -> ""
+        }
+        val mime = if (location.endsWith(".html")) "text/html" else "text/plain"
+        return WebResourceResponse(
+            mime, "utf-8", 200, "OK",
+            mapOf(
+                "Access-Control-Allow-Origin" to "*",
+                "X-Substituted-For" to location,
+                "X-302-Attempt" to (attempted.exceptionOrNull()?.toString() ?: "constructed")
+            ),
+            ByteArrayInputStream(body.toByteArray())
+        )
+    }
 
     private fun notFound() = WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), ByteArrayInputStream(ByteArray(0)))
 
@@ -332,7 +438,7 @@ class EngineProbe {
             var frame = new Promise(function (res) { window.addEventListener('message', function (e) { res(e.data); }); setTimeout(function () { res('timeout'); }, 5000); });
             var steps = [
               fetch('/data.json').then(function (q) { return q.json(); }).then(function (j) { r.steps.fetchJson = j.ok; }).catch(bad('fetchJson')),
-              fetch('/redirect').then(function (q) { return q.text().then(function (t) { r.steps.redirect302 = { status: q.status, redirected: q.redirected, url: q.url, body: t }; }); }).catch(bad('redirect302')),
+              fetch('/redirect').then(function (q) { return q.text().then(function (t) { r.steps.redirect302 = { status: q.status, redirected: q.redirected, url: q.url, body: t, substitutedFor: q.headers.get('X-Substituted-For'), attempt302: q.headers.get('X-302-Attempt') }; }); }).catch(bad('redirect302')),
               fetch('/big.bin', { headers: { Range: 'bytes=10-19' } }).then(function (q) { return q.arrayBuffer().then(function (b) { r.steps.range = { status: q.status, bytes: b.byteLength, contentRange: q.headers.get('Content-Range'), rangeSeen: q.headers.get('X-Range-Seen') }; }); }).catch(bad('range')),
               import('/dynamic.mjs').then(function (m) { r.steps.dynamicImport = m.value; }).catch(bad('dynamicImport')),
               fetch('https://other.ext.zenium.invalid/cors.json').then(function (q) { return q.json(); }).then(function (j) { r.steps.corsBetweenOrigins = j.ok; }).catch(bad('corsBetweenOrigins')),
