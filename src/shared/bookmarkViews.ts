@@ -46,6 +46,25 @@ export function sortManagerRows(nodes: readonly BookmarkNode[], sort: ManagerSor
   })
 }
 
+/** Chrome asks before "Open all" opens this many pages at once (`kNumBookmarkUrlsBeforePrompting`). */
+export const OPEN_ALL_PROMPT_AT = 15
+
+/**
+ * The confirmation "Open all" shows for `count` pages, or null when they open without asking.
+ * The shape is the dialog host's `ConfirmOptions`.
+ */
+export function openAllPrompt(
+  count: number
+): { message: string; detail: string; okLabel: string; cancelLabel: string } | null {
+  if (count < OPEN_ALL_PROMPT_AT) return null
+  return {
+    message: 'Open all bookmarks?',
+    detail: `You are about to open ${count} tabs. Are you sure?`,
+    okLabel: 'Open All',
+    cancelLabel: 'Cancel'
+  }
+}
+
 /**
  * Chrome's "Sort by name" on a folder: its direct children, folders first, then A to Z, as the
  * ids to hand `move(ids, folderId, 0)` in one call. Null when the folder is missing or already

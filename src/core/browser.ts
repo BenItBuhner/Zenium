@@ -65,7 +65,7 @@ import {
 } from './model'
 import { getDomain, inputToUrl } from '../shared/url'
 import { overlayForUrl } from '../shared/zenPages'
-import { sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
+import { openAllPrompt, sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
 import { buildSearchUrl, matchEngineKeyword } from '../shared/search'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
@@ -653,26 +653,36 @@ export class Browser {
   }
 
   /** Open the bookmarks below the given nodes in a new window (private when asked). */
-  openBookmarksInWindow(ids: readonly string[], isPrivate: boolean, win: ZenWindow): void {
-    const urls = this.collectBookmarkUrls(ids)
+  async openBookmarksInWindow(
+    ids: readonly string[],
+    isPrivate: boolean,
+    win: ZenWindow
+  ): Promise<void> {
+    const urls = await this.bookmarkUrlsToOpen(ids, win)
     if (urls.length === 0) return
     const target = this.openWindow(isPrivate ? 'private' : 'synced', win)
     if (!target) return
     urls.forEach((url, i) => this.tabs.createTab({ url, active: i === 0 }, target))
   }
 
-  private collectBookmarkUrls(ids: readonly string[]): string[] {
+  /**
+   * The pages below the given nodes, each once; 15 or more ask first (Chrome), and only pages
+   * that do open count as used.
+   */
+  private async bookmarkUrlsToOpen(ids: readonly string[], win: ZenWindow): Promise<string[]> {
     const seen = new Set<string>()
-    const urls: string[] = []
+    const nodes: BookmarkNode[] = []
     for (const id of ids) {
       for (const node of this.bookmarks.tree.urlsUnder(id)) {
         if (!node.url || seen.has(node.id)) continue
         seen.add(node.id)
-        urls.push(node.url)
-        this.bookmarks.touch(node.id)
+        nodes.push(node)
       }
     }
-    return urls
+    const prompt = openAllPrompt(nodes.length)
+    if (prompt && !(await this.platform.dialogs.confirm(prompt, win))) return []
+    nodes.forEach((node) => this.bookmarks.touch(node.id))
+    return nodes.map((node) => node.url ?? '')
   }
 
   /** Open a bookmark in the given tab (or a new one) and remember that it was used. */
@@ -685,8 +695,8 @@ export class Browser {
   }
 
   /** Open every bookmark below the given nodes in new tabs (the first one becomes active). */
-  openBookmarks(ids: readonly string[], win: ZenWindow): void {
-    const urls = this.collectBookmarkUrls(ids)
+  async openBookmarks(ids: readonly string[], win: ZenWindow): Promise<void> {
+    const urls = await this.bookmarkUrlsToOpen(ids, win)
     urls.forEach((url, i) => this.tabs.createTab({ url, active: i === 0 }, win))
   }
 

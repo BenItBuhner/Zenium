@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import type { BookmarkNode } from '../types'
 import { BOOKMARKS_BAR_ID, BookmarkTree, createBookmarkRoots } from '../bookmarks'
 import {
+  OPEN_ALL_PROMPT_AT,
   bookmarksBarVisible,
+  openAllPrompt,
   sortManagerRows,
   sortedByNameOrder,
   toggledBookmarksBarMode
@@ -108,5 +110,22 @@ describe('sortedByNameOrder', () => {
     ])
     expect(sortedByNameOrder(tree, 'missing')).toBeNull()
     expect(sortedByNameOrder(tree, 'alpha')).toBeNull()
+  })
+})
+
+describe('openAllPrompt', () => {
+  it('opens fewer than 15 pages without asking', () => {
+    expect(openAllPrompt(0)).toBeNull()
+    expect(openAllPrompt(OPEN_ALL_PROMPT_AT - 1)).toBeNull()
+  })
+
+  it('asks from 15 pages on, naming the count', () => {
+    expect(openAllPrompt(OPEN_ALL_PROMPT_AT)).toMatchObject({
+      message: 'Open all bookmarks?',
+      detail: 'You are about to open 15 tabs. Are you sure?',
+      okLabel: 'Open All',
+      cancelLabel: 'Cancel'
+    })
+    expect(openAllPrompt(40)?.detail).toBe('You are about to open 40 tabs. Are you sure?')
   })
 })
