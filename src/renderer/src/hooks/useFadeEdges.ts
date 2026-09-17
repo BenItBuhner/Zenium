@@ -20,7 +20,7 @@ export interface FadeEdgesOptions {
  */
 export function useFadeEdges<T extends HTMLElement>({
   axis = 'auto',
-  size = 32
+  size = 16
 }: FadeEdgesOptions = {}): RefCallback<T> {
   return useCallback(
     (el: T | null) => {

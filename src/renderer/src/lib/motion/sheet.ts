@@ -40,7 +40,7 @@ export type SheetDetent = 'collapsed' | 'expanded'
 /** Share of the layer height the peek detent shows. */
 export const SHEET_PEEK_FRACTION = 0.52
 /** Room (px) kept between the top inset and an expanded sheet, so the page still shows above it. */
-export const SHEET_TOP_MARGIN = 32
+export const SHEET_TOP_MARGIN = 40
 /** Detents closer than this (px) fold into one: a second stop a couple of rows away is noise. */
 export const SHEET_MIN_DETENT_GAP = 96
 /** How far (px) the sheet can be stretched past its expanded detent, with diminishing returns. */

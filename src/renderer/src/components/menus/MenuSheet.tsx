@@ -80,20 +80,21 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
       contentKey={`${menu.id}:${path.map((item) => item.id).join('/')}`}
       handleLabel="Resize menu"
       header={
-        <div className="flex h-10 items-center gap-1 pb-1">
+        <div className="flex h-9 items-center gap-1">
           {path.length > 0 && (
             <button
               type="button"
-              className="zen-toolbar-button h-8 w-8"
+              className="zen-toolbar-button h-11 w-11 shrink-0"
+              style={{ borderRadius: 12 }}
               onClick={() => setNav((n) => ({ path: n.path.slice(0, -1), direction: -1 }))}
               aria-label="Back"
             >
-              <ChevronLeft className="h-4 w-4" />
+              <ChevronLeft className="h-5 w-5" strokeWidth={1.75} />
             </button>
           )}
           <span
             className={cn(
-              'min-w-0 flex-1 truncate text-[14px] font-semibold',
+              'min-w-0 flex-1 truncate text-[17px] font-semibold leading-tight tracking-[-0.012em]',
               path.length === 0 && 'px-3'
             )}
           >
@@ -105,7 +106,7 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
       <div
         key={path.length}
         className={cn(
-          'flex flex-col gap-2.5 pb-1',
+          'flex flex-col gap-2 pb-1',
           nav.direction > 0 && 'zen-drawer-right',
           nav.direction < 0 && 'zen-drawer-left'
         )}
@@ -125,9 +126,11 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
                 >
                   <span className="min-w-0 flex-1 truncate">{item.label}</span>
                   {(item.type === 'checkbox' || item.type === 'radio') && item.checked && (
-                    <Check className="h-4 w-4 shrink-0" />
+                    <Check className="h-5 w-5 shrink-0" strokeWidth={1.75} />
                   )}
-                  {item.submenu && <ChevronRight className="h-4 w-4 shrink-0 opacity-60" />}
+                  {item.submenu && (
+                    <ChevronRight className="h-5 w-5 shrink-0 opacity-60" strokeWidth={1.75} />
+                  )}
                 </button>
               </li>
             ))}

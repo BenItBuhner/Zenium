@@ -623,7 +623,7 @@
     padding-right: 12px;
     border-radius: 28px 28px 0 0;
     background: var(--zen-panel-bg);
-    backdrop-filter: blur(28px) saturate(1.25);
+    backdrop-filter: blur(24px) saturate(1.2);
     box-shadow:
       0 -1px 0 rgb(255 255 255 / 0.35) inset,
       0 -12px 48px rgb(0 0 0 / 0.22);
@@ -709,8 +709,9 @@
    * are the sidebar's rows – same type, the chrome's base radius, a press shows as the element
    * tone – with sections set apart by spacing rather than rules.
    */
+  /* The scrim is the space's own dark, never flat black; the sheet fades it in with its position. */
   .zen-sheet-scrim {
-    background: #000;
+    background: color-mix(in srgb, var(--zen-bg-solid) 30%, #000 70%);
     touch-action: none;
     will-change: opacity;
   }
@@ -722,16 +723,16 @@
   .zen-sheet-handle-hit {
     display: flex;
     width: 100%;
-    height: 22px;
+    height: 20px;
     align-items: center;
     justify-content: center;
   }
   .zen-sheet-handle {
-    width: 36px;
+    width: 32px;
     height: 4px;
     border-radius: 2px;
-    background: rgb(var(--zen-fg-rgb) / 0.22);
-    transition: background 160ms var(--zen-ease);
+    background: rgb(var(--zen-fg-rgb) / 0.25);
+    transition: background 120ms var(--zen-ease);
   }
   .zen-sheet[data-dragging='true'] .zen-sheet-handle {
     background: rgb(var(--zen-fg-rgb) / 0.4);
@@ -751,11 +752,11 @@
   .zen-sheet-item {
     display: flex;
     width: 100%;
-    height: 44px;
+    height: 48px;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
     padding: 0 12px;
-    border-radius: var(--radius-zen);
+    border-radius: 10px;
     corner-shape: var(--zen-corner);
     color: var(--zen-fg);
     text-align: left;
