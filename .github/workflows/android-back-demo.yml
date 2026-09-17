@@ -1,0 +1,80 @@
+name: Android back demo
+
+# Records the predictive back gesture – over a page's history, the three-dot menu and the tab
+# overview, and finally the system's back-to-home with nothing left to pop – on a
+# hardware-accelerated Android 15 emulator and uploads the video and screenshots. Dispatch-only:
+# it takes about ten minutes and has nothing to say about a change being correct. The recording
+# comes from an API 35 Google APIs image on a software GPU, so expect a handful of frames per
+# second; a phone does all of this in a frame.
+on:
+  workflow_dispatch:
+  push:
+    branches: [cursor/predictive-back-63ce]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-back-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  record:
+    name: Record on an API 35 emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools platforms;android-35 build-tools;35.0.0
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
+      - run: npm ci
+      - name: Build the chrome and page script
+        run: npm run build:android:web
+      - name: Assemble the debug APK and the back demo driver
+        working-directory: android
+        run: ./gradlew assembleDebug assembleDebugAndroidTest -PskipWeb --no-daemon --stacktrace
+      - name: Enable KVM for the emulator
+        # https://github.blog/changelog/2023-02-23-hardware-accelerated-android-virtualization-on-actions-windows-and-linux-larger-hosted-runners/
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
+      - name: Record the back gestures
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 3
+          ram-size: 4096M
+          heap-size: 512M
+          # An animator scale of 0 reads as prefers-reduced-motion in the WebView, which would
+          # skip every spring – the animations are what is being recorded.
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: bash .github/scripts/android-back-demo.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-back-demo
+          path: artifacts/android-back-demo/
+          if-no-files-found: warn
+          retention-days: 14
