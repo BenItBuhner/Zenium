@@ -18,6 +18,7 @@ import {
   type MatchRequest
 } from '../matcher'
 import type { Rule, RulesetSource } from '../rules'
+import type { EngineDecision } from '../sink'
 import { EXTENSION_ID, compileAll, rule } from './fixtures'
 
 // ---------------------------------------------------------------------------------------------
@@ -113,7 +114,9 @@ describe('domain lists', () => {
   test('the longest matching entry decides between included and excluded', () => {
     expect(hostMatchesDomainLists('a.example.com', ['example.com'], [])).toBe(true)
     expect(hostMatchesDomainLists('other.com', ['example.com'], [])).toBe(false)
-    expect(hostMatchesDomainLists('b.a.example.com', ['example.com'], ['a.example.com'])).toBe(false)
+    expect(hostMatchesDomainLists('b.a.example.com', ['example.com'], ['a.example.com'])).toBe(
+      false
+    )
     expect(hostMatchesDomainLists('c.example.com', ['example.com'], ['a.example.com'])).toBe(true)
     expect(hostMatchesDomainLists('x.a.example.com', ['a.example.com'], ['example.com'])).toBe(true)
     expect(hostMatchesDomainLists('example.com', [], ['example.com'])).toBe(false)
@@ -172,15 +175,42 @@ describe('precedence inside an extension', () => {
     ])
     const http = { ...SCRIPT, url: 'http://cdn.example.com/a.js' }
     expect(matched([rs], http)).toEqual(['r:4'])
-    expect(matched([ruleset('r', 'static', rs.rules.slice(0, 3).map((c) => c.rule))], http)).toEqual([
-      'r:3'
-    ])
-    expect(matched([ruleset('r', 'static', rs.rules.slice(0, 2).map((c) => c.rule))], http)).toEqual([
-      'r:2'
-    ])
-    expect(matched([ruleset('r', 'static', rs.rules.slice(0, 1).map((c) => c.rule))], http)).toEqual([
-      'r:1'
-    ])
+    expect(
+      matched(
+        [
+          ruleset(
+            'r',
+            'static',
+            rs.rules.slice(0, 3).map((c) => c.rule)
+          )
+        ],
+        http
+      )
+    ).toEqual(['r:3'])
+    expect(
+      matched(
+        [
+          ruleset(
+            'r',
+            'static',
+            rs.rules.slice(0, 2).map((c) => c.rule)
+          )
+        ],
+        http
+      )
+    ).toEqual(['r:2'])
+    expect(
+      matched(
+        [
+          ruleset(
+            'r',
+            'static',
+            rs.rules.slice(0, 1).map((c) => c.rule)
+          )
+        ],
+        http
+      )
+    ).toEqual(['r:1'])
   })
 
   test('a full tie goes to the greater rule id within a ruleset', () => {
@@ -221,7 +251,9 @@ describe('precedence inside an extension', () => {
     const b = ruleset('b', 'static', [rule(9, { type: 'allow' }, { urlFilter: 'x' }, 1)], {
       manifestIndex: 1
     })
-    expect(compareMatches({ rule: a.rules[0]!, ruleset: a }, { rule: b.rules[0]!, ruleset: b })).toBeGreaterThan(0)
+    expect(
+      compareMatches({ rule: a.rules[0]!, ruleset: a }, { rule: b.rules[0]!, ruleset: b })
+    ).toBeGreaterThan(0)
   })
 
   test('disabled static rules do not match', () => {
@@ -242,7 +274,11 @@ describe('modifyHeaders', () => {
     )
 
   test('all matching header rules apply, highest priority first', () => {
-    const rs = ruleset('r', 'static', [headers(1, 1, 'x-a'), headers(2, 3, 'x-b'), headers(3, 2, 'x-c')])
+    const rs = ruleset('r', 'static', [
+      headers(1, 1, 'x-a'),
+      headers(2, 3, 'x-b'),
+      headers(3, 2, 'x-c')
+    ])
     expect(matched([rs], SCRIPT)).toEqual(['r:2', 'r:3', 'r:1'])
   })
 
@@ -293,9 +329,13 @@ describe('conditions', () => {
       rule(1, { type: 'block' }, { urlFilter: 'x.test', requestMethods: ['post'] }),
       rule(2, { type: 'block' }, { urlFilter: 'x.test', excludedRequestMethods: ['get'] }, 2)
     ])
-    expect(matched([rs], { url: 'https://x.test/', type: 'xmlhttprequest', method: 'post' })).toEqual(['r:2'])
+    expect(
+      matched([rs], { url: 'https://x.test/', type: 'xmlhttprequest', method: 'post' })
+    ).toEqual(['r:2'])
     expect(matched([rs], { url: 'https://x.test/', type: 'xmlhttprequest' })).toEqual([])
-    expect(matched([rs], { url: 'https://x.test/', type: 'xmlhttprequest', method: 'PUT' })).toEqual(['r:2'])
+    expect(
+      matched([rs], { url: 'https://x.test/', type: 'xmlhttprequest', method: 'PUT' })
+    ).toEqual(['r:2'])
     expect(matched([rs], { url: 'wss://x.test/', type: 'websocket' })).toEqual(['r:2'])
     const only = ruleset('r', 'static', [
       rule(1, { type: 'block' }, { urlFilter: 'x.test', requestMethods: ['get'] })
@@ -306,13 +346,29 @@ describe('conditions', () => {
   test('initiator and request domains, with an opaque or missing initiator', () => {
     const rs = ruleset('r', 'static', [
       rule(1, { type: 'block' }, { initiatorDomains: ['example.com'] }),
-      rule(2, { type: 'block' }, { requestDomains: ['cdn.test'], excludedInitiatorDomains: ['example.com'] })
+      rule(
+        2,
+        { type: 'block' },
+        { requestDomains: ['cdn.test'], excludedInitiatorDomains: ['example.com'] }
+      )
     ])
-    expect(matched([rs], { url: 'https://cdn.test/', type: 'image', initiator: 'https://www.example.com' })).toEqual(['r:1'])
-    expect(matched([rs], { url: 'https://cdn.test/', type: 'image', initiator: 'https://other.test' })).toEqual(['r:2'])
+    expect(
+      matched([rs], {
+        url: 'https://cdn.test/',
+        type: 'image',
+        initiator: 'https://www.example.com'
+      })
+    ).toEqual(['r:1'])
+    expect(
+      matched([rs], { url: 'https://cdn.test/', type: 'image', initiator: 'https://other.test' })
+    ).toEqual(['r:2'])
     expect(matched([rs], { url: 'https://cdn.test/', type: 'image' })).toEqual(['r:2'])
-    expect(matched([rs], { url: 'https://cdn.test/', type: 'image', initiator: 'null' })).toEqual(['r:2'])
-    expect(matched([rs], { url: 'https://cdn.test/', type: 'image', initiator: 'data:text/html,x' })).toEqual(['r:2'])
+    expect(matched([rs], { url: 'https://cdn.test/', type: 'image', initiator: 'null' })).toEqual([
+      'r:2'
+    ])
+    expect(
+      matched([rs], { url: 'https://cdn.test/', type: 'image', initiator: 'data:text/html,x' })
+    ).toEqual(['r:2'])
   })
 
   test('domainType uses the registrable domain; no initiator is third party', () => {
@@ -320,8 +376,20 @@ describe('conditions', () => {
       rule(1, { type: 'block' }, { domainType: 'thirdParty' }),
       rule(2, { type: 'allow' }, { domainType: 'firstParty' })
     ])
-    expect(matched([rs], { url: 'https://cdn.example.com/', type: 'image', initiator: 'https://www.example.com' })).toEqual(['r:2'])
-    expect(matched([rs], { url: 'https://cdn.example.com/', type: 'image', initiator: 'https://other.test' })).toEqual(['r:1'])
+    expect(
+      matched([rs], {
+        url: 'https://cdn.example.com/',
+        type: 'image',
+        initiator: 'https://www.example.com'
+      })
+    ).toEqual(['r:2'])
+    expect(
+      matched([rs], {
+        url: 'https://cdn.example.com/',
+        type: 'image',
+        initiator: 'https://other.test'
+      })
+    ).toEqual(['r:1'])
     expect(matched([rs], { url: 'https://cdn.example.com/', type: 'image' })).toEqual(['r:1'])
   })
 
@@ -330,21 +398,39 @@ describe('conditions', () => {
       rule(1, { type: 'block' }, { tabIds: [5] }),
       rule(2, { type: 'block' }, { excludedTabIds: [5, -1] }, 1)
     ])
-    expect(matched([rs], { url: 'https://x.test/', type: 'image', tabId: 5 })).toEqual(['_session:1'])
-    expect(matched([rs], { url: 'https://x.test/', type: 'image', tabId: 6 })).toEqual(['_session:2'])
+    expect(matched([rs], { url: 'https://x.test/', type: 'image', tabId: 5 })).toEqual([
+      '_session:1'
+    ])
+    expect(matched([rs], { url: 'https://x.test/', type: 'image', tabId: 6 })).toEqual([
+      '_session:2'
+    ])
     expect(matched([rs], { url: 'https://x.test/', type: 'image' })).toEqual([])
   })
 
+  test('rules without resourceTypes match every type except main_frame', () => {
+    const rs = ruleset('r', 'static', [rule(1, { type: 'block' }, { urlFilter: 'x.test' })])
+    expect(matched([rs], { url: 'https://x.test/', type: 'main_frame' })).toEqual([])
+    expect(matched([rs], { url: 'https://x.test/', type: 'sub_frame' })).toEqual(['r:1'])
+    expect(matched([rs], { url: 'https://x.test/', type: 'image' })).toEqual(['r:1'])
+  })
+
   test('upgradeScheme only matches http and ftp', () => {
-    const rs = ruleset('r', 'static', [rule(1, { type: 'upgradeScheme' }, { urlFilter: 'x.test' })])
+    const rs = ruleset('r', 'static', [
+      rule(1, { type: 'upgradeScheme' }, { urlFilter: 'x.test', resourceTypes: ['main_frame'] })
+    ])
     expect(matched([rs], { url: 'http://x.test/', type: 'main_frame' })).toEqual(['r:1'])
+    expect(matched([rs], { url: 'ftp://x.test/', type: 'main_frame' })).toEqual(['r:1'])
     expect(matched([rs], { url: 'https://x.test/', type: 'main_frame' })).toEqual([])
   })
 
   test('allowAllRequests matches the frame request itself', () => {
     const rs = ruleset('r', 'static', [
-      rule(1, { type: 'allowAllRequests' }, { urlFilter: '||example.com/app', resourceTypes: ['main_frame'] }),
-      rule(2, { type: 'block' }, { urlFilter: 'example.com' })
+      rule(
+        1,
+        { type: 'allowAllRequests' },
+        { urlFilter: '||example.com/app', resourceTypes: ['main_frame'] }
+      ),
+      rule(2, { type: 'block' }, { urlFilter: 'example.com', resourceTypes: ['main_frame'] })
     ])
     expect(matched([rs], { url: 'https://example.com/app', type: 'main_frame' })).toEqual(['r:1'])
     expect(matched([rs], { url: 'https://example.com/other', type: 'main_frame' })).toEqual(['r:2'])
@@ -352,9 +438,20 @@ describe('conditions', () => {
 
   test('topDomains match the top-level frame, falling back to the initiator', () => {
     const rs = ruleset('r', 'static', [rule(1, { type: 'block' }, { topDomains: ['news.test'] })])
-    expect(matched([rs], { url: 'https://ad.test/', type: 'image', initiator: 'https://widget.test', topUrl: 'https://www.news.test/a' })).toEqual(['r:1'])
-    expect(matched([rs], { url: 'https://ad.test/', type: 'image', initiator: 'https://news.test' })).toEqual(['r:1'])
-    expect(matched([rs], { url: 'https://ad.test/', type: 'image', initiator: 'https://other.test' })).toEqual([])
+    expect(
+      matched([rs], {
+        url: 'https://ad.test/',
+        type: 'image',
+        initiator: 'https://widget.test',
+        topUrl: 'https://www.news.test/a'
+      })
+    ).toEqual(['r:1'])
+    expect(
+      matched([rs], { url: 'https://ad.test/', type: 'image', initiator: 'https://news.test' })
+    ).toEqual(['r:1'])
+    expect(
+      matched([rs], { url: 'https://ad.test/', type: 'image', initiator: 'https://other.test' })
+    ).toEqual([])
   })
 
   test('regexFilter rules match the whole spec, case-insensitive by default', () => {
@@ -362,8 +459,12 @@ describe('conditions', () => {
       rule(1, { type: 'block' }, { regexFilter: '^https://[a-z]+\\.example\\.com/(ads|track)/' }),
       rule(2, { type: 'block' }, { regexFilter: 'PIXEL', isUrlFilterCaseSensitive: true })
     ])
-    expect(matched([rs], { url: 'https://cdn.example.com/ads/x.js', type: 'script' })).toEqual(['r:1'])
-    expect(matched([rs], { url: 'https://cdn.example.com/ADS/x.js', type: 'script' })).toEqual(['r:1'])
+    expect(matched([rs], { url: 'https://cdn.example.com/ads/x.js', type: 'script' })).toEqual([
+      'r:1'
+    ])
+    expect(matched([rs], { url: 'https://cdn.example.com/ADS/x.js', type: 'script' })).toEqual([
+      'r:1'
+    ])
     expect(matched([rs], { url: 'https://cdn.example.com/pixel', type: 'script' })).toEqual([])
     expect(matched([rs], { url: 'https://cdn.example.com/PIXEL', type: 'script' })).toEqual(['r:2'])
   })
@@ -375,10 +476,20 @@ describe('response header stage', () => {
     rule(
       2,
       { type: 'block' },
-      { urlFilter: 'x.test', responseHeaders: [{ header: 'content-type', values: ['text/*'], excludedValues: ['text/plain'] }] },
+      {
+        urlFilter: 'x.test',
+        responseHeaders: [
+          { header: 'content-type', values: ['text/*'], excludedValues: ['text/plain'] }
+        ]
+      },
       2
     ),
-    rule(3, { type: 'allow' }, { urlFilter: 'x.test', excludedResponseHeaders: [{ header: 'x-keep' }] }, 3),
+    rule(
+      3,
+      { type: 'allow' },
+      { urlFilter: 'x.test', excludedResponseHeaders: [{ header: 'x-keep' }] },
+      3
+    ),
     rule(4, { type: 'block' }, { urlFilter: 'x.test/before' })
   ])
   const req = (headers?: Record<string, string[]>, path = ''): MatchRequest => ({
@@ -393,10 +504,13 @@ describe('response header stage', () => {
   })
 
   test('header presence and value patterns', () => {
-    expect(matched([rs], req({ 'X-Ads': ['1'] }))).toEqual(['r:1'])
-    expect(matched([rs], req({ 'content-type': ['text/html'] }))).toEqual(['r:2'])
-    expect(matched([rs], req({ 'content-type': ['text/plain'] }))).toEqual([])
-    expect(matched([rs], req({ 'content-type': ['image/png'] }))).toEqual([])
+    // `x-keep` is present so the priority-3 allow rule stays out of the way.
+    const keep = { 'x-keep': ['1'] }
+    expect(matched([rs], req({ ...keep, 'X-Ads': ['1'] }))).toEqual(['r:1'])
+    expect(matched([rs], req({ ...keep, 'content-type': ['text/html'] }))).toEqual(['r:2'])
+    expect(matched([rs], req({ ...keep, 'content-type': ['text/plain'] }))).toEqual([])
+    expect(matched([rs], req({ ...keep, 'content-type': ['image/png'] }))).toEqual([])
+    expect(matched([rs], req({ ...keep }))).toEqual([])
   })
 
   test('excluded headers: the allow rule matches when the header is absent', () => {
@@ -415,22 +529,38 @@ describe('response header stage', () => {
 describe('redirect targets', () => {
   test('applyRegexSubstitution follows RE2 rewrite syntax', () => {
     const re = /^https:\/\/www\.(abc|def)\.xyz\.com\/(.*)$/i
-    expect(applyRegexSubstitution(re, 'https://www.abc.xyz.com/p?q', 'https://\\1.xyz.com/\\2')).toBe(
-      'https://abc.xyz.com/p?q'
+    expect(
+      applyRegexSubstitution(re, 'https://www.abc.xyz.com/p?q', 'https://\\1.xyz.com/\\2')
+    ).toBe('https://abc.xyz.com/p?q')
+    expect(applyRegexSubstitution(re, 'https://www.abc.xyz.com/', '\\0#\\\\')).toBe(
+      'https://www.abc.xyz.com/#\\'
     )
-    expect(applyRegexSubstitution(re, 'https://www.abc.xyz.com/', '\\0#\\\\')).toBe('https://www.abc.xyz.com/#\\')
     expect(applyRegexSubstitution(re, 'https://other/', 'x')).toBeUndefined()
   })
 
   test('applyUrlTransform replaces and clears components', () => {
     const url = 'http://user:pw@www.example.com:8080/a/b?x=1&y=2#frag'
-    expect(applyUrlTransform(url, { scheme: 'https', port: '' })).toBe('https://user:pw@www.example.com/a/b?x=1&y=2#frag')
-    expect(applyUrlTransform(url, { host: 'new.test', path: '/', query: '', fragment: '' })).toBe('http://user:pw@new.test:8080/')
-    expect(applyUrlTransform(url, { username: '', password: '' })).toBe('http://www.example.com:8080/a/b?x=1&y=2#frag')
-    expect(applyUrlTransform(url, { query: '?only=1', fragment: '#top' })).toBe('http://user:pw@www.example.com:8080/a/b?only=1#top')
-    expect(applyUrlTransform(url, { scheme: 'chrome-extension', host: EXTENSION_ID, port: '', username: '', password: '' })).toBe(
-      `chrome-extension://${EXTENSION_ID}/a/b?x=1&y=2#frag`
+    expect(applyUrlTransform(url, { scheme: 'https', port: '' })).toBe(
+      'https://user:pw@www.example.com/a/b?x=1&y=2#frag'
     )
+    expect(applyUrlTransform(url, { host: 'new.test', path: '/', query: '', fragment: '' })).toBe(
+      'http://user:pw@new.test:8080/'
+    )
+    expect(applyUrlTransform(url, { username: '', password: '' })).toBe(
+      'http://www.example.com:8080/a/b?x=1&y=2#frag'
+    )
+    expect(applyUrlTransform(url, { query: '?only=1', fragment: '#top' })).toBe(
+      'http://user:pw@www.example.com:8080/a/b?only=1#top'
+    )
+    expect(
+      applyUrlTransform(url, {
+        scheme: 'chrome-extension',
+        host: EXTENSION_ID,
+        port: '',
+        username: '',
+        password: ''
+      })
+    ).toBe(`chrome-extension://${EXTENSION_ID}/a/b?x=1&y=2#frag`)
   })
 
   test('queryTransform removes, replaces and adds parameters', () => {
@@ -447,29 +577,48 @@ describe('redirect targets', () => {
         }
       })
     ).toBe('https://example.com/?keep=1&ref=new+value&added=1')
-    expect(applyUrlTransform('https://example.com/?a=1', { queryTransform: { removeParams: ['a'] } })).toBe(
-      'https://example.com/'
-    )
+    expect(
+      applyUrlTransform('https://example.com/?a=1', { queryTransform: { removeParams: ['a'] } })
+    ).toBe('https://example.com/')
   })
 
   test('redirectTargetFor: fixed url, substitution, transform, and no self-redirects', () => {
     const [fixed, subst, transform, self] = compileAll([
       rule(1, { type: 'redirect', redirect: { url: 'https://target.test/' } }, { urlFilter: 'a' }),
-      rule(2, { type: 'redirect', redirect: { regexSubstitution: 'https://\\1.test/' } }, { regexFilter: '^https://(\\w+)\\.example\\.com/' }),
-      rule(3, { type: 'redirect', redirect: { transform: { scheme: 'https' } } }, { urlFilter: 'a' }),
-      rule(4, { type: 'redirect', redirect: { url: 'https://cdn.example.com/a' } }, { urlFilter: 'a' })
+      rule(
+        2,
+        { type: 'redirect', redirect: { regexSubstitution: 'https://\\1.test/' } },
+        { regexFilter: '^https://(\\w+)\\.example\\.com/' }
+      ),
+      rule(
+        3,
+        { type: 'redirect', redirect: { transform: { scheme: 'https' } } },
+        { urlFilter: 'a' }
+      ),
+      rule(
+        4,
+        { type: 'redirect', redirect: { url: 'https://cdn.example.com/a' } },
+        { urlFilter: 'a' }
+      )
     ])
     expect(redirectTargetFor(fixed!, 'http://cdn.example.com/a')).toBe('https://target.test/')
     expect(redirectTargetFor(subst!, 'https://cdn.example.com/a')).toBe('https://cdn.test/')
     expect(redirectTargetFor(subst!, 'https://other.test/')).toBeUndefined()
-    expect(redirectTargetFor(transform!, 'http://cdn.example.com/a')).toBe('https://cdn.example.com/a')
+    expect(redirectTargetFor(transform!, 'http://cdn.example.com/a')).toBe(
+      'https://cdn.example.com/a'
+    )
     expect(redirectTargetFor(transform!, 'https://cdn.example.com/a')).toBeUndefined()
     expect(redirectTargetFor(self!, 'https://cdn.example.com/a')).toBeUndefined()
   })
 
   test('a redirect that cannot redirect the request does not match, so lower rules apply', () => {
     const rs = ruleset('r', 'static', [
-      rule(1, { type: 'redirect', redirect: { url: 'https://cdn.example.com/a.js' } }, { urlFilter: 'a.js' }, 5),
+      rule(
+        1,
+        { type: 'redirect', redirect: { url: 'https://cdn.example.com/a.js' } },
+        { urlFilter: 'a.js' },
+        5
+      ),
       rule(2, { type: 'block' }, { urlFilter: 'a.js' })
     ])
     expect(matched([rs], SCRIPT)).toEqual(['r:2'])
@@ -479,7 +628,7 @@ describe('redirect targets', () => {
 describe('engine decision', () => {
   test('decisionOf maps every action and reports the engine set id', () => {
     const rs = (rules: Rule[]): MatcherRuleset[] => [ruleset('r', 'static', rules)]
-    const decide = (rules: Rule[], request: MatchRequest = SCRIPT) =>
+    const decide = (rules: Rule[], request: MatchRequest = SCRIPT): EngineDecision =>
       decisionOf(matchRequest(rs(rules), request)!, EXTENSION_ID)
     const setId = `ext:${EXTENSION_ID}:static:r`
     expect(decide([rule(1, { type: 'block' }, { urlFilter: 'a.js' })])).toEqual({
@@ -490,21 +639,44 @@ describe('engine decision', () => {
       action: 'allow',
       matched: { setId, ruleId: 1 }
     })
-    expect(decide([rule(1, { type: 'block' }, { urlFilter: 'nomatch' })])).toEqual({ action: 'allow' })
-    expect(decide([rule(1, { type: 'upgradeScheme' }, { urlFilter: 'a.js' })], { ...SCRIPT, url: 'http://cdn.example.com/a.js' })).toEqual({
+    expect(decide([rule(1, { type: 'block' }, { urlFilter: 'nomatch' })])).toEqual({
+      action: 'allow'
+    })
+    expect(
+      decide([rule(1, { type: 'upgradeScheme' }, { urlFilter: 'a.js' })], {
+        ...SCRIPT,
+        url: 'http://cdn.example.com/a.js'
+      })
+    ).toEqual({
       action: 'upgrade',
       redirectUrl: 'https://cdn.example.com/a.js',
       matched: { setId, ruleId: 1 }
     })
-    expect(decide([rule(1, { type: 'redirect', redirect: { url: 'https://t.test/' } }, { urlFilter: 'a.js' })])).toEqual({
+    expect(
+      decide([
+        rule(1, { type: 'redirect', redirect: { url: 'https://t.test/' } }, { urlFilter: 'a.js' })
+      ])
+    ).toEqual({
       action: 'redirect',
       redirectUrl: 'https://t.test/',
       matched: { setId, ruleId: 1 }
     })
     expect(
       decide([
-        rule(1, { type: 'modifyHeaders', requestHeaders: [{ header: 'x-a', operation: 'set', value: '1' }] }, { urlFilter: 'a.js' }),
-        rule(2, { type: 'modifyHeaders', responseHeaders: [{ header: 'x-b', operation: 'remove' }] }, { urlFilter: 'a.js' }, 2)
+        rule(
+          1,
+          {
+            type: 'modifyHeaders',
+            requestHeaders: [{ header: 'x-a', operation: 'set', value: '1' }]
+          },
+          { urlFilter: 'a.js' }
+        ),
+        rule(
+          2,
+          { type: 'modifyHeaders', responseHeaders: [{ header: 'x-b', operation: 'remove' }] },
+          { urlFilter: 'a.js' },
+          2
+        )
       ])
     ).toEqual({
       action: 'modifyHeaders',
@@ -515,7 +687,10 @@ describe('engine decision', () => {
   })
 
   test('without an extension id the public ruleset id is reported', () => {
-    const outcome = matchRequest([ruleset('_dynamic', 'dynamic', [rule(1, { type: 'block' }, { urlFilter: 'a.js' })])], SCRIPT)!
+    const outcome = matchRequest(
+      [ruleset('_dynamic', 'dynamic', [rule(1, { type: 'block' }, { urlFilter: 'a.js' })])],
+      SCRIPT
+    )!
     expect(decisionOf(outcome).matched).toEqual({ setId: '_dynamic', ruleId: 1 })
   })
 
@@ -538,8 +713,18 @@ describe('engine decision', () => {
       documentUrl: 'https://top.test/'
     })
     expect(fromEngineRequest(ctx)).toEqual(request)
-    expect(toEngineRequest({ url: 'https://x.test/', type: 'image' })).toEqual({ url: 'https://x.test/', type: 'image', method: 'GET' })
-    expect(fromEngineRequest({ url: 'https://x.test/', type: 'image', method: 'GET', tabId: 'tab-12' }).tabId).toBe(12)
-    expect(fromEngineRequest({ url: 'https://x.test/', type: 'image', method: 'GET', tabId: 'none' }).tabId).toBe(-1)
+    expect(toEngineRequest({ url: 'https://x.test/', type: 'image' })).toEqual({
+      url: 'https://x.test/',
+      type: 'image',
+      method: 'GET'
+    })
+    expect(
+      fromEngineRequest({ url: 'https://x.test/', type: 'image', method: 'GET', tabId: 'tab-12' })
+        .tabId
+    ).toBe(12)
+    expect(
+      fromEngineRequest({ url: 'https://x.test/', type: 'image', method: 'GET', tabId: 'none' })
+        .tabId
+    ).toBe(-1)
   })
 })

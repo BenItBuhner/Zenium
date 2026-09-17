@@ -8,6 +8,7 @@ import {
   readRule,
   RULES_FILE_NOT_A_LIST,
   RuleSchemaError,
+  type CompiledRule,
   type Rule,
   type RuleParseCode
 } from '../rules'
@@ -214,7 +215,12 @@ describe('schema messages (json_schema_compiler wording)', () => {
 describe('semantic errors, one per Chrome ParseResult', () => {
   const cases: [string, Rule, RuleParseCode, 'static' | 'dynamic' | 'session'][] = [
     ['id below 1', blockRule(0, 'a'), 'ERROR_INVALID_RULE_ID', 'static'],
-    ['priority below 1', blockRule(1, 'a', { priority: 0 }), 'ERROR_INVALID_RULE_PRIORITY', 'static'],
+    [
+      'priority below 1',
+      blockRule(1, 'a', { priority: 0 }),
+      'ERROR_INVALID_RULE_PRIORITY',
+      'static'
+    ],
     ['empty urlFilter', blockRule(1, ''), 'ERROR_EMPTY_URL_FILTER', 'static'],
     ['non-ascii urlFilter', blockRule(1, 'caf\u00e9'), 'ERROR_NON_ASCII_URL_FILTER', 'static'],
     [
@@ -223,8 +229,18 @@ describe('semantic errors, one per Chrome ParseResult', () => {
       'ERROR_MULTIPLE_FILTERS_SPECIFIED',
       'static'
     ],
-    ['empty regexFilter', rule(1, { type: 'block' }, { regexFilter: '' }), 'ERROR_EMPTY_REGEX_FILTER', 'static'],
-    ['invalid regexFilter', rule(1, { type: 'block' }, { regexFilter: '(' }), 'ERROR_INVALID_REGEX_FILTER', 'static'],
+    [
+      'empty regexFilter',
+      rule(1, { type: 'block' }, { regexFilter: '' }),
+      'ERROR_EMPTY_REGEX_FILTER',
+      'static'
+    ],
+    [
+      'invalid regexFilter',
+      rule(1, { type: 'block' }, { regexFilter: '(' }),
+      'ERROR_INVALID_REGEX_FILTER',
+      'static'
+    ],
     [
       'regexFilter over 2 KB',
       rule(1, { type: 'block' }, { regexFilter: '.{100,}.{100,}.{100,}' }),
@@ -284,7 +300,11 @@ describe('semantic errors, one per Chrome ParseResult', () => {
     ],
     [
       'request method included and excluded',
-      rule(1, { type: 'block' }, { urlFilter: 'a', requestMethods: ['get'], excludedRequestMethods: ['get'] }),
+      rule(
+        1,
+        { type: 'block' },
+        { urlFilter: 'a', requestMethods: ['get'], excludedRequestMethods: ['get'] }
+      ),
       'ERROR_REQUEST_METHOD_DUPLICATED',
       'static'
     ],
@@ -302,7 +322,11 @@ describe('semantic errors, one per Chrome ParseResult', () => {
     ],
     [
       'domains and initiatorDomains together',
-      rule(1, { type: 'block' }, { urlFilter: 'a', domains: ['a.com'], initiatorDomains: ['b.com'] }),
+      rule(
+        1,
+        { type: 'block' },
+        { urlFilter: 'a', domains: ['a.com'], initiatorDomains: ['b.com'] }
+      ),
       'ERROR_DOMAINS_AND_INITIATOR_DOMAINS_BOTH_SPECIFIED',
       'static'
     ],
@@ -318,7 +342,12 @@ describe('semantic errors, one per Chrome ParseResult', () => {
       'ERROR_NON_ASCII_EXCLUDED_REQUEST_DOMAIN',
       'static'
     ],
-    ['redirect without redirect key', rule(1, { type: 'redirect' }, { urlFilter: 'a' }), 'ERROR_INVALID_REDIRECT', 'static'],
+    [
+      'redirect without redirect key',
+      rule(1, { type: 'redirect' }, { urlFilter: 'a' }),
+      'ERROR_INVALID_REDIRECT',
+      'static'
+    ],
     [
       'redirect with an invalid url',
       rule(1, { type: 'redirect', redirect: { url: 'not a url' } }, { urlFilter: 'a' }),
@@ -339,7 +368,11 @@ describe('semantic errors, one per Chrome ParseResult', () => {
     ],
     [
       'transform scheme outside the allow list',
-      rule(1, { type: 'redirect', redirect: { transform: { scheme: 'javascript' } } }, { urlFilter: 'a' }),
+      rule(
+        1,
+        { type: 'redirect', redirect: { transform: { scheme: 'javascript' } } },
+        { urlFilter: 'a' }
+      ),
       'ERROR_INVALID_TRANSFORM_SCHEME',
       'static'
     ],
@@ -357,7 +390,11 @@ describe('semantic errors, one per Chrome ParseResult', () => {
     ],
     [
       'transform fragment without #',
-      rule(1, { type: 'redirect', redirect: { transform: { fragment: 'top' } } }, { urlFilter: 'a' }),
+      rule(
+        1,
+        { type: 'redirect', redirect: { transform: { fragment: 'top' } } },
+        { urlFilter: 'a' }
+      ),
       'ERROR_INVALID_TRANSFORM_FRAGMENT',
       'static'
     ],
@@ -376,17 +413,30 @@ describe('semantic errors, one per Chrome ParseResult', () => {
     ],
     [
       'regexSubstitution without regexFilter',
-      rule(1, { type: 'redirect', redirect: { regexSubstitution: 'https://x/' } }, { urlFilter: 'a' }),
+      rule(
+        1,
+        { type: 'redirect', redirect: { regexSubstitution: 'https://x/' } },
+        { urlFilter: 'a' }
+      ),
       'ERROR_REGEX_SUBSTITUTION_WITHOUT_FILTER',
       'static'
     ],
     [
       'regexSubstitution referencing a missing group',
-      rule(1, { type: 'redirect', redirect: { regexSubstitution: 'https://\\3/' } }, { regexFilter: '^(a)(b)' }),
+      rule(
+        1,
+        { type: 'redirect', redirect: { regexSubstitution: 'https://\\3/' } },
+        { regexFilter: '^(a)(b)' }
+      ),
       'ERROR_INVALID_REGEX_SUBSTITUTION',
       'static'
     ],
-    ['modifyHeaders without headers', rule(1, { type: 'modifyHeaders' }, { urlFilter: 'a' }), 'ERROR_NO_HEADERS_TO_MODIFY_SPECIFIED', 'static'],
+    [
+      'modifyHeaders without headers',
+      rule(1, { type: 'modifyHeaders' }, { urlFilter: 'a' }),
+      'ERROR_NO_HEADERS_TO_MODIFY_SPECIFIED',
+      'static'
+    ],
     [
       'modifyHeaders with an empty list',
       rule(1, { type: 'modifyHeaders', requestHeaders: [] }, { urlFilter: 'a' }),
@@ -395,25 +445,47 @@ describe('semantic errors, one per Chrome ParseResult', () => {
     ],
     [
       'modifyHeaders with an invalid header name',
-      rule(1, { type: 'modifyHeaders', requestHeaders: [{ header: 'bad header', operation: 'remove' }] }, { urlFilter: 'a' }),
+      rule(
+        1,
+        { type: 'modifyHeaders', requestHeaders: [{ header: 'bad header', operation: 'remove' }] },
+        { urlFilter: 'a' }
+      ),
       'ERROR_INVALID_HEADER_TO_MODIFY_NAME',
       'static'
     ],
     [
       'set without a value',
-      rule(1, { type: 'modifyHeaders', requestHeaders: [{ header: 'x-a', operation: 'set' }] }, { urlFilter: 'a' }),
+      rule(
+        1,
+        { type: 'modifyHeaders', requestHeaders: [{ header: 'x-a', operation: 'set' }] },
+        { urlFilter: 'a' }
+      ),
       'ERROR_HEADER_VALUE_NOT_SPECIFIED',
       'static'
     ],
     [
       'remove with a value',
-      rule(1, { type: 'modifyHeaders', requestHeaders: [{ header: 'x-a', operation: 'remove', value: 'v' }] }, { urlFilter: 'a' }),
+      rule(
+        1,
+        {
+          type: 'modifyHeaders',
+          requestHeaders: [{ header: 'x-a', operation: 'remove', value: 'v' }]
+        },
+        { urlFilter: 'a' }
+      ),
       'ERROR_HEADER_VALUE_PRESENT',
       'static'
     ],
     [
       'append to a single-value request header',
-      rule(1, { type: 'modifyHeaders', requestHeaders: [{ header: 'authorization', operation: 'append', value: 'v' }] }, { urlFilter: 'a' }),
+      rule(
+        1,
+        {
+          type: 'modifyHeaders',
+          requestHeaders: [{ header: 'authorization', operation: 'append', value: 'v' }]
+        },
+        { urlFilter: 'a' }
+      ),
       'ERROR_APPEND_INVALID_REQUEST_HEADER',
       'static'
     ],
@@ -429,9 +501,24 @@ describe('semantic errors, one per Chrome ParseResult', () => {
       'ERROR_INVALID_ALLOW_ALL_REQUESTS_RESOURCE_TYPE',
       'static'
     ],
-    ['tabIds on a static rule', rule(1, { type: 'block' }, { urlFilter: 'a', tabIds: [1] }), 'ERROR_TAB_IDS_ON_NON_SESSION_RULE', 'static'],
-    ['tabIds on a dynamic rule', rule(1, { type: 'block' }, { urlFilter: 'a', tabIds: [1] }), 'ERROR_TAB_IDS_ON_NON_SESSION_RULE', 'dynamic'],
-    ['empty tabIds', rule(1, { type: 'block' }, { urlFilter: 'a', tabIds: [] }), 'ERROR_EMPTY_TAB_IDS_LIST', 'session'],
+    [
+      'tabIds on a static rule',
+      rule(1, { type: 'block' }, { urlFilter: 'a', tabIds: [1] }),
+      'ERROR_TAB_IDS_ON_NON_SESSION_RULE',
+      'static'
+    ],
+    [
+      'tabIds on a dynamic rule',
+      rule(1, { type: 'block' }, { urlFilter: 'a', tabIds: [1] }),
+      'ERROR_TAB_IDS_ON_NON_SESSION_RULE',
+      'dynamic'
+    ],
+    [
+      'empty tabIds',
+      rule(1, { type: 'block' }, { urlFilter: 'a', tabIds: [] }),
+      'ERROR_EMPTY_TAB_IDS_LIST',
+      'session'
+    ],
     [
       'tab id included and excluded',
       rule(1, { type: 'block' }, { urlFilter: 'a', tabIds: [1], excludedTabIds: [1] }),
@@ -462,7 +549,10 @@ describe('semantic errors, one per Chrome ParseResult', () => {
   })
 
   test('session rules may use tabIds', () => {
-    const result = compileRule(rule(1, { type: 'block' }, { urlFilter: 'a', tabIds: [3, 4] }), SESSION)
+    const result = compileRule(
+      rule(1, { type: 'block' }, { urlFilter: 'a', tabIds: [3, 4] }),
+      SESSION
+    )
     expect(result.ok).toBe(true)
     if (result.ok) expect([...result.compiled.tabIds]).toEqual([3, 4])
   })
@@ -473,12 +563,13 @@ describe('semantic errors, one per Chrome ParseResult', () => {
       DYNAMIC
     )
     expect(result.ok).toBe(true)
-    if (result.ok) expect(result.compiled.redirectUrl).toBe(`chrome-extension://${EXTENSION_ID}/x/y.js`)
+    if (result.ok)
+      expect(result.compiled.redirectUrl).toBe(`chrome-extension://${EXTENSION_ID}/x/y.js`)
   })
 })
 
 describe('urlFilter anchors', () => {
-  const compiled = (urlFilter: string) => {
+  const compiled = (urlFilter: string): CompiledRule => {
     const result = compileRule(blockRule(1, urlFilter), STATIC)
     if (!result.ok) throw new Error(result.message)
     return result.compiled
@@ -490,9 +581,15 @@ describe('urlFilter anchors', () => {
       anchorRight: 'none',
       urlPattern: 'example.com^'
     })
-    expect(compiled('|https://a.com/')).toMatchObject({ anchorLeft: 'boundary', anchorRight: 'none' })
+    expect(compiled('|https://a.com/')).toMatchObject({
+      anchorLeft: 'boundary',
+      anchorRight: 'none'
+    })
     expect(compiled('a.com/x.js|')).toMatchObject({ anchorLeft: 'none', anchorRight: 'boundary' })
-    expect(compiled('|http://a|')).toMatchObject({ anchorLeft: 'boundary', anchorRight: 'boundary' })
+    expect(compiled('|http://a|')).toMatchObject({
+      anchorLeft: 'boundary',
+      anchorRight: 'boundary'
+    })
   })
 
   test('patterns are lower-cased unless case sensitive', () => {
@@ -522,9 +619,17 @@ describe('helpers', () => {
     expect(isRuleSafe(blockRule(1, 'a'))).toBe(true)
     expect(isRuleSafe(rule(1, { type: 'allow' }, {}))).toBe(true)
     expect(isRuleSafe(rule(1, { type: 'upgradeScheme' }, {}))).toBe(true)
-    expect(isRuleSafe(rule(1, { type: 'redirect', redirect: { url: 'https://x/' } }, {}))).toBe(false)
+    expect(isRuleSafe(rule(1, { type: 'redirect', redirect: { url: 'https://x/' } }, {}))).toBe(
+      false
+    )
     expect(
-      isRuleSafe(rule(1, { type: 'modifyHeaders', requestHeaders: [{ header: 'a', operation: 'remove' }] }, {}))
+      isRuleSafe(
+        rule(
+          1,
+          { type: 'modifyHeaders', requestHeaders: [{ header: 'a', operation: 'remove' }] },
+          {}
+        )
+      )
     ).toBe(false)
   })
 })

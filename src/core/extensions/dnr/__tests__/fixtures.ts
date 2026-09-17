@@ -113,7 +113,10 @@ export const CHROME_EXAMPLE_RULES: Rule[] = [
   }
 ]
 
-export function compileAll(rules: readonly Rule[], source: RulesetSource = 'static'): CompiledRule[] {
+export function compileAll(
+  rules: readonly Rule[],
+  source: RulesetSource = 'static'
+): CompiledRule[] {
   return rules.map((rule) => {
     const result = compileRule(rule, { source, extensionBaseUrl: EXTENSION_BASE_URL })
     if (!result.ok) throw new Error(`fixture rule ${rule.id}: ${result.message}`)
