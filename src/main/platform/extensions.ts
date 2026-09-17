@@ -41,7 +41,7 @@ import {
   USER_CANCELLED_ERROR,
   installStatusFor,
   type BeginInstallDetails,
-  type WebstoreFailure,
+  type WebstoreBeginInstallOutcome,
   type WebstoreInstallStatus
 } from '../../core/extensions/webstorePrivate'
 import {
@@ -567,6 +567,19 @@ export class ExtensionService implements ExtensionHost {
   // Management
   // ---------------------------------------------------------------------------
 
+  /** Chrome's "Remove <name>?" question, asked before a page (the store) may uninstall. */
+  confirmUninstall(record: ExtensionRecord, win?: ZenWindow): Promise<boolean> {
+    return this.browser.platform.dialogs.confirm(
+      {
+        message: `Remove "${record.name || 'this extension'}"?`,
+        okLabel: 'Remove',
+        cancelLabel: 'Cancel',
+        danger: true
+      },
+      win
+    )
+  }
+
   async remove(id: string): Promise<void> {
     const record = this.record(id) ?? this.registry.extensions.find((r) => r.path === id)
     if (!record) return
@@ -823,7 +836,7 @@ export class ExtensionService implements ExtensionHost {
   async webstoreBeginInstall(
     details: BeginInstallDetails,
     win?: ZenWindow
-  ): Promise<WebstoreFailure | { result: '' }> {
+  ): Promise<WebstoreBeginInstallOutcome> {
     if (this.record(details.id))
       return { result: 'already_installed', message: 'This item is already installed.' }
     if (this.busy.has(details.id))
