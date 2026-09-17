@@ -5,7 +5,7 @@ import type { UIState } from '@shared/types'
 import { languageName } from '@shared/languageNames'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
-import { languageOptions, pairLabel, retarget } from '@renderer/lib/translate'
+import { errorCaption, languageOptions, pairLabel, retarget } from '@renderer/lib/translate'
 import { formatBytes } from '@renderer/lib/utils'
 import { IconButton, Menulist, TranslateButton } from './controls'
 
@@ -67,6 +67,7 @@ export function TranslateBar({
   const progress = progressOf(tab)
   const showOptions =
     tab.status === 'offered' || tab.status === 'translating' || tab.status === 'translated'
+  const caption = errorCaption(tab.error)
 
   let body: ReactNode
   if (phone) {
@@ -129,7 +130,7 @@ export function TranslateBar({
           <>
             <span className="truncate">
               <span className="zen-translate-danger">Translation failed.</span>
-              {tab.error ? ` ${tab.error}` : ''}
+              {caption ? ` ${caption}` : ''}
             </span>
             <TranslateButton onClick={translate} disabled={!tab.source || !tab.target}>
               Try again
@@ -214,7 +215,7 @@ function PhoneBody({
       break
     default:
       title = 'Translation failed'
-      caption = tab.error ?? pair
+      caption = errorCaption(tab.error) ?? pair
       action = (
         <TranslateButton onClick={translate} disabled={!tab.source || !tab.target}>
           Try again
