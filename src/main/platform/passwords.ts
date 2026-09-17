@@ -1,6 +1,7 @@
 import { safeStorage, systemPreferences } from 'electron'
 import { execFile } from 'node:child_process'
 import { pbkdf2, scrypt } from 'node:crypto'
+import { KeyWrapError } from '../../core/platform'
 import type { KdfParams, KeyWrapHost, PasswordsHost, ReauthHost } from '../../core/platform'
 
 /**
@@ -21,6 +22,10 @@ const SCRYPT_MAXMEM = 64 * 1024 * 1024
 const REAUTH_TIMEOUT_MS = 120_000
 const AVAILABILITY_TIMEOUT_MS = 20_000
 
+function describe(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : String(error)
+}
+
 export class SafeStorageKeyWrap implements KeyWrapHost {
   async osAvailable(): Promise<boolean> {
     try {
@@ -35,24 +40,39 @@ export class SafeStorageKeyWrap implements KeyWrapHost {
 
   async wrap(dataKey: Uint8Array): Promise<string> {
     const text = Buffer.from(dataKey).toString('base64')
-    const encrypted = (await safeStorage.isAsyncEncryptionAvailable().catch(() => false))
-      ? await safeStorage.encryptStringAsync(text)
-      : safeStorage.encryptString(text)
-    return BLOB_PREFIX + encrypted.toString('base64')
+    try {
+      const encrypted = (await safeStorage.isAsyncEncryptionAvailable().catch(() => false))
+        ? await safeStorage.encryptStringAsync(text)
+        : safeStorage.encryptString(text)
+      return BLOB_PREFIX + encrypted.toString('base64')
+    } catch (error) {
+      throw new KeyWrapError('unavailable', describe(error))
+    }
   }
 
+  /**
+   * `safeStorage` does not say why a decryption failed – a denied Keychain access request and a
+   * locked keyring come back like a rotated key would – so every refusal is reported as one to
+   * try again, never as the vault being gone.
+   */
   async unwrap(blob: string): Promise<Uint8Array> {
-    if (!blob.startsWith(BLOB_PREFIX)) throw new Error('Not a safeStorage wrapped key')
+    if (!blob.startsWith(BLOB_PREFIX))
+      throw new KeyWrapError('unavailable', 'The vault key was not protected by this device')
     const encrypted = Buffer.from(blob.slice(BLOB_PREFIX.length), 'base64')
     let text: string
-    if (await safeStorage.isAsyncEncryptionAvailable().catch(() => false)) {
-      const { result } = await safeStorage.decryptStringAsync(encrypted)
-      text = result
-    } else {
-      text = safeStorage.decryptString(encrypted)
+    try {
+      if (await safeStorage.isAsyncEncryptionAvailable().catch(() => false)) {
+        const { result } = await safeStorage.decryptStringAsync(encrypted)
+        text = result
+      } else {
+        text = safeStorage.decryptString(encrypted)
+      }
+    } catch (error) {
+      throw new KeyWrapError('unavailable', describe(error))
     }
     const key = Buffer.from(text, 'base64')
-    if (key.length !== 32) throw new Error('The unwrapped vault key has the wrong size')
+    if (key.length !== 32)
+      throw new KeyWrapError('unavailable', 'The unwrapped vault key has the wrong size')
     return new Uint8Array(key)
   }
 

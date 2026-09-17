@@ -1,5 +1,6 @@
 import type { Credential } from '../../../shared/types'
-import type { KdfParams, KeyWrapHost, StoreIO } from '../../platform'
+import { KeyWrapError } from '../../platform'
+import type { KdfParams, KeyWrapFailure, KeyWrapHost, StoreIO } from '../../platform'
 import { fromBase64, open, seal, toBase64 } from '../crypto'
 import { pbkdf2Sha256 } from '../kdf'
 
@@ -47,6 +48,8 @@ export class FakeKeyWrap implements KeyWrapHost {
   available = true
   /** When true, silent unwraps fail like an authentication-bound Keystore key would. */
   requiresInteraction = false
+  /** When set, every interactive `wrap` / `unwrap` refuses with this failure (a dismissed prompt…). */
+  refuse: KeyWrapFailure | null = null
   wraps = 0
   unwraps = 0
 
@@ -55,18 +58,22 @@ export class FakeKeyWrap implements KeyWrapHost {
   }
 
   async wrap(dataKey: Uint8Array): Promise<string> {
-    if (!this.available) throw new Error('keystore unavailable')
+    if (!this.available) throw new KeyWrapError('unavailable', 'keystore unavailable')
+    if (this.refuse) throw new KeyWrapError(this.refuse, `refused: ${this.refuse}`)
     this.wraps++
     const box = await seal(this.deviceKey, dataKey, 'fake-keystore')
     return `fake:${box.nonce}:${box.data}`
   }
 
   async unwrap(blob: string, interactive: boolean): Promise<Uint8Array> {
-    if (!this.available) throw new Error('keystore unavailable')
-    if (this.requiresInteraction && !interactive) throw new Error('authentication required')
+    if (!this.available) throw new KeyWrapError('unavailable', 'keystore unavailable')
+    if (this.requiresInteraction && !interactive)
+      throw new KeyWrapError('unavailable', 'authentication required')
+    if (this.refuse) throw new KeyWrapError(this.refuse, `refused: ${this.refuse}`)
     this.unwraps++
     const [tag, nonce, data] = blob.split(':')
-    if (tag !== 'fake' || !nonce || !data) throw new Error('not a blob from this device')
+    if (tag !== 'fake' || !nonce || !data)
+      throw new KeyWrapError('invalidated', 'not a blob from this device')
     return open(this.deviceKey, { nonce, data }, 'fake-keystore')
   }
 

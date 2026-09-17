@@ -10,6 +10,7 @@ import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import android.security.keystore.UserNotAuthenticatedException
 import android.util.Log
+import org.json.JSONObject
 import java.security.KeyStore
 import java.util.Base64
 import java.util.concurrent.ExecutorService
@@ -26,7 +27,8 @@ import javax.crypto.SecretKeyFactory
  * it only works within [AUTH_VALIDITY_SECONDS] of the user proving themselves with the device
  * credential or a Class 3 biometric. Unlocking the phone counts, so most starts open the vault
  * silently; otherwise an interactive call shows the system prompt and retries, and a silent one
- * (the startup probe) is rejected so the core keeps the vault locked until the manager is opened.
+ * (the startup probe) answers with an `unavailable` refusal so the core keeps the vault locked
+ * until the manager is opened.
  *
  * Documented fallback: without a screen lock the key cannot be authentication-bound, so a plain
  * hardware-backed key protects the vault (app sandbox plus Keystore). Removing the screen lock later
@@ -50,7 +52,7 @@ class VaultKeystore(
             return
         }
         attempt(interactive = true, reason = "Protect your saved passwords", reply = reply) {
-            val key = obtainKey() ?: throw IllegalStateException("The Android Keystore is unavailable")
+            val key = obtainKey() ?: throw KeystoreUnavailable("The Android Keystore is unavailable")
             VaultCipher.wrap(key, dataKey, authBound = keyIsAuthBound).encode()
         }
     }
@@ -63,7 +65,7 @@ class VaultKeystore(
             return
         }
         attempt(interactive, reason = "Unlock your saved passwords", reply = reply) {
-            val key = existingKey() ?: throw IllegalStateException("The vault key is missing from the Android Keystore")
+            val key = existingKey() ?: throw KeyGone("The vault key is missing from the Android Keystore")
             Base64.getEncoder().encodeToString(VaultCipher.unwrap(key, blob))
         }
     }
@@ -71,8 +73,10 @@ class VaultKeystore(
     /**
      * Run a Keystore operation off the main thread. When the key wants a fresh authentication and
      * the call may show UI, prompt with authenticators that satisfy the key (device credential or a
-     * Class 3 biometric) and retry once; every other failure rejects the bridge call with a message
-     * the core can show.
+     * Class 3 biometric) and retry once. A refusal answers with `{ failure, message }` rather than
+     * rejecting, so the core can tell a dismissed prompt or a key that wants an authentication a
+     * silent call cannot ask for (worth trying again) from a key the device has invalidated for
+     * good; only malformed input rejects the bridge call.
      */
     private fun attempt(interactive: Boolean, reason: String, reply: (Any?) -> Unit, op: () -> String) {
         io.execute {
@@ -86,31 +90,40 @@ class VaultKeystore(
                 main.post {
                     reauth.authenticate(reason, strong = true) { ok ->
                         if (!ok) {
-                            reply(Host.Rejection("Authentication was cancelled"))
+                            reply(failure("cancelled", "Authentication was cancelled"))
                             return@authenticate
                         }
                         io.execute {
                             val retry = runCatching(op)
-                            main.post {
-                                retry.onSuccess(reply).onFailure { reply(Host.Rejection(describe(it))) }
-                            }
+                            main.post { retry.onSuccess(reply).onFailure { reply(failure(it)) } }
                         }
                     }
                 }
                 return@execute
             }
             if (error is KeyPermanentlyInvalidatedException) deleteKey()
-            main.post { reply(Host.Rejection(describe(error))) }
+            main.post { reply(failure(error)) }
         }
     }
 
-    private fun describe(error: Throwable): String = when (error) {
-        is UserNotAuthenticatedException -> "Authentication is required to open the vault"
+    /** The Keystore cannot be used right now; asking again may work. */
+    private class KeystoreUnavailable(message: String) : RuntimeException(message)
+
+    /** The key the blob was wrapped with no longer exists; the blob will never open here again. */
+    private class KeyGone(message: String) : RuntimeException(message)
+
+    private fun failure(error: Throwable): JSONObject = when (error) {
+        is UserNotAuthenticatedException -> failure("unavailable", "Authentication is required to open the vault")
         is KeyPermanentlyInvalidatedException ->
-            "The screen lock was changed or removed, which invalidated the vault key on this device"
-        is AEADBadTagException -> "The vault key was not protected on this device"
-        else -> error.message ?: error.javaClass.simpleName
+            failure("invalidated", "The screen lock was changed or removed, which invalidated the vault key on this device")
+        // The blob does not open with the key the Keystore holds now: a key minted after an invalidation.
+        is AEADBadTagException -> failure("invalidated", "The vault key was not protected on this device")
+        is KeyGone -> failure("invalidated", error.message ?: "The vault key is gone")
+        else -> failure("unavailable", error.message ?: error.javaClass.simpleName)
     }
+
+    private fun failure(code: String, message: String): JSONObject =
+        JSONObject().put("failure", code).put("message", message)
 
     // ---------------------------------------------------------------------------------------------
     // Key management

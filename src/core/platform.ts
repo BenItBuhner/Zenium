@@ -615,6 +615,25 @@ export type KdfParams =
   { kdf: 'scrypt'; n: number; r: number; p: number } | { kdf: 'pbkdf2-sha256'; iterations: number }
 
 /**
+ * Why a `KeyWrapHost` refused. Everything but `'invalidated'` is worth asking again for: the user
+ * dismissed or failed the system prompt (`'cancelled'`), or the keystore cannot be used right now
+ * (`'unavailable'`: a locked keychain, a denied Keychain access request, a silent call against a
+ * key that wants a fresh authentication). `'invalidated'` means the wrapped key is gone for good
+ * on this device (the screen lock was removed, the keychain item deleted).
+ */
+export type KeyWrapFailure = 'cancelled' | 'unavailable' | 'invalidated'
+
+export class KeyWrapError extends Error {
+  constructor(
+    readonly code: KeyWrapFailure,
+    message: string
+  ) {
+    super(message)
+    this.name = 'KeyWrapError'
+  }
+}
+
+/**
  * Protects the vault's random data key with something only this device and user can undo:
  * Electron's `safeStorage` (Keychain, DPAPI, libsecret) on desktop, an Android Keystore key on
  * Android. `wrap` / `unwrap` may show system UI (Android asks for the device credential when the
@@ -623,11 +642,15 @@ export type KdfParams =
 export interface KeyWrapHost {
   /** The OS keystore is usable right now (false on Linux without a secret service). */
   osAvailable(): Promise<boolean>
-  /** Opaque, host-specific blob; only this host on this device can `unwrap` it. */
+  /**
+   * Opaque, host-specific blob; only this host on this device can `unwrap` it. Rejects with a
+   * `KeyWrapError` when the user dismisses the system prompt or the keystore is not usable.
+   */
   wrap(dataKey: Uint8Array): Promise<string>
   /**
-   * Rejects when the OS refuses, the user cancels or the blob was not written here. Only an
-   * `interactive` call may put up system UI (Android's device-credential prompt); the silent
+   * Rejects with a `KeyWrapError` when the OS refuses, the user cancels or the blob was not
+   * written here; only `'invalidated'` means the blob will never open again on this device. Only
+   * an `interactive` call may put up system UI (Android's device-credential prompt); the silent
    * variant runs at startup and simply fails when the key wants a fresh authentication.
    */
   unwrap(blob: string, interactive: boolean): Promise<Uint8Array>

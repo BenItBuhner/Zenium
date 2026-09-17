@@ -479,8 +479,11 @@ export type ReauthOutcome<T> =
   | { status: 'passphrase' }
   /** The OS cannot verify the user here: a vault passphrase must be set first. */
   | { status: 'setup-passphrase' }
-  /** The user cancelled, the OS refused or the passphrase was wrong. */
-  | { status: 'denied' }
+  /**
+   * The user cancelled, the OS refused or the passphrase was wrong; `reason` carries the host's
+   * explanation when it gave one ("Authentication was cancelled").
+   */
+  | { status: 'denied'; reason?: string }
 
 export interface GeneratorOptions {
   mode: 'password' | 'passphrase'

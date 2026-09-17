@@ -10,6 +10,7 @@ import type {
 } from '../../shared/types'
 import { emptyCheckupState } from '../../shared/defaults'
 import type { Browser } from '../browser'
+import { KeyWrapError } from '../platform'
 import type { KeyWrapHost, PasswordsHost, ReauthHost } from '../platform'
 import type { ZenWindow } from '../window'
 import {
@@ -38,10 +39,10 @@ export class NoopKeyWrap implements KeyWrapHost {
     return false
   }
   async wrap(): Promise<string> {
-    throw new Error('No OS keystore on this host')
+    throw new KeyWrapError('unavailable', 'No OS keystore on this host')
   }
   async unwrap(): Promise<Uint8Array> {
-    throw new Error('No OS keystore on this host')
+    throw new KeyWrapError('unavailable', 'No OS keystore on this host')
   }
   kdfParams(): typeof PBKDF2_PARAMS {
     return PBKDF2_PARAMS
@@ -156,11 +157,16 @@ export class PasswordService {
         this.bump()
         return { status: 'denied' }
       }
-      // The OS keystore refused (cancelled prompt, key invalidated); a passphrase may still work.
+      // The OS keystore refused. A passphrase wrapping is still a way in; otherwise a dismissed
+      // prompt or a keystore that is unusable right now is only "try again", and just a key the
+      // device has invalidated for good makes the vault unreadable (`status.error`, the reset).
       if (this.store.protection().passphrase) return { status: 'passphrase' }
-      this.unlockError = error instanceof Error ? error.message : String(error)
-      this.bump()
-      return { status: 'denied' }
+      const reason = error instanceof Error ? error.message : String(error)
+      if (error instanceof KeyWrapError && error.code === 'invalidated') {
+        this.unlockError = reason
+        this.bump()
+      }
+      return { status: 'denied', reason }
     }
     if (passphrase !== undefined) this.lastReauthAt = Date.now()
     this.unlockError = null

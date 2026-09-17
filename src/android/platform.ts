@@ -30,6 +30,7 @@ import type {
   WindowHost,
   WindowHostFactory
 } from '@core/platform'
+import { KeyWrapError, type KeyWrapFailure } from '@core/platform'
 import { PBKDF2_PARAMS, deriveWithWebCrypto } from '@core/credentials/kdf'
 import { fromBase64, toBase64 } from '@core/credentials/crypto'
 import readabilityJs from '@mozilla/readability/Readability.js?raw'
@@ -68,6 +69,18 @@ export function androidCapabilities(sdkInt: number): HostCapabilities {
 }
 
 /**
+ * What `vault.wrap` / `vault.unwrap` answer: the result, or the refusal Kotlin could name (a
+ * dismissed prompt, a key that wants an authentication a silent call cannot ask for, a key the
+ * device invalidated when the screen lock changed).
+ */
+type KeyWrapReply = string | { failure: KeyWrapFailure; message: string }
+
+function keyWrapResult(reply: KeyWrapReply): string {
+  if (typeof reply === 'string') return reply
+  throw new KeyWrapError(reply.failure, reply.message)
+}
+
+/**
  * The vault's data key is wrapped by an AES-GCM key that never leaves the Android Keystore
  * (`VaultKeystore.kt`). Kotlin asks for the device credential when the key demands a recent
  * authentication and the call is interactive. Passphrase wrappings use WebCrypto PBKDF2 in the
@@ -80,13 +93,14 @@ class AndroidKeyWrap implements KeyWrapHost {
     return this.bridge.call<boolean>('vault.available')
   }
 
-  wrap(dataKey: Uint8Array): Promise<string> {
-    return this.bridge.call<string>('vault.wrap', { key: toBase64(dataKey) })
+  async wrap(dataKey: Uint8Array): Promise<string> {
+    const reply = await this.bridge.call<KeyWrapReply>('vault.wrap', { key: toBase64(dataKey) })
+    return keyWrapResult(reply)
   }
 
   async unwrap(blob: string, interactive: boolean): Promise<Uint8Array> {
-    const key = await this.bridge.call<string>('vault.unwrap', { blob, interactive })
-    return fromBase64(key)
+    const reply = await this.bridge.call<KeyWrapReply>('vault.unwrap', { blob, interactive })
+    return fromBase64(keyWrapResult(reply))
   }
 
   kdfParams(): KdfParams {
