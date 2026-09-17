@@ -7,9 +7,12 @@ import {
   hslToRgb,
   isDarkColor,
   makeTheme,
+  mix,
+  panelBase,
   resolveTheme,
   rgbToHex,
   rgbToHsl,
+  scrimBase,
   themeCssVariables,
   toMonochrome,
   wheelToColor
@@ -75,5 +78,24 @@ describe('resolveTheme', () => {
     const vars = themeCssVariables(resolveTheme(null, false))
     expect(vars['--zen-fg-rgb']).toMatch(/^\d+ \d+ \d+$/)
     expect(vars['--zen-accent-rgb']).toMatch(/^\d+ \d+ \d+$/)
+    expect(vars['--zen-panel-rgb']).toMatch(/^\d+ \d+ \d+$/)
+    expect(vars['--zen-scrim-rgb']).toMatch(/^\d+ \d+ \d+$/)
+  })
+
+  it('tints panels and the scrim with the space colour', () => {
+    // Light: 30% of the window over white; dark: 55% over #101010; scrim: 30% over black.
+    const light = resolveTheme(makeTheme('#4080ff'), false)
+    expect(panelBase(light)).toEqual(mix(light.averageColor, [255, 255, 255], 0.7))
+    expect(scrimBase(light)).toEqual(mix(light.averageColor, [0, 0, 0], 0.7))
+    const dark = resolveTheme(makeTheme('#4080ff'), true)
+    expect(panelBase(dark)).toEqual(mix(dark.averageColor, [16, 16, 16], 0.45))
+    // A themed panel is not neutral: it leans towards the space's hue.
+    const [r, , b] = panelBase(light)
+    expect(b).toBeGreaterThan(r)
+    // The base window without a theme stays near paper and near black.
+    expect(panelBase(resolveTheme(null, false))).toEqual([251, 251, 252])
+    expect(panelBase(resolveTheme(null, true))).toEqual([23, 23, 25])
+    expect(scrimBase(resolveTheme(null, false))).toEqual([73, 72, 74])
+    expect(scrimBase(resolveTheme(null, true))).toEqual([8, 8, 10])
   })
 })

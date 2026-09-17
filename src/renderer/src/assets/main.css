@@ -13,21 +13,52 @@
 }
 
 :root {
-  /* Overwritten from JS by the active space theme. */
+  /*
+   * Overwritten from JS by the active space theme (`themeCssVariables`). The space colours the
+   * whole window: panels and the scrim are tints of its gradient's average, emitted as rgb
+   * triples so alpha can be applied where they are used. These are the base window's values.
+   */
   --zen-bg: #f2f1f5;
   --zen-bg-solid: #f2f1f5;
   --zen-fg: #1e1e24;
   --zen-fg-rgb: 30 30 36;
   --zen-accent: #6264dc;
   --zen-accent-rgb: 98 100 220;
+  --zen-panel-rgb: 251 251 252;
+  --zen-scrim-rgb: 73 72 74;
   --zen-texture: 0;
 
+  /* Ink and fills: alphas of the foreground. */
   --zen-element-bg: rgb(var(--zen-fg-rgb) / 0.07);
   --zen-element-bg-hover: rgb(var(--zen-fg-rgb) / 0.12);
   --zen-element-bg-active: rgb(var(--zen-fg-rgb) / 0.16);
   --zen-border: rgb(var(--zen-fg-rgb) / 0.12);
   --zen-muted: rgb(var(--zen-fg-rgb) / 0.6);
-  --zen-panel-bg: rgb(255 255 255 / 0.74);
+  --zen-faint: rgb(var(--zen-fg-rgb) / 0.4);
+  /*
+   * The accent as ink (text, glyphs) and as a fill (the one primary control, a toggle that is
+   * on): the space colour held to a lightness that reads. The raw accent stands in where
+   * relative colour syntax is missing; see the @supports block below.
+   */
+  --zen-accent-ink: var(--zen-accent);
+  --zen-accent-fill: var(--zen-accent);
+  --zen-on-accent: #fff;
+  /* Status colours: ink, plus an rgb triple for a tint of at most 16%. Never a filled surface. */
+  --zen-ok: #1f8a4c;
+  --zen-ok-rgb: 31 138 76;
+  --zen-warn: #b45f06;
+  --zen-warn-rgb: 180 95 6;
+  --zen-danger: #c43434;
+  --zen-danger-rgb: 196 52 52;
+
+  /* Surfaces over the window: the space-tinted panel colour, blurred; a tinted scrim under them. */
+  --zen-panel-bg: rgb(var(--zen-panel-rgb) / 0.8);
+  --zen-scrim: rgb(var(--zen-scrim-rgb) / 0.28);
+  --zen-blur-panel: blur(24px) saturate(1.2);
+  --zen-blur-hero: blur(40px) saturate(1.1);
+  /* Elevation: 1 a resting card, 2 an active or dragged one, --zen-shadow (3) a panel. */
+  --zen-shadow-1: 0 1px 2px rgb(0 0 0 / 0.06), 0 8px 24px rgb(0 0 0 / 0.1);
+  --zen-shadow-2: 0 2px 4px rgb(0 0 0 / 0.08), 0 18px 44px rgb(0 0 0 / 0.18);
   --zen-shadow: 0 18px 50px rgb(0 0 0 / 0.22), 0 2px 8px rgb(0 0 0 / 0.12);
   --zen-padding: 8px;
   --zen-content-radius: 12px;
@@ -42,8 +73,37 @@
 }
 
 :root[data-theme='dark'] {
-  --zen-panel-bg: rgb(28 28 34 / 0.84);
+  --zen-panel-rgb: 23 23 25;
+  --zen-scrim-rgb: 8 8 10;
+  --zen-on-accent: #101010;
+  --zen-ok: #6fd39a;
+  --zen-ok-rgb: 111 211 154;
+  --zen-warn: #f2b35c;
+  --zen-warn-rgb: 242 179 92;
+  --zen-danger: #ff8080;
+  --zen-danger-rgb: 255 128 128;
+  --zen-panel-bg: rgb(var(--zen-panel-rgb) / 0.86);
+  --zen-scrim: rgb(var(--zen-scrim-rgb) / 0.45);
+  /* Dark elevation: the light opacities times 2.2, plus a one-pixel inner light hairline. */
+  --zen-shadow-1:
+    0 1px 2px rgb(0 0 0 / 0.2), 0 8px 24px rgb(0 0 0 / 0.32),
+    inset 0 0 0 1px rgb(255 255 255 / 0.06);
+  --zen-shadow-2:
+    0 2px 4px rgb(0 0 0 / 0.24), 0 18px 44px rgb(0 0 0 / 0.5),
+    inset 0 0 0 1px rgb(255 255 255 / 0.06);
   --zen-shadow: 0 18px 50px rgb(0 0 0 / 0.55), 0 2px 8px rgb(0 0 0 / 0.35);
+}
+
+/* Zen clamps its primary colour's lightness before using it as ink or a fill; so does the chrome. */
+@supports (color: oklch(from red clamp(0.3, l, 0.6) c h)) {
+  :root {
+    --zen-accent-ink: oklch(from var(--zen-accent) clamp(0.35, l, 0.6) c h);
+    --zen-accent-fill: oklch(from var(--zen-accent) clamp(0.35, l, 0.6) c h);
+  }
+  :root[data-theme='dark'] {
+    --zen-accent-ink: oklch(from var(--zen-accent) clamp(0.7, l, 0.85) c h);
+    --zen-accent-fill: oklch(from var(--zen-accent) clamp(0.55, l, 0.7) c h);
+  }
 }
 
 /* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME); zero on desktop. */
@@ -276,7 +336,7 @@
 
   .zen-panel {
     background: var(--zen-panel-bg);
-    backdrop-filter: blur(24px) saturate(1.2);
+    backdrop-filter: var(--zen-blur-panel);
     border: 1px solid rgb(var(--zen-fg-rgb) / 0.1);
     border-radius: 16px;
     box-shadow: var(--zen-shadow);
