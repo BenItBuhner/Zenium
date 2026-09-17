@@ -96,11 +96,13 @@
   }
 
   /*
-   * Rows (9.2, 9.18): a minimum height that grows with the content, never a clamp; 44 for one
-   * line, 64 for a label with a description. Whatever trails the text centres on the row's
+   * Rows (9.2, 9.18, 9.21): a minimum height that grows with the content, never a clamp; 44 for
+   * one line, 64 for a label with a description, the 12 above and below being the row's own
+   * padding (20 + 24 = 44, 20 + 2 + 18 + 24 = 64). Whatever trails the text centres on the row's
    * height; only the leading box takes the first text line. The title and the description each
    * keep to one line here, so the three-line case (a trailing control on the label line) does not
-   * arise.
+   * arise. The rows hold no 40 px control, only 44 icon buttons whose 20 px glyph is the row's
+   * glyph, so they stay at the base heights and the list has no gap between them.
    */
   .zen-list-row {
     position: relative;
@@ -109,7 +111,7 @@
     min-height: var(--v2-row);
     align-items: center;
     gap: 12px;
-    padding: 0 12px;
+    padding: 12px;
     border-radius: var(--v2-radius-control);
     color: var(--v2-text);
     text-align: left;
@@ -126,7 +128,11 @@
   .zen-list-row[data-selected='true']:active {
     background: var(--v2-nav-active);
   }
-  /* The leading 20 box: a glyph or favicon, or the row's checkbox while rows are being picked. */
+  /*
+   * The leading box: a glyph or favicon, or the row's checkbox while rows are being picked. It
+   * sits on the first text line (9.2): its top (line − box) / 2 below the line's top, an
+   * expression rather than a number – 0 for a 20 box on the 20 line here, 2 for a 16 box.
+   */
   .zen-list-lead {
     display: flex;
     width: var(--v2-icon);
@@ -135,8 +141,12 @@
     align-self: flex-start;
     align-items: center;
     justify-content: center;
-    /* Centred on the first text line: the text's 12 padding, and the line is as tall as the box. */
-    margin-top: 12px;
+    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+  }
+  .zen-list-lead[data-checkbox='true'] {
+    width: var(--v2-checkbox);
+    height: var(--v2-checkbox);
+    margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
   }
   .zen-list-favicon {
     width: 100%;
@@ -169,7 +179,6 @@
     flex: 1;
     flex-direction: column;
     gap: 2px;
-    padding: 12px 0;
   }
   .zen-list-title {
     font-size: var(--v2-font-body);
@@ -188,12 +197,16 @@
     color: var(--v2-text-deemphasized);
     font-variant-numeric: tabular-nums;
   }
-  /* Trailing content, centred by the row; a 44 control's glyph then lands 12 from the row's edge. */
+  /*
+   * Trailing content, centred by the row (9.18). A 44 icon button reaches into the row's 12
+   * padding on its three outer sides, so a 44 row holds it whole and its glyph lands 12 from the
+   * row's edge, the same 12 the leading glyph keeps.
+   */
   .zen-list-trailing {
     display: flex;
     align-items: center;
     flex-shrink: 0;
-    margin-right: -12px;
+    margin: -12px -12px -12px 0;
   }
   /* A group's heading (a day, "Recently closed"): a 15/600 sub-heading, sentence case, 20 above. */
   .zen-list-heading {

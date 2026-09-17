@@ -250,7 +250,7 @@ export function PhoneListRow({
       style={{ touchAction: onSwipeDelete && !selecting ? 'pan-y' : undefined }}
       {...gestures}
     >
-      <span className="zen-list-lead" aria-hidden>
+      <span className="zen-list-lead" data-checkbox={selecting} aria-hidden>
         {selecting ? (
           <span
             className="zen-list-checkbox flex items-center justify-center"
