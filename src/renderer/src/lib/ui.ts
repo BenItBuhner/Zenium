@@ -37,9 +37,17 @@ export function startBrowserSync(): void {
 export interface UrlbarState {
   open: boolean
   mode: UrlbarOpenMode
-  /** Tab the URL bar edits (null → a new tab will be created on submit). */
+  /**
+   * Tab the URL bar edits (null → a new tab will be created on submit). In `new-tab` mode it is
+   * the new tab page the bar floats over: what is typed navigates that tab.
+   */
   tabId: string | null
   initialText: string | undefined
+  /**
+   * `initialText` was typed by the user (into the new tab page before the bar was up): the caret
+   * goes after it instead of selecting it, so the next keystroke carries on rather than replaces.
+   */
+  typed?: boolean
   /** Anchor the bar to the top instead of floating when the user clicked the address pill. */
   attached: boolean
 }
@@ -271,7 +279,54 @@ export async function openUrlbar(
   })
 }
 
+/**
+ * Keys typed into the new tab page while its URL bar is still on its way up (the snapshot of the
+ * page is taken first). They are appended here and land in the field as its initial text, so
+ * nothing typed between Ctrl+T and the first paint of the bar is lost.
+ */
+let typeahead: { tabId: string; text: string } | null = null
+
+/**
+ * The URL bar over a new tab page: `new-tab` mode bound to that tab, so what is typed navigates
+ * it instead of creating another. `text` is what the page's search box already received.
+ */
+export function openNewTabPageUrlbar(
+  tabId: string,
+  text: string | undefined,
+  attached: boolean
+): void {
+  const ui = uiStore.get()
+  if (ui.overlay === 'onboarding') return
+  if (ui.urlbar.open && ui.urlbar.mode === 'new-tab' && ui.urlbar.tabId === tabId) {
+    if (text) window.dispatchEvent(new CustomEvent<string>('zen-urlbar-type', { detail: text }))
+    return
+  }
+  if (typeahead && typeahead.tabId === tabId) {
+    typeahead.text += text ?? ''
+    return
+  }
+  const mine = { tabId, text: text ?? '' }
+  typeahead = mine
+  void captureActiveTab(tabId).then(() => {
+    if (typeahead !== mine) return
+    typeahead = null
+    run('focus.chrome', undefined)
+    uiStore.set({
+      urlbar: {
+        open: true,
+        mode: 'new-tab',
+        tabId,
+        initialText: mine.text || undefined,
+        typed: Boolean(mine.text),
+        attached
+      },
+      drawerOpen: false
+    })
+  })
+}
+
 export function closeUrlbar(): void {
+  typeahead = null
   if (!uiStore.get().urlbar.open) return
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   invalidateSnapshot()

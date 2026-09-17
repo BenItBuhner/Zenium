@@ -6,6 +6,7 @@ import {
   cancelExternalProtocol,
   closeMenu,
   closeUrlbar,
+  openNewTabPageUrlbar,
   openOverlay,
   openUrlbar,
   pushToast,
@@ -39,6 +40,10 @@ export function useMainEvents(): void {
         void openUrlbar(mode, currentActiveTabId(), { text, attached })
       }),
       onEvent('urlbar.close', () => closeUrlbar()),
+      onEvent('newtab.opened', ({ tabId, text }) => {
+        const state = browserStore.get().state
+        openNewTabPageUrlbar(tabId, text, isPhone() || state?.settings.urlbarBehavior === 'normal')
+      }),
       onEvent('overlay.open', ({ kind, folderId, section }) => {
         const ui = uiStore.get()
         if (ui.overlay === kind && !folderId) {

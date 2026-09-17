@@ -221,6 +221,8 @@ export class BrowserState {
   })
   /** Newest first; the `SessionService` owns the list, this is where it persists. */
   recentlyClosed: ClosedEntry[] = []
+  /** The new tab page's custom background image; provided by the Browser (the host owns the file). */
+  newTabBackgroundFor: () => UIState['newTabBackground'] = () => ({ image: false, canPick: false })
   /** "My shortcuts" of the new tab page, in grid order. */
   newTabShortcuts: NewTabShortcut[] = []
   /** Hosts the user removed from the new tab page's "Most visited" grid. */
@@ -613,6 +615,7 @@ export class BrowserState {
       ...this.downloadsFor(win),
       bookmarks: this.bookmarks,
       newTabShortcuts: this.newTabShortcuts,
+      newTabBackground: this.newTabBackgroundFor(),
       recentlyClosedCount: this.recentlyClosed.length,
       recentlyClosed: this.recentlyClosed.slice(0, 10).map(summarizeClosed),
       media: this.media,

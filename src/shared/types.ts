@@ -1531,6 +1531,8 @@ export interface UIState {
   bookmarks: BookmarkNode[]
   /** "My shortcuts" of the new tab page, in grid order (Settings edits them). */
   newTabShortcuts: NewTabShortcut[]
+  /** The new tab page's custom background: whether one is set, whether the host can pick one. */
+  newTabBackground: { image: boolean; canPick: boolean }
   recentlyClosedCount: number
   /** Newest first, at most 10 – enough for menus to render without a round trip. */
   recentlyClosed: ClosedEntrySummary[]

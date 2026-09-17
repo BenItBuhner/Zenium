@@ -538,4 +538,80 @@ describe('NewTabService: my shortcuts and most visited', () => {
     expect(f.browser.state.settings.newTab.background).toBe('space')
     expect(svc.stateFor(tab.id)?.backgroundImage).toBeNull()
   })
+
+  it('the chrome state says whether an image is set and whether the host can pick one', async () => {
+    const f = fixture({ withBackground: true })
+    const win = f.browser.focusedWindow()
+    expect(f.browser.state.snapshot(win).newTabBackground).toEqual({ image: false, canPick: true })
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    await f.browser.newTab.pickBackgroundImage(win)
+    expect(f.browser.state.snapshot(win).newTabBackground).toEqual({ image: true, canPick: true })
+    const bare = fixture()
+    expect(bare.browser.state.snapshot(bare.browser.focusedWindow()).newTabBackground).toEqual({
+      image: false,
+      canPick: false
+    })
+  })
+
+  it('Settings edits the same shortcuts list through the newtab commands', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const a = f.browser.handleCommand(win, 'newtab.addShortcut', {
+      title: 'A',
+      url: 'a.example'
+    }) as string
+    const b = f.browser.handleCommand(win, 'newtab.addShortcut', {
+      title: '',
+      url: 'https://b.example/x'
+    }) as string
+    expect(f.browser.state.snapshot(win).newTabShortcuts.map((s) => s.title)).toEqual([
+      'A',
+      'b.example'
+    ])
+    f.browser.handleCommand(win, 'newtab.reorderShortcuts', { ids: [b, a] })
+    f.browser.handleCommand(win, 'newtab.updateShortcut', { id: a, title: 'A2', url: 'a2.example' })
+    expect(f.browser.state.snapshot(win).newTabShortcuts).toEqual([
+      { id: b, title: 'b.example', url: 'https://b.example/x' },
+      { id: a, title: 'A2', url: 'https://a2.example/' }
+    ])
+    f.browser.handleCommand(win, 'newtab.removeShortcut', { id: b })
+    expect(f.browser.state.snapshot(win).newTabShortcuts.map((s) => s.id)).toEqual([a])
+  })
+
+  it('settings.update sanitises the new tab keys and keeps the rest of the settings', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'settings.update', {
+      newTab: { shortcuts: 'custom', background: 'nope', greeting: true }
+    })
+    expect(f.browser.state.settings.newTab).toEqual({
+      enabled: true,
+      shortcuts: 'custom',
+      background: 'space',
+      greeting: true
+    })
+    f.browser.handleCommand(win, 'settings.update', { newTab: { enabled: false } })
+    expect(f.browser.state.settings.newTab).toEqual({
+      enabled: false,
+      shortcuts: 'custom',
+      background: 'space',
+      greeting: true
+    })
+  })
+})
+
+describe('NewTabService: what the page never leaves behind', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('a tab that only ever showed the new tab page is not kept in Recently Closed', async () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    expect(tab.url).toBe(NEW_TAB_URL)
+    const before = f.browser.state.recentlyClosed.length
+    f.browser.tabs.closeTab(tab.id, false, win)
+    expect(f.browser.state.recentlyClosed).toHaveLength(before)
+  })
 })

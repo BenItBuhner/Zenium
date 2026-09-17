@@ -257,11 +257,19 @@ function useGlobalKeys(state: UIState): void {
   }, [])
 }
 
-/** The "New Tab" button and empty state open Zen's floating URL bar instead of a new-tab page. */
+/**
+ * The "New Tab" button and empty state: a tab at `zen://newtab` with the URL bar over it when the
+ * new tab page is on (`newtab.open` answers with `newtab.opened`), else Zen's floating URL bar
+ * alone stands in for a new-tab page.
+ */
 function useNewTabEvent(state: UIState): void {
   useEffect(() => {
     const onNewTab = (): void => {
       closeUrlbar()
+      if (state.capabilities.newTabPage && state.settings.newTab.enabled) {
+        run('newtab.open', undefined)
+        return
+      }
       void openUrlbar('new-tab', activeTab(state)?.id ?? null, {
         attached: isPhone() || state.settings.urlbarBehavior === 'normal'
       })

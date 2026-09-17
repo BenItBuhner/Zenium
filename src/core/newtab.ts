@@ -179,6 +179,10 @@ export class NewTabService {
   private historyVersion = 0
 
   constructor(private readonly browser: Browser) {
+    browser.state.newTabBackgroundFor = () => {
+      const host = browser.platform.newTabBackground
+      return { image: Boolean(host?.current()), canPick: Boolean(host) }
+    }
     browser.history.onChange(() => {
       this.historyVersion += 1
       this.push()

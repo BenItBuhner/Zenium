@@ -1,6 +1,6 @@
 import type { CSSProperties, JSX } from 'react'
 import type { Tab } from '@shared/types'
-import { BLANK_URL, getHost } from '@shared/url'
+import { getHost, isEmptyTabUrl } from '@shared/url'
 import { tabTitle } from '@renderer/lib/selectors'
 import { useThumbnail } from '@renderer/lib/thumbnails'
 import { cn } from '@renderer/lib/utils'
@@ -33,7 +33,7 @@ export function TabPreview({ tab, scale = 1, className, style }: Props): JSX.Ele
     )
   }
   const host = getHost(tab.url).replace(/^www\./, '')
-  const blank = tab.url === BLANK_URL || !tab.url
+  const blank = isEmptyTabUrl(tab.url)
   return (
     <div
       className={cn(

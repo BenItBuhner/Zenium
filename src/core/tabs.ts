@@ -30,6 +30,7 @@ import {
   BLANK_URL,
   ERROR_URL_PREFIX,
   errorPageUrl,
+  isEmptyTabUrl,
   isNavigableUrl,
   titleForUrl
 } from '../shared/url'
@@ -911,7 +912,7 @@ export class TabManager {
 
   /**
    * What "Recently Closed" remembers about a tab that is going away. Private tabs and tabs that
-   * never left the blank page are not worth keeping (Firefox skips those too).
+   * never left the blank page or the new tab page are not worth keeping (Firefox skips those too).
    */
   private captureClosed(tab: Tab, index: number, closedAt: number): ClosedTabEntry | null {
     if (this.isPrivate(tab)) return null
@@ -919,8 +920,8 @@ export class TabManager {
     const navigation = view
       ? view.navigationEntries()
       : (this.pendingNavigation.get(tab.id) ?? null)
-    const visited = navigation?.entries.some((e) => e.url !== BLANK_URL && e.url !== '') ?? false
-    if (tab.url === BLANK_URL && !visited) return null
+    const visited = navigation?.entries.some((e) => !isEmptyTabUrl(e.url)) ?? false
+    if (isEmptyTabUrl(tab.url) && !visited) return null
     return closedTabEntry(
       tab,
       { spaceId: tab.spaceId, folderId: tab.folderId, index, windowId: tab.windowId },
