@@ -41,6 +41,12 @@ export interface UpdateAsset {
   notarized?: boolean
   /** Android only: SHA-256 of the signing certificate (Android upgrades in place only when it matches). */
   signer?: string | null
+  /**
+   * Android only: the APK's applicationId. Another id than the installed app's means the release
+   * installs as a separate app next to it (nothing can migrate); absent in manifests from before
+   * the field existed.
+   */
+  packageName?: string | null
 }
 
 export interface UpdateManifest {
@@ -148,6 +154,11 @@ export interface UpdateStatus {
   signature: UpdateSignatureState | null
   /** Android: the release is signed with another key than the installed app – it cannot upgrade in place. */
   signerMismatch: boolean
+  /**
+   * Android: the release's APK has another applicationId than this app, so Android installs it
+   * alongside instead of over it; the old app must be uninstalled afterwards by hand.
+   */
+  packageChange: boolean
 }
 
 export const DEFAULT_UPDATE_SETTINGS: UpdateSettings = {
@@ -302,6 +313,8 @@ export function selectReleaseFromList(list: unknown): ReleaseCandidate | null {
 const OSES: readonly UpdateOs[] = ['windows', 'macos', 'linux', 'android']
 const ARCHES: readonly UpdateArch[] = ['x64', 'arm64', 'universal']
 const KINDS: readonly UpdateAssetKind[] = ['nsis', 'dmg', 'zip', 'appimage', 'deb', 'apk']
+/** An Android applicationId: dot-separated Java identifiers, at least two segments. */
+const PACKAGE_NAME = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/
 
 export class UpdateManifestError extends Error {
   constructor(message: string) {
@@ -404,6 +417,9 @@ export function parseUpdateManifest(
     if (typeof a.signer === 'string' && /^[0-9a-f]{64}$/i.test(a.signer))
       asset.signer = a.signer.toLowerCase()
     else if (a.signer === null) asset.signer = null
+    if (typeof a.packageName === 'string' && PACKAGE_NAME.test(a.packageName))
+      asset.packageName = a.packageName
+    else if (a.packageName === null) asset.packageName = null
     return asset
   })
   const feeds: Record<string, string> = {}
@@ -414,7 +430,7 @@ export function parseUpdateManifest(
   }
   return {
     schemaVersion: UPDATE_MANIFEST_SCHEMA,
-    name: typeof m.name === 'string' && m.name ? m.name : 'Zen',
+    name: typeof m.name === 'string' && m.name ? m.name : 'Zenium',
     version,
     tag,
     prerelease: m.prerelease === true || isPrereleaseVersion(version),
@@ -520,17 +536,17 @@ export function feedKeyFor(target: UpdateTarget): string {
 export function describeUpdateTarget(target: UpdateTarget): string {
   switch (target.kind) {
     case 'nsis':
-      return 'Updates download in the background and install when Zen restarts.'
+      return 'Updates download in the background and install when Zenium restarts.'
     case 'appimage':
-      return 'Updates download in the background and replace this AppImage when Zen restarts.'
+      return 'Updates download in the background and replace this AppImage when Zenium restarts.'
     case 'deb':
       return 'Updates download in the background; installing asks for your password once (dpkg).'
     case 'mac-signed':
-      return 'Updates download in the background and install when Zen restarts.'
+      return 'Updates download in the background and install when Zenium restarts.'
     case 'mac-unsigned':
-      return 'This build is not signed by Apple, so macOS cannot swap it in place: Zen downloads and opens the disk image and you drag the new Zen over the old one.'
+      return 'This build is not signed by Apple, so macOS cannot swap it in place: Zenium downloads and opens the disk image and you drag the new Zenium over the old one.'
     case 'apk':
-      return 'Zen downloads the APK and hands it to Android, which asks you to confirm the install.'
+      return 'Zenium downloads the APK and hands it to Android, which asks you to confirm the install.'
     case 'portable':
       return 'Portable builds are not updated in place; download the new version from the release page.'
     case 'unpacked':
@@ -575,6 +591,7 @@ export function emptyUpdateStatus(currentVersion: string, target: UpdateTarget):
     error: null,
     lastCheckedAt: null,
     signature: null,
-    signerMismatch: false
+    signerMismatch: false,
+    packageChange: false
   }
 }

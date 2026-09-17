@@ -533,6 +533,8 @@ export interface UpdateHost {
   publicKeys(): string[]
   /** Android: hex SHA-256 of the certificate the running app is signed with. */
   signer(): string | null
+  /** Android: the running app's applicationId; null on hosts where packages have no identity. */
+  packageName(): string | null
   /**
    * Fetch and verify `asset`. Resolves with the local file for `installer` mode (opened by
    * `install`) or null when the update is staged for an in-place install. Rejects with an error

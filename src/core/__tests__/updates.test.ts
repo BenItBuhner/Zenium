@@ -119,6 +119,7 @@ type Responses = Record<string, { ok: boolean; status: number; text: string } | 
 class FakeHost implements UpdateHost {
   keys: string[] = []
   installedSigner: string | null = null
+  installedPackage: string | null = null
   downloads = 0
   installs: Array<string | null> = []
   cancelled = false
@@ -136,6 +137,10 @@ class FakeHost implements UpdateHost {
 
   signer(): string | null {
     return this.installedSigner
+  }
+
+  packageName(): string | null {
+    return this.installedPackage
   }
 
   download(
@@ -241,7 +246,7 @@ describe('UpdateService', () => {
     const service = new UpdateService(same.browser, host)
     await service.check({ manual: true })
     expect(service.status().phase).toBe('up-to-date')
-    expect(same.toasts).toEqual(['Zen 0.2.0 is up to date.'])
+    expect(same.toasts).toEqual(['Zenium 0.2.0 is up to date.'])
 
     const none = fakeBrowser('0.1.0', {})
     const service2 = new UpdateService(none.browser, host)
@@ -389,6 +394,49 @@ describe('UpdateService', () => {
     expect(matching.status().downloadedPath).toBe('/cache/updates/zen.apk')
     await matching.install()
     expect(host.installs).toEqual(['/cache/updates/zen.apk'])
+  })
+
+  it('treats an APK with another applicationId as a new app, whatever its key', async () => {
+    const host = new FakeHost({ os: 'android', arch: 'universal', kind: 'apk' })
+    host.installedSigner = 'f'.repeat(64) // not the release's 'e' key
+    host.installedPackage = 'app.zen.chromium'
+    const renamed = manifestFor('0.2.0').replace(
+      '"signer":"eeee',
+      '"packageName":"io.github.benitbuhner.zenium","signer":"eeee'
+    )
+    expect(renamed).toContain('io.github.benitbuhner.zenium')
+    const { browser, toasts } = fakeBrowser('0.1.0', {
+      [`${LATEST}/update-manifest.json`]: { ok: true, status: 200, text: renamed }
+    })
+    const service = new UpdateService(browser, host)
+    await service.check({ manual: false })
+    expect(service.status().phase).toBe('available')
+    expect(service.status().release?.asset?.packageName).toBe('io.github.benitbuhner.zenium')
+    expect(service.status().packageChange).toBe(true)
+    // The key comparison is meaningless for a different package: it must not block the download.
+    expect(service.status().signerMismatch).toBe(false)
+    expect(toasts.at(-1)).toMatch(/new app/)
+    await service.download()
+    expect(host.downloads).toBe(1)
+    expect(service.status().phase).toBe('ready')
+    expect(toasts.at(-1)).toMatch(/alongside/)
+
+    // Same applicationId: the signer check applies as before.
+    host.installedPackage = 'io.github.benitbuhner.zenium'
+    const same = new UpdateService(browser, host)
+    await same.check({ manual: false })
+    expect(same.status().packageChange).toBe(false)
+    expect(same.status().signerMismatch).toBe(true)
+
+    // Manifests from before the field existed carry no packageName: only the key decides.
+    host.installedSigner = 'e'.repeat(64)
+    const { browser: browser2 } = fakeBrowser('0.1.0', {
+      [`${LATEST}/update-manifest.json`]: { ok: true, status: 200, text: manifestFor('0.2.0') }
+    })
+    const old = new UpdateService(browser2, host)
+    await old.check({ manual: false })
+    expect(old.status().packageChange).toBe(false)
+    expect(old.status().signerMismatch).toBe(false)
   })
 
   it('opens the release page for builds that cannot update themselves', async () => {

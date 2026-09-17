@@ -66,6 +66,10 @@ export class ElectronUpdateHost implements UpdateHost {
     return null
   }
 
+  packageName(): null {
+    return null
+  }
+
   async download(
     release: UpdateRelease,
     asset: UpdateAsset,

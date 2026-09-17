@@ -1,5 +1,5 @@
-appId: app.zen-browser.chromium
-productName: Zen
+appId: io.github.benitbuhner.zenium
+productName: Zenium
 directories:
   buildResources: build
 files:
@@ -28,7 +28,7 @@ publish:
 # Every artifact name carries the CPU architecture so that the x64 and arm64 builds of one release
 # can sit next to each other on the GitHub release page (see .github/workflows/release.yml).
 win:
-  executableName: zen
+  executableName: zenium
   # One NSIS installer per architecture. Build one arch per electron-builder invocation
   # (--x64 / --arm64); asking for both at once merges them into a single installer.
   target:
@@ -38,6 +38,10 @@ nsis:
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
+  # The app used to be "Zen" (appId app.zen-browser.chromium); Windows sees Zenium as a different
+  # program. The include removes the old installation silently and keeps its user data for the
+  # app to migrate on first launch (src/main/platform/legacyPaths.ts).
+  include: build/installer.nsh
 mac:
   target:
     - target: dmg
@@ -53,9 +57,9 @@ mac:
   artifactName: ${name}-${version}-${arch}.${ext}
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    - NSCameraUsageDescription: Zen requests access to the device's camera for websites that ask for it.
-    - NSMicrophoneUsageDescription: Zen requests access to the device's microphone for websites that ask for it.
-    - NSDownloadsFolderUsageDescription: Zen saves downloaded files to your Downloads folder.
+    - NSCameraUsageDescription: Zenium requests access to the device's camera for websites that ask for it.
+    - NSMicrophoneUsageDescription: Zenium requests access to the device's microphone for websites that ask for it.
+    - NSDownloadsFolderUsageDescription: Zenium saves downloaded files to your Downloads folder.
   # Notarization only runs after a successful code signature and only when the Apple credentials
   # (APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID) are in the environment; without them
   # electron-builder logs "skipped macOS notarization" and carries on.
@@ -63,11 +67,26 @@ mac:
 dmg:
   artifactName: ${name}-${version}-${arch}.${ext}
 linux:
+  executableName: zenium
   target:
     - AppImage
     - deb
-  maintainer: zen-chromium
+  maintainer: Bennett Buhner <136861830+BenItBuhner@users.noreply.github.com>
   category: Network
+deb:
+  # The package was called zen-chromium before the rename. Conflicts + Replaces make dpkg and apt
+  # remove that package when this one is installed instead of leaving two browsers side by side.
+  fpm:
+    - --conflicts
+    - zen-chromium
+    - --replaces
+    - zen-chromium
+    - --provides
+    - zen-chromium
+  # electron-builder's own scripts plus a `zen-chromium` command alias (the old package's binary
+  # name) kept for one release so agent configs that launch it with --mcp keep working.
+  afterInstall: build/linux/after-install.sh
+  afterRemove: build/linux/after-remove.sh
 appImage:
   artifactName: ${name}-${version}-${arch}.${ext}
 npmRebuild: false

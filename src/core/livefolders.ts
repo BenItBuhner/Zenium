@@ -155,7 +155,7 @@ export class LiveFolderService {
         if (!cfg.source) throw new Error('Enter a GitHub username')
         const headers: Record<string, string> = {
           accept: 'application/vnd.github+json',
-          'user-agent': 'zen-chromium-live-folders'
+          'user-agent': 'zenium-live-folders'
         }
         if (cfg.token) headers.authorization = `Bearer ${cfg.token}`
         const body = await this.fetchJson(githubSearchUrl(cfg), headers)

@@ -234,7 +234,7 @@ export const PRIVATE_THEME: SpaceTheme = {
 
 /** Preset gradients offered in the theme picker / onboarding. */
 export const THEME_PRESETS: Array<{ name: string; theme: SpaceTheme }> = [
-  { name: 'Zen Purple', theme: makeTheme('#9d7cff', ['#ff8bd1']) },
+  { name: 'Zenium Purple', theme: makeTheme('#9d7cff', ['#ff8bd1']) },
   { name: 'Ocean', theme: makeTheme('#4fa3ff', ['#5af0d6']) },
   { name: 'Forest', theme: makeTheme('#4caf50', ['#c8e06e']) },
   { name: 'Sunset', theme: makeTheme('#ff7a59', ['#ffc857', '#ff4f9a']) },

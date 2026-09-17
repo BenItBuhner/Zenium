@@ -2,8 +2,11 @@ import { promises as fs, existsSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import type { EncryptedEnvelope } from './crypto'
 import { isEnvelope } from './crypto'
+import { moveLegacyDirectory } from '../platform/legacyPaths'
 
-export const SYNC_DIR_NAME = 'zen-sync'
+export const SYNC_DIR_NAME = 'zenium-sync'
+/** The folder's name while the browser was called Zen (up to v0.2.0); taken over on first use. */
+export const LEGACY_SYNC_DIR_NAME = 'zen-sync'
 const FILE_EXT = '.zensync'
 
 export interface DeviceFile {
@@ -13,7 +16,7 @@ export interface DeviceFile {
   envelope: EncryptedEnvelope
 }
 
-const README = `Zen (Chromium) sync data.
+const README = `Zenium sync data.
 
 Each file in this folder belongs to one of your devices and is end-to-end encrypted with your
 sync passphrase (AES-256-GCM). The folder can live in any synced location – Dropbox, iCloud
@@ -29,7 +32,17 @@ export class FolderTransport {
   private watcher: FSWatcher | null = null
   private watchTimer: NodeJS.Timeout | null = null
 
-  constructor(readonly root: string) {}
+  constructor(readonly root: string) {
+    // A folder that still holds a zen-sync directory from before the rename keeps its data: the
+    // directory is renamed in place (cloud drives sync that like any other rename).
+    try {
+      moveLegacyDirectory(join(root, LEGACY_SYNC_DIR_NAME), this.dir, (message) =>
+        console.warn('[zen] sync:', message)
+      )
+    } catch (error) {
+      console.warn('[zen] sync: could not take over the zen-sync folder:', error)
+    }
+  }
 
   get dir(): string {
     return join(this.root, SYNC_DIR_NAME)

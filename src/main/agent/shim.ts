@@ -3,17 +3,18 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 /**
- * `zen --mcp`: the stdio face of the MCP server, for agent clients that launch a command rather
- * than connect to a URL. The running browser owns the server; this process only relays each
- * newline-delimited JSON-RPC message from stdin to `http://127.0.0.1:<port>/mcp` (found in the
- * profile's `zen/agent.json`, together with the token that skips the approval prompt) and writes
- * the responses to stdout. When stdin closes the session is deleted and the process exits.
+ * `zenium --mcp` (the .deb also keeps `zen-chromium --mcp` for one release): the stdio face of the
+ * MCP server, for agent clients that launch a command rather than connect to a URL. The running
+ * browser owns the server; this process only relays each newline-delimited JSON-RPC message from
+ * stdin to `http://127.0.0.1:<port>/mcp` (found in the profile's `zen/agent.json`, together with
+ * the token that skips the approval prompt) and writes the responses to stdout. When stdin closes
+ * the session is deleted and the process exits.
  */
 export async function runStdioShim(userDataDir: string): Promise<number> {
   const endpoint = readEndpoint(userDataDir)
   if (!endpoint) {
     process.stderr.write(
-      'zen --mcp: the Zen browser is not running with its MCP server enabled. Start Zen and turn on Settings → AI Agents.\n'
+      'zenium --mcp: Zenium is not running with its MCP server enabled. Start Zenium and turn on Settings → AI Agents.\n'
     )
     return 2
   }
@@ -41,7 +42,7 @@ export async function runStdioShim(userDataDir: string): Promise<number> {
           'content-type': 'application/json',
           accept: 'application/json, text/event-stream',
           authorization: `Bearer ${endpoint.token}`,
-          'user-agent': 'zen-mcp-stdio'
+          'user-agent': 'zenium-mcp-stdio'
         }
         if (sessionId) headers['mcp-session-id'] = sessionId
         const res = await fetch(endpoint.url, { method: 'POST', headers, body: text })
@@ -59,7 +60,7 @@ export async function runStdioShim(userDataDir: string): Promise<number> {
         write({
           jsonrpc: '2.0',
           id,
-          error: { code: -32603, message: `Zen is not reachable: ${(error as Error).message}` }
+          error: { code: -32603, message: `Zenium is not reachable: ${(error as Error).message}` }
         })
       }
     })

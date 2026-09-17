@@ -228,7 +228,7 @@ function LookSection({
           <Switch checked={s.borderless} onCheckedChange={(v) => set({ borderless: v })} />
         </Row>
       </Group>
-      <Group title="Zen URL Bar">
+      <Group title="URL Bar">
         <Row label="Floating behaviour">
           <Choice<UrlbarBehavior>
             value={s.urlbarBehavior}
@@ -354,7 +354,7 @@ function TabsSection({
         <Group title="Window Sync">
           <Row
             label="Tabs across windows"
-            hint="Zen mirrors your spaces and tabs in every window. Choose 'pinned only' to keep unpinned tabs per window."
+            hint="Zenium mirrors your spaces and tabs in every window. Choose 'pinned only' to keep unpinned tabs per window."
           >
             <Choice<WindowSyncMode>
               value={s.windowSync}
@@ -773,7 +773,7 @@ function AboutSection({
   return (
     <Group title="About">
       <Row
-        label="Zen (Chromium port)"
+        label="Zenium"
         hint={`Version ${state.version} · running on Chromium via ${engineHost}${
           newer ? ` · ${newer.version} is available` : ''
         }`}

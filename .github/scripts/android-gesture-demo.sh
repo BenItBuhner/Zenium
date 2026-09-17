@@ -16,8 +16,10 @@
 #   files/<DEMO_DIR>/done       – written by the driver when the sequence is over
 set -euo pipefail
 
-app_id=app.zen.chromium.debug
-runner=app.zen.chromium.debug.test/androidx.test.runner.AndroidJUnitRunner
+# applicationId of the debug build (android/app/build.gradle.kts); the instrumentation APK is
+# "<applicationId>.test" and the driver classes keep the Kotlin package app.zen.chromium.
+app_id=io.github.benitbuhner.zenium.debug
+runner=io.github.benitbuhner.zenium.debug.test/androidx.test.runner.AndroidJUnitRunner
 demo_class=${DEMO_CLASS:-app.zen.chromium.GestureDemo}
 demo_dir=${DEMO_DIR:-gesture-demo}
 out=${DEMO_OUT:-artifacts/android-gesture-demo}

@@ -229,7 +229,7 @@ export class Browser {
       bounds: win.initialBounds,
       maximized: win.initialMaximized,
       cascadeFrom: win.cascadeFrom,
-      title: win.isPrivate ? 'Zen (Private Browsing)' : 'Zen',
+      title: win.isPrivate ? 'Zenium (Private Browsing)' : 'Zenium',
       backgroundColor: rgbToHex(theme.averageColor)
     })
     this.governor.watchWindow(win)
