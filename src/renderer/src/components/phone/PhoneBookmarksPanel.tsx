@@ -37,7 +37,6 @@ import {
   browserStore,
   closeOverlay,
   MENU_GAP,
-  pushToast,
   showLocalMenu,
   uiStore,
   type LocalMenuItem
@@ -167,8 +166,10 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
   const copyLinks = (ids: readonly string[]): void => {
     const urls = ids.flatMap((id) => tree.urlsUnder(id)).map((node) => node.url ?? '')
     if (!urls.length) return
-    run('clipboard.writeText', { text: urls.join('\n') })
-    pushToast(urls.length === 1 ? 'Link copied' : `${urls.length} links copied`)
+    run('clipboard.writeText', {
+      text: urls.join('\n'),
+      confirmation: urls.length === 1 ? 'Link copied' : `${urls.length} links copied`
+    })
     exitSelection()
   }
 

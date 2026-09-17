@@ -21,7 +21,7 @@ import {
   type Selection
 } from '@renderer/lib/multiSelect'
 import { activeTab } from '@renderer/lib/selectors'
-import { closeOverlay, MENU_GAP, pushToast, showLocalMenu } from '@renderer/lib/ui'
+import { closeOverlay, MENU_GAP, showLocalMenu } from '@renderer/lib/ui'
 import { EmptyNote, OverlayShell } from '../overlays/OverlayShell'
 import {
   PhoneGroupHeading,
@@ -119,8 +119,10 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
 
   const copy = (list: readonly HistoryRow[]): void => {
     if (!list.length) return
-    run('clipboard.writeText', { text: list.map((row) => row.url).join('\n') })
-    pushToast(list.length === 1 ? 'Link copied' : `${list.length} links copied`)
+    run('clipboard.writeText', {
+      text: list.map((row) => row.url).join('\n'),
+      confirmation: list.length === 1 ? 'Link copied' : `${list.length} links copied`
+    })
     exitSelection()
   }
 
