@@ -62,6 +62,8 @@ export interface HostCapabilities {
   appLinkSettings: boolean
   /** Touch hosts: dragging down from the top of a page can reload it (Settings → Look and Feel). */
   pullToRefresh: boolean
+  /** The host can protect the password vault's key (OS keystore) – the password manager is on. */
+  passwords: boolean
 }
 
 export interface Rect {
@@ -306,24 +308,6 @@ export type ExtensionSource = 'chrome-web-store' | 'edge-add-ons' | 'crx' | 'zip
 /** What the last update check found for an extension (`unknown` until one ran or when it cannot update). */
 export type ExtensionUpdateState = 'unknown' | 'up-to-date' | 'available' | 'updating' | 'error'
 
-// ---- PROVISIONAL: extensions UI (PR #68) --------------------------------------------------------
-// `ExtensionAction` and `ExtensionInfo.action` are the shapes the API-layer PR is expected to
-// produce per active tab (`chrome.action` state merged with the manifest); the UI only reads them
-// and nothing on main fills them yet. Reconcile with that PR on rebase.
-
-/** The toolbar action for the active tab (`chrome.action` state, merged with the manifest). */
-export interface ExtensionAction {
-  badgeText: string
-  /** CSS colour string; null → the accent fill. */
-  badgeBackgroundColor: string | null
-  badgeTextColor: string | null
-  title: string
-  /** Data URL of the action icon; null → the manifest icon. */
-  icon: string | null
-  popup: string | null
-  enabled: boolean
-}
-
 export interface ExtensionInfo {
   id: string
   name: string
@@ -366,8 +350,22 @@ export interface ExtensionInfo {
   updateError: string | null
   /** When this extension was last checked for updates, or null when never. */
   updateCheckedAt: number | null
-  /** PROVISIONAL (extensions UI, PR #68): filled by the API-layer PR; absent until it lands. */
+  /** Effective `chrome.action` state for the active tab; absent while the extension is not loaded. */
   action?: ExtensionAction
+}
+
+/** What an extension's toolbar button should show: `chrome.action` state for the active tab. */
+export interface ExtensionAction {
+  badgeText: string
+  /** CSS colour, or null for the host's default badge colour. */
+  badgeBackgroundColor: string | null
+  badgeTextColor: string | null
+  title: string
+  /** Data URL set through `action.setIcon`, or null for the manifest icon. */
+  icon: string | null
+  /** Full popup URL, or null when a click fires `action.onClicked` instead. */
+  popup: string | null
+  enabled: boolean
 }
 
 /**
@@ -380,7 +378,7 @@ export interface ExtensionPromptRequest {
   /**
    * `install`: a fresh install or a reinstall; `update`: an update that added permissions;
    * `permissions`: approving those before an updated extension is enabled again; `request`: a
-   * running extension's `permissions.request` (raised by the API layer once it lands).
+   * running extension's `permissions.request` (raised by the API layer).
    */
   kind: 'install' | 'update' | 'permissions' | 'request'
   name: string
@@ -439,6 +437,122 @@ export interface SyncStatus {
   devices: Array<{ id: string; name: string; lastSeen: number }>
   /** Set while the first sync waits for the user to confirm merging with existing cloud data. */
   pendingMerge: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Passwords (the encrypted credential vault)
+// ---------------------------------------------------------------------------
+
+export interface PasswordSettings {
+  /** Offer to save logins submitted in pages (the prompt itself arrives with in-page fill). */
+  offerToSave: boolean
+  /**
+   * Seconds a successful re-authentication keeps covering reveals, copies and exports before the
+   * user is asked again (Chrome uses about a minute); 0 asks every time.
+   */
+  reauthGraceSeconds: number
+}
+
+/**
+ * A saved login. The password only ever leaves the core through the re-authenticated commands
+ * (`passwords.reveal`, `passwords.copy`, `passwords.export`).
+ */
+export interface Credential {
+  id: string
+  /** Origin the login belongs to, e.g. `https://accounts.example.com`. */
+  origin: string
+  /** Page the login was saved from when known (fill and "change password" links), else ''. */
+  url: string
+  username: string
+  password: string
+  /** HTTP authentication realm (Basic / Digest prompts); `null` for form logins. */
+  realm: string | null
+  notes: string
+  createdAt: number
+  updatedAt: number
+  lastUsedAt: number | null
+}
+
+/** What the chrome lists: a credential without its secret. */
+export interface CredentialSummary extends Omit<Credential, 'password'> {
+  /** Registrable domain (`example.com`) used for grouping and matching. */
+  domain: string
+  favicon: string | null
+}
+
+/** Password checkup: which entries are compromised, weak or reused (ids only, no secrets). */
+export interface CheckupState {
+  running: boolean
+  /** Entries processed so far and the total, while running. */
+  checked: number
+  total: number
+  finishedAt: number | null
+  error: string | null
+  compromised: string[]
+  weak: string[]
+  /** Groups of entries sharing one password; each group has at least two members. */
+  reused: string[][]
+  /** Entries the breach lookup could not check (network); neither safe nor compromised. */
+  unchecked: string[]
+}
+
+export interface PasswordsStatus {
+  /** The data key is not in memory; `passwords.unlock` (with the passphrase where needed) opens the vault. */
+  locked: boolean
+  /** How the data key is protected: by the OS keystore, by a passphrase, or both. */
+  protection: { os: boolean; passphrase: boolean }
+  /** The OS keystore is usable on this device right now. */
+  osKeystore: boolean
+  /** The OS can verify the user (Touch ID, Windows Hello, Android biometrics or device credential). */
+  osReauth: boolean
+  count: number
+  /** Registrable domains the user never wants to save logins for. */
+  neverSave: string[]
+  /** Increments on every change so the chrome re-fetches its lists. */
+  revision: number
+  /** The vault file could not be read; the manager offers to start over. */
+  error: string | null
+  checkup: CheckupState
+}
+
+/** Outcome of a command that needs the user to re-authenticate first. */
+export type ReauthOutcome<T> =
+  | { status: 'ok'; value: T }
+  /** Ask for the vault passphrase and call again with it. */
+  | { status: 'passphrase' }
+  /** The OS cannot verify the user here: a vault passphrase must be set first. */
+  | { status: 'setup-passphrase' }
+  /**
+   * The user cancelled, the OS refused or the passphrase was wrong; `reason` carries the host's
+   * explanation when it gave one ("Authentication was cancelled").
+   */
+  | { status: 'denied'; reason?: string }
+
+export interface GeneratorOptions {
+  mode: 'password' | 'passphrase'
+  /** Password mode: characters (clamped to the site's rules when a domain is given). */
+  length: number
+  upper: boolean
+  lower: boolean
+  digits: boolean
+  symbols: boolean
+  /** Passphrase mode: number of words and how they are joined. */
+  words: number
+  separator: string
+  capitalize: boolean
+  includeDigit: boolean
+}
+
+export type ImportConflict = 'skip' | 'replace' | 'keep-both'
+
+export interface ImportResult {
+  /** Which export the file looked like (`chrome`, `firefox`, `bitwarden`…); null when unrecognised. */
+  format: string | null
+  total: number
+  added: number
+  replaced: number
+  skipped: number
+  invalid: number
 }
 
 // ---------------------------------------------------------------------------
@@ -757,6 +871,7 @@ export interface Settings {
    * external-protocol sheet: pages may hand links of that scheme to the app without asking again.
    */
   externalProtocols: Record<string, boolean>
+  passwords: PasswordSettings
 }
 
 // ---------------------------------------------------------------------------
@@ -1104,6 +1219,8 @@ export interface UIState {
   agentServer: AgentServerStatus
   /** Automatic updates: what the browser knows about the latest release and how far it got. */
   updates: UpdateStatus
+  /** The password vault: lock state, protection, counts and the last checkup (never secrets). */
+  passwords: PasswordsStatus
 }
 
 export interface FindResult {
@@ -1605,6 +1722,66 @@ export interface Commands {
   'updates.cancel': { args: void; result: void }
   /** Open the release notes on GitHub in a tab. */
   'updates.openRelease': { args: void; result: void }
+
+  /**
+   * Open (or first create) the vault. `passphrase` answers a `passphrase` outcome, and creates
+   * the vault after a `setup-passphrase` one (no OS keystore on this device).
+   */
+  'passwords.unlock': { args: { passphrase?: string }; result: ReauthOutcome<null> }
+  'passwords.lock': { args: void; result: void }
+  /** Throw the unreadable vault away and start empty (offered when `PasswordsStatus.error` is set). */
+  'passwords.reset': { args: void; result: void }
+  /**
+   * Set or change the vault passphrase (the desktop fallback when no OS keystore exists, and
+   * the re-authentication secret where the OS cannot verify the user). Changing an existing
+   * passphrase needs the current one.
+   */
+  'passwords.setPassphrase': {
+    args: { passphrase: string; current?: string }
+    result: ReauthOutcome<null>
+  }
+  /** Saved logins without their secrets, newest first; `query` filters by site and username. */
+  'passwords.list': { args: { query?: string }; result: CredentialSummary[] }
+  /** The password of one login, behind re-authentication. */
+  'passwords.reveal': { args: { id: string; passphrase?: string }; result: ReauthOutcome<string> }
+  /** Copy a login's username, or (behind re-authentication) its password. */
+  'passwords.copy': {
+    args: { id: string; field: 'username' | 'password'; passphrase?: string }
+    result: ReauthOutcome<null>
+  }
+  'passwords.add': {
+    args: { url: string; username: string; password: string; notes?: string }
+    result: CredentialSummary
+  }
+  'passwords.update': {
+    args: {
+      id: string
+      patch: Partial<Pick<Credential, 'url' | 'username' | 'password' | 'notes'>>
+    }
+    result: CredentialSummary | null
+  }
+  /** Delete a login; it can be brought back with `passwords.restore` for a short while. */
+  'passwords.remove': { args: { id: string }; result: void }
+  'passwords.restore': { args: { id: string }; result: boolean }
+  'passwords.neverSaveAdd': { args: { domain: string }; result: void }
+  'passwords.neverSaveRemove': { args: { domain: string }; result: void }
+  /** A fresh strong password; `domain` applies the site's published password rules. */
+  'passwords.generate': {
+    args: { options: GeneratorOptions; domain?: string }
+    result: { password: string; rules: string | null }
+  }
+  'passwords.checkupRun': { args: void; result: void }
+  'passwords.checkupCancel': { args: void; result: void }
+  /** Pick a CSV export (Chrome, Edge, Firefox, Bitwarden, Safari, LastPass) and import it. */
+  'passwords.import': { args: { conflict: ImportConflict }; result: ImportResult | null }
+  /**
+   * Write every login to a Chrome-compatible CSV where the user chooses, behind
+   * re-authentication; `saved` is false when the save dialog was cancelled.
+   */
+  'passwords.export': {
+    args: { passphrase?: string }
+    result: ReauthOutcome<{ saved: boolean; count: number }>
+  }
 }
 
 export type CommandName = keyof Commands
@@ -1647,6 +1824,8 @@ export interface Events {
   'externalProtocol.cancel': { requestId: string }
   /** Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts). */
   insets: { top: number; right: number; bottom: number; left: number }
+  /** A login was deleted; `passwords.restore` brings it back for a while. */
+  'passwords.removed': { id: string; site: string }
   // ---- PROVISIONAL: extensions UI (PR #68), see the matching block in `Commands` --------------
   /** The popup's document asked for this size (CSS px); the renderer fits its frame around it. */
   'extension.popupSize': { id: string; width: number; height: number }

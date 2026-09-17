@@ -39,6 +39,7 @@ import { ModService } from './mods'
 import { SiteInfoService } from './siteInfo'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
+import { PasswordService } from './credentials/service'
 import { NoExtensions, NoSync, NoUpdateHost, NoopGovernor } from './hostDefaults'
 import {
   activeSpace,
@@ -58,7 +59,7 @@ import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
-import { ONBOARDING_ESSENTIALS, spaceLabel } from '../shared/defaults'
+import { ONBOARDING_ESSENTIALS, sanitizePasswordSettings, spaceLabel } from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { PRIVATE_THEME, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
@@ -122,6 +123,8 @@ export class Browser {
   readonly siteInfo: SiteInfoService
   /** Links that leave the web: the confirm sheet and the remembered per-scheme choices. */
   readonly externalProtocols: ExternalProtocolService
+  /** The encrypted credential vault and everything the password manager does with it. */
+  readonly passwords: PasswordService
   readonly windows = new Map<string, ZenWindow>()
   quitting = false
   private readonly handlers: CommandHandlers
@@ -164,6 +167,7 @@ export class Browser {
     )
     this.siteInfo = new SiteInfoService(this)
     this.externalProtocols = new ExternalProtocolService(this)
+    this.passwords = new PasswordService(this, platform.passwords)
     this.state.extras = () => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -174,7 +178,8 @@ export class Browser {
       sync: this.sync.status(),
       agents: this.agents.list(),
       agentServer: this.agents.serverStatus(),
-      updates: this.updates.status()
+      updates: this.updates.status(),
+      passwords: this.passwords.status()
     })
     this.handlers = this.commandHandlers()
   }
@@ -347,6 +352,7 @@ export class Browser {
     this.sync.start()
     this.agents.start()
     this.updates.start()
+    this.passwords.start()
     this.syncShortcuts()
     this.state.commit()
   }
@@ -851,6 +857,7 @@ export class Browser {
     this.extensions.flushSync()
     this.mods.flushSync()
     this.sync.flushSync()
+    this.passwords.flushSync()
   }
 
   private syncShortcuts(): void {
@@ -1386,6 +1393,27 @@ export class Browser {
       'updates.cancel': () => this.updates.cancel(),
       'updates.openRelease': (_a, win) => this.updates.openRelease(win),
 
+      'passwords.unlock': ({ passphrase }) => this.passwords.unlock(passphrase),
+      'passwords.lock': () => this.passwords.lock(),
+      'passwords.reset': () => this.passwords.reset(),
+      'passwords.setPassphrase': ({ passphrase, current }, win) =>
+        this.passwords.setPassphrase(passphrase, current, win),
+      'passwords.list': ({ query }) => this.passwords.list(query),
+      'passwords.reveal': ({ id, passphrase }, win) => this.passwords.reveal(id, passphrase, win),
+      'passwords.copy': ({ id, field, passphrase }, win) =>
+        this.passwords.copy(id, field, passphrase, win),
+      'passwords.add': (input) => this.passwords.add(input),
+      'passwords.update': ({ id, patch }) => this.passwords.update(id, patch),
+      'passwords.remove': ({ id }, win) => this.passwords.remove(id, win),
+      'passwords.restore': ({ id }) => this.passwords.restore(id),
+      'passwords.neverSaveAdd': ({ domain }) => this.passwords.neverSaveAdd(domain),
+      'passwords.neverSaveRemove': ({ domain }) => this.passwords.neverSaveRemove(domain),
+      'passwords.generate': ({ options, domain }) => this.passwords.generate(options, domain),
+      'passwords.checkupRun': () => this.passwords.runCheckup(),
+      'passwords.checkupCancel': () => this.passwords.cancelCheckup(),
+      'passwords.import': ({ conflict }, win) => this.passwords.import(conflict, win),
+      'passwords.export': ({ passphrase }, win) => this.passwords.export(passphrase, win),
+
       'onboarding.complete': ({ searchEngineId, colorScheme, essentials }, win) => {
         if (state.searchEngines.some((e) => e.id === searchEngineId))
           state.settings.searchEngineId = searchEngineId
@@ -1450,6 +1478,11 @@ export class Browser {
         s.appIcon = sanitizeAppIcon(value)
       } else if (key === 'phoneBar') {
         s.phoneBar = sanitizePhoneBar(value)
+      } else if (key === 'passwords' && value && typeof value === 'object') {
+        s.passwords = sanitizePasswordSettings({
+          ...s.passwords,
+          ...(value as Partial<Settings['passwords']>)
+        })
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }

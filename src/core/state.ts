@@ -16,6 +16,7 @@ import type {
   LiveFolderConfig,
   MediaState,
   Mod,
+  PasswordsStatus,
   Platform,
   Rect,
   ResourceSnapshot,
@@ -34,7 +35,9 @@ import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
   emptyAgentServerStatus,
-  emptyResourceSnapshot
+  emptyPasswordsStatus,
+  emptyResourceSnapshot,
+  sanitizePasswordSettings
 } from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { DEFAULT_SEARCH_ENGINES } from '../shared/search'
@@ -109,6 +112,7 @@ export interface StateExtras {
   agents: AgentInfo[]
   agentServer: AgentServerStatus
   updates: UpdateStatus
+  passwords: PasswordsStatus
 }
 
 /**
@@ -172,7 +176,8 @@ export class BrowserState {
       os: updateOsOf(this.platform),
       arch: 'universal',
       kind: 'dev'
-    })
+    }),
+    passwords: emptyPasswordsStatus()
   })
   searchEngines: SearchEngine[] = DEFAULT_SEARCH_ENGINES
   readonly version: string
@@ -236,6 +241,7 @@ export class BrowserState {
     this.settings.agents = sanitizeAgentSettings(data.settings?.agents)
     this.settings.updates = sanitizeUpdateSettings(data.settings?.updates)
     this.settings.phoneBar = sanitizePhoneBar(data.settings?.phoneBar)
+    this.settings.passwords = sanitizePasswordSettings(data.settings?.passwords)
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     this.bookmarks = this.loadBookmarks(data)
     if (Array.isArray(data.windows) && data.windows.length) {

@@ -626,6 +626,73 @@ export interface UpdateHost {
   cancel(): void
 }
 
+// ---------------------------------------------------------------------------
+// Passwords: key protection and re-authentication
+// ---------------------------------------------------------------------------
+
+/** Passphrase key derivation parameters, recorded in the vault so the writing host can undo it. */
+export type KdfParams =
+  { kdf: 'scrypt'; n: number; r: number; p: number } | { kdf: 'pbkdf2-sha256'; iterations: number }
+
+/**
+ * Why a `KeyWrapHost` refused. Everything but `'invalidated'` is worth asking again for: the user
+ * dismissed or failed the system prompt (`'cancelled'`), or the keystore cannot be used right now
+ * (`'unavailable'`: a locked keychain, a denied Keychain access request, a silent call against a
+ * key that wants a fresh authentication). `'invalidated'` means the wrapped key is gone for good
+ * on this device (the screen lock was removed, the keychain item deleted).
+ */
+export type KeyWrapFailure = 'cancelled' | 'unavailable' | 'invalidated'
+
+export class KeyWrapError extends Error {
+  constructor(
+    readonly code: KeyWrapFailure,
+    message: string
+  ) {
+    super(message)
+    this.name = 'KeyWrapError'
+  }
+}
+
+/**
+ * Protects the vault's random data key with something only this device and user can undo:
+ * Electron's `safeStorage` (Keychain, DPAPI, libsecret) on desktop, an Android Keystore key on
+ * Android. `wrap` / `unwrap` may show system UI (Android asks for the device credential when the
+ * Keystore key demands a recent authentication).
+ */
+export interface KeyWrapHost {
+  /** The OS keystore is usable right now (false on Linux without a secret service). */
+  osAvailable(): Promise<boolean>
+  /**
+   * Opaque, host-specific blob; only this host on this device can `unwrap` it. Rejects with a
+   * `KeyWrapError` when the user dismisses the system prompt or the keystore is not usable.
+   */
+  wrap(dataKey: Uint8Array): Promise<string>
+  /**
+   * Rejects with a `KeyWrapError` when the OS refuses, the user cancels or the blob was not
+   * written here; only `'invalidated'` means the blob will never open again on this device. Only
+   * an `interactive` call may put up system UI (Android's device-credential prompt); the silent
+   * variant runs at startup and simply fails when the key wants a fresh authentication.
+   */
+  unwrap(blob: string, interactive: boolean): Promise<Uint8Array>
+  /** Parameters this host uses for new passphrase wrappings. */
+  kdfParams(): KdfParams
+  /** Derive the 32-byte passphrase key (`node:crypto` scrypt on desktop, PBKDF2 elsewhere). */
+  deriveKey(passphrase: string, salt: Uint8Array, params: KdfParams): Promise<Uint8Array>
+}
+
+/** The OS verifies the user before a password is shown, copied or exported. */
+export interface ReauthHost {
+  /** Touch ID, Windows Hello, or Android biometrics / device credential can be used right now. */
+  available(): Promise<boolean>
+  /** Show the OS prompt; resolves true only when the user verified themselves. */
+  verify(reason: string, win?: ZenWindow): Promise<boolean>
+}
+
+export interface PasswordsHost {
+  keys: KeyWrapHost
+  reauth: ReauthHost
+}
+
 export interface Platform {
   readonly info: PlatformInfo
   readonly capabilities: HostCapabilities
@@ -644,6 +711,8 @@ export interface Platform {
   readonly siteData?: SiteDataHost
   /** Hosts that ask before a page may open another app (Android). */
   readonly externalProtocols?: ExternalProtocolHost
+  /** Key protection and re-authentication for the password vault; omit when `capabilities.passwords` is off. */
+  readonly passwords?: PasswordsHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Host-backed services; omit for the built-in no-op versions. */

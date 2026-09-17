@@ -22,7 +22,8 @@ export default defineConfig({
         input: {
           index: resolve('src/preload/index.ts'),
           page: resolve('src/preload/page.ts'),
-          webstore: resolve('src/preload/webstore.ts')
+          webstore: resolve('src/preload/webstore.ts'),
+          extension: resolve('src/preload/extension.ts')
         }
       }
     }
