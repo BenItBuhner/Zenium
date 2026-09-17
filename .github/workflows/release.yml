@@ -485,7 +485,9 @@ jobs:
     needs: [prepare, assemble]
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Normally ~5 minutes; the headroom is for the bounded upload retries below (worst case for
+    # one package: 5 attempts × 5 minutes plus the pauses), not for the happy path.
+    timeout-minutes: 45
     permissions:
       contents: write
       id-token: write
@@ -533,16 +535,20 @@ jobs:
             gh release create "$TAG" --draft --verify-tag --title "$TITLE" --notes-file release/notes.md "${flags[@]}"
           fi
           # One file per call with retries: a single transient HTTP 500 from uploads.github.com
-          # used to fail the whole step halfway through (v0.3.19, first attempt).
+          # used to fail the whole step halfway through (v0.3.19, first attempt). Every attempt is
+          # bounded, because `gh release upload` has no timeout of its own: on v0.3.21 an attempt
+          # stalled for 17 minutes during a GitHub upload incident and ate the job's time limit.
+          # The runner pushes the largest package (~140 MB) in about a minute when GitHub is healthy
+          # (v0.3.20: 24 assets, 1.2 GB, 8 minutes), so five minutes means "stalled", not "slow".
           for file in release/assets/*; do
-            for attempt in 1 2 3 4; do
-              if gh release upload "$TAG" "$file" --clobber; then break; fi
-              if [[ "$attempt" -eq 4 ]]; then
+            for attempt in 1 2 3 4 5; do
+              if timeout -k 30 300 gh release upload "$TAG" "$file" --clobber; then break; fi
+              if [[ "$attempt" -eq 5 ]]; then
                 echo "::error::Uploading $(basename "$file") failed after $attempt attempts"
                 exit 1
               fi
-              echo "::warning::Uploading $(basename "$file") failed (attempt $attempt); retrying"
-              sleep $((10 * attempt))
+              echo "::warning::Uploading $(basename "$file") failed or stalled (attempt $attempt); retrying"
+              sleep $((15 * attempt))
             done
           done
           uploaded="$(gh release view "$TAG" --json assets --jq '.assets | length')"
