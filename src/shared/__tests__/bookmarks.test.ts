@@ -128,6 +128,20 @@ describe('BookmarkTree', () => {
     expect(tree.isAncestor('work', 'blog')).toBe(false)
   })
 
+  it('labels the folders above a node without the root, keeping the immediate parent', () => {
+    const nested = new BookmarkTree([
+      ...sample(),
+      folder('docs-folder', 'work', 2, 'Docs'),
+      url('mdn', 'docs-folder', 0, 'MDN', 'https://developer.mozilla.org/')
+    ])
+    expect(nested.folderLabel('mdn')).toBe('Work / Docs')
+    expect(nested.folderLabel('mail')).toBe('Work')
+    expect(nested.folderLabel('news')).toBe('')
+    expect(nested.folderLabel('docs-folder')).toBe('Work')
+    expect(nested.folderLabel(BOOKMARKS_BAR_ID)).toBe('')
+    expect(nested.pathLabel('mdn')).toBe('Bookmarks bar / Work / Docs')
+  })
+
   it('collects descendants and the URLs below a node', () => {
     expect(tree.descendants(BOOKMARKS_BAR_ID).map((n) => n.id)).toEqual([
       'work',

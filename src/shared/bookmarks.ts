@@ -118,6 +118,17 @@ export class BookmarkTree {
       .join(separator)
   }
 
+  /**
+   * The folders above a node without the root's name: "Work / Docs" for a bookmark in
+   * Other bookmarks > Work > Docs, "" for one directly under a root.
+   */
+  folderLabel(id: string, separator = ' / '): string {
+    return this.path(id)
+      .filter((n) => !isBookmarkRoot(n.id))
+      .map((n) => n.title)
+      .join(separator)
+  }
+
   isAncestor(ancestorId: string, id: string): boolean {
     return this.path(id).some((n) => n.id === ancestorId)
   }

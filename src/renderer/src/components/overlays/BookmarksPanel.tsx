@@ -1,8 +1,8 @@
 import type { JSX } from 'react'
 import { useMemo, useState } from 'react'
 import { Bookmark, MoreHorizontal, Trash2 } from 'lucide-react'
-import type { BookmarkNode, UIState } from '@shared/types'
-import { BookmarkTree, isBookmarkRoot, searchBookmarks } from '@shared/bookmarks'
+import type { UIState } from '@shared/types'
+import { BookmarkTree, searchBookmarks } from '@shared/bookmarks'
 import { displayUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { activeTab } from '@renderer/lib/selectors'
@@ -31,14 +31,6 @@ export function BookmarksPanel({ state }: { state: UIState }): JSX.Element {
     run('bookmark.open', { id, newTab: newTab || !tab, tabId: tab?.id ?? null })
     closeOverlay()
   }
-
-  /** "Work / Docs": the folders above a bookmark (root to parent), without the root's name. */
-  const folderLabel = (node: BookmarkNode): string =>
-    tree
-      .path(node.id)
-      .filter((p) => !isBookmarkRoot(p.id))
-      .map((p) => p.title)
-      .join(' / ')
 
   return (
     <OverlayShell
@@ -86,7 +78,7 @@ export function BookmarksPanel({ state }: { state: UIState }): JSX.Element {
       ) : (
         <ul className="px-2 pb-2">
           {list.map((b) => {
-            const folder = folderLabel(b)
+            const folder = tree.folderLabel(b.id)
             return (
               <li
                 key={b.id}
@@ -116,7 +108,7 @@ export function BookmarksPanel({ state }: { state: UIState }): JSX.Element {
                 </button>
                 <button
                   type="button"
-                  className="zen-toolbar-button h-6 w-6 opacity-0 group-hover:opacity-100"
+                  className="zen-toolbar-button zen-row-action h-6 w-6 opacity-0 group-hover:opacity-100"
                   title="Remove bookmark"
                   onClick={() => run('bookmark.remove', { ids: [b.id] })}
                 >
