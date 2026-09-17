@@ -9,6 +9,7 @@ import { ExternalProtocolLayer } from './components/protocol/ExternalProtocolShe
 import { BarEditorLayer } from './components/phone/BarEditorSheet'
 import { SiteInfoLayer } from './components/siteinfo/SiteInfoSheet'
 import { SheetPresence } from './lib/motion/presence'
+import { TranslateSelectionLayer } from './components/translate/SelectionPopover'
 import { browserStore, uiStore } from './lib/ui'
 
 /** Waits for the first state snapshot from the main process before rendering the browser UI. */
@@ -22,6 +23,7 @@ export function Root(): JSX.Element {
       <NewTabCustomizeLayer />
       <DefaultBrowserLayer />
       <SiteInfoLayer />
+      <TranslateSelectionLayer />
       <BarEditorLayer />
       <DownloadBubbleLayer />
       <MenuLayer />
