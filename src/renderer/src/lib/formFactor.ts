@@ -1,8 +1,9 @@
 import { useEffect } from 'react'
 import { classifyViewport, type ViewportMetrics } from '@shared/formFactor'
-import type { FormFactor } from '@shared/types'
+import type { FormFactor, WindowChrome } from '@shared/types'
 import { run } from './api'
 import { createStore } from './store'
+import { browserStore } from './ui'
 
 export type { FormFactor }
 
@@ -14,9 +15,18 @@ export type { FormFactor }
  *  - `phone`   – bottom bar, sidebar in a drawer, sheets instead of popovers.
  *  - `tablet`  – a touch screen with room for the desktop layout, with touch-sized controls.
  *  - `desktop` – everything else.
+ *
+ * Toolbar-only popup windows (`window.open` with a size) are the exception: a page-sized popup
+ * on a laptop is not a phone, so they keep the desktop layout at any width.
  */
 export interface ViewportInfo extends ViewportMetrics {
   formFactor: FormFactor
+}
+
+/** `classifyViewport`, except that a popup window never becomes a phone however small it is. */
+export function formFactorFor(metrics: ViewportMetrics, chrome: WindowChrome | null): FormFactor {
+  if (chrome === 'popup') return metrics.coarse ? 'tablet' : 'desktop'
+  return classifyViewport(metrics)
 }
 
 function compute(): ViewportInfo {
@@ -28,7 +38,8 @@ function compute(): ViewportInfo {
   const coarse =
     window.matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints > 0 && !hover)
   const metrics = { width, height, coarse, hover }
-  return { formFactor: classifyViewport(metrics), ...metrics }
+  const chrome = browserStore.get().state?.window.chrome ?? null
+  return { formFactor: formFactorFor(metrics, chrome), ...metrics }
 }
 
 export const viewportStore = createStore<ViewportInfo>(compute(), 'viewport')
@@ -59,6 +70,9 @@ if (!flags.__zenViewportWatched) {
   for (const query of ['(pointer: coarse)', '(hover: hover)']) {
     window.matchMedia(query).addEventListener('change', refresh)
   }
+  // Subscribed at import, ahead of any React subscription: the first snapshot re-derives the
+  // layout before the shell renders, so a popup window never flashes the phone chrome.
+  browserStore.subscribe(refresh)
 }
 
 export function useViewport(): ViewportInfo {
