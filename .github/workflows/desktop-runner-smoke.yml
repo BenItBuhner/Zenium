@@ -58,6 +58,10 @@ jobs:
       - name: Harness dependencies (Playwright for Electron)
         working-directory: .github/smoke
         run: npm install --no-audit --no-fund
+      - name: Make sure the session shows a desktop (dismiss OOBE, start Explorer; windows-11-arm boots into OOBE)
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:SMOKE_OUT" | Out-Null
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-mouse.ps1" -Action dismiss-oobe | Tee-Object -FilePath "$env:SMOKE_OUT\oobe-dismiss.json"
       - name: Runner baseline facts and registry snapshot
         run: |
           New-Item -ItemType Directory -Force -Path "$env:SMOKE_OUT" | Out-Null
@@ -67,6 +71,7 @@ jobs:
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-screenshot.ps1" -Path "$env:SMOKE_OUT\runner-desktop.png"
       - name: Smoke the unpacked build
         continue-on-error: true
+        timeout-minutes: 22
         run: |
           $exe = Get-ChildItem dist -Directory -Filter '*unpacked*' | ForEach-Object { Join-Path $_.FullName 'zen.exe' } | Where-Object { Test-Path $_ } | Select-Object -First 1
           "unpacked exe: $exe"
@@ -91,6 +96,7 @@ jobs:
       - name: Smoke the installed NSIS build
         if: always() && steps.nsis.outputs.exe != ''
         continue-on-error: true
+        timeout-minutes: 22
         run: node "$env:SMOKE\smoke.mjs" --exe "${{ steps.nsis.outputs.exe }}" --label nsis-local --out "$env:SMOKE_OUT"
       - name: Facts after running the installed NSIS build
         if: always()
@@ -126,6 +132,7 @@ jobs:
       - name: Smoke the installed release
         if: always() && steps.release.outputs.exe != ''
         continue-on-error: true
+        timeout-minutes: 22
         run: node "$env:SMOKE\smoke.mjs" --exe "${{ steps.release.outputs.exe }}" --label release-0.2.0 --out "$env:SMOKE_OUT"
       - name: Facts after running the installed release
         if: always()
@@ -206,6 +213,7 @@ jobs:
         run: bash "$SMOKE/mac-facts.sh" "$(ls -d dist/mac*/Zen.app | head -1)" "$SMOKE_OUT" unpacked-bundle
       - name: Smoke the unpacked build
         continue-on-error: true
+        timeout-minutes: 22
         run: |
           app="$(ls -d dist/mac*/Zen.app | head -1)"
           echo "app: $app"
@@ -226,6 +234,7 @@ jobs:
         id: dmg
         if: always()
         continue-on-error: true
+        timeout-minutes: 8
         run: |
           dmg="$(ls release-assets/*.dmg | head -1)"
           bash "$SMOKE/mac-dmg.sh" "$dmg" "$RUNNER_TEMP/zenium-release" "$SMOKE_OUT/release-0.2.0-dmg"
@@ -237,6 +246,7 @@ jobs:
       - name: Smoke the release app
         if: always() && steps.dmg.outputs.app != ''
         continue-on-error: true
+        timeout-minutes: 22
         run: node "$SMOKE/smoke.mjs" --exe "${{ steps.dmg.outputs.app }}/Contents/MacOS/Zen" --label release-0.2.0 --out "$SMOKE_OUT"
       - name: Facts after running the release app
         if: always() && steps.dmg.outputs.app != ''

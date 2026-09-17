@@ -36,6 +36,16 @@ function Find-UninstallEntry {
   return $null
 }
 
+function Resolve-InstallDir($entry) {
+  if (-not $entry) { return $null }
+  if ($entry.installLocation -and (Test-Path $entry.installLocation)) { return $entry.installLocation }
+  $u = $entry.uninstallString -replace '^"(.*?)".*$', '$1'
+  if ($u -and (Test-Path $u)) { return (Split-Path $u -Parent) }
+  $guess = Join-Path $env:LOCALAPPDATA 'Programs\zen-chromium'
+  if (Test-Path $guess) { return $guess }
+  return $null
+}
+
 switch ($Action) {
   'install' {
     if (-not (Test-Path $Installer)) { throw "installer not found: $Installer" }
@@ -86,11 +96,16 @@ switch ($Action) {
     }
     $entry = Find-UninstallEntry
     $info.uninstallEntry = $entry
+    # electron-builder's per-user key carries no InstallLocation: derive the directory from the
+    # uninstaller path in UninstallString.
+    $installDir = Resolve-InstallDir $entry
+    $info.installDir = $installDir
     $exe = $null
-    if ($entry -and $entry.installLocation -and (Test-Path $entry.installLocation)) {
-      $exe = Get-ChildItem -Path $entry.installLocation -Filter *.exe -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch '^Uninstall' } | Select-Object -First 1 -ExpandProperty FullName
-      $info.installDirEntries = @(Get-ChildItem -Path $entry.installLocation -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
-      $info.installSizeMB = [math]::Round((Get-ChildItem -Path $entry.installLocation -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
+    if ($installDir) {
+      $exe = Get-ChildItem -Path $installDir -Filter *.exe -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch '^Uninstall' } | Select-Object -First 1 -ExpandProperty FullName
+      $info.installDirEntries = @(Get-ChildItem -Path $installDir -ErrorAction SilentlyContinue | ForEach-Object { if ($_.PSIsContainer) { "$($_.Name)/" } else { "$($_.Name) ($([math]::Round($_.Length / 1MB, 1)) MB)" } })
+      $info.installSizeMB = [math]::Round((Get-ChildItem -Path $installDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
+      $info.mainExePresent = Test-Path (Join-Path $installDir "$Match.exe")
     }
     if (-not $exe) {
       $guess = Join-Path $env:LOCALAPPDATA 'Programs'
@@ -111,19 +126,25 @@ switch ($Action) {
     $info = [ordered]@{ entryBefore = $entry }
     if (-not $entry) { Write-Output 'no uninstall entry found'; $info | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $Out "$Label-uninstall.json"); break }
     $uninstaller = $entry.uninstallString -replace '^"(.*?)".*$', '$1'
-    if (-not (Test-Path $uninstaller)) { $uninstaller = Get-ChildItem -Path $entry.installLocation -Filter 'Uninstall*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName }
+    $installDir = Resolve-InstallDir $entry
+    if (-not (Test-Path $uninstaller) -and $installDir) { $uninstaller = Get-ChildItem -Path $installDir -Filter 'Uninstall*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName }
     $info.uninstaller = $uninstaller
+    $info.installDir = $installDir
     Get-Process -Name "$Match*" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 1
     $start = Get-Date
-    # _?= makes the NSIS uninstaller run in place instead of a copy in %TEMP%, so -Wait really waits.
-    $p = Start-Process -FilePath $uninstaller -ArgumentList @('/S', "_?=$($entry.installLocation)") -PassThru -Wait
+    # QuietUninstallString is "<uninstaller> /currentuser /S"; _?= makes the NSIS uninstaller run in
+    # place instead of a copy in %TEMP%, so -Wait really waits (an empty _?= aborts with exit code 2).
+    $uninstallArgs = @('/currentuser', '/S')
+    if ($installDir) { $uninstallArgs += "_?=$installDir" }
+    $info.arguments = $uninstallArgs
+    $p = Start-Process -FilePath $uninstaller -ArgumentList $uninstallArgs -PassThru -Wait
     $info.exitCode = $p.ExitCode
     $info.durationSeconds = [math]::Round(((Get-Date) - $start).TotalSeconds, 1)
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 3
     $info.entryAfter = Find-UninstallEntry
-    $info.installDirExists = Test-Path $entry.installLocation
-    if ($info.installDirExists) { $info.installDirLeftovers = @(Get-ChildItem -Path $entry.installLocation -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName | Select-Object -First 40) }
+    $info.installDirExists = if ($installDir) { Test-Path $installDir } else { $null }
+    if ($info.installDirExists) { $info.installDirLeftovers = @(Get-ChildItem -Path $installDir -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName | Select-Object -First 40) }
     $info.shortcutsLeft = @(Get-ChildItem -Path ([Environment]::GetFolderPath('Programs')), ([Environment]::GetFolderPath('Desktop')) -Filter *.lnk -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Name -match $Match } | Select-Object -ExpandProperty FullName)
     $info.appDataLeft = @(@((Join-Path $env:APPDATA 'Zen'), (Join-Path $env:LOCALAPPDATA 'zen-chromium-updater')) | Where-Object { Test-Path $_ })
     $info | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $Out "$Label-uninstall.json") -Encoding UTF8

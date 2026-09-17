@@ -199,6 +199,49 @@ $facts.appDataDirs = @(
 )
 $facts.processes = @(Get-Process -Name 'zen*' -ErrorAction SilentlyContinue | ForEach-Object { [ordered]@{ pid = $_.Id; name = $_.ProcessName; wsMB = [math]::Round($_.WorkingSet64 / 1MB, 1) } })
 
+# --- Microsoft Defender: is real-time protection on, and did it remove anything of ours? -----------
+# (An unsigned Electron installer is a classic false-positive target; a missing zen.exe after an
+# install that reported success points here.)
+$defender = [ordered]@{}
+try {
+  $st = Get-MpComputerStatus -ErrorAction Stop
+  $defender.status = [ordered]@{
+    antivirusEnabled = $st.AntivirusEnabled; realTimeProtectionEnabled = $st.RealTimeProtectionEnabled
+    antispywareEnabled = $st.AntispywareEnabled; isTamperProtected = $st.IsTamperProtected
+    signatureVersion = $st.AntivirusSignatureVersion; signatureAge = $st.AntivirusSignatureAge
+  }
+} catch { $defender.status = @{ error = "$_" } }
+try {
+  $defender.threats = @(Get-MpThreatDetection -ErrorAction Stop | ForEach-Object {
+    [ordered]@{ threatId = $_.ThreatID; resources = @($_.Resources); action = $_.ActionSuccess; initialDetectionTime = "$($_.InitialDetectionTime)"; processName = $_.ProcessName }
+  })
+} catch { $defender.threats = @{ error = "$_" } }
+try {
+  $defender.threatCatalog = @(Get-MpThreat -ErrorAction Stop | ForEach-Object { [ordered]@{ threatId = $_.ThreatID; name = $_.ThreatName; severity = $_.SeverityID; resources = @($_.Resources) } })
+} catch { $defender.threatCatalog = @{ error = "$_" } }
+try {
+  # 1116 = malware detected, 1117 = action taken, 1015/1116/1117/1118/1119/5007 are the usual suspects.
+  $defender.events = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = @(1006, 1007, 1008, 1015, 1116, 1117, 1118, 1119) } -MaxEvents 40 -ErrorAction Stop |
+    ForEach-Object { [ordered]@{ time = $_.TimeCreated.ToString('o'); id = $_.Id; message = ($_.Message -replace '\s+', ' ').Substring(0, [math]::Min(700, ($_.Message -replace '\s+', ' ').Length)) } })
+} catch { $defender.events = @{ error = "$_" } }
+try {
+  $defender.exclusions = [ordered]@{ paths = @((Get-MpPreference -ErrorAction Stop).ExclusionPath); processes = @((Get-MpPreference -ErrorAction Stop).ExclusionProcess) }
+} catch { $defender.exclusions = @{ error = "$_" } }
+$facts.defender = $defender
+
+# --- Shell / OOBE state of the interactive session -----------------------------------------------
+$facts.shell = [ordered]@{
+  explorer = @(Get-Process -Name explorer -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+  oobeProcesses = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(msoobe|CloudExperienceHost.*|WWAHost|OOBE.*|LogonUI|UserOOBEBroker)$' } | ForEach-Object { "$($_.ProcessName):$($_.Id)" })
+  oobeInProgress = $(try { (Get-ItemProperty 'HKLM:\SYSTEM\Setup' -ErrorAction Stop).OOBEInProgress } catch { $null })
+  foregroundWindow = $(try {
+    Add-Type -Namespace SmokeFg -Name U -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, System.Text.StringBuilder s, int n); [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);' -ErrorAction Stop
+    $h = [SmokeFg.U]::GetForegroundWindow(); $t = New-Object System.Text.StringBuilder 512; $c = New-Object System.Text.StringBuilder 256
+    [void][SmokeFg.U]::GetWindowText($h, $t, 512); [void][SmokeFg.U]::GetClassName($h, $c, 256)
+    "$($t.ToString()) [$($c.ToString())]"
+  } catch { "$_" })
+}
+
 $json = Join-Path $Out "$Label-facts.json"
 $facts | ConvertTo-Json -Depth 8 | Set-Content -Path $json -Encoding UTF8
 
@@ -217,6 +260,10 @@ $summary += "Shortcuts: $((@($shortcuts) | ForEach-Object { "$($_.path) -> $($_.
 $summary += "StartApps matching: $((@($facts.startApps) | ForEach-Object { "$($_.name)=$($_.appId)" }) -join ' ; ')"
 $summary += "Install dirs: $((@($installs) | ForEach-Object { "$($_.dir) ($($_.sizeMB) MB, exes: $($_.exes -join ','))" }) -join ' ; ')"
 $summary += "AppData dirs: $((@($facts.appDataDirs) | ForEach-Object { $_.dir }) -join ' ; ')"
+$summary += "Defender: rtp=$($defender.status.realTimeProtectionEnabled) av=$($defender.status.antivirusEnabled) sig=$($defender.status.signatureVersion) threats=$(@($defender.threats).Count) events=$(@($defender.events).Count) exclusionPaths=$(@($defender.exclusions.paths) -join ',')"
+foreach ($t in @($defender.threats)) { if ($t.resources) { $summary += "  Defender detection: $($t.resources -join ' | ') action=$($t.action) at $($t.initialDetectionTime)" } }
+foreach ($e in @($defender.events)) { if ($e.message -and $e.message -match $Match) { $summary += "  Defender event $($e.id) $($e.time): $($e.message)" } }
+$summary += "Shell: explorer=$($facts.shell.explorer -join ',') oobeInProgress=$($facts.shell.oobeInProgress) oobeProcesses=$($facts.shell.oobeProcesses -join ',') foreground=$($facts.shell.foregroundWindow)"
 if ($reg.newKeysSinceSnapshot) { $summary += "New registry keys since snapshot: $(($reg.newKeysSinceSnapshot | ConvertTo-Json -Depth 4 -Compress))" }
 $summary -join "`n" | Set-Content -Path (Join-Path $Out "$Label-facts.txt") -Encoding UTF8
 Write-Output ($summary -join "`n")

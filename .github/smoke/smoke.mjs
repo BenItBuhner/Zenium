@@ -30,6 +30,14 @@ const scenarios = (opts.scenarios ?? 'boot,restore,scale,dark,errordialog').spli
 const EXTRA_ARGS = typeof opts['extra-args'] === 'string' ? opts['extra-args'].split(' ').filter(Boolean) : []
 const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), `zenium-smoke-${opts.label}-`))
 const profile = path.join(profileRoot, 'profile')
+// Every main-process evaluate and every step is fenced by a timeout, and the whole run by a
+// watchdog: a blocked main process (modal dialog, hung menu) must not stall the runner job.
+const EVALUATE_TIMEOUT_MS = Number(opts['evaluate-timeout-ms'] ?? 45000)
+const STEP_TIMEOUT_MS = Number(opts['step-timeout-ms'] ?? 180000)
+const WATCHDOG_MS = Number(opts['watchdog-min'] ?? 18) * 60 * 1000
+const logFile = path.join(outDir, 'smoke.log')
+fs.writeFileSync(logFile, '')
+let currentSession = null
 
 const result = {
   label: opts.label,
@@ -50,6 +58,32 @@ function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`
   logLines.push(line)
   console.log(line)
+  try {
+    fs.appendFileSync(logFile, line + '\n')
+  } catch {
+    // best effort
+  }
+}
+
+function withTimeout(promise, ms, label) {
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms} ms`)), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
+function killAppProcesses() {
+  if (IS_WIN) sh('taskkill', ['/F', '/IM', path.basename(opts.exe), '/T'], 20000)
+  else sh('pkill', ['-9', '-f', `^${opts.exe.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}( |$)`], 20000)
+}
+
+// Partial results survive a hang: whatever the current session recorded goes into result.json.
+function flushPartialResult(reason) {
+  if (currentSession && !result.scenarios[currentSession.scenario]) {
+    result.scenarios[currentSession.scenario] = { partial: true, reason, session: currentSession.summary() }
+  }
+  writeJson(path.join(outDir, 'result.json'), result)
 }
 
 function parseArgs(argv) {
@@ -359,16 +393,22 @@ class Session {
     this.steps = []
     this.timings = {}
     this.exit = null
+    currentSession = this
   }
 
   async launch() {
     const t0 = Date.now()
+    log(`launching ${opts.exe} (${this.scenario})`)
     this.app = await electron.launch({
       executablePath: opts.exe,
       args: [`--user-data-dir=${this.userData}`, ...EXTRA_ARGS, ...this.extraArgs],
       env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1', ...this.extraEnv },
       timeout: 120000
     })
+    // A main process blocked by a synchronous native dialog never answers an evaluate: fence
+    // every call so the step fails instead of the whole run stalling.
+    const rawEvaluate = this.app.evaluate.bind(this.app)
+    this.app.evaluate = (fn, arg) => withTimeout(rawEvaluate(fn, arg), EVALUATE_TIMEOUT_MS, 'app.evaluate')
     const proc = this.app.process()
     this.pid = proc.pid
     proc.stderr?.on('data', (d) => this.stderr.push(d.toString()))
@@ -437,11 +477,12 @@ class Session {
     throw new Error(`no chrome page (file://…/index.html) within ${timeoutMs} ms; pages: ${this.app.windows().map((p) => p.url()).join(', ')}`)
   }
 
-  async step(name, fn) {
+  async step(name, fn, timeoutMs = STEP_TIMEOUT_MS) {
     const t = Date.now()
     const entry = { name, ok: false, ms: 0 }
+    log(`step ${name}: start`)
     try {
-      const detail = await fn()
+      const detail = await withTimeout(fn(), timeoutMs, `step ${name}`)
       entry.ok = true
       if (detail !== undefined) entry.detail = detail
     } catch (e) {
@@ -766,11 +807,11 @@ async function scenarioBoot() {
   const s = new Session('boot', userData)
   const out = { userData }
   try {
-    await s.step('launch', async () => {
+    const launched = await s.step('launch', async () => {
       await s.launch()
       return s.timings
     })
-    if (!s.app) throw new Error('launch failed')
+    if (!launched.ok) throw new Error(`launch failed: ${launched.error}`)
 
     await s.step('facts', async () => {
       out.facts = await mainFacts(s.app)
@@ -1094,7 +1135,7 @@ async function scenarioBoot() {
         }, 10000, 500)
       let answered = canClick ? null : 'auto-answered by hook (no UI scripting)'
       if (canClick && IS_WIN) {
-        const r = ps('win-mouse.ps1', ['-Action', 'uia-invoke', '-Name', 'Allow'], 30000)
+        const r = ps('win-mouse.ps1', ['-Action', 'click-button', '-Name', 'Allow', '-TimeoutSeconds', '8'], 30000)
         answered = r.stdout || r.stderr
       } else if (canClick && IS_MAC) {
         const r = sh('osascript', ['-e', 'tell application "System Events" to tell process "Zen" to click button "Allow" of sheet 1 of window 1'], 20000)
@@ -1200,10 +1241,11 @@ async function scenarioRestore() {
   const s = new Session('restore', userData)
   const out = { userData, stateBefore: readState(userData) }
   try {
-    await s.step('relaunch', async () => {
+    const launched = await s.step('relaunch', async () => {
       await s.launch()
       return s.timings
     })
+    if (!launched.ok) throw new Error(`launch failed: ${launched.error}`)
     await s.step('restored-windows-and-tabs', async () => {
       await sleep(3000)
       const wins = await s.winFacts()
@@ -1276,10 +1318,11 @@ async function scenarioScale() {
   const s = new Session('scale', userData, ['--force-device-scale-factor=1.5'])
   const out = { userData }
   try {
-    await s.step('launch-scale-1.5', async () => {
+    const launched = await s.step('launch-scale-1.5', async () => {
       await s.launch()
       return s.timings
     })
+    if (!launched.ok) throw new Error(`launch failed: ${launched.error}`)
     await s.step('scale-facts-and-screenshot', async () => {
       await sleep(2000)
       const dpr = await s.chrome.evaluate(() => ({ devicePixelRatio: window.devicePixelRatio, innerWidth: window.innerWidth, innerHeight: window.innerHeight }))
@@ -1322,24 +1365,42 @@ async function scenarioDark() {
   await sleep(1500)
   const s = new Session('dark', userData)
   try {
-    await s.step('launch-in-os-dark-mode', async () => {
+    const launched = await s.step('launch-in-os-dark-mode', async () => {
       await s.launch()
       return s.timings
     })
-    await s.step('dark-facts-and-screenshot', async () => {
-      await sleep(2000)
+    if (!launched.ok) throw new Error(`launch failed: ${launched.error}`)
+    const themeFacts = async () => {
       const theme = await s.app.evaluate(({ nativeTheme }) => ({ shouldUseDarkColors: nativeTheme.shouldUseDarkColors, themeSource: nativeTheme.themeSource }))
       const chrome = await s.chrome.evaluate(() => {
         const root = document.querySelector('.zen-window')
         return {
           dataDark: root?.getAttribute('data-dark'),
+          dataTheme: document.documentElement.dataset.theme,
           prefersDark: window.matchMedia('(prefers-color-scheme: dark)').matches,
           background: root ? getComputedStyle(root).backgroundColor : null,
           bodyBackground: getComputedStyle(document.body).backgroundColor
         }
       })
-      await s.shot('01-os-dark-mode')
       return { theme, chrome }
+    }
+    await s.step('dark-facts-and-screenshot', async () => {
+      await sleep(2000)
+      const facts = await themeFacts()
+      await s.shot('01-os-dark-mode')
+      return facts
+    })
+    // Does the running app follow a live OS theme change (Chromium watches the registry key /
+    // AppleInterfaceStyle notification)? Startup vs live can differ.
+    await s.step('live-toggle-light-then-dark', async () => {
+      const toLight = setOsDarkMode(false)
+      await sleep(3500)
+      const afterLight = await themeFacts()
+      const toDark = setOsDarkMode(true)
+      await sleep(3500)
+      const afterDark = await themeFacts()
+      await s.shot('02-after-live-toggle-to-dark')
+      return { toLight, afterLight, toDark, afterDark }
     })
     await s.step('quit', async () => s.quit())
   } catch (e) {
@@ -1372,7 +1433,7 @@ function nativeDialogFacts() {
 
 function dismissNativeDialog(buttonName) {
   if (IS_WIN) {
-    const r = ps('win-mouse.ps1', ['-Action', 'uia-invoke', '-Name', buttonName, '-TimeoutSeconds', '5'], 30000)
+    const r = ps('win-mouse.ps1', ['-Action', 'click-button', '-Name', buttonName, '-TimeoutSeconds', '5'], 30000)
     return r.stdout || r.stderr
   }
   if (IS_MAC) {
@@ -1390,10 +1451,11 @@ async function scenarioErrorDialog() {
   const s = new Session('errordialog', userData, [], {}, { noExceptionHook: true })
   const out = { userData }
   try {
-    await s.step('launch-stock-exception-handling', async () => {
+    const launched = await s.step('launch-stock-exception-handling', async () => {
       await s.launch()
       return { ...s.timings, hook: s.hookResult }
     })
+    if (!launched.ok) throw new Error(`launch failed: ${launched.error}`)
     await s.step('open-page-and-second-window', async () => {
       await s.press(`${ACCEL}+t`)
       const input = s.chrome.locator('input[placeholder*="Search or enter address"], input[placeholder^="Search with"]')
@@ -1459,6 +1521,15 @@ async function scenarioErrorDialog() {
 
 async function main() {
   log(`smoke ${opts.label}: exe=${opts.exe} scenarios=${scenarios.join(',')} out=${outDir}`)
+  const watchdog = setTimeout(() => {
+    log(`WATCHDOG: run exceeded ${WATCHDOG_MS / 60000} min; writing partial results and killing the app`)
+    result.fatal = `watchdog: run exceeded ${WATCHDOG_MS / 60000} min (last scenario: ${currentSession?.scenario}, last step: ${currentSession?.steps.at(-1)?.name})`
+    flushPartialResult('watchdog')
+    killAppProcesses()
+    fs.writeFileSync(path.join(outDir, 'smoke.log'), logLines.join('\n'))
+    process.exit(3)
+  }, WATCHDOG_MS)
+  watchdog.unref?.()
   result.exeExists = fs.existsSync(opts.exe)
   if (!result.exeExists) {
     result.fatal = `executable not found: ${opts.exe}`
@@ -1481,10 +1552,10 @@ async function main() {
     // Make sure no instance survives between scenarios (a lingering process would break the lock).
     // The pattern is anchored to the executable path so the harness (whose own command line
     // contains that path) does not kill itself; helpers die with the browser process.
-    if (IS_WIN) sh('taskkill', ['/F', '/IM', path.basename(opts.exe), '/T'], 20000)
-    else sh('pkill', ['-9', '-f', `^${opts.exe.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}( |$)`], 20000)
+    killAppProcesses()
     await sleep(1500)
   }
+  clearTimeout(watchdog)
   for (const [name, sc] of Object.entries(result.scenarios)) {
     result.verdict[name] = {
       booted: Boolean(sc.session && sc.session.timings && sc.session.timings.chromeRenderedMs),

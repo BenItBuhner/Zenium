@@ -4,6 +4,8 @@
 #   -Action escape                                send Esc to the foreground window (closes menus)
 #   -Action sendkeys -Name '^t'                   SendKeys sequence to the foreground window
 #   -Action uia-invoke -Name <button text>        click a native dialog button through UI Automation
+#   -Action click-button -Name <button text>      click a native dialog button (Win32 BM_CLICK, UIA fallback)
+#   -Action dismiss-oobe                          kill OOBE hosts / start Explorer if the session sits in OOBE
 #   -Action dialogs                               JSON list of the app's top-level windows incl. native dialog text
 #   -Action processes                             JSON list of zen*.exe processes with memory
 #   -Action window                                JSON with Win32 styles of the app's top-level window
@@ -30,8 +32,75 @@ Add-Type -Namespace Smoke -Name Native -MemberDefinition @'
 [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out RECT pvAttribute, int cbAttribute);
 [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
 [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder s, int n);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+[DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+public delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
+[DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr lParam);
+[DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumProc cb, IntPtr lParam);
 [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 '@
+
+function Get-WindowClass([IntPtr]$h) { $sb = New-Object System.Text.StringBuilder 256; [void][Smoke.Native]::GetClassName($h, $sb, 256); $sb.ToString() }
+function Get-WindowTitle([IntPtr]$h) { $sb = New-Object System.Text.StringBuilder 1024; [void][Smoke.Native]::GetWindowText($h, $sb, 1024); $sb.ToString() }
+function Get-TopWindows {
+  $script:enumList = New-Object System.Collections.ArrayList
+  $cb = [Smoke.Native+EnumProc] { param($h, $l) [void]$script:enumList.Add($h); $true }
+  [void][Smoke.Native]::EnumWindows($cb, [IntPtr]::Zero)
+  return @($script:enumList.ToArray())
+}
+function Get-ChildWindows([IntPtr]$parent) {
+  $script:enumList = New-Object System.Collections.ArrayList
+  $cb = [Smoke.Native+EnumProc] { param($h, $l) [void]$script:enumList.Add($h); $true }
+  [void][Smoke.Native]::EnumChildWindows($parent, $cb, [IntPtr]::Zero)
+  return @($script:enumList.ToArray())
+}
+# Native dialogs (#32770: MessageBox, TaskDialog, Electron's error box) owned by the app's processes,
+# with their static text and Button children read straight through Win32.
+function Get-NativeDialogs {
+  $pids = @(Get-Process -Name "$ProcessName*" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+  $out = @()
+  foreach ($h in Get-TopWindows) {
+    if (-not [Smoke.Native]::IsWindowVisible($h)) { continue }
+    $ownerPid = [uint32]0
+    [void][Smoke.Native]::GetWindowThreadProcessId($h, [ref]$ownerPid)
+    if ($pids -notcontains [int]$ownerPid) { continue }
+    $cls = Get-WindowClass $h
+    $entry = [ordered]@{ hwnd = $h.ToString(); pid = [int]$ownerPid; title = (Get-WindowTitle $h); className = $cls; texts = @(); buttons = @() }
+    if ($cls -eq '#32770') {
+      # EnumChildWindows walks all descendants (TaskDialog buttons sit under a DirectUIHWND).
+      foreach ($c in Get-ChildWindows $h) {
+        $ccls = Get-WindowClass $c
+        $txt = Get-WindowTitle $c
+        if ($ccls -eq 'Button' -and $txt) { $entry.buttons += ($txt -replace '&', '') }
+        elseif ($ccls -eq 'Static' -and $txt) { $entry.texts += $txt }
+      }
+    }
+    $out += [pscustomobject]$entry
+  }
+  return $out
+}
+function Invoke-DialogButton([string]$label) {
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+    foreach ($h in Get-TopWindows) {
+      if (-not [Smoke.Native]::IsWindowVisible($h) -or (Get-WindowClass $h) -ne '#32770') { continue }
+      foreach ($c in @(Get-ChildWindows $h)) {
+        if ((Get-WindowClass $c) -ne 'Button') { continue }
+        if (((Get-WindowTitle $c) -replace '&', '') -ne $label) { continue }
+        [void][Smoke.Native]::SetForegroundWindow($h)
+        Start-Sleep -Milliseconds 120
+        [void][Smoke.Native]::PostMessage($c, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)   # BM_CLICK
+        return "clicked '$label' (hwnd $($c.ToString()) in dialog '$(Get-WindowTitle $h)')"
+      }
+    }
+    Start-Sleep -Milliseconds 400
+  }
+  return $null
+}
 
 function Move-Cursor([int]$x, [int]$y) {
   [Smoke.Native]::SetCursorPos($x, $y) | Out-Null
@@ -68,6 +137,47 @@ switch ($Action) {
     Add-Type -AssemblyName System.Windows.Forms
     [System.Windows.Forms.SendKeys]::SendWait($Name)
     Write-Output "sent $Name"
+  }
+  'click-button' {
+    # Win32 path first (BM_CLICK to the Button child of a visible #32770 dialog), UIA as fallback.
+    $r = Invoke-DialogButton $Name
+    if ($r) { Write-Output $r; break }
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+    $root = [System.Windows.Automation.AutomationElement]::RootElement
+    $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, $Name)
+    $el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
+    if (-not $el) { throw "no button named '$Name' found within $TimeoutSeconds s (dialogs: $((Get-NativeDialogs | ForEach-Object { "$($_.title)[$($_.className)] buttons=$($_.buttons -join '/')" }) -join ' ; '))" }
+    $pattern = $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+    $pattern.Invoke()
+    Write-Output "invoked '$Name' through UIA (pid $($el.Current.ProcessId))"
+  }
+  'dismiss-oobe' {
+    # Some runner images (windows-11-arm) leave the interactive session inside the Windows OOBE
+    # ("Choose privacy settings for your device"): no Explorer shell, every screenshot shows OOBE.
+    # Kill the OOBE hosts and make sure an Explorer shell is running before the smoke starts.
+    $before = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(msoobe|CloudExperienceHost.*|WWAHost|OOBE.*|UserOOBEBroker)$' } | ForEach-Object { "$($_.ProcessName):$($_.Id)" })
+    $fg = [Smoke.Native]::GetForegroundWindow()
+    $fgTitle = Get-WindowTitle $fg
+    $fgClass = Get-WindowClass $fg
+    foreach ($p in Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(msoobe|CloudExperienceHost.*|WWAHost|OOBE.*|UserOOBEBroker)$' }) {
+      try { Stop-Process -Id $p.Id -Force -ErrorAction Stop } catch {}
+    }
+    Start-Sleep -Seconds 2
+    $explorer = @(Get-Process -Name explorer -ErrorAction SilentlyContinue)
+    $startedExplorer = $false
+    if (-not $explorer.Count) {
+      try { Start-Process explorer.exe; $startedExplorer = $true; Start-Sleep -Seconds 6 } catch {}
+    }
+    [pscustomobject]@{
+      oobeProcessesBefore = $before
+      foregroundBefore = "$fgTitle [$fgClass]"
+      explorerBefore = @($explorer | ForEach-Object { $_.Id })
+      startedExplorer = $startedExplorer
+      oobeProcessesAfter = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(msoobe|CloudExperienceHost.*|WWAHost|OOBE.*|UserOOBEBroker)$' } | ForEach-Object { "$($_.ProcessName):$($_.Id)" })
+      foregroundAfter = "$(Get-WindowTitle ([Smoke.Native]::GetForegroundWindow())) [$(Get-WindowClass ([Smoke.Native]::GetForegroundWindow()))]"
+      explorerAfter = @(Get-Process -Name explorer -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+    } | ConvertTo-Json -Depth 4 -Compress
   }
   'uia-invoke' {
     Add-Type -AssemblyName UIAutomationClient
@@ -108,7 +218,7 @@ switch ($Action) {
       }
       $out += [pscustomobject]$entry
     }
-    [pscustomobject]@{ count = @($out).Count; windows = @($out) } | ConvertTo-Json -Depth 4 -Compress
+    [pscustomobject]@{ count = @($out).Count; windows = @($out); win32Dialogs = @(Get-NativeDialogs | Where-Object { $_.className -eq '#32770' }) } | ConvertTo-Json -Depth 4 -Compress
   }
   'processes' {
     $procs = Get-Process -Name "$ProcessName*" -ErrorAction SilentlyContinue | ForEach-Object {

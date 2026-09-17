@@ -44,7 +44,7 @@ if [ -n "${APP:-}" ]; then
   sleep 8
   ps -axo pid,comm | grep -i '[Z]en' | tee -a "$TXT"
   screencapture -x "$OUT/dmg-open-a-no-quarantine.png" 2>&1 | tee -a "$TXT"
-  osascript -e 'tell application "Zen" to quit' >/dev/null 2>&1 || true
+  osascript -e 'with timeout of 10 seconds' -e 'tell application "Zen" to quit' -e 'end timeout' >/dev/null 2>&1 || true
   sleep 2
   pkill -9 -f "$APP/Contents/MacOS/Zen" 2>/dev/null || true
 
