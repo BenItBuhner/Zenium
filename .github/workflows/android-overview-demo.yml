@@ -19,10 +19,6 @@ on:
         options:
           - overview
           - first-tap
-  # TEMPORARY (removed before the PR is marked ready): the branch's author cannot dispatch
-  # workflows, so the first-tap recording runs on push.
-  push:
-    branches: [cursor/overview-first-tap-f378]
 
 permissions:
   contents: read
@@ -33,8 +29,7 @@ concurrency:
 
 env:
   NODE_VERSION: 22
-  # The push trigger has no inputs: it records the first-tap sequence.
-  DEMO: ${{ inputs.demo || 'first-tap' }}
+  DEMO: ${{ inputs.demo || 'overview' }}
 
 jobs:
   record:
