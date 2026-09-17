@@ -188,6 +188,8 @@ export function zenTranslatePageRuntime(): TranslatePageRuntime {
     inlineChildren: Node[][]
     inlineParents: number[]
     opaque: boolean[]
+    /** For each inline, whether the source had whitespace right before and right after it. */
+    spaced: [boolean, boolean][]
     /** Nodes standing in for `nodes` while translated. */
     current: Node[] | null
     state: 'pending' | 'sent' | 'done'
@@ -404,9 +406,18 @@ export function zenTranslatePageRuntime(): TranslatePageRuntime {
     unit.inlineChildren = []
     unit.inlineParents = []
     unit.opaque = []
+    unit.spaced = []
     let html = ''
     for (const node of unit.nodes) html += serializeNode(node, unit, -1)
     return html
+  }
+
+  function endsInSpace(node: Node | null): boolean {
+    return node !== null && /\s$/.test(node.textContent ?? '')
+  }
+
+  function startsWithSpace(node: Node | null): boolean {
+    return node !== null && /^\s/.test(node.textContent ?? '')
   }
 
   function serializeNode(node: Node, unit: Unit, parentIndex: number): string {
@@ -419,6 +430,7 @@ export function zenTranslatePageRuntime(): TranslatePageRuntime {
     unit.inlineChildren.push(opaque ? [] : Array.from(el.childNodes))
     unit.inlineParents.push(parentIndex)
     unit.opaque.push(opaque)
+    unit.spaced.push([endsInSpace(el.previousSibling), startsWithSpace(el.nextSibling)])
     if (tagOf(el) === 'BR') return `<br data-zt="${index}">`
     if (opaque) return `<img data-zt="${index}">`
     let inner = ''
@@ -468,7 +480,41 @@ export function zenTranslatePageRuntime(): TranslatePageRuntime {
       if (!unit.opaque[index]) setChildren(original, buildChildren(el, unit, placed))
       out.push(original)
     }
+    respaceOpaque(out, unit)
     return out
+  }
+
+  /** A letter or digit in a script that separates words with spaces. */
+  function wordChar(text: string, last: boolean): boolean {
+    const ch = last ? text.slice(-1) : text.slice(0, 1)
+    return (
+      /[\p{L}\p{N}]/u.test(ch) &&
+      !/[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Thai}\p{sc=Lao}\p{sc=Khmer}\p{sc=Myanmar}]/u.test(
+        ch
+      )
+    )
+  }
+
+  /**
+   * The engine keeps opaque elements (no-translate spans, code, images) as tokens and tends to drop
+   * the whitespace around them: "the <span translate=no>eBiblio</span> app" comes back as
+   * "the appeBiblio". Where the source had a space on a side and the translation now puts a word
+   * directly against the element, the space goes back.
+   */
+  function respaceOpaque(out: Node[], unit: Unit): void {
+    for (let i = 0; i < out.length; i++) {
+      const node = out[i]
+      if (node.nodeType !== ELEMENT_NODE || tagOf(node as Element) === 'BR') continue
+      const index = unit.inlines.indexOf(node as Element)
+      if (index < 0 || !unit.opaque[index]) continue
+      const [before, after] = unit.spaced[index] ?? [false, false]
+      const prev = out[i - 1]
+      const next = out[i + 1]
+      if (before && prev && prev.nodeType === TEXT_NODE && wordChar(prev.textContent ?? '', true))
+        prev.textContent = `${prev.textContent ?? ''} `
+      if (after && next && next.nodeType === TEXT_NODE && wordChar(next.textContent ?? '', false))
+        next.textContent = ` ${next.textContent ?? ''}`
+    }
   }
 
   function applyUnit(unit: Unit, html: string | null): void {
@@ -514,6 +560,7 @@ export function zenTranslatePageRuntime(): TranslatePageRuntime {
       inlineChildren: [],
       inlineParents: [],
       opaque: [],
+      spaced: [],
       current: null,
       state: 'pending',
       whole: candidate.nodes.length === candidate.parent.childNodes.length,

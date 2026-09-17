@@ -202,6 +202,30 @@ describe('translate page runtime', () => {
       expect(p.textContent).toBe('See A and B.')
     })
 
+    it('puts the space back between a word and an opaque element the engine glued together', () => {
+      document.body.innerHTML =
+        '<p id="p">Usa la aplicación <span translate="no">eBiblio</span>, en «<span translate="no">Zenium</span>» o <code>ls</code>.</p>'
+      rt.start(1)
+      const [item] = rt.next(1, 10, 10000).items
+      expect(item.html).toBe(
+        'Usa la aplicación <img data-zt="0">, en «<img data-zt="1">» o <img data-zt="2">.'
+      )
+      // Spaces lost around the first and third, none to add around the quoted one.
+      rt.apply(1, [
+        {
+          id: item.id,
+          html: 'Use the app<img data-zt="0">, in «<img data-zt="1">» or<img data-zt="2">.'
+        }
+      ])
+      expect(document.getElementById('p')!.textContent).toBe(
+        'Use the app eBiblio, in «Zenium» or ls.'
+      )
+      rt.revert()
+      expect(document.getElementById('p')!.textContent).toBe(
+        'Usa la aplicación eBiblio, en «Zenium» o ls.'
+      )
+    })
+
     it('ignores answers for other sessions or units it did not send', () => {
       document.body.innerHTML = '<p>Hello</p>'
       rt.start(1)

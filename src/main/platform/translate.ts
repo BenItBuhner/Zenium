@@ -208,7 +208,10 @@ export class ElectronTranslateHost implements TranslateHost {
     /** The chrome renderer that should run the next engine worker. */
     private readonly chromeWebContents: () => WebContents | null
   ) {
-    this.models = new FileModelStore(join(userDataDir, 'zen', 'translate'), `Zenium/${app.getVersion()}`)
+    this.models = new FileModelStore(
+      join(userDataDir, 'zen', 'translate'),
+      `Zenium/${app.getVersion()}`
+    )
     this.locales = preferredLocales()
   }
 
