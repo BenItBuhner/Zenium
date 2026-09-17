@@ -17,7 +17,8 @@ const css = readFileSync(fileURLToPath(new URL('../../assets/main.css', import.m
 const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The pull-to-refresh disc (components/content/PullIndicator.tsx).
   ['.zen-ptr-disc {', '.zen-space-strip {'],
-  // The Settings > Look and Feel > Navigation bar button (components/overlays/SettingsPanel.tsx).
+  // The v2 button, shared by every v2 surface (today the Settings > Look and Feel > Navigation bar
+  // button, components/overlays/SettingsPanel.tsx); its layering is pinned by the tests below.
   ['.zen-v2-button {', '/* Safe-area insets pushed by mobile hosts'],
   // The Tabs button's hold menu (components/phone/TabsQuickMenu.tsx).
   ['.zen-quick-menu {', '.zen-sheet.zen-bar-editor {'],
@@ -155,5 +156,52 @@ describe('design language v2 tokens', () => {
     // Inside: the ring and selection derive from the accent, and the shared focus-ring rule reads the ring.
     expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(3)
     expect(inside).toMatch(/\[class\^='zen-v2-'\]:focus-visible/)
+  })
+})
+
+/**
+ * The stylesheet without its comments, so braces in prose do not count, and the number of
+ * `{` blocks still open at `index` in it: 0 means the rule sits outside every `@layer`.
+ */
+const bare = css.replace(/\/\*[\s\S]*?\*\//g, '')
+function nesting(index: number): number {
+  const before = bare.slice(0, index)
+  return (before.match(/\{/g) ?? []).length - (before.match(/\}/g) ?? []).length
+}
+function ruleAt(selector: string): number {
+  const at = bare.indexOf(`\n${selector} {`)
+  expect(at, `rule "${selector}"`).toBeGreaterThanOrEqual(0)
+  return at + 1
+}
+
+describe('the v2 button', () => {
+  it('is one rule, secondary by default with a data-primary variant', () => {
+    expect(bare.match(/\.zen-v2-button \{/g) ?? []).toHaveLength(1)
+    const base = ruleAt('.zen-v2-button')
+    const primary = ruleAt('.zen-v2-button[data-primary]')
+    expect(bare.slice(base, bare.indexOf('\n}', base))).toMatch(/background: var\(--v2-fill\)/)
+    const primaryBody = bare.slice(primary, bare.indexOf('\n}', primary))
+    expect(primaryBody).toMatch(/background: var\(--v2-accent\)/)
+    expect(primaryBody).toMatch(/color: var\(--v2-on-accent\)/)
+    // Same layer, so the variant's higher specificity is what makes it win – it must not rely on
+    // coming later, but it does come later, as a variant reads.
+    expect(primary).toBeGreaterThan(base)
+  })
+
+  it('sits outside the cascade layers, where it beats a Button’s utilities and no layered copy can beat it', () => {
+    // Unlayered declarations win over every `@layer` (utilities included) whatever their order
+    // or specificity: the rule must be unlayered to style a `Button` that carries the class, and
+    // a second, layered copy of the class would lose all of its declarations to this one.
+    for (const selector of [
+      '.zen-v2-button',
+      '.zen-v2-button:active:not(:disabled)',
+      '.zen-v2-button:disabled',
+      '.zen-v2-button[data-primary]',
+      '.zen-v2-button[data-primary]:active:not(:disabled)'
+    ])
+      expect(nesting(ruleAt(selector)), `"${selector}" is inside a block`).toBe(0)
+    // And no `@layer` block anywhere restates the class.
+    for (const match of bare.matchAll(/\.zen-v2-button[^{]*\{/g))
+      expect(nesting(match.index), `"${match[0].trim()}" is layered`).toBe(0)
   })
 })

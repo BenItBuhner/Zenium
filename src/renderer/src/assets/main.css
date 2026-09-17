@@ -257,23 +257,47 @@
 }
 
 /*
- * A v2 secondary button (design-language-v2-draft §6): the control's height and radius from the
- * density tokens (40 tall and radius 6 under a finger), the button weight, the text at 10 percent.
+ * The v2 button (design-language-v2-draft §6): the control's height and radius from the density
+ * tokens (40 tall and radius 6 under a finger), the button weight, the text at 10 percent as the
+ * secondary; `data-primary` for the one accent button of a view. This is the only rule for the
+ * class, and it stays outside the cascade layers on purpose: a `Button` that carries the class
+ * keeps its utilities (`h-8`, `px-3.5`, `rounded-lg`, `bg-[…]`), and only an unlayered rule beats
+ * them. For the same reason a second copy inside `@layer components` would lose every declaration
+ * to this one – its `[data-primary]` included, which turned primaries into secondaries – so a
+ * surface that wants the button reads this rule and adds nothing. The focus ring is the shared
+ * `zen-v2-*` rule above.
  */
 .zen-v2-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: var(--v2-control);
-  padding: 0 12px;
+  min-width: 96px;
+  padding: 0 16px;
   border-radius: var(--v2-radius-control);
   background: var(--v2-fill);
   color: var(--v2-text);
   font-size: var(--v2-font-body);
   font-weight: var(--v2-weight-button);
+  line-height: var(--v2-line-body);
+  white-space: nowrap;
   transition:
     background 120ms var(--zen-ease),
     transform 120ms var(--zen-ease);
 }
 .zen-v2-button:active:not(:disabled) {
+  background: var(--v2-fill-hover);
   transform: scale(0.98);
+}
+.zen-v2-button:disabled {
+  opacity: 0.4;
+}
+.zen-v2-button[data-primary] {
+  background: var(--v2-accent);
+  color: var(--v2-on-accent);
+}
+.zen-v2-button[data-primary]:active:not(:disabled) {
+  background: color-mix(in srgb, var(--v2-on-accent) 30%, var(--v2-accent));
 }
 
 /* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME); zero on desktop. */
