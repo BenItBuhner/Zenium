@@ -60,6 +60,7 @@ import {
 } from './extensionRuntime'
 import { AndroidExtensionStoreIo } from './extensionStoreIo'
 import { AndroidSiteData } from './siteData'
+import { AndroidTranslateHost, type TranslateProgressEvent } from './translate'
 import { AndroidTabViewHost, type ViewEventPayloads } from './views'
 
 /** Android 13 (Tiramisu): the first release whose clipboard shows its own "copied" chip. */
@@ -274,6 +275,8 @@ export interface HostEventPayloads {
   'ext.popupClosed': { id: string }
   /** One intercepted request, while an extension listens for `webRequest` events. */
   'ext.request': ExtRequestEvent
+  /** Bytes of a translation model file arriving (`translate.download` in flight). */
+  'translate.progress': TranslateProgressEvent
 }
 
 /**
@@ -639,6 +642,7 @@ export class AndroidPlatform implements Platform {
   readonly externalProtocols: ExternalProtocolHost
   readonly passwords: PasswordsHost
   readonly blocking: BlockingHost
+  readonly translate: AndroidTranslateHost
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
@@ -668,6 +672,7 @@ export class AndroidPlatform implements Platform {
     this.views = new AndroidTabViewHost(bridge)
     this.siteData = new AndroidSiteData(bridge)
     this.blocking = new AndroidBlockingHost(bridge)
+    this.translate = new AndroidTranslateHost(bridge)
     this.menus = new RendererMenuHost()
     this.windows = {
       create: (win: ZenWindow): WindowHost => {
@@ -1012,6 +1017,9 @@ export class AndroidPlatform implements Platform {
         return
       case 'ext.request':
         this.extensionRuntime?.onRequest(payload as HostEventPayloads['ext.request'])
+        return
+      case 'translate.progress':
+        this.translate.onProgress(payload as HostEventPayloads['translate.progress'])
         return
       case 'view.adopt': {
         const p = payload as HostEventPayloads['view.adopt']

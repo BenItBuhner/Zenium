@@ -30,6 +30,8 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         // (ext/ExtensionStore.kt, src/android/extensionStoreIo.ts).
         .addPathHandler(PACKAGES_PATH, WebViewAssetLoader.InternalStoragePathHandler(context, File(context.cacheDir, ExtensionStore.PACKAGES_DIR)))
         .addPathHandler(EXTENSION_FILES_PATH, WebViewAssetLoader.InternalStoragePathHandler(context, File(context.filesDir, ExtensionStore.ROOT_DIR)))
+        // Downloaded translation models (`Translate.kt`), read by the engine worker of the chrome.
+        .addPathHandler("/translate/", WebViewAssetLoader.InternalStoragePathHandler(context, Translate.modelsDir(context)))
         .build()
     var ready = false
         private set

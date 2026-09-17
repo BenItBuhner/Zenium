@@ -34,6 +34,7 @@ import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
 import { ElectronAgentTransport } from '../agent/server'
 import { ElectronSiteData } from './siteData'
+import { ElectronTranslateHost, focusedChromeWebContents } from './translate'
 import { ElectronUpdateHost } from './updates'
 import { applyAppIcon } from './appIcon'
 import { createPasswordsHost } from './passwords'
@@ -93,6 +94,7 @@ export class ElectronPlatform implements Platform {
   readonly blocking: ElectronBundledLists
   /** The webRequest multiplexer and text matcher; created with the browser in `start`. */
   requestBlocking!: ElectronBlocking
+  readonly translate: ElectronTranslateHost
   browser!: Browser
   private readonly profileDir: string
 
@@ -102,6 +104,9 @@ export class ElectronPlatform implements Platform {
     this.io = new FileStoreIO(this.profileDir)
     this.blocking = new ElectronBundledLists(bundledListsDirectory(), this.profileDir)
     this.windows = new ElectronWindowFactory()
+    this.translate = new ElectronTranslateHost(userDataDir, () =>
+      focusedChromeWebContents((id) => this.windows.windowForWebContents(id) !== undefined)
+    )
     this.sessions = new SessionManager(buildUserAgent())
     this.views = new ElectronTabViewHost(this.sessions)
     this.siteData = new ElectronSiteData(this.sessions)

@@ -1,0 +1,97 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_main",
+  "spaces": [
+    {
+      "id": "space_main",
+      "name": "Browse",
+      "icon": "🌐",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          {
+            "c": [
+              70,
+              120,
+              220
+            ],
+            "x": 0.3,
+            "y": 0.3,
+            "isPrimary": true
+          },
+          {
+            "c": [
+              200,
+              110,
+              170
+            ],
+            "x": 0.7,
+            "y": 0.7
+          }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 30
+      },
+      "tabIds": [
+        "tab_es",
+        "tab_de"
+      ],
+      "activeTabId": "tab_es",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [],
+  "tabs": [
+    {
+      "id": "tab_es",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://10.0.2.2:8766/es.html",
+      "title": "Biblioteca municipal: horarios y talleres",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_de",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://10.0.2.2:8766/de.html",
+      "title": "Stadtrat beschließt Sanierung des Marktplatzes",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "searchSuggestions": false,
+    "updates": {
+      "autoCheck": false,
+      "autoDownload": false,
+      "channel": "stable"
+    }
+  },
+  "shortcutOverrides": {},
+  "bookmarks": [],
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_main",
+      "selection": {
+        "space_main": "tab_es"
+      },
+      "compact": false
+    }
+  ]
+}
