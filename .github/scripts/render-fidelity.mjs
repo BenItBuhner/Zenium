@@ -10,7 +10,8 @@
 // second build (the workflow fetches main's), that build goes first under the label `zen-before`,
 // so one run shows the change side by side with Chrome. After the branch build's pages, the same
 // tab is loaded again under a few user-agent identities (stock WebView, the previous release,
-// Chrome's own) to tell which signal a site keys on.
+// Chrome's own), and Chrome is loaded carrying the WebView's request tells one at a time, to tell
+// which signal a site keys on.
 //
 // It also answers on port 8787 as a header echo the emulator reaches at http://10.0.2.2:8787/, with
 // a couple of controlled pages for font defaults and viewport handling.
@@ -513,9 +514,11 @@ const CHROME_BROWSER = {
   isTab: () => true
 }
 
-/** Launch the browser on the first page and open a DevTools session on that tab. */
+/** (Re)start the browser on the first page and open a DevTools session on that tab. */
 async function connect(browser) {
   const first = PAGES[0]
+  tryShell(`am force-stop ${browser.pkg}`)
+  await sleep(1_500)
   log(`[${browser.id}] launching with ${first.url}`)
   browser.launch(first.url)
   await sleep(6_000)
@@ -584,8 +587,8 @@ async function runBrowser(browser, label) {
     }
   }
 
-  // Does the page's text and colour scheme follow the system the way Chrome's does? The
-  // configuration change can rebuild the browser's activity, so attach to the tab again.
+  // Does the page's text and colour scheme follow the system the way Chrome's does? The browser
+  // is restarted under the new setting so a process-wide configuration cache cannot hide it.
   const home = PAGES[0]
   for (const [variant, apply, reset] of [
     [
@@ -599,9 +602,9 @@ async function runBrowser(browser, label) {
     log(`[${label}] ${home.id} with ${variant}`)
     try {
       apply()
-      await sleep(5_000)
+      await sleep(4_000)
       session.close()
-      session = await reconnect(browser)
+      session = await connect(browser)
       const data = await record(session, home, name)
       results[`${home.id}-${variant}`] = data
       log(`  -> body ${data.bodyFontSize} html ${data.htmlFontSize} dark=${data.prefersDark}`)
@@ -615,16 +618,58 @@ async function runBrowser(browser, label) {
       } catch {
         /* keep going */
       }
-      await sleep(5_000)
+      await sleep(4_000)
     }
   }
   try {
     session.close()
-    session = await reconnect(browser)
+    session = await connect(browser)
   } catch (e) {
-    log(`  !! could not reattach after the theme reset: ${e.message}`)
+    log(`  !! could not restart after the theme reset: ${e.message}`)
   }
   return { session, results }
+}
+
+/**
+ * Chrome carrying one of the WebView's tells at a time: which of them makes Google serve the
+ * lighter page? Each is injected into Chrome's own requests over DevTools.
+ */
+function chromeVariantsFor(chromeUserAgent) {
+  return [
+    { id: 'with-x-requested-with', headers: { 'X-Requested-With': APP } },
+    // A user-agent override without metadata makes Chromium drop the Sec-CH-UA headers.
+    { id: 'without-client-hints', userAgent: chromeUserAgent },
+    { id: 'without-brotli', headers: { 'Accept-Encoding': 'gzip, deflate' } },
+    { id: 'with-zero-network-hints', headers: { downlink: '0', rtt: '0' } },
+    {
+      id: 'without-client-hints-with-x-requested-with',
+      userAgent: chromeUserAgent,
+      headers: { 'X-Requested-With': APP }
+    }
+  ]
+}
+
+async function runChromeVariants(session, chromeHome, label) {
+  const results = {}
+  for (const variant of chromeVariantsFor(chromeHome.userAgent)) {
+    log(`[${label}] ${variant.id}`)
+    try {
+      if (variant.userAgent) await session.identity(variant.userAgent)
+      await session.cdp.send('Network.setExtraHTTPHeaders', { headers: variant.headers ?? {} })
+      for (const page of VARIANT_PAGES) {
+        const name = `${label}-${variant.id}-${page.id}`
+        results[`${variant.id}/${page.id}`] = await record(session, page, name)
+      }
+    } catch (e) {
+      if (!deviceAlive()) throw new EmulatorGone()
+      log(`  !! ${variant.id} failed: ${e.message}`)
+      results[variant.id] = { error: e.message }
+    } finally {
+      await session.identity('').catch(() => {})
+      await session.cdp.send('Network.setExtraHTTPHeaders', { headers: {} }).catch(() => {})
+    }
+  }
+  return results
 }
 
 /**
@@ -907,6 +952,13 @@ async function main() {
     try {
       const chrome = await runBrowser(CHROME_BROWSER, 'chrome')
       summary.chrome = chrome.results
+      if (chrome.session && chrome.results['google-home'] && !chrome.results['google-home'].error) {
+        summary['chrome-with-webview-tells'] = await runChromeVariants(
+          chrome.session,
+          chrome.results['google-home'],
+          'chrome'
+        )
+      }
       chrome.session?.close()
     } catch (e) {
       if (e instanceof EmulatorGone) throw e
