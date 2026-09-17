@@ -182,6 +182,7 @@ class CustomTabHost(
 
     fun destroy() {
         tabs.destroyAll()
+        downloads.destroy()
     }
 
     companion object {

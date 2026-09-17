@@ -237,9 +237,15 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             }
             "clipboard.writeImage" -> copyImage(args.str("url"), reply)
             "net.fetch" -> fetchText(args.str("url"), args.obj("headers"), args.num("timeoutMs").toInt(), reply)
-            "download.bind" -> { downloads.bind(args.str("token"), args.str("id")); reply(null) }
+            "download.bind" -> { downloads.bind(args.str("token"), args.str("id"), args.obj("destination")); reply(null) }
             "download.cancel" -> { downloads.cancel(args.str("id")); reply(null) }
-            "download.pause", "download.resume" -> reply(null)
+            "download.pause" -> { downloads.pause(args.str("id")); reply(null) }
+            "download.resume" -> { downloads.resume(args); reply(null) }
+            "download.retry" -> { downloads.retry(args); reply(null) }
+            "download.release" -> downloads.release(args, reply)
+            "download.discard" -> downloads.discard(args, reply)
+            "download.notify" -> { downloads.notifyCompleted(args); reply(null) }
+            "download.chooseLocation" -> downloads.chooseLocation(reply)
             "download.open" -> { downloads.open(args.str("savePath"), args.str("mimeType")); reply(null) }
             "download.showAll" -> { downloads.showAll(); reply(null) }
             "profile.clear" -> { Profiles.clear(args.str("containerId")); reply(null) }
@@ -693,6 +699,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     fun destroy() {
         cancelProbe()
         agentServer.stop()
+        downloads.destroy()
         updates.shutdown()
         tabs.destroyAll()
         // The chrome too: a WebView that outlives its activity keeps its document – and the
