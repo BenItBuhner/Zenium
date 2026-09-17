@@ -1,0 +1,749 @@
+import type {
+  TranslateBatch,
+  TranslateModelInfo,
+  TranslatePageSample,
+  TranslatePreferences,
+  TranslateRuntimeStatus,
+  TranslateSelectionResult,
+  TranslateTabState,
+  TranslateUIState
+} from '../../shared/translate'
+import type { EngineRelayResponse, LanguagePair } from '../../shared/translateEngine'
+import {
+  TRANSLATE_RUNTIME_MISSING,
+  translateCall,
+  translateInstallCall,
+  type TranslatePageRuntime,
+  type TranslateWaitResult
+} from '../../shared/translateScript'
+import type { Browser } from '../browser'
+import type { TabView, TranslateHost } from '../platform'
+import { JsonStore } from '../store/JsonStore'
+import { decideLanguage, MIN_SAMPLE_CHARS, registryCodeForLabel } from './detect'
+import { WorkerEngine, type TranslationEngine } from './engine'
+import {
+  defaultPreferences,
+  defaultTarget,
+  offerFor,
+  sanitizePreferences,
+  siteOf,
+  withLanguageRule,
+  withSiteRule,
+  type LanguageRule
+} from './languages'
+import { ModelManager } from './models'
+import {
+  condenseRecords,
+  ModelRegistry,
+  REGISTRY_RECORDS_URL,
+  type RegistryCache,
+  type RegistryRecord
+} from './registry'
+
+/** Characters of page text sampled for language detection. */
+const SAMPLE_CHARS = 2000
+/** The first batch is small so the viewport changes quickly; later ones fill the engine. */
+const FIRST_BATCH = { items: 12, chars: 2500 }
+const BATCH = { items: 32, chars: 6000 }
+/** How long one long-poll for new page content lasts (well under Android's evaluation limit). */
+const WAIT_MS = 15_000
+/** The engine (and its loaded models) is dropped after this long without work. */
+const ENGINE_IDLE_MS = 5 * 60_000
+const SELECTION_MAX_CHARS = 5000
+/** Selection detection is trusted from this probability; below it the page language is used. */
+const SELECTION_CONFIDENCE = 0.5
+
+interface Persisted {
+  preferences: TranslatePreferences
+  registry: RegistryCache | null
+}
+
+interface TabEntry {
+  state: TranslateTabState
+  /** Runtime token of the document the state belongs to (0 until the page was sampled). */
+  doc: number
+  /** Bumped when the page changes or the user reverts; async work checks it before acting. */
+  gen: number
+  /** The page runtime's session id while a translation runs (0 otherwise). */
+  session: number
+  abort: AbortController | null
+}
+
+export interface TranslatePageOptions {
+  /** Translate into this language instead of the default target. */
+  target?: string
+  /** The page language, when the user corrected the detector. */
+  source?: string
+  /** Started by the auto-translate rules rather than the user. */
+  auto?: boolean
+}
+
+export interface TranslateSelectionOptions {
+  /** The text to translate; the page's current selection when omitted. */
+  text?: string
+  target?: string
+}
+
+function emptyState(tabId: string): TranslateTabState {
+  return {
+    tabId,
+    status: 'idle',
+    source: null,
+    confidence: null,
+    target: null,
+    progress: null,
+    download: null,
+    error: null,
+    auto: false,
+    dismissed: false
+  }
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/** Pages whose document can be translated in place. */
+export function translatablePageUrl(url: string): boolean {
+  return /^(https?|file):\/\//i.test(url) || url.startsWith('zen://reader')
+}
+
+/**
+ * Invoke a method of the page runtime, installing the runtime (once per document) when the page
+ * does not have it yet.
+ */
+async function callPage<T>(
+  view: TabView,
+  method: keyof TranslatePageRuntime,
+  ...args: unknown[]
+): Promise<T> {
+  const result = await view.executeJavaScript(translateCall(method, ...args))
+  if (result !== TRANSLATE_RUNTIME_MISSING) return result as T
+  return (await view.executeJavaScript(translateInstallCall(method, ...args))) as T
+}
+
+/**
+ * Page translation: per-tab state (detect, offer, translate, revert), the language preferences,
+ * the models on the device and the engine that runs them. The page side is
+ * `shared/translateScript.ts`, driven through the tab view's `executeJavaScript`; the engine is
+ * a Web Worker of the chrome that the host starts (`TranslateHost`).
+ */
+export class TranslateService {
+  readonly registry: ModelRegistry
+  readonly models: ModelManager | null
+  private readonly host: TranslateHost | null
+  private readonly store: JsonStore<Persisted>
+  private prefs: TranslatePreferences
+  private engine: WorkerEngine | null = null
+  private starting: Promise<WorkerEngine> | null = null
+  private idleTimer: ReturnType<typeof setTimeout> | null = null
+  private busy = 0
+  private sessions = 0
+  private readonly tabs = new Map<string, TabEntry>()
+  private installedCache: TranslateModelInfo[] | null = null
+
+  constructor(private readonly browser: Browser) {
+    this.host = browser.platform.translate ?? null
+    this.registry = new ModelRegistry()
+    this.models = this.host ? new ModelManager(this.registry, this.host.models) : null
+    this.store = new JsonStore<Persisted>(browser.platform.io, 'translate.json', 300)
+    const persisted = this.store.readSync()
+    this.prefs = sanitizePreferences(
+      persisted?.preferences,
+      defaultPreferences(this.host?.locales ?? [])
+    )
+    const cached = persisted?.registry
+    if (cached && Array.isArray(cached.models) && typeof cached.fetchedAt === 'number')
+      this.registry.replace(cached.models, cached.fetchedAt)
+    if (this.models) {
+      void this.models
+        .refresh()
+        .then(() => this.changed())
+        .catch(() => undefined)
+    }
+  }
+
+  /** Called once the browser runs: ask Remote Settings for new models when the copy is old. */
+  start(): void {
+    void this.refreshRegistry()
+  }
+
+  get available(): boolean {
+    return this.host !== null
+  }
+
+  get preferences(): TranslatePreferences {
+    return this.prefs
+  }
+
+  // ---------------------------------------------------------------------------
+  // UI state
+  // ---------------------------------------------------------------------------
+
+  uiState(): TranslateUIState {
+    for (const tabId of [...this.tabs.keys()]) {
+      if (!this.browser.tabs.tab(tabId)) this.tabs.delete(tabId)
+    }
+    if (!this.installedCache)
+      this.installedCache = this.models ? this.models.info().filter((m) => m.installed) : []
+    const tabs: Record<string, TranslateTabState> = {}
+    for (const [tabId, entry] of this.tabs) tabs[tabId] = entry.state
+    return {
+      available: this.available,
+      preferences: this.prefs,
+      languages: this.registry.languages(),
+      installed: this.installedCache,
+      registryDate: new Date(this.registry.fetchedAt || Date.parse(ModelRegistry.snapshotDate))
+        .toISOString()
+        .slice(0, 10),
+      tabs
+    }
+  }
+
+  tabState(tabId: string): TranslateTabState | null {
+    return this.tabs.get(tabId)?.state ?? null
+  }
+
+  private changed(): void {
+    this.installedCache = null
+    this.browser.state.commitVolatile()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Preferences
+  // ---------------------------------------------------------------------------
+
+  setPreferences(patch: Partial<TranslatePreferences>): void {
+    this.prefs = sanitizePreferences({ ...this.prefs, ...patch }, this.prefs)
+    this.persist()
+    this.changed()
+  }
+
+  setLanguageRule(language: string, rule: LanguageRule): void {
+    this.prefs = withLanguageRule(this.prefs, language, rule)
+    this.persist()
+    this.changed()
+  }
+
+  /** Never offer to translate the site of `tabId` (or offer again). */
+  setSiteRule(tabId: string, never: boolean): void {
+    const tab = this.browser.tabs.tab(tabId)
+    const site = tab ? siteOf(tab.url) : ''
+    if (!site) return
+    this.prefs = withSiteRule(this.prefs, site, never)
+    this.persist()
+    const entry = this.tabs.get(tabId)
+    if (never && entry && entry.state.status === 'offered') this.update(entry, { status: 'idle' })
+    this.changed()
+  }
+
+  private persist(): void {
+    this.store.write({
+      preferences: this.prefs,
+      registry:
+        this.registry.fetchedAt > 0
+          ? { fetchedAt: this.registry.fetchedAt, models: this.registry.packed() }
+          : null
+    })
+  }
+
+  flushSync(): void {
+    this.store.flushSync()
+  }
+
+  stop(): void {
+    for (const entry of this.tabs.values()) this.cancel(entry)
+    if (this.idleTimer) clearTimeout(this.idleTimer)
+    this.idleTimer = null
+    this.engine?.dispose()
+    this.engine = null
+  }
+
+  // ---------------------------------------------------------------------------
+  // Registry and models
+  // ---------------------------------------------------------------------------
+
+  private async refreshRegistry(): Promise<void> {
+    if (!this.host || !this.registry.stale(Date.now())) return
+    try {
+      const response = await this.browser.platform.net.fetchText(REGISTRY_RECORDS_URL, {
+        timeoutMs: 20_000
+      })
+      if (!response.ok) return
+      const parsed = JSON.parse(response.text) as { data?: RegistryRecord[] }
+      const models = condenseRecords(Array.isArray(parsed.data) ? parsed.data : [])
+      if (models.length === 0) return
+      this.registry.replace(models, Date.now())
+      this.persist()
+      this.changed()
+      if (this.models) await this.models.prune().catch(() => undefined)
+    } catch {
+      /* offline, blocked or malformed: the bundled snapshot stands */
+    }
+  }
+
+  async downloadModel(pair: LanguagePair): Promise<void> {
+    const models = this.requireModels()
+    await models.ensure(pair)
+    this.changed()
+  }
+
+  async removeModel(pair: LanguagePair): Promise<void> {
+    const models = this.requireModels()
+    if (this.engine && !this.engine.disposed) await this.engine.unload(pair).catch(() => undefined)
+    await models.remove(pair)
+    this.changed()
+  }
+
+  private requireModels(): ModelManager {
+    if (!this.models) throw new Error('Zenium cannot translate pages on this device.')
+    return this.models
+  }
+
+  private requireHost(): TranslateHost {
+    if (!this.host) throw new Error('Zenium cannot translate pages on this device.')
+    return this.host
+  }
+
+  // ---------------------------------------------------------------------------
+  // Engine
+  // ---------------------------------------------------------------------------
+
+  private engineReady(): Promise<WorkerEngine> {
+    if (this.engine && !this.engine.disposed) return Promise.resolve(this.engine)
+    if (this.starting) return this.starting
+    const host = this.requireHost()
+    this.starting = (async () => {
+      const assets = await host.assets()
+      const engine = new WorkerEngine(host.createEngine(), assets)
+      try {
+        await engine.whenReady()
+      } catch (error) {
+        engine.dispose()
+        throw error
+      }
+      this.engine = engine
+      this.touch()
+      return engine
+    })().finally(() => {
+      this.starting = null
+    })
+    return this.starting
+  }
+
+  /** The engine hosts relay their worker answers here (Electron). */
+  onRelayResponse(response: EngineRelayResponse): void {
+    this.host?.onRelayResponse?.(response)
+  }
+
+  private touch(): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer)
+    this.idleTimer = setTimeout(() => this.idle(), ENGINE_IDLE_MS)
+  }
+
+  private idle(): void {
+    this.idleTimer = null
+    if (this.busy > 0) {
+      this.touch()
+      return
+    }
+    this.engine?.dispose()
+    this.engine = null
+  }
+
+  /** Make the models of `route` available: download what is missing, load them into the engine. */
+  private async prepare(
+    route: LanguagePair[],
+    engine: TranslationEngine,
+    onDownload: (received: number, total: number) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const models = this.requireModels()
+    const total = models.bytesToDownload(route)
+    let base = 0
+    let downloaded = false
+    for (const pair of route) {
+      const record = this.registry.find(pair)
+      const missing = record !== null && !models.isInstalled(record)
+      await models.ensure(
+        pair,
+        (received) => onDownload(Math.min(total, base + received), total),
+        signal
+      )
+      if (missing && record) {
+        base += record.bytes
+        downloaded = true
+      }
+      await engine.loadPair(pair, await models.files_(pair))
+    }
+    if (downloaded) {
+      this.changed()
+      void models.prune().catch(() => undefined)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Page lifecycle
+  // ---------------------------------------------------------------------------
+
+  /** A new document is ready in the tab: detect its language and apply the offer rules. */
+  onPageReady(tabId: string): void {
+    if (!this.host) return
+    const entry = this.tabs.get(tabId)
+    if (entry) {
+      this.cancel(entry)
+      this.tabs.delete(tabId)
+      this.browser.state.commitVolatile()
+    }
+    if (!this.prefs.autoOffer && this.prefs.alwaysTranslate.length === 0) return
+    void this.detect(tabId).catch(() => undefined)
+  }
+
+  /**
+   * The tab's URL changed. A new document resets the state (its `dom-ready` follows); a
+   * same-document navigation keeps the translation running.
+   */
+  onNavigated(tabId: string): void {
+    const entry = this.tabs.get(tabId)
+    if (!entry || entry.doc === 0) return
+    const view = this.browser.tabs.view(tabId)
+    if (!view) {
+      this.forget(tabId, entry)
+      return
+    }
+    const gen = entry.gen
+    void view
+      .executeJavaScript(translateCall('status'))
+      .then((result) => {
+        if (this.tabs.get(tabId) !== entry || entry.gen !== gen) return
+        // A document without the runtime is a new one; only same-document navigations keep it.
+        const status =
+          result && typeof result === 'object' ? (result as TranslateRuntimeStatus) : null
+        if (!status || status.doc !== entry.doc) this.forget(tabId, entry)
+      })
+      .catch(() => {
+        if (this.tabs.get(tabId) === entry && entry.gen === gen) this.forget(tabId, entry)
+      })
+  }
+
+  private forget(tabId: string, entry: TabEntry): void {
+    this.cancel(entry)
+    if (this.tabs.get(tabId) === entry) this.tabs.delete(tabId)
+    this.browser.state.commitVolatile()
+  }
+
+  private entry(tabId: string): TabEntry {
+    let entry = this.tabs.get(tabId)
+    if (!entry) {
+      entry = { state: emptyState(tabId), doc: 0, gen: 0, session: 0, abort: null }
+      this.tabs.set(tabId, entry)
+    }
+    return entry
+  }
+
+  private update(entry: TabEntry, patch: Partial<TranslateTabState>): void {
+    Object.assign(entry.state, patch)
+    this.browser.state.commitVolatile()
+  }
+
+  /** Stop whatever runs for the tab; the page keeps whatever it shows. */
+  private cancel(entry: TabEntry): void {
+    entry.gen++
+    entry.session = 0
+    entry.abort?.abort()
+    entry.abort = null
+  }
+
+  private view(tabId: string): TabView | null {
+    const tab = this.browser.tabs.tab(tabId)
+    const view = this.browser.tabs.view(tabId)
+    if (!tab || !view || !translatablePageUrl(tab.url)) return null
+    return view
+  }
+
+  private async sample(tabId: string, view: TabView): Promise<TranslatePageSample | null> {
+    const result = await callPage<TranslatePageSample | null>(view, 'sample', SAMPLE_CHARS)
+    if (!result || typeof result !== 'object') return null
+    const entry = this.entry(tabId)
+    entry.doc = result.doc
+    return result
+  }
+
+  /**
+   * Identify the page language: sample the page, run the detector, reconcile with the page's
+   * hints. Records the outcome in the tab state; returns the language or null.
+   */
+  private async identify(tabId: string, view: TabView): Promise<string | null> {
+    const entry = this.entry(tabId)
+    const gen = entry.gen
+    const sample = await this.sample(tabId, view)
+    if (!sample || entry.gen !== gen) return null
+    if (sample.notranslate) return null
+    const chars = Math.max(sample.chars, sample.text.length)
+    const detection =
+      chars >= MIN_SAMPLE_CHARS
+        ? await (await this.engineReady()).detect(sample.text).catch(() => null)
+        : null
+    if (entry.gen !== gen) return null
+    const supported = new Set(this.registry.languages())
+    const decision = decideLanguage(sample, detection, supported)
+    entry.state.source = decision.language
+    entry.state.confidence = decision.confidence
+    return decision.language
+  }
+
+  private async detect(tabId: string): Promise<void> {
+    const view = this.view(tabId)
+    const tab = this.browser.tabs.tab(tabId)
+    if (!view || !tab) return
+    const site = siteOf(tab.url)
+    if (site && this.prefs.neverTranslateSites.includes(site)) return
+    const entry = this.entry(tabId)
+    const gen = entry.gen
+    this.update(entry, { status: 'detecting' })
+    let language: string | null = null
+    try {
+      language = await this.identify(tabId, view)
+    } catch {
+      language = null
+    }
+    if (entry.gen !== gen || this.tabs.get(tabId) !== entry) return
+    if (!language) {
+      this.update(entry, { status: 'idle' })
+      return
+    }
+    const target = defaultTarget(this.prefs, language)
+    const decision = this.registry.route({ from: language, to: target })
+      ? offerFor(this.prefs, language, site)
+      : 'none'
+    if (decision === 'translate') {
+      this.update(entry, { status: 'idle', target, auto: true })
+      await this.translatePage(tabId, { target, auto: true })
+    } else if (decision === 'offer') {
+      this.update(entry, { status: 'offered', target, auto: true, dismissed: false })
+    } else {
+      this.update(entry, { status: 'idle', target })
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Commands
+  // ---------------------------------------------------------------------------
+
+  /** `translate.page`: translate the tab's document (into `target`, the default when omitted). */
+  async translatePage(tabId: string, options: TranslatePageOptions = {}): Promise<void> {
+    const view = this.view(tabId)
+    if (!view) throw new Error('This page cannot be translated.')
+    const entry = this.entry(tabId)
+    const running = entry.state.status === 'translating' || entry.state.status === 'translated'
+    if (running && entry.session !== 0) {
+      const sameTarget = !options.target || options.target === entry.state.target
+      const sameSource = !options.source || options.source === entry.state.source
+      if (sameTarget && sameSource) return
+    }
+    this.cancel(entry)
+    const gen = entry.gen
+    const controller = new AbortController()
+    entry.abort = controller
+    this.busy++
+    try {
+      if (options.source) {
+        if (!this.registry.languages().includes(options.source))
+          throw new Error(`Zenium has no translation model for ${options.source}.`)
+        entry.state.source = options.source
+        entry.state.confidence = null
+      }
+      if (!entry.state.source) {
+        this.update(entry, { status: 'detecting', error: null, auto: Boolean(options.auto) })
+        await this.identify(tabId, view)
+        if (entry.gen !== gen) return
+      }
+      const source = entry.state.source
+      if (!source) throw new Error('Zenium could not tell what language this page is in.')
+      const target = options.target ?? entry.state.target ?? defaultTarget(this.prefs, source)
+      if (source === target) throw new Error(`This page is already in ${target}.`)
+      const route = this.registry.route({ from: source, to: target })
+      if (!route) throw new Error(`Zenium has no translation model from ${source} to ${target}.`)
+      const engine = await this.engineReady()
+      if (entry.gen !== gen) return
+      const models = this.requireModels()
+      const toDownload = models.bytesToDownload(route)
+      this.update(entry, {
+        status: toDownload > 0 ? 'downloading' : 'translating',
+        target,
+        error: null,
+        progress: null,
+        download: toDownload > 0 ? { received: 0, total: toDownload } : null,
+        auto: Boolean(options.auto),
+        dismissed: false
+      })
+      await this.prepare(
+        route,
+        engine,
+        (received, total) => {
+          if (entry.gen === gen) this.update(entry, { download: { received, total } })
+        },
+        controller.signal
+      )
+      if (entry.gen !== gen) return
+      this.update(entry, { status: 'translating', download: null })
+      await this.run(tabId, entry, gen, engine, route)
+    } catch (error) {
+      if (entry.gen !== gen) return
+      entry.session = 0
+      this.update(entry, {
+        status: 'error',
+        error: messageOf(error),
+        download: null
+      })
+      throw error
+    } finally {
+      this.busy--
+      this.touch()
+      if (entry.abort === controller) entry.abort = null
+    }
+  }
+
+  /** Feed the page's units through the engine until the document goes away or the user reverts. */
+  private async run(
+    tabId: string,
+    entry: TabEntry,
+    gen: number,
+    engine: TranslationEngine,
+    route: LanguagePair[]
+  ): Promise<void> {
+    const view = (): TabView | undefined =>
+      entry.gen === gen ? this.browser.tabs.view(tabId) : undefined
+    const first = view()
+    if (!first) return
+    const session = ++this.sessions
+    entry.session = session
+    const started = await callPage<TranslateRuntimeStatus>(first, 'start', session)
+    if (entry.gen !== gen) return
+    entry.doc = started.doc
+    this.update(entry, { progress: { done: started.done, total: started.total } })
+    let batchSize = FIRST_BATCH
+    for (;;) {
+      const current = view()
+      if (!current) return
+      const batch = await callPage<TranslateBatch>(
+        current,
+        'next',
+        session,
+        batchSize.items,
+        batchSize.chars
+      )
+      if (entry.gen !== gen) return
+      if (batch.items.length === 0) {
+        if (entry.state.status !== 'translated')
+          this.update(entry, {
+            status: 'translated',
+            progress: { done: batch.done, total: batch.total }
+          })
+        const waiting = view()
+        if (!waiting) return
+        const wait = await callPage<TranslateWaitResult>(waiting, 'wait', session, WAIT_MS)
+        if (entry.gen !== gen) return
+        if (wait.ended) return
+        if (wait.pending > 0 && entry.state.status !== 'translating')
+          this.update(entry, { status: 'translating' })
+        continue
+      }
+      batchSize = BATCH
+      this.touch()
+      const translations = await engine.translate(
+        batch.items.map((item) => item.html),
+        { route, html: true }
+      )
+      const applying = view()
+      if (!applying) return
+      const status = await callPage<TranslateRuntimeStatus>(
+        applying,
+        'apply',
+        session,
+        batch.items.map((item, index) => ({ id: item.id, html: translations[index] ?? null }))
+      )
+      if (entry.gen !== gen) return
+      this.update(entry, {
+        status: status.pending > 0 || status.done < status.total ? 'translating' : 'translated',
+        progress: { done: status.done, total: status.total }
+      })
+    }
+  }
+
+  /** `translate.revert`: show the original page again. */
+  revert(tabId: string): void {
+    const entry = this.tabs.get(tabId)
+    if (!entry) return
+    const hadSession = entry.session !== 0
+    this.cancel(entry)
+    const view = this.browser.tabs.view(tabId)
+    if (hadSession && view)
+      void view.executeJavaScript(translateCall('revert')).catch(() => undefined)
+    const source = entry.state.source
+    const offer =
+      source !== null &&
+      entry.state.target !== null &&
+      this.registry.route({ from: source, to: entry.state.target }) !== null
+    this.update(entry, {
+      status: offer ? 'offered' : 'idle',
+      progress: null,
+      download: null,
+      error: null,
+      dismissed: false
+    })
+  }
+
+  /** `translate.dismiss`: the user closed the offer for this page. */
+  dismiss(tabId: string): void {
+    const entry = this.tabs.get(tabId)
+    if (!entry) return
+    this.update(entry, { dismissed: true })
+  }
+
+  /** `translate.selection`: translate the selected text (or `options.text`) of a tab. */
+  async translateSelection(
+    tabId: string,
+    options: TranslateSelectionOptions = {}
+  ): Promise<TranslateSelectionResult | null> {
+    const view = this.view(tabId)
+    let text = options.text?.replace(/\s+/g, ' ').trim() ?? ''
+    if (!text) {
+      if (!view) return null
+      text = String((await callPage<string>(view, 'selection', SELECTION_MAX_CHARS)) ?? '')
+    }
+    text = text.slice(0, SELECTION_MAX_CHARS)
+    if (!text) return null
+    this.busy++
+    try {
+      const engine = await this.engineReady()
+      const detection = await engine.detect(text).catch(() => null)
+      const supported = new Set(this.registry.languages())
+      let source: string | null = null
+      if (detection?.language && detection.confidence >= SELECTION_CONFIDENCE) {
+        const code = registryCodeForLabel(detection.language, text)
+        if (supported.has(code)) source = code
+      }
+      if (!source) source = this.tabs.get(tabId)?.state.source ?? null
+      if (!source && detection?.language) {
+        const code = registryCodeForLabel(detection.language, text)
+        if (supported.has(code)) source = code
+      }
+      if (!source) throw new Error('Zenium could not tell what language the selection is in.')
+      let target = options.target ?? this.prefs.preferred[0] ?? defaultTarget(this.prefs, source)
+      if (target === source) target = defaultTarget(this.prefs, source)
+      const route = this.registry.route({ from: source, to: target })
+      if (!route) throw new Error(`Zenium has no translation model from ${source} to ${target}.`)
+      const entry = this.tabs.get(tabId)
+      await this.prepare(route, engine, (received, total) => {
+        if (entry) this.update(entry, { download: { received, total } })
+      })
+      if (entry) this.update(entry, { download: null })
+      const [translation] = await engine.translate([text], { route, html: false })
+      return { text, source, target, translation: translation ?? text }
+    } finally {
+      this.busy--
+      this.touch()
+    }
+  }
+}

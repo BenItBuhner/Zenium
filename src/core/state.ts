@@ -33,6 +33,7 @@ import type {
   Tab,
   UIState
 } from '../shared/types'
+import type { TranslateUIState } from '../shared/translate'
 import { DEFAULT_CONTAINER_ID } from '../shared/types'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import {
@@ -129,6 +130,25 @@ export interface StateExtras {
   permissionRules: PermissionRule[]
   securityPrompts: SecurityPrompt[]
   blocking: BlockingStatus
+  translate: TranslateUIState
+}
+
+/** Translation state of a host without an engine (and before the service exists). */
+export function emptyTranslateState(): TranslateUIState {
+  return {
+    available: false,
+    preferences: {
+      preferred: ['en'],
+      alwaysTranslate: [],
+      neverTranslate: [],
+      neverTranslateSites: [],
+      autoOffer: true
+    },
+    languages: [],
+    installed: [],
+    registryDate: '',
+    tabs: {}
+  }
 }
 
 /**
@@ -208,7 +228,8 @@ export class BrowserState {
     blockedPopups: {},
     permissionRules: [],
     securityPrompts: [],
-    blocking: emptyBlockingStatus()
+    blocking: emptyBlockingStatus(),
+    translate: emptyTranslateState()
   })
   searchEngines: SearchEngine[] = DEFAULT_SEARCH_ENGINES
   readonly version: string
