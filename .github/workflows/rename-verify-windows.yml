@@ -84,8 +84,16 @@ jobs:
           Start-Process -FilePath (Resolve-Path .\zen-0.2.0-setup.exe) -ArgumentList '/S' -Wait
           Assert (Test-Path "$uninstallKey\$oldGuid") "Zen 0.2.0 registered under the derived GUID $oldGuid"
           $old = Get-ItemProperty "$uninstallKey\$oldGuid"
-          Log ("Zen entry: DisplayName='{0}' DisplayVersion='{1}' InstallLocation='{2}' UninstallString='{3}'" -f $old.DisplayName, $old.DisplayVersion, $old.InstallLocation, $old.UninstallString)
-          $oldExe = Join-Path $old.InstallLocation 'zen.exe'
+          Log ("Zen entry: DisplayName='{0}' DisplayVersion='{1}' UninstallString='{2}'" -f $old.DisplayName, $old.DisplayVersion, $old.UninstallString)
+          # electron-builder keeps InstallLocation in its install-info key HKCU\Software\<GUID>
+          # (the same key build/installer.nsh reads); fall back to the uninstaller's directory.
+          $oldInfo = Get-ItemProperty "HKCU:\Software\$oldGuid" -ErrorAction SilentlyContinue
+          $oldDir = $oldInfo.InstallLocation
+          if (-not $oldDir) { $oldDir = Split-Path -Parent (($old.UninstallString -split '"')[1]) }
+          Log "Zen install dir: $oldDir"
+          Assert (Test-Path $oldDir) "Zen install directory exists"
+          $old | Add-Member -NotePropertyName InstallLocation -NotePropertyValue $oldDir -Force
+          $oldExe = Join-Path $oldDir 'zen.exe'
           Assert (Test-Path $oldExe) "zen.exe present at $oldExe"
           $oldDesktopLnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Zen.lnk'
           Log "Zen desktop shortcut present: $(Test-Path $oldDesktopLnk)"
