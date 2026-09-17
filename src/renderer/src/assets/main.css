@@ -501,6 +501,38 @@
     box-shadow: var(--zen-frame-shadow);
   }
 
+  /*
+   * Pull-to-refresh: the disc that comes down under the frame's top edge as the page is pulled
+   * (touch hosts move the page WebView itself; see `lib/pull.ts`). Position, scale and turn are
+   * written per frame; the spin starts from the turn the pull left it at, so nothing jumps.
+   */
+  .zen-ptr-disc {
+    color: var(--zen-fg);
+    background: var(--zen-panel-bg);
+    backdrop-filter: var(--zen-blur-panel);
+    border: 1px solid rgb(var(--zen-fg-rgb) / 0.1);
+    border-radius: 999px;
+    box-shadow: var(--zen-shadow);
+    will-change: transform, opacity;
+  }
+  .zen-ptr-glyph {
+    opacity: 0.72;
+    transform: rotate(var(--zen-ptr-turn, 0deg));
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-ptr-disc[data-armed] .zen-ptr-glyph {
+    opacity: 1;
+  }
+  .zen-ptr-glyph[data-spinning] {
+    opacity: 1;
+    animation: zen-ptr-spin 900ms linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-ptr-glyph[data-spinning] {
+      animation: none;
+    }
+  }
+
   .zen-space-strip {
     display: flex;
     transition: transform 280ms var(--zen-ease);
@@ -534,6 +566,14 @@
 @keyframes zen-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+@keyframes zen-ptr-spin {
+  from {
+    transform: rotate(var(--zen-ptr-turn, 0deg));
+  }
+  to {
+    transform: rotate(calc(var(--zen-ptr-turn, 0deg) + 360deg));
   }
 }
 @keyframes zen-toast-in {

@@ -283,7 +283,8 @@ describe('PullMachine', () => {
     settle()
     expect(h.machine.state.phase).toBe('idle')
     // Even though the finger was moving down when the pull was cancelled, the page only goes home.
-    for (const x of h.painted.slice(h.painted.indexOf(from))) expect(x).toBeLessThanOrEqual(from + 1e-6)
+    for (const x of h.painted.slice(h.painted.indexOf(from)))
+      expect(x).toBeLessThanOrEqual(from + 1e-6)
     expect(h.machine.current).toBe(0)
   })
 

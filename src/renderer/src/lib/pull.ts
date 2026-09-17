@@ -289,10 +289,13 @@ export class PullMachine {
 
   private pollIn(ms: number): void {
     this.clearTimer()
-    this.timer = setTimeout(() => {
-      this.timer = null
-      this.poll()
-    }, Math.max(16, ms))
+    this.timer = setTimeout(
+      () => {
+        this.timer = null
+        this.poll()
+      },
+      Math.max(16, ms)
+    )
   }
 
   private clearTimer(): void {
@@ -305,7 +308,10 @@ export class PullMachine {
 // The chrome's instance
 // ---------------------------------------------------------------------------
 
-export const pullStore = createStore<PullState>({ tabId: null, phase: 'idle', armed: false }, 'pull')
+export const pullStore = createStore<PullState>(
+  { tabId: null, phase: 'idle', armed: false },
+  'pull'
+)
 
 /** What the host does with the value: move the tab's page down by `offset` CSS px. */
 export interface PullHost {

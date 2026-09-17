@@ -111,6 +111,17 @@ export function createPreviewBridge(): NativeBridge {
       const frame = views.get(String(tabId))
       if (frame) frame.style.borderRadius = `${Number(radius)}px`
     },
+    // The page comes down off the frame's top edge by the pull's offset; like Kotlin, the bottom
+    // is clipped so the page never overlaps the chrome below the frame.
+    'view.setPullOffset': ({ tabId, offset }) => {
+      const frame = views.get(String(tabId))
+      if (!frame) return
+      const y = Math.max(0, Number(offset))
+      frame.style.transform = y > 0 ? `translate3d(0, ${y}px, 0)` : ''
+      frame.style.clipPath =
+        y > 0 ? `inset(0 0 ${y}px 0 round ${frame.style.borderRadius || '0px'})` : ''
+    },
+    'chrome.setPullToRefresh': () => undefined,
     'view.setVisible': ({ tabId, visible }) => {
       const frame = views.get(String(tabId))
       if (frame) frame.style.display = visible ? 'block' : 'none'
