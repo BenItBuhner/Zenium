@@ -2433,12 +2433,6 @@ export interface Commands {
     args: { requestId: string; allow: boolean; always: boolean }
     result: void
   }
-  /**
-   * Put text on the system clipboard (a link copied from a history or bookmark row) and confirm
-   * it where the chrome is the one to say so (`Browser.copyText`: Android 13+ has the OS chip).
-   */
-  'clipboard.writeText': { args: { text: string; confirmation: string }; result: void }
-
   'layout.report': { args: LayoutReport; result: void }
 
   /**
@@ -2751,8 +2745,13 @@ export interface Commands {
   /**
    * Copy arbitrary text (history rows, menus) through the host clipboard. `sensitive` marks a
    * secret (a generated password): hidden from clipboard previews and cleared after the timeout.
+   * With a `confirmation` the core also says so where the chrome is the one to
+   * (`Browser.copyText`: a toast, or nothing on Android 13+ where the OS shows its clipboard chip).
    */
-  'clipboard.writeText': { args: { text: string; sensitive?: boolean }; result: void }
+  'clipboard.writeText': {
+    args: { text: string; sensitive?: boolean; confirmation?: string }
+    result: void
+  }
 
   /**
    * Ctrl+T, the sidebar's New Tab button, double-click on the sidebar: a tab at `zen://newtab`
