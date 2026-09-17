@@ -294,6 +294,8 @@ export interface WindowHost {
   show(): void
   focus(): void
   close(): void
+  /** Set the native window title (Alt+Tab / taskbar / Dock); hosts throttle rapid updates. */
+  setTitle(title: string): void
   /** Bounds to remember for session restore (null when the host has no movable windows). */
   normalBounds(): Rect | null
   /** Brief vibration for a gesture landmark; hosts without haptics leave this out. */

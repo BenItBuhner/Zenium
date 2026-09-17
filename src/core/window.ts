@@ -13,6 +13,7 @@ import type {
 import type { Browser } from './browser'
 import type { PersistedWindow } from './state'
 import { getSpace, tabVisibleIn } from './model'
+import { formatWindowTitle } from '../shared/windowTitle'
 import type { WindowHost } from './platform'
 
 export interface WindowInit {
@@ -300,6 +301,12 @@ export class ZenWindow {
 
   send<K extends EventName>(name: K, payload: Events[K]): void {
     if (this.alive) this.host.send(name, payload)
+  }
+
+  /** Push the native window title (`<active tab title> - Zenium`) to the host; the host throttles. */
+  updateTitle(): void {
+    if (!this.alive) return
+    this.host.setTitle(formatWindowTitle(this.browser.tabs.activeTitleFor(this), this.isPrivate))
   }
 
   /** Whether the chrome currently covers the content (used by hosts for input routing). */

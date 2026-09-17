@@ -96,6 +96,13 @@ export class TabManager {
     return this.tab(win.selectedTabIn(win.activeSpace()))
   }
 
+  /** The title a window shows for its active tab (the custom name wins), or null when it has none. */
+  activeTitleFor(win: ZenWindow): string | null {
+    const tab = this.activeTabFor(win)
+    if (!tab) return null
+    return tab.customTitle ?? tab.title
+  }
+
   /** Tabs currently shown in a window's content area (active tab, or every tab of its split group). */
   visibleTabIds(win: ZenWindow): string[] {
     const active = this.activeTabFor(win)
@@ -522,6 +529,8 @@ export class TabManager {
       afterTabId?: string
       folderId?: string | null
       load?: boolean
+      /** The plain host typed into the URL bar when `url` is its https:// upgrade (http fallback). */
+      upgradedFrom?: string
       /** Preset id (hosts that must know the id before the tab exists, e.g. adopted popups). */
       id?: string
     },
@@ -569,6 +578,9 @@ export class TabManager {
       insertTabIntoSpace(m, space, tab, index)
     }
     tab.bookmarked = this.browser.bookmarks.has(tab.url)
+    // Set before the load below so an active tab's single activation load (or a background load)
+    // is eligible for the http fallback straight away.
+    if (opts.upgradedFrom) this.httpsUpgraded.set(tab.id, opts.upgradedFrom)
     if (opts.active !== false) {
       this.activateTab(tab.id, win)
     } else if (opts.load !== false && tab.url !== BLANK_URL) {
