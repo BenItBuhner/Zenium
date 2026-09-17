@@ -4,7 +4,7 @@ name: Desktop shell smoke (Windows, macOS)
 
 on:
   push:
-    branches: ['cursor/desktop-os-window-shell-95da']
+    branches: ['cursor/desktop-window-shell-4efc']
 
 permissions:
   contents: read
@@ -82,6 +82,11 @@ jobs:
             echo "app: $app"
             node "$SMOKE/shell-smoke.mjs" --exe "$app/Contents/MacOS/Zenium" --out "$SMOKE_OUT"
           fi
+      - name: Summarise checks
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$SMOKE_OUT/summary.txt" ]; then cat "$SMOKE_OUT/summary.txt"; else echo "no summary"; fi
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v7
