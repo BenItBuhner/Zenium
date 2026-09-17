@@ -1945,7 +1945,8 @@ export interface Commands {
   'bookmark.toggleBar': { args: void; result: void }
   'bookmark.cut': { args: { ids: string[] }; result: void }
   'bookmark.copy': { args: { ids: string[] }; result: void }
-  'bookmark.paste': { args: { folderId: string; index?: number }; result: void }
+  /** Paste the app's bookmark clipboard; false when it is empty (a URL on the host clipboard is the caller's). */
+  'bookmark.paste': { args: { folderId: string; index?: number }; result: boolean }
   /** Netscape bookmark HTML import through the host's file picker. */
   'bookmark.import': { args: void; result: BookmarkImportResult | null }
   /** Netscape bookmark HTML export through the host's save dialog. */

@@ -925,8 +925,8 @@ export class Menus {
             )
         },
         { type: 'separator' },
-        { label: 'Cut', enabled: editable, click: () => bookmarks.cut(ids) },
-        { label: 'Copy', enabled: editable, click: () => bookmarks.copy(ids) }
+        { label: 'Cut', enabled: editable, click: () => this.browser.clipBookmarks(ids, 'cut') },
+        { label: 'Copy', enabled: editable, click: () => this.browser.clipBookmarks(ids, 'copy') }
       )
       // Touch users have no drag and drop; the nested chooser moves the selection anywhere.
       if (!bar)

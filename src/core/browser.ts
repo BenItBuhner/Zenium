@@ -646,6 +646,20 @@ export class Browser {
     this.updateSettings({ bookmarksBar: mode }, win)
   }
 
+  /**
+   * Cut or copy bookmarks: the app's clipboard takes the nodes, the host clipboard the pages'
+   * addresses as text (Chrome), one per line, so they paste into any text field.
+   */
+  clipBookmarks(ids: readonly string[], mode: 'cut' | 'copy'): void {
+    if (mode === 'cut') this.bookmarks.cut(ids)
+    else this.bookmarks.copy(ids)
+    const urls = ids
+      .map((id) => this.bookmarks.get(id))
+      .filter((n): n is BookmarkNode => n?.type === 'url' && Boolean(n.url))
+      .map((n) => n.url ?? '')
+    if (urls.length) this.platform.clipboard.writeText(urls.join('\n'))
+  }
+
   /** The bar folder menu's "Sort by name": folders first, then bookmarks, A to Z, in one move. */
   sortBookmarkFolder(folderId: string): boolean {
     const order = sortedByNameOrder(this.bookmarks.tree, folderId)
@@ -1434,9 +1448,9 @@ export class Browser {
         this.menus.showBookmarkContextMenu(ids, folderId, { x, y }, win, surface ?? 'manager'),
       'bookmark.menu': ({ x, y }, win) => this.menus.showBookmarksMenu({ x, y }, win),
       'bookmark.toggleBar': (_a, win) => this.toggleBookmarksBar(win),
-      'bookmark.cut': ({ ids }) => this.bookmarks.cut(ids),
-      'bookmark.copy': ({ ids }) => this.bookmarks.copy(ids),
-      'bookmark.paste': ({ folderId, index }) => void this.bookmarks.paste(folderId, index),
+      'bookmark.cut': ({ ids }) => this.clipBookmarks(ids, 'cut'),
+      'bookmark.copy': ({ ids }) => this.clipBookmarks(ids, 'copy'),
+      'bookmark.paste': ({ folderId, index }) => this.bookmarks.paste(folderId, index),
       'bookmark.import': (_a, win) => this.importBookmarks(win),
       'bookmark.export': (_a, win) => this.exportBookmarks(win),
 

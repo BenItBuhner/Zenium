@@ -5,7 +5,7 @@ import { ChevronRight } from 'lucide-react'
 import type { BookmarkNode, Tab, UIState } from '@shared/types'
 import { BOOKMARKS_BAR_ID, MOBILE_BOOKMARKS_ID, OTHER_BOOKMARKS_ID } from '@shared/bookmarks'
 import { inputToUrl } from '@shared/url'
-import { run } from '@renderer/lib/api'
+import { cmd, run } from '@renderer/lib/api'
 import { dropStore } from '@renderer/lib/drag'
 import { closeBookmarkChrome, openBookmarkChrome, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -271,15 +271,22 @@ export function BookmarksBar({
   // Chips
   // ---------------------------------------------------------------------------
 
-  const [focusIndex, setFocusIndex] = useState(0)
+  // The roving tab stop is remembered by chip, so a reorder (a cut and paste, a drop) keeps it on
+  // the same chip wherever that chip lands; its position is derived.
+  const [focusId, setFocusId] = useState<string | null>(null)
+  const focusIndex = useMemo(() => {
+    if (focusId === OVERFLOW_ANCHOR) return hidden.length ? visibleCount : 0
+    const at = focusId ? items.findIndex((n) => n.id === focusId) : -1
+    return at >= 0 && at < visibleCount ? at : 0
+  }, [focusId, hidden.length, items, visibleCount])
   const focusChip = (index: number): void => {
     const shown = items.slice(0, visibleCount)
     const ids = shown.map((n) => n.id)
     if (hidden.length) ids.push(OVERFLOW_ANCHOR)
     if (!ids.length) return
     const at = ((index % ids.length) + ids.length) % ids.length
-    setFocusIndex(at)
-    chipEls.current.get(ids[at])?.focus()
+    setFocusId(ids[at] ?? null)
+    chipEls.current.get(ids[at] ?? '')?.focus()
   }
 
   const onStripKeyDown = (e: React.KeyboardEvent): void => {
@@ -311,10 +318,36 @@ export function BookmarksBar({
           )
         break
       }
+      case 'c':
+      case 'x': {
+        if (!(e.ctrlKey || e.metaKey)) return
+        const node = items[focusIndex]
+        if (node && focusIndex < visibleCount)
+          run(e.key === 'x' ? 'bookmark.cut' : 'bookmark.copy', { ids: [node.id] })
+        break
+      }
       default:
         return
     }
     e.preventDefault()
+  }
+
+  // Ctrl+V with a chip focused: bookmarks cut or copied in the app land after it; failing that,
+  // a URL on the clipboard becomes a new chip there (Chrome).
+  const onStripPaste = (e: React.ClipboardEvent): void => {
+    const pasted = droppedBookmark(e.clipboardData)
+    const index = Math.min(focusIndex + 1, visibleCount)
+    e.preventDefault()
+    void cmd('bookmark.paste', { folderId: BOOKMARKS_BAR_ID, index }).then((moved) => {
+      if (moved || !pasted) return
+      run('bookmark.create', {
+        parentId: BOOKMARKS_BAR_ID,
+        index,
+        title: pasted.title,
+        url: pasted.url,
+        type: 'url'
+      })
+    })
   }
 
   const openNode = (node: BookmarkNode, e: React.MouseEvent): void => {
@@ -363,7 +396,12 @@ export function BookmarksBar({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <div ref={stripRef} className="zen-bm-strip" onKeyDown={onStripKeyDown}>
+      <div
+        ref={stripRef}
+        className="zen-bm-strip"
+        onKeyDown={onStripKeyDown}
+        onPaste={onStripPaste}
+      >
         {tabDrag && (
           <span
             aria-hidden
@@ -403,7 +441,7 @@ export function BookmarksBar({
               if (menu && node.type === 'folder' && menu.anchorId !== node.id && !drag)
                 openMenu(node.id)
             }}
-            onFocus={() => setFocusIndex(i)}
+            onFocus={() => setFocusId(node.id)}
             onClick={(e) => {
               if (justDragged()) return
               if (node.type === 'folder') toggleMenu(node.id)
@@ -447,7 +485,7 @@ export function BookmarksBar({
           aria-haspopup="menu"
           aria-expanded={menu?.anchorId === OVERFLOW_ANCHOR}
           className="zen-bm-chip px-1.5"
-          onFocus={() => setFocusIndex(visibleCount)}
+          onFocus={() => setFocusId(OVERFLOW_ANCHOR)}
           onPointerEnter={() => {
             if (menu && menu.anchorId !== OVERFLOW_ANCHOR && !drag) openMenu(OVERFLOW_ANCHOR)
           }}
