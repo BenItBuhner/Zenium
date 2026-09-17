@@ -1449,7 +1449,8 @@ export interface MenuItemDescriptor {
 export interface MenuDescriptor {
   id: string
   items: MenuItemDescriptor[]
-  source: 'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app' | 'bookmark' | 'history'
+  source:
+    'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app' | 'bookmark' | 'history'
   /** Anchor in chrome CSS pixels, when known. */
   x: number | null
   y: number | null
