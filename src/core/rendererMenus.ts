@@ -25,6 +25,7 @@ export class RendererMenuHost implements MenuHost {
           label: item.label ?? '',
           enabled: item.enabled ?? true,
           checked: Boolean(item.checked),
+          icon: item.icon ?? null,
           submenu: item.submenu ? serialise(item.submenu) : null
         }
       })

@@ -1,4 +1,4 @@
-import type { KeyBinding, Rect, Tab } from '@shared/types'
+import type { KeyBinding, NavigationSnapshot, Rect, Tab } from '@shared/types'
 import type { SiteCertificate } from '@shared/siteInfo'
 import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@shared/zenPages'
 import type {
@@ -199,6 +199,25 @@ export class AndroidTabView implements TabView {
 
   goForward(): void {
     this.bridge.send('view.forward', { tabId: this.tabId })
+  }
+
+  /**
+   * URL-only fallback until the Kotlin host exposes the WebView's back/forward list: the
+   * snapshot is the current page alone, so index 0 is the only reachable entry.
+   */
+  goToIndex(index: number): void {
+    void index
+  }
+
+  navigationEntries(): NavigationSnapshot {
+    if (!this.nav.url) return { entries: [], index: -1 }
+    return { entries: [{ url: this.nav.url, title: this.nav.title }], index: 0 }
+  }
+
+  async restoreNavigation(snapshot: NavigationSnapshot): Promise<void> {
+    const current =
+      snapshot.entries[snapshot.index] ?? snapshot.entries[snapshot.entries.length - 1]
+    if (current?.url) this.loadURL(current.url)
   }
 
   reload(ignoreCache: boolean): void {

@@ -930,6 +930,93 @@ export class Menus {
     return bookmarks.roots().map((root) => ({ label: root.title, submenu: build(root.id) }))
   }
 
+  /** Firefox's "Recently Closed Tabs / Windows" as one submenu: newest first, ten at most. */
+  private recentlyClosedSubmenu(win: ZenWindow): MenuItemTemplate {
+    const { session } = this.browser
+    const entries = session.summaries().slice(0, 10)
+    if (entries.length === 0) return { label: 'Recently Closed', enabled: false, submenu: [] }
+    const items: Template = entries.map((e) => ({
+      label:
+        e.kind === 'window'
+          ? `Reopen Window – ${clip(e.title, 40)} (${e.tabCount} ${e.tabCount === 1 ? 'tab' : 'tabs'})`
+          : clip(e.title || (e.url ? displayUrl(e.url) : 'Untitled'), 60),
+      icon: e.favicon,
+      click: () => session.restoreClosed(e.id, win)
+    }))
+    return {
+      label: 'Recently Closed',
+      submenu: [
+        ...items,
+        { type: 'separator' },
+        { label: 'Restore All', click: () => session.restoreAll(win) },
+        { label: 'Clear List', click: () => session.clearRecentlyClosed() }
+      ]
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // History page
+  // ---------------------------------------------------------------------------
+
+  /** Context menu of one visit on the history page. */
+  showHistoryContextMenu(visitId: string, url: string, win: ZenWindow): void {
+    const { tabs, history, state } = this.browser
+    const caps = state.capabilities
+    const host = getDomain(url)
+    this.popup(
+      [
+        {
+          label: 'Open in New Tab',
+          click: () => tabs.createTab({ url, active: true }, win)
+        },
+        ...(caps.windows
+          ? [
+              {
+                label: 'Open in New Window',
+                click: () => this.browser.openUrlInWindow(url, 'synced', win)
+              },
+              {
+                label: 'Open in New Private Window',
+                click: () => this.browser.openUrlInWindow(url, 'private', win)
+              }
+            ]
+          : []),
+        { type: 'separator' },
+        { label: 'Copy Link', click: () => this.browser.platform.clipboard.writeText(url) },
+        { type: 'separator' },
+        { label: 'Remove from History', click: () => history.deleteVisits([visitId]) },
+        {
+          label: 'Forget About This Page',
+          click: () => history.deleteUrls([url])
+        },
+        { type: 'separator' },
+        {
+          label: 'More from This Site',
+          enabled: Boolean(host),
+          click: () =>
+            this.browser.emit('overlay.open', { kind: 'history', section: `host:${host}` }, win)
+        }
+      ],
+      win,
+      'history'
+    )
+  }
+
+  /** Menu of a day heading on the history page. */
+  showHistoryDayMenu(dayKey: string, count: number, win: ZenWindow): void {
+    const { history } = this.browser
+    this.popup(
+      [
+        {
+          label: `Delete This Day (${count} ${count === 1 ? 'visit' : 'visits'})`,
+          click: () => history.deleteDay(dayKey)
+        }
+      ],
+      win,
+      'history'
+    )
+  }
+
   /**
    * The "⋯" application menu in the toolbar (Firefox's hamburger menu). One list for every
    * layout: an item the host cannot do is left out (`caps`), and the phone layout – which has no
@@ -1003,6 +1090,7 @@ export class Menus {
           click: () => this.browser.emit('overlay.open', { kind: 'history' }, win)
         },
         // Phone slot: "Recent Tabs" (tabs open on other devices, from sync) goes here.
+        ...desktop(this.recentlyClosedSubmenu(win)),
         {
           label: 'Downloads',
           click: () => this.browser.emit('overlay.open', { kind: 'downloads' }, win)
@@ -1136,4 +1224,9 @@ export class Menus {
   describe(url: string): string {
     return displayUrl(url)
   }
+}
+
+/** Menu labels have no room for long page titles. */
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text
 }

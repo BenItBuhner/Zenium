@@ -1,4 +1,4 @@
-import { Menu, type MenuItemConstructorOptions } from 'electron'
+import { Menu, nativeImage, type MenuItemConstructorOptions } from 'electron'
 import type { MenuHost, MenuItemTemplate, MenuPopupOptions } from '../../core/platform'
 import type { ElectronWindow } from './window'
 
@@ -26,5 +26,18 @@ function toElectron(item: MenuItemTemplate): MenuItemConstructorOptions {
   if (item.role) out.role = item.role
   if (item.click) out.click = item.click
   if (item.submenu) out.submenu = item.submenu.map(toElectron)
+  const icon = item.icon ? menuIcon(item.icon) : null
+  if (icon) out.icon = icon
   return out
+}
+
+/** Only inline (`data:`) favicons can be shown; remote ones would need a fetch first. */
+function menuIcon(src: string): Electron.NativeImage | null {
+  if (!src.startsWith('data:image/')) return null
+  try {
+    const image = nativeImage.createFromDataURL(src)
+    return image.isEmpty() ? null : image.resize({ width: 16, height: 16 })
+  } catch {
+    return null
+  }
 }

@@ -11,7 +11,7 @@ import {
 } from 'electron'
 import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
-import type { Rect, Tab } from '../../shared/types'
+import type { NavigationSnapshot, Rect, Tab } from '../../shared/types'
 import type { SiteCertificate } from '../../shared/siteInfo'
 import type {
   AgentCapture,
@@ -208,6 +208,42 @@ export class ElectronTabView implements TabView {
 
   goForward(): void {
     this.wc.navigationHistory.goForward()
+  }
+
+  goToIndex(index: number): void {
+    const history = this.view.webContents.navigationHistory
+    if (index >= 0 && index < history.length()) history.goToIndex(index)
+  }
+
+  navigationEntries(): NavigationSnapshot {
+    const wc = this.view.webContents
+    if (wc.isDestroyed()) return { entries: [], index: -1 }
+    const history = wc.navigationHistory
+    return {
+      entries: history.getAllEntries().map((e) => ({ url: e.url, title: e.title })),
+      index: history.getActiveIndex()
+    }
+  }
+
+  async restoreNavigation(snapshot: NavigationSnapshot): Promise<void> {
+    const wc = this.view.webContents
+    if (wc.isDestroyed()) return
+    const entries = snapshot.entries.filter((e) => typeof e.url === 'string' && e.url !== '')
+    const index = Math.min(Math.max(snapshot.index, 0), entries.length - 1)
+    const current = entries[index]
+    if (!current) return
+    // `navigationHistory.restore` arrived in Electron 34; older hosts (and a rejected restore,
+    // e.g. on an entry the renderer refuses) fall back to loading the current entry alone.
+    const history = wc.navigationHistory as Partial<Electron.NavigationHistory>
+    if (typeof history.restore === 'function') {
+      try {
+        await history.restore({ entries, index })
+        return
+      } catch {
+        if (wc.isDestroyed()) return
+      }
+    }
+    await wc.loadURL(current.url).catch(() => undefined)
   }
 
   reload(ignoreCache: boolean): void {
