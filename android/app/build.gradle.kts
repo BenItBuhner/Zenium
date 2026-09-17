@@ -196,8 +196,11 @@ dependencies {
     implementation("androidx.browser:browser:1.8.0")
     // The share sheet's "QR code" action draws the link as a code (Share.kt); pure Java, no camera.
     implementation("com.google.zxing:core:3.5.3")
+    // Password manager re-authentication: the system biometric / device credential sheet.
+    implementation("androidx.biometric:biometric:1.1.0")
 
-    // JVM unit tests (src/test): pure logic such as the screenshot stitching geometry.
+    // JVM unit tests (src/test): pure logic such as the screenshot stitching geometry and the
+    // vault key wrapping format.
     testImplementation("junit:junit:4.13.2")
 
     // On-device driver for the gesture demo recording (.github/workflows/android-gesture-demo.yml).
