@@ -140,9 +140,9 @@ class ServicesHardeningDemo {
         val f = Finger()
 
         // 1. The page opened a pop-up on its own: blocked, the chip says so, the list offers Open.
-        waitFor("Pop-up blocked", 12_000)
+        waitFor("Pop-up blocked", 12_000, prefix = true)
         shot("01-popup-blocked-chip")
-        tapLabel(f, "Pop-up blocked")
+        tapLabel(f, "Pop-up blocked", prefix = true)
         waitFor("Pop-ups blocked", 5_000)
         shot("02-popup-blocked-list")
         tapLabel(f, "Open")
@@ -152,9 +152,9 @@ class ServicesHardeningDemo {
         // 2. Links to other apps: the automatic tel: launch is refused and listed; a tapped tel:
         //    link asks; an intent:// link with no app to take it lands on its fallback page.
         openInApp("http://$SERVER/apps")
-        waitFor("Pop-up blocked", 12_000)
+        waitFor("Pop-up blocked", 12_000, prefix = true)
         shot("04-app-launch-blocked-chip")
-        tapLabel(f, "Pop-up blocked")
+        tapLabel(f, "Pop-up blocked", prefix = true)
         waitFor("Pop-ups blocked", 5_000)
         shot("05-app-launch-blocked-list")
         tapLabel(f, "Dismiss")
@@ -242,10 +242,10 @@ class ServicesHardeningDemo {
         }
     }
 
-    private fun waitFor(label: String, timeoutMs: Long): Boolean {
+    private fun waitFor(label: String, timeoutMs: Long, prefix: Boolean = false): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            if (findByLabel(label) != null) {
+            if (findByLabel(label, prefix) != null) {
                 step("saw '$label'")
                 return true
             }
@@ -255,8 +255,8 @@ class ServicesHardeningDemo {
         return false
     }
 
-    private fun tapLabel(f: Finger, label: String): Boolean {
-        val target = findByLabel(label) ?: run {
+    private fun tapLabel(f: Finger, label: String, prefix: Boolean = false): Boolean {
+        val target = findByLabel(label, prefix) ?: run {
             step("no node labelled '$label'")
             return false
         }
@@ -279,19 +279,27 @@ class ServicesHardeningDemo {
         log.append(SystemClock.uptimeMillis()).append(' ').append(message).append('\n')
     }
 
-    private fun findByLabel(label: String): Rect? = findAllByLabel(label).firstOrNull()
+    private fun findByLabel(label: String, prefix: Boolean = false): Rect? =
+        findAllByLabel(label, prefix).firstOrNull()
 
-    /** Breadth-first search of the active window for nodes labelled `label` (aria-label or text). */
-    private fun findAllByLabel(label: String): List<Rect> {
+    /**
+     * Breadth-first search of the active window for nodes labelled `label` (aria-label or text).
+     * With `prefix`, a node whose text starts with the label and a space matches as well: a button
+     * made of several spans ("Pop-up blocked" and "Show") is one node with their texts joined.
+     */
+    private fun findAllByLabel(label: String, prefix: Boolean = false): List<Rect> {
         val root = ui.rootInActiveWindow ?: return emptyList()
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         val found = ArrayList<Rect>()
         queue.add(root)
         var visited = 0
+        val matches = { text: CharSequence? ->
+            text != null && (text.toString() == label || (prefix && text.toString().startsWith("$label ")))
+        }
         while (queue.isNotEmpty() && visited < 8_000) {
             val node = queue.removeFirst()
             visited++
-            if (node.contentDescription?.toString() == label || node.text?.toString() == label) {
+            if (matches(node.contentDescription) || matches(node.text)) {
                 found += Rect().also { node.getBoundsInScreen(it) }
             }
             for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
