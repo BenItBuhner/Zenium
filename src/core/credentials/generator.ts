@@ -96,7 +96,8 @@ export function generatePassword(
     const chars = intersect(classChars(cls), pool)
     if (chars && !mandatory.some((m) => intersect(m, chars) === m)) mandatory.push(chars)
   }
-  if (!pool) pool = LOWER + UPPER + DIGITS
+  // A site that allows none of the user's classes (digits only, say) gets its own alphabet.
+  if (!pool) pool = allowed || LOWER + UPPER + DIGITS
   const maxConsecutive = rules.maxConsecutive ?? 2
 
   for (let attempt = 0; attempt < 64; attempt++) {
