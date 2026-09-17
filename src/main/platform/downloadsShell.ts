@@ -5,7 +5,8 @@ import { aggregateProgress, progressBarFor, type AggregateProgress } from '../..
 import type { ZenWindow } from '../../core/window'
 import type { ElectronWindow } from './window'
 import { downloadDir } from './downloads'
-import appIcon from '../../../resources/icon.png?asset'
+import { windowIcon } from './appIcon'
+import { APP_ICON_DEFAULT } from '../../shared/appIcon'
 
 function browserWindowOf(win: ZenWindow | undefined): BrowserWindow | undefined {
   const host = win?.host as ElectronWindow | undefined
@@ -52,7 +53,7 @@ export class ElectronDownloadsShell {
         if (wc.isDestroyed()) return
         wc.startDrag({
           file: item.savePath,
-          icon: icon.isEmpty() ? nativeImage.createFromPath(appIcon) : icon
+          icon: icon.isEmpty() ? windowIcon(APP_ICON_DEFAULT) : icon
         })
       })
   }
