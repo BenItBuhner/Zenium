@@ -1044,19 +1044,10 @@
     background: rgb(var(--zen-group-rgb));
     box-shadow: 0 0 0 3px rgb(var(--zen-group-rgb) / 0.25);
   }
-  /* Landing strip below the grid while a grouped card is in the hand. */
-  .zen-loose-strip {
-    border-radius: var(--zen-card-radius);
-    corner-shape: var(--zen-corner);
-    color: var(--zen-muted);
-    background: rgb(var(--zen-fg-rgb) / 0.05);
-    transition:
-      background 140ms var(--zen-ease),
-      color 140ms var(--zen-ease);
-  }
-  .zen-loose-strip[data-targeted] {
-    color: var(--zen-fg);
-    background: rgb(var(--zen-fg-rgb) / 0.12);
+  /* A card being swiped off the grid is positioned per frame; the press transition would lag it. */
+  .zen-overview-card[data-swiping] {
+    transition: none;
+    will-change: transform, opacity;
   }
   /* Along the top of a grouped tab's card on the swipe track. */
   .zen-group-ribbon {

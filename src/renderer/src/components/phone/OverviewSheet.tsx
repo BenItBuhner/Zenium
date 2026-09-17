@@ -1,5 +1,6 @@
 import type { JSX, ReactNode } from 'react'
 import { useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useBackSurface } from '@renderer/lib/back'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
@@ -26,6 +27,8 @@ interface Props {
  * the phone menu's `BottomSheet` – draggable, on the shared sheet surface under the tinted
  * scrim – with a title row and 48px rows. A picked row slides the sheet away first and acts
  * once it is gone; the system back gesture pulls it down with the finger; Escape dismisses it.
+ * Drawn on the body: the overview is a layer under the page bar, and a sheet inside it would be
+ * cut off by the bar.
  */
 export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
@@ -49,7 +52,7 @@ export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.E
     return () => window.removeEventListener('keydown', onKey, true)
   }, [])
 
-  return (
+  return createPortal(
     <BottomSheet
       ref={sheet}
       onDismissed={onClose}
@@ -82,6 +85,7 @@ export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.E
           </li>
         ))}
       </ul>
-    </BottomSheet>
+    </BottomSheet>,
+    document.body
   )
 }
