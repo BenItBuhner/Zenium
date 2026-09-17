@@ -304,9 +304,6 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             .show()
     }
 
-<<<<<<< HEAD
-    private fun applyTheme(dark: Boolean, background: String, scrim: String) {
-=======
     /**
      * The system's own haptics for the chrome's gestures – the long-press pick-up, a notch as the
      * dragged address bar passes the middle of the screen, and the click of it docking – so they
@@ -324,8 +321,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
         chrome.performHapticFeedback(constant)
     }
 
-    private fun applyTheme(dark: Boolean, background: String) {
->>>>>>> 7150978 (Phone chrome: omnibox fills the frame above the keyboard; long-press carries the address bar to either edge)
+    private fun applyTheme(dark: Boolean, background: String, scrim: String) {
         themeDark = dark
         if (scrim.isNotEmpty()) themeScrim = parseColor(scrim)
         val color = parseColor(background.ifEmpty { if (dark) "#16161b" else "#f2f1f5" })
