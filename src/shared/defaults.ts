@@ -15,6 +15,7 @@ import type {
 import { DEFAULT_CONTAINER_ID } from './types'
 import { APP_ICON_DEFAULT } from './appIcon'
 import { defaultPhoneBar } from './phoneBar'
+import { DEFAULT_NEW_TAB_SETTINGS } from './newtab'
 import { DEFAULT_UPDATE_SETTINGS } from './updates'
 import { DEFAULT_PROMO_STATE } from './defaultBrowser'
 import { DEFAULT_BLOCKING_SETTINGS } from './blocking'
@@ -243,7 +244,8 @@ export const DEFAULT_SETTINGS: Settings = {
   pageControls: structuredClone(DEFAULT_PAGE_CONTROLS),
   bookmarksBar: 'newtab',
   shortcutPreset: 'chrome',
-  privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS)
+  privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
+  newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS)
 }
 
 /** Firefox's four default containers plus "No Container". */

@@ -222,6 +222,16 @@ export function resolveTheme(theme: SpaceTheme | null, darkScheme: boolean): Res
   }
 }
 
+/**
+ * The wallpaper a space stands for: its gradient at full strength (the window mutes the colours
+ * under the chrome; a wallpaper shows them as they are), or the base colour of spaces that have
+ * no gradient.
+ */
+export function resolveWallpaper(theme: SpaceTheme | null, darkScheme: boolean): string {
+  if (!theme || theme.colors.length === 0) return resolveTheme(null, darkScheme).background
+  return resolveTheme({ ...theme, opacity: 1 }, darkScheme).background
+}
+
 export function makeTheme(primaryHex: string, extra: string[] = []): SpaceTheme {
   const rgb = hexToRgb(primaryHex) ?? [120, 120, 220]
   const pos = colorToWheel(rgb)

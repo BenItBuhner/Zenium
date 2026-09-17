@@ -168,6 +168,8 @@ function sourceTitle(source: MenuDescriptor['source']): string {
       return 'Folder'
     case 'newtab':
       return 'New Tab'
+    case 'topsite':
+      return 'Shortcut'
     case 'app':
       return 'Zenium'
     case 'bookmark':

@@ -1312,6 +1312,47 @@ export interface CompactModeSettings {
   sidebarPersistent: boolean
 }
 
+// ---------------------------------------------------------------------------
+// New tab page (phone): a quiet surface on the space gradient, customisable per Chrome / Edge
+// ---------------------------------------------------------------------------
+
+/**
+ * Layout presets. `focused` is the search field and the top-site tiles on the bare space
+ * gradient; `inspirational` adds a wallpaper; `informational` would add a feed on top of that
+ * (no feed core exists, so it is offered as "not available" and renders like `inspirational`);
+ * `custom` shows exactly the `modules` the user toggled.
+ */
+export type NewTabPreset = 'focused' | 'inspirational' | 'informational' | 'custom'
+/** Which sites the tiles show: history frecency (pins first) or only the pinned ones. */
+export type NewTabShortcutStyle = 'most-visited' | 'my-shortcuts'
+/** The wallpaper the wallpaper presets draw: one derived from the space theme, or a picked image. */
+export type NewTabWallpaper = 'space' | 'image'
+
+export interface NewTabModules {
+  searchBox: boolean
+  shortcuts: boolean
+  wallpaper: boolean
+  /** Reserved for a feed core; nothing renders it yet. */
+  feed: boolean
+}
+
+export interface NewTabPinnedSite {
+  url: string
+  title: string
+}
+
+export interface NewTabSettings {
+  preset: NewTabPreset
+  /** Sections the `custom` preset shows; the named presets ignore them. */
+  modules: NewTabModules
+  shortcutStyle: NewTabShortcutStyle
+  wallpaper: NewTabWallpaper
+  /** Sites pinned to the front of the tiles, in order. */
+  pinned: NewTabPinnedSite[]
+  /** Hosts the user removed from the most-visited tiles. */
+  hiddenHosts: string[]
+}
+
 export interface Settings {
   colorScheme: ColorScheme
   /** Colour of the app icon (launcher alias on Android, window / Dock icon on desktop). */
@@ -1407,6 +1448,8 @@ export interface Settings {
   shortcutPreset: ShortcutPreset
   /** Safe Browsing, HTTPS-only, secure DNS, cookies, GPC / DNT (Settings → Privacy and security). */
   privacy: PrivacySettings
+  /** The phone's new tab page (preset, sections, wallpaper, pinned and removed sites). */
+  newTab: NewTabSettings
 }
 
 // ---------------------------------------------------------------------------
@@ -2247,6 +2290,7 @@ export interface MenuDescriptor {
     | 'space'
     | 'folder'
     | 'newtab'
+    | 'topsite'
     | 'app'
     | 'bookmark'
     | 'history'
@@ -2456,6 +2500,12 @@ export interface Commands {
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
   'folder.contextMenu': { args: { folderId: string }; result: void }
   'newtab.contextMenu': { args: void; result: void }
+  /** Long-press on a new tab page tile: pin / unpin, remove, open in a new tab. */
+  'newtab.tileContextMenu': { args: { url: string; title: string }; result: void }
+  /** The picked new tab wallpaper image as a data URL (null when none was picked). */
+  'newtab.wallpaper': { args: void; result: string | null }
+  /** Store (or with null, forget) the picked wallpaper image; the settings pick when it shows. */
+  'newtab.setWallpaper': { args: { dataUrl: string | null }; result: void }
   /**
    * The "⋯" application menu. `anchor` is the menu button in chrome CSS pixels: the menu opens
    * along its bottom edge; without it the menu opens at the pointer. `keyboard` marks a menu
