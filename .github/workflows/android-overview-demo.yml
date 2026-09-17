@@ -9,10 +9,6 @@ name: Android overview demo
 # so at a handful of frames per second they run slower than on a phone).
 on:
   workflow_dispatch:
-  # TEMPORARY (removed before the PR is marked ready): the branch's author cannot dispatch
-  # workflows, so the recording runs on push.
-  push:
-    branches: [cursor/overview-groups-spaces-drawer-f378]
 
 permissions:
   contents: read
