@@ -18,17 +18,19 @@ class ExtensionPopup(
     extensions: Extensions,
     served: Extensions.Served,
     private val url: String,
+    context: String,
     private val onClosed: () -> Unit
 ) {
     val extensionId = served.id
     private val density = host.activity.resources.displayMetrics.density
     private val dialog = BottomSheetDialog(host.activity)
     private val container = FrameLayout(host.activity)
-    val webView = ExtensionWebView(host, extensions, served, "popup")
+    val webView = ExtensionWebView(host, extensions, served, context)
     private var closed = false
 
     init {
-        val initial = (320 * density).roundToInt()
+        // Options pages are documents, not popups: they get the tall sheet from the start.
+        val initial = ((if (context == "popup") 320 else 560) * density).roundToInt()
         container.addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, initial))
         dialog.setContentView(container)
         dialog.behavior.state = BottomSheetBehavior.STATE_EXPANDED

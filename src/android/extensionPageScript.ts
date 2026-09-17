@@ -1,8 +1,17 @@
-import type { BootConfig, BootGroup, ExtensionBoot, IsolationMode } from '@core/extensions/runtime/boot'
+import type {
+  BootConfig,
+  BootGroup,
+  ExtensionBoot,
+  IsolationMode
+} from '@core/extensions/runtime/boot'
 import type { ContentScriptDeclaration } from '@core/extensions/runtime/manifest'
 import { contentScriptAppliesTo, type FrameContext } from '@core/extensions/runtime/matchPatterns'
 import { extensionOrigin } from '@core/extensions/runtime/plan'
-import { scheduleRunAt, type LifecycleHooks, type ReadyState } from '@core/extensions/runtime/scheduling'
+import {
+  scheduleRunAt,
+  type LifecycleHooks,
+  type ReadyState
+} from '@core/extensions/runtime/scheduling'
 import {
   capturePrimordials,
   createChromeShim,
@@ -97,8 +106,14 @@ declare const __zenExtBoot: Boot
   // --- transport ---------------------------------------------------------------------------------
   const bridge = g.__zenExtBridge
   if (!bridge) return
-  const sources: Record<string, GroupFunction> = Object.assign(Object.create(null) as Record<string, GroupFunction>, boot.sources)
-  const cssTexts: Record<string, string> = Object.assign(Object.create(null) as Record<string, string>, boot.css)
+  const sources: Record<string, GroupFunction> = Object.assign(
+    Object.create(null) as Record<string, GroupFunction>,
+    boot.sources
+  )
+  const cssTexts: Record<string, string> = Object.assign(
+    Object.create(null) as Record<string, string>,
+    boot.css
+  )
   const attached: ExtensionBoot[] = []
   const rawPost = bridge.postMessage
   const post = (message: string): void => rawPost.call(bridge, message)
@@ -132,11 +147,17 @@ declare const __zenExtBoot: Boot
    * and never reach the page, reads fall through to the real window with native methods bound so
    * `window.setTimeout(...)` keeps working, event handler and other setter properties are forwarded.
    */
-  function shadowWindow(chrome: Record<string, unknown>, mode: IsolationMode): Record<string, unknown> {
+  function shadowWindow(
+    chrome: Record<string, unknown>,
+    mode: IsolationMode
+  ): Record<string, unknown> {
     if (mode === 'none') return realWindow as unknown as Record<string, unknown>
     const store: Record<PropertyKey, unknown> = Object.create(null)
     const bound = new Map<PropertyKey, unknown>()
-    const target = Object.create(Object.getPrototypeOf(realWindow) as object) as Record<PropertyKey, unknown>
+    const target = Object.create(Object.getPrototypeOf(realWindow) as object) as Record<
+      PropertyKey,
+      unknown
+    >
     const win = realWindow as unknown as Record<PropertyKey, unknown>
     const findSetter = (key: PropertyKey): boolean => {
       let obj: object | null = win
@@ -150,7 +171,8 @@ declare const __zenExtBoot: Boot
     const proxy: Record<string, unknown> = new Proxy(target, {
       get(_t, key) {
         if (key in store) return store[key]
-        if (key === 'window' || key === 'self' || key === 'globalThis' || key === 'frames') return proxy
+        if (key === 'window' || key === 'self' || key === 'globalThis' || key === 'frames')
+          return proxy
         if (key === 'chrome' || key === 'browser') return chrome
         const value = win[key]
         if (typeof value === 'function' && typeof key === 'string') {
@@ -252,7 +274,8 @@ declare const __zenExtBoot: Boot
     const entry = adopted.get(key)
     if (!entry) return
     adopted.delete(key)
-    if (entry instanceof CSSStyleSheet) document.adoptedStyleSheets = document.adoptedStyleSheets.filter((s) => s !== entry)
+    if (entry instanceof CSSStyleSheet)
+      document.adoptedStyleSheets = document.adoptedStyleSheets.filter((s) => s !== entry)
     else entry.remove()
   }
 
@@ -289,7 +312,10 @@ declare const __zenExtBoot: Boot
         fn.call(w, w, w, w, scope.shim.chrome, scope.shim.chrome)
       } catch (e) {
         error = e instanceof Error ? `${e.name}: ${e.message}` : String(e)
-        primordials.error(`[Zenium] content script of ${scope.ext.name} (group ${group.index}) threw`, e)
+        primordials.error(
+          `[Zenium] content script of ${scope.ext.name} (group ${group.index}) threw`,
+          e
+        )
       }
     }
     if (stats)
@@ -312,12 +338,23 @@ declare const __zenExtBoot: Boot
    * execution, so it is never eval'd against the page's CSP; it runs in the extension's scope
    * with its `chrome`. The token is compared, not embedded, so `toString()` reveals nothing.
    */
-  function exec(token: unknown, extId: unknown, kind: unknown, payload: unknown, fn: unknown): unknown {
+  function exec(
+    token: unknown,
+    extId: unknown,
+    kind: unknown,
+    payload: unknown,
+    fn: unknown
+  ): unknown {
     if (token !== boot.config.token) throw new Error('bad token')
     const ext = extensions().find((e) => e.id === extId)
     if (!ext) throw new Error('unknown extension')
     const scope = scopeFor(ext, frameContext(), 'content')
-    const options = (payload ?? {}) as { id?: unknown; code?: unknown; remove?: unknown; world?: unknown }
+    const options = (payload ?? {}) as {
+      id?: unknown
+      code?: unknown
+      remove?: unknown
+      world?: unknown
+    }
     if (kind === 'css') {
       const key = `${ext.id}/#${String(options.id ?? options.code ?? '')}`
       if (options.remove) removeCss(key)
@@ -328,7 +365,12 @@ declare const __zenExtBoot: Boot
     const w = options.world === 'MAIN' ? realWindow : scope.window
     return (fn as GroupFunction).call(w, w, w, w, scope.shim.chrome, scope.shim.chrome)
   }
-  Object.defineProperty(g, '__zenExtExec', { value: exec, writable: false, configurable: false, enumerable: false })
+  Object.defineProperty(g, '__zenExtExec', {
+    value: exec,
+    writable: false,
+    configurable: false,
+    enumerable: false
+  })
 
   // --- frame context ---------------------------------------------------------------------------
 
@@ -341,7 +383,10 @@ declare const __zenExtBoot: Boot
     }
     const url = location.href
     let precursorUrl: string | null = null
-    if (!isTopFrame && (url === 'about:blank' || url === 'about:srcdoc' || /^(data|blob):/.test(url))) {
+    if (
+      !isTopFrame &&
+      (url === 'about:blank' || url === 'about:srcdoc' || /^(data|blob):/.test(url))
+    ) {
       try {
         precursorUrl = window.parent.location.href
       } catch {
@@ -380,15 +425,23 @@ declare const __zenExtBoot: Boot
 
   if (boot.config.kind === 'content') {
     const frame = frameContext()
-    const stats: Stats | null = boot.debug ? { frame: frame.url, matchMs: 0, bootMs: 0, applied: 0, groups: [] } : null
-    if (stats) Object.defineProperty(g, '__zenExtStats', { value: stats, enumerable: false, configurable: true })
+    const stats: Stats | null = boot.debug
+      ? { frame: frame.url, matchMs: 0, bootMs: 0, applied: 0, groups: [] }
+      : null
+    if (stats)
+      Object.defineProperty(g, '__zenExtStats', {
+        value: stats,
+        enumerable: false,
+        configurable: true
+      })
 
     /** Match one unit's extensions against this frame and schedule what applies. */
     const apply = (list: ExtensionBoot[], started: number): void => {
       const due: Array<{ ext: ExtensionBoot; group: BootGroup }> = []
       for (const ext of list) {
         attached.push(ext)
-        for (const group of ext.groups) if (contentScriptAppliesTo(declarationOf(group), frame)) due.push({ ext, group })
+        for (const group of ext.groups)
+          if (contentScriptAppliesTo(declarationOf(group), frame)) due.push({ ext, group })
       }
       if (stats) stats.matchMs += performance.now() - started
       for (const { ext, group } of due) {
@@ -411,7 +464,12 @@ declare const __zenExtBoot: Boot
         apply(other.config.extensions, t)
       }
     }
-    Object.defineProperty(g, '__zenExtRuntime', { value: runtime, writable: false, configurable: false, enumerable: false })
+    Object.defineProperty(g, '__zenExtRuntime', {
+      value: runtime,
+      writable: false,
+      configurable: false,
+      enumerable: false
+    })
     return
   }
 
@@ -433,7 +491,8 @@ declare const __zenExtBoot: Boot
     pageWindow.importScripts = (...urls: string[]): void => {
       for (const url of urls) {
         const absolute = new URL(url, location.href).href
-        if (!absolute.startsWith(origin + '/')) throw new Error(`importScripts: ${url} is not on the extension origin`)
+        if (!absolute.startsWith(origin + '/'))
+          throw new Error(`importScripts: ${url} is not on the extension origin`)
         const xhr = new XMLHttpRequest()
         xhr.open('GET', absolute, false)
         xhr.send()
@@ -443,20 +502,44 @@ declare const __zenExtBoot: Boot
       }
     }
     pageWindow.skipWaiting = (): Promise<void> => Promise.resolve()
-    pageWindow.clients = { claim: (): Promise<void> => Promise.resolve(), matchAll: (): Promise<never[]> => Promise.resolve([]) }
-    pageWindow.registration = { scope: origin + '/', active: null, installing: null, waiting: null, unregister: (): Promise<boolean> => Promise.resolve(true) }
+    pageWindow.clients = {
+      claim: (): Promise<void> => Promise.resolve(),
+      matchAll: (): Promise<never[]> => Promise.resolve([])
+    }
+    pageWindow.registration = {
+      scope: origin + '/',
+      active: null,
+      installing: null,
+      waiting: null,
+      unregister: (): Promise<boolean> => Promise.resolve(true)
+    }
     pageWindow.serviceWorker = { state: 'activated', scriptURL: location.href }
   }
 
   if (context === 'popup') {
     // Chrome closes the popup on window.close(); the host owns the sheet.
-    pageWindow.close = (): void => post(primordials.stringify({ t: 'closePopup', token: boot.config.token, ep: `${nonce}.${ext.id.slice(0, 8)}` }))
+    pageWindow.close = (): void =>
+      post(
+        primordials.stringify({
+          t: 'closePopup',
+          token: boot.config.token,
+          ep: `${nonce}.${ext.id.slice(0, 8)}`
+        })
+      )
     const report = (): void => {
       const root = document.documentElement
       const body = document.body
       const width = Math.max(root.scrollWidth, body ? body.scrollWidth : 0)
       const height = Math.max(root.scrollHeight, body ? body.scrollHeight : 0)
-      post(primordials.stringify({ t: 'popupSize', token: boot.config.token, ep: `${nonce}.${ext.id.slice(0, 8)}`, width, height }))
+      post(
+        primordials.stringify({
+          t: 'popupSize',
+          token: boot.config.token,
+          ep: `${nonce}.${ext.id.slice(0, 8)}`,
+          width,
+          height
+        })
+      )
     }
     window.addEventListener('load', () => {
       report()

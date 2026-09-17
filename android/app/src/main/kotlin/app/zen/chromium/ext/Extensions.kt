@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Base64
 import android.util.Log
+import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -92,16 +93,18 @@ class Extensions(private val host: Host) {
 
     fun handle(method: String, args: JSONObject, reply: (Any?) -> Unit) {
         when (method) {
-            "ext.scan" -> io.execute { val list = scan(); main.post { reply(list) } }
+            "ext.scan" -> io.execute { val list = scan(); main.post { reply(json("token" to token, "extensions" to list, "uiLanguage" to Locale.getDefault().toLanguageTag())) } }
             "ext.configure" -> configure(args, reply)
             "ext.setRules" -> setRules(args, reply)
             "ext.observeRequests" -> { observeRequests = args.bool("on"); reply(null) }
             "ext.send" -> { send(args.str("ep"), args.str("message")); reply(null) }
             "ext.background.start" -> { startBackground(args.str("id")); reply(null) }
             "ext.background.stop" -> { stopBackground(args.str("id")); reply(null) }
-            "ext.popup.open" -> { openPopup(args.str("id"), args.str("url")); reply(null) }
+            "ext.popup.open" -> { openPopup(args.str("id"), args.str("url"), args.str("context", "popup")); reply(null) }
             "ext.popup.close" -> { closePopup(); reply(null) }
             "ext.exec" -> exec(args, reply)
+            "ext.cookies.get" -> reply(CookieManager.getInstance().getCookie(args.str("url")))
+            "ext.cookies.set" -> { CookieManager.getInstance().setCookie(args.str("url"), args.str("cookie")); reply(null) }
             "ext.readFile" -> io.execute {
                 val text = runCatching { fileFor(args.str("id"), args.str("path"))?.readText() }.getOrNull()
                 main.post { reply(text) }
@@ -449,10 +452,10 @@ class Extensions(private val host: Host) {
         view.destroy()
     }
 
-    private fun openPopup(id: String, url: String) {
+    private fun openPopup(id: String, url: String, context: String) {
         closePopup()
         val ext = served[id] ?: return
-        val sheet = ExtensionPopup(host, this, ext, url) {
+        val sheet = ExtensionPopup(host, this, ext, url, context) {
             popup = null
             host.chrome.hostEvent("ext.popupClosed", json("id" to id))
         }
