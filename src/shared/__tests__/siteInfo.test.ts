@@ -137,5 +137,14 @@ describe('formatting', () => {
     expect(permissionLabel('geolocation')).toBe('Location')
     expect(permissionLabel('camera')).toBe('Camera')
     expect(permissionLabel('something-new')).toBe('something-new')
+    expect(permissionLabel('popups')).toBe('Pop-up windows')
+    expect(permissionLabel('openExternal:tel')).toBe('Open tel: links')
+    expect(permissionLabel('openExternal:intent')).toBe('Open apps through intent: links')
+    expect(permissionLabel('openExternal:package:com.example.scan')).toBe(
+      'Open the app com.example.scan'
+    )
+    expect(permissionLabel('storage-access:https://embedder.example')).toBe(
+      'Cookies while embedded (embedder.example)'
+    )
   })
 })

@@ -191,11 +191,31 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'clipboard-read': 'Read the clipboard',
   openExternal: 'Open other apps',
   mediaKeySystem: 'Protected content (DRM)',
+  popups: 'Pop-up windows',
+  fileSystem: 'Write to files you picked',
+  'storage-access': 'Cookies while embedded',
+  'top-level-storage-access': 'Cookies for embedded sites',
+  'window-management': 'Manage windows on all displays',
+  'idle-detection': 'Know when you are active',
   ads: 'Ads and trackers'
 }
 
+/**
+ * A stored permission may carry a qualifier after a colon (`openExternal:tel`, `storage-access:
+ * https://embedder.example`): the label names the permission and keeps the qualifier in brackets.
+ */
 export function permissionLabel(permission: string): string {
-  return PERMISSION_LABELS[permission] ?? permission
+  const colon = permission.indexOf(':')
+  const name = colon === -1 ? permission : permission.slice(0, colon)
+  const qualifier = colon === -1 ? null : permission.slice(colon + 1)
+  const label = PERMISSION_LABELS[name] ?? name
+  if (!qualifier) return label
+  if (name === 'openExternal') {
+    if (qualifier.startsWith('package:'))
+      return `Open the app ${qualifier.slice('package:'.length)}`
+    return qualifier === 'intent' ? 'Open apps through intent: links' : `Open ${qualifier}: links`
+  }
+  return `${label} (${qualifier.replace(/^https:\/\//, '')})`
 }
 
 /** `1.2 MB`-style sizes; bytes below a kilobyte read as a plain count. */
