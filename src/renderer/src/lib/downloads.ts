@@ -230,11 +230,14 @@ export function downloadButtonVisible(state: UIState, ui: DownloadsUi): boolean 
   )
 }
 
-/** The records the bubble lists: the partial set while it exists, else everything. */
+/**
+ * The records the bubble lists: the partial set while it exists, else everything, with the
+ * transfers still running ahead of the finished ones (each group keeps the engine's order).
+ */
 export function bubbleItems(items: DownloadRecord[], partial: string[] | null): DownloadRecord[] {
-  if (!partial) return items
-  const shown = items.filter((i) => partial.includes(i.id))
-  return shown.length > 0 ? shown : items
+  const shown = partial ? items.filter((i) => partial.includes(i.id)) : items
+  const listed = shown.length > 0 ? shown : items
+  return [...listed.filter(isActiveDownload), ...listed.filter((i) => !isActiveDownload(i))]
 }
 
 /**
