@@ -5,7 +5,7 @@ import {
   matchEngineKeyword,
   parseSuggestResponse
 } from '../search'
-import { searchCommands } from '../commands'
+import { URLBAR_COMMANDS, searchCommands } from '../commands'
 
 const google = DEFAULT_SEARCH_ENGINES.find((e) => e.id === 'google')!
 
@@ -43,5 +43,14 @@ describe('command bar', () => {
     expect(searchCommands('compact').map((c) => c.action)).toContain('compact.toggle')
     expect(searchCommands('split grid').map((c) => c.action)).toContain('split.grid')
     expect(searchCommands('')).toEqual([])
+  })
+
+  it('shows sentence-case labels and still matches Title Case queries', () => {
+    expect(URLBAR_COMMANDS.find((c) => c.id === 'compact')?.label).toBe('Toggle compact mode')
+    expect(URLBAR_COMMANDS.find((c) => c.id === 'copy-url-md')?.label).toBe(
+      'Copy current URL as Markdown'
+    )
+    expect(searchCommands('Compact Mode').map((c) => c.action)).toContain('compact.toggle')
+    expect(searchCommands('Find in Page').map((c) => c.action)).toContain('find.open')
   })
 })

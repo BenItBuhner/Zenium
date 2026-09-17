@@ -65,7 +65,7 @@ export class Menus {
     if (hasLink) {
       template.push(
         {
-          label: 'Open Link in New Tab',
+          label: 'Open link in new tab',
           click: () =>
             tabs.createTab(
               {
@@ -78,16 +78,16 @@ export class Menus {
             )
         },
         {
-          label: 'Open Link in Glance',
+          label: 'Open link in Glance',
           enabled: glanceAllowed,
           click: () => tabs.openGlance(params.linkURL, tabId, 0.5, 0.5, win)
         },
         {
-          label: 'Split Link in New Tab',
+          label: 'Split link in new tab',
           click: () => this.splitLink(tabId, params.linkURL, win)
         },
         {
-          label: 'Open Link in New Container Tab',
+          label: 'Open link in new container tab',
           enabled: !win.isPrivate,
           submenu: this.containerSubmenu((cid) =>
             tabs.createTab({ url: params.linkURL, active: true, containerId: cid }, win)
@@ -96,7 +96,7 @@ export class Menus {
         ...(caps.windows
           ? [
               {
-                label: 'Open Link in New Private Window',
+                label: 'Open link in new private window',
                 click: () => {
                   const pw = this.browser.openWindow('private', win)
                   if (pw) tabs.createTab({ url: params.linkURL, active: true }, pw)
@@ -106,17 +106,17 @@ export class Menus {
           : []),
         { type: 'separator' },
         {
-          label: 'Copy Link',
+          label: 'Copy link',
           click: () => this.browser.platform.clipboard.writeText(params.linkURL)
         },
-        { label: 'Save Link As…', click: () => view.downloadURL(params.linkURL) },
+        { label: 'Save link as…', click: () => view.downloadURL(params.linkURL) },
         { type: 'separator' }
       )
     }
     if (isImage) {
       template.push(
         {
-          label: 'Open Image in New Tab',
+          label: 'Open image in new tab',
           click: () =>
             tabs.createTab(
               {
@@ -129,31 +129,31 @@ export class Menus {
             )
         },
         {
-          label: 'Copy Image',
+          label: 'Copy image',
           click: () => this.copyImage(params.srcURL, tabId, params.x, params.y, win)
         },
         {
-          label: 'Copy Image Link',
+          label: 'Copy image link',
           click: () => this.browser.platform.clipboard.writeText(params.srcURL)
         },
-        { label: 'Save Image As…', click: () => view.downloadURL(params.srcURL) },
+        { label: 'Save image as…', click: () => view.downloadURL(params.srcURL) },
         { type: 'separator' }
       )
     }
     if (isMedia) {
       template.push(
         {
-          label: params.mediaType === 'video' ? 'Copy Video Link' : 'Copy Audio Link',
+          label: params.mediaType === 'video' ? 'Copy video link' : 'Copy audio link',
           click: () => this.browser.platform.clipboard.writeText(params.srcURL)
         },
         {
-          label: params.mediaType === 'video' ? 'Save Video As…' : 'Save Audio As…',
+          label: params.mediaType === 'video' ? 'Save video as…' : 'Save audio as…',
           click: () => view.downloadURL(params.srcURL)
         },
         ...(params.mediaType === 'video'
           ? [
               {
-                label: 'Picture-in-Picture',
+                label: 'Picture-in-picture',
                 click: () => this.browser.actions.run('page.pip', { sourceTabId: tabId, win })
               }
             ]
@@ -168,7 +168,7 @@ export class Menus {
         }
         template.push(
           {
-            label: 'Add to Dictionary',
+            label: 'Add to dictionary',
             click: () => view.addWordToDictionary(params.misspelledWord)
           },
           { type: 'separator' }
@@ -182,13 +182,13 @@ export class Menus {
         { label: 'Copy', role: 'copy', enabled: params.editFlags.canCopy },
         { label: 'Paste', role: 'paste', enabled: params.editFlags.canPaste },
         {
-          label: 'Paste as Plain Text',
+          label: 'Paste as plain text',
           role: 'pasteAndMatchStyle',
           enabled: params.editFlags.canPaste
         },
         { label: 'Delete', role: 'delete', enabled: params.editFlags.canDelete },
         { type: 'separator' },
-        { label: 'Select All', role: 'selectAll', enabled: params.editFlags.canSelectAll },
+        { label: 'Select all', role: 'selectAll', enabled: params.editFlags.canSelectAll },
         { type: 'separator' }
       )
     } else if (selection) {
@@ -221,25 +221,25 @@ export class Menus {
           click: () => this.browser.toggleBookmark(tabId)
         },
         {
-          label: 'Save Page As…',
+          label: 'Save page as…',
           click: () => this.browser.actions.run('page.savePage', { sourceTabId: tabId, win })
         },
         {
-          label: 'Take Screenshot',
+          label: 'Take screenshot',
           click: () => this.browser.actions.run('page.screenshot', { sourceTabId: tabId, win })
         },
         {
           label: this.browser.reader.isReaderUrl(tab.url)
-            ? 'Exit Reader View'
-            : 'Enter Reader View',
+            ? 'Exit reader view'
+            : 'Enter reader view',
           enabled: this.browser.reader.isReaderUrl(tab.url) || this.browser.reader.canRead(tab),
           click: () => this.browser.reader.toggle(tabId, win)
         },
         { type: 'separator' },
-        { label: 'Select All', role: 'selectAll' },
+        { label: 'Select all', role: 'selectAll' },
         { type: 'separator' },
         {
-          label: 'View Page Source',
+          label: 'View page source',
           enabled: !tab.url.startsWith('zen://'),
           click: () => this.browser.actions.run('page.viewSource', { sourceTabId: tabId, win })
         }
@@ -247,7 +247,7 @@ export class Menus {
     }
     template.push({ type: 'separator' }, ...this.boostsSubmenu(tabId, win), { type: 'separator' })
     if (caps.devtools)
-      template.push({ label: 'Inspect Element', click: () => view.openDevTools('inspect') })
+      template.push({ label: 'Inspect element', click: () => view.openDevTools('inspect') })
     this.popup(template, win, 'page')
   }
 
@@ -268,11 +268,11 @@ export class Menus {
           },
           { type: 'separator' },
           {
-            label: 'Zap Element',
+            label: 'Zap element',
             click: () => boosts.startZap(tabId)
           },
           {
-            label: 'Force Dark Mode',
+            label: 'Force dark mode',
             type: 'checkbox',
             checked: Boolean(boost?.darkMode),
             click: () => boosts.update(domain, { darkMode: !boost?.darkMode })
@@ -342,16 +342,16 @@ export class Menus {
 
     const template: Template = [
       {
-        label: 'New Tab Below',
+        label: 'New tab below',
         enabled: !tab.essential,
         click: () => this.browser.newTabAfter(tabId, win)
       },
       { type: 'separator' },
-      { label: tab.discarded ? 'Load Tab' : 'Reload Tab', click: () => tabs.reload(tabId) },
-      { label: tab.muted ? 'Unmute Tab' : 'Mute Tab', click: () => tabs.toggleMute(tabId) },
-      { label: 'Duplicate Tab', click: () => tabs.duplicate(tabId, win) },
-      { label: 'Rename Tab…', click: () => this.browser.emit('tab.startRename', { tabId }, win) },
-      { label: 'Change Icon…', click: () => this.browser.emit('tab.pickIcon', { tabId }, win) },
+      { label: tab.discarded ? 'Load tab' : 'Reload tab', click: () => tabs.reload(tabId) },
+      { label: tab.muted ? 'Unmute tab' : 'Mute tab', click: () => tabs.toggleMute(tabId) },
+      { label: 'Duplicate tab', click: () => tabs.duplicate(tabId, win) },
+      { label: 'Rename tab…', click: () => this.browser.emit('tab.startRename', { tabId }, win) },
+      { label: 'Change icon…', click: () => this.browser.emit('tab.pickIcon', { tabId }, win) },
       { type: 'separator' },
       ...(local
         ? []
@@ -365,29 +365,29 @@ export class Menus {
                 }
           ]),
       tab.essential
-        ? { label: 'Unpin Tab', click: () => tabs.togglePin(tabId, win) }
-        : { label: tab.pinned ? 'Unpin Tab' : 'Pin Tab', click: () => tabs.togglePin(tabId, win) },
+        ? { label: 'Unpin tab', click: () => tabs.togglePin(tabId, win) }
+        : { label: tab.pinned ? 'Unpin tab' : 'Pin tab', click: () => tabs.togglePin(tabId, win) },
       ...(tab.pinned || tab.essential
         ? [
             {
-              label: 'Reset Pinned Tab',
+              label: 'Reset pinned tab',
               enabled: pinnedChanged,
               click: () => tabs.resetPinned(tabId, true, win)
             },
             {
-              label: 'Edit Pinned Tab…',
+              label: 'Edit pinned tab…',
               click: () => this.browser.emit('tab.editPinnedUrl', { tabId }, win)
             }
           ]
         : []),
       { type: 'separator' },
       {
-        label: 'Split with Current Tab',
+        label: 'Split with current tab',
         enabled: canSplitWithActive,
         click: () => active && tabs.createSplit([active.id, tab.id], 'vertical', win)
       },
       ...(tab.splitGroupId
-        ? [{ label: 'Un-split Tab', click: () => tabs.removeFromSplit(tabId, true, win) }]
+        ? [{ label: 'Un-split tab', click: () => tabs.removeFromSplit(tabId, true, win) }]
         : []),
       {
         label: local ? 'Move to Space…' : 'Move to Space',
@@ -410,7 +410,7 @@ export class Menus {
         ? []
         : [
             {
-              label: 'Move to Folder',
+              label: 'Move to folder',
               enabled: !tab.essential && !tab.pinned,
               submenu: [
                 ...folders.map((f) => ({
@@ -421,22 +421,22 @@ export class Menus {
                 })),
                 ...(folders.length ? [{ type: 'separator' as const }] : []),
                 {
-                  label: 'New Folder…',
+                  label: 'New folder…',
                   click: () => this.browser.newFolderWithTab(space.id, tabId, win)
                 },
                 ...(tab.folderId
-                  ? [{ label: 'Remove from Folder', click: () => tabs.moveToFolder(tabId, null) }]
+                  ? [{ label: 'Remove from folder', click: () => tabs.moveToFolder(tabId, null) }]
                   : [])
               ]
             },
             {
-              label: 'Add Route for Domain',
+              label: 'Add route for domain',
               enabled: Boolean(domain) && !state.settings.spaceRouting[domain],
               submenu: this.spaceSubmenu(null, (sid) => this.browser.addRouteForTab(tabId, sid))
             }
           ]),
       {
-        label: 'Open in New Container Tab',
+        label: 'Open in new container tab',
         enabled: !win.isPrivate,
         submenu: this.containerSubmenu((cid) =>
           tabs.createTab({ url: tab.url, active: true, containerId: cid }, win)
@@ -450,10 +450,10 @@ export class Menus {
       {
         label: 'Share',
         submenu: [
-          { label: 'Copy Link', click: () => tabs.copyUrl(tabId) },
-          { label: 'Copy Link as Markdown', click: () => tabs.copyUrl(tabId, true) },
+          { label: 'Copy link', click: () => tabs.copyUrl(tabId) },
+          { label: 'Copy link as Markdown', click: () => tabs.copyUrl(tabId, true) },
           {
-            label: 'Email Link…',
+            label: 'Email link…',
             click: () =>
               this.browser.platform.shell.openExternal(
                 `mailto:?subject=${encodeURIComponent(tab.customTitle ?? tab.title)}&body=${encodeURIComponent(tab.url)}`
@@ -464,34 +464,34 @@ export class Menus {
       { type: 'separator' },
       tab.frozen || tab.cpuThrottle > 1
         ? {
-            label: tab.frozen ? 'Wake Tab' : 'Remove CPU Throttling',
+            label: tab.frozen ? 'Wake tab' : 'Remove CPU throttling',
             click: () => void this.browser.governor.wakeTab(tabId)
           }
         : {
-            label: 'Freeze Tab',
+            label: 'Freeze tab',
             enabled: !tab.discarded && tabs.windowsShowing(tabId).length === 0,
             click: () => void this.browser.governor.freezeTab(tabId)
           },
       {
-        label: 'Unload Tab',
+        label: 'Unload tab',
         enabled: !tab.discarded && active?.id !== tabId,
         click: () => tabs.discard(tabId)
       },
       { type: 'separator' },
       ...(!tab.essential
         ? [
-            { label: 'Close Tabs Above', click: () => tabs.closeAbove(tabId, win) },
-            { label: 'Close Tabs Below', click: () => tabs.closeBelow(tabId, win) },
-            { label: 'Close Other Tabs', click: () => tabs.closeOthers(tabId, win) },
+            { label: 'Close tabs above', click: () => tabs.closeAbove(tabId, win) },
+            { label: 'Close tabs below', click: () => tabs.closeBelow(tabId, win) },
+            { label: 'Close other tabs', click: () => tabs.closeOthers(tabId, win) },
             { type: 'separator' as const }
           ]
         : []),
       {
-        label: tab.pinned || tab.essential ? 'Close Tab (keep pinned)' : 'Close Tab',
+        label: tab.pinned || tab.essential ? 'Close tab (keep pinned)' : 'Close tab',
         click: () => tabs.closeTab(tabId, false, win)
       },
       ...(tab.pinned || tab.essential
-        ? [{ label: 'Remove Tab', click: () => tabs.closeTab(tabId, true, win) }]
+        ? [{ label: 'Remove tab', click: () => tabs.closeTab(tabId, true, win) }]
         : [])
     ]
     this.popup(template, win, 'tab')
@@ -514,7 +514,7 @@ export class Menus {
     this.popup(
       [
         {
-          label: `Open ${n} Tabs in Split View`,
+          label: `Open ${n} tabs in split view`,
           enabled: n <= 4,
           click: () =>
             tabs.createSplit(
@@ -525,7 +525,7 @@ export class Menus {
         },
         { type: 'separator' },
         {
-          label: allPinned ? `Unpin ${n} Tabs` : `Pin ${n} Tabs`,
+          label: allPinned ? `Unpin ${n} tabs` : `Pin ${n} tabs`,
           enabled: nonEssential.length > 0,
           click: () => {
             for (const t of nonEssential) if (t.pinned === allPinned) tabs.togglePin(t.id, win)
@@ -535,7 +535,7 @@ export class Menus {
           ? []
           : [
               {
-                label: `Move ${n} Tabs to Space`,
+                label: `Move ${n} tabs to Space`,
                 enabled: nonEssential.length > 0 && m.spaces.length > 1,
                 submenu: this.spaceSubmenu(space.id, (sid) => {
                   for (const t of nonEssential)
@@ -551,7 +551,7 @@ export class Menus {
                 })
               },
               {
-                label: `Add ${n} Tabs to Folder`,
+                label: `Add ${n} tabs to folder`,
                 enabled: nonEssential.some((t) => !t.pinned),
                 submenu: [
                   ...folders.map((f) => ({
@@ -562,7 +562,7 @@ export class Menus {
                   })),
                   ...(folders.length ? [{ type: 'separator' as const }] : []),
                   {
-                    label: 'New Folder…',
+                    label: 'New folder…',
                     click: () => {
                       const folder = this.browser.createFolder(space.id, 'New Folder', '📁', win)
                       for (const t of nonEssential)
@@ -573,14 +573,14 @@ export class Menus {
               }
             ]),
         {
-          label: `Unload ${n} Tabs`,
+          label: `Unload ${n} tabs`,
           click: () => {
             for (const t of selected) if (!t.discarded) tabs.discard(t.id)
           }
         },
         { type: 'separator' },
         {
-          label: `Close ${n} Tabs`,
+          label: `Close ${n} tabs`,
           click: () => {
             for (const t of selected) tabs.closeTab(t.id, false, win)
           }
@@ -598,15 +598,15 @@ export class Menus {
     this.popup(
       [
         {
-          label: 'New Tab',
+          label: 'New tab',
           click: () => this.browser.emit('urlbar.toggle', { mode: 'new-tab' }, win)
         },
         {
-          label: 'New Tab in Container',
+          label: 'New tab in container',
           enabled: !win.isPrivate,
           submenu: [
             {
-              label: 'No Container',
+              label: 'No container',
               click: () => tabs.createTab({ containerId: DEFAULT_CONTAINER_ID, active: true }, win)
             },
             ...this.containerSubmenu((cid) =>
@@ -619,18 +619,18 @@ export class Menus {
           ? []
           : [
               {
-                label: 'New Folder',
+                label: 'New folder',
                 click: () => this.browser.createFolder(space.id, 'New Folder', '📁', win)
               },
               {
-                label: 'New Live Folder…',
+                label: 'New live folder…',
                 click: () => this.browser.emit('overlay.open', { kind: 'live-folder' }, win)
               },
               { label: 'New Space…', click: () => this.browser.emit('space.new', undefined, win) },
               { type: 'separator' as const }
             ]),
         {
-          label: 'Clear Unpinned Tabs',
+          label: 'Clear unpinned tabs',
           enabled: space.tabIds.some((id) => !state.model.tabs[id]?.pinned),
           click: () => tabs.closeUnpinned(space.id, win)
         }
@@ -652,31 +652,31 @@ export class Menus {
     this.popup(
       [
         { label: 'Edit Space…', click: () => this.browser.emit('space.edit', { spaceId }, win) },
-        { label: 'Change Theme…', click: () => this.browser.emit('theme.open', { spaceId }, win) },
+        { label: 'Change theme…', click: () => this.browser.emit('theme.open', { spaceId }, win) },
         { type: 'separator' },
         {
-          label: 'Move Left',
+          label: 'Move left',
           enabled: idx > 0,
           click: () => this.browser.reorderSpace(spaceId, idx - 1)
         },
         {
-          label: 'Move Right',
+          label: 'Move right',
           enabled: idx < state.model.spaces.length - 1,
           click: () => this.browser.reorderSpace(spaceId, idx + 1)
         },
         { type: 'separator' },
-        { label: 'Open in New Window', click: () => this.openSpaceInNewWindow(spaceId, win) },
+        { label: 'Open in new window', click: () => this.openSpaceInNewWindow(spaceId, win) },
         { type: 'separator' },
         { label: 'Unload Space', click: () => tabs.unloadSpace(spaceId) },
         {
-          label: 'Unload All Spaces Except Current',
+          label: 'Unload all Spaces except current',
           click: () => this.browser.unloadOtherSpaces(win)
         },
-        { label: 'Freeze Other Tabs', click: () => void this.browser.governor.freezeOthers() },
-        { label: 'Close Unpinned Tabs', click: () => tabs.closeUnpinned(spaceId, win) },
+        { label: 'Freeze other tabs', click: () => void this.browser.governor.freezeOthers() },
+        { label: 'Close unpinned tabs', click: () => tabs.closeUnpinned(spaceId, win) },
         { type: 'separator' },
         {
-          label: 'Space Routing Settings…',
+          label: 'Space routing settings…',
           click: () => this.browser.emit('overlay.open', { kind: 'settings' }, win)
         },
         { type: 'separator' },
@@ -704,22 +704,22 @@ export class Menus {
     this.popup(
       [
         {
-          label: 'Rename Folder…',
+          label: 'Rename folder…',
           click: () => this.browser.emit('folder.startRename', { folderId }, win)
         },
         {
-          label: folder.collapsed ? 'Expand Folder' : 'Collapse Folder',
+          label: folder.collapsed ? 'Expand folder' : 'Collapse folder',
           click: () => this.browser.updateFolder(folderId, { collapsed: !folder.collapsed })
         },
         { type: 'separator' },
         ...((live
           ? [
               {
-                label: 'Refresh Live Folder',
+                label: 'Refresh live folder',
                 click: () => void this.browser.liveFolders.refresh(folderId, true)
               },
               {
-                label: 'Refresh Every',
+                label: 'Refresh every',
                 submenu: [15, 30, 60, 120, 240, 480].map((minutes) => ({
                   label:
                     minutes < 60
@@ -731,25 +731,25 @@ export class Menus {
                 }))
               },
               {
-                label: 'Live Folder Settings…',
+                label: 'Live folder settings…',
                 click: () =>
                   this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
               },
               {
-                label: 'Stop Updating (make static)',
+                label: 'Stop updating (make static)',
                 click: () => this.browser.liveFolders.remove(folderId)
               }
             ]
           : [
               {
-                label: 'Make Live Folder…',
+                label: 'Make live folder…',
                 click: () =>
                   this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
               }
             ]) as Template),
         { type: 'separator' },
-        { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
-        { label: 'Delete Folder', click: () => this.browser.deleteFolder(folderId, false) }
+        { label: 'Unpack folder', click: () => this.browser.deleteFolder(folderId, true) },
+        { label: 'Delete folder', click: () => this.browser.deleteFolder(folderId, false) }
       ],
       win,
       'folder'
@@ -765,7 +765,7 @@ export class Menus {
     this.popup(
       [
         {
-          label: 'New Tab',
+          label: 'New tab',
           click: () => this.browser.emit('urlbar.toggle', { mode: 'new-tab' }, win)
         },
         ...(local
@@ -774,13 +774,13 @@ export class Menus {
         { type: 'separator' },
         ...(caps.windows
           ? [
-              { label: 'New Window', click: () => this.browser.openWindow('synced', win) },
+              { label: 'New window', click: () => this.browser.openWindow('synced', win) },
               {
-                label: 'New Blank Window',
+                label: 'New blank window',
                 click: () => this.browser.openWindow('unsynced', win)
               },
               {
-                label: 'New Private Window',
+                label: 'New private window',
                 click: () => this.browser.openWindow('private', win)
               }
             ]
@@ -799,12 +799,12 @@ export class Menus {
           click: () => this.browser.emit('overlay.open', { kind: 'downloads' }, win)
         },
         {
-          label: 'Add-ons and Themes',
+          label: 'Add-ons and themes',
           click: () => this.browser.emit('overlay.open', { kind: 'addons' }, win)
         },
         { type: 'separator' },
         {
-          label: 'Compact Mode',
+          label: 'Compact mode',
           type: 'checkbox',
           checked: win.compactEnabled,
           click: () => this.browser.toggleCompactMode(win)
@@ -813,7 +813,7 @@ export class Menus {
           ? []
           : [
               {
-                label: 'Change Theme…',
+                label: 'Change theme…',
                 click: () => this.browser.emit('theme.open', { spaceId: win.activeSpaceId }, win)
               }
             ]),
@@ -821,17 +821,17 @@ export class Menus {
           label: 'Zoom',
           submenu: [
             {
-              label: 'Zoom In',
+              label: 'Zoom in',
               enabled: Boolean(active),
               click: () => active && tabs.adjustZoom(active.id, 1)
             },
             {
-              label: 'Zoom Out',
+              label: 'Zoom out',
               enabled: Boolean(active),
               click: () => active && tabs.adjustZoom(active.id, -1)
             },
             {
-              label: 'Reset Zoom',
+              label: 'Reset zoom',
               enabled: Boolean(active),
               click: () => active && tabs.setZoom(active.id, 1)
             }
@@ -845,12 +845,12 @@ export class Menus {
         },
         { type: 'separator' },
         {
-          label: 'Find in Page…',
+          label: 'Find in page…',
           enabled: Boolean(active),
           click: () => active && this.browser.emit('find.open', { tabId: active.id }, win)
         },
         {
-          label: 'Reader View',
+          label: 'Reader view',
           enabled: Boolean(active) && this.browser.reader.canRead(active),
           click: () => active && this.browser.reader.toggle(active.id, win)
         },
@@ -861,13 +861,13 @@ export class Menus {
             active && this.browser.actions.run('page.print', { sourceTabId: active.id, win })
         },
         {
-          label: 'Save Page As…',
+          label: 'Save page as…',
           enabled: Boolean(active),
           click: () =>
             active && this.browser.actions.run('page.savePage', { sourceTabId: active.id, win })
         },
         {
-          label: 'Take Screenshot',
+          label: 'Take screenshot',
           enabled: Boolean(active),
           click: () =>
             active && this.browser.actions.run('page.screenshot', { sourceTabId: active.id, win })
@@ -883,15 +883,15 @@ export class Menus {
                     enabled: false
                   },
                   { type: 'separator' },
-                  { label: 'Free Up Memory Now', click: () => void this.browser.governor.trim() },
+                  { label: 'Free up memory now', click: () => void this.browser.governor.trim() },
                   {
-                    label: 'Freeze Other Tabs',
+                    label: 'Freeze other tabs',
                     click: () => void this.browser.governor.freezeOthers()
                   },
-                  { label: 'Wake All Tabs', click: () => void this.browser.governor.wakeAll() },
+                  { label: 'Wake all tabs', click: () => void this.browser.governor.wakeAll() },
                   { type: 'separator' },
                   {
-                    label: 'Resource Settings…',
+                    label: 'Resource settings…',
                     click: () =>
                       this.browser.emit(
                         'overlay.open',
@@ -904,7 +904,7 @@ export class Menus {
             ]
           : []) as Template),
         {
-          label: 'Keyboard Shortcuts',
+          label: 'Keyboard shortcuts',
           click: () => this.browser.emit('overlay.open', { kind: 'shortcuts' }, win)
         },
         {
@@ -914,7 +914,7 @@ export class Menus {
         ...(caps.devtools
           ? [
               {
-                label: 'Developer Tools',
+                label: 'Developer tools',
                 enabled: Boolean(active),
                 click: () => active && tabs.toggleDevtools(active.id)
               }
