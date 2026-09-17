@@ -394,9 +394,15 @@ describe('the app menu', () => {
     for (const label of DESKTOP_ONLY) expect(menu).not.toContain(label)
     // A phone without a printer path hides Print rather than greying it.
     expect(appMenu(harness({ ...ANDROID, print: false }, 'phone'))).not.toContain('Print…')
-    // A device build has the extension store: the management page is reachable from the menu.
+    // A device build has the extension store: the management page is reachable from the menu,
+    // closing the library block in Firefox's order.
     const withStore = appMenu(harness({ ...ANDROID, extensions: true }, 'phone'))
-    expect(withStore.indexOf('Add-ons and Themes')).toBe(withStore.indexOf('Downloads') + 1)
+    const downloads = withStore.indexOf('Downloads')
+    expect(withStore.slice(downloads, downloads + 3)).toEqual([
+      'Downloads',
+      'Passwords',
+      'Add-ons and Themes'
+    ])
   })
 
   it('closes the page group with the page controls where the host has them', () => {
