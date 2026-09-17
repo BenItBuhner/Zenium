@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 import type { UIState } from '@shared/types'
 import type { ResolvedTheme } from '@shared/theme'
+import { bookmarksBarVisible } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
 import { isPhone, useViewport } from '@renderer/lib/formFactor'
 import { activeTab } from '@renderer/lib/selectors'
@@ -20,6 +21,7 @@ import {
 import { cn } from '@renderer/lib/utils'
 import { useMainEvents } from '@renderer/hooks/useMainEvents'
 import { useTheme } from '@renderer/hooks/useTheme'
+import { BookmarksBar } from './components/bookmarks/BookmarksBar'
 import { ContentArea } from './components/content/ContentArea'
 import { DragGhost } from './components/DragGhost'
 import { ModStyles } from './components/ModStyles'
@@ -64,6 +66,9 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
     compact.enabled && compact.hideToolbar && settings.toolbarLayout !== 'single'
   const showToolbar = settings.toolbarLayout === 'multiple' && !toolbarHidden
   const sidebarRevealed = sidebarHidden && ui.compactHover
+  // The bookmarks bar sits under the toolbar and hides with it in compact mode.
+  const barWanted = bookmarksBarVisible(settings.bookmarksBar, tab?.url ?? null)
+  const showBar = barWanted && !(compact.enabled && compact.hideToolbar)
 
   // Compact mode: hovering the window edge reveals the sidebar on top of a frozen page snapshot.
   const revealTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -141,6 +146,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
         }}
       >
         {showToolbar && <Toolbar state={state} tab={tab} />}
+        {showBar && <BookmarksBar state={state} tab={tab} />}
         <div className="relative min-h-0 flex-1">
           <ContentArea state={state} ui={ui} />
         </div>
@@ -173,7 +179,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
         </>
       )}
       {toolbarHidden && !showToolbar && settings.toolbarLayout === 'multiple' && (
-        <CompactToolbar state={state} />
+        <CompactToolbar state={state} showBar={barWanted} />
       )}
 
       {ui.drag && <DragGhost state={state} drag={ui.drag} />}
@@ -183,8 +189,8 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   )
 }
 
-/** Compact mode with the top toolbar hidden: hover the top edge to reveal it. */
-function CompactToolbar({ state }: { state: UIState }): JSX.Element {
+/** Compact mode with the top toolbar hidden: hover the top edge to reveal it (and the bar). */
+function CompactToolbar({ state, showBar }: { state: UIState; showBar: boolean }): JSX.Element {
   const tab = activeTab(state)
   const ref = useRef<HTMLDivElement>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -204,7 +210,9 @@ function CompactToolbar({ state }: { state: UIState }): JSX.Element {
     >
       <div className="h-1.5" />
       <div className="px-2 opacity-0 transition-opacity group-data-[open=true]/ct:opacity-100 pointer-events-none group-data-[open=true]/ct:pointer-events-auto">
-        <Toolbar state={state} tab={tab} floating />
+        <Toolbar state={state} tab={tab} floating>
+          {showBar && <BookmarksBar state={state} tab={tab} className="px-1" />}
+        </Toolbar>
       </div>
     </div>
   )
