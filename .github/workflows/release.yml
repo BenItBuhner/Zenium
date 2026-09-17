@@ -538,8 +538,10 @@ jobs:
           # used to fail the whole step halfway through (v0.3.19, first attempt). Every attempt is
           # bounded, because `gh release upload` has no timeout of its own: on v0.3.21 an attempt
           # stalled for 17 minutes during a GitHub upload incident and ate the job's time limit.
-          # The runner pushes the largest package (~140 MB) in about a minute when GitHub is healthy
-          # (v0.3.20: 24 assets, 1.2 GB, 8 minutes), so five minutes means "stalled", not "slow".
+          # When GitHub is healthy the runner pushes all 24 assets (1.2 GB) in about a minute
+          # (v0.3.21 retry: 65 s); on a slow day the batch took 8 minutes (v0.3.20), i.e. about a
+          # minute for the largest ~140 MB package. Five minutes for one package therefore means
+          # "stalled", not "slow".
           for file in release/assets/*; do
             for attempt in 1 2 3 4 5; do
               if timeout -k 30 300 gh release upload "$TAG" "$file" --clobber; then break; fi
