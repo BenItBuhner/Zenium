@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import type { BookmarkNode, Platform, UIState } from '@shared/types'
 import {
+  BOOKMARKS_BAR_ID,
   type BookmarkTree,
   defaultBookmarkFolderId,
   isBookmarkRoot,
@@ -46,9 +47,12 @@ import { useEscapeTrap } from './escape'
 const SEARCH_LIMIT = 200
 const DRAG_THRESHOLD = 5
 
-/** The folder the manager opens on: the first root with anything in it, else the platform default. */
+/**
+ * The folder the manager opens on: the bookmarks bar on desktop (Chrome), the platform's own
+ * root on phones; when that one is empty, the first root with anything in it.
+ */
 function initialFolder(tree: BookmarkTree, platform: Platform): string {
-  const preferred = defaultBookmarkFolderId(platform)
+  const preferred = platform === 'android' ? defaultBookmarkFolderId(platform) : BOOKMARKS_BAR_ID
   if (tree.children(preferred).length) return preferred
   return tree.roots().find((r) => tree.children(r.id).length)?.id ?? preferred
 }
