@@ -256,40 +256,6 @@
   }
 }
 
-/*
- * Design language v2 draft (docs/design-language-v2-draft.md §1–§3), for surfaces still in
- * development: colour stays on the window and the sidebar; pages, panels and controls are neutral
- * near-white or near-black, opaque, with a hairline border as their edge. Those surfaces take
- * every value from here – never hex of their own – so the set can be re-tuned in one place.
- */
-:root {
-  --v2-page: #fbfbfe;
-  --v2-card: #f4f4f7;
-  --v2-card-border: #e7e7e8;
-  --v2-panel: #f4f4f4;
-  --v2-border: rgb(0 0 0 / 0.15);
-  --v2-text: #15141a;
-  --v2-text-deemphasized: color-mix(in srgb, var(--v2-text) 69%, transparent);
-  --v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #000);
-  --v2-on-accent: #fff;
-  --v2-scrim: rgb(0 0 0 / 0.4);
-  /* Elevation: cards are flat (the border is the edge); panels and menus, dialogs and sheets. */
-  --v2-shadow-panel: 0 2px 6px rgb(0 0 0 / 0.2);
-  --v2-shadow-dialog: 0 10px 8px rgb(0 0 0 / 0.15);
-}
-
-:root[data-theme='dark'] {
-  --v2-page: #1c1b22;
-  --v2-card: #19181f;
-  --v2-card-border: #302f38;
-  --v2-panel: #1f1f1f;
-  --v2-border: rgb(255 255 255 / 0.12);
-  --v2-text: #fbfbfe;
-  --v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #fff);
-  --v2-on-accent: #15141a;
-  --v2-scrim: rgb(0 0 0 / 0.55);
-}
-
 /* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME); zero on desktop. */
 :root {
   --zen-inset-top: 0px;
@@ -540,7 +506,8 @@
    * (touch hosts move the page WebView itself; see `lib/pull.ts`). A v2 panel – neutral, opaque,
    * its hairline border the edge – round because it is an indicator, not a control. Position,
    * scale and turn are written per frame; the spin starts from the turn the pull left it at, so
-   * nothing jumps. The glyph is deemphasised until letting go would refresh.
+   * nothing jumps. The glyph is a row glyph (§9.3: 20 at 1.75 on phones), deemphasised until
+   * letting go would refresh.
    */
   .zen-ptr-disc {
     background: var(--v2-panel);
@@ -553,6 +520,11 @@
     color: var(--v2-text-deemphasized);
     transform: rotate(var(--zen-ptr-turn, 0deg));
     transition: color 120ms var(--zen-ease);
+  }
+  .zen-ptr-glyph svg {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    stroke-width: var(--v2-icon-stroke);
   }
   .zen-ptr-disc[data-armed] .zen-ptr-glyph,
   .zen-ptr-glyph[data-spinning] {

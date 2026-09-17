@@ -62,7 +62,7 @@ export function PullIndicator(): JSX.Element | null {
         }}
       >
         <div ref={glyphRef} className="zen-ptr-glyph flex" data-spinning={spinning || undefined}>
-          <RefreshCw className="h-5 w-5" strokeWidth={1.75} />
+          <RefreshCw />
         </div>
       </div>
     </div>
