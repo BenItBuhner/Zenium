@@ -37,7 +37,7 @@ describe('jump list', () => {
   it('lists the two new-window tasks first, then the recent documents', () => {
     expect(categories.map((c) => c.type)).toEqual(['tasks', 'recent'])
     const items = categories[0].items ?? []
-    expect(items.map((i) => i.title)).toEqual(['New window', 'New private window'])
+    expect(items.map((i) => i.title)).toEqual(['New Window', 'New Private Window'])
     expect(items.map((i) => i.args)).toEqual([NEW_WINDOW_FLAG, PRIVATE_WINDOW_FLAG])
   })
 

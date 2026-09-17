@@ -4,6 +4,10 @@ import { useEffect, useState } from 'react'
  * Footprint of the native caption buttons the OS draws over the chrome's top trailing corner
  * (Windows 11's Window Controls Overlay), in CSS px. Both are 0 when nothing is drawn: hosts
  * without the overlay, and fullscreen windows, where the buttons disappear.
+ *
+ * Reads `navigator.windowControlsOverlay` (the same geometry Chromium exposes as
+ * `env(titlebar-area-x/y/width/height)`), so the sidebar, compact mode and a right-hand sidebar
+ * all keep that strip clear of chrome the user can click.
  */
 export interface CaptionOverlay {
   width: number

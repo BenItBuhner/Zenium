@@ -39,6 +39,7 @@ import { describeNetError, HTTP_FALLBACK_CODES, overlayForUrl } from '../shared/
 import { closedTabEntry, closedWindowEntry } from './session'
 import type { PageFlags, TabView, TabViewEvents } from './platform'
 import { safeOrigin } from './permissions'
+import { planWindowOpen } from './windowOpen'
 
 export type { PageFlags } from './platform'
 
@@ -471,23 +472,50 @@ export class TabManager {
       },
       onDestroyed: () => undefined,
       onUserActivation: () => this.browser.popups.activate(tabId),
-      onOpenWindow: (url, disposition, userGesture) => {
-        if (!isNavigableUrl(url) && !url.startsWith('mailto:')) return 'deny'
+      onOpenWindow: (url, disposition, userGesture, features = '') => {
+        const plan = planWindowOpen(url, disposition, features)
+        if (plan.action === 'deny') return 'deny'
         const parent = this.tab(tabId)
         // No gesture, no window: the URL bar lists what was blocked.
         if (this.browser.popups.decide(tabId, parent?.url ?? '', url, userGesture) === 'blocked')
           return 'deny'
-        // window.open() with features → a real popup so `window.opener` keeps working (OAuth etc.).
-        if (disposition === 'new-window') return 'popup'
+        const owner = ownerWindow()
+        if (plan.action === 'window' && this.browser.state.capabilities.windows) {
+          // Sized window.open → toolbar-only chrome at that size; Shift+click / unsized
+          // new-window → a full Zenium window. Private openers stay private.
+          const kind = owner.isPrivate
+            ? 'private'
+            : plan.chrome === 'popup' || owner.kind === 'unsynced'
+              ? 'unsynced'
+              : 'synced'
+          const win = this.browser.createWindow({
+            kind,
+            from: owner,
+            chrome: plan.chrome,
+            bounds: plan.bounds,
+            empty: true
+          })
+          this.createTab(
+            {
+              url,
+              spaceId: parent?.spaceId ?? undefined,
+              containerId: parent?.containerId,
+              active: true,
+              afterTabId: parent && !parent.essential ? parent.id : undefined
+            },
+            win
+          )
+          return 'window'
+        }
         this.createTab(
           {
             url,
             spaceId: parent?.spaceId ?? undefined,
             containerId: parent?.containerId,
-            active: disposition !== 'background-tab',
+            active: plan.active,
             afterTabId: parent && !parent.essential ? parent.id : undefined
           },
-          ownerWindow()
+          owner
         )
         return 'tab'
       },

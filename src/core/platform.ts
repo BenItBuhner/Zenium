@@ -211,15 +211,18 @@ export interface TabViewEvents {
   onDomReady(): void
   onDestroyed(): void
   /**
-   * `window.open` / `target=_blank`. Return how the host should proceed. `userGesture` is the
+   * `window.open` / Shift+click / `target=_blank`. The host always denies Chromium's own window:
+   * `tab` and `window` mean the core already opened a Zenium tab or window. `userGesture` is the
    * host's own knowledge of whether the user asked for it (null when it has none: the core then
-   * relies on the activation it tracked through `onUserActivation`).
+   * relies on the activation it tracked through `onUserActivation`). `features` is the
+   * `window.open` features string (empty for Shift+click).
    */
   onOpenWindow(
     url: string,
     disposition: WindowOpenDisposition,
-    userGesture: boolean | null
-  ): 'deny' | 'tab' | 'popup'
+    userGesture: boolean | null,
+    features?: string
+  ): 'deny' | 'tab' | 'window'
   /** A trusted input event (click, key, tap) was delivered to the page. */
   onUserActivation(): void
   onPageMessage(message: PageMessage): void

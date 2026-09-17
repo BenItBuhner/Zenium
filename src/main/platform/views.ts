@@ -220,23 +220,18 @@ export class ElectronTabView implements TabView {
     wc.on('input-event', (_e, input) => {
       if (isActivatingInput(input)) ev.onUserActivation()
     })
-    wc.setWindowOpenHandler(({ url, disposition }) => {
+    wc.setWindowOpenHandler(({ url, disposition, features }) => {
       // Announced before the core creates the tab, so the new view finds the pending target.
       const cancelTarget = this.onNavigationTarget?.(wc, url)
       // Electron does not say whether the user asked; the core knows from the activation clock.
-      const verdict = ev.onOpenWindow(url, disposition as WindowOpenDisposition, null)
-      if (verdict !== 'tab') cancelTarget?.()
-      if (verdict === 'popup') {
-        return {
-          action: 'allow',
-          overrideBrowserWindowOptions: {
-            width: 720,
-            height: 640,
-            autoHideMenuBar: true,
-            webPreferences: { preload: undefined, sandbox: true, contextIsolation: true }
-          }
-        }
-      }
+      const verdict = ev.onOpenWindow(
+        url,
+        disposition as WindowOpenDisposition,
+        null,
+        features ?? ''
+      )
+      if (verdict === 'deny') cancelTarget?.()
+      // Always deny Chromium's chrome-less BrowserWindow: the core opened a Zenium tab or window.
       return { action: 'deny' }
     })
   }
