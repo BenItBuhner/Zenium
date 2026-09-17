@@ -5,20 +5,12 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
   className?: string
 }
 
+/** A quiet field: a fill of the ink, no border, the focus ring its only line (styles in main.css). */
 const Input = React.forwardRef<HTMLInputElement, InputProps>(function Input(
   { className, ...props },
   ref
 ) {
-  return (
-    <input
-      ref={ref}
-      className={cn(
-        'flex h-8 w-full rounded-lg border border-[var(--zen-border)] bg-[var(--zen-element-bg)] px-2.5 text-[13px] text-[var(--zen-fg)] outline-none placeholder:text-[var(--zen-muted)] focus-visible:border-[var(--zen-accent)] focus-visible:ring-2 focus-visible:ring-[var(--zen-accent)]/30 disabled:opacity-50',
-        className
-      )}
-      {...props}
-    />
-  )
+  return <input ref={ref} className={cn('zen-input', className)} {...props} />
 })
 
 export { Input }

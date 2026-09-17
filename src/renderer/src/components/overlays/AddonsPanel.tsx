@@ -3,7 +3,6 @@ import { useState } from 'react'
 import { FolderOpen, Link2, Plus, Puzzle, Trash2 } from 'lucide-react'
 import type { Mod, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
-import { cn } from '@renderer/lib/utils'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
@@ -15,9 +14,9 @@ type Tab = 'extensions' | 'mods'
 export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
   const [tab, setTab] = useState<Tab>('extensions')
   return (
-    <OverlayShell title="Add-ons and Themes" variant="full">
-      <div className="flex h-full">
-        <nav className="w-52 shrink-0 border-r border-[var(--zen-border)] p-2">
+    <OverlayShell title="Add-ons and Themes" variant="full" className="zen-settings">
+      <div className="zen-settings-body">
+        <nav className="zen-settings-nav" aria-label="Add-on kinds">
           {(
             [
               { id: 'extensions', label: 'Extensions' },
@@ -27,18 +26,17 @@ export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
             <button
               key={item.id}
               type="button"
-              className={cn(
-                'zen-squircle flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
-                tab === item.id && 'bg-[var(--zen-element-bg-active)] font-medium'
-              )}
+              className="zen-settings-nav-item"
+              data-active={tab === item.id}
+              aria-current={tab === item.id ? 'page' : undefined}
               onClick={() => setTab(item.id)}
             >
               {item.label}
             </button>
           ))}
         </nav>
-        <div className="min-w-0 flex-1 overflow-y-auto p-6">
-          <div className="mx-auto flex max-w-2xl flex-col gap-5">
+        <div className="zen-settings-content">
+          <div className="zen-settings-page">
             {tab === 'extensions' ? (
               <ExtensionsSection state={state} />
             ) : (
@@ -54,28 +52,25 @@ export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
 export function ExtensionsSection({ state }: { state: UIState }): JSX.Element {
   return (
     <>
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-4 px-2.5">
         <div>
-          <h3 className="text-[15px] font-semibold">Extensions</h3>
-          <p className="mt-1 text-[12.5px] text-[var(--zen-muted)]">
+          <h3 className="zen-settings-heading px-0">Extensions</h3>
+          <p className="zen-settings-hint mt-1">
             Load unpacked Chrome extensions (a folder with a <code>manifest.json</code>). Content
             scripts, storage, webRequest, scripting and DevTools panels are supported; extensions
             run in every container.
           </p>
         </div>
         <Button size="sm" onClick={() => run('extension.add', undefined)}>
-          <FolderOpen className="mr-1.5 h-3.5 w-3.5" /> Load unpacked…
+          <FolderOpen className="h-3.5 w-3.5" /> Load unpacked…
         </Button>
       </div>
       {state.extensions.length === 0 ? (
         <EmptyNote>No extensions yet.</EmptyNote>
       ) : (
-        <ul className="zen-squircle overflow-hidden rounded-xl border border-[var(--zen-border)]">
+        <ul className="zen-settings-rows">
           {state.extensions.map((ext) => (
-            <li
-              key={ext.id}
-              className="flex items-center gap-3 border-b border-[var(--zen-border)] px-4 py-3 last:border-b-0"
-            >
+            <li key={ext.id} className="zen-settings-row py-2">
               {ext.icon ? (
                 <img src={ext.icon} alt="" className="h-8 w-8 rounded-lg" draggable={false} />
               ) : (
@@ -85,14 +80,14 @@ export function ExtensionsSection({ state }: { state: UIState }): JSX.Element {
               )}
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline gap-2">
-                  <span className="truncate text-[13.5px] font-medium">{ext.name}</span>
+                  <span className="zen-settings-label truncate font-medium">{ext.name}</span>
                   {ext.version && (
-                    <span className="text-[11px] text-[var(--zen-muted)]">v{ext.version}</span>
+                    <span className="zen-settings-hint tabular-nums">v{ext.version}</span>
                   )}
                 </div>
-                <div className="truncate text-[11.5px] text-[var(--zen-muted)]" title={ext.path}>
+                <div className="zen-settings-hint truncate" title={ext.path}>
                   {ext.error ? (
-                    <span className="text-red-500">{ext.error}</span>
+                    <span className="text-[var(--zen-danger)]">{ext.error}</span>
                   ) : (
                     ext.description || ext.path
                   )}
@@ -123,10 +118,10 @@ export function ModsSection({ state }: { state: UIState }): JSX.Element {
   const [url, setUrl] = useState('')
   return (
     <>
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-4 px-2.5">
         <div>
-          <h3 className="text-[15px] font-semibold">Mods</h3>
-          <p className="mt-1 text-[12.5px] text-[var(--zen-muted)]">
+          <h3 className="zen-settings-heading px-0">Mods</h3>
+          <p className="zen-settings-hint mt-1">
             Custom CSS for the browser chrome, like Zen&apos;s mods and <code>userChrome.css</code>.
             Style hooks: <code>.zen-tab</code>, <code>.zen-essential</code>, <code>.zen-panel</code>
             , <code>.zen-content-frame</code>, <code>.zen-toolbar-button</code>,{' '}
@@ -135,7 +130,7 @@ export function ModsSection({ state }: { state: UIState }): JSX.Element {
         </div>
         <div className="flex shrink-0 gap-2">
           <Button size="sm" variant="secondary" onClick={() => run('mod.importFile', undefined)}>
-            <FolderOpen className="mr-1.5 h-3.5 w-3.5" /> Import…
+            <FolderOpen className="h-3.5 w-3.5" /> Import…
           </Button>
           <Button
             size="sm"
@@ -143,11 +138,11 @@ export function ModsSection({ state }: { state: UIState }): JSX.Element {
               void run('mod.add', { name: 'New mod', css: '/* your CSS */\n' })
             }}
           >
-            <Plus className="mr-1.5 h-3.5 w-3.5" /> New mod
+            <Plus className="h-3.5 w-3.5" /> New mod
           </Button>
         </div>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 px-2.5">
         <Link2 className="h-4 w-4 shrink-0 opacity-60" />
         <Input
           placeholder="https://example.com/mod.css"
@@ -175,7 +170,7 @@ export function ModsSection({ state }: { state: UIState }): JSX.Element {
       {state.mods.length === 0 ? (
         <EmptyNote>No mods installed.</EmptyNote>
       ) : (
-        <ul className="zen-squircle overflow-hidden rounded-xl border border-[var(--zen-border)]">
+        <ul className="zen-settings-rows">
           {state.mods.map((mod) => (
             <ModRow
               key={mod.id}
@@ -202,8 +197,8 @@ function ModRow({
   const [css, setCss] = useState(mod.css)
   const [name, setName] = useState(mod.name)
   return (
-    <li className="border-b border-[var(--zen-border)] last:border-b-0">
-      <div className="flex items-center gap-3 px-4 py-3">
+    <li>
+      <div className="zen-settings-row py-2">
         <div className="min-w-0 flex-1">
           {editing ? (
             <Input
@@ -217,13 +212,13 @@ function ModRow({
           ) : (
             <button
               type="button"
-              className="truncate text-left text-[13.5px] font-medium"
+              className="zen-settings-label block max-w-full truncate text-left font-medium"
               onClick={onToggleEdit}
             >
               {mod.name}
             </button>
           )}
-          <div className="truncate text-[11.5px] text-[var(--zen-muted)]">
+          <div className="zen-settings-hint truncate">
             {mod.source ?? `${mod.css.length.toLocaleString()} characters`}
           </div>
         </div>
@@ -244,11 +239,11 @@ function ModRow({
         </button>
       </div>
       {editing && (
-        <div className="px-4 pb-3">
+        <div className="px-2.5 pb-3">
           <textarea
             value={css}
             spellCheck={false}
-            className="zen-squircle h-48 w-full resize-y rounded-xl bg-[var(--zen-element-bg)] p-2.5 font-mono text-[12px] outline-none ring-1 ring-transparent focus:ring-[var(--zen-accent)]/60"
+            className="zen-squircle h-48 w-full resize-y rounded-[10px] bg-[var(--zen-element-bg)] p-2.5 font-mono text-[12px] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--zen-accent)]"
             onChange={(e) => setCss(e.target.value)}
             onBlur={() => css !== mod.css && run('mod.update', { id: mod.id, patch: { css } })}
           />
