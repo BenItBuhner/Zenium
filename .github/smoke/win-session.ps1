@@ -43,6 +43,23 @@ $oobePattern = '^(msoobe|CloudExperienceHost.*|WWAHost|OOBE.*|UserOOBEBroker)$'
 function Get-OobeProcesses {
   @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match $oobePattern })
 }
+# With the OOBE window gone, windows-11-arm leaves the Start menu / Search flyout (a "Search" or
+# "Start" CoreWindow) in the foreground, where it would cover the app in every screenshot. Escape
+# closes it.
+function Close-ShellFlyout {
+  Add-Type -AssemblyName System.Windows.Forms
+  $closed = @()
+  for ($i = 0; $i -lt 3; $i++) {
+    $fg = [Smoke.Native]::GetForegroundWindow()
+    $title = Get-WindowTitle $fg
+    $cls = Get-WindowClass $fg
+    if ($cls -ne 'Windows.UI.Core.CoreWindow' -or $title -notmatch '^(Search|Start)$') { break }
+    [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+    Start-Sleep -Milliseconds 800
+    $closed += "$title [$cls]"
+  }
+  return $closed
+}
 
 switch ($Action) {
   'dismiss-oobe' {
@@ -64,6 +81,7 @@ switch ($Action) {
         Start-Sleep -Milliseconds 500
       }
     }
+    $info.closedShellPopups = @(Close-ShellFlyout)
     $fg = [Smoke.Native]::GetForegroundWindow()
     $info.oobeProcessesAfter = @(Get-OobeProcesses | ForEach-Object { "$($_.ProcessName):$($_.Id)" })
     $info.foregroundAfter = "$(Get-WindowTitle $fg) [$(Get-WindowClass $fg)]"
