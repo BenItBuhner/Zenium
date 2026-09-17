@@ -70,7 +70,7 @@ export class ExternalProtocolService {
     const initiatorUrl = this.initiatorOf(request.tabId)
     const schemeAllows = cls.kind === 'external' && cls.canRemember
     const canRemember = this.rememberAllowed(request.tabId, schemeAllows, false)
-    if (this.alreadyAllowed(scheme, initiatorUrl) && request.userGesture) {
+    if (this.alreadyAllowed(scheme, initiatorUrl, request.tabId) && request.userGesture) {
       this.answerHost(request.requestId, true)
       return
     }
@@ -104,7 +104,7 @@ export class ExternalProtocolService {
     if (tabId && this.hasPendingFor(tabId)) return Promise.resolve(false)
     const scheme = cls.scheme
     const canRemember = this.rememberAllowed(tabId, cls.canRemember, true)
-    if (this.alreadyAllowed(scheme, initiatorUrl)) return Promise.resolve(true)
+    if (this.alreadyAllowed(scheme, initiatorUrl, tabId)) return Promise.resolve(true)
     const win = tabId ? this.browser.tabs.windowFor(tabId) : this.browser.focusedWindow()
     const requestId = newId('ext')
     return new Promise<boolean>((resolve) => {
@@ -183,7 +183,9 @@ export class ExternalProtocolService {
     }
   }
 
-  private alreadyAllowed(scheme: string, initiatorUrl: string): boolean {
+  private alreadyAllowed(scheme: string, initiatorUrl: string, tabId: string | null): boolean {
+    const tab = this.browser.tabs.tab(tabId)
+    if (tab && this.browser.tabs.isPrivate(tab)) return false
     if (this.browser.permissions.stored(externalPermission(scheme), initiatorUrl) === 'allow')
       return true
     return Boolean(this.browser.state.settings.externalProtocols[scheme])
