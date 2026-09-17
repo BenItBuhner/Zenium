@@ -426,13 +426,42 @@ export interface NetHost {
   ): Promise<{ ok: boolean; status: number; text: string }>
 }
 
-/** Live-download control; the core keeps the records, the host owns the transfers. */
+/**
+ * Live-download control; the core keeps the records, the host owns the transfers. Hosts write
+ * in-flight files under `PARTIAL_SUFFIX` and hand the final name over only in `release`, which
+ * is how flagged files stay quarantined until the user keeps them.
+ */
 export interface DownloadHost {
   pause(id: string): void
-  resume(id: string): void
+  /** Continue a paused or resumable interrupted transfer; after a restart only the record is known. */
+  resume(item: DownloadItem): void
   cancel(id: string): void
+  /**
+   * A fresh request for the same URL and referrer, reported through `begin` with
+   * `resumes: item.id` so the row keeps its identity.
+   */
+  retry(item: DownloadItem): void
+  /**
+   * Rename the finished partial file to `item.finalName`; resolves with where it ended up.
+   * `notify` is the "notify on complete" setting for hosts whose downloader owns the completion
+   * notification (Android); desktop notifications are the desktop program's, from `download.changed`.
+   */
+  release(
+    item: DownloadItem,
+    options: { notify: boolean }
+  ): Promise<{ savePath: string; finalName: string } | null>
+  /** Delete the partial or quarantined file (nothing to do when it is already gone). */
+  deletePartial(item: DownloadItem): Promise<void>
   open(item: DownloadItem): Promise<void>
   showInFolder(item: DownloadItem): void
+  /** Folder picker for Settings › Downloads; resolves with the chosen directory or null. */
+  chooseDirectory?(win?: ZenWindow): Promise<string | null>
+  /**
+   * The app is quitting and the host's engine is about to tear the in-flight transfer down
+   * (Chromium cancels it and deletes its file): keep the partial file and return where it now
+   * lives, or null when it could not be kept. Synchronous: it runs from the quit handler.
+   */
+  park?(item: DownloadItem): string | null
 }
 
 export interface SessionHost {

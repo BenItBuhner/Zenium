@@ -1,5 +1,13 @@
-import type { EventName, Events, HapticKind, HostCapabilities, ShareAction } from '@shared/types'
-import { PRIVATE_CONTAINER_ID } from '@shared/types'
+import type {
+  DownloadItem,
+  EventName,
+  Events,
+  HapticKind,
+  HostCapabilities,
+  ShareAction
+} from '@shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
+import { resolveDownloadSettings } from '@shared/downloads'
 import { newId } from '@shared/ids'
 import type { SharedIntent } from '@shared/shareTarget'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '@shared/updates'
@@ -162,23 +170,45 @@ export interface HostEventPayloads {
   'download.started': {
     token: string
     url: string
+    referrer: string
     filename: string
     totalBytes: number
     mimeType: string
     sourceTabId: string | null
+    /** Container of the WebView the download came from (its profile); private follows from it. */
+    containerId: string
+    /** Set when Kotlin continues an interrupted record after a restart or retries one (the record's id). */
+    resumes?: string
+    savePath?: string
+    canResume?: boolean
   }
   'download.progress': {
     token: string
     receivedBytes: number
     totalBytes: number
     state: 'progressing' | 'paused' | 'interrupted'
+    canResume?: boolean
+    etag?: string
+    lastModified?: string
+    savePath?: string
+    /** The name the file is actually written under (MediaStore may have made it unique). */
+    finalName?: string
+    mimeType?: string
+    error?: string
   }
   'download.done': {
     token: string
     state: 'completed' | 'cancelled' | 'interrupted'
     savePath: string
-    filename: string
+    finalName: string
+    receivedBytes?: number
+    totalBytes?: number
+    canResume?: boolean
+    error?: string
+    mimeType?: string
   }
+  /** Pause / Resume / Cancel pressed on the download's system notification. */
+  'download.action': { id: string; op: 'pause' | 'resume' | 'cancel' }
   'permission.request': { requestId: string; permission: string; url: string }
   'view.adopt': { viewId: string; parentTabId: string | null; active: boolean }
   /** An HTTP request reached the Kotlin MCP socket server; answered with `agent.reply`. */
@@ -552,17 +582,41 @@ export class AndroidPlatform implements Platform {
         return { ok: result.ok, status: result.status ?? (result.ok ? 200 : 0), text: result.text }
       }
     }
+    // Kotlin owns the transfers (`Downloads.kt`); records and decisions stay in the core.
+    const describe = (item: DownloadItem): Record<string, string | number | boolean> => ({
+      id: item.id,
+      url: item.url,
+      referrer: item.referrer,
+      savePath: item.savePath,
+      filename: item.filename,
+      finalName: item.finalName,
+      mimeType: item.mimeType,
+      totalBytes: item.totalBytes,
+      etag: item.etag,
+      lastModified: item.lastModified,
+      containerId: item.containerId,
+      private: item.private
+    })
     this.downloads = {
       pause: (id) => bridge.send('download.pause', { id }),
-      resume: (id) => bridge.send('download.resume', { id }),
+      resume: (item) => bridge.send('download.resume', describe(item)),
       cancel: (id) => bridge.send('download.cancel', { id }),
+      retry: (item) => bridge.send('download.retry', describe(item)),
+      // The downloader's own notification announces the finished file, so the setting rides along.
+      release: (item, options) =>
+        bridge.call<{ savePath: string; finalName: string } | null>('download.release', {
+          ...describe(item),
+          notify: options.notify
+        }),
+      deletePartial: (item) => bridge.call('download.discard', describe(item)),
       open: (item) =>
         bridge.call('download.open', {
           id: item.id,
           savePath: item.savePath,
           mimeType: item.mimeType
         }),
-      showInFolder: () => bridge.send('download.showAll')
+      showInFolder: () => bridge.send('download.showAll'),
+      chooseDirectory: () => bridge.call<string | null>('download.chooseDirectory')
     }
     this.sessions = {
       clearContainerData: (containerId) => bridge.call('profile.clear', { containerId }),
@@ -675,15 +729,36 @@ export class AndroidPlatform implements Platform {
         return
       case 'download.started': {
         const p = payload as HostEventPayloads['download.started']
+        const containerId = p.containerId || DEFAULT_CONTAINER_ID
         const record = browser.downloads.begin({
           url: p.url,
+          referrer: p.referrer,
           filename: p.filename,
           totalBytes: p.totalBytes,
-          mimeType: p.mimeType
+          mimeType: p.mimeType,
+          savePath: p.savePath,
+          sourceTabId: p.sourceTabId,
+          userGesture: null,
+          canResume: p.canResume,
+          containerId,
+          private: containerId === PRIVATE_CONTAINER_ID,
+          resumes: p.resumes
         })
         this.downloadTokens.set(p.token, record.id)
-        this.bridge.send('download.bind', { token: p.token, id: record.id })
-        browser.onDownloadStarted(p.sourceTabId)
+        // Where the file goes: the system save dialog, the folder from Settings, or the default.
+        const settings = resolveDownloadSettings(browser.state.settings)
+        const destination = settings.askWhereToSave
+          ? { mode: 'ask' }
+          : settings.directory
+            ? { mode: 'folder', folder: settings.directory }
+            : { mode: 'default' }
+        this.bridge.send('download.bind', {
+          token: p.token,
+          id: record.id,
+          destination,
+          private: record.private
+        })
+        if (!p.resumes) browser.onDownloadStarted(p.sourceTabId)
         return
       }
       case 'download.progress': {
@@ -693,7 +768,14 @@ export class AndroidPlatform implements Platform {
           browser.downloads.progress(id, {
             receivedBytes: p.receivedBytes,
             totalBytes: p.totalBytes,
-            state: p.state
+            state: p.state,
+            canResume: p.canResume,
+            etag: p.etag,
+            lastModified: p.lastModified,
+            savePath: p.savePath || undefined,
+            finalName: p.finalName || undefined,
+            mimeType: p.mimeType || undefined,
+            error: p.error
           })
         return
       }
@@ -701,8 +783,28 @@ export class AndroidPlatform implements Platform {
         const p = payload as HostEventPayloads['download.done']
         const id = this.downloadTokens.get(p.token)
         this.downloadTokens.delete(p.token)
-        if (id)
-          browser.downloads.finish(id, p.state, { savePath: p.savePath, filename: p.filename })
+        if (!id) return
+        if (p.state === 'cancelled' && p.error === 'dismissed') {
+          // The save dialog was dismissed: no download happened, so no record either.
+          browser.downloads.remove(id)
+          return
+        }
+        browser.downloads.finish(id, p.state, {
+          savePath: p.savePath,
+          finalName: p.finalName,
+          receivedBytes: p.receivedBytes,
+          totalBytes: p.totalBytes,
+          canResume: p.canResume,
+          error: p.error,
+          mimeType: p.mimeType || undefined
+        })
+        return
+      }
+      case 'download.action': {
+        const p = payload as HostEventPayloads['download.action']
+        if (p.op === 'pause') browser.downloads.pause(p.id)
+        else if (p.op === 'resume') browser.downloads.resume(p.id)
+        else browser.downloads.cancel(p.id)
         return
       }
       case 'permission.request': {

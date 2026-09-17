@@ -130,6 +130,33 @@ export class HistoryService {
     return best ? `${best.host}/` : null
   }
 
+  /**
+   * A page of `url`'s site was visited on an earlier day, or more than once. Chromium's download
+   * warnings treat such a site as familiar and skip the file-type warning for installers it serves.
+   */
+  visitedBeforeToday(url: string): boolean {
+    let host: string
+    try {
+      host = new URL(url).host.toLowerCase()
+    } catch {
+      return false
+    }
+    if (!host) return false
+    const midnight = new Date()
+    midnight.setHours(0, 0, 0, 0)
+    const today = midnight.getTime()
+    for (const e of this.entries.values()) {
+      let entryHost: string
+      try {
+        entryHost = new URL(e.url).host.toLowerCase()
+      } catch {
+        continue
+      }
+      if (entryHost === host && (e.lastVisit < today || e.visitCount > 1)) return true
+    }
+    return false
+  }
+
   delete(url: string): void {
     if (this.entries.delete(url)) this.persist()
   }
