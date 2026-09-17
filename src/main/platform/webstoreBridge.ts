@@ -13,12 +13,10 @@ import {
   EMPTY_REFERRER_CHAIN,
   WEBSTORE_CHANNEL,
   WEBSTORE_EVENT_CHANNEL,
-  WEBSTORE_URL_PATTERNS,
   installStatusFor,
   isWebstorePage,
   managementInfoFor,
   parseBeginInstallDetails,
-  withChromeClientHints,
   type ManagementEvent,
   type ManagementMember,
   type WebstoreMv2DeprecationStatus,
@@ -28,30 +26,11 @@ import {
   type WebstoreWebGlStatus
 } from '../../core/extensions/webstorePrivate'
 import { readManifest, type ExtensionService, type RegistryEvent } from './extensions'
-import { registerRequestHeaderRule, type RequestHeaderRule } from './requestHeaders'
 
 const WEBSTORE_PRELOAD_ID = 'zenium-webstore'
 const webstorePreload = join(__dirname, '../preload/webstore.js')
 
 const UNINSTALL_CANCELLED_ERROR = 'The user did not accept the uninstall.'
-
-/** Request headers for the store's servers, with Chrome's brand in the client hints. */
-export function rewriteStoreRequestHeaders(
-  headers: Record<string, string>
-): Record<string, string> {
-  return withChromeClientHints(headers, process.versions.chrome)
-}
-
-/**
- * Presents the browser to the store's servers as Chrome: the page request's client hints decide
- * whether the store renders its install button or "Switch to Chrome". The one client of
- * `requestHeaders.ts`; goes through it because a session has a single `onBeforeSendHeaders` slot.
- */
-export const STORE_CLIENT_HINTS_RULE: RequestHeaderRule = {
-  id: 'webstore-client-hints',
-  urls: WEBSTORE_URL_PATTERNS,
-  headers: (details) => rewriteStoreRequestHeaders(details.requestHeaders)
-}
 
 type Handler = (args: unknown[], context: CallContext) => Promise<WebstoreReply> | WebstoreReply
 
@@ -145,12 +124,12 @@ export class WebstoreBridge {
       this.handle(event, member, args)
     )
     this.extensions.onChange((event) => this.forward(event))
-    registerRequestHeaderRule(STORE_CLIENT_HINTS_RULE)
   }
 
   /**
-   * Gives a persistent session's pages the store preload. The client-hint rewrite for the same
-   * sessions is {@link STORE_CLIENT_HINTS_RULE}; the platform attaches `requestHeaders.ts` to them.
+   * Gives a persistent session's pages the store preload. The client-hint rewrite that makes the
+   * store render its install button for the same sessions is `webstoreClientHints` in
+   * `requestHeaders.ts`, which the platform attaches next to this.
    */
   attach(ses: Session): void {
     if (ses.getPreloadScripts().some((script) => script.id === WEBSTORE_PRELOAD_ID)) return

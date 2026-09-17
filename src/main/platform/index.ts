@@ -222,7 +222,8 @@ export class ElectronPlatform implements Platform {
       ses.setSpellCheckerLanguages(['en-US'])
       if (this.sessions.isPersistent(containerId)) {
         webstore.attach(ses)
-        // The session's one onBeforeSendHeaders slot, until the webRequest multiplexer owns it.
+        // Interim: the session's one onBeforeSendHeaders slot, running webstoreClientHints. The
+        // webRequest multiplexer registers that handler itself and deletes this call when it lands.
         requestHeaderRules.attach(ses)
         void (browser.extensions as ExtensionService).attachSession()
       }

@@ -1,6 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Session } from 'electron'
-import { RequestHeaderRules, matchesPattern, parseMatchPattern } from '../requestHeaders'
+import { WEBSTORE_URL_PATTERNS as CORE_PATTERNS } from '../../../core/extensions/webstorePrivate'
+import {
+  RequestHeaderRules,
+  WEBSTORE_URL_PATTERNS,
+  matchesPattern,
+  parseMatchPattern,
+  requestHeaderRules,
+  webstoreClientHints,
+  type RequestHeaderHandler
+} from '../requestHeaders'
 
 type Details = Electron.OnBeforeSendHeadersListenerDetails
 type Listener = (
@@ -55,9 +64,111 @@ function details(url: string, requestHeaders: Record<string, string>): Details {
 }
 
 const STORE = 'https://chromewebstore.google.com/*'
-const brand = (details: Details): Record<string, string> => ({
-  ...details.requestHeaders,
-  'sec-ch-ua': `${details.requestHeaders['sec-ch-ua'] ?? ''}, "Google Chrome";v="152"`
+const brand: RequestHeaderHandler['rewrite'] = (headers) => ({
+  ...headers,
+  'sec-ch-ua': `${headers['sec-ch-ua'] ?? ''}, "Google Chrome";v="152"`
+})
+
+describe('webstoreClientHints', () => {
+  const versions = process.versions
+  beforeAll(() => {
+    // Electron's main process reports the Chromium build here; Node alone does not.
+    Object.defineProperty(process, 'versions', {
+      value: { ...versions, chrome: '152.0.7359.98' },
+      configurable: true
+    })
+  })
+  afterAll(() => {
+    Object.defineProperty(process, 'versions', { value: versions, configurable: true })
+  })
+
+  const electronHints = {
+    'Sec-CH-UA': '"Chromium";v="152", "Not_A Brand";v="24"',
+    'Sec-CH-UA-Full-Version-List': '"Chromium";v="152.0.7359.98", "Not_A Brand";v="24.0.0.0"',
+    'Sec-CH-UA-Mobile': '?0',
+    Accept: 'text/html',
+    Cookie: 'session=abc'
+  }
+
+  it('is the store-origin handler, keyed on the store URL patterns', () => {
+    expect(webstoreClientHints.id).toBe('webstore-client-hints')
+    expect(webstoreClientHints.urls).toBe(WEBSTORE_URL_PATTERNS)
+    expect(WEBSTORE_URL_PATTERNS).toEqual(CORE_PATTERNS)
+    expect(WEBSTORE_URL_PATTERNS).toEqual([
+      'https://chromewebstore.google.com/*',
+      'https://chrome.google.com/webstore/*'
+    ])
+  })
+
+  it('adds the Google Chrome brand to Sec-CH-UA and Sec-CH-UA-Full-Version-List', () => {
+    const input = { ...electronHints }
+    const result = webstoreClientHints.rewrite(
+      input,
+      details('https://chromewebstore.google.com/', input)
+    )
+    expect(result).toEqual({
+      ...electronHints,
+      'Sec-CH-UA': '"Chromium";v="152", "Google Chrome";v="152", "Not_A Brand";v="24"',
+      'Sec-CH-UA-Full-Version-List':
+        '"Chromium";v="152.0.7359.98", "Google Chrome";v="152.0.7359.98", "Not_A Brand";v="24.0.0.0"'
+    })
+  })
+
+  it('is pure: returns a new map, leaves the input alone, and is idempotent', () => {
+    const input = { ...electronHints }
+    const once = webstoreClientHints.rewrite(
+      input,
+      details('https://chromewebstore.google.com/', input)
+    )
+    expect(input).toEqual(electronHints)
+    expect(once).not.toBe(input)
+    const twice = webstoreClientHints.rewrite(
+      once,
+      details('https://chromewebstore.google.com/', once)
+    )
+    expect(twice).toEqual(once)
+  })
+
+  it('passes unrelated headers through untouched and writes Sec-CH-UA in full when absent', () => {
+    const input = { Accept: '*/*', 'Accept-Language': 'en-US', Authorization: 'Bearer x' }
+    const result = webstoreClientHints.rewrite(
+      input,
+      details('https://chromewebstore.google.com/', input)
+    )
+    expect(result).toEqual({
+      ...input,
+      'sec-ch-ua': '"Chromium";v="152", "Google Chrome";v="152", "Not_A Brand";v="24"'
+    })
+    for (const [name, value] of Object.entries(input)) expect(result[name]).toBe(value)
+  })
+
+  it('leaves requests to other origins untouched through its url patterns', () => {
+    const rules = new RequestHeaderRules()
+    rules.register(webstoreClientHints)
+    const headers = { 'sec-ch-ua': '"Chromium";v="152", "Not_A Brand";v="24"' }
+    for (const url of [
+      'https://example.com/',
+      'https://google.com/',
+      'https://chrome.google.com/',
+      'https://chromewebstore.google.com.evil.example/',
+      'http://chromewebstore.google.com/'
+    ]) {
+      expect(rules.apply(details(url, headers)), url).toBe(headers)
+    }
+    for (const url of [
+      'https://chromewebstore.google.com/detail/json-formatter/bcjindcccaagfpapjjmafapmmgkkhgoa',
+      'https://chrome.google.com/webstore/detail/abc?hl=en'
+    ]) {
+      expect(rules.apply(details(url, headers)), url).toEqual({
+        'sec-ch-ua': '"Chromium";v="152", "Google Chrome";v="152", "Not_A Brand";v="24"'
+      })
+    }
+    expect(headers).toEqual({ 'sec-ch-ua': '"Chromium";v="152", "Not_A Brand";v="24"' })
+  })
+
+  it('is the only handler of the host registration', () => {
+    expect(requestHeaderRules.handlerIds()).toEqual(['webstore-client-hints'])
+  })
 })
 
 describe('match patterns', () => {
@@ -91,10 +202,10 @@ describe('match patterns', () => {
 })
 
 describe('RequestHeaderRules', () => {
-  it('installs one filtered listener per session that runs the matching rules', () => {
+  it('installs one filtered listener per session that runs the matching handlers', () => {
     const rules = new RequestHeaderRules()
     const ses = new FakeSession()
-    rules.register({ id: 'store', urls: [STORE], headers: brand })
+    rules.register({ id: 'store', urls: [STORE], rewrite: brand })
     rules.attach(ses.asSession())
     rules.attach(ses.asSession())
     expect(ses.installs).toHaveLength(1)
@@ -103,51 +214,52 @@ describe('RequestHeaderRules', () => {
       ses.request('https://chromewebstore.google.com/detail/a', {
         'sec-ch-ua': '"Chromium";v="152"'
       })
-    ).toEqual({
-      'sec-ch-ua': '"Chromium";v="152", "Google Chrome";v="152"'
-    })
+    ).toEqual({ 'sec-ch-ua': '"Chromium";v="152", "Google Chrome";v="152"' })
     expect(ses.request('https://example.com/', { accept: '*/*' })).toEqual({ accept: '*/*' })
   })
 
-  it('chains rules in registration order and passes each the previous edits', () => {
+  it('chains handlers in registration order and passes each the previous edits', () => {
     const rules = new RequestHeaderRules()
     rules.register({
       id: 'first',
       urls: ['https://*/*'],
-      headers: (d) => ({ ...d.requestHeaders, 'x-first': 'yes' })
+      rewrite: (headers) => ({ ...headers, 'x-first': 'yes' })
     })
     rules.register({
       id: 'second',
       urls: [STORE],
-      headers: (d) => ({ ...d.requestHeaders, 'x-second': `after ${d.requestHeaders['x-first']}` })
+      rewrite: (headers, d) => ({
+        ...headers,
+        'x-second': `after ${headers['x-first']} for ${new URL(d.url).hostname}`
+      })
     })
     expect(rules.apply(details('https://chromewebstore.google.com/', {}))).toEqual({
       'x-first': 'yes',
-      'x-second': 'after yes'
+      'x-second': 'after yes for chromewebstore.google.com'
     })
     expect(rules.apply(details('https://example.com/', {}))).toEqual({ 'x-first': 'yes' })
     expect(rules.apply(details('http://example.com/', { a: 'b' }))).toEqual({ a: 'b' })
   })
 
-  it('re-filters attached sessions as rules come and go and frees the slot when none remain', () => {
+  it('re-filters attached sessions as handlers come and go and frees the slot when none remain', () => {
     const rules = new RequestHeaderRules()
     const ses = new FakeSession()
     rules.attach(ses.asSession())
     expect(ses.installs).toHaveLength(1)
     expect(ses.current.listener).toBeNull()
 
-    const remove = rules.register({ id: 'store', urls: [STORE], headers: brand })
+    const remove = rules.register({ id: 'store', urls: [STORE], rewrite: brand })
     expect(ses.current.urls).toEqual([STORE])
     rules.register({
       id: 'other',
       urls: ['https://example.com/*', STORE],
-      headers: (d) => d.requestHeaders
+      rewrite: (headers) => headers
     })
     expect(ses.current.urls).toEqual([STORE, 'https://example.com/*'])
-    expect(rules.ruleIds()).toEqual(['store', 'other'])
+    expect(rules.handlerIds()).toEqual(['store', 'other'])
 
     remove()
-    expect(rules.ruleIds()).toEqual(['other'])
+    expect(rules.handlerIds()).toEqual(['other'])
     expect(ses.current.urls).toEqual(['https://example.com/*', STORE])
     rules.unregister('other')
     rules.unregister('missing')
@@ -155,27 +267,27 @@ describe('RequestHeaderRules', () => {
     expect(ses.current.listener).toBeNull()
   })
 
-  it('replaces a rule registered under the same id and rejects invalid patterns', () => {
+  it('replaces a handler registered under the same id and rejects invalid patterns', () => {
     const rules = new RequestHeaderRules()
-    rules.register({ id: 'store', urls: [STORE], headers: () => ({ v: '1' }) })
-    rules.register({ id: 'store', urls: [STORE], headers: () => ({ v: '2' }) })
-    expect(rules.ruleIds()).toEqual(['store'])
+    rules.register({ id: 'store', urls: [STORE], rewrite: () => ({ v: '1' }) })
+    rules.register({ id: 'store', urls: [STORE], rewrite: () => ({ v: '2' }) })
+    expect(rules.handlerIds()).toEqual(['store'])
     expect(rules.apply(details('https://chromewebstore.google.com/', {}))).toEqual({ v: '2' })
     expect(() =>
       rules.register({
         id: 'bad',
         urls: ['chromewebstore.google.com'],
-        headers: (d) => d.requestHeaders
+        rewrite: (headers) => headers
       })
     ).toThrow(/invalid match pattern/)
-    expect(rules.ruleIds()).toEqual(['store'])
+    expect(rules.handlerIds()).toEqual(['store'])
   })
 
   it('detachAll removes the listeners it installed', () => {
     const rules = new RequestHeaderRules()
     const a = new FakeSession()
     const b = new FakeSession()
-    rules.register({ id: 'store', urls: [STORE], headers: brand })
+    rules.register({ id: 'store', urls: [STORE], rewrite: brand })
     rules.attach(a.asSession())
     rules.attach(b.asSession())
     rules.detachAll()
