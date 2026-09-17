@@ -211,12 +211,13 @@ export class ElectronTabView implements TabView {
   }
 
   goToIndex(index: number): void {
-    const history = this.view.webContents.navigationHistory
+    if (this.wc.isDestroyed()) return
+    const history = this.wc.navigationHistory
     if (index >= 0 && index < history.length()) history.goToIndex(index)
   }
 
   navigationEntries(): NavigationSnapshot {
-    const wc = this.view.webContents
+    const wc = this.wc
     if (wc.isDestroyed()) return { entries: [], index: -1 }
     const history = wc.navigationHistory
     return {
@@ -226,7 +227,7 @@ export class ElectronTabView implements TabView {
   }
 
   async restoreNavigation(snapshot: NavigationSnapshot): Promise<void> {
-    const wc = this.view.webContents
+    const wc = this.wc
     if (wc.isDestroyed()) return
     const entries = snapshot.entries.filter((e) => typeof e.url === 'string' && e.url !== '')
     const index = Math.min(Math.max(snapshot.index, 0), entries.length - 1)
