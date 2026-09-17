@@ -337,6 +337,8 @@ describe('URL bar command suggestions', () => {
     expect(ids('reader', phone)).toContain('reader')
     expect(ids('screenshot', phone)).toContain('screenshot')
     expect(ids('history', phone)).toContain('history')
+  })
+})
 
 describe('navigationWindow', () => {
   it('lists a short stack whole', () => {
@@ -361,5 +363,6 @@ describe('navigationWindow', () => {
     // At the newest entry: nothing forward, nine back.
     expect(navigationWindow(40, 39, NAVIGATION_MENU_MAX)).toEqual({ start: 30, end: 40 })
     // At the oldest entry: all ten are forward entries.
-    expect(navigationWindow(40, 0, NAVIGATION_MENU_MAX)).toEqual({ start: 0, end: 10 })  })
+    expect(navigationWindow(40, 0, NAVIGATION_MENU_MAX)).toEqual({ start: 0, end: 10 })
+  })
 })
