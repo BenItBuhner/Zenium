@@ -21,11 +21,7 @@ function Dialog({ request }: { request: ExternalProtocolRequest }): JSX.Element 
   const [remember, setRemember] = useState(false)
   const cancelRef = useRef<HTMLButtonElement>(null)
   const decide = (allow: boolean): void =>
-    answerExternalProtocol(
-      request.requestId,
-      allow,
-      allow && remember && request.canRemember
-    )
+    answerExternalProtocol(request.requestId, allow, allow && remember && request.canRemember)
 
   useEffect(() => {
     cancelRef.current?.focus()

@@ -64,6 +64,7 @@ export function androidCapabilities(sdkInt: number): HostCapabilities {
     share: true,
     clipboardChip: sdkInt >= CLIPBOARD_CHIP_SDK,
     appLinkSettings: true,
+    // RoleManager.ROLE_BROWSER is owned by the Android program; this compiles the host contract.
     defaultBrowser: false
   }
 }

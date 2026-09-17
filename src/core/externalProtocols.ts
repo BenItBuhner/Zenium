@@ -68,7 +68,8 @@ export class ExternalProtocolService {
     }
     const scheme = cls.scheme
     const initiatorUrl = this.initiatorOf(request.tabId)
-    const canRemember = this.rememberAllowed(request.tabId, cls.canRemember, false)
+    const schemeAllows = cls.kind === 'external' && cls.canRemember
+    const canRemember = this.rememberAllowed(request.tabId, schemeAllows, false)
     if (this.alreadyAllowed(scheme, initiatorUrl) && request.userGesture) {
       this.answerHost(request.requestId, true)
       return
@@ -192,7 +193,11 @@ export class ExternalProtocolService {
    * `originScoped` (desktop): "Always allow" needs a real tab and a host, and never a private
    * window. Android still offers it for the scheme even when the page's host is empty.
    */
-  private rememberAllowed(tabId: string | null, schemeAllows: boolean, originScoped: boolean): boolean {
+  private rememberAllowed(
+    tabId: string | null,
+    schemeAllows: boolean,
+    originScoped: boolean
+  ): boolean {
     if (!schemeAllows) return false
     const tab = this.browser.tabs.tab(tabId)
     if (tab && this.browser.tabs.isPrivate(tab)) return false
