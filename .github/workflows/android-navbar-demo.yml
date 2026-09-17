@@ -12,10 +12,6 @@ name: Android navigation bar demo
 # android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  # TEMPORARY: verification run for the navigation bar PR; removed before the PR is marked ready.
-  push:
-    branches:
-      - cursor/android-navbar-customize-56b9
 
 permissions:
   contents: read
