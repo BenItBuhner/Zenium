@@ -1034,6 +1034,46 @@
   .zen-sheet[data-dragging='true'] .zen-sheet-item:active {
     background: transparent;
   }
+
+  /*
+   * The external-protocol confirm sheet ("Open in Gmail?"): the menu sheet's chassis and rows,
+   * a 40 accent-tinted pill around the scheme's glyph, the address as a caption, and the two
+   * phone-height buttons of §8.3 – the one primary on the right.
+   */
+  .zen-protocol-glyph {
+    display: inline-flex;
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    background: rgb(var(--zen-accent-rgb) / 0.16);
+    color: var(--zen-accent-ink);
+  }
+  .zen-protocol-address {
+    padding: 0 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--zen-muted);
+    overflow-wrap: anywhere;
+  }
+  .zen-protocol-actions .zen-button {
+    height: 44px;
+    padding: 0 20px;
+    border-radius: 12px;
+    corner-shape: var(--zen-corner);
+    font-size: 14px;
+  }
+  :root[data-pointer='fine'] .zen-protocol-actions .zen-button {
+    height: 32px;
+    padding: 0 16px;
+    border-radius: 8px;
+    font-size: 13px;
+  }
 }
 
 /*
