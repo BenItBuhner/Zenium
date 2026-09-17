@@ -1,12 +1,13 @@
 import type { JSX } from 'react'
 import { useState } from 'react'
-import { ChevronDown, FolderOpen, Link2, Plus, Trash2 } from 'lucide-react'
+import { FolderOpen, Link2, Plus, Trash2 } from 'lucide-react'
 import type { Mod, UIState } from '@shared/types'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { cn } from '@renderer/lib/utils'
 import { ExtensionsPage } from '../extensions/ExtensionsPage'
+import { V2Menulist } from '../extensions/V2Menulist'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
@@ -17,7 +18,8 @@ type Tab = 'extensions' | 'mods'
 /**
  * Zen's "Add-ons and Themes" (Ctrl+Shift+A): extensions and chrome CSS mods. The Extensions
  * tab is an in-content page that owns its scrolling (components/extensions/ExtensionsPage); on
- * a phone the category column becomes a menulist above the page (v2 draft §6).
+ * a phone the category column becomes a menulist above the page (v2 draft §6) whose options
+ * open in a bottom sheet (§9.13).
  */
 export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
   const [tab, setTab] = useState<Tab>('extensions')
@@ -32,21 +34,12 @@ export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
       <div className={cn('flex h-full', phone && 'flex-col')}>
         {phone ? (
           <div className="zen-v2 zen-v2-page shrink-0 px-4 pt-3 pb-1">
-            <span className="zen-v2-menulist-wrap">
-              <select
-                className="zen-v2-menulist"
-                aria-label="Category"
-                value={tab}
-                onChange={(e) => setTab(e.target.value as Tab)}
-              >
-                {tabs.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown />
-            </span>
+            <V2Menulist
+              label="Category"
+              value={tab}
+              options={tabs.map((item) => ({ value: item.id, label: item.label }))}
+              onChange={setTab}
+            />
           </div>
         ) : (
           <nav className="w-52 shrink-0 border-r border-[var(--zen-border)] p-2">

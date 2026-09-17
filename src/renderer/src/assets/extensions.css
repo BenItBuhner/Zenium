@@ -284,38 +284,154 @@
     padding-left: 34px;
   }
 
-  /* Menulist: rectangular, 32 (40 on a phone) with a 1px border and a 16 chevron. */
-  .zen-v2-menulist-wrap {
-    position: relative;
-    display: block;
+  /*
+   * A form field (§9.12): label above, 4 to the field, the message (description or validation)
+   * under it; actions that belong to the field follow it on a desktop and, on a phone, become a
+   * full-width row under the message, two peers splitting it with an 8 gap (§9.11).
+   */
+  .zen-v2-form-field {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'label label'
+      'control actions'
+      'message message';
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 4px;
   }
+  .zen-v2-field-label {
+    grid-area: label;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-v2-form-control {
+    grid-area: control;
+    display: flex;
+    min-width: 0;
+  }
+  .zen-v2-form-actions {
+    grid-area: actions;
+    display: flex;
+    gap: 8px;
+  }
+  .zen-v2-field-message {
+    grid-area: message;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 0;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-v2-field-message[data-tone='danger'] {
+    color: var(--v2-danger);
+  }
+  /* The validation glyph is 16 on every form factor, on the 18 line's first pixel row. */
+  .zen-v2-field-message .lucide {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+  }
+  [data-form-factor='phone'] .zen-v2-form-field {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'label'
+      'control'
+      'message'
+      'actions';
+  }
+  [data-form-factor='phone'] .zen-v2-form-actions {
+    margin-top: 4px;
+  }
+  [data-form-factor='phone'] .zen-v2-form-actions > .zen-v2-button {
+    flex: 1 1 0;
+  }
+
+  /*
+   * Menulist (§6, §9.13): the rectangular control, 32 (40 on a phone) with a 1px border and a
+   * 16 chevron at its end; a button, since its popup is the renderer's, never the native one.
+   */
   .zen-v2-menulist {
-    appearance: none;
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 8px;
     width: 100%;
     height: var(--v2-control);
-    padding: 0 36px 0 12px;
+    padding: 0 12px;
     border: 1px solid rgb(var(--v2-text-rgb) / 0.3);
     border-radius: var(--v2-radius-control);
     background: var(--v2-page);
     color: var(--v2-text);
+    text-align: left;
     font-size: var(--v2-font-body);
     line-height: var(--v2-line-body);
+    transition: background 120ms var(--zen-ease);
   }
-  .zen-v2-menulist:hover {
+  .zen-v2-menulist:hover,
+  .zen-v2-menulist[aria-expanded='true'] {
     background: color-mix(in srgb, var(--v2-page), var(--v2-text) 7%);
   }
   .zen-v2-menulist:focus-visible {
     border-color: var(--v2-accent);
   }
-  .zen-v2-menulist-wrap .lucide {
-    position: absolute;
-    right: 12px;
-    top: 50%;
+  .zen-v2-menulist > .lucide {
+    flex-shrink: 0;
     width: var(--v2-icon);
     height: var(--v2-icon);
-    transform: translateY(-50%);
-    pointer-events: none;
+  }
+  /* Its desktop popup: a panel at radius 12 with 6 padding, 28 rows at radius 6, a trailing check. */
+  .zen-v2-menulist-popup {
+    display: flex;
+    flex-direction: column;
+    padding: 6px;
+    border-radius: var(--v2-radius-sheet);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-v2-menulist-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: var(--v2-radius-inner);
+    color: inherit;
+    text-align: left;
+    white-space: nowrap;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-v2-menulist-option:hover {
+    background: var(--v2-fill);
+  }
+  .zen-v2-menulist-option:active {
+    background: var(--v2-fill-hover);
+  }
+  .zen-v2-menulist-option > .lucide {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    margin-left: auto;
+  }
+
+  /*
+   * A plain radio glyph (§9.14): 16 (20 on a phone, the checkbox's size) with a 1px border at
+   * text 45%; checked, an accent ring around a 6 dot of the page colour.
+   */
+  .zen-v2-radio {
+    flex-shrink: 0;
+    width: var(--v2-checkbox);
+    height: var(--v2-checkbox);
+    border: 1px solid rgb(var(--v2-text-rgb) / 0.45);
+    border-radius: 50%;
+    background: var(--v2-page);
+  }
+  .zen-v2-radio[data-checked] {
+    border-color: var(--v2-accent);
+    box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 8px) / 2) var(--v2-accent);
   }
 
   /* Checkbox: 16 at radius 2 (20 on a phone), the accent with an on-accent check when on. */
@@ -844,20 +960,23 @@
     line-height: var(--v2-line-small);
     color: var(--v2-text-deemphasized);
   }
+  /* The footer (§9.11): on a desktop the buttons hug and right-align at 32 with an 8 gap, the primary last. */
   .zen-ext-dialog-buttons {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
   }
   /*
-   * The phone sheet variant has the sheet's own padding; its buttons keep the row, right-aligned
-   * at the sheet's end at 40 and their natural width (see the end of this file), the primary
-   * last (Firefox Android, §6).
+   * The phone sheet variant has the sheet's own padding. Its footer fills the width (§9.11): the
+   * two peers split it equally with the 8 gap, the primary trailing, each 40 tall.
    */
   [data-form-factor='phone'] .zen-ext-dialog {
     width: auto;
     max-width: none;
     padding: 4px 16px 8px;
+  }
+  [data-form-factor='phone'] .zen-ext-dialog-buttons > .zen-v2-button {
+    flex: 1 1 0;
   }
 }
 
@@ -899,8 +1018,12 @@
 .zen-v2-button[data-variant='danger'] {
   color: var(--v2-danger);
 }
-/* A toast's action and a phone sheet's buttons sit at their natural width, not the dialog's 96. */
+/*
+ * A toast's action sits at its natural width, not the dialog's 96; a phone sheet's or form's
+ * buttons split their row between them (§9.11), so the minimum must not hold one of them wider.
+ */
 .zen-toast .zen-v2-button,
-[data-form-factor='phone'] .zen-ext-dialog .zen-v2-button {
+[data-form-factor='phone'] .zen-ext-dialog .zen-v2-button,
+[data-form-factor='phone'] .zen-v2-form-actions > .zen-v2-button {
   min-width: 0;
 }

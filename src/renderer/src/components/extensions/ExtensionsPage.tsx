@@ -1,5 +1,5 @@
 import type { DragEvent, JSX } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import {
   Ellipsis,
   FolderOpen,
@@ -26,7 +26,7 @@ import { ExtensionDetails } from './ExtensionDetails'
 import { ExtensionIcon } from './ExtensionIcon'
 import { PageHeader } from './PageHeader'
 import { useNow } from './useNow'
-import { V2Button, V2Field, V2IconButton, V2Switch } from './v2'
+import { V2Button, V2Field, V2FormField, V2IconButton, V2Switch } from './v2'
 
 interface MenuState {
   anchor: Rect
@@ -240,8 +240,13 @@ function UpdateCaption({ state }: { state: UIState }): JSX.Element | null {
   return <p className="zen-v2-caption">{text}</p>
 }
 
-/** The field the primary action reveals: a store link or an id, Enter installs, Escape hides. */
+/**
+ * The form the primary action reveals (§9.12): a labelled field for a store link or an ID with
+ * an example as its placeholder and a description under it, which the validation text replaces
+ * while the value is wrong. Enter installs, Escape hides it.
+ */
 function AddFromStore({ onDone }: { onDone: () => void }): JSX.Element {
+  const id = useId()
   const [text, setText] = useState('')
   const [invalid, setInvalid] = useState(false)
   const ref = useRef<HTMLInputElement>(null)
@@ -257,8 +262,21 @@ function AddFromStore({ onDone }: { onDone: () => void }): JSX.Element {
     onDone()
   }
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2">
+    <V2FormField
+      id={id}
+      label="Store link or extension ID"
+      description="A Chrome Web Store or Edge Add-ons listing, or the 32-letter ID in its address"
+      error={invalid ? 'That is not a store link or a 32-letter extension ID' : undefined}
+      actions={
+        <>
+          <V2Button onClick={onDone}>Cancel</V2Button>
+          <V2Button variant="primary" disabled={!parsed} onClick={submit}>
+            Add
+          </V2Button>
+        </>
+      }
+    >
+      {(field) => (
         <V2Field
           ref={ref}
           lead={Store}
@@ -266,9 +284,7 @@ function AddFromStore({ onDone }: { onDone: () => void }): JSX.Element {
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
-          placeholder="Chrome Web Store or Edge Add-ons link, or an extension id"
-          aria-label="Store link or extension id"
-          aria-invalid={invalid || undefined}
+          placeholder="https://chromewebstore.google.com/detail/eimadpbcbfnmbkopoojfekhnkhdbieeh"
           onChange={(e) => {
             setText(e.target.value)
             setInvalid(false)
@@ -280,19 +296,10 @@ function AddFromStore({ onDone }: { onDone: () => void }): JSX.Element {
               onDone()
             }
           }}
+          {...field}
         />
-        <V2Button onClick={onDone}>Cancel</V2Button>
-        <V2Button variant="primary" disabled={!parsed} onClick={submit}>
-          Add
-        </V2Button>
-      </div>
-      {invalid && (
-        <p className="zen-v2-caption flex items-center gap-1.5" data-tone="danger">
-          <Info className="h-4 w-4" />
-          That is not a store link or a 32-letter extension id
-        </p>
       )}
-    </div>
+    </V2FormField>
   )
 }
 

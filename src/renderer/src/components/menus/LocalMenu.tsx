@@ -1,8 +1,9 @@
 import type { JSX } from 'react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { LucideIcon } from 'lucide-react'
 import type { Rect } from '@shared/types'
+import { useEscape } from '@renderer/hooks/useEscape'
 import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
 import { anchorBelow } from '@renderer/lib/extensions/popupPlacement'
 import { useViewport } from '@renderer/lib/formFactor'
@@ -60,23 +61,6 @@ export function LocalMenu(props: Props): JSX.Element | null {
     viewport.coarse ? <SheetMenu {...props} /> : <PopoverMenu {...props} />,
     document.body
   )
-}
-
-function useEscape(close: () => void): void {
-  const latest = useRef(close)
-  useEffect(() => {
-    latest.current = close
-  })
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      latest.current()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
 }
 
 function PopoverMenu({ anchor, items, onClose, context }: Props): JSX.Element {

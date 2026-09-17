@@ -1,5 +1,5 @@
 import type { ButtonHTMLAttributes, InputHTMLAttributes, JSX, ReactNode, Ref } from 'react'
-import type { LucideIcon } from 'lucide-react'
+import { CircleAlert, type LucideIcon } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 
 /**
@@ -79,6 +79,84 @@ export function V2Field({
         {...props}
       />
     </span>
+  )
+}
+
+/** What a `V2FormField` hands its field: the id its label points at and the message's wiring. */
+export interface FieldAria {
+  id: string
+  'aria-describedby': string | undefined
+  'aria-invalid': true | undefined
+}
+
+/**
+ * A form field (§9.12): the label above the field at 15/400, tied to it with `<label for>` and
+ * 4px away; under the field a description at 13 in the deemphasised ink, or, while the value is
+ * wrong, the validation text at 13 in the danger ink behind a 16 glyph. Actions that belong to
+ * the field sit after it on a desktop and as a full-width row under the message on a phone
+ * (§9.11). The placeholder is the caller's example text, never the label.
+ */
+export function V2FormField({
+  id,
+  label,
+  description,
+  error,
+  actions,
+  className,
+  children
+}: {
+  id: string
+  label: string
+  description?: string
+  error?: string
+  actions?: ReactNode
+  className?: string
+  children: (field: FieldAria) => ReactNode
+}): JSX.Element {
+  const message = error ?? description
+  const messageId = message ? `${id}-message` : undefined
+  return (
+    <div className={cn('zen-v2-form-field', className)}>
+      <label htmlFor={id} className="zen-v2-field-label">
+        {label}
+      </label>
+      <div className="zen-v2-form-control">
+        {children({ id, 'aria-describedby': messageId, 'aria-invalid': error ? true : undefined })}
+      </div>
+      {actions && <div className="zen-v2-form-actions">{actions}</div>}
+      {message && (
+        <p
+          id={messageId}
+          className="zen-v2-field-message"
+          data-tone={error ? 'danger' : undefined}
+          role={error ? 'alert' : undefined}
+        >
+          {error && <CircleAlert />}
+          {message}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * A plain radio glyph (§9.14): a 16 circle (20 on a phone) with a 1px border at text 45%; when
+ * checked an accent ring around a 6 dot of the page colour. Presentational: the row that holds
+ * it carries the state (`aria-selected` or `aria-checked`).
+ */
+export function V2Radio({
+  checked,
+  className
+}: {
+  checked: boolean
+  className?: string
+}): JSX.Element {
+  return (
+    <span
+      className={cn('zen-v2-radio', className)}
+      data-checked={checked || undefined}
+      aria-hidden
+    />
   )
 }
 
