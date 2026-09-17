@@ -2318,8 +2318,13 @@ export class Browser {
           x !== undefined && y !== undefined ? { x, y } : undefined,
           win
         ),
-      'translate.showSelection': ({ tabId, text }, win) =>
-        this.translate.showSelection(tabId, text, null, win),
+      'translate.showSelection': ({ tabId, text, x, y }, win) =>
+        this.translate.showSelection(
+          tabId,
+          text,
+          x !== undefined && y !== undefined ? { x, y } : null,
+          win
+        ),
       'translate.selection': ({ tabId, text, target }) =>
         this.translate.translateSelection(tabId, { text, target }),
       'translate.setPreferences': (patch) => this.translate.setPreferences(patch),
