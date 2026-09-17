@@ -19,3 +19,6 @@ android/.kotlin
 *.jks
 # The committed CI debug keystore (well-known password, debug builds only) – see android/app/build.gradle.kts.
 !android/ci-debug.keystore
+
+# TypeScript incremental build state
+*.tsbuildinfo

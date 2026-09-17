@@ -14,11 +14,15 @@ import type {
   DialogHost,
   DownloadHost,
   ExternalProtocolHost,
+  KdfParams,
   KeyEventInput,
+  KeyWrapHost,
   NetHost,
+  PasswordsHost,
   PickedTextFile,
   Platform,
   PlatformInfo,
+  ReauthHost,
   SessionHost,
   ShellHost,
   StoreIO,
@@ -26,6 +30,9 @@ import type {
   WindowHost,
   WindowHostFactory
 } from '@core/platform'
+import { KeyWrapError, type KeyWrapFailure } from '@core/platform'
+import { PBKDF2_PARAMS, deriveWithWebCrypto } from '@core/credentials/kdf'
+import { fromBase64, toBase64 } from '@core/credentials/crypto'
 import readabilityJs from '@mozilla/readability/Readability.js?raw'
 import readabilityReaderableJs from '@mozilla/readability/Readability-readerable.js?raw'
 import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
@@ -57,7 +64,65 @@ export function androidCapabilities(sdkInt: number): HostCapabilities {
     share: true,
     clipboardChip: sdkInt >= CLIPBOARD_CHIP_SDK,
     appLinkSettings: true,
-    pullToRefresh: true
+    pullToRefresh: true,
+    passwords: true
+  }
+}
+
+/**
+ * What `vault.wrap` / `vault.unwrap` answer: the result, or the refusal Kotlin could name (a
+ * dismissed prompt, a key that wants an authentication a silent call cannot ask for, a key the
+ * device invalidated when the screen lock changed).
+ */
+type KeyWrapReply = string | { failure: KeyWrapFailure; message: string }
+
+function keyWrapResult(reply: KeyWrapReply): string {
+  if (typeof reply === 'string') return reply
+  throw new KeyWrapError(reply.failure, reply.message)
+}
+
+/**
+ * The vault's data key is wrapped by an AES-GCM key that never leaves the Android Keystore
+ * (`VaultKeystore.kt`). Kotlin asks for the device credential when the key demands a recent
+ * authentication and the call is interactive. Passphrase wrappings use WebCrypto PBKDF2 in the
+ * chrome WebView (a secure context: `https://appassets.androidplatform.net`).
+ */
+class AndroidKeyWrap implements KeyWrapHost {
+  constructor(private readonly bridge: Bridge) {}
+
+  osAvailable(): Promise<boolean> {
+    return this.bridge.call<boolean>('vault.available')
+  }
+
+  async wrap(dataKey: Uint8Array): Promise<string> {
+    const reply = await this.bridge.call<KeyWrapReply>('vault.wrap', { key: toBase64(dataKey) })
+    return keyWrapResult(reply)
+  }
+
+  async unwrap(blob: string, interactive: boolean): Promise<Uint8Array> {
+    const reply = await this.bridge.call<KeyWrapReply>('vault.unwrap', { blob, interactive })
+    return fromBase64(keyWrapResult(reply))
+  }
+
+  kdfParams(): KdfParams {
+    return PBKDF2_PARAMS
+  }
+
+  deriveKey(passphrase: string, salt: Uint8Array, params: KdfParams): Promise<Uint8Array> {
+    return deriveWithWebCrypto(passphrase, salt, params)
+  }
+}
+
+/** `androidx.biometric` BiometricPrompt: fingerprint or face where enrolled, else the device PIN. */
+class AndroidReauth implements ReauthHost {
+  constructor(private readonly bridge: Bridge) {}
+
+  available(): Promise<boolean> {
+    return this.bridge.call<boolean>('reauth.available')
+  }
+
+  verify(reason: string): Promise<boolean> {
+    return this.bridge.call<boolean>('reauth.verify', { reason })
   }
 }
 
@@ -430,6 +495,7 @@ export class AndroidPlatform implements Platform {
   readonly app: AppHost
   readonly siteData: AndroidSiteData
   readonly externalProtocols: ExternalProtocolHost
+  readonly passwords: PasswordsHost
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
@@ -467,6 +533,7 @@ export class AndroidPlatform implements Platform {
       pickTextFiles: (options) => bridge.call<PickedTextFile[]>('dialog.openText', options),
       saveTextFile: (options) => bridge.call<boolean>('dialog.saveText', options)
     }
+    this.passwords = { keys: new AndroidKeyWrap(bridge), reauth: new AndroidReauth(bridge) }
     this.clipboard = {
       writeText: (text) => bridge.send('clipboard.writeText', { text }),
       writeImageFromUrl: (url) => bridge.call<boolean>('clipboard.writeImage', { url })

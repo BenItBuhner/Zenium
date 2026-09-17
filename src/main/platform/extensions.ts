@@ -57,6 +57,7 @@ import {
   sweepStagingDirs,
   writePackage
 } from './extensionStore'
+import type { ExtensionApiHooks } from './extensionApi'
 import type { SessionManager } from './sessions'
 import type { ElectronWindow } from './window'
 
@@ -148,6 +149,8 @@ export class ExtensionService implements ExtensionHost {
   private readonly updates = new Map<string, UpdateInfo>()
   /** Ids with an install or update in flight. */
   private readonly busy = new Set<string>()
+  /** Loads in flight, by path (see `load`). */
+  private readonly loading = new Map<string, Promise<void>>()
   /** Approvals the store page's prompt produced, consumed by `completeInstall`. */
   private readonly approvals = new Map<string, { warnings: string[]; expires: number }>()
   private readonly loadedListeners = new Set<(ext: Extension, ses: Session) => void>()
@@ -157,6 +160,8 @@ export class ExtensionService implements ExtensionHost {
   private popup: { view: WebContentsView; win: ZenWindow } | null = null
   private checking: Promise<void> | null = null
   private updateTimer: ReturnType<typeof setInterval> | null = null
+  /** The chrome.* API layer (`platform/extensionApi`): toolbar state and click routing. */
+  private api: ExtensionApiHooks | null = null
 
   /**
    * Shows the install prompt and resolves with the user's decision. The default is a native
@@ -176,6 +181,10 @@ export class ExtensionService implements ExtensionHost {
       { idForPath: idForUnpackedPath, readManifest },
       Date.now()
     )
+  }
+
+  attachApi(api: ExtensionApiHooks): void {
+    this.api = api
   }
 
   async start(): Promise<void> {
@@ -224,8 +233,21 @@ export class ExtensionService implements ExtensionHost {
   // Loading into sessions
   // ---------------------------------------------------------------------------
 
-  /** Load into every persistent session so content scripts run in all containers. */
-  private async load(record: ExtensionRecord): Promise<void> {
+  /**
+   * Load into every persistent session so content scripts run in all containers. `start()` and
+   * the session hook's `attachSession()` overlap at boot; a second `loadExtension` for a path
+   * whose first one is still in flight makes Chromium activate the extension twice (two worker
+   * registrations), so one load per record runs at a time.
+   */
+  private load(record: ExtensionRecord): Promise<void> {
+    const inFlight = this.loading.get(record.path)
+    if (inFlight) return inFlight
+    const task = this.loadIntoSessions(record).finally(() => this.loading.delete(record.path))
+    this.loading.set(record.path, task)
+    return task
+  }
+
+  private async loadIntoSessions(record: ExtensionRecord): Promise<void> {
     this.errors.delete(record.id)
     if (!existsSync(join(record.path, 'manifest.json'))) {
       this.errors.set(record.id, 'manifest.json not found')
@@ -313,7 +335,8 @@ export class ExtensionService implements ExtensionHost {
         updateState: update.state,
         availableVersion: update.availableVersion,
         updateError: update.error,
-        updateCheckedAt: update.checkedAt
+        updateCheckedAt: update.checkedAt,
+        action: (ext && this.api ? this.api.actionState(ext.id) : null) ?? undefined
       }
     })
   }
@@ -943,7 +966,10 @@ export class ExtensionService implements ExtensionHost {
     this.closePopup()
     const record = this.record(id) ?? this.registry.extensions.find((r) => r.path === id)
     const ext = record ? this.loadedById.get(record.id) : undefined
-    if (!record || !ext || !record.popup) return
+    if (!record || !ext) return
+    // `chrome.action.setPopup` overrides the manifest; an empty popup fires `action.onClicked`.
+    const popupPath = this.api ? this.api.popupForClick(ext.id, win) : record.popup
+    if (!popupPath) return
     const ses = this.sessions.persistent()[0]?.[1]
     if (!ses) return
     const view = new WebContentsView({
@@ -951,7 +977,9 @@ export class ExtensionService implements ExtensionHost {
         session: ses,
         sandbox: true,
         contextIsolation: true,
-        nodeIntegration: false
+        nodeIntegration: false,
+        // The API layer's preload must reach iframes the popup embeds.
+        nodeIntegrationInSubFrames: true
       }
     })
     view.setBackgroundColor('#00000000')
@@ -999,7 +1027,7 @@ export class ExtensionService implements ExtensionHost {
       return { action: 'deny' }
     })
     void wc
-      .loadURL(`chrome-extension://${ext.id}/${record.popup.replace(/^\/+/, '')}`)
+      .loadURL(`chrome-extension://${ext.id}/${popupPath.replace(/^\/+/, '')}`)
       .catch(() => undefined)
   }
 

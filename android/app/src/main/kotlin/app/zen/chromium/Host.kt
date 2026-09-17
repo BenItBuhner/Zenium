@@ -66,6 +66,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val share = Share(this, io)
     /** Links that leave the web: held here while the core (and the user) decide. */
     override val externalProtocols = ExternalProtocols(this)
+    /** Device credential and biometric prompts, and the Keystore-wrapped password vault key. */
+    val reauth = Reauth(activity)
+    val vault = VaultKeystore(activity, reauth, io, main)
     override var fullscreenTab: TabWebView? = null
         private set
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
@@ -223,6 +226,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "dialog.confirm" -> confirm(args, reply)
             "dialog.openText" -> activity.pickTextFiles(args.arr("extensions")) { files -> reply(files) }
             "dialog.saveText" -> activity.saveTextFile(args.str("defaultName"), args.str("mimeType"), args.str("text")) { ok -> reply(ok) }
+
+            // --- passwords: vault key protection and re-authentication ---------------------------
+            "vault.available" -> io.execute { val ok = vault.available(); main.post { reply(ok) } }
+            "vault.wrap" -> vault.wrap(args.str("key"), reply)
+            "vault.unwrap" -> vault.unwrap(args.str("blob"), args.bool("interactive"), reply)
+            "reauth.available" -> reply(reauth.available())
+            "reauth.verify" -> reauth.authenticate(args.str("reason"), strong = false) { ok -> reply(ok) }
             "clipboard.writeText" -> {
                 val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 cm.setPrimaryClip(ClipData.newPlainText("Zenium", args.str("text")))

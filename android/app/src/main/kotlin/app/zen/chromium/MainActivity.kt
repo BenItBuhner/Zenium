@@ -242,13 +242,15 @@ class MainActivity : BrowserActivity() {
     fun pickTextFiles(extensions: JSONArray, callback: (JSONArray) -> Unit) {
         textFilesCallback?.invoke(JSONArray())
         textFilesCallback = callback
-        val mimes = (0 until extensions.length()).mapNotNull { i ->
+        val mimes = (0 until extensions.length()).flatMap { i ->
             when (extensions.optString(i)) {
-                "css" -> "text/css"
-                "json" -> "application/json"
-                "txt" -> "text/plain"
-                "html", "htm" -> "text/html"
-                else -> null
+                "css" -> listOf("text/css")
+                "json" -> listOf("application/json")
+                "txt" -> listOf("text/plain")
+                "html", "htm" -> listOf("text/html")
+                // Password exports: providers label CSV either way.
+                "csv" -> listOf("text/csv", "text/comma-separated-values")
+                else -> emptyList()
             }
         }.ifEmpty { listOf("*/*") }
         try {

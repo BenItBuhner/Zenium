@@ -13,7 +13,12 @@ export class SessionManager implements SessionHost {
   private readonly sessions = new Map<string, Session>()
   private readonly onCreate: Array<(ses: Session, containerId: string) => void> = []
 
-  constructor(private readonly userAgent: string) {}
+  constructor(private readonly userAgent: string) {
+    // `session.setUserAgent` covers frames and their requests; extension service workers read the
+    // app-level fallback for `navigator.userAgent` (LastPass sees "Electron/" there and takes its
+    // desktop-app path, touching `document` in a worker), so both present the same plain UA.
+    app.userAgentFallback = userAgent
+  }
 
   /** Register a hook that runs for every session (existing and future). */
   configure(hook: (ses: Session, containerId: string) => void): void {
