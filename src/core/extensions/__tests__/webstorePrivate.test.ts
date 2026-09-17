@@ -2,15 +2,31 @@ import { describe, expect, it } from 'vitest'
 import { newRecord, type ExtensionRecord } from '../registry'
 import {
   CHROME_BRAND,
+  DEFAULT_WEBSTORE_PREFERENCES,
+  EDGE_BRAND,
+  SIGNED_OUT_BROWSER_LOGIN,
+  STORE_BRANDS,
+  WEBSTORE_PRIVATE_MEMBERS,
+  WEBSTORE_PRIVATE_OPTIONAL_MEMBERS,
   installStatusFor,
   isWebstorePage,
   managementInfoFor,
   parseBeginInstallDetails,
+  storeForFrame,
+  storeForPage,
+  withBrand,
   withChromeBrand,
-  withChromeClientHints
+  withChromeClientHints,
+  withClientHintBrand,
+  withEdgeIdentity,
+  withEdgeToken
 } from '../webstorePrivate'
 
 const ID = 'bcjindcccaagfpapjjmafapmmgkkhgoa'
+const EDGE_ID = 'odfafepnkmbhccpbejgmiehpchacaeak'
+const EDGE_PAGE = `https://microsoftedge.microsoft.com/addons/detail/ublock-origin/${EDGE_ID}`
+const CHROMIUM_UA =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36'
 
 const record = (overrides: Partial<ExtensionRecord> = {}): ExtensionRecord => ({
   ...newRecord({
@@ -33,26 +49,89 @@ const record = (overrides: Partial<ExtensionRecord> = {}): ExtensionRecord => ({
   ...overrides
 })
 
-describe('isWebstorePage', () => {
-  it('accepts both store hosts, the legacy one only on its webstore path', () => {
-    expect(isWebstorePage(`https://chromewebstore.google.com/detail/json-formatter/${ID}`)).toBe(
-      true
+describe('storeForPage / isWebstorePage', () => {
+  it('accepts both Chrome Web Store hosts, the legacy one only on its webstore path', () => {
+    expect(storeForPage(`https://chromewebstore.google.com/detail/json-formatter/${ID}`)).toBe(
+      'chrome-web-store'
     )
     expect(isWebstorePage('https://chromewebstore.google.com/')).toBe(true)
-    expect(isWebstorePage(`https://chrome.google.com/webstore/detail/${ID}`)).toBe(true)
+    expect(storeForPage(`https://chrome.google.com/webstore/detail/${ID}`)).toBe('chrome-web-store')
     expect(isWebstorePage('https://chrome.google.com/webstore')).toBe(true)
-    expect(isWebstorePage('https://chrome.google.com/')).toBe(false)
+    expect(storeForPage('https://chrome.google.com/')).toBeNull()
     expect(isWebstorePage('https://chrome.google.com/intl/en/chrome/')).toBe(false)
+  })
+
+  it('accepts the Edge Add-ons host over https', () => {
+    expect(storeForPage(EDGE_PAGE)).toBe('edge-add-ons')
+    expect(storeForPage('https://microsoftedge.microsoft.com/addons/')).toBe('edge-add-ons')
+    expect(storeForPage('https://microsoftedge.microsoft.com/')).toBe('edge-add-ons')
+    expect(isWebstorePage('https://microsoftedge.microsoft.com/addons/search/dark%20reader')).toBe(
+      true
+    )
+    expect(storeForPage(`http://microsoftedge.microsoft.com/addons/detail/${EDGE_ID}`)).toBeNull()
+    expect(storeForPage('https://www.microsoft.com/en-us/edge')).toBeNull()
+    expect(storeForPage('https://microsoftedge.microsoft.com.evil.example/addons/')).toBeNull()
+    expect(storeForPage('https://edge.microsoft.com/extensionwebstorebase/v1/crx')).toBeNull()
   })
 
   it('rejects other origins, other schemes and junk', () => {
     expect(isWebstorePage(`http://chromewebstore.google.com/detail/${ID}`)).toBe(false)
     expect(isWebstorePage('https://chromewebstore.google.com.evil.example/')).toBe(false)
     expect(isWebstorePage('https://evil.example/chromewebstore.google.com/')).toBe(false)
-    expect(isWebstorePage('https://microsoftedge.microsoft.com/addons/')).toBe(false)
+    expect(isWebstorePage('https://evil.example/microsoftedge.microsoft.com/addons/')).toBe(false)
     expect(isWebstorePage('about:blank')).toBe(false)
     expect(isWebstorePage('not a url')).toBe(false)
     expect(isWebstorePage('')).toBe(false)
+  })
+})
+
+describe('storeForFrame', () => {
+  it('is the frame page store, and the parent store for a blank child frame', () => {
+    expect(storeForFrame(EDGE_PAGE, null)).toBe('edge-add-ons')
+    expect(storeForFrame(`https://chromewebstore.google.com/detail/${ID}`, null)).toBe(
+      'chrome-web-store'
+    )
+    expect(storeForFrame('about:blank', EDGE_PAGE)).toBe('edge-add-ons')
+    expect(storeForFrame('about:blank', `https://chrome.google.com/webstore/detail/${ID}`)).toBe(
+      'chrome-web-store'
+    )
+  })
+
+  it('gives nothing to blank frames without a store parent and to other pages under a store', () => {
+    expect(storeForFrame('about:blank', null)).toBeNull()
+    expect(storeForFrame('about:blank', 'https://example.com/')).toBeNull()
+    expect(storeForFrame('about:blank', 'about:blank')).toBeNull()
+    expect(storeForFrame('https://example.com/', EDGE_PAGE)).toBeNull()
+    expect(storeForFrame('about:srcdoc', EDGE_PAGE)).toBeNull()
+  })
+})
+
+describe('the member lists', () => {
+  it("answer Edge's members and leave its probed-only member undefined", () => {
+    expect(WEBSTORE_PRIVATE_MEMBERS).toContain('completeInstallWithCV')
+    expect(WEBSTORE_PRIVATE_MEMBERS).toContain('getPreferences')
+    expect(WEBSTORE_PRIVATE_MEMBERS).toContain('getBrowserLogin')
+    expect(WEBSTORE_PRIVATE_OPTIONAL_MEMBERS).toEqual(['showFeedbackDialog'])
+    for (const name of WEBSTORE_PRIVATE_OPTIONAL_MEMBERS)
+      expect(WEBSTORE_PRIVATE_MEMBERS as readonly string[]).not.toContain(name)
+    expect(new Set(WEBSTORE_PRIVATE_MEMBERS).size).toBe(WEBSTORE_PRIVATE_MEMBERS.length)
+  })
+
+  it('shape the Edge results the page destructures', () => {
+    expect(SIGNED_OUT_BROWSER_LOGIN).toEqual({
+      login: '',
+      account_type: '',
+      account_location: '',
+      age_group_type: 'Undefined'
+    })
+    expect(DEFAULT_WEBSTORE_PREFERENCES).toEqual({
+      is_edge_feedback_enabled: true,
+      aadc_age_group: 'NotApplicable'
+    })
+    expect(STORE_BRANDS).toEqual({
+      'chrome-web-store': 'Google Chrome',
+      'edge-add-ons': 'Microsoft Edge'
+    })
   })
 })
 
@@ -209,5 +288,94 @@ describe('withChromeClientHints', () => {
   it('is idempotent', () => {
     const once = withChromeClientHints({ 'sec-ch-ua': '"Chromium";v="152"' }, '152.0.0.0')
     expect(withChromeClientHints(once, '152.0.0.0')).toEqual(once)
+  })
+})
+
+describe('withBrand / withClientHintBrand for Edge', () => {
+  it('inserts Microsoft Edge after Chromium with the same version, once', () => {
+    const edge = withBrand('"Chromium";v="152", "Not_A Brand";v="24"', EDGE_BRAND, '999')
+    expect(edge).toBe('"Chromium";v="152", "Microsoft Edge";v="152", "Not_A Brand";v="24"')
+    expect(withBrand(edge, EDGE_BRAND, '1')).toBe(edge)
+    expect(withBrand('', EDGE_BRAND, '152')).toBe('"Microsoft Edge";v="152"')
+  })
+
+  it('does not put Chrome next to Edge or Edge next to Chrome', () => {
+    const chrome = withChromeBrand('"Chromium";v="152"', '152')
+    expect(chrome).not.toContain(EDGE_BRAND)
+    const edge = withBrand('"Chromium";v="152"', EDGE_BRAND, '152')
+    expect(edge).not.toContain(CHROME_BRAND)
+  })
+
+  it('rewrites both hint headers with Edge, keeping casing and other headers', () => {
+    const headers = {
+      'Sec-CH-UA': '"Chromium";v="152", "Not_A Brand";v="24"',
+      'Sec-CH-UA-Full-Version-List': '"Chromium";v="152.0.7359.98", "Not_A Brand";v="24.0.0.0"',
+      Accept: 'text/html'
+    }
+    expect(withClientHintBrand(headers, EDGE_BRAND, '152.0.7359.98')).toEqual({
+      'Sec-CH-UA': '"Chromium";v="152", "Microsoft Edge";v="152", "Not_A Brand";v="24"',
+      'Sec-CH-UA-Full-Version-List':
+        '"Chromium";v="152.0.7359.98", "Microsoft Edge";v="152.0.7359.98", "Not_A Brand";v="24.0.0.0"',
+      Accept: 'text/html'
+    })
+  })
+})
+
+describe('withEdgeToken', () => {
+  it("appends Edge's reduced token with the Chromium major", () => {
+    expect(withEdgeToken(CHROMIUM_UA, '152.0.7359.98')).toBe(`${CHROMIUM_UA} Edg/152.0.0.0`)
+    expect(withEdgeToken('Mozilla/5.0 Chrome/153.0.0.0 Safari/537.36', '153')).toBe(
+      'Mozilla/5.0 Chrome/153.0.0.0 Safari/537.36 Edg/153.0.0.0'
+    )
+  })
+
+  it('leaves a string that already names Edge alone', () => {
+    const edge = `${CHROMIUM_UA} Edg/152.0.0.0`
+    expect(withEdgeToken(edge, '152.0.7359.98')).toBe(edge)
+    const real = `${CHROMIUM_UA} Edg/152.0.3485.54`
+    expect(withEdgeToken(real, '152.0.7359.98')).toBe(real)
+    expect(withEdgeToken('Mozilla/5.0 EdgA/152.0.0.0', '152')).toBe(
+      'Mozilla/5.0 EdgA/152.0.0.0 Edg/152.0.0.0'
+    )
+  })
+})
+
+describe('withEdgeIdentity', () => {
+  const request = {
+    'User-Agent': CHROMIUM_UA,
+    'Sec-CH-UA': '"Chromium";v="152", "Not_A Brand";v="24"',
+    'Sec-CH-UA-Full-Version-List': '"Chromium";v="152.0.7359.98", "Not_A Brand";v="24.0.0.0"',
+    'Sec-CH-UA-Mobile': '?0',
+    Accept: 'text/html',
+    Cookie: 'x=1'
+  }
+
+  it('makes the request look like Edge: UA token plus brand, other headers untouched', () => {
+    const result = withEdgeIdentity(request, '152.0.7359.98')
+    expect(result).toEqual({
+      ...request,
+      'User-Agent': `${CHROMIUM_UA} Edg/152.0.0.0`,
+      'Sec-CH-UA': '"Chromium";v="152", "Microsoft Edge";v="152", "Not_A Brand";v="24"',
+      'Sec-CH-UA-Full-Version-List':
+        '"Chromium";v="152.0.7359.98", "Microsoft Edge";v="152.0.7359.98", "Not_A Brand";v="24.0.0.0"'
+    })
+    expect(result).not.toBe(request)
+    expect(request['User-Agent']).toBe(CHROMIUM_UA)
+  })
+
+  it('is idempotent and case-insensitive on the header name', () => {
+    const once = withEdgeIdentity(request, '152.0.7359.98')
+    expect(withEdgeIdentity(once, '152.0.7359.98')).toEqual(once)
+    expect(withEdgeIdentity({ 'user-agent': CHROMIUM_UA }, '152.0.7359.98')).toEqual({
+      'user-agent': `${CHROMIUM_UA} Edg/152.0.0.0`,
+      'sec-ch-ua': '"Chromium";v="152", "Microsoft Edge";v="152", "Not_A Brand";v="24"'
+    })
+  })
+
+  it('does not invent a User-Agent for a request that carries none', () => {
+    expect(withEdgeIdentity({ Accept: '*/*' }, '152.0.7359.98')).toEqual({
+      Accept: '*/*',
+      'sec-ch-ua': '"Chromium";v="152", "Microsoft Edge";v="152", "Not_A Brand";v="24"'
+    })
   })
 })

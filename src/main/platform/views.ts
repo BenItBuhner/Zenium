@@ -34,6 +34,36 @@ import type { ElectronWindow } from './window'
 
 const pagePreload = join(__dirname, '../preload/page.js')
 
+/** How long a page gets to hand over a frame before an overlay opens without its picture. */
+const SNAPSHOT_TIMEOUT_MS = 600
+
+/** Keys that never count as a gesture in Chromium's user-activation model. */
+const NON_ACTIVATING_KEYS = new Set(['Escape', 'Shift', 'Control', 'Alt', 'Meta', 'AltGr'])
+
+/**
+ * Whether an input event on its way to the page grants it user activation: mouse and touch
+ * presses, taps and key presses other than Escape and bare modifiers (as in Chromium).
+ */
+export function isActivatingInput(input: Electron.InputEvent): boolean {
+  switch (input.type) {
+    case 'mouseDown':
+    case 'pointerDown':
+    case 'touchEnd':
+    case 'gestureTap':
+      return true
+    case 'rawKeyDown':
+    case 'keyDown': {
+      // Electron hands keyboard events over in the `before-input-event` shape (`key`); the typed
+      // structure says `keyCode`. Accept either.
+      const k = input as Partial<Electron.KeyboardInputEvent> & { key?: string }
+      const key = k.key ?? k.keyCode ?? ''
+      return !NON_ACTIVATING_KEYS.has(key)
+    }
+    default:
+      return false
+  }
+}
+
 /**
  * What the host knows about a navigation it started itself, for `webNavigation.onCommitted`'s
  * transition type; consumed by the next main-frame commit.
@@ -186,10 +216,15 @@ export class ElectronTabView implements TabView {
       ev.onDestroyed()
       this.onDestroyed(this)
     })
+    // Trusted input on its way to the page: the core's user-activation clock for pop-ups.
+    wc.on('input-event', (_e, input) => {
+      if (isActivatingInput(input)) ev.onUserActivation()
+    })
     wc.setWindowOpenHandler(({ url, disposition }) => {
       // Announced before the core creates the tab, so the new view finds the pending target.
       const cancelTarget = this.onNavigationTarget?.(wc, url)
-      const verdict = ev.onOpenWindow(url, disposition as WindowOpenDisposition)
+      // Electron does not say whether the user asked; the core knows from the activation clock.
+      const verdict = ev.onOpenWindow(url, disposition as WindowOpenDisposition, null)
       if (verdict !== 'tab') cancelTarget?.()
       if (verdict === 'popup') {
         return {
@@ -443,11 +478,19 @@ export class ElectronTabView implements TabView {
     return result.filePath
   }
 
-  /** JPEG snapshot of the page, used to keep a dimmed preview behind overlays (URL bar, Glance). */
+  /**
+   * JPEG snapshot of the page, used to keep a dimmed preview behind overlays (URL bar, Glance).
+   * A page that has not painted yet (still in its TLS handshake, waiting on a sign-in) gives
+   * `capturePage` nothing to copy and the promise never settles: the overlay that asked must not
+   * wait on it, so an unanswered capture counts as no picture.
+   */
   async snapshot(): Promise<string | null> {
     try {
-      const image = await this.wc.capturePage()
-      if (image.isEmpty()) return null
+      const image = await Promise.race([
+        this.wc.capturePage(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), SNAPSHOT_TIMEOUT_MS))
+      ])
+      if (!image || image.isEmpty()) return null
       const size = image.getSize()
       const scaled = size.width > 1400 ? image.resize({ width: 1400 }) : image
       return `data:image/jpeg;base64,${scaled.toJPEG(65).toString('base64')}`
@@ -752,12 +795,15 @@ export class ElectronTabViewHost implements TabViewHost {
   constructor(private readonly sessions: SessionManager) {}
 
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView {
-    const view = new ElectronTabView(host as ElectronWindow, tab, this.sessions, events, (v) => {
-      this.byWebContentsId.delete(v.webContentsId)
-      this.tabIds.delete(v.webContentsId)
+    // The view no longer has web contents by the time `destroyed` fires: the id is kept here.
+    let id = -1
+    const view = new ElectronTabView(host as ElectronWindow, tab, this.sessions, events, () => {
+      this.byWebContentsId.delete(id)
+      this.tabIds.delete(id)
     })
-    this.byWebContentsId.set(view.webContentsId, view)
-    this.tabIds.set(view.webContentsId, tab.id)
+    id = view.webContentsId
+    this.byWebContentsId.set(id, view)
+    this.tabIds.set(id, tab.id)
     for (const listener of this.viewListeners) listener(view)
     return view
   }

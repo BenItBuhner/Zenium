@@ -1,31 +1,44 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { StoreId } from '../core/extensions/store'
 import {
-  CHROME_BRAND,
   MANAGEMENT_MEMBERS,
+  STORE_BRANDS,
   WEBSTORE_CHANNEL,
   WEBSTORE_EVENT_CHANNEL,
   WEBSTORE_PRIVATE_MEMBERS,
-  isWebstorePage,
+  WEBSTORE_PRIVATE_OPTIONAL_MEMBERS,
+  storeForFrame,
+  withEdgeToken,
   type ManagementEvent,
   type WebstoreReply
 } from '../core/extensions/webstorePrivate'
 
 /**
- * Frame preload for every persistent session: on the Chrome Web Store (and nowhere else) it
- * gives the page the `chrome.webstorePrivate` and `chrome.management` members it drives its
- * install button with, and Chrome's brand in `navigator.userAgentData`. The page calls the
- * members Chrome-style (trailing callback, `chrome.runtime.lastError` during the callback); the
- * calls travel to the main process over one IPC channel and `ExtensionService` answers them.
+ * Frame preload for every persistent session: on the Chrome Web Store and Edge Add-ons (and
+ * nowhere else) it gives the page the `chrome.webstorePrivate` and `chrome.management` members
+ * it drives its install button with, and that store's browser brand in `navigator.userAgentData`
+ * (plus Edge's user-agent string on Edge Add-ons). The page calls the members Chrome-style
+ * (trailing callback, `chrome.runtime.lastError` during the callback); the calls travel to the
+ * main process over one IPC channel and `ExtensionService` answers them.
  *
  * The bridge object lives in the isolated world; a small shim installed into the main world
  * turns its promises back into Chrome's callback protocol.
+ *
+ * Why the user agent is overridden here rather than with `webContents.setUserAgent`: this
+ * preload runs per frame, gated on the same origin test as the API itself, so exactly the frames
+ * that get `chrome.webstorePrivate` see Edge and nothing else does. `setUserAgent` is
+ * per-WebContents: it would also apply to every other origin the tab loads (cross-origin
+ * subframes, requests in flight while navigating in or out) and it would have to be switched on
+ * a navigation event and restored on the next one, where Chromium reloads an in-flight
+ * navigation whose entry overrides the UA. The request headers get the same identity from
+ * `edgeStoreUserAgent` in `main/platform/requestHeaders.ts`, keyed on the same origin.
  */
 
 const BRIDGE_KEY = '__zeniumWebstore'
 
 type EventListener = (event: ManagementEvent, payload: unknown) => void
 
-function install(): void {
+function install(store: StoreId): void {
   const listeners = new Set<EventListener>()
   ipcRenderer.on(
     WEBSTORE_EVENT_CHANNEL,
@@ -45,9 +58,11 @@ function install(): void {
     args: [
       BRIDGE_KEY,
       [...WEBSTORE_PRIVATE_MEMBERS],
+      [...WEBSTORE_PRIVATE_OPTIONAL_MEMBERS],
       [...MANAGEMENT_MEMBERS],
-      CHROME_BRAND,
-      process.versions.chrome
+      STORE_BRANDS[store],
+      process.versions.chrome,
+      store === 'edge-add-ons' ? withEdgeToken(navigator.userAgent, process.versions.chrome) : null
     ]
   })
 }
@@ -55,16 +70,19 @@ function install(): void {
 /**
  * Runs in the page's world (serialised, so it must not close over anything). Builds
  * `chrome.webstorePrivate` and `chrome.management` on whatever `chrome` object the page has,
- * and puts Chrome's brand into `navigator.userAgentData`: the page's scripts check the brands
- * the same way its server checks the client hints (see `withChromeBrand`) before they let the
- * install button work.
+ * and puts the store's brand into `navigator.userAgentData`: the page's scripts check the brands
+ * the same way the Chrome Web Store's server checks the client hints (see `withBrand`) before
+ * they let the install button work. On Edge Add-ons `userAgent` is Edge's string and replaces
+ * `navigator.userAgent` and `navigator.appVersion` too.
  */
 function installShim(
   bridgeKey: string,
   privateMembers: string[],
+  optionalMembers: string[],
   managementMembers: string[],
-  chromeBrand: string,
-  chromiumVersion: string
+  storeBrand: string,
+  chromiumVersion: string,
+  userAgent: string | null
 ): void {
   type Reply = { value?: unknown; error?: string }
   type Callback = (...args: unknown[]) => void
@@ -87,14 +105,25 @@ function installShim(
   const bridge = scope[bridgeKey] as Bridge
 
   const withBrand = (brands: Brand[], version: string): Brand[] => {
-    if (brands.some((entry) => entry.brand === chromeBrand)) return brands
+    if (brands.some((entry) => entry.brand === storeBrand)) return brands
     const chromium = brands.findIndex((entry) => entry.brand === 'Chromium')
     const result = [...brands]
     result.splice(chromium >= 0 ? chromium + 1 : result.length, 0, {
-      brand: chromeBrand,
+      brand: storeBrand,
       version: chromium >= 0 ? brands[chromium].version : version
     })
     return result
+  }
+  if (userAgent !== null) {
+    const expose = (name: string, value: string): void => {
+      Object.defineProperty(Navigator.prototype, name, {
+        configurable: true,
+        enumerable: true,
+        get: () => value
+      })
+    }
+    expose('userAgent', userAgent)
+    expose('appVersion', userAgent.replace(/^Mozilla\//, ''))
   }
   const native = (navigator as Navigator & { userAgentData?: UaData }).userAgentData
   if (native) {
@@ -159,9 +188,13 @@ function installShim(
       return undefined
     }
 
-  const unimplemented = (api: string): ProxyHandler<Record<string, unknown>> => ({
+  // Members the page probes for and has a fallback without (`optional`) stay silent.
+  const unimplemented = (
+    api: string,
+    optional: string[] = []
+  ): ProxyHandler<Record<string, unknown>> => ({
     get(target: Record<string, unknown>, property: string | symbol): unknown {
-      if (typeof property === 'string' && !(property in target))
+      if (typeof property === 'string' && !(property in target) && !optional.includes(property))
         console.warn(`Zenium: chrome.${api}.${property} is not implemented`)
       return target[property as string]
     }
@@ -201,7 +234,10 @@ function installShim(
   // "Failed to create API on Chrome object.", so the page's `chrome` is a Proxy that serves our
   // two namespaces itself and everything else from Electron's object.
   const ours = new Map<string | symbol, unknown>([
-    ['webstorePrivate', new Proxy(webstorePrivate, unimplemented('webstorePrivate'))],
+    [
+      'webstorePrivate',
+      new Proxy(webstorePrivate, unimplemented('webstorePrivate', optionalMembers))
+    ],
     ['management', new Proxy(management, unimplemented('management'))]
   ])
   const chrome = new Proxy(nativeChrome, {
@@ -237,15 +273,18 @@ function installShim(
   })
 }
 
-/** The store's own frames, including the blank child frames it creates (they inherit its API). */
-function isWebstoreFrame(): boolean {
-  if (isWebstorePage(location.href)) return true
-  if (location.href !== 'about:blank' || window.parent === window) return false
-  try {
-    return isWebstorePage(window.parent.location.href)
-  } catch {
-    return false
+/** The store this frame belongs to: its own page's, or for a blank child frame the parent's. */
+function frameStore(): StoreId | null {
+  let parentUrl: string | null = null
+  if (window.parent !== window) {
+    try {
+      parentUrl = window.parent.location.href
+    } catch {
+      parentUrl = null
+    }
   }
+  return storeForFrame(location.href, parentUrl)
 }
 
-if (isWebstoreFrame()) install()
+const store = frameStore()
+if (store) install(store)

@@ -9,14 +9,18 @@ import {
 import { join } from 'node:path'
 import type { ZenWindow } from '../../core/window'
 import type { ExtensionRecord } from '../../core/extensions/registry'
+import type { StoreId } from '../../core/extensions/store'
 import {
+  DEFAULT_WEBSTORE_PREFERENCES,
   EMPTY_REFERRER_CHAIN,
+  SIGNED_OUT_BROWSER_LOGIN,
   WEBSTORE_CHANNEL,
   WEBSTORE_EVENT_CHANNEL,
   installStatusFor,
   isWebstorePage,
   managementInfoFor,
   parseBeginInstallDetails,
+  storeForFrame,
   type ManagementEvent,
   type ManagementMember,
   type WebstoreMv2DeprecationStatus,
@@ -36,13 +40,16 @@ type Handler = (args: unknown[], context: CallContext) => Promise<WebstoreReply>
 
 interface CallContext {
   win: ZenWindow | undefined
+  /** The store whose page is calling; its installs are downloaded from that store first. */
+  store: StoreId
 }
 
 /**
- * Answers the Chrome Web Store page's `chrome.webstorePrivate` and `chrome.management` calls
- * (the `preload/webstore.ts` frame preload puts them on the page) so the store's own install
- * button installs through `ExtensionService`, and forwards registry changes to open store pages
- * as `chrome.management` events. Only frames on the store's origins are answered.
+ * Answers the Chrome Web Store and Edge Add-ons pages' `chrome.webstorePrivate` and
+ * `chrome.management` calls (the `preload/webstore.ts` frame preload puts them on the pages) so
+ * each store's own install button installs through `ExtensionService`, and forwards registry
+ * changes to open store pages as `chrome.management` events. Only frames on the stores' origins
+ * are answered, and each is answered for its own store.
  */
 export class WebstoreBridge {
   /** Store pages that have talked to us; they get `chrome.management` events. */
@@ -58,20 +65,24 @@ export class WebstoreBridge {
     private readonly windowFor: (wc: WebContents) => ZenWindow | undefined
   ) {
     this.handlers = {
-      'webstorePrivate.beginInstallWithManifest3': async ([details], { win }) => {
+      'webstorePrivate.beginInstallWithManifest3': async ([details], { win, store }) => {
         const parsed = parseBeginInstallDetails(details)
         if (!parsed) return { value: 'invalid_id', error: 'Invalid extension id' }
-        const outcome = await this.extensions.webstoreBeginInstall(parsed, win)
+        const outcome = await this.extensions.webstoreBeginInstall(parsed, store, win)
         return outcome.result === ''
           ? { value: '' }
           : { value: outcome.result, error: outcome.message }
       },
       'webstorePrivate.completeInstall': ([id], { win }) => this.completeInstall(id, win),
+      // Edge's variant carries a correlation vector for its telemetry; the install is the same.
+      'webstorePrivate.completeInstallWithCV': ([id], { win }) => this.completeInstall(id, win),
       'webstorePrivate.install': ([id], { win }) => this.completeInstall(id, win),
       'webstorePrivate.enableAppLauncher': () => ({}),
-      'webstorePrivate.getBrowserLogin': () => ({ value: { login: '' } }),
+      // Chrome reads `login`; the Edge page reads the account fields. No browser account exists.
+      'webstorePrivate.getBrowserLogin': () => ({ value: SIGNED_OUT_BROWSER_LOGIN }),
       'webstorePrivate.getStoreLogin': () => ({ value: '' }),
       'webstorePrivate.setStoreLogin': () => ({}),
+      'webstorePrivate.getPreferences': () => ({ value: DEFAULT_WEBSTORE_PREFERENCES }),
       'webstorePrivate.getWebGLStatus': async () => ({ value: await webGlStatus() }),
       'webstorePrivate.getIsLauncherEnabled': () => ({ value: false }),
       'webstorePrivate.isInIncognitoMode': () => ({ value: false }),
@@ -127,10 +138,10 @@ export class WebstoreBridge {
   }
 
   /**
-   * Gives a persistent session's pages the store preload. The client-hint rewrite that makes the
-   * store render its install button for the same sessions is `webstoreClientHints` in
-   * `requestHeaders.ts`, registered with the webRequest multiplexer, which owns the session's
-   * one `onBeforeSendHeaders` listener.
+   * Gives a persistent session's pages the store preload. The header rewrites that make the
+   * stores' servers render their install buttons for the same sessions are `webstoreClientHints`
+   * and `edgeStoreUserAgent` in `requestHeaders.ts`, registered with the webRequest multiplexer,
+   * which owns the session's one `onBeforeSendHeaders` listener.
    */
   attach(ses: Session): void {
     if (ses.getPreloadScripts().some((script) => script.id === WEBSTORE_PRELOAD_ID)) return
@@ -143,8 +154,11 @@ export class WebstoreBridge {
     args: unknown
   ): Promise<WebstoreReply> {
     const frame = event.senderFrame
-    if (!frame || frame.isDestroyed() || !isStoreFrame(frame))
-      throw new Error('chrome.webstorePrivate is only available to the Chrome Web Store')
+    const store = frame && !frame.isDestroyed() ? storeOfFrame(frame) : null
+    if (!store)
+      throw new Error(
+        'chrome.webstorePrivate is only available to the Chrome Web Store and Edge Add-ons'
+      )
     const handler =
       typeof member === 'string' ? this.handlers[member as keyof typeof this.handlers] : undefined
     if (!handler) throw new Error(`Unknown member ${String(member)}`)
@@ -152,7 +166,8 @@ export class WebstoreBridge {
     const started = Date.now()
     try {
       const reply = await handler(Array.isArray(args) ? args : [], {
-        win: this.windowFor(event.sender)
+        win: this.windowFor(event.sender),
+        store
       })
       console.log(
         `[zen] webstore: ${member}(${summarize(args)}) -> ${summarize(reply.value)}${reply.error ? ` error "${reply.error}"` : ''} (${Date.now() - started} ms)`
@@ -220,13 +235,10 @@ export class WebstoreBridge {
   }
 }
 
-/** A store page's frame, or a blank child frame of one (the preload serves those too). */
-function isStoreFrame(frame: WebFrameMain): boolean {
-  if (isWebstorePage(frame.url)) return true
+/** The store of a page's frame, or of a blank child frame of one (the preload serves those too). */
+function storeOfFrame(frame: WebFrameMain): StoreId | null {
   const parent = frame.parent
-  return (
-    frame.url === 'about:blank' && !!parent && !parent.isDestroyed() && isWebstorePage(parent.url)
-  )
+  return storeForFrame(frame.url, parent && !parent.isDestroyed() ? parent.url : null)
 }
 
 async function webGlStatus(): Promise<WebstoreWebGlStatus> {

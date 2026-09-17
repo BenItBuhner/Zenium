@@ -103,7 +103,7 @@ export function AgentsSection({
         </Row>
         <Row
           label="Allow agents to run JavaScript in pages"
-          hint="Enables the browser_evaluate tool. Powerful, but lets an agent run arbitrary script in the pages it drives."
+          hint="Off by default. Enables the browser_evaluate tool, which lets an agent run arbitrary script in the pages it drives in Zenium, including sites you are signed in to."
         >
           <Switch
             checked={a.allowScripts}
