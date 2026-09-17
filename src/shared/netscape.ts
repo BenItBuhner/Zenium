@@ -428,7 +428,12 @@ export function planNetscapeImport(doc: NetscapeDocument, target: ImportTarget):
     }
     // Show the root that received something (the bar when the file had a toolbar folder).
     const barGotNodes = nodes.some((n) => n.parentId === BOOKMARKS_BAR_ID)
-    return { nodes, bookmarks, folders, folderId: barGotNodes ? BOOKMARKS_BAR_ID : OTHER_BOOKMARKS_ID }
+    return {
+      nodes,
+      bookmarks,
+      folders,
+      folderId: barGotNodes ? BOOKMARKS_BAR_ID : OTHER_BOOKMARKS_ID
+    }
   }
 
   const imported: BookmarkNode = {
