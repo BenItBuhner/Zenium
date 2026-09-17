@@ -13,7 +13,8 @@ import { IconBtn, Title } from './shared'
  * the bottom edge under the finger – and a click outside closing it. Panes stack inside; `layer`
  * (the re-authentication prompt) sits over the whole content area, outside the page frame: a
  * desktop scrim dims the frame only (§9.5), while the phone sheet portals itself to the window,
- * where the shell's other sheets live.
+ * where the shell's other sheets live. While the layer is up the page is inert, so nothing
+ * focusable is left behind the scrim (§9.22).
  */
 export function PageShell({
   children,
@@ -42,6 +43,7 @@ export function PageShell({
         ref={pageRef}
         role="dialog"
         aria-label="Passwords"
+        inert={Boolean(layer)}
         style={{ transformOrigin: '50% 100%' }}
         className={cn(
           'zen-v2-pw-page zen-animate-in relative flex flex-1 flex-col overflow-hidden',

@@ -6,7 +6,7 @@ import type {
   Ref,
   TextareaHTMLAttributes
 } from 'react'
-import { useId, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { Check, ChevronDown, CircleAlert, Search } from 'lucide-react'
 import { Select as SelectPrimitive } from 'radix-ui'
 import { useBackSurface } from '@renderer/lib/back'
@@ -102,9 +102,11 @@ export function TextArea({
 }
 
 /**
- * A rectangular menulist: the trigger is a field with a chevron, the menu a bordered panel. While
- * it is open it is the topmost surface: Escape and the system back close the menu, and nothing
- * under it (a pane, the overlay) hears the key.
+ * A rectangular menulist: the trigger is a field with a chevron, the menu a bordered panel
+ * anchored under it (§9.20): gap 0, its start edge on the trigger's – or its end edge, when the
+ * trigger sits in the trailing half of its row – kept 8 px inside the window. While it is open it
+ * is the topmost surface: Escape and the system back close the menu and return focus to the
+ * trigger, and nothing under it (a pane, the overlay) hears the key; opening another closes it.
  */
 export function Menulist<T extends string>({
   value,
@@ -129,6 +131,8 @@ export function Menulist<T extends string>({
   className?: string
 }): JSX.Element {
   const [open, setOpen] = useState(false)
+  const [align, setAlign] = useState<'start' | 'end'>('start')
+  const trigger = useRef<HTMLButtonElement>(null)
   // One surface name per instance: with a shared name, the first menulist on the view would
   // claim Escape for a menu that is not its own and the open one would stay open.
   const surface = `passwords-menu-${useId()}`
@@ -138,11 +142,15 @@ export function Menulist<T extends string>({
     <SelectPrimitive.Root
       value={value}
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={(next) => {
+        if (next) setAlign(inTrailingHalf(trigger.current) ? 'end' : 'start')
+        setOpen(next)
+      }}
       onValueChange={(v) => onChange(v as T)}
       disabled={disabled}
     >
       <SelectPrimitive.Trigger
+        ref={trigger}
         aria-label={label}
         data-fill={fill || undefined}
         data-title={title || undefined}
@@ -156,7 +164,10 @@ export function Menulist<T extends string>({
       <SelectPrimitive.Portal>
         <SelectPrimitive.Content
           position="popper"
-          sideOffset={4}
+          side="bottom"
+          align={align}
+          sideOffset={0}
+          collisionPadding={8}
           className="zen-v2-pw-menu zen-animate-pop"
         >
           <SelectPrimitive.Viewport>
@@ -175,6 +186,16 @@ export function Menulist<T extends string>({
       </SelectPrimitive.Portal>
     </SelectPrimitive.Root>
   )
+}
+
+/** Whether a menulist's centre lies in the trailing half of the row or header it sits in (§9.20). */
+function inTrailingHalf(trigger: HTMLElement | null): boolean {
+  if (!trigger) return false
+  const bar = trigger.closest('.zen-v2-pw-row, .zen-v2-pw-header-row') ?? trigger.parentElement
+  if (!bar) return false
+  const t = trigger.getBoundingClientRect()
+  const b = bar.getBoundingClientRect()
+  return t.left + t.width / 2 > b.left + b.width / 2
 }
 
 /** The Proton checkbox glyph: a 16 square (20 on a phone) at radius 2, accent when checked. */
@@ -336,6 +357,45 @@ export function Title({
   className?: string
 }): JSX.Element {
   return <h2 className={cn('zen-v2-pw-title min-w-0 truncate', className)}>{children}</h2>
+}
+
+/**
+ * A title block (§9.23): what heads a desktop dialog or popover instead of a bar – no control and
+ * no X, since Escape, a click outside and the footer close it. Padding 16, an optional 16 px
+ * glyph 8 px before the 17/600 title, an optional description 4 px under it, 16 px to the body;
+ * 54 tall on its own, 78 with a one-line description. `id` and `descriptionId` are for the
+ * dialog's `aria-labelledby` and `aria-describedby`.
+ */
+export function TitleBlock({
+  id,
+  glyph,
+  description,
+  descriptionId,
+  children,
+  className
+}: {
+  id: string
+  glyph?: ReactNode
+  description?: ReactNode
+  descriptionId?: string
+  children: ReactNode
+  className?: string
+}): JSX.Element {
+  return (
+    <div className={cn('zen-v2-pw-title-block shrink-0', className)}>
+      <div className="flex items-center gap-2">
+        {glyph}
+        <h3 id={id} className="zen-v2-pw-block-title min-w-0 flex-1">
+          {children}
+        </h3>
+      </div>
+      {description && (
+        <p id={descriptionId} className="zen-v2-pw-description">
+          {description}
+        </p>
+      )}
+    </div>
+  )
 }
 
 /** A sub-heading over a group of rows: 15/600, sentence case, an optional count trailing. */

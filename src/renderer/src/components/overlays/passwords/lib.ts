@@ -1,4 +1,4 @@
-import type { UIEvent } from 'react'
+import type { RefObject, UIEvent } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import type { CredentialSummary, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
@@ -51,6 +51,65 @@ export function useEscape(name: string, close: () => void): void {
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [name])
+}
+
+/**
+ * Keyboard reach into a dialog or sheet (v2 §9.22). The dialog is the nearest `role="dialog"`
+ * around `ref` (the desktop prompt's own box, the shared `BottomSheet` on a phone with its
+ * grabber first in the order). On open, focus moves into it – the first field, else the first
+ * control, else the container – unless something inside already has it; Tab and Shift+Tab wrap
+ * inside it; when it closes, focus returns to the control that opened it, except after a click
+ * that landed on another control, which keeps the focus it took.
+ */
+export function useFocusReach(ref: RefObject<HTMLElement | null>): void {
+  // The opener is whatever had focus before the first render put a field in front of it.
+  const [anchor] = useState(() => document.activeElement as HTMLElement | null)
+  useEffect(() => {
+    const root = ref.current?.closest<HTMLElement>('[role="dialog"]') ?? ref.current
+    if (!root) return
+    if (!root.contains(document.activeElement)) {
+      const items = tabbables(root)
+      const first = items.find((el) => el.matches('input, textarea, select')) ?? items[0] ?? root
+      first.focus({ preventScroll: true })
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Tab' || e.defaultPrevented) return
+      const items = tabbables(root)
+      const first = items[0]
+      const last = items[items.length - 1]
+      if (!first || !last) return
+      const active = document.activeElement
+      if (!root.contains(active)) {
+        e.preventDefault()
+        ;(e.shiftKey ? last : first).focus()
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', onKey, true)
+    return () => {
+      document.removeEventListener('keydown', onKey, true)
+      const active = document.activeElement
+      const lost = !active || active === document.body || root.contains(active)
+      if (lost && anchor?.isConnected) anchor.focus({ preventScroll: true })
+    }
+  }, [ref, anchor])
+}
+
+/** The elements Tab visits inside `root`, in order. */
+function tabbables(root: HTMLElement): HTMLElement[] {
+  const all = root.querySelectorAll<HTMLElement>(
+    'a[href], button, input, select, textarea, [tabindex]'
+  )
+  return [...all].filter(
+    (el) =>
+      !el.matches(':disabled, [tabindex="-1"], [inert], [inert] *') &&
+      el.getClientRects().length > 0
+  )
 }
 
 /** Open the login's page (or its origin) in a new tab and close the manager. */
