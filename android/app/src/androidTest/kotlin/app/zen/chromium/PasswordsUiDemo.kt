@@ -200,7 +200,7 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
 
         // 7. The settings; the re-authentication menulist set to Every time, so the copy below
         //    asks again although the reveal just verified the user.
-        pickCategory(f, "Settings", "Offer to save passwords")
+        pickCategory(f, "Settings", "Lock now")
         SystemClock.sleep(700)
         snap("settings")
         setGraceToEveryTime(f)
@@ -219,7 +219,10 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         } else {
             step("no credential prompt for the copy")
         }
-        if (waitFor("Continue", 10_000) == null) error("the passphrase prompt never showed")
+        if (waitFor("Continue", 10_000) == null) {
+            dumpNames("the detail after the copy")
+            error("the passphrase prompt never showed")
+        }
         step("the passphrase prompt is up")
         SystemClock.sleep(1_300)
         snap("prompt-sheet")
@@ -261,6 +264,7 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
             }
             step("back did not pop the pane yet (attempt $attempt)")
         }
+        dumpNames("the manager after back")
         error("back did not pop the detail pane")
     }
 
@@ -283,7 +287,10 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
             if (awaitManager(6_000)) return
             step("the tap on the '$label' row did not open the manager; clicking it through accessibility")
         }
-        if (!clickByLabel(label)) error("no menu row '$label'")
+        if (!clickByLabel(label)) {
+            dumpNames("the app menu")
+            error("no menu row '$label'")
+        }
         if (!awaitManager(10_000)) error("the manager never opened")
     }
 
@@ -332,20 +339,24 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
             }
             SystemClock.sleep(300)
         }
+        dumpNames("the gate")
         error("the vault did not open")
     }
 
     // --- the manager -----------------------------------------------------------------------------
 
-    /** Tap a login's row (its username) and wait for the detail pane. */
+    /** Tap a login's row (named after its username, then the site) and wait for the detail pane. */
     private fun openLogin(f: Finger, username: String) {
         step("opening the login $username")
-        if (waitFor(username, 8_000) == null) error("no row for $username")
+        val row = waitForRow(username, 8_000) ?: run {
+            dumpNames("the list")
+            error("no row for $username")
+        }
         SystemClock.sleep(400)
-        tapLabel(f, username)
+        f.tap(row.exactCenterX(), row.exactCenterY())
         if (waitFor("Show password", 6_000) != null) return
         step("the tap on the row did not open the detail; clicking it through accessibility")
-        clickByLabel(username)
+        clickRow(username)
         if (waitFor("Show password", 6_000) == null) error("the detail for $username never opened")
     }
 
@@ -374,17 +385,26 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
                 SystemClock.sleep(800)
             }
         }
+        dumpNames("the manager after picking $label")
         error("could not switch to $label")
     }
 
-    /** Select a radio row by its label and wait for the view to follow. */
+    /** Select a radio row (named after its label, then its description) and wait for the view to follow. */
     private fun chooseRadio(f: Finger, label: String, expect: String) {
         step("radio: $label")
-        tapLabel(f, label)
-        if (waitFor(expect, 4_000) != null) return
-        step("the tap on the '$label' radio did not apply; clicking it through accessibility")
-        clickByLabel(label)
-        if (waitFor(expect, 4_000) == null) step("the '$label' radio never applied")
+        val row = waitForRow(label, 5_000)
+        if (row != null) {
+            f.tap(row.exactCenterX(), row.exactCenterY())
+            if (waitFor(expect, 4_000) != null) return
+            step("the tap on the '$label' radio did not apply; clicking it through accessibility")
+        } else {
+            step("no radio named '$label'")
+        }
+        clickRow(label)
+        if (waitFor(expect, 4_000) == null) {
+            dumpNames("the generator")
+            step("the '$label' radio never applied")
+        }
     }
 
     /** Poll the checkup until it has finished (or failed); the state then. */
@@ -591,6 +611,44 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
 
     private fun AccessibilityNodeInfo.isNamed(label: String): Boolean =
         text?.toString()?.trim() == label || contentDescription?.toString()?.trim() == label
+
+    /**
+     * A list row, a radio or a checkbox is one node to accessibility, named after everything in
+     * it – the username then the site, the label then the description – so its label alone is
+     * only the start of its name. An exact match wins when there is one.
+     */
+    private fun rowNode(label: String): AccessibilityNodeInfo? =
+        findNode { it == label } ?: findNode { it.startsWith(label) }
+
+    private fun findRow(label: String): Rect? = rowNode(label)?.let { Rect().also(it::getBoundsInScreen) }
+
+    private fun waitForRow(label: String, timeoutMs: Long): Rect? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            findRow(label)?.let { return it }
+            SystemClock.sleep(200)
+        }
+        return null
+    }
+
+    /** Click a row through accessibility: the node itself or its nearest clickable ancestor. */
+    private fun clickRow(label: String): Boolean {
+        var node = rowNode(label)
+        while (node != null && !node.isClickable) node = node.parent
+        return node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
+    }
+
+    /** The names of the app's visible nodes, into the step log, when a lookup has failed. */
+    private fun dumpNames(where: String) {
+        val names = nodes { node ->
+            node.packageName?.toString() == app.packageName && node.isVisibleToUser &&
+                (!node.text.isNullOrBlank() || !node.contentDescription.isNullOrBlank())
+        }.map { node ->
+            val name = (node.contentDescription?.takeIf { it.isNotBlank() } ?: node.text).toString().trim()
+            name.take(70) + if (node.isClickable) " [clickable]" else ""
+        }
+        step("names in $where (${names.size}): ${names.take(80).joinToString(" | ")}")
+    }
 
     /** The button labelled `label` is on screen and enabled (a disabled submit reports otherwise). */
     private fun buttonEnabled(label: String): Boolean = nodes { node ->
