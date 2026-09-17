@@ -23,12 +23,12 @@ async function sampleVault(): Promise<{
 }> {
   const key = newDataKey()
   const logins = [
-    credential({ id: 'a', origin: 'https://one.example', username: 'ada' }),
+    credential({ id: 'a', origin: 'https://one.example', username: 'ada.lovelace' }),
     credential({ id: 'b', origin: 'https://two.example', username: 'bob', notes: 'work' }),
     credential({
       id: 'c',
       origin: 'https://one.example',
-      username: 'ada',
+      username: 'ada.lovelace',
       realm: 'Admin',
       lastUsedAt: 5
     })
@@ -74,8 +74,10 @@ describe('vault format', () => {
   it('keeps no plaintext anywhere in the document', async () => {
     const { file } = await sampleVault()
     const text = JSON.stringify(file)
+    // Every probe contains a '.' or '-', which base64 never emits, so a random
+    // ciphertext can never match one by chance.
     expect(text).not.toContain('secret-')
-    expect(text).not.toContain('ada')
+    expect(text).not.toContain('ada.lovelace')
     expect(text).not.toContain('one.example')
     expect(text).not.toContain('ads.example')
   })
