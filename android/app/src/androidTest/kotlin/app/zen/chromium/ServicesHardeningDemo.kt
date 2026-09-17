@@ -225,8 +225,11 @@ class ServicesHardeningDemo {
      * back before moving on.
      */
     private fun fill(f: Finger, label: String, text: String) {
+        // The dialog has one password field and one plain field; with the labels not exposed
+        // (the tree is mid-update), the field is told by kind.
         val field = findNodes(label).firstOrNull { it.isEditable }
             ?: findNodes(label).firstNotNullOfOrNull { editableWithin(it) }
+            ?: ui.rootInActiveWindow?.let(::editables)?.firstOrNull { it.isPassword == (label == "Password") }
         if (field == null) {
             step("no field labelled '$label'")
             return
@@ -259,37 +262,61 @@ class ServicesHardeningDemo {
 
     /** Whether the field named `label` holds `text` (a password field reports it masked). */
     private fun holds(label: String, text: String): Boolean {
-        val field = findNodes(label).firstOrNull { it.isEditable } ?: return false
+        val field = findNodes(label).firstOrNull { it.isEditable }
+            ?: ui.rootInActiveWindow?.let(::editables)?.firstOrNull { it.isPassword == (label == "Password") }
+            ?: return false
         val value = field.text?.toString() ?: return false
         return value == text || (field.isPassword && value.length == text.length)
     }
 
-    private fun editableWithin(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+    private fun editableWithin(node: AccessibilityNodeInfo): AccessibilityNodeInfo? =
+        editables(node).firstOrNull()
+
+    private fun editables(node: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
         val queue = ArrayDeque<AccessibilityNodeInfo>()
+        val found = ArrayList<AccessibilityNodeInfo>()
         queue.add(node)
         var visited = 0
-        while (queue.isNotEmpty() && visited < 500) {
+        while (queue.isNotEmpty() && visited < 8_000) {
             val n = queue.removeFirst()
             visited++
-            if (n.isEditable) return n
+            if (n.isEditable) found += n
             for (i in 0 until n.childCount) n.getChild(i)?.let(queue::add)
         }
-        return null
+        return found
     }
 
     /**
      * Answer the external-app sheet. A lagging emulator drops a tap now and then; the sheet
-     * still being up says so, and the tap is repeated.
+     * still being up says so, and the tap is repeated. The tree going away for a moment (the
+     * active window changing hands) is not the sheet closing; another window in front is sent
+     * back first. The last resort for a refusal is the back gesture, which the sheet answers.
      */
     private fun answerSheet(f: Finger, label: String) {
         for (attempt in 1..3) {
             if (!tapLabel(f, label)) return
             val deadline = SystemClock.uptimeMillis() + 3_000
+            var gone = false
             while (SystemClock.uptimeMillis() < deadline) {
-                if (findByLabel("Not now") == null) return
                 SystemClock.sleep(250)
+                val root = ui.rootInActiveWindow ?: continue
+                if (root.packageName?.toString() != app.packageName) {
+                    step("the window of ${root.packageName} came in front; sending it back")
+                    ensureForeground()
+                    continue
+                }
+                if (findByLabel("Not now") == null) {
+                    gone = true
+                    break
+                }
             }
+            if (gone) return
             step("the sheet is still up after '$label' (attempt $attempt)")
+        }
+        if (label == "Not now") {
+            ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+            step("sent back to close the sheet")
+            SystemClock.sleep(1_000)
         }
     }
 
@@ -330,13 +357,32 @@ class ServicesHardeningDemo {
         return false
     }
 
+    /**
+     * Tap the node labelled `label` once it has come to rest (a sheet still sliding in reports
+     * bounds a frame behind), inside its bounds but clear of the system navigation bar along
+     * the bottom edge, which would take the tap instead.
+     */
     private fun tapLabel(f: Finger, label: String, prefix: Boolean = false): Boolean {
-        val target = findByLabel(label, prefix) ?: run {
+        var target = findByLabel(label, prefix) ?: run {
             step("no node labelled '$label'")
             return false
         }
-        f.tap(target.exactCenterX(), target.exactCenterY())
-        step("tapped '$label' at $target")
+        val settleBy = SystemClock.uptimeMillis() + 2_000
+        while (SystemClock.uptimeMillis() < settleBy) {
+            SystemClock.sleep(150)
+            val again = findByLabel(label, prefix) ?: break
+            if (again == target) break
+            target = again
+        }
+        val x = target.exactCenterX()
+        val lowest = height - NAV_BAR_MARGIN
+        val y = if (target.exactCenterY() > lowest) {
+            max(target.top + 8f, lowest.toFloat())
+        } else {
+            target.exactCenterY()
+        }
+        f.tap(x, y)
+        step("tapped '$label' at $target (${x.toInt()},${y.toInt()})")
         return true
     }
 
@@ -366,7 +412,14 @@ class ServicesHardeningDemo {
         findNodes(label, prefix).map { node -> Rect().also(node::getBoundsInScreen) }
 
     private fun findNodes(label: String, prefix: Boolean = false): List<AccessibilityNodeInfo> {
-        val root = ui.rootInActiveWindow ?: return emptyList()
+        // The root is briefly unavailable while the active window changes; that is not "gone".
+        var root = ui.rootInActiveWindow
+        var tries = 0
+        while (root == null && tries++ < 4) {
+            SystemClock.sleep(100)
+            root = ui.rootInActiveWindow
+        }
+        if (root == null) return emptyList()
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         val found = ArrayList<AccessibilityNodeInfo>()
         queue.add(root)
@@ -452,5 +505,7 @@ class ServicesHardeningDemo {
         private const val PILL_LABEL = "Address"
         private const val SERVER = "10.0.2.2:8787"
         private const val STEP_MS = 8L
+        /** The 3-button navigation bar's height on the runner's emulator, with room to spare. */
+        private const val NAV_BAR_MARGIN = 100
     }
 }
