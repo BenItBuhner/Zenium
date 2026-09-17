@@ -1,6 +1,5 @@
 package app.zen.chromium
 
-import android.accessibilityservice.AccessibilityService
 import android.app.UiAutomation
 import android.graphics.Rect
 import android.os.SystemClock
@@ -202,10 +201,6 @@ class LayoutDemo : DemoHarness("layout-demo-state.json", "layout", "layout-demo"
     }
 
     private fun findPillLabel(): String? = findNodeLabel { it.startsWith("$PILL_LABEL,") }
-
-    private fun back() {
-        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-    }
 
     /** Take down an open menu or panel. */
     private fun dismiss() {

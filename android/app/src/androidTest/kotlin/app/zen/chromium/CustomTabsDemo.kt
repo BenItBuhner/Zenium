@@ -1,6 +1,5 @@
 package app.zen.chromium
 
-import android.accessibilityservice.AccessibilityService
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.ComponentName
@@ -364,10 +363,6 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         beat()
         clickByLabel(FIND_CLOSE_LABEL)
         SystemClock.sleep(1_000)
-    }
-
-    private fun back() {
-        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
     }
 
     /** Drag the page by `fraction` of the window height (negative: content moves up). */
