@@ -71,7 +71,7 @@ export interface PageFlags {
 
 /** Messages the page script sends back to the browser. */
 export interface PageMessage {
-  type: 'glance' | 'open-tab' | 'navigate' | 'media' | 'zap'
+  type: 'glance' | 'open-tab' | 'navigate' | 'media' | 'zap' | 'activation' | 'popup-blocked'
   url?: string
   x?: number
   y?: number
@@ -193,8 +193,18 @@ export interface TabViewEvents {
   onTargetUrl(url: string): void
   onDomReady(): void
   onDestroyed(): void
-  /** `window.open` / `target=_blank`. Return how the host should proceed. */
-  onOpenWindow(url: string, disposition: WindowOpenDisposition): 'deny' | 'tab' | 'popup'
+  /**
+   * `window.open` / `target=_blank`. Return how the host should proceed. `userGesture` is the
+   * host's own knowledge of whether the user asked for it (null when it has none: the core then
+   * relies on the activation it tracked through `onUserActivation`).
+   */
+  onOpenWindow(
+    url: string,
+    disposition: WindowOpenDisposition,
+    userGesture: boolean | null
+  ): 'deny' | 'tab' | 'popup'
+  /** A trusted input event (click, key, tap) was delivered to the page. */
+  onUserActivation(): void
   onPageMessage(message: PageMessage): void
 }
 
@@ -234,6 +244,11 @@ export interface TabView {
   insertCSS(css: string): Promise<string>
   removeInsertedCSS(key: string): Promise<void>
   sendPageFlags(flags: PageFlags): void
+  /**
+   * Hosts whose engine blocks pop-ups itself (the Android WebView) learn whether the page's site
+   * may open windows without a gesture; Electron leaves the decision to the core.
+   */
+  setPopupsAllowed?(allowed: boolean): void
   /** Boost "zap element" picker on/off. */
   setZapMode(on: boolean): void
   setBackgroundColor(color: string): void
@@ -487,6 +502,11 @@ export interface SessionHost {
   clearContainerData(containerId: string): Promise<void>
   /** Wipe the private-browsing session once its last window closed. */
   clearPrivate(): Promise<void>
+  /**
+   * Drop the HTTP credentials and client-certificate choices the engine itself cached for this
+   * session, so a site asks again (the core forgets its own copies alongside).
+   */
+  clearAuthCache?(): Promise<void>
 }
 
 /** Stored data of a site as the host's storage layer reports it. */

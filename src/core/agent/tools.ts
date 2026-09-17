@@ -1484,13 +1484,20 @@ const browserWaitFor: AgentTool = {
   }
 }
 
+/**
+ * Told to agents that call `browser_evaluate` while scripting is off, and used as the tool's own
+ * preamble, so both explain where the user turns it on.
+ */
+export const SCRIPTING_DISABLED =
+  'Running JavaScript in pages is disabled until the user enables "Allow agents to run JavaScript in pages" in Zenium Settings → AI Agents. Use browser_snapshot, browser_read_page and the interaction tools instead.'
+
 const browserEvaluate: AgentTool = {
   scripting: true,
   definition: {
     name: 'browser_evaluate',
     title: 'Run JavaScript',
     description:
-      'Run JavaScript in the page and return the JSON-serialised result: an expression ("document.title"), or a function ("() => document.body.dataset.build"). Use it to read attributes, computed values or anything the snapshot does not show.',
+      'Run JavaScript in the page and return the JSON-serialised result: an expression ("document.title"), or a function ("() => document.body.dataset.build"). Use it to read attributes, computed values or anything the snapshot does not show. Off by default: the tool only works after the user enables "Allow agents to run JavaScript in pages" in Zenium Settings → AI Agents.',
     inputSchema: schema(
       {
         expression: {
@@ -1633,6 +1640,6 @@ export function agentInstructions(mode: AgentMode, allowScripts: boolean): strin
     '- browser_navigate accepts URLs or search words. Use zen_spaces to keep your work in its own space when it is more than a quick lookup.',
     allowScripts
       ? '- browser_evaluate runs JavaScript in the page (an expression or an arrow function) when nothing else does the job, e.g. to read attributes.'
-      : '- Running scripts in pages is disabled by the user.'
+      : `- ${SCRIPTING_DISABLED}`
   ].join('\n')
 }

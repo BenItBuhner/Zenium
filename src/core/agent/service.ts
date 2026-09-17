@@ -31,6 +31,7 @@ import {
 } from './protocol'
 import {
   AGENT_TOOLS,
+  SCRIPTING_DISABLED,
   acceptedArgs,
   agentInstructions,
   orderedTabs,
@@ -491,8 +492,7 @@ export class AgentService implements SessionStore, McpHandlers {
     const s = this.requireApproved(session)
     const tool = AGENT_TOOLS.find((t) => t.definition.name === name)
     if (!tool) return textError(`Unknown tool ${name}`)
-    if (tool.scripting && !this.settings.allowScripts)
-      return textError('Scripts are disabled in Settings → AI Agents')
+    if (tool.scripting && !this.settings.allowScripts) return textError(SCRIPTING_DISABLED)
     s.calls++
     s.lastActiveAt = Date.now()
     const ctx: ToolContext = { browser: this.browser, agents: this, session: s }

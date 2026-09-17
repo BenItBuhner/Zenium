@@ -137,5 +137,12 @@ describe('formatting', () => {
     expect(permissionLabel('geolocation')).toBe('Location')
     expect(permissionLabel('camera')).toBe('Camera')
     expect(permissionLabel('something-new')).toBe('something-new')
+    expect(permissionLabel('popups')).toBe('Pop-up windows')
+    expect(permissionLabel('openExternal:tel')).toBe('Open tel: links')
+    expect(permissionLabel('storage-access:https://embedder.example')).toBe(
+      'Cookies while embedded (embedder.example)'
+    )
+    expect(permissionLabel('fileSystem')).toBe('Write to files you picked')
+    expect(permissionLabel('fileSystem:read')).toBe('View folders you picked')
   })
 })

@@ -1,0 +1,162 @@
+import { describe, expect, it, vi } from 'vitest'
+import type { Certificate, WebContents } from 'electron'
+import { mkdtempSync, utimesSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { Browser } from '../../../core/browser'
+import type { PermissionRequestDetails } from '../../../core/permissions'
+import {
+  describeCertificate,
+  hostOf,
+  isFreshlyEmptied,
+  permissionCheckDetails,
+  permissionRequestDetails
+} from '../security'
+
+vi.mock('electron', () => ({ app: { on: vi.fn() } }))
+
+describe('hostOf', () => {
+  it("takes Electron's host:port as it is, and the host of a full URL", () => {
+    expect(hostOf('localhost:8443')).toBe('localhost:8443')
+    expect(hostOf('127.0.0.1:8443')).toBe('127.0.0.1:8443')
+    expect(hostOf('[::1]:8443')).toBe('[::1]:8443')
+    expect(hostOf('https://intranet.example:8443/whoami')).toBe('intranet.example:8443')
+    expect(hostOf('https://intranet.example/whoami')).toBe('intranet.example')
+    expect(hostOf(' intranet.example ')).toBe('intranet.example')
+  })
+})
+
+describe('permissionRequestDetails', () => {
+  const page = { isDestroyed: () => false, getURL: () => 'https://top.example/page' } as WebContents
+
+  it('names the embedding page only for requests from frames', () => {
+    expect(
+      permissionRequestDetails(page, { isMainFrame: true, requestingUrl: 'https://top.example' })
+    ).toEqual({})
+    expect(
+      permissionRequestDetails(page, { isMainFrame: false, requestingUrl: 'https://ad.example' })
+    ).toEqual({ embedderUrl: 'https://top.example/page' })
+  })
+
+  it('passes the external URL and the file of a File System Access request through', () => {
+    expect(
+      permissionRequestDetails(page, {
+        isMainFrame: true,
+        requestingUrl: 'https://top.example',
+        externalURL: 'zoommtg://zoom.us/join'
+      })
+    ).toEqual({ externalUrl: 'zoommtg://zoom.us/join' })
+    expect(
+      permissionRequestDetails(null, {
+        isMainFrame: true,
+        requestingUrl: 'https://top.example',
+        filePath: '/home/ada/notes.md',
+        isDirectory: false,
+        fileAccessType: 'writable'
+      })
+    ).toEqual({ filePath: '/home/ada/notes.md', isDirectory: false, fileAccessType: 'writable' })
+  })
+})
+
+describe('permissionCheckDetails', () => {
+  const browserWith = (activeOrigins: string[]): Browser =>
+    ({
+      popups: { originHasBeenActive: (origin: string) => activeOrigins.includes(origin) }
+    }) as unknown as Browser
+
+  it('passes the embedder through and nothing else for ordinary checks', () => {
+    const browser = browserWith(['https://top.example'])
+    expect(
+      permissionCheckDetails('notifications', 'https://top.example', { isMainFrame: true }, browser)
+    ).toEqual({})
+    expect(
+      permissionCheckDetails(
+        'storage-access',
+        'https://ad.example',
+        { isMainFrame: false, embeddingOrigin: 'https://top.example' },
+        browser
+      )
+    ).toEqual({ embedderUrl: 'https://top.example' })
+  })
+
+  it('adds what Electron leaves out of a File System Access check', () => {
+    const fresh = (path: string): boolean => path.endsWith('saved.txt')
+    const browser = browserWith(['https://editor.example'])
+    const check = (
+      filePath: string,
+      fileAccessType: 'writable' | 'readable',
+      isDirectory = false
+    ): PermissionRequestDetails =>
+      permissionCheckDetails(
+        'fileSystem',
+        'https://editor.example',
+        { isMainFrame: true, filePath, isDirectory, fileAccessType },
+        browser,
+        fresh
+      )
+    expect(check('/home/ada/saved.txt', 'writable')).toEqual({
+      filePath: '/home/ada/saved.txt',
+      isDirectory: false,
+      fileAccessType: 'writable',
+      pageActivated: true,
+      pickedForSaving: true
+    })
+    expect(check('/home/ada/opened.txt', 'writable')).toMatchObject({ pickedForSaving: false })
+    // Reads and folders are never "just saved"; a site without a gesture gets no question.
+    expect(check('/home/ada/saved.txt', 'readable')).not.toHaveProperty('pickedForSaving')
+    expect(check('/home/ada', 'writable', true)).not.toHaveProperty('pickedForSaving')
+    expect(
+      permissionCheckDetails(
+        'fileSystem',
+        'https://quiet.example',
+        { isMainFrame: true, filePath: '/x', isDirectory: false, fileAccessType: 'writable' },
+        browser,
+        fresh
+      )
+    ).toMatchObject({ pageActivated: false })
+  })
+})
+
+describe('isFreshlyEmptied', () => {
+  it('recognises the empty file a save dialog just left behind, and nothing else', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zenium-fsa-'))
+    const empty = join(dir, 'empty.txt')
+    const full = join(dir, 'full.txt')
+    const old = join(dir, 'old.txt')
+    writeFileSync(empty, '')
+    writeFileSync(full, 'content')
+    writeFileSync(old, '')
+    const now = Date.now()
+    utimesSync(old, new Date(now - 120_000), new Date(now - 120_000))
+    expect(isFreshlyEmptied(empty, now)).toBe(true)
+    expect(isFreshlyEmptied(full, now)).toBe(false)
+    expect(isFreshlyEmptied(old, now)).toBe(false)
+    expect(isFreshlyEmptied(dir, now)).toBe(false)
+    expect(isFreshlyEmptied(join(dir, 'missing.txt'), now)).toBe(false)
+  })
+})
+
+describe('describeCertificate', () => {
+  it('prefers the printable names and converts validity to milliseconds', () => {
+    const cert = {
+      fingerprint: 'sha256/abc',
+      subjectName: 'Ada Lovelace (work)',
+      issuerName: 'Zenium Demo CA',
+      serialNumber: '01',
+      validStart: 1_700_000_000,
+      validExpiry: 1_800_000_000,
+      subject: { commonName: 'ignored' },
+      issuer: { commonName: 'ignored' }
+    } as unknown as Certificate
+    expect(describeCertificate(cert)).toEqual({
+      fingerprint: 'sha256/abc',
+      subject: 'Ada Lovelace (work)',
+      issuer: 'Zenium Demo CA',
+      serialNumber: '01',
+      validFrom: 1_700_000_000_000,
+      validTo: 1_800_000_000_000
+    })
+    const bare = { ...cert, subjectName: '', issuerName: '' } as unknown as Certificate
+    expect(describeCertificate(bare)).toMatchObject({ subject: 'ignored', issuer: 'ignored' })
+  })
+})

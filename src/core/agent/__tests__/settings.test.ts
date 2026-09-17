@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { sanitizeAgentSettings } from '../settings'
 import { DEFAULT_AGENT_SETTINGS } from '../../../shared/defaults'
-import { AGENT_TOOLS, agentInstructions } from '../tools'
+import { AGENT_TOOLS, SCRIPTING_DISABLED, agentInstructions } from '../tools'
 import { AGENT_COLORS } from '../service'
 
 describe('sanitizeAgentSettings', () => {
@@ -32,6 +32,16 @@ describe('sanitizeAgentSettings', () => {
     const s = sanitizeAgentSettings({ enabled: 'yes' as never, lan: 1 as never })
     expect(s.enabled).toBe(DEFAULT_AGENT_SETTINGS.enabled)
     expect(s.lan).toBe(DEFAULT_AGENT_SETTINGS.lan)
+  })
+
+  it('keeps page scripting off unless the user turned it on', () => {
+    expect(DEFAULT_AGENT_SETTINGS.allowScripts).toBe(false)
+    expect(sanitizeAgentSettings(undefined).allowScripts).toBe(false)
+    expect(sanitizeAgentSettings({ enabled: true }).allowScripts).toBe(false)
+    expect(sanitizeAgentSettings({ allowScripts: 'true' as never }).allowScripts).toBe(false)
+    // A profile that stored an explicit choice keeps it when missing keys are filled in.
+    expect(sanitizeAgentSettings({ allowScripts: true }).allowScripts).toBe(true)
+    expect(sanitizeAgentSettings({ allowScripts: false }).allowScripts).toBe(false)
   })
 })
 
@@ -71,6 +81,14 @@ describe('tool registry', () => {
     expect(agentInstructions('background', true)).toContain('BACKGROUND')
     expect(agentInstructions('foreground', false)).toContain('disabled')
     expect(agentInstructions('foreground', true)).toContain('browser_evaluate')
+  })
+
+  it('tells agents where scripting is enabled while it is off', () => {
+    expect(SCRIPTING_DISABLED).toContain('Settings → AI Agents')
+    expect(agentInstructions('foreground', false)).toContain(SCRIPTING_DISABLED)
+    const evaluate = AGENT_TOOLS.find((t) => t.definition.name === 'browser_evaluate')
+    expect(evaluate?.definition.description).toContain('Off by default')
+    expect(evaluate?.definition.description).toContain('Settings → AI Agents')
   })
 })
 

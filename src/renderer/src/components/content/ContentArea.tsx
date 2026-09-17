@@ -128,7 +128,13 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
  * which keeps the stage – and the snapshot must not show through the grid behind them.
  */
 function overlayCoversContentBesidesStage(ui: UiState): boolean {
-  return ui.overlay !== 'none' || ui.urlbar.open || ui.drag !== null || ui.siteInfoOpen
+  return (
+    ui.overlay !== 'none' ||
+    ui.urlbar.open ||
+    ui.drag !== null ||
+    ui.siteInfoOpen ||
+    ui.securityPromptOpen
+  )
 }
 
 /**

@@ -87,6 +87,8 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
 
   installPageScript({
     trackMedia: true,
+    // The WebView blocks pop-ups itself; this script runs in the page's world and can see which.
+    reportBlockedPopups: true,
     send: (message) => bridge.postMessage(JSON.stringify({ token: TOKEN, ...message })),
     onFlags: (listener) => {
       onFlags = listener

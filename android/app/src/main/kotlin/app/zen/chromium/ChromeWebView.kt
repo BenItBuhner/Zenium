@@ -48,6 +48,10 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
             // The chrome is designed in CSS pixels; system font scaling would break its layout.
             textZoom = 100
             cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+            // The chrome places focus itself (the address field, a dialog's first field). With a
+            // keyboard attached the device is out of touch mode, and requestFocus() would otherwise
+            // hand focus to the first focusable node in the document instead.
+            setNeedInitialFocus(false)
         }
         setBackgroundColor(Color.TRANSPARENT)
         overScrollMode = OVER_SCROLL_NEVER

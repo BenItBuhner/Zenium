@@ -78,9 +78,17 @@
         </intent>
     </queries>
 
+    <!--
+      Browsing data stays on this device: no cloud backup, and (Android 12+, where allowBackup
+      alone does not cover it) no device-to-device transfer either. Nothing here needs restoring:
+      settings and profile are small and rebuilt or synced, while WebView cookies, storage,
+      downloads metadata, remembered permissions and the agent token must not leave the device.
+    -->
     <application
         android:name=".ZenApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:fullBackupContent="@xml/zenium_backup_rules"
+        android:dataExtractionRules="@xml/zenium_data_extraction_rules"
         android:hardwareAccelerated="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
