@@ -7,6 +7,8 @@
  * Android loads them straight into the tab's WebView. Reader articles and shared images live in
  * the core; hosts pass lookups so this module stays free of state.
  */
+import type { OverlayKind } from './types'
+
 export const ZEN_SCHEME = 'zen'
 
 /** An image shared into the browser (`zen://image?id=…`); the bytes live in the core. */
@@ -114,6 +116,25 @@ export type ReaderPageLookup = (id: string) => string | null
 
 /** Resolves `zen://image?id=…` to the image's `data:` URL (null once the image is gone). */
 export type ImagePageLookup = (id: string) => string | null
+
+/** `zen://` addresses that are chrome surfaces rather than documents, and the overlay each opens. */
+const OVERLAY_PAGES: Record<string, OverlayKind> = {
+  history: 'history',
+  settings: 'settings'
+}
+
+/**
+ * The chrome overlay a `zen://` address stands for (`zen://history` → the history page), or
+ * `null` for a real page. Navigating to one of these opens the overlay instead of loading.
+ */
+export function overlayForUrl(rawUrl: string): OverlayKind | null {
+  if (!rawUrl.startsWith(`${ZEN_SCHEME}://`)) return null
+  try {
+    return OVERLAY_PAGES[new URL(rawUrl).hostname] ?? null
+  } catch {
+    return null
+  }
+}
 
 /** HTML for any `zen://` URL (unknown hosts fall back to the blank page). */
 export function zenPageHtml(

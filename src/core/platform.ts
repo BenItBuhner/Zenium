@@ -16,6 +16,7 @@ import type {
   HapticKind,
   HostCapabilities,
   KeyBinding,
+  NavigationSnapshot,
   Platform as PlatformOs,
   Rect,
   ResourceSnapshot,
@@ -202,6 +203,15 @@ export interface TabView {
   canGoForward(): boolean
   goBack(): void
   goForward(): void
+  /** Jump to an entry of the back/forward stack (an index of `navigationEntries()`). */
+  goToIndex(index: number): void
+  /** The back/forward stack as URLs and titles, and which entry is current. */
+  navigationEntries(): NavigationSnapshot
+  /**
+   * Replace the back/forward stack with `snapshot` and load its current entry (a reopened tab
+   * gets its history back). Hosts that cannot rebuild the stack load the current URL instead.
+   */
+  restoreNavigation(snapshot: NavigationSnapshot): Promise<void>
   reload(ignoreCache: boolean): void
   stop(): void
   /** True once a document has committed (a view that only ever triggered a download has none). */
@@ -329,12 +339,14 @@ export interface MenuItemTemplate {
   enabled?: boolean
   checked?: boolean
   role?: MenuRole
+  /** A favicon (`data:` URL) shown before the label where the host's menus can (recently closed). */
+  icon?: string | null
   submenu?: MenuItemTemplate[]
   click?: () => void
 }
 
 export type MenuSource =
-  'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app' | 'bookmark'
+  'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app' | 'bookmark' | 'history'
 
 export interface MenuPopupOptions {
   source: MenuSource

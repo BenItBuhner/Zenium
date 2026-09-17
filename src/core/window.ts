@@ -98,6 +98,11 @@ export class ZenWindow {
     return this.closing
   }
 
+  /** Last known normal (non-maximised) bounds; what a reopened window comes back at. */
+  get bounds(): Rect | null {
+    return this.savedBounds
+  }
+
   // ---------------------------------------------------------------------------
   // Selection
   // ---------------------------------------------------------------------------
