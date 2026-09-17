@@ -6,4 +6,35 @@
     <string name="leave_page_message">Information you’ve entered may not be saved.</string>
     <string name="leave">Leave</string>
     <string name="stay">Stay</string>
+
+    <!-- Custom tabs (another app's link rendered by Zenium). Menu items are Title Case (v2 §9.1). -->
+    <string name="cct_close">Close</string>
+    <string name="cct_menu">Menu</string>
+    <string name="cct_secure">Secure connection</string>
+    <string name="cct_share">Share…</string>
+    <string name="cct_copy_link">Copy Link</string>
+    <string name="cct_reload">Reload</string>
+    <string name="cct_find_in_page">Find in Page</string>
+    <string name="cct_open_in_zenium">Open in Zenium</string>
+    <string name="cct_powered_by">Powered by Zenium</string>
+    <string name="cct_link_copied">Link copied</string>
+    <string name="cct_find_hint">Find in page</string>
+    <string name="cct_find_close">Close find bar</string>
+    <string name="cct_find_next">Next match</string>
+    <string name="cct_find_previous">Previous match</string>
+    <string name="cct_downloading">Downloading %1$s</string>
+    <string name="cct_permission_camera">Use your camera</string>
+    <string name="cct_permission_microphone">Use your microphone</string>
+    <string name="cct_permission_media">Use your camera and microphone</string>
+    <string name="cct_permission_location">Know your location</string>
+    <string name="cct_permission_protected_media">Play protected content</string>
+    <string name="cct_permission_message">%1$s wants to:</string>
+    <string name="cct_allow">Allow</string>
+    <string name="cct_block">Block</string>
+    <string name="cct_open_in_app">Open in %1$s?</string>
+    <string name="cct_open_in_another_app">Open in another app?</string>
+    <string name="cct_open">Open</string>
+    <string name="cct_not_now">Not now</string>
+    <string name="cct_no_app">No app can open this link</string>
+    <string name="cct_find_count">%1$d/%2$d</string>
 </resources>

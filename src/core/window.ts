@@ -2,6 +2,7 @@ import type {
   EventName,
   Events,
   FindResult,
+  FormFactor,
   GlanceState,
   HapticKind,
   LayoutReport,
@@ -13,6 +14,7 @@ import type {
 import type { Browser } from './browser'
 import type { PersistedWindow } from './state'
 import { getSpace, tabVisibleIn } from './model'
+import { formatWindowTitle } from '../shared/windowTitle'
 import type { WindowHost } from './platform'
 
 export interface WindowInit {
@@ -52,6 +54,11 @@ export class ZenWindow {
   compactEnabled: boolean
   compactSidebarPersistent = false
   htmlFullscreenTabId: string | null = null
+  /**
+   * The layout the chrome is showing, as it reports it (`window.formFactor`); the desktop layout
+   * until the chrome says otherwise. The app menu and the command list are built for it.
+   */
+  formFactor: FormFactor = 'desktop'
   lastFocusedAt = 0
   readonly initialBounds: Rect | null
   readonly initialMaximized: boolean
@@ -300,6 +307,12 @@ export class ZenWindow {
 
   send<K extends EventName>(name: K, payload: Events[K]): void {
     if (this.alive) this.host.send(name, payload)
+  }
+
+  /** Push the native window title (`<active tab title> - Zenium`) to the host; the host throttles. */
+  updateTitle(): void {
+    if (!this.alive) return
+    this.host.setTitle(formatWindowTitle(this.browser.tabs.activeTitleFor(this), this.isPrivate))
   }
 
   /** Whether the chrome currently covers the content (used by hosts for input routing). */

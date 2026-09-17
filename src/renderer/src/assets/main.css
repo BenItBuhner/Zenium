@@ -257,6 +257,26 @@
   }
 }
 
+/*
+ * A v2 secondary button (design-language-v2-draft §6): the control's height and radius from the
+ * density tokens (40 tall and radius 6 under a finger), the button weight, the text at 10 percent.
+ */
+.zen-v2-button {
+  height: var(--v2-control);
+  padding: 0 12px;
+  border-radius: var(--v2-radius-control);
+  background: var(--v2-fill);
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-button);
+  transition:
+    background 120ms var(--zen-ease),
+    transform 120ms var(--zen-ease);
+}
+.zen-v2-button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
 /* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME); zero on desktop. */
 :root {
   --zen-inset-top: 0px;
@@ -1380,6 +1400,175 @@
 }
 :root[data-form-factor='phone'] .zen-settings nav + div {
   padding: 12px;
+}
+
+@layer components {
+  /*
+   * The phone bar's controls (`BarButton`). One with nothing to do right now is drawn dimmed
+   * rather than disabled: it still takes the hold that opens the bar's editor.
+   */
+  .zen-toolbar-button[data-disabled] {
+    opacity: 0.3;
+  }
+  .zen-toolbar-button[data-disabled]:hover,
+  .zen-toolbar-button[data-disabled]:active {
+    background: transparent;
+    transform: none;
+    opacity: 0.3;
+  }
+  /* Reload and Stop share one slot: the glyph that is not current is faded out, never removed. */
+  .zen-glyph-swap > * {
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-glyph-swap > [data-shown='false'] {
+    opacity: 0;
+  }
+
+  /*
+   * The Tabs button's hold: a menu of two rows on the v2 draft's panel – neutral, a hairline
+   * edge at radius 8, the panel shadow – with the rows at the panel's radius minus its padding.
+   */
+  .zen-quick-menu {
+    padding: 4px;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-card);
+    background: var(--v2-panel);
+    box-shadow: var(--v2-shadow-panel);
+    color: var(--v2-text);
+    corner-shape: var(--zen-corner);
+  }
+  /* Rows at the phone's menu height, in Android's menu size (v2 §4: 14 at 400). */
+  .zen-quick-menu-item {
+    display: flex;
+    width: 100%;
+    height: var(--v2-menu-row);
+    align-items: center;
+    gap: 12px;
+    padding: 0 12px;
+    border-radius: calc(var(--v2-radius-card) - 4px);
+    color: var(--v2-text);
+    text-align: left;
+    font-size: 14px;
+    font-weight: var(--v2-weight-body);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-quick-menu-item:active:not(:disabled) {
+    background: var(--v2-fill);
+  }
+  .zen-quick-menu-item:disabled {
+    opacity: 0.4;
+  }
+
+  /*
+   * The bar's editor (`BarEditorSheet`), on the v2 draft: the dialog surface with a hairline
+   * edge at radius 12 in place of the tinted sheet, a 17/600 title, 44 px rows at 15/400, and a
+   * hairline under the header only once the rows have scrolled under it. Rows move per frame by
+   * transform alone. A row in the hand lifts to the dragged card's level – two percent larger,
+   * a touch translucent – and follows the finger while a caret marks where it will land.
+   */
+  .zen-sheet.zen-bar-editor {
+    border: 1px solid var(--v2-border);
+    border-bottom: 0;
+    border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
+    background: var(--v2-panel);
+    color: var(--v2-text);
+    backdrop-filter: none;
+    box-shadow: var(--v2-shadow-sheet);
+  }
+  /* Outranks the tinted sheet's dark shadow (v2 §3: dark adds nothing, the border is the edge). */
+  :root[data-theme='dark'] .zen-sheet.zen-bar-editor {
+    box-shadow: var(--v2-shadow-sheet);
+  }
+  .zen-bar-editor .zen-sheet-handle {
+    background: rgb(var(--v2-text-rgb) / 0.25);
+  }
+  .zen-bar-editor .zen-sheet-grip {
+    transition: box-shadow 120ms var(--zen-ease);
+  }
+  .zen-bar-editor[data-scrolled='true'] .zen-sheet-grip {
+    box-shadow: 0 1px 0 var(--v2-border);
+  }
+  .zen-bar-title {
+    font-size: var(--v2-font-heading);
+    font-weight: var(--v2-weight-heading);
+    line-height: 24px;
+    letter-spacing: -0.01em;
+  }
+  .zen-bar-row {
+    position: relative;
+    display: flex;
+    min-height: var(--v2-row);
+    align-items: center;
+    gap: 12px;
+    padding: 0 0 0 8px;
+    border-radius: var(--v2-radius-card);
+    corner-shape: var(--zen-corner);
+    color: var(--v2-text);
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
+    user-select: none;
+    -webkit-user-select: none;
+    transition:
+      background 120ms var(--zen-ease),
+      box-shadow 200ms var(--zen-ease),
+      opacity 120ms var(--zen-ease),
+      scale 120ms var(--zen-ease);
+  }
+  /* Row glyphs at the phone's stroke; the bar's own glyphs keep theirs. */
+  .zen-bar-row svg {
+    stroke-width: var(--v2-icon-stroke);
+  }
+  .zen-bar-row-pressable:active {
+    background: var(--v2-fill);
+  }
+  .zen-bar-row[data-held] {
+    z-index: 1;
+    background: var(--v2-panel);
+    box-shadow: var(--zen-shadow-2);
+    opacity: 0.9;
+    scale: 1.02;
+  }
+  /* A touch that starts on the handle is a drag from the first pixel, never a scroll. */
+  .zen-bar-handle {
+    color: var(--v2-text-deemphasized);
+    touch-action: none;
+  }
+  /* Where the held row will land: a 2 px accent line between rows, moved on the spring. */
+  .zen-bar-caret {
+    position: absolute;
+    top: -1px;
+    left: 8px;
+    right: 8px;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--v2-accent);
+    pointer-events: none;
+    will-change: transform;
+  }
+  .zen-bar-heading {
+    padding: 8px 12px 2px;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+  }
+  .zen-bar-caption {
+    padding: 0 12px 6px;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-bar-note {
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+  }
+}
+
+/* The editor draws a hairline when its rows scroll under the header; the fading edge would say the same twice. */
+.zen-bar-editor [data-fade-axis='y'] {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

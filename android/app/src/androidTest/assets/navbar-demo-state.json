@@ -1,0 +1,90 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_work",
+  "spaces": [
+    {
+      "id": "space_work",
+      "name": "Work",
+      "icon": "💼",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          { "c": [96, 110, 235], "x": 0.3, "y": 0.35, "isPrimary": true },
+          { "c": [214, 92, 160], "x": 0.7, "y": 0.65 }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 40
+      },
+      "tabIds": ["tab_example", "tab_tea", "tab_rfc", "tab_coffee"],
+      "activeTabId": "tab_example",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [],
+  "tabs": [
+    {
+      "id": "tab_example",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://example.com/",
+      "title": "Example Domain",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_tea",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://en.wikipedia.org/wiki/Tea",
+      "title": "Tea - Wikipedia",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_rfc",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://www.rfc-editor.org/rfc/rfc2324.html",
+      "title": "RFC 2324: Hyper Text Coffee Pot Control Protocol (HTCPCP/1.0)",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_coffee",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://en.wikipedia.org/wiki/Coffee",
+      "title": "Coffee - Wikipedia",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "updates": { "autoCheck": false, "autoDownload": false, "channel": "stable" }
+  },
+  "shortcutOverrides": {},
+  "bookmarks": [],
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_work",
+      "selection": { "space_work": "tab_example" },
+      "compact": false
+    }
+  ]
+}

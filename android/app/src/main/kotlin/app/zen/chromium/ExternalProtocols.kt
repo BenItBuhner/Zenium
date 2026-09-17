@@ -13,9 +13,10 @@ import android.widget.Toast
  * navigation is held here while the core decides (a remembered "always allow", or the confirm
  * sheet in the chrome); `externalProtocol.respond` then starts the app or drops the request. The
  * same sheet offers a site's own app for a web address it claims without being verified for it
- * (`AppLinks`), in which case the page loads regardless of the answer.
+ * (`AppLinks`), in which case the page loads regardless of the answer. In the browser window the
+ * host is the core in the chrome; a custom tab answers the request natively (see `CustomTabHost`).
  */
-class ExternalProtocols(private val host: Host) {
+class ExternalProtocols(private val host: PageHost) {
     private class Pending(
         val tab: TabWebView,
         val url: String,
@@ -51,7 +52,7 @@ class ExternalProtocols(private val host: Host) {
         val fallbackUrl = intent?.getStringExtra(EXTRA_FALLBACK_URL)?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
         intent?.removeExtra(EXTRA_FALLBACK_URL)
         pending[id] = Pending(tab, url, intent, fallbackUrl, null)
-        host.chrome.hostEvent(
+        host.hostEvent(
             "externalProtocol.request",
             json(
                 "requestId" to id,
@@ -86,7 +87,7 @@ class ExternalProtocols(private val host: Host) {
     private fun offer(tab: TabWebView, url: String, candidate: AppLinks.Probe.Candidate, site: String) {
         val id = "ext-${++seq}"
         pending[id] = Pending(tab, url, candidate.intent, null, site)
-        host.chrome.hostEvent(
+        host.hostEvent(
             "externalProtocol.request",
             json(
                 "requestId" to id,

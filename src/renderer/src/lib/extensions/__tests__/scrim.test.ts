@@ -11,6 +11,8 @@ const quiet: ScrimInput = {
   menu: null,
   siteInfoOpen: false,
   externalProtocol: null,
+  barEditorOpen: false,
+  tabsMenu: null,
   stageActive: false,
   extensionPrompts: [],
   extensionPopup: null,
@@ -65,6 +67,10 @@ describe('extensionChromeScrim', () => {
     expect(extensionChromeScrim({ ...withPanel, drag: { tabId: 't', x: 0, y: 0 } })).toBeNull()
     expect(
       extensionChromeScrim({ ...withPanel, urlbar: { ...quiet.urlbar, open: true } })
+    ).toBeNull()
+    expect(extensionChromeScrim({ ...withPanel, barEditorOpen: true })).toBeNull()
+    expect(
+      extensionChromeScrim({ ...withPanel, tabsMenu: { x: 0, y: 0, width: 44, height: 44 } })
     ).toBeNull()
     expect(
       extensionChromeScrim({ ...quiet, extensionPrompts: [prompt], overlay: 'settings' })

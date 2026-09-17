@@ -930,35 +930,48 @@ export class Menus {
     return bookmarks.roots().map((root) => ({ label: root.title, submenu: build(root.id) }))
   }
 
-  /** The "⋯" application menu in the toolbar (Firefox's hamburger menu). */
+  /**
+   * The "⋯" application menu in the toolbar (Firefox's hamburger menu). One list for every
+   * layout: an item the host cannot do is left out (`caps`), and the phone layout – which has no
+   * sidebar, window frame or keyboard to speak of – also drops the items that only act on those
+   * (Chrome's phone menu has none of them either). The desktop menu is unchanged by this: its
+   * host has every capability the items ask for.
+   */
   showAppMenu(win: ZenWindow): void {
     const { state, tabs } = this.browser
     const caps = state.capabilities
     const active = tabs.activeTabFor(win)
     const local = Boolean(win.localSpace)
+    const phone = win.formFactor === 'phone'
+    /** Items the host must be able to act on; left out rather than greyed where it cannot. */
+    const when = (able: boolean, ...items: Template): Template => (able ? items : [])
+    /** Items of the sidebar layouts (desktop and tablet) only. */
+    const desktop = (...items: Template): Template => (phone ? [] : items)
     this.popup(
       [
         {
           label: 'New Tab',
           click: () => this.browser.emit('urlbar.toggle', { mode: 'new-tab' }, win)
         },
-        ...(local
-          ? []
-          : [{ label: 'New Space…', click: () => this.browser.emit('space.new', undefined, win) }]),
+        // Phone slot: "New Private Tab" goes here once Android has private tabs (Chrome: New
+        // Incognito tab, second item).
+        ...when(!local, {
+          label: 'New Space…',
+          click: () => this.browser.emit('space.new', undefined, win)
+        }),
         { type: 'separator' },
-        ...(caps.windows
-          ? [
-              { label: 'New Window', click: () => this.browser.openWindow('synced', win) },
-              {
-                label: 'New Blank Window',
-                click: () => this.browser.openWindow('unsynced', win)
-              },
-              {
-                label: 'New Private Window',
-                click: () => this.browser.openWindow('private', win)
-              }
-            ]
-          : []),
+        ...when(
+          caps.windows,
+          { label: 'New Window', click: () => this.browser.openWindow('synced', win) },
+          {
+            label: 'New Blank Window',
+            click: () => this.browser.openWindow('unsynced', win)
+          },
+          {
+            label: 'New Private Window',
+            click: () => this.browser.openWindow('private', win)
+          }
+        ),
         { type: 'separator' },
         {
           label: 'Bookmarks',
@@ -989,29 +1002,26 @@ export class Menus {
           label: 'History',
           click: () => this.browser.emit('overlay.open', { kind: 'history' }, win)
         },
+        // Phone slot: "Recent Tabs" (tabs open on other devices, from sync) goes here.
         {
           label: 'Downloads',
           click: () => this.browser.emit('overlay.open', { kind: 'downloads' }, win)
         },
-        {
+        ...when(caps.extensions, {
           label: 'Add-ons and Themes',
           click: () => this.browser.emit('overlay.open', { kind: 'addons' }, win)
-        },
+        }),
         { type: 'separator' },
-        {
+        ...desktop({
           label: 'Compact Mode',
           type: 'checkbox',
           checked: win.compactEnabled,
           click: () => this.browser.toggleCompactMode(win)
-        },
-        ...(local
-          ? []
-          : [
-              {
-                label: 'Change Theme…',
-                click: () => this.browser.emit('theme.open', { spaceId: win.activeSpaceId }, win)
-              }
-            ]),
+        }),
+        ...when(!local, {
+          label: 'Change Theme…',
+          click: () => this.browser.emit('theme.open', { spaceId: win.activeSpaceId }, win)
+        }),
         {
           label: 'Zoom',
           submenu: [
@@ -1032,12 +1042,12 @@ export class Menus {
             }
           ]
         },
-        {
+        ...desktop({
           label: 'Fullscreen',
           type: 'checkbox',
           checked: win.host.isFullScreen(),
           click: () => this.browser.toggleFullscreen(win)
-        },
+        }),
         { type: 'separator' },
         {
           label: 'Find in Page…',
@@ -1049,21 +1059,17 @@ export class Menus {
           enabled: Boolean(active) && this.browser.reader.canRead(active),
           click: () => active && this.browser.reader.toggle(active.id, win)
         },
-        ...(caps.share
-          ? [
-              {
-                label: 'Share…',
-                enabled: Boolean(active) && /^https?:/i.test(active!.url),
-                click: () => active && this.browser.shareTab(active.id, win)
-              }
-            ]
-          : []),
-        {
+        ...when(caps.share, {
+          label: 'Share…',
+          enabled: Boolean(active) && /^https?:/i.test(active!.url),
+          click: () => active && this.browser.shareTab(active.id, win)
+        }),
+        ...when(caps.print, {
           label: 'Print…',
-          enabled: Boolean(active) && caps.print,
+          enabled: Boolean(active),
           click: () =>
             active && this.browser.actions.run('page.print', { sourceTabId: active.id, win })
-        },
+        }),
         {
           label: 'Save Page As…',
           enabled: Boolean(active),
@@ -1076,60 +1082,51 @@ export class Menus {
           click: () =>
             active && this.browser.actions.run('page.screenshot', { sourceTabId: active.id, win })
         },
+        // Phone slots: "Add to Home Screen" (W1-7) and the "Desktop Site" checkbox (W1-8) go
+        // here, closing the page group as they do in Chrome.
         { type: 'separator' },
-        ...((caps.resourceGovernor
-          ? [
-              {
-                label: 'Resources',
-                submenu: [
-                  {
-                    label: `Memory ${Math.round(state.resources.memory.used)} MB · CPU ${Math.round(state.resources.cpu.used)}% · ${state.resources.loadedTabs} live, ${state.resources.frozenTabs} frozen`,
-                    enabled: false
-                  },
-                  { type: 'separator' },
-                  { label: 'Free Up Memory Now', click: () => void this.browser.governor.trim() },
-                  {
-                    label: 'Freeze Other Tabs',
-                    click: () => void this.browser.governor.freezeOthers()
-                  },
-                  { label: 'Wake All Tabs', click: () => void this.browser.governor.wakeAll() },
-                  { type: 'separator' },
-                  {
-                    label: 'Resource Settings…',
-                    click: () =>
-                      this.browser.emit(
-                        'overlay.open',
-                        { kind: 'settings', section: 'resources' },
-                        win
-                      )
-                  }
-                ]
-              }
-            ]
-          : []) as Template),
-        {
+        ...when(caps.resourceGovernor, {
+          label: 'Resources',
+          submenu: [
+            {
+              label: `Memory ${Math.round(state.resources.memory.used)} MB · CPU ${Math.round(state.resources.cpu.used)}% · ${state.resources.loadedTabs} live, ${state.resources.frozenTabs} frozen`,
+              enabled: false
+            },
+            { type: 'separator' },
+            { label: 'Free Up Memory Now', click: () => void this.browser.governor.trim() },
+            {
+              label: 'Freeze Other Tabs',
+              click: () => void this.browser.governor.freezeOthers()
+            },
+            { label: 'Wake All Tabs', click: () => void this.browser.governor.wakeAll() },
+            { type: 'separator' },
+            {
+              label: 'Resource Settings…',
+              click: () =>
+                this.browser.emit('overlay.open', { kind: 'settings', section: 'resources' }, win)
+            }
+          ]
+        }),
+        ...desktop({
           label: 'Keyboard Shortcuts',
           click: () => this.browser.emit('overlay.open', { kind: 'shortcuts' }, win)
-        },
+        }),
         {
           label: 'Settings',
           click: () => this.browser.emit('overlay.open', { kind: 'settings' }, win)
         },
-        ...(caps.devtools
-          ? [
-              {
-                label: 'Developer Tools',
-                enabled: Boolean(active),
-                click: () => active && tabs.toggleDevtools(active.id)
-              }
-            ]
-          : []),
+        ...when(caps.devtools, {
+          label: 'Developer Tools',
+          enabled: Boolean(active),
+          click: () => active && tabs.toggleDevtools(active.id)
+        }),
         { type: 'separator' },
         { label: `About Zenium ${state.version}`, enabled: false },
-        {
+        // An Android app is left, not quit: the system owns its lifetime.
+        ...desktop({
           label: 'Quit',
           click: () => this.browser.actions.run('app.quit', { sourceTabId: null, win })
-        }
+        })
       ],
       win,
       'app'

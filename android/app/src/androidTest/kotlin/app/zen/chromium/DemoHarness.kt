@@ -143,10 +143,10 @@ abstract class DemoHarness(
         )
     }
 
-    private class Insets(val windowWidth: Int, val windowHeight: Int, val top: Int, val bottom: Int)
+    protected class Insets(val windowWidth: Int, val windowHeight: Int, val top: Int, val bottom: Int)
 
     /** The window and its system bar insets – the same numbers the chrome lays itself out with. */
-    private fun windowInsets(): Insets {
+    protected fun windowInsets(): Insets {
         var result = Insets(0, 0, 0, 0)
         instrumentation.runOnMainSync {
             val root = activity.window.decorView
@@ -250,7 +250,8 @@ abstract class DemoHarness(
 
     private fun findNode(label: String): AccessibilityNodeInfo? = findNode { it == label }
 
-    private fun findNode(matches: (String) -> Boolean): AccessibilityNodeInfo? {
+    /** The first node (breadth-first) whose label or text satisfies `matches`, with its state. */
+    protected fun findNode(matches: (String) -> Boolean): AccessibilityNodeInfo? {
         val root = ui.rootInActiveWindow ?: return null
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)

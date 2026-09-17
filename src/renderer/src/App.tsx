@@ -4,7 +4,7 @@ import type { UIState } from '@shared/types'
 import type { ResolvedTheme } from '@shared/theme'
 import { run } from '@renderer/lib/api'
 import { closeExtensionPopup } from '@renderer/lib/extensions/popup'
-import { isPhone, useViewport } from '@renderer/lib/formFactor'
+import { isPhone, useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   captureActiveTab,
@@ -39,6 +39,7 @@ export function App(): JSX.Element {
   const state = useBrowser()
   const viewport = useViewport()
   const theme = useTheme(state, viewport.formFactor)
+  useFormFactorReport(viewport.formFactor)
   useMainEvents()
   useGlobalKeys(state)
   useNewTabEvent(state)
