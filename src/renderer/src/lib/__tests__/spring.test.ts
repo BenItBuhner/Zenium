@@ -86,4 +86,15 @@ describe('stepSpring', () => {
     const back = simulate(caught, 0, SPRING_SNAPPY)
     expect(back[back.length - 1]).toEqual({ x: 0, v: 0 })
   })
+
+  it('rests by px thresholds: a spring over a 0…1 progress would snap the last 40%', () => {
+    // Why the FLIP tracker and the exit of a closed card run their springs over a distance in
+    // px and divide back: on a unit scale the rest thresholds are met almost at once.
+    const unit = simulate({ x: 1, v: 0 }, 0, SPRING_SNAPPY)
+    expect(unit.length).toBeLessThan(10)
+    expect(unit[unit.length - 2].x).toBeGreaterThan(0.3)
+    const px = simulate({ x: 190, v: 0 }, 0, SPRING_SNAPPY)
+    expect(px.length).toBeGreaterThan(15)
+    expect(px[px.length - 2].x).toBeLessThan(1)
+  })
 })

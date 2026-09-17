@@ -965,6 +965,129 @@ export class Menus {
     return bookmarks.roots().map((root) => ({ label: root.title, submenu: build(root.id) }))
   }
 
+  /** Firefox's "Recently Closed Tabs / Windows" as one submenu: newest first, ten at most. */
+  private recentlyClosedSubmenu(win: ZenWindow): MenuItemTemplate {
+    const { session } = this.browser
+    const entries = session.summaries().slice(0, 10)
+    if (entries.length === 0) return { label: 'Recently Closed', enabled: false, submenu: [] }
+    const items: Template = entries.map((e) => ({
+      label:
+        e.kind === 'window'
+          ? `Reopen Window – ${clip(e.title, 40)} (${e.tabCount} ${e.tabCount === 1 ? 'tab' : 'tabs'})`
+          : clip(e.title || (e.url ? displayUrl(e.url) : 'Untitled'), 60),
+      icon: e.favicon,
+      click: () => session.restoreClosed(e.id, win)
+    }))
+    return {
+      label: 'Recently Closed',
+      submenu: [
+        ...items,
+        { type: 'separator' },
+        { label: 'Restore All', click: () => session.restoreAll(win) },
+        { label: 'Clear List', click: () => session.clearRecentlyClosed() }
+      ]
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // History page
+  // ---------------------------------------------------------------------------
+
+  /** Context menu of one visit on the history page. */
+  showHistoryContextMenu(visitId: string, url: string, win: ZenWindow): void {
+    const { tabs, history, state } = this.browser
+    const caps = state.capabilities
+    const host = getDomain(url)
+    this.popup(
+      [
+        {
+          label: 'Open in New Tab',
+          click: () => tabs.createTab({ url, active: true }, win)
+        },
+        ...(caps.windows
+          ? [
+              {
+                label: 'Open in New Window',
+                click: () => this.browser.openUrlInWindow(url, 'synced', win)
+              },
+              {
+                label: 'Open in New Private Window',
+                click: () => this.browser.openUrlInWindow(url, 'private', win)
+              }
+            ]
+          : []),
+        { type: 'separator' },
+        { label: 'Copy Link', click: () => this.browser.platform.clipboard.writeText(url) },
+        { type: 'separator' },
+        { label: 'Remove from History', click: () => history.deleteVisits([visitId]) },
+        {
+          label: 'Forget About This Page',
+          click: () => history.deleteUrls([url])
+        },
+        { type: 'separator' },
+        {
+          label: 'More from This Site',
+          enabled: Boolean(host),
+          click: () =>
+            this.browser.emit('overlay.open', { kind: 'history', section: `host:${host}` }, win)
+        }
+      ],
+      win,
+      'history'
+    )
+  }
+
+  /**
+   * The tab's back/forward stack, from a long press or right click on the back / forward
+   * button: up to ten entries around the current one (forward entries on top, like Firefox),
+   * the current entry checked, and "Show Full History". A menu rather than a chrome panel
+   * because on desktop only native popups draw above the page views.
+   */
+  showNavigationMenu(tabId: string, win: ZenWindow): void {
+    const { tabs, history } = this.browser
+    const { entries, index } = tabs.navigationEntries(tabId)
+    const window = navigationWindow(entries.length, index, NAVIGATION_MENU_MAX)
+    const items: Template = []
+    for (let i = window.end - 1; i >= window.start; i -= 1) {
+      const entry = entries[i]
+      const current = i === index
+      items.push({
+        label: clip(entry.title || displayUrl(entry.url), 60),
+        type: current ? 'checkbox' : 'normal',
+        checked: current || undefined,
+        icon: current ? null : history.faviconFor(entry.url),
+        click: current ? undefined : () => tabs.goToIndex(tabId, i)
+      })
+    }
+    this.popup(
+      [
+        ...items,
+        { type: 'separator' },
+        {
+          label: 'Show Full History',
+          click: () => this.browser.emit('overlay.open', { kind: 'history' }, win)
+        }
+      ],
+      win,
+      'history'
+    )
+  }
+
+  /** Menu of a day heading on the history page. */
+  showHistoryDayMenu(dayKey: string, count: number, win: ZenWindow): void {
+    const { history } = this.browser
+    this.popup(
+      [
+        {
+          label: `Delete This Day (${count} ${count === 1 ? 'visit' : 'visits'})`,
+          click: () => history.deleteDay(dayKey)
+        }
+      ],
+      win,
+      'history'
+    )
+  }
+
   /**
    * The "⋯" application menu in the toolbar (Firefox's hamburger menu). One list for every
    * layout: an item the host cannot do is left out (`caps`), and the phone layout – which has no
@@ -1038,6 +1161,7 @@ export class Menus {
           click: () => this.browser.emit('overlay.open', { kind: 'history' }, win)
         },
         // Phone slot: "Recent Tabs" (tabs open on other devices, from sync) goes here.
+        ...desktop(this.recentlyClosedSubmenu(win)),
         {
           label: 'Downloads',
           click: () => this.browser.emit('overlay.open', { kind: 'downloads' }, win)
@@ -1171,4 +1295,31 @@ export class Menus {
   describe(url: string): string {
     return displayUrl(url)
   }
+}
+
+/** Menu labels have no room for long page titles. */
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text
+}
+
+/** Entries the back/forward list shows at most. */
+export const NAVIGATION_MENU_MAX = 10
+
+/**
+ * The `[start, end)` slice of a back/forward stack of `length` entries to list around `index`:
+ * at most `max` entries, the current one kept in view, biased towards the back entries when
+ * the stack is longer than the list (that is what the button is mostly used for).
+ */
+export function navigationWindow(
+  length: number,
+  index: number,
+  max: number
+): { start: number; end: number } {
+  if (length <= max) return { start: 0, end: length }
+  const current = Math.max(0, Math.min(index, length - 1))
+  const forward = Math.min(length - 1 - current, Math.floor((max - 1) / 3))
+  let start = current + forward - (max - 1)
+  if (start < 0) start = 0
+  const end = Math.min(length, start + max)
+  return { start: Math.max(0, end - max), end }
 }

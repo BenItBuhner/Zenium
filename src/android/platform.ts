@@ -1,5 +1,13 @@
-import type { EventName, Events, HapticKind, HostCapabilities, ShareAction } from '@shared/types'
-import { PRIVATE_CONTAINER_ID } from '@shared/types'
+import type {
+  DownloadItem,
+  EventName,
+  Events,
+  HapticKind,
+  HostCapabilities,
+  ShareAction
+} from '@shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
+import { resolveDownloadSettings } from '@shared/downloads'
 import { newId } from '@shared/ids'
 import type { SharedIntent } from '@shared/shareTarget'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '@shared/updates'
@@ -10,6 +18,8 @@ import type { ZenWindow } from '@core/window'
 import type {
   AgentTransport,
   AppHost,
+  BlockingHost,
+  BundledFilterList,
   ClipboardHost,
   DialogHost,
   DownloadHost,
@@ -33,6 +43,8 @@ import type {
 import { KeyWrapError, type KeyWrapFailure } from '@core/platform'
 import { PBKDF2_PARAMS, deriveWithWebCrypto } from '@core/credentials/kdf'
 import { fromBase64, toBase64 } from '@core/credentials/crypto'
+import type { RuleSet } from '@core/blocking/rules'
+import { INDEX_FILE } from '@core/blocking/store'
 import readabilityJs from '@mozilla/readability/Readability.js?raw'
 import readabilityReaderableJs from '@mozilla/readability/Readability-readerable.js?raw'
 import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
@@ -64,7 +76,9 @@ export function androidCapabilities(sdkInt: number): HostCapabilities {
     clipboardChip: sdkInt >= CLIPBOARD_CHIP_SDK,
     appLinkSettings: true,
     pullToRefresh: true,
-    passwords: true
+    passwords: true,
+    defaultBrowser: true,
+    requestBlocking: true
   }
 }
 
@@ -161,23 +175,45 @@ export interface HostEventPayloads {
   'download.started': {
     token: string
     url: string
+    referrer: string
     filename: string
     totalBytes: number
     mimeType: string
     sourceTabId: string | null
+    /** Container of the WebView the download came from (its profile); private follows from it. */
+    containerId: string
+    /** Set when Kotlin continues an interrupted record after a restart or retries one (the record's id). */
+    resumes?: string
+    savePath?: string
+    canResume?: boolean
   }
   'download.progress': {
     token: string
     receivedBytes: number
     totalBytes: number
     state: 'progressing' | 'paused' | 'interrupted'
+    canResume?: boolean
+    etag?: string
+    lastModified?: string
+    savePath?: string
+    /** The name the file is actually written under (MediaStore may have made it unique). */
+    finalName?: string
+    mimeType?: string
+    error?: string
   }
   'download.done': {
     token: string
     state: 'completed' | 'cancelled' | 'interrupted'
     savePath: string
-    filename: string
+    finalName: string
+    receivedBytes?: number
+    totalBytes?: number
+    canResume?: boolean
+    error?: string
+    mimeType?: string
   }
+  /** Pause / Resume / Cancel pressed on the download's system notification. */
+  'download.action': { id: string; op: 'pause' | 'resume' | 'cancel' }
   'permission.request': { requestId: string; permission: string; url: string }
   'view.adopt': { viewId: string; parentTabId: string | null; active: boolean }
   /** An HTTP request reached the Kotlin MCP socket server; answered with `agent.reply`. */
@@ -446,24 +482,82 @@ export class AndroidWindowHost implements WindowHost {
   }
 }
 
-class AndroidStoreIO implements StoreIO {
+/**
+ * The root documents (and the small rule-set index) arrive with the boot payload and are
+ * mirrored in memory; documents in a folder – the filter lists' text under `blocking/`, megabytes
+ * each – stay on disk and are read through the bridge when asked for.
+ */
+export class AndroidStoreIO implements StoreIO {
   constructor(
     private readonly bridge: Bridge,
     private readonly files: Record<string, string>
   ) {}
 
+  private mirrored(name: string): boolean {
+    return !name.includes('/') || name === INDEX_FILE || name in this.files
+  }
+
   readSync(name: string): string | null {
-    return this.files[name] ?? null
+    const cached = this.files[name]
+    if (cached !== undefined) return cached
+    if (!name.includes('/')) return null
+    return this.bridge.callSync<string | null | undefined>('storage.read', { name }) ?? null
+  }
+
+  exists(name: string): boolean {
+    if (name in this.files) return true
+    return this.bridge.callSync<boolean | undefined>('storage.exists', { name }) === true
   }
 
   async write(name: string, text: string): Promise<void> {
-    this.files[name] = text
+    if (this.mirrored(name)) this.files[name] = text
     await this.bridge.call('storage.write', { name, text })
   }
 
   writeSync(name: string, text: string): void {
-    this.files[name] = text
+    if (this.mirrored(name)) this.files[name] = text
     this.bridge.callSync('storage.writeSync', { name, text })
+  }
+
+  async remove(name: string): Promise<void> {
+    delete this.files[name]
+    await this.bridge.call('storage.remove', { name })
+  }
+}
+
+/** The bundled filter-list snapshot lives in the APK's assets; Kotlin copies it into the profile. */
+class AndroidBlockingHost implements BlockingHost {
+  constructor(private readonly bridge: Bridge) {}
+
+  async bundledLists(): Promise<BundledFilterList[]> {
+    const raw = await this.bridge.call<unknown[] | null>('blocking.bundled')
+    if (!Array.isArray(raw)) return []
+    return raw.flatMap((l) => {
+      const list = bundledListFrom(l)
+      return list ? [list] : []
+    })
+  }
+
+  async installBundled(set: RuleSet, file: string): Promise<BundledFilterList | null> {
+    return bundledListFrom(await this.bridge.call<unknown>('blocking.install', { set, file }))
+  }
+}
+
+/** Kotlin's description of a bundled list, checked field by field. */
+export function bundledListFrom(raw: unknown): BundledFilterList | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  if (
+    typeof o.id !== 'string' ||
+    typeof o.builtAt !== 'number' ||
+    typeof o.filterCount !== 'number'
+  )
+    return null
+  return {
+    id: o.id,
+    version: typeof o.version === 'string' ? o.version : null,
+    builtAt: o.builtAt,
+    filterCount: o.filterCount
   }
 }
 
@@ -490,6 +584,7 @@ export class AndroidPlatform implements Platform {
   readonly siteData: AndroidSiteData
   readonly externalProtocols: ExternalProtocolHost
   readonly passwords: PasswordsHost
+  readonly blocking: BlockingHost
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
@@ -508,6 +603,7 @@ export class AndroidPlatform implements Platform {
     this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null, boot.packageName ?? null)
     this.views = new AndroidTabViewHost(bridge)
     this.siteData = new AndroidSiteData(bridge)
+    this.blocking = new AndroidBlockingHost(bridge)
     this.menus = new RendererMenuHost()
     this.windows = {
       create: (win: ZenWindow): WindowHost => {
@@ -551,17 +647,41 @@ export class AndroidPlatform implements Platform {
         return { ok: result.ok, status: result.status ?? (result.ok ? 200 : 0), text: result.text }
       }
     }
+    // Kotlin owns the transfers (`Downloads.kt`); records and decisions stay in the core.
+    const describe = (item: DownloadItem): Record<string, string | number | boolean> => ({
+      id: item.id,
+      url: item.url,
+      referrer: item.referrer,
+      savePath: item.savePath,
+      filename: item.filename,
+      finalName: item.finalName,
+      mimeType: item.mimeType,
+      totalBytes: item.totalBytes,
+      etag: item.etag,
+      lastModified: item.lastModified,
+      containerId: item.containerId,
+      private: item.private
+    })
     this.downloads = {
       pause: (id) => bridge.send('download.pause', { id }),
-      resume: (id) => bridge.send('download.resume', { id }),
+      resume: (item) => bridge.send('download.resume', describe(item)),
       cancel: (id) => bridge.send('download.cancel', { id }),
+      retry: (item) => bridge.send('download.retry', describe(item)),
+      // The downloader's own notification announces the finished file, so the setting rides along.
+      release: (item, options) =>
+        bridge.call<{ savePath: string; finalName: string } | null>('download.release', {
+          ...describe(item),
+          notify: options.notify
+        }),
+      deletePartial: (item) => bridge.call('download.discard', describe(item)),
       open: (item) =>
         bridge.call('download.open', {
           id: item.id,
           savePath: item.savePath,
           mimeType: item.mimeType
         }),
-      showInFolder: () => bridge.send('download.showAll')
+      showInFolder: () => bridge.send('download.showAll'),
+      chooseDirectory: () => bridge.call<string | null>('download.chooseDirectory')
     }
     this.sessions = {
       clearContainerData: (containerId) => bridge.call('profile.clear', { containerId }),
@@ -572,7 +692,11 @@ export class AndroidPlatform implements Platform {
       relaunch: () => bridge.send('app.quit'),
       lastWindowClosed: () => undefined,
       // Kotlin flips the launcher alias that carries this colour (LauncherIcon.kt).
-      setAppIcon: (id) => bridge.send('app.setIcon', { id })
+      setAppIcon: (id) => bridge.send('app.setIcon', { id }),
+      // Kotlin reads the browser role (RoleManager on Android 10+, the http handler before that).
+      isDefaultBrowser: () => bridge.call<boolean | null>('app.isDefaultBrowser'),
+      // Resolves when the role dialog / default-apps screen hands control back to the app.
+      requestDefaultBrowser: () => bridge.call<boolean | null>('app.requestDefaultBrowser')
     }
     this.events.send('insets', boot.insets)
   }
@@ -670,15 +794,36 @@ export class AndroidPlatform implements Platform {
         return
       case 'download.started': {
         const p = payload as HostEventPayloads['download.started']
+        const containerId = p.containerId || DEFAULT_CONTAINER_ID
         const record = browser.downloads.begin({
           url: p.url,
+          referrer: p.referrer,
           filename: p.filename,
           totalBytes: p.totalBytes,
-          mimeType: p.mimeType
+          mimeType: p.mimeType,
+          savePath: p.savePath,
+          sourceTabId: p.sourceTabId,
+          userGesture: null,
+          canResume: p.canResume,
+          containerId,
+          private: containerId === PRIVATE_CONTAINER_ID,
+          resumes: p.resumes
         })
         this.downloadTokens.set(p.token, record.id)
-        this.bridge.send('download.bind', { token: p.token, id: record.id })
-        browser.onDownloadStarted(p.sourceTabId)
+        // Where the file goes: the system save dialog, the folder from Settings, or the default.
+        const settings = resolveDownloadSettings(browser.state.settings)
+        const destination = settings.askWhereToSave
+          ? { mode: 'ask' }
+          : settings.directory
+            ? { mode: 'folder', folder: settings.directory }
+            : { mode: 'default' }
+        this.bridge.send('download.bind', {
+          token: p.token,
+          id: record.id,
+          destination,
+          private: record.private
+        })
+        if (!p.resumes) browser.onDownloadStarted(p.sourceTabId)
         return
       }
       case 'download.progress': {
@@ -688,7 +833,14 @@ export class AndroidPlatform implements Platform {
           browser.downloads.progress(id, {
             receivedBytes: p.receivedBytes,
             totalBytes: p.totalBytes,
-            state: p.state
+            state: p.state,
+            canResume: p.canResume,
+            etag: p.etag,
+            lastModified: p.lastModified,
+            savePath: p.savePath || undefined,
+            finalName: p.finalName || undefined,
+            mimeType: p.mimeType || undefined,
+            error: p.error
           })
         return
       }
@@ -696,8 +848,28 @@ export class AndroidPlatform implements Platform {
         const p = payload as HostEventPayloads['download.done']
         const id = this.downloadTokens.get(p.token)
         this.downloadTokens.delete(p.token)
-        if (id)
-          browser.downloads.finish(id, p.state, { savePath: p.savePath, filename: p.filename })
+        if (!id) return
+        if (p.state === 'cancelled' && p.error === 'dismissed') {
+          // The save dialog was dismissed: no download happened, so no record either.
+          browser.downloads.remove(id)
+          return
+        }
+        browser.downloads.finish(id, p.state, {
+          savePath: p.savePath,
+          finalName: p.finalName,
+          receivedBytes: p.receivedBytes,
+          totalBytes: p.totalBytes,
+          canResume: p.canResume,
+          error: p.error,
+          mimeType: p.mimeType || undefined
+        })
+        return
+      }
+      case 'download.action': {
+        const p = payload as HostEventPayloads['download.action']
+        if (p.op === 'pause') browser.downloads.pause(p.id)
+        else if (p.op === 'resume') browser.downloads.resume(p.id)
+        else browser.downloads.cancel(p.id)
         return
       }
       case 'permission.request': {

@@ -5,6 +5,9 @@
 export const BLANK_URL = 'zen://blank'
 export const ERROR_URL_PREFIX = 'zen://error'
 export const READER_URL_PREFIX = 'zen://reader'
+/** The history page: a chrome surface, not a document (see `overlayForUrl` in zenPages). */
+export const HISTORY_URL = 'zen://history'
+export const SETTINGS_URL = 'zen://settings'
 
 const SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}(:\d+)?(\/.*)?$/
@@ -75,7 +78,8 @@ export function inputToUrl(raw: string): string | null {
     if (scheme === 'about') {
       const rest = input.slice('about:'.length)
       if (rest === 'blank' || rest === 'newtab' || rest === 'home') return BLANK_URL
-      if (rest === 'preferences' || rest === 'settings') return 'zen://settings'
+      if (rest === 'preferences' || rest === 'settings') return SETTINGS_URL
+      if (rest === 'history') return HISTORY_URL
       return BLANK_URL
     }
     return input

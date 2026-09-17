@@ -5,9 +5,11 @@ import type {
   BookmarkNode,
   BookmarkTreeData,
   Boost,
-  ClosedTab,
+  ClosedEntry,
   Container,
+  DefaultBrowserStatus,
   DownloadItem,
+  DownloadsProgress,
   ExtensionInfo,
   Folder,
   HostCapabilities,
@@ -60,7 +62,14 @@ import {
   type UpdateStatus
 } from '../shared/updates'
 import { BLANK_URL } from '../shared/url'
+import { sanitizePromoState } from '../shared/defaultBrowser'
+import {
+  emptyBlockingStatus,
+  sanitizeBlockingSettings,
+  type BlockingStatus
+} from '../shared/blocking'
 import { defer, type StoreIO } from './platform'
+import { sanitizeClosedEntries, summarizeClosed } from './session'
 import type { ZenWindow } from './window'
 
 /** A synced window as remembered between sessions (blank / private windows are never restored). */
@@ -94,6 +103,8 @@ interface Persisted {
   maximized?: boolean
   /** v2: every synced window. */
   windows?: PersistedWindow[]
+  /** v3: recently closed tabs and windows (newest first, 25 deep). */
+  recentlyClosed?: ClosedEntry[]
 }
 
 export type StateListener = () => void
@@ -110,6 +121,8 @@ export interface StateExtras {
   agentServer: AgentServerStatus
   updates: UpdateStatus
   passwords: PasswordsStatus
+  defaultBrowser: DefaultBrowserStatus
+  blocking: BlockingStatus
 }
 
 /**
@@ -126,8 +139,19 @@ export class BrowserState {
    * depth first). Always a valid tree: `ensureValid` runs it through `normalizeBookmarkNodes`.
    */
   bookmarks: BookmarkNode[] = createBookmarkRoots(0)
-  downloads: DownloadItem[] = []
-  recentlyClosed: ClosedTab[] = []
+  /**
+   * The downloads a window may show and their aggregate progress; provided by the Browser once the
+   * download service exists (private windows see more than the rest).
+   */
+  downloadsFor: (win: ZenWindow) => {
+    downloads: DownloadItem[]
+    downloadsProgress: DownloadsProgress
+  } = () => ({
+    downloads: [],
+    downloadsProgress: { received: 0, total: 0, indeterminate: false, active: 0 }
+  })
+  /** Newest first; the `SessionService` owns the list, this is where it persists. */
+  recentlyClosed: ClosedEntry[] = []
   media: MediaState[] = []
   devtoolsOpenFor = new Set<string>()
   resources: ResourceSnapshot = emptyResourceSnapshot()
@@ -173,7 +197,9 @@ export class BrowserState {
       arch: 'universal',
       kind: 'dev'
     }),
-    passwords: emptyPasswordsStatus()
+    passwords: emptyPasswordsStatus(),
+    defaultBrowser: { isDefault: null, prompt: null },
+    blocking: emptyBlockingStatus()
   })
   searchEngines: SearchEngine[] = DEFAULT_SEARCH_ENGINES
   readonly version: string
@@ -228,6 +254,8 @@ export class BrowserState {
   }
 
   private applyPersisted(data: Persisted): void {
+    // Before v3 the recently closed list was in memory only: it starts empty.
+    this.recentlyClosed = data.version === 3 ? sanitizeClosedEntries(data.recentlyClosed) : []
     this.settings = { ...structuredClone(DEFAULT_SETTINGS), ...data.settings }
     this.settings.compactMode = { ...DEFAULT_SETTINGS.compactMode, ...data.settings?.compactMode }
     // Compact mode's "persistent sidebar" toggle is transient by design.
@@ -238,6 +266,8 @@ export class BrowserState {
     this.settings.updates = sanitizeUpdateSettings(data.settings?.updates)
     this.settings.phoneBar = sanitizePhoneBar(data.settings?.phoneBar)
     this.settings.passwords = sanitizePasswordSettings(data.settings?.passwords)
+    this.settings.defaultBrowserPromo = sanitizePromoState(data.settings?.defaultBrowserPromo)
+    this.settings.blocking = sanitizeBlockingSettings(data.settings?.blocking)
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     this.bookmarks = this.loadBookmarks(data)
     if (Array.isArray(data.windows) && data.windows.length) {
@@ -297,6 +327,25 @@ export class BrowserState {
 
   /** Re-run the consistency checks after bulk changes (sync). */
   repair(): void {
+    this.ensureValid()
+  }
+
+  /**
+   * "Restore previous session" is off: the open tabs of the last session are forgotten (pinned
+   * tabs and Essentials are part of the sidebar's structure and stay) and one window comes back
+   * with a fresh tab instead of its selection.
+   */
+  forgetSession(): void {
+    const m = this.model
+    for (const space of m.spaces) {
+      for (const id of space.tabIds) {
+        const tab = m.tabs[id]
+        if (tab && !tab.pinned && !tab.essential) delete m.tabs[id]
+      }
+      space.tabIds = space.tabIds.filter((id) => m.tabs[id])
+      space.activeTabId = null
+    }
+    this.restoredWindows = this.restoredWindows.slice(0, 1).map((w) => ({ ...w, selection: {} }))
     this.ensureValid()
   }
 
@@ -480,9 +529,10 @@ export class BrowserState {
       glance: win.glance,
       compactSidebarRevealed: win.compactSidebarRevealed,
       window: win.windowState(),
-      downloads: this.downloads,
+      ...this.downloadsFor(win),
       bookmarks: this.bookmarks,
       recentlyClosedCount: this.recentlyClosed.length,
+      recentlyClosed: this.recentlyClosed.slice(0, 10).map(summarizeClosed),
       media: this.media,
       findResult: win.findResult,
       devtoolsOpenFor: [...this.devtoolsOpenFor],
@@ -557,6 +607,7 @@ export class BrowserState {
           loading: false,
           audible: false,
           errorCode: null,
+          blockedCount: 0,
           url: t.url.startsWith('zen://error') ? (safeOriginalUrl(t.url) ?? BLANK_URL) : t.url
         })),
       essentialTabIds: m.essentialTabIds,
@@ -567,7 +618,8 @@ export class BrowserState {
       settings: this.settings,
       shortcutOverrides: this.shortcutOverrides,
       bookmarkTree: { schemaVersion: BOOKMARK_SCHEMA_VERSION, nodes: this.bookmarks },
-      windows: persistedWindows
+      windows: persistedWindows,
+      recentlyClosed: this.recentlyClosed
     }
   }
 

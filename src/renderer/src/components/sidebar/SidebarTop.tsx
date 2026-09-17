@@ -1,4 +1,4 @@
-import type { JSX } from 'react'
+import type { JSX, ReactNode } from 'react'
 import { useRef } from 'react'
 import {
   ArrowLeft,
@@ -21,6 +21,7 @@ import { isPrivateWindow } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { openOverlay, openUrlbar } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { useLongPress } from '../phone/useLongPress'
 import { WindowControls } from '../WindowControls'
 
 interface Props {
@@ -72,24 +73,22 @@ export function NavRow({
   const extensions = state.extensions.filter((e) => e.enabled && !e.error && e.popup)
   return (
     <div className={cn('zen-no-drag flex items-center gap-0.5', compact && 'flex-col', className)}>
-      <button
-        type="button"
-        className="zen-toolbar-button"
+      <NavigationButton
+        tab={tab}
         title="Back (Alt+←)"
-        disabled={!tab?.canGoBack}
-        onClick={() => tab && run('tab.back', { tabId: tab.id })}
+        enabled={Boolean(tab?.canGoBack)}
+        command="tab.back"
       >
         <ArrowLeft className="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        className="zen-toolbar-button"
+      </NavigationButton>
+      <NavigationButton
+        tab={tab}
         title="Forward (Alt+→)"
-        disabled={!tab?.canGoForward}
-        onClick={() => tab && run('tab.forward', { tabId: tab.id })}
+        enabled={Boolean(tab?.canGoForward)}
+        command="tab.forward"
       >
         <ArrowRight className="h-4 w-4" />
-      </button>
+      </NavigationButton>
       <button
         type="button"
         className="zen-toolbar-button"
@@ -204,6 +203,41 @@ export function NavRow({
         <MoreHorizontal className="h-4 w-4" />
       </button>
     </div>
+  )
+}
+
+/**
+ * Back or forward: a click navigates one step; press-and-hold (about 400 ms, released) or a
+ * right click lists the tab's back/forward stack instead, like Firefox's buttons.
+ */
+function NavigationButton({
+  tab,
+  title,
+  enabled,
+  command,
+  children
+}: {
+  tab: Tab | null
+  title: string
+  enabled: boolean
+  command: 'tab.back' | 'tab.forward'
+  children: ReactNode
+}): JSX.Element {
+  const press = useLongPress(() => tab && run('tab.navigationMenu', { tabId: tab.id }))
+  return (
+    <button
+      type="button"
+      className="zen-toolbar-button"
+      title={title}
+      disabled={!enabled}
+      {...press.handlers}
+      onClick={() => {
+        if (press.swallowsClick() || !tab) return
+        run(command, { tabId: tab.id })
+      }}
+    >
+      {children}
+    </button>
   )
 }
 

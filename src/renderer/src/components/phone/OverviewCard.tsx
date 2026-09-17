@@ -1,10 +1,10 @@
 import type { CSSProperties, JSX } from 'react'
 import { X } from 'lucide-react'
 import type { Tab } from '@shared/types'
-import { run } from '@renderer/lib/api'
 import { tabTitle } from '@renderer/lib/selectors'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from '../sidebar/Favicon'
+import { departStore } from './departureStore'
 import { TabPreview } from './TabPreview'
 import { liftStore, useCardLift, type CardLiftOptions } from './useCardLift'
 
@@ -19,30 +19,39 @@ interface Props {
   /** The hero stands in for this card while the page morphs into it. */
   hidden: boolean
   onPick: (tab: Tab) => void
-  lift: Omit<CardLiftOptions, 'tab'>
+  /** The card's close button – absent, the card shows none. */
+  onClose?: (tab: Tab) => void
+  /** The card was swiped off the grid (it is out of sight already): close its tab. */
+  onSwipeClose?: (tab: Tab) => void
+  lift: Omit<CardLiftOptions, 'tab' | 'onSwipeClose'>
   ref: (el: HTMLDivElement | null) => void
 }
 
 /**
  * One tab in the overview grid: title row above the thumbnail. Tap to switch to it; hold to pick
- * it up (see `useCardLift`). While it is in the hand the slot shows a faint stand-in, and a card
- * that another card is about to be dropped on tucks itself in a little.
+ * it up, swipe it sideways to close it (see `useCardLift`). While it is in the hand the slot
+ * shows a faint stand-in, and a card that another card is about to be dropped on tucks itself in
+ * a little.
  */
-export function OverviewCard({ tab, active, hidden, onPick, lift, ref }: Props): JSX.Element {
-  const handlers = useCardLift({ tab, ...lift })
+export function OverviewCard({
+  tab,
+  active,
+  hidden,
+  onPick,
+  onClose,
+  onSwipeClose,
+  lift,
+  ref
+}: Props): JSX.Element {
+  const handlers = useCardLift({ tab, ...lift, onSwipeClose: (t) => onSwipeClose?.(t) })
   const held = liftStore.use((s) => (s.tabId === tab.id ? s.phase : 'idle'))
   const targeted = liftStore.use((s) => s.phase === 'dragging' && s.target === `card:${tab.id}`)
+  const departing = departStore.use((s) => s.hidden.has(tab.id))
   const style: CSSProperties = {}
-  if (hidden || held === 'dropping') style.opacity = 0
+  if (hidden || departing || held === 'dropping') style.opacity = 0
   else if (held !== 'idle') style.opacity = 0.35
   return (
-    <div
-      ref={ref}
-      className="relative"
-      style={{ aspectRatio: '3 / 4' }}
-      data-tab-id={tab.id}
-      data-drop={lift.enabled ? `card:${tab.id}` : undefined}
-    >
+    <div ref={ref} className="relative" style={{ aspectRatio: '3 / 4' }} data-tab-id={tab.id}>
       <div
         role="button"
         tabIndex={0}
@@ -65,14 +74,25 @@ export function OverviewCard({ tab, active, hidden, onPick, lift, ref }: Props):
           if (e.key === 'Enter' || e.key === ' ') onPick(tab)
         }}
       >
-        <CardBody tab={tab} />
+        <CardBody tab={tab} closable={Boolean(onClose)} onClose={onClose} />
       </div>
     </div>
   )
 }
 
-/** Title row and thumbnail – shared with the ghost of a card in the hand. */
-export function CardBody({ tab, closable = true }: { tab: Tab; closable?: boolean }): JSX.Element {
+/**
+ * Title row and thumbnail – shared with the ghost of a card in the hand and a card on its way
+ * out, which show the close button (so the card looks the same) without it doing anything.
+ */
+export function CardBody({
+  tab,
+  closable = true,
+  onClose
+}: {
+  tab: Tab
+  closable?: boolean
+  onClose?: (tab: Tab) => void
+}): JSX.Element {
   return (
     <>
       <header
@@ -88,7 +108,7 @@ export function CardBody({ tab, closable = true }: { tab: Tab; closable?: boolea
             aria-label="Close tab"
             onClick={(e) => {
               e.stopPropagation()
-              run('tab.close', { tabId: tab.id })
+              onClose?.(tab)
             }}
           >
             <X className="h-4 w-4" />

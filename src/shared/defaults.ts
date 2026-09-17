@@ -14,6 +14,8 @@ import { DEFAULT_CONTAINER_ID } from './types'
 import { APP_ICON_DEFAULT } from './appIcon'
 import { defaultPhoneBar } from './phoneBar'
 import { DEFAULT_UPDATE_SETTINGS } from './updates'
+import { DEFAULT_PROMO_STATE } from './defaultBrowser'
+import { DEFAULT_BLOCKING_SETTINGS } from './blocking'
 
 /** Off until the user turns it on in Settings → AI Agents; loopback only, approval required. */
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -178,7 +180,9 @@ export const DEFAULT_SETTINGS: Settings = {
   agents: structuredClone(DEFAULT_AGENT_SETTINGS),
   updates: structuredClone(DEFAULT_UPDATE_SETTINGS),
   externalProtocols: {},
-  passwords: structuredClone(DEFAULT_PASSWORD_SETTINGS)
+  passwords: structuredClone(DEFAULT_PASSWORD_SETTINGS),
+  defaultBrowserPromo: structuredClone(DEFAULT_PROMO_STATE),
+  blocking: structuredClone(DEFAULT_BLOCKING_SETTINGS)
 }
 
 /** Firefox's four default containers plus "No Container". */

@@ -12,6 +12,8 @@ interface HostGlobal {
 const STORAGE_PREFIX = 'zen-preview:'
 /** How long a reload takes to begin in this stand-in host (see `view.reload`). */
 const RELOAD_DELAY_MS = 3000
+/** Whether the preview "holds the browser role" (outside the file store: it is not profile data). */
+const DEFAULT_BROWSER_KEY = 'zen-preview-default-browser'
 
 /**
  * A stand-in for the Kotlin host so the Android chrome can run in an ordinary desktop browser
@@ -59,6 +61,12 @@ export function createPreviewBridge(): NativeBridge {
       localStorage.setItem(STORAGE_PREFIX + String(name), String(text)),
     'storage.writeSync': ({ name, text }) =>
       localStorage.setItem(STORAGE_PREFIX + String(name), String(text)),
+    'storage.read': ({ name }) => localStorage.getItem(STORAGE_PREFIX + String(name)),
+    'storage.exists': ({ name }) => localStorage.getItem(STORAGE_PREFIX + String(name)) !== null,
+    'storage.remove': ({ name }) => localStorage.removeItem(STORAGE_PREFIX + String(name)),
+    // The preview has no request engine and ships no filter-list snapshot.
+    'blocking.bundled': () => [],
+    'blocking.install': () => null,
     'view.create': ({ tabId }) => {
       const frame = document.createElement('iframe')
       frame.className = 'zen-preview-view'
@@ -215,6 +223,13 @@ export function createPreviewBridge(): NativeBridge {
     'app.openAppLinkSettings': () => console.info('[zen preview] open-by-default settings'),
     'externalProtocol.respond': ({ requestId, allow }) =>
       console.info('[zen preview] external protocol', requestId, allow ? 'allowed' : 'refused'),
+    // The browser role, remembered per preview profile; the "role dialog" is a confirm().
+    'app.isDefaultBrowser': () => localStorage.getItem(DEFAULT_BROWSER_KEY) === 'true',
+    'app.requestDefaultBrowser': () => {
+      const granted = window.confirm('Preview host: make Zenium the default browser?')
+      localStorage.setItem(DEFAULT_BROWSER_KEY, granted ? 'true' : 'false')
+      return granted
+    },
     'net.fetch': async ({ url }) => {
       try {
         const res = await fetch(String(url))

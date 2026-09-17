@@ -18,6 +18,7 @@ import type {
 } from '../../core/platform'
 import type { ZenWindow } from '../../core/window'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
+import { resolveDownloadSettings } from '../../shared/downloads'
 import { FileStoreIO } from './storeIo'
 import { SessionManager, buildUserAgent } from './sessions'
 import { installZenProtocol } from './protocol'
@@ -28,8 +29,8 @@ import { ElectronWindowFactory, type ElectronWindow } from './window'
 import { ExtensionService } from './extensions'
 import { WebstoreBridge } from './webstoreBridge'
 import { ExtensionApiHost } from './extensionApi'
-import { InMemoryRuleSink } from './extensionApi/dnrSink'
-import { requestHeaderRules } from './requestHeaders'
+import { createDnrSink } from './extensionApi/dnrSink'
+import { webstoreClientHints } from './requestHeaders'
 import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
 import { ElectronAgentTransport } from '../agent/server'
@@ -37,6 +38,7 @@ import { ElectronSiteData } from './siteData'
 import { ElectronUpdateHost } from './updates'
 import { applyAppIcon } from './appIcon'
 import { createPasswordsHost } from './passwords'
+import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
@@ -57,7 +59,10 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   clipboardChip: false,
   appLinkSettings: false,
   pullToRefresh: false,
-  passwords: true
+  passwords: true,
+  // The OS owns default-app choices on desktop; the desktop program decides if Zenium ever asks.
+  defaultBrowser: false,
+  requestBlocking: true
 }
 
 /**
@@ -80,17 +85,26 @@ export class ElectronPlatform implements Platform {
   readonly app: AppHost
   readonly siteData: ElectronSiteData
   readonly passwords: PasswordsHost
+  readonly blocking: ElectronBundledLists
+  /** The webRequest multiplexer and text matcher; created with the browser in `start`. */
+  requestBlocking!: ElectronBlocking
   browser!: Browser
+  private readonly profileDir: string
 
   constructor(private readonly userDataDir: string) {
     this.info = { os: process.platform as PlatformOs, version: app.getVersion() }
-    this.io = new FileStoreIO(join(userDataDir, 'zen'))
+    this.profileDir = join(userDataDir, 'zen')
+    this.io = new FileStoreIO(this.profileDir)
+    this.blocking = new ElectronBundledLists(bundledListsDirectory(), this.profileDir)
     this.windows = new ElectronWindowFactory()
     this.sessions = new SessionManager(buildUserAgent())
     this.views = new ElectronTabViewHost(this.sessions)
     this.siteData = new ElectronSiteData(this.sessions)
     this.menus = new ElectronMenus()
-    this.downloads = new ElectronDownloads(() => this.browser.state.settings.askWhereToSave)
+    this.downloads = new ElectronDownloads(() => {
+      const downloads = resolveDownloadSettings(this.browser.state.settings)
+      return { askWhereToSave: downloads.askWhereToSave, directory: downloads.directory }
+    })
     this.dialogs = {
       confirm: async (options: ConfirmOptions, win?: ZenWindow) => {
         const bw = browserWindowOf(win)
@@ -195,7 +209,9 @@ export class ElectronPlatform implements Platform {
             .allWindows()
             .map((win) => browserWindowOf(win))
             .filter((bw): bw is Electron.BrowserWindow => bw !== undefined)
-        )
+        ),
+      isDefaultBrowser: async () => null,
+      requestDefaultBrowser: async () => null
     }
   }
 
@@ -236,7 +252,11 @@ export class ElectronPlatform implements Platform {
     const browser = new Browser(this)
     this.browser = browser
     this.windows.bind(browser)
-    this.downloads.bind(browser.downloads)
+    this.downloads.bind(browser.downloads, {
+      tabIdFor: (source) => this.views.tabIdForWebContents(source) ?? null,
+      parentWindow: (sourceTabId) =>
+        browserWindowOf(sourceTabId ? browser.tabs.windowFor(sourceTabId) : browser.focusedWindow())
+    })
     const webstore = new WebstoreBridge(browser.extensions as ExtensionService, (wc) => {
       const tabId = this.views.tabIdForWebContents(wc)
       return tabId ? browser.tabs.ownerOf(tabId) : undefined
@@ -248,25 +268,35 @@ export class ElectronPlatform implements Platform {
       this.views,
       this.io,
       this.userDataDir,
-      new InMemoryRuleSink((message) => console.info(message))
+      // Extensions' declarativeNetRequest rule sets go straight into the request-blocking engine.
+      createDnrSink(browser.blocking.engine)
     )
     extensionApi.install()
     const extensionService = browser.extensions as ExtensionService
     extensionService.attachApi(extensionApi)
     extensionService.onChange((event) => extensionApi.registryChanged(event))
+    this.requestBlocking = new ElectronBlocking(browser, this.views, this.profileDir)
+    this.requestBlocking.start()
+    // Decisions the engine took by an extension's rule feed getMatchedRules, the action badge
+    // count and onRuleMatchedDebug.
+    this.requestBlocking.onDecision((ctx, decision) =>
+      extensionApi.declarativeNetRequest.decided(ctx, decision)
+    )
+    // The store's client hints run as a builtin handler of the multiplexer, which owns each
+    // session's one onBeforeSendHeaders slot; persistent sessions only, like the store preload.
+    this.requestBlocking.registerHeaderRewrite(webstoreClientHints, { persistentOnly: true })
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
+      // The one webRequest listener set of the session; every request hook goes through it.
+      this.requestBlocking.attach(ses, containerId)
       this.attachPermissions(ses)
-      this.downloads.attach(ses, (source) =>
-        browser.onDownloadStarted(source ? (this.views.tabIdForWebContents(source) ?? null) : null)
+      this.downloads.attach(ses, containerId, (sourceTabId) =>
+        browser.onDownloadStarted(sourceTabId)
       )
       ses.setSpellCheckerLanguages(['en-US'])
       if (this.sessions.isPersistent(containerId)) {
         webstore.attach(ses)
         extensionApi.attachSession(ses, containerId)
-        // Interim: the session's one onBeforeSendHeaders slot, running webstoreClientHints. The
-        // webRequest multiplexer registers that handler itself and deletes this call when it lands.
-        requestHeaderRules.attach(ses)
         void (browser.extensions as ExtensionService).attachSession()
       }
     })

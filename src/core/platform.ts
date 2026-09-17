@@ -16,6 +16,7 @@ import type {
   HapticKind,
   HostCapabilities,
   KeyBinding,
+  NavigationSnapshot,
   Platform as PlatformOs,
   Rect,
   ResourceSnapshot,
@@ -31,6 +32,7 @@ import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '.
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
+import type { RuleSet } from './blocking/rules'
 
 export interface PlatformInfo {
   os: PlatformOs
@@ -49,6 +51,10 @@ export interface StoreIO {
   write(name: string, text: string): Promise<void>
   /** Synchronous write used when the process is about to go away. */
   writeSync(name: string, text: string): void
+  /** Delete a document (missing documents are not an error). Hosts without it get a `{}` tombstone. */
+  remove?(name: string): Promise<void>
+  /** Whether a document exists without reading it (large documents such as filter lists). */
+  exists?(name: string): boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +185,8 @@ export interface TabViewEvents {
   onCrashed(reason: CrashReason): void
   onAudioStateChanged(audible: boolean): void
   onMediaStateChanged(playing: boolean): void
+  /** The host's own request engine blocked `count` more requests of this page (Android). */
+  onRequestsBlocked(count: number): void
   onEnterHtmlFullscreen(): void
   onLeaveHtmlFullscreen(): void
   onDevtoolsOpened(): void
@@ -208,6 +216,15 @@ export interface TabView {
   canGoForward(): boolean
   goBack(): void
   goForward(): void
+  /** Jump to an entry of the back/forward stack (an index of `navigationEntries()`). */
+  goToIndex(index: number): void
+  /** The back/forward stack as URLs and titles, and which entry is current. */
+  navigationEntries(): NavigationSnapshot
+  /**
+   * Replace the back/forward stack with `snapshot` and load its current entry (a reopened tab
+   * gets its history back). Hosts that cannot rebuild the stack load the current URL instead.
+   */
+  restoreNavigation(snapshot: NavigationSnapshot): Promise<void>
   reload(ignoreCache: boolean): void
   stop(): void
   /** True once a document has committed (a view that only ever triggered a download has none). */
@@ -335,14 +352,17 @@ export interface MenuItemTemplate {
   enabled?: boolean
   checked?: boolean
   role?: MenuRole
+  /**
+   * A favicon or extension icon (`data:` URL) shown before the label where the host's menus can
+   * (recently closed entries, `chrome.contextMenus` items).
+   */
+  icon?: string | null
   submenu?: MenuItemTemplate[]
   click?: () => void
-  /** A small icon next to the label as a data URL (extension items); hosts may ignore it. */
-  icon?: string
 }
 
 export type MenuSource =
-  'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app' | 'bookmark'
+  'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app' | 'bookmark' | 'history'
 
 export interface MenuPopupOptions {
   source: MenuSource
@@ -434,13 +454,42 @@ export interface NetHost {
   ): Promise<{ ok: boolean; status: number; text: string }>
 }
 
-/** Live-download control; the core keeps the records, the host owns the transfers. */
+/**
+ * Live-download control; the core keeps the records, the host owns the transfers. Hosts write
+ * in-flight files under `PARTIAL_SUFFIX` and hand the final name over only in `release`, which
+ * is how flagged files stay quarantined until the user keeps them.
+ */
 export interface DownloadHost {
   pause(id: string): void
-  resume(id: string): void
+  /** Continue a paused or resumable interrupted transfer; after a restart only the record is known. */
+  resume(item: DownloadItem): void
   cancel(id: string): void
+  /**
+   * A fresh request for the same URL and referrer, reported through `begin` with
+   * `resumes: item.id` so the row keeps its identity.
+   */
+  retry(item: DownloadItem): void
+  /**
+   * Rename the finished partial file to `item.finalName`; resolves with where it ended up.
+   * `notify` is the "notify on complete" setting for hosts whose downloader owns the completion
+   * notification (Android); desktop notifications are the desktop program's, from `download.changed`.
+   */
+  release(
+    item: DownloadItem,
+    options: { notify: boolean }
+  ): Promise<{ savePath: string; finalName: string } | null>
+  /** Delete the partial or quarantined file (nothing to do when it is already gone). */
+  deletePartial(item: DownloadItem): Promise<void>
   open(item: DownloadItem): Promise<void>
   showInFolder(item: DownloadItem): void
+  /** Folder picker for Settings › Downloads; resolves with the chosen directory or null. */
+  chooseDirectory?(win?: ZenWindow): Promise<string | null>
+  /**
+   * The app is quitting and the host's engine is about to tear the in-flight transfer down
+   * (Chromium cancels it and deletes its file): keep the partial file and return where it now
+   * lives, or null when it could not be kept. Synchronous: it runs from the quit handler.
+   */
+  park?(item: DownloadItem): string | null
 }
 
 export interface SessionHost {
@@ -483,6 +532,19 @@ export interface AppHost {
    * with the persisted choice and again whenever the setting changes.
    */
   setAppIcon?(id: AppIconId): void
+  /**
+   * Whether this app is the system's default browser. Android answers from the browser role
+   * (`app.isDefaultBrowser` over the bridge); hosts without `capabilities.defaultBrowser` resolve
+   * null, meaning "not supported here".
+   */
+  isDefaultBrowser(): Promise<boolean | null>
+  /**
+   * Ask the system to make this app the default browser (`app.requestDefaultBrowser`): the role
+   * dialog on Android 10+, which answers with the outcome; the default-apps settings screen on
+   * Android 8–9, which resolves null once the user comes back so the core reads the role again.
+   * Unsupported hosts resolve null without doing anything.
+   */
+  requestDefaultBrowser(): Promise<boolean | null>
 }
 
 // ---------------------------------------------------------------------------
@@ -693,6 +755,34 @@ export interface PasswordsHost {
   reauth: ReauthHost
 }
 
+/** A default filter list whose snapshot is built into the app (`resources/blocking/`). */
+export interface BundledFilterList {
+  id: string
+  /** `! Version:` of the snapshot, when the list has one. */
+  version: string | null
+  /** When the snapshot was built (ms since epoch). */
+  builtAt: number
+  filterCount: number
+}
+
+/**
+ * The host side of ad and tracker blocking. Matching itself is the core's `RuleEngine` plus the
+ * platform's text matcher (Ghostery's engine behind Electron's `webRequest`, the Kotlin engine
+ * inside `shouldInterceptRequest`); this interface only hands over the bundled snapshot of the
+ * default lists so the very first run is protected before any list has been downloaded.
+ */
+export interface BlockingHost {
+  /** The lists this build ships a snapshot of. */
+  bundledLists(): Promise<BundledFilterList[]>
+  /**
+   * Write the bundled snapshot of `set.id` to `file` (a path under the profile, as the
+   * `RuleSetStore` names it) as a complete rule-set document: `set` plus the snapshot's
+   * `filterText`. Copying host-side keeps megabytes of filter text out of the core. Resolves
+   * with the snapshot's metadata, or null when the build has no snapshot for the list.
+   */
+  installBundled(set: RuleSet, file: string): Promise<BundledFilterList | null>
+}
+
 export interface Platform {
   readonly info: PlatformInfo
   readonly capabilities: HostCapabilities
@@ -713,6 +803,8 @@ export interface Platform {
   readonly externalProtocols?: ExternalProtocolHost
   /** Key protection and re-authentication for the password vault; omit when `capabilities.passwords` is off. */
   readonly passwords?: PasswordsHost
+  /** Bundled filter-list snapshots; hosts without it start unprotected until the lists download. */
+  readonly blocking?: BlockingHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Host-backed services; omit for the built-in no-op versions. */

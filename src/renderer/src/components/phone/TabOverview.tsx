@@ -36,11 +36,20 @@ import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from '../sidebar/Favicon'
 import { SpaceGlyph } from '../SpaceGlyph'
+import { Departures } from './Departures'
+import { clearDepartures, depart, rectOf } from './departureStore'
 import { DEFAULT_FOLDER_ICON, GroupCard } from './GroupCard'
 import { CARD_HEADER, CARD_RADIUS, CardBody, OverviewCard } from './OverviewCard'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
 import { TabPreview } from './TabPreview'
-import { cancelLift, liftStore, settleLift, type LiftTarget } from './useCardLift'
+import {
+  cancelLift,
+  liftStore,
+  settleLift,
+  type LiftHover,
+  type LiftSlot,
+  type LiftTarget
+} from './useCardLift'
 import { useFlip } from './useFlip'
 import { useOverviewHandle } from './usePillGestures'
 
@@ -48,6 +57,12 @@ import { useOverviewHandle } from './usePillGestures'
 const NEW_GROUP_NAME = 'Group'
 /** How long a dropped card waits for the browser to confirm its new place before it lands anyway. */
 const DROP_TIMEOUT_MS = 900
+/**
+ * The middle of a card, as fractions of its width and height inset from each edge, is where a
+ * dragged card merges into it; the bands outside put the dragged card before or after it.
+ */
+const MERGE_INSET_X = 0.26
+const MERGE_INSET_Y = 0.2
 
 interface Props {
   state: UIState
@@ -82,8 +97,26 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const pinned = pinnedOf(state, space)
   const regular = regularOf(state, space)
   const groups = groupsOf(state, space.id)
-  const loose = regular.filter((t) => !t.folderId || !state.folders[t.folderId])
   const count = essentials.length + pinned.length + regular.length
+
+  // While a card is dragged its stand-in sits in the slot under the finger, not where the tab
+  // is: the grid shows the order the drop would make, and glides into it as the slot moves.
+  const liftTabId = liftStore.use((s) => s.tabId)
+  const liftSlot = liftStore.use((s) => s.slot)
+  const dragged = liftSlot && liftTabId ? (state.tabs[liftTabId] ?? null) : null
+  const shown = (list: Tab[], folderId: string | null): Tab[] => {
+    if (!dragged || !liftSlot) return list
+    const without = list.filter((t) => t.id !== dragged.id)
+    if (liftSlot.folderId !== folderId) return without
+    const i = Math.min(liftSlot.index, without.length)
+    return [...without.slice(0, i), dragged, ...without.slice(i)]
+  }
+  const membersOf = (folderId: string): Tab[] => regular.filter((t) => t.folderId === folderId)
+  const loose = shown(
+    regular.filter((t) => !t.folderId || !state.folders[t.folderId]),
+    null
+  )
+  const members = new Map(groups.map((f) => [f.id, shown(membersOf(f.id), f.id)] as const))
   const hero = heroTabId ? (state.tabs[heroTabId] ?? null) : null
   const p = Math.min(1, Math.max(0, progress))
   // Taps work as soon as the overview is heading open; layout tracking waits for it to rest.
@@ -155,15 +188,24 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   }, [interactive, sheetOpen, drawerOpen])
 
   // A card in the hand has nowhere to go once the overview leaves (the sheet stays in state but
-  // off screen; the overview unmounts altogether when it is closed).
+  // off screen; the overview unmounts altogether when it is closed), and cards on their way out
+  // have nothing to leave from.
   useEffect(() => {
-    if (!interactive) cancelLift()
+    if (!interactive) {
+      cancelLift()
+      clearDepartures()
+    }
   }, [interactive])
-  useEffect(() => () => cancelLift(), [])
+  useEffect(
+    () => () => {
+      cancelLift()
+      clearDepartures()
+    },
+    []
+  )
 
   // A dropped card flies to its new slot once the browser has moved it there.
   const liftPhase = liftStore.use((s) => s.phase)
-  const liftTabId = liftStore.use((s) => s.tabId)
   const pendingDrop = useRef<PendingDrop | null>(null)
   useLayoutEffect(() => {
     const pending = pendingDrop.current
@@ -179,7 +221,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     else cancelLift()
   })
   useEffect(() => {
-    // The browser may never confirm (the command failed): land the card where it is regardless.
+    // The browser may never confirm (the command failed): land the card where its stand-in is.
     const pending = pendingDrop.current
     if (!pending || liftPhase !== 'dropping') return
     const timer = setTimeout(
@@ -187,13 +229,19 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         if (pendingDrop.current === pending) {
           pendingDrop.current = null
           const s = liftStore.get()
-          if (s.phase === 'dropping' && s.origin) settleLift(s.origin)
+          if (s.phase !== 'dropping') return
+          const rect = s.tabId ? flip.layoutRect(s.tabId) : null
+          const to = rect
+            ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
+            : s.origin
+          if (to) settleLift(to)
+          else cancelLift()
         }
       },
       Math.max(0, pending.deadline - performance.now())
     )
     return () => clearTimeout(timer)
-  }, [liftPhase])
+  }, [liftPhase, flip])
 
   const pick = (tab: Tab): void => closeOverview(tab.id)
   const register = (id: string) => (el: HTMLElement | null) => {
@@ -220,36 +268,96 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     }
   }
 
+  /** The group a tab is shown in (a folder of this space), or null for a loose tab. */
+  const groupIdOf = (tab: Tab, s: UIState = state): string | null =>
+    tab.folderId && s.folders[tab.folderId]?.spaceId === space.id ? tab.folderId : null
+  /** The regular tabs shown in a group (or loose, for null), in the browser's order. */
+  const listIn = (s: UIState, folderId: string | null): Tab[] =>
+    regularOf(s, activeSpace(s)).filter((t) => groupIdOf(t, s) === folderId)
+
   /**
-   * A card was dropped: act on the target, then let the settle effect above fly the ghost to
-   * the card's slot once the browser shows it there (straight away when nothing changes).
+   * What the finger is over, from the slots of the last layout (the glide in flight ignored, so
+   * cards passing under the finger cannot flip the answer). On another card: its middle merges
+   * into it, its edges put the card before or after it; on a group's own chrome: into the group;
+   * past the last card: the end; anywhere else (a gutter, the stand-in): no change.
    */
-  const dropCard = (tab: Tab, target: LiftTarget | null): void => {
+  const hoverAt = (tab: Tab, x: number, y: number, current: LiftHover): LiftHover => {
+    const keep: LiftHover = { target: null, slot: current.slot }
+    const grid = scrollRef.current?.getBoundingClientRect()
+    if (!grid || x < grid.left || x > grid.right || y < grid.top || y > grid.bottom) return keep
+    const inside = (r: DOMRect | null): r is DOMRect =>
+      r !== null && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
+    // Member cards of an expanded group and the loose cards, as shown right now.
+    const cards: Array<{ tab: Tab; list: Tab[]; folderId: string | null }> = []
+    for (const folder of groups) {
+      if (folder.collapsed) continue
+      const list = members.get(folder.id) ?? []
+      for (const t of list) cards.push({ tab: t, list, folderId: folder.id })
+    }
+    for (const t of loose) cards.push({ tab: t, list: loose, folderId: null })
+    for (const { tab: other, list, folderId } of cards) {
+      if (other.id === tab.id) continue
+      const r = flip.layoutRect(other.id)
+      if (!inside(r)) continue
+      const ix = r.width * MERGE_INSET_X
+      const iy = r.height * MERGE_INSET_Y
+      if (x > r.left + ix && x < r.right - ix && y > r.top + iy && y < r.bottom - iy)
+        return { target: `card:${other.id}`, slot: current.slot }
+      const cx = r.left + r.width / 2
+      const cy = r.top + r.height / 2
+      const after = Math.abs(x - cx) / r.width > Math.abs(y - cy) / r.height ? x > cx : y > cy
+      const index = list.filter((t) => t.id !== tab.id).indexOf(other)
+      return { target: null, slot: { folderId, index: index + (after ? 1 : 0) } }
+    }
+    for (const folder of groups) {
+      if (inside(flip.layoutRect(`group:${folder.id}`)))
+        return { target: `group:${folder.id}`, slot: current.slot }
+    }
+    if (inside(flip.layoutRect(tab.id))) return keep
+    const looseWithout = loose.filter((t) => t.id !== tab.id)
+    const lastGroup = groups.filter((f) => (members.get(f.id) ?? []).length > 0).at(-1)
+    const lastKey =
+      looseWithout.at(-1)?.id ?? (lastGroup ? `group:${lastGroup.id}` : pinned.at(-1)?.id)
+    const last = lastKey ? flip.layoutRect(lastKey) : null
+    if (!last || y > last.bottom || (y >= last.top && x > last.right))
+      return { target: null, slot: { folderId: null, index: looseWithout.length } }
+    return keep
+  }
+
+  /**
+   * A card was dropped: act on the target (or the slot), then let the settle effect above fly the
+   * ghost to the card's slot once the browser shows it there (straight away when nothing changes).
+   */
+  const dropCard = (tab: Tab, target: LiftTarget | null, slot: LiftSlot | null): void => {
     const expect = (landed: (s: UIState) => boolean): void => {
       pendingDrop.current = { landed, deadline: performance.now() + DROP_TIMEOUT_MS }
     }
     const unchanged = (): void => expect(() => true)
-    if (!target) return unchanged()
-    if (target === 'loose') {
-      if (!tab.folderId) return unchanged()
-      run('tab.moveToFolder', { tabId: tab.id, folderId: null })
-      return expect((s) => !s.tabs[tab.id]?.folderId)
+    const regularWithout = regular.filter((t) => t.id !== tab.id)
+    /** Move the tab right before `before` (or to the end of the regular tabs), into `folderId`. */
+    const moveTo = (folderId: string | null, before: Tab | undefined, after?: Tab): void => {
+      const index = before
+        ? regularWithout.indexOf(before)
+        : after
+          ? regularWithout.indexOf(after) + 1
+          : regularWithout.length
+      run('tab.move', { tabId: tab.id, spaceId: space.id, section: 'regular', index })
+      if (groupIdOf(tab) !== folderId) run('tab.moveToFolder', { tabId: tab.id, folderId })
     }
-    if (target.startsWith('group:')) {
+    if (target?.startsWith('group:')) {
       const folderId = target.slice('group:'.length)
-      if (!state.folders[folderId] || tab.folderId === folderId) return unchanged()
-      run('tab.moveToFolder', { tabId: tab.id, folderId })
-      return expect((s) => s.tabs[tab.id]?.folderId === folderId)
+      if (!state.folders[folderId] || groupIdOf(tab) === folderId) return unchanged()
+      moveTo(folderId, undefined, membersOf(folderId).at(-1))
+      return expect((s) => groupIdOf(s.tabs[tab.id] ?? tab, s) === folderId)
     }
-    if (target.startsWith('card:')) {
+    if (target?.startsWith('card:')) {
       const other = state.tabs[target.slice('card:'.length)]
       if (!other || other.id === tab.id || other.pinned || other.essential) return unchanged()
-      const theirs = other.folderId && state.folders[other.folderId] ? other.folderId : null
+      const theirs = groupIdOf(other)
       if (theirs) {
-        // Dropped on a member of a group: join that group.
-        if (tab.folderId === theirs) return unchanged()
-        run('tab.moveToFolder', { tabId: tab.id, folderId: theirs })
-        return expect((s) => s.tabs[tab.id]?.folderId === theirs)
+        // Dropped on a member of a group: join that group, right behind it.
+        moveTo(theirs, undefined, other)
+        return expect((s) => groupIdOf(s.tabs[tab.id] ?? tab, s) === theirs)
       }
       void makeGroup([other.id, tab.id], false)
       return expect((s) => {
@@ -257,8 +365,62 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         return Boolean(mine) && mine === s.tabs[other.id]?.folderId
       })
     }
+    if (slot) {
+      const list = listIn(state, slot.folderId).filter((t) => t.id !== tab.id)
+      const index = Math.min(slot.index, list.length)
+      const from = listIn(state, groupIdOf(tab))
+      if (slot.folderId === groupIdOf(tab) && from.indexOf(tab) === index) return unchanged()
+      moveTo(slot.folderId, list[index], list.at(-1))
+      return expect((s) => {
+        const t = s.tabs[tab.id]
+        if (!t) return true
+        if (groupIdOf(t, s) !== slot.folderId) return false
+        const now = listIn(s, slot.folderId)
+        return now.findIndex((o) => o.id === tab.id) === Math.min(index, now.length - 1)
+      })
+    }
     unchanged()
   }
+
+  /** Tabs told to close leave the grid visibly: their cards collapse where they stand. */
+  const closesForReal = (tab: Tab): boolean =>
+    !(tab.pinned || tab.essential) || state.settings.pinnedCloseBehavior === 'close'
+  const closeTabs = (tabs: Tab[]): void => {
+    depart(
+      tabs.flatMap((tab) => {
+        const rect = closesForReal(tab) ? rectOf(cells.current.get(tab.id)) : null
+        return rect ? [{ key: tab.id, kind: 'tab' as const, tab, rect }] : []
+      })
+    )
+    for (const tab of tabs) run('tab.close', { tabId: tab.id })
+  }
+  const closeOthers = (tab: Tab): void => {
+    const others = regular.filter((t) => t.id !== tab.id)
+    depart(
+      others.flatMap((t) => {
+        const rect = rectOf(cells.current.get(t.id))
+        return rect ? [{ key: t.id, kind: 'tab' as const, tab: t, rect }] : []
+      })
+    )
+    run('tab.closeOthers', { tabId: tab.id })
+  }
+  const closeGroup = (folder: Folder): void => {
+    const rect = rectOf(cells.current.get(`group:${folder.id}`))
+    if (rect)
+      depart([
+        {
+          key: `group:${folder.id}`,
+          kind: 'group',
+          folder,
+          tabs: membersOf(folder.id),
+          rect,
+          columns
+        }
+      ])
+    run('folder.delete', { folderId: folder.id, unpack: false })
+  }
+  /** A card swiped off the grid is already out of sight: just close the tab. */
+  const swipedAway = (tab: Tab): void => run('tab.close', { tabId: tab.id })
 
   const card = (tab: Tab): JSX.Element => (
     <OverviewCard
@@ -268,10 +430,14 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       active={tab.id === active?.id}
       hidden={tab.id === heroTabId && p < 1}
       onPick={pick}
+      onClose={(t) => closeTabs([t])}
+      onSwipeClose={swipedAway}
       lift={{
         enabled: interactive && !tab.pinned,
+        swipeable: interactive && closesForReal(tab),
         scroller: () => scrollRef.current,
         onMenu: (t) => setSheet({ kind: 'tab', tabId: t.id }),
+        onHover: hoverAt,
         onDrop: dropCard
       }}
     />
@@ -283,8 +449,6 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       getComputedStyle(document.documentElement).getPropertyValue('--zen-content-radius')
     ) || 12
   const heroActive = Boolean(hero && hero.id === active?.id)
-  const draggedTab = liftTabId ? state.tabs[liftTabId] : null
-  const showLooseStrip = liftPhase === 'dragging' && Boolean(draggedTab?.folderId)
 
   return (
     <>
@@ -338,7 +502,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
               scrollRef.current = el
               return fadeGrid(el)
             }}
-            className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-1"
+            className="zen-overview-grid min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
             // The card the page morphs into is scrolled into view: keep it clear of the fades.
             style={{ touchAction: 'pan-y', overscrollBehavior: 'contain', scrollPaddingBlock: 16 }}
             onScroll={measure}
@@ -366,14 +530,14 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
             >
               {pinned.map(card)}
               {groups.map((folder) => {
-                const members = regular.filter((t) => t.folderId === folder.id)
-                if (members.length === 0) return null
+                const tabs = members.get(folder.id) ?? []
+                if (tabs.length === 0) return null
                 return (
                   <GroupCard
                     key={folder.id}
                     ref={register(`group:${folder.id}`)}
                     folder={folder}
-                    tabs={members}
+                    tabs={tabs}
                     card={card}
                     columns={columns}
                     onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
@@ -381,11 +545,11 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                 )
               })}
               {loose.map(card)}
-              {showLooseStrip && <LooseStrip />}
               <NewTabCard />
             </div>
           </div>
         </div>
+        <Departures activeTabId={active?.id ?? null} />
         <LiftGhost state={state} activeTabId={active?.id ?? null} />
       </div>
       {hero && heroRect && p < 1 && (
@@ -426,15 +590,19 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           state={state}
           tab={state.tabs[sheet.tabId]}
           groups={groups}
+          others={regular.length - 1}
           onClose={() => setSheet(null)}
           onNewGroup={(tab) => void makeGroup([tab.id], true)}
+          onCloseTab={(tab) => closeTabs([tab])}
+          onCloseOthers={closeOthers}
         />
       )}
       {interactive && sheet?.kind === 'group' && state.folders[sheet.folderId] && (
         <GroupSheet
           folder={state.folders[sheet.folderId]}
-          count={regular.filter((t) => t.folderId === sheet.folderId).length}
+          count={membersOf(sheet.folderId).length}
           onClose={() => setSheet(null)}
+          onCloseGroup={closeGroup}
         />
       )}
     </>
@@ -471,32 +639,25 @@ function LiftGhost({
   )
 }
 
-/** Landing strip for a grouped card being dragged: drop it here to take it out of its group. */
-function LooseStrip(): JSX.Element {
-  const targeted = liftStore.use((s) => s.target === 'loose')
-  return (
-    <div
-      className="zen-loose-strip col-span-full flex h-14 items-center justify-center text-[13px] font-medium"
-      data-drop="loose"
-      data-targeted={targeted || undefined}
-    >
-      Remove from group
-    </div>
-  )
-}
-
 function TabSheet({
   state,
   tab,
   groups,
+  others,
   onClose,
-  onNewGroup
+  onNewGroup,
+  onCloseTab,
+  onCloseOthers
 }: {
   state: UIState
   tab: Tab
   groups: Folder[]
+  /** How many other tabs "Close other tabs" would close. */
+  others: number
   onClose: () => void
   onNewGroup: (tab: Tab) => void
+  onCloseTab: (tab: Tab) => void
+  onCloseOthers: (tab: Tab) => void
 }): JSX.Element {
   const current = tab.folderId && state.folders[tab.folderId] ? tab.folderId : null
   const actions: SheetAction[] = []
@@ -518,11 +679,18 @@ function TabSheet({
         onPick: () => run('tab.moveToFolder', { tabId: tab.id, folderId: null })
       })
   }
+  if (!tab.pinned && !tab.essential && others > 0)
+    actions.push({
+      id: 'close-others',
+      label: `Close other tabs (${others})`,
+      destructive: true,
+      onPick: () => onCloseOthers(tab)
+    })
   actions.push({
     id: 'close',
     label: 'Close tab',
     destructive: true,
-    onPick: () => run('tab.close', { tabId: tab.id })
+    onPick: () => onCloseTab(tab)
   })
   return <OverviewSheet title={tabTitle(tab)} actions={actions} onClose={onClose} />
 }
@@ -530,11 +698,13 @@ function TabSheet({
 function GroupSheet({
   folder,
   count,
-  onClose
+  onClose,
+  onCloseGroup
 }: {
   folder: Folder
   count: number
   onClose: () => void
+  onCloseGroup: (folder: Folder) => void
 }): JSX.Element {
   const palette = Object.keys(FOLDER_COLORS) as FolderColor[]
   const actions: SheetAction[] = [
@@ -558,7 +728,7 @@ function GroupSheet({
       id: 'close',
       label: `Close group (${count} tab${count === 1 ? '' : 's'})`,
       destructive: true,
-      onPick: () => run('folder.delete', { folderId: folder.id, unpack: false })
+      onPick: () => onCloseGroup(folder)
     }
   ]
   return (

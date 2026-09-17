@@ -190,7 +190,8 @@ export const PERMISSION_LABELS: Record<string, string> = {
   midi: 'MIDI devices',
   'clipboard-read': 'Read the clipboard',
   openExternal: 'Open other apps',
-  mediaKeySystem: 'Protected content (DRM)'
+  mediaKeySystem: 'Protected content (DRM)',
+  ads: 'Ads and trackers'
 }
 
 export function permissionLabel(permission: string): string {

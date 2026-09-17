@@ -32,6 +32,7 @@ function tab(id: string, patch: Partial<Tab> = {}): Tab {
     errorCode: null,
     bookmarked: false,
     readerable: false,
+    blockedCount: 0,
     ...patch
   }
 }

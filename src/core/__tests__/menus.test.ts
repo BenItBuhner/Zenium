@@ -13,6 +13,7 @@ import type {
   WindowHost
 } from '../platform'
 import type { ZenWindow } from '../window'
+import { NAVIGATION_MENU_MAX, navigationWindow } from '../menus'
 
 /**
  * Electron's capabilities, a hand-kept copy of src/main/platform/index.ts: the real object imports
@@ -38,7 +39,9 @@ const DESKTOP: HostCapabilities = {
   clipboardChip: false,
   appLinkSettings: false,
   pullToRefresh: false,
-  passwords: true
+  passwords: true,
+  defaultBrowser: false,
+  requestBlocking: true
 }
 
 /**
@@ -65,7 +68,9 @@ const ANDROID: HostCapabilities = {
   clipboardChip: true,
   appLinkSettings: true,
   pullToRefresh: true,
-  passwords: true
+  passwords: true,
+  defaultBrowser: true,
+  requestBlocking: true
 }
 
 function memoryIo(): StoreIO {
@@ -174,6 +179,7 @@ const DESKTOP_APP_MENU = [
   'Bookmarks > Import Bookmarks…',
   'Bookmarks > Export Bookmarks…',
   'History',
+  'Recently Closed',
   'Downloads',
   'Add-ons and Themes',
   '-',
@@ -333,5 +339,32 @@ describe('URL bar command suggestions', () => {
     expect(ids('reader', phone)).toContain('reader')
     expect(ids('screenshot', phone)).toContain('screenshot')
     expect(ids('history', phone)).toContain('history')
+  })
+})
+
+describe('navigationWindow', () => {
+  it('lists a short stack whole', () => {
+    expect(navigationWindow(4, 2, NAVIGATION_MENU_MAX)).toEqual({ start: 0, end: 4 })
+    expect(navigationWindow(0, -1, NAVIGATION_MENU_MAX)).toEqual({ start: 0, end: 0 })
+  })
+
+  it('caps a long stack at the maximum and keeps the current entry in view', () => {
+    for (let index = 0; index < 40; index += 1) {
+      const { start, end } = navigationWindow(40, index, NAVIGATION_MENU_MAX)
+      expect(end - start).toBe(NAVIGATION_MENU_MAX)
+      expect(start).toBeGreaterThanOrEqual(0)
+      expect(end).toBeLessThanOrEqual(40)
+      expect(index).toBeGreaterThanOrEqual(start)
+      expect(index).toBeLessThan(end)
+    }
+  })
+
+  it('favours back entries, with a few forward ones when they exist', () => {
+    // Current entry deep in the middle: three forward entries, six back entries.
+    expect(navigationWindow(40, 20, NAVIGATION_MENU_MAX)).toEqual({ start: 14, end: 24 })
+    // At the newest entry: nothing forward, nine back.
+    expect(navigationWindow(40, 39, NAVIGATION_MENU_MAX)).toEqual({ start: 30, end: 40 })
+    // At the oldest entry: all ten are forward entries.
+    expect(navigationWindow(40, 0, NAVIGATION_MENU_MAX)).toEqual({ start: 0, end: 10 })
   })
 })

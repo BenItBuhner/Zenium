@@ -1,4 +1,5 @@
 import { rm } from 'node:fs/promises'
+import type { Decision, RequestContext } from '../../../core/blocking/rules'
 import {
   createDeclarativeNetRequestApi,
   type DeclarativeNetRequestApi,
@@ -6,14 +7,11 @@ import {
   type TestMatchRequestDetails
 } from '../../../core/extensions/dnr/api'
 import type { RequestMethod, ResourceType } from '../../../core/extensions/dnr/rules'
-import {
-  routeDecision,
-  type EngineDecision,
-  type RuleSink
-} from '../../../core/extensions/dnr/sink'
+import { routeDecision, type RuleSink } from '../../../core/extensions/dnr/sink'
 import {
   DnrState,
   createGlobalStaticRulePool,
+  UNKNOWN_TAB_ID,
   type DnrExtensionInfo,
   type ExtensionActionOptions,
   type GetRulesFilter,
@@ -49,10 +47,10 @@ const DNR_PERMISSIONS = ['declarativeNetRequest', 'declarativeNetRequestWithHost
  * `chrome.declarativeNetRequest` for the browser layer: one `DnrState` per loaded extension that
  * holds the permission (static `rule_resources` read from the install directory, the persisted
  * record under `<userData>/zen/extension-dnr/<id>.json`), the routed API over it, and a
- * `DnrTranslator` keeping the rule sink in step with every state change. The sink is the
- * in-memory adapter in `dnrSink.ts` until the blocking engine lands; `recordDecision` is the entry
- * point the engine's decisions will take back into the matched-rule log, the action counts and
- * `onRuleMatchedDebug`. Manifest rulesets marked `enabled` are active from the first load.
+ * `DnrTranslator` keeping the rule sink (the request-blocking engine, see `dnrSink.ts`) in step
+ * with every state change; `decided` takes the engine's decisions back into the matched-rule log,
+ * the action counts and `onRuleMatchedDebug`. Manifest rulesets marked `enabled` are active from
+ * the first load.
  */
 export class DeclarativeNetRequestHostApi {
   private readonly entries = new Map<string, Entry>()
@@ -60,6 +58,8 @@ export class DeclarativeNetRequestHostApi {
   private readonly pool = createGlobalStaticRulePool()
   /** One sync at a time per extension, in order. */
   private readonly syncing = new Map<string, Promise<void>>()
+  /** Chrome's `requestId`s are opaque decimal strings; numbered per process here. */
+  private requestSerial = 0
 
   constructor(
     private readonly host: ApiHost,
@@ -174,26 +174,36 @@ export class DeclarativeNetRequestHostApi {
   }
 
   /**
-   * The engine applied a rule: `routeDecision` names the extension and rule; the record feeds
-   * `getMatchedRules`, the action count and `onRuleMatchedDebug`. Nothing calls this until the
-   * blocking engine reports its decisions (see `dnrSink.ts`).
+   * The engine decided a request by a named rule (`ElectronBlocking.onDecision`): when the rule
+   * is an extension's, the record feeds `getMatchedRules`, the action count (allow rules do not
+   * count) and, for unpacked extensions, `onRuleMatchedDebug` with Chrome's request details.
    */
-  recordDecision(
-    decision: EngineDecision,
-    context: { tabId: number; actionType?: MatchRecord['actionType']; request?: RequestDetails }
-  ): void {
+  decided(ctx: RequestContext, decision: Decision): void {
     const routed = routeDecision(decision)
     if (!routed) return
     const entry = this.entries.get(routed.extensionId)
     if (!entry) return
-    const match: MatchRecord = {
+    const tab = ctx.tabId === undefined ? undefined : this.host.model.tab(ctx.tabId)
+    const tabId = tab ? this.host.model.chromeTabId(tab) : UNKNOWN_TAB_ID
+    const frameId = ctx.frameId ?? (ctx.type === 'main_frame' ? 0 : -1)
+    this.requestSerial += 1
+    const request: RequestDetails = {
+      requestId: String(this.requestSerial),
+      url: ctx.url,
+      method: ctx.method,
+      frameId,
+      parentFrameId: frameId === 0 ? -1 : 0,
+      tabId,
+      type: ctx.type
+    }
+    if (ctx.initiator !== undefined) request.initiator = ctx.initiator
+    entry.state.recordMatch({
       ruleId: routed.ruleId,
       rulesetId: routed.rulesetId,
-      tabId: context.tabId
-    }
-    if (context.actionType !== undefined) match.actionType = context.actionType
-    if (context.request !== undefined) match.request = context.request
-    entry.state.recordMatch(match)
+      tabId,
+      actionType: matchedActionType(decision),
+      request
+    })
   }
 
   /** The states currently mirrored, for diagnostics and tests. */
@@ -251,6 +261,22 @@ export class DeclarativeNetRequestHostApi {
       .filter((info) => this.entries.has(info.id))
       .sort((a, b) => b.installedAt - a.installedAt)
       .map((info) => info.id)
+  }
+}
+
+/** The rule action a decision stands for, in `chrome.declarativeNetRequest.RuleActionType` terms. */
+function matchedActionType(decision: Decision): NonNullable<MatchRecord['actionType']> {
+  switch (decision.action) {
+    case 'block':
+      return 'block'
+    case 'redirect':
+      return 'redirect'
+    case 'upgrade':
+      return 'upgradeScheme'
+    case 'modifyHeaders':
+      return 'modifyHeaders'
+    case 'allow':
+      return 'allow'
   }
 }
 

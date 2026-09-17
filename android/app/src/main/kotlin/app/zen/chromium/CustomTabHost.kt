@@ -11,6 +11,7 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import app.zen.chromium.blocking.Blocking
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.json.JSONObject
 
@@ -30,6 +31,8 @@ class CustomTabHost(
 ) : PageHost {
     override val pageScript = ""
     override val pageToken = ""
+    /** The browser's rule sets apply here too: same engine, same files under `zen/blocking/`. */
+    override val blocking = Blocking.shared(activity)
     override val keys = Keys()
     override val downloads = Downloads(activity, this)
     override val permissions = Permissions(this)
@@ -58,10 +61,10 @@ class CustomTabHost(
         when (name) {
             "permission.request" -> askPermission(args)
             "externalProtocol.request" -> askExternal(args)
-            "download.started" -> Toast.makeText(
-                activity, activity.getString(R.string.cct_downloading, args.str("filename")), Toast.LENGTH_SHORT
-            ).show()
-            // Download progress, crash reports and the like: the DownloadManager notification and
+            "download.started" -> downloadStarted(args)
+            "download.done" -> downloadDone(args)
+            "download.action" -> downloadAction(args)
+            // Download progress, crash reports and the like: the downloader's notification and
             // the page itself are the UI a custom tab has for them.
         }
     }
@@ -137,6 +140,70 @@ class CustomTabHost(
             .show()
     }
 
+    // --- downloads ----------------------------------------------------------------------------------
+
+    /**
+     * The downloader announces a transfer and waits for a record to bind it to; in the browser
+     * window the core keeps that record and picks the destination. A custom tab has no core, so
+     * the transfer is bound here at once – to the default download folder, under its token as the
+     * id – and runs with the downloader's notification, whose Pause, Resume and Cancel come back
+     * as `download.action`. What the downloader reported is kept per id, so a finished file can
+     * be published under its final name and an interrupted one resumed from its partial file.
+     */
+    private val downloadRecords = HashMap<String, JSONObject>()
+    private val downloadIdByToken = HashMap<String, String>()
+
+    private fun downloadStarted(args: JSONObject) {
+        Toast.makeText(activity, activity.getString(R.string.cct_downloading, args.str("filename")), Toast.LENGTH_SHORT).show()
+        val token = args.str("token")
+        // A resumed transfer reports under a new token but keeps its id; it is bound already.
+        val resumes = args.strOrNull("resumes")
+        val id = resumes ?: token
+        downloadIdByToken[token] = id
+        val record = downloadRecords.getOrPut(id) { json("id" to id, "private" to false) }
+        for (key in listOf("url", "referrer", "filename", "mimeType", "containerId")) record.put(key, args.str(key))
+        record.put("totalBytes", args.num("totalBytes"))
+        if (resumes == null) downloads.bind(token, id, json("mode" to "default"), false)
+    }
+
+    private fun downloadDone(args: JSONObject) {
+        val id = downloadIdByToken.remove(args.str("token")) ?: return
+        val record = downloadRecords[id] ?: return
+        when {
+            args.str("state") == "completed" -> {
+                downloadRecords.remove(id)
+                downloads.release(
+                    json(
+                        "id" to id, "url" to record.str("url"), "referrer" to record.str("referrer"),
+                        "savePath" to args.str("savePath"), "filename" to args.str("filename"),
+                        "finalName" to args.str("finalName"), "mimeType" to args.str("mimeType"),
+                        "private" to false, "notify" to true
+                    )
+                ) {}
+            }
+            args.str("state") == "interrupted" && args.bool("canResume") -> {
+                record.put("savePath", args.str("savePath"))
+                record.put("finalName", args.str("finalName"))
+                record.put("totalBytes", args.num("totalBytes"))
+            }
+            else -> downloadRecords.remove(id)
+        }
+    }
+
+    private fun downloadAction(args: JSONObject) {
+        val id = args.str("id")
+        // Every window's downloader hears every notification action; only ours are answered here.
+        val record = downloadRecords[id] ?: return
+        when (args.str("op")) {
+            "pause" -> downloads.pause(id)
+            "resume" -> downloads.resume(record)
+            "cancel" -> if (downloadIdByToken.containsValue(id)) downloads.cancel(id) else {
+                downloadRecords.remove(id)
+                downloads.discard(record) {}
+            }
+        }
+    }
+
     // --- fullscreen ---------------------------------------------------------------------------------
 
     override fun enterFullscreen(tab: TabWebView, view: View, callback: WebChromeClient.CustomViewCallback) {
@@ -182,6 +249,7 @@ class CustomTabHost(
 
     fun destroy() {
         tabs.destroyAll()
+        downloads.destroy()
     }
 
     companion object {

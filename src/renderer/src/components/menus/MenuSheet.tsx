@@ -175,6 +175,8 @@ function sourceTitle(source: MenuDescriptor['source']): string {
       return 'Zenium'
     case 'bookmark':
       return 'Bookmark'
+    case 'history':
+      return 'History'
   }
 }
 

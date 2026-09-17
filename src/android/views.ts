@@ -1,4 +1,4 @@
-import type { KeyBinding, Rect, Tab } from '@shared/types'
+import type { KeyBinding, NavigationSnapshot, Rect, Tab } from '@shared/types'
 import type { SiteCertificate } from '@shared/siteInfo'
 import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@shared/zenPages'
 import type {
@@ -35,6 +35,8 @@ export interface ViewEventPayloads {
   failLoad: { code: number; description: string; url: string }
   crashed: { reason: string }
   audio: { audible: boolean }
+  /** The Kotlin request engine blocked `count` more requests of the page. */
+  blocked: { count: number }
   enterFullscreen: void
   leaveFullscreen: void
   found: FindResultInfo
@@ -107,6 +109,11 @@ export class AndroidTabView implements TabView {
         const p = payload as ViewEventPayloads['audio']
         this.audible = p.audible
         ev.onAudioStateChanged(p.audible)
+        return
+      }
+      case 'blocked': {
+        const p = payload as ViewEventPayloads['blocked']
+        if (typeof p.count === 'number' && p.count > 0) ev.onRequestsBlocked(p.count)
         return
       }
       case 'enterFullscreen':
@@ -199,6 +206,25 @@ export class AndroidTabView implements TabView {
 
   goForward(): void {
     this.bridge.send('view.forward', { tabId: this.tabId })
+  }
+
+  /**
+   * URL-only fallback until the Kotlin host exposes the WebView's back/forward list: the
+   * snapshot is the current page alone, so index 0 is the only reachable entry.
+   */
+  goToIndex(index: number): void {
+    void index
+  }
+
+  navigationEntries(): NavigationSnapshot {
+    if (!this.nav.url) return { entries: [], index: -1 }
+    return { entries: [{ url: this.nav.url, title: this.nav.title }], index: 0 }
+  }
+
+  async restoreNavigation(snapshot: NavigationSnapshot): Promise<void> {
+    const current =
+      snapshot.entries[snapshot.index] ?? snapshot.entries[snapshot.entries.length - 1]
+    if (current?.url) this.loadURL(current.url)
   }
 
   reload(ignoreCache: boolean): void {

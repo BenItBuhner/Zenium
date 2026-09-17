@@ -9,6 +9,7 @@ import { SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from '../sidebar/Favicon'
+import { departStore } from './departureStore'
 import { liftStore } from './useCardLift'
 import { useLongPress } from './useLongPress'
 
@@ -99,8 +100,11 @@ export function GroupCard({ folder, tabs, card, onMenu, columns, ref }: Props): 
     run('folder.update', { folderId: folder.id, patch: { collapsed: !collapsed } })
   }
 
+  // Closing: the exit drawn over the card takes its place until the browser removes the tabs.
+  const departing = departStore.use((s) => s.items.some((i) => i.key === `group:${folder.id}`))
   const style = {
-    '--zen-group-rgb': groupColorChannels(folder.color)
+    '--zen-group-rgb': groupColorChannels(folder.color),
+    opacity: departing ? 0 : undefined
   } as CSSProperties
   // A group of one takes a single column, like the card it holds; two or more span the row,
   // however many columns the window gives it, and lay their cards out in the same columns.
@@ -116,7 +120,6 @@ export function GroupCard({ folder, tabs, card, onMenu, columns, ref }: Props): 
         single ? 'col-span-1' : 'col-span-full'
       )}
       style={style}
-      data-drop={`group:${folder.id}`}
       data-targeted={targeted || undefined}
       data-collapsed={collapsed || undefined}
     >
@@ -133,14 +136,7 @@ export function GroupCard({ folder, tabs, card, onMenu, columns, ref }: Props): 
         }}
         {...press.handlers}
       >
-        {folder.icon && folder.icon !== DEFAULT_FOLDER_ICON ? (
-          // A folder given its own icon on the desktop keeps it; the colour still tints the card.
-          <span className="w-4 shrink-0 text-center text-[14px] leading-none" aria-hidden>
-            {folder.icon}
-          </span>
-        ) : (
-          <span className="zen-group-dot h-2.5 w-2.5 shrink-0 rounded-full" aria-hidden />
-        )}
+        <GroupBadge folder={folder} />
         {renaming ? (
           <GroupRename folder={folder} />
         ) : (
@@ -176,6 +172,18 @@ export function GroupCard({ folder, tabs, card, onMenu, columns, ref }: Props): 
         {tabs.map(card)}
       </div>
     </div>
+  )
+}
+
+/** What stands for the group in its header: its own icon, or a dot of its colour. */
+export function GroupBadge({ folder }: { folder: Folder }): JSX.Element {
+  return folder.icon && folder.icon !== DEFAULT_FOLDER_ICON ? (
+    // A folder given its own icon on the desktop keeps it; the colour still tints the card.
+    <span className="w-4 shrink-0 text-center text-[14px] leading-none" aria-hidden>
+      {folder.icon}
+    </span>
+  ) : (
+    <span className="zen-group-dot h-2.5 w-2.5 shrink-0 rounded-full" aria-hidden />
   )
 }
 

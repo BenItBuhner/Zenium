@@ -1,24 +1,37 @@
+import type { RuleEngine } from '../../../core/blocking/engine'
+import type { Decision, RequestContext } from '../../../core/blocking/rules'
 import type { EngineRuleSet, RuleSink } from '../../../core/extensions/dnr/sink'
 
 /**
- * Where the declarativeNetRequest translator's rule sets go on desktop.
+ * Where the declarativeNetRequest translator's rule sets go on desktop: straight into the core's
+ * request-blocking engine (`src/core/blocking/engine.ts`), whose `setRuleSet` / `removeRuleSet`
+ * are the `RuleSink` contract (`core/extensions/dnr/sink.ts` mirrors the engine's rule types).
+ * The engine sits behind the session's `webRequest` multiplexer (`platform/blocking.ts`), so a
+ * set handed over here filters requests from the next one on. Set ids
+ * (`ext:<extensionId>:static:<rulesetId>`, `:_dynamic`, `:_session`), the priority band
+ * (`RULE_SET_PRIORITY.dnr`, newest install highest) and the attribution the blocking settings
+ * show follow `internal/parity-services/blocking-rule-interface.md`.
  *
- * Until the shared-services blocking engine lands (`src/core/blocking/engine.ts` with its Electron
- * multiplexer `src/main/platform/blocking.ts`, branch `cursor/services-blocking-24d1`), the sets
- * are held here in memory and logged: extensions see their rulesets enabled and counted, no
- * request is filtered yet. The swap when that branch merges is this one file:
- *
- *   import type { RuleEngine } from '../../../core/blocking/engine'
- *   export function createDnrSink(engine: RuleEngine): RuleSink {
- *     return engine   // `RuleEngine` implements `setRuleSet` / `removeRuleSet` directly
- *   }
- *
- * and `ExtensionApiHost` receives the platform's engine instead of `new InMemoryRuleSink()`.
- * The engine's decisions then flow back through `routeDecision` (`core/extensions/dnr/sink.ts`)
- * into `DeclarativeNetRequestApi.recordDecision`, which fills `getMatchedRules` and
- * `onRuleMatchedDebug`. Set ids (`ext:<extensionId>:static:<rulesetId>`, `:_dynamic`,
- * `:_session`), priorities (`ENGINE_DNR_PRIORITY` band) and attribution already follow
- * `internal/parity-services/blocking-rule-interface.md`, so nothing else changes.
+ * Decisions come back the other way: `ElectronBlocking.onDecision` reports every decision that
+ * named a rule, and `DeclarativeNetRequestHostApi.decided` routes the ones from an extension's
+ * set into its matched-rule log, action count and `onRuleMatchedDebug`.
+ */
+export function createDnrSink(engine: RuleEngine): RuleSink {
+  return {
+    setRuleSet: (set) => engine.setRuleSet(set),
+    removeRuleSet: (id) => engine.removeRuleSet(id)
+  }
+}
+
+/** A decision the engine took and the request it was about, as `ElectronBlocking` reports it. */
+export interface EngineDecisionReport {
+  ctx: RequestContext
+  decision: Decision
+}
+
+/**
+ * An in-memory `RuleSink` for tests and diagnostics: holds the sets the translator emits without
+ * filtering anything (`ruleCount` counts across every held set).
  */
 export class InMemoryRuleSink implements RuleSink {
   readonly sets = new Map<string, EngineRuleSet>()
@@ -36,7 +49,6 @@ export class InMemoryRuleSink implements RuleSink {
     if (this.sets.delete(id)) this.log(`[zen] dnr sink: removed ${id}`)
   }
 
-  /** Rule count across every held set, for diagnostics. */
   ruleCount(): number {
     let count = 0
     for (const set of this.sets.values()) count += set.rules?.length ?? 0

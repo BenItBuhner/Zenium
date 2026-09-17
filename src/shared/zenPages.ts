@@ -7,6 +7,8 @@
  * Android loads them straight into the tab's WebView. Reader articles and shared images live in
  * the core; hosts pass lookups so this module stays free of state.
  */
+import type { OverlayKind } from './types'
+
 export const ZEN_SCHEME = 'zen'
 
 /** An image shared into the browser (`zen://image?id=…`); the bytes live in the core. */
@@ -67,10 +69,14 @@ export function blankPageHtml(): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>New Tab</title><style>${BASE_STYLE}</style></head><body></body></html>`
 }
 
+/** `net::ERR_BLOCKED_BY_CLIENT`: the request engine stopped the navigation itself. */
+export const BLOCKED_BY_CLIENT_CODE = -20
+
 export function errorPageHtml(url: URL): string {
   const code = Number(url.searchParams.get('code') ?? 0)
   const description = url.searchParams.get('description') ?? ''
   const target = url.searchParams.get('url') ?? ''
+  if (code === BLOCKED_BY_CLIENT_CODE) return blockedPageHtml(target)
   const message = describeNetError(code, 'The page could not be loaded.')
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Problem loading page</title><style>${BASE_STYLE}</style></head>
 <body><div class="card">
@@ -78,6 +84,27 @@ export function errorPageHtml(url: URL): string {
   <p>${escapeHtml(message)}</p>
   <p><code>${escapeHtml(target)}</code><br><code>${escapeHtml(description)} (${code})</code></p>
   <button onclick="location.replace(${JSON.stringify(target)})">Try Again</button>
+</div></body></html>`
+}
+
+/**
+ * Shown when a filter list blocks a whole page (malware hosts, ad-only domains). The site can be
+ * excepted in Settings → Privacy and security; the page itself only offers the way back.
+ */
+export function blockedPageHtml(target: string): string {
+  let host = target
+  try {
+    host = new URL(target).hostname || target
+  } catch {
+    // Keep the raw target for URLs that do not parse.
+  }
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Page blocked</title><style>${BASE_STYLE}</style></head>
+<body><div class="card">
+  <h1>Zenium blocked this page</h1>
+  <p><strong>${escapeHtml(host)}</strong> is on one of your filter lists as an ad, tracking or malware host, so Zenium did not load it.</p>
+  <p>To visit it anyway, add the site to the exceptions in Settings &rsaquo; Privacy and security.</p>
+  <p><code>${escapeHtml(target)}</code></p>
+  <button onclick="history.back()">Go back</button>
 </div></body></html>`
 }
 
@@ -115,18 +142,44 @@ export type ReaderPageLookup = (id: string) => string | null
 /** Resolves `zen://image?id=…` to the image's `data:` URL (null once the image is gone). */
 export type ImagePageLookup = (id: string) => string | null
 
+/**
+ * A `zen://` URL as a `URL` whose `hostname` is the page name. Parsed as `http://` because
+ * engines before Chromium 130 (the Android WebView that hosts the core on older devices and on
+ * the emulator) give a non-special scheme no host at all, which turned every error page into the
+ * blank page.
+ */
+export function parseZenUrl(rawUrl: string): URL | null {
+  if (!/^zen:\/\//i.test(rawUrl)) return null
+  try {
+    return new URL(`http://${rawUrl.slice('zen://'.length)}`)
+  } catch {
+    return null
+  }
+}
+
+/** `zen://` addresses that are chrome surfaces rather than documents, and the overlay each opens. */
+const OVERLAY_PAGES: Record<string, OverlayKind> = {
+  history: 'history',
+  settings: 'settings'
+}
+
+/**
+ * The chrome overlay a `zen://` address stands for (`zen://history` → the history page), or
+ * `null` for a real page. Navigating to one of these opens the overlay instead of loading.
+ */
+export function overlayForUrl(rawUrl: string): OverlayKind | null {
+  const url = parseZenUrl(rawUrl)
+  return url ? (OVERLAY_PAGES[url.hostname] ?? null) : null
+}
+
 /** HTML for any `zen://` URL (unknown hosts fall back to the blank page). */
 export function zenPageHtml(
   rawUrl: string,
   reader?: ReaderPageLookup,
   image?: ImagePageLookup
 ): string {
-  let url: URL
-  try {
-    url = new URL(rawUrl)
-  } catch {
-    return blankPageHtml()
-  }
+  const url = parseZenUrl(rawUrl)
+  if (!url) return blankPageHtml()
   switch (url.hostname) {
     case 'error':
       return errorPageHtml(url)
