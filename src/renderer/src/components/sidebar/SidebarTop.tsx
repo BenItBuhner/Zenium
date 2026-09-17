@@ -21,6 +21,8 @@ import { isPrivateWindow } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { openOverlay, openUrlbar, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { StarChip } from '../bookmarks/StarChip'
+import { useBookmarkTree } from '../bookmarks/tree'
 import { useLongPress } from '../phone/useLongPress'
 import { PillChip } from '../urlbar/PillChip'
 import { WindowControls } from '../WindowControls'
@@ -79,6 +81,8 @@ export function NavRow({
     void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, {
       attached: state.settings.urlbarBehavior !== 'always-float'
     })
+  const tree = useBookmarkTree(state)
+  const bookmarked = Boolean(tab && isWebPage && tree.hasUrl(tab.url))
   return (
     <div className={cn('zen-no-drag flex items-center gap-0.5', compact && 'flex-col', className)}>
       <NavigationButton
@@ -213,6 +217,7 @@ export function NavRow({
                 <Copy className="h-3 w-3" />
               </PillChip>
             )}
+            {tab && isWebPage && <StarChip tab={tab} filled={bookmarked} />}
           </span>
         </div>
       )}

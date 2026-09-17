@@ -76,7 +76,11 @@ export function useMainEvents(): void {
       onEvent('tab.pickIcon', ({ tabId }) => uiStore.set({ iconPickerTabId: tabId })),
       onEvent('bookmark.star', (star) => {
         closeUrlbar()
-        void openBookmarkChrome({ starDialog: star }, currentActiveTabId())
+        // The bubble hangs from the star in the address pill, measured as the request arrives.
+        const chip = document.querySelector('[data-bm-star]')
+        const r = chip?.getBoundingClientRect()
+        const anchor = r ? { x: r.left, y: r.top, width: r.width, height: r.height } : null
+        void openBookmarkChrome({ starDialog: { ...star, anchor } }, currentActiveTabId())
       }),
       onEvent('bookmark.edit', (edit) => {
         // Inside the manager the request is handled in place; anywhere else it is a dialog.
