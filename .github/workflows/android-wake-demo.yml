@@ -27,8 +27,6 @@ on:
         options:
           - '34'
           - '35'
-  push:
-    branches: [cursor/android-wake-blank-chrome-b675]
 
 permissions:
   contents: read
@@ -45,7 +43,7 @@ jobs:
       script: .github/scripts/android-wake-demo.sh
       api-level: ${{ inputs.api-level || '35' }}
       script-env: |
-        WAKE_ASSERT=${{ inputs.assert && 'true' || 'false' }}
+        WAKE_ASSERT=${{ (github.event_name == 'push' || inputs.assert) && 'true' || 'false' }}
         BEFORE_APK_DIR=${{ inputs.before && 'before/android/app/build/outputs/apk/debug' || '' }}
       # The "before" take needs main's APK: check main out beside the working tree and build it.
       setup-script: |
