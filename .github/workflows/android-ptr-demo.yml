@@ -17,10 +17,6 @@ on:
         options:
           - light
           - dark
-  # TEMPORARY, removed before the PR is marked ready: worker tokens cannot dispatch workflows.
-  push:
-    branches:
-      - cursor/android-pull-to-refresh-7f3a
 
 permissions:
   contents: read
