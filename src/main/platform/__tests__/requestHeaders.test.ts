@@ -1,8 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { WEBSTORE_URL_PATTERNS as CORE_PATTERNS } from '../../../core/extensions/webstorePrivate'
 import {
+  EDGE_ADD_ONS_URL_PATTERNS as CORE_EDGE_PATTERNS,
+  WEBSTORE_URL_PATTERNS as CORE_PATTERNS
+} from '../../../core/extensions/webstorePrivate'
+import {
+  EDGE_ADD_ONS_URL_PATTERNS,
   WEBSTORE_URL_PATTERNS,
   compileMatchPatterns,
+  edgeStoreUserAgent,
   matchesPattern,
   parseMatchPattern,
   webstoreClientHints
@@ -117,6 +122,99 @@ describe('webstoreClientHints', () => {
     ]) {
       expect(store(url), url).toBe(true)
     }
+  })
+})
+
+describe('edgeStoreUserAgent', () => {
+  const versions = process.versions
+  beforeAll(() => {
+    Object.defineProperty(process, 'versions', {
+      value: { ...versions, chrome: '152.0.7359.98' },
+      configurable: true
+    })
+  })
+  afterAll(() => {
+    Object.defineProperty(process, 'versions', { value: versions, configurable: true })
+  })
+
+  const CHROMIUM_UA =
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7359.98 Safari/537.36'
+  const EDGE_UA = `${CHROMIUM_UA} Edg/152.0.0.0`
+  const EDGE_PAGE =
+    'https://microsoftedge.microsoft.com/addons/detail/ublock-origin/odfafepnkmbhccpbejgmiehpchacaeak'
+  const electronHeaders = {
+    'User-Agent': CHROMIUM_UA,
+    'Sec-CH-UA': '"Chromium";v="152", "Not_A Brand";v="24"',
+    'Sec-CH-UA-Full-Version-List': '"Chromium";v="152.0.7359.98", "Not_A Brand";v="24.0.0.0"',
+    'Sec-CH-UA-Mobile': '?0',
+    Accept: 'text/html',
+    Cookie: 'session=abc'
+  }
+
+  it('is the Edge Add-ons handler, keyed on that origin only', () => {
+    expect(edgeStoreUserAgent.id).toBe('edge-store-user-agent')
+    expect(edgeStoreUserAgent.urls).toBe(EDGE_ADD_ONS_URL_PATTERNS)
+    expect(EDGE_ADD_ONS_URL_PATTERNS).toEqual(CORE_EDGE_PATTERNS)
+    expect(EDGE_ADD_ONS_URL_PATTERNS).toEqual(['https://microsoftedge.microsoft.com/*'])
+    expect(edgeStoreUserAgent.id).not.toBe(webstoreClientHints.id)
+  })
+
+  it('appends the Edg token to User-Agent and adds the Microsoft Edge brand to the client hints', () => {
+    const input = { ...electronHeaders }
+    const result = edgeStoreUserAgent.rewrite(input, details(EDGE_PAGE, input))
+    expect(result).toEqual({
+      ...electronHeaders,
+      'User-Agent': EDGE_UA,
+      'Sec-CH-UA': '"Chromium";v="152", "Microsoft Edge";v="152", "Not_A Brand";v="24"',
+      'Sec-CH-UA-Full-Version-List':
+        '"Chromium";v="152.0.7359.98", "Microsoft Edge";v="152.0.7359.98", "Not_A Brand";v="24.0.0.0"'
+    })
+    expect(result['Sec-CH-UA']).not.toContain('Google Chrome')
+  })
+
+  it('is pure: returns a new map, leaves the input alone, and is idempotent', () => {
+    const input = { ...electronHeaders }
+    const once = edgeStoreUserAgent.rewrite(input, details(EDGE_PAGE, input))
+    expect(input).toEqual(electronHeaders)
+    expect(once).not.toBe(input)
+    const twice = edgeStoreUserAgent.rewrite(once, details(EDGE_PAGE, once))
+    expect(twice).toEqual(once)
+    expect(twice['User-Agent'].match(/Edg\//g)).toHaveLength(1)
+  })
+
+  it('leaves a User-Agent that already carries Edg alone and never invents one', () => {
+    const edge = { 'user-agent': EDGE_UA, Accept: '*/*' }
+    expect(edgeStoreUserAgent.rewrite(edge, details(EDGE_PAGE, edge))['user-agent']).toBe(EDGE_UA)
+    const bare = { Accept: '*/*', 'Accept-Language': 'en-US' }
+    const result = edgeStoreUserAgent.rewrite(bare, details(EDGE_PAGE, bare))
+    expect(Object.keys(result).some((name) => name.toLowerCase() === 'user-agent')).toBe(false)
+    expect(result).toEqual({
+      ...bare,
+      'sec-ch-ua': '"Chromium";v="152", "Microsoft Edge";v="152", "Not_A Brand";v="24"'
+    })
+  })
+
+  it('selects the Edge Add-ons origin only through its url patterns, never the Chrome Web Store', () => {
+    const edge = compileMatchPatterns(edgeStoreUserAgent.urls)
+    for (const url of [
+      EDGE_PAGE,
+      'https://microsoftedge.microsoft.com/addons/Microsoft-Edge-Extensions-Home',
+      'https://microsoftedge.microsoft.com/addons/search/dark%20reader?hl=en'
+    ]) {
+      expect(edge(url), url).toBe(true)
+    }
+    for (const url of [
+      'https://chromewebstore.google.com/detail/json-formatter/bcjindcccaagfpapjjmafapmmgkkhgoa',
+      'https://chrome.google.com/webstore/detail/abc',
+      'https://www.microsoft.com/edge',
+      'https://microsoftedge.microsoft.com.evil.example/',
+      'http://microsoftedge.microsoft.com/addons/',
+      'https://edge.microsoft.com/extensionwebstorebase/v1/crx'
+    ]) {
+      expect(edge(url), url).toBe(false)
+    }
+    // And the Chrome handler's patterns do not select the Edge origin either.
+    expect(compileMatchPatterns(webstoreClientHints.urls)(EDGE_PAGE)).toBe(false)
   })
 })
 

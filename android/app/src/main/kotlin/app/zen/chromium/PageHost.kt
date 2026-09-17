@@ -25,6 +25,8 @@ interface PageHost {
     val permissions: Permissions
     /** Links that leave the web (`mailto:`, `intent://`, a site's own app). */
     val externalProtocols: ExternalProtocols
+    /** HTTP sign-in and client-certificate requests. */
+    val security: Security
     val snapshots: HistorySnapshots
     val tabs: TabHost
     val fullscreenTab: TabWebView?

@@ -1336,6 +1336,72 @@ export interface MediaState {
 }
 
 // ---------------------------------------------------------------------------
+// Security: blocked pop-ups, site rules, HTTP authentication, client certificates
+// ---------------------------------------------------------------------------
+
+/**
+ * A window a page tried to open without the user asking for it, or (Android) a link to another
+ * application it tried to launch without a gesture.
+ */
+export interface BlockedPopup {
+  url: string
+  at: number
+  kind: 'popup' | 'external'
+}
+
+/** One remembered per-site answer (`permission` may carry a qualifier: `openExternal:zoommtg`). */
+export interface PermissionRule {
+  origin: string
+  permission: string
+  decision: 'allow' | 'deny'
+}
+
+export interface ClientCertificateInfo {
+  fingerprint: string
+  subject: string
+  issuer: string
+  serialNumber: string
+  /** Unix milliseconds. */
+  validFrom: number
+  validTo: number
+}
+
+/** A server or proxy asked for credentials (Basic, Digest, NTLM, Negotiate). */
+export interface HttpAuthPrompt {
+  id: string
+  kind: 'http-auth'
+  /** Tab whose page triggered it; null for proxy challenges outside any page. */
+  tabId: string | null
+  host: string
+  port: number
+  realm: string
+  /** Lower-case challenge scheme ('basic', 'digest', 'ntlm', 'negotiate'); '' when unknown. */
+  scheme: string
+  isProxy: boolean
+  /** Whether the credentials travel over TLS. */
+  secure: boolean
+  /** The previous answer for this realm was refused. */
+  failedBefore: boolean
+  /** The username of that refused answer, so only the password needs retyping; '' otherwise. */
+  username: string
+}
+
+export interface ClientCertificatePrompt {
+  id: string
+  kind: 'client-certificate'
+  tabId: string | null
+  host: string
+  certificates: ClientCertificateInfo[]
+}
+
+export type SecurityPrompt = HttpAuthPrompt | ClientCertificatePrompt
+
+/** The user's answer; cancelling a prompt sends null instead. */
+export type SecurityPromptResponse =
+  | { kind: 'http-auth'; username: string; password: string; remember: boolean }
+  | { kind: 'client-certificate'; index: number }
+
+// ---------------------------------------------------------------------------
 // The full UI state snapshot broadcast to the renderer
 // ---------------------------------------------------------------------------
 
@@ -1393,6 +1459,12 @@ export interface UIState {
   passwords: PasswordsStatus
   /** Default-browser role: whether Zenium holds it and which prompt (if any) is due. */
   defaultBrowser: DefaultBrowserStatus
+  /** Pop-ups the blocker refused, per tab (the URL bar shows an indicator). */
+  blockedPopups: Record<string, BlockedPopup[]>
+  /** Every remembered per-site permission answer (Settings lists and revokes them). */
+  permissionRules: PermissionRule[]
+  /** Pending HTTP authentication and client-certificate prompts, oldest first. */
+  securityPrompts: SecurityPrompt[]
   /** Ad and tracker blocking: lists, their freshness and the session counter. */
   blocking: BlockingStatus
 }
@@ -1988,6 +2060,21 @@ export interface Commands {
     args: { passphrase?: string }
     result: ReauthOutcome<{ saved: boolean; count: number }>
   }
+  /** "Open anyway" for one blocked pop-up of a tab. */
+  'popups.open': { args: { tabId: string; url: string }; result: void }
+  'popups.dismiss': { args: { tabId: string }; result: void }
+  /** Always allow (or stop allowing) pop-ups on the site of the tab's current page. */
+  'popups.setSiteAllowed': { args: { tabId: string; allow: boolean }; result: void }
+  /** Forget one remembered per-site answer; the site asks (or is blocked) again. */
+  'permissions.forget': { args: { origin: string; permission: string }; result: void }
+  'permissions.reset': { args: void; result: void }
+  /** Answer a pending HTTP authentication or client-certificate prompt (null cancels). */
+  'security.respond': {
+    args: { id: string; response: SecurityPromptResponse | null }
+    result: void
+  }
+  /** Drop the credentials and certificate choices remembered for this session. */
+  'security.forgetSession': { args: void; result: void }
   /** Refresh one filter list (or every enabled one) from its canonical URL now. */
   'blocking.updateLists': { args: { id?: string }; result: void }
   /** The master switch of ad and tracker blocking (the `ads` permission's default). */

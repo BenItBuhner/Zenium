@@ -51,6 +51,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override val blocking = Blocking.shared(activity)
     override val keys = Keys()
     override val permissions = Permissions(this)
+    override val security = Security(this)
     override val downloads = Downloads(activity, this)
     var chrome = ChromeWebView(activity, this)
         private set
@@ -178,6 +179,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.input" -> if (tab == null) reply(null) else tab.sendAgentInput(args.obj("event")) { reply(null) }
             "view.setFlags" -> { tab?.setFlags(args.obj("flags")); reply(null) }
             "view.setZap" -> { tab?.setZap(args.bool("on")); reply(null) }
+            "view.setPopupsAllowed" -> { tab?.setPopupsAllowed(args.bool("allowed")); reply(null) }
             "view.setBackground" -> {
                 tab?.setBackgroundColor(parseColor(args.str("color", "#ffffff")))
                 reply(null)
@@ -271,6 +273,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "download.showAll" -> { downloads.showAll(); reply(null) }
             "profile.clear" -> { Profiles.clear(args.str("containerId")); reply(null) }
             "permission.respond" -> { permissions.respond(args.str("requestId"), args.bool("allow")); reply(null) }
+            "auth.respond" -> {
+                security.respondAuth(args.str("requestId"), args.strOrNull("username"), args.strOrNull("password"))
+                reply(null)
+            }
+            "security.forgetSession" -> { security.forgetSession(); reply(null) }
 
             // --- AI agents (MCP server) ------------------------------------------------------------
             "agent.start" -> reply(agentServer.start(args.num("port", 41735.0).toInt(), args.bool("lan")))
@@ -751,6 +758,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         agentServer.stop()
         downloads.destroy()
         updates.shutdown()
+        security.shutdown()
         tabs.destroyAll()
         // Not the request engine: it is the process's, and a custom tab may still be using it.
         // The chrome too: a WebView that outlives its activity keeps its document – and the

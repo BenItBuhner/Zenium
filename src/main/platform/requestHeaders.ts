@@ -1,6 +1,6 @@
 /**
- * The store-origin client-hints rewrite as a function-shaped builtin request-header handler, and
- * the Chromium match-pattern helpers the `webRequest` multiplexer filters requests with.
+ * The store-origin request-header rewrites as function-shaped builtin request-header handlers,
+ * and the Chromium match-pattern helpers the `webRequest` multiplexer filters requests with.
  *
  * The constraint: Electron gives a session exactly one listener per `webRequest` event (a second
  * registration replaces the first), and any listener the host installs switches off native
@@ -11,14 +11,19 @@
  * before any `chrome.webRequest`-style listener, so their edits count as the host's when
  * listeners conflict with them.
  *
- * The shape: the rewrite transforms an existing `Sec-CH-UA` value (Chrome's brand goes next to
- * the Chromium entry, with that entry's version) rather than setting a constant, so it is not a
- * `modifyHeaders` rule for the engine's rule-set registry. It is a {@link RequestHeaderHandler}:
- * `{ id, urls, rewrite(headers, details) }` with a pure `rewrite`.
+ * The shape: the rewrites transform existing values (a brand goes next to the Chromium entry of
+ * `Sec-CH-UA`, with that entry's version; Edge's token is appended to the request's own
+ * `User-Agent`) rather than setting constants, so they are not `modifyHeaders` rules for the
+ * engine's rule-set registry. Each is a {@link RequestHeaderHandler}:
+ * `{ id, urls, rewrite(headers, details) }` with a pure `rewrite`. The platform registers
+ * {@link webstoreClientHints} and {@link edgeStoreUserAgent} for persistent sessions in
+ * `index.ts`.
  */
 import {
+  EDGE_ADD_ONS_URL_PATTERNS as EDGE_URL_PATTERNS,
   WEBSTORE_URL_PATTERNS as STORE_URL_PATTERNS,
-  withChromeClientHints
+  withChromeClientHints,
+  withEdgeIdentity
 } from '../../core/extensions/webstorePrivate'
 
 /** A builtin participant in the `onBeforeSendHeaders` phase for the requests `urls` select. */
@@ -37,6 +42,9 @@ export interface RequestHeaderHandler {
 /** The Chrome Web Store origins (the legacy host on its webstore path only). */
 export const WEBSTORE_URL_PATTERNS: readonly string[] = STORE_URL_PATTERNS
 
+/** The Edge Add-ons origin. */
+export const EDGE_ADD_ONS_URL_PATTERNS: readonly string[] = EDGE_URL_PATTERNS
+
 /**
  * Presents the browser to the store's servers as Chrome. The page request's client hints decide
  * whether the store renders its install button or "Switch to Chrome": Chrome's brand is added to
@@ -48,6 +56,21 @@ export const webstoreClientHints: RequestHeaderHandler = {
   urls: WEBSTORE_URL_PATTERNS,
   rewrite(headers): Record<string, string> {
     return withChromeClientHints(headers, process.versions.chrome)
+  }
+}
+
+/**
+ * Presents the browser to the Edge Add-ons origin as Edge: `Edg/<major>.0.0.0` is appended to the
+ * request's `User-Agent` and Edge's brand is added to the client hints, both only when missing.
+ * The page's own gate is the brand list it reads from `navigator.userAgentData` (the frame
+ * preload supplies that); the headers make the server see the same browser the page does.
+ * Nothing outside this origin is touched.
+ */
+export const edgeStoreUserAgent: RequestHeaderHandler = {
+  id: 'edge-store-user-agent',
+  urls: EDGE_ADD_ONS_URL_PATTERNS,
+  rewrite(headers): Record<string, string> {
+    return withEdgeIdentity(headers, process.versions.chrome)
   }
 }
 

@@ -17,7 +17,11 @@ import { DEFAULT_UPDATE_SETTINGS } from './updates'
 import { DEFAULT_PROMO_STATE } from './defaultBrowser'
 import { DEFAULT_BLOCKING_SETTINGS } from './blocking'
 
-/** Off until the user turns it on in Settings → AI Agents; loopback only, approval required. */
+/**
+ * Off until the user turns it on in Settings → AI Agents; loopback only, approval required.
+ * Page scripting (`browser_evaluate`) is a separate opt-in: an agent that can run arbitrary
+ * JavaScript in the user's pages can read and exfiltrate anything they are signed in to.
+ */
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   enabled: false,
   port: 41735,
@@ -25,7 +29,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   approveNewAgents: true,
   approvedNames: [],
   defaultMode: 'foreground',
-  allowScripts: true,
+  allowScripts: false,
   showCursor: true
 }
 

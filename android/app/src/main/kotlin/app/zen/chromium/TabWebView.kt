@@ -22,8 +22,10 @@ import android.view.MotionEvent
 import android.view.PixelCopy
 import android.view.View
 import android.view.ViewOutlineProvider
+import android.webkit.ClientCertRequest
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
+import android.webkit.HttpAuthHandler
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.SslErrorHandler
@@ -120,7 +122,9 @@ class TabWebView(
             builtInZoomControls = true
             displayZoomControls = false
             setSupportMultipleWindows(true)
-            javaScriptCanOpenWindowsAutomatically = true
+            // The pop-up blocker: window.open needs a gesture unless the core allowed the site
+            // (setPopupsAllowed); a blocked call is reported by the page script and listed.
+            javaScriptCanOpenWindowsAutomatically = false
             mediaPlaybackRequiresUserGesture = true
             mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             if (WebViewFeature.isFeatureSupported(WebViewFeature.SAFE_BROWSING_ENABLE)) safeBrowsingEnabled = true
@@ -365,14 +369,33 @@ class TabWebView(
         }
     }
 
+    /** The core's "always allow pop-ups on this site": window.open may open windows on its own. */
+    fun setPopupsAllowed(allowed: Boolean) {
+        settings.javaScriptCanOpenWindowsAutomatically = allowed
+    }
+
     // --- input ---------------------------------------------------------------------------------
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         lastTouchX = event.x
         lastTouchY = event.y
+        if (event.actionMasked == MotionEvent.ACTION_UP) reportActivation()
         // The pull decides what of the touch the WebView sees (see PullToRefreshGesture).
         return pull.onTouchEvent(event)
     }
+
+    /**
+     * A trusted tap or key reached the page: the core's user-activation model (pop-ups, app
+     * launches) runs on it. Rate-limited so scrolling does not flood the bridge.
+     */
+    private fun reportActivation() {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastActivationAt < ACTIVATION_REPORT_INTERVAL_MS) return
+        lastActivationAt = now
+        host.viewEvent(tabId, "activation", null)
+    }
+
+    private var lastActivationAt = 0L
 
     /** Long-press on links/images opens Zen's page menu; text selection stays native. */
     private fun onLongPress(): Boolean {
@@ -412,6 +435,7 @@ class TabWebView(
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
+            reportActivation()
             val isEscape = event.keyCode == KeyEvent.KEYCODE_ESCAPE
             if (host.keys.matches(event) || isEscape) {
                 host.keys.toInput(event)?.let { host.onKey(tabId, it) }
@@ -789,6 +813,14 @@ class TabWebView(
             }
         }
 
+        override fun onReceivedHttpAuthRequest(view: WebView, handler: HttpAuthHandler, host: String, realm: String) {
+            this@TabWebView.host.security.onHttpAuth(this@TabWebView, handler, host, realm)
+        }
+
+        override fun onReceivedClientCertRequest(view: WebView, request: ClientCertRequest) {
+            host.security.onClientCertRequest(request)
+        }
+
         /**
          * The engine's word on a main-frame navigation: true when it took the navigation over
          * (onto the Zenium blocked page, or to the redirect target), false when the page may go.
@@ -959,6 +991,8 @@ class TabWebView(
         ): Boolean = host.activity.showFileChooser(filePathCallback, fileChooserParams)
 
         override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
+            // The WebView only asks without a gesture when the site may open windows on its own.
+            if (!isUserGesture && !settings.javaScriptCanOpenWindowsAutomatically) return false
             if (!host.popupsAsTabs) {
                 // A custom tab has one page: a popup the user asked for (target=_blank, window.open
                 // from a tap) navigates it; a popup no tap asked for is blocked, as Chrome does.
@@ -1005,6 +1039,9 @@ class TabWebView(
 
         /** `net::ERR_BLOCKED_BY_CLIENT`, what the core's blocked page is keyed on. */
         private const val BLOCKED_BY_CLIENT = -20
+
+        /** Well inside the core's 5 s activation window, so a tap is never missed for long. */
+        private const val ACTIVATION_REPORT_INTERVAL_MS = 400L
 
         /** Where the visual viewport sits in the layout viewport (non-zero only while pinch-zoomed). */
         private const val VISUAL_OFFSET_SCRIPT =
