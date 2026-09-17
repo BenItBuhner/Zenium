@@ -23,11 +23,12 @@ export interface MethodSpec {
   keepNative?: boolean
   /**
    * Answered on the context side, never reaching the host: the shape of a member the browser
-   * layer does not implement yet, so an extension that touches it while starting runs on.
+   * layer does not implement (or has nothing to say about, like `cookies.getPartitionKey` in a
+   * browser without per-site cookie partitions), so an extension that touches it runs on.
    * `value` goes to the callback or promise; `id` answers with the caller's own id (a string
    * first argument or `createProperties.id`) or a generated one of that type; `sync` also returns
-   * the id synchronously (`contextMenus.create`). Browser layer part 2 turns these into routed
-   * calls by deleting the flag and adding the host handler.
+   * the id synchronously. Turning one into a routed call is deleting the flag and adding the
+   * host handler.
    */
   inert?: { value?: unknown; id?: 'number' | 'string'; sync?: boolean }
 }
@@ -247,16 +248,14 @@ export const API_SPEC: ApiSpec = {
     }
   },
 
-  // Browser layer part 2 namespaces, as shapes. Electron 44 has none of them, and of the top 30
-  // Chrome Web Store extensions 15 register a webNavigation listener, 13 a contextMenus one, 11
-  // commands.onCommand, 9 touch cookies and 7 notifications – at the top of their background
-  // script, where an undefined namespace ends the extension before it does anything else.
-  // Events never fire and methods answer with Chrome's empty results until part 2 lands.
+  // Browser layer part 2 namespaces. Electron 44 has none of them; every member routes to the
+  // host and every event is fired from there (webNavigation from the tab views' navigation
+  // events, contextMenus from the page and toolbar menus, commands from the key handler,
+  // notifications from the native notification, cookies from the sessions' cookie stores).
   webNavigation: {
-    shape: true,
     methods: {
-      getFrame: { params: [object('details')], inert: { value: null } },
-      getAllFrames: { params: [object('details')], inert: { value: [] } }
+      getFrame: { params: [object('details')] },
+      getAllFrames: { params: [object('details')] }
     },
     events: {
       onBeforeNavigate: {},
@@ -292,15 +291,15 @@ export const API_SPEC: ApiSpec = {
     }
   },
   contextMenus: {
-    shape: true,
     methods: {
-      create: { params: [object('createProperties')], inert: { id: 'number', sync: true } },
+      // `create` returns the id synchronously; the shim special-cases it (see `shim.ts`) and
+      // passes the id it generated as a second argument for the host to adopt.
+      create: { params: [object('createProperties')] },
       update: {
-        params: [{ name: 'id', type: ['integer', 'string'] }, object('updateProperties')],
-        inert: {}
+        params: [{ name: 'id', type: ['integer', 'string'] }, object('updateProperties')]
       },
-      remove: { params: [{ name: 'menuItemId', type: ['integer', 'string'] }], inert: {} },
-      removeAll: { params: [], inert: {} }
+      remove: { params: [{ name: 'menuItemId', type: ['integer', 'string'] }] },
+      removeAll: { params: [] }
     },
     events: { onClicked: {} },
     constants: {
@@ -324,21 +323,18 @@ export const API_SPEC: ApiSpec = {
     }
   },
   commands: {
-    shape: true,
-    methods: { getAll: { params: [], inert: { value: [] } } },
+    methods: { getAll: { params: [] } },
     events: { onCommand: {} }
   },
   notifications: {
-    shape: true,
     methods: {
       create: {
-        params: [{ name: 'notificationId', type: 'string', optional: true }, object('options')],
-        inert: { id: 'string' }
+        params: [{ name: 'notificationId', type: 'string', optional: true }, object('options')]
       },
-      update: { params: [string('notificationId'), object('options')], inert: { value: false } },
-      clear: { params: [string('notificationId')], inert: { value: false } },
-      getAll: { params: [], inert: { value: {} } },
-      getPermissionLevel: { params: [], inert: { value: 'denied' } }
+      update: { params: [string('notificationId'), object('options')] },
+      clear: { params: [string('notificationId')] },
+      getAll: { params: [] },
+      getPermissionLevel: { params: [] }
     },
     events: {
       onClosed: {},
@@ -353,13 +349,13 @@ export const API_SPEC: ApiSpec = {
     }
   },
   cookies: {
-    shape: true,
     methods: {
-      get: { params: [object('details')], inert: { value: null } },
-      getAll: { params: [object('details')], inert: { value: [] } },
-      set: { params: [object('details')], inert: { value: null } },
-      remove: { params: [object('details')], inert: { value: null } },
-      getAllCookieStores: { params: [], inert: { value: [] } },
+      get: { params: [object('details')] },
+      getAll: { params: [object('details')] },
+      set: { params: [object('details')] },
+      remove: { params: [object('details')] },
+      getAllCookieStores: { params: [] },
+      // Zenium partitions cookies per container, never per top-level site: the key is empty.
       getPartitionKey: { params: [object('details')], inert: { value: { partitionKey: {} } } }
     },
     events: { onChanged: {} },
@@ -376,6 +372,85 @@ export const API_SPEC: ApiSpec = {
         EXPLICIT: 'explicit',
         EXPIRED_OVERWRITE: 'expired_overwrite',
         OVERWRITE: 'overwrite'
+      }
+    }
+  },
+  // The engine's own binding is inert without Chrome's rules service (and the blocking engine's
+  // hook disables the native path anyway), so every member is replaced by the host's, backed by
+  // `core/extensions/dnr`. `testMatchOutcome` and `onRuleMatchedDebug` exist for unpacked
+  // extensions only, as in Chrome; the host answers with an error for the others.
+  declarativeNetRequest: {
+    methods: {
+      updateDynamicRules: { params: [object('options')] },
+      getDynamicRules: { params: [object('filter', true)] },
+      updateSessionRules: { params: [object('options')] },
+      getSessionRules: { params: [object('filter', true)] },
+      updateEnabledRulesets: { params: [object('options')] },
+      getEnabledRulesets: { params: [] },
+      updateStaticRules: { params: [object('options')] },
+      getDisabledRuleIds: { params: [object('options')] },
+      getAvailableStaticRuleCount: { params: [] },
+      getMatchedRules: { params: [object('filter', true)] },
+      setExtensionActionOptions: { params: [object('options')] },
+      isRegexSupported: { params: [object('regexOptions')] },
+      testMatchOutcome: { params: [object('request')] }
+    },
+    events: { onRuleMatchedDebug: {} },
+    constants: {
+      DYNAMIC_RULESET_ID: '_dynamic',
+      SESSION_RULESET_ID: '_session',
+      GUARANTEED_MINIMUM_STATIC_RULES: 30000,
+      MAX_NUMBER_OF_DYNAMIC_AND_SESSION_RULES: 5000,
+      MAX_NUMBER_OF_DYNAMIC_RULES: 30000,
+      MAX_NUMBER_OF_UNSAFE_DYNAMIC_RULES: 5000,
+      MAX_NUMBER_OF_SESSION_RULES: 5000,
+      MAX_NUMBER_OF_UNSAFE_SESSION_RULES: 5000,
+      MAX_NUMBER_OF_REGEX_RULES: 1000,
+      MAX_NUMBER_OF_STATIC_RULESETS: 100,
+      MAX_NUMBER_OF_ENABLED_STATIC_RULESETS: 50,
+      GETMATCHEDRULES_QUOTA_INTERVAL: 10,
+      MAX_GETMATCHEDRULES_CALLS_PER_INTERVAL: 20,
+      ResourceType: {
+        MAIN_FRAME: 'main_frame',
+        SUB_FRAME: 'sub_frame',
+        STYLESHEET: 'stylesheet',
+        SCRIPT: 'script',
+        IMAGE: 'image',
+        FONT: 'font',
+        OBJECT: 'object',
+        XMLHTTPREQUEST: 'xmlhttprequest',
+        PING: 'ping',
+        CSP_REPORT: 'csp_report',
+        MEDIA: 'media',
+        WEBSOCKET: 'websocket',
+        WEBTRANSPORT: 'webtransport',
+        WEBBUNDLE: 'webbundle',
+        OTHER: 'other'
+      },
+      RuleActionType: {
+        BLOCK: 'block',
+        REDIRECT: 'redirect',
+        ALLOW: 'allow',
+        UPGRADE_SCHEME: 'upgradeScheme',
+        MODIFY_HEADERS: 'modifyHeaders',
+        ALLOW_ALL_REQUESTS: 'allowAllRequests'
+      },
+      RequestMethod: {
+        CONNECT: 'connect',
+        DELETE: 'delete',
+        GET: 'get',
+        HEAD: 'head',
+        OPTIONS: 'options',
+        PATCH: 'patch',
+        POST: 'post',
+        PUT: 'put',
+        OTHER: 'other'
+      },
+      DomainType: { FIRST_PARTY: 'firstParty', THIRD_PARTY: 'thirdParty' },
+      HeaderOperation: { APPEND: 'append', SET: 'set', REMOVE: 'remove' },
+      UnsupportedRegexReason: {
+        SYNTAX_ERROR: 'syntaxError',
+        MEMORY_LIMIT_EXCEEDED: 'memoryLimitExceeded'
       }
     }
   }

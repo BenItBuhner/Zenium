@@ -28,6 +28,7 @@ import { ElectronWindowFactory, type ElectronWindow } from './window'
 import { ExtensionService } from './extensions'
 import { WebstoreBridge } from './webstoreBridge'
 import { ExtensionApiHost } from './extensionApi'
+import { InMemoryRuleSink } from './extensionApi/dnrSink'
 import { requestHeaderRules } from './requestHeaders'
 import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
@@ -246,7 +247,8 @@ export class ElectronPlatform implements Platform {
       this.sessions,
       this.views,
       this.io,
-      this.userDataDir
+      this.userDataDir,
+      new InMemoryRuleSink((message) => console.info(message))
     )
     extensionApi.install()
     const extensionService = browser.extensions as ExtensionService
@@ -261,7 +263,7 @@ export class ElectronPlatform implements Platform {
       ses.setSpellCheckerLanguages(['en-US'])
       if (this.sessions.isPersistent(containerId)) {
         webstore.attach(ses)
-        extensionApi.attachSession(ses)
+        extensionApi.attachSession(ses, containerId)
         // Interim: the session's one onBeforeSendHeaders slot, running webstoreClientHints. The
         // webRequest multiplexer registers that handler itself and deletes this call when it lands.
         requestHeaderRules.attach(ses)

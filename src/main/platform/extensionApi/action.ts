@@ -239,6 +239,16 @@ export class ActionApi {
     this.host.dispatch(extensionId, 'action', 'onClicked', [tab], { wake: true })
   }
 
+  /**
+   * Badge text set by the browser layer itself (declarativeNetRequest's action count); an empty
+   * text falls back to what the extension set.
+   */
+  setBadgeTextFor(extensionId: string, tabId: number, text: string): void {
+    const ext = this.host.loaded(extensionId)
+    if (!ext) return
+    this.write(ext, tabId, 'badgeText', text || null)
+  }
+
   /** The state the toolbar should show for an extension right now (its active tab). */
   stateFor(extensionId: string): ExtensionAction | null {
     const ext = this.host.loaded(extensionId)

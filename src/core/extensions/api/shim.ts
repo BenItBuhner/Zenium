@@ -13,6 +13,16 @@ import type { ApiSpec, MethodSpec, ParamSpec, ParamType } from './spec'
 
 export type InvokeResult = { ok: true; value: unknown } | { ok: false; error: string }
 
+/**
+ * Which listeners of an event a host delivery is for, once the host matched the event's URL
+ * against the listeners' `UrlFilter`s (`webNavigation`): the unfiltered ones, and the filtered
+ * ones by the ids the shim gave them. Absent when every listener should receive it.
+ */
+export interface EventDelivery {
+  unfiltered: boolean
+  matched: number[]
+}
+
 export interface ShimHost {
   /** `frame` for documents, `worker` for the MV3 service worker. */
   kind: 'frame' | 'worker'
@@ -21,7 +31,9 @@ export interface ShimHost {
   /** Fire-and-forget notifications: `hello`, `listen`, `unlisten`, `storage-changed`. */
   notify(kind: string, payload: unknown): void
   /** Events pushed by the host, addressed by namespace and event name. */
-  onEvent(listener: (namespace: string, event: string, args: unknown[]) => void): void
+  onEvent(
+    listener: (namespace: string, event: string, args: unknown[], delivery?: EventDelivery) => void
+  ): void
 }
 
 export interface ExtensionView {
@@ -114,6 +126,20 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     } catch {
       return undefined
     }
+  }
+
+  // Typed accessors for the untyped values that arrive from extensions and from the host: the
+  // reflective parts of the shim (patching the engine's objects) keep `Any`, new code narrows.
+  function isObject(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+  }
+
+  function isFunction(value: unknown): value is (...args: unknown[]) => unknown {
+    return typeof value === 'function'
+  }
+
+  function isMenuId(value: unknown): value is string | number {
+    return typeof value === 'string' || (typeof value === 'number' && Number.isInteger(value))
   }
 
   function define(target: Any, key: string, value: unknown): void {
@@ -402,6 +428,8 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   // Events
   // ---------------------------------------------------------------------------
 
+  type Listener = (...args: unknown[]) => unknown
+
   interface EventObject {
     addListener(fn: Any, ...rest: unknown[]): void
     removeListener(fn: Any): void
@@ -412,21 +440,62 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
 
   interface EventRecord {
     object: EventObject
-    listeners: Set<Any>
-    pending: Array<{ args: unknown[]; at: number }>
+    /** Listener → the id of its URL filter set, null for an unfiltered listener. */
+    listeners: Map<Listener, number | null>
+    pending: Array<{ args: unknown[]; at: number; delivery?: EventDelivery }>
     nativeDelivers: boolean
     /** With `nativeDelivers`: which host deliveries the engine already made (dropped here). */
     nativeHandles: (args: unknown[]) => boolean
   }
 
   const events = new Map<string, EventRecord>()
+  let filterIds = 0
+
+  /**
+   * `addListener(fn, filters)`: `filters.url` is a list of `events.UrlFilter`s the host matches
+   * before delivering (`webNavigation`). Only the shape is checked here; the host validates the
+   * fields and ignores unknown ones, like Chrome.
+   */
+  function urlFilters(fullName: string, filters: unknown): unknown[] | null {
+    if (filters === undefined || filters === null) return null
+    if (!isObject(filters)) {
+      throw new TypeError(
+        `Error in invocation of ${fullName}.addListener(function callback, optional object filters): No matching signature.`
+      )
+    }
+    const url = filters.url
+    if (url === undefined) return null
+    if (!Array.isArray(url) || !url.every(isObject)) {
+      throw new TypeError(
+        `Error in invocation of ${fullName}.addListener(function callback, optional object filters): Error at parameter 'filters': Error at property 'url': Expected array of UrlFilter objects.`
+      )
+    }
+    return url
+  }
+
+  function callListener(fn: Listener, args: unknown[], results?: unknown[]): void {
+    try {
+      const result = fn(...args)
+      if (results) results.push(result)
+    } catch (error) {
+      setTimeout(() => {
+        throw error
+      }, 0)
+    }
+  }
+
+  /** Whether a delivery addressed by the host is for this listener. */
+  function wants(filterId: number | null, delivery: EventDelivery | undefined): boolean {
+    if (!delivery) return true
+    return filterId === null ? delivery.unfiltered : delivery.matched.includes(filterId)
+  }
 
   function createEvent(
     fullName: string,
     native: Any,
     options: { nativeDelivers: boolean; nativeHandles?: (args: unknown[]) => boolean }
   ): EventObject {
-    const listeners = new Set<Any>()
+    const listeners = new Map<Listener, number | null>()
     const record: EventRecord = {
       object: null as unknown as EventObject,
       listeners,
@@ -434,50 +503,54 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       nativeDelivers: options.nativeDelivers && Boolean(native),
       nativeHandles: options.nativeHandles ?? (() => true)
     }
+    const unfilteredCount = (): number => {
+      let count = 0
+      for (const id of listeners.values()) if (id === null) count += 1
+      return count
+    }
     const object: EventObject = {
       addListener(fn: Any, ...rest: unknown[]): void {
-        if (typeof fn !== 'function') return
+        if (!isFunction(fn) || listeners.has(fn)) return
         if (record.nativeDelivers) safely(() => native.addListener(fn, ...rest))
-        const first = listeners.size === 0
-        listeners.add(fn)
-        if (first) host.notify('listen', { event: fullName })
+        const filters = urlFilters(fullName, rest[0])
+        if (filters) {
+          filterIds += 1
+          listeners.set(fn, filterIds)
+          host.notify('listen', { event: fullName, filterId: filterIds, filters })
+        } else {
+          const first = unfilteredCount() === 0
+          listeners.set(fn, null)
+          if (first) host.notify('listen', { event: fullName })
+        }
         if (record.pending.length > 0) {
           const now = Date.now()
           const queued = record.pending.splice(0)
+          const filterId = listeners.get(fn) ?? null
           for (const item of queued) {
             if (now - item.at > PENDING_TTL) continue
-            try {
-              fn(...item.args)
-            } catch (error) {
-              setTimeout(() => {
-                throw error
-              }, 0)
-            }
+            // A filtered listener registered after the host matched cannot be matched now; it
+            // only receives deliveries the host addressed to everyone.
+            if (wants(filterId, item.delivery)) callListener(fn, item.args)
           }
         }
       },
       removeListener(fn: Any): void {
         if (record.nativeDelivers) safely(() => native.removeListener(fn))
-        if (!listeners.delete(fn)) return
-        if (listeners.size === 0) host.notify('unlisten', { event: fullName })
+        if (!listeners.has(fn)) return
+        const filterId = listeners.get(fn) ?? null
+        listeners.delete(fn)
+        if (filterId !== null) host.notify('unlisten', { event: fullName, filterId })
+        else if (unfilteredCount() === 0) host.notify('unlisten', { event: fullName })
       },
       hasListener(fn: Any): boolean {
-        return listeners.has(fn)
+        return isFunction(fn) && listeners.has(fn)
       },
       hasListeners(): boolean {
         return listeners.size > 0
       },
       dispatch(...args: unknown[]): unknown[] {
         const results: unknown[] = []
-        for (const fn of [...listeners]) {
-          try {
-            results.push(fn(...args))
-          } catch (error) {
-            setTimeout(() => {
-              throw error
-            }, 0)
-          }
-        }
+        for (const fn of [...listeners.keys()]) callListener(fn, args, results)
         return results
       }
     }
@@ -496,18 +569,24 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     return object
   }
 
-  function deliver(fullName: string, args: unknown[]): void {
+  function deliver(fullName: string, args: unknown[], delivery?: EventDelivery): void {
     const record = events.get(fullName)
     if (!record) return
     // The engine already fired this one at our listeners; a second delivery would duplicate it.
     if (record.nativeDelivers && record.nativeHandles(args)) return
     if (record.listeners.size > 0) {
-      record.object.dispatch(...args)
+      for (const [fn, filterId] of [...record.listeners]) {
+        if (wants(filterId, delivery)) callListener(fn, args)
+      }
       return
     }
     const now = Date.now()
     record.pending = record.pending.filter((p) => now - p.at <= PENDING_TTL)
-    if (record.pending.length < 50) record.pending.push({ args, at: now })
+    if (record.pending.length < 50) {
+      const item: EventRecord['pending'][number] = { args, at: now }
+      if (delivery) item.delivery = delivery
+      record.pending.push(item)
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -541,6 +620,99 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
         if (safely(() => target[name]) === undefined) define(target, name, value)
       }
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // contextMenus: `create` returns its id synchronously, `onclick` stays on this side
+  // ---------------------------------------------------------------------------
+
+  /** `onclick` handlers by item id (functions cannot cross to the host). */
+  const menuClickHandlers = new Map<string, Listener>()
+  let generatedMenuIds = 0
+  const menuKey = (id: string | number): string => (typeof id === 'number' ? `n:${id}` : `s:${id}`)
+  const menuQualified = 'contextMenus.create(object createProperties, optional function callback)'
+
+  /** Strip `onclick` for the wire (a flag tells the host one was given) and remember it here. */
+  function menuProperties(
+    props: Record<string, unknown>,
+    id: string | number | null
+  ): Record<string, unknown> {
+    const sent: Record<string, unknown> = { ...props }
+    const onclick = props.onclick
+    if (isFunction(onclick)) {
+      sent.onclick = true
+      if (id !== null) menuClickHandlers.set(menuKey(id), onclick)
+    } else {
+      delete sent.onclick
+    }
+    return sent
+  }
+
+  if (spec.contextMenus) {
+    for (const root of roots) {
+      const menus = namespaceOn(root, 'contextMenus')
+      define(menus, 'create', function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const props = raw[0]
+        if (!isObject(props)) throw signatureError(menuQualified)
+        let id: string | number
+        if (isMenuId(props.id)) {
+          id = props.id
+        } else {
+          generatedMenuIds += 1
+          id = generatedMenuIds
+        }
+        const sent = menuProperties(props, id)
+        const work = invoke('contextMenus', 'create', [sent, id]).then(
+          () => undefined,
+          (error: unknown) => {
+            menuClickHandlers.delete(menuKey(id))
+            throw error
+          }
+        )
+        // Chrome reports failures through runtime.lastError (unchecked when no callback is given).
+        settle(menuQualified, work, callback ?? (() => undefined))
+        return id
+      })
+      define(menus, 'update', function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const qualified =
+          'contextMenus.update(integer|string id, object updateProperties, optional function callback)'
+        const [id, props] = normalizeArgs(qualified, raw, [
+          { name: 'id', type: ['integer', 'string'] },
+          { name: 'updateProperties', type: 'object' }
+        ])
+        const sent = isObject(props) && isMenuId(id) ? menuProperties(props, id) : props
+        return settle(qualified, invoke('contextMenus', 'update', [id, sent]), callback)
+      })
+      define(menus, 'remove', function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const qualified =
+          'contextMenus.remove(integer|string menuItemId, optional function callback)'
+        const [id] = normalizeArgs(qualified, raw, [
+          { name: 'menuItemId', type: ['integer', 'string'] }
+        ])
+        if (isMenuId(id)) menuClickHandlers.delete(menuKey(id))
+        return settle(qualified, invoke('contextMenus', 'remove', [id]), callback)
+      })
+      define(menus, 'removeAll', function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        menuClickHandlers.clear()
+        return settle(
+          'contextMenus.removeAll(optional function callback)',
+          invoke('contextMenus', 'removeAll', []),
+          callback
+        )
+      })
+    }
+  }
+
+  /** A click on an item created with `onclick`: Chrome calls that handler besides `onClicked`. */
+  function menuClicked(args: unknown[]): void {
+    const info = args[0]
+    if (!isObject(info) || !isMenuId(info.menuItemId)) return
+    const handler = menuClickHandlers.get(menuKey(info.menuItemId))
+    if (handler) callListener(handler, args)
   }
 
   // ---------------------------------------------------------------------------
@@ -768,7 +940,21 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
         }
         return out
       })
+      // The background page's `window` is only reachable from the background page itself: the
+      // engine puts every extension document in its own process, so a popup gets null (Chrome
+      // returns the shared window there; extensions fall back to messaging when it is null).
       define(extension, 'getBackgroundPage', (): Any => (isBackgroundPage ? g : null))
+      if (!isFunction(safely(() => runtime.getBackgroundPage))) {
+        define(runtime, 'getBackgroundPage', function (...raw: unknown[]): unknown {
+          const callback = takeCallback(raw)
+          const qualified = 'runtime.getBackgroundPage(optional function callback)'
+          const work =
+            manifestVersion === 2 && manifest.background
+              ? Promise.resolve(isBackgroundPage ? g : null)
+              : Promise.reject(new Error('You do not have a background page.'))
+          return settle(qualified, work, callback)
+        })
+      }
     }
   }
 
@@ -776,16 +962,17 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   // Event delivery from the host
   // ---------------------------------------------------------------------------
 
-  host.onEvent((namespace, event, args) => {
+  host.onEvent((namespace, event, args, delivery) => {
     if (namespace === '__zen') {
       if (event === 'views' && Array.isArray(args[0])) views = args[0] as ExtensionView[]
       return
     }
+    if (namespace === 'contextMenus' && event === 'onClicked') menuClicked(args)
     const names =
       namespace === 'action'
         ? [`action.${event}`, `browserAction.${event}`]
         : [`${namespace}.${event}`]
-    for (const name of names) deliver(name, args)
+    for (const name of names) deliver(name, args, delivery)
   })
 
   host.notify('hello', {
