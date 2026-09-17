@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { HistoryEntry } from '@shared/types'
-import { isTopSiteCandidate, rankTopSites, scoreFrecency, topSiteHost } from '../historyAdapter'
+import {
+  isTopSiteCandidate,
+  isUnknownCommandError,
+  parseTopSites,
+  rankTopSites,
+  scoreFrecency,
+  topSiteHost
+} from '../historyAdapter'
 
 const DAY = 24 * 60 * 60 * 1000
 const now = 1_800_000_000_000
@@ -111,5 +118,32 @@ describe('rankTopSites', () => {
     expect(tie.map((s) => s.url)).toEqual(['https://newer.example/', 'https://older.example/'])
     expect(rankTopSites(entries, { now, n: 0 })).toEqual([])
     expect(rankTopSites([], { now, n: 8 })).toEqual([])
+  })
+})
+
+describe('the history.topSites contract', () => {
+  it('accepts the contract shape and nothing else', () => {
+    const site = { url: 'https://a.example/', title: 'A', favicon: null, score: 12 }
+    expect(parseTopSites([site, { ...site, favicon: 'data:image/png;base64,' }])).toHaveLength(2)
+    expect(parseTopSites([])).toEqual([])
+    expect(parseTopSites(null)).toBeNull()
+    expect(parseTopSites({ page: [site] })).toBeNull()
+    expect(parseTopSites([{ url: 'https://a.example/', title: 'A' }])).toBeNull()
+    expect(parseTopSites([{ ...site, score: '12' }])).toBeNull()
+  })
+
+  it('tells a core without the command from a command that failed', () => {
+    expect(
+      isUnknownCommandError(new Error('Unknown command: history.topSites'), 'history.topSites')
+    ).toBe(true)
+    expect(isUnknownCommandError('Unknown command: history.topSites', 'history.topSites')).toBe(
+      true
+    )
+    expect(isUnknownCommandError(new Error('Unknown command: other'), 'history.topSites')).toBe(
+      false
+    )
+    expect(
+      isUnknownCommandError(new Error('history.topSites: store closed'), 'history.topSites')
+    ).toBe(false)
   })
 })

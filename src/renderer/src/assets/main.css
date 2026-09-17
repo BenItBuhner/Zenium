@@ -2465,15 +2465,203 @@
 
 @layer components {
   /*
-   * The phone's new tab page (`NewTabPage`). Quiet by default: the page is the window's own
-   * gradient – drawn at the window's size and offset by the frame's position from JS, so the
-   * frame reads as a window onto the space – and the search field and the tiles wear the pill's
-   * fill language on it. The wallpaper presets put the space's colours at full strength, or a
-   * picked picture under a tinted scrim, behind it all instead.
+   * v2 controls (design language v2 draft, sections 2, 3 and 6): a phone sheet on the neutral
+   * dialog surface, rows that grow with their text, Proton's square checkbox and round radio,
+   * image radio cards and rectangular buttons. Built from the `--v2-*` tokens alone.
+   */
+  /* The `BottomSheet` chassis in v2 clothes: neutral, opaque, a hairline for an edge, radius 12. */
+  .zen-v2-sheet {
+    padding-left: 0;
+    padding-right: 0;
+    border: 1px solid var(--v2-border);
+    border-bottom: 0;
+    border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
+    background: var(--v2-panel);
+    backdrop-filter: none;
+    box-shadow: var(--v2-shadow-sheet);
+    color: var(--v2-text);
+    font-size: 15px;
+  }
+  :root[data-theme='dark'] .zen-v2-sheet {
+    box-shadow: var(--v2-shadow-sheet);
+  }
+  /* The scrim is the sheet's sibling, so the sheet's variant is read off it with `:has`. */
+  .zen-sheet-scrim:has(+ .zen-v2-sheet) {
+    background: var(--v2-scrim);
+  }
+  .zen-v2-sheet .zen-sheet-handle,
+  .zen-v2-sheet[data-dragging='true'] .zen-sheet-handle {
+    background: rgb(var(--v2-text-rgb) / 0.25);
+  }
+  .zen-v2-sheet[data-dragging='true'] .zen-sheet-handle {
+    background: rgb(var(--v2-text-rgb) / 0.4);
+  }
+  /* Type: hierarchy by size, weights 400 and 600 only. */
+  .zen-v2-title {
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 24px;
+    letter-spacing: -0.012em;
+  }
+  .zen-v2-heading {
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 20px;
+  }
+  .zen-v2-description {
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--v2-text-deemphasized);
+  }
+  /*
+   * A row: at least 44 tall, growing with its text and never clamping; the leading control sits
+   * on the first text line, not the row's centre. The press fill keeps 8 px from the sheet's edge.
+   */
+  .zen-v2-row {
+    display: flex;
+    width: calc(100% - 16px);
+    min-height: 44px;
+    margin: 0 8px;
+    padding: 12px 8px;
+    gap: 12px;
+    align-items: flex-start;
+    border-radius: var(--v2-radius-control);
+    color: var(--v2-text);
+    text-align: left;
+    font-size: 15px;
+    line-height: 20px;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-v2-row:active:not(:disabled) {
+    background: var(--v2-fill);
+  }
+  .zen-v2-row:disabled {
+    opacity: 0.4;
+  }
+  .zen-sheet[data-dragging='true'] .zen-v2-row:active {
+    background: transparent;
+  }
+  /* Checkbox: a 20 square (16 on desktop) at radius 2, the accent filled in with a white check. */
+  .zen-v2-check,
+  .zen-v2-radio {
+    display: inline-flex;
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgb(var(--v2-text-rgb) / 0.4);
+    background: var(--v2-page);
+    color: var(--v2-on-accent);
+    transition:
+      background 120ms var(--zen-ease),
+      border-color 120ms var(--zen-ease);
+  }
+  .zen-v2-check {
+    border-radius: 2px;
+  }
+  .zen-v2-check[data-checked] {
+    border-color: var(--v2-accent);
+    background: var(--v2-accent);
+  }
+  .zen-v2-check > svg {
+    opacity: 0;
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-v2-check[data-checked] > svg {
+    opacity: 1;
+  }
+  /* Radio: a 20 ring; picked, the ring turns accent and a 10 dot fills its middle. */
+  .zen-v2-radio {
+    border-radius: 9999px;
+  }
+  .zen-v2-radio::after {
+    content: '';
+    width: 10px;
+    height: 10px;
+    border-radius: 9999px;
+    background: var(--v2-accent);
+    transform: scale(0);
+    transition: transform 160ms var(--zen-ease);
+  }
+  .zen-v2-radio[data-checked] {
+    border-color: var(--v2-accent);
+  }
+  .zen-v2-radio[data-checked]::after {
+    transform: scale(1);
+  }
+  /* Image radio card: the picture at radius 8 with a hairline, the picked one outlined in accent. */
+  .zen-v2-image-radio {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    color: var(--v2-text);
+    text-align: left;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 18px;
+  }
+  .zen-v2-image-radio:disabled {
+    opacity: 0.4;
+  }
+  .zen-v2-image-radio-picture {
+    position: relative;
+    display: block;
+    overflow: hidden;
+    aspect-ratio: 16 / 10;
+    border: 1px solid var(--v2-card-border);
+    border-radius: var(--v2-radius-card);
+    background: var(--v2-card);
+    transition: box-shadow 120ms var(--zen-ease);
+  }
+  .zen-v2-image-radio[aria-checked='true'] .zen-v2-image-radio-picture {
+    border-color: var(--v2-accent);
+    box-shadow: 0 0 0 1px var(--v2-accent);
+  }
+  .zen-v2-image-radio:active:not(:disabled) .zen-v2-image-radio-picture {
+    transform: scale(0.98);
+  }
+  /* Buttons: 40 tall under a finger (32 on desktop), rectangular, 15/500; secondary is text at 10%. */
+  .zen-v2-button {
+    display: inline-flex;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    padding: 0 12px;
+    border-radius: var(--v2-radius-control);
+    background: var(--v2-fill);
+    color: var(--v2-text);
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 20px;
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  .zen-v2-button:active:not(:disabled) {
+    background: var(--v2-fill-hover);
+    transform: scale(0.98);
+  }
+  .zen-v2-button:disabled {
+    opacity: 0.4;
+  }
+  .zen-v2-button[data-danger] {
+    color: var(--zen-danger);
+  }
+}
+
+@layer components {
+  /*
+   * The phone's new tab page (`NewTabPage`). As in Zen, a new tab is the window itself: the page
+   * is the space gradient – drawn at the window's size and offset by the frame's position from
+   * JS, so the frame reads as a window onto the space – with the floating URL bar's surface as the
+   * search field and Essentials-style tiles beneath. The wallpaper presets put the space's colours
+   * at full strength, or a picked picture under a neutral scrim, behind it all instead.
    */
   .zen-ntp {
     background: var(--zen-bg);
     background-repeat: no-repeat;
+    color: var(--zen-fg);
   }
   .zen-ntp[data-wallpaper='space'] {
     background: var(--zen-wallpaper);
@@ -2481,41 +2669,43 @@
   .zen-ntp[data-wallpaper='image'] {
     background-size: cover;
     background-position: center;
-    /* Ink over a picture is white; the fills and tones are alphas of it, a little stronger. */
+    /* Ink over a picture is white; the tiles' fills and captions are alphas of it, a little stronger. */
     --zen-fg: #fff;
     --zen-fg-rgb: 255 255 255;
-    --zen-element-bg: rgb(255 255 255 / 0.16);
-    --zen-element-bg-hover: rgb(255 255 255 / 0.26);
-    --zen-muted: rgb(255 255 255 / 0.8);
-    --zen-faint: rgb(255 255 255 / 0.62);
+    --v2-window-fill: rgb(255 255 255 / 0.16);
+    --v2-window-fill-hover: rgb(255 255 255 / 0.26);
     color: #fff;
   }
   .zen-ntp[data-hidden] {
     visibility: hidden;
   }
-  /* The legibility scrim: the space's own dark, deeper towards the bottom where the captions sit. */
+  /* The legibility scrim: neutral black, deeper towards the bottom where the captions sit. */
   .zen-ntp-scrim {
-    background: linear-gradient(
-      180deg,
-      rgb(var(--zen-scrim-rgb) / 0.14),
-      rgb(var(--zen-scrim-rgb) / 0.46)
-    );
+    background: linear-gradient(180deg, rgb(0 0 0 / 0.1), rgb(0 0 0 / 0.45));
   }
-  /* The search field: the address pill's shape and fill, pressed as the pill is. */
+  /*
+   * The search field is the floating URL bar's field: opaque, radius 12, its shadow and no border.
+   * Inside it the chrome's ink tokens are the v2 surface's, so the icon buttons read on it whatever
+   * the space's colours are.
+   */
   .zen-ntp-field {
-    height: 44px;
-    border-radius: 9999px;
-    background: var(--zen-element-bg);
+    height: 56px;
+    border-radius: var(--v2-radius-sheet);
+    corner-shape: var(--zen-corner);
+    background: var(--v2-urlbar);
+    box-shadow: var(--v2-shadow-urlbar);
+    color: var(--v2-text);
+    --zen-fg: var(--v2-text);
+    --zen-fg-rgb: var(--v2-text-rgb);
+    --zen-element-bg: var(--v2-fill);
+    --zen-element-bg-hover: var(--v2-fill-hover);
     transition: background 120ms var(--zen-ease);
   }
   .zen-ntp-field:has(.zen-ntp-field-main:active) {
-    background: var(--zen-element-bg-hover);
+    background: color-mix(in srgb, var(--v2-urlbar) 94%, var(--v2-text));
   }
-  .zen-ntp-slot {
-    transition: background 120ms var(--zen-ease);
-  }
-  .zen-ntp-slot:active {
-    background: var(--zen-element-bg-hover);
+  .zen-ntp-placeholder {
+    color: var(--v2-text-deemphasized);
   }
   /* The tiles come up one after another; the run waits while the page is not being painted. */
   .zen-ntp-site {
@@ -2525,17 +2715,23 @@
   .zen-ntp[data-hidden] .zen-ntp-site {
     animation-play-state: paused;
   }
+  /* A tile is an Essentials tile: radius 8, a fill of the window's ink, pressed a little deeper. */
   .zen-ntp-tile {
-    border-radius: 14px;
+    border-radius: var(--v2-radius-card);
     corner-shape: var(--zen-corner);
-    background: var(--zen-element-bg);
+    background: var(--v2-window-fill);
     transition:
       background 120ms var(--zen-ease),
       transform 120ms var(--zen-ease);
   }
   .zen-ntp-site-button:active .zen-ntp-tile {
-    background: var(--zen-element-bg-hover);
+    background: var(--v2-window-fill-hover);
     transform: scale(0.96);
+  }
+  .zen-ntp-caption {
+    font-size: 13px;
+    line-height: 18px;
+    color: rgb(var(--zen-fg-rgb) / 0.69);
   }
   /* A site's icon fades in once it has loaded; until then the tile is the fill alone. */
   .zen-ntp-icon {
@@ -2546,7 +2742,67 @@
     opacity: 1;
   }
   .zen-ntp-letter {
-    color: var(--zen-muted);
+    color: rgb(var(--zen-fg-rgb) / 0.69);
+  }
+  /*
+   * The layout preset pictures in the customise sheet: the space's gradient as a miniature window
+   * with the field and the tiles drawn on it as bars and squares.
+   */
+  .zen-ntp-preview {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding-top: 22%;
+    background: var(--zen-bg);
+    background-size: cover;
+    color: var(--v2-text);
+  }
+  .zen-ntp-preview[data-picture]::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(160deg, rgb(255 255 255 / 0.35), transparent 45%, rgb(0 0 0 / 0.3));
+  }
+  .zen-ntp-preview-field {
+    position: relative;
+    width: 58%;
+    height: 10px;
+    border-radius: 3px;
+    background: var(--v2-urlbar);
+  }
+  .zen-ntp-preview-tiles {
+    position: relative;
+    display: flex;
+    gap: 5px;
+  }
+  .zen-ntp-preview-tile {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    background: rgb(var(--zen-fg-rgb) / 0.2);
+  }
+  .zen-ntp-preview-line {
+    position: relative;
+    width: 58%;
+    height: 4px;
+    border-radius: 2px;
+    background: rgb(var(--zen-fg-rgb) / 0.2);
+  }
+  /* Custom: the sliders glyph over the page, in the window's ink. */
+  .zen-ntp-preview-glyph {
+    position: absolute;
+    right: 6px;
+    bottom: 6px;
+    display: flex;
+    width: 24px;
+    height: 24px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background: var(--v2-urlbar);
   }
   /*
    * The surface a new tab grows in (MOT-03): the window's colour, clipped per frame to the

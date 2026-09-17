@@ -30,10 +30,10 @@ interface Props {
 
 /**
  * The phone's new tab page, drawn in the content frame where the blank page would be: the
- * space gradient as the page, a search field in the address pill's vocabulary, and the most
- * visited sites as tiles. Nothing is boxed; what the page shows is the preset's (or the
- * customise sheet's) choice, and the wallpaper presets put the space's colours – or a picked
- * image under a legibility scrim – behind it all.
+ * space gradient as the page (a new tab in Zen is the window itself), a search field on the
+ * floating URL bar's surface, and the most visited sites as Essentials-style tiles. What the
+ * page shows is the preset's (or the customise sheet's) choice, and the wallpaper presets put
+ * the space's colours – or a picked image under a legibility scrim – behind it all.
  */
 export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
   const settings = state.settings.newTab
@@ -74,7 +74,7 @@ export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
       style={style}
     >
       {wallpaper === 'image' && <div className="zen-ntp-scrim absolute inset-0" aria-hidden />}
-      <div className="relative flex min-h-0 flex-1 flex-col items-center px-6">
+      <div className="relative flex min-h-0 flex-1 flex-col items-center px-4">
         <div className="min-h-6" style={{ flex: 3 }} />
         {sections.searchBox && <SearchField tab={tab} />}
         {sections.shortcuts && <TopSites state={state} tab={tab} />}
@@ -94,9 +94,9 @@ export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
 }
 
 /**
- * The search field: the address pill's shape with a placeholder, the search glyph and the two
- * trailing slots for voice and visual search. A tap opens the omnibox for this tab – the field
- * itself never takes input, so what is typed goes where every other address does.
+ * The search field: the floating URL bar's field with a placeholder, the search glyph and the
+ * two trailing icon buttons for voice and visual search. A tap opens the omnibox for this tab –
+ * the field itself never takes input, so what is typed goes where every other address does.
  */
 function SearchField({ tab }: { tab: Tab }): JSX.Element {
   const open = (): void => void openUrlbar('edit', tab.id, { attached: true })
@@ -104,18 +104,18 @@ function SearchField({ tab }: { tab: Tab }): JSX.Element {
     <div role="group" aria-label="Search" className="zen-ntp-field flex w-full max-w-[520px]">
       <button
         type="button"
-        className="zen-ntp-field-main flex h-11 min-w-0 flex-1 items-center gap-3 pl-4 text-left"
+        className="zen-ntp-field-main flex h-full min-w-0 flex-1 items-center gap-3 pl-4 text-left"
         onClick={open}
       >
-        <Search className="h-5 w-5 shrink-0 text-[var(--zen-muted)]" strokeWidth={1.75} />
-        <span className="min-w-0 flex-1 truncate text-[14px] text-[var(--zen-faint)]">
+        <Search className="zen-ntp-placeholder h-5 w-5 shrink-0" strokeWidth={1.75} />
+        <span className="zen-ntp-placeholder min-w-0 flex-1 truncate text-[15px] leading-5">
           Search or type URL
         </span>
       </button>
       <span className="flex shrink-0 items-center gap-0.5 pr-1.5">
         <button
           type="button"
-          className="zen-ntp-slot flex h-8 w-8 items-center justify-center rounded-full text-[var(--zen-muted)]"
+          className="zen-toolbar-button h-11 w-11"
           aria-label="Search by voice"
           onClick={() =>
             window.dispatchEvent(new CustomEvent('zen-voice-search', { detail: { tabId: tab.id } }))
@@ -125,7 +125,7 @@ function SearchField({ tab }: { tab: Tab }): JSX.Element {
         </button>
         <button
           type="button"
-          className="zen-ntp-slot flex h-8 w-8 items-center justify-center rounded-full text-[var(--zen-muted)]"
+          className="zen-toolbar-button h-11 w-11"
           aria-label="Search with your camera"
           onClick={() =>
             window.dispatchEvent(
@@ -199,7 +199,7 @@ function TopSites({ state, tab }: { state: UIState; tab: Tab }): JSX.Element | n
   )
 }
 
-/** A 56 squircle with the site's icon and its name beneath; a hold opens the tile's menu. */
+/** A 56 tile at radius 8 with the site's icon and its name beneath; a hold opens the tile's menu. */
 function TopSiteTile({ site, tabId }: { site: TopSiteTile; tabId: string }): JSX.Element {
   const label = tileLabel(site.title, site.url)
   const hold = useLongPress(() =>
@@ -219,16 +219,14 @@ function TopSiteTile({ site, tabId }: { site: TopSiteTile; tabId: string }): JSX
       <span className="zen-ntp-tile flex h-14 w-14 items-center justify-center">
         <TileIcon favicon={site.favicon} label={label} />
       </span>
-      <span className="w-full truncate text-center text-[12px] leading-4 text-[var(--zen-muted)]">
-        {label}
-      </span>
+      <span className="zen-ntp-caption w-full truncate text-center">{label}</span>
     </button>
   )
 }
 
 /**
- * The site's icon at 24, fading in once it has loaded; a letter in the element tone when the site
- * has none (or it failed), and the globe when there is no letter to show either.
+ * The site's icon at 24, fading in once it has loaded; a letter in the deemphasised ink when the
+ * site has none (or it failed), and the globe when there is no letter to show either.
  */
 function TileIcon({ favicon, label }: { favicon: string | null; label: string }): JSX.Element {
   const [loaded, setLoaded] = useState(false)

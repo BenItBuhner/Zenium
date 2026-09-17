@@ -3,11 +3,12 @@ import { getHost } from '@shared/url'
 import { cmd } from './api'
 
 /**
- * Seam between the phone chrome and the history model the desktop program owns (contract v0:
- * `history.topSites { n, excludedHosts } -> TopSite[]`). The command is not on `main` yet, so
- * the most visited sites are ranked here from what `history.recent` gives today. When the
- * contract lands, `topSites()` becomes one `cmd('history.topSites', …)` call and the ranking
- * below goes with this file.
+ * Seam between the phone chrome and the history model the desktop program owns (contract v0 in
+ * the project store, `internal/desktop-parity/history-interface.md`): the most visited sites
+ * come from `history.topSites { n, excludedHosts } -> TopSite[]`. Until that command is on
+ * `main` the call fails as unknown, and the sites are ranked here from what `history.recent`
+ * gives today. When the contract lands, `TopSite` moves to the shared types, `topSites()`
+ * becomes the one `cmd('history.topSites', …)` call, and the fallback below goes with this file.
  */
 
 /** Contract v0's shape, so the tiles need no change when the real command arrives. */
@@ -17,6 +18,9 @@ export interface TopSite {
   favicon: string | null
   score: number
 }
+
+/** The contract's command, called by name because `Commands` does not declare it yet. */
+const TOP_SITES_COMMAND = 'history.topSites'
 
 /** How many aggregates the fallback pulls to rank from; a profile rarely has more visited sites. */
 const RECENT_LIMIT = 400
@@ -90,11 +94,73 @@ export function rankTopSites(
     }))
 }
 
-/** The most visited sites, `n` at most, without the hosts the user removed. */
+function isTopSite(value: unknown): value is TopSite {
+  if (!value || typeof value !== 'object') return false
+  const site = value as Record<string, unknown>
+  return (
+    typeof site.url === 'string' &&
+    typeof site.title === 'string' &&
+    (site.favicon === null || typeof site.favicon === 'string') &&
+    typeof site.score === 'number'
+  )
+}
+
+/** The result of `history.topSites` when it is the contract's, or null for anything else. */
+export function parseTopSites(value: unknown): TopSite[] | null {
+  return Array.isArray(value) && value.every(isTopSite) ? value : null
+}
+
+/** Whether a failed call means the core does not know the command (rather than a real error). */
+export function isUnknownCommandError(error: unknown, name: string): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /unknown command/i.test(message) && message.includes(name)
+}
+
+type LooseInvoke = (name: string, args: unknown) => Promise<unknown>
+
+/**
+ * Whether the core behind this chrome answers `history.topSites`. Unknown until the first call;
+ * once the command has failed as unknown the fallback is used for the rest of the session, so
+ * the console does not fill with the same rejection on every new tab page.
+ */
+let contractAvailable: boolean | null = null
+
+async function contractTopSites(
+  n: number,
+  excludedHosts: readonly string[]
+): Promise<TopSite[] | null> {
+  if (contractAvailable === false) return null
+  // `cmd` is typed against `Commands`, which does not declare the contract yet, and it logs every
+  // rejection; the probe goes to the bridge directly and stays quiet when the command is unknown.
+  const invoke = window.zen.invoke as unknown as LooseInvoke
+  try {
+    const result = await invoke(TOP_SITES_COMMAND, {
+      n,
+      excludedHosts: excludedHosts.length ? [...excludedHosts] : undefined
+    })
+    const sites = parseTopSites(result)
+    if (sites) contractAvailable = true
+    return sites
+  } catch (error) {
+    if (isUnknownCommandError(error, TOP_SITES_COMMAND)) {
+      contractAvailable = false
+      return null
+    }
+    console.error(`[zen] command ${TOP_SITES_COMMAND} failed`, error)
+    return null
+  }
+}
+
+/**
+ * The most visited sites, `n` at most, without the hosts the user removed: the contract's
+ * answer when the core has it, otherwise ranked here from the recent aggregates.
+ */
 export async function topSites(
   n: number,
   excludedHosts: readonly string[] = []
 ): Promise<TopSite[]> {
+  const fromContract = await contractTopSites(n, excludedHosts)
+  if (fromContract) return fromContract.slice(0, Math.max(0, n))
   const entries = await cmd('history.recent', { limit: RECENT_LIMIT }).catch(() => [])
   return rankTopSites(entries, { now: Date.now(), n, excludedHosts })
 }

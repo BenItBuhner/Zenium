@@ -1,6 +1,6 @@
 import type { ChangeEvent, JSX, ReactNode } from 'react'
 import { useEffect, useRef } from 'react'
-import { ImagePlus, Trash2 } from 'lucide-react'
+import { Check, SlidersHorizontal } from 'lucide-react'
 import type {
   NewTabModules,
   NewTabPreset,
@@ -15,7 +15,8 @@ import {
   newTabSections,
   pickNewTabPreset,
   presetAvailable,
-  toggleNewTabModule
+  toggleNewTabModule,
+  type NewTabSections
 } from '@shared/newtab'
 import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
@@ -28,9 +29,7 @@ import {
   wallpaperImageStore
 } from '@renderer/lib/newtab'
 import { browserStore, pushToast } from '@renderer/lib/ui'
-import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
-import { Switch } from '../ui/switch'
 
 const PRESET_LABELS: Record<NewTabPreset, string> = {
   focused: 'Focused',
@@ -46,6 +45,11 @@ const MODULE_LABELS: Array<{ key: keyof NewTabModules; label: string }> = [
   { key: 'feed', label: 'Feed' }
 ]
 
+const SHORTCUT_STYLES: Array<{ style: NewTabShortcutStyle; label: string; description: string }> = [
+  { style: 'most-visited', label: 'Most visited', description: 'The sites you go to most' },
+  { style: 'my-shortcuts', label: 'My shortcuts', description: 'Only the sites you pin' }
+]
+
 /** Mounted above whichever shell is up; the sheet itself renders while the store says open. */
 export function NewTabCustomizeLayer(): JSX.Element | null {
   const open = customizeStore.use((s) => s.open)
@@ -54,9 +58,10 @@ export function NewTabCustomizeLayer(): JSX.Element | null {
 }
 
 /**
- * The new tab page's customise sheet (the gear on the page): the layout presets as chips, the
- * sections as toggle rows, the shortcut style and the wallpaper source. Every change is written
- * to the settings at once, so the page behind the sheet shows it as the sheet is used.
+ * The new tab page's customise sheet (the gear on the page), a phone sheet in the v2 vocabulary:
+ * the layout presets as image radio cards, the sections as checkbox rows, the shortcut style and
+ * the wallpaper source as radio rows. Every change is written to the settings at once, so the
+ * page behind the sheet shows it as the sheet is used.
  */
 function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
   const settings = state.settings.newTab
@@ -101,30 +106,35 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
   return (
     <BottomSheet
       ref={sheet}
+      className="zen-v2-sheet"
       onDismissed={closeCustomize}
       handleLabel="Resize sheet"
       header={
-        <div className="flex h-9 items-center px-3">
-          <span className="zen-title min-w-0 flex-1 truncate">New tab page</span>
+        <div className="flex items-start px-4 pb-4 pt-1">
+          <h2 className="zen-v2-title min-w-0 flex-1 truncate">New Tab Page</h2>
         </div>
       }
     >
-      <div className="flex flex-col gap-4 pb-2">
+      <div className="flex flex-col gap-6 pb-4">
         <Section title="Layout">
-          <ChipStrip>
+          <div
+            role="radiogroup"
+            aria-label="Layout"
+            className="grid grid-cols-2 gap-x-3 gap-y-4 px-4 pt-1"
+          >
             {NEW_TAB_PRESETS.map((preset) => (
-              <Chip
+              <PresetCard
                 key={preset}
+                preset={preset}
+                sections={newTabSections(pickNewTabPreset(settings, preset))}
                 active={settings.preset === preset}
                 disabled={!presetAvailable(preset)}
-                onClick={() => update(pickNewTabPreset(settings, preset))}
-              >
-                {PRESET_LABELS[preset]}
-              </Chip>
+                onSelect={() => update(pickNewTabPreset(settings, preset))}
+              />
             ))}
-          </ChipStrip>
+          </div>
           {!FEED_AVAILABLE && (
-            <p className="px-3 pt-2 text-[12px] leading-4 text-[var(--zen-muted)]">
+            <p className="zen-v2-description px-4 pt-3">
               Informational is not available: Zenium has no feed.
             </p>
           )}
@@ -134,79 +144,65 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
           {MODULE_LABELS.map(({ key, label }) => {
             const unavailable = key === 'feed' && !FEED_AVAILABLE
             return (
-              <label
+              <CheckRow
                 key={key}
-                className={cn('zen-sheet-item', unavailable && 'pointer-events-none opacity-40')}
-              >
-                <span className="min-w-0 flex-1 truncate">{label}</span>
-                {unavailable && (
-                  <span className="shrink-0 text-[13px] text-[var(--zen-muted)]">
-                    Not available
-                  </span>
-                )}
-                <Switch
-                  checked={sections[key]}
-                  disabled={unavailable}
-                  aria-label={label}
-                  onCheckedChange={(checked) => update(toggleNewTabModule(settings, key, checked))}
-                />
-              </label>
+                label={label}
+                checked={sections[key]}
+                disabled={unavailable}
+                trailing={unavailable ? 'Not available' : undefined}
+                onChange={(checked) => update(toggleNewTabModule(settings, key, checked))}
+              />
             )
           })}
         </Section>
 
         <Section title="Shortcuts">
-          <ChipStrip>
-            {(
-              [
-                ['most-visited', 'Most visited'],
-                ['my-shortcuts', 'My shortcuts']
-              ] as Array<[NewTabShortcutStyle, string]>
-            ).map(([style, label]) => (
-              <Chip
+          <div role="radiogroup" aria-label="Shortcuts">
+            {SHORTCUT_STYLES.map(({ style, label, description }) => (
+              <RadioRow
                 key={style}
-                active={settings.shortcutStyle === style}
-                onClick={() => update({ ...settings, shortcutStyle: style })}
-              >
-                {label}
-              </Chip>
+                label={label}
+                description={description}
+                checked={settings.shortcutStyle === style}
+                onSelect={() => update({ ...settings, shortcutStyle: style })}
+              />
             ))}
-          </ChipStrip>
+          </div>
         </Section>
 
         <Section title="Wallpaper">
-          <ChipStrip>
-            <Chip active={settings.wallpaper === 'space'} onClick={() => pickWallpaper('space')}>
-              Space colours
-            </Chip>
-            <Chip active={settings.wallpaper === 'image'} onClick={() => pickWallpaper('image')}>
-              Image
-            </Chip>
-          </ChipStrip>
-          <button
-            type="button"
-            className="zen-sheet-item mt-1"
-            onClick={() => fileInput.current?.click()}
-          >
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center">
-              <ImagePlus className="h-5 w-5" strokeWidth={1.75} />
-            </span>
-            <span className="min-w-0 flex-1 truncate">
-              {image.dataUrl ? 'Choose another image' : 'Choose an image'}
-            </span>
-          </button>
-          {image.dataUrl && (
+          <div role="radiogroup" aria-label="Wallpaper">
+            <RadioRow
+              label="Space colours"
+              checked={settings.wallpaper === 'space'}
+              onSelect={() => pickWallpaper('space')}
+            />
+            <RadioRow
+              label="Image"
+              description={image.dataUrl ? 'The picture you chose' : 'A picture from this device'}
+              checked={settings.wallpaper === 'image'}
+              onSelect={() => pickWallpaper('image')}
+            />
+          </div>
+          <div className="flex gap-2 px-4 pt-2">
             <button
               type="button"
-              className="zen-sheet-item"
-              onClick={() => void setWallpaperImage(null)}
+              className="zen-v2-button"
+              onClick={() => fileInput.current?.click()}
             >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center">
-                <Trash2 className="h-5 w-5" strokeWidth={1.75} />
-              </span>
-              <span className="min-w-0 flex-1 truncate">Remove the image</span>
+              {image.dataUrl ? 'Choose another image' : 'Choose an image'}
             </button>
-          )}
+            {image.dataUrl && (
+              <button
+                type="button"
+                className="zen-v2-button"
+                data-danger
+                onClick={() => void setWallpaperImage(null)}
+              >
+                Remove
+              </button>
+            )}
+          </div>
           <input
             ref={fileInput}
             type="file"
@@ -220,35 +216,97 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
   )
 }
 
-/** A group of the sheet: a sentence-case heading and its rows, set apart by spacing alone. */
+/** A group of the sheet: a sentence-case sub-heading and its rows, set apart by spacing alone. */
 function Section({ title, children }: { title: string; children: ReactNode }): JSX.Element {
   return (
     <section className="flex flex-col">
-      <h3 className="px-3 pb-1 text-[14px] font-semibold leading-5 tracking-[-0.006em]">{title}</h3>
+      <h3 className="zen-v2-heading px-4 pb-1">{title}</h3>
       {children}
     </section>
   )
 }
 
-function ChipStrip({ children }: { children: ReactNode }): JSX.Element {
+/** A checkbox row: the 20 square on the left, the label to its right, the row is the target. */
+function CheckRow({
+  label,
+  checked,
+  disabled,
+  trailing,
+  onChange
+}: {
+  label: string
+  checked: boolean
+  disabled?: boolean
+  trailing?: string
+  onChange: (checked: boolean) => void
+}): JSX.Element {
   return (
-    <div role="radiogroup" className="flex flex-wrap gap-1.5 px-3 pt-1">
-      {children}
-    </div>
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      disabled={disabled}
+      className="zen-v2-row"
+      onClick={() => onChange(!checked)}
+    >
+      <span className="zen-v2-check" data-checked={checked || undefined} aria-hidden>
+        <Check className="h-3.5 w-3.5" strokeWidth={3} />
+      </span>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {trailing && <span className="zen-v2-description shrink-0 pt-px">{trailing}</span>}
+    </button>
   )
 }
 
-/** A pill in the element tone; the picked one wears the accent tint, as the overview's spaces do. */
-function Chip({
+/** A radio row: the 20 ring on the left; with a description the row grows to two lines. */
+function RadioRow({
+  label,
+  description,
+  checked,
+  disabled,
+  onSelect
+}: {
+  label: string
+  description?: string
+  checked: boolean
+  disabled?: boolean
+  onSelect: () => void
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={checked}
+      disabled={disabled}
+      className="zen-v2-row"
+      onClick={onSelect}
+    >
+      <span className="zen-v2-radio" data-checked={checked || undefined} aria-hidden />
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="truncate">{label}</span>
+        {description && <span className="zen-v2-description line-clamp-2">{description}</span>}
+      </span>
+    </button>
+  )
+}
+
+/**
+ * An image radio card for a layout preset: the space's gradient as a miniature of the page with
+ * the parts the preset shows drawn on it (Custom shows the user's own choice), the name beneath,
+ * and an accent outline on the picked one.
+ */
+function PresetCard({
+  preset,
+  sections,
   active,
   disabled,
-  onClick,
-  children
+  onSelect
 }: {
+  preset: NewTabPreset
+  sections: NewTabSections
   active: boolean
-  disabled?: boolean
-  onClick: () => void
-  children: ReactNode
+  disabled: boolean
+  onSelect: () => void
 }): JSX.Element {
   return (
     <button
@@ -256,15 +314,37 @@ function Chip({
       role="radio"
       aria-checked={active}
       disabled={disabled}
-      className={cn(
-        'flex h-9 shrink-0 items-center rounded-full px-3.5 text-[13px] font-medium transition-[background] duration-150 active:scale-[0.98] disabled:opacity-40',
-        active
-          ? 'bg-[rgb(var(--zen-accent-rgb)/0.16)]'
-          : 'bg-[var(--zen-element-bg)] active:bg-[var(--zen-element-bg-hover)]'
-      )}
-      onClick={onClick}
+      className="zen-v2-image-radio"
+      onClick={onSelect}
     >
-      {children}
+      <span className="zen-v2-image-radio-picture">
+        <span
+          className="zen-ntp-preview"
+          data-picture={sections.wallpaper || undefined}
+          aria-hidden
+        >
+          {sections.searchBox && <span className="zen-ntp-preview-field" />}
+          {sections.shortcuts && (
+            <span className="zen-ntp-preview-tiles">
+              {Array.from({ length: 4 }, (_, i) => (
+                <span key={i} className="zen-ntp-preview-tile" />
+              ))}
+            </span>
+          )}
+          {preset === 'informational' && (
+            <>
+              <span className="zen-ntp-preview-line" />
+              <span className="zen-ntp-preview-line" style={{ width: '42%' }} />
+            </>
+          )}
+          {preset === 'custom' && (
+            <span className="zen-ntp-preview-glyph">
+              <SlidersHorizontal className="h-4 w-4" strokeWidth={1.75} />
+            </span>
+          )}
+        </span>
+      </span>
+      <span className="truncate px-0.5">{PRESET_LABELS[preset]}</span>
     </button>
   )
 }
