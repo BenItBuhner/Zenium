@@ -100,7 +100,10 @@ function Header({ request }: { request: ExternalProtocolRequest }): JSX.Element 
   const Icon = wordsFor(request.scheme).icon
   return (
     <div className="flex h-14 items-center gap-3 px-3">
-      <span className="zen-protocol-glyph" aria-hidden>
+      <span
+        className="zen-sheet-badge flex h-10 w-10 shrink-0 items-center justify-center"
+        aria-hidden
+      >
         <Icon className="h-5 w-5" strokeWidth={1.75} />
       </span>
       <div className="min-w-0 flex-1">
@@ -135,7 +138,10 @@ function Body({
   const buttonClass = phone ? PHONE_BUTTON : undefined
   return (
     <div className="flex flex-col gap-4 pb-1 pt-1">
-      <div className="zen-protocol-address" title={request.url}>
+      <div
+        className="truncate px-3 text-[13px] leading-snug text-[var(--zen-muted)]"
+        title={request.url}
+      >
         {displayAddress(request.url)}
       </div>
       {request.canRemember && (
@@ -205,7 +211,6 @@ function ProtocolSheet({ request }: { request: ExternalProtocolRequest }): JSX.E
       onDismissed={() => answer(false)}
       contentKey={`${request.requestId}:${request.canRemember}`}
       handleLabel="Dismiss"
-      className="zen-protocol-sheet"
       header={<Header request={request} />}
     >
       <Body
@@ -236,7 +241,7 @@ function ProtocolPanel({ request }: { request: ExternalProtocolRequest }): JSX.E
       <div
         role="dialog"
         aria-label={titleOf(request)}
-        className="zen-panel zen-animate-pop zen-protocol-sheet relative w-full max-w-[400px] px-3 pb-3 pt-2"
+        className="zen-panel zen-animate-pop relative w-full max-w-[400px] px-3 pb-3 pt-2"
       >
         <Header request={request} />
         <Body

@@ -95,7 +95,7 @@ export function imagePageHtml(dataUrl: string): string {
   if (!/^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]*$/i.test(dataUrl))
     return imageMissingPageHtml()
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Shared image</title><style>${BASE_STYLE}
-  body { display: grid; place-items: center; background: light-dark(#f2f1f5, #16161b); }
+  body { display: grid; place-items: center; }
   img { max-width: 100vw; max-height: 100vh; object-fit: contain; }
 </style></head>
 <body><img src="${dataUrl}" alt="Shared image"></body></html>`
