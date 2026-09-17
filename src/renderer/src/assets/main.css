@@ -1209,7 +1209,10 @@
   gap: 16px;
 }
 
-/* Settings on a phone: the section list becomes a strip of pills above the content. */
+/*
+ * Settings on a phone: the section list becomes a strip of pills above the content. Its fading
+ * edges come from `useFadeEdges` in SettingsPanel (`[data-fade-axis='x']` above).
+ */
 :root[data-form-factor='phone'] .zen-settings > div > div {
   flex-direction: column;
 }
@@ -1223,23 +1226,6 @@
   scrollbar-width: none;
   scroll-snap-type: x proximity;
   scroll-padding-inline: 12px;
-}
-/* Fading edges until the strip is driven by `useFadeEdges`, which masks by scroll position. */
-:root[data-form-factor='phone'] .zen-settings nav:not([data-fade-axis]) {
-  -webkit-mask-image: linear-gradient(
-    to right,
-    transparent,
-    #000 16px,
-    #000 calc(100% - 16px),
-    transparent
-  );
-  mask-image: linear-gradient(
-    to right,
-    transparent,
-    #000 16px,
-    #000 calc(100% - 16px),
-    transparent
-  );
 }
 :root[data-form-factor='phone'] .zen-settings nav::-webkit-scrollbar {
   display: none;
