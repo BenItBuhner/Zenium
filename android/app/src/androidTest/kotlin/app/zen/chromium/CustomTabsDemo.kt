@@ -17,7 +17,6 @@ import androidx.browser.customtabs.CustomTabsClient
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.browser.customtabs.CustomTabsServiceConnection
 import androidx.browser.customtabs.CustomTabsSession
-import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertNotNull
@@ -43,12 +42,15 @@ class CustomTabsDemo {
     fun record() {
         out.deleteRecursively()
         out.mkdirs()
-        ActivityScenario.launch(MainActivity::class.java).use {
-            waitFor("Address", 30_000)
-            handshake()
-            recordScheme("light", CustomTabsIntent.COLOR_SCHEME_LIGHT, Color.rgb(63, 102, 154))
-            recordScheme("dark", CustomTabsIntent.COLOR_SCHEME_DARK, Color.rgb(45, 62, 91))
-        }
+        instrumentation.startActivitySync(
+            Intent(app, MainActivity::class.java)
+                .setAction(Intent.ACTION_MAIN)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        )
+        check(waitFor("Address", 30_000))
+        handshake()
+        recordScheme("light", CustomTabsIntent.COLOR_SCHEME_LIGHT, Color.rgb(63, 102, 154))
+        recordScheme("dark", CustomTabsIntent.COLOR_SCHEME_DARK, Color.rgb(45, 62, 91))
         File(out, "done").writeText("done\n")
         SystemClock.sleep(4_000)
     }
