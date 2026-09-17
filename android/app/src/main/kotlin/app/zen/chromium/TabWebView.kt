@@ -14,6 +14,7 @@ import android.os.Looper
 import android.os.Message
 import android.os.SystemClock
 import android.util.Base64
+import android.util.Log
 import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
@@ -710,8 +711,13 @@ class TabWebView(
 
         override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
             val reason = if (detail.didCrash()) "crashed" else "killed"
-            host.tabs.replaceCrashed(this@TabWebView)
-            host.chrome.viewEvent(tabId, "crashed", json("reason" to reason))
+            Log.w("ZenTab", "renderer of $tabId gone ($reason, priority at exit ${detail.rendererPriorityAtExit()})")
+            // Every WebView shares the one renderer. When the chrome lost it too, the host drops
+            // this view – before or after this call – and the rebooted core recreates the tab
+            // itself; only a view that was really swapped tells the chrome its page crashed.
+            if (host.tabs.replaceCrashed(this@TabWebView)) {
+                host.chrome.viewEvent(tabId, "crashed", json("reason" to reason))
+            }
             return true
         }
     }

@@ -1,0 +1,59 @@
+name: Android wake demo
+
+# Puts the browser through screen off and on (through the lock screen), the memory trims of a
+# backgrounded app, Doze, a killed WebView renderer and a hung one on a hardware-accelerated
+# Android emulator, checks that the chrome is painted and answering after each, and uploads the
+# recordings, the screenshots and the driver's report (WakeDemo). With `before` it first records
+# the same sequence on an APK built from main, so the two takes can be compared. Dispatch-only:
+# it takes fifteen to twenty minutes and only regresses the wake path; the recordings come from a
+# Google APIs image on a software GPU, so expect a handful of frames per second. The build, the
+# emulator and its caches live in android-emulator-demo.yml; this file picks the driver, the system
+# image, the assertion and the comparison take.
+on:
+  workflow_dispatch:
+    inputs:
+      assert:
+        description: Fail when the chrome is not painted or does not answer after a scenario
+        type: boolean
+        default: true
+      before:
+        description: Also record an APK built from main first, for comparison
+        type: boolean
+        default: false
+      api-level:
+        description: System image (35 is Android 15, the wake path most phones run)
+        type: choice
+        default: '35'
+        options:
+          - '34'
+          - '35'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-wake-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Wake demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-wake-demo.sh
+      api-level: ${{ inputs.api-level || '35' }}
+      script-env: |
+        WAKE_ASSERT=${{ inputs.assert && 'true' || 'false' }}
+        BEFORE_APK_DIR=${{ inputs.before && 'before/android/app/build/outputs/apk/debug' || '' }}
+      # The "before" take needs main's APK: check main out beside the working tree and build it.
+      setup-script: |
+        if [ -z "$BEFORE_APK_DIR" ]; then exit 0; fi
+        git fetch --depth=1 origin main
+        git worktree add --detach before FETCH_HEAD
+        cd before
+        npm ci
+        npm run build:android:web
+        cd android && ./gradlew assembleDebug -PskipWeb --no-daemon --stacktrace
+      timeout-minutes: 60
+      artifact-name: android-wake-demo
+      artifact-path: artifacts/android-wake-demo/
