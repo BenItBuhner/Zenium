@@ -234,7 +234,7 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
         )}
         {rows.length === 0 ? (
           <PhoneEmptyNote>
-            {searching ? 'No matching pages.' : 'Pages you visit will show up here.'}
+            {searching ? 'No matching pages' : 'Pages you visit will show up here'}
           </PhoneEmptyNote>
         ) : (
           groups.map((group) => (

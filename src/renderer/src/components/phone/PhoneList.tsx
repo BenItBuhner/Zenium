@@ -147,9 +147,32 @@ export function PhoneGroupHeading({ children }: { children: ReactNode }): JSX.El
   return <h3 className="zen-list-heading">{children}</h3>
 }
 
-/** What a list says when it has nothing to show: one deemphasised line, sentence case. */
-export function PhoneEmptyNote({ children }: { children: ReactNode }): JSX.Element {
-  return <p className="zen-phone-empty">{children}</p>
+/**
+ * What a list says when it has nothing to show (9.17): one sentence, sentence case, no full
+ * stop, anchored 48 below what stays put above the list; and, only where there is one obvious
+ * next step, a secondary button 16 beneath it.
+ */
+export function PhoneEmptyNote({
+  children,
+  action
+}: {
+  children: ReactNode
+  action?: { label: string; onSelect: () => void }
+}): JSX.Element {
+  return (
+    <div className="zen-phone-empty">
+      <p>{children}</p>
+      {action && (
+        <button
+          type="button"
+          className="zen-sheet-button zen-v2-sheet-button zen-phone-empty-action"
+          onClick={action.onSelect}
+        >
+          {action.label}
+        </button>
+      )}
+    </div>
+  )
 }
 
 /** A favicon in the row's leading box, or the fallback glyph. */

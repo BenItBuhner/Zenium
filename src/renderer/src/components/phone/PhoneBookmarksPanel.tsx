@@ -318,13 +318,21 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
       />
       <div ref={attachList} className="zen-phone-list min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {rows.length === 0 ? (
-          <PhoneEmptyNote>
-            {searching
-              ? 'No matching bookmarks.'
-              : folderId === null || isBookmarkRoot(folderId)
-                ? 'Pages you bookmark will show up here.'
-                : 'This folder is empty.'}
-          </PhoneEmptyNote>
+          searching ? (
+            <PhoneEmptyNote>No matching bookmarks</PhoneEmptyNote>
+          ) : folderId === null || isBookmarkRoot(folderId) ? (
+            // Importing is the one obvious next step for a root with nothing in it (9.17).
+            <PhoneEmptyNote
+              action={{
+                label: 'Import bookmarks',
+                onSelect: () => run('bookmark.import', undefined)
+              }}
+            >
+              Pages you bookmark will show up here
+            </PhoneEmptyNote>
+          ) : (
+            <PhoneEmptyNote>This folder is empty</PhoneEmptyNote>
+          )
         ) : (
           rows.map((node) => (
             <BookmarkNodeRow

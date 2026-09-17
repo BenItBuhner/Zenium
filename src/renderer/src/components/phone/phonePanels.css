@@ -18,11 +18,34 @@
     box-shadow: var(--v2-shadow-panel);
     color: var(--v2-text);
   }
-  /* The 56 header's title (panels and sheets): hierarchy by size, weights 400 and 600 only. */
+  /* The 56 panel header's title (9.16): hierarchy by size, weights 400 and 600 only. */
   .zen-phone-title {
     font-size: var(--v2-font-heading);
     font-weight: var(--v2-weight-heading);
     line-height: var(--v2-line-body);
+    color: var(--v2-text);
+  }
+  /*
+   * A sheet's header (9.16): 48 after the chassis's 20 grip strip, so the first row starts at 68
+   * and the grabber's 44 band (9.9) is the strip plus this header's upper 24. The title is
+   * 17/600 at line-height 22, centred; a trailing 44 control would sit at 2 px margins.
+   */
+  .zen-phone-sheet-header {
+    display: flex;
+    height: 48px;
+    align-items: center;
+    justify-content: center;
+    padding: 0 46px;
+  }
+  .zen-phone-sheet-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: center;
+    font-size: var(--v2-font-heading);
+    font-weight: var(--v2-weight-heading);
+    line-height: 22px;
     color: var(--v2-text);
   }
   /*
@@ -44,24 +67,40 @@
   .zen-phone-list::-webkit-scrollbar {
     display: none;
   }
+  /*
+   * An empty state (9.17): one sentence at 15/400 and 69%, centred in a 32 gutter (the list's own
+   * 8 and 24 here), its first line 48 below what stays put above the list; anchored to the top,
+   * never to the middle of the free height. The optional follow-up is a secondary button 16
+   * beneath it, hugging its label with an 88 minimum at the 40 control height.
+   */
   .zen-phone-empty {
-    padding: 40px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 48px 24px 24px;
     text-align: center;
     font-size: var(--v2-font-body);
     line-height: var(--v2-line-body);
     color: var(--v2-text-deemphasized);
   }
+  .zen-phone-empty-action {
+    min-width: 88px;
+    margin-top: 16px;
+  }
 
   /*
-   * Rows (9.2): a minimum height that grows with the content, never a clamp; 44 for one line,
-   * 64 for a label with a description. The leading glyph sits on the first text line.
+   * Rows (9.2, 9.18): a minimum height that grows with the content, never a clamp; 44 for one
+   * line, 64 for a label with a description. Whatever trails the text centres on the row's
+   * height; only the leading box takes the first text line. The title and the description each
+   * keep to one line here, so the three-line case (a trailing control on the label line) does not
+   * arise.
    */
   .zen-list-row {
     position: relative;
     display: flex;
     width: 100%;
     min-height: var(--v2-row);
-    align-items: flex-start;
+    align-items: center;
     gap: 12px;
     padding: 0 12px;
     border-radius: var(--v2-radius-control);
@@ -86,9 +125,10 @@
     width: var(--v2-icon);
     height: var(--v2-icon);
     flex-shrink: 0;
+    align-self: flex-start;
     align-items: center;
     justify-content: center;
-    /* Centred on the first text line: the row's 12 padding, and the line is as tall as the box. */
+    /* Centred on the first text line: the text's 12 padding, and the line is as tall as the box. */
     margin-top: 12px;
   }
   .zen-list-favicon {
@@ -141,10 +181,9 @@
     color: var(--v2-text-deemphasized);
     font-variant-numeric: tabular-nums;
   }
-  /* Trailing content sits centred; a 44 control's glyph then lands 12 from the row's edge. */
+  /* Trailing content, centred by the row; a 44 control's glyph then lands 12 from the row's edge. */
   .zen-list-trailing {
     display: flex;
-    align-self: center;
     align-items: center;
     flex-shrink: 0;
     margin-right: -12px;

@@ -77,8 +77,8 @@ export function BookmarkEditSheet({
       handleLabel="Resize editor"
       className="zen-phone-editor"
       header={
-        <div className="flex h-9 items-center">
-          <span className="zen-phone-title min-w-0 flex-1 truncate px-1">{title}</span>
+        <div className="zen-phone-sheet-header">
+          <span className="zen-phone-sheet-title">{title}</span>
         </div>
       }
     >
@@ -147,7 +147,7 @@ function EditorForm({
 
   return (
     <form
-      className="flex flex-col gap-3 px-1 pb-2 pt-1"
+      className="flex flex-col gap-3 px-1 pb-2"
       aria-busy={waiting}
       onSubmit={(e) => {
         e.preventDefault()
