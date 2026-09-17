@@ -13,7 +13,7 @@ import { IconBtn, Title } from './shared'
  * the bottom edge under the finger – and a click outside closing it. Panes stack inside; `layer`
  * (the re-authentication prompt) sits over the whole content area, outside the page frame: a
  * desktop scrim dims the frame only (§9.5), while the phone sheet portals itself to the window,
- * above the frame it pushes back.
+ * where the shell's other sheets live.
  */
 export function PageShell({
   children,
@@ -62,9 +62,11 @@ export function PageShell({
 }
 
 /**
- * A pane header: 22/600 title with 16 px below it, actions trailing, the close control on the
- * page's own header and a back control on a pushed pane. No line at rest; one appears while
- * content scrolls under it. Icon buttons overhang the gutter so their glyphs sit on it.
+ * A pane header (§9.16): its control box plus 12 – 56 on a phone, 40 on the desktop – with a
+ * 22/600 title, actions trailing, the close control on the page's own header and a back control
+ * on a pushed pane. No line at rest; one appears at its bottom edge while content scrolls under
+ * it, so the 16 px under the title (§9.7) belong to the scroller. Icon buttons overhang the
+ * gutter so their glyphs sit on it.
  */
 export function PaneHeader({
   title,
@@ -84,17 +86,13 @@ export function PaneHeader({
   children?: ReactNode
   className?: string
 }): JSX.Element {
-  const phone = usePhone()
   return (
     <header
-      className={cn('zen-v2-pw-header flex shrink-0 flex-col gap-3 pb-4', className)}
+      className={cn('zen-v2-pw-header flex shrink-0 flex-col gap-3', children && 'pb-3', className)}
       data-scrolled={scrolled}
     >
       <div
-        className={cn(
-          'zen-v2-pw-column flex items-center gap-2',
-          phone ? 'min-h-14 pt-2' : 'min-h-12 pt-2'
-        )}
+        className="zen-v2-pw-header-row zen-v2-pw-column flex items-center gap-2"
         style={{
           paddingLeft: 'calc(var(--pw-gutter) - (var(--v2-icon-button) - var(--v2-icon)) / 2)',
           paddingRight: 'calc(var(--pw-gutter) - (var(--v2-icon-button) - var(--v2-icon)) / 2)'

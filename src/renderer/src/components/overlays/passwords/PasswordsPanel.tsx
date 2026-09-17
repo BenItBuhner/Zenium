@@ -148,7 +148,7 @@ function Manager({
   return (
     <div className="flex min-h-0 flex-1">
       {!phone && (
-        <nav aria-label="Categories" className="zen-v2-pw-nav pt-[60px]">
+        <nav aria-label="Categories" className="zen-v2-pw-nav pt-[52px]">
           {VIEWS.map((item) => (
             <button
               key={item.id}
@@ -188,7 +188,7 @@ function Manager({
           }
         />
         <div
-          className="zen-v2-pw-column min-h-0 flex-1 overflow-y-auto"
+          className="zen-v2-pw-column min-h-0 flex-1 overflow-y-auto pt-4"
           onScroll={onScroll}
           key={view}
         >
@@ -275,7 +275,7 @@ function AddPane({
   return (
     <>
       <PaneHeader title="New Login" onBack={onCancel} scrolled={scrolled} />
-      <div className="zen-v2-pw-column min-h-0 flex-1 overflow-y-auto" onScroll={onScroll}>
+      <div className="zen-v2-pw-column min-h-0 flex-1 overflow-y-auto pt-4" onScroll={onScroll}>
         <div className="zen-v2-pw-gutter pb-8">
           <LoginForm
             onCancel={onCancel}

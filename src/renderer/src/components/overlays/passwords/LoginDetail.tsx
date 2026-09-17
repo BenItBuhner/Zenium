@@ -112,7 +112,7 @@ export function LoginDetail({
           )
         }
       />
-      <div className="zen-v2-pw-column min-h-0 flex-1 overflow-y-auto" onScroll={onScroll}>
+      <div className="zen-v2-pw-column min-h-0 flex-1 overflow-y-auto pt-4" onScroll={onScroll}>
         <div className="zen-v2-pw-gutter flex flex-col gap-4 pb-8">
           {confirmDelete && (
             <div className="zen-v2-pw-inner-box zen-animate-fade flex flex-wrap items-center gap-3">

@@ -18,10 +18,11 @@ export interface PassphraseRequest {
 /**
  * Asks for the vault passphrase (or for a new one on devices without an OS keystore or
  * biometrics). On a phone it is a v2 sheet (§6: neutral panel, radius 12, hairline, grabber,
- * black scrim) on the `BottomSheet` spring – one progress value moves the sheet, the scrim and
- * the back preview together; it is dragged, flung or pulled down by the back gesture. On the
- * desktop it is a dialog whose scrim dims the content frame only (§9.5). Either way it is the
- * topmost surface: Escape and back settle it, the manager behind it stays open.
+ * black scrim; §9.16: a 48 header after the 20 px grip strip) on the `BottomSheet` spring – one
+ * progress value moves the sheet, the scrim and the back preview together; it is dragged, flung
+ * or pulled down by the back gesture. On the desktop it is a dialog whose scrim dims the content
+ * frame only (§9.5). Either way it is the topmost surface: Escape and back settle it, the
+ * manager behind it stays open.
  */
 export function PassphrasePrompt({
   request,
@@ -55,9 +56,8 @@ function PhonePrompt({
     onCancel: () => sheet.current?.cancelBack()
   })
   useEscape('passwords-prompt', () => sheet.current?.dismiss())
-  // The manager lives inside the content frame, which the sheet pushes back with a transform –
-  // a `fixed` sheet in there would be clipped by the frame and recede with it. Like the other
-  // sheets (Root.tsx), this one sits at the window level.
+  // Like the shell's other sheets (Root.tsx) this one sits at the window level, above the phone
+  // bar and outside the overlay host's stacking context, rather than inside the manager's page.
   return createPortal(
     <BottomSheet
       ref={sheet}
@@ -65,7 +65,7 @@ function PhonePrompt({
       onDismissed={() => onSettle(answer.current)}
       handleLabel="Dismiss"
       header={
-        <div className="flex min-h-10 items-center gap-3 px-4 pb-1">
+        <div className="zen-v2-pw-sheet-header flex items-center gap-3 px-4">
           <StatusGlyph tone="accent">
             {request.mode === 'setup' ? <ShieldCheck /> : <KeyRound />}
           </StatusGlyph>
@@ -108,10 +108,11 @@ function DesktopPrompt({
       <div
         role="dialog"
         aria-label={title(request)}
-        className="zen-v2-pw zen-v2-pw-dialog zen-animate-pop flex w-full max-w-[400px] flex-col gap-4 p-5"
+        className="zen-v2-pw zen-v2-pw-dialog zen-animate-pop flex w-full max-w-[400px] flex-col gap-4 px-5 pb-5 pt-3"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-3">
+        {/* The dialog's header is the 40 box of §9.16, 12 px under the edge so its title keeps 20. */}
+        <div className="zen-v2-pw-header-row flex items-center gap-3">
           <StatusGlyph tone="accent">
             {request.mode === 'setup' ? <ShieldCheck /> : <KeyRound />}
           </StatusGlyph>
