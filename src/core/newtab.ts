@@ -88,6 +88,9 @@ export class ForwardingEvents implements TabViewEvents {
   onMediaStateChanged(playing: boolean): void {
     this.target?.onMediaStateChanged(playing)
   }
+  onRequestsBlocked(count: number): void {
+    this.target?.onRequestsBlocked(count)
+  }
   onEnterHtmlFullscreen(): void {
     this.target?.onEnterHtmlFullscreen()
   }
@@ -122,8 +125,15 @@ export class ForwardingEvents implements TabViewEvents {
     if (this.target) this.target.onDestroyed()
     else this.gone()
   }
-  onOpenWindow(url: string, disposition: WindowOpenDisposition): 'deny' | 'tab' | 'popup' {
-    return this.target?.onOpenWindow(url, disposition) ?? 'deny'
+  onOpenWindow(
+    url: string,
+    disposition: WindowOpenDisposition,
+    userGesture: boolean | null
+  ): 'deny' | 'tab' | 'popup' {
+    return this.target?.onOpenWindow(url, disposition, userGesture) ?? 'deny'
+  }
+  onUserActivation(): void {
+    this.target?.onUserActivation()
   }
   onPageMessage(message: PageMessage): void {
     this.target?.onPageMessage(message)
@@ -289,7 +299,7 @@ export class NewTabService {
     }
     const favicons = new Map<string, string | null>()
     for (const s of list)
-      favicons.set(s.url, isPrivate ? null : this.browser.history.faviconFor(s.url))
+      favicons.set(s.url, isPrivate ? null : this.browser.history.siteFaviconFor(s.url))
     this.shortcutsCache = { key, favicons }
     return list.map((s) => ({ ...s, favicon: favicons.get(s.url) ?? null }))
   }

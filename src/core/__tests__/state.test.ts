@@ -235,9 +235,7 @@ describe('state.json v4 (new tab page)', () => {
   it('migrates a v2 profile: no shortcuts, default new tab settings', () => {
     const settings = structuredClone(DEFAULT_SETTINGS) as Partial<typeof DEFAULT_SETTINGS>
     delete settings.newTab
-    const s = state(
-      fakeIo(legacyProfile(2, { settings: settings as typeof DEFAULT_SETTINGS }))
-    )
+    const s = state(fakeIo(legacyProfile(2, { settings: settings as typeof DEFAULT_SETTINGS })))
     expect(s.newTabShortcuts).toEqual([])
     expect(s.settings.newTab).toEqual(DEFAULT_SETTINGS.newTab)
   })

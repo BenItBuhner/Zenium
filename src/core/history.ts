@@ -503,27 +503,22 @@ export class HistoryService {
 
   /**
    * A favicon seen on `url`'s site: the page's own if it was visited, else the most visited
-   * page's of the same host (`www.` and case aside). For tiles of pages history may not hold.
+   * page's of the same host (`www.` and case aside). For new tab page tiles of pages history may
+   * not hold itself.
    */
-  faviconFor(url: string): string | null {
+  siteFaviconFor(url: string): string | null {
     const exact = this.entries.get(url)
     if (exact?.favicon) return exact.favicon
-    let host: string
-    try {
-      host = normalizeHost(new URL(url).hostname)
-    } catch {
-      return null
-    }
+    const host = getHost(url)
+      .toLowerCase()
+      .replace(/^www\./, '')
     if (!host) return null
     let best: HistoryEntry | null = null
     for (const e of this.entries.values()) {
       if (!e.favicon) continue
-      let candidate: string
-      try {
-        candidate = normalizeHost(new URL(e.url).hostname)
-      } catch {
-        continue
-      }
+      const candidate = getHost(e.url)
+        .toLowerCase()
+        .replace(/^www\./, '')
       if (candidate === host && (!best || e.visitCount > best.visitCount)) best = e
     }
     return best?.favicon ?? null
