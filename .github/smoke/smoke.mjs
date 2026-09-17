@@ -175,6 +175,14 @@ function osascript(script, timeout = 30000) {
 
 const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
+function realPath(p) {
+  try {
+    return fs.realpathSync.native(p)
+  } catch {
+    return p
+  }
+}
+
 function killAppProcesses() {
   if (IS_WIN) sh('taskkill', ['/F', '/IM', path.basename(opts.exe), '/T'], 20000)
   else sh('pkill', ['-9', '-f', `^${escapeRegExp(opts.exe)}( |$)`], 20000)
@@ -922,7 +930,8 @@ async function runScenario(name, userData, sessionOptions, body) {
           electron: process.versions.electron,
           chrome: process.versions.chrome
         }))
-        if (!facts.userData.startsWith(profileRoot)) {
+        // Resolved on both sides: macOS reports /private/var/... for the /var/... tmpdir.
+        if (!realPath(facts.userData).startsWith(realPath(profileRoot))) {
           throw new Error(`profile not isolated: userData is ${facts.userData}`)
         }
         if (s.timings.chromeRenderedMs > RENDER_BUDGET_MS) {
