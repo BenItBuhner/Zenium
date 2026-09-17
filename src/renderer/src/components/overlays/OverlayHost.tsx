@@ -1,8 +1,8 @@
 import type { JSX } from 'react'
 import type { UIState } from '@shared/types'
 import type { UiState } from '@renderer/lib/ui'
+import { BookmarkManager } from '../bookmarks/BookmarkManager'
 import { AddonsPanel } from './AddonsPanel'
-import { BookmarksPanel } from './BookmarksPanel'
 import { BoostPanel } from './BoostPanel'
 import { DownloadsPanel } from './DownloadsPanel'
 import { HistoryPanel } from './HistoryPanel'
@@ -23,7 +23,7 @@ export function OverlayHost({ state, ui }: { state: UIState; ui: UiState }): JSX
     case 'history':
       return <HistoryPanel state={state} />
     case 'bookmarks':
-      return <BookmarksPanel state={state} />
+      return <BookmarkManager state={state} />
     case 'downloads':
       return <DownloadsPanel state={state} />
     case 'theme':

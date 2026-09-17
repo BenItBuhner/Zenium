@@ -1,4 +1,11 @@
-import type { MenuDescriptor, OverlayKind, Rect, UIState, UrlbarOpenMode } from '@shared/types'
+import type {
+  BookmarkNodeType,
+  MenuDescriptor,
+  OverlayKind,
+  Rect,
+  UIState,
+  UrlbarOpenMode
+} from '@shared/types'
 import { cmd, onEvent, run } from './api'
 import { createStore } from './store'
 import { rememberThumbnail, thumbnailOf } from './thumbnails'
@@ -79,6 +86,10 @@ export interface UiState {
   editingPinnedUrlTabId: string | null
   /** Tab whose icon picker is open. */
   iconPickerTabId: string | null
+  /** The star dialog (Ctrl+D): the tab that was starred and its bookmark. */
+  starDialog: { tabId: string; nodeId: string; created: boolean } | null
+  /** A bookmark the manager should edit, or create (`id: null`) inside `parentId`. */
+  bookmarkEdit: { id: string | null; parentId: string; type: BookmarkNodeType } | null
   /** Zen's multi-select: tabs picked with Ctrl / Shift+click (acted on together). */
   selectedTabIds: string[]
   /** Last plainly clicked / toggled tab – the anchor for Shift+click ranges. */
@@ -128,6 +139,8 @@ export const uiStore = createStore<UiState>(
     renamingFolderId: null,
     editingPinnedUrlTabId: null,
     iconPickerTabId: null,
+    starDialog: null,
+    bookmarkEdit: null,
     selectedTabIds: [],
     selectionAnchorId: null,
     glanceActive: false,

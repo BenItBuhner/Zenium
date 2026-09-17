@@ -8,6 +8,7 @@ import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
+import { StarDialog } from './bookmarks/StarDialog'
 
 const TAB_ICONS = [
   ...SPACE_ICONS,
@@ -25,12 +26,14 @@ const TAB_ICONS = [
   '🏷️'
 ]
 
-/** Small centred dialogs opened from tab context menus: pinned-URL editor and icon picker. */
+/** Small dialogs opened from tabs: the star dialog, the pinned-URL editor and the icon picker. */
 export function TabDialogs({ state }: { state: UIState }): JSX.Element | null {
   const pinnedTabId = uiStore.use((s) => s.editingPinnedUrlTabId)
   const iconTabId = uiStore.use((s) => s.iconPickerTabId)
+  const star = uiStore.use((s) => s.starDialog)
   const pinnedTab = pinnedTabId ? state.tabs[pinnedTabId] : undefined
   const iconTab = iconTabId ? state.tabs[iconTabId] : undefined
+  if (star) return <StarDialog key={star.nodeId} state={state} star={star} />
   if (pinnedTab) return <PinnedUrlDialog tab={pinnedTab} />
   if (iconTab) return <IconPickerDialog tab={iconTab} />
   return null
