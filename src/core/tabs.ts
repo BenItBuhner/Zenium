@@ -522,6 +522,8 @@ export class TabManager {
       afterTabId?: string
       folderId?: string | null
       load?: boolean
+      /** The plain host typed into the URL bar when `url` is its https:// upgrade (http fallback). */
+      upgradedFrom?: string
       /** Preset id (hosts that must know the id before the tab exists, e.g. adopted popups). */
       id?: string
     },
@@ -569,6 +571,9 @@ export class TabManager {
       insertTabIntoSpace(m, space, tab, index)
     }
     tab.bookmarked = this.browser.bookmarks.has(tab.url)
+    // Set before the load below so an active tab's single activation load (or a background load)
+    // is eligible for the http fallback straight away.
+    if (opts.upgradedFrom) this.httpsUpgraded.set(tab.id, opts.upgradedFrom)
     if (opts.active !== false) {
       this.activateTab(tab.id, win)
     } else if (opts.load !== false && tab.url !== BLANK_URL) {
