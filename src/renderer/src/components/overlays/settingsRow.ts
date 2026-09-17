@@ -25,14 +25,20 @@ export function rowIsLabel(control: RowControl | null): boolean {
   return control !== null && control !== 'segmented'
 }
 
+/** A two-way pill whose labels together run past this many characters is too wide for a phone row. */
+const SEGMENTED_INLINE_CHARS = 18
+
 /**
- * Controls wide enough to starve the label in a narrow column: fields, selects and a segmented
- * pill of three or more. Where the column is narrow (a phone) the row stacks them under the label.
+ * Controls wide enough to starve the label in a narrow column: fields, selects, and a segmented
+ * pill of three or more (or of two with long labels). Where the column is narrow (a phone) the
+ * row stacks them under the label.
  */
 export function rowStacks(control: RowControl | null, children: ReactNode): boolean {
   if (control === 'select' || control === 'input') return true
   if (control !== 'segmented') return false
   const only = Children.toArray(children).find(isValidElement)
-  const props = only?.props as { options?: unknown[] } | undefined
-  return (props?.options?.length ?? 0) > 2
+  const props = only?.props as { options?: Array<{ label?: string }> } | undefined
+  const options = props?.options ?? []
+  if (options.length > 2) return true
+  return options.reduce((n, o) => n + (o.label?.length ?? 0), 0) > SEGMENTED_INLINE_CHARS
 }

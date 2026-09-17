@@ -350,7 +350,7 @@ function TabsSection({
             onChange={(v) => set({ newTabPosition: v })}
             options={[
               { value: 'end', label: 'At the end' },
-              { value: 'after-current', label: 'Below the current tab' }
+              { value: 'after-current', label: 'Below current tab' }
             ]}
           />
         </Row>

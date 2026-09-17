@@ -58,11 +58,21 @@ describe('rowStacks', () => {
     expect(rowStacks('segmented', createElement(Segmented, { options: three }))).toBe(true)
   })
 
-  it('keeps a switch and a two-way pill beside the label', () => {
+  it('keeps a switch and a short two-way pill beside the label', () => {
     expect(rowStacks('switch', createElement(Switch))).toBe(false)
-    expect(rowStacks('segmented', createElement(Segmented, { options: three.slice(0, 2) }))).toBe(
-      false
-    )
+    const short = [
+      { value: 'bottom', label: 'Bottom' },
+      { value: 'top', label: 'Top' }
+    ]
+    expect(rowStacks('segmented', createElement(Segmented, { options: short }))).toBe(false)
     expect(rowStacks(null, 'text')).toBe(false)
+  })
+
+  it('stacks a two-way pill whose labels would not fit beside the label', () => {
+    const long = [
+      { value: 'end', label: 'At the end' },
+      { value: 'after-current', label: 'Below the current tab' }
+    ]
+    expect(rowStacks('segmented', createElement(Segmented, { options: long }))).toBe(true)
   })
 })
