@@ -174,6 +174,7 @@
   .zen-essential,
   .zen-panel,
   .zen-content-frame,
+  .zen-omnibox-sheet,
   .zen-toolbar-button,
   .zen-kbd,
   .zen-suggestion,
@@ -513,6 +514,19 @@
     opacity: 1;
   }
 }
+/*
+ * The address pill growing into the omnibox field as the bar's buttons make room: the field's
+ * backdrop starts over the pill's slot (shifted past the back button, scaled to the pill's
+ * width) and stretches to the whole band – transform only, no layout per frame.
+ */
+@keyframes zen-field-grow {
+  from {
+    transform: translateX(var(--zen-field-shift, 48px)) scaleX(var(--zen-field-scale, 0.5));
+  }
+  to {
+    transform: none;
+  }
+}
 @layer components {
   .zen-sheet-in {
     animation: zen-sheet-in 220ms var(--zen-ease);
@@ -531,6 +545,96 @@
   }
   .zen-phone-bar {
     background: transparent;
+  }
+  .zen-phone-bar-lifted > button:not(.zen-phone-pill) {
+    pointer-events: none;
+  }
+  /* The slot an address pill left behind while it is being carried: a shallow well. */
+  .zen-pill-well {
+    background: rgb(var(--zen-fg-rgb) / 0.04);
+    box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.06);
+    transition: background 160ms var(--zen-ease);
+  }
+  .zen-pill-well-target {
+    background: rgb(var(--zen-fg-rgb) / 0.09);
+  }
+  /*
+   * The carried pill: the pill's own look, moved with transforms only. Picking it up is a level
+   * swap – a resting card in the bar, a dragged card once lifted – on a fixed transition, never
+   * a shadow animated per frame.
+   */
+  .zen-pill-ghost {
+    background: var(--zen-bg-solid);
+    box-shadow: var(--zen-shadow-1);
+    transition: box-shadow 200ms var(--zen-ease);
+    will-change: transform;
+  }
+  .zen-pill-ghost[data-lifted='true'] {
+    box-shadow: var(--zen-shadow-2);
+  }
+  /*
+   * The phone's omnibox: the content frame becomes the suggestions surface – the space-tinted
+   * panel over the window, blurred like every panel – and the field a raised card in the bar
+   * band. Depth, not lines, separates them.
+   */
+  .zen-omnibox-sheet {
+    background: var(--zen-panel-bg);
+    backdrop-filter: var(--zen-blur-panel);
+    border-radius: var(--zen-content-radius);
+    box-shadow:
+      0 0 0 1px rgb(var(--zen-fg-rgb) / 0.08),
+      0 2px 14px rgb(0 0 0 / 0.08);
+    will-change: transform, opacity;
+  }
+  .zen-omnibox-field {
+    position: relative;
+  }
+  /* The field's backdrop is its own layer so the grow animation scales it, not the content. */
+  .zen-omnibox-field::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--zen-panel-bg);
+    box-shadow: var(--zen-shadow-1);
+    transform-origin: 0 50%;
+    animation: zen-field-grow 220ms var(--zen-ease);
+  }
+  .zen-omnibox-field > * {
+    position: relative;
+    animation: zen-fade 220ms var(--zen-ease);
+  }
+  /*
+   * Selected text in the chrome takes the space's accent at 30 %, never the browser's default
+   * blue; the accent-fill shade so it stays legible on dark, with the raw accent for WebViews
+   * that cannot mix colours.
+   */
+  .zen-omnibox-field input::selection {
+    background: rgb(var(--zen-accent-rgb) / 0.3);
+    background: color-mix(in srgb, var(--zen-accent-fill) 30%, transparent);
+    color: var(--zen-fg);
+  }
+  /* Rows sit 4 px inside the sheet: concentric with its corners whatever the frame radius is. */
+  .zen-suggestion-sheet {
+    border-radius: calc(var(--zen-content-radius) - 4px);
+  }
+  /* Two-way choice as one pill: a quiet track, the picked half in the accent tint. */
+  .zen-segmented {
+    background: var(--zen-element-bg);
+  }
+  .zen-segment {
+    color: var(--zen-muted);
+    transition:
+      background 120ms var(--zen-ease),
+      color 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  .zen-segment:active {
+    transform: scale(0.98);
+  }
+  .zen-segment[data-active='true'] {
+    background: rgb(var(--zen-accent-rgb) / 0.16);
+    color: var(--zen-fg);
   }
 
   /*

@@ -56,7 +56,9 @@ export function useLayoutReporter(
     formFactor,
     state.settings.sidebarSide,
     state.settings.toolbarLayout,
-    state.settings.compactMode.enabled
+    state.settings.compactMode.enabled,
+    // The phone bar changing edges slides the viewport without resizing it.
+    state.settings.phoneBarPosition
   ])
 
   const contentHidden = overlayCoversContent(ui) || ui.compactHover

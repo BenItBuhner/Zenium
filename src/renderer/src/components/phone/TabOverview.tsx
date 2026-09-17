@@ -1,7 +1,7 @@
 import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { PanelLeft, Plus, X } from 'lucide-react'
-import type { Folder, Rect, Space, Tab, UIState } from '@shared/types'
+import type { Folder, PhoneBarPosition, Rect, Space, Tab, UIState } from '@shared/types'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { closeOverview, type OverviewState } from '@renderer/lib/gestures/stage'
@@ -30,6 +30,8 @@ interface Props {
   overview: OverviewState
   /** Where the page normally is, in window coordinates. */
   area: Rect
+  /** Edge the address bar is docked at: the overview fills the rest of the screen. */
+  edge: PhoneBarPosition
 }
 
 /**
@@ -39,7 +41,7 @@ interface Props {
  * while the page shrinks into the slot of its own card (and grows back out of the card that is
  * picked when leaving), so a half-finished drag always shows exactly where things are going.
  */
-export function TabOverview({ state, overview, area }: Props): JSX.Element {
+export function TabOverview({ state, overview, area, edge }: Props): JSX.Element {
   const { progress, phase, heroTabId } = overview
   const space = activeSpace(state)
   const active = activeTab(state)
@@ -58,7 +60,7 @@ export function TabOverview({ state, overview, area }: Props): JSX.Element {
   const fadeGrid = useFadeEdges<HTMLDivElement>({ axis: 'y' })
   const cells = useRef(new Map<string, HTMLElement>())
   const [heroCell, setHeroCell] = useState<Rect | null>(null)
-  const handle = useOverviewHandle({ edge: 'bottom' })
+  const handle = useOverviewHandle({ edge })
 
   // Where the hero's own card sits, in layout space (the root's entrance scale divided out).
   const cardsKey = [...essentials, ...pinned, ...regular].map((t) => t.id).join('|')
@@ -131,8 +133,14 @@ export function TabOverview({ state, overview, area }: Props): JSX.Element {
         style={{
           left: 'var(--zen-inset-left)',
           right: 'var(--zen-inset-right)',
-          top: 'var(--zen-inset-top)',
-          bottom: 'calc(var(--zen-phone-bar) + var(--zen-inset-bottom))',
+          top:
+            edge === 'top'
+              ? 'calc(var(--zen-phone-bar) + var(--zen-inset-top))'
+              : 'var(--zen-inset-top)',
+          bottom:
+            edge === 'bottom'
+              ? 'calc(var(--zen-phone-bar) + var(--zen-inset-bottom))'
+              : 'var(--zen-inset-bottom)',
           pointerEvents: interactive ? 'auto' : 'none'
         }}
       >

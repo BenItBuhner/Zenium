@@ -8,6 +8,7 @@ import type {
   GlanceTrigger,
   HostCapabilities,
   NewTabPosition,
+  PhoneBarPosition,
   PinnedCloseBehavior,
   Settings,
   SidebarSide,
@@ -32,7 +33,7 @@ import { AgentsSection } from './AgentsSection'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { OverlayShell } from './OverlayShell'
 import { ResourcesSection } from './ResourcesSection'
-import { Choice, Group, Row } from './SettingsPrimitives'
+import { Choice, Group, Row, Segmented } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
 import { SyncSection } from './SyncSection'
 import { UpdatesSection } from './UpdatesSection'
@@ -244,6 +245,17 @@ function LookSection({
               { value: 'float-typing', label: 'Floating only when typing' },
               { value: 'always-float', label: 'Always floating' },
               { value: 'normal', label: 'Normal (attached to top)' }
+            ]}
+          />
+        </Row>
+        <Row label="Position on phones" hint="Hold the address bar to carry it to the other edge.">
+          <Segmented<PhoneBarPosition>
+            label="Position on phones"
+            value={s.phoneBarPosition}
+            onChange={(v) => set({ phoneBarPosition: v })}
+            options={[
+              { value: 'bottom', label: 'Bottom' },
+              { value: 'top', label: 'Top' }
             ]}
           />
         </Row>

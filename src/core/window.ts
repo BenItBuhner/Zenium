@@ -3,6 +3,7 @@ import type {
   Events,
   FindResult,
   GlanceState,
+  HapticKind,
   LayoutReport,
   Rect,
   Space,
@@ -291,6 +292,10 @@ export class ZenWindow {
 
   focusChrome(): void {
     if (this.alive) this.host.focusChrome()
+  }
+
+  haptic(kind: HapticKind): void {
+    if (this.alive) this.host.haptic?.(kind)
   }
 
   send<K extends EventName>(name: K, payload: Events[K]): void {

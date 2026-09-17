@@ -13,6 +13,7 @@ import type {
   EventName,
   Events,
   ExtensionInfo,
+  HapticKind,
   HostCapabilities,
   KeyBinding,
   Platform as PlatformOs,
@@ -293,6 +294,8 @@ export interface WindowHost {
   close(): void
   /** Bounds to remember for session restore (null when the host has no movable windows). */
   normalBounds(): Rect | null
+  /** Brief vibration for a gesture landmark; hosts without haptics leave this out. */
+  haptic?(kind: HapticKind): void
 }
 
 export interface WindowCreateInit {

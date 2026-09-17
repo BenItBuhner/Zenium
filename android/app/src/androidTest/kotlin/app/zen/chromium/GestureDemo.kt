@@ -11,6 +11,7 @@ import android.graphics.Rect
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
+import android.view.KeyCharacterMap
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.view.ViewCompat
@@ -33,7 +34,9 @@ import kotlin.math.roundToInt
  *
  * Touch input is injected through UiAutomation as real pointer events, interpolated in real time,
  * so the chrome measures genuine finger velocities. It only ever asserts that it could run; what
- * the chrome does with the gestures is what the recording is for.
+ * the chrome does with the gestures is what the recording is for. A second sequence (`omnibox`)
+ * records the URL bar with the keyboard up and the long-press that carries the bar between the
+ * edges of the screen (`android-omnibox-demo.sh`).
  *
  * Handshake with the workflow (files under the app's `files/gesture-demo/`):
  *  - the driver writes `record` once the warm-up is done and waits for `recording`, which the
@@ -59,12 +62,7 @@ class GestureDemo {
 
     @Test
     fun record() {
-        val info = ui.serviceInfo
-        info.flags = info.flags or
-            AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
-            AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
-        ui.serviceInfo = info
-
+        configureAccessibility()
         seedProfile()
         launch()
         measure()
@@ -74,7 +72,53 @@ class GestureDemo {
         Log.i(TAG, "done")
     }
 
+    /**
+     * The omnibox and the movable bar (`android-omnibox-demo.sh`). `-e scenario before` runs the
+     * short keyboard scene only, for recording the build that still had the bug; `after` (the
+     * default) records the fixed omnibox at both edges, the long-press that carries the bar to
+     * the top and back, a move reversed midway, and the swipe gestures at either edge.
+     */
+    @Test
+    fun omnibox() {
+        configureAccessibility()
+        val scenario = InstrumentationRegistry.getArguments().getString("scenario") ?: "after"
+        seedProfile()
+        launch()
+        measure()
+        warmUpKeyboard()
+        if (scenario == "before") {
+            handshake()
+            omniboxBefore()
+        } else {
+            // The next tab's card needs a thumbnail for the swipes to have something to show.
+            flingLeft(); settle()
+            flingRight(); settle()
+            handshake()
+            omniboxAfter()
+        }
+        Log.i(TAG, "done")
+    }
+
+    /**
+     * The keyboard's first appearance on a fresh emulator takes seconds and paints late (the
+     * insets arrive, the keys do not): bring it up once off camera so the takes show it whole.
+     */
+    private fun warmUpKeyboard() {
+        Finger().tap(pillCenterX, pillY)
+        SystemClock.sleep(7_000)
+        dismissOmnibox()
+        SystemClock.sleep(1_000)
+    }
+
     // --- setup -----------------------------------------------------------------------------------
+
+    private fun configureAccessibility() {
+        val info = ui.serviceInfo
+        info.flags = info.flags or
+            AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
+            AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+        ui.serviceInfo = info
+    }
 
     private fun seedProfile() {
         val zen = File(app.filesDir, "zen").apply { mkdirs() }
@@ -267,6 +311,149 @@ class GestureDemo {
     }
 
     private fun beat() = SystemClock.sleep(1_500)
+
+    // --- omnibox and bar relocation --------------------------------------------------------------
+
+    /** The build with the bug: URL bar open, keyboard up, a strip of the page under the suggestions. */
+    private fun omniboxBefore() {
+        val f = Finger()
+        f.tap(pillCenterX, pillY)
+        SystemClock.sleep(3_000)
+        typeText("wiki")
+        SystemClock.sleep(3_000)
+        shotNamed("omnibox-before-keyboard-strip")
+        SystemClock.sleep(1_500)
+        finishRecording()
+    }
+
+    private fun omniboxAfter() {
+        val insets = windowInsets()
+        val bar = 56 * density
+        val topPillY = insets.top + bar / 2
+        val bottomPillY = height - insets.bottom - bar / 2
+        val travel = bottomPillY - topPillY
+        val f = Finger()
+
+        // 1. The omnibox at the bottom: the field rides the keyboard, suggestions fill the frame.
+        f.tap(pillCenterX, pillY)
+        SystemClock.sleep(2_500)
+        typeText("wiki")
+        SystemClock.sleep(2_500)
+        shotNamed("omnibox-after-keyboard")
+        SystemClock.sleep(1_000)
+        dismissOmnibox()
+
+        // 2. Hold the pill, carry it to the top, let go: the page slides down, the bar docks.
+        f.down(pillCenterX, pillY)
+        f.hold(800)
+        shotNamed("omnibox-pill-lifted")
+        f.moveBy(0f, -0.5f * travel, 700)
+        f.hold(500)
+        f.moveBy(0f, topPillY - pillY + 0.5f * travel, 600)
+        f.hold(400)
+        f.up()
+        SystemClock.sleep(2_200)
+        shotNamed("omnibox-docked-top")
+        remeasurePill("top")
+
+        // 3. The omnibox at the top with the keyboard.
+        f.tap(pillCenterX, pillY)
+        SystemClock.sleep(2_500)
+        typeText("wiki")
+        SystemClock.sleep(2_000)
+        shotNamed("omnibox-top-keyboard")
+        SystemClock.sleep(800)
+        dismissOmnibox()
+
+        // 4. Change of mind: head back down, then return and let go near the top.
+        f.down(pillCenterX, pillY)
+        f.hold(800)
+        f.moveBy(0f, 0.45f * travel, 700)
+        f.hold(500)
+        f.moveBy(0f, -0.35f * travel, 600)
+        f.hold(300)
+        f.up()
+        SystemClock.sleep(2_000)
+
+        // 5. The swipes at the top: next tab and back, then the overview pulled down.
+        remeasurePill("top")
+        flingLeft()
+        SystemClock.sleep(3_000)
+        flingRight()
+        SystemClock.sleep(3_000)
+        pullOverview(inward = 1f)
+        SystemClock.sleep(2_000)
+        shotNamed("omnibox-overview-top")
+        f.tap(pillCenterX, pillY)
+        SystemClock.sleep(2_200)
+
+        // 6. Flick it back to the bottom.
+        f.down(pillCenterX, pillY)
+        f.hold(800)
+        f.moveBy(0f, 0.45f * travel, 200)
+        f.up()
+        SystemClock.sleep(2_200)
+        remeasurePill("bottom")
+
+        // 7. And the swipes at the bottom again.
+        flingLeft()
+        SystemClock.sleep(3_000)
+        pullOverview(inward = -1f)
+        SystemClock.sleep(2_000)
+        f.tap(pillCenterX, pillY)
+        SystemClock.sleep(2_200)
+        finishRecording()
+    }
+
+    /** The pill moved with the bar to `edge`: find it again (falling back to that edge's slot). */
+    private fun remeasurePill(edge: String) {
+        val insets = windowInsets()
+        val found = findByLabel(PILL_LABEL)?.takeIf { it.width() > 100 * density }
+        pill = found ?: computedPill(insets.bottom).also { slot ->
+            if (edge == "top") slot.offsetTo(slot.left, (insets.top + 6 * density).roundToInt())
+        }
+        pillY = pill.exactCenterY()
+        pillCenterX = pill.exactCenterX()
+        Log.i(TAG, "pill now $pill (${if (found != null) "from accessibility" else "computed for $edge"})")
+    }
+
+    /** Pull the overview in from the pill: `inward` is +1 with the bar at the top, −1 at the bottom. */
+    private fun pullOverview(inward: Float) {
+        val f = Finger()
+        f.down(pillCenterX, pillY)
+        f.settleIn(0f, inward * NUDGE)
+        f.moveBy(0f, inward * (0.75f * overviewTravel - NUDGE), 800)
+        f.hold(300)
+        f.up()
+    }
+
+    /** Back twice: the first closes the keyboard, the second the URL bar. */
+    private fun dismissOmnibox() {
+        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+        SystemClock.sleep(900)
+        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+        SystemClock.sleep(1_400)
+    }
+
+    private fun typeText(text: String) {
+        val events = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray()) ?: return
+        for (event in events) {
+            ui.injectInputEvent(event, true)
+            SystemClock.sleep(40)
+        }
+    }
+
+    /** Tell the recorder to stop while the app is still on screen. */
+    private fun finishRecording() {
+        File(out, "done").writeText("done\n")
+        SystemClock.sleep(4_000)
+    }
+
+    private fun shotNamed(fileName: String) {
+        val bitmap = ui.takeScreenshot() ?: return
+        File(out, "$fileName.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
+    }
 
     /**
      * Cross the slop (so the axis is locked and no long press can start) and wait for the stage.

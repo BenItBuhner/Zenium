@@ -1,13 +1,23 @@
 name: Android gesture demo
 
-# Records the phone chrome's URL-pill gestures (swipe to switch tabs, pull up for the tab
-# overview) on a hardware-accelerated Android emulator and uploads the video and screenshots.
-# Dispatch-only: it takes about ten minutes and has nothing to say about a change being correct.
-# The recording comes from an API 34 Google APIs image on a software GPU, so expect a handful of
-# frames per second and a pause of a second or two at the start of every gesture while the chrome
-# snapshots the live page; a phone does both in a frame.
+# Records the phone chrome on a hardware-accelerated Android emulator and uploads the video and
+# screenshots: either the URL-pill gestures (swipe to switch tabs, pull up for the tab overview) or
+# the omnibox with the keyboard up and the long-press that carries the address bar between the
+# edges of the screen (that one also builds `main` first, so the video opens with the old bar).
+# Dispatch-only: it takes ten to fifteen minutes and has nothing to say about a change being
+# correct. The recording comes from an API 34 Google APIs image on a software GPU, so expect a
+# handful of frames per second and a pause of a second or two at the start of every gesture while
+# the chrome snapshots the live page; a phone does both in a frame.
 on:
   workflow_dispatch:
+    inputs:
+      demo:
+        description: Sequence to record
+        type: choice
+        default: gestures
+        options:
+          - gestures
+          - omnibox
 
 permissions:
   contents: read
@@ -18,12 +28,13 @@ concurrency:
 
 env:
   NODE_VERSION: 22
+  DEMO: ${{ inputs.demo || 'gestures' }}
 
 jobs:
   record:
     name: Record on an API 34 emulator
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -47,6 +58,22 @@ jobs:
       - name: Assemble the debug APK and the gesture driver
         working-directory: android
         run: ./gradlew assembleDebug assembleDebugAndroidTest -PskipWeb --no-daemon --stacktrace
+      - name: Check out main for the "before" take
+        if: env.DEMO == 'omnibox'
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          path: before
+      - name: Build the "before" APK
+        if: env.DEMO == 'omnibox'
+        working-directory: before
+        run: |
+          npm ci
+          npm run build:android:web
+          cd android && ./gradlew assembleDebug -PskipWeb --no-daemon --stacktrace
+      - name: Install ffmpeg to join the two takes
+        if: env.DEMO == 'omnibox'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
       - name: Enable KVM for the emulator
         # https://github.blog/changelog/2023-02-23-hardware-accelerated-android-virtualization-on-actions-windows-and-linux-larger-hosted-runners/
         run: |
@@ -54,8 +81,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
           ls -la /dev/kvm
-      - name: Record the gestures
+      - name: Record the sequence
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          BEFORE_APK_DIR: ${{ env.DEMO == 'omnibox' && 'before/android/app/build/outputs/apk/debug' || '' }}
         with:
           api-level: 34
           target: google_apis
@@ -68,11 +97,11 @@ jobs:
           # skip every spring – the animations are what is being recorded.
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: bash .github/scripts/android-gesture-demo.sh
+          script: bash .github/scripts/android-${{ env.DEMO }}-demo.sh
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: android-gesture-demo
-          path: artifacts/android-gesture-demo/
+          name: android-${{ env.DEMO }}-demo
+          path: artifacts/android-${{ env.DEMO }}-demo/
           if-no-files-found: warn
           retention-days: 14

@@ -87,10 +87,19 @@ function currentActiveTabId(): string | null {
 
 let tabsShown = false
 let overviewShown = false
+/** Other layers standing in for the page (the address bar being carried to the other edge). */
+const layersShown = new Set<string>()
 
 function syncStageActive(): void {
-  const active = tabsShown || overviewShown
+  const active = tabsShown || overviewShown || layersShown.size > 0
   if (uiStore.get().stageActive !== active) uiStore.set({ stageActive: active })
+}
+
+/** A stage layer outside this module started (or stopped) drawing in place of the page. */
+export function setStageLayerShown(layer: string, shown: boolean): void {
+  if (shown) layersShown.add(layer)
+  else layersShown.delete(layer)
+  syncStageActive()
 }
 
 /**
@@ -153,6 +162,13 @@ export function prepareStage(state: UIState): void {
   if (!tab) return
   pruneThumbnails((id) => Boolean(state.tabs[id]))
   pendingCapture = captureThumbnail(tab.id)
+}
+
+/** Hand the capture `prepareStage` started to another gesture (null when there is none). */
+export function takePendingCapture(): Promise<unknown> | null {
+  const capture = pendingCapture
+  pendingCapture = null
+  return capture
 }
 
 /** Start dragging the tab track. Returns false when there is no tab to move away from. */
