@@ -1,7 +1,7 @@
 package app.zen.chromium
 
 import android.app.Activity
-import android.content.ComponentCallbacks2
+import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
@@ -14,6 +14,7 @@ import android.view.ViewGroup
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.widget.FrameLayout
+import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
@@ -40,6 +41,23 @@ class MainActivity : AppCompatActivity() {
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var permissionCallback: ((Map<String, Boolean>) -> Unit)? = null
     private var textFilesCallback: ((JSONArray) -> Unit)? = null
+    private var saveTextCallback: ((Boolean) -> Unit)? = null
+    private var saveTextContent: String = ""
+
+    private val textFileSaver = registerForActivityResult(CreateTextDocument()) { uri ->
+        val callback = saveTextCallback ?: return@registerForActivityResult
+        saveTextCallback = null
+        val text = saveTextContent
+        saveTextContent = ""
+        if (uri == null) {
+            callback(false)
+            return@registerForActivityResult
+        }
+        val written = runCatching {
+            contentResolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { it.write(text) } != null
+        }.getOrDefault(false)
+        callback(written)
+    }
 
     private val textFilePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         val callback = textFilesCallback ?: return@registerForActivityResult
@@ -161,12 +179,33 @@ class MainActivity : AppCompatActivity() {
 
     // --- lifecycle --------------------------------------------------------------------------
 
+    /**
+     * Set while the window is hidden (screen off, another app in front): the start and resume that
+     * follow are a return to the screen, not the launch, and the host checks that everything paints.
+     */
+    private var hidden = false
+
+    override fun onStart() {
+        super.onStart()
+        if (hidden) host.onStart()
+    }
+
+    override fun onStop() {
+        hidden = true
+        super.onStop()
+    }
+
     override fun onResume() {
         super.onResume()
         host.chrome.hostEvent("focus", json("focused" to true))
+        if (hidden) {
+            hidden = false
+            host.onResume()
+        }
     }
 
     override fun onPause() {
+        host.onPause()
         host.chrome.hostEvent("focus", json("focused" to false))
         // Give the core a chance to persist synchronously before the process may be frozen.
         host.chrome.hostEvent("pause", null)
@@ -189,8 +228,8 @@ class MainActivity : AppCompatActivity() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         // Backgrounded and on the system's LRU list: the back previews are the one cache worth
-        // dropping (UI_HIDDEN alone is not pressure – the user may be right back).
-        if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) host.snapshots.clear()
+        // dropping (see HostLifecycle for why UI_HIDDEN is not pressure).
+        if (HostLifecycle.trimDropsSnapshots(level)) host.snapshots.clear()
     }
 
     // --- keyboard --------------------------------------------------------------------------------
@@ -229,6 +268,7 @@ class MainActivity : AppCompatActivity() {
                 "css" -> "text/css"
                 "json" -> "application/json"
                 "txt" -> "text/plain"
+                "html", "htm" -> "text/html"
                 else -> null
             }
         }.ifEmpty { listOf("*/*") }
@@ -237,6 +277,20 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             textFilesCallback = null
             callback(JSONArray())
+        }
+    }
+
+    /** Save text where the user chooses (bookmark export); answers with true once written. */
+    fun saveTextFile(name: String, mimeType: String, text: String, callback: (Boolean) -> Unit) {
+        saveTextCallback?.invoke(false)
+        saveTextCallback = callback
+        saveTextContent = text
+        try {
+            textFileSaver.launch(mimeType.ifBlank { "text/plain" } to name)
+        } catch (e: Exception) {
+            saveTextCallback = null
+            saveTextContent = ""
+            callback(false)
         }
     }
 
@@ -255,4 +309,16 @@ class MainActivity : AppCompatActivity() {
         permissionCallback = callback
         permissionLauncher.launch(permissions.toTypedArray())
     }
+}
+
+/** `ACTION_CREATE_DOCUMENT` with the MIME type chosen per call (`mimeType to suggestedName`). */
+private class CreateTextDocument : ActivityResultContract<Pair<String, String>, Uri?>() {
+    override fun createIntent(context: Context, input: Pair<String, String>): Intent =
+        Intent(Intent.ACTION_CREATE_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType(input.first)
+            .putExtra(Intent.EXTRA_TITLE, input.second)
+
+    override fun parseResult(resultCode: Int, intent: Intent?): Uri? =
+        if (resultCode == Activity.RESULT_OK) intent?.data else null
 }

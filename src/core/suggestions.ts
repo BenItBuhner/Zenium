@@ -168,15 +168,17 @@ export class SuggestionService {
       tabHits += 1
     }
 
-    for (const bm of isPrivate ? [] : this.browser.bookmarks.search(query, 3)) {
-      if (seenUrls.has(bm.url)) continue
+    // Bookmarks from every folder; the subtitle names the folder so "Work / Docs" is visible.
+    for (const bm of isPrivate ? [] : this.browser.bookmarks.searchUrls(query, 3)) {
+      if (!bm.url || seenUrls.has(bm.url)) continue
+      const path = this.browser.bookmarks.pathLabel(bm.id)
       results.push({
         id: `bm:${bm.id}`,
         kind: 'bookmark',
         title: bm.title,
-        subtitle: displayUrl(bm.url),
+        subtitle: path ? `${path} · ${displayUrl(bm.url)}` : displayUrl(bm.url),
         url: bm.url,
-        favicon: bm.favicon,
+        favicon: bm.favicon ?? null,
         targetId: bm.id,
         fill: query
       })
