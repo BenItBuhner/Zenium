@@ -377,7 +377,7 @@ class TabWebView(
         val now = SystemClock.uptimeMillis()
         if (now - lastActivationAt < ACTIVATION_REPORT_INTERVAL_MS) return
         lastActivationAt = now
-        host.chrome.viewEvent(tabId, "activation", null)
+        host.viewEvent(tabId, "activation", null)
     }
 
     private var lastActivationAt = 0L

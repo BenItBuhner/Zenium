@@ -49,7 +49,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override val blocking = Blocking.shared(activity)
     override val keys = Keys()
     override val permissions = Permissions(this)
-    val security = Security(this)
+    override val security = Security(this)
     override val downloads = Downloads(activity, this)
     var chrome = ChromeWebView(activity, this)
         private set

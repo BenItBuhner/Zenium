@@ -14,7 +14,7 @@ import java.util.concurrent.Executors
  * client-certificate request opens the system KeyChain chooser, and the alias picked is kept per
  * host and port until Zenium quits. Nothing is ever sent without the user's say-so.
  */
-class Security(private val host: Host) {
+class Security(private val host: PageHost) {
     private var seq = 0
     private val pendingAuth = HashMap<String, HttpAuthHandler>()
     private val certificateChoices = HashMap<String, String>()
@@ -24,7 +24,7 @@ class Security(private val host: Host) {
     fun onHttpAuth(tab: TabWebView, handler: HttpAuthHandler, hostName: String, realm: String) {
         val id = "auth_${++seq}"
         pendingAuth[id] = handler
-        host.chrome.hostEvent(
+        host.hostEvent(
             "auth.request",
             json("requestId" to id, "tabId" to tab.tabId, "host" to hostName, "realm" to realm, "url" to (tab.url ?: ""))
         )
