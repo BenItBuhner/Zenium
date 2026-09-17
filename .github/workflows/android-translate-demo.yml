@@ -1,0 +1,32 @@
+name: Android translate demo
+
+# Records offline page translation in the phone chrome on a hardware-accelerated Android emulator
+# and uploads the video, the screenshots and the driver's measurements (translate-results.json):
+# a Spanish article with a lang attribute and a German one without, auto-detected, translated with
+# models downloaded on first use (then read back from files/translate/), late content picked up,
+# reverted, plus a selection. The driver speaks to the core through window.zen.invoke, the way the
+# translate bar will. Dispatch-only: it takes about ten minutes and has nothing to say about a
+# change being correct. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file only picks the driver.
+on:
+  workflow_dispatch:
+  # TEMPORARY while the engine PR is verified; removed before the PR is marked ready.
+  push:
+    branches: [cursor/services-translate-24d1]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-translate-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: translate demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-translate-demo.sh
+      artifact-name: android-translate-demo
+      artifact-path: artifacts/android-translate-demo/
+      timeout-minutes: 50
