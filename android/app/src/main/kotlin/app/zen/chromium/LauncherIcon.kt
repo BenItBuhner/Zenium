@@ -7,7 +7,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.os.Build
 import android.util.Log
 
 /**
@@ -58,27 +57,28 @@ class LauncherIcon(private val context: Context) {
         else -> id == LauncherIconVariants.DEFAULT
     }
 
-    /** Recents shows the task under the icon it was launched with; hand it the current one. */
+    /**
+     * Recents shows the task under its root activity's icon – the application icon, whatever the
+     * launcher shows – so hand it the current one. As a bitmap: Launcher3's Recents only draws a
+     * task's own icon when it is one (a resource id is ignored there).
+     */
     private fun describeTask(activity: Activity, id: String) {
-        val label = context.getString(R.string.app_name)
-        val iconRes = context.resources.getIdentifier("ic_launcher_$id", "mipmap", context.packageName)
-        if (iconRes == 0) return
-        val description = when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
-                ActivityManager.TaskDescription.Builder().setLabel(label).setIcon(iconRes).build()
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P ->
-                @Suppress("DEPRECATION") ActivityManager.TaskDescription(label, iconRes)
-            else -> {
-                val drawable = pm.getActivityIcon(component(id))
-                val size = (48 * context.resources.displayMetrics.density).toInt().coerceAtLeast(1)
-                val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-                drawable.setBounds(0, 0, size, size)
-                drawable.draw(Canvas(bitmap))
-                @Suppress("DEPRECATION") ActivityManager.TaskDescription(label, bitmap)
-            }
-        }
-        activity.setTaskDescription(description)
+        val bitmap = iconBitmap(id) ?: return
+        @Suppress("DEPRECATION")
+        activity.setTaskDescription(ActivityManager.TaskDescription(context.getString(R.string.app_name), bitmap))
     }
+
+    /** The launcher icon of a variant drawn through the launcher's own mask, 48 dp square. */
+    fun iconBitmap(id: String): Bitmap? = runCatching {
+        val res = context.resources
+        val iconRes = res.getIdentifier("ic_launcher_$id", "mipmap", context.packageName)
+        val drawable = if (iconRes != 0) res.getDrawable(iconRes, context.theme) else pm.getActivityIcon(component(id))
+        val size = (48 * res.displayMetrics.density).toInt().coerceAtLeast(1)
+        Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).also { bitmap ->
+            drawable.setBounds(0, 0, size, size)
+            drawable.draw(Canvas(bitmap))
+        }
+    }.onFailure { Log.w(TAG, "could not draw the $id icon", it) }.getOrNull()
 
     companion object {
         private const val TAG = "ZenLauncherIcon"

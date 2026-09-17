@@ -2,6 +2,11 @@ package app.zen.chromium
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.drawable.AdaptiveIconDrawable
 import android.os.SystemClock
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -10,6 +15,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 import java.io.FileInputStream
 
 /**
@@ -76,12 +82,15 @@ class AppIconDemo : DemoHarness("appicon-demo-state.json", "appicon-$THEME", "ap
         shot("launcher-drawer")
 
         // 5. Themed icons (Android 13) only apply on the home screen: drag Zenium out of the
-        //    drawer onto it, then switch the launcher's themed icons on and off around a capture.
+        //    drawer onto it the way Launcher3's own tests do (press until the drag starts, move in
+        //    small steps, lift), then switch the launcher's themed icons on and off around a capture.
         val zen = reveal("Zenium")
         if (zen != null) {
-            f.press(zen.exactCenterX(), zen.exactCenterY())
-            f.moveBy(0f, -0.3f * height, 700)
-            f.hold(700)
+            f.down(zen.exactCenterX(), zen.exactCenterY())
+            f.hold(1_200)
+            f.moveBy(0f, -NUDGE, 120)
+            f.moveBy(0f, -(0.3f * height - NUDGE), 1_200)
+            f.hold(800)
             f.up()
             SystemClock.sleep(3_000)
             ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
@@ -94,6 +103,9 @@ class AppIconDemo : DemoHarness("appicon-demo-state.json", "appicon-$THEME", "ap
                 SystemClock.sleep(2_500)
             }
         }
+        // The Android 13 monochrome layer itself, drawn through the OS (what a themed launcher
+        // tints), next to the full icon – in case the launcher above did not take the drop.
+        saveLayers(launcherIcon)
 
         // 6. Recents: the browser's card is still there, under the new icon.
         ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_RECENTS)
@@ -114,6 +126,45 @@ class AppIconDemo : DemoHarness("appicon-demo-state.json", "appicon-$THEME", "ap
         assertEquals("app.zen.chromium.icon.Sunset", intent.component?.className)
         assertTrue("the browser was recreated", !activity.isDestroyed)
         assertEquals("the launch came back to the same task", task, activity.taskId)
+    }
+
+    /**
+     * `appicon-<theme>-layers.png`: for every variant, the adaptive icon as the launcher masks it
+     * and its monochrome layer as Android 13 hands it to a themed launcher, tinted in the system
+     * accent the way Launcher3 does.
+     */
+    private fun saveLayers(launcherIcon: LauncherIcon) {
+        val res = app.resources
+        val cell = (56 * density).toInt()
+        val pad = (12 * density).toInt()
+        val ids = LauncherIconVariants.ALIASES.keys.toList()
+        val bitmap = Bitmap.createBitmap(pad + ids.size * (cell + pad), pad * 3 + cell * 2, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(res.getColor(if (THEME == "dark") android.R.color.system_neutral1_900 else android.R.color.system_neutral1_50, app.theme))
+        val bg = res.getColor(if (THEME == "dark") android.R.color.system_accent2_800 else android.R.color.system_accent1_100, app.theme)
+        val fg = res.getColor(if (THEME == "dark") android.R.color.system_accent1_200 else android.R.color.system_accent1_700, app.theme)
+        ids.forEachIndexed { i, id ->
+            val x = pad + i * (cell + pad)
+            launcherIcon.iconBitmap(id)?.let { icon ->
+                canvas.drawBitmap(icon, null, Rect(x, pad, x + cell, pad + cell), null)
+            }
+            val iconRes = res.getIdentifier("ic_launcher_$id", "mipmap", app.packageName)
+            val adaptive = res.getDrawable(iconRes, app.theme) as? AdaptiveIconDrawable ?: return@forEachIndexed
+            val mono = adaptive.monochrome ?: return@forEachIndexed
+            val y = pad * 2 + cell
+            val disc = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = bg }
+            canvas.drawCircle(x + cell / 2f, y + cell / 2f, cell / 2f, disc)
+            // The monochrome layer covers the 108 dp canvas; the launcher shows its middle 72 dp.
+            val inset = (cell * (108 - 72) / 72f / 2f).toInt()
+            mono.setBounds(x - inset, y - inset, x + cell + inset, y + cell + inset)
+            mono.setTint(fg)
+            canvas.save()
+            canvas.clipRect(x, y, x + cell, y + cell)
+            mono.draw(canvas)
+            canvas.restore()
+        }
+        File(out, "appicon-$THEME-layers.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        Log.i(tag, "layers sheet written for ${ids.size} variants")
     }
 
     /** Swipe up from the bottom of the home screen, then bring Zenium (last alphabetically) into view. */
