@@ -170,7 +170,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             "dialog.openText" -> activity.pickTextFiles(args.arr("extensions")) { files -> reply(files) }
             "clipboard.writeText" -> {
                 val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cm.setPrimaryClip(ClipData.newPlainText("Zen", args.str("text")))
+                cm.setPrimaryClip(ClipData.newPlainText("Zenium", args.str("text")))
                 reply(null)
             }
             "clipboard.writeImage" -> copyImage(args.str("url"), reply)
@@ -299,7 +299,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
 
     private fun print(tab: TabWebView) {
         val manager = activity.getSystemService(Context.PRINT_SERVICE) as PrintManager
-        val name = tab.title?.ifEmpty { null } ?: "Zen page"
+        val name = tab.title?.ifEmpty { null } ?: "Zenium page"
         manager.print(name, tab.createPrintDocumentAdapter(name), PrintAttributes.Builder().build())
     }
 
