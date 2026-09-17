@@ -37,6 +37,24 @@ function track(tracker: VelocityTracker, e: ReactPointerEvent<HTMLElement>): voi
 
 type Mode = 'pending' | 'tabs' | 'overview' | 'dock' | 'none'
 
+/**
+ * Take a touch sequence away from the browser's gesture recogniser for as long as it lasts.
+ *
+ * `touch-action: none` stops the scroll a drag would cause, but Chromium still recognises the
+ * gesture: a fast release starts a fling in the browser process (its scroll updates are filtered,
+ * the fling itself runs on), and a tap in the ~300 ms after it is swallowed as the tap that stops
+ * the fling – the card tapped right after a swipe-open of the overview did nothing. A touchmove
+ * the page consumes drops every gesture derived from it, fling included, and the moves of a
+ * surface we drag ourselves are ours in full. Returns the function that hands them back.
+ */
+function claimTouchMoves(target: HTMLElement): () => void {
+  const consume = (e: TouchEvent): void => {
+    if (e.cancelable) e.preventDefault()
+  }
+  target.addEventListener('touchmove', consume, { passive: false })
+  return () => target.removeEventListener('touchmove', consume)
+}
+
 interface Touch {
   id: number
   x0: number
@@ -51,6 +69,8 @@ interface Touch {
   dockStart: number
   tracker: VelocityTracker
   longPress: ReturnType<typeof setTimeout> | null
+  /** Gives the touch's moves back to the browser once it is over. */
+  release: () => void
 }
 
 export interface PillGestureOptions {
@@ -124,7 +144,8 @@ export function usePillGestures({ edge, onTap }: PillGestureOptions): PillGestur
       caught,
       dockStart,
       tracker,
-      longPress: null
+      longPress: null,
+      release: claimTouchMoves(e.currentTarget)
     }
     touch.current = t
     const target = e.currentTarget
@@ -186,6 +207,7 @@ export function usePillGestures({ edge, onTap }: PillGestureOptions): PillGestur
     if (!t || t.id !== e.pointerId) return
     touch.current = null
     clearLongPress(t)
+    t.release()
     if (t.mode === 'pending') {
       if (t.caught || cancelled) swallowClick.current = true
       return
@@ -232,6 +254,7 @@ export function useOverviewHandle({ edge }: { edge: PhoneBarPosition }): Overvie
     y0: number
     dragging: boolean
     tracker: VelocityTracker
+    release: () => void
   } | null>(null)
   const inward = edge === 'bottom' ? -1 : 1
 
@@ -239,6 +262,7 @@ export function useOverviewHandle({ edge }: { edge: PhoneBarPosition }): Overvie
     const t = touch.current
     if (!t || t.id !== e.pointerId) return
     touch.current = null
+    t.release()
     if (!t.dragging) return
     const { vy } = cancelled ? { vy: 0 } : t.tracker.velocity(e.timeStamp)
     releaseOverview(vy * inward)
@@ -247,13 +271,23 @@ export function useOverviewHandle({ edge }: { edge: PhoneBarPosition }): Overvie
   return {
     onPointerDown: (e) => {
       if (e.button !== 0 || touch.current) return
+      // A touch that begins on one of the header's controls is that control's, even mid-flight:
+      // catching it here would take the pointer and turn the tap into nothing.
+      if ((e.target as HTMLElement).closest('button, input')) return
       const state = browserStore.get().state
       if (!state) return
       const tracker = new VelocityTracker()
       tracker.add(e.timeStamp, e.clientX, e.clientY)
-      // Mid-flight the header has no working controls, so a catch may take the touch at once.
+      // Mid-flight the rest of the header has nothing to tap, so a catch may take the touch at once.
       const dragging = catchOverview()
-      touch.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dragging, tracker }
+      touch.current = {
+        id: e.pointerId,
+        x0: e.clientX,
+        y0: e.clientY,
+        dragging,
+        tracker,
+        release: claimTouchMoves(e.currentTarget)
+      }
       if (dragging) e.currentTarget.setPointerCapture(e.pointerId)
     },
     onPointerMove: (e) => {
@@ -266,6 +300,7 @@ export function useOverviewHandle({ edge }: { edge: PhoneBarPosition }): Overvie
         if (Math.hypot(dx, dy) < SLOP) return
         const state = browserStore.get().state
         if (!state || Math.abs(dx) > Math.abs(dy) || !beginOverviewDrag(state)) {
+          t.release()
           touch.current = null
           return
         }

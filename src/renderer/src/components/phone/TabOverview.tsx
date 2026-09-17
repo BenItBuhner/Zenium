@@ -14,7 +14,11 @@ import { FOLDER_COLORS } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
-import { closeOverview, type OverviewState } from '@renderer/lib/gestures/stage'
+import {
+  closeOverview,
+  overviewInteractive,
+  type OverviewState
+} from '@renderer/lib/gestures/stage'
 import { groupColorHex, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import {
@@ -80,7 +84,9 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const count = essentials.length + pinned.length + regular.length
   const hero = heroTabId ? (state.tabs[heroTabId] ?? null) : null
   const p = Math.min(1, Math.max(0, progress))
-  const interactive = phase === 'open'
+  // Taps work as soon as the overview is heading open; layout tracking waits for it to rest.
+  const interactive = overviewInteractive(overview)
+  const settled = phase === 'open'
   const side = state.settings.sidebarSide
   const isDark = isDarkScheme(state)
 
@@ -91,7 +97,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const [heroCell, setHeroCell] = useState<Rect | null>(null)
   const [sheet, setSheet] = useState<Sheet | null>(null)
   const handle = useOverviewHandle({ edge })
-  const flip = useFlip(cells, scrollRef, interactive)
+  const flip = useFlip(cells, scrollRef, settled)
 
   // Where the hero's own card sits, in layout space (the root's entrance scale divided out). A
   // hero inside a collapsed group has no card to land on: it heads for the group's card instead
@@ -160,7 +166,9 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     if (!pending || liftPhase !== 'dropping' || !liftTabId) return
     if (!pending.landed(state) && performance.now() < pending.deadline) return
     pendingDrop.current = null
-    const rect = flip.layoutRect(liftTabId)
+    // The slot as laid out (any glide in flight stripped); before the grid has settled nothing
+    // is tracked yet and the cell's own box is the answer.
+    const rect = flip.layoutRect(liftTabId) ?? cells.current.get(liftTabId)?.getBoundingClientRect()
     const origin = liftStore.get().origin
     const to = rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : origin
     if (to) settleLift(to)

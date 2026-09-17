@@ -1,14 +1,26 @@
 name: Android overview demo
 
 # Records the phone chrome's tab overview on a hardware-accelerated Android emulator and uploads
-# the video and screenshots: the page morphing into its card at a slow drag, the Spaces drawer,
-# tab groups made by holding and by dropping a card on another, collapsing, moving a tab between
-# groups, and the group ribbon on the pill's swipe track. Dispatch-only, like the gesture demo:
-# it takes about ten minutes and says nothing about a change being correct. Same caveats as the
-# gesture demo about frame rate and the software GPU (springs advance at most 64 ms per frame,
-# so at a handful of frames per second they run slower than on a phone).
+# the video and screenshots. Two sequences (the `demo` input): `overview` – the page morphing
+# into its card at a slow drag, the Spaces drawer, tab groups made by holding and by dropping a
+# card on another, collapsing, moving a tab between groups, and the group ribbon on the pill's
+# swipe track; `first-tap` – the overview opened by the tabs button and by the pill swipe, with a
+# card tapped right after each open and inside the two windows that used to lose the tap (the
+# run fails when a first tap is lost). Dispatch-only, like the gesture demo: it takes about ten
+# minutes and says nothing about a change being correct. Same caveats as the gesture demo about
+# frame rate and the software GPU (springs advance at most 64 ms per frame, so at a handful of
+# frames per second they run slower than on a phone). The build, the emulator and the Gradle
+# cache live in android-emulator-demo.yml; this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
+    inputs:
+      demo:
+        description: Sequence to record
+        type: choice
+        default: overview
+        options:
+          - overview
+          - first-tap
 
 permissions:
   contents: read
@@ -17,68 +29,17 @@ concurrency:
   group: android-overview-demo-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  NODE_VERSION: 22
-
 jobs:
   record:
-    name: Record on an API 34 emulator
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: 17
-      - uses: android-actions/setup-android@v4
-        with:
-          packages: platform-tools platforms;android-35 build-tools;35.0.0
-          log-accepted-android-sdk-licenses: false
-      - uses: gradle/actions/setup-gradle@v6
-        with:
-          cache-read-only: true
-      - run: npm ci
-      - name: Build the chrome and page script
-        run: npm run build:android:web
-      - name: Assemble the debug APK and the demo driver
-        working-directory: android
-        run: ./gradlew assembleDebug assembleDebugAndroidTest -PskipWeb --no-daemon --stacktrace
-      - name: Enable KVM for the emulator
-        # https://github.blog/changelog/2023-02-23-hardware-accelerated-android-virtualization-on-actions-windows-and-linux-larger-hosted-runners/
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          ls -la /dev/kvm
-      - name: Record the overview and its groups
-        uses: reactivecircus/android-emulator-runner@v2
-        env:
-          DEMO_CLASS: app.zen.chromium.OverviewDemo
-          DEMO_DIR: overview-demo
-          DEMO_OUT: artifacts/android-overview-demo
-          DEMO_VIDEO: overview-groups-demo.mp4
-        with:
-          api-level: 34
-          target: google_apis
-          arch: x86_64
-          profile: pixel_6
-          cores: 3
-          ram-size: 4096M
-          heap-size: 512M
-          # An animator scale of 0 reads as prefers-reduced-motion in the WebView, which would
-          # skip every spring – the animations are what is being recorded.
-          disable-animations: false
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: bash .github/scripts/android-gesture-demo.sh
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: android-overview-demo
-          path: artifacts/android-overview-demo/
-          if-no-files-found: warn
-          retention-days: 14
+    name: ${{ inputs.demo == 'first-tap' && 'first-tap' || 'overview' }} demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=${{ inputs.demo == 'first-tap' && 'app.zen.chromium.FirstTapDemo' || 'app.zen.chromium.OverviewDemo' }}
+        DEMO_DIR=${{ inputs.demo == 'first-tap' && 'firsttap-demo' || 'overview-demo' }}
+        DEMO_OUT=artifacts/android-overview-demo
+        DEMO_VIDEO=${{ inputs.demo == 'first-tap' && 'overview-firsttap-fix.mp4' || 'overview-groups-demo.mp4' }}
+      artifact-name: android-overview-demo
+      artifact-path: artifacts/android-overview-demo/

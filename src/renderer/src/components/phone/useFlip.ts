@@ -3,7 +3,9 @@ import { FlipTracker, layoutAnimations } from '@renderer/lib/motion/flip'
 
 /**
  * Glide the overview's cells to their new slots after every re-layout (see `FlipTracker`).
- * Suspended while the grid is scaling in and while a group is animating its height.
+ * Nothing is measured while the grid is scaling in – the overview re-renders every frame of
+ * that spring, and a forced layout per card per frame would slow the very frames the spring is
+ * paced by – and glides pause while a group is animating its height.
  */
 export function useFlip(
   cells: RefObject<Map<string, HTMLElement>>,
@@ -12,7 +14,8 @@ export function useFlip(
 ): FlipTracker {
   const tracker = useMemo(() => new FlipTracker(), [])
   useLayoutEffect(() => {
-    tracker.commit(cells.current, scroller.current, enabled && !layoutAnimations.any())
+    if (!enabled) return
+    tracker.commit(cells.current, scroller.current, !layoutAnimations.any())
   })
   useEffect(() => {
     // A group finished changing height: the cards below it are where they are now.
