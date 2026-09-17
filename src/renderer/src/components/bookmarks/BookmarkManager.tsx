@@ -840,7 +840,7 @@ function DragGhost({
         <BookmarkIcon node={first} className="h-4 w-4 shrink-0" />
         <span className="min-w-0 flex-1 truncate text-[13px]">{nodeLabel(first)}</span>
         {drag.ids.length > 1 && (
-          <span className="rounded-full bg-[var(--zen-v2-accent)] px-2 py-0.5 text-[11px] font-semibold text-[var(--zen-v2-accent-ink)] tabular-nums">
+          <span className="rounded-full bg-[var(--v2-accent)] px-2 py-0.5 text-[11px] font-semibold text-[var(--v2-on-accent)] tabular-nums">
             {drag.ids.length}
           </span>
         )}

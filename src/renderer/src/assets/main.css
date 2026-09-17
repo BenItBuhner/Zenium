@@ -300,32 +300,10 @@
   background: color-mix(in srgb, var(--v2-on-accent) 30%, var(--v2-accent));
 }
 
-/*
- * v2 draft tokens (docs/design-language-v2-draft.md §1–3) for the surfaces built against it, the
- * bookmark chrome first: neutral opaque pages and panels, Zen's control accent (the space accent
- * mixed 40% into black or white, so a saturated space still gives a readable navy or steel), the
- * ink on it, the nav column's active fill and the scrim that dims only the content frame.
- */
+/* Bookmark chrome: deemphasised text is the text at 69%; a selected row is the space accent at 16%. */
 :root {
-  --zen-v2-page: #fbfbfe;
-  --zen-v2-panel: #f4f4f4;
-  --zen-v2-panel-border: rgb(0 0 0 / 0.15);
-  --zen-v2-nav-active: #e9ecf2;
-  --zen-v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #000);
-  --zen-v2-accent-ink: #fff;
-  --zen-v2-scrim: rgb(21 20 26 / 0.45);
-  /* Deemphasised text is the text at 69%; a selected row is the space accent at 16%. */
   --zen-bm-dim: color-mix(in srgb, var(--zen-fg) 69%, transparent);
   --zen-bm-selection: color-mix(in srgb, var(--zen-accent) 16%, transparent);
-}
-:root[data-theme='dark'] {
-  --zen-v2-page: #1c1b22;
-  --zen-v2-panel: #1f1f1f;
-  --zen-v2-panel-border: rgb(255 255 255 / 0.12);
-  --zen-v2-nav-active: #252630;
-  --zen-v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #fff);
-  --zen-v2-accent-ink: #15141a;
-  --zen-v2-scrim: rgb(0 0 0 / 0.55);
 }
 
 /* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME); zero on desktop. */
@@ -1428,13 +1406,13 @@
     background: var(--zen-element-bg-active);
   }
   .zen-bm-chip:focus-visible {
-    outline: 2px solid var(--zen-v2-accent);
+    outline: 2px solid var(--v2-accent);
     outline-offset: 0;
   }
   /* Drop-into target: keeps its size, gains the hover fill and a 2px inset accent outline. */
   .zen-bm-chip[data-target='true'] {
     background: var(--zen-element-bg-hover);
-    box-shadow: inset 0 0 0 2px var(--zen-v2-accent);
+    box-shadow: inset 0 0 0 2px var(--v2-accent);
   }
   .zen-bm-chip[data-lifted='true'] {
     visibility: hidden;
@@ -1472,18 +1450,18 @@
     opacity: 0.45;
   }
   .zen-bm-lift {
-    background: var(--zen-v2-panel);
+    background: var(--v2-panel);
     opacity: 0.9;
     /* The hairline is an inset ring: a border would take 2px off the copied item's width. */
     box-shadow:
-      inset 0 0 0 1px var(--zen-v2-panel-border),
+      inset 0 0 0 1px var(--v2-border),
       var(--zen-shadow-2);
     scale: 1.02;
   }
   /* The list's empty space is the append target of a drag. */
   .zen-bm-list[data-target='true'] {
     background: var(--zen-element-bg);
-    box-shadow: inset 0 0 0 2px var(--zen-v2-accent);
+    box-shadow: inset 0 0 0 2px var(--v2-accent);
   }
   .zen-bm-empty {
     padding: 0 8px;
@@ -1496,7 +1474,7 @@
   .zen-bm-insert {
     position: absolute;
     pointer-events: none;
-    background: var(--zen-v2-accent);
+    background: var(--v2-accent);
     border-radius: 1px;
     transition: opacity 100ms var(--zen-ease);
   }
@@ -1517,8 +1495,8 @@
     border-radius: 8px;
     corner-shape: var(--zen-corner);
     overflow: hidden;
-    background: var(--zen-v2-panel);
-    border: 1px solid var(--zen-v2-panel-border);
+    background: var(--v2-panel);
+    border: 1px solid var(--v2-border);
     box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
     color: var(--zen-fg);
   }
@@ -1550,7 +1528,7 @@
   }
   .zen-bm-menu-row[data-target='true'] {
     background: var(--zen-element-bg-hover);
-    box-shadow: inset 0 0 0 2px var(--zen-v2-accent);
+    box-shadow: inset 0 0 0 2px var(--v2-accent);
   }
   .zen-bm-menu-row[data-lifted='true'] {
     opacity: 0.4;
@@ -1558,7 +1536,7 @@
   .zen-bm-menu-sep {
     height: 1px;
     margin: 4px 0;
-    background: var(--zen-v2-panel-border);
+    background: var(--v2-border);
   }
   .zen-bm-menu-heading {
     padding: 6px 8px 2px;
@@ -1597,28 +1575,28 @@
     padding: 16px;
     border-radius: 8px;
     corner-shape: var(--zen-corner);
-    background: var(--zen-v2-panel);
-    border: 1px solid var(--zen-v2-panel-border);
+    background: var(--v2-panel);
+    border: 1px solid var(--v2-border);
     box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
     color: var(--zen-fg);
   }
   .zen-bm-scrim {
-    background: var(--zen-v2-scrim);
+    background: var(--v2-scrim-modal);
   }
   .zen-bm-dialog {
     padding: 16px;
     border-radius: 12px;
     corner-shape: var(--zen-corner);
-    background: var(--zen-v2-panel);
-    border: 1px solid var(--zen-v2-panel-border);
+    background: var(--v2-panel);
+    border: 1px solid var(--v2-border);
     box-shadow: 0 10px 8px rgb(0 0 0 / 0.15);
     color: var(--zen-fg);
   }
   .zen-bm-page {
     border-radius: 8px;
-    background: var(--zen-v2-page);
+    background: var(--v2-page);
     backdrop-filter: none;
-    border: 1px solid var(--zen-v2-panel-border);
+    border: 1px solid var(--v2-border);
     box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
     color: var(--zen-fg);
   }
@@ -1629,7 +1607,7 @@
     transition: border-color 120ms var(--zen-ease);
   }
   .zen-bm-toolbar[data-scrolled='true'] {
-    border-color: var(--zen-v2-panel-border);
+    border-color: var(--v2-border);
   }
   .zen-bm-dialog-title {
     font-size: 17px;
@@ -1676,12 +1654,12 @@
     background: var(--zen-bm-selection);
   }
   .zen-bm-row[data-focused='true'] {
-    outline: 2px solid var(--zen-v2-accent);
+    outline: 2px solid var(--v2-accent);
     outline-offset: -2px;
   }
   .zen-bm-row[data-target='true'] {
     background: var(--zen-element-bg);
-    box-shadow: inset 0 0 0 2px var(--zen-v2-accent);
+    box-shadow: inset 0 0 0 2px var(--v2-accent);
   }
   .zen-bm-row[data-lifted='true'] {
     opacity: 0.4;
@@ -1737,7 +1715,7 @@
     background: var(--zen-element-bg);
   }
   .zen-bm-tree-row[aria-selected='true'] {
-    background: var(--zen-v2-nav-active);
+    background: var(--v2-nav-active);
   }
   .zen-bm-tree-row[aria-selected='true']::before {
     content: '';
@@ -1746,11 +1724,11 @@
     bottom: 0;
     left: 0;
     width: 3px;
-    background: var(--zen-v2-accent);
+    background: var(--v2-accent);
   }
   .zen-bm-tree-row[data-target='true'] {
     background: var(--zen-element-bg);
-    box-shadow: inset 0 0 0 2px var(--zen-v2-accent);
+    box-shadow: inset 0 0 0 2px var(--v2-accent);
   }
 
   /* The folder chooser's rows inside a dialog: single line, 32 tall. */
@@ -1799,7 +1777,7 @@
   }
   .zen-bm-crumb[data-target='true'] {
     background: var(--zen-element-bg);
-    box-shadow: inset 0 0 0 2px var(--zen-v2-accent);
+    box-shadow: inset 0 0 0 2px var(--v2-accent);
     color: var(--zen-fg);
   }
 
@@ -1810,10 +1788,10 @@
     flex: 1;
     padding: 0 6px;
     border-radius: 4px;
-    background: var(--zen-v2-page);
+    background: var(--v2-page);
     color: var(--zen-fg);
     font: inherit;
-    outline: 2px solid var(--zen-v2-accent);
+    outline: 2px solid var(--v2-accent);
     outline-offset: 0;
   }
 
@@ -1836,7 +1814,7 @@
     background: var(--zen-element-bg);
   }
   .zen-select:focus-visible {
-    outline: 2px solid var(--zen-v2-accent);
+    outline: 2px solid var(--v2-accent);
     outline-offset: 0;
   }
   .zen-field {
@@ -1855,7 +1833,7 @@
     color: var(--zen-faint);
   }
   .zen-field:focus-visible {
-    outline: 2px solid var(--zen-v2-accent);
+    outline: 2px solid var(--v2-accent);
     outline-offset: 0;
   }
   .zen-field::-webkit-search-cancel-button {
@@ -1886,12 +1864,12 @@
     opacity: 0.4;
   }
   .zen-button:focus-visible {
-    outline: 2px solid var(--zen-v2-accent);
+    outline: 2px solid var(--v2-accent);
     outline-offset: 0;
   }
   .zen-button[data-variant='primary'] {
-    background: var(--zen-v2-accent);
-    color: var(--zen-v2-accent-ink);
+    background: var(--v2-accent);
+    color: var(--v2-on-accent);
   }
   .zen-button[data-variant='primary']:hover:not(:disabled) {
     filter: brightness(1.08);
