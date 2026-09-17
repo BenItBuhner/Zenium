@@ -13,6 +13,7 @@ import {
   phoneBarAvailable,
   phoneBarCapacity,
   phoneBarCount,
+  phoneBarGeometry,
   phoneBarItemEnabled,
   phoneBarItems,
   phoneBarLayoutsEqual,
@@ -20,11 +21,14 @@ import {
   pillWidth,
   removePhoneBarItem,
   sanitizePhoneBar,
-  slotAtSequencePosition
+  slotAtSequencePosition,
+  type PhoneBarItemContext
 } from '../phoneBar'
 import { BLANK_URL } from '../url'
 
-const tab = (over: Partial<Parameters<typeof phoneBarItemEnabled>[1]['tab']> = {}) => ({
+type EnabledTab = NonNullable<PhoneBarItemContext['tab']>
+
+const tab = (over: Partial<EnabledTab> = {}): PhoneBarItemContext => ({
   tab: {
     url: 'https://example.com/',
     loading: false,
@@ -72,9 +76,10 @@ describe('sanitizePhoneBar (migration)', () => {
   })
 
   it('drops repeats, keeping the first', () => {
-    expect(sanitizePhoneBar({ left: ['back', 'back'], right: ['back', 'menu', 'menu'] })).toEqual(
-      { left: ['back'], right: ['menu'] }
-    )
+    expect(sanitizePhoneBar({ left: ['back', 'back'], right: ['back', 'menu', 'menu'] })).toEqual({
+      left: ['back'],
+      right: ['menu']
+    })
   })
 
   it('keeps an empty side and an empty bar as they are', () => {
@@ -115,6 +120,26 @@ describe('phoneBarCapacity', () => {
       expect(pillWidth(width, phoneBarCapacity(width) + 1)).toBeLessThan(88)
     }
     expect(pillWidth(360, 4)).toBe(360 - 16 - 4 * 48)
+  })
+})
+
+describe('phoneBarGeometry', () => {
+  it('places items 48 px apart from either edge with the pill between them', () => {
+    const g = phoneBarGeometry({ left: ['back', 'forward'], right: ['tabs', 'menu'] }, 360)
+    expect(g.items.get('back')).toBe(8)
+    expect(g.items.get('forward')).toBe(56)
+    // The last item ends 8 px from the right edge; its neighbour sits a 4 px gap before it.
+    expect(g.items.get('menu')).toBe(360 - 8 - 44)
+    expect(g.items.get('tabs')).toBe(360 - 8 - 44 - 48)
+    expect(g.pill).toEqual({ left: 8 + 2 * 48, width: pillWidth(360, 4) })
+    // The pill ends a gap before the first right-hand item.
+    expect(g.pill.left + g.pill.width + 4).toBe(g.items.get('tabs'))
+  })
+
+  it('gives an empty side nothing and the pill the whole band', () => {
+    const g = phoneBarGeometry({ left: [], right: [] }, 412)
+    expect(g.items.size).toBe(0)
+    expect(g.pill).toEqual({ left: 8, width: 412 - 16 })
   })
 })
 

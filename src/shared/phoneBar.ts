@@ -124,6 +124,32 @@ export function pillWidth(width: number, items: number): number {
   return Math.max(0, width - 2 * BAR_PADDING - items * (BAR_BUTTON + BAR_GAP))
 }
 
+export interface PhoneBarGeometry {
+  /** Left edge (px) of each item's 44 px box. */
+  items: Map<PhoneBarItemId, number>
+  /** The pill's left edge and width (px). */
+  pill: { left: number; width: number }
+}
+
+/**
+ * Where everything sits in a bar `width` px wide drawing `layout`: items 44 px wide at 4 px
+ * gaps from either edge (inside the 8 px padding), the pill filling what is left between them.
+ */
+export function phoneBarGeometry(layout: PhoneBarLayout, width: number): PhoneBarGeometry {
+  const step = BAR_BUTTON + BAR_GAP
+  const items = new Map<PhoneBarItemId, number>()
+  layout.left.forEach((id, i) => items.set(id, BAR_PADDING + i * step))
+  const right = layout.right.length
+  layout.right.forEach((id, j) => items.set(id, width - BAR_PADDING - (right - j) * step + BAR_GAP))
+  return {
+    items,
+    pill: {
+      left: BAR_PADDING + layout.left.length * step,
+      width: pillWidth(width, layout.left.length + right)
+    }
+  }
+}
+
 /** Items not yet in the bar, in catalogue order, restricted to `available` when given. */
 export function phoneBarAvailable(
   layout: PhoneBarLayout,
@@ -197,7 +223,10 @@ export function layoutFromSequence(sequence: readonly PhoneBarSequenceEntry[]): 
  */
 export function slotAtSequencePosition(layout: PhoneBarLayout, position: number): PhoneBarSlot {
   const pillAt = layout.left.length
-  const p = Math.max(0, Math.min(layout.left.length + layout.right.length + 1, Math.round(position)))
+  const p = Math.max(
+    0,
+    Math.min(layout.left.length + layout.right.length + 1, Math.round(position))
+  )
   return p <= pillAt ? { side: 'left', index: p } : { side: 'right', index: p - pillAt - 1 }
 }
 
