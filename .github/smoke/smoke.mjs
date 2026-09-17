@@ -47,7 +47,10 @@ const result = {
   osRelease: os.release(),
   hostname: os.hostname(),
   startedAt: new Date().toISOString(),
-  harness: { seededSettings: 'updates.autoCheck=false, updates.autoDownload=false on every fresh profile' },
+  harness: {
+    seededSettings: 'updates.autoCheck=false, updates.autoDownload=false on every fresh profile',
+    playwrightColorScheme: 'null (no prefers-color-scheme emulation; pages follow the OS theme)'
+  },
   scenarios: {},
   screenshots: [],
   verdict: {}
@@ -497,6 +500,9 @@ class Session {
       executablePath: opts.exe,
       args: [`--user-data-dir=${this.userData}`, ...EXTRA_ARGS, ...this.extraArgs],
       env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1', ...this.extraEnv },
+      // Playwright emulates prefers-color-scheme: light on every page it attaches to unless told
+      // otherwise (runs 2 and 3 measured that emulation, not the OS theme). null = follow the OS.
+      colorScheme: null,
       timeout: 120000
     })
     // A main process blocked by a synchronous native dialog never answers an evaluate: fence
@@ -1468,10 +1474,14 @@ function setOsDarkMode(on) {
     return { apps: a.status, system: b.status, err: a.stderr || b.stderr || undefined }
   }
   if (IS_MAC) {
+    // System Events posts the AppleInterfaceThemeChangedNotification that running apps listen
+    // for; `defaults write` alone only edits the plist (run 3: the app never saw the change).
+    const ui = sh('osascript', ['-e', `tell application "System Events" to tell appearance preferences to set dark mode to ${on ? 'true' : 'false'}`], 20000)
     const r = on
       ? sh('defaults', ['write', '-g', 'AppleInterfaceStyle', 'Dark'])
       : sh('defaults', ['delete', '-g', 'AppleInterfaceStyle'])
-    return { status: r.status, err: r.stderr || undefined }
+    const read = sh('defaults', ['read', '-g', 'AppleInterfaceStyle'])
+    return { systemEvents: ui.status === 0 ? 'ok' : `failed: ${ui.stderr || ui.stdout}`, status: r.status, err: r.stderr || undefined, appleInterfaceStyle: read.status === 0 ? read.stdout : 'unset' }
   }
   return null
 }
