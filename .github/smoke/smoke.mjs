@@ -47,6 +47,7 @@ const result = {
   osRelease: os.release(),
   hostname: os.hostname(),
   startedAt: new Date().toISOString(),
+  harness: { seededSettings: 'updates.autoCheck=false, updates.autoDownload=false on every fresh profile' },
   scenarios: {},
   screenshots: [],
   verdict: {}
@@ -158,14 +159,17 @@ on run argv
               end repeat
             end repeat
           end try
-          repeat with e in entire contents of w
-            try
-              if class of e is button and (name of e as text) is wanted then
-                click e
-                return "clicked " & wanted & " in window '" & (name of w as text) & "'"
-              end if
-            end try
-          end repeat
+          -- Only alerts and dialogs are walked in full: a browser window's accessibility tree is huge.
+          if (role description of w as text) is not "standard window" then
+            repeat with e in entire contents of w
+              try
+                if class of e is button and (name of e as text) is wanted then
+                  click e
+                  return "clicked " & wanted & " in window '" & (name of w as text) & "' (" & (role description of w as text) & ")"
+                end if
+              end try
+            end repeat
+          end if
         end repeat
       end tell
     end tell
@@ -201,12 +205,14 @@ on run argv
               end repeat
             end repeat
           end try
-          repeat with e in entire contents of w
-            try
-              if class of e is static text then set end of out to ("  text: " & (value of e as text))
-              if class of e is button then set end of out to ("  button: " & (name of e as text))
-            end try
-          end repeat
+          if (role description of w as text) is not "standard window" then
+            repeat with e in entire contents of w
+              try
+                if class of e is static text then set end of out to ("  text: " & (value of e as text))
+                if class of e is button then set end of out to ("  button: " & (name of e as text))
+              end try
+            end repeat
+          end if
         end repeat
       end tell
     end tell
@@ -814,13 +820,19 @@ class Session {
 // Profile helpers
 // ---------------------------------------------------------------------------------------------
 
+// Every profile starts with automatic updates off. Left on, v0.2.0 finds the newest release within
+// seconds of its first launch and electron-updater replaces the installed app on quit (observed
+// in run 3), so the binary under test changes half-way through the run. Bennett's real first
+// launch has this ON; the boot scenario records that the harness turned it off.
+const HARNESS_SETTINGS = { updates: { autoCheck: false, autoDownload: false, channel: 'stable' } }
+
 function freshProfile(name, { onboardingDone = false } = {}) {
   const dir = path.join(profileRoot, name)
   fs.rmSync(dir, { recursive: true, force: true })
   fs.mkdirSync(path.join(dir, 'zen'), { recursive: true })
-  if (onboardingDone) {
-    writeJson(path.join(dir, 'zen', 'state.json'), { version: 2, settings: { onboardingDone: true } })
-  }
+  const settings = structuredClone(HARNESS_SETTINGS)
+  if (onboardingDone) settings.onboardingDone = true
+  writeJson(path.join(dir, 'zen', 'state.json'), { version: 2, settings })
   return dir
 }
 
@@ -1213,22 +1225,30 @@ async function scenarioBoot() {
         )
       }, tab.id)
       await sleep(1500)
+      // The app opens this prompt with dialog.showMessageBox and no parent window. On macOS Electron
+      // runs a parentless alert through [NSAlert runModal], which parks the main process until it
+      // is answered (run 3: every evaluate timed out here), so probe that first, photograph, and
+      // click through OS UI scripting before asking the main process anything.
+      const mainDuringPrompt = await s.mainResponsive(4000)
+      await shot(`${s.scenario}-17-notification-permission-prompt`)
+      let osDialog = null
+      let answered = canClick ? null : 'auto-answered by hook (no UI scripting)'
+      if (canClick && IS_WIN) {
+        osDialog = nativeDialogFacts()
+        const r = ps('win-mouse.ps1', ['-Action', 'click-button', '-Name', 'Allow', '-TimeoutSeconds', '8'], 30000)
+        answered = r.stdout || r.stderr
+      } else if (canClick && IS_MAC) {
+        osDialog = macDialogFacts()
+        answered = macClickButton('Allow')
+      }
+      const mainAfterClick = await s.mainResponsive(6000)
       await s.collect()
       const dialog = s.dialogs[s.dialogs.length - 1]
-      await shot(`${s.scenario}-17-notification-permission-prompt`)
       const readPermission = () =>
         pollUntil(async () => {
           const p = await s.app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript('window.__notif && window.__notif.permission'), tab.id).catch(() => null)
           return p || null
         }, 10000, 500)
-      let answered = canClick ? null : 'auto-answered by hook (no UI scripting)'
-      if (canClick && IS_WIN) {
-        const r = ps('win-mouse.ps1', ['-Action', 'click-button', '-Name', 'Allow', '-TimeoutSeconds', '8'], 30000)
-        answered = r.stdout || r.stderr
-      } else if (canClick && IS_MAC) {
-        const r = sh('osascript', ['-e', 'tell application "System Events" to tell process "Zen" to click button "Allow" of sheet 1 of window 1'], 20000)
-        answered = r.status === 0 ? r.stdout : `osascript failed: ${r.stderr}`
-      }
       let permission = await readPermission()
       let fallback = null
       if (!permission && canClick) {
@@ -1239,7 +1259,16 @@ async function scenarioBoot() {
       await s.app.evaluate(() => {
         globalThis.__smoke.autoAnswerDialog = null
       })
-      return { permBefore, dialog: dialog ? { message: dialog.message, detail: dialog.detail, buttons: dialog.buttons, answered: dialog.answered } : null, answered, fallback, permission }
+      return {
+        permBefore,
+        mainProcessWhilePromptOpen: mainDuringPrompt,
+        mainProcessAfterClick: mainAfterClick,
+        osDialog,
+        dialog: dialog ? { message: dialog.message, detail: dialog.detail, buttons: dialog.buttons, answered: dialog.answered } : null,
+        answered,
+        fallback,
+        permission
+      }
     })
 
     await s.step('notification-display', async () => {
@@ -1514,7 +1543,7 @@ function nativeDialogFacts() {
   }
   if (IS_MAC) {
     const r = sh('osascript', ['-e', 'tell application "System Events" to tell process "Zen" to get {name, role description} of every window'], 20000)
-    return { status: r.status, out: r.stdout || r.stderr }
+    return { status: r.status, out: r.stdout || r.stderr, contents: macDialogFacts() }
   }
   return null
 }
@@ -1525,8 +1554,7 @@ function dismissNativeDialog(buttonName) {
     return r.stdout || r.stderr
   }
   if (IS_MAC) {
-    const r = sh('osascript', ['-e', `tell application "System Events" to tell process "Zen" to click button "${buttonName}" of window 1`], 20000)
-    return r.status === 0 ? r.stdout : `osascript failed: ${r.stderr}`
+    return macClickButton(buttonName)
   }
   return null
 }
