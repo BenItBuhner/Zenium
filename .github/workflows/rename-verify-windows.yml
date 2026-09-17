@@ -121,9 +121,12 @@ jobs:
           Assert (-not (Test-Path $oldDesktopLnk)) "Zen desktop shortcut removed"
           Assert (Test-Path "$uninstallKey\$newGuid") "Zenium registered under GUID $newGuid"
           $new = Get-ItemProperty "$uninstallKey\$newGuid"
-          Log ("Zenium entry: DisplayName='{0}' DisplayVersion='{1}' InstallLocation='{2}'" -f $new.DisplayName, $new.DisplayVersion, $new.InstallLocation)
+          $newInfo = Get-ItemProperty "HKCU:\Software\$newGuid" -ErrorAction SilentlyContinue
+          $newDir = $newInfo.InstallLocation
+          if (-not $newDir) { $newDir = Split-Path -Parent (($new.UninstallString -split '"')[1]) }
+          Log ("Zenium entry: DisplayName='{0}' DisplayVersion='{1}' UninstallString='{2}' install dir '{3}'" -f $new.DisplayName, $new.DisplayVersion, $new.UninstallString, $newDir)
           Assert ($new.DisplayName -eq 'Zenium') "Apps entry is named Zenium"
-          $newExe = Join-Path $new.InstallLocation 'zenium.exe'
+          $newExe = Join-Path $newDir 'zenium.exe'
           Assert (Test-Path $newExe) "zenium.exe present at $newExe"
           Assert (Test-Path (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Zenium.lnk')) "Zenium desktop shortcut created"
           Assert (Test-Path $marker) "Zen profile survived the uninstall (marker still in %APPDATA%\Zen)"
