@@ -1125,8 +1125,21 @@
   height: 42px;
   border-radius: 11px;
 }
-:root[data-pointer='coarse'] .zen-tab .zen-tab-close {
+/* Hover-revealed row actions (close a tab, remove an entry) have nothing to hover under a finger. */
+:root[data-pointer='coarse'] .zen-tab .zen-tab-close,
+:root[data-pointer='coarse'] .zen-row-action {
   opacity: 1;
+}
+/* A row's Remove button fills its 44 px row rather than the 32 px coarse toolbar size. */
+:root[data-pointer='coarse'] .zen-row-action {
+  width: 44px;
+  height: 44px;
+}
+/* The phone find bar: 44 px targets in one row with the field. */
+:root[data-pointer='coarse'] .zen-find-phone .zen-toolbar-button {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
 }
 :root[data-pointer='coarse'] .zen-essential {
   height: 48px;

@@ -126,6 +126,19 @@ export function createPreviewBridge(): NativeBridge {
     'view.eval': () => {
       throw new Error('not available in the preview host')
     },
+    // Find in page: a same-origin frame is searched for real; a cross-origin one (any live site)
+    // cannot be read, so it gets a stand-in count derived from the text (0 to 9 matches, so both
+    // the found and the not-found states can be reached), enough for the find bar to lay out.
+    'view.find': ({ tabId, text, forward, newSession }) => {
+      const frame = views.get(String(tabId))
+      if (!frame) return
+      const result = findInFrame(frame, String(text), Boolean(forward), Boolean(newSession))
+      viewEvent(String(tabId), 'found', { ...result, finalUpdate: true })
+    },
+    'view.stopFind': ({ tabId }) => {
+      const frame = views.get(String(tabId))
+      if (frame) finds.delete(frame)
+    },
     'view.savePage': () => null,
     'view.screenshot': () => null,
     'view.certificate': () => null,
@@ -160,6 +173,50 @@ export function createPreviewBridge(): NativeBridge {
     const handler = handlers[call.method]
     if (!handler) return undefined
     return handler((call.args ?? {}) as Record<string, unknown>)
+  }
+
+  const finds = new WeakMap<HTMLIFrameElement, { text: string; matches: number; active: number }>()
+
+  /** Match count and active ordinal for `text`, stepping through the matches on repeated calls. */
+  function findInFrame(
+    frame: HTMLIFrameElement,
+    text: string,
+    forward: boolean,
+    newSession: boolean
+  ): { activeMatchOrdinal: number; matches: number } {
+    const needle = text.toLowerCase()
+    if (!needle) {
+      finds.delete(frame)
+      return { activeMatchOrdinal: 0, matches: 0 }
+    }
+    const previous = finds.get(frame)
+    const continuing = previous !== undefined && previous.text === needle && !newSession
+    const matches = continuing ? previous.matches : countMatches(frame, needle)
+    let active = 0
+    if (matches > 0) {
+      active = continuing ? ((previous.active - 1 + (forward ? 1 : matches - 1)) % matches) + 1 : 1
+    }
+    finds.set(frame, { text: needle, matches, active })
+    return { activeMatchOrdinal: active, matches }
+  }
+
+  function countMatches(frame: HTMLIFrameElement, needle: string): number {
+    let body: HTMLElement | null = null
+    try {
+      body = frame.contentDocument?.body ?? null
+    } catch {
+      /* cross-origin */
+    }
+    if (body) {
+      const haystack = (body.innerText || body.textContent || '').toLowerCase()
+      let count = 0
+      for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, at + 1))
+        count++
+      return count
+    }
+    let hash = 0
+    for (const ch of needle) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
+    return hash % 10
   }
 
   const snapshots = new WeakMap<HTMLIFrameElement, { key: string; data: string | null }>()
