@@ -11,6 +11,7 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import app.zen.chromium.blocking.Blocking
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.json.JSONObject
 
@@ -30,6 +31,8 @@ class CustomTabHost(
 ) : PageHost {
     override val pageScript = ""
     override val pageToken = ""
+    /** The browser's rule sets apply here too: same engine, same files under `zen/blocking/`. */
+    override val blocking = Blocking.shared(activity)
     override val keys = Keys()
     override val downloads = Downloads(activity, this)
     override val permissions = Permissions(this)

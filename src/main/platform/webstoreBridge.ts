@@ -139,9 +139,9 @@ export class WebstoreBridge {
 
   /**
    * Gives a persistent session's pages the store preload. The header rewrites that make the
-   * stores' servers see the browser they render their install buttons for are
-   * `webstoreClientHints` and `edgeStoreUserAgent` in `requestHeaders.ts`, which the platform
-   * attaches next to this.
+   * stores' servers render their install buttons for the same sessions are `webstoreClientHints`
+   * and `edgeStoreUserAgent` in `requestHeaders.ts`, registered with the webRequest multiplexer,
+   * which owns the session's one `onBeforeSendHeaders` listener.
    */
   attach(ses: Session): void {
     if (ses.getPreloadScripts().some((script) => script.id === WEBSTORE_PRELOAD_ID)) return

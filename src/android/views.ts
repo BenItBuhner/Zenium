@@ -35,6 +35,8 @@ export interface ViewEventPayloads {
   failLoad: { code: number; description: string; url: string }
   crashed: { reason: string }
   audio: { audible: boolean }
+  /** The Kotlin request engine blocked `count` more requests of the page. */
+  blocked: { count: number }
   enterFullscreen: void
   leaveFullscreen: void
   found: FindResultInfo
@@ -107,6 +109,11 @@ export class AndroidTabView implements TabView {
         const p = payload as ViewEventPayloads['audio']
         this.audible = p.audible
         ev.onAudioStateChanged(p.audible)
+        return
+      }
+      case 'blocked': {
+        const p = payload as ViewEventPayloads['blocked']
+        if (typeof p.count === 'number' && p.count > 0) ev.onRequestsBlocked(p.count)
         return
       }
       case 'enterFullscreen':

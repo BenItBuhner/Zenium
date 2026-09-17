@@ -1,38 +1,30 @@
 /**
  * The store-origin request-header rewrites as function-shaped builtin request-header handlers,
- * and the interim registration that runs them until the blocking engine's `webRequest`
- * multiplexer owns the hook.
+ * and the Chromium match-pattern helpers the `webRequest` multiplexer filters requests with.
  *
  * The constraint: Electron gives a session exactly one listener per `webRequest` event (a second
  * registration replaces the first), and any listener the host installs switches off native
  * extension `webRequest` / `declarativeNetRequest` handling for that session. So no feature may
- * call `ses.webRequest.onBeforeSendHeaders` itself.
+ * call `ses.webRequest.onBeforeSendHeaders` itself: the multiplexer (`webRequest.ts`) owns the
+ * hook, and builtin transforms of the request headers register with it through
+ * `WebRequestMultiplexer.registerHeaderRewrite`, which runs them right after the rule engine and
+ * before any `chrome.webRequest`-style listener, so their edits count as the host's when
+ * listeners conflict with them.
  *
  * The shape: the rewrites transform existing values (a brand goes next to the Chromium entry of
  * `Sec-CH-UA`, with that entry's version; Edge's token is appended to the request's own
  * `User-Agent`) rather than setting constants, so they are not `modifyHeaders` rules for the
  * engine's rule-set registry. Each is a {@link RequestHeaderHandler}:
- * `{ id, urls, rewrite(headers, details) }` with a pure `rewrite`, which the multiplexer
- * registers as a builtin handler at session creation, right after the rule engine, in its
- * ordered `RequestHandler` list (`webRequest.ts` on `cursor/services-blocking-24d1`).
- *
- * The hand-off: that multiplexer attaches `onBeforeSendHeaders` to every session
- * unconditionally, so when it lands the adopter registers {@link webstoreClientHints} and
- * {@link edgeStoreUserAgent} in the multiplexer and deletes the `requestHeaderRules.attach` call
- * in `index.ts` and this module's {@link RequestHeaderRules.attach} in the same PR; whichever PR
- * lands second removes the duplicate. Until then {@link requestHeaderRules} installs the one
- * listener per persistent session, filtered to the handlers' URL patterns, and those two are its
- * only registered handlers.
+ * `{ id, urls, rewrite(headers, details) }` with a pure `rewrite`. The platform registers
+ * {@link webstoreClientHints} and {@link edgeStoreUserAgent} for persistent sessions in
+ * `index.ts`.
  */
-import type { Session } from 'electron'
 import {
   EDGE_ADD_ONS_URL_PATTERNS as EDGE_URL_PATTERNS,
   WEBSTORE_URL_PATTERNS as STORE_URL_PATTERNS,
   withChromeClientHints,
   withEdgeIdentity
 } from '../../core/extensions/webstorePrivate'
-
-type BeforeSendHeadersDetails = Electron.OnBeforeSendHeadersListenerDetails
 
 /** A builtin participant in the `onBeforeSendHeaders` phase for the requests `urls` select. */
 export interface RequestHeaderHandler {
@@ -82,23 +74,47 @@ export const edgeStoreUserAgent: RequestHeaderHandler = {
   }
 }
 
-interface MatchPattern {
+export interface MatchPattern {
   /** `*` is http or https; the empty string (from `<all_urls>`) is any scheme. */
   scheme: string
   host: string
   subdomains: boolean
+  /** `*` or absent matches any port; a number must equal the URL's (explicit or default) port. */
+  port: string | null
   path: RegExp
 }
 
-const PATTERN_RE = /^(\*|[a-z][a-z0-9+.-]*):\/\/(\*|(?:\*\.)?[^/*]+)(\/.*)$/i
+const PATTERN_RE = /^(\*|[a-z][a-z0-9+.-]*):\/\/(\*|(?:\*\.)?[^/*]+(?::\*)?|)(\/.*)$/i
 
-/** `URLPattern::Parse` for the subset Electron's `WebRequestFilter.urls` accepts. */
+const DEFAULT_PORTS: Record<string, string> = {
+  'http:': '80',
+  'https:': '443',
+  'ws:': '80',
+  'wss:': '443',
+  'ftp:': '21'
+}
+
+/**
+ * `URLPattern::Parse` for the subset Electron's `WebRequestFilter.urls` accepts: `*` as the
+ * scheme is http or https, `*.` on the host takes the host and its subdomains, an optional
+ * `:port` (a number or `*`), `*` in the path and query runs over anything. Null for a pattern
+ * Chromium would reject.
+ */
 export function parseMatchPattern(text: string): MatchPattern | null {
-  if (text === '<all_urls>') return { scheme: '', host: '', subdomains: true, path: /^/ }
+  if (text === '<all_urls>')
+    return { scheme: '', host: '', subdomains: true, port: null, path: /^/ }
   const match = PATTERN_RE.exec(text)
   if (!match) return null
   const scheme = match[1].toLowerCase()
   let host = match[2].toLowerCase()
+  let port: string | null = null
+  const colon = host.lastIndexOf(':')
+  if (colon > 0 && !host.endsWith(']')) {
+    port = host.slice(colon + 1)
+    host = host.slice(0, colon)
+    if (port !== '*' && !/^\d+$/.test(port)) return null
+    if (port === '*') port = null
+  }
   let subdomains = false
   if (host === '*') {
     host = ''
@@ -106,9 +122,14 @@ export function parseMatchPattern(text: string): MatchPattern | null {
   } else if (host.startsWith('*.')) {
     host = host.slice(2)
     subdomains = true
+    if (host === '') return null
+  } else if (host === '') {
+    // Only `file:` URLs have no host.
+    if (scheme !== 'file') return null
+    subdomains = true
   }
   const path = new RegExp(`^${match[3].split('*').map(escapeRegExp).join('.*')}$`)
-  return { scheme, host, subdomains, path }
+  return { scheme, host, subdomains, port, path }
 }
 
 export function matchesPattern(pattern: MatchPattern, url: string): boolean {
@@ -126,86 +147,27 @@ export function matchesPattern(pattern: MatchPattern, url: string): boolean {
     const exact = host === pattern.host
     if (!exact && !(pattern.subdomains && host.endsWith(`.${pattern.host}`))) return false
   }
+  if (
+    pattern.port !== null &&
+    (parsed.port || DEFAULT_PORTS[parsed.protocol] || '') !== pattern.port
+  )
+    return false
   return pattern.path.test(`${parsed.pathname}${parsed.search}`)
+}
+
+/**
+ * Several match patterns compiled to one predicate, the way `chrome.webRequest`'s `urls` filter
+ * reads them; a pattern Chromium would reject matches nothing.
+ */
+export function compileMatchPatterns(patterns: readonly string[]): (url: string) => boolean {
+  const parsed: MatchPattern[] = []
+  for (const text of patterns) {
+    const pattern = parseMatchPattern(text)
+    if (pattern) parsed.push(pattern)
+  }
+  return (url) => parsed.some((pattern) => matchesPattern(pattern, url))
 }
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
-
-/**
- * The interim registration: one `onBeforeSendHeaders` listener per attached session, filtered to
- * the union of the handlers' patterns, running the matching handlers in registration order.
- * Generic inside so a test can drive it with any handler; the host registers one.
- */
-export class RequestHeaderRules {
-  private readonly handlers = new Map<
-    string,
-    { handler: RequestHeaderHandler; patterns: MatchPattern[] }
-  >()
-  private readonly sessions = new Set<Session>()
-
-  /** Add or replace a handler; returns the function that removes it again. */
-  register(handler: RequestHeaderHandler): () => void {
-    const patterns = handler.urls.map((text) => {
-      const pattern = parseMatchPattern(text)
-      if (!pattern)
-        throw new Error(`Request header handler ${handler.id}: invalid match pattern ${text}`)
-      return pattern
-    })
-    this.handlers.set(handler.id, { handler, patterns })
-    this.reinstall()
-    return () => this.unregister(handler.id)
-  }
-
-  unregister(id: string): void {
-    if (this.handlers.delete(id)) this.reinstall()
-  }
-
-  handlerIds(): string[] {
-    return [...this.handlers.keys()]
-  }
-
-  /** The request headers after every handler whose patterns match `details.url`, in order. */
-  apply(details: BeforeSendHeadersDetails): Record<string, string> {
-    let headers = details.requestHeaders
-    for (const { handler, patterns } of this.handlers.values()) {
-      if (!patterns.some((pattern) => matchesPattern(pattern, details.url))) continue
-      headers = handler.rewrite(headers, details)
-    }
-    return headers
-  }
-
-  /** Install the session's listener (once per session; re-filtered whenever the handlers change). */
-  attach(ses: Session): void {
-    if (this.sessions.has(ses)) return
-    this.sessions.add(ses)
-    this.install(ses)
-  }
-
-  /** Remove the listeners this module installed, freeing the slot for another owner. */
-  detachAll(): void {
-    for (const ses of this.sessions) ses.webRequest.onBeforeSendHeaders(null)
-    this.sessions.clear()
-  }
-
-  private reinstall(): void {
-    for (const ses of this.sessions) this.install(ses)
-  }
-
-  private install(ses: Session): void {
-    const urls = [...new Set([...this.handlers.values()].flatMap(({ handler }) => handler.urls))]
-    if (urls.length === 0) {
-      ses.webRequest.onBeforeSendHeaders(null)
-      return
-    }
-    ses.webRequest.onBeforeSendHeaders({ urls }, (details, callback) => {
-      callback({ requestHeaders: this.apply(details) })
-    })
-  }
-}
-
-/** The host's interim registration; the two store handlers are its only handlers. */
-export const requestHeaderRules = new RequestHeaderRules()
-requestHeaderRules.register(webstoreClientHints)
-requestHeaderRules.register(edgeStoreUserAgent)

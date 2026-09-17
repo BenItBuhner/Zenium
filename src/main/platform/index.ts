@@ -29,7 +29,7 @@ import { ElectronWindowFactory, type ElectronWindow } from './window'
 import { ExtensionService } from './extensions'
 import { WebstoreBridge } from './webstoreBridge'
 import { ExtensionApiHost } from './extensionApi'
-import { requestHeaderRules } from './requestHeaders'
+import { edgeStoreUserAgent, webstoreClientHints } from './requestHeaders'
 import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
 import { ElectronAgentTransport } from '../agent/server'
@@ -37,6 +37,7 @@ import { ElectronSiteData } from './siteData'
 import { ElectronUpdateHost } from './updates'
 import { applyAppIcon } from './appIcon'
 import { createPasswordsHost } from './passwords'
+import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
@@ -59,7 +60,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   pullToRefresh: false,
   passwords: true,
   // The OS owns default-app choices on desktop; the desktop program decides if Zenium ever asks.
-  defaultBrowser: false
+  defaultBrowser: false,
+  requestBlocking: true
 }
 
 /**
@@ -82,11 +84,17 @@ export class ElectronPlatform implements Platform {
   readonly app: AppHost
   readonly siteData: ElectronSiteData
   readonly passwords: PasswordsHost
+  readonly blocking: ElectronBundledLists
+  /** The webRequest multiplexer and text matcher; created with the browser in `start`. */
+  requestBlocking!: ElectronBlocking
   browser!: Browser
+  private readonly profileDir: string
 
   constructor(private readonly userDataDir: string) {
     this.info = { os: process.platform as PlatformOs, version: app.getVersion() }
-    this.io = new FileStoreIO(join(userDataDir, 'zen'))
+    this.profileDir = join(userDataDir, 'zen')
+    this.io = new FileStoreIO(this.profileDir)
+    this.blocking = new ElectronBundledLists(bundledListsDirectory(), this.profileDir)
     this.windows = new ElectronWindowFactory()
     this.sessions = new SessionManager(buildUserAgent())
     this.views = new ElectronTabViewHost(this.sessions)
@@ -264,8 +272,17 @@ export class ElectronPlatform implements Platform {
     const extensionService = browser.extensions as ExtensionService
     extensionService.attachApi(extensionApi)
     extensionService.onChange((event) => extensionApi.registryChanged(event))
+    this.requestBlocking = new ElectronBlocking(browser, this.views, this.profileDir)
+    this.requestBlocking.start()
+    // The stores' header rewrites (Chrome's brand for the Chrome Web Store, Edge's user agent
+    // and brand for Edge Add-ons) run as builtin handlers of the multiplexer, which owns each
+    // session's one onBeforeSendHeaders slot; persistent sessions only, like the store preload.
+    this.requestBlocking.registerHeaderRewrite(webstoreClientHints, { persistentOnly: true })
+    this.requestBlocking.registerHeaderRewrite(edgeStoreUserAgent, { persistentOnly: true })
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
+      // The one webRequest listener set of the session; every request hook goes through it.
+      this.requestBlocking.attach(ses, containerId)
       this.attachPermissions(ses)
       this.downloads.attach(ses, containerId, (sourceTabId) =>
         browser.onDownloadStarted(sourceTabId)
@@ -274,9 +291,6 @@ export class ElectronPlatform implements Platform {
       if (this.sessions.isPersistent(containerId)) {
         webstore.attach(ses)
         extensionApi.attachSession(ses)
-        // Interim: the session's one onBeforeSendHeaders slot, running webstoreClientHints. The
-        // webRequest multiplexer registers that handler itself and deletes this call when it lands.
-        requestHeaderRules.attach(ses)
         void (browser.extensions as ExtensionService).attachSession()
       }
     })
