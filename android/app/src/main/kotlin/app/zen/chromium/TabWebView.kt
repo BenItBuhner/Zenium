@@ -54,8 +54,11 @@ class TabWebView(
     context: Context,
     var tabId: String,
     val containerId: String,
-    private val host: Host
+    host: PageHost
 ) : WebView(context) {
+    /** Reassigned once, when a custom tab's page moves into the browser window (`TabHost.adopt`). */
+    var host: PageHost = host
+        internal set
     private var loading = false
     private var lastTouchX = 0f
     private var lastTouchY = 0f
@@ -125,7 +128,7 @@ class TabWebView(
             host.downloads.start(url, userAgent, contentDisposition, mimetype, contentLength, tabId)
         }
         setFindListener { activeMatchOrdinal, numberOfMatches, isDoneCounting ->
-            host.chrome.viewEvent(
+            host.viewEvent(
                 tabId, "found",
                 json(
                     "activeMatchOrdinal" to (if (numberOfMatches == 0) 0 else activeMatchOrdinal + 1),
@@ -183,7 +186,7 @@ class TabWebView(
             is PullGestureClassifier.Pull.Cancel -> "cancel" to json("time" to event.time)
         }
         if (event !is PullGestureClassifier.Pull.Move) Log.d(PULL_TAG, "$phase on $tabId (${url ?: "no url"})")
-        host.chrome.pullEvent(tabId, phase, payload)
+        host.pullEvent(tabId, phase, payload)
     }
 
     override fun onOverScrolled(scrollX: Int, scrollY: Int, clampedX: Boolean, clampedY: Boolean) {
@@ -195,6 +198,8 @@ class TabWebView(
 
     private fun installPageScript() {
         val script = host.pageScript
+        // A host without the core (a custom tab) has nothing to talk to the page about.
+        if (script.isEmpty()) return
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             WebViewCompat.addWebMessageListener(this, "__zenPageBridge", setOf("*")) { _, message, _, isMainFrame, proxy ->
                 if (!isMainFrame) return@addWebMessageListener
@@ -227,7 +232,7 @@ class TabWebView(
             }
         }
         obj.remove("token")
-        host.chrome.viewEvent(tabId, "pageMessage", obj)
+        host.viewEvent(tabId, "pageMessage", obj)
     }
 
     // --- script evaluation for the core (async-aware) --------------------------------------------
@@ -325,7 +330,7 @@ class TabWebView(
                 val msg = Message.obtain(Handler(Looper.getMainLooper()) { m ->
                     val href = m.data.getString("url") ?: result.extra ?: ""
                     val src = m.data.getString("src") ?: ""
-                    host.chrome.viewEvent(
+                    host.viewEvent(
                         tabId, "contextMenu",
                         json(
                             "linkURL" to href,
@@ -340,7 +345,7 @@ class TabWebView(
                 return true
             }
             HitTestResult.IMAGE_TYPE -> {
-                host.chrome.viewEvent(
+                host.viewEvent(
                     tabId, "contextMenu",
                     json("linkURL" to "", "srcURL" to (result.extra ?: ""), "mediaType" to "image", "x" to anchorX, "y" to anchorY)
                 )
@@ -354,7 +359,7 @@ class TabWebView(
         if (event.action == KeyEvent.ACTION_DOWN) {
             val isEscape = event.keyCode == KeyEvent.KEYCODE_ESCAPE
             if (host.keys.matches(event) || isEscape) {
-                host.keys.toInput(event)?.let { host.chrome.onKey(tabId, it) }
+                host.keys.toInput(event)?.let { host.onKey(tabId, it) }
                 if (!isEscape) return true
             }
         }
@@ -705,8 +710,8 @@ class TabWebView(
             pageStarted = true
             loading = true
             failPendingEvals("the page navigated away before the script finished")
-            host.chrome.viewEvent(tabId, "startLoading", null)
-            host.chrome.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", false))
+            host.viewEvent(tabId, "startLoading", null)
+            host.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", false))
             if (muted) setMuted(true)
         }
 
@@ -715,9 +720,9 @@ class TabWebView(
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.HISTORY_UPDATED)
             if (!loading) {
                 // pushState / hash navigation after the page finished loading.
-                host.chrome.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", true))
+                host.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", true))
             }
-            host.back.refresh()
+            host.backChanged()
         }
 
         override fun onPageCommitVisible(view: WebView, url: String) {
@@ -727,19 +732,19 @@ class TabWebView(
         override fun onPageFinished(view: WebView, url: String) {
             loading = false
             pageStarted = false
-            if (pendingFlags) {
+            if (pendingFlags && host.pageScript.isNotEmpty()) {
                 evaluateJavascript(host.pageScript, null)
             }
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.FINISHED)
-            host.chrome.viewEvent(tabId, "stopLoading", navState())
+            host.viewEvent(tabId, "stopLoading", navState())
             if (muted) setMuted(true)
-            host.back.refresh()
+            host.backChanged()
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
             if (!request.isForMainFrame) return
             loading = false
-            host.chrome.viewEvent(
+            host.viewEvent(
                 tabId, "failLoad",
                 json(
                     "code" to netErrorCode(error.errorCode),
@@ -758,7 +763,7 @@ class TabWebView(
                 else -> -202
             }
             loading = false
-            host.chrome.viewEvent(tabId, "failLoad", json("code" to code, "description" to "ERR_CERT_INVALID", "url" to error.url))
+            host.viewEvent(tabId, "failLoad", json("code" to code, "description" to "ERR_CERT_INVALID", "url" to error.url))
         }
 
         override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
@@ -768,7 +773,7 @@ class TabWebView(
             // this view – before or after this call – and the rebooted core recreates the tab
             // itself; only a view that was really swapped tells the chrome its page crashed.
             if (host.tabs.replaceCrashed(this@TabWebView)) {
-                host.chrome.viewEvent(tabId, "crashed", json("reason" to reason))
+                host.viewEvent(tabId, "crashed", json("reason" to reason))
             }
             return true
         }
@@ -778,7 +783,11 @@ class TabWebView(
 
     private inner class Chrome : WebChromeClient() {
         override fun onReceivedTitle(view: WebView, title: String?) {
-            host.chrome.viewEvent(tabId, "title", json("title" to (title ?: "")))
+            host.viewEvent(tabId, "title", json("title" to (title ?: "")))
+        }
+
+        override fun onProgressChanged(view: WebView, newProgress: Int) {
+            host.progress(tabId, newProgress)
         }
 
         override fun onReceivedIcon(view: WebView, icon: Bitmap) {
@@ -788,7 +797,7 @@ class TabWebView(
                 val out = ByteArrayOutputStream()
                 scaled.compress(Bitmap.CompressFormat.PNG, 100, out)
                 val data = "data:image/png;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
-                Handler(Looper.getMainLooper()).post { host.chrome.viewEvent(tabId, "favicon", json("url" to data)) }
+                Handler(Looper.getMainLooper()).post { host.viewEvent(tabId, "favicon", json("url" to data)) }
             }
         }
 
@@ -815,11 +824,27 @@ class TabWebView(
         ): Boolean = host.activity.showFileChooser(filePathCallback, fileChooserParams)
 
         override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
+            if (!host.popupsAsTabs) {
+                // A custom tab has one page: a popup the user asked for (target=_blank, window.open
+                // from a tap) navigates it; a popup no tap asked for is blocked, as Chrome does.
+                if (!isUserGesture) return false
+                val probe = WebView(view.context)
+                probe.webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(v: WebView, request: WebResourceRequest): Boolean {
+                        this@TabWebView.loadUrl(request.url.toString())
+                        Handler(Looper.getMainLooper()).post { probe.destroy() }
+                        return true
+                    }
+                }
+                (resultMsg.obj as WebViewTransport).webView = probe
+                resultMsg.sendToTarget()
+                return true
+            }
             // Hand the popup a real WebView so `window.opener` keeps working, then adopt it as a tab.
             val popup = host.tabs.createPopup(containerId)
             (resultMsg.obj as WebViewTransport).webView = popup
             resultMsg.sendToTarget()
-            host.chrome.hostEvent("view.adopt", json("viewId" to popup.tabId, "parentTabId" to tabId, "active" to isUserGesture))
+            host.hostEvent("view.adopt", json("viewId" to popup.tabId, "parentTabId" to tabId, "active" to isUserGesture))
             return true
         }
 

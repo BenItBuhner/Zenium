@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The activity behind a custom tab holds still while the tab slides over or off it. -->
+<set xmlns:android="http://schemas.android.com/apk/res/android">
+    <alpha
+        android:duration="300"
+        android:fromAlpha="1"
+        android:toAlpha="1" />
+</set>

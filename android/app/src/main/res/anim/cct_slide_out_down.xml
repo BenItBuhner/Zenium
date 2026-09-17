@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A custom tab closing back to the app that opened it. -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@android:interpolator/accelerate_cubic">
+    <translate
+        android:duration="260"
+        android:fromYDelta="0"
+        android:toYDelta="100%" />
+</set>
