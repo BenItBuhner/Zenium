@@ -40,6 +40,7 @@ import { SiteInfoService } from './siteInfo'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
+import { DefaultBrowserService } from './defaultBrowser'
 import { NoExtensions, NoSync, NoUpdateHost, NoopGovernor } from './hostDefaults'
 import {
   activeSpace,
@@ -65,6 +66,7 @@ import { PRIVATE_THEME, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
+import { sanitizePromoState } from '../shared/defaultBrowser'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 
 type CommandHandlers = {
@@ -125,6 +127,8 @@ export class Browser {
   readonly externalProtocols: ExternalProtocolService
   /** The encrypted credential vault and everything the password manager does with it. */
   readonly passwords: PasswordService
+  /** The system's browser role: are we the default, and should we be asking to become it. */
+  readonly defaultBrowser: DefaultBrowserService
   readonly windows = new Map<string, ZenWindow>()
   quitting = false
   private readonly handlers: CommandHandlers
@@ -168,6 +172,7 @@ export class Browser {
     this.siteInfo = new SiteInfoService(this)
     this.externalProtocols = new ExternalProtocolService(this)
     this.passwords = new PasswordService(this, platform.passwords)
+    this.defaultBrowser = new DefaultBrowserService(this)
     this.state.extras = () => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -178,7 +183,8 @@ export class Browser {
       agents: this.agents.list(),
       agentServer: this.agents.serverStatus(),
       updates: this.updates.status(),
-      passwords: this.passwords.status()
+      passwords: this.passwords.status(),
+      defaultBrowser: this.defaultBrowser.status()
     })
     this.handlers = this.commandHandlers()
   }
@@ -276,6 +282,7 @@ export class Browser {
 
   onWindowFocused(win: ZenWindow): void {
     if (this.state.settings.onboardingDone) this.tabs.claimVisible(win)
+    this.defaultBrowser.onForeground()
   }
 
   onWindowClosing(win: ZenWindow): void {
@@ -352,6 +359,7 @@ export class Browser {
     this.agents.start()
     this.updates.start()
     this.passwords.start()
+    this.defaultBrowser.start()
     this.syncShortcuts()
     this.state.commit()
   }
@@ -1416,9 +1424,14 @@ export class Browser {
           )
           tab.title = known.title
         }
+        this.defaultBrowser.onOnboardingDone()
         state.commit()
         this.emit('urlbar.toggle', { mode: 'new-tab' }, win)
-      }
+      },
+
+      'defaultBrowser.request': ({ source }) => this.defaultBrowser.request(source),
+      'defaultBrowser.dismiss': ({ prompt }) => this.defaultBrowser.dismiss(prompt),
+      'defaultBrowser.refresh': () => this.defaultBrowser.refresh()
     }
   }
 
@@ -1464,6 +1477,11 @@ export class Browser {
         s.passwords = sanitizePasswordSettings({
           ...s.passwords,
           ...(value as Partial<Settings['passwords']>)
+        })
+      } else if (key === 'defaultBrowserPromo' && value && typeof value === 'object') {
+        s.defaultBrowserPromo = sanitizePromoState({
+          ...s.defaultBrowserPromo,
+          ...(value as Partial<Settings['defaultBrowserPromo']>)
         })
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value

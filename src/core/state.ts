@@ -7,6 +7,7 @@ import type {
   Boost,
   ClosedTab,
   Container,
+  DefaultBrowserStatus,
   DownloadItem,
   ExtensionInfo,
   Folder,
@@ -60,6 +61,7 @@ import {
   type UpdateStatus
 } from '../shared/updates'
 import { BLANK_URL } from '../shared/url'
+import { sanitizePromoState } from '../shared/defaultBrowser'
 import { defer, type StoreIO } from './platform'
 import type { ZenWindow } from './window'
 
@@ -110,6 +112,7 @@ export interface StateExtras {
   agentServer: AgentServerStatus
   updates: UpdateStatus
   passwords: PasswordsStatus
+  defaultBrowser: DefaultBrowserStatus
 }
 
 /**
@@ -173,7 +176,8 @@ export class BrowserState {
       arch: 'universal',
       kind: 'dev'
     }),
-    passwords: emptyPasswordsStatus()
+    passwords: emptyPasswordsStatus(),
+    defaultBrowser: { isDefault: null, prompt: null }
   })
   searchEngines: SearchEngine[] = DEFAULT_SEARCH_ENGINES
   readonly version: string
@@ -238,6 +242,7 @@ export class BrowserState {
     this.settings.updates = sanitizeUpdateSettings(data.settings?.updates)
     this.settings.phoneBar = sanitizePhoneBar(data.settings?.phoneBar)
     this.settings.passwords = sanitizePasswordSettings(data.settings?.passwords)
+    this.settings.defaultBrowserPromo = sanitizePromoState(data.settings?.defaultBrowserPromo)
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     this.bookmarks = this.loadBookmarks(data)
     if (Array.isArray(data.windows) && data.windows.length) {

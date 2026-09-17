@@ -56,7 +56,9 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   clipboardChip: false,
   appLinkSettings: false,
   pullToRefresh: false,
-  passwords: true
+  passwords: true,
+  // The OS owns default-app choices on desktop; the desktop program decides if Zenium ever asks.
+  defaultBrowser: false
 }
 
 /**
@@ -194,7 +196,9 @@ export class ElectronPlatform implements Platform {
             .allWindows()
             .map((win) => browserWindowOf(win))
             .filter((bw): bw is Electron.BrowserWindow => bw !== undefined)
-        )
+        ),
+      isDefaultBrowser: async () => null,
+      requestDefaultBrowser: async () => null
     }
   }
 
