@@ -1150,25 +1150,53 @@
     color: var(--v2-accent);
   }
   .zen-banner {
-    align-items: flex-start;
     padding-left: 12px;
   }
-  /* The glyph sits on the title's first line (§9.2), not the card's middle. */
-  .zen-banner .zen-message-glyph {
-    margin-top: calc(4px + (var(--v2-line-body) - var(--v2-icon)) / 2);
+  /* The text fills the card's height and centres its lines in it. */
+  .zen-banner .zen-message-text {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-self: stretch;
   }
+  /* The title's row: the glyph sits on its first line (§9.2), a longer title wraps beside it. */
   .zen-banner-title {
+    display: flex;
+    gap: 8px;
     font-weight: var(--v2-weight-heading);
+  }
+  .zen-banner-title > span {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .zen-banner-title .zen-message-glyph {
+    align-self: flex-start;
+    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
   }
   .zen-banner-detail {
     font-size: var(--v2-font-small);
     line-height: var(--v2-line-small);
     color: var(--v2-text-deemphasized);
   }
-  .zen-banner .zen-message-button,
-  .zen-banner .zen-message-close {
-    margin-top: 0;
-    align-self: center;
+  /* Under the title's text, not under the glyph. */
+  .zen-banner[data-glyph] .zen-banner-detail {
+    padding-left: calc(var(--v2-icon) + 8px);
+  }
+  /*
+   * What trails the text (the action, the close) centres on the card's height (§9.18) – unless
+   * the text runs past two lines: then `BannerCard` marks the card and the slot takes the
+   * title's height and place, so they centre on the title instead.
+   */
+  .zen-message-trailing {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .zen-banner[data-wrapped] .zen-message-trailing {
+    align-self: flex-start;
+    height: var(--zen-banner-title-height);
+    margin-top: 4px;
   }
   .zen-message-close {
     flex: none;
