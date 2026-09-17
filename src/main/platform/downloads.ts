@@ -15,6 +15,8 @@ import { PARTIAL_SUFFIX, finalName as stripPartial } from '../../shared/download
 import type { DownloadHost } from '../../core/platform'
 import type { DownloadService } from '../../core/downloads'
 import type { ZenWindow } from '../../core/window'
+import type { AppIconId } from '../../shared/appIcon'
+import { openDownloadsFolder, startFileDrag } from './downloadsShell'
 import { uniquePath } from './uniquePath'
 
 export { uniquePath } from './uniquePath'
@@ -131,7 +133,11 @@ export class ElectronDownloads implements DownloadHost {
   private tabIdFor: (source: WebContents) => string | null = () => null
   private parentWindow: (sourceTabId: string | null) => BrowserWindow | undefined = () => undefined
 
-  constructor(private readonly settings: () => ElectronDownloadSettings) {
+  constructor(
+    private readonly settings: () => ElectronDownloadSettings,
+    /** The app icon a dragged-out file falls back to when the OS has none for its type. */
+    private readonly appIcon: () => AppIconId
+  ) {
     setDownloadDirectoryProvider(() => this.settings().directory)
   }
 
@@ -624,6 +630,15 @@ export class ElectronDownloads implements DownloadHost {
       : await dialog.showOpenDialog(options)
     if (result.canceled) return null
     return result.filePaths[0] ?? null
+  }
+
+  // Desktop UI plumbing (the shell owns the implementation; the core reaches it through the host).
+  startFileDrag(item: DownloadItem, win: ZenWindow): void {
+    startFileDrag(item, win, this.appIcon())
+  }
+
+  openDownloadsFolder(): void {
+    openDownloadsFolder()
   }
 }
 

@@ -4,6 +4,7 @@ import type {
   CommandArgs,
   CommandName,
   CommandResult,
+  DownloadSettings,
   EventName,
   Events,
   Folder,
@@ -27,7 +28,7 @@ import { HistoryService } from './history'
 import { SessionService } from './session'
 import { NewTabService } from './newtab'
 import { BookmarkService } from './bookmarks'
-import { DownloadService } from './downloads'
+import { DownloadService, isQuarantined } from './downloads'
 import { resolveDownloadSettings } from '../shared/downloads'
 import { PermissionService } from './permissions'
 import { PermissionPromptService } from './permissionPrompts'
@@ -684,12 +685,17 @@ export class Browser {
    * opened only for the download; otherwise just make sure the keyboard keeps working.
    */
   onDownloadStarted(sourceTabId: string | null): void {
-    // Firefox shows the downloads panel whenever a download begins; Chrome only animates its
-    // toolbar button. The setting decides. Let any tab switch paint first so the panel can dim a
-    // snapshot of the page behind it.
     const win = sourceTabId ? this.tabs.windowFor(sourceTabId) : this.focusedWindow()
-    if (resolveDownloadSettings(this.state.settings).openPanelOnStart)
+    // Firefox shows the downloads panel whenever a download begins; Chrome only animates the
+    // toolbar button (the renderer does that from the list). The setting decides; single-window
+    // hosts (Android) keep the panel, their downloads UI is not the desktop's. Let any tab switch
+    // paint first so the panel can dim a snapshot of the page behind it.
+    if (
+      resolveDownloadSettings(this.state.settings).openPanelOnStart ||
+      !this.state.capabilities.windows
+    ) {
       setTimeout(() => this.emit('overlay.open', { kind: 'downloads' }, win), 200)
+    }
     const tab = this.tabs.tab(sourceTabId)
     const view = sourceTabId ? this.tabs.view(sourceTabId) : undefined
     if (!tab || !view) return
@@ -1990,6 +1996,13 @@ export class Browser {
       'download.setOpenWhenDone': ({ id, on }) => this.downloads.setOpenWhenDone(id, on),
       'download.chooseDirectory': (_args, win) => this.downloads.chooseDirectory(win),
       'download.openPanel': (_args, win) => this.emit('overlay.open', { kind: 'downloads' }, win),
+      'download.dragOut': ({ id }, win) => {
+        // Only a released file has a final path to hand to the OS; a quarantined one still waits.
+        const item = this.downloads.item(id)
+        if (item && item.state === 'completed' && !isQuarantined(item))
+          platform.downloads.startFileDrag?.(item, win)
+      },
+      'download.openFolder': () => platform.downloads.openDownloadsFolder?.(),
 
       'find.start': ({ tabId, text, forward, newSession }, win) => {
         const view = tabs.view(tabId)
@@ -2311,6 +2324,13 @@ export class Browser {
           ...s.newTab,
           ...(value as Partial<Settings['newTab']>)
         })
+      } else if (key === 'downloads' && value && typeof value === 'object') {
+        // The block is partial: a one-key patch from a Settings row must not drop the others.
+        // `askWhereToSave` keeps living at the top level (the resolver reads it from there).
+        const incoming = value as Partial<DownloadSettings>
+        const { askWhereToSave, ...rest } = incoming
+        s.downloads = { ...s.downloads, ...rest }
+        if (typeof askWhereToSave === 'boolean') s.askWhereToSave = askWhereToSave
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }
