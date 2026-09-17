@@ -142,6 +142,21 @@ export type ReaderPageLookup = (id: string) => string | null
 /** Resolves `zen://image?id=…` to the image's `data:` URL (null once the image is gone). */
 export type ImagePageLookup = (id: string) => string | null
 
+/**
+ * A `zen://` URL as a `URL` whose `hostname` is the page name. Parsed as `http://` because
+ * engines before Chromium 130 (the Android WebView that hosts the core on older devices and on
+ * the emulator) give a non-special scheme no host at all, which turned every error page into the
+ * blank page.
+ */
+export function parseZenUrl(rawUrl: string): URL | null {
+  if (!/^zen:\/\//i.test(rawUrl)) return null
+  try {
+    return new URL(`http://${rawUrl.slice('zen://'.length)}`)
+  } catch {
+    return null
+  }
+}
+
 /** `zen://` addresses that are chrome surfaces rather than documents, and the overlay each opens. */
 const OVERLAY_PAGES: Record<string, OverlayKind> = {
   history: 'history',
@@ -153,12 +168,8 @@ const OVERLAY_PAGES: Record<string, OverlayKind> = {
  * `null` for a real page. Navigating to one of these opens the overlay instead of loading.
  */
 export function overlayForUrl(rawUrl: string): OverlayKind | null {
-  if (!rawUrl.startsWith(`${ZEN_SCHEME}://`)) return null
-  try {
-    return OVERLAY_PAGES[new URL(rawUrl).hostname] ?? null
-  } catch {
-    return null
-  }
+  const url = parseZenUrl(rawUrl)
+  return url ? (OVERLAY_PAGES[url.hostname] ?? null) : null
 }
 
 /** HTML for any `zen://` URL (unknown hosts fall back to the blank page). */
@@ -167,12 +178,8 @@ export function zenPageHtml(
   reader?: ReaderPageLookup,
   image?: ImagePageLookup
 ): string {
-  let url: URL
-  try {
-    url = new URL(rawUrl)
-  } catch {
-    return blankPageHtml()
-  }
+  const url = parseZenUrl(rawUrl)
+  if (!url) return blankPageHtml()
   switch (url.hostname) {
     case 'error':
       return errorPageHtml(url)
