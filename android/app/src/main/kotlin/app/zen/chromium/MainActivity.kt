@@ -68,6 +68,15 @@ class MainActivity : BrowserActivity() {
         callback(files)
     }
 
+    private var defaultBrowserCallback: ((Any?) -> Unit)? = null
+    private val defaultBrowserRequest = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { _ ->
+        val callback = defaultBrowserCallback ?: return@registerForActivityResult
+        defaultBrowserCallback = null
+        // Result codes differ between the role dialog and the settings screen (and OEMs): the
+        // role itself is the answer either way.
+        callback(DefaultBrowser.isDefault(this))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -283,6 +292,28 @@ class MainActivity : BrowserActivity() {
             }
         }
         return uri.lastPathSegment?.substringAfterLast('/') ?: "mod.css"
+    }
+
+    /**
+     * Ask the system to make Zenium the default browser: the role dialog on Android 10+, the
+     * default-apps settings before that. Answers with the role once the user is back, or null
+     * when the device offers no way to ask.
+     */
+    fun requestDefaultBrowser(reply: (Any?) -> Unit) {
+        defaultBrowserCallback?.invoke(null)
+        defaultBrowserCallback = null
+        val intent = DefaultBrowser.requestIntent(this)
+        if (intent == null) {
+            reply(null)
+            return
+        }
+        defaultBrowserCallback = reply
+        try {
+            defaultBrowserRequest.launch(intent)
+        } catch (e: Exception) {
+            defaultBrowserCallback = null
+            reply(null)
+        }
     }
 }
 

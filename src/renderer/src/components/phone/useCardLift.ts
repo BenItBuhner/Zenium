@@ -1,16 +1,22 @@
-import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import type { Rect, Tab } from '@shared/types'
 import { SpringAnimation, type SpringConfig } from '@renderer/lib/motion/spring'
+import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import { createStore } from '@renderer/lib/store'
+import { CardSwipe } from './cardSwipe'
 
 /** Hold before a card comes off the grid. */
 const LONG_PRESS_MS = 380
-/** Movement (px) that turns a held card into a drag, or a touch into a scroll. */
+/** Movement (px) that turns a held card into a drag, or a touch into a scroll or a swipe. */
 const SLOP = 8
 /** Distance from the edge of the grid within which a drag scrolls it. */
 const AUTOSCROLL_ZONE = 56
 /** How long a released hold waits for its click before opening the actions regardless. */
 const MENU_DELAY_MS = 250
+/** How long the finger rests with a new slot before the gap opens there (see `hover`)… */
+const SLOT_DWELL_MS = 150
+/** …and how slow (px/s) it has to be moving to count as resting. */
+const SLOT_SPEED_PX_S = 120
 const AUTOSCROLL_SPEED = 14
 
 /** The ghost tracks the finger closely but not rigidly: a firm spring with a little give. */
@@ -23,12 +29,26 @@ const SPRING_FOLLOW: SpringConfig = {
 }
 
 /**
- * Where a dragged card may land, from the `data-drop` attribute under the finger:
+ * Where a dragged card may land when it is dropped *on* something:
  *  - `card:<tabId>`   another tab's card – the two become a group (or the card joins its group)
  *  - `group:<id>`     a group card – the tab joins the group
- *  - `loose`          the landing strip below the grid – the tab leaves its group
  */
 export type LiftTarget = string
+
+/**
+ * Where a dragged card is going to be put *between* things: a position in a group's members
+ * (`folderId`) or in the loose tabs (`null`), counted without the dragged tab itself.
+ */
+export interface LiftSlot {
+  folderId: string | null
+  index: number
+}
+
+/** What is under the finger, as the owner of the grid works it out from its layout. */
+export interface LiftHover {
+  target: LiftTarget | null
+  slot: LiftSlot | null
+}
 
 export type LiftPhase = 'idle' | 'lifted' | 'dragging' | 'dropping'
 
@@ -39,8 +59,10 @@ export interface LiftState {
   ghost: Rect | null
   /** Where the card came from, in window coordinates. */
   origin: Rect | null
-  /** Drop target under the finger, null when it would spring back. */
+  /** Drop target under the finger, null when the card would go into its slot instead. */
   target: LiftTarget | null
+  /** Slot the card's stand-in is shown in while it is dragged (and lands in when dropped). */
+  slot: LiftSlot | null
   /** Scale of the ghost (1 on the grid, smaller in the hand, smaller still over a target). */
   scale: number
 }
@@ -51,6 +73,7 @@ const IDLE: LiftState = {
   ghost: null,
   origin: null,
   target: null,
+  slot: null,
   scale: 1
 }
 
@@ -101,7 +124,7 @@ function stopSprings(): void {
 /** Scale of the ghost for the current situation. */
 function targetScale(phase: LiftPhase, target: LiftTarget | null): number {
   if (phase === 'lifted') return 1.04
-  if (phase === 'dragging') return target && target !== 'loose' ? 0.84 : 0.94
+  if (phase === 'dragging') return target ? 0.84 : 0.94
   return 1
 }
 
@@ -133,14 +156,6 @@ export function cancelLift(): void {
   if (liftStore.get().phase !== 'idle') liftStore.set(IDLE)
 }
 
-function dropTargetAt(x: number, y: number, ownId: string): LiftTarget | null {
-  const el = document.elementFromPoint(x, y)
-  const target = el?.closest<HTMLElement>('[data-drop]')
-  const key = target?.dataset.drop ?? null
-  if (!key || key === `card:${ownId}`) return null
-  return key
-}
-
 function vibrate(ms: number): void {
   try {
     navigator.vibrate?.(ms)
@@ -154,19 +169,35 @@ function blockTouchScroll(e: TouchEvent): void {
   if (e.cancelable) e.preventDefault()
 }
 
+function sameSlot(a: LiftSlot | null, b: LiftSlot | null): boolean {
+  if (!a || !b) return a === b
+  return a.folderId === b.folderId && a.index === b.index
+}
+
 export interface CardLiftOptions {
   tab: Tab
   /** Cards that cannot be grouped (pinned tabs) are never picked up. */
   enabled: boolean
+  /** Cards that cannot be closed by a swipe (pinned tabs) are never swiped. */
+  swipeable: boolean
   /** The grid's scroll container, for auto-scrolling while dragging near its edges. */
   scroller: () => HTMLElement | null
   /** Held without moving, then released: show the card's actions. */
   onMenu: (tab: Tab) => void
   /**
-   * Dropped. The owner acts on the target and, once the grid shows the card in its slot (its
-   * old one when nothing changed), calls `settleLift` with that slot so the ghost flies there.
+   * The finger is at (x, y) with the card in hand: what it is over. Asked on every move; the
+   * answer's `slot` moves the card's stand-in (the grid opens the gap), its `target` marks what
+   * the card would merge into.
    */
-  onDrop: (tab: Tab, target: LiftTarget | null) => void
+  onHover: (tab: Tab, x: number, y: number, current: LiftHover) => LiftHover
+  /**
+   * Dropped. The owner acts on the target (or the slot) and, once the grid shows the card in its
+   * place (its old one when nothing changed), calls `settleLift` with that slot so the ghost
+   * flies there.
+   */
+  onDrop: (tab: Tab, target: LiftTarget | null, slot: LiftSlot | null) => void
+  /** Swiped off the grid: close the tab. */
+  onSwipeClose: (tab: Tab) => void
 }
 
 export interface CardLiftHandlers {
@@ -174,7 +205,7 @@ export interface CardLiftHandlers {
   onPointerMove: (e: ReactPointerEvent<HTMLElement>) => void
   onPointerUp: (e: ReactPointerEvent<HTMLElement>) => void
   onPointerCancel: (e: ReactPointerEvent<HTMLElement>) => void
-  /** Whether the click that follows this touch must be ignored (it was a hold or a drag). */
+  /** Whether the click that follows this touch must be ignored (it was a hold, a drag or a swipe). */
   swallowsClick: () => boolean
 }
 
@@ -186,25 +217,57 @@ interface Touch {
   y: number
   timer: ReturnType<typeof setTimeout> | null
   lifted: boolean
+  /** Finger position that maps to a swipe offset of zero. */
+  swipeFrom: number | null
+  velocity: VelocityTracker
 }
 
 /**
- * Long-press a card to pick it up: held in place and released it shows its actions; moved, it
- * follows the finger as a ghost and can be dropped on another card (the two become a group), on
- * a group (it joins) or on the strip below the grid (it leaves its group). A touch that moves
- * before the hold is over is a scroll, and never ours.
+ * The gestures of a card in the grid, beyond the tap that opens it. Long-press picks it up: held
+ * in place and released it shows its actions; moved, it follows the finger as a ghost that can be
+ * dropped on another card (the two become a group), on a group (it joins) or between cards (it
+ * moves there – the gap opens under the finger). A sideways move before the hold is up swipes the
+ * card off the grid to close it; a vertical one is a scroll, and never ours.
  */
 export function useCardLift({
   tab,
   enabled,
+  swipeable,
   scroller,
   onMenu,
-  onDrop
+  onHover,
+  onDrop,
+  onSwipeClose
 }: CardLiftOptions): CardLiftHandlers {
   const touch = useRef<Touch | null>(null)
   const swallow = useRef(false)
   const autoscroll = useRef<number | null>(null)
+  // One swipe per card for as long as it is on the grid, whatever the tab's record becomes.
+  const latest = useRef({ tab, onSwipeClose })
+  useLayoutEffect(() => {
+    latest.current = { tab, onSwipeClose }
+  })
+  const swipeRef = useRef<CardSwipe | null>(null)
+  const swipe = (): CardSwipe =>
+    (swipeRef.current ??= new CardSwipe(() => latest.current.onSwipeClose(latest.current.tab)))
 
+  /**
+   * A new slot takes hold only once the finger has stayed with it for a moment: the edge of a
+   * card is on the way to its middle, and the gap must not open (moving that card away) under a
+   * finger that is heading for a merge. Merge targets take hold at once.
+   */
+  const pendingSlot = useRef<{
+    slot: LiftSlot | null
+    timer: ReturnType<typeof setTimeout>
+  } | null>(null)
+  const dropPendingSlot = (): void => {
+    if (pendingSlot.current) clearTimeout(pendingSlot.current.timer)
+    pendingSlot.current = null
+  }
+  const applySlot = (slot: LiftSlot | null): void => {
+    dropPendingSlot()
+    if (liftStore.get().phase === 'dragging') liftStore.set({ slot })
+  }
   const stopAutoscroll = (): void => {
     if (autoscroll.current !== null) cancelAnimationFrame(autoscroll.current)
     autoscroll.current = null
@@ -215,6 +278,7 @@ export function useCardLift({
     if (t?.timer) clearTimeout(t.timer)
     touch.current = null
     stopAutoscroll()
+    dropPendingSlot()
     document.removeEventListener('touchmove', blockTouchScroll)
   }
 
@@ -224,7 +288,16 @@ export function useCardLift({
       if (t?.timer) clearTimeout(t.timer)
       touch.current = null
       if (autoscroll.current !== null) cancelAnimationFrame(autoscroll.current)
+      if (pendingSlot.current) clearTimeout(pendingSlot.current.timer)
+      pendingSlot.current = null
       document.removeEventListener('touchmove', blockTouchScroll)
+    },
+    []
+  )
+  useEffect(
+    () => () => {
+      swipeRef.current?.dispose()
+      swipeRef.current = null
     },
     []
   )
@@ -237,7 +310,14 @@ export function useCardLift({
     t.lifted = true
     swallow.current = true
     stopSprings()
-    liftStore.set({ tabId: tab.id, phase: 'lifted', ghost: rect, origin: rect, target: null })
+    liftStore.set({
+      tabId: tab.id,
+      phase: 'lifted',
+      ghost: rect,
+      origin: rect,
+      target: null,
+      slot: null
+    })
     scaleSpring.start(1, 0, targetScale('lifted', null))
     document.addEventListener('touchmove', blockTouchScroll, { passive: false })
     vibrate(8)
@@ -253,6 +333,30 @@ export function useCardLift({
     else xSpring.start(s.ghost?.x ?? toX, 0, toX)
     if (ySpring.running) ySpring.retarget(toY)
     else ySpring.start(s.ghost?.y ?? toY, 0, toY)
+  }
+
+  const hover = (t: Touch): void => {
+    const s = liftStore.get()
+    const next = onHover(tab, t.x, t.y, { target: s.target, slot: s.slot })
+    if (next.target !== s.target) {
+      liftStore.set({ target: next.target })
+      retargetScale()
+      if (next.target) vibrate(4)
+    }
+    if (sameSlot(next.slot, s.slot)) {
+      dropPendingSlot()
+      return
+    }
+    // The dwell counts from the moment the finger slows down: a finger still on its way (over the
+    // edge of a card, towards its middle) keeps the timer waiting.
+    const { vx, vy } = t.velocity.velocity(performance.now())
+    const settling = Math.hypot(vx, vy) < SLOT_SPEED_PX_S
+    if (pendingSlot.current && sameSlot(pendingSlot.current.slot, next.slot) && settling) return
+    dropPendingSlot()
+    pendingSlot.current = {
+      slot: next.slot,
+      timer: setTimeout(() => applySlot(next.slot), SLOT_DWELL_MS)
+    }
   }
 
   const scrollNearEdges = (t: Touch): void => {
@@ -271,15 +375,28 @@ export function useCardLift({
       const before = el.scrollTop
       el.scrollTop += delta
       if (el.scrollTop === before) return
+      // The slots moved under the finger.
+      hover(t)
       autoscroll.current = requestAnimationFrame(tick)
     }
     autoscroll.current = requestAnimationFrame(tick)
   }
 
+  const startSwipe = (el: HTMLElement, t: Touch, from: number): void => {
+    if (t.timer) clearTimeout(t.timer)
+    t.timer = null
+    t.swipeFrom = from
+    swallow.current = true
+    swipe().begin(el)
+    document.addEventListener('touchmove', blockTouchScroll, { passive: false })
+  }
+
   const onPointerDown = (e: ReactPointerEvent<HTMLElement>): void => {
     swallow.current = false
-    if (!enabled || e.button !== 0 || touch.current) return
+    if (e.button !== 0 || touch.current) return
     if ((e.target as HTMLElement).closest('button')) return
+    // A card on its way out is not for touching.
+    if (swipe().committed) return
     if (liftStore.get().phase !== 'idle') return
     const el = e.currentTarget
     const t: Touch = {
@@ -289,12 +406,23 @@ export function useCardLift({
       x: e.clientX,
       y: e.clientY,
       timer: null,
-      lifted: false
+      lifted: false,
+      swipeFrom: null,
+      velocity: new VelocityTracker()
     }
-    t.timer = setTimeout(() => lift(el, t), LONG_PRESS_MS)
+    t.velocity.add(e.timeStamp, e.clientX, e.clientY)
     touch.current = t
+    if (swipe().running) {
+      // Caught springing back: carry on from where the card is.
+      startSwipe(el, t, e.clientX - swipe().catchUp())
+    } else if (enabled) {
+      t.timer = setTimeout(() => lift(el, t), LONG_PRESS_MS)
+    } else if (!swipeable) {
+      touch.current = null
+      return
+    }
     // Every event of this touch comes here, wherever the finger wanders; a native scroll still
-    // takes over (with a pointercancel) when it moves before the hold is up.
+    // takes over (with a pointercancel) when it moves vertically before the hold is up.
     try {
       el.setPointerCapture(e.pointerId)
     } catch {
@@ -307,10 +435,25 @@ export function useCardLift({
     if (!t || t.id !== e.pointerId) return
     t.x = e.clientX
     t.y = e.clientY
-    const moved = Math.hypot(t.x - t.x0, t.y - t.y0) >= SLOP
+    const native = e.nativeEvent as PointerEvent & { getCoalescedEvents?: () => PointerEvent[] }
+    const coalesced = native.getCoalescedEvents?.() ?? []
+    if (coalesced.length > 0)
+      for (const c of coalesced) t.velocity.add(c.timeStamp, c.clientX, c.clientY)
+    else t.velocity.add(e.timeStamp, e.clientX, e.clientY)
+    if (t.swipeFrom !== null) {
+      swipe().move(t.x - t.swipeFrom)
+      return
+    }
+    const dx = t.x - t.x0
+    const dy = t.y - t.y0
+    const moved = Math.hypot(dx, dy) >= SLOP
     if (!t.lifted) {
-      // Moving before the hold is over is a scroll (or a swipe) – not ours.
-      if (moved) clear()
+      if (!moved) return
+      // Sideways before the hold is over is a swipe; anything else is a scroll – not ours.
+      if (swipeable && Math.abs(dx) > Math.abs(dy)) {
+        startSwipe(e.currentTarget, t, t.x0 + Math.sign(dx) * SLOP)
+        swipe().move(t.x - (t.swipeFrom ?? t.x0))
+      } else clear()
       return
     }
     const s = liftStore.get()
@@ -320,12 +463,7 @@ export function useCardLift({
     }
     if (liftStore.get().phase !== 'dragging') return
     follow(t)
-    const target = dropTargetAt(t.x, t.y, tab.id)
-    if (target !== s.target) {
-      liftStore.set({ target })
-      retargetScale()
-      if (target && target !== 'loose') vibrate(4)
-    }
+    hover(t)
     scrollNearEdges(t)
   }
 
@@ -351,12 +489,17 @@ export function useCardLift({
     const t = touch.current
     if (!t || t.id !== e.pointerId) return
     const lifted = t.lifted
+    const swiping = t.swipeFrom !== null
     clear()
+    if (swiping) {
+      swipe().release(cancelled ? 0 : t.velocity.velocity(e.timeStamp).vx)
+      return
+    }
     if (!lifted) return
     const s = liftStore.get()
     if (s.phase === 'lifted' || cancelled) {
       // Put it straight back down; the menu comes up for a hold that was released in place.
-      liftStore.set({ phase: 'dropping', target: null })
+      liftStore.set({ phase: 'dropping', target: null, slot: null })
       if (s.origin) settleLift(s.origin)
       else cancelLift()
       if (s.phase === 'lifted' && !cancelled)
@@ -364,7 +507,7 @@ export function useCardLift({
       return
     }
     liftStore.set({ phase: 'dropping' })
-    onDrop(tab, s.target)
+    onDrop(tab, s.target, s.slot)
   }
 
   return {

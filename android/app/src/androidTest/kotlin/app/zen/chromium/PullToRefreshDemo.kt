@@ -1,6 +1,5 @@
 package app.zen.chromium
 
-import android.accessibilityservice.AccessibilityService
 import android.os.SystemClock
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -200,10 +199,6 @@ class PullToRefreshDemo : DemoHarness("ptr-demo-state.json", "ptr-$THEME", "ptr-
         reveal("Settings")
         if (!clickByLabel("Settings")) error("no Settings row in the menu")
         SystemClock.sleep(3_000)
-    }
-
-    private fun back() {
-        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
     }
 
     /** Run a shell command with the instrumentation's shell permissions; returns its output. */

@@ -1,4 +1,13 @@
-import type { Settings, Space, SplitLayout, Tab, TabSection } from '../shared/types'
+import type {
+  ClosedTabEntry,
+  HistoryTransition,
+  NavigationSnapshot,
+  Settings,
+  Space,
+  SplitLayout,
+  Tab,
+  TabSection
+} from '../shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import {
   addTabToSplit,
@@ -26,8 +35,8 @@ import {
 } from '../shared/url'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
-import { describeNetError, HTTP_FALLBACK_CODES } from '../shared/zenPages'
-import { newId } from '../shared/ids'
+import { describeNetError, HTTP_FALLBACK_CODES, overlayForUrl } from '../shared/zenPages'
+import { closedTabEntry, closedWindowEntry } from './session'
 import type { PageFlags, TabView, TabViewEvents } from './platform'
 
 export type { PageFlags } from './platform'
@@ -45,6 +54,10 @@ export class TabManager {
   private readonly owners = new Map<string, ZenWindow>()
   /** Tabs whose current load came from typed input we upgraded to https:// (eligible for http fallback). */
   private readonly httpsUpgraded = new Map<string, string>()
+  /** Back/forward stacks to replay when a reopened tab's page is created. */
+  private readonly pendingNavigation = new Map<string, NavigationSnapshot>()
+  /** How the next committed navigation of a tab came about (for the history record). */
+  private readonly pendingTransition = new Map<string, HistoryTransition>()
 
   constructor(private readonly browser: Browser) {}
 
@@ -180,8 +193,51 @@ export class TabManager {
       }
       tab.url = url
     }
+    const snapshot = this.pendingNavigation.get(tabId)
+    if (snapshot) {
+      // A reopened tab: give it its back/forward stack back instead of a bare load.
+      this.pendingNavigation.delete(tabId)
+      this.pendingTransition.set(tabId, 'restored')
+      void view.restoreNavigation(snapshot)
+      return view
+    }
     view.loadURL(url || BLANK_URL)
     return view
+  }
+
+  /** Replay `snapshot` the next time the tab's page is created (reopened tabs and windows). */
+  setPendingNavigation(tabId: string, snapshot: NavigationSnapshot): void {
+    this.pendingNavigation.set(tabId, snapshot)
+  }
+
+  /** The tab's back/forward stack (URLs and titles) with the current entry marked. */
+  navigationEntries(tabId: string): NavigationSnapshot {
+    const view = this.view(tabId)
+    if (view) return view.navigationEntries()
+    const pending = this.pendingNavigation.get(tabId)
+    if (pending) return pending
+    const tab = this.tab(tabId)
+    return tab
+      ? { entries: [{ url: tab.url, title: tab.title }], index: 0 }
+      : { entries: [], index: -1 }
+  }
+
+  /** Jump to an entry of the back/forward stack (the long-press list on the back button). */
+  goToIndex(tabId: string, index: number): void {
+    const view = this.view(tabId)
+    if (!view) {
+      const tab = this.tab(tabId)
+      if (!tab) return
+      const pending = this.pendingNavigation.get(tabId)
+      if (pending && index >= 0 && index < pending.entries.length) {
+        this.pendingNavigation.set(tabId, { ...pending, index })
+        tab.url = pending.entries[index].url
+      }
+      this.ensureLoaded(tabId)
+      return
+    }
+    this.thawForNavigation(tabId)
+    view.goToIndex(index)
   }
 
   loadedCount(): number {
@@ -446,7 +502,10 @@ export class TabManager {
     tab.bookmarked = this.browser.bookmarks.has(url)
     tab.zoom = view.getZoom()
     view.setBackgroundColor(this.backgroundFor(url))
-    if (!this.isPrivate(tab)) this.browser.history.visit(url, tab.title, tab.favicon)
+    const transition = this.pendingTransition.get(tabId) ?? 'link'
+    this.pendingTransition.delete(tabId)
+    if (!this.isPrivate(tab))
+      this.browser.history.visit(url, tab.title, tab.favicon, { transition, tabId })
     for (const w of this.browser.allWindows())
       if (w.findResult?.tabId === tabId) w.findResult = null
     this.sendPageFlags(tabId)
@@ -477,6 +536,7 @@ export class TabManager {
     this.views.delete(tabId)
     this.httpsUpgraded.delete(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
+    this.pendingTransition.delete(tabId)
     if (this.owners.has(tabId)) view.detach()
     this.owners.delete(tabId)
     if (!view.isDestroyed()) {
@@ -626,7 +686,7 @@ export class TabManager {
   }
 
   /** Which window a tab belongs to under the current window-sync mode (null = shared). */
-  private ownerWindowIdFor(tab: Tab, space: Space, win: ZenWindow): string | null {
+  ownerWindowIdFor(tab: Tab, space: Space, win: ZenWindow): string | null {
     if (space.windowId) return space.windowId
     if (tab.pinned || tab.essential) return null
     return this.settings.windowSync === 'pinned' ? win.id : null
@@ -764,6 +824,8 @@ export class TabManager {
     }
     const space = getSpace(m, tab.spaceId)
     const index = sectionIndexOf(m, tab)
+    // The back/forward stack has to be read while the page still exists.
+    const closed = this.captureClosed(tab, index, Date.now())
     // Every window that had this tab selected picks a neighbour (Firefox: next, else previous).
     const reselect: Array<{ w: ZenWindow; s: Space; next: string | null }> = []
     for (const w of this.browser.allWindows()) {
@@ -791,16 +853,7 @@ export class TabManager {
     this.browser.governor.onTabRemoved(tabId)
     this.browser.agents.onTabRemoved(tabId)
     this.browser.liveFolders.onTabLeftFolder(tabId, tab.folderId)
-    if (!this.isPrivate(tab)) {
-      this.browser.state.recentlyClosed.unshift({
-        tab: { ...tab, splitGroupId: null, discarded: true },
-        spaceId: tab.spaceId,
-        index,
-        closedAt: Date.now()
-      })
-      if (this.browser.state.recentlyClosed.length > 25)
-        this.browser.state.recentlyClosed.length = 25
-    }
+    if (closed) this.browser.session.pushTab(closed)
     for (const { w, s, next } of reselect) {
       w.select(s, next)
       if (w.activeSpaceId === s.id && next) this.activateTab(next, w)
@@ -809,33 +862,29 @@ export class TabManager {
     this.browser.state.commit()
   }
 
+  /**
+   * What "Recently Closed" remembers about a tab that is going away. Private tabs and tabs that
+   * never left the blank page are not worth keeping (Firefox skips those too).
+   */
+  private captureClosed(tab: Tab, index: number, closedAt: number): ClosedTabEntry | null {
+    if (this.isPrivate(tab)) return null
+    const view = this.view(tab.id)
+    const navigation = view
+      ? view.navigationEntries()
+      : (this.pendingNavigation.get(tab.id) ?? null)
+    const visited = navigation?.entries.some((e) => e.url !== BLANK_URL && e.url !== '') ?? false
+    if (tab.url === BLANK_URL && !visited) return null
+    return closedTabEntry(
+      tab,
+      { spaceId: tab.spaceId, folderId: tab.folderId, index, windowId: tab.windowId },
+      navigation && navigation.entries.length > 0 ? navigation : null,
+      closedAt
+    )
+  }
+
+  /** Ctrl+Shift+T: bring back the newest recently closed tab or window. */
   reopenClosed(win: ZenWindow = this.browser.focusedWindow()): void {
-    const closed = this.browser.state.recentlyClosed.shift()
-    if (!closed) return
-    const m = this.model
-    let space = (closed.spaceId ? getSpace(m, closed.spaceId) : undefined) ?? win.activeSpace()
-    if (win.localSpace) space = win.localSpace
-    const tab = createTabRecord({
-      ...closed.tab,
-      spaceId: closed.tab.essential && !space.windowId ? null : space.id,
-      containerId: win.isPrivate ? PRIVATE_CONTAINER_ID : closed.tab.containerId,
-      discarded: true
-    })
-    if (m.tabs[tab.id]) tab.id = newId('tab')
-    m.tabs[tab.id] = tab
-    if (
-      tab.essential &&
-      !space.windowId &&
-      m.essentialTabIds.length < this.settings.essentialsMax
-    ) {
-      m.essentialTabIds.splice(Math.min(closed.index, m.essentialTabIds.length), 0, tab.id)
-      tab.windowId = null
-    } else {
-      tab.essential = false
-      insertTabIntoSpace(m, space, tab, closed.index)
-      tab.windowId = this.ownerWindowIdFor(tab, space, win)
-    }
-    this.activateTab(tab.id, win)
+    this.browser.session.reopenClosed(win)
   }
 
   closeOthers(tabId: string, win: ZenWindow = this.windowFor(tabId)): void {
@@ -886,14 +935,25 @@ export class TabManager {
   // Navigation
   // ---------------------------------------------------------------------------
 
-  navigate(tabId: string, url: string, opts: { upgradedFrom?: string } = {}): void {
+  navigate(
+    tabId: string,
+    url: string,
+    opts: { upgradedFrom?: string; transition?: HistoryTransition } = {}
+  ): void {
     const tab = this.tab(tabId)
     if (!tab || !isNavigableUrl(url)) return
+    const overlay = overlayForUrl(url)
+    if (overlay) {
+      // `zen://history` and friends are chrome surfaces: open them over the page instead.
+      this.browser.emit('overlay.open', { kind: overlay }, this.windowFor(tabId))
+      return
+    }
     tab.url = url
     tab.title = titleForUrl(url)
     tab.errorCode = null
     if (opts.upgradedFrom) this.httpsUpgraded.set(tabId, opts.upgradedFrom)
     else this.httpsUpgraded.delete(tabId)
+    this.pendingTransition.set(tabId, opts.transition ?? 'typed')
     const hadView = this.view(tabId) !== undefined
     this.thawForNavigation(tabId)
     const view = this.ensureLoaded(tabId)
@@ -932,10 +992,11 @@ export class TabManager {
     if (tab.url.startsWith(ERROR_URL_PREFIX)) {
       const original = safeParam(tab.url, 'url')
       if (original) {
-        this.navigate(tabId, original)
+        this.navigate(tabId, original, { transition: 'reload' })
         return
       }
     }
+    this.pendingTransition.set(tabId, 'reload')
     view.reload(skipCache)
   }
 
@@ -1537,6 +1598,20 @@ export class TabManager {
     const others = this.browser
       .allWindows()
       .filter((w) => w !== win && w.kind === 'synced' && w.alive)
+    // Tabs that go away with the window; remembered as one "Recently Closed" window entry. Their
+    // back/forward stacks must be read before the pages below are destroyed.
+    const leaving: Tab[] = win.localSpace
+      ? win.localSpace.tabIds.map((id) => this.tab(id)).filter((t): t is Tab => Boolean(t))
+      : quitting || others.length === 0
+        ? []
+        : Object.values(m.tabs).filter((t) => t.windowId === win.id)
+    const now = Date.now()
+    const closedTabs: ClosedTabEntry[] = []
+    for (const tab of leaving) {
+      const entry = this.captureClosed(tab, sectionIndexOf(m, tab), now)
+      if (entry) closedTabs.push(entry)
+    }
+    const activeTabId = win.selectedTabIn(win.activeSpace())
     for (const [tabId, view] of this.viewsOwnedBy(win)) {
       const tab = this.tab(tabId)
       const local = !tab || tab.windowId === win.id
@@ -1559,19 +1634,10 @@ export class TabManager {
     }
     if (win.localSpace) {
       for (const id of [...win.localSpace.tabIds]) {
-        const tab = this.tab(id)
-        if (!tab) continue
+        if (!this.tab(id)) continue
         removeTabFromSplit(m, id)
         removeTabFromLists(m, id)
         delete m.tabs[id]
-        if (!win.isPrivate) {
-          this.browser.state.recentlyClosed.unshift({
-            tab: { ...tab, splitGroupId: null, discarded: true, windowId: null },
-            spaceId: null,
-            index: 0,
-            closedAt: Date.now()
-          })
-        }
       }
       delete m.localSpaces[win.localSpace.id]
     } else if (!quitting) {
@@ -1582,19 +1648,16 @@ export class TabManager {
           tab.windowId = null
           continue
         }
-        const index = sectionIndexOf(m, tab)
         removeTabFromSplit(m, tab.id)
         removeTabFromLists(m, tab.id)
         delete m.tabs[tab.id]
-        this.browser.state.recentlyClosed.unshift({
-          tab: { ...tab, splitGroupId: null, discarded: true, windowId: null },
-          spaceId: tab.spaceId,
-          index,
-          closedAt: Date.now()
-        })
       }
     }
-    if (this.browser.state.recentlyClosed.length > 25) this.browser.state.recentlyClosed.length = 25
+    for (const t of closedTabs) this.pendingNavigation.delete(t.tab.id)
+    if (closedTabs.length > 0)
+      this.browser.session.pushWindow(
+        closedWindowEntry(win.kind, win.bounds, activeTabId, closedTabs, now)
+      )
     this.browser.updateMedia()
   }
 

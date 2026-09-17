@@ -64,6 +64,11 @@ export interface HostCapabilities {
   pullToRefresh: boolean
   /** The host can protect the password vault's key (OS keystore) – the password manager is on. */
   passwords: boolean
+  /**
+   * The host can tell whether this app is the system's default browser and ask the system to make
+   * it one (Android's browser role). Desktop hosts leave this to the platform's own settings.
+   */
+  defaultBrowser: boolean
 }
 
 export interface Rect {
@@ -532,12 +537,57 @@ export interface ImportResult {
 // History, bookmarks, downloads
 // ---------------------------------------------------------------------------
 
+/** Per-URL aggregate (the "place"): what the omnibox ranks and the top-sites tiles read. */
 export interface HistoryEntry {
   url: string
   title: string
   visitCount: number
   lastVisit: number
   favicon: string | null
+  firstVisit?: number
+  /** Visits that started from typed input (weigh more in frecency). */
+  typedCount?: number
+}
+
+export type HistoryTransition = 'link' | 'typed' | 'reload' | 'redirect' | 'restored' | 'other'
+
+/** One visit of a page (the history page lists these, newest first, grouped by day). */
+export interface HistoryVisit {
+  /** Stable and unique per visit. */
+  id: string
+  url: string
+  title: string
+  favicon: string | null
+  /** Milliseconds since the epoch. */
+  visitTime: number
+  transition: HistoryTransition
+  tabId?: string
+}
+
+export interface HistoryQuery {
+  /** Every whitespace-separated term must occur in the title or URL (case-insensitive). */
+  text?: string
+  /** Inclusive lower bound of `visitTime`. */
+  fromMs?: number
+  /** Exclusive upper bound of `visitTime`. */
+  toMs?: number
+  /** Only visits of this host (or its subdomains). */
+  host?: string
+  limit: number
+  offset?: number
+}
+
+export interface HistoryDayGroup {
+  /** Local calendar day, `YYYY-MM-DD`. */
+  dayKey: string
+  visits: HistoryVisit[]
+}
+
+export interface TopSite {
+  url: string
+  title: string
+  favicon: string | null
+  score: number
 }
 
 /** Legacy flat bookmark (state.json v1–v2); migrated into the tree on load. */
@@ -589,16 +639,106 @@ export interface BookmarkImportResult {
 
 export type DownloadState = 'progressing' | 'paused' | 'completed' | 'cancelled' | 'interrupted'
 
+export type DownloadDangerLevel = 'safe' | 'suspicious' | 'dangerous'
+
+/**
+ * Machine reason behind a danger level. File-type reasons follow Chromium's download_file_types
+ * categories (`executable`, `script`, `archive`, `office-macro`, `file-type` for the rest of the
+ * list); `insecure-download` is an http transfer started from an https page; `url-verdict` came
+ * from a `DangerVerdictProvider` (Safe Browsing and friends). `none` while `level` is `safe`.
+ */
+export type DownloadDangerReason =
+  | 'none'
+  | 'executable'
+  | 'script'
+  | 'archive'
+  | 'office-macro'
+  | 'file-type'
+  | 'insecure-download'
+  | 'url-verdict'
+
+export interface DownloadDanger {
+  level: DownloadDangerLevel
+  reason: DownloadDangerReason
+  /** One sentence for the row ("This file type can harm your device."); empty when safe. */
+  message: string
+}
+
 export interface DownloadItem {
   id: string
   url: string
+  /** Page the download came from (empty when unknown); a retry sends it as the Referer again. */
+  referrer: string
+  /** Name the server suggested (or the `download` attribute / URL gave), before uniquifying. */
   filename: string
+  /** Name the file ends up under: `filename` made unique (`report(1).pdf`) or the one the user typed. */
+  finalName: string
+  /**
+   * Where the bytes are right now: the partial file while in progress, the final file once
+   * completed. On Android this can be a `content:` URI.
+   */
   savePath: string
   totalBytes: number
   receivedBytes: number
   state: DownloadState
   startedAt: number
+  /** When the file was complete on disk (still set while a flagged file waits for Keep / Discard). */
+  completedAt?: number
+  /** When the transfer stopped for any reason: completed, cancelled or interrupted. */
+  endedAt?: number
   mimeType: string
+  /** The server honours Range requests, so paused and interrupted transfers can continue. */
+  canResume: boolean
+  /** Why an interrupted download stopped (Chromium's `net::` error name or a short reason). */
+  error?: string
+  danger: DownloadDanger
+  /** The user chose "Keep" for a flagged file: it left quarantine and may be opened. */
+  dangerAccepted: boolean
+  /** Open the file as soon as the download completes (Chrome's "Open when done"). */
+  openWhenDone: boolean
+  /** Recent transfer rate; 0 while paused or unknown. */
+  bytesPerSecond: number
+  /** Estimated time to completion; null without a size or a rate. */
+  etaMs: number | null
+  /** Set on the copy that rides the `removed` event: the row left the list, the file stays. */
+  removed?: boolean
+  /** Started from a private window or the Android private profile; never written to disk. */
+  private: boolean
+  /** Container the download belongs to (`PRIVATE_CONTAINER_ID` when `private`). */
+  containerId: string
+  /** HTTP validators the host uses for `If-Range` on resume (empty when the server sent none). */
+  etag: string
+  lastModified: string
+}
+
+export type DownloadChangeKind = 'started' | 'progress' | 'done' | 'removed'
+
+/** Aggregate of the in-flight downloads a window sees (its toolbar indicator, the OS progress bar). */
+export interface DownloadsProgress {
+  received: number
+  total: number
+  /** A transfer without a known size is running, so `received / total` says nothing. */
+  indeterminate: boolean
+  /** In-flight downloads, paused ones included; 0 clears the indicator. */
+  active: number
+}
+
+export interface DownloadSettings {
+  /** Folder new downloads go to; null means the platform's Downloads folder. */
+  directory: string | null
+  /** Firefox's "Always ask you where to save files" (mirrors `Settings.askWhereToSave`). */
+  askWhereToSave: boolean
+  /** Completion notifications (desktop: the system notification centre; Android: the downloader's). */
+  notifyOnComplete: boolean
+  /** Open the downloads panel whenever a download starts; off shows the toolbar indicator only. */
+  openPanelOnStart: boolean
+  /** Open the downloads panel when a download finishes (Chrome 112+). */
+  openPanelOnComplete: boolean
+  /**
+   * Lower-case extensions opened automatically once downloaded (Chrome's "Open certain file
+   * types automatically"); dangerous types never auto-open.
+   */
+  autoOpenTypes: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -830,6 +970,12 @@ export interface Settings {
   restoreSession: boolean
   /** Firefox's "Always ask you where to save files"; off saves straight into the Downloads folder. */
   askWhereToSave: boolean
+  /**
+   * Downloads folder, panel behaviour, auto-open types and notifications; absent in profiles from
+   * before it existed (`resolveDownloadSettings` fills the defaults). `askWhereToSave` above is
+   * the older sibling and stays the source of truth for that switch.
+   */
+  downloads?: Partial<DownloadSettings>
   onboardingDone: boolean
   showTabSeparator: boolean
   ctrlTabCyclesWithinSection: boolean
@@ -845,6 +991,8 @@ export interface Settings {
    */
   externalProtocols: Record<string, boolean>
   passwords: PasswordSettings
+  /** Session counter and cooldowns of the "make Zenium your default browser" prompts. */
+  defaultBrowserPromo: DefaultBrowserPromoState
 }
 
 // ---------------------------------------------------------------------------
@@ -897,6 +1045,40 @@ export interface ExternalProtocolRequest {
   /** Whether the sheet offers to remember the choice for this scheme. */
   canRemember: boolean
 }
+
+// ---------------------------------------------------------------------------
+// Default browser (Android's browser role)
+// ---------------------------------------------------------------------------
+
+/**
+ * Persisted bookkeeping of the default-browser prompts. Sessions are counted from the end of
+ * onboarding; the sheet comes up after a few of them and again after a cooldown, the banner fills
+ * the sessions in between. Pure rules over this state live in `shared/defaultBrowser.ts`.
+ */
+export interface DefaultBrowserPromoState {
+  /** Sessions (app starts) since onboarding finished. */
+  sessions: number
+  /** Session in which the promo sheet last came up (null = never). */
+  promptedAt: number | null
+  /** How often the sheet was answered with "Not now". */
+  dismissals: number
+  /** "Set as default" was chosen from a prompt: never ask again. */
+  done: boolean
+  /** Session in which the banner last came up (null = never). */
+  bannerAt: number | null
+}
+
+/** What the chrome should show for the default-browser prompts right now. */
+export type DefaultBrowserPrompt = 'sheet' | 'banner' | null
+
+export interface DefaultBrowserStatus {
+  /** Whether this app holds the browser role; null until the host answered (or when it cannot tell). */
+  isDefault: boolean | null
+  prompt: DefaultBrowserPrompt
+}
+
+/** Where a request to become the default browser was made from. */
+export type DefaultBrowserRequestSource = 'onboarding' | 'sheet' | 'banner' | 'settings'
 
 // ---------------------------------------------------------------------------
 // AI agents (the built-in MCP server)
@@ -1162,10 +1344,14 @@ export interface UIState {
   glance: GlanceState | null
   compactSidebarRevealed: boolean
   window: WindowState
+  /** Newest first; private windows also see their private downloads, other windows never do. */
   downloads: DownloadItem[]
+  downloadsProgress: DownloadsProgress
   /** Every bookmark node (roots included), ordered parent-first, then by index. */
   bookmarks: BookmarkNode[]
   recentlyClosedCount: number
+  /** Newest first, at most 10 – enough for menus to render without a round trip. */
+  recentlyClosed: ClosedEntrySummary[]
   media: MediaState[]
   findResult: FindResult | null
   /** Tab id whose devtools are open (for the toolbar indicator). */
@@ -1192,6 +1378,8 @@ export interface UIState {
   updates: UpdateStatus
   /** The password vault: lock state, protection, counts and the last checkup (never secrets). */
   passwords: PasswordsStatus
+  /** Default-browser role: whether Zenium holds it and which prompt (if any) is due. */
+  defaultBrowser: DefaultBrowserStatus
 }
 
 export interface FindResult {
@@ -1253,13 +1441,16 @@ export interface MenuItemDescriptor {
   label: string
   enabled: boolean
   checked: boolean
+  /** A favicon (`data:` or remote URL) the renderer may show before the label. */
+  icon?: string | null
   submenu: MenuItemDescriptor[] | null
 }
 
 export interface MenuDescriptor {
   id: string
   items: MenuItemDescriptor[]
-  source: 'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app' | 'bookmark'
+  source:
+    'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app' | 'bookmark' | 'history'
   /** Anchor in chrome CSS pixels, when known. */
   x: number | null
   y: number | null
@@ -1344,7 +1535,13 @@ export interface Commands {
   }
   'tab.moveToSpace': { args: { tabId: string; spaceId: string }; result: void }
   'tab.moveToFolder': { args: { tabId: string; folderId: string | null }; result: void }
+  /** Restore the newest recently closed entry (a window entry as a whole window). */
   'tab.reopenClosed': { args: void; result: void }
+  /** The tab's back/forward stack for the long-press list on the back / forward buttons. */
+  'tab.navigationEntries': { args: { tabId: string }; result: NavigationSnapshot }
+  'tab.goToIndex': { args: { tabId: string; index: number }; result: void }
+  /** The back/forward list as a menu (long press / right click on the back and forward buttons). */
+  'tab.navigationMenu': { args: { tabId: string }; result: void }
   'tab.setZoom': { args: { tabId: string; delta: number | null }; result: void }
   'tab.contextMenu': { args: { tabId: string }; result: void }
   'tab.toggleDevtools': { args: { tabId: string }; result: void }
@@ -1478,6 +1675,29 @@ export interface Commands {
   'history.recent': { args: { limit: number }; result: HistoryEntry[] }
   'history.delete': { args: { url: string }; result: void }
   'history.clear': { args: void; result: void }
+  'history.visits': { args: { query: HistoryQuery }; result: HistoryVisit[] }
+  'history.grouped': { args: { query: HistoryQuery }; result: HistoryDayGroup[] }
+  'history.topSites': { args: { n: number; excludedHosts?: string[] }; result: TopSite[] }
+  /** Visits with `fromMs <= visitTime < toMs`. */
+  'history.count': { args: { fromMs: number; toMs: number }; result: number }
+  'history.deleteVisits': { args: { ids: string[] }; result: void }
+  'history.deleteUrls': { args: { urls: string[] }; result: void }
+  'history.deleteDay': { args: { dayKey: string }; result: void }
+  /** Removes the visits in range and returns how many went. */
+  'history.deleteRange': { args: { fromMs: number; toMs: number }; result: number }
+  /** Open the history page (`zen://history`). */
+  'history.open': { args: void; result: void }
+  /** Context menu of a history row (open in new tab / window / private window, copy, remove…). */
+  'history.contextMenu': { args: { visitId: string; url: string }; result: void }
+  /** Menu of a day heading on the history page (delete the day). */
+  'history.dayMenu': { args: { dayKey: string; count: number }; result: void }
+
+  'session.recentlyClosed': { args: void; result: ClosedEntrySummary[] }
+  'session.restoreClosed': { args: { id: string }; result: void }
+  'session.clearRecentlyClosed': { args: void; result: void }
+
+  /** Copy arbitrary text (history rows, menus) through the host clipboard. */
+  'clipboard.writeText': { args: { text: string }; result: void }
 
   /** Bookmark the tab's page in the default folder, or remove its bookmarks (toast feedback). */
   'bookmark.toggle': { args: { tabId: string }; result: void }
@@ -1526,8 +1746,22 @@ export interface Commands {
   'download.cancel': { args: { id: string }; result: void }
   'download.showInFolder': { args: { id: string }; result: void }
   'download.open': { args: { id: string }; result: void }
+  /** Take the row out of the list; the file stays where it is. */
   'download.remove': { args: { id: string }; result: void }
+  /** "Clear all": every finished row leaves the list (`download.clearCompleted` is the older name). */
+  'download.removeCompleted': { args: void; result: void }
   'download.clearCompleted': { args: void; result: void }
+  /** Start over: a new request for the same URL with the same referrer, replacing the row. */
+  'download.retry': { args: { id: string }; result: void }
+  /** "Keep": release a flagged file from quarantine. */
+  'download.acceptDanger': { args: { id: string }; result: void }
+  /** "Discard": delete a flagged file (or what is left of a failed one) and drop the row. */
+  'download.discard': { args: { id: string }; result: void }
+  'download.setOpenWhenDone': { args: { id: string; on: boolean }; result: void }
+  /** Let the user pick the default downloads folder; resolves with it (or null when dismissed). */
+  'download.chooseDirectory': { args: void; result: string | null }
+  /** Show the downloads panel (Ctrl/Cmd+J, the app menu, a completion notification). */
+  'download.openPanel': { args: void; result: void }
 
   'find.start': {
     /** `newSession` starts a fresh search for `text`; otherwise steps to the next/previous match. */
@@ -1558,6 +1792,8 @@ export interface Commands {
   /** Zen's "New blank window" (Ctrl+Shift+N): an independent, temporary tab list. */
   'window.newUnsynced': { args: void; result: void }
   'window.newPrivate': { args: void; result: void }
+  /** Open a URL in a new window of the given kind (history rows: "Open in New / Private Window"). */
+  'window.openUrl': { args: { url: string; kind: WindowKind }; result: void }
   /** Blank windows: move every local tab back into one of the real spaces. */
   'window.moveTabsToSpace': { args: { spaceId: string }; result: void }
 
@@ -1575,6 +1811,19 @@ export interface Commands {
     args: { searchEngineId: string; colorScheme: ColorScheme; essentials: string[] }
     result: void
   }
+
+  /**
+   * Ask the system to make Zenium the default browser (Android's role dialog, or the default-apps
+   * settings on older versions); resolves with whether it now is (null when the host cannot tell).
+   */
+  'defaultBrowser.request': {
+    args: { source: DefaultBrowserRequestSource }
+    result: boolean | null
+  }
+  /** "Not now" on the sheet, or the banner's close button. */
+  'defaultBrowser.dismiss': { args: { prompt: 'sheet' | 'banner' }; result: void }
+  /** Read the role again (the settings row opens; the app came back from the system dialog). */
+  'defaultBrowser.refresh': { args: void; result: boolean | null }
 
   'boost.update': {
     args: { domain: string; patch: Partial<Omit<Boost, 'domain' | 'updatedAt'>> }
@@ -1738,6 +1987,14 @@ export interface Events {
   'urlbar.close': void
   'overlay.open': { kind: OverlayKind; folderId?: string; section?: string }
   'find.open': { tabId: string; again?: 'next' | 'prev' }
+  /**
+   * A download row changed. `progress` is throttled to 4 Hz per item, state changes arrive at
+   * once; `done` covers completed, cancelled and interrupted (read `item.state`). Private items
+   * only reach private windows. The full list also rides in `state.downloads`.
+   */
+  'download.changed': { item: DownloadItem; kind: DownloadChangeKind }
+  /** A dangerous or suspicious download finished and waits for Keep / Discard. */
+  'download.danger': { id: string }
   toast: { message: string; kind?: 'info' | 'error' }
   /** Link hover status text (Firefox shows this in the bottom corner). */
   status: { text: string }
@@ -1764,6 +2021,9 @@ export interface Events {
   'externalProtocol.request': ExternalProtocolRequest
   /** The request was withdrawn (its tab closed, another one took its place). */
   'externalProtocol.cancel': { requestId: string }
+  /** History changed: visits are throttled to twice a second, deletions arrive at once. */
+  'history.changed': { kind: 'visit' | 'delete' | 'clear' }
+  'session.recentlyClosedChanged': void
   /** Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts). */
   insets: { top: number; right: number; bottom: number; left: number }
   /** A login was deleted; `passwords.restore` brings it back for a while. */
@@ -1773,12 +2033,50 @@ export interface Events {
 export type EventName = keyof Events
 
 // ---------------------------------------------------------------------------
-// Recently closed tabs (kept in main only, count exposed to UI)
+// Recently closed tabs and windows (persisted in state.json, summaries in the snapshot)
 // ---------------------------------------------------------------------------
 
-export interface ClosedTab {
+/** A page's back/forward stack (URLs and titles only) and which entry is current. */
+export interface NavigationSnapshot {
+  entries: Array<{ url: string; title: string }>
+  index: number
+}
+
+export interface ClosedTabEntry {
+  kind: 'tab'
+  id: string
+  closedAt: number
   tab: Tab
   spaceId: string | null
+  folderId: string | null
+  /** Position inside its section (essentials, pinned or regular) when it was closed. */
   index: number
-  closedAt: number
+  windowId: string | null
+  navigation: NavigationSnapshot | null
 }
+
+export interface ClosedWindowEntry {
+  kind: 'window'
+  id: string
+  closedAt: number
+  windowKind: WindowKind
+  bounds: Rect | null
+  activeTabId: string | null
+  tabs: ClosedTabEntry[]
+}
+
+export type ClosedEntry = ClosedTabEntry | ClosedWindowEntry
+
+/** What menus and the history page show for a closed entry (no full tab records). */
+export interface ClosedEntrySummary {
+  id: string
+  kind: 'tab' | 'window'
+  title: string
+  url: string | null
+  favicon: string | null
+  closedAt: number
+  tabCount: number
+}
+
+/** The pre-visit-model name; new code uses `ClosedTabEntry`. */
+export type ClosedTab = ClosedTabEntry

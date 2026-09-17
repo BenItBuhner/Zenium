@@ -281,7 +281,10 @@ export class Actions {
     try {
       const path = await view.savePage(`${safeName}.html`)
       if (!path) return
-      this.browser.downloads.addCompleted(path, 'text/html')
+      this.browser.downloads.addCompleted(path, 'text/html', {
+        containerId: tab.containerId,
+        private: win.isPrivate
+      })
       this.browser.toast('Page saved', 'info', win)
     } catch (error) {
       this.browser.toast(`Could not save page: ${(error as Error).message}`, 'error', win)
@@ -289,12 +292,16 @@ export class Actions {
   }
 
   private async screenshot(tabId: string, win: ZenWindow): Promise<void> {
+    const tab = this.browser.tabs.tab(tabId)
     const view = this.browser.tabs.view(tabId)
     if (!view) return
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const path = await view.screenshot(`Screenshot ${stamp}.png`)
     if (path) {
-      this.browser.downloads.addCompleted(path, 'image/png')
+      this.browser.downloads.addCompleted(path, 'image/png', {
+        containerId: tab?.containerId,
+        private: win.isPrivate
+      })
       this.browser.toast('Screenshot saved to Downloads', 'info', win)
     } else {
       this.browser.toast('Could not capture the page', 'error', win)
