@@ -517,6 +517,9 @@ export class Browser {
       { title: 'Import bookmarks', extensions: ['html', 'htm'] },
       win
     )
+    // The picker was opened from the chrome and took its focus; without it back, the next
+    // click-opened popup menu on Linux is dropped by the host until something else refocuses.
+    win.focusChrome()
     let total: BookmarkImportResult | null = null
     for (const file of files) {
       const result = this.bookmarks.importHtml(file.text)
@@ -550,6 +553,7 @@ export class Browser {
       },
       win
     )
+    win.focusChrome()
     if (saved) this.toast('Bookmarks exported', 'info', win)
     return saved
   }
