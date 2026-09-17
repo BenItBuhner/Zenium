@@ -9,7 +9,7 @@ import { SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from '../sidebar/Favicon'
-import { departStore } from './departures'
+import { departStore } from './departureStore'
 import { liftStore } from './useCardLift'
 import { useLongPress } from './useLongPress'
 

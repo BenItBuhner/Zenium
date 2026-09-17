@@ -4,7 +4,7 @@ import type { Tab } from '@shared/types'
 import { tabTitle } from '@renderer/lib/selectors'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from '../sidebar/Favicon'
-import { departStore } from './departures'
+import { departStore } from './departureStore'
 import { TabPreview } from './TabPreview'
 import { liftStore, useCardLift, type CardLiftOptions } from './useCardLift'
 
