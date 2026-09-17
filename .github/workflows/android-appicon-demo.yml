@@ -6,8 +6,6 @@ name: Android app icon demo
 # like the other demos; same emulator caveats as android-gesture-demo.yml.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/app-icon-colors-df4b]
 
 permissions:
   contents: read
