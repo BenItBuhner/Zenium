@@ -39,10 +39,17 @@ export function initialFolderStack(
 }
 
 /** Rows of a folder: folders first, then bookmarks, each in the user's own order. */
-export function folderRows(tree: BookmarkTree, folderId: FolderId, platform: Platform): BookmarkNode[] {
+export function folderRows(
+  tree: BookmarkTree,
+  folderId: FolderId,
+  platform: Platform
+): BookmarkNode[] {
   if (folderId === null) return topLevelRoots(tree, platform)
   const children = tree.children(folderId)
-  return [...children.filter((n) => n.type === 'folder'), ...children.filter((n) => n.type === 'url')]
+  return [
+    ...children.filter((n) => n.type === 'folder'),
+    ...children.filter((n) => n.type === 'url')
+  ]
 }
 
 /** The header title for a stack position. */

@@ -160,6 +160,13 @@ export const HOVER_CARD_HIDDEN: HoverCardState = {
   by: null
 }
 
+/** What the bookmark editor is asked to do: edit a node, or create one inside `parentId`. */
+export interface BookmarkEditRequest {
+  id: string | null
+  parentId: string
+  type: BookmarkNodeType
+}
+
 export interface UiState {
   overlay: OverlayKind
   overlaySpaceId: string | null
@@ -217,8 +224,11 @@ export interface UiState {
    * step puts it away by itself, the chip keeps it until the user does.
    */
   zoomBubble: { tabId: string; factor: number; seq: number; source: 'auto' | 'chip' } | null
-  /** A bookmark the manager should edit, or create (`id: null`) inside `parentId`. */
-  bookmarkEdit: { id: string | null; parentId: string; type: BookmarkNodeType } | null
+  /**
+   * A bookmark the manager should edit, or create (`id: null`) inside `parentId`; on phones the
+   * editor sheet (the `bookmark.edit` event, the star toast's Edit).
+   */
+  bookmarkEdit: BookmarkEditRequest | null
   /** "Bookmark all tabs": the pages to file and the folder name Chrome would suggest. */
   bookmarkAllTabs: { tabIds: string[]; defaultTitle: string } | null
   /**
@@ -876,6 +886,8 @@ export interface LocalMenuItem {
   label: string
   onSelect: () => void
   enabled?: boolean
+  /** A destructive row, drawn in the danger ink. */
+  danger?: boolean
 }
 
 /** A group break; the sheet separates groups by spacing. */
@@ -884,23 +896,38 @@ export const MENU_GAP = 'gap' as const
 const localMenus = new Map<string, Map<string, () => void>>()
 let localMenuSeq = 0
 
+export interface LocalMenuOptions {
+  /** The sheet's title: the row's own name rather than the source's generic one. */
+  title?: string
+  /** Where a mouse-driven popover anchors. */
+  anchor?: { x: number; y: number }
+}
+
 export async function showLocalMenu(
   source: MenuDescriptor['source'],
   items: ReadonlyArray<LocalMenuItem | typeof MENU_GAP>,
   activeTabId: string | null,
-  anchor?: { x: number; y: number }
+  options: LocalMenuOptions = {}
 ): Promise<void> {
   const id = `local_${++localMenuSeq}`
   const handlers = new Map<string, () => void>()
   const descriptor: MenuDescriptor = {
     id,
     source,
-    x: anchor?.x ?? null,
-    y: anchor?.y ?? null,
+    title: options.title,
+    x: options.anchor?.x ?? null,
+    y: options.anchor?.y ?? null,
     items: items.map((item, index) => {
       const itemId = `${id}_${index}`
       if (item === MENU_GAP)
-        return { id: itemId, type: 'separator', label: '', enabled: true, checked: false, submenu: null }
+        return {
+          id: itemId,
+          type: 'separator',
+          label: '',
+          enabled: true,
+          checked: false,
+          submenu: null
+        }
       handlers.set(itemId, item.onSelect)
       return {
         id: itemId,
@@ -908,7 +935,8 @@ export async function showLocalMenu(
         label: item.label,
         enabled: item.enabled ?? true,
         checked: false,
-        submenu: null
+        submenu: null,
+        danger: item.danger
       }
     })
   }

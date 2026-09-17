@@ -1701,6 +1701,8 @@ export class Browser {
       'app.openAppLinkSettings': (_a, win) => this.openAppLinkSettings(win),
       'externalProtocol.respond': ({ requestId, allow, always }) =>
         this.externalProtocols.respond(requestId, allow, always),
+      'clipboard.writeText': ({ text, confirmation }, win) =>
+        this.copyText(text, confirmation, win),
       'layout.report': (report, win) => win.applyLayout(report),
 
       'tab.new': (_a, win) => this.openNewTab(win),

@@ -16,6 +16,13 @@ interface Props {
   className?: string
   /** Stable hook for the desktop boot smoke (`data-testid` on the panel). */
   testId?: string
+  /** Stands in for the default header (a phone panel's 56 header, or its selection header). */
+  header?: ReactNode
+  /**
+   * The shell scrolls the children (default). Off, the children fill the panel as a column and
+   * scroll whatever part of themselves they want to – a list under a pinned search field.
+   */
+  scroll?: boolean
 }
 
 /** Common chrome for panels that open over the content area. */
@@ -25,7 +32,9 @@ export function OverlayShell({
   variant = 'dock',
   actions,
   className,
-  testId
+  testId,
+  header,
+  scroll = true
 }: Props): JSX.Element {
   const phone = useViewport().formFactor === 'phone'
   // The system back gesture: the panel recedes towards the bottom edge, shrinking and fading
@@ -61,21 +70,27 @@ export function OverlayShell({
         data-testid={testId}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--zen-border)] px-4">
-          <h2 className="flex-1 text-[14px] font-semibold">{title}</h2>
-          {actions}
-          <button
-            type="button"
-            className="zen-toolbar-button h-7 w-7"
-            title="Close (Esc)"
-            onClick={() => closeOverlay()}
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </header>
-        <div ref={fade} className="min-h-0 flex-1 overflow-y-auto">
-          {children}
-        </div>
+        {header ?? (
+          <header className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--zen-border)] px-4">
+            <h2 className="flex-1 text-[14px] font-semibold">{title}</h2>
+            {actions}
+            <button
+              type="button"
+              className="zen-toolbar-button h-7 w-7"
+              title="Close (Esc)"
+              onClick={() => closeOverlay()}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </header>
+        )}
+        {scroll ? (
+          <div ref={fade} className="min-h-0 flex-1 overflow-y-auto">
+            {children}
+          </div>
+        ) : (
+          <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+        )}
       </div>
     </div>
   )

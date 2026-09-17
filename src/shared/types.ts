@@ -2356,6 +2356,8 @@ export interface MenuItemDescriptor {
   /** A favicon (`data:` or remote URL) the renderer may show before the label. */
   icon?: string | null
   submenu: MenuItemDescriptor[] | null
+  /** A destructive row ("Delete"), drawn in the danger ink. */
+  danger?: boolean
 }
 
 export interface MenuDescriptor {
@@ -2372,6 +2374,8 @@ export interface MenuDescriptor {
     | 'bookmark'
     | 'history'
     | 'urlbar'
+  /** What the phone sheet calls the menu (a bookmark's name, "3 selected"); the source's generic name when absent. */
+  title?: string
   /** Anchor in chrome CSS pixels, when known. */
   x: number | null
   y: number | null
@@ -2429,6 +2433,11 @@ export interface Commands {
     args: { requestId: string; allow: boolean; always: boolean }
     result: void
   }
+  /**
+   * Put text on the system clipboard (a link copied from a history or bookmark row) and confirm
+   * it where the chrome is the one to say so (`Browser.copyText`: Android 13+ has the OS chip).
+   */
+  'clipboard.writeText': { args: { text: string; confirmation: string }; result: void }
 
   'layout.report': { args: LayoutReport; result: void }
 
