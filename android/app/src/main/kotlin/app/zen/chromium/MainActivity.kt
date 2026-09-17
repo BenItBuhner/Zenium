@@ -96,14 +96,15 @@ class MainActivity : AppCompatActivity() {
             WindowInsetsCompat.CONSUMED
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            ViewCompat.setWindowInsetsAnimationCallback(shell, object : WindowInsetsAnimationCompat.Callback(DISPATCH_MODE_STOP) {
+            val stop = WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_STOP
+            ViewCompat.setWindowInsetsAnimationCallback(shell, object : WindowInsetsAnimationCompat.Callback(stop) {
                 override fun onPrepare(animation: WindowInsetsAnimationCompat) {
                     // Only the chrome's own inputs (the address bar) ride the keyboard frame by
                     // frame; a page input would relayout its WebView on every frame instead.
                     if (animation.typeMask and WindowInsetsCompat.Type.ime() != 0 && host.chrome.hasFocus()) imeAnimating = true
                 }
 
-                override fun onProgress(insets: WindowInsetsCompat, running: MutableList<WindowInsetsAnimationCompat>): WindowInsetsCompat {
+                override fun onProgress(insets: WindowInsetsCompat, running: List<WindowInsetsAnimationCompat>): WindowInsetsCompat {
                     if (imeAnimating) applyInsets(insets)
                     return insets
                 }

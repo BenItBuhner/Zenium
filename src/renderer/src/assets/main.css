@@ -544,6 +544,9 @@
   .zen-phone-bar {
     background: transparent;
   }
+  .zen-phone-bar-lifted > button:not(.zen-phone-pill) {
+    pointer-events: none;
+  }
   /* The slot an address pill left behind while it is being carried: a shallow well. */
   .zen-pill-well {
     background: rgb(var(--zen-fg-rgb) / 0.04);

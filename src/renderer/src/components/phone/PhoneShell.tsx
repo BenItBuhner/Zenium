@@ -232,13 +232,17 @@ function PhoneBar({
   return (
     <nav
       className={cn(
-        'zen-phone-bar absolute inset-x-0 z-30 flex items-center gap-1 px-2',
+        'zen-phone-bar absolute z-30 flex items-center gap-1 px-2',
         edge === 'bottom' ? 'bottom-0' : 'top-0',
+        // While the pill is being carried the other buttons are on their way out too.
+        pillLook !== 'docked' && 'zen-phone-bar-lifted',
         inert && 'pointer-events-none'
       )}
       aria-hidden={inert || undefined}
       style={{
         ...style,
+        left: 'var(--zen-inset-left)',
+        right: 'var(--zen-inset-right)',
         paddingTop: edge === 'top' ? `calc(${inset} + 6px)` : 6,
         paddingBottom: edge === 'bottom' ? `calc(${inset} + 6px)` : 6
       }}
