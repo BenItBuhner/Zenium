@@ -432,12 +432,38 @@ describe('WebRequestMultiplexer listeners', () => {
         : undefined
     )
 
-    // The engine's cancel is final and the listeners never see the request.
-    expect(ses.beforeRequest({ url: 'https://site.example/engine-blocks' })).toEqual({
+    const errors: WebRequestDetails[] = []
+    mux.addListener(
+      'onErrorOccurred',
+      (d) => {
+        errors.push(d)
+      },
+      { registrant: 'watcher' }
+    )
+
+    // The engine's cancel is final and the listeners never see the request, but they hear that
+    // it was blocked, as Chromium tells them.
+    expect(ses.beforeRequest({ id: 41, url: 'https://site.example/engine-blocks' })).toEqual({
       cancel: true
     })
     expect(log).toEqual([])
     expect(mux.inFlight).toBe(0)
+    expect(errors).toMatchObject([
+      {
+        event: 'onErrorOccurred',
+        requestId: '41',
+        url: 'https://site.example/engine-blocks',
+        error: 'net::ERR_BLOCKED_BY_CLIENT',
+        fromCache: false
+      }
+    ])
+    // Electron's own error event for the cancelled request finds nothing left to report.
+    ses.observe('onErrorOccurred', {
+      id: 41,
+      url: 'https://site.example/engine-blocks',
+      error: 'net::ERR_BLOCKED_BY_CLIENT'
+    })
+    expect(errors).toHaveLength(1)
 
     // Every listener runs; the highest-priority registrant's redirect wins, the loser is a conflict.
     expect(ses.beforeRequest({ url: 'https://site.example/redirect' })).toEqual({
@@ -448,10 +474,14 @@ describe('WebRequestMultiplexer listeners', () => {
       { event: 'onBeforeRequest', registrant: 'low', url: 'https://site.example/redirect' }
     ])
 
-    // Any cancel wins over redirects.
-    expect(ses.beforeRequest({ url: 'https://site.example/redirect/cancel' })).toEqual({
+    // Any cancel wins over redirects, and a listener's cancel is reported like the engine's.
+    expect(ses.beforeRequest({ id: 42, url: 'https://site.example/redirect/cancel' })).toEqual({
       cancel: true
     })
+    expect(errors.map((d) => [d.requestId, d.error])).toEqual([
+      ['41', 'net::ERR_BLOCKED_BY_CLIENT'],
+      ['42', 'net::ERR_BLOCKED_BY_CLIENT']
+    ])
     // A data: redirect is a cancel in disguise and beats a higher-priority plain redirect.
     expect(ses.beforeRequest({ url: 'https://site.example/redirect/data' })).toEqual({
       redirectURL: 'data:text/plain,'

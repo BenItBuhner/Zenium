@@ -226,6 +226,9 @@ export interface Answer {
 /** Requests whose context outlived their completion events are dropped past this many. */
 const MAX_TRACKED_REQUESTS = 4096
 
+/** What Chromium reports for a request a rule or an extension cancelled. */
+export const BLOCKED_BY_CLIENT = 'net::ERR_BLOCKED_BY_CLIENT'
+
 /** Fans the session's `webRequest` events out to the ordered handlers, then the listeners. */
 export class WebRequestMultiplexer {
   private readonly handlers: RequestHandler[] = []
@@ -324,7 +327,7 @@ export class WebRequestMultiplexer {
         if (result) break
       }
       if (result && 'cancel' in result) {
-        this.requests.delete(details.id)
+        this.cancelled(request, details.id)
         callback({ cancel: true })
         return
       }
@@ -337,7 +340,7 @@ export class WebRequestMultiplexer {
           this.conflict('onBeforeRequest', registrant, details.url)
         )
         if (composed.cancel) {
-          this.requests.delete(details.id)
+          this.cancelled(request, details.id)
           callback({ cancel: true })
         } else if (composed.redirectUrl) callback({ redirectURL: composed.redirectUrl })
         else callback({})
@@ -357,13 +360,13 @@ export class WebRequestMultiplexer {
         }
       }
       if (cancel) {
-        this.requests.delete(details.id)
+        this.cancelled(request, details.id)
         callback({ cancel: true })
         return
       }
       this.dispatch('onBeforeSendHeaders', request, { requestHeaders: headers }, (answers) => {
         if (answers.some((a) => a.response.cancel)) {
-          this.requests.delete(details.id)
+          this.cancelled(request, details.id)
           callback({ cancel: true })
           return
         }
@@ -392,7 +395,7 @@ export class WebRequestMultiplexer {
         }
       }
       if (cancel) {
-        this.requests.delete(details.id)
+        this.cancelled(request, details.id)
         callback({ cancel: true })
         return
       }
@@ -403,7 +406,7 @@ export class WebRequestMultiplexer {
       }
       this.dispatch('onHeadersReceived', request, extra, (answers) => {
         if (answers.some((a) => a.response.cancel)) {
-          this.requests.delete(details.id)
+          this.cancelled(request, details.id)
           callback({ cancel: true })
           return
         }
@@ -569,6 +572,23 @@ export class WebRequestMultiplexer {
     const finish = (): void => done(answers.filter((a): a is Answer => a !== null))
     if (pending.length === 0) finish()
     else void Promise.all(pending).then(finish)
+  }
+
+  /**
+   * A handler or listener cancelled the request: Chromium reports it to `onErrorOccurred` as
+   * `net::ERR_BLOCKED_BY_CLIENT`, so the listeners hear that here and now (the Kotlin registry
+   * does the same) and the record is dropped before Electron's own error event, which then
+   * finds nothing to report twice.
+   */
+  private cancelled(request: HostRequest, id: number): void {
+    if (this.listeners.get('onErrorOccurred')?.length)
+      this.dispatch(
+        'onErrorOccurred',
+        request,
+        { error: BLOCKED_BY_CLIENT, fromCache: false },
+        noop
+      )
+    this.requests.delete(id)
   }
 
   private conflict(event: WebRequestEvent, registrant: string, url: string): void {
