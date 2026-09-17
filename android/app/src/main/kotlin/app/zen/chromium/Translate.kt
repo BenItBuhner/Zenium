@@ -120,7 +120,10 @@ class Translate(context: Context, private val host: Host) {
         }
     }
 
-    /** The registry's CDN answers directly; follow a few redirects anyway (https only). */
+    /**
+     * The registry's CDN answers directly; follow a few redirects anyway (https only). The user
+     * agent names the product plainly: the CDN answers 406 to browser-style user agents.
+     */
     private fun open(url: String): HttpURLConnection {
         var current = URL(url)
         for (hop in 0 until 6) {
@@ -130,6 +133,7 @@ class Translate(context: Context, private val host: Host) {
                 readTimeout = 30_000
                 instanceFollowRedirects = false
                 setRequestProperty("Accept", "application/octet-stream")
+                setRequestProperty("User-Agent", "Zenium/${BuildConfig.VERSION_NAME}")
             }
             val status = connection.responseCode
             if (status in 300..399) {

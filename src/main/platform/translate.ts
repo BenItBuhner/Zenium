@@ -39,7 +39,14 @@ async function readAsset(specifier: string): Promise<ArrayBuffer> {
  * place, so a listing of the directory is always an inventory of usable models.
  */
 export class FileModelStore implements TranslateModelStore {
-  constructor(readonly dir: string) {}
+  /**
+   * `userAgent` names the product plainly (`Zenium/<version>`): the attachment CDN answers 406
+   * to Chromium-style browser user agents, and the download is not a page load anyway.
+   */
+  constructor(
+    readonly dir: string,
+    private readonly userAgent: string
+  ) {}
 
   async list(): Promise<{ name: string; size: number }[]> {
     await mkdir(this.dir, { recursive: true })
@@ -67,7 +74,11 @@ export class FileModelStore implements TranslateModelStore {
     await mkdir(this.dir, { recursive: true })
     const target = join(this.dir, file.name)
     const partial = `${target}.part`
-    const response = await net.fetch(file.url, { signal, cache: 'no-store' })
+    const response = await net.fetch(file.url, {
+      signal,
+      cache: 'no-store',
+      headers: { Accept: 'application/octet-stream', 'User-Agent': this.userAgent }
+    })
     if (!response.ok || !response.body)
       throw new Error(`the model download failed (HTTP ${response.status})`)
     const hash = createHash('sha256')
@@ -197,7 +208,7 @@ export class ElectronTranslateHost implements TranslateHost {
     /** The chrome renderer that should run the next engine worker. */
     private readonly chromeWebContents: () => WebContents | null
   ) {
-    this.models = new FileModelStore(join(userDataDir, 'zen', 'translate'))
+    this.models = new FileModelStore(join(userDataDir, 'zen', 'translate'), `Zenium/${app.getVersion()}`)
     this.locales = preferredLocales()
   }
 
