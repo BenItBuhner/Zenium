@@ -800,6 +800,7 @@ export class Browser {
       'app.menu': (_a, win) => this.menus.showAppMenu(win),
       'focus.content': (_a, win) => win.focusContent(),
       'focus.chrome': (_a, win) => win.focusChrome(),
+      haptic: ({ kind }, win) => win.haptic(kind),
       'media.toggle': ({ tabId }) => {
         const view = tabs.view(tabId)
         if (!view) return

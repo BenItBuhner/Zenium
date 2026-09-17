@@ -174,6 +174,7 @@
   .zen-essential,
   .zen-panel,
   .zen-content-frame,
+  .zen-omnibox-sheet,
   .zen-toolbar-button,
   .zen-kbd,
   .zen-suggestion,
@@ -513,6 +514,17 @@
     opacity: 1;
   }
 }
+/* The address pill growing into the omnibox field as the bar's buttons make room. */
+@keyframes zen-field-grow {
+  from {
+    margin-left: 48px;
+    margin-right: 144px;
+  }
+  to {
+    margin-left: 0;
+    margin-right: 0;
+  }
+}
 @layer components {
   .zen-sheet-in {
     animation: zen-sheet-in 220ms var(--zen-ease);
@@ -531,6 +543,44 @@
   }
   .zen-phone-bar {
     background: transparent;
+  }
+  /* The slot an address pill left behind while it is being carried: a shallow well. */
+  .zen-pill-well {
+    background: rgb(var(--zen-fg-rgb) / 0.04);
+    box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.06);
+    transition: background 160ms var(--zen-ease);
+  }
+  .zen-pill-well-target {
+    background: rgb(var(--zen-fg-rgb) / 0.09);
+  }
+  /* The carried pill: the pill's own look, elevation added per frame from the lift. */
+  .zen-pill-ghost {
+    background: var(--zen-bg-solid);
+    will-change: transform, top, left;
+  }
+  /*
+   * The phone's omnibox: the content frame becomes the suggestions surface, the field a raised
+   * card in the bar band. Depth, not lines, separates them.
+   */
+  .zen-omnibox-sheet {
+    background: var(--zen-panel-bg);
+    border-radius: var(--zen-content-radius);
+    box-shadow:
+      0 0 0 1px rgb(var(--zen-fg-rgb) / 0.08),
+      0 2px 14px rgb(0 0 0 / 0.08);
+    will-change: transform, opacity;
+  }
+  .zen-omnibox-field {
+    background: var(--zen-panel-bg);
+    box-shadow:
+      0 0 0 1px rgb(var(--zen-fg-rgb) / 0.06),
+      0 1px 2px rgb(0 0 0 / 0.06),
+      0 6px 20px rgb(0 0 0 / 0.1);
+    animation: zen-field-grow 220ms var(--zen-ease);
+  }
+  /* Concentric with the sheet's 12 px corners at the list's 4 px inset. */
+  .zen-suggestion-sheet {
+    border-radius: 8px;
   }
 
   /*

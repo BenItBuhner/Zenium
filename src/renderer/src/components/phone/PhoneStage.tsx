@@ -24,7 +24,14 @@ export function PhoneStage({ state }: { state: UIState }): JSX.Element | null {
   return (
     <div className="absolute inset-0 z-20">
       {tabs.phase !== 'idle' && <TabSwitchStage state={state} tabs={tabs} area={area} />}
-      {overview.phase !== 'closed' && <TabOverview state={state} overview={overview} area={area} />}
+      {overview.phase !== 'closed' && (
+        <TabOverview
+          state={state}
+          overview={overview}
+          area={area}
+          edge={state.settings.phoneBarPosition}
+        />
+      )}
     </div>
   )
 }

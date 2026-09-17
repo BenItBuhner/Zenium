@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { MonitorSmartphone, Plus } from 'lucide-react'
 import type { Rect, UIState } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
+import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import { captureActiveTab, uiStore, type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -52,9 +53,13 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
 
   const { area, contentHidden } = useLayoutReporter(viewportRef, state, ui, glanceActive)
   const local: Rect | null = area ? { x: 0, y: 0, width: area.width, height: area.height } : null
+  // The phone shell draws the URL bar itself: its field sits in the bar band outside this frame.
+  const phone = useViewport().formFactor === 'phone'
   // The phone's gesture stage draws its own cards where the page was; nothing to dim behind it.
+  // Its URL bar covers the frame completely, so there is nothing to dim behind that either.
   const staged = ui.stageActive && !overlayCoversContentBesidesStage(ui)
-  const showSnapshot = (contentHidden || glanceActive) && Boolean(tab) && !staged
+  const showSnapshot =
+    (contentHidden || glanceActive) && Boolean(tab) && !staged && !(phone && ui.urlbar.open)
   const dropKey = dropStore.use((s) => s.key)
   const foreign = isForeignTab(state, tab?.id)
 
@@ -91,7 +96,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
         {glanceActive && state.glance && local && (
           <GlanceFrame state={state} glance={state.glance} area={local} ready={ui.glanceReady} />
         )}
-        {ui.urlbar.open && local && (
+        {ui.urlbar.open && local && !phone && (
           <Urlbar
             key={`${ui.urlbar.mode}-${ui.urlbar.tabId ?? 'new'}`}
             state={state}

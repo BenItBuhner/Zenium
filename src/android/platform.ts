@@ -1,4 +1,4 @@
-import type { EventName, Events, HostCapabilities } from '@shared/types'
+import type { EventName, Events, HapticKind, HostCapabilities } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { newId } from '@shared/ids'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '@shared/updates'
@@ -300,6 +300,10 @@ export class AndroidWindowHost implements WindowHost {
 
   focusChrome(): void {
     this.bridge.send('chrome.focus')
+  }
+
+  haptic(kind: HapticKind): void {
+    this.bridge.send('chrome.haptic', { kind })
   }
 
   openChromeDevTools(): void {

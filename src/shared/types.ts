@@ -522,6 +522,10 @@ export type ThirdPartyPinnedBehavior = 'new-tab' | 'glance' | 'same-tab'
 export type ColorScheme = 'system' | 'light' | 'dark'
 export type SidebarSide = 'left' | 'right'
 export type NewTabPosition = 'end' | 'after-current'
+/** Screen edge the phone layout docks its address bar to. */
+export type PhoneBarPosition = 'top' | 'bottom'
+/** Haptic feedback the chrome asks the host for (mobile hosts; no-op elsewhere). */
+export type HapticKind = 'lift' | 'tick' | 'dock'
 
 export interface CompactModeSettings {
   enabled: boolean
@@ -543,6 +547,8 @@ export interface Settings {
   borderless: boolean
   compactMode: CompactModeSettings
   urlbarBehavior: UrlbarBehavior
+  /** Phone layout: where the address bar (and its gestures) live. Long-press the pill to move it. */
+  phoneBarPosition: PhoneBarPosition
   glanceEnabled: boolean
   glanceTrigger: GlanceTrigger
   pinnedCloseBehavior: PinnedCloseBehavior
@@ -1051,6 +1057,8 @@ export interface Commands {
   'focus.content': { args: void; result: void }
   /** Renderer → main: chrome UI opened, take keyboard focus. */
   'focus.chrome': { args: void; result: void }
+  /** Renderer → host: a gesture reached a landmark (pick-up, midpoint, dock); vibrate briefly. */
+  haptic: { args: { kind: HapticKind }; result: void }
   'media.toggle': { args: { tabId: string }; result: void }
 
   'split.create': { args: { tabIds: string[]; layout: SplitLayout }; result: void }

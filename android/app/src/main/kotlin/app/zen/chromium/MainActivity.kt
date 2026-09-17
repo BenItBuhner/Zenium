@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.util.Patterns
 import android.view.KeyEvent
@@ -18,6 +19,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import org.json.JSONArray
 import org.json.JSONObject
@@ -33,6 +35,9 @@ class MainActivity : AppCompatActivity() {
     lateinit var host: Host
         private set
     private var insets = JSONObject()
+    private var latestInsets: WindowInsetsCompat? = null
+    /** The keyboard is animating for the chrome; its frames are streamed as insets. */
+    private var imeAnimating = false
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var permissionCallback: ((Map<String, Boolean>) -> Unit)? = null
     private var textFilesCallback: ((JSONArray) -> Unit)? = null
@@ -84,17 +89,31 @@ class MainActivity : AppCompatActivity() {
         setContentView(shell)
 
         ViewCompat.setOnApplyWindowInsetsListener(shell) { _, windowInsets ->
-            val bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-            val ime = windowInsets.getInsets(WindowInsetsCompat.Type.ime())
-            val d = resources.displayMetrics.density
-            insets = json(
-                "top" to bars.top / d,
-                "right" to bars.right / d,
-                "bottom" to maxOf(bars.bottom, ime.bottom) / d,
-                "left" to bars.left / d
-            )
-            host.chrome.hostEvent("insets", insets)
+            latestInsets = windowInsets
+            // The end state arrives before the keyboard starts moving; while its animation is
+            // being streamed to the chrome the per-frame values below take over instead.
+            if (!imeAnimating) applyInsets(windowInsets)
             WindowInsetsCompat.CONSUMED
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            ViewCompat.setWindowInsetsAnimationCallback(shell, object : WindowInsetsAnimationCompat.Callback(DISPATCH_MODE_STOP) {
+                override fun onPrepare(animation: WindowInsetsAnimationCompat) {
+                    // Only the chrome's own inputs (the address bar) ride the keyboard frame by
+                    // frame; a page input would relayout its WebView on every frame instead.
+                    if (animation.typeMask and WindowInsetsCompat.Type.ime() != 0 && host.chrome.hasFocus()) imeAnimating = true
+                }
+
+                override fun onProgress(insets: WindowInsetsCompat, running: MutableList<WindowInsetsAnimationCompat>): WindowInsetsCompat {
+                    if (imeAnimating) applyInsets(insets)
+                    return insets
+                }
+
+                override fun onEnd(animation: WindowInsetsAnimationCompat) {
+                    if (!imeAnimating || animation.typeMask and WindowInsetsCompat.Type.ime() == 0) return
+                    imeAnimating = false
+                    latestInsets?.let(::applyInsets)
+                }
+            })
         }
 
         // Back is the host's PredictiveBack: it registers itself only while there is something to
@@ -104,6 +123,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun currentInsets(): JSONObject = insets
+
+    /** Tell the chrome how far the status bar, cutout, gesture bar and keyboard reach in CSS px. */
+    private fun applyInsets(windowInsets: WindowInsetsCompat) {
+        val bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+        val ime = windowInsets.getInsets(WindowInsetsCompat.Type.ime())
+        val d = resources.displayMetrics.density
+        insets = json(
+            "top" to bars.top / d,
+            "right" to bars.right / d,
+            "bottom" to maxOf(bars.bottom, ime.bottom) / d,
+            "left" to bars.left / d
+        )
+        host.chrome.hostEvent("insets", insets)
+    }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)

@@ -15,6 +15,7 @@ import android.os.Looper
 import android.print.PrintAttributes
 import android.print.PrintManager
 import android.provider.MediaStore
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
@@ -168,6 +169,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
                 imm.hideSoftInputFromWindow(chrome.windowToken, 0)
                 reply(null)
             }
+            "chrome.haptic" -> { haptic(args.str("kind")); reply(null) }
             "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("background"), args.str("scrim")); reply(null) }
             "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId")); reply(null) }
             "window.setFullscreen" -> { setImmersive(args.bool("fullscreen")); reply(null) }
@@ -302,7 +304,28 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             .show()
     }
 
+<<<<<<< HEAD
     private fun applyTheme(dark: Boolean, background: String, scrim: String) {
+=======
+    /**
+     * The system's own haptics for the chrome's gestures – the long-press pick-up, a notch as the
+     * dragged address bar passes the middle of the screen, and the click of it docking – so they
+     * feel like every other long-press and snap on the device.
+     */
+    private fun haptic(kind: String) {
+        val constant = when (kind) {
+            "lift" -> HapticFeedbackConstants.LONG_PRESS
+            "tick" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) HapticFeedbackConstants.SEGMENT_TICK
+                else HapticFeedbackConstants.CLOCK_TICK
+            "dock" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) HapticFeedbackConstants.CONFIRM
+                else HapticFeedbackConstants.CONTEXT_CLICK
+            else -> return
+        }
+        chrome.performHapticFeedback(constant)
+    }
+
+    private fun applyTheme(dark: Boolean, background: String) {
+>>>>>>> 7150978 (Phone chrome: omnibox fills the frame above the keyboard; long-press carries the address bar to either edge)
         themeDark = dark
         if (scrim.isNotEmpty()) themeScrim = parseColor(scrim)
         val color = parseColor(background.ifEmpty { if (dark) "#16161b" else "#f2f1f5" })

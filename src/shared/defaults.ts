@@ -94,6 +94,7 @@ export const DEFAULT_SETTINGS: Settings = {
     sidebarPersistent: false
   },
   urlbarBehavior: 'float-typing',
+  phoneBarPosition: 'bottom',
   glanceEnabled: true,
   glanceTrigger: 'alt',
   pinnedCloseBehavior: 'reset-unload-switch',

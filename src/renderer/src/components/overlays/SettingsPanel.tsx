@@ -8,6 +8,7 @@ import type {
   GlanceTrigger,
   HostCapabilities,
   NewTabPosition,
+  PhoneBarPosition,
   PinnedCloseBehavior,
   Settings,
   SidebarSide,
@@ -244,6 +245,19 @@ function LookSection({
               { value: 'float-typing', label: 'Floating only when typing' },
               { value: 'always-float', label: 'Always floating' },
               { value: 'normal', label: 'Normal (attached to top)' }
+            ]}
+          />
+        </Row>
+        <Row
+          label="Position on phones"
+          hint="Press and hold the address bar to carry it to the other edge of the screen."
+        >
+          <Choice<PhoneBarPosition>
+            value={s.phoneBarPosition}
+            onChange={(v) => set({ phoneBarPosition: v })}
+            options={[
+              { value: 'bottom', label: 'Bottom' },
+              { value: 'top', label: 'Top' }
             ]}
           />
         </Row>

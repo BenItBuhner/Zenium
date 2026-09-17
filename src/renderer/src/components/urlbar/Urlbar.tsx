@@ -1,7 +1,7 @@
-import type { JSX } from 'react'
+import type { JSX, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowRight, Bookmark, Clock, Globe, Layers, Search, Terminal } from 'lucide-react'
-import type { Rect, Suggestion, UIState } from '@shared/types'
+import { ArrowRight, Bookmark, Clock, Globe, Layers, Search, Terminal, X } from 'lucide-react'
+import type { PhoneBarPosition, Rect, Suggestion, UIState } from '@shared/types'
 import { ERROR_URL_PREFIX, BLANK_URL } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
@@ -12,7 +12,13 @@ import { cn } from '@renderer/lib/utils'
 interface Props {
   state: UIState
   urlbar: UrlbarState
-  area: Rect
+  /** Content area the bar floats in (desktop layouts); null for the phone sheet. */
+  area: Rect | null
+  /**
+   * Phone layout: the edge the address bar is docked at. The field takes the bar's own band and
+   * the suggestions fill the content frame, growing away from it towards the middle of the screen.
+   */
+  phoneEdge?: PhoneBarPosition
 }
 
 /** Zen remembers what you typed until you navigate away. */
@@ -36,7 +42,7 @@ function initialTextFor(state: UIState, urlbar: UrlbarState): string {
   return tab.url
 }
 
-export function Urlbar({ state, urlbar, area }: Props): JSX.Element {
+export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   const [text, setText] = useState(() => initialTextFor(state, urlbar))
   const [results, setResults] = useState<Suggestion[]>([])
   const [selected, setSelected] = useState(-1)
@@ -96,6 +102,13 @@ export function Urlbar({ state, urlbar, area }: Props): JSX.Element {
     void fetchSuggestions(value, grew && !/\s/.test(value))
   }
 
+  const clear = (): void => {
+    lastTyped.current = ''
+    setText('')
+    void fetchSuggestions('', false)
+    inputRef.current?.focus()
+  }
+
   const close = useCallback(
     (keepDraft: boolean) => {
       const key = tab ? `${tab.id}|${tab.url}` : 'new'
@@ -107,11 +120,22 @@ export function Urlbar({ state, urlbar, area }: Props): JSX.Element {
   )
 
   // The system back gesture lifts the bar away like a sheet off the top edge, fading as it goes;
-  // commit closes it keeping the draft, like Escape, cancel springs it back.
+  // commit closes it keeping the draft, like Escape, cancel springs it back. On the phone the
+  // suggestions sheet shrinks towards the bar's edge and the field settles back into the pill.
   const panelRef = useRef<HTMLDivElement>(null)
+  const sheetRef = useRef<HTMLDivElement>(null)
+  const fieldRef = useRef<HTMLDivElement>(null)
   useBackDismissal('urlbar', {
     travel: 320,
     render: (v) => {
+      const sheet = sheetRef.current
+      if (sheet) {
+        sheet.style.transform = `scale(${1 - 0.08 * v})`
+        sheet.style.opacity = String(1 - 0.6 * v)
+        const field = fieldRef.current
+        if (field) field.style.opacity = String(1 - 0.5 * v)
+        return
+      }
       const el = panelRef.current
       if (!el) return
       el.style.transformOrigin = '50% 0%'
@@ -207,8 +231,9 @@ export function Urlbar({ state, urlbar, area }: Props): JSX.Element {
   }
 
   const floating = !urlbar.attached
-  const width = Math.min(680, area.width - 32)
+  const width = Math.min(680, (area?.width ?? 0) - 32)
   const style = useMemo(() => {
+    if (!area) return undefined
     const top = floating ? Math.max(24, area.height * 0.16) : 8
     return {
       left: floating ? (area.width - width) / 2 : 8,
@@ -217,10 +242,71 @@ export function Urlbar({ state, urlbar, area }: Props): JSX.Element {
       // Never grow past the content area – on phones the keyboard takes most of it.
       maxHeight: Math.max(120, area.height - top - 8)
     }
-  }, [floating, area.width, area.height, width])
+  }, [floating, area, width])
 
   const placeholder =
     urlbar.mode === 'search' ? `Search with ${engine.name}` : 'Search or enter address'
+
+  const rows = (className?: string): JSX.Element[] =>
+    results.map((item, i) => (
+      <SuggestionRow
+        key={item.id}
+        item={item}
+        selected={i === selected}
+        className={className}
+        onHover={() => setSelected(i)}
+        onPick={(e) => submit(item, { newTab: e.altKey || e.button === 1 })}
+      />
+    ))
+
+  if (phoneEdge) {
+    return (
+      <PhoneSheet
+        edge={phoneEdge}
+        sheetRef={sheetRef}
+        fieldRef={fieldRef}
+        onDismiss={() => close(true)}
+        rows={rows('zen-suggestion-sheet')}
+        hint={results.length === 0 && !text ? placeholder : null}
+        field={
+          <div className="zen-omnibox-field flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full pl-2 pr-1.5">
+            <span
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--zen-element-bg)] text-[11px] font-semibold"
+              title={`Search engine: ${engine.name}`}
+            >
+              {engine.glyph}
+            </span>
+            <input
+              ref={inputRef}
+              value={text}
+              onChange={onChange}
+              onKeyDown={onKeyDown}
+              placeholder={placeholder}
+              spellCheck={false}
+              autoComplete="off"
+              autoCapitalize="off"
+              autoCorrect="off"
+              inputMode="url"
+              enterKeyHint="go"
+              className="h-full min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-[var(--zen-muted)]"
+            />
+            {text && (
+              <button
+                type="button"
+                className="zen-toolbar-button h-8 w-8 shrink-0 rounded-full"
+                aria-label="Clear"
+                // Keep the input focused so the keyboard stays where it is.
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={clear}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        }
+      />
+    )
+  }
 
   return (
     <div className="absolute inset-0 z-30" onMouseDown={() => close(true)}>
@@ -261,15 +347,7 @@ export function Urlbar({ state, urlbar, area }: Props): JSX.Element {
             ref={fadeResults}
             className="min-h-0 max-h-[420px] flex-1 overflow-y-auto border-t border-[var(--zen-border)] p-1.5"
           >
-            {results.map((item, i) => (
-              <SuggestionRow
-                key={item.id}
-                item={item}
-                selected={i === selected}
-                onHover={() => setSelected(i)}
-                onPick={(e) => submit(item, { newTab: e.altKey || e.button === 1 })}
-              />
-            ))}
+            {rows()}
           </ul>
         )}
         <div className="zen-kbd-hint flex h-7 shrink-0 items-center gap-3 border-t border-[var(--zen-border)] px-4 text-[10.5px] text-[var(--zen-muted)]">
@@ -293,14 +371,102 @@ export function Urlbar({ state, urlbar, area }: Props): JSX.Element {
   )
 }
 
+/**
+ * The phone's omnibox. The field sits exactly where the address pill was – in the bar band at
+ * `edge`, riding the keyboard inset – and the suggestions take over the whole content frame,
+ * ordered so the first one is nearest the field and the list grows towards the middle of the
+ * screen. Nothing of the page shows through: the frame is the surface, whatever the keyboard's
+ * height or the phone's orientation.
+ */
+function PhoneSheet({
+  edge,
+  field,
+  rows,
+  hint,
+  onDismiss,
+  sheetRef,
+  fieldRef
+}: {
+  edge: PhoneBarPosition
+  field: JSX.Element
+  rows: JSX.Element[]
+  /** Shown in the empty sheet before anything is typed. */
+  hint: string | null
+  onDismiss: () => void
+  /** Painted by the back gesture (transform and opacity only). */
+  sheetRef: RefObject<HTMLDivElement | null>
+  fieldRef: RefObject<HTMLDivElement | null>
+}): JSX.Element {
+  const bottom = edge === 'bottom'
+  // A long list dissolves at the edge that has more past it, like every scroller in the chrome.
+  const fadeRows = useFadeEdges<HTMLUListElement>({ axis: 'y' })
+  const bandStyle = {
+    left: 'var(--zen-inset-left)',
+    right: 'var(--zen-inset-right)',
+    [bottom ? 'bottom' : 'top']: 0,
+    paddingTop: bottom ? 6 : 'calc(var(--zen-inset-top) + 6px)',
+    paddingBottom: bottom ? 'calc(var(--zen-inset-bottom) + 6px)' : 6
+  }
+  const sheetStyle = {
+    left: 'calc(var(--zen-inset-left) + var(--zen-padding))',
+    right: 'calc(var(--zen-inset-right) + var(--zen-padding))',
+    top: bottom
+      ? 'calc(var(--zen-inset-top) + var(--zen-padding))'
+      : 'calc(var(--zen-inset-top) + var(--zen-phone-bar))',
+    bottom: bottom
+      ? 'calc(var(--zen-inset-bottom) + var(--zen-phone-bar))'
+      : 'calc(var(--zen-inset-bottom) + var(--zen-padding))',
+    transformOrigin: bottom ? '50% 100%' : '50% 0%'
+  }
+  return (
+    <div className="absolute inset-0 z-30" onMouseDown={onDismiss}>
+      <div
+        ref={sheetRef}
+        className="zen-omnibox-sheet zen-animate-fade absolute overflow-hidden"
+        style={sheetStyle}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        {rows.length > 0 ? (
+          <ul
+            ref={fadeRows}
+            className={cn(
+              'absolute inset-0 flex overflow-y-auto p-1',
+              bottom ? 'flex-col-reverse' : 'flex-col'
+            )}
+            style={{ touchAction: 'pan-y', overscrollBehavior: 'contain' }}
+          >
+            {rows}
+          </ul>
+        ) : (
+          hint && (
+            <div className="absolute inset-0 flex items-center justify-center px-10 text-center text-[13px] text-[var(--zen-muted)]">
+              {hint}
+            </div>
+          )
+        )}
+      </div>
+      <div
+        ref={fieldRef}
+        className="absolute flex items-center px-2"
+        style={bandStyle}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        {field}
+      </div>
+    </div>
+  )
+}
+
 function SuggestionRow({
   item,
   selected,
+  className,
   onHover,
   onPick
 }: {
   item: Suggestion
   selected: boolean
+  className?: string
   onHover: () => void
   onPick: (e: React.MouseEvent) => void
 }): JSX.Element {
@@ -319,7 +485,10 @@ function SuggestionRow({
               : Globe
   return (
     <li
-      className="zen-suggestion flex h-9 cursor-default items-center gap-3 rounded-lg px-2.5"
+      className={cn(
+        'zen-suggestion flex h-9 shrink-0 cursor-default items-center gap-3 rounded-lg px-2.5',
+        className
+      )}
       data-selected={selected}
       onMouseEnter={onHover}
       onPointerDown={(e) => {
