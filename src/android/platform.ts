@@ -93,7 +93,9 @@ export function androidCapabilities({
     pullToRefresh: true,
     passwords: true,
     defaultBrowser: true,
-    requestBlocking: true
+    requestBlocking: true,
+    // The WebView has no preload bridge for `zen://newtab` yet; new tabs stay URL-bar-only.
+    newTabPage: false
   }
 }
 

@@ -74,6 +74,11 @@ export interface HostCapabilities {
   defaultBrowser: boolean
   /** The host runs a request engine that blocks ads and trackers (Settings → Privacy and security). */
   requestBlocking: boolean
+  /**
+   * The host renders `zen://newtab` as a live page (theme bridge, shortcuts, customize panel).
+   * Without it new tabs stay blank and the URL bar alone stands in for a new tab page.
+   */
+  newTabPage: boolean
 }
 
 export interface Rect {
@@ -955,6 +960,69 @@ export interface CompactModeSettings {
   sidebarPersistent: boolean
 }
 
+// ---------------------------------------------------------------------------
+// New tab page (`zen://newtab`)
+// ---------------------------------------------------------------------------
+
+/** What the shortcuts grid on the new tab page shows. */
+export type NewTabShortcutsMode = 'most-visited' | 'custom' | 'hidden'
+/** What the new tab page paints behind its content. */
+export type NewTabBackgroundKind = 'space' | 'solid' | 'image'
+
+/** New tab page preferences (synced with the other settings). */
+export interface NewTabSettings {
+  /** Open `zen://newtab` for new tabs; off keeps the URL-bar-only behaviour. */
+  enabled: boolean
+  shortcuts: NewTabShortcutsMode
+  background: NewTabBackgroundKind
+  /** A "Good morning" line above the search box. */
+  greeting: boolean
+}
+
+/** A tile of the "My shortcuts" grid. Kept per device (never synced). */
+export interface NewTabShortcut {
+  id: string
+  title: string
+  url: string
+}
+
+/**
+ * Everything `zen://newtab` renders. The host hands the initial state to the page before its
+ * first paint and pushes a fresh one whenever a space theme, a setting or the grid changes.
+ */
+export interface NewTabPageState {
+  /** Theme of the tab's space (null for the default look), resolved by the page for its scheme. */
+  theme: SpaceTheme | null
+  colorScheme: ColorScheme
+  /** Private window: the private accent and a "Private" label. */
+  isPrivate: boolean
+  shortcutsMode: NewTabShortcutsMode
+  background: NewTabBackgroundKind
+  greeting: boolean
+  shortcuts: NewTabShortcut[]
+  topSites: TopSite[]
+  /** Address of the custom background image (`zen://newtab-background?v=…`), when one is set. */
+  backgroundImage: string | null
+  /** The host can open an image file picker (`dialogs.pickImageFile`). */
+  canPickImage: boolean
+}
+
+/** Actions the new tab page asks the browser for (one-way; the browser answers with state). */
+export type NewTabPageAction =
+  | { type: 'ready' }
+  | { type: 'search'; text: string }
+  | { type: 'open'; url: string; background: boolean }
+  | { type: 'add-shortcut'; title: string; url: string }
+  | { type: 'update-shortcut'; id: string; title: string; url: string }
+  | { type: 'remove-shortcut'; id: string }
+  | { type: 'restore-shortcut'; id: string; title: string; url: string; index: number }
+  | { type: 'reorder-shortcuts'; ids: string[] }
+  | { type: 'set-shortcuts-mode'; mode: NewTabShortcutsMode }
+  | { type: 'set-background'; background: NewTabBackgroundKind }
+  | { type: 'set-greeting'; greeting: boolean }
+  | { type: 'pick-background-image' }
+  | { type: 'shortcut-context-menu'; id: string }
+
 export interface Settings {
   colorScheme: ColorScheme
   /** Colour of the app icon (launcher alias on Android, window / Dock icon on desktop). */
@@ -1016,6 +1084,8 @@ export interface Settings {
   defaultBrowserPromo: DefaultBrowserPromoState
   /** Ad and tracker blocking (Settings → Privacy and security). */
   blocking: BlockingSettings
+  /** The new tab page: whether it opens, what its grid shows, what it paints behind. */
+  newTab: NewTabSettings
 }
 
 // ---------------------------------------------------------------------------
@@ -1798,6 +1868,20 @@ export interface Commands {
   /** Copy arbitrary text (history rows, menus) through the host clipboard. */
   'clipboard.writeText': { args: { text: string }; result: void }
 
+  /**
+   * Ctrl+T, the sidebar's New Tab button, double-click on the sidebar: a tab at `zen://newtab`
+   * (or, with the page turned off, the URL bar in new-tab mode).
+   */
+  'newtab.open': { args: void; result: void }
+  /** Custom shortcuts of the new tab page (Settings and the page's own dialogs). */
+  'newtab.addShortcut': { args: { title: string; url: string }; result: string }
+  'newtab.updateShortcut': { args: { id: string; title: string; url: string }; result: void }
+  'newtab.removeShortcut': { args: { id: string }; result: void }
+  'newtab.reorderShortcuts': { args: { ids: string[] }; result: void }
+  /** Pick a background image from disk (`capabilities` gate it; resolves false when cancelled). */
+  'newtab.pickBackgroundImage': { args: void; result: boolean }
+  'newtab.clearBackgroundImage': { args: void; result: void }
+
   /** Bookmark the tab's page in the default folder, or remove its bookmarks (toast feedback). */
   'bookmark.toggle': { args: { tabId: string }; result: void }
   /** Star the tab's page: bookmarks it when needed, then opens the star dialog. */
@@ -2133,6 +2217,11 @@ export interface Events {
   state: UIState
   'urlbar.toggle': { mode: UrlbarOpenMode; text?: string }
   'urlbar.close': void
+  /**
+   * A new tab page was opened (and activated) for the user: the chrome waits for the tab to
+   * appear in its state, lets it paint, then opens the URL bar in new-tab mode over it.
+   */
+  'newtab.opened': { tabId: string; text?: string }
   'overlay.open': { kind: OverlayKind; folderId?: string; section?: string }
   'find.open': { tabId: string; again?: 'next' | 'prev' }
   /**

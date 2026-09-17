@@ -18,6 +18,7 @@ import type {
   LiveFolderConfig,
   MediaState,
   Mod,
+  NewTabShortcut,
   PasswordsStatus,
   PermissionRule,
   Platform,
@@ -42,6 +43,7 @@ import {
   emptyAgentServerStatus,
   emptyPasswordsStatus,
   emptyResourceSnapshot,
+  sanitizeNewTabSettings,
   sanitizePasswordSettings
 } from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
@@ -87,8 +89,12 @@ export interface PersistedWindow {
   compact: boolean
 }
 
-interface Persisted {
-  version: 1 | 2 | 3
+/**
+ * `state.json`. v1: one window; v2: every synced window; v3: the bookmark tree; v4: the new tab
+ * page's shortcuts and its "Most visited" block list.
+ */
+export interface Persisted {
+  version: 1 | 2 | 3 | 4
   spaces: Space[]
   tabs: Tab[]
   essentialTabIds: string[]
@@ -109,6 +115,39 @@ interface Persisted {
   windows?: PersistedWindow[]
   /** v3: recently closed tabs and windows (newest first, 25 deep). */
   recentlyClosed?: ClosedEntry[]
+  /** v4: "My shortcuts" of the new tab page (local to this device). */
+  newTabShortcuts?: NewTabShortcut[]
+  /** v4: hosts removed from the new tab page's "Most visited" grid (local to this device). */
+  newTabHiddenHosts?: string[]
+}
+
+export const PERSISTED_VERSION = 4
+
+/** Host block list from disk: lower-case strings, no `www.`, unique. */
+export function sanitizeHiddenHosts(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  for (const item of raw) {
+    if (typeof item !== 'string') continue
+    const host = item.trim().toLowerCase().replace(/^www\./, '')
+    if (host && !out.includes(host)) out.push(host)
+  }
+  return out
+}
+
+/** Shortcut records from disk: strings only, unique ids, blank titles fall back to the URL. */
+export function sanitizeNewTabShortcuts(raw: unknown): NewTabShortcut[] {
+  if (!Array.isArray(raw)) return []
+  const out: NewTabShortcut[] = []
+  const seen = new Set<string>()
+  for (const item of raw as Array<Partial<Record<keyof NewTabShortcut, unknown>>>) {
+    if (!item || typeof item !== 'object') continue
+    const { id, url, title } = item
+    if (typeof id !== 'string' || !id || typeof url !== 'string' || !url || seen.has(id)) continue
+    seen.add(id)
+    out.push({ id, url, title: typeof title === 'string' && title.trim() ? title : url })
+  }
+  return out
 }
 
 export type StateListener = () => void
@@ -179,6 +218,10 @@ export class BrowserState {
   })
   /** Newest first; the `SessionService` owns the list, this is where it persists. */
   recentlyClosed: ClosedEntry[] = []
+  /** "My shortcuts" of the new tab page, in grid order. */
+  newTabShortcuts: NewTabShortcut[] = []
+  /** Hosts the user removed from the new tab page's "Most visited" grid. */
+  newTabHiddenHosts: string[] = []
   media: MediaState[] = []
   devtoolsOpenFor = new Set<string>()
   resources: ResourceSnapshot = emptyResourceSnapshot()
@@ -262,7 +305,7 @@ export class BrowserState {
   /** Load the profile from disk (or create the first-run defaults). */
   load(): void {
     const data = this.store.readSync()
-    if (data && (data.version === 1 || data.version === 2 || data.version === 3)) {
+    if (data && [1, 2, 3, 4].includes(data.version)) {
       this.applyPersisted(data)
     }
     this.ensureValid()
@@ -286,7 +329,7 @@ export class BrowserState {
 
   private applyPersisted(data: Persisted): void {
     // Before v3 the recently closed list was in memory only: it starts empty.
-    this.recentlyClosed = data.version === 3 ? sanitizeClosedEntries(data.recentlyClosed) : []
+    this.recentlyClosed = data.version >= 3 ? sanitizeClosedEntries(data.recentlyClosed) : []
     this.settings = { ...structuredClone(DEFAULT_SETTINGS), ...data.settings }
     this.settings.compactMode = { ...DEFAULT_SETTINGS.compactMode, ...data.settings?.compactMode }
     // Compact mode's "persistent sidebar" toggle is transient by design.
@@ -299,8 +342,12 @@ export class BrowserState {
     this.settings.passwords = sanitizePasswordSettings(data.settings?.passwords)
     this.settings.defaultBrowserPromo = sanitizePromoState(data.settings?.defaultBrowserPromo)
     this.settings.blocking = sanitizeBlockingSettings(data.settings?.blocking)
+    this.settings.newTab = sanitizeNewTabSettings(data.settings?.newTab)
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     this.bookmarks = this.loadBookmarks(data)
+    // v4: before it the new tab page (its shortcuts and block list) did not exist.
+    this.newTabShortcuts = data.version >= 4 ? sanitizeNewTabShortcuts(data.newTabShortcuts) : []
+    this.newTabHiddenHosts = data.version >= 4 ? sanitizeHiddenHosts(data.newTabHiddenHosts) : []
     if (Array.isArray(data.windows) && data.windows.length) {
       this.restoredWindows = data.windows.filter((w) => w && typeof w.id === 'string')
     } else {
@@ -629,7 +676,7 @@ export class BrowserState {
     const transient = new Set<string>()
     for (const w of this.liveWindows()) if (w.glance) transient.add(w.glance.tabId)
     return {
-      version: 3,
+      version: PERSISTED_VERSION,
       spaces: m.spaces,
       tabs: Object.values(m.tabs)
         .filter((t) => !transient.has(t.id) && !(t.spaceId && m.localSpaces[t.spaceId]))
@@ -650,7 +697,9 @@ export class BrowserState {
       shortcutOverrides: this.shortcutOverrides,
       bookmarkTree: { schemaVersion: BOOKMARK_SCHEMA_VERSION, nodes: this.bookmarks },
       windows: persistedWindows,
-      recentlyClosed: this.recentlyClosed
+      recentlyClosed: this.recentlyClosed,
+      newTabShortcuts: this.newTabShortcuts,
+      newTabHiddenHosts: this.newTabHiddenHosts
     }
   }
 

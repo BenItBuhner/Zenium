@@ -69,7 +69,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   passwords: true,
   // The OS owns default-app choices on desktop; the desktop program decides if Zenium ever asks.
   defaultBrowser: false,
-  requestBlocking: true
+  requestBlocking: true,
+  newTabPage: true
 }
 
 /**
