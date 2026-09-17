@@ -26,6 +26,10 @@ export function describePermissionRule(rule: PermissionRule): string {
   const [permission, qualifier] = splitQualifier(rule.permission)
   const verb = rule.decision === 'allow' ? 'may' : 'may not'
   if (permission === 'openExternal') {
+    if (qualifier?.startsWith('package:')) {
+      return `${verb} open the app ${qualifier.slice('package:'.length)}`
+    }
+    if (qualifier === 'intent') return `${verb} open other apps through intent: links`
     return qualifier
       ? `${verb} hand ${qualifier}: links to another app`
       : `${verb} hand links to other apps`

@@ -332,14 +332,37 @@ export function qualifiedPermission(
   details?: PermissionRequestDetails
 ): string {
   if (permission === 'openExternal') {
-    const scheme = schemeOf(details?.externalUrl ?? '')
-    return scheme ? `openExternal:${scheme}` : permission
+    const target = externalTarget(details?.externalUrl ?? '')
+    if (target.scheme !== 'intent')
+      return target.scheme ? `openExternal:${target.scheme}` : permission
+    return target.app ? `openExternal:package:${target.app}` : 'openExternal:intent'
   }
   if (permission === 'storage-access') {
     const embedder = safeOrigin(details?.embedderUrl ?? '')
     return embedder && embedder !== 'null' ? `storage-access:${embedder}` : permission
   }
   return permission
+}
+
+/**
+ * What an external link really targets. An Android `intent:` URL is only a wrapper: its
+ * fragment (`#Intent;scheme=zxing;package=com.example.scanner;end`) names the link scheme the
+ * app handles and the app itself, and those are what the user hears about and what a remembered
+ * answer covers (the same as a plain `zxing:` link would).
+ */
+export function externalTarget(url: string): { scheme: string; app: string | null } {
+  const scheme = schemeOf(url)
+  if (scheme !== 'intent') return { scheme, app: null }
+  const hash = url.indexOf('#')
+  const fields = hash === -1 ? [] : url.slice(hash + 1).split(';')
+  const field = (name: string): string | null => {
+    const hit = fields.find((f) => f.startsWith(`${name}=`))
+    const value = hit ? hit.slice(name.length + 1).trim() : ''
+    return value ? value : null
+  }
+  const inner = field('scheme')?.toLowerCase() ?? ''
+  const app = field('package')
+  return { scheme: /^[a-z][a-z0-9+.-]*$/.test(inner) ? inner : scheme, app }
 }
 
 /** The words of a permission prompt, shared by every host so the copy matches everywhere. */
@@ -352,14 +375,29 @@ export function permissionPromptCopy(
   const remembered = 'Your choice is remembered for this site.'
   switch (permission) {
     case 'openExternal': {
-      const scheme = schemeOf(details.externalUrl ?? '')
+      const { scheme, app } = externalTarget(details.externalUrl ?? '')
+      const wrapped = scheme === 'intent'
       const what = details.targetApp
         ? details.targetApp
+        : wrapped
+          ? app
+            ? `the app ${app}`
+            : 'another app'
+          : scheme
+            ? `${scheme}: links in another app`
+            : 'another app'
+      const link = app
+        ? `\nApp: ${shorten(app)}`
+        : details.externalUrl
+          ? `\n${shorten(details.externalUrl)}`
+          : ''
+      const scope = wrapped
+        ? app
+          ? `links to ${shorten(app)} on this site`
+          : 'this site'
         : scheme
-          ? `${scheme}: links in another app`
-          : 'another app'
-      const link = details.externalUrl ? `\n${shorten(details.externalUrl)}` : ''
-      const scope = scheme ? `${scheme}: links on this site` : 'this site'
+          ? `${scheme}: links on this site`
+          : 'this site'
       return {
         message: `Allow ${site} to open ${what}?`,
         detail: `Zenium hands the link to an application outside the browser.${link}\nChoosing Open is remembered for ${scope}.`,

@@ -75,6 +75,10 @@ describe('describePermissionRule', () => {
   it('names the scheme of an external-app rule and the embedder of a storage-access rule', () => {
     expect(rule('openExternal:zoommtg')).toBe('may hand zoommtg: links to another app')
     expect(rule('openExternal', 'deny')).toBe('may not hand links to other apps')
+    expect(rule('openExternal:package:com.example.app')).toBe('may open the app com.example.app')
+    expect(rule('openExternal:intent', 'deny')).toBe(
+      'may not open other apps through intent: links'
+    )
     expect(rule('storage-access:https://embedder.example')).toBe(
       'may use its cookies inside embedder.example'
     )
@@ -101,7 +105,8 @@ describe('currentSecurityPrompt', () => {
           scheme: 'basic',
           isProxy: false,
           secure: true,
-          failedBefore: false
+          failedBefore: false,
+          username: ''
         }
       ]
     })
