@@ -138,6 +138,15 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
     private fun find(vararg labels: String): Rect =
         findAny(*labels) ?: error("none of ${labels.joinToString()} is on screen")
 
+    /** Fling the grid by `dy` px (negative scrolls towards the bottom) and let it come to rest. */
+    private fun scrollGrid(dy: Float) {
+        val f = Finger()
+        f.down(width * 0.5f, height * 0.55f)
+        f.moveBy(0f, dy, 260)
+        f.up()
+        SystemClock.sleep(1_800)
+    }
+
     private fun tap(label: String) {
         val target = waitFor(label) ?: error("no $label to tap")
         Finger().tap(target.exactCenterX(), target.exactCenterY())
