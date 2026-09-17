@@ -56,6 +56,9 @@ class TabWebView(
     val containerId: String,
     private val host: Host
 ) : WebView(context) {
+    /** Native hosts (Custom Tabs) mirror title and URL changes without a chrome WebView. */
+    var onTitleChanged: ((String) -> Unit)? = null
+    var onUrlChanged: ((String) -> Unit)? = null
     private var loading = false
     private var lastTouchX = 0f
     private var lastTouchY = 0f
@@ -655,11 +658,13 @@ class TabWebView(
             failPendingEvals("the page navigated away before the script finished")
             host.chrome.viewEvent(tabId, "startLoading", null)
             host.chrome.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", false))
+            onUrlChanged?.invoke(url)
             if (muted) setMuted(true)
         }
 
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
             onHistoryCommitted()
+            onUrlChanged?.invoke(url)
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.HISTORY_UPDATED)
             if (!loading) {
                 // pushState / hash navigation after the page finished loading.
@@ -727,6 +732,7 @@ class TabWebView(
     private inner class Chrome : WebChromeClient() {
         override fun onReceivedTitle(view: WebView, title: String?) {
             host.chrome.viewEvent(tabId, "title", json("title" to (title ?: "")))
+            onTitleChanged?.invoke(title.orEmpty())
         }
 
         override fun onReceivedIcon(view: WebView, icon: Bitmap) {

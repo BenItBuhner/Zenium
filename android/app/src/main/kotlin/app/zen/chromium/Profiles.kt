@@ -15,6 +15,8 @@ import androidx.webkit.WebViewFeature
  */
 object Profiles {
     const val DEFAULT_CONTAINER = "default"
+    /** Custom Tabs intentionally use the main profile, sharing its WebView cookie jar and sign-in. */
+    const val CUSTOM_TAB_CONTAINER = DEFAULT_CONTAINER
 
     val supported: Boolean
         get() = WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)

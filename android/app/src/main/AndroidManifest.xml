@@ -130,6 +130,24 @@
             </intent-filter>
         </activity>
 
+        <!-- A separate document task keeps a caller's Custom Tab out of Zenium's tab model. -->
+        <activity
+            android:name=".CustomTabActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="standard"
+            android:taskAffinity="${applicationId}.customtabs"
+            android:theme="@style/Theme.Zen" />
+
+        <!-- Apps discover this endpoint before launching a CustomTabsIntent for Zenium. -->
+        <service
+            android:name=".ZeniumCustomTabsService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.support.customtabs.action.CustomTabsService" />
+            </intent-filter>
+        </service>
+
         <!-- The aliases' target: hands over to MainActivity in its own task and finishes unseen, so
              disabling an alias never removes the browser's task (see LauncherIconActivity). -->
         <activity
