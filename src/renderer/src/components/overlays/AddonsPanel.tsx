@@ -1,9 +1,10 @@
 import type { JSX } from 'react'
 import { useState } from 'react'
-import { FolderOpen, Link2, Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, FolderOpen, Link2, Plus, Trash2 } from 'lucide-react'
 import type { Mod, UIState } from '@shared/types'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
+import { useViewport } from '@renderer/lib/formFactor'
 import { cn } from '@renderer/lib/utils'
 import { ExtensionsPage } from '../extensions/ExtensionsPage'
 import { Button } from '../ui/button'
@@ -13,50 +14,74 @@ import { EmptyNote, OverlayShell } from './OverlayShell'
 
 type Tab = 'extensions' | 'mods'
 
-/** Zen's "Add-ons and Themes" (Ctrl+Shift+A): unpacked extensions and chrome CSS mods. */
+/**
+ * Zen's "Add-ons and Themes" (Ctrl+Shift+A): extensions and chrome CSS mods. The Extensions
+ * tab is an in-content page that owns its scrolling (components/extensions/ExtensionsPage); on
+ * a phone the category column becomes a menulist above the page (v2 draft §6).
+ */
 export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
   const [tab, setTab] = useState<Tab>('extensions')
+  const phone = useViewport().formFactor === 'phone'
   const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
+  const tabs: Array<{ id: Tab; label: string }> = [
+    { id: 'extensions', label: 'Extensions' },
+    { id: 'mods', label: 'Mods' }
+  ]
   return (
     <OverlayShell title="Add-ons and Themes" variant="full">
-      <div className="flex h-full">
-        <nav className="w-52 shrink-0 border-r border-[var(--zen-border)] p-2">
-          {(
-            [
-              { id: 'extensions', label: 'Extensions' },
-              { id: 'mods', label: 'Mods' }
-            ] as Array<{ id: Tab; label: string }>
-          ).map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={cn(
-                'zen-squircle flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
-                tab === item.id && 'bg-[var(--zen-element-bg-active)] font-medium'
-              )}
-              onClick={() => setTab(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <div ref={fade} className="min-w-0 flex-1 overflow-y-auto p-6">
-          <div className="mx-auto flex max-w-2xl flex-col gap-5">
-            {tab === 'extensions' ? (
-              <ExtensionsSection state={state} />
-            ) : (
-              <ModsSection state={state} />
-            )}
+      <div className={cn('flex h-full', phone && 'flex-col')}>
+        {phone ? (
+          <div className="zen-v2 zen-v2-page shrink-0 px-4 pt-3 pb-1">
+            <span className="zen-v2-menulist-wrap">
+              <select
+                className="zen-v2-menulist"
+                aria-label="Category"
+                value={tab}
+                onChange={(e) => setTab(e.target.value as Tab)}
+              >
+                {tabs.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown />
+            </span>
           </div>
-        </div>
+        ) : (
+          <nav className="w-52 shrink-0 border-r border-[var(--zen-border)] p-2">
+            {tabs.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={cn(
+                  'zen-squircle flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
+                  tab === item.id && 'bg-[var(--zen-element-bg-active)] font-medium'
+                )}
+                onClick={() => setTab(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+        )}
+        {tab === 'extensions' ? (
+          <ExtensionsPage state={state} />
+        ) : (
+          <div ref={fade} className="min-w-0 flex-1 overflow-y-auto p-6">
+            <div className="mx-auto flex max-w-2xl flex-col gap-5">
+              <ModsSection state={state} />
+            </div>
+          </div>
+        )}
       </div>
     </OverlayShell>
   )
 }
 
-/** The Extensions tab: the management page (components/extensions/ExtensionsPage). */
+/** The Extensions section of Settings: the management page inside the Settings column. */
 export function ExtensionsSection({ state }: { state: UIState }): JSX.Element {
-  return <ExtensionsPage state={state} />
+  return <ExtensionsPage state={state} embedded />
 }
 
 export function ModsSection({ state }: { state: UIState }): JSX.Element {

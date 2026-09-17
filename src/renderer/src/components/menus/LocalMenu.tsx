@@ -5,11 +5,11 @@ import type { LucideIcon } from 'lucide-react'
 import type { Rect } from '@shared/types'
 import { anchorBelow } from '@renderer/lib/extensions/popupPlacement'
 import { useViewport } from '@renderer/lib/formFactor'
-import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
 export interface LocalMenuItem {
   id: string
+  /** Title Case, as Zen's menu items are (v2 draft §9.1). */
   label: string
   icon?: LucideIcon
   danger?: boolean
@@ -40,10 +40,10 @@ function isSeparator(entry: LocalMenuEntry): entry is LocalMenuSeparator {
 }
 
 /**
- * A menu the renderer owns (design-language.md §8.8): on a mouse a 240 panel 8px under its
- * control with 28 rows at radius 6, icons all-or-nothing, danger rows in the danger ink; on a
- * finger the same rows in a bottom sheet, grouped by a gap where the desktop draws a separator.
- * Escape and an outside click (or tap on the scrim) close it.
+ * A menu the renderer owns (v2 draft §6 menus): on a mouse a bordered panel at radius 8 under
+ * its control with 31 rows, a 16 icon each when any has one, hairline separators and danger
+ * rows in the danger ink; on a finger the same rows at 44 in a bottom sheet. Escape and an
+ * outside click (or a tap on the scrim) close it; there is no scrim on the desktop (§9.5).
  */
 export function LocalMenu(props: Props): JSX.Element {
   const viewport = useViewport()
@@ -101,7 +101,7 @@ function PopoverMenu({ anchor, items, onClose }: Props): JSX.Element {
       <div
         ref={ref}
         role="menu"
-        className="zen-panel zen-menu zen-animate-pop fixed select-none"
+        className="zen-v2 zen-v2-panel zen-v2-menu zen-animate-pop fixed select-none"
         style={{
           left: pos?.left ?? anchor.x,
           top: pos?.top ?? anchor.y + anchor.height + 8,
@@ -113,13 +113,13 @@ function PopoverMenu({ anchor, items, onClose }: Props): JSX.Element {
       >
         {items.map((entry) =>
           isSeparator(entry) ? (
-            <div key={entry.id} className="zen-menu-separator" role="separator" />
+            <div key={entry.id} className="zen-v2-menu-separator" role="separator" />
           ) : (
             <button
               key={entry.id}
               type="button"
               role="menuitem"
-              className="zen-menu-item"
+              className="zen-v2-menu-item"
               data-danger={entry.danger || undefined}
               disabled={entry.disabled}
               onClick={() => {
@@ -129,11 +129,11 @@ function PopoverMenu({ anchor, items, onClose }: Props): JSX.Element {
             >
               {withIcons && (
                 <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                  {entry.icon && <entry.icon className="h-4 w-4" />}
+                  {entry.icon && <entry.icon />}
                 </span>
               )}
               <span className="min-w-0 flex-1 truncate">{entry.label}</span>
-              {entry.hint && <span className="zen-menu-hint">{entry.hint}</span>}
+              {entry.hint && <span className="zen-v2-menu-hint">{entry.hint}</span>}
             </button>
           )
         )}
@@ -145,53 +145,36 @@ function PopoverMenu({ anchor, items, onClose }: Props): JSX.Element {
 function SheetMenu({ items, title, onClose }: Props): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   useEscape(() => sheet.current?.dismiss())
-  const groups: LocalMenuItem[][] = []
-  let group: LocalMenuItem[] = []
-  for (const entry of items) {
-    if (isSeparator(entry)) {
-      if (group.length) groups.push(group)
-      group = []
-    } else group.push(entry)
-  }
-  if (group.length) groups.push(group)
   const withIcons = items.some((item) => !isSeparator(item) && item.icon)
   return (
     <BottomSheet
       ref={sheet}
       onDismissed={onClose}
       handleLabel="Resize menu"
-      header={
-        title ? (
-          <div className="flex h-9 items-center px-3">
-            <span className="min-w-0 flex-1 truncate text-[17px] font-semibold leading-tight tracking-[-0.012em]">
-              {title}
-            </span>
-          </div>
-        ) : undefined
-      }
+      header={title ? <div className="zen-v2 zen-v2-sheet-title">{title}</div> : undefined}
     >
-      <div className="flex flex-col gap-4 pb-1">
-        {groups.map((rows, index) => (
-          <ul key={index} className="flex flex-col">
-            {rows.map((item) => (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  disabled={item.disabled}
-                  className={cn('zen-sheet-item', item.danger && 'text-[var(--zen-danger)]')}
-                  onClick={() => sheet.current?.dismiss(() => item.onSelect())}
-                >
-                  {withIcons && (
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center">
-                      {item.icon && <item.icon className="h-5 w-5" strokeWidth={1.75} />}
-                    </span>
-                  )}
-                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        ))}
+      <div className="zen-v2 flex flex-col pb-2">
+        {items.map((entry) =>
+          isSeparator(entry) ? (
+            <div key={entry.id} className="zen-v2-sheet-separator" role="separator" />
+          ) : (
+            <button
+              key={entry.id}
+              type="button"
+              disabled={entry.disabled}
+              className="zen-v2-sheet-row"
+              data-danger={entry.danger || undefined}
+              onClick={() => sheet.current?.dismiss(() => entry.onSelect())}
+            >
+              {withIcons && (
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+                  {entry.icon && <entry.icon />}
+                </span>
+              )}
+              <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+            </button>
+          )
+        )}
       </div>
     </BottomSheet>
   )

@@ -17,9 +17,9 @@ import {
 } from '@renderer/lib/extensions/toolbar'
 import { activeTab } from '@renderer/lib/selectors'
 import { openOverlay, uiStore } from '@renderer/lib/ui'
-import { cn } from '@renderer/lib/utils'
 import { LocalMenu, type LocalMenuEntry } from '../menus/LocalMenu'
 import { ExtensionIcon } from './ExtensionIcon'
+import { V2IconButton } from './v2'
 
 const PANEL_WIDTH = 320
 
@@ -34,9 +34,10 @@ interface Props {
 }
 
 /**
- * Pinned extension actions as 28 toolbar buttons with their badges, and the puzzle-piece button
- * that holds the rest (design-language.md §8.3 icon buttons, §8.1 panel, §8.8 rows). Actions that
- * do not fit beside the address pill fold into the panel in pin order.
+ * Pinned extension actions as toolbar buttons (the shipped `.zen-toolbar-button`, so they match
+ * their neighbours until the v2 pass moves the toolbar) with their badges, and the puzzle-piece
+ * button that holds the rest in a v2 panel of 32 rows. Actions that do not fit beside the
+ * address pill fold into the panel in pin order.
  */
 export function ToolbarActions({
   state,
@@ -168,13 +169,13 @@ function actionMenu(ext: ExtensionInfo, state: UIState): LocalMenuEntry[] {
   }
   items.push({
     id: 'unpin',
-    label: 'Unpin from toolbar',
+    label: 'Unpin from Toolbar',
     icon: PinOff,
     onSelect: () => run('extension.setPinned', { id: ext.id, pinned: false })
   })
   items.push({
     id: 'manage',
-    label: 'Manage extensions',
+    label: 'Manage Extensions',
     icon: Puzzle,
     onSelect: () => void openOverlay('addons', activeTab(state)?.id ?? null)
   })
@@ -243,7 +244,7 @@ function ExtensionsPanel({
         ref={ref}
         role="dialog"
         aria-label="Extensions"
-        className="zen-panel zen-ext-panel zen-animate-pop"
+        className="zen-v2 zen-v2-panel zen-ext-panel zen-animate-pop"
         style={{
           left: pos?.left ?? anchor.x,
           top: pos?.top ?? anchor.y + anchor.height + 8,
@@ -252,7 +253,6 @@ function ExtensionsPanel({
         }}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="zen-ext-panel-heading">Extensions</div>
         <ul className="flex flex-col">
           {extensions.map((ext) => (
             <li key={ext.id} className="zen-ext-panel-row">
@@ -265,32 +265,28 @@ function ExtensionsPanel({
                 <ExtensionIcon icon={actionIcon(ext)} size={16} box={16} />
                 <span className="min-w-0 flex-1 truncate">{ext.name}</span>
               </button>
-              <button
-                type="button"
-                className={cn('zen-toolbar-button', ext.pinned && 'text-[var(--zen-accent-ink)]')}
+              <V2IconButton
+                icon={ext.pinned ? PinOff : Pin}
+                label={ext.pinned ? `Unpin ${ext.name}` : `Pin ${ext.name} to toolbar`}
                 title={ext.pinned ? 'Unpin from toolbar' : 'Pin to toolbar'}
-                aria-label={ext.pinned ? `Unpin ${ext.name}` : `Pin ${ext.name} to toolbar`}
                 aria-pressed={Boolean(ext.pinned)}
                 onClick={() => run('extension.setPinned', { id: ext.id, pinned: !ext.pinned })}
-              >
-                {ext.pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
-              </button>
+              />
             </li>
           ))}
         </ul>
-        <div className="mt-2 flex flex-col">
-          <button
-            type="button"
-            className="zen-ext-panel-row"
-            onClick={() => {
-              onClose()
-              void openOverlay('addons', activeTab(state)?.id ?? null)
-            }}
-          >
-            <SlidersHorizontal className="h-4 w-4 shrink-0 text-[var(--zen-muted)]" />
-            <span className="min-w-0 flex-1 truncate">Manage extensions</span>
-          </button>
-        </div>
+        <div className="zen-v2-menu-separator" role="separator" />
+        <button
+          type="button"
+          className="zen-ext-panel-row"
+          onClick={() => {
+            onClose()
+            void openOverlay('addons', activeTab(state)?.id ?? null)
+          }}
+        >
+          <SlidersHorizontal className="zen-v2-deemphasized" />
+          <span className="min-w-0 flex-1 truncate">Manage Extensions</span>
+        </button>
       </div>
     </div>,
     document.body

@@ -73,12 +73,12 @@ describe('badgeLabel', () => {
 describe('badgeStyle', () => {
   it('falls back to the accent tokens without a colour', () => {
     expect(badgeStyle({ badgeBackgroundColor: null, badgeTextColor: null })).toEqual({
-      background: 'var(--zen-accent-fill)',
-      color: 'var(--zen-on-accent)'
+      background: 'var(--v2-accent)',
+      color: 'var(--v2-on-accent)'
     })
     expect(badgeStyle({ badgeBackgroundColor: 'transparent', badgeTextColor: null })).toEqual({
-      background: 'var(--zen-accent-fill)',
-      color: 'var(--zen-on-accent)'
+      background: 'var(--v2-accent)',
+      color: 'var(--v2-on-accent)'
     })
   })
 

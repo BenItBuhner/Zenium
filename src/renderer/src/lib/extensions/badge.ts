@@ -131,16 +131,15 @@ export interface BadgeStyle {
 }
 
 /**
- * The badge's colours as CSS values. Without a colour from the extension the badge is the accent
- * fill with `--zen-on-accent` ink; with one, the extension's colour and whichever ink reads on it
+ * The badge's colours as CSS values. Without a colour from the extension the badge is the v2
+ * accent with its on-accent ink; with one, the extension's colour and whichever ink reads on it
  * (or the extension's own text colour when it set one).
  */
 export function badgeStyle(
   action: Pick<ExtensionAction, 'badgeBackgroundColor' | 'badgeTextColor'>
 ): BadgeStyle {
   const bg = parseCssColor(action.badgeBackgroundColor)
-  if (!bg || bg.a === 0)
-    return { background: 'var(--zen-accent-fill)', color: 'var(--zen-on-accent)' }
+  if (!bg || bg.a === 0) return { background: 'var(--v2-accent)', color: 'var(--v2-on-accent)' }
   const background = `rgb(${bg.r} ${bg.g} ${bg.b}${bg.a < 1 ? ` / ${bg.a.toFixed(2)}` : ''})`
   const text = parseCssColor(action.badgeTextColor)
   if (text && text.a > 0) return { background, color: `rgb(${text.r} ${text.g} ${text.b})` }

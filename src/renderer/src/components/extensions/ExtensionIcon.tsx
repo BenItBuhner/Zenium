@@ -3,12 +3,13 @@ import { Puzzle } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 
 /**
- * An extension's icon at `size` inside a `box` (design-language.md §8.2: icon 20 in a 32 box).
- * The manifest icon when there is one, otherwise the puzzle glyph in the secondary ink.
+ * An extension's icon at `size` inside a `box` (32 in the management cards, 16 in the toolbar).
+ * The manifest icon when there is one, otherwise the puzzle glyph in the deemphasised ink; the
+ * image's corners are on the v2 scale (6 for an inner box, 4 for a control-sized one).
  */
 export function ExtensionIcon({
   icon,
-  size = 20,
+  size = 32,
   box = 32,
   className,
   glyphClassName
@@ -35,7 +36,7 @@ export function ExtensionIcon({
         />
       ) : (
         <Puzzle
-          className={cn('text-[var(--zen-muted)]', glyphClassName)}
+          className={cn('text-[var(--v2-text-deemphasized)]', glyphClassName)}
           style={{ width: size, height: size }}
         />
       )}

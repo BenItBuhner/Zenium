@@ -7,6 +7,7 @@ import {
   POPUP_MIN,
   POPUP_PADDING,
   POPUP_RADIUS,
+  RADIUS_FLOOR,
   placePopup
 } from '../popupPlacement'
 
@@ -38,7 +39,7 @@ describe('placePopup', () => {
     })
     expect(p.radius).toBe(POPUP_RADIUS)
     expect(p.innerRadius).toBe(POPUP_RADIUS - POPUP_PADDING)
-    expect(p.innerRadius).toBeGreaterThanOrEqual(10)
+    expect(p.innerRadius).toBeGreaterThanOrEqual(RADIUS_FLOOR)
   })
 
   it('hangs from its right edge when the button is near the window edge', () => {

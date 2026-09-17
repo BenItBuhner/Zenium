@@ -31,6 +31,7 @@ import {
   type LucideIcon
 } from 'lucide-react'
 import { warningGlyph, type WarningGlyph } from '@renderer/lib/extensions/warningGlyph'
+import { V2Row } from './v2'
 
 const GLYPHS: Record<WarningGlyph, LucideIcon> = {
   globe: Globe,
@@ -63,15 +64,7 @@ const GLYPHS: Record<WarningGlyph, LucideIcon> = {
   'key-round': KeyRound
 }
 
-/** One of Chrome's permission warnings as a row: a 16 glyph for its kind, then the sentence. */
+/** One of Chrome's permission warnings as a row: a glyph for its kind, then the sentence. */
 export function WarningRow({ warning }: { warning: string }): JSX.Element {
-  const Glyph = GLYPHS[warningGlyph(warning)]
-  return (
-    <div className="zen-settings-row zen-ext-warning">
-      <Glyph className="h-4 w-4 shrink-0 text-[var(--zen-muted)]" />
-      <span className="zen-settings-text">
-        <span className="zen-settings-label">{warning}</span>
-      </span>
-    </div>
-  )
+  return <V2Row lead={GLYPHS[warningGlyph(warning)]} label={warning} />
 }

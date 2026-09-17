@@ -5,18 +5,18 @@ import type { ExtensionPromptRequest } from '@shared/types'
 import { answerExtensionPrompt } from '@renderer/lib/extensions/popup'
 import { sourceLabel } from '@renderer/lib/extensions/storeInput'
 import { useViewport } from '@renderer/lib/formFactor'
-import { uiStore } from '@renderer/lib/ui'
+import { contentAreaStore, uiStore } from '@renderer/lib/ui'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
-import { Note } from '../overlays/SettingsPrimitives'
-import { Button } from '../ui/button'
 import { ExtensionIcon } from './ExtensionIcon'
+import { V2Button, V2Row } from './v2'
 import { WarningRow } from './WarningRow'
 
 /**
- * Install, update and `permissions.request` prompts (design-language.md §8.1 dialog): main asks,
- * the renderer shows the extension's icon in a pill tint, what it will be able to do as rows
- * with a glyph per kind, and two buttons. One prompt at a time, oldest first; Escape, the scrim
- * and Cancel all answer no.
+ * Install, update and `permissions.request` prompts as a v2 dialog (§1–§3: the panel colour,
+ * radius 12, the dialog shadow; §9.5: only the content frame dims, the sidebar and toolbar stay
+ * undimmed and inert). Main asks, the renderer shows the extension's icon, what it will be able
+ * to do as rows with a glyph per kind, and two buttons. One prompt at a time, oldest first;
+ * Escape, the scrim and Cancel all answer no. On a finger it is a bottom sheet.
  */
 export function ExtensionPromptDialog(): JSX.Element | null {
   const prompt = uiStore.use((s) => s.extensionPrompts[0] ?? null)
@@ -73,34 +73,36 @@ function PromptBody({
   useEffect(() => accept.current?.focus(), [])
   return (
     <>
-      <div className="flex items-center gap-3">
-        <span className="zen-ext-dialog-icon">
-          <ExtensionIcon icon={prompt.icon} size={32} box={48} glyphClassName="text-current" />
-        </span>
+      <div className="zen-ext-dialog-head">
+        <ExtensionIcon icon={prompt.icon} size={32} box={32} className="zen-ext-dialog-icon" />
         <div className="min-w-0 flex-1">
           <h2 className="zen-ext-dialog-title">{copy.title}</h2>
           {copy.subtitle && <p className="zen-ext-dialog-sub">{copy.subtitle}</p>}
         </div>
       </div>
       <div className="flex flex-col">
-        {prompt.warnings.length > 0 && <p className="zen-ext-caption mb-1">It can</p>}
-        {prompt.warnings.length === 0 ? (
-          <Note>
-            {prompt.kind === 'permissions'
-              ? 'No new permissions are needed'
-              : 'This extension requires no special permissions'}
-          </Note>
-        ) : (
-          prompt.warnings.map((warning) => <WarningRow key={warning} warning={warning} />)
-        )}
+        {prompt.warnings.length > 0 && <p className="zen-v2-caption">It can:</p>}
+        <div className="zen-v2-rows">
+          {prompt.warnings.length === 0 ? (
+            <V2Row
+              label={
+                <span className="zen-v2-deemphasized">
+                  {prompt.kind === 'permissions'
+                    ? 'No new permissions are needed'
+                    : 'This extension requires no special permissions'}
+                </span>
+              }
+            />
+          ) : (
+            prompt.warnings.map((warning) => <WarningRow key={warning} warning={warning} />)
+          )}
+        </div>
       </div>
-      <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={() => onAnswer(false)}>
-          Cancel
-        </Button>
-        <Button ref={accept} onClick={() => onAnswer(true)}>
+      <div className="zen-ext-dialog-buttons">
+        <V2Button onClick={() => onAnswer(false)}>Cancel</V2Button>
+        <V2Button ref={accept} variant="primary" onClick={() => onAnswer(true)}>
           {copy.accept}
-        </Button>
+        </V2Button>
       </div>
     </>
   )
@@ -108,6 +110,7 @@ function PromptBody({
 
 function PanelPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Element {
   const answer = (accept: boolean): void => answerExtensionPrompt(prompt, accept)
+  const area = contentAreaStore.use((s) => s.area)
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
@@ -118,22 +121,34 @@ function PanelPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [prompt])
+  // The scrim dims the content frame only; the transparent rest of the layer keeps the chrome
+  // inert until the prompt is answered, and any click outside the dialog answers no.
+  const frame = area ?? { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }
   return (
     <div
-      className="zen-overlay-scrim zen-animate-fade fixed inset-0 z-[95] flex items-center justify-center"
+      className="zen-v2 zen-v2-fade fixed inset-0 z-[95]"
       onMouseDown={(e) => {
         e.stopPropagation()
         answer(false)
       }}
     >
       <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={copyFor(prompt).title}
-        className="zen-panel zen-ext-dialog zen-animate-pop"
-        onMouseDown={(e) => e.stopPropagation()}
+        className="zen-v2-scrim"
+        style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }}
+      />
+      <div
+        className="absolute flex items-center justify-center"
+        style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }}
       >
-        <PromptBody prompt={prompt} onAnswer={answer} />
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={copyFor(prompt).title}
+          className="zen-v2-dialog zen-ext-dialog zen-animate-pop"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <PromptBody prompt={prompt} onAnswer={answer} />
+        </div>
       </div>
     </div>
   )
@@ -159,7 +174,7 @@ function SheetPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
         }
       }}
     >
-      <div className="zen-ext-dialog">
+      <div className="zen-v2 zen-ext-dialog">
         <PromptBody prompt={prompt} onAnswer={answer} />
       </div>
     </BottomSheet>

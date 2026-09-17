@@ -1,0 +1,955 @@
+/*
+ * Extensions UI, styled to the design-language v2 draft (§1–§3 colour, radius and elevation,
+ * §6 components, §9 settled rules; v1 §7 for motion) while the shipped surfaces wait for the
+ * v2 pass. The `--v2-*` tokens are the draft's measured values; the v2 pass moves them into the
+ * theme and the `.zen-v2` scope goes away. Nothing here touches a shipped class.
+ */
+:root {
+  --v2-page: #fbfbfe;
+  --v2-card: #f4f4f7;
+  --v2-card-border: #e7e7e8;
+  --v2-panel: #f4f4f4;
+  --v2-panel-border: rgb(0 0 0 / 0.15);
+  --v2-text: #15141a;
+  --v2-text-rgb: 21 20 26;
+  --v2-text-deemphasized: rgb(21 20 26 / 0.69);
+  --v2-border: #e7e7e8;
+  /* Controls: text at 10% at rest, 17% hovered, 24% pressed (Zen's in-content button scale). */
+  --v2-fill: rgb(21 20 26 / 0.1);
+  --v2-fill-hover: rgb(21 20 26 / 0.17);
+  --v2-fill-active: rgb(21 20 26 / 0.24);
+  --v2-field-border: rgb(21 20 26 / 0.3);
+  --v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #000);
+  --v2-on-accent: #fff;
+  --v2-shadow-panel: 0 2px 6px rgb(0 0 0 / 0.2);
+  --v2-shadow-dialog: 0 10px 8px rgb(0 0 0 / 0.15);
+  /* Dialogs dim the content frame only (§9.5). */
+  --v2-scrim: rgb(21 20 26 / 0.45);
+  --v2-focus-offset: 0px;
+}
+:root[data-theme='dark'] {
+  --v2-page: #1c1b22;
+  --v2-card: #19181f;
+  --v2-card-border: #302f38;
+  --v2-panel: #1f1f1f;
+  --v2-panel-border: rgb(255 255 255 / 0.12);
+  --v2-text: #fbfbfe;
+  --v2-text-rgb: 251 251 254;
+  --v2-text-deemphasized: rgb(251 251 254 / 0.69);
+  --v2-border: #302f38;
+  --v2-fill: rgb(251 251 254 / 0.1);
+  --v2-fill-hover: rgb(251 251 254 / 0.17);
+  --v2-fill-active: rgb(251 251 254 / 0.24);
+  --v2-field-border: rgb(251 251 254 / 0.3);
+  --v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #fff);
+  --v2-on-accent: #15141a;
+  --v2-scrim: rgb(0 0 0 / 0.55);
+  --v2-focus-offset: -2px;
+}
+
+@layer components {
+  /* The scope: in-content text, 16 glyphs at stroke 1.5 (20 at 1.75 on a phone, §9.3). */
+  .zen-v2 {
+    color: var(--v2-text);
+  }
+  .zen-v2 .lucide {
+    stroke-width: 1.5;
+  }
+  [data-form-factor='phone'] .zen-v2 .lucide {
+    stroke-width: 1.75;
+  }
+  .zen-v2 :focus-visible {
+    outline: 2px solid var(--v2-accent);
+    outline-offset: var(--v2-focus-offset);
+  }
+
+  /* --- Page ------------------------------------------------------------------------------- */
+
+  .zen-v2-page {
+    background: var(--v2-page);
+    font-size: 15px;
+    line-height: 20px;
+  }
+  /* The content column (§5): 664 at most, 32 aside; the phone keeps a 16 gutter. */
+  .zen-v2-column {
+    width: 100%;
+    max-width: calc(664px + 2 * 32px);
+    margin: 0 auto;
+    padding: 0 32px;
+  }
+  [data-form-factor='phone'] .zen-v2-column {
+    padding: 0 16px;
+  }
+  /*
+   * The page header (§9.7): the title 22/600 with 16 below, no line at rest; once content
+   * scrolls under it a hairline appears at its bottom edge.
+   */
+  .zen-v2-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--v2-page);
+    padding: 24px 0 16px;
+    box-shadow: 0 1px 0 transparent;
+    transition: box-shadow 120ms var(--zen-ease);
+  }
+  .zen-v2-header[data-scrolled] {
+    box-shadow: 0 1px 0 var(--v2-border);
+  }
+  /* Embedded in another page's column (Settings): its column and scrolling, a static header. */
+  .zen-v2[data-embedded] .zen-v2-column {
+    max-width: none;
+    padding: 0;
+  }
+  .zen-v2[data-embedded] .zen-v2-header {
+    position: static;
+    padding-top: 0;
+    background: transparent;
+  }
+  .zen-v2-header-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+  }
+  .zen-v2-title {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 28px;
+  }
+  .zen-v2-deemphasized {
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-v2-caption {
+    margin: 0;
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--v2-text-deemphasized);
+    font-variant-numeric: tabular-nums;
+  }
+  .zen-v2-caption[data-tone='warn'] {
+    color: var(--zen-warn);
+  }
+  .zen-v2-caption[data-tone='danger'] {
+    color: var(--zen-danger);
+  }
+  .zen-v2-body {
+    margin: 0;
+    font-size: 15px;
+    line-height: 20px;
+  }
+
+  /* --- Cards (§6) ------------------------------------------------------------------------- */
+
+  .zen-v2-card {
+    background: var(--v2-card);
+    border: 1px solid var(--v2-card-border);
+    border-radius: 8px;
+    corner-shape: var(--zen-corner);
+    padding: 16px;
+    color: var(--v2-text);
+  }
+  .zen-v2-card-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 8px;
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 24px;
+  }
+  .zen-v2-card-title .lucide {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+
+  /*
+   * Two-line rows (§9.2): 32 for one line, 52 with a description, growing with content; the
+   * phone's are 44 and 64. A leading glyph sits on the first text line, 2px down. Rows inside
+   * a card are separated by hairlines (Zen's add-on detail rows).
+   */
+  .zen-v2-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    min-height: 32px;
+    padding: 6px 0;
+  }
+  .zen-v2-row[data-lines='2'] {
+    min-height: 52px;
+  }
+  [data-form-factor='phone'] .zen-v2-row {
+    min-height: 44px;
+    padding: 12px 0;
+  }
+  [data-form-factor='phone'] .zen-v2-row[data-lines='2'] {
+    min-height: 64px;
+  }
+  .zen-v2-rows > .zen-v2-row + .zen-v2-row {
+    border-top: 1px solid var(--v2-border);
+  }
+  .zen-v2-row-lead {
+    flex-shrink: 0;
+    margin-top: 2px;
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-v2-row-lead.lucide,
+  .zen-v2-row-lead .lucide {
+    width: 16px;
+    height: 16px;
+  }
+  [data-form-factor='phone'] .zen-v2-row-lead.lucide,
+  [data-form-factor='phone'] .zen-v2-row-lead .lucide {
+    width: 20px;
+    height: 20px;
+    margin-top: 0;
+  }
+  .zen-v2-row-text {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+  }
+  .zen-v2-label {
+    font-size: 15px;
+    line-height: 20px;
+    overflow-wrap: anywhere;
+  }
+  .zen-v2-description {
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--v2-text-deemphasized);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  /* A value at the row's end: the same size, deemphasised. */
+  .zen-v2-value {
+    max-width: 60%;
+    font-size: 15px;
+    line-height: 20px;
+    color: var(--v2-text-deemphasized);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .zen-v2-row-controls {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 4px;
+    /* Centred on the first text line rather than the row. */
+    height: 20px;
+  }
+  /* In-content links are the accent (Firefox's link colour), underlined on hover only. */
+  .zen-v2-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--v2-accent);
+    text-decoration: none;
+  }
+  .zen-v2-link:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .zen-v2-link .lucide {
+    width: 16px;
+    height: 16px;
+  }
+
+  /* --- Controls (§6) ---------------------------------------------------------------------- */
+
+  /* Buttons: 32 at radius 4 and weight 500; primary the accent, secondary text at 10%. */
+  .zen-v2-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: 4px;
+    background: var(--v2-fill);
+    color: var(--v2-text);
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  .zen-v2-button .lucide {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+  .zen-v2-button:hover:not(:disabled) {
+    background: var(--v2-fill-hover);
+  }
+  .zen-v2-button:active:not(:disabled) {
+    background: var(--v2-fill-active);
+    transform: scale(0.98);
+  }
+  .zen-v2-button:disabled {
+    opacity: 0.4;
+  }
+  .zen-v2-button[data-variant='primary'] {
+    background: var(--v2-accent);
+    color: var(--v2-on-accent);
+  }
+  .zen-v2-button[data-variant='primary']:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--v2-accent) 88%, var(--v2-text));
+  }
+  .zen-v2-button[data-variant='primary']:active:not(:disabled) {
+    background: color-mix(in srgb, var(--v2-accent) 76%, var(--v2-text));
+  }
+  .zen-v2-button[data-variant='danger'] {
+    color: var(--zen-danger);
+  }
+  [data-form-factor='phone'] .zen-v2-button {
+    height: 40px;
+    padding: 0 16px;
+    border-radius: 6px;
+  }
+
+  /* Fields: 32 at radius 4 with a 1px border on the page colour; the focus ring is the accent. */
+  .zen-v2-field {
+    display: block;
+    width: 100%;
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--v2-field-border);
+    border-radius: 4px;
+    background: var(--v2-page);
+    color: var(--v2-text);
+    font-size: 15px;
+    line-height: 20px;
+    outline: none;
+  }
+  .zen-v2-field::placeholder {
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-v2-field:focus-visible {
+    border-color: var(--v2-accent);
+    outline: 2px solid var(--v2-accent);
+    outline-offset: var(--v2-focus-offset);
+  }
+  .zen-v2-field[aria-invalid='true'] {
+    border-color: var(--zen-danger);
+  }
+  .zen-v2-field-lead {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translateY(-50%);
+    pointer-events: none;
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-v2-field[data-lead] {
+    padding-left: 34px;
+  }
+  [data-form-factor='phone'] .zen-v2-field {
+    height: 40px;
+    border-radius: 6px;
+  }
+
+  /* Menulist: rectangular, 32 (40 on a phone) with a 1px border and a 16 chevron. */
+  .zen-v2-menulist-wrap {
+    position: relative;
+    display: block;
+  }
+  .zen-v2-menulist {
+    appearance: none;
+    display: block;
+    width: 100%;
+    height: 32px;
+    padding: 0 36px 0 12px;
+    border: 1px solid var(--v2-field-border);
+    border-radius: 4px;
+    background: var(--v2-page);
+    color: var(--v2-text);
+    font-size: 15px;
+    line-height: 20px;
+    outline: none;
+  }
+  .zen-v2-menulist:hover {
+    background: color-mix(in srgb, var(--v2-page), var(--v2-text) 7%);
+  }
+  .zen-v2-menulist:focus-visible {
+    border-color: var(--v2-accent);
+    outline: 2px solid var(--v2-accent);
+    outline-offset: var(--v2-focus-offset);
+  }
+  .zen-v2-menulist-wrap .lucide {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translateY(-50%);
+    pointer-events: none;
+  }
+  [data-form-factor='phone'] .zen-v2-menulist {
+    height: 40px;
+    border-radius: 6px;
+  }
+
+  /* Checkbox: 16 at radius 2 (20 on a phone), the accent with an on-accent check when on. */
+  .zen-v2-checkbox {
+    appearance: none;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    margin: 2px 0 0;
+    border: 1px solid var(--v2-field-border);
+    border-radius: 2px;
+    background: var(--v2-page);
+    display: grid;
+    place-items: center;
+    transition:
+      background 120ms var(--zen-ease),
+      border-color 120ms var(--zen-ease);
+  }
+  .zen-v2-checkbox:hover:not(:disabled) {
+    background: var(--v2-fill);
+  }
+  .zen-v2-checkbox:checked {
+    background: var(--v2-accent);
+    border-color: var(--v2-accent);
+  }
+  .zen-v2-checkbox:checked::after {
+    content: '';
+    width: 12px;
+    height: 12px;
+    background: var(--v2-on-accent);
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+  }
+  .zen-v2-checkbox:disabled {
+    opacity: 0.4;
+  }
+  .zen-v2-check-row {
+    cursor: default;
+  }
+  .zen-v2-check-row:has(.zen-v2-checkbox:disabled) {
+    color: var(--v2-text-deemphasized);
+  }
+  [data-form-factor='phone'] .zen-v2-checkbox {
+    width: 20px;
+    height: 20px;
+    margin-top: 0;
+  }
+  [data-form-factor='phone'] .zen-v2-checkbox:checked::after {
+    width: 14px;
+    height: 14px;
+  }
+
+  /*
+   * The toggle where Zen uses one (its add-ons manager): moz-toggle's 26×14 track with a 10
+   * dot, the accent when on. The button around it is the hit area (28 desktop, 44 phone).
+   */
+  .zen-v2-switch {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 28px;
+    border-radius: 6px;
+  }
+  .zen-v2-switch:disabled {
+    opacity: 0.4;
+  }
+  .zen-v2-toggle {
+    position: relative;
+    display: block;
+    width: 26px;
+    height: 14px;
+    border-radius: 7px;
+    border: 1px solid var(--v2-field-border);
+    background: var(--v2-fill);
+    transition:
+      background 120ms var(--zen-ease),
+      border-color 120ms var(--zen-ease);
+  }
+  .zen-v2-toggle::after {
+    content: '';
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--v2-text-deemphasized);
+    transition:
+      transform 160ms var(--zen-ease),
+      background 120ms var(--zen-ease);
+  }
+  .zen-v2-switch:hover:not(:disabled) .zen-v2-toggle {
+    background: var(--v2-fill-hover);
+  }
+  .zen-v2-switch[aria-checked='true'] .zen-v2-toggle {
+    background: var(--v2-accent);
+    border-color: var(--v2-accent);
+  }
+  .zen-v2-switch[aria-checked='true']:hover:not(:disabled) .zen-v2-toggle {
+    background: color-mix(in srgb, var(--v2-accent) 88%, var(--v2-text));
+  }
+  .zen-v2-switch[aria-checked='true'] .zen-v2-toggle::after {
+    transform: translateX(12px);
+    background: var(--v2-on-accent);
+  }
+  [data-form-factor='phone'] .zen-v2-switch {
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
+  }
+
+  /* Icon buttons (§9.3): 28 box, 16 glyph, radius 6; phone 44/20/8; tablet 40/20. */
+  .zen-v2-icon-button {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    color: var(--v2-text);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-v2-icon-button .lucide {
+    width: 16px;
+    height: 16px;
+  }
+  .zen-v2-icon-button:hover:not(:disabled),
+  .zen-v2-icon-button[aria-expanded='true'] {
+    background: var(--v2-fill);
+  }
+  .zen-v2-icon-button:active:not(:disabled) {
+    background: var(--v2-fill-hover);
+  }
+  .zen-v2-icon-button:disabled {
+    opacity: 0.4;
+  }
+  .zen-v2-icon-button[aria-pressed='true'] {
+    color: var(--v2-accent);
+  }
+  [data-form-factor='tablet'] .zen-v2-icon-button {
+    width: 40px;
+    height: 40px;
+  }
+  [data-form-factor='phone'] .zen-v2-icon-button {
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
+  }
+  [data-form-factor='tablet'] .zen-v2-icon-button .lucide,
+  [data-form-factor='phone'] .zen-v2-icon-button .lucide {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* --- Panels, menus, dialogs (§1, §3, §6) ------------------------------------------------ */
+
+  .zen-v2-panel {
+    background: var(--v2-panel);
+    border: 1px solid var(--v2-panel-border);
+    border-radius: 8px;
+    corner-shape: var(--zen-corner);
+    box-shadow: var(--v2-shadow-panel);
+    color: var(--v2-text);
+  }
+  .zen-v2-dialog {
+    background: var(--v2-panel);
+    border: 1px solid var(--v2-panel-border);
+    border-radius: 12px;
+    corner-shape: var(--zen-corner);
+    box-shadow: var(--v2-shadow-dialog);
+    color: var(--v2-text);
+  }
+  /* The dialog's scrim: the content frame only, the sidebar and toolbar stay undimmed. */
+  .zen-v2-scrim {
+    position: absolute;
+    background: var(--v2-scrim);
+  }
+
+  /* Menus: rows 31 with a 16 icon, label and a hint at 69%, hairline separators. */
+  .zen-v2-menu {
+    display: flex;
+    flex-direction: column;
+    min-width: 232px;
+    max-width: 332px;
+    padding: 4px 0;
+    font-size: 14px;
+    line-height: 15px;
+  }
+  .zen-v2-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 31px;
+    margin: 0 4px;
+    padding: 0 8px;
+    border-radius: 4px;
+    color: inherit;
+    text-align: left;
+    white-space: nowrap;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-v2-menu-item .lucide {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+  .zen-v2-menu-item:hover:not(:disabled) {
+    background: var(--v2-fill);
+  }
+  .zen-v2-menu-item:active:not(:disabled) {
+    background: var(--v2-fill-hover);
+  }
+  .zen-v2-menu-item:disabled {
+    opacity: 0.4;
+  }
+  .zen-v2-menu-item[data-danger] {
+    color: var(--zen-danger);
+  }
+  .zen-v2-menu-separator {
+    height: 1px;
+    margin: 4px 0;
+    background: var(--v2-panel-border);
+  }
+  .zen-v2-menu-hint {
+    margin-left: auto;
+    padding-left: 16px;
+    color: var(--v2-text-deemphasized);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The phone's sheet rows (§6): 44 at 15/400 with 20 glyphs, groups parted by a hairline. */
+  .zen-v2-sheet-row {
+    display: flex;
+    width: 100%;
+    height: 44px;
+    align-items: center;
+    gap: 12px;
+    padding: 0 16px;
+    color: var(--v2-text);
+    text-align: left;
+    font-size: 15px;
+    line-height: 20px;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-v2-sheet-row .lucide {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+  }
+  .zen-v2-sheet-row:active:not(:disabled) {
+    background: var(--v2-fill);
+  }
+  .zen-v2-sheet-row:disabled {
+    opacity: 0.4;
+  }
+  .zen-v2-sheet-row[data-danger] {
+    color: var(--zen-danger);
+  }
+  .zen-v2-sheet-separator {
+    height: 1px;
+    margin: 4px 16px;
+    background: var(--v2-panel-border);
+  }
+  .zen-v2-sheet-title {
+    display: flex;
+    align-items: center;
+    min-height: 40px;
+    padding: 0 16px;
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 24px;
+  }
+
+  /* --- Extensions: the management page ---------------------------------------------------- */
+
+  /* An extension is a card (Zen's add-on cards): icon 32 on the first line, name 17/600. */
+  .zen-ext-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+    transition: border-color 120ms var(--zen-ease);
+  }
+  .zen-ext-card:has(> .zen-ext-card-main:hover) {
+    border-color: var(--v2-field-border);
+  }
+  .zen-ext-card-main {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-items: flex-start;
+    gap: 12px;
+    text-align: left;
+    color: inherit;
+  }
+  .zen-ext-card-icon {
+    margin-top: 2px;
+  }
+  .zen-ext-name {
+    display: block;
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 22px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .zen-ext-sub {
+    display: block;
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--v2-text-deemphasized);
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .zen-ext-sub[data-tone='danger'] {
+    color: var(--zen-danger);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .zen-ext-sub[data-tone='warn'] {
+    color: var(--zen-warn);
+  }
+  /* A disabled extension's icon and name recede; its controls stay at full strength. */
+  .zen-ext-card[data-disabled] .zen-ext-fade {
+    opacity: 0.5;
+  }
+  .zen-ext-card-controls {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 4px;
+    /* Centred on the 22px name line. */
+    height: 22px;
+  }
+  .zen-ext-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  /* Empty state: a 24 glyph at stroke 1.5 in the deemphasised ink, one sentence, the action. */
+  .zen-ext-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 48px 16px 24px;
+    text-align: center;
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-ext-empty .lucide {
+    width: 24px;
+    height: 24px;
+  }
+  .zen-ext-empty p {
+    margin: 0;
+    max-width: 360px;
+    font-size: 15px;
+    line-height: 20px;
+  }
+  /*
+   * Dropping a package on the page (§9.4 drop-into target): the page keeps its size and gains
+   * the hover fill plus a 2px inset accent outline at its own radius, with the one caption.
+   */
+  .zen-ext-drop {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border-radius: 8px;
+    corner-shape: var(--zen-corner);
+    background: var(--v2-fill);
+    outline: 2px solid var(--v2-accent);
+    outline-offset: -2px;
+    color: var(--v2-accent);
+    font-size: 15px;
+    font-weight: 500;
+    pointer-events: none;
+  }
+  .zen-ext-drop .lucide {
+    width: 16px;
+    height: 16px;
+  }
+
+  /* --- Extensions: toolbar, panel, popup, dialog ------------------------------------------ */
+
+  /*
+   * The toolbar badge (`chrome.action.setBadgeText`): a 10/600 pill (the pill's one use, §2)
+   * over the button's corner, in the extension's colour when it set one, else the accent.
+   */
+  .zen-ext-badge {
+    position: absolute;
+    right: -2px;
+    bottom: -2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 14px;
+    min-width: 14px;
+    padding: 0 3px;
+    border-radius: 9999px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    box-shadow: 0 0 0 2px var(--zen-bg-solid);
+    pointer-events: none;
+  }
+
+  /* The puzzle-piece panel: a 320 panel of 32 rows (icon 16, name, a pin button), no header. */
+  .zen-ext-panel {
+    position: fixed;
+    display: flex;
+    flex-direction: column;
+    width: 320px;
+    max-height: calc(100vh - 32px);
+    padding: 4px 0;
+    overflow-y: auto;
+    font-size: 14px;
+    line-height: 20px;
+  }
+  .zen-ext-panel-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    margin: 0 4px;
+    padding: 0 4px 0 8px;
+    border-radius: 4px;
+    color: inherit;
+    text-align: left;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-ext-panel-row:hover {
+    background: var(--v2-fill);
+  }
+  .zen-ext-panel-row:active {
+    background: var(--v2-fill-hover);
+  }
+  .zen-ext-panel-row > button:first-child {
+    height: 100%;
+  }
+  .zen-ext-panel-row .lucide {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+
+  /*
+   * The frame around an action popup: a panel at radius 8 whose 1px border is a spread shadow
+   * outside the rect, so the document's view fills the frame to its concentric radius 7. It
+   * pops in 180ms and follows the document's size; the view itself is main's.
+   */
+  .zen-ext-popup-frame {
+    position: fixed;
+    z-index: 80;
+    border-radius: 8px;
+    background: var(--v2-panel);
+    box-shadow:
+      0 0 0 1px var(--v2-panel-border),
+      var(--v2-shadow-panel);
+  }
+  /* The well the document lands in, tinted until the view is shown over it. */
+  .zen-ext-popup-well {
+    position: absolute;
+    background: var(--v2-fill);
+  }
+
+  /*
+   * Install and permission prompts: a 440 dialog at radius 12 with 16 padding; the icon 32,
+   * the title 17/600, what it can do as 32 rows with a glyph, and two buttons, the primary last.
+   */
+  .zen-ext-dialog {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: 440px;
+    max-width: calc(100vw - 32px);
+    max-height: calc(100vh - 32px);
+    padding: 16px;
+    overflow-y: auto;
+  }
+  .zen-ext-dialog-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .zen-ext-dialog-icon {
+    flex-shrink: 0;
+    margin-top: -4px;
+  }
+  .zen-ext-dialog-title {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 24px;
+    overflow-wrap: anywhere;
+  }
+  .zen-ext-dialog-sub {
+    margin: 0;
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-ext-dialog-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .zen-ext-dialog .zen-v2-button {
+    min-width: 96px;
+  }
+  /* The phone sheet variant has the sheet's own padding and full-width buttons. */
+  [data-form-factor='phone'] .zen-ext-dialog {
+    width: auto;
+    max-width: none;
+    padding: 4px 16px 8px;
+  }
+  [data-form-factor='phone'] .zen-ext-dialog-buttons {
+    flex-direction: column-reverse;
+  }
+  [data-form-factor='phone'] .zen-ext-dialog-buttons .zen-v2-button {
+    width: 100%;
+  }
+}
+
+@keyframes zen-v2-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@layer components {
+  .zen-v2-fade {
+    animation: zen-v2-fade 160ms var(--zen-ease);
+  }
+}

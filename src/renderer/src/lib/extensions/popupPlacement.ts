@@ -1,10 +1,15 @@
 import type { Rect } from '@shared/types'
 
-/** Desktop panel (design-language.md §8.1): radius 16, 8px below the trigger. */
-export const POPUP_RADIUS = 16
+/** A panel (design-language v2 draft §2): radius 8, 8px below the trigger (v1 §8.1 gap). */
+export const POPUP_RADIUS = 8
 export const POPUP_GAP = 8
-/** The frame around the extension's document; inner radius = 16 − padding stays ≥ 10. */
-export const POPUP_PADDING = 6
+/**
+ * The frame around the extension's document: a 1px ring of panel colour, so the view sits at
+ * the concentric radius 7 (inner = outer − padding, floor 2) inside the frame's hairline border.
+ */
+export const POPUP_PADDING = 1
+/** The concentric rule's floor. */
+export const RADIUS_FLOOR = 2
 /** Distance from the window edge the frame keeps. */
 export const POPUP_MARGIN = 8
 /** How far into the frame's leading edge the trigger's centre lands (its "first 40px"). */
@@ -48,8 +53,8 @@ export interface AnchoredRect extends Rect {
 }
 
 /**
- * A desktop panel under its trigger (design-language.md §8.1): `gap` below it with the
- * trigger's centre `inset` into the panel's leading edge, hanging from the panel's right edge
+ * A desktop panel under its trigger: `gap` below it with the trigger's centre `inset` into the
+ * panel's leading edge, hanging from the panel's right edge
  * instead when the left alignment would leave the window, and kept `margin` from every edge.
  */
 export function anchorBelow(
@@ -74,9 +79,9 @@ export function anchorBelow(
 }
 
 /**
- * Where an action popup goes: a level-3 frame 8px below its button with the button's centre
- * inside the frame's first 40px, hanging from the frame's right edge instead when the left
- * alignment would leave the window, clamped to the window and to Chrome's popup limits.
+ * Where an action popup goes: a panel 8px below its button with the button's centre inside the
+ * frame's first 40px, hanging from the frame's right edge instead when the left alignment would
+ * leave the window, clamped to the window and to Chrome's popup limits.
  */
 export function placePopup({
   anchor,
@@ -111,7 +116,7 @@ export function placePopup({
       height: innerHeight
     },
     radius: POPUP_RADIUS,
-    innerRadius: Math.max(6, POPUP_RADIUS - padding),
+    innerRadius: Math.max(RADIUS_FLOOR, POPUP_RADIUS - padding),
     side
   }
 }

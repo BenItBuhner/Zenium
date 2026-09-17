@@ -9,10 +9,11 @@ import { uiStore } from '@renderer/lib/ui'
 const POP_MS = 180
 
 /**
- * The panel an action popup sits in (design-language.md §8.1 desktop). The document is main's
- * WebContentsView; this draws the level-3 surface around it 8px under the toolbar button, pops
- * it in, and then tells main where the view goes (`extension.resizePopup`). When the document
- * asks for a new size, the frame and the view move together, at once.
+ * The panel an action popup sits in (v2 draft §1–§3: the panel colour, a hairline border and
+ * the panel shadow at radius 8). The document is main's WebContentsView; this draws the surface
+ * around it 8px under the toolbar button, pops it in, and then tells main where the view goes
+ * (`extension.resizePopup`). When the document asks for a new size, the frame and the view move
+ * together, at once.
  */
 export function PopupFrame(): JSX.Element | null {
   const popup = uiStore.use((s) => s.extensionPopup)
@@ -56,7 +57,7 @@ function Frame({
   const originX = Math.max(0, Math.min(frame.width, anchor.x + anchor.width / 2 - frame.x))
   return (
     <div
-      className="zen-panel zen-ext-popup-frame zen-animate-pop"
+      className="zen-ext-popup-frame zen-animate-pop"
       role="presentation"
       data-side={side}
       style={{

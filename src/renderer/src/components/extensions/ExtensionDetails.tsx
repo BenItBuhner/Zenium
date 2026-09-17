@@ -1,148 +1,165 @@
-import type { JSX } from 'react'
-import { ArrowUpRight, ChevronLeft, Ellipsis } from 'lucide-react'
+import type { JSX, ReactNode } from 'react'
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  Ellipsis,
+  Info,
+  ShieldCheck,
+  SlidersHorizontal
+} from 'lucide-react'
 import type { ExtensionInfo, Rect } from '@shared/types'
 import { anchorOf } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { formatBytes, formatDate } from '@renderer/lib/extensions/format'
 import { sourceLabel, storePageUrl } from '@renderer/lib/extensions/storeInput'
 import { closeOverlay } from '@renderer/lib/ui'
-import { Group, Note, Row } from '../overlays/SettingsPrimitives'
-import { Switch } from '../ui/switch'
 import { ExtensionIcon } from './ExtensionIcon'
+import { PageHeader } from './PageHeader'
+import { V2Card, V2CheckRow, V2IconButton, V2Row, V2Switch } from './v2'
 import { WarningRow } from './WarningRow'
 
 /**
- * One extension, pushed in over the list (design-language.md §8.7 back header, §8.2 groups):
- * the description, then Permissions, Source and Options as groups 16px apart.
+ * One extension, pushed in over the list: a back header with the name as the page title, the
+ * description, then Permissions, Source and Options as bordered cards with 17/600 titles (v2
+ * draft §6) whose rows are parted by hairlines, as Zen's add-on detail rows are.
  */
 export function ExtensionDetails({
   ext,
+  scrolled,
   onBack,
   onMenu
 }: {
   ext: ExtensionInfo
+  scrolled: boolean
   onBack: () => void
   onMenu: (anchor: Rect) => void
 }): JSX.Element {
   const warnings = ext.warnings ?? []
   const store = storePageUrl(ext.source, ext.id)
   return (
-    <div className="zen-drawer-right flex flex-col gap-4">
-      <header className="zen-ext-header">
-        <button
-          type="button"
-          className="zen-toolbar-button -ml-1"
-          title="Back"
-          aria-label="Back to extensions"
-          onClick={onBack}
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <ExtensionIcon icon={ext.icon} size={20} box={28} />
-        <h3 className="zen-ext-title">{ext.name || ext.id}</h3>
-        <Switch
+    <>
+      <PageHeader scrolled={scrolled}>
+        <V2IconButton icon={ArrowLeft} label="Back to extensions" title="Back" onClick={onBack} />
+        <ExtensionIcon icon={ext.icon} size={24} box={28} />
+        <h1 className="zen-v2-title">{ext.name || ext.id}</h1>
+        <V2Switch
           checked={ext.enabled}
-          aria-label={`${ext.name} enabled`}
-          onCheckedChange={(v) => run('extension.setEnabled', { id: ext.id, enabled: v })}
+          label={`${ext.name} enabled`}
+          onChange={(v) => run('extension.setEnabled', { id: ext.id, enabled: v })}
         />
-        <button
-          type="button"
-          className="zen-toolbar-button"
-          title="More"
-          aria-label="More actions"
+        <V2IconButton
+          icon={Ellipsis}
+          label="More actions"
           aria-haspopup="menu"
           onClick={(e) => onMenu(anchorOf(e.currentTarget))}
-        >
-          <Ellipsis className="h-4 w-4" />
-        </button>
-      </header>
-      {ext.error ? (
-        <p className="px-2.5 text-[13px] leading-[1.4] text-[var(--zen-danger)]">{ext.error}</p>
-      ) : (
-        ext.description && <p className="zen-ext-description px-2.5">{ext.description}</p>
-      )}
-      {ext.manifestVersion === 2 && (
-        <p className="zen-ext-caption-warn px-2.5">
-          Manifest V2 extensions are being retired; check the store for a newer version.
-        </p>
-      )}
-
-      <Group title="Permissions">
-        {warnings.length === 0 ? (
-          <Note>This extension requires no special permissions</Note>
+        />
+      </PageHeader>
+      <div className="zen-v2-column flex flex-col gap-6 pb-8">
+        {ext.error ? (
+          <p className="zen-v2-body text-[var(--zen-danger)]">{ext.error}</p>
         ) : (
-          warnings.map((warning) => <WarningRow key={warning} warning={warning} />)
+          ext.description && <p className="zen-v2-body zen-v2-deemphasized">{ext.description}</p>
         )}
-      </Group>
+        {ext.manifestVersion === 2 && (
+          <p className="zen-v2-caption -mt-3" data-tone="warn">
+            Manifest V2 extensions are being retired; check the store for a newer version.
+          </p>
+        )}
 
-      <Group title="Source">
-        {store ? (
-          <a
-            className="zen-settings-row zen-ext-link"
-            href={store}
-            onClick={(e) => {
-              e.preventDefault()
-              run('tab.create', { url: store, active: true })
-              closeOverlay()
-            }}
-          >
-            <span className="zen-settings-text">
-              <span className="zen-settings-label">{sourceLabel(ext.source)}</span>
-            </span>
-            <ArrowUpRight className="h-4 w-4 shrink-0 text-[var(--zen-muted)]" />
-          </a>
-        ) : (
-          <ValueRow label="Source" value={sourceLabel(ext.source)} title={ext.path} />
-        )}
-        <ValueRow label="Id" value={ext.id} tabular />
-        <ValueRow label="Version" value={ext.version} tabular />
-        {ext.installedAt !== undefined && (
-          <ValueRow label="Installed" value={formatDate(ext.installedAt)} />
-        )}
-        {ext.sizeBytes !== undefined && ext.sizeBytes > 0 && (
-          <ValueRow label="Size" value={formatBytes(ext.sizeBytes)} tabular />
-        )}
-      </Group>
+        <V2Card title="Permissions" icon={ShieldCheck}>
+          <div className="zen-v2-rows">
+            {warnings.length === 0 ? (
+              <V2Row
+                label={
+                  <span className="zen-v2-deemphasized">
+                    This extension requires no special permissions
+                  </span>
+                }
+              />
+            ) : (
+              warnings.map((warning) => <WarningRow key={warning} warning={warning} />)
+            )}
+          </div>
+        </V2Card>
 
-      <Group title="Options">
-        <Row label="Allow access to file URLs">
-          <Switch
-            checked={Boolean(ext.allowFileAccess)}
-            disabled={Boolean(ext.error)}
-            onCheckedChange={(v) => run('extension.setAllowFileAccess', { id: ext.id, allow: v })}
-          />
-        </Row>
-        <Row label="Allow in private windows" hint="Not available yet">
-          <Switch checked={false} disabled />
-        </Row>
-      </Group>
-    </div>
+        <V2Card title="Source" icon={Info}>
+          <div className="zen-v2-rows">
+            <V2Row label="Source">
+              {store ? (
+                <a
+                  className="zen-v2-link"
+                  href={store}
+                  title={store}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    run('tab.create', { url: store, active: true })
+                    closeOverlay()
+                  }}
+                >
+                  {sourceLabel(ext.source)}
+                  <ArrowUpRight />
+                </a>
+              ) : (
+                <Value title={ext.path}>{sourceLabel(ext.source)}</Value>
+              )}
+            </V2Row>
+            <V2Row label="Id">
+              <Value tabular>{ext.id}</Value>
+            </V2Row>
+            <V2Row label="Version">
+              <Value tabular>{ext.version}</Value>
+            </V2Row>
+            {ext.installedAt !== undefined && (
+              <V2Row label="Installed">
+                <Value>{formatDate(ext.installedAt)}</Value>
+              </V2Row>
+            )}
+            {ext.sizeBytes !== undefined && ext.sizeBytes > 0 && (
+              <V2Row label="Size">
+                <Value tabular>{formatBytes(ext.sizeBytes)}</Value>
+              </V2Row>
+            )}
+          </div>
+        </V2Card>
+
+        <V2Card title="Options" icon={SlidersHorizontal}>
+          <div className="zen-v2-rows">
+            <V2CheckRow
+              label="Allow access to file URLs"
+              checked={Boolean(ext.allowFileAccess)}
+              disabled={Boolean(ext.error)}
+              onChange={(v) => run('extension.setAllowFileAccess', { id: ext.id, allow: v })}
+            />
+            <V2CheckRow
+              label="Allow in private windows"
+              description="Not available yet"
+              checked={false}
+              disabled
+              onChange={() => undefined}
+            />
+          </div>
+        </V2Card>
+      </div>
+    </>
   )
 }
 
-/** A label with a value at the right (§8.2 trailing value 13 fg 60%). */
-function ValueRow({
-  label,
-  value,
+/** A value at the row's end, deemphasised; ids and versions in tabular figures (no monospace). */
+function Value({
+  children,
   tabular,
   title
 }: {
-  label: string
-  value: string
+  children: ReactNode
   tabular?: boolean
   title?: string
 }): JSX.Element {
   return (
-    <div className="zen-settings-row">
-      <span className="zen-settings-text">
-        <span className="zen-settings-label">{label}</span>
-      </span>
-      <span
-        className={`zen-ext-value truncate${tabular ? ' tabular-nums' : ''}`}
-        title={title ?? value}
-      >
-        {value}
-      </span>
-    </div>
+    <span
+      className={`zen-v2-value${tabular ? ' tabular-nums' : ''}`}
+      title={title ?? (typeof children === 'string' ? children : undefined)}
+    >
+      {children}
+    </span>
   )
 }
