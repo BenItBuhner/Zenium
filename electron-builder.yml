@@ -19,6 +19,19 @@ asarUnpack:
 # Apple Silicon reports it as "damaged" with no Open Anyway). No-op on other platforms and when a
 # certificate is configured.
 afterPack: ./build/after-pack.mjs
+# What a browser registers with the OS. macOS turns `protocols` into CFBundleURLTypes and the
+# platform `fileAssociations` into CFBundleDocumentTypes; the Linux desktop entry gets
+# `x-scheme-handler/http;x-scheme-handler/https` from `protocols` and the document types from
+# `linux.mimeTypes`. Windows is registered by build/installer.nsh (RegisteredApplications,
+# Clients\StartMenuInternet, the ZeniumHTML ProgID): electron-builder's own Windows
+# fileAssociations would also make Zenium the per-user default for every listed extension at
+# install time, which a browser must leave to the user (Chrome only adds OpenWithProgids).
+protocols:
+  - name: Web URL
+    schemes:
+      - http
+      - https
+    role: Viewer
 # Automatic updates (electron-updater). This block makes electron-builder write `app-update.yml`
 # into the packaged app and emit the `latest*.yml` feed files next to every installer, even with
 # `--publish never` (the Release workflow uploads them itself). The app never uses it to discover
@@ -64,6 +77,36 @@ mac:
     - NSCameraUsageDescription: Zenium requests access to the device's camera for websites that ask for it.
     - NSMicrophoneUsageDescription: Zenium requests access to the device's microphone for websites that ask for it.
     - NSDownloadsFolderUsageDescription: Zenium saves downloaded files to your Downloads folder.
+  # Documents Zenium can open from the Finder ("Open With" lists it; Alternate rank keeps Preview
+  # and Safari as the system's own defaults until the user chooses otherwise).
+  fileAssociations:
+    - ext:
+        - html
+        - htm
+        - shtml
+        - xhtml
+        - xht
+        - mhtml
+        - mht
+      name: HTML Document
+      role: Viewer
+      rank: Alternate
+    - ext: pdf
+      name: PDF Document
+      role: Viewer
+      rank: Alternate
+    - ext: svg
+      name: SVG Image
+      role: Viewer
+      rank: Alternate
+    - ext: webp
+      name: WebP Image
+      role: Viewer
+      rank: Alternate
+    - ext: avif
+      name: AVIF Image
+      role: Viewer
+      rank: Alternate
   # Notarization only runs after a successful code signature and only when the Apple credentials
   # (APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID) are in the environment; without them
   # electron-builder logs "skipped macOS notarization" and carries on.
@@ -77,6 +120,29 @@ linux:
     - deb
   maintainer: Bennett Buhner <136861830+BenItBuhner@users.noreply.github.com>
   category: Network
+  # Existing types only (no mime-info file of our own); `protocols` above adds the URL schemes.
+  mimeTypes:
+    - text/html
+    - application/xhtml+xml
+    - multipart/related
+    - image/svg+xml
+    - image/webp
+    - image/avif
+    - application/pdf
+  desktop:
+    entry:
+      # The desktop file is zenium.desktop (executableName); `desktopName` in package.json makes
+      # electron-builder write the matching StartupWMClass and Electron the matching app id.
+      Actions: new-window;new-private-window;
+    # `zenium` resolves through the /usr/bin symlink the deb installs; the AppImage relies on the
+    # integrator (AppImageLauncher) to point Exec at the image.
+    desktopActions:
+      new-window:
+        Name: New Window
+        Exec: zenium --new-window
+      new-private-window:
+        Name: New Private Window
+        Exec: zenium --private-window
 deb:
   # The package was called zen-chromium before the rename. Conflicts + Replaces make dpkg and apt
   # remove that package when this one is installed instead of leaving two browsers side by side.

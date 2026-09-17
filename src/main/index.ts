@@ -75,6 +75,7 @@ function main(): void {
       queued.push(launch)
       return
     }
+    if (launch.makeDefault) void b.defaultBrowser.makeDefault()
     if (launch.urls.length === 0 && launch.window === 'current') return
     const win =
       launch.window === 'private'
@@ -107,7 +108,7 @@ function main(): void {
   })
   app.on('open-file', (event, path) => {
     event.preventDefault()
-    openLaunch({ urls: [pathToFileUrl(path)], window: 'current' })
+    openLaunch({ urls: [pathToFileUrl(path)], window: 'current', makeDefault: false })
   })
 
   app.whenReady().then(() => {

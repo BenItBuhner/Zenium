@@ -3,6 +3,7 @@
   "version": "0.3.9",
   "description": "Zenium: Zen Browser's Spaces, Essentials, Glance, Split View and Compact Mode on the Blink engine (Electron on desktop, the system WebView on Android).",
   "main": "./out/main/index.js",
+  "desktopName": "zenium.desktop",
   "author": "Zenium contributors",
   "license": "MIT",
   "private": true,

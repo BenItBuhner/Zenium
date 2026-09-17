@@ -12,7 +12,11 @@ export interface LaunchArgs {
   /** Navigable URLs in command-line order; file paths are already `file://` URLs. */
   urls: string[]
   window: LaunchWindowMode
+  /** `--make-default-browser`: the Windows registration's ReinstallCommand (build/installer.nsh). */
+  makeDefault: boolean
 }
+
+const MAKE_DEFAULT_FLAG = '--make-default-browser'
 
 /** Zen Browser ships `--blank-window` and `--private-window`; Chrome's spellings are accepted too. */
 const WINDOW_FLAGS: Record<string, LaunchWindowMode> = {
@@ -47,6 +51,7 @@ const SCHEME_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):/
 export function parseLaunchArgs(argv: readonly string[], cwd: string): LaunchArgs {
   const urls: string[] = []
   let window: LaunchWindowMode = 'current'
+  let makeDefault = false
   for (const raw of argv) {
     const arg = unquote(raw)
     if (!arg) continue
@@ -55,13 +60,17 @@ export function parseLaunchArgs(argv: readonly string[], cwd: string): LaunchArg
       if (WINDOW_RANK[flag] > WINDOW_RANK[window]) window = flag
       continue
     }
+    if (arg.toLowerCase() === MAKE_DEFAULT_FLAG) {
+      makeDefault = true
+      continue
+    }
     // Chromium switches (`--no-sandbox`, `--original-process-start-time=…`) and the `-psn_…`
     // argument macOS used to add for Finder launches are not documents.
     if (arg.startsWith('-')) continue
     const url = launchArgToUrl(arg, cwd)
     if (url) urls.push(url)
   }
-  return { urls, window }
+  return { urls, window, makeDefault }
 }
 
 /**

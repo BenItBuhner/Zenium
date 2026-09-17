@@ -9,7 +9,8 @@ describe('parseLaunchArgs', () => {
     )
     expect(launch).toEqual({
       urls: ['https://example.org/a?b=c#d', 'http://x.test'],
-      window: 'current'
+      window: 'current',
+      makeDefault: false
     })
   })
 
@@ -21,7 +22,17 @@ describe('parseLaunchArgs', () => {
     expect(parseLaunchArgs(['--private-window', '--new-window'], '/').window).toBe('private')
     expect(parseLaunchArgs(['--New-Window', 'example.org'], '/')).toEqual({
       urls: ['https://example.org'],
-      window: 'new'
+      window: 'new',
+      makeDefault: false
+    })
+  })
+
+  it('recognises the Windows ReinstallCommand flag', () => {
+    expect(parseLaunchArgs(['--make-default-browser'], 'C:\\').makeDefault).toBe(true)
+    expect(parseLaunchArgs(['--hide-icons'], 'C:\\')).toEqual({
+      urls: [],
+      window: 'current',
+      makeDefault: false
     })
   })
 
