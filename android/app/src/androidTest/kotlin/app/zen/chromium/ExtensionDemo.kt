@@ -286,6 +286,11 @@ class ExtensionDemo {
         SystemClock.sleep(1_500)
         results.put("probeConsole", JSONArray(consoleOf(probeView).takeLast(40)))
         gradeCalls()
+        val traces = JSONObject()
+        instrumentation.runOnMainSync {
+            for (id in listOf(DARK_READER, STYLUS)) traces.put(id, JSONArray(host.extensions.traceSnapshot(id).takeLast(150)))
+        }
+        results.put("bridgeTrace", traces)
     }
 
     /**
@@ -468,6 +473,19 @@ class ExtensionDemo {
             "background=${bg?.toString()?.take(600)}"
         )
         val page = probe.optJSONObject("page") ?: JSONObject()
+        val images = page.optJSONObject("images") ?: JSONObject()
+        val ads = images.optString("ads")
+        val dyn = images.optString("dyn")
+        val ok = images.optString("ok")
+        stage(
+            PROBE_ID, "declarativeNetRequest",
+            when {
+                ads == "error" && dyn == "error" && ok == "loaded" -> "PASS"
+                ok == "loaded" && (ads == "error" || dyn == "error") -> "PARTIAL"
+                else -> "FAIL"
+            },
+            "static rule (ads=1)=$ads dynamic rule (dyn=1)=$dyn control (ok=1)=$ok"
+        )
         results.put(
             "isolation",
             JSONObject()

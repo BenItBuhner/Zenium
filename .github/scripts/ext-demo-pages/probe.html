@@ -58,32 +58,29 @@
           <p>pixel.png?ok=1 must load.</p>
         </section>
       </div>
-      <p>
-        <img
-          src="pixel.png?ads=1"
-          alt=""
-          width="24"
-          height="24"
-          onload="__page.images.ads = 'loaded'"
-          onerror="__page.images.ads = 'error'"
-        />
-        <img
-          src="pixel.png?dyn=1"
-          alt=""
-          width="24"
-          height="24"
-          onload="__page.images.dyn = 'loaded'"
-          onerror="__page.images.dyn = 'error'"
-        />
-        <img
-          src="pixel.png?ok=1"
-          alt=""
-          width="24"
-          height="24"
-          onload="__page.images.ok = 'loaded'"
-          onerror="__page.images.ok = 'error'"
-        />
-      </p>
+      <p id="pixels"></p>
+      <script>
+        // A fresh URL per load: the renderer's memory cache would otherwise answer a reload
+        // without asking shouldInterceptRequest, and the rules would never see the request.
+        ;(function () {
+          var token = '&t=' + Date.now()
+          var holder = document.getElementById('pixels')
+          ;['ads', 'dyn', 'ok'].forEach(function (name) {
+            var img = document.createElement('img')
+            img.alt = ''
+            img.width = 24
+            img.height = 24
+            img.onload = function () {
+              __page.images[name] = 'loaded'
+            }
+            img.onerror = function () {
+              __page.images[name] = 'error'
+            }
+            img.src = 'pixel.png?' + name + '=1' + token
+            holder.appendChild(img)
+          })
+        })()
+      </script>
     </main>
   </body>
 </html>

@@ -364,6 +364,7 @@ export class AndroidExtensionHost implements ExtensionHost {
   /** Re-read the folder (a developer edited the sideloaded files) and reconfigure Kotlin. */
   async reload(id: string): Promise<void> {
     if (!this.loaded.has(id)) return
+    this.bridge.send('ext.background.stop', { id })
     await this.rescan()
   }
 
@@ -1661,6 +1662,7 @@ export class AndroidExtensionHost implements ExtensionHost {
         return undefined
       }
       case 'reload':
+        this.bridge.send('ext.background.stop', { id: ext.id })
         await this.configure()
         return undefined
       case 'getContexts':

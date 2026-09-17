@@ -3,6 +3,7 @@ package app.zen.chromium.ext
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
 import android.webkit.CookieManager
@@ -120,6 +121,8 @@ class Extensions(private val host: Host) {
      */
     val callStats = HashMap<String, IntArray>()
     private val pendingCalls = HashMap<String, String>()
+    /** While `debug`: the last few hundred bridge messages, one line each (see [trace]). */
+    private val bridgeTrace = ArrayDeque<String>()
     /**
      * Times `onPageStarted` arrived after the new document's bootstrap had already said hello
      * (evidence for the ordering `onDocumentGone` tolerates), for instrumentation.
@@ -337,13 +340,14 @@ class Extensions(private val host: Host) {
     /** Host → endpoint: the reply proxy of the frame that said hello. A dead frame reports `ext.gone`. */
     private fun send(ep: String, message: String) {
         val endpoint = endpoints[ep] ?: return
-        if (debug && message.contains("\"t\":\"reply\"")) recordReply(ep, message)
+        if (debug) recordReply(ep, message)
         val ok = runCatching { endpoint.proxy.postMessage(message) }.isSuccess
         if (!ok) gone(listOf(ep))
     }
 
     private fun recordCall(ep: String, message: JSONObject) {
         val ext = endpoints[ep]?.extensionId ?: message.str("ext")
+        trace(">", ep, ext, message)
         val key = when (message.str("t")) {
             "call" -> "$ext ${message.str("ns")}.${message.str("method")}"
             "msg" -> "$ext runtime.sendMessage"
@@ -360,6 +364,7 @@ class Extensions(private val host: Host) {
 
     private fun recordReply(ep: String, message: String) {
         val reply = runCatching { JSONObject(message) }.getOrNull() ?: return
+        trace("<", ep, endpoints[ep]?.extensionId ?: "", reply)
         if (reply.optString("t") != "reply") return
         synchronized(callStats) {
             val key = pendingCalls.remove("$ep:${reply.opt("id")}") ?: return
@@ -367,8 +372,43 @@ class Extensions(private val host: Host) {
         }
     }
 
+    /**
+     * One line per bridge message while `debug`: direction, extension, endpoint context, message
+     * type and the little that tells messages apart (a call's method, a message's `type` field,
+     * a reply's outcome). Instrumentation reads it to see where a handshake stopped.
+     */
+    private fun trace(direction: String, ep: String, ext: String, message: JSONObject) {
+        val context = endpoints[ep]?.context ?: message.str("ctx", "?")
+        val t = message.str("t")
+        val detail = when (t) {
+            "call" -> "${message.str("ns")}.${message.str("method")}"
+            "msg", "deliver" -> {
+                val target = message.optJSONObject("target")
+                val data = message.opt("data")
+                val kind = (data as? JSONObject)?.let { it.optString("type", "").ifEmpty { it.optString("t", "") } } ?: ""
+                listOfNotNull(
+                    target?.opt("tabId")?.let { "tab=$it" },
+                    kind.takeIf { it.isNotEmpty() }?.let { "type=$it" },
+                    (message.optJSONObject("sender")?.has("tab"))?.let { "senderTab=$it" }
+                ).joinToString(" ")
+            }
+            "msgReply" -> "handled=${message.opt("handled")} willRespond=${message.opt("willRespond")} listeners=${message.opt("listeners")}"
+            "reply" -> if (message.optBoolean("ok", true)) "ok" else "error=${message.optString("error").take(80)}"
+            "event" -> "${message.str("ns")}.${message.str("name")}"
+            else -> ""
+        }
+        synchronized(bridgeTrace) {
+            if (bridgeTrace.size >= 600) bridgeTrace.removeFirst()
+            bridgeTrace.addLast("${SystemClock.uptimeMillis()} $direction ${ext.take(8)}/$context $t $detail".trimEnd())
+        }
+    }
+
     /** A snapshot of `callStats` for instrumentation. */
     fun callStatsSnapshot(): Map<String, IntArray> = synchronized(callStats) { callStats.mapValues { it.value.copyOf() } }
+
+    /** The bridge trace lines mentioning `extensionId` (its first eight characters), oldest first. */
+    fun traceSnapshot(extensionId: String): List<String> =
+        synchronized(bridgeTrace) { bridgeTrace.filter { it.contains(" ${extensionId.take(8)}/") } }
 
     private fun exec(args: JSONObject, reply: (Any?) -> Unit) {
         val tab = host.tabs.get(args.str("tabId"))
@@ -689,9 +729,16 @@ class Extensions(private val host: Host) {
     // Background pages and popups
     // ---------------------------------------------------------------------------------------------
 
+    /**
+     * Idempotent: a reconfigure (every `updateDynamicRules`/`registerContentScripts` call triggers
+     * one) keeps a background that is already running at the same URL. Restarting it on every
+     * configure made the five demo backgrounds restart every ~5 s, because each start called one
+     * of those APIs. `ext.background.stop` first for a real reload.
+     */
     private fun startBackground(id: String) {
         val ext = served[id] ?: return
         val url = ext.backgroundUrl ?: return
+        if (backgrounds[id]?.served?.backgroundUrl == url) return
         stopBackground(id)
         val view = ExtensionWebView(host, this, ext, "background")
         backgrounds[id] = view
