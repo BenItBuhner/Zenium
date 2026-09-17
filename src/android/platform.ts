@@ -13,6 +13,7 @@ import type { SharedIntent } from '@shared/shareTarget'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '@shared/updates'
 import { Browser } from '@core/browser'
 import type { HostExternalRequest } from '@core/externalProtocols'
+import { NoExtensions } from '@core/hostDefaults'
 import { RendererMenuHost } from '@core/rendererMenus'
 import type { ZenWindow } from '@core/window'
 import type {
@@ -21,6 +22,7 @@ import type {
   ClipboardHost,
   DialogHost,
   DownloadHost,
+  ExtensionHost,
   ExternalProtocolHost,
   KdfParams,
   KeyEventInput,
@@ -45,14 +47,26 @@ import readabilityJs from '@mozilla/readability/Readability.js?raw'
 import readabilityReaderableJs from '@mozilla/readability/Readability-readerable.js?raw'
 import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
 import type { Bridge } from './bridge'
+import { AndroidExtensions } from './extensionHost'
+import { AndroidExtensionStoreIo, type PackageHandle } from './extensionStoreIo'
 import { AndroidSiteData } from './siteData'
 import { AndroidTabViewHost, type ViewEventPayloads } from './views'
 
 /** Android 13 (Tiramisu): the first release whose clipboard shows its own "copied" chip. */
 const CLIPBOARD_CHIP_SDK = 33
 
+export interface AndroidCapabilityInputs {
+  /** `Build.VERSION.SDK_INT`. */
+  sdkInt: number
+  /** Kotlin named the extension install root: the store and the registry are there to use. */
+  extensions: boolean
+}
+
 /** What the Android host can do for the chrome; a few points depend on the OS release. */
-export function androidCapabilities(sdkInt: number): HostCapabilities {
+export function androidCapabilities({
+  sdkInt,
+  extensions
+}: AndroidCapabilityInputs): HostCapabilities {
   return {
     windowControls: false,
     nativeMenus: false,
@@ -62,7 +76,7 @@ export function androidCapabilities(sdkInt: number): HostCapabilities {
     pictureInPicture: false,
     viewSource: false,
     windows: false,
-    extensions: false,
+    extensions,
     resourceGovernor: false,
     sync: false,
     print: true,
@@ -148,6 +162,11 @@ export interface BootInfo {
   /** Persisted JSON documents by name (state.json, history.json, …). */
   files: Record<string, string>
   downloadsDir: string
+  /**
+   * Absolute path of `files/zen/extensions`, where the extension store installs (absent in the
+   * preview host, which has no files and therefore no extensions).
+   */
+  extensionsRoot?: string
   insets: { top: number; right: number; bottom: number; left: number }
   fullscreen: boolean
 }
@@ -215,6 +234,11 @@ export interface HostEventPayloads {
   'agent.request': { id: number } & AgentHttpRequest
   /** Bytes of a release APK arriving (`update.download` in flight). */
   'update.progress': { token: string; transferred: number; total: number; bytesPerSecond: number }
+  /**
+   * A `.crx` or `.zip` another app opened with or shared to Zenium (`ACTION_VIEW` / `ACTION_SEND`):
+   * Kotlin copied it to a package file the extension store installs from.
+   */
+  'extension.sideload': PackageHandle
 }
 
 /**
@@ -527,13 +551,20 @@ export class AndroidPlatform implements Platform {
   private readonly downloadTokens = new Map<string, string>()
   private readonly agentTransport: AndroidAgentTransport
   private readonly updateHost: AndroidUpdateHost
+  /** `files/zen/extensions` when Kotlin has one; the preview host installs nothing. */
+  private readonly extensionsRoot: string | null
+  private extensions: AndroidExtensions | null = null
 
   constructor(
     private readonly bridge: Bridge,
     boot: BootInfo
   ) {
     this.info = { os: 'android', version: boot.version }
-    this.capabilities = androidCapabilities(boot.sdkInt)
+    this.extensionsRoot = boot.extensionsRoot || null
+    this.capabilities = androidCapabilities({
+      sdkInt: boot.sdkInt,
+      extensions: this.extensionsRoot !== null
+    })
     this.io = new AndroidStoreIO(bridge, boot.files)
     this.agentTransport = new AndroidAgentTransport(bridge)
     this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null, boot.packageName ?? null)
@@ -650,6 +681,18 @@ export class AndroidPlatform implements Platform {
     return this.updateHost
   }
 
+  /**
+   * The extension store (`extensionHost.ts`): installs from the stores and from files into
+   * `files/zen/extensions`, the registry, updates. Without an install root (the preview host)
+   * the built-in stand-in answers, and the capability above keeps the UI away.
+   */
+  createExtensions(browser: Browser): ExtensionHost {
+    if (this.extensionsRoot === null) return new NoExtensions(browser)
+    const io = new AndroidExtensionStoreIo(this.bridge, this.extensionsRoot)
+    this.extensions = new AndroidExtensions(browser, io)
+    return this.extensions
+  }
+
   /** Mozilla's Readability, bundled with the chrome. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string {
     return file === 'Readability.js' ? readabilityJs : readabilityReaderableJs
@@ -691,6 +734,8 @@ export class AndroidPlatform implements Platform {
         return
       case 'focus': {
         const { focused } = payload as HostEventPayloads['focus']
+        // The Activity resumed or paused: the extension update schedule runs only while it is up.
+        this.extensions?.setForeground(focused)
         if (!this.windowHost) return
         this.windowHost.focused = focused
         if (focused) this.window.onFocused()
@@ -822,6 +867,12 @@ export class AndroidPlatform implements Platform {
       case 'update.progress':
         this.updateHost.onProgress(payload as HostEventPayloads['update.progress'])
         return
+      case 'extension.sideload': {
+        const handle = payload as HostEventPayloads['extension.sideload']
+        if (this.extensions) void this.extensions.installHandle(handle, this.window)
+        else this.bridge.send('extStore.discard', { token: handle.token })
+        return
+      }
       case 'view.adopt': {
         const p = payload as HostEventPayloads['view.adopt']
         // Kotlin created the WebView for a popup. Pick the tab id first and bind it before the

@@ -43,9 +43,10 @@ const DESKTOP: HostCapabilities = {
 }
 
 /**
- * The Android host on API 34, a hand-kept copy of `androidCapabilities(34)` in
- * src/android/platform.ts: that module pulls in the WebView bridge and Vite `?raw` imports a
- * core test cannot load. Keep it in step by hand, as above.
+ * The Android host on API 34 without an extension install root (the preview host), a hand-kept
+ * copy of `androidCapabilities({ sdkInt: 34, extensions: false })` in src/android/platform.ts:
+ * that module pulls in the WebView bridge and Vite `?raw` imports a core test cannot load. Keep
+ * it in step by hand, as above. A device build turns `extensions` on.
  */
 const ANDROID: HostCapabilities = {
   windowControls: false,
@@ -285,6 +286,9 @@ describe('the app menu', () => {
     for (const label of DESKTOP_ONLY) expect(menu).not.toContain(label)
     // A phone without a printer path hides Print rather than greying it.
     expect(appMenu(harness({ ...ANDROID, print: false }, 'phone'))).not.toContain('Print…')
+    // A device build has the extension store: the management page is reachable from the menu.
+    const withStore = appMenu(harness({ ...ANDROID, extensions: true }, 'phone'))
+    expect(withStore.indexOf('Add-ons and Themes')).toBe(withStore.indexOf('Downloads') + 1)
   })
 
   it('leaves the phone layout again when the window widens', () => {
