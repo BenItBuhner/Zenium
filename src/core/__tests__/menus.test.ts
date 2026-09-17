@@ -32,7 +32,8 @@ const DESKTOP: HostCapabilities = {
   updates: true,
   share: false,
   clipboardChip: false,
-  appLinkSettings: false
+  appLinkSettings: false,
+  pullToRefresh: false
 }
 
 /** The Android host on API 34 (`androidCapabilities` in src/android/platform.ts). */
@@ -53,7 +54,8 @@ const ANDROID: HostCapabilities = {
   updates: true,
   share: true,
   clipboardChip: true,
-  appLinkSettings: true
+  appLinkSettings: true,
+  pullToRefresh: true
 }
 
 function memoryIo(): StoreIO {
@@ -154,6 +156,13 @@ const DESKTOP_APP_MENU = [
   'New Private Window',
   '-',
   'Bookmarks',
+  'Bookmarks > Bookmark This Page',
+  'Bookmarks > Bookmark All Tabs…',
+  'Bookmarks > -',
+  'Bookmarks > Show Bookmarks',
+  'Bookmarks > -',
+  'Bookmarks > Import Bookmarks…',
+  'Bookmarks > Export Bookmarks…',
   'History',
   'Downloads',
   'Add-ons and Themes',
@@ -227,6 +236,13 @@ describe('the app menu', () => {
       'New Space…',
       '-',
       'Bookmarks',
+      'Bookmarks > Bookmark This Page',
+      'Bookmarks > Bookmark All Tabs…',
+      'Bookmarks > -',
+      'Bookmarks > Show Bookmarks',
+      'Bookmarks > -',
+      'Bookmarks > Import Bookmarks…',
+      'Bookmarks > Export Bookmarks…',
       'History',
       'Downloads',
       '-',
