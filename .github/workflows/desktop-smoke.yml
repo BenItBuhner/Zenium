@@ -44,9 +44,13 @@ jobs:
           - name: windows-x64
             os: windows-latest
             arch: x64
+            sevenzip_filter: ''
           - name: windows-arm64
             os: windows-11-arm
             arch: arm64
+            # Same as the Release workflow: the bundled 7-Zip's ARM64 branch filter produces a
+            # payload the NSIS extractor cannot decode (the installer exits 0 without zenium.exe).
+            sevenzip_filter: BCJ
     defaults:
       run:
         shell: pwsh
@@ -63,6 +67,8 @@ jobs:
       - name: Bundle main, preload and renderer
         run: npx electron-vite build
       - name: Package the NSIS installer (leaves the unpacked build in dist as well)
+        env:
+          ELECTRON_BUILDER_7Z_FILTER: ${{ matrix.sevenzip_filter }}
         run: npx electron-builder --win nsis --${{ matrix.arch }} --publish never
       - name: Make sure the session shows a desktop (windows-11-arm boots into OOBE)
         run: |

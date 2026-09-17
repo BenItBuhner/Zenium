@@ -14,15 +14,6 @@
       "pattern": "sandboxed_renderer\\.bundle\\.js script failed to run|Cannot destructure property 'preloadScripts'",
       "fixedBy": "cursor/desktop-hotfix-quit-crash-55a2",
       "note": "Two console errors from the first tab view at startup: the sandboxed renderer's preload bootstrap runs before the view has a URL."
-    },
-    {
-      "id": "WIN-002",
-      "kind": "install",
-      "pattern": "zenium\\.exe",
-      "platforms": ["win32"],
-      "archs": ["arm64"],
-      "fixedBy": "cursor/desktop-arm64-nsis-fix-76ee",
-      "note": "The ARM64 NSIS installer completes without writing zenium.exe, so the installed build cannot be launched."
     }
   ]
 }
