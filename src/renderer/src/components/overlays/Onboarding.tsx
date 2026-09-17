@@ -6,52 +6,62 @@ import { ONBOARDING_ESSENTIALS } from '@shared/defaults'
 import { THEME_PRESETS, resolveTheme } from '@shared/theme'
 import { formatBinding } from '@shared/shortcuts'
 import { run } from '@renderer/lib/api'
+import { useViewport } from '@renderer/lib/formFactor'
+import {
+  isTouchOnly,
+  tourFeatures,
+  tourSteps,
+  type TourFeature,
+  type TourStep
+} from '@renderer/lib/onboarding'
 import { openOverlay } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Button } from '../ui/button'
 
-type Step = 'welcome' | 'look' | 'search' | 'essentials' | 'features' | 'sync' | 'shortcuts'
-const STEPS: Step[] = ['welcome', 'look', 'search', 'essentials', 'features', 'sync', 'shortcuts']
-
-const FEATURES: Array<{ icon: typeof Layers; title: string; text: string }> = [
-  {
+const FEATURES: Record<TourFeature, { icon: typeof Layers; title: string; text: string }> = {
+  spaces: {
     icon: Layers,
     title: 'Spaces',
     text: 'Separate tabs by project. Each space has its own colours, pinned tabs and container.'
   },
-  {
+  compact: {
     icon: PanelLeftClose,
     title: 'Compact Mode',
     text: 'Hide the sidebar and toolbar; they slide back in when you hover the edge.'
   },
-  {
+  glance: {
     icon: Eye,
     title: 'Glance & Split View',
     text: 'Alt+click a link to peek at it, or put up to four tabs side by side.'
   },
-  {
+  boosts: {
     icon: Sparkles,
     title: 'Boosts',
     text: 'Tint a site, swap its fonts, zap elements you never want to see, force dark mode.'
   },
-  {
+  livefolders: {
     icon: Rss,
     title: 'Live Folders',
     text: 'Folders that fill themselves with your GitHub pull requests, issues or a feed.'
   },
-  {
+  sync: {
     icon: RefreshCw,
     title: 'Sync',
     text: 'Keep spaces, folders and pinned tabs identical on every computer, end-to-end encrypted.'
   }
-]
+}
 
 /**
  * First-run experience mirroring Zen 1.22's onboarding: look, search engine, Essentials, a tour
- * of Spaces / Boosts / Live Folders, sync and the key shortcuts.
+ * of Spaces / Boosts / Live Folders, sync where the host has it and the key shortcuts where
+ * there is a keyboard to press them on (`lib/onboarding.ts` has the rules).
  */
 export function Onboarding({ state }: { state: UIState }): JSX.Element {
-  const [step, setStep] = useState<Step>('welcome')
+  const touchOnly = isTouchOnly(useViewport())
+  const sync = state.capabilities.sync
+  const steps = useMemo(() => tourSteps({ sync }, touchOnly), [sync, touchOnly])
+  const features = useMemo(() => tourFeatures({ sync }, touchOnly), [sync, touchOnly])
+  const [step, setStep] = useState<TourStep>('welcome')
   const [scheme, setScheme] = useState<ColorScheme>('system')
   const [engine, setEngine] = useState('google')
   const [picked, setPicked] = useState<string[]>([])
@@ -60,7 +70,7 @@ export function Onboarding({ state }: { state: UIState }): JSX.Element {
   const dark =
     scheme === 'dark' ||
     (scheme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
-  const index = STEPS.indexOf(step)
+  const index = Math.max(0, steps.indexOf(step))
   const preview = useMemo(
     () => resolveTheme(THEME_PRESETS[presetIndex].theme, dark),
     [presetIndex, dark]
@@ -72,7 +82,7 @@ export function Onboarding({ state }: { state: UIState }): JSX.Element {
       patch: { theme: THEME_PRESETS[presetIndex].theme }
     })
     run('onboarding.complete', { searchEngineId: engine, colorScheme: scheme, essentials: picked })
-    if (setupSync) setTimeout(() => void openOverlay('sync', null), 400)
+    if (sync && setupSync) setTimeout(() => void openOverlay('sync', null), 400)
   }
 
   const highlights = state.shortcuts.filter((s) =>
@@ -96,7 +106,7 @@ export function Onboarding({ state }: { state: UIState }): JSX.Element {
       <div className="zen-texture" />
       <div className="zen-panel zen-animate-pop relative w-[640px] max-w-[calc(100%-32px)] p-8">
         <div className="mb-6 flex items-center gap-1.5">
-          {STEPS.map((s, i) => (
+          {steps.map((s, i) => (
             <span
               key={s}
               className={cn(
@@ -224,22 +234,24 @@ export function Onboarding({ state }: { state: UIState }): JSX.Element {
           <div className="flex flex-col gap-4">
             <h2 className="text-xl font-semibold">What makes Zenium, Zenium</h2>
             <div className="grid grid-cols-2 gap-2">
-              {FEATURES.map((f) => (
-                <div
-                  key={f.title}
-                  className="zen-squircle flex gap-3 rounded-xl border border-[var(--zen-border)] p-3"
-                >
-                  <span className="zen-squircle flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--zen-element-bg)]">
-                    <f.icon className="h-4 w-4" />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block text-[13px] font-medium">{f.title}</span>
-                    <span className="block text-[11.5px] leading-snug text-[var(--zen-muted)]">
-                      {f.text}
+              {features
+                .map((id) => FEATURES[id])
+                .map((f) => (
+                  <div
+                    key={f.title}
+                    className="zen-squircle flex gap-3 rounded-xl border border-[var(--zen-border)] p-3"
+                  >
+                    <span className="zen-squircle flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--zen-element-bg)]">
+                      <f.icon className="h-4 w-4" />
                     </span>
-                  </span>
-                </div>
-              ))}
+                    <span className="min-w-0">
+                      <span className="block text-[13px] font-medium">{f.title}</span>
+                      <span className="block text-[11.5px] leading-snug text-[var(--zen-muted)]">
+                        {f.text}
+                      </span>
+                    </span>
+                  </div>
+                ))}
             </div>
           </div>
         )}
@@ -248,7 +260,7 @@ export function Onboarding({ state }: { state: UIState }): JSX.Element {
           <div className="flex flex-col gap-4">
             <h2 className="text-xl font-semibold">Sync your Spaces across devices</h2>
             <p className="text-[13px] leading-relaxed text-[var(--zen-muted)]">
-              Point Zen at a folder your cloud drive or Syncthing already keeps in sync, choose a
+              Point Zenium at a folder your cloud drive or Syncthing already keeps in sync, choose a
               passphrase, and your spaces, folders, pinned tabs, Essentials, containers and settings
               follow you to every computer. Everything is encrypted before it leaves this device.
             </p>
@@ -310,19 +322,19 @@ export function Onboarding({ state }: { state: UIState }): JSX.Element {
         <div className="mt-8 flex items-center justify-between">
           <Button
             variant="ghost"
-            onClick={() => setStep(STEPS[Math.max(0, index - 1)])}
+            onClick={() => setStep(steps[Math.max(0, index - 1)])}
             disabled={index === 0}
           >
             Back
           </Button>
           <div className="flex items-center gap-2">
-            {index > 0 && index < STEPS.length - 1 && (
+            {index > 0 && index < steps.length - 1 && (
               <Button variant="ghost" onClick={finish}>
                 Skip tour
               </Button>
             )}
-            {index < STEPS.length - 1 ? (
-              <Button onClick={() => setStep(STEPS[index + 1])}>Continue</Button>
+            {index < steps.length - 1 ? (
+              <Button onClick={() => setStep(steps[index + 1])}>Continue</Button>
             ) : (
               <Button onClick={finish}>Start browsing</Button>
             )}

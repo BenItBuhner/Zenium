@@ -1,6 +1,5 @@
 package app.zen.chromium
 
-import android.accessibilityservice.AccessibilityService
 import android.graphics.Rect
 import android.os.SystemClock
 import android.util.Log
@@ -128,10 +127,6 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
             (centerX - half).toInt(), (centerY - half).toInt(),
             (centerX + half).toInt(), (centerY + half).toInt()
         )
-    }
-
-    private fun back() {
-        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
     }
 
     /** The panels focus their search field on open, which raises the keyboard; back takes it down first. */

@@ -64,6 +64,11 @@ export interface HostCapabilities {
   pullToRefresh: boolean
   /** The host can protect the password vault's key (OS keystore) – the password manager is on. */
   passwords: boolean
+  /**
+   * The host can tell whether this app is the system's default browser and ask the system to make
+   * it one (Android's browser role). Desktop hosts leave this to the platform's own settings.
+   */
+  defaultBrowser: boolean
 }
 
 export interface Rect {
@@ -845,6 +850,8 @@ export interface Settings {
    */
   externalProtocols: Record<string, boolean>
   passwords: PasswordSettings
+  /** Session counter and cooldowns of the "make Zenium your default browser" prompts. */
+  defaultBrowserPromo: DefaultBrowserPromoState
 }
 
 // ---------------------------------------------------------------------------
@@ -897,6 +904,40 @@ export interface ExternalProtocolRequest {
   /** Whether the sheet offers to remember the choice for this scheme. */
   canRemember: boolean
 }
+
+// ---------------------------------------------------------------------------
+// Default browser (Android's browser role)
+// ---------------------------------------------------------------------------
+
+/**
+ * Persisted bookkeeping of the default-browser prompts. Sessions are counted from the end of
+ * onboarding; the sheet comes up after a few of them and again after a cooldown, the banner fills
+ * the sessions in between. Pure rules over this state live in `shared/defaultBrowser.ts`.
+ */
+export interface DefaultBrowserPromoState {
+  /** Sessions (app starts) since onboarding finished. */
+  sessions: number
+  /** Session in which the promo sheet last came up (null = never). */
+  promptedAt: number | null
+  /** How often the sheet was answered with "Not now". */
+  dismissals: number
+  /** "Set as default" was chosen from a prompt: never ask again. */
+  done: boolean
+  /** Session in which the banner last came up (null = never). */
+  bannerAt: number | null
+}
+
+/** What the chrome should show for the default-browser prompts right now. */
+export type DefaultBrowserPrompt = 'sheet' | 'banner' | null
+
+export interface DefaultBrowserStatus {
+  /** Whether this app holds the browser role; null until the host answered (or when it cannot tell). */
+  isDefault: boolean | null
+  prompt: DefaultBrowserPrompt
+}
+
+/** Where a request to become the default browser was made from. */
+export type DefaultBrowserRequestSource = 'onboarding' | 'sheet' | 'banner' | 'settings'
 
 // ---------------------------------------------------------------------------
 // AI agents (the built-in MCP server)
@@ -1192,6 +1233,8 @@ export interface UIState {
   updates: UpdateStatus
   /** The password vault: lock state, protection, counts and the last checkup (never secrets). */
   passwords: PasswordsStatus
+  /** Default-browser role: whether Zenium holds it and which prompt (if any) is due. */
+  defaultBrowser: DefaultBrowserStatus
 }
 
 export interface FindResult {
@@ -1575,6 +1618,19 @@ export interface Commands {
     args: { searchEngineId: string; colorScheme: ColorScheme; essentials: string[] }
     result: void
   }
+
+  /**
+   * Ask the system to make Zenium the default browser (Android's role dialog, or the default-apps
+   * settings on older versions); resolves with whether it now is (null when the host cannot tell).
+   */
+  'defaultBrowser.request': {
+    args: { source: DefaultBrowserRequestSource }
+    result: boolean | null
+  }
+  /** "Not now" on the sheet, or the banner's close button. */
+  'defaultBrowser.dismiss': { args: { prompt: 'sheet' | 'banner' }; result: void }
+  /** Read the role again (the settings row opens; the app came back from the system dialog). */
+  'defaultBrowser.refresh': { args: void; result: boolean | null }
 
   'boost.update': {
     args: { domain: string; patch: Partial<Omit<Boost, 'domain' | 'updatedAt'>> }

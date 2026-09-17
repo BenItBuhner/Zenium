@@ -475,6 +475,19 @@ export interface AppHost {
    * with the persisted choice and again whenever the setting changes.
    */
   setAppIcon?(id: AppIconId): void
+  /**
+   * Whether this app is the system's default browser. Android answers from the browser role
+   * (`app.isDefaultBrowser` over the bridge); hosts without `capabilities.defaultBrowser` resolve
+   * null, meaning "not supported here".
+   */
+  isDefaultBrowser(): Promise<boolean | null>
+  /**
+   * Ask the system to make this app the default browser (`app.requestDefaultBrowser`): the role
+   * dialog on Android 10+, which answers with the outcome; the default-apps settings screen on
+   * Android 8–9, which resolves null once the user comes back so the core reads the role again.
+   * Unsupported hosts resolve null without doing anything.
+   */
+  requestDefaultBrowser(): Promise<boolean | null>
 }
 
 // ---------------------------------------------------------------------------

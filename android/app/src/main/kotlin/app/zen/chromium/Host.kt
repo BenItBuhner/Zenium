@@ -217,6 +217,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "app.share" -> share.share(args, reply)
             "app.openAppLinkSettings" -> { openAppLinkSettings(); reply(null) }
             "externalProtocol.respond" -> { externalProtocols.respond(args.str("requestId"), args.bool("allow")); reply(null) }
+            "app.isDefaultBrowser" -> reply(DefaultBrowser.isDefault(activity))
+            "app.requestDefaultBrowser" -> activity.requestDefaultBrowser(reply)
             "keys.setShortcuts" -> { keys.setShortcuts(args.arr("bindings")); reply(null) }
 
             // --- services --------------------------------------------------------------------------

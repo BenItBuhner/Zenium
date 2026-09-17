@@ -64,7 +64,8 @@ export function androidCapabilities(sdkInt: number): HostCapabilities {
     clipboardChip: sdkInt >= CLIPBOARD_CHIP_SDK,
     appLinkSettings: true,
     pullToRefresh: true,
-    passwords: true
+    passwords: true,
+    defaultBrowser: true
   }
 }
 
@@ -572,7 +573,11 @@ export class AndroidPlatform implements Platform {
       relaunch: () => bridge.send('app.quit'),
       lastWindowClosed: () => undefined,
       // Kotlin flips the launcher alias that carries this colour (LauncherIcon.kt).
-      setAppIcon: (id) => bridge.send('app.setIcon', { id })
+      setAppIcon: (id) => bridge.send('app.setIcon', { id }),
+      // Kotlin reads the browser role (RoleManager on Android 10+, the http handler before that).
+      isDefaultBrowser: () => bridge.call<boolean | null>('app.isDefaultBrowser'),
+      // Resolves when the role dialog / default-apps screen hands control back to the app.
+      requestDefaultBrowser: () => bridge.call<boolean | null>('app.requestDefaultBrowser')
     }
     this.events.send('insets', boot.insets)
   }
