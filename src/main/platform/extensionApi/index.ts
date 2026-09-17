@@ -54,9 +54,12 @@ import { ApiModel, type ModelSnapshot } from './model'
 import { NotificationsApi } from './notifications'
 import { PermissionsApi } from './permissions'
 import { RuntimeApi } from './runtime'
+import { SessionsApi } from './sessions'
 import { ApiStore } from './store'
 import { StorageApi } from './storage'
+import { TabGroupsApi } from './tabGroups'
 import { TabsApi } from './tabs'
+import { TopSitesApi } from './topSites'
 import {
   ApiError,
   extensionIdFromUrl,
@@ -140,6 +143,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly bookmarks: BookmarksApi
   readonly history: HistoryApi
   readonly downloads: DownloadsApi
+  /** `chrome.sessions` (recently closed); `sessions` is taken by the engine's session manager. */
+  readonly recentlyClosed: SessionsApi
+  readonly topSites: TopSitesApi
+  readonly tabGroups: TabGroupsApi
 
   private readonly namespaces: Record<string, NamespaceHandlers>
   private readonly extensions = new Map<string, LoadedExtension>()
@@ -196,8 +203,11 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.bookmarks = new BookmarksApi(this)
     this.history = new HistoryApi(this)
     this.downloads = new DownloadsApi(this, downloadBridge)
+    this.recentlyClosed = new SessionsApi(this)
+    this.topSites = new TopSitesApi(this)
+    this.tabGroups = new TabGroupsApi(this)
     this.namespaces = {
-      tabs: this.tabs.handlers,
+      tabs: { ...this.tabs.handlers, ...this.tabGroups.tabHandlers },
       windows: this.windows.handlers,
       runtime: this.runtime.handlers,
       action: this.action.handlers,
@@ -214,7 +224,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       declarativeNetRequest: this.declarativeNetRequest.handlers,
       bookmarks: this.bookmarks.handlers,
       history: this.history.handlers,
-      downloads: this.downloads.handlers
+      downloads: this.downloads.handlers,
+      sessions: this.recentlyClosed.handlers,
+      topSites: this.topSites.handlers,
+      tabGroups: this.tabGroups.handlers
     }
     // A tab's outermost document changed: `activeTab` grants for another origin end and the
     // declarativeNetRequest action counts start over.
@@ -344,11 +357,13 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.commands.load(loaded)
     // After the permissions: the state exists only for extensions holding the permission.
     this.declarativeNetRequest.load(loaded)
-    // Existing tabs and bookmarks are the baseline, not a burst of `onCreated`.
+    // Existing tabs, bookmarks, downloads and folders are the baseline, not a burst of `onCreated`.
     if (!this.snapshot) {
       this.snapshot = this.model.snapshot()
       this.bookmarks.tick()
       this.downloads.tick()
+      this.recentlyClosed.tick()
+      this.tabGroups.tick(null, this.snapshot)
     }
     const firstEver = this.store.installedVersion(ext.id) === undefined
     this.runtime.lifecycle(ext.id, ext.version, !this.seen.has(ext.id) && !firstEver)
@@ -660,11 +675,14 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       this.snapshot = null
       this.bookmarks.reset()
       this.downloads.reset()
+      this.recentlyClosed.reset()
+      this.tabGroups.reset()
       return
     }
     this.watchWindows()
     this.bookmarks.tick()
     this.downloads.tick()
+    this.recentlyClosed.tick()
     const { shortcuts } = this.browser.state
     if (shortcuts !== this.shortcutsSeen) {
       // The user rebound a Zenium shortcut: commands are resolved against the new table.
@@ -675,6 +693,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     const next = this.model.snapshot()
     const prev = this.snapshot
     this.snapshot = next
+    this.tabGroups.tick(prev, next)
     if (!prev) return
     for (const [zenId, before] of prev.tabs) {
       if (next.tabs.has(zenId)) continue

@@ -105,7 +105,9 @@ export const API_SPEC: ApiSpec = {
         keepNative: true
       },
       getAllInWindow: { params: [integer('windowId', true)] },
-      getSelected: { params: [integer('windowId', true)] }
+      getSelected: { params: [integer('windowId', true)] },
+      group: { params: [object('options')] },
+      ungroup: { params: [{ name: 'tabIds', type: ['integer', 'array'] }] }
     },
     events: {
       onCreated: {},
@@ -594,6 +596,43 @@ export const API_SPEC: ApiSpec = {
         USER_CANCELED: 'USER_CANCELED',
         USER_SHUTDOWN: 'USER_SHUTDOWN',
         CRASH: 'CRASH'
+      }
+    }
+  },
+  sessions: {
+    methods: {
+      getRecentlyClosed: { params: [object('filter', true)] },
+      getDevices: { params: [object('filter', true)] },
+      restore: { params: [string('sessionId', true)] }
+    },
+    events: { onChanged: {} },
+    constants: { MAX_SESSION_RESULTS: 25 }
+  },
+  topSites: {
+    methods: { get: { params: [] } },
+    events: {}
+  },
+  // Zenium's folders are the groups; `tabs.group` / `tabs.ungroup` are declared on `tabs`.
+  tabGroups: {
+    methods: {
+      get: { params: [integer('groupId')] },
+      query: { params: [object('queryInfo')] },
+      update: { params: [integer('groupId'), object('updateProperties')] },
+      move: { params: [integer('groupId'), object('moveProperties')] }
+    },
+    events: { onCreated: {}, onUpdated: {}, onMoved: {}, onRemoved: {} },
+    constants: {
+      TAB_GROUP_ID_NONE: -1,
+      Color: {
+        GREY: 'grey',
+        BLUE: 'blue',
+        RED: 'red',
+        YELLOW: 'yellow',
+        GREEN: 'green',
+        PINK: 'pink',
+        PURPLE: 'purple',
+        CYAN: 'cyan',
+        ORANGE: 'orange'
       }
     }
   }
