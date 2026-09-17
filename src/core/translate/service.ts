@@ -319,6 +319,11 @@ export class TranslateService {
     this.changed()
   }
 
+  /** `translate.models`: every pair the registry offers, installed or not (the Languages settings). */
+  modelInfo(): TranslateModelInfo[] {
+    return this.models ? this.models.info() : []
+  }
+
   private requireModels(): ModelManager {
     if (!this.models) throw new Error('Zenium cannot translate pages on this device.')
     return this.models

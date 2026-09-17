@@ -4,7 +4,12 @@
  */
 import type { AppIconId } from './appIcon'
 import type { SiteInfo, SiteInfoSnapshot } from './siteInfo'
-import type { TranslatePreferences, TranslateSelectionResult, TranslateUIState } from './translate'
+import type {
+  TranslateModelInfo,
+  TranslatePreferences,
+  TranslateSelectionResult,
+  TranslateUIState
+} from './translate'
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
 import type { BlockingSettings, BlockingStatus } from './blocking'
@@ -3520,6 +3525,8 @@ export interface Commands {
   'translate.setSiteRule': { args: { tabId: string; never: boolean }; result: void }
   'translate.downloadModel': { args: { from: string; to: string }; result: void }
   'translate.removeModel': { args: { from: string; to: string }; result: void }
+  /** Every language pair the model registry offers, flagged with whether it is on this device. */
+  'translate.models': { args: void; result: TranslateModelInfo[] }
   /** The chrome renderer hands back an answer of the engine worker it runs for the core. */
   'translate.engineResponse': { args: EngineRelayResponse; result: void }
   /** Open the install / name-edit sheet for a tab (the ambient banner's "Add"). */

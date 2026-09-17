@@ -2328,6 +2328,7 @@ export class Browser {
       'translate.setSiteRule': ({ tabId, never }) => this.translate.setSiteRule(tabId, never),
       'translate.downloadModel': ({ from, to }) => this.translate.downloadModel({ from, to }),
       'translate.removeModel': ({ from, to }) => this.translate.removeModel({ from, to }),
+      'translate.models': () => this.translate.modelInfo(),
       'translate.engineResponse': (response) => this.translate.onRelayResponse(response),
       'webapp.openInstall': ({ tabId }, win) => this.webApps.openInstall(tabId, win),
       'webapp.pin': ({ tabId, title }, win) => this.webApps.pin(tabId, title, win),
