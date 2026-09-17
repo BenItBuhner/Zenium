@@ -57,6 +57,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override val tabs = TabHost(root, this)
     val agentServer = AgentServer(this)
     val updates = Updates(activity, this)
+    val translate = Translate(activity, this)
     val siteData = SiteData()
     /** The launcher icon colour (one enabled `activity-alias`), driven by Settings → Look and Feel. */
     val launcherIcon = LauncherIcon(activity)
@@ -299,6 +300,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "extStore.pick" -> extStore.pick(reply)
             "extStore.takeSideloads" -> reply(extStore.takeSideloads())
             // --- end of the extension store block -------------------------------------------------------
+
+            // --- page translation models ----------------------------------------------------------
+            "translate.list" -> translate.list(reply)
+            "translate.download" -> translate.download(
+                args.str("token"), args.str("url"), args.str("name"), args.num("size").toLong(), args.str("sha256"), reply
+            )
+            "translate.cancel" -> { translate.cancel(args.str("token")); reply(null) }
+            "translate.delete" -> translate.delete(args.arr("names"), reply)
 
             else -> throw IllegalArgumentException("Unknown method: $method")
         }
@@ -739,6 +748,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         downloads.destroy()
         updates.shutdown()
         security.shutdown()
+        translate.shutdown()
         tabs.destroyAll()
         // Not the request engine: it is the process's, and a custom tab may still be using it.
         // The chrome too: a WebView that outlives its activity keeps its document – and the
