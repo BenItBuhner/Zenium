@@ -296,8 +296,10 @@ export type ExtensionSource = 'chrome-web-store' | 'edge-add-ons' | 'crx' | 'zip
 /** What the last update check found for an extension (`unknown` until one ran or when it cannot update). */
 export type ExtensionUpdateState = 'unknown' | 'up-to-date' | 'available' | 'updating' | 'error'
 
-// Extensions UI (W1-D): reconcile with the API-layer PR on rebase. `ExtensionAction` and
-// `ExtensionInfo.action` are the shapes that PR produces per active tab; the UI only reads them.
+// ---- PROVISIONAL: extensions UI (PR #68) --------------------------------------------------------
+// `ExtensionAction` and `ExtensionInfo.action` are the shapes the API-layer PR is expected to
+// produce per active tab (`chrome.action` state merged with the manifest); the UI only reads them
+// and nothing on main fills them yet. Reconcile with that PR on rebase.
 
 /** The toolbar action for the active tab (`chrome.action` state, merged with the manifest). */
 export interface ExtensionAction {
@@ -354,7 +356,7 @@ export interface ExtensionInfo {
   updateError: string | null
   /** When this extension was last checked for updates, or null when never. */
   updateCheckedAt: number | null
-  /** Extensions UI (W1-D): reconcile with the API-layer PR on rebase; absent until it lands. */
+  /** PROVISIONAL (extensions UI, PR #68): filled by the API-layer PR; absent until it lands. */
   action?: ExtensionAction
 }
 
@@ -1502,6 +1504,10 @@ export interface Commands {
     result: void
   }
   'extension.closePopup': { args: void; result: void }
+  // ---- PROVISIONAL: extensions UI (PR #68) ------------------------------------------------------
+  // Added by the UI wave ahead of the engine; `src/main/platform/extensions.ts` implements them
+  // as they stand. The API-layer and store PRs may rename or fold them: reconcile here on rebase
+  // and keep the renderer's call sites (`lib/extensions/*`, `components/extensions/*`) in step.
   /** Move the open popup view to where the renderer's frame has settled, and show it. */
   'extension.resizePopup': { args: { bounds: Rect; visible: boolean }; result: void }
   /** Paths dropped on the management page: `.crx` / `.zip` packages or unpacked folders. */
@@ -1516,6 +1522,7 @@ export interface Commands {
     args: { requestId: string; accept: boolean }
     result: void
   }
+  // ---- end PROVISIONAL ----------------------------------------------------------------------------
 
   'mod.add': { args: { name: string; css: string; source?: string }; result: string }
   'mod.update': {
@@ -1598,6 +1605,7 @@ export interface Events {
   'externalProtocol.cancel': { requestId: string }
   /** Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts). */
   insets: { top: number; right: number; bottom: number; left: number }
+  // ---- PROVISIONAL: extensions UI (PR #68), see the matching block in `Commands` --------------
   /** The popup's document asked for this size (CSS px); the renderer fits its frame around it. */
   'extension.popupSize': { id: string; width: number; height: number }
   /** Main closed the popup itself (blur, Escape inside it, a link opened a tab). */
@@ -1608,6 +1616,7 @@ export interface Events {
   extensionPermissionRequest: ExtensionPromptRequest
   /** An install finished; the renderer toasts it with a Pin action while it is not in the toolbar. */
   'extension.installed': { id: string; name: string; toolbarPinned: boolean }
+  // ---- end PROVISIONAL ----------------------------------------------------------------------------
 }
 
 export type EventName = keyof Events
