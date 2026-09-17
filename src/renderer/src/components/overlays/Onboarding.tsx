@@ -59,7 +59,8 @@ export function Onboarding({ state }: { state: UIState }): JSX.Element {
   const [setupSync, setSetupSync] = useState(false)
   const dark =
     scheme === 'dark' ||
-    (scheme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+    (scheme === 'system' &&
+      (state.systemDark ?? window.matchMedia('(prefers-color-scheme: dark)').matches))
   const index = STEPS.indexOf(step)
   const preview = useMemo(
     () => resolveTheme(THEME_PRESETS[presetIndex].theme, dark),

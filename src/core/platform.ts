@@ -9,6 +9,7 @@
  * import from `electron`, `node:*` or the DOM.
  */
 import type {
+  ColorScheme,
   DownloadItem,
   EventName,
   Events,
@@ -462,6 +463,20 @@ export interface AppHost {
   setAppIcon?(id: AppIconId): void
 }
 
+/**
+ * The OS colour scheme as the engine sees it. Desktop hosts read it from the native theme so the
+ * chrome follows a system-wide flip without waiting for the renderer's media query, which on
+ * Windows can lag behind or disagree with it; hosts without this leave the renderer to
+ * `prefers-color-scheme`.
+ */
+export interface ThemeHost {
+  /** Whether the engine resolves the scheme to dark right now. */
+  systemDark(): boolean
+  onChanged(listener: () => void): void
+  /** Which scheme pages and native UI use; `system` follows the OS. */
+  setSource(scheme: ColorScheme): void
+}
+
 // ---------------------------------------------------------------------------
 // Host-backed services (Electron-only features expose a no-op on other hosts)
 // ---------------------------------------------------------------------------
@@ -591,6 +606,8 @@ export interface Platform {
   readonly downloads: DownloadHost
   readonly sessions: SessionHost
   readonly app: AppHost
+  /** The OS colour scheme; hosts without it leave the renderer to `prefers-color-scheme`. */
+  readonly theme?: ThemeHost
   /** Cookies and storage per site; hosts without it show a sheet with the connection only. */
   readonly siteData?: SiteDataHost
   /** Hosts that ask before a page may open another app (Android). */

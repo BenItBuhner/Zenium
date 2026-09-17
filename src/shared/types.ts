@@ -900,6 +900,11 @@ export interface UIState {
   platform: Platform
   capabilities: HostCapabilities
   version: string
+  /**
+   * Whether the host resolves the OS colour scheme to dark (the `system` choice); null when the
+   * host has no say and the chrome reads `prefers-color-scheme` itself.
+   */
+  systemDark: boolean | null
   tabs: Record<string, Tab>
   /** Ordered essential tab ids (all containers – the UI filters by container). */
   essentialTabIds: string[]

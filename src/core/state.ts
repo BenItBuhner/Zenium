@@ -109,6 +109,8 @@ export class BrowserState {
   media: MediaState[] = []
   devtoolsOpenFor = new Set<string>()
   resources: ResourceSnapshot = emptyResourceSnapshot()
+  /** The host's reading of the OS colour scheme (null: the renderer reads its media query). */
+  systemDark: boolean | null = null
   windowBounds: Rect | null = null
   /** Windows to restore on startup (from the previous session). */
   restoredWindows: PersistedWindow[] = []
@@ -418,6 +420,7 @@ export class BrowserState {
       platform: this.platform,
       capabilities: this.capabilities,
       version: this.version,
+      systemDark: this.systemDark,
       tabs,
       essentialTabIds,
       spaces,
