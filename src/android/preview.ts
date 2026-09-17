@@ -42,6 +42,7 @@ export function createPreviewBridge(): NativeBridge {
   const handlers: Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>> = {
     boot: (): BootInfo => ({
       version: 'preview',
+      sdkInt: 34,
       signer: null,
       packageName: null,
       files,
@@ -151,6 +152,19 @@ export function createPreviewBridge(): NativeBridge {
     'clipboard.writeText': ({ text }) => void navigator.clipboard?.writeText(String(text)),
     'clipboard.writeImage': () => false,
     'app.openExternal': ({ url }) => void window.open(String(url), '_blank'),
+    // The browser's own share sheet where there is one; otherwise the share is just logged.
+    'app.share': async ({ title, text, url, imageUrl }) => {
+      const data = {
+        title: title ? String(title) : undefined,
+        text: text ? String(text) : undefined,
+        url: url ? String(url) : imageUrl ? String(imageUrl) : undefined
+      }
+      if (typeof navigator.share === 'function') await navigator.share(data).catch(() => undefined)
+      else console.info('[zen preview] share', data)
+    },
+    'app.openAppLinkSettings': () => console.info('[zen preview] open-by-default settings'),
+    'externalProtocol.respond': ({ requestId, allow }) =>
+      console.info('[zen preview] external protocol', requestId, allow ? 'allowed' : 'refused'),
     'net.fetch': async ({ url }) => {
       try {
         const res = await fetch(String(url))

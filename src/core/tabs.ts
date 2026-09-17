@@ -466,6 +466,7 @@ export class TabManager {
     if (!view) return
     this.views.delete(tabId)
     this.httpsUpgraded.delete(tabId)
+    this.browser.externalProtocols.cancelForTab(tabId)
     if (this.owners.has(tabId)) view.detach()
     this.owners.delete(tabId)
     if (!view.isDestroyed()) {
@@ -1481,12 +1482,9 @@ export class TabManager {
     const url = tab.url.startsWith(ERROR_URL_PREFIX)
       ? (safeParam(tab.url, 'url') ?? tab.url)
       : tab.url
-    this.browser.platform.clipboard.writeText(
-      markdown ? `[${tab.customTitle ?? tab.title}](${url})` : url
-    )
-    this.browser.toast(
-      markdown ? 'Copied URL as Markdown' : 'Copied URL',
-      'info',
+    this.browser.copyText(
+      markdown ? `[${tab.customTitle ?? tab.title}](${url})` : url,
+      markdown ? 'Link copied as Markdown' : 'Link copied',
       this.windowFor(tabId)
     )
   }
