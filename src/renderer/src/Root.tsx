@@ -1,5 +1,6 @@
 import React, { type JSX } from 'react'
 import { App } from './App'
+import { DownloadBubbleLayer } from './components/downloads/DownloadBubble'
 import { MenuSheet } from './components/menus/MenuSheet'
 import { ExternalProtocolLayer } from './components/protocol/ExternalProtocolSheet'
 import { SiteInfoLayer } from './components/siteinfo/SiteInfoSheet'
@@ -13,6 +14,7 @@ export function Root(): JSX.Element {
     <>
       <App />
       <SiteInfoLayer />
+      <DownloadBubbleLayer />
       <MenuLayer />
       <ExternalProtocolLayer />
     </>

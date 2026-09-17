@@ -1371,6 +1371,19 @@ export interface Events {
   'urlbar.close': void
   'overlay.open': { kind: OverlayKind; folderId?: string; section?: string }
   'find.open': { tabId: string; again?: 'next' | 'prev' }
+  /** A transfer began in this window (the toolbar button animates in). */
+  'downloads.started': { id: string }
+  /**
+   * A transfer ended; `active` counts the transfers still in flight (the state broadcast comes a
+   * tick later). The renderer decides whether the bubble opens or the button gets a badge.
+   */
+  'downloads.finished': {
+    id: string
+    state: 'completed' | 'cancelled' | 'interrupted'
+    active: number
+  }
+  /** Show the bubble with this item (a completion notification was clicked). */
+  'downloads.show': { id: string | null }
   toast: { message: string; kind?: 'info' | 'error' }
   /** Link hover status text (Firefox shows this in the bottom corner). */
   status: { text: string }

@@ -961,6 +961,183 @@
   .zen-sheet-text-button:active:not(:disabled) {
     opacity: 0.6;
   }
+
+  /*
+   * Downloads. The toolbar button wears a progress ring (stroke-dashoffset only) and a count
+   * badge; a start plays the fill-and-scale pulse. Rows in the bubble (60) and on the page (40)
+   * share the glyph box, the 3px bar (transform only) and hover-revealed actions.
+   */
+  .zen-download-button {
+    overflow: visible;
+    animation: zen-pop 180ms var(--zen-ease);
+  }
+  .zen-download-body {
+    position: relative;
+  }
+  .zen-download-body::before {
+    content: '';
+    position: absolute;
+    inset: -6px;
+    border-radius: 9px;
+    background: rgb(var(--zen-accent-rgb) / 0.2);
+    opacity: 0;
+  }
+  .zen-download-body-pulse {
+    animation: zen-download-pulse 260ms var(--zen-ease);
+  }
+  .zen-download-body-pulse::before {
+    animation: zen-download-pulse-fill 260ms var(--zen-ease);
+  }
+  .zen-download-ring {
+    left: 2px;
+    top: 2px;
+    transform: rotate(-90deg);
+  }
+  .zen-download-ring-track {
+    stroke: rgb(var(--zen-fg-rgb) / 0.14);
+  }
+  .zen-download-ring-value {
+    stroke: var(--zen-accent-ink);
+    transition: stroke-dashoffset 260ms var(--zen-ease);
+  }
+  .zen-download-ring-paused .zen-download-ring-value {
+    stroke: var(--zen-faint);
+  }
+  .zen-download-ring-spin {
+    transform-origin: 50% 50%;
+    animation: zen-spin 900ms linear infinite;
+  }
+  .zen-download-badge {
+    position: absolute;
+    right: -3px;
+    top: -3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border-radius: 9999px;
+    background: var(--zen-accent-fill);
+    color: var(--zen-on-accent);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    animation: zen-pop 180ms var(--zen-ease);
+  }
+  .zen-download-badge-failed {
+    background: var(--zen-danger);
+  }
+  .zen-download-bubble {
+    --zen-inner: 6px;
+  }
+  .zen-download-glyph {
+    border-radius: 10px;
+    background: rgb(var(--zen-fg-rgb) / 0.07);
+    color: var(--zen-fg);
+    corner-shape: var(--zen-corner);
+  }
+  .zen-download-row {
+    outline: none;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-download-row:hover,
+  .zen-download-row:focus-visible,
+  .zen-download-row:focus-within {
+    background: var(--zen-element-bg);
+  }
+  .zen-download-row:focus-visible {
+    outline: 2px solid var(--zen-accent);
+    outline-offset: 2px;
+  }
+  .zen-download-row-marked {
+    background: rgb(var(--zen-accent-rgb) / 0.16);
+  }
+  .zen-download-actions {
+    opacity: 0;
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-download-row:hover .zen-download-actions,
+  .zen-download-row:focus-within .zen-download-actions,
+  .zen-download-row:focus-visible .zen-download-actions,
+  :root[data-pointer='coarse'] .zen-download-actions {
+    opacity: 1;
+  }
+  .zen-download-bar {
+    position: relative;
+    height: 3px;
+    overflow: hidden;
+    border-radius: 9999px;
+    background: rgb(var(--zen-fg-rgb) / 0.12);
+  }
+  .zen-download-bar-fill {
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    background: var(--zen-accent-fill);
+    transform-origin: 0 50%;
+    transition: transform 260ms var(--zen-ease);
+  }
+  .zen-download-bar[data-paused] .zen-download-bar-fill {
+    background: var(--zen-faint);
+  }
+  .zen-download-bar-sweep {
+    width: 40%;
+    animation: zen-progress 1.1s var(--zen-ease) infinite;
+  }
+  .zen-download-pill {
+    display: inline-flex;
+    align-items: center;
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 9999px;
+    background: var(--zen-element-bg);
+    color: var(--zen-fg);
+    font-size: 12.5px;
+    font-weight: 500;
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  .zen-download-pill:hover {
+    background: var(--zen-element-bg-hover);
+  }
+  .zen-download-pill:active {
+    transform: scale(0.98);
+  }
+  .zen-animate-pop-out {
+    animation: zen-pop-out 180ms var(--zen-ease) forwards;
+  }
+}
+
+@keyframes zen-pop-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+@keyframes zen-download-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.14);
+  }
+}
+@keyframes zen-download-pulse-fill {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  45% {
+    opacity: 1;
+  }
 }
 
 @layer components {

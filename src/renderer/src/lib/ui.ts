@@ -103,6 +103,8 @@ export interface UiState {
   siteInfoOpen: boolean
   /** A page wants to open another app: the external-protocol confirm sheet is up for it. */
   externalProtocol: ExternalProtocolRequest | null
+  /** The downloads bubble (anchored to the toolbar button) is up. */
+  downloadsOpen: boolean
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
   /**
@@ -146,6 +148,7 @@ export const uiStore = createStore<UiState>(
     menu: null,
     siteInfoOpen: false,
     externalProtocol: null,
+    downloadsOpen: false,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false
   },
@@ -214,6 +217,7 @@ export function returnFocusToPage(): void {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    !ui.downloadsOpen &&
     !ui.stageActive
   )
     run('focus.content', undefined)
@@ -231,6 +235,7 @@ export function invalidateSnapshot(): void {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    !ui.downloadsOpen &&
     !ui.stageActive
   ) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
@@ -353,6 +358,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.menu !== null ||
     ui.siteInfoOpen ||
     ui.externalProtocol !== null ||
+    ui.downloadsOpen ||
     ui.stageActive
   )
 }

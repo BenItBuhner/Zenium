@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { UIState } from '@shared/types'
 import { onEvent } from '@renderer/lib/api'
+import { onDownloadFinished, onDownloadStarted, showDownload } from '@renderer/lib/downloads'
 import { isPhone } from '@renderer/lib/formFactor'
 import {
   cancelExternalProtocol,
@@ -66,6 +67,12 @@ export function useMainEvents(): void {
         uiStore.set({ findOpen: true, findTabId: tabId })
         if (again) window.dispatchEvent(new CustomEvent('zen-find-again', { detail: again }))
       }),
+      onEvent('downloads.started', () => onDownloadStarted()),
+      onEvent('downloads.finished', ({ id, state, active }) => {
+        const browser = browserStore.get().state
+        if (browser) onDownloadFinished(id, state, active, browser)
+      }),
+      onEvent('downloads.show', ({ id }) => showDownload(id)),
       onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
       onEvent('status', ({ text }) => uiStore.set({ statusText: text })),
       onEvent('sidebar.toggle', () => window.dispatchEvent(new CustomEvent('zen-sidebar-toggle'))),
