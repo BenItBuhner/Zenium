@@ -305,6 +305,8 @@ const meta = readMeta()
 const windowsSigned = ['windows-x64', 'windows-arm64'].every((key) => meta[key]?.signed === true)
 const macSigned = meta.macos?.signed === true
 const macNotarized = meta.macos?.notarized === true
+/** No Developer ID: the bundle is ad-hoc signed (sealed) by build/after-pack.mjs. */
+const macAdhoc = meta.macos?.adhoc === true
 const androidReleaseKey = meta.android?.signing === 'release'
 /** The committed CI debug key: not a release key, but the same signer in every build. */
 const androidCiDebugKey = meta.android?.signing === 'ci-debug'
@@ -350,7 +352,9 @@ const installing = [
     ? null
     : macSigned
       ? 'The app is signed but not notarized by Apple, so the first launch is blocked: choose **Open Anyway** under *System Settings → Privacy & Security*, or run `xattr -dr com.apple.quarantine /Applications/Zenium.app`.'
-      : 'This build is not signed or notarized by Apple, so macOS blocks the first launch ("Apple could not verify…"). Choose **Open Anyway** under *System Settings → Privacy & Security*, or run `xattr -dr com.apple.quarantine /Applications/Zenium.app` once.',
+      : macAdhoc
+        ? 'This build is not signed with an Apple Developer ID or notarized (it carries an ad-hoc signature so the bundle is sealed), so macOS blocks the first launch with "Apple could not verify…": choose **Open Anyway** under *System Settings → Privacy & Security*, right-click the app and choose *Open*, or run `xattr -dr com.apple.quarantine /Applications/Zenium.app` once.'
+        : 'This build is not signed or notarized by Apple, so macOS blocks the first launch ("Apple could not verify…"). Choose **Open Anyway** under *System Settings → Privacy & Security*, or run `xattr -dr com.apple.quarantine /Applications/Zenium.app` once.',
   '',
   '</details>',
   '',

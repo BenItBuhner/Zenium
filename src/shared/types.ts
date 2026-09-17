@@ -41,6 +41,15 @@ export interface HostCapabilities {
   agents: boolean
   /** The host checks GitHub Releases for new versions and can fetch / apply them. */
   updates: boolean
+  /** The host has a system share sheet (`app.share`); menus offer Share items when true. */
+  share: boolean
+  /**
+   * The OS itself confirms copies with a clipboard chip (Android 13+); the chrome then stays
+   * quiet instead of toasting "Link copied" a second time.
+   */
+  clipboardChip: boolean
+  /** The host has a system screen for which links open in this app (Android's Open by default). */
+  appLinkSettings: boolean
 }
 
 export interface Rect {
@@ -279,6 +288,12 @@ export interface LiveFolderConfig {
 // Extensions (unpacked Chrome extensions) and Mods (custom chrome CSS)
 // ---------------------------------------------------------------------------
 
+/** Where an extension came from; store installs update through their store. */
+export type ExtensionSource = 'chrome-web-store' | 'edge-add-ons' | 'crx' | 'zip' | 'unpacked'
+
+/** What the last update check found for an extension (`unknown` until one ran or when it cannot update). */
+export type ExtensionUpdateState = 'unknown' | 'up-to-date' | 'available' | 'updating' | 'error'
+
 export interface ExtensionInfo {
   id: string
   name: string
@@ -292,6 +307,33 @@ export interface ExtensionInfo {
   popup: string | null
   /** Set when the extension could not be loaded (unsupported manifest, missing files…). */
   error: string | null
+  source: ExtensionSource
+  /** Who signed the package: a store, or `unknown` for other signed CRX files; null when unsigned. */
+  publisher: 'chrome-web-store' | 'edge-add-ons' | 'unknown' | null
+  /** Where updates come from (the store endpoint or `manifest.update_url`); null when it cannot update. */
+  updateUrl: string | null
+  installedAt: number
+  updatedAt: number
+  /** Pinned extensions are left out of update checks. */
+  pinned: boolean
+  /** Chrome's "Allow access to file URLs"; off by default. */
+  allowFileAccess: boolean
+  manifestVersion: number
+  permissions: string[]
+  hostPermissions: string[]
+  /** `options_ui.page` or `options_page`, relative to the extension root. */
+  optionsPage: string | null
+  /** The install prompt's warning lines Chrome would show for this manifest. */
+  warnings: string[]
+  /** Warning lines an update added; the extension stays disabled until they are approved. */
+  pendingWarnings: string[] | null
+  updateState: ExtensionUpdateState
+  /** The version the last check offered, while `updateState` is `available` or `updating`. */
+  availableVersion: string | null
+  /** Why the last update check or install failed, while `updateState` is `error`. */
+  updateError: string | null
+  /** When this extension was last checked for updates, or null when never. */
+  updateCheckedAt: number | null
   /** Effective `chrome.action` state for the active tab (hosts with the API layer only). */
   action?: ExtensionActionState | null
 }
@@ -599,6 +641,62 @@ export interface Settings {
   resources: ResourceSettings
   agents: AgentSettings
   updates: UpdateSettings
+  /**
+   * Non-web schemes (`mailto`, `tel`, `sms`, `market`, …) the user chose "Always allow" for in the
+   * external-protocol sheet: pages may hand links of that scheme to the app without asking again.
+   */
+  externalProtocols: Record<string, boolean>
+}
+
+// ---------------------------------------------------------------------------
+// Sharing and external protocols
+// ---------------------------------------------------------------------------
+
+/** What `app.share` hands to the system share sheet. */
+export interface SharePayload {
+  /** Shown as the preview's title (the page title, or the link text). */
+  title?: string
+  /** Plain text to share when there is no URL. */
+  text?: string
+  url?: string
+  /**
+   * An image to share as a file: the host fetches it (with the tab's cookies) and shares the
+   * bytes rather than the address.
+   */
+  imageUrl?: string
+  /** The tab the share started from (the sheet's own actions – screenshot, print – work on it). */
+  tabId?: string
+  /** The page's favicon (a `data:` or `http(s)` URL) for the preview thumbnail. */
+  favicon?: string
+}
+
+/**
+ * One of the browser's own buttons in the system share sheet (Android 14's action row): the
+ * host reports the tap, the core carries it out on the tab the share started from.
+ */
+export interface ShareAction {
+  kind: 'copy' | 'screenshot' | 'print'
+  url: string
+  tabId: string | null
+}
+
+/**
+ * A page wants to leave the web (`mailto:`, `tel:`, `intent://`, a custom scheme) or a site's
+ * native app could open the link: the chrome shows a confirm sheet and answers through
+ * `externalProtocol.respond`.
+ */
+export interface ExternalProtocolRequest {
+  requestId: string
+  /** The address the page wants to open, as the page gave it. */
+  url: string
+  /** Its scheme, lower-case (`mailto`, `tel`, `intent`, `https` for an app link). */
+  scheme: string
+  /** Name of the app that would open it, when the host could tell; null for "another app". */
+  appName: string | null
+  /** Host of the page that asked; empty when unknown. */
+  site: string
+  /** Whether the sheet offers to remember the choice for this scheme. */
+  canRemember: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -990,6 +1088,15 @@ export interface Commands {
   'app.listSpaces': { args: void; result: Array<{ id: string; name: string; icon: string }> }
   'app.openExternal': { args: { url: string }; result: void }
   'app.quit': { args: void; result: void }
+  /** System share sheet (`capabilities.share`); hosts without one copy the link and toast. */
+  'app.share': { args: SharePayload; result: void }
+  /** Android's "Open by default" screen for this app (`capabilities.appLinkSettings`). */
+  'app.openAppLinkSettings': { args: void; result: void }
+  /** The external-protocol sheet's answer (`always` remembers the scheme in settings). */
+  'externalProtocol.respond': {
+    args: { requestId: string; allow: boolean; always: boolean }
+    result: void
+  }
 
   'layout.report': { args: LayoutReport; result: void }
 
@@ -1255,8 +1362,20 @@ export interface Commands {
   'liveFolder.remove': { args: { folderId: string }; result: void }
 
   'extension.add': { args: void; result: void }
+  /** Picks a `.crx` or `.zip` file and installs it. */
+  'extension.installFromFile': { args: void; result: void }
+  /** Installs from the Chrome Web Store or Edge Add-ons by id or listing URL. */
+  'extension.installFromStore': {
+    args: { ref: string; store?: 'chrome-web-store' | 'edge-add-ons' }
+    result: void
+  }
   'extension.remove': { args: { id: string }; result: void }
   'extension.setEnabled': { args: { id: string; enabled: boolean }; result: void }
+  'extension.setPinned': { args: { id: string; pinned: boolean }; result: void }
+  'extension.reload': { args: { id: string }; result: void }
+  'extension.checkForUpdates': { args: void; result: void }
+  'extension.update': { args: { id: string }; result: void }
+  'extension.openOptions': { args: { id: string }; result: void }
   'extension.openPopup': { args: { id: string; anchor: Rect }; result: void }
   'extension.closePopup': { args: void; result: void }
 
@@ -1331,6 +1450,10 @@ export interface Events {
   /** Hosts without native menus ask the renderer to show one. */
   'menu.show': MenuDescriptor
   'menu.hide': { menuId: string }
+  /** A page wants to open another app: show the confirm sheet (answered by `externalProtocol.respond`). */
+  'externalProtocol.request': ExternalProtocolRequest
+  /** The request was withdrawn (its tab closed, another one took its place). */
+  'externalProtocol.cancel': { requestId: string }
   /** Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts). */
   insets: { top: number; right: number; bottom: number; left: number }
 }

@@ -19,6 +19,7 @@ import type {
   Platform as PlatformOs,
   Rect,
   ResourceSnapshot,
+  SharePayload,
   SyncScope,
   SyncStatus,
   Tab
@@ -380,6 +381,22 @@ export interface ShellHost {
   openExternal(url: string): void
   openPath(path: string): Promise<void>
   showItemInFolder(path: string): void
+  /**
+   * The system share sheet (`capabilities.share`). Resolves once the sheet is up; hosts without
+   * one leave it out and the core copies the link instead.
+   */
+  share?(payload: SharePayload): Promise<void>
+  /** The OS screen for which links open in this app (`capabilities.appLinkSettings`). */
+  openAppLinkSettings?(): void
+}
+
+/**
+ * A page asked to leave the web. The host holds the navigation, describes it to the core with
+ * `Browser.externalProtocols.request`, and the core answers here once the user (or a remembered
+ * choice) has decided; `allow` hands the link to the other app.
+ */
+export interface ExternalProtocolHost {
+  respond(requestId: string, allow: boolean): void
 }
 
 export interface NetHost {
@@ -491,9 +508,23 @@ export interface Governor {
 export interface ExtensionHost {
   start(): Promise<void>
   list(): ExtensionInfo[]
+  /** Load an unpacked folder picked in a native dialog. */
   addFromDialog(win: ZenWindow): Promise<void>
-  remove(id: string): void
-  setEnabled(id: string, enabled: boolean): Promise<void>
+  /** Install a `.crx` or `.zip` picked in a native dialog. */
+  installFromFileDialog(win: ZenWindow): Promise<void>
+  /** Install from a store by extension id or listing URL. */
+  installFromStore(
+    ref: string,
+    store: 'chrome-web-store' | 'edge-add-ons' | null,
+    win?: ZenWindow
+  ): Promise<void>
+  remove(id: string): Promise<void>
+  setEnabled(id: string, enabled: boolean, win?: ZenWindow): Promise<void>
+  setPinned(id: string, pinned: boolean): void
+  reload(id: string): Promise<void>
+  checkForUpdates(win?: ZenWindow): Promise<void>
+  update(id: string, win?: ZenWindow): Promise<void>
+  openOptions(id: string, win: ZenWindow): void
   openPopup(id: string, anchor: Rect, win: ZenWindow): void
   closePopup(): void
   flushSync(): void
@@ -576,6 +607,8 @@ export interface Platform {
   readonly app: AppHost
   /** Cookies and storage per site; hosts without it show a sheet with the connection only. */
   readonly siteData?: SiteDataHost
+  /** Hosts that ask before a page may open another app (Android). */
+  readonly externalProtocols?: ExternalProtocolHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Host-backed services; omit for the built-in no-op versions. */

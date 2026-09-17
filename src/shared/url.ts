@@ -21,7 +21,8 @@ const KNOWN_SCHEMES = [
   'ftp',
   'data',
   'view-source',
-  'chrome'
+  'chrome',
+  'chrome-extension'
 ]
 /** `host:port[/path]` – looks like a scheme but is a bare host with a port (dev servers). */
 const HOST_PORT_RE =

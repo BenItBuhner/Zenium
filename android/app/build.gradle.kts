@@ -191,6 +191,8 @@ dependencies {
     // 1.13 adds WebStorageCompat.deleteBrowsingDataForSite (the site-information sheet's "clear all site data").
     implementation("androidx.webkit:webkit:1.13.0")
     implementation("com.google.android.material:material:1.12.0")
+    // The share sheet's "QR code" action draws the link as a code (Share.kt); pure Java, no camera.
+    implementation("com.google.zxing:core:3.5.3")
 
     // JVM unit tests (src/test): pure logic such as the screenshot stitching geometry.
     testImplementation("junit:junit:4.13.2")

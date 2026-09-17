@@ -25,6 +25,7 @@ import { ElectronMenus } from './menus'
 import { ElectronTabViewHost, copyImageFromUrl } from './views'
 import { ElectronWindowFactory, type ElectronWindow } from './window'
 import { ExtensionService } from './extensions'
+import { WebstoreBridge } from './webstoreBridge'
 import { ExtensionApiHost } from './extensionApi'
 import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
@@ -47,7 +48,10 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   sync: true,
   print: true,
   agents: true,
-  updates: true
+  updates: true,
+  share: false,
+  clipboardChip: false,
+  appLinkSettings: false
 }
 
 /**
@@ -183,7 +187,7 @@ export class ElectronPlatform implements Platform {
   }
 
   createExtensions(browser: Browser): ExtensionService {
-    return new ExtensionService(browser, this.sessions)
+    return new ExtensionService(browser, this.sessions, this.userDataDir)
   }
 
   createSync(browser: Browser): SyncEngine {
@@ -204,6 +208,11 @@ export class ElectronPlatform implements Platform {
     this.browser = browser
     this.windows.bind(browser)
     this.downloads.bind(browser.downloads)
+    const webstore = new WebstoreBridge(browser.extensions as ExtensionService, (wc) => {
+      const tabId = this.views.tabIdForWebContents(wc)
+      return tabId ? browser.tabs.ownerOf(tabId) : undefined
+    })
+    webstore.install()
     const extensionApi = new ExtensionApiHost(
       browser,
       this.sessions,
@@ -221,6 +230,7 @@ export class ElectronPlatform implements Platform {
       )
       ses.setSpellCheckerLanguages(['en-US'])
       if (this.sessions.isPersistent(containerId)) {
+        webstore.attach(ses)
         extensionApi.attachSession(ses)
         void (browser.extensions as ExtensionService).attachSession()
       }

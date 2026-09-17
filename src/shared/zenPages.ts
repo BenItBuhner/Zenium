@@ -1,13 +1,16 @@
 /**
  * `zen://` internal pages. Zen has no new-tab page (the URL bar replaces it), so `zen://blank` is
- * an empty page that picks up the theme; `zen://error` renders navigation failures and
- * `zen://reader` shows Reader View articles.
+ * an empty page that picks up the theme; `zen://error` renders navigation failures,
+ * `zen://reader` shows Reader View articles and `zen://image` an image another app shared in.
  *
  * Pure HTML generation shared by every host: Electron serves these through a privileged protocol,
- * Android loads them straight into the tab's WebView. Reader articles live in the core's
- * `ReaderService`; hosts pass a lookup so this module stays free of state.
+ * Android loads them straight into the tab's WebView. Reader articles and shared images live in
+ * the core; hosts pass lookups so this module stays free of state.
  */
 export const ZEN_SCHEME = 'zen'
+
+/** An image shared into the browser (`zen://image?id=…`); the bytes live in the core. */
+export const IMAGE_URL_PREFIX = 'zen://image'
 
 const ERROR_MESSAGES: Record<number, string> = {
   [-105]: "We can't connect to the server at this address. Check the address for typing errors.",
@@ -87,11 +90,37 @@ export function readerMissingPageHtml(original: string | null): string {
 </div></body></html>`
 }
 
+/** The `zen://image` page: the shared picture, fitted to the viewport like Chrome's image view. */
+export function imagePageHtml(dataUrl: string): string {
+  if (!/^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]*$/i.test(dataUrl))
+    return imageMissingPageHtml()
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Shared image</title><style>${BASE_STYLE}
+  body { display: grid; place-items: center; }
+  img { max-width: 100vw; max-height: 100vh; object-fit: contain; }
+</style></head>
+<body><img src="${dataUrl}" alt="Shared image"></body></html>`
+}
+
+export function imageMissingPageHtml(): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Shared image</title><style>${BASE_STYLE}</style></head>
+<body><div class="card">
+  <h1>This image is no longer available</h1>
+  <p>Images shared into Zenium are kept only while the browser is open.</p>
+</div></body></html>`
+}
+
 /** Resolves `zen://reader?id=…` to the article's HTML (null once the article is gone). */
 export type ReaderPageLookup = (id: string) => string | null
 
+/** Resolves `zen://image?id=…` to the image's `data:` URL (null once the image is gone). */
+export type ImagePageLookup = (id: string) => string | null
+
 /** HTML for any `zen://` URL (unknown hosts fall back to the blank page). */
-export function zenPageHtml(rawUrl: string, reader?: ReaderPageLookup): string {
+export function zenPageHtml(
+  rawUrl: string,
+  reader?: ReaderPageLookup,
+  image?: ImagePageLookup
+): string {
   let url: URL
   try {
     url = new URL(rawUrl)
@@ -106,6 +135,10 @@ export function zenPageHtml(rawUrl: string, reader?: ReaderPageLookup): string {
         reader?.(url.searchParams.get('id') ?? '') ??
         readerMissingPageHtml(url.searchParams.get('url'))
       )
+    case 'image': {
+      const data = image?.(url.searchParams.get('id') ?? '')
+      return data ? imagePageHtml(data) : imageMissingPageHtml()
+    }
     default:
       return blankPageHtml()
   }
