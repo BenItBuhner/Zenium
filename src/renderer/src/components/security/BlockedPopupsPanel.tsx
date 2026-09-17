@@ -17,7 +17,7 @@ import { useSpringPresence } from '@renderer/hooks/useSpringPresence'
 import { Button } from '../ui/button'
 import { Switch } from '../ui/switch'
 
-const PANEL_WIDTH = 360
+const PANEL_WIDTH = 400
 
 /**
  * What the pop-up blocker refused for one tab: the pages (and app launches) the site tried to open
@@ -129,7 +129,7 @@ export function BlockedPopupsPanel({
                 checked={allowed}
                 onCheckedChange={(v) => run('popups.setSiteAllowed', { tabId: tab.id, allow: v })}
               />
-              <span className={cn('min-w-0 truncate text-[12.5px]')}>
+              <span className={cn('min-w-0 text-[12.5px] leading-snug')}>
                 Always allow pop-ups on {siteLabel(origin)}
               </span>
             </label>

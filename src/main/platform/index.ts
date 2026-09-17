@@ -301,12 +301,19 @@ export class ElectronPlatform implements Platform {
   }
 
   private attachPermissions(ses: Session): void {
-    const { permissions } = this.browser
+    const { permissions, external } = this.browser
     ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
       const url = details.requestingUrl || webContents?.getURL() || ''
-      void permissions
-        .decide(permission, url, permissionRequestDetails(webContents, details))
-        .then(callback)
+      const request = permissionRequestDetails(webContents, details)
+      // Chromium does not tell us whether a page's launch of another application had a
+      // gesture, so the core's own activation tracking decides: without one the launch is
+      // listed with the tab's blocked pop-ups instead of prompting.
+      const tabId = webContents ? this.views.tabIdForWebContents(webContents) : undefined
+      if (permission === 'openExternal' && tabId && request.externalUrl) {
+        void external.request(tabId, request.externalUrl, false).then(callback)
+        return
+      }
+      void permissions.decide(permission, url, request).then(callback)
     })
     ses.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) =>
       permissions.check(permission, requestingOrigin, { embedderUrl: details.embeddingOrigin })
