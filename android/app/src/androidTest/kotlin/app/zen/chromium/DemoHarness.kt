@@ -35,14 +35,18 @@ import kotlin.math.roundToInt
  *  - screenshots land next to them as `<shotPrefix>-<name>.png`.
  *
  * `stateAsset` is the profile to seed; `null` leaves the profile empty (the first run).
+ * `uiAutomationFlags` go to [android.app.Instrumentation.getUiAutomation]: by default connecting
+ * suspends every other accessibility service for the run, and a demo that wants TalkBack to stay
+ * up passes [UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES].
  */
 abstract class DemoHarness(
     private val stateAsset: String?,
     private val shotPrefix: String,
-    handshakeDir: String
+    handshakeDir: String,
+    uiAutomationFlags: Int = 0
 ) {
     protected val instrumentation = InstrumentationRegistry.getInstrumentation()
-    protected val ui: UiAutomation = instrumentation.uiAutomation
+    protected val ui: UiAutomation = instrumentation.getUiAutomation(uiAutomationFlags)
     protected val app: Context = instrumentation.targetContext
     protected val out = File(app.filesDir, handshakeDir)
     protected val density = app.resources.displayMetrics.density
@@ -66,6 +70,9 @@ abstract class DemoHarness(
     /** A chance to edit the seeded profile's JSON (a colour scheme from the `theme` argument, say). */
     protected open fun patchState(json: String): String = json
 
+    /** A chance to prepare the device once the profile is seeded and before the app starts. */
+    protected open fun beforeLaunch() {}
+
     /** Seed, launch, warm up, hand over to the recorder, run the sequence. */
     protected fun runDemo() {
         val info = ui.serviceInfo
@@ -75,6 +82,7 @@ abstract class DemoHarness(
         ui.serviceInfo = info
 
         seedProfile()
+        beforeLaunch()
         launch()
         measure()
         warmUp()
