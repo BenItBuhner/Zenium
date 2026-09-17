@@ -105,9 +105,9 @@ export class ResourceGovernor implements Governor {
   /** The Electron web contents behind a tab's live view. */
   private wc(tabId: string): WebContents | undefined {
     const view = this.browser.tabs.view(tabId)
-    return view instanceof ElectronTabView && !view.webContents.isDestroyed()
-      ? view.webContents
-      : undefined
+    if (!(view instanceof ElectronTabView) || view.isDestroyed()) return undefined
+    const wc = view.webContents
+    return wc && !wc.isDestroyed() ? wc : undefined
   }
 
   requestLoad(tabId: string, windowId: string | undefined): boolean {
@@ -220,7 +220,16 @@ export class ResourceGovernor implements Governor {
   // ---------------------------------------------------------------------------
 
   onViewCreated(_tabId: string, view: TabView): void {
-    if (view instanceof ElectronTabView) void this.applyConcurrency(view.webContents)
+    if (!(view instanceof ElectronTabView)) return
+    const wc = view.webContents
+    if (!wc || wc.isDestroyed()) return
+    const apply = (): void => {
+      if (!wc.isDestroyed()) void this.applyConcurrency(wc)
+    }
+    // Attaching the debugger to a view that has not committed a document kills the sandbox
+    // renderer before its preload runs (WIN-009).
+    if (wc.getURL()) apply()
+    else wc.once('did-finish-load', apply)
   }
 
   onViewDestroyed(tabId: string, view: TabView): void {

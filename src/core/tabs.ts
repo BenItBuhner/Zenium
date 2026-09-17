@@ -29,6 +29,7 @@ import type { ZenWindow } from './window'
 import { describeNetError, HTTP_FALLBACK_CODES } from '../shared/zenPages'
 import { newId } from '../shared/ids'
 import type { PageFlags, TabView, TabViewEvents } from './platform'
+import { forgetViewRecord } from './viewMaps'
 
 export type { PageFlags } from './platform'
 
@@ -159,11 +160,6 @@ export class TabManager {
     if (!tab) return undefined
     const existing = this.view(tabId)
     if (existing) return existing
-    const view = this.createView(tab, win ?? this.windowFor(tabId))
-    this.browser.governor.trackLoad(tabId)
-    tab.discarded = false
-    tab.frozen = false
-    tab.cpuThrottle = 1
     let url = tab.url
     if (url.startsWith(ERROR_URL_PREFIX)) {
       try {
@@ -173,6 +169,11 @@ export class TabManager {
       }
       tab.url = url
     }
+    const view = this.createView(tab, win ?? this.windowFor(tabId))
+    this.browser.governor.trackLoad(tabId)
+    tab.discarded = false
+    tab.frozen = false
+    tab.cpuThrottle = 1
     view.loadURL(url || BLANK_URL)
     return view
   }
@@ -396,7 +397,9 @@ export class TabManager {
         this.sendPageFlags(tabId)
         this.browser.onPageReady(tabId)
       },
-      onDestroyed: () => undefined,
+      onDestroyed: () => {
+        this.forgetView(tabId)
+      },
       onOpenWindow: (url, disposition) => {
         if (!isNavigableUrl(url) && !url.startsWith('mailto:')) return 'deny'
         // window.open() with features → a real popup so `window.opener` keeps working (OAuth etc.).
@@ -461,23 +464,32 @@ export class TabManager {
     for (const id of this.views.keys()) this.sendPageFlags(id)
   }
 
+  /**
+   * Drop a live page from the maps. Safe when the host already destroyed the view (window close
+   * tears child `WebContents` down) or when `destroyView` already ran.
+   */
+  private forgetView(tabId: string): TabView | undefined {
+    const view = forgetViewRecord(tabId, {
+      views: this.views,
+      owners: this.owners,
+      extras: [this.httpsUpgraded]
+    })
+    if (!view) return undefined
+    this.browser.governor.onViewDestroyed(tabId, view)
+    this.browser.state.devtoolsOpenFor.delete(tabId)
+    return view
+  }
+
   destroyView(tabId: string): void {
-    const view = this.views.get(tabId)
-    if (!view) return
-    this.views.delete(tabId)
-    this.httpsUpgraded.delete(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
-    if (this.owners.has(tabId)) view.detach()
-    this.owners.delete(tabId)
+    const view = this.forgetView(tabId)
+    if (!view) return
+    view.detach()
     if (!view.isDestroyed()) {
       // A frozen page never processes its close message; wake it so the renderer exits cleanly.
       if (this.tab(tabId)?.frozen) void this.browser.governor.thaw(tabId, true)
-      this.browser.governor.onViewDestroyed(tabId, view)
       view.destroy()
-    } else {
-      this.browser.governor.onViewDestroyed(tabId, view)
     }
-    this.browser.state.devtoolsOpenFor.delete(tabId)
   }
 
   /** Unload a tab's page while keeping it in the sidebar (Zen's "pending" tabs). */

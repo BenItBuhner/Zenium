@@ -39,15 +39,18 @@ const pagePreload = join(__dirname, '../preload/page.js')
  */
 export class ElectronTabView implements TabView {
   readonly view: WebContentsView
+  /** Captured at construction: `webContents` is gone by the time `destroyed` fires. */
+  readonly contentsId: number
   private host: ElectronWindow | null = null
   private visible = false
+  private startedUrl: string | null = null
 
   constructor(
     host: ElectronWindow,
     tab: Tab,
     sessions: SessionManager,
     private readonly events: TabViewEvents,
-    private readonly onDestroyed: (view: ElectronTabView) => void
+    private readonly onDestroyed: (contentsId: number) => void
   ) {
     this.view = new WebContentsView({
       webPreferences: {
@@ -61,13 +64,17 @@ export class ElectronTabView implements TabView {
         spellcheck: true,
         safeDialogs: true,
         autoplayPolicy: 'document-user-activation-required',
-        backgroundThrottling: true,
+        backgroundThrottling: false,
         scrollBounce: true,
         enableWebSQL: false
       }
     })
+    this.contentsId = this.view.webContents.id
     this.view.setVisible(false)
     this.wire(tab)
+    // Load before attaching so the sandboxed renderer is never left at an empty URL
+    // (`binding.startupData` is null until a navigation, which logs WIN-009).
+    this.loadURL(tab.url || 'zen://blank')
     this.attachTo(host)
   }
 
@@ -139,7 +146,7 @@ export class ElectronTabView implements TabView {
     wc.on('dom-ready', () => ev.onDomReady())
     wc.on('destroyed', () => {
       ev.onDestroyed()
-      this.onDestroyed(this)
+      this.onDestroyed(this.contentsId)
     })
     wc.setWindowOpenHandler(({ url, disposition }) => {
       const verdict = ev.onOpenWindow(url, disposition as WindowOpenDisposition)
@@ -166,6 +173,8 @@ export class ElectronTabView implements TabView {
   // --- navigation -----------------------------------------------------------
 
   loadURL(url: string): void {
+    if (this.startedUrl === url) return
+    this.startedUrl = url
     void this.view.webContents.loadURL(url).catch(() => undefined)
   }
 
@@ -263,13 +272,15 @@ export class ElectronTabView implements TabView {
   }
 
   isDestroyed(): boolean {
-    return this.view.webContents.isDestroyed()
+    const wc = this.view.webContents
+    return !wc || wc.isDestroyed()
   }
 
   destroy(): void {
     this.detach()
-    if (!this.view.webContents.isDestroyed()) {
-      this.view.webContents.close({ waitForBeforeUnload: false })
+    const wc = this.view.webContents
+    if (wc && !wc.isDestroyed()) {
+      wc.close({ waitForBeforeUnload: false })
     }
   }
 
@@ -660,12 +671,18 @@ export class ElectronTabViewHost implements TabViewHost {
   constructor(private readonly sessions: SessionManager) {}
 
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView {
-    const view = new ElectronTabView(host as ElectronWindow, tab, this.sessions, events, (v) => {
-      this.byWebContentsId.delete(v.webContents.id)
-      this.tabIds.delete(v.webContents.id)
-    })
-    this.byWebContentsId.set(view.webContents.id, view)
-    this.tabIds.set(view.webContents.id, tab.id)
+    const view = new ElectronTabView(
+      host as ElectronWindow,
+      tab,
+      this.sessions,
+      events,
+      (contentsId) => {
+        this.byWebContentsId.delete(contentsId)
+        this.tabIds.delete(contentsId)
+      }
+    )
+    this.byWebContentsId.set(view.contentsId, view)
+    this.tabIds.set(view.contentsId, tab.id)
     return view
   }
 

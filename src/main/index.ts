@@ -12,6 +12,10 @@ app.setName('Zenium')
 /** The product name up to v0.2.0; its userData directory is taken over on the first launch. */
 const LEGACY_APP_NAME = 'Zen'
 
+// Electron shows a blocking "A JavaScript error occurred in the main process" dialog only when
+// no `uncaughtException` listener exists. Errors still go to stderr for the smoke harness.
+process.on('uncaughtException', (err) => console.error('[zenium] uncaught', err))
+
 // `zenium --mcp`: relay stdio to the running browser's MCP server and exit – no windows, no lock.
 if (process.argv.slice(1).includes('--mcp')) {
   app.disableHardwareAcceleration()
