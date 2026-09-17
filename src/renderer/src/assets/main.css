@@ -892,44 +892,6 @@
   }
 
   /*
-   * Pull-to-refresh: the disc that comes down under the frame's top edge as the page is pulled
-   * (touch hosts move the page WebView itself; see `lib/pull.ts`). A v2 panel – neutral, opaque,
-   * its hairline border the edge – round because it is an indicator, not a control. Position,
-   * scale and turn are written per frame; the spin starts from the turn the pull left it at, so
-   * nothing jumps. The glyph is a row glyph (§9.3: 20 at 1.75 on phones), deemphasised until
-   * letting go would refresh.
-   */
-  .zen-ptr-disc {
-    background: var(--v2-panel);
-    border: 1px solid var(--v2-border);
-    border-radius: 999px;
-    box-shadow: var(--v2-shadow-panel);
-    will-change: transform, opacity;
-  }
-  .zen-ptr-glyph {
-    color: var(--v2-text-deemphasized);
-    transform: rotate(var(--zen-ptr-turn, 0deg));
-    transition: color 120ms var(--zen-ease);
-  }
-  .zen-ptr-glyph svg {
-    width: var(--v2-icon);
-    height: var(--v2-icon);
-    stroke-width: var(--v2-icon-stroke);
-  }
-  .zen-ptr-disc[data-armed] .zen-ptr-glyph,
-  .zen-ptr-glyph[data-spinning] {
-    color: var(--v2-text);
-  }
-  .zen-ptr-glyph[data-spinning] {
-    animation: zen-ptr-spin 900ms linear infinite;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .zen-ptr-glyph[data-spinning] {
-      animation: none;
-    }
-  }
-
-  /*
    * The page-load bar: 2 px of accent hugging the top edge of the content frame, over its
    * hairline and clear of its rounded corners (the live page covers everything inside the
    * frame). Per frame only the fill's scaleX moves and the sweep translates; the bar as a whole
@@ -966,6 +928,44 @@
     width: 40%;
     background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.6), transparent);
     animation: zen-progress 1.1s var(--zen-ease) infinite;
+  }
+
+  /*
+   * Pull-to-refresh: the disc that comes down under the frame's top edge as the page is pulled
+   * (touch hosts move the page WebView itself; see `lib/pull.ts`). A v2 panel – neutral, opaque,
+   * its hairline border the edge – round because it is an indicator, not a control. Position,
+   * scale and turn are written per frame; the spin starts from the turn the pull left it at, so
+   * nothing jumps. The glyph is a row glyph (§9.3: 20 at 1.75 on phones), deemphasised until
+   * letting go would refresh.
+   */
+  .zen-ptr-disc {
+    background: var(--v2-panel);
+    border: 1px solid var(--v2-border);
+    border-radius: 999px;
+    box-shadow: var(--v2-shadow-panel);
+    will-change: transform, opacity;
+  }
+  .zen-ptr-glyph {
+    color: var(--v2-text-deemphasized);
+    transform: rotate(var(--zen-ptr-turn, 0deg));
+    transition: color 120ms var(--zen-ease);
+  }
+  .zen-ptr-glyph svg {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    stroke-width: var(--v2-icon-stroke);
+  }
+  .zen-ptr-disc[data-armed] .zen-ptr-glyph,
+  .zen-ptr-glyph[data-spinning] {
+    color: var(--v2-text);
+  }
+  .zen-ptr-glyph[data-spinning] {
+    animation: zen-ptr-spin 900ms linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-ptr-glyph[data-spinning] {
+      animation: none;
+    }
   }
 
   .zen-space-strip {
@@ -1180,7 +1180,7 @@
     stroke-width: var(--v2-icon-stroke);
   }
 
-  /* Desktop sidebar: the toast's row, clipped so the card slides in from below it. */
+  /* The sidebar of Android's wide layouts: the toast's row, clipped so the card slides in from below it. */
   .zen-message-well {
     display: grid;
     clip-path: inset(-12px -12px 0 -12px);
@@ -3475,8 +3475,9 @@
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
-  /* The load bar still fills; its sweep stands still. */
+  /* The load bar still fills; its sweep is gone (stood still, it would read as a two-tone band). */
   .zen-load-progress-fill::after {
+    content: none;
     animation: none;
   }
 }

@@ -37,7 +37,7 @@ export function MessageLayer(): JSX.Element | null {
 
   if (toasts.length === 0 && banners.length === 0) return null
   return (
-    <div className="zen-message-layer" aria-live="polite">
+    <div className="zen-message-layer">
       {banners.length > 0 && (
         <div className="zen-message-stack" style={{ height: stackHeight }}>
           {banners.map((b, i) => (
