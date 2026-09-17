@@ -116,10 +116,13 @@ class BackDemo {
 
     // --- history ---------------------------------------------------------------------------------
 
-    /** Run `block` on the main thread with the demo tab's view (null when it is gone). */
+    /** Run `block` on the main thread with the demo tab's view – the seeded tab, else whichever page is on screen. */
     private fun <T> withTab(block: (TabWebView?) -> T): T {
         var result: T? = null
-        instrumentation.runOnMainSync { result = block(activity.host.tabs.get(TAB_ID)) }
+        instrumentation.runOnMainSync {
+            val tabs = activity.host.tabs
+            result = block(tabs.get(TAB_ID) ?: tabs.all().firstOrNull { it.isShown })
+        }
         @Suppress("UNCHECKED_CAST")
         return result as T
     }
@@ -135,7 +138,7 @@ class BackDemo {
         follow("a[href]", "https://www.iana.org/help/example-domains")
         awaitLoaded("iana.org")
         SystemClock.sleep(2_000)
-        follow("a[href=\"/domains\"], a[href^=\"/domains/\"], nav a[href^=\"/\"]", "https://www.iana.org/domains/reserved")
+        follow("a[href=\"/domains\"], a[href^=\"/domains/\"], a[href^=\"/protocols\"]", "https://www.iana.org/domains/reserved")
         awaitLoaded("iana.org/domains")
         SystemClock.sleep(2_500)
         val depth = withTab { it?.copyBackForwardList()?.size ?: 0 }
