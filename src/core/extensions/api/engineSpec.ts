@@ -498,7 +498,13 @@ export const ENGINE_SPEC: ApiSpec = {
     events: { onCreated: {}, onErased: {}, onChanged: {}, onDeterminingFilename: {} },
     constants: {
       State: { IN_PROGRESS: 'in_progress', INTERRUPTED: 'interrupted', COMPLETE: 'complete' },
-      DangerType: { FILE: 'file', URL: 'url', CONTENT: 'content', SAFE: 'safe', ACCEPTED: 'accepted' }
+      DangerType: {
+        FILE: 'file',
+        URL: 'url',
+        CONTENT: 'content',
+        SAFE: 'safe',
+        ACCEPTED: 'accepted'
+      }
     }
   },
   fontSettings: {
@@ -736,7 +742,7 @@ function mergeNamespace(
     ...(base?.constants || over?.constants
       ? { constants: { ...base?.constants, ...over?.constants } }
       : {}),
-    ...(base?.manifestVersion ?? over?.manifestVersion
+    ...((base?.manifestVersion ?? over?.manifestVersion)
       ? { manifestVersion: base?.manifestVersion ?? over?.manifestVersion }
       : {}),
     // A namespace the engine's host implements is no longer a shape.

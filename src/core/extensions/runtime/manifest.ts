@@ -3,12 +3,7 @@
  * MV3. Kept deliberately small: the store-install core owns the complete manifest type; this
  * runtime model is what the injection planner, the chrome.* shim and the hosts consume.
  */
-import {
-  getMessage,
-  localeCandidates,
-  substituteMessages,
-  type LocaleMessages
-} from '../api/i18n'
+import { getMessage, localeCandidates, substituteMessages, type LocaleMessages } from '../api/i18n'
 
 export type ManifestVersion = 2 | 3
 

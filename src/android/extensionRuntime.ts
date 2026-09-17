@@ -32,7 +32,7 @@ import {
 } from '@core/extensions/runtime/background'
 import { buildExtensionBoot, type ContentBootConfig } from '@core/extensions/runtime/boot'
 import type { NetRule } from '@core/extensions/runtime/dnr'
-import { parseRuntimeManifest, type RuntimeManifest } from '@core/extensions/runtime/manifest'
+import { parseRuntimeManifest } from '@core/extensions/runtime/manifest'
 import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
 import { MessageRouter, type Endpoint } from '@core/extensions/runtime/router'
 import { planUnits, sameUnits, type ExtensionUnits } from '@core/extensions/runtime/units'
@@ -273,8 +273,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     this.timers = {
       setTimeout: options.setTimeout ?? ((fn, ms) => setTimeout(fn, ms)),
       clearTimeout:
-        options.clearTimeout ??
-        ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>))
+        options.clearTimeout ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>))
     }
     this.dataStore = new JsonStore<RuntimeData>(browser.platform.io, RUNTIME_STORE, 300)
     this.data = readData(this.dataStore.readSync())
@@ -338,7 +337,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       this.envPromise = this.bridge.call<RuntimeEnv>('ext.env').then((env) => {
         this.env = {
           token: env.token,
-          uiLanguage: env.uiLanguage || (typeof navigator === 'undefined' ? 'en' : navigator.language),
+          uiLanguage:
+            env.uiLanguage || (typeof navigator === 'undefined' ? 'en' : navigator.language),
           isolatedWorlds: env.isolatedWorlds === true
         }
         return this.env
@@ -452,6 +452,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     this.sessionRules.delete(id)
     this.startupFired.delete(id)
     this.save()
+    // Settle the debounced document first so no pending write brings it back after the remove.
+    this.storage.get(id)?.store.flushSync()
     this.storage.delete(id)
     const io = this.browser.platform.io
     if (io.remove) await io.remove(storageDocName(id)).catch(() => undefined)
@@ -852,7 +854,10 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       const endpoint = this.router.endpoint(ep)
       this.router.unregister(ep)
       this.listening.delete(ep)
-      if (endpoint?.context === 'background' && this.backgroundEps.get(endpoint.extensionId) === ep) {
+      if (
+        endpoint?.context === 'background' &&
+        this.backgroundEps.get(endpoint.extensionId) === ep
+      ) {
         this.backgroundEps.delete(endpoint.extensionId)
         this.background.onGone(endpoint.extensionId)
       }
@@ -909,7 +914,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
         }
       ])
     const updated = (change: Record<string, unknown>): void => {
-      if (tab) this.emitAll('tabs', 'onUpdated', [chromeTabId, change, this.api.tabs.chromeTab(tab)])
+      if (tab)
+        this.emitAll('tabs', 'onUpdated', [chromeTabId, change, this.api.tabs.chromeTab(tab)])
     }
     switch (name) {
       case 'navigated': {
@@ -971,9 +977,11 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     }
     for (const id of this.knownTabIds) {
       if (ids.has(id)) continue
-      const chromeId = this.api.tabs.knownChromeId(id)
-      if (chromeId !== undefined)
-        this.emitAll('tabs', 'onRemoved', [chromeId, { windowId: 1, isWindowClosing: false }])
+      // Every tab has an id in Chrome, seen by the extension or not; a closed one keeps its number.
+      this.emitAll('tabs', 'onRemoved', [
+        this.api.tabs.chromeIdFor(id),
+        { windowId: 1, isWindowClosing: false }
+      ])
       this.router.unregisterTab(id)
     }
     this.knownTabIds = ids
@@ -1053,12 +1061,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   }
 
   /** `chrome.storage.<area>.<method>`: the shim forwards `[area, ...arguments]`. */
-  private storageCall(
-    ext: Attached,
-    endpoint: Endpoint,
-    method: string,
-    args: unknown[]
-  ): unknown {
+  private storageCall(ext: Attached, endpoint: Endpoint, method: string, args: unknown[]): unknown {
     const area = String(args[0]) as StorageArea
     if (!STORAGE_AREAS.includes(area)) throw new Error(`Unknown storage area ${area}`)
     const id = ext.record.id
@@ -1123,7 +1126,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
         return undefined
       }
       case 'setAccessLevel': {
-        if (area !== 'session') throw new Error('setAccessLevel is only available on storage.session.')
+        if (area !== 'session')
+          throw new Error('setAccessLevel is only available on storage.session.')
         if (untrusted) throw new Error('Context cannot set the storage access level')
         const level = asRecord(args[1]).accessLevel
         entry.sessionUntrusted = level === 'TRUSTED_AND_UNTRUSTED_CONTEXTS'

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { buildExtensionBoot } from '../boot'
-import { parseRuntimeManifest } from '../manifest'
+import { parseRuntimeManifest, type RuntimeManifest } from '../manifest'
 import type { RegisteredContentScript } from '../plan'
 import { injectsProgrammatically, originRulesFor, planUnits, sameUnits } from '../units'
 
 const ID = 'abcdefghijklmnopabcdefghijklmnop'
 
-function manifestOf(extra: Record<string, unknown>) {
+function manifestOf(extra: Record<string, unknown>): RuntimeManifest {
   return parseRuntimeManifest(
     { manifest_version: 3, name: 'Unit test', version: '1.2.3', ...extra },
     null
@@ -153,7 +153,10 @@ describe('planUnits', () => {
       `https://${ID}.ext.zenium.invalid/_generated_background_page.html`
     )
     expect(planned.served.backgroundHtml).toContain('<script type="module" src="/sw.js">')
-    const page = JSON.parse(planned.served.page) as { kind: string; extension: { groups: unknown[] } }
+    const page = JSON.parse(planned.served.page) as {
+      kind: string
+      extension: { groups: unknown[] }
+    }
     expect(page.kind).toBe('page')
     expect(page.extension.groups).toEqual([])
   })

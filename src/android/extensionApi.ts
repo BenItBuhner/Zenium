@@ -125,11 +125,6 @@ export class TabIds {
     return id
   }
 
-  /** The numeric id a closed tab had, if it was ever handed out. */
-  knownChromeId(tabId: string): number | undefined {
-    return this.chromeIds.get(tabId)
-  }
-
   coreIdFor(chromeTabId: number): string | null {
     return this.coreIds.get(chromeTabId) ?? null
   }
@@ -656,7 +651,11 @@ export class ExtensionApi {
     const fromUserScript = (raw: unknown): Record<string, unknown> => {
       const script = asRecord(raw)
       const js = Array.isArray(script.js) ? script.js.map((j) => asRecord(j).file) : []
-      return { ...script, js: asStringArray(js), world: script.world === 'MAIN' ? 'MAIN' : 'USER_SCRIPT' }
+      return {
+        ...script,
+        js: asStringArray(js),
+        world: script.world === 'MAIN' ? 'MAIN' : 'USER_SCRIPT'
+      }
     }
     switch (method) {
       case 'register':
@@ -788,7 +787,10 @@ export class ExtensionApi {
         )
         const added = normalizeRuleset(options.addRules ?? [], origin)
         const next = [...current.filter((r) => !removeIds.has(r.id)), ...added]
-        await this.host.setRules(id, dynamic ? { ...rules, dynamic: next } : { ...rules, session: next })
+        await this.host.setRules(
+          id,
+          dynamic ? { ...rules, dynamic: next } : { ...rules, session: next }
+        )
         return undefined
       }
       case 'getDynamicRules':

@@ -25,12 +25,7 @@
  * event { ns, name, args }, portConnect { portId, name, sender, userScript? }, portAccept
  * { portId, accept, error? }, portMsg { portId, data }, portDisconnect { portId, error? }.
  */
-import {
-  ENGINE_NOOPS,
-  ENGINE_STUB_RESULTS,
-  engineApiSpec,
-  namespaceGranted
-} from './engineSpec'
+import { ENGINE_NOOPS, ENGINE_STUB_RESULTS, engineApiSpec, namespaceGranted } from './engineSpec'
 import { getMessage, normalizeSubstitutions, type LocaleMessages } from './i18n'
 import { installExtensionApi, type InvokeResult, type ShimDiagnostics, type ShimHost } from './shim'
 
@@ -41,13 +36,7 @@ import { installExtensionApi, type InvokeResult, type ShimDiagnostics, type Shim
  * as a tab (an options page with `open_in_tab`, a changelog).
  */
 export type EngineContextKind =
-  | 'content'
-  | 'userScript'
-  | 'background'
-  | 'popup'
-  | 'options'
-  | 'offscreen'
-  | 'page'
+  'content' | 'userScript' | 'background' | 'popup' | 'options' | 'offscreen' | 'page'
 
 export interface EngineConfig {
   id: string
@@ -646,7 +635,12 @@ export function createEmulatedEngine(
 
   // --- host → context ----------------------------------------------------------------------------
 
-  const deliverMessage = (id: number, data: unknown, sender: MessageSender, viaUserScript: boolean): void => {
+  const deliverMessage = (
+    id: number,
+    data: unknown,
+    sender: MessageSender,
+    viaUserScript: boolean
+  ): void => {
     const event = events.get(viaUserScript ? 'runtime.onUserScriptMessage' : 'runtime.onMessage')
     if (!event || !event.hasListeners()) {
       post({ t: 'msgReply', id, handled: false, listeners: false })

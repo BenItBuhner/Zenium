@@ -375,7 +375,12 @@ describe('createEmulatedEngine', () => {
 
   it('queues an event pushed before any listener exists and replays it on addListener', () => {
     const h = harness()
-    h.engine.receive({ t: 'event', ns: 'runtime', name: 'onInstalled', args: [{ reason: 'install' }] })
+    h.engine.receive({
+      t: 'event',
+      ns: 'runtime',
+      name: 'onInstalled',
+      args: [{ reason: 'install' }]
+    })
     const seen: unknown[] = []
     ;(h.chrome.runtime.onInstalled as Listenable).addListener((d) => seen.push(d))
     expect(seen).toEqual([{ reason: 'install' }])

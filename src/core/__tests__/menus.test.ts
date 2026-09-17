@@ -47,7 +47,7 @@ const DESKTOP: HostCapabilities = {
 
 /**
  * The Android host on API 34 without an extension install root (the preview host), a hand-kept
- * copy of `androidCapabilities({ sdkInt: 34, extensions: false })` in src/android/platform.ts:
+ * copy of `androidCapabilities({ sdkInt: 34, extensions: false, isolatedWorlds: false })` in src/android/platform.ts:
  * that module pulls in the WebView bridge and Vite `?raw` imports a core test cannot load. Keep
  * it in step by hand, as above. A device build turns `extensions` on.
  */

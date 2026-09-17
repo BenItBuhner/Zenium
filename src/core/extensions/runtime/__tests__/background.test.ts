@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BackgroundLifecycle, backgroundKindOf, type BackgroundHost } from '../background'
-import { parseRuntimeManifest } from '../manifest'
+import { parseRuntimeManifest, type RuntimeManifest } from '../manifest'
 
 /** Manual timers: `advance(ms)` fires what is due, in order. */
 class FakeHost implements BackgroundHost {
@@ -31,7 +31,9 @@ class FakeHost implements BackgroundHost {
   advance(ms: number): void {
     const until = this.now + ms
     for (;;) {
-      const next = [...this.timers].filter(([, t]) => t.at <= until).sort((a, b) => a[1].at - b[1].at)[0]
+      const next = [...this.timers]
+        .filter(([, t]) => t.at <= until)
+        .sort((a, b) => a[1].at - b[1].at)[0]
       if (!next) break
       this.timers.delete(next[0])
       this.now = next[1].at
@@ -48,9 +50,9 @@ class FakeHost implements BackgroundHost {
 const ID = 'abcdefghijklmnopabcdefghijklmnop'
 
 describe('backgroundKindOf', () => {
-  const mv3 = (background: unknown) =>
+  const mv3 = (background: unknown): RuntimeManifest =>
     parseRuntimeManifest({ manifest_version: 3, name: 'x', version: '1', background }, null)
-  const mv2 = (background: unknown) =>
+  const mv2 = (background: unknown): RuntimeManifest =>
     parseRuntimeManifest({ manifest_version: 2, name: 'x', version: '1', background }, null)
 
   it('classifies workers, event pages and persistent pages', () => {
