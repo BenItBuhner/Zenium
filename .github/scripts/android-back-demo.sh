@@ -10,8 +10,8 @@
 #   files/back-demo/done       – written by the driver when the sequence is over
 set -euo pipefail
 
-app_id=app.zen.chromium.debug
-runner=app.zen.chromium.debug.test/androidx.test.runner.AndroidJUnitRunner
+app_id=io.github.benitbuhner.zenium.debug
+runner=io.github.benitbuhner.zenium.debug.test/androidx.test.runner.AndroidJUnitRunner
 out=artifacts/android-back-demo
 video=back-predictive-demo.mp4
 mkdir -p "$out"
