@@ -1,9 +1,8 @@
 import type { CSSProperties, JSX } from 'react'
 import { useEffect, useRef } from 'react'
-import { ArrowLeft, Lock, MoreHorizontal, Plus, Search } from 'lucide-react'
+import { Lock, Search } from 'lucide-react'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
-import { run } from '@renderer/lib/api'
 import {
   contentShift,
   cssPx,
@@ -11,25 +10,32 @@ import {
   dockStore,
   phoneBarHeight
 } from '@renderer/lib/gestures/dock'
-import {
-  closeOverview,
-  overviewIsOpen,
-  stageStore,
-  toggleOverview
-} from '@renderer/lib/gestures/stage'
+import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gestures/stage'
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
-import { activeSpace, activeTab, essentialsFor, tabsOf } from '@renderer/lib/selectors'
+import { activeSpace, activeTab } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
-import { contentAreaStore, openUrlbar, type UiState } from '@renderer/lib/ui'
+import {
+  closeBarEditor,
+  closeTabsMenu,
+  contentAreaStore,
+  openBarEditor,
+  openTabsMenu,
+  openUrlbar,
+  type UiState
+} from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ContentArea } from '../content/ContentArea'
 import { Onboarding } from '../overlays/Onboarding'
 import { Favicon } from '../sidebar/Favicon'
 import { TabDialogs } from '../TabDialogs'
 import { Urlbar } from '../urlbar/Urlbar'
+import { BarButton } from './BarButton'
+import { barContext, barLayout } from './barItems'
 import { PhoneStage } from './PhoneStage'
 import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
+import { TabsQuickMenu } from './TabsQuickMenu'
+import { useBarHold, type BarHoldHandlers } from './useBarHold'
 import { usePillGestures, type PillGestureHandlers } from './usePillGestures'
 
 interface Props {
@@ -64,8 +70,23 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     lastActive.current = activeTabId
   }, [activeTabId, ui.drawerOpen])
 
-  // Leaving the phone layout (rotation, DeX) drops a half-carried bar.
-  useEffect(() => () => dismissDock(), [])
+  // Leaving the phone layout (rotation, DeX) drops a half-carried bar, the bar's editor and menu.
+  useEffect(
+    () => () => {
+      dismissDock()
+      closeBarEditor()
+      closeTabsMenu()
+    },
+    []
+  )
+
+  // A hold on the Tabs button: its quick menu, anchored to the button; any other hold, the editor.
+  const hold = useBarHold({
+    onHold: (item, rect) => {
+      if (item === 'tabs') void openTabsMenu(rect, activeTabId)
+      else void openBarEditor(activeTabId)
+    }
+  })
 
   const pill = usePillGestures({
     edge,
@@ -121,6 +142,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           state={state}
           edge={edge}
           pill={pill}
+          hold={hold}
           overviewOpen={overviewOpen}
           pillLook={dock.phase === 'idle' ? 'docked' : 'well'}
           style={{ opacity: fromHere ? 1 - p : 1 }}
@@ -141,6 +163,9 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       {barHidden && <Urlbar state={state} urlbar={ui.urlbar} area={null} phoneEdge={edge} />}
       {dock.phase !== 'idle' && <BarDockLayer state={state} pill={pill} />}
       {ui.drawerOpen && <SpacesDrawer state={state} isDark={isDark} />}
+      {ui.tabsMenu && !barHidden && (
+        <TabsQuickMenu state={state} anchor={ui.tabsMenu} edge={edge} onClose={closeTabsMenu} />
+      )}
       <PhoneToasts ui={ui} barEdge={barHidden ? null : edge} />
       <TabDialogs state={state} />
       {onboarding && <Onboarding state={state} />}
@@ -159,15 +184,18 @@ function edgePadding(side: PhoneBarPosition, barEdge: PhoneBarPosition): string 
 type PillLook = 'docked' | 'well' | 'well-target'
 
 /**
- * Back · address pill · new tab · tabs · menu, docked at `edge`. The pill is the gesture anchor:
- * swipe it sideways to move to the previous / next tab (the neighbour's card follows the
- * finger), pull it towards the middle of the screen for the tab overview, tap it for the URL
- * bar, hold it to carry the whole bar to the other edge.
+ * The bar docked at `edge`: the controls of `settings.phoneBar` either side of the address pill
+ * (by default back · pill · new tab · tabs · menu). The pill is the gesture anchor: swipe it
+ * sideways to move to the previous / next tab (the neighbour's card follows the finger), pull it
+ * towards the middle of the screen for the tab overview, tap it for the URL bar, hold it to
+ * carry the whole bar to the other edge. A hold anywhere else on the bar opens the editor that
+ * rearranges it (on the Tabs button, its quick menu).
  */
 function PhoneBar({
   state,
   edge,
   pill,
+  hold,
   overviewOpen,
   pillLook,
   inert,
@@ -176,6 +204,7 @@ function PhoneBar({
   state: UIState
   edge: PhoneBarPosition
   pill: PillGestureHandlers
+  hold?: BarHoldHandlers
   overviewOpen: boolean
   /** The pill in place, or the empty slot it left (highlighted when it is about to land here). */
   pillLook: PillLook
@@ -185,7 +214,8 @@ function PhoneBar({
 }): JSX.Element {
   const tab = activeTab(state)
   const space = activeSpace(state)
-  const count = tabsOf(state, space).length + essentialsFor(state, space).length
+  const ctx = barContext(state, overviewOpen)
+  const layout = barLayout(state)
   const inset = `var(--zen-inset-${edge})`
 
   return (
@@ -205,16 +235,11 @@ function PhoneBar({
         paddingTop: edge === 'top' ? `calc(${inset} + 6px)` : 6,
         paddingBottom: edge === 'bottom' ? `calc(${inset} + 6px)` : 6
       }}
+      {...(inert ? {} : hold)}
     >
-      <button
-        type="button"
-        className="zen-toolbar-button h-11 w-11"
-        aria-label="Back"
-        disabled={!tab?.canGoBack}
-        onClick={() => tab && run('tab.back', { tabId: tab.id })}
-      >
-        <ArrowLeft className="h-5 w-5" />
-      </button>
+      {layout.left.map((id) => (
+        <BarButton key={id} id={id} ctx={ctx} inert={inert} />
+      ))}
       {/*
         The pill is a gesture surface, not a button: its site icon, address and lock are real
         buttons inside it, so TalkBack gets a node for each (a button's descendants would all
@@ -236,42 +261,9 @@ function PhoneBar({
           <PillContent state={state} tab={tab} space={space} interactive={!inert} />
         )}
       </div>
-      <button
-        type="button"
-        className="zen-toolbar-button h-11 w-11"
-        aria-label="New tab"
-        onClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
-        onContextMenu={(e) => {
-          e.preventDefault()
-          run('newtab.contextMenu', undefined)
-        }}
-      >
-        <Plus className="h-5 w-5" />
-      </button>
-      <button
-        type="button"
-        className="zen-toolbar-button h-11 w-11"
-        aria-label={`Tabs (${count})`}
-        aria-pressed={overviewOpen}
-        onClick={() => toggleOverview(state)}
-      >
-        <span
-          className={cn(
-            'flex h-[22px] min-w-[22px] items-center justify-center rounded-[6px] border-2 border-current px-1 text-[11px] font-semibold leading-none transition-colors',
-            overviewOpen && 'bg-[var(--zen-fg)] text-[var(--zen-bg-solid)]'
-          )}
-        >
-          {count > 99 ? '∞' : count}
-        </span>
-      </button>
-      <button
-        type="button"
-        className="zen-toolbar-button h-11 w-11"
-        aria-label="Menu"
-        onClick={() => run('app.menu', undefined)}
-      >
-        <MoreHorizontal className="h-5 w-5" />
-      </button>
+      {layout.right.map((id) => (
+        <BarButton key={id} id={id} ctx={ctx} inert={inert} />
+      ))}
     </nav>
   )
 }

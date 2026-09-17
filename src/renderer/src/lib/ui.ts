@@ -103,6 +103,10 @@ export interface UiState {
   siteInfoOpen: boolean
   /** A page wants to open another app: the external-protocol confirm sheet is up for it. */
   externalProtocol: ExternalProtocolRequest | null
+  /** Phone layout: the sheet that rearranges the bar's controls is up. */
+  barEditorOpen: boolean
+  /** Phone layout: the Tabs button's quick menu is up, anchored to the button (window px). */
+  tabsMenu: Rect | null
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
   /**
@@ -146,6 +150,8 @@ export const uiStore = createStore<UiState>(
     menu: null,
     siteInfoOpen: false,
     externalProtocol: null,
+    barEditorOpen: false,
+    tabsMenu: null,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false
   },
@@ -214,6 +220,8 @@ export function returnFocusToPage(): void {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    !ui.barEditorOpen &&
+    !ui.tabsMenu &&
     !ui.stageActive
   )
     run('focus.content', undefined)
@@ -231,6 +239,8 @@ export function invalidateSnapshot(): void {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    !ui.barEditorOpen &&
+    !ui.tabsMenu &&
     !ui.stageActive
   ) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
@@ -353,8 +363,49 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.menu !== null ||
     ui.siteInfoOpen ||
     ui.externalProtocol !== null ||
+    ui.barEditorOpen ||
+    ui.tabsMenu !== null ||
     ui.stageActive
   )
+}
+
+// ---------------------------------------------------------------------------
+// Phone bar editor
+// ---------------------------------------------------------------------------
+
+/** Open the sheet that rearranges the phone bar's controls (from Settings or a hold on the bar). */
+export async function openBarEditor(activeTabId: string | null): Promise<void> {
+  if (uiStore.get().barEditorOpen) return
+  // The sheet recedes the page behind it like every other, so the snapshot must exist first;
+  // over an overlay (Settings) it already does.
+  if (uiStore.get().overlay === 'none') await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ barEditorOpen: true })
+}
+
+export function closeBarEditor(): void {
+  if (!uiStore.get().barEditorOpen) return
+  uiStore.set({ barEditorOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/**
+ * The Tabs button's quick menu. It overhangs the content area, where the page view is drawn
+ * above the chrome, so the page gives way to its snapshot while the menu is up, as it does for
+ * the sheets.
+ */
+export async function openTabsMenu(anchor: Rect, activeTabId: string | null): Promise<void> {
+  if (uiStore.get().overlay === 'none') await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ tabsMenu: anchor })
+}
+
+export function closeTabsMenu(): void {
+  if (!uiStore.get().tabsMenu) return
+  uiStore.set({ tabsMenu: null })
+  invalidateSnapshot()
+  returnFocusToPage()
 }
 
 // The system back gesture (registry of dismissable surfaces, legacy chain) lives in `back.ts`.

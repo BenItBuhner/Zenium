@@ -35,6 +35,7 @@ import {
   emptyAgentServerStatus,
   emptyResourceSnapshot
 } from '../shared/defaults'
+import { sanitizePhoneBar } from '../shared/phoneBar'
 import { DEFAULT_SEARCH_ENGINES } from '../shared/search'
 import { applyShortcutOverrides, defaultShortcuts } from '../shared/shortcuts'
 import {
@@ -230,6 +231,7 @@ export class BrowserState {
     this.settings.resources = sanitizeResourceSettings(data.settings?.resources)
     this.settings.agents = sanitizeAgentSettings(data.settings?.agents)
     this.settings.updates = sanitizeUpdateSettings(data.settings?.updates)
+    this.settings.phoneBar = sanitizePhoneBar(data.settings?.phoneBar)
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     this.bookmarks = this.loadBookmarks(data)
     if (Array.isArray(data.windows) && data.windows.length) {

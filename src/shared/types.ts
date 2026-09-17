@@ -625,6 +625,30 @@ export type SidebarSide = 'left' | 'right'
 export type NewTabPosition = 'end' | 'after-current'
 /** Screen edge the phone layout docks its address bar to. */
 export type PhoneBarPosition = 'top' | 'bottom'
+/**
+ * A control the phone's bar can host (see `shared/phoneBar.ts` for the catalogue). The address
+ * pill is not one of them: it is always there, in the flexible slot between the two sides.
+ */
+export type PhoneBarItemId =
+  | 'back'
+  | 'forward'
+  | 'reload'
+  | 'home'
+  | 'share'
+  | 'bookmark'
+  | 'bookmarks'
+  | 'history'
+  | 'downloads'
+  | 'tabs'
+  | 'new-tab'
+  | 'menu'
+  | 'spaces'
+  | 'find'
+/** Which controls sit on either side of the address pill; both sides read left to right as drawn. */
+export interface PhoneBarLayout {
+  left: PhoneBarItemId[]
+  right: PhoneBarItemId[]
+}
 /** Haptic feedback the chrome asks the host for (mobile hosts; no-op elsewhere). */
 export type HapticKind = 'lift' | 'tick' | 'dock'
 
@@ -652,6 +676,8 @@ export interface Settings {
   urlbarBehavior: UrlbarBehavior
   /** Phone layout: where the address bar (and its gestures) live. Long-press the pill to move it. */
   phoneBarPosition: PhoneBarPosition
+  /** Phone layout: the controls either side of the address pill (Settings › Navigation bar). */
+  phoneBar: PhoneBarLayout
   /** Touch hosts: drag down from the top of a page to reload it. */
   pullToRefresh: boolean
   glanceEnabled: boolean

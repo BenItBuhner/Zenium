@@ -2,6 +2,7 @@ import React, { type JSX } from 'react'
 import { App } from './App'
 import { MenuSheet } from './components/menus/MenuSheet'
 import { ExternalProtocolLayer } from './components/protocol/ExternalProtocolSheet'
+import { BarEditorLayer } from './components/phone/BarEditorSheet'
 import { SiteInfoLayer } from './components/siteinfo/SiteInfoSheet'
 import { browserStore, uiStore } from './lib/ui'
 
@@ -13,6 +14,7 @@ export function Root(): JSX.Element {
     <>
       <App />
       <SiteInfoLayer />
+      <BarEditorLayer />
       <MenuLayer />
       <ExternalProtocolLayer />
     </>
