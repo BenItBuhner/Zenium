@@ -348,6 +348,22 @@ export interface ExtensionInfo {
   updateError: string | null
   /** When this extension was last checked for updates, or null when never. */
   updateCheckedAt: number | null
+  /** Effective `chrome.action` state for the active tab; absent while the extension is not loaded. */
+  action?: ExtensionAction
+}
+
+/** What an extension's toolbar button should show: `chrome.action` state for the active tab. */
+export interface ExtensionAction {
+  badgeText: string
+  /** CSS colour, or null for the host's default badge colour. */
+  badgeBackgroundColor: string | null
+  badgeTextColor: string | null
+  title: string
+  /** Data URL set through `action.setIcon`, or null for the manifest icon. */
+  icon: string | null
+  /** Full popup URL, or null when a click fires `action.onClicked` instead. */
+  popup: string | null
+  enabled: boolean
 }
 
 export interface Mod {

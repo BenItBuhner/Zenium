@@ -27,6 +27,7 @@ import { ElectronTabViewHost, copyImageFromUrl } from './views'
 import { ElectronWindowFactory, type ElectronWindow } from './window'
 import { ExtensionService } from './extensions'
 import { WebstoreBridge } from './webstoreBridge'
+import { ExtensionApiHost } from './extensionApi'
 import { requestHeaderRules } from './requestHeaders'
 import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
@@ -240,6 +241,17 @@ export class ElectronPlatform implements Platform {
       return tabId ? browser.tabs.ownerOf(tabId) : undefined
     })
     webstore.install()
+    const extensionApi = new ExtensionApiHost(
+      browser,
+      this.sessions,
+      this.views,
+      this.io,
+      this.userDataDir
+    )
+    extensionApi.install()
+    const extensionService = browser.extensions as ExtensionService
+    extensionService.attachApi(extensionApi)
+    extensionService.onChange((event) => extensionApi.registryChanged(event))
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
       this.attachPermissions(ses)
@@ -249,6 +261,7 @@ export class ElectronPlatform implements Platform {
       ses.setSpellCheckerLanguages(['en-US'])
       if (this.sessions.isPersistent(containerId)) {
         webstore.attach(ses)
+        extensionApi.attachSession(ses)
         // Interim: the session's one onBeforeSendHeaders slot, running webstoreClientHints. The
         // webRequest multiplexer registers that handler itself and deletes this call when it lands.
         requestHeaderRules.attach(ses)
