@@ -518,6 +518,84 @@ export const API_SPEC: ApiSpec = {
         KEYWORD_GENERATED: 'keyword_generated'
       }
     }
+  },
+  downloads: {
+    methods: {
+      download: { params: [object('options')] },
+      search: { params: [object('query')] },
+      pause: { params: [integer('downloadId')] },
+      resume: { params: [integer('downloadId')] },
+      cancel: { params: [integer('downloadId')] },
+      getFileIcon: { params: [integer('downloadId'), object('options', true)] },
+      open: { params: [integer('downloadId')] },
+      show: { params: [integer('downloadId')] },
+      showDefaultFolder: { params: [] },
+      erase: { params: [object('query')] },
+      removeFile: { params: [integer('downloadId')] },
+      acceptDanger: { params: [integer('downloadId')] },
+      setUiOptions: { params: [object('options')] },
+      setShelfEnabled: { params: [boolean('enabled')] }
+    },
+    events: { onCreated: {}, onErased: {}, onChanged: {}, onDeterminingFilename: {} },
+    constants: {
+      FilenameConflictAction: { UNIQUIFY: 'uniquify', OVERWRITE: 'overwrite', PROMPT: 'prompt' },
+      State: { IN_PROGRESS: 'in_progress', INTERRUPTED: 'interrupted', COMPLETE: 'complete' },
+      DangerType: {
+        FILE: 'file',
+        URL: 'url',
+        CONTENT: 'content',
+        UNCOMMON: 'uncommon',
+        HOST: 'host',
+        UNWANTED: 'unwanted',
+        SAFE: 'safe',
+        ACCEPTED: 'accepted',
+        ALLOWLISTED_BY_POLICY: 'allowlistedByPolicy',
+        ASYNC_SCANNING: 'asyncScanning',
+        ASYNC_LOCAL_PASSWORD_SCANNING: 'asyncLocalPasswordScanning',
+        PASSWORD_PROTECTED: 'passwordProtected',
+        BLOCKED_TOO_LARGE: 'blockedTooLarge',
+        SENSITIVE_CONTENT_WARNING: 'sensitiveContentWarning',
+        SENSITIVE_CONTENT_BLOCK: 'sensitiveContentBlock',
+        DEEP_SCANNED_FAILED: 'deepScannedFailed',
+        DEEP_SCANNED_SAFE: 'deepScannedSafe',
+        DEEP_SCANNED_OPENED_DANGEROUS: 'deepScannedOpenedDangerous',
+        PROMPT_FOR_SCANNING: 'promptForScanning',
+        PROMPT_FOR_LOCAL_PASSWORD_SCANNING: 'promptForLocalPasswordScanning',
+        ACCOUNT_COMPROMISE: 'accountCompromise',
+        BLOCKED_SCAN_FAILED: 'blockedScanFailed'
+      },
+      InterruptReason: {
+        FILE_FAILED: 'FILE_FAILED',
+        FILE_ACCESS_DENIED: 'FILE_ACCESS_DENIED',
+        FILE_NO_SPACE: 'FILE_NO_SPACE',
+        FILE_NAME_TOO_LONG: 'FILE_NAME_TOO_LONG',
+        FILE_TOO_LARGE: 'FILE_TOO_LARGE',
+        FILE_VIRUS_INFECTED: 'FILE_VIRUS_INFECTED',
+        FILE_TRANSIENT_ERROR: 'FILE_TRANSIENT_ERROR',
+        FILE_BLOCKED: 'FILE_BLOCKED',
+        FILE_SECURITY_CHECK_FAILED: 'FILE_SECURITY_CHECK_FAILED',
+        FILE_TOO_SHORT: 'FILE_TOO_SHORT',
+        FILE_HASH_MISMATCH: 'FILE_HASH_MISMATCH',
+        FILE_SAME_AS_SOURCE: 'FILE_SAME_AS_SOURCE',
+        NETWORK_FAILED: 'NETWORK_FAILED',
+        NETWORK_TIMEOUT: 'NETWORK_TIMEOUT',
+        NETWORK_DISCONNECTED: 'NETWORK_DISCONNECTED',
+        NETWORK_SERVER_DOWN: 'NETWORK_SERVER_DOWN',
+        NETWORK_INVALID_REQUEST: 'NETWORK_INVALID_REQUEST',
+        SERVER_FAILED: 'SERVER_FAILED',
+        SERVER_NO_RANGE: 'SERVER_NO_RANGE',
+        SERVER_BAD_CONTENT: 'SERVER_BAD_CONTENT',
+        SERVER_UNAUTHORIZED: 'SERVER_UNAUTHORIZED',
+        SERVER_CERT_PROBLEM: 'SERVER_CERT_PROBLEM',
+        SERVER_FORBIDDEN: 'SERVER_FORBIDDEN',
+        SERVER_UNREACHABLE: 'SERVER_UNREACHABLE',
+        SERVER_CONTENT_LENGTH_MISMATCH: 'SERVER_CONTENT_LENGTH_MISMATCH',
+        SERVER_CROSS_ORIGIN_REDIRECT: 'SERVER_CROSS_ORIGIN_REDIRECT',
+        USER_CANCELED: 'USER_CANCELED',
+        USER_SHUTDOWN: 'USER_SHUTDOWN',
+        CRASH: 'CRASH'
+      }
+    }
   }
 }
 

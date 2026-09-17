@@ -468,11 +468,14 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     dispatch(...args: unknown[]): unknown[]
   }
 
+  /** Sees what the listeners of one delivery returned (events whose answer the host waits for). */
+  type After = (results: unknown[]) => void
+
   interface EventRecord {
     object: EventObject
     /** Listener → the id of its URL filter set, null for an unfiltered listener. */
     listeners: Map<Listener, number | null>
-    pending: Array<{ args: unknown[]; at: number; delivery?: EventDelivery }>
+    pending: Array<{ args: unknown[]; at: number; delivery?: EventDelivery; after?: After }>
     nativeDelivers: boolean
     /** With `nativeDelivers`: which host deliveries the engine already made (dropped here). */
     nativeHandles: (args: unknown[]) => boolean
@@ -560,7 +563,10 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
             if (now - item.at > PENDING_TTL) continue
             // A filtered listener registered after the host matched cannot be matched now; it
             // only receives deliveries the host addressed to everyone.
-            if (wants(filterId, item.delivery)) callListener(fn, item.args)
+            if (!wants(filterId, item.delivery)) continue
+            const results: unknown[] = []
+            callListener(fn, item.args, results)
+            item.after?.(results)
           }
         }
       },
@@ -600,15 +606,22 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     return object
   }
 
-  function deliver(fullName: string, args: unknown[], delivery?: EventDelivery): void {
+  function deliver(
+    fullName: string,
+    args: unknown[],
+    delivery?: EventDelivery,
+    after?: After
+  ): void {
     const record = events.get(fullName)
     if (!record) return
     // The engine already fired this one at our listeners; a second delivery would duplicate it.
     if (record.nativeDelivers && record.nativeHandles(args)) return
     if (record.listeners.size > 0) {
+      const results: unknown[] = []
       for (const [fn, filterId] of [...record.listeners]) {
-        if (wants(filterId, delivery)) callListener(fn, args)
+        if (wants(filterId, delivery)) callListener(fn, args, results)
       }
+      after?.(results)
       return
     }
     const now = Date.now()
@@ -616,8 +629,27 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     if (record.pending.length < 50) {
       const item: EventRecord['pending'][number] = { args, at: now }
       if (delivery) item.delivery = delivery
+      if (after) item.after = after
       record.pending.push(item)
     }
+  }
+
+  /**
+   * `downloads.onDeterminingFilename(item, suggest)`: the host holds the file's placement until
+   * this context answers once. A listener that returns true answers later through `suggest`;
+   * otherwise the answer is whatever it passed synchronously, or nothing.
+   */
+  function determineFilename(args: unknown[]): void {
+    const token = args[1]
+    let answered = false
+    const suggest = (suggestion?: unknown): void => {
+      if (answered) return
+      answered = true
+      host.notify('downloads-determined', { token, suggestion: suggestion ?? null })
+    }
+    deliver('downloads.onDeterminingFilename', [args[0], suggest], undefined, (results) => {
+      if (!results.includes(true)) suggest()
+    })
   }
 
   // ---------------------------------------------------------------------------
@@ -1013,6 +1045,10 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       return
     }
     if (namespace === 'contextMenus' && event === 'onClicked') menuClicked(args)
+    if (namespace === 'downloads' && event === 'onDeterminingFilename') {
+      determineFilename(args)
+      return
+    }
     const names =
       namespace === 'action'
         ? [`action.${event}`, `browserAction.${event}`]

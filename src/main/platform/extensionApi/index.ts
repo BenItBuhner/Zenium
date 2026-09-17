@@ -46,6 +46,7 @@ import {
 } from './contexts'
 import { CookiesApi } from './cookies'
 import { DeclarativeNetRequestHostApi } from './declarativeNetRequest'
+import { DownloadsApi, type DownloadBridge } from './downloads'
 import { ExtensionApi } from './extension'
 import { HistoryApi } from './history'
 import { ManagementApi } from './management'
@@ -138,6 +139,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly declarativeNetRequest: DeclarativeNetRequestHostApi
   readonly bookmarks: BookmarksApi
   readonly history: HistoryApi
+  readonly downloads: DownloadsApi
 
   private readonly namespaces: Record<string, NamespaceHandlers>
   private readonly extensions = new Map<string, LoadedExtension>()
@@ -158,7 +160,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     io: StoreIO,
     userDataDir: string,
     /** Where `declarativeNetRequest` rule sets go: the request-blocking engine. */
-    ruleSink: RuleSink
+    ruleSink: RuleSink,
+    /** The platform's download host, for `downloads.download` and the file-name step. */
+    downloadBridge: DownloadBridge
   ) {
     this.model = new ApiModel(browser, views)
     this.store = new ApiStore(io, userDataDir)
@@ -191,6 +195,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     )
     this.bookmarks = new BookmarksApi(this)
     this.history = new HistoryApi(this)
+    this.downloads = new DownloadsApi(this, downloadBridge)
     this.namespaces = {
       tabs: this.tabs.handlers,
       windows: this.windows.handlers,
@@ -208,7 +213,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       cookies: this.cookies.handlers,
       declarativeNetRequest: this.declarativeNetRequest.handlers,
       bookmarks: this.bookmarks.handlers,
-      history: this.history.handlers
+      history: this.history.handlers,
+      downloads: this.downloads.handlers
     }
     // A tab's outermost document changed: `activeTab` grants for another origin end and the
     // declarativeNetRequest action counts start over.
@@ -234,6 +240,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     // Every tab view, the ones alive already included: `webNavigation.*` comes from their events.
     this.views.onViewCreated((view) => this.webNavigation.attach(view))
     this.history.attach()
+    this.downloads.attach()
     app.on('before-quit', () => this.flushSync())
   }
 
@@ -341,6 +348,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     if (!this.snapshot) {
       this.snapshot = this.model.snapshot()
       this.bookmarks.tick()
+      this.downloads.tick()
     }
     const firstEver = this.store.installedVersion(ext.id) === undefined
     this.runtime.lifecycle(ext.id, ext.version, !this.seen.has(ext.id) && !firstEver)
@@ -486,6 +494,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         return
       case 'storage-changed':
         this.storage.changed(ctx, payload)
+        return
+      case 'downloads-determined':
+        this.downloads.determined(ctx, payload)
         return
       default:
         return
@@ -648,10 +659,12 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     if (this.extensions.size === 0) {
       this.snapshot = null
       this.bookmarks.reset()
+      this.downloads.reset()
       return
     }
     this.watchWindows()
     this.bookmarks.tick()
+    this.downloads.tick()
     const { shortcuts } = this.browser.state
     if (shortcuts !== this.shortcutsSeen) {
       // The user rebound a Zenium shortcut: commands are resolved against the new table.

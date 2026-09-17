@@ -29,6 +29,7 @@ import { ElectronWindowFactory, type ElectronWindow } from './window'
 import { ExtensionService } from './extensions'
 import { WebstoreBridge } from './webstoreBridge'
 import { ExtensionApiHost } from './extensionApi'
+import { electronDownloadBridge } from './extensionApi/downloadsBridge'
 import { createDnrSink } from './extensionApi/dnrSink'
 import { ExtensionResourceOrigin } from './extensionApi/resourceOrigin'
 import { edgeStoreUserAgent, webstoreClientHints } from './requestHeaders'
@@ -283,7 +284,8 @@ export class ElectronPlatform implements Platform {
       this.io,
       this.userDataDir,
       // Extensions' declarativeNetRequest rule sets go straight into the request-blocking engine.
-      createDnrSink(browser.blocking.engine, extensionResources)
+      createDnrSink(browser.blocking.engine, extensionResources),
+      electronDownloadBridge(this.downloads)
     )
     extensionApi.install()
     const extensionService = browser.extensions as ExtensionService
