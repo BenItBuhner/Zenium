@@ -453,6 +453,45 @@ export const API_SPEC: ApiSpec = {
         MEMORY_LIMIT_EXCEEDED: 'memoryLimitExceeded'
       }
     }
+  },
+
+  // Browser layer part 3: bridges onto Zenium's own models. Every member routes to the host,
+  // which reads and writes the model through its service and fires the events from a diff of
+  // the model's commits.
+  bookmarks: {
+    methods: {
+      get: { params: [{ name: 'idOrIdList', type: ['string', 'array'] }] },
+      getChildren: { params: [string('id')] },
+      getRecent: { params: [integer('numberOfItems')] },
+      getTree: { params: [] },
+      getSubTree: { params: [string('id')] },
+      search: { params: [{ name: 'query', type: ['string', 'object'] }] },
+      create: { params: [object('bookmark')] },
+      move: { params: [string('id'), object('destination')] },
+      update: { params: [string('id'), object('changes')] },
+      remove: { params: [string('id')] },
+      removeTree: { params: [string('id')] }
+    },
+    events: {
+      onCreated: {},
+      onRemoved: {},
+      onChanged: {},
+      onMoved: {},
+      onChildrenReordered: {},
+      onImportBegan: {},
+      onImportEnded: {}
+    },
+    constants: {
+      MAX_WRITE_OPERATIONS_PER_HOUR: 1000000,
+      MAX_SUSTAINED_WRITE_OPERATIONS_PER_MINUTE: 1000000,
+      BookmarkTreeNodeUnmodifiable: { MANAGED: 'managed' },
+      FolderType: {
+        BOOKMARKS_BAR: 'bookmarks-bar',
+        OTHER: 'other',
+        MOBILE: 'mobile',
+        MANAGED: 'managed'
+      }
+    }
   }
 }
 

@@ -33,6 +33,7 @@ import type { ElectronTabViewHost } from '../views'
 import { ActionApi } from './action'
 import { ActiveTabGrants } from './activeTab'
 import { AlarmsApi } from './alarms'
+import { BookmarksApi } from './bookmarks'
 import { CommandsApi } from './commands'
 import { ContextMenusApi } from './contextMenus'
 import {
@@ -134,6 +135,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly notifications: NotificationsApi
   readonly cookies: CookiesApi
   readonly declarativeNetRequest: DeclarativeNetRequestHostApi
+  readonly bookmarks: BookmarksApi
 
   private readonly namespaces: Record<string, NamespaceHandlers>
   private readonly extensions = new Map<string, LoadedExtension>()
@@ -185,6 +187,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       this.activeTab,
       join(userDataDir, 'zen', 'extension-dnr')
     )
+    this.bookmarks = new BookmarksApi(this)
     this.namespaces = {
       tabs: this.tabs.handlers,
       windows: this.windows.handlers,
@@ -200,7 +203,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       commands: this.commands.handlers,
       notifications: this.notifications.handlers,
       cookies: this.cookies.handlers,
-      declarativeNetRequest: this.declarativeNetRequest.handlers
+      declarativeNetRequest: this.declarativeNetRequest.handlers,
+      bookmarks: this.bookmarks.handlers
     }
     // A tab's outermost document changed: `activeTab` grants for another origin end and the
     // declarativeNetRequest action counts start over.
@@ -328,8 +332,11 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.commands.load(loaded)
     // After the permissions: the state exists only for extensions holding the permission.
     this.declarativeNetRequest.load(loaded)
-    // Existing tabs are the baseline, not a burst of `tabs.onCreated`.
-    if (!this.snapshot) this.snapshot = this.model.snapshot()
+    // Existing tabs and bookmarks are the baseline, not a burst of `onCreated`.
+    if (!this.snapshot) {
+      this.snapshot = this.model.snapshot()
+      this.bookmarks.tick()
+    }
     const firstEver = this.store.installedVersion(ext.id) === undefined
     this.runtime.lifecycle(ext.id, ext.version, !this.seen.has(ext.id) && !firstEver)
     this.seen.add(ext.id)
@@ -635,9 +642,11 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   private tick(): void {
     if (this.extensions.size === 0) {
       this.snapshot = null
+      this.bookmarks.reset()
       return
     }
     this.watchWindows()
+    this.bookmarks.tick()
     const { shortcuts } = this.browser.state
     if (shortcuts !== this.shortcutsSeen) {
       // The user rebound a Zenium shortcut: commands are resolved against the new table.
