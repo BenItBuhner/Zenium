@@ -86,6 +86,11 @@ export interface UiState {
   editingPinnedUrlTabId: string | null
   /** Tab whose icon picker is open. */
   iconPickerTabId: string | null
+  /**
+   * The list of pop-ups the blocker refused for a tab, anchored under the address pill's
+   * indicator (window coordinates) or, without an anchor, as a sheet.
+   */
+  blockedPopupsPanel: { tabId: string; anchor: Rect | null } | null
   /** Zen's multi-select: tabs picked with Ctrl / Shift+click (acted on together). */
   selectedTabIds: string[]
   /** Last plainly clicked / toggled tab – the anchor for Shift+click ranges. */
@@ -141,6 +146,7 @@ export const uiStore = createStore<UiState>(
     renamingFolderId: null,
     editingPinnedUrlTabId: null,
     iconPickerTabId: null,
+    blockedPopupsPanel: null,
     selectedTabIds: [],
     selectionAnchorId: null,
     glanceActive: false,
