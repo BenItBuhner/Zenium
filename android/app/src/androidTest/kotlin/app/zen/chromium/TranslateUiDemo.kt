@@ -1,5 +1,6 @@
 package app.zen.chromium
 
+import android.graphics.PointF
 import android.os.SystemClock
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -48,14 +49,16 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
         shot("02-es-offer")
 
         // --- the glyph at the end of the pill puts the bar away and raises it again ------------
-        val hidden = tapLabel(f, "Hide the translation bar")
+        val hidden = tapPillGlyph(f, "Hide the translation bar")
+        val dismissed = awaitTab(ES_TAB, 5_000) { it.optBoolean("dismissed") }
         SystemClock.sleep(1_200)
-        results.put("pillGlyphHide", hidden && findByLabel("Translate") == null)
+        results.put("pillGlyphHide", hidden && dismissed?.optBoolean("dismissed") == true && barUp() == false)
         shot("03-es-bar-hidden")
-        val raised = tapLabel(f, "Translate this page")
+        val raised = tapPillGlyph(f, "Translate this page")
+        val back = awaitTab(ES_TAB, 5_000) { it.optString("status") == "offered" && !it.optBoolean("dismissed") }
         SystemClock.sleep(1_200)
-        results.put("pillGlyphRaise", raised && waitFor("Translate", 5_000) != null)
-        Log.i(tag, "pill glyph: hid=$hidden raised=$raised")
+        results.put("pillGlyphRaise", raised && back?.optBoolean("dismissed") == false && barUp() == true)
+        Log.i(tag, "pill glyph: hid=$hidden (${results.opt("pillGlyphHide")}) raised=$raised (${results.opt("pillGlyphRaise")})")
         shot("04-es-bar-from-pill")
 
         // --- Translate: the model comes down, the page turns English ----------------------------
@@ -151,5 +154,70 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
         }
         reveal(label)
         return clickByLabel(label)
+    }
+
+    /**
+     * A real touch on the translation glyph at the end of the URL pill, once it says `label` (the
+     * label tells whether the tap raises the bar or puts it away). The glyph is located through the
+     * chrome's DOM: the WebView's accessibility tree does not always carry the pill's inner buttons
+     * (the other demos fall back to a position for the site icon for the same reason), so the tree
+     * only stands in when the DOM has nothing to say.
+     */
+    private fun tapPillGlyph(f: Finger, label: String): Boolean {
+        val deadline = SystemClock.uptimeMillis() + 5_000
+        var glyph = pillGlyph()
+        while ((glyph == null || glyph.second != label) && SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(200)
+            glyph = pillGlyph()
+        }
+        val tree = findByLabel(label)
+        val at = when {
+            glyph != null && glyph.second == label -> glyph.first
+            tree != null -> PointF(tree.exactCenterX(), tree.exactCenterY())
+            else -> {
+                Log.w(tag, "no translation glyph labelled '$label' (the DOM says '${glyph?.second ?: "none"}', the tree nothing)")
+                return false
+            }
+        }
+        Log.i(tag, "pill glyph '$label' at $at (${if (tree != null) "in the tree too" else "DOM only"})")
+        f.tap(at.x, at.y)
+        return true
+    }
+
+    /** The pill's translation glyph as the chrome's DOM has it: its centre on screen and its label. */
+    private fun pillGlyph(): Pair<PointF, String>? {
+        val raw = chrome(
+            "(function(){var b=document.querySelector('.zen-phone-bar [data-translate]');if(!b)return null;" +
+                "var r=b.getBoundingClientRect();if(!r.width||!r.height)return null;" +
+                "return {x:r.left+r.width/2,y:r.top+r.height/2,dpr:window.devicePixelRatio,label:b.getAttribute('aria-label')||''}})()"
+        )
+        if (raw == null || raw == "null") return null
+        val json = runCatching { JSONObject(raw) }.getOrNull() ?: return null
+        val origin = IntArray(2)
+        instrumentation.runOnMainSync { (activity as MainActivity).host.chrome.getLocationOnScreen(origin) }
+        val dpr = json.optDouble("dpr", density.toDouble())
+        val at = PointF(
+            origin[0] + (json.getDouble("x") * dpr).toFloat(),
+            origin[1] + (json.getDouble("y") * dpr).toFloat()
+        )
+        return at to json.getString("label")
+    }
+
+    /** Whether the translate bar is in the chrome's DOM right now (null when the chrome did not answer). */
+    private fun barUp(): Boolean? = when (chrome("!!document.querySelector('.zen-translate-bar')")) {
+        "true" -> true
+        "false" -> false
+        else -> null
+    }
+
+    /** Poll a tab's whole translate state until `done(state)` holds; the last state when time runs out. */
+    private fun awaitTab(tabId: String, timeoutMs: Long, done: (JSONObject) -> Boolean): JSONObject? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val state = tabState(tabId)
+            if (state != null && done(state)) return state
+            SystemClock.sleep(200)
+        }
+        return tabState(tabId)
     }
 }
