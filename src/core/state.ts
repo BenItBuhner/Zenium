@@ -147,6 +147,7 @@ export function emptyTranslateState(): TranslateUIState {
     languages: [],
     installed: [],
     registryDate: '',
+    modelLicense: '',
     tabs: {}
   }
 }

@@ -76,6 +76,8 @@ export interface TranslateUIState {
   installed: TranslateModelInfo[]
   /** Date of the model registry in use (`YYYY-MM-DD`) and whether it came from a live refresh. */
   registryDate: string
+  /** SPDX identifier of the licence the model files come under (shown next to the models). */
+  modelLicense: string
   /** Per-tab state for tabs that left `idle`. */
   tabs: Record<string, TranslateTabState>
 }

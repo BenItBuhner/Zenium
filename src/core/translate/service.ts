@@ -196,6 +196,7 @@ export class TranslateService {
       registryDate: new Date(this.registry.fetchedAt || Date.parse(ModelRegistry.snapshotDate))
         .toISOString()
         .slice(0, 10),
+      modelLicense: ModelRegistry.modelLicense,
       tabs
     }
   }

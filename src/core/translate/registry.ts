@@ -1,7 +1,12 @@
 import type { LanguagePair } from '../../shared/translateEngine'
 import { TRANSLATE_PIVOT_LANGUAGE } from '../../shared/translate'
 import type { PackedFile, PackedModel } from './registryTypes'
-import { REGISTRY_LOCATION_PREFIX, REGISTRY_SNAPSHOT, REGISTRY_SNAPSHOT_AT } from './registryData'
+import {
+  REGISTRY_LOCATION_PREFIX,
+  REGISTRY_MODEL_LICENSE,
+  REGISTRY_SNAPSHOT,
+  REGISTRY_SNAPSHOT_AT
+} from './registryData'
 
 /** Where Remote Settings serves the model files. */
 export const REGISTRY_CDN = 'https://firefox-settings-attachments.cdn.mozilla.net/'
@@ -156,6 +161,8 @@ export class ModelRegistry {
 
   /** Date of the bundled snapshot (`YYYY-MM-DD`). */
   static readonly snapshotDate = REGISTRY_SNAPSHOT_AT
+  /** SPDX identifier of the licence the model files come under. */
+  static readonly modelLicense = REGISTRY_MODEL_LICENSE
 
   replace(packed: PackedModel[], fetchedAt: number): void {
     const next = new Map<string, ModelRecord>()
