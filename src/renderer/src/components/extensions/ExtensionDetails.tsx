@@ -7,8 +7,8 @@ import {
   ShieldCheck,
   SlidersHorizontal
 } from 'lucide-react'
-import type { ExtensionInfo, Rect } from '@shared/types'
-import { anchorOf } from '@renderer/lib/anchor'
+import type { ExtensionInfo } from '@shared/types'
+import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { formatDate } from '@renderer/lib/extensions/format'
 import { sourceLabel, storePageUrl } from '@renderer/lib/extensions/storeInput'
@@ -32,7 +32,7 @@ export function ExtensionDetails({
   ext: ExtensionInfo
   scrolled: boolean
   onBack: () => void
-  onMenu: (anchor: Rect) => void
+  onMenu: (anchor: Anchor) => void
 }): JSX.Element {
   const warnings = ext.warnings
   const pending = ext.pendingWarnings ?? []

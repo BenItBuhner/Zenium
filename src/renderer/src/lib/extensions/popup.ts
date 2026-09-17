@@ -1,4 +1,5 @@
-import type { ExtensionPromptRequest, Rect } from '@shared/types'
+import type { ExtensionPromptRequest } from '@shared/types'
+import type { Anchor } from '../anchor'
 import { run } from '../api'
 import { activeTab } from '../selectors'
 import {
@@ -8,6 +9,7 @@ import {
   returnFocusToPage,
   uiStore
 } from '../ui'
+import { claimPopover } from '../popover'
 import { placePopup, type PopupPlacement } from './popupPlacement'
 
 /** How long the frame waits for the document's size before opening at the default one. */
@@ -22,6 +24,8 @@ interface PendingPopup {
   size: { width: number; height: number } | null
 }
 let pending: PendingPopup | null = null
+/** Gives the popover slot back once the popup is closed. */
+let releasePopover: (() => void) | null = null
 
 /**
  * Open an action popup under its toolbar button. The renderer owns the frame and decides where
@@ -34,17 +38,21 @@ let pending: PendingPopup | null = null
  * page is captured first and its view hidden behind the capture while the popup is up
  * (`overlayCoversContent`), as for every other chrome overlay.
  */
-export function openExtensionPopup(id: string, anchor: Rect, hasPopup: boolean): void {
+export function openExtensionPopup(id: string, anchor: Anchor, hasPopup: boolean): void {
   const current = uiStore.get().extensionPopup
   if (current || pending) closeExtensionPopup()
+  // Main takes the button's box alone; the bar is the frame's business.
+  const box = { x: anchor.x, y: anchor.y, width: anchor.width, height: anchor.height }
   if (!hasPopup) {
-    run('extension.openPopup', { id, anchor })
+    run('extension.openPopup', { id, anchor: box })
     return
   }
+  // One popover at a time (§9.20): the frame takes the slot from whatever renderer popover is up.
+  releasePopover = claimPopover(() => closeExtensionPopup())
   const placement = placementFor(anchor, null)
   run('extension.openPopup', {
     id,
-    anchor,
+    anchor: box,
     bounds: placement.inner,
     radius: placement.innerRadius
   })
@@ -70,6 +78,8 @@ export function openExtensionPopup(id: string, anchor: Rect, hasPopup: boolean):
 export function closeExtensionPopup(notifyMain = true): void {
   const wasPending = pending !== null
   pending = null
+  releasePopover?.()
+  releasePopover = null
   if (!uiStore.get().extensionPopup) {
     if (wasPending && notifyMain) run('extension.closePopup', undefined)
     return
@@ -95,7 +105,7 @@ export function popupSizeReported(id: string, width: number, height: number): vo
 
 /** Where the frame and the view go for the current window size. */
 export function placementFor(
-  anchor: Rect,
+  anchor: Anchor,
   content: { width: number; height: number } | null
 ): PopupPlacement {
   return placePopup({

@@ -14,8 +14,8 @@ import {
   Store,
   Trash2
 } from 'lucide-react'
-import type { ExtensionInfo, Rect, UIState } from '@shared/types'
-import { anchorOf } from '@renderer/lib/anchor'
+import type { ExtensionInfo, UIState } from '@shared/types'
+import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { relativeTime } from '@renderer/lib/extensions/format'
 import { parseStoreInput, versionAndSource } from '@renderer/lib/extensions/storeInput'
@@ -29,7 +29,7 @@ import { useNow } from './useNow'
 import { V2Button, V2Field, V2FormField, V2IconButton, V2Switch } from './v2'
 
 interface MenuState {
-  anchor: Rect
+  anchor: Anchor
   title?: string
   items: LocalMenuEntry[]
 }
@@ -56,7 +56,7 @@ export function ExtensionsPage({
   const extensions = state.extensions
   // An extension removed underneath its details level takes the level with it.
   const details = detailsId ? extensions.find((e) => e.id === detailsId) : undefined
-  const menuFor = (ext: ExtensionInfo, anchor: Rect): MenuState =>
+  const menuFor = (ext: ExtensionInfo, anchor: Anchor): MenuState =>
     rowMenu(ext, anchor, setDetailsId, () => setDetailsId(null))
 
   const dropDepth = useRef(0)
@@ -156,12 +156,12 @@ function ExtensionList({
   adding: boolean
   setAdding: (v: boolean) => void
   openMenu: (menu: MenuState) => void
-  menuFor: (ext: ExtensionInfo, anchor: Rect) => MenuState
+  menuFor: (ext: ExtensionInfo, anchor: Anchor) => MenuState
   openDetails: (id: string) => void
 }): JSX.Element {
   const extensions = state.extensions
   const empty = extensions.length === 0
-  const headerMenu = (anchor: Rect): MenuState => ({
+  const headerMenu = (anchor: Anchor): MenuState => ({
     anchor,
     title: 'Extensions',
     items: [
@@ -328,7 +328,7 @@ function ExtensionCard({
 }: {
   ext: ExtensionInfo
   onOpen: () => void
-  onMenu: (anchor: Rect) => void
+  onMenu: (anchor: Anchor) => void
 }): JSX.Element {
   const mv2 = ext.manifestVersion === 2
   const disabledLook = !ext.enabled && !ext.error
@@ -395,7 +395,7 @@ function ExtensionCard({
 /** The card's overflow menu; also the details header's. Menu items are Title Case (§9.1). */
 function rowMenu(
   ext: ExtensionInfo,
-  anchor: Rect,
+  anchor: Anchor,
   openDetails: (id: string) => void,
   closeDetails: () => void
 ): MenuState {

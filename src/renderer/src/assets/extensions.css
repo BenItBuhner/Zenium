@@ -157,37 +157,64 @@
 
   /*
    * Two-line rows (§9.2): 32 for one line, 52 with a description, growing with content; the
-   * phone's are 44 and 64 through the density tokens. A leading glyph sits on the first text
-   * line, 2px down. Rows inside a card are separated by hairlines (Zen's add-on detail rows).
+   * phone's are 44 and 64 through the density tokens. Whatever trails the text centres on the
+   * row (§9.18); the leading glyph or checkbox travels with the text and sits on its first line,
+   * (line − box) / 2 below the line's top – 2 for a 16 box on a 20 line, 0 for the phone's 20
+   * (§9.2). Rows inside a card are separated by hairlines (Zen's add-on detail rows).
    */
   .zen-v2-row {
+    --row-pad: 6px;
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 12px;
     min-height: var(--v2-row);
-    padding: 6px 0;
+    padding: var(--row-pad) 0;
   }
   .zen-v2-row[data-lines='2'] {
     min-height: var(--v2-row-two-line);
   }
   [data-form-factor='phone'] .zen-v2-row {
-    padding: 12px 0;
+    --row-pad: 12px;
+  }
+  /*
+   * A row holding a control grows around it (§9.21): the larger of its base and the control's
+   * height plus 8 – 40 for a 32 button, menulist or field, 36 for a 28 icon button or switch,
+   * 48 / 52 on a phone. The 4 above and below is the row's own padding, not a list gap: rows
+   * touch. A two-line row keeps its 52 / 64 when that is the larger.
+   */
+  .zen-v2-row:has(.zen-v2-button, .zen-v2-menulist, .zen-v2-field),
+  [data-form-factor='phone'] .zen-v2-row:has(.zen-v2-button, .zen-v2-menulist, .zen-v2-field) {
+    --row-pad: 4px;
+    min-height: calc(var(--v2-control) + 8px);
+  }
+  .zen-v2-row:has(.zen-v2-icon-button, .zen-v2-switch),
+  [data-form-factor='phone'] .zen-v2-row:has(.zen-v2-icon-button, .zen-v2-switch) {
+    --row-pad: 4px;
+    min-height: calc(var(--v2-icon-button) + 8px);
+  }
+  .zen-v2-row[data-lines='2']:has(.zen-v2-button, .zen-v2-menulist, .zen-v2-field),
+  .zen-v2-row[data-lines='2']:has(.zen-v2-icon-button, .zen-v2-switch) {
+    min-height: max(var(--v2-row-two-line), calc(var(--v2-control) + 8px));
   }
   .zen-v2-rows > .zen-v2-row + .zen-v2-row {
     border-top: 1px solid var(--v2-card-border);
   }
+  .zen-v2-row-body {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-items: flex-start;
+    gap: 12px;
+  }
   .zen-v2-row-lead {
     flex-shrink: 0;
-    margin-top: 2px;
+    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
     color: var(--v2-text-deemphasized);
   }
   .zen-v2-row-lead.lucide,
   .zen-v2-row-lead .lucide {
     width: var(--v2-icon);
     height: var(--v2-icon);
-  }
-  [data-form-factor='phone'] .zen-v2-row-lead {
-    margin-top: 0;
   }
   .zen-v2-row-text {
     display: flex;
@@ -219,13 +246,12 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* Trailing controls: centred on the row's height (§9.18). */
   .zen-v2-row-controls {
     display: flex;
     flex-shrink: 0;
     align-items: center;
     gap: 4px;
-    /* Centred on the first text line rather than the row. */
-    height: var(--v2-line-body);
   }
   /* In-content links are the accent (Firefox's link colour), underlined on hover only. */
   .zen-v2-link {
@@ -434,13 +460,16 @@
     box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 8px) / 2) var(--v2-accent);
   }
 
-  /* Checkbox: 16 at radius 2 (20 on a phone), the accent with an on-accent check when on. */
+  /*
+   * Checkbox: 16 at radius 2 (20 on a phone), the accent with an on-accent check when on. As a
+   * row's leading box it sits (line − box) / 2 below the first text line's top (§9.2).
+   */
   .zen-v2-checkbox {
     appearance: none;
     flex-shrink: 0;
     width: var(--v2-checkbox);
     height: var(--v2-checkbox);
-    margin: 2px 0 0;
+    margin: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2) 0 0;
     border: 1px solid rgb(var(--v2-text-rgb) / 0.3);
     border-radius: var(--v2-radius-checkbox);
     background: var(--v2-page);
@@ -473,9 +502,6 @@
   }
   .zen-v2-check-row:has(.zen-v2-checkbox:disabled) {
     color: var(--v2-text-deemphasized);
-  }
-  [data-form-factor='phone'] .zen-v2-checkbox {
-    margin-top: 0;
   }
 
   /*
@@ -590,6 +616,53 @@
     color: var(--v2-text);
   }
 
+  /*
+   * A title block (§9.23): the first content of a popover, dialog or sheet, no bar and no
+   * control – padding 16, a 16 glyph on the title's start with an 8 gap (on the first title
+   * line, as a row's leading glyph), the title 17/600 at line-height 22, a description 15 at
+   * 69% 4 under it, then 16 to the body: 54 for a title alone, 78 with a description. When the
+   * body scrolls under it §9.7's hairline appears at its bottom edge and goes again at the top.
+   */
+  .zen-v2-title-block {
+    position: relative;
+    flex-shrink: 0;
+    padding: var(--v2-card-padding);
+  }
+  .zen-v2-title-block-title {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0;
+    font-size: var(--v2-font-heading);
+    font-weight: var(--v2-weight-heading);
+    line-height: 22px;
+    overflow-wrap: anywhere;
+  }
+  .zen-v2-title-block-title > :first-child:not(:last-child) {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    margin-top: 3px;
+  }
+  .zen-v2-title-block-description {
+    margin: 4px 0 0;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-v2-title-block::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 1px;
+    background: var(--v2-border);
+    opacity: 0;
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-v2-title-block[data-scrolled]::after {
+    opacity: 1;
+  }
+
   /* Menus: rows 31 with a 16 icon, label and a hint at 69%, hairline separators. */
   .zen-v2-menu {
     display: flex;
@@ -679,14 +752,25 @@
     margin: 4px 16px;
     background: var(--v2-border);
   }
+  /*
+   * A phone sheet's header (§9.16): 48 under the 20 grip strip, the title 17/600 at line-height
+   * 22 and centred, with an optional 16 glyph before it; the first row then starts at 68.
+   */
   .zen-v2-sheet-title {
     display: flex;
     align-items: center;
-    min-height: 40px;
+    justify-content: center;
+    gap: 8px;
+    height: 48px;
     padding: 0 16px;
     font-size: var(--v2-font-heading);
     font-weight: var(--v2-weight-heading);
-    line-height: 24px;
+    line-height: 22px;
+  }
+  .zen-v2-sheet-title > :first-child:not(:last-child) {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
   }
 
   /* --- Extensions: the management page ---------------------------------------------------- */
@@ -825,6 +909,12 @@
   .zen-ext-panel-row [aria-disabled='true'] {
     opacity: 0.4;
   }
+  /* The anchor keeps its pressed fill while its popover is open (§9.20), as Zen's menu button. */
+  .zen-toolbar-button.zen-ext-action[data-active],
+  .zen-toolbar-button.zen-ext-puzzle[data-active] {
+    background: var(--zen-element-bg);
+    opacity: 1;
+  }
 
   /*
    * The toolbar badge (`chrome.action.setBadgeText`): a 10/600 pill (the pill's one use, §2)
@@ -849,38 +939,55 @@
     pointer-events: none;
   }
 
-  /* The puzzle-piece panel: a 320 panel of 32 rows (icon 16, name, a pin button), no header. */
+  /*
+   * The puzzle-piece popover (§9.20): 400 wide – its rows carry a trailing pin button – flush
+   * under the toolbar's bar, a title block (§9.23) over the rows, content up to 60% of the
+   * window's height (never more than the window minus 16) and past that the rows scroll under
+   * the title. The text is inset 16 with the title; the rows' hover fill runs 8 beyond it.
+   */
   .zen-ext-panel {
     position: fixed;
     display: flex;
     flex-direction: column;
-    width: 320px;
-    max-height: calc(100vh - 32px);
-    padding: 4px 0;
-    overflow-y: auto;
+    width: 400px;
+    max-height: min(60vh, calc(100vh - 16px));
     font-size: 14px;
     line-height: var(--v2-line-body);
   }
+  .zen-ext-panel-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 0 8px 8px;
+    overflow-y: auto;
+  }
+  /*
+   * Panel rows (§9.21): 32 for a glyph and a label; a row holding the 28 pin button grows to
+   * 36 – the button plus 8 – and the rows touch, so adjacent buttons sit 8 apart.
+   */
   .zen-ext-panel-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    height: var(--v2-row);
-    margin: 0 4px;
-    padding: 0 4px 0 8px;
+    width: 100%;
+    min-height: var(--v2-row);
+    padding: 0 8px;
     border-radius: var(--v2-radius-control);
     color: inherit;
     text-align: left;
     transition: background 120ms var(--zen-ease);
+  }
+  .zen-ext-panel-row:has(> .zen-v2-icon-button) {
+    align-items: stretch;
+    min-height: calc(var(--v2-icon-button) + 8px);
+  }
+  .zen-ext-panel-row > .zen-v2-icon-button {
+    align-self: center;
   }
   .zen-ext-panel-row:hover {
     background: var(--v2-fill);
   }
   .zen-ext-panel-row:active {
     background: var(--v2-fill-hover);
-  }
-  .zen-ext-panel-row > button:first-child {
-    height: 100%;
   }
   .zen-ext-panel-row .lucide {
     width: var(--v2-icon);
@@ -925,55 +1032,53 @@
   }
 
   /*
-   * Install and permission prompts: a 440 dialog at radius 12 with 16 padding; the icon 32,
-   * the title 17/600, what it can do as 32 rows with a glyph, and two buttons, the primary last.
+   * Install and permission prompts: a 400 dialog (§9.20's width for a description that wraps
+   * and two footer buttons) at radius 12, opening with a title block (§9.23) – the extension's
+   * icon at 16, the title 17/600, the source as its description – then what it can do as 32
+   * rows with a glyph, and two buttons, the primary last. The title block and the footer stay
+   * put; between them the body scrolls when the window is short (§9.7's hairline on the title).
    */
   .zen-ext-dialog {
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    width: 440px;
+    width: 400px;
     max-width: calc(100vw - 32px);
     max-height: calc(100vh - 32px);
-    padding: var(--v2-card-padding);
-    overflow-y: auto;
+    overflow: hidden;
   }
-  .zen-ext-dialog-head {
+  .zen-ext-dialog-body {
     display: flex;
-    align-items: flex-start;
-    gap: 12px;
-  }
-  .zen-ext-dialog-icon {
-    flex-shrink: 0;
-    margin-top: -4px;
-  }
-  .zen-ext-dialog-title {
-    margin: 0;
-    font-size: var(--v2-font-heading);
-    font-weight: var(--v2-weight-heading);
-    line-height: 24px;
-    overflow-wrap: anywhere;
-  }
-  .zen-ext-dialog-sub {
-    margin: 0;
-    font-size: var(--v2-font-small);
-    line-height: var(--v2-line-small);
-    color: var(--v2-text-deemphasized);
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+    padding: 0 var(--v2-card-padding);
+    overflow-y: auto;
   }
   /* The footer (§9.11): on a desktop the buttons hug and right-align at 32 with an 8 gap, the primary last. */
   .zen-ext-dialog-buttons {
     display: flex;
+    flex-shrink: 0;
     justify-content: flex-end;
     gap: 8px;
+    padding: var(--v2-card-padding);
   }
   /*
-   * The phone sheet variant has the sheet's own padding. Its footer fills the width (§9.11): the
-   * two peers split it equally with the 8 gap, the primary trailing, each 40 tall.
+   * The phone sheet variant: the sheet's own header and scroll, so the dialog is plain flow
+   * under it. Its footer fills the width (§9.11): the two peers split it equally with the 8
+   * gap, the primary trailing, each 40 tall; the sheet adds the bottom inset.
    */
   [data-form-factor='phone'] .zen-ext-dialog {
     width: auto;
     max-width: none;
-    padding: 4px 16px 8px;
+    max-height: none;
+    overflow: visible;
+  }
+  [data-form-factor='phone'] .zen-ext-dialog-body {
+    overflow: visible;
+  }
+  [data-form-factor='phone'] .zen-ext-dialog-buttons {
+    padding-bottom: 8px;
   }
   [data-form-factor='phone'] .zen-ext-dialog-buttons > .zen-v2-button {
     flex: 1 1 0;

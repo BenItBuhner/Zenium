@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { useEffect, useRef } from 'react'
-import type { Rect } from '@shared/types'
+import type { Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { closeExtensionPopup, placementFor } from '@renderer/lib/extensions/popup'
 import { uiStore } from '@renderer/lib/ui'
@@ -11,7 +11,7 @@ const POP_MS = 180
 /**
  * The panel an action popup sits in (v2 draft §1–§3: the panel colour, a hairline border and
  * the panel shadow at radius 8). The document is main's WebContentsView; this draws the surface
- * around it 8px under the toolbar button, pops it in, and then tells main where the view goes
+ * around it flush under the toolbar's bar (§9.20), pops it in, and then tells main where the view goes
  * (`extension.resizePopup`). When the document asks for a new size, the frame and the view move
  * together, at once.
  */
@@ -33,7 +33,7 @@ function Frame({
   anchor,
   content
 }: {
-  anchor: Rect
+  anchor: Anchor
   content: { width: number; height: number } | null
 }): JSX.Element {
   const placement = placementFor(anchor, content)

@@ -13,7 +13,9 @@ export function PageHeader({
 }): JSX.Element {
   return (
     <header className="zen-v2-header" data-scrolled={scrolled || undefined}>
-      <div className="zen-v2-column zen-v2-header-row">{children}</div>
+      <div className="zen-v2-column zen-v2-header-row" data-bar="">
+        {children}
+      </div>
     </header>
   )
 }

@@ -212,8 +212,43 @@ export function V2Card({
 }
 
 /**
- * A two-line row (§9.2): a leading glyph on the first line, the label at 15, a description
- * at 13 in the deemphasised ink, and whatever sits at the end.
+ * A title block (§9.23): the first content of a popover, dialog or sheet, with no bar and no
+ * control – padding 16, an optional 16 glyph at the title's start with an 8 gap, the title
+ * 17/600 at line-height 22, an optional description 15 at 69% 4 under it, then 16 to the body.
+ * In a scrolling popover or dialog it stays put and takes §9.7's hairline once the body has
+ * scrolled under it (`scrolled`).
+ */
+export function V2TitleBlock({
+  id,
+  title,
+  description,
+  glyph,
+  scrolled,
+  className
+}: {
+  id?: string
+  title: ReactNode
+  description?: ReactNode
+  /** A 16 glyph (an icon, an extension's own) at the title's start. */
+  glyph?: ReactNode
+  scrolled?: boolean
+  className?: string
+}): JSX.Element {
+  return (
+    <div className={cn('zen-v2-title-block', className)} data-scrolled={scrolled || undefined}>
+      <h2 id={id} className="zen-v2-title-block-title">
+        {glyph}
+        <span className="min-w-0 flex-1">{title}</span>
+      </h2>
+      {description && <p className="zen-v2-title-block-description">{description}</p>}
+    </div>
+  )
+}
+
+/**
+ * A two-line row (§9.2, §9.18): the leading glyph and the text travel together and sit on the
+ * first text line – the glyph (line − glyph) / 2 below the line's top – while whatever trails
+ * the text centres on the row's height.
  */
 export function V2Row({
   label,
@@ -232,14 +267,16 @@ export function V2Row({
 }): JSX.Element {
   return (
     <div className={cn('zen-v2-row', className)} data-lines={description ? '2' : undefined}>
-      {Lead && <Lead className="zen-v2-row-lead" />}
-      <span className="zen-v2-row-text">
-        <span className="zen-v2-label">{label}</span>
-        {description && (
-          <span className="zen-v2-description" data-tone={tone}>
-            {description}
-          </span>
-        )}
+      <span className="zen-v2-row-body">
+        {Lead && <Lead className="zen-v2-row-lead" />}
+        <span className="zen-v2-row-text">
+          <span className="zen-v2-label">{label}</span>
+          {description && (
+            <span className="zen-v2-description" data-tone={tone}>
+              {description}
+            </span>
+          )}
+        </span>
       </span>
       {children}
     </div>
@@ -262,16 +299,18 @@ export function V2CheckRow({
 }): JSX.Element {
   return (
     <label className="zen-v2-row zen-v2-check-row" data-lines={description ? '2' : undefined}>
-      <input
-        type="checkbox"
-        className="zen-v2-checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-      <span className="zen-v2-row-text">
-        <span className="zen-v2-label">{label}</span>
-        {description && <span className="zen-v2-description">{description}</span>}
+      <span className="zen-v2-row-body">
+        <input
+          type="checkbox"
+          className="zen-v2-checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        <span className="zen-v2-row-text">
+          <span className="zen-v2-label">{label}</span>
+          {description && <span className="zen-v2-description">{description}</span>}
+        </span>
       </span>
     </label>
   )

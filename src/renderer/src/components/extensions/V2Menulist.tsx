@@ -2,10 +2,10 @@ import type { JSX } from 'react'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown } from 'lucide-react'
-import type { Rect } from '@shared/types'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
-import { anchorOf } from '@renderer/lib/anchor'
+import { useArrowKeys, usePopover } from '@renderer/hooks/usePopover'
+import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { anchorBelow } from '@renderer/lib/extensions/popupPlacement'
 import { useViewport } from '@renderer/lib/formFactor'
 import { cn } from '@renderer/lib/utils'
@@ -18,7 +18,7 @@ export interface MenulistOption<T extends string> {
 }
 
 interface PopupProps<T extends string> {
-  anchor: Rect
+  anchor: Anchor
   label: string
   value: T
   options: readonly MenulistOption<T>[]
@@ -31,7 +31,9 @@ interface PopupProps<T extends string> {
  * border and a 16 chevron, whose popup is never the native `<select>`'s. On a mouse the options
  * are a `--v2-panel` popover under the control at radius 12 with 6 padding: 28 rows at radius 6,
  * the current one marked by a trailing 16 check. On a finger they are a bottom sheet of 44 rows
- * with a radio glyph (§9.14) on the current option. Picking one closes the popup.
+ * with a radio glyph (§9.14) on the current option. Picking one closes the popup. The popover
+ * hangs flush under the control (§9.20) and takes focus on its current option; the arrow keys
+ * move it, Escape gives it back to the control (§9.22).
  */
 export function V2Menulist<T extends string>({
   label,
@@ -47,7 +49,7 @@ export function V2Menulist<T extends string>({
   onChange: (value: T) => void
   className?: string
 }): JSX.Element {
-  const [anchor, setAnchor] = useState<Rect | null>(null)
+  const [anchor, setAnchor] = useState<Anchor | null>(null)
   const viewport = useViewport()
   const current = options.find((option) => option.value === value)
   const popup: PopupProps<T> | null = anchor && {
@@ -88,7 +90,6 @@ function MenulistPopover<T extends string>({
   onClose
 }: PopupProps<T>): JSX.Element | null {
   const ready = useFloatingChrome()
-  useEscape(onClose)
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ left: number; top: number; side: 'left' | 'right' } | null>(null)
   useLayoutEffect(() => {
@@ -102,6 +103,12 @@ function MenulistPopover<T extends string>({
     )
     setPos({ left: placed.x, top: placed.y, side: placed.side })
   }, [anchor, options.length, ready])
+  usePopover(ref, {
+    onClose,
+    active: ready && pos !== null,
+    initial: (root) => root.querySelector<HTMLElement>('[aria-selected="true"]')
+  })
+  useArrowKeys(ref, '.zen-v2-menulist-option')
   if (!ready) return null
   return createPortal(
     <div
@@ -118,7 +125,7 @@ function MenulistPopover<T extends string>({
         className="zen-v2 zen-v2-panel zen-v2-menulist-popup zen-animate-pop fixed select-none"
         style={{
           left: pos?.left ?? anchor.x,
-          top: pos?.top ?? anchor.y + anchor.height + 4,
+          top: pos?.top ?? anchor.y + anchor.height,
           minWidth: anchor.width,
           visibility: pos ? 'visible' : 'hidden',
           transformOrigin: pos?.side === 'right' ? '100% 0' : '0 0'

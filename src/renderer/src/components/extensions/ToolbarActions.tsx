@@ -1,14 +1,15 @@
-import type { JSX } from 'react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { JSX, RefObject } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Pin, PinOff, Puzzle, SlidersHorizontal } from 'lucide-react'
-import type { ExtensionInfo, Rect, UIState } from '@shared/types'
+import type { ExtensionInfo, UIState } from '@shared/types'
 import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
-import { anchorOf } from '@renderer/lib/anchor'
+import { usePopover } from '@renderer/hooks/usePopover'
+import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { badgeLabel, badgeStyle } from '@renderer/lib/extensions/badge'
 import { closeExtensionPopup, openExtensionPopup } from '@renderer/lib/extensions/popup'
-import { anchorBelow } from '@renderer/lib/extensions/popupPlacement'
+import { POPOVER_WIDTH, anchorBelow } from '@renderer/lib/extensions/popupPlacement'
 import {
   actionEnabled,
   actionIcon,
@@ -20,9 +21,10 @@ import {
 import { activeTab } from '@renderer/lib/selectors'
 import { openOverlay, uiStore } from '@renderer/lib/ui'
 import { ExtensionIcon } from './ExtensionIcon'
-import { V2IconButton } from './v2'
+import { V2IconButton, V2TitleBlock } from './v2'
 
-const PANEL_WIDTH = 320
+/** Rows with a trailing pin button: the 400 of §9.20's three widths. */
+const PANEL_WIDTH = POPOVER_WIDTH.form
 
 interface Props {
   state: UIState
@@ -37,8 +39,8 @@ interface Props {
 /**
  * Pinned extension actions as toolbar buttons (the shipped `.zen-toolbar-button`, so they match
  * their neighbours until the v2 pass moves the toolbar) with their badges, and the puzzle-piece
- * button that holds the rest in a v2 panel of 32 rows. Actions that do not fit beside the
- * address pill fold into the panel in pin order.
+ * button that holds the rest in a v2 popover (§9.20) of 36 rows. Actions that do not fit beside
+ * the address pill fold into the panel in pin order.
  */
 export function ToolbarActions({
   state,
@@ -54,7 +56,8 @@ export function ToolbarActions({
       ? { shown: pinned.length, hidden: 0 }
       : fitToolbarActions({ rowWidth, fixedButtons, pinned: pinned.length })
   const shown = pinned.slice(0, fit.shown)
-  const [panelAnchor, setPanelAnchor] = useState<Rect | null>(null)
+  const puzzle = useRef<HTMLButtonElement>(null)
+  const [panelAnchor, setPanelAnchor] = useState<Anchor | null>(null)
   if (all.length === 0) return null
   return (
     <>
@@ -62,8 +65,9 @@ export function ToolbarActions({
         <ActionButton key={ext.id} ext={ext} />
       ))}
       <button
+        ref={puzzle}
         type="button"
-        className="zen-toolbar-button"
+        className="zen-toolbar-button zen-ext-puzzle"
         title="Extensions"
         aria-label="Extensions"
         aria-haspopup="dialog"
@@ -82,6 +86,7 @@ export function ToolbarActions({
           state={state}
           anchor={panelAnchor}
           extensions={all}
+          opener={puzzle}
           onClose={() => setPanelAnchor(null)}
         />
       )}
@@ -157,21 +162,31 @@ function ActionButton({ ext }: { ext: ExtensionInfo }): JSX.Element {
 // The puzzle-piece panel
 // ---------------------------------------------------------------------------
 
+/**
+ * The puzzle-piece popover (§9.20): 400 wide, flush under the toolbar's bar and aligned with
+ * the button, a title block (§9.23) over rows of 36 – icon, name and a pin button (§9.21) –
+ * then Manage Extensions behind a hairline. Past 60% of the window's height the rows scroll
+ * under the title. Focus lands on the first row and returns to the button on Escape (§9.22).
+ */
 function ExtensionsPanel({
   state,
   anchor,
   extensions,
+  opener,
   onClose
 }: {
   state: UIState
-  anchor: Rect
+  anchor: Anchor
   extensions: ExtensionInfo[]
+  /** The puzzle button: where focus returns on Escape (§9.22). */
+  opener: RefObject<HTMLElement | null>
   onClose: () => void
 }): JSX.Element | null {
   const ref = useRef<HTMLDivElement>(null)
   // The panel overhangs the content frame: it paints once the page's capture is in place.
   const ready = useFloatingChrome()
   const [pos, setPos] = useState<{ left: number; top: number; side: 'left' | 'right' } | null>(null)
+  const [scrolled, setScrolled] = useState(false)
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
@@ -183,16 +198,7 @@ function ExtensionsPanel({
     )
     setPos({ left: placed.x, top: placed.y, side: placed.side })
   }, [anchor, extensions.length, ready])
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      onClose()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose])
+  usePopover(ref, { onClose, active: ready && pos !== null, returnTo: opener })
   const openFromPanel = (ext: ExtensionInfo): void => {
     if (!actionEnabled(ext)) return
     onClose()
@@ -210,53 +216,59 @@ function ExtensionsPanel({
       <div
         ref={ref}
         role="dialog"
-        aria-label="Extensions"
+        aria-labelledby="zen-ext-panel-title"
         className="zen-v2 zen-v2-panel zen-ext-panel zen-animate-pop"
         style={{
           left: pos?.left ?? anchor.x,
-          top: pos?.top ?? anchor.y + anchor.height + 8,
+          top: pos?.top ?? anchor.y + anchor.height,
           visibility: pos ? 'visible' : 'hidden',
           transformOrigin: pos?.side === 'right' ? '100% 0' : '0 0'
         }}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <ul className="flex flex-col">
-          {extensions.map((ext) => (
-            <li key={ext.id} className="zen-ext-panel-row">
-              <button
-                type="button"
-                className="flex h-full min-w-0 flex-1 items-center gap-2 text-left"
-                title={actionTitle(ext)}
-                aria-disabled={!actionEnabled(ext) || undefined}
-                onClick={() => openFromPanel(ext)}
-              >
-                <ExtensionIcon icon={actionIcon(ext)} size={16} box={16} />
-                <span className="min-w-0 flex-1 truncate">{ext.name}</span>
-              </button>
-              <V2IconButton
-                icon={ext.toolbarPinned ? PinOff : Pin}
-                label={ext.toolbarPinned ? `Unpin ${ext.name}` : `Pin ${ext.name} to toolbar`}
-                title={ext.toolbarPinned ? 'Unpin from toolbar' : 'Pin to toolbar'}
-                aria-pressed={ext.toolbarPinned}
-                onClick={() =>
-                  run('extension.setToolbarPinned', { id: ext.id, pinned: !ext.toolbarPinned })
-                }
-              />
-            </li>
-          ))}
-        </ul>
-        <div className="zen-v2-menu-separator" role="separator" />
-        <button
-          type="button"
-          className="zen-ext-panel-row"
-          onClick={() => {
-            onClose()
-            void openOverlay('addons', activeTab(state)?.id ?? null)
-          }}
+        <V2TitleBlock id="zen-ext-panel-title" title="Extensions" scrolled={scrolled} />
+        <div
+          className="zen-ext-panel-body"
+          onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
         >
-          <SlidersHorizontal className="zen-v2-deemphasized" />
-          <span className="min-w-0 flex-1 truncate">Manage Extensions</span>
-        </button>
+          <ul className="flex flex-col">
+            {extensions.map((ext) => (
+              <li key={ext.id} className="zen-ext-panel-row">
+                <button
+                  type="button"
+                  className="flex h-full min-w-0 flex-1 items-center gap-2 text-left"
+                  title={actionTitle(ext)}
+                  aria-disabled={!actionEnabled(ext) || undefined}
+                  onClick={() => openFromPanel(ext)}
+                >
+                  <ExtensionIcon icon={actionIcon(ext)} size={16} box={16} />
+                  <span className="min-w-0 flex-1 truncate">{ext.name}</span>
+                </button>
+                <V2IconButton
+                  icon={ext.toolbarPinned ? PinOff : Pin}
+                  label={ext.toolbarPinned ? `Unpin ${ext.name}` : `Pin ${ext.name} to toolbar`}
+                  title={ext.toolbarPinned ? 'Unpin from toolbar' : 'Pin to toolbar'}
+                  aria-pressed={ext.toolbarPinned}
+                  onClick={() =>
+                    run('extension.setToolbarPinned', { id: ext.id, pinned: !ext.toolbarPinned })
+                  }
+                />
+              </li>
+            ))}
+          </ul>
+          <div className="zen-v2-menu-separator" role="separator" />
+          <button
+            type="button"
+            className="zen-ext-panel-row"
+            onClick={() => {
+              onClose()
+              void openOverlay('addons', activeTab(state)?.id ?? null)
+            }}
+          >
+            <SlidersHorizontal className="zen-v2-deemphasized" />
+            <span className="min-w-0 flex-1 truncate">Manage Extensions</span>
+          </button>
+        </div>
       </div>
     </div>,
     document.body

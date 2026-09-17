@@ -2,9 +2,10 @@ import type { JSX } from 'react'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { LucideIcon } from 'lucide-react'
-import type { Rect } from '@shared/types'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
+import { useArrowKeys, usePopover } from '@renderer/hooks/usePopover'
+import type { Anchor } from '@renderer/lib/anchor'
 import { anchorBelow } from '@renderer/lib/extensions/popupPlacement'
 import { useViewport } from '@renderer/lib/formFactor'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
@@ -29,8 +30,8 @@ export interface LocalMenuSeparator {
 export type LocalMenuEntry = LocalMenuItem | LocalMenuSeparator
 
 interface Props {
-  /** The control that opened the menu, in window coordinates. */
-  anchor: Rect
+  /** The control that opened the menu, in window coordinates, with the bar it sits in. */
+  anchor: Anchor
   items: LocalMenuEntry[]
   onClose: () => void
   /** Title of the phone sheet (the thing the menu is about). */
@@ -44,11 +45,11 @@ function isSeparator(entry: LocalMenuEntry): entry is LocalMenuSeparator {
 }
 
 /**
- * A menu the renderer owns (v2 draft §6 menus): on a mouse a bordered panel at radius 8 under
- * its control (6 for a context menu, §2) with 31 rows, a 16 icon each when any has one, hairline
- * separators and danger rows in the danger ink; on a finger the same rows at 44 in a bottom
- * sheet. Escape and an outside click (or a tap on the scrim) close it; there is no scrim on the
- * desktop (§9.5).
+ * A menu the renderer owns (v2 draft §6 menus): on a mouse a bordered panel at radius 8 flush
+ * under its control (6 for a context menu, §2; §9.20 for where it hangs) with 31 rows, a 16 icon
+ * each when any has one, hairline separators and danger rows in the danger ink; on a finger the
+ * same rows at 44 in a bottom sheet. Escape and an outside click (or a tap on the scrim) close
+ * it; there is no scrim on the desktop (§9.5).
  *
  * The page's view composites above the chrome, so while the menu is up the content frame shows
  * the page's capture instead (`useFloatingChrome`), as it does for the main-process menus.
@@ -64,7 +65,6 @@ export function LocalMenu(props: Props): JSX.Element | null {
 }
 
 function PopoverMenu({ anchor, items, onClose, context }: Props): JSX.Element {
-  useEscape(onClose)
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ left: number; top: number; side: 'left' | 'right' } | null>(null)
   useLayoutEffect(() => {
@@ -78,6 +78,15 @@ function PopoverMenu({ anchor, items, onClose, context }: Props): JSX.Element {
     )
     setPos({ left: placed.x, top: placed.y, side: placed.side })
   }, [anchor, items.length])
+  // Opened from the keyboard (the control shows its focus ring) the first item takes focus;
+  // opened by pointer the menu itself does, and the arrow keys start at the first item (§9.22).
+  const [fromKeyboard] = useState(() => document.activeElement?.matches(':focus-visible') ?? false)
+  usePopover(ref, {
+    onClose,
+    active: pos !== null,
+    initial: fromKeyboard ? 'first' : 'container'
+  })
+  useArrowKeys(ref, '.zen-v2-menu-item')
   const withIcons = items.some((item) => !isSeparator(item) && item.icon)
   return (
     <div
@@ -94,11 +103,12 @@ function PopoverMenu({ anchor, items, onClose, context }: Props): JSX.Element {
       <div
         ref={ref}
         role="menu"
+        tabIndex={-1}
         className="zen-v2 zen-v2-panel zen-v2-menu zen-animate-pop fixed select-none"
         data-context={context || undefined}
         style={{
           left: pos?.left ?? anchor.x,
-          top: pos?.top ?? anchor.y + anchor.height + 8,
+          top: pos?.top ?? anchor.y + anchor.height,
           visibility: pos ? 'visible' : 'hidden',
           transformOrigin: pos?.side === 'right' ? '100% 0' : '0 0'
         }}

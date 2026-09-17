@@ -80,6 +80,8 @@ export function NavRow({
     <div
       ref={row}
       className={cn('zen-no-drag flex items-center gap-0.5', compact && 'flex-col', className)}
+      // The bar the extension popovers hang from (v2 §9.20): flush under it, aligned by half.
+      data-bar={compact ? undefined : ''}
     >
       <NavigationButton
         tab={tab}
