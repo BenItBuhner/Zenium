@@ -9,6 +9,8 @@ const LONG_PRESS_MS = 380
 const SLOP = 8
 /** Distance from the edge of the grid within which a drag scrolls it. */
 const AUTOSCROLL_ZONE = 56
+/** How long a released hold waits for its click before opening the actions regardless. */
+const MENU_DELAY_MS = 250
 const AUTOSCROLL_SPEED = 14
 
 /** The ghost tracks the finger closely but not rigidly: a firm spring with a little give. */
@@ -327,6 +329,24 @@ export function useCardLift({
     scrollNearEdges(t)
   }
 
+  /**
+   * A hold released in place opens the card's actions – on the click that follows the release
+   * (so the sheet's scrim, appearing under the finger, cannot receive that same click), or after
+   * a moment if no click comes.
+   */
+  const menuTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const openMenu = (): void => {
+    if (menuTimer.current) clearTimeout(menuTimer.current)
+    menuTimer.current = null
+    onMenu(tab)
+  }
+  useEffect(
+    () => () => {
+      if (menuTimer.current) clearTimeout(menuTimer.current)
+    },
+    []
+  )
+
   const finish = (e: ReactPointerEvent<HTMLElement>, cancelled: boolean): void => {
     const t = touch.current
     if (!t || t.id !== e.pointerId) return
@@ -339,7 +359,8 @@ export function useCardLift({
       liftStore.set({ phase: 'dropping', target: null })
       if (s.origin) settleLift(s.origin)
       else cancelLift()
-      if (s.phase === 'lifted' && !cancelled) onMenu(tab)
+      if (s.phase === 'lifted' && !cancelled)
+        menuTimer.current = setTimeout(openMenu, MENU_DELAY_MS)
       return
     }
     liftStore.set({ phase: 'dropping' })
@@ -354,6 +375,7 @@ export function useCardLift({
     swallowsClick: () => {
       const s = swallow.current
       swallow.current = false
+      if (menuTimer.current) openMenu()
       return s
     }
   }

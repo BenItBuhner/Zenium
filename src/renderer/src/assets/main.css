@@ -654,26 +654,11 @@
   }
 
   /*
-   * Scrim behind the overview's drawer and action sheets: the space's own dark at the design
-   * language's strength; how much of it shows (opacity 0 → 1) is the surface's progress.
+   * Scrim behind the overview's Spaces drawer: the space's own dark at the design language's
+   * strength; how much of it shows (opacity 0 → 1) is the drawer's progress.
    */
   .zen-overview-scrim {
     background: var(--zen-scrim);
-  }
-  /*
-   * Rows of the overview's action sheets on the shared `.zen-sheet` surface: the sheet's corner
-   * minus its side padding (`--zen-sheet-inner`), so they nest concentrically.
-   */
-  .zen-overview-sheet-row {
-    border-radius: var(--zen-sheet-inner, 16px);
-    corner-shape: var(--zen-corner);
-    transition: background 120ms var(--zen-ease);
-  }
-  .zen-overview-sheet-row:active:not(:disabled) {
-    background: var(--zen-element-bg-hover);
-  }
-  .zen-overview-sheet-row[data-danger] {
-    color: var(--zen-danger);
   }
   .zen-group-swatch {
     transition: transform 140ms var(--zen-ease);
@@ -823,16 +808,10 @@
     letter-spacing: -0.012em;
     line-height: 1.25;
   }
+  /* Its edges fade through `useFadeEdges`, only where there is more to scroll to. */
   .zen-overview-strip {
     scrollbar-width: none;
     scroll-snap-type: x proximity;
-    mask-image: linear-gradient(
-      to right,
-      transparent,
-      #000 16px,
-      #000 calc(100% - 16px),
-      transparent
-    );
   }
   .zen-overview-strip::-webkit-scrollbar {
     display: none;

@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, type PointerEvent as ReactPointerEv
 
 const LONG_PRESS_MS = 380
 const SLOP = 8
+/** How long a released hold waits for its click before firing regardless. */
+const RELEASE_DELAY_MS = 250
 
 export interface LongPressHandlers {
   onPointerDown: (e: ReactPointerEvent<HTMLElement>) => void
@@ -19,12 +21,17 @@ export interface LongPress {
 }
 
 /**
- * A press-and-hold on an element (a group's header, a space's row). A touch that moves is a
- * scroll or a drag and is left alone; a right click counts as a long press too, for the mouse.
+ * A press-and-hold on an element (a group's header, a space's row, an Essential). The hold is
+ * recognised while the finger is down (a haptic tick), and the callback runs when it lifts – on
+ * the click that follows the release, so a sheet the callback opens cannot receive that click,
+ * or after a moment if no click comes. A touch that moves is a scroll or a drag and is left
+ * alone; a right click counts as a long press too, for the mouse.
  */
 export function useLongPress(onLongPress: () => void): LongPress {
   const touch = useRef<{ id: number; x: number; y: number } | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const held = useRef(false)
+  const release = useRef<ReturnType<typeof setTimeout> | null>(null)
   const swallow = useRef(false)
   const callback = useRef(onLongPress)
   useLayoutEffect(() => {
@@ -36,12 +43,26 @@ export function useLongPress(onLongPress: () => void): LongPress {
     timer.current = null
     touch.current = null
   }
+  const fire = (): void => {
+    if (release.current) clearTimeout(release.current)
+    release.current = null
+    callback.current()
+  }
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current)
+      if (release.current) clearTimeout(release.current)
     },
     []
   )
+
+  const lift = (): void => {
+    clear()
+    if (!held.current) return
+    held.current = false
+    swallow.current = true
+    release.current = setTimeout(fire, RELEASE_DELAY_MS)
+  }
 
   return {
     handlers: {
@@ -52,30 +73,42 @@ export function useLongPress(onLongPress: () => void): LongPress {
         const control = (e.target as HTMLElement).closest('button, input')
         if (control && control !== e.currentTarget) return
         touch.current = { id: e.pointerId, x: e.clientX, y: e.clientY }
+        held.current = false
         timer.current = setTimeout(() => {
           timer.current = null
-          touch.current = null
-          swallow.current = true
-          callback.current()
+          held.current = true
+          try {
+            navigator.vibrate?.(8)
+          } catch {
+            /* not available */
+          }
         }, LONG_PRESS_MS)
       },
       onPointerMove: (e) => {
         const t = touch.current
         if (!t || t.id !== e.pointerId) return
-        if (Math.hypot(e.clientX - t.x, e.clientY - t.y) >= SLOP) clear()
+        if (Math.hypot(e.clientX - t.x, e.clientY - t.y) >= SLOP) {
+          clear()
+          held.current = false
+        }
       },
-      onPointerUp: clear,
-      onPointerCancel: clear,
+      onPointerUp: lift,
+      onPointerCancel: () => {
+        clear()
+        held.current = false
+      },
       onContextMenu: (e) => {
         e.preventDefault()
         clear()
+        held.current = false
         swallow.current = true
-        callback.current()
+        fire()
       }
     },
     swallowsClick: () => {
       const s = swallow.current
       swallow.current = false
+      if (release.current) fire()
       return s
     }
   }

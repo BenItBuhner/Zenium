@@ -25,6 +25,8 @@ import { useLongPress } from './useLongPress'
 const SLOP = 8
 /** Height of a space row, with its gap: what one step of a reorder drag is worth. */
 const ROW_HEIGHT = 48
+/** How long a released hold waits for its click before opening the options regardless. */
+const MENU_DELAY_MS = 250
 
 interface Props {
   state: UIState
@@ -253,6 +255,21 @@ function SpaceList({
     [landingSpring]
   )
 
+  const pendingMenu = useRef<{ spaceId: string; timer: ReturnType<typeof setTimeout> } | null>(null)
+  const openPendingMenu = (): void => {
+    const pending = pendingMenu.current
+    if (!pending) return
+    clearTimeout(pending.timer)
+    pendingMenu.current = null
+    run('space.contextMenu', { spaceId: pending.spaceId })
+  }
+  useEffect(
+    () => () => {
+      if (pendingMenu.current) clearTimeout(pendingMenu.current.timer)
+    },
+    []
+  )
+
   const spaces = state.spaces
   const slotFor = (index: number, dy: number): number =>
     Math.max(0, Math.min(spaces.length - 1, Math.round(index + dy / ROW_HEIGHT)))
@@ -317,7 +334,13 @@ function SpaceList({
       if (dragging) settle(ev.clientY - y0)
       else {
         settle(0)
-        run('space.contextMenu', { spaceId: space.id })
+        // The options open on the click that follows the release (so the menu's scrim cannot
+        // receive that same click), or after a moment if none comes.
+        if (pendingMenu.current) clearTimeout(pendingMenu.current.timer)
+        pendingMenu.current = {
+          spaceId: space.id,
+          timer: setTimeout(() => openPendingMenu(), MENU_DELAY_MS)
+        }
       }
     }
     const onCancel = (ev: PointerEvent): void => {
@@ -355,6 +378,7 @@ function SpaceList({
             offset={offset}
             onPick={() => onPick(space.id)}
             onHold={(e) => hold(e, space, index)}
+            onHeldClick={openPendingMenu}
           />
         )
       })}
@@ -376,7 +400,8 @@ function SpaceRow({
   stepping,
   offset,
   onPick,
-  onHold
+  onHold,
+  onHeldClick
 }: {
   state: UIState
   space: Space
@@ -390,6 +415,8 @@ function SpaceRow({
   onPick: () => void
   /** Pointer down on the row; returns true when the touch is being watched for a hold. */
   onHold: (e: ReactPointerEvent<HTMLElement>) => boolean
+  /** The click after a hold released in place: open the options now. */
+  onHeldClick: () => void
 }): JSX.Element {
   const count = tabsOf(state, space).length
   const swatch = space.theme ? rgbToHex(resolveTheme(space.theme, isDark).accent) : null
@@ -420,6 +447,7 @@ function SpaceRow({
       onClick={() => {
         if (wasHeld.current) {
           wasHeld.current = false
+          onHeldClick()
           return
         }
         onPick()
