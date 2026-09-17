@@ -208,6 +208,13 @@ export class ElectronWindow implements WindowHost {
     return this.alive ? this.win.getNormalBounds() : null
   }
 
+  /** Download progress on the taskbar button (Windows, Unity launcher) or the dock icon (macOS). */
+  setProgressBar(value: number, mode?: 'normal' | 'indeterminate' | 'paused'): void {
+    if (!this.alive) return
+    if (value < 0) this.win.setProgressBar(-1, { mode: 'none' })
+    else this.win.setProgressBar(value, mode ? { mode } : undefined)
+  }
+
   // ---------------------------------------------------------------------------
   // Bounds persistence
   // ---------------------------------------------------------------------------

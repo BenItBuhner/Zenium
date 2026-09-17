@@ -18,6 +18,7 @@ import type {
 } from '../../core/platform'
 import type { ZenWindow } from '../../core/window'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
+import { resolveDownloadSettings } from '../../shared/downloads'
 import { FileStoreIO } from './storeIo'
 import { SessionManager, buildUserAgent } from './sessions'
 import { installZenProtocol } from './protocol'
@@ -89,7 +90,10 @@ export class ElectronPlatform implements Platform {
     this.views = new ElectronTabViewHost(this.sessions)
     this.siteData = new ElectronSiteData(this.sessions)
     this.menus = new ElectronMenus()
-    this.downloads = new ElectronDownloads(() => this.browser.state.settings.askWhereToSave)
+    this.downloads = new ElectronDownloads(() => ({
+      askWhereToSave: this.browser.state.settings.askWhereToSave,
+      location: resolveDownloadSettings(this.browser.state.settings).location
+    }))
     this.dialogs = {
       confirm: async (options: ConfirmOptions, win?: ZenWindow) => {
         const bw = browserWindowOf(win)
@@ -235,7 +239,11 @@ export class ElectronPlatform implements Platform {
     const browser = new Browser(this)
     this.browser = browser
     this.windows.bind(browser)
-    this.downloads.bind(browser.downloads)
+    this.downloads.bind(browser.downloads, {
+      tabIdFor: (source) => this.views.tabIdForWebContents(source) ?? null,
+      parentWindow: (sourceTabId) =>
+        browserWindowOf(sourceTabId ? browser.tabs.windowFor(sourceTabId) : browser.focusedWindow())
+    })
     const webstore = new WebstoreBridge(browser.extensions as ExtensionService, (wc) => {
       const tabId = this.views.tabIdForWebContents(wc)
       return tabId ? browser.tabs.ownerOf(tabId) : undefined
@@ -255,9 +263,7 @@ export class ElectronPlatform implements Platform {
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
       this.attachPermissions(ses)
-      this.downloads.attach(ses, (source) =>
-        browser.onDownloadStarted(source ? (this.views.tabIdForWebContents(source) ?? null) : null)
-      )
+      this.downloads.attach(ses, (sourceTabId) => browser.onDownloadStarted(sourceTabId))
       ses.setSpellCheckerLanguages(['en-US'])
       if (this.sessions.isPersistent(containerId)) {
         webstore.attach(ses)
