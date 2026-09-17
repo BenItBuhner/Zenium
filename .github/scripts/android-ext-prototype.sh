@@ -14,8 +14,8 @@
 #   files/ext-demo/done       – written by the driver when the visible sequence is over
 set -euo pipefail
 
-app_id=app.zen.chromium.debug
-runner=app.zen.chromium.debug.test/androidx.test.runner.AndroidJUnitRunner
+app_id=io.github.benitbuhner.zenium.debug
+runner=io.github.benitbuhner.zenium.debug.test/androidx.test.runner.AndroidJUnitRunner
 out=artifacts/android-ext-prototype
 video=ext-android-prototype-demo.mp4
 ext_dir=${EXT_DIR:-artifacts/ext}

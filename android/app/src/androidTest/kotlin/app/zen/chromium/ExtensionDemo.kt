@@ -405,7 +405,7 @@ class ExtensionDemo {
         for (line in section.lines()) {
             val m = Regex("""^\s*([\d,]+)K:\s+(\S+)\s+\(pid\s+(\d+)""").find(line) ?: continue
             val name = m.groupValues[2]
-            if (!name.contains("zen.chromium") && !name.contains("webview")) continue
+            if (!name.startsWith(app.packageName) && !name.contains("webview")) continue
             val kb = m.groupValues[1].replace(",", "").toLong()
             processes.put(name, kb)
             appTotalKb += kb
