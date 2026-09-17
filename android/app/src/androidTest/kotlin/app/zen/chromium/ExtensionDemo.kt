@@ -355,10 +355,36 @@ class ExtensionDemo {
         SystemClock.sleep(4_000)
         shot("08-ryd-youtube")
         val ryd = json(tabEval(ytView, RYD_REPORT))
+        // On a WebView with worlds the extension's bootstrap statistics live in its world.
+        val rydWorld = if (worlds) worldEval(ytView, RYD, WORLD_REPORT)?.let(::json) else null
+        val worldGroups = rydWorld?.optJSONObject("stats")?.optJSONArray("groups")?.length() ?: 0
+        val groups = ryd.optInt("groups") + worldGroups
+        ryd.put("groups", groups)
+        if (rydWorld != null) ryd.put("world", rydWorld)
         results.put("returnYouTubeDislike", ryd)
         results.put("youtubeConsole", JSONArray(consoleOf(ytView)))
         val api = ryd.optJSONArray("apiEntries")?.length() ?: 0
-        stage(RYD, "contentScript", if (ryd.optInt("groups") > 0) "PASS" else "FAIL", "groups=${ryd.optInt("groups")} readyState=${ryd.optString("readyState")} url=${ryd.optString("url")}")
+        stage(RYD, "contentScript", if (groups > 0) "PASS" else "FAIL", "groups=$groups readyState=${ryd.optString("readyState")} url=${ryd.optString("url")}")
+        // A phone WebView lands on m.youtube.com, whose CSP requires Trusted Types for script
+        // sinks: the page's own realm refuses a plain `script.textContent`, the extension's
+        // isolated world accepts it through the bootstrap's pass-through policy (the shield).
+        val pageSink = tabEval(ytView, TT_SINK_PROBE)
+        val worldSink = if (worlds) worldEval(ytView, RYD, TT_SINK_PROBE) else null
+        val shield = rydWorld?.optJSONObject("stats")?.optJSONObject("trustedTypes")
+        results.put(
+            "trustedTypes",
+            JSONObject().put("url", ryd.optString("url")).put("pageSink", pageSink).put("worldSink", worldSink ?: JSONObject.NULL).put("shield", shield ?: JSONObject.NULL)
+        )
+        stage(
+            RYD, "trustedTypes",
+            when {
+                !worlds -> "N/A"
+                shield?.optBoolean("policy") == true && worldSink == "ok" -> "PASS"
+                shield != null -> "PARTIAL"
+                else -> "FAIL"
+            },
+            "page sink=$pageSink world sink=$worldSink shield=$shield" + if (!worlds) " (one realm: the page's Trusted Types policy applies to content scripts too)" else ""
+        )
         stage(
             RYD, "coreFunction",
             when {
@@ -454,6 +480,7 @@ class ExtensionDemo {
         results.put("cspPage", json(tabEval(cspView, PROBE_REPORT)))
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(cspTab)},"force":true}""")
         instrumentation.runOnMainSync { results.put("lateOnPageStarted", host.extensions.lateOnPageStarted) }
+        lateInjection()
 
         // Background pages: console output and errors of every extension.
         val backgrounds = JSONObject()
@@ -479,6 +506,52 @@ class ExtensionDemo {
         results.put("pageTiming", JSONObject().put("withExtensions", timingWith).put("withoutExtensions", timingWithout))
         for (id in ids) chromeInvoke("extension.setEnabled", """{"id":${JSONObject.quote(id)},"enabled":true}""")
         SystemClock.sleep(3_000)
+    }
+
+    /**
+     * `scripting.executeScript` / `insertCSS` into a document that predates the extension's
+     * units: the probe is disabled, a tab opens without it, the probe comes back and its
+     * background injects into that tab. The frame has no world of the probe's, so the runtime
+     * boots the probe's scope late into the main world (`Extensions.lateBoots`) and runs the
+     * function there; the CSS lands on the page either way.
+     */
+    private fun lateInjection() {
+        val report = JSONObject()
+        chromeInvoke("extension.setEnabled", """{"id":${JSONObject.quote(PROBE_ID)},"enabled":false}""")
+        waitFor(20_000, 300) { if (backgroundView(PROBE_ID) == null) true else null }
+        val lateTab = createTab("$BASE/probe.html")
+        val lateView = waitForView(lateTab)
+        waitFor(30_000) { if (tabEval(lateView, "document.readyState") == "complete") true else null }
+        SystemClock.sleep(1_000)
+        report.put("probeRanInTab", tabEval(lateView, "String(typeof document.__zenProbeStart)"))
+        chromeInvoke("extension.setEnabled", """{"id":${JSONObject.quote(PROBE_ID)},"enabled":true}""")
+        val bg = waitFor(30_000, 500) {
+            val v = backgroundView(PROBE_ID) ?: return@waitFor null
+            if (tabEval(v, "String(typeof chrome === 'object' && !!chrome.scripting)") == "true") v else null
+        }
+        var verdict = "FAIL"
+        if (bg == null) {
+            report.put("error", "no probe background after re-enabling")
+        } else {
+            chromeInvoke("tab.activate", """{"tabId":${JSONObject.quote(lateTab)}}""")
+            SystemClock.sleep(800)
+            tabEval(bg, LATE_INJECT)
+            val raw = waitFor(20_000, 300) { val v = tabEval(bg, "window.__late || null"); if (v == "null") null else v }
+            val result = raw?.let(::json) ?: JSONObject().put("error", "never settled")
+            report.put("result", result)
+            report.put("outlineColor", tabEval(lateView, "getComputedStyle(document.body).outlineColor"))
+            val exec = result.optJSONArray("exec")?.optJSONObject(0)?.optJSONObject("result")
+            verdict = when {
+                exec != null && exec.optString("title").isNotEmpty() && report.optString("outlineColor") == "rgb(255, 0, 128)" -> "PASS"
+                exec != null || report.optString("outlineColor") == "rgb(255, 0, 128)" -> "PARTIAL"
+                else -> "FAIL"
+            }
+        }
+        instrumentation.runOnMainSync { report.put("lateBoots", host.extensions.lateBoots) }
+        results.put("lateInjection", report)
+        stage(PROBE_ID, "lateInjection", verdict, report.toString().take(500))
+        chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(lateTab)},"force":true}""")
+        SystemClock.sleep(800)
     }
 
     /** Reload the probe tab `n` times and report navigation timing plus the bootstrap's own numbers. */
@@ -874,6 +947,16 @@ class ExtensionDemo {
             "JSON.stringify({elements: document.querySelectorAll('[id*=\"return-youtube-dislike\"],[class*=\"ryd-\"],#ryd-dislike-text').length, " +
                 "apiEntries: performance.getEntriesByType('resource').filter(function(e){return e.name.indexOf('returnyoutubedislike')>=0}).map(function(e){return {name:e.name,size:e.transferSize,duration:Math.round(e.duration)}}), " +
                 "groups: (window.__zenExtStats && window.__zenExtStats.groups ? window.__zenExtStats.groups.length : 0), stats: window.__zenExtStats || null, readyState: document.readyState, title: document.title, url: location.href})"
+        /** In the probe's background: inject a function and a stylesheet into the active tab, report to `window.__late`. */
+        private const val LATE_INJECT =
+            "(function(){window.__late=null;chrome.tabs.query({active:true,currentWindow:true},function(tabs){var t=tabs&&tabs[0];" +
+                "if(!t){window.__late=JSON.stringify({error:'no active tab'});return}" +
+                "chrome.scripting.executeScript({target:{tabId:t.id},func:function(){return {title:document.title,readyState:document.readyState,chrome:typeof chrome,probeStart:typeof document.__zenProbeStart}}})" +
+                ".then(function(r){return chrome.scripting.insertCSS({target:{tabId:t.id},css:'body{outline:3px dashed rgb(255, 0, 128) !important}'}).then(function(){window.__late=JSON.stringify({exec:r})})})" +
+                ".catch(function(e){window.__late=JSON.stringify({error:String(e&&e.message||e)})})})})()"
+        /** A plain string into a script sink: "ok", or the TypeError a Trusted Types CSP raises. */
+        private const val TT_SINK_PROBE =
+            "(function(){try{var s=document.createElement('script');s.textContent='void 0';return 'ok'}catch(e){return 'refused: '+String(e&&e.message||e).slice(0,120)}})()"
         private const val NAV_TIMING =
             "(function(){var n=performance.getEntriesByType('navigation')[0]||{};var s=window.__zenExtStats||{};return JSON.stringify({responseEnd:Math.round(n.responseEnd||0),domContentLoaded:Math.round(n.domContentLoadedEventEnd||0),load:Math.round(n.loadEventEnd||0),bootMs:s.bootMs||0,matchMs:s.matchMs||0,applied:s.applied||0})})()"
         private val WITH_BENCH = """
