@@ -9,6 +9,16 @@ import type { UpdateSettings, UpdateStatus } from './updates'
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
 /**
+ * How the chrome lays itself out, decided by the renderer from the window and its pointer (see
+ * `lib/formFactor.ts`) and reported to the core, which builds menus and command lists for it.
+ *
+ *  - `phone`   – bottom bar, sidebar in a drawer, sheets instead of popovers.
+ *  - `tablet`  – desktop layout with touch-sized controls.
+ *  - `desktop` – everything else.
+ */
+export type FormFactor = 'phone' | 'tablet' | 'desktop'
+
+/**
  * What the host can do for the chrome. The renderer adapts its UI to these rather than to the
  * platform name (e.g. a DeX desktop session is still `android`, but has a mouse and keyboard).
  */
@@ -1374,6 +1384,8 @@ export interface Commands {
   'window.toggleMaximize': { args: void; result: void }
   'window.close': { args: void; result: void }
   'window.toggleFullscreen': { args: void; result: void }
+  /** Renderer → main: the layout the chrome settled on (sent on start and whenever it changes). */
+  'window.formFactor': { args: { formFactor: FormFactor }; result: void }
   /** Zen: a new synced window starts at the current space showing the same tabs. */
   'window.new': { args: void; result: void }
   /** Zen's "New blank window" (Ctrl+Shift+N): an independent, temporary tab list. */

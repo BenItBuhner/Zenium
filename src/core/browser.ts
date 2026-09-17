@@ -1258,6 +1258,9 @@ export class Browser {
         win.host.isMaximized() ? win.host.unmaximize() : win.host.maximize(),
       'window.close': (_a, win) => win.host.close(),
       'window.toggleFullscreen': (_a, win) => this.toggleFullscreen(win),
+      'window.formFactor': ({ formFactor }, win) => {
+        win.formFactor = formFactor
+      },
       'window.new': (_a, win) => void this.openWindow('synced', win),
       'window.newUnsynced': (_a, win) => void this.openWindow('unsynced', win),
       'window.newPrivate': (_a, win) => void this.openWindow('private', win),
