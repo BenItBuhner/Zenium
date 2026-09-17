@@ -6,6 +6,7 @@ import {
   cancelExternalProtocol,
   closeMenu,
   closeUrlbar,
+  openBookmarkChrome,
   openOverlay,
   openUrlbar,
   pushToast,
@@ -75,9 +76,17 @@ export function useMainEvents(): void {
       onEvent('tab.pickIcon', ({ tabId }) => uiStore.set({ iconPickerTabId: tabId })),
       onEvent('bookmark.star', (star) => {
         closeUrlbar()
-        uiStore.set({ starDialog: star })
+        void openBookmarkChrome({ starDialog: star }, currentActiveTabId())
       }),
-      onEvent('bookmark.edit', (edit) => uiStore.set({ bookmarkEdit: edit })),
+      onEvent('bookmark.edit', (edit) => {
+        // Inside the manager the request is handled in place; anywhere else it is a dialog.
+        if (uiStore.get().overlay === 'bookmarks') uiStore.set({ bookmarkEdit: edit })
+        else void openBookmarkChrome({ bookmarkEdit: edit }, currentActiveTabId())
+      }),
+      onEvent('bookmark.allTabs', (request) => {
+        closeUrlbar()
+        void openBookmarkChrome({ bookmarkAllTabs: request }, currentActiveTabId())
+      }),
       onEvent('space.switched', ({ fromIndex, toIndex }) => {
         uiStore.set({ spaceSlideDirection: toIndex > fromIndex ? 1 : toIndex < fromIndex ? -1 : 0 })
       }),

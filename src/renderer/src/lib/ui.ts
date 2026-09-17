@@ -93,6 +93,10 @@ export interface UiState {
   starDialog: { tabId: string; nodeId: string; created: boolean } | null
   /** A bookmark the manager should edit, or create (`id: null`) inside `parentId`. */
   bookmarkEdit: { id: string | null; parentId: string; type: BookmarkNodeType } | null
+  /** "Bookmark all tabs": the pages to file and the folder name Chrome would suggest. */
+  bookmarkAllTabs: { tabIds: string[]; defaultTitle: string } | null
+  /** A folder panel of the bookmarks bar hangs over the page. */
+  barMenuOpen: boolean
   /** Zen's multi-select: tabs picked with Ctrl / Shift+click (acted on together). */
   selectedTabIds: string[]
   /** Last plainly clicked / toggled tab – the anchor for Shift+click ranges. */
@@ -151,6 +155,8 @@ export const uiStore = createStore<UiState>(
     securityPromptOpen: false,
     starDialog: null,
     bookmarkEdit: null,
+    bookmarkAllTabs: null,
+    barMenuOpen: false,
     selectedTabIds: [],
     selectionAnchorId: null,
     glanceActive: false,
@@ -233,7 +239,8 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.barEditorOpen &&
     !ui.tabsMenu &&
     !ui.securityPromptOpen &&
-    !ui.stageActive
+    !ui.stageActive &&
+    !bookmarkChromeOpen(ui)
   )
 }
 
@@ -257,10 +264,43 @@ export function invalidateSnapshot(): void {
     !ui.barEditorOpen &&
     !ui.tabsMenu &&
     !ui.securityPromptOpen &&
-    !ui.stageActive
+    !ui.stageActive &&
+    !bookmarkChromeOpen(ui)
   ) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
   }
+}
+
+// ---------------------------------------------------------------------------
+// Bookmark chrome over the page: the star bubble, the bar's panels, the dialogs
+// ---------------------------------------------------------------------------
+
+type BookmarkChrome = Pick<UiState, 'starDialog' | 'bookmarkEdit' | 'bookmarkAllTabs' | 'barMenuOpen'>
+
+/** Whether any of it is up. The manager owns its own edit dialog while it is open. */
+export function bookmarkChromeOpen(ui: UiState): boolean {
+  return (
+    ui.starDialog !== null ||
+    ui.bookmarkAllTabs !== null ||
+    ui.barMenuOpen ||
+    (ui.bookmarkEdit !== null && ui.overlay === 'none')
+  )
+}
+
+/** Like a menu: the page behind is captured first, then the chrome takes the keyboard. */
+export async function openBookmarkChrome(
+  patch: Partial<BookmarkChrome>,
+  activeTabId: string | null
+): Promise<void> {
+  await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set(patch)
+}
+
+export function closeBookmarkChrome(patch: Partial<BookmarkChrome>): void {
+  uiStore.set(patch)
+  invalidateSnapshot()
+  returnFocusToPage()
 }
 
 export async function openUrlbar(
@@ -382,7 +422,8 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.barEditorOpen ||
     ui.tabsMenu !== null ||
     ui.securityPromptOpen ||
-    ui.stageActive
+    ui.stageActive ||
+    bookmarkChromeOpen(ui)
   )
 }
 
