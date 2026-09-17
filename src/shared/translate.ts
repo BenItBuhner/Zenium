@@ -80,18 +80,13 @@ export interface TranslateUIState {
   tabs: Record<string, TranslateTabState>
 }
 
-/** What the page script reports back to the core (inside a `PageMessage` of type `translate`). */
-export type TranslatePageEvent =
-  /** Content appeared after the page was translated; the core should pull the next batch. */
-  | 'pending'
-  /** The script's document went away or its session was replaced. */
-  | 'ended'
-
 /**
  * What the translation script collected for language detection: the first visible text of the
  * page plus the hints the document itself gives.
  */
 export interface TranslatePageSample {
+  /** Token of the document the runtime is installed in (see `TranslateRuntimeStatus.doc`). */
+  doc: number
   text: string
   /** `<html lang>` (or the first `lang` attribute below it), '' when absent. */
   lang: string
@@ -116,6 +111,29 @@ export interface TranslateBatch {
   total: number
   /** Units already translated. */
   done: number
+}
+
+/** A translated block going back to the page; `null` leaves the original text in place. */
+export interface TranslateTranslatedItem {
+  id: number
+  html: string | null
+}
+
+/** Where the page script's session stands. */
+export interface TranslateRuntimeStatus {
+  /**
+   * Random token of the document the runtime lives in. Same-document navigations (pushState,
+   * fragments) keep it; a new document gets a new runtime and a new token.
+   */
+  doc: number
+  /** The active session (0 when none). */
+  session: number
+  total: number
+  done: number
+  /** Units collected but not handed out yet. */
+  pending: number
+  /** The document is going away or the session was reverted. */
+  ended: boolean
 }
 
 export const TRANSLATE_PIVOT_LANGUAGE = 'en'
