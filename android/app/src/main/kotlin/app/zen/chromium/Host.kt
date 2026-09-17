@@ -59,6 +59,9 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     /** The chrome's colour scheme, so native pieces (the back preview) match it. */
     var themeDark = false
         private set
+    /** The chrome's `--zen-scrim` token (ARGB): the space-tinted dim under its sheets. */
+    var themeScrim = parseColor(DEFAULT_SCRIM)
+        private set
     /** Previews of the pages a back gesture would return to. */
     val snapshots = HistorySnapshots(activity)
     /** Last: it reads the tabs and fullscreen state above when it decides what back would do. */
@@ -165,7 +168,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
                 imm.hideSoftInputFromWindow(chrome.windowToken, 0)
                 reply(null)
             }
-            "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("background")); reply(null) }
+            "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("background"), args.str("scrim")); reply(null) }
             "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId")); reply(null) }
             "window.setFullscreen" -> { setImmersive(args.bool("fullscreen")); reply(null) }
             "app.quit" -> { activity.finishAndRemoveTask(); reply(null) }
@@ -299,8 +302,9 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             .show()
     }
 
-    private fun applyTheme(dark: Boolean, background: String) {
+    private fun applyTheme(dark: Boolean, background: String, scrim: String) {
         themeDark = dark
+        if (scrim.isNotEmpty()) themeScrim = parseColor(scrim)
         val color = parseColor(background.ifEmpty { if (dark) "#16161b" else "#f2f1f5" })
         root.setBackgroundColor(color)
         activity.window.decorView.setBackgroundColor(color)
@@ -426,6 +430,9 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     }
 
     companion object {
+        /** The chrome's base light scrim (`--zen-scrim` before any space theme is applied). */
+        private const val DEFAULT_SCRIM = "#49484a47"
+
         fun parseColor(css: String): Int = runCatching {
             // #rrggbbaa (Electron style) → Android ARGB.
             if (css.length == 9 && css.startsWith("#")) {
