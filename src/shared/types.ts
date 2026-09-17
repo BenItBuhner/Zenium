@@ -2,6 +2,7 @@
  * Types shared between the main process, the preload script and the renderer.
  * Everything here must be JSON-serialisable (it crosses the IPC boundary).
  */
+import type { SiteInfo } from './siteInfo'
 import type { UpdateSettings, UpdateStatus } from './updates'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
@@ -1091,6 +1092,15 @@ export interface Commands {
   'urlbar.runCommand': { args: { action: string }; result: void }
 
   'overlay.snapshot': { args: { tabId: string }; result: string | null }
+
+  /** Connection, cookies, storage and permissions of the tab's site (null for an unknown tab). */
+  'site.info': { args: { tabId: string }; result: SiteInfo | null }
+  /** Remove the cookies of the tab's site; resolves with how many were removed. */
+  'site.clearCookies': { args: { tabId: string }; result: { removed: number } }
+  /** Remove cookies, storage and permissions of the tab's site and reload the page. */
+  'site.clearData': { args: { tabId: string }; result: void }
+  /** Forget one permission decision of the site (or all of them) and reload the page. */
+  'site.resetPermissions': { args: { tabId: string; permission?: string }; result: void }
 
   /** Take a fresh resource sample right now and return it. */
   'resources.snapshot': { args: void; result: ResourceSnapshot }

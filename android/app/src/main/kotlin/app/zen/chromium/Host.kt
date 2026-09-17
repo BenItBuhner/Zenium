@@ -46,6 +46,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     val tabs = TabHost(root, this)
     val agentServer = AgentServer(this)
     val updates = Updates(activity, this)
+    val siteData = SiteData()
     val pageToken: String = SecureRandom().let { r -> ByteArray(16).also(r::nextBytes).joinToString("") { "%02x".format(it) } }
     val pageScript: String = activity.assets.open("page.js").bufferedReader().readText().replace("__ZEN_TOKEN__", pageToken)
     private val io = Executors.newCachedThreadPool { r -> Thread(r, "zen-io") }
@@ -131,6 +132,15 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             "view.snapshot" -> if (tab == null) reply(null) else tab.snapshot(reply)
             "view.screenshot" -> if (tab == null) reply(null) else tab.screenshot { png -> saveToDownloads(args.str("name"), "image/png", png, reply) }
             "view.capture" -> if (tab == null) reply(null) else tab.capture(args.str("mode", "viewport"), args.optJSONObject("region"), args.str("format", "jpeg"), reply)
+            "view.certificate" -> reply(tab?.certificateInfo())
+
+            // --- site information (cookies and storage of a site, per container) -------------------
+            "site.cookies" -> reply(siteData.cookies(args.str("containerId", Profiles.DEFAULT_CONTAINER), args.str("url")))
+            "site.storage" -> siteData.storage(args.str("containerId", Profiles.DEFAULT_CONTAINER), args.str("site"), reply)
+            "site.clearCookies" -> siteData.clearCookies(args.str("containerId", Profiles.DEFAULT_CONTAINER), args.str("url"), reply)
+            "site.clearStorage" -> siteData.clearStorage(
+                args.str("containerId", Profiles.DEFAULT_CONTAINER), args.str("site"), args.arr("origins"), reply
+            )
 
             // --- chrome / window / app -----------------------------------------------------------
             "chrome.focus" -> { chrome.requestFocus(); reply(null) }

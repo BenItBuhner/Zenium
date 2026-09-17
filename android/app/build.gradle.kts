@@ -70,14 +70,27 @@ val appVersionCode: Int =
 
 /**
  * Release signing comes from the environment (CI secrets) or from Gradle properties, e.g. in
- * ~/.gradle/gradle.properties. Without a keystore the release build is signed with the debug key
- * so it still installs, but every such build carries a different signature and cannot upgrade an
- * earlier install in place.
+ * ~/.gradle/gradle.properties. Without a keystore the release build falls back to the CI debug
+ * key below.
  */
 fun signingSetting(env: String, property: String): String? =
     (System.getenv(env) ?: project.findProperty(property)?.toString())?.takeIf { it.isNotBlank() }
 
 val releaseKeystore = signingSetting("ZEN_ANDROID_KEYSTORE_FILE", "zen.android.keystoreFile")
+
+/**
+ * `android/ci-debug.keystore` is committed to the repository with a well-known password. It is a
+ * *debug* key – anyone can sign with it, exactly like Android's standard debug keystore – but it
+ * is the *same* key on every machine and every CI run. Android's own debug key is generated per
+ * machine, so every CI runner would sign with a different key and no debug-keyed APK could ever
+ * upgrade another in place. With this key every debug build (CI artifacts, GitHub releases built
+ * without ANDROID_KEYSTORE_*) upgrades the previous one, including through the in-app updater,
+ * which only ever installs an APK whose SHA-256 matches the release manifest. Switching to the
+ * project release keystore later means one final uninstall for users of debug-keyed builds.
+ */
+val ciDebugKeystore = rootProject.file("ci-debug.keystore")
+val ciDebugAlias = "zenium-ci-debug"
+val ciDebugPassword = "zenium-ci-debug"
 
 android {
     namespace = "app.zen.chromium"
@@ -100,6 +113,12 @@ android {
     }
 
     signingConfigs {
+        getByName("debug") {
+            storeFile = ciDebugKeystore
+            storePassword = ciDebugPassword
+            keyAlias = ciDebugAlias
+            keyPassword = ciDebugPassword
+        }
         if (releaseKeystore != null) {
             create("release") {
                 storeFile = rootProject.file(releaseKeystore)
@@ -122,8 +141,8 @@ android {
                 signingConfigs.getByName("release")
             } else {
                 logger.warn(
-                    "No release keystore configured (ZEN_ANDROID_KEYSTORE_FILE); the release APK will be " +
-                        "signed with the debug key and cannot upgrade a properly signed install."
+                    "No release keystore configured (ZEN_ANDROID_KEYSTORE_FILE); the release APK is signed " +
+                        "with the committed CI debug key (android/ci-debug.keystore), not a release key."
                 )
                 signingConfigs.getByName("debug")
             }
@@ -165,7 +184,8 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.activity:activity-ktx:1.9.3")
-    implementation("androidx.webkit:webkit:1.12.1")
+    // 1.13 adds WebStorageCompat.deleteBrowsingDataForSite (the site-information sheet's "clear all site data").
+    implementation("androidx.webkit:webkit:1.13.0")
     implementation("com.google.android.material:material:1.12.0")
 
     // JVM unit tests (src/test): pure logic such as the screenshot stitching geometry.

@@ -23,6 +23,7 @@ import type {
   Tab
 } from '../shared/types'
 import type { KeyInput } from '../shared/shortcuts'
+import type { SiteCertificate, SiteCookie } from '../shared/siteInfo'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '../shared/updates'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
@@ -255,6 +256,10 @@ export interface TabView {
    * to `snapshot()` (viewport only).
    */
   capture?(options: AgentCaptureOptions): Promise<AgentCapture | null>
+
+  // Site information (optional).
+  /** Certificate of the main frame's connection; null on http pages or when unavailable. */
+  certificate?(): Promise<SiteCertificate | null>
 }
 
 export interface TabViewHost {
@@ -400,6 +405,28 @@ export interface SessionHost {
   clearPrivate(): Promise<void>
 }
 
+/** Stored data of a site as the host's storage layer reports it. */
+export interface SiteStorageReading {
+  usageBytes: number | null
+  quotaBytes: number | null
+  /** Origins of the site that hold data. */
+  origins: string[]
+}
+
+/**
+ * Cookies and stored data of one site inside a container, for the site-information sheet.
+ * Cookie values never cross this boundary – names and attributes are all the chrome shows.
+ */
+export interface SiteDataHost {
+  /** The cookies a page at `url` receives (its host's and its parent domains'). */
+  cookies(containerId: string, url: string): Promise<SiteCookie[]>
+  storage(containerId: string, site: string): Promise<SiteStorageReading>
+  /** Remove the cookies a page at `url` receives; resolves with how many went away. */
+  clearCookies(containerId: string, url: string): Promise<number>
+  /** Delete the stored data of `site` (hosts that can) or of the given origins (the rest). */
+  clearStorage(containerId: string, site: string, origins: string[]): Promise<void>
+}
+
 export interface AppHost {
   quit(): void
   /** Quit and start again (after changing the process profile). */
@@ -535,6 +562,8 @@ export interface Platform {
   readonly downloads: DownloadHost
   readonly sessions: SessionHost
   readonly app: AppHost
+  /** Cookies and storage per site; hosts without it show a sheet with the connection only. */
+  readonly siteData?: SiteDataHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Host-backed services; omit for the built-in no-op versions. */

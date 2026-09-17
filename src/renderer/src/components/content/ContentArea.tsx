@@ -111,7 +111,12 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
 /** Chrome that dims the page behind it and is not the gesture stage (URL bar, panels, drawer…). */
 function overlayCoversContentBesidesStage(ui: UiState): boolean {
   return (
-    ui.overlay !== 'none' || ui.urlbar.open || ui.drag !== null || ui.drawerOpen || ui.menu !== null
+    ui.overlay !== 'none' ||
+    ui.urlbar.open ||
+    ui.drag !== null ||
+    ui.drawerOpen ||
+    ui.menu !== null ||
+    ui.siteInfoOpen
   )
 }
 

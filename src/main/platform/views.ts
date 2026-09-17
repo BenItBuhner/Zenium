@@ -12,6 +12,7 @@ import {
 import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import type { Rect, Tab } from '../../shared/types'
+import type { SiteCertificate } from '../../shared/siteInfo'
 import type {
   AgentCapture,
   AgentCaptureOptions,
@@ -500,6 +501,54 @@ export class ElectronTabView implements TabView {
     }
   }
 
+  /**
+   * The certificate behind the page, from the DevTools protocol's Security domain (enabling it
+   * reports the current state at once). Null when the page is not https or the debugger is
+   * taken (DevTools open).
+   */
+  async certificate(): Promise<SiteCertificate | null> {
+    const wc = this.view.webContents
+    if (wc.isDestroyed() || !wc.getURL().startsWith('https:')) return null
+    const dbg = wc.debugger
+    const attachedHere = !dbg.isAttached()
+    try {
+      if (attachedHere) dbg.attach('1.3')
+      const state = await new Promise<SecurityStateParams | null>((resolve) => {
+        const done = (value: SecurityStateParams | null): void => {
+          clearTimeout(timer)
+          dbg.off('message', onMessage)
+          resolve(value)
+        }
+        const onMessage = (_e: Electron.Event, method: string, params: unknown): void => {
+          if (method === 'Security.visibleSecurityStateChanged') done(params as SecurityStateParams)
+        }
+        const timer = setTimeout(() => done(null), 1500)
+        dbg.on('message', onMessage)
+        dbg.sendCommand('Security.enable').catch(() => done(null))
+      })
+      await dbg.sendCommand('Security.disable').catch(() => undefined)
+      const cert = state?.visibleSecurityState?.certificateSecurityState
+      if (!cert) return null
+      return {
+        subject: cert.subjectName ?? '',
+        issuer: cert.issuer ?? '',
+        validFrom: typeof cert.validFrom === 'number' ? cert.validFrom * 1000 : null,
+        validTo: typeof cert.validTo === 'number' ? cert.validTo * 1000 : null,
+        protocol: cert.protocol ?? null
+      }
+    } catch {
+      return null
+    } finally {
+      if (attachedHere) {
+        try {
+          dbg.detach()
+        } catch {
+          /* already detached */
+        }
+      }
+    }
+  }
+
   private async captureWithDevtools(
     options: AgentCaptureOptions,
     mimeType: string
@@ -552,6 +601,20 @@ export class ElectronTabView implements TabView {
 
 /** Chromium refuses textures much taller than this; very long pages are cut, not failed. */
 const MAX_CAPTURE_HEIGHT = 12_000
+
+/** The parts of `Security.visibleSecurityStateChanged` the site-information sheet uses. */
+interface SecurityStateParams {
+  visibleSecurityState?: {
+    securityState?: string
+    certificateSecurityState?: {
+      protocol?: string
+      subjectName?: string
+      issuer?: string
+      validFrom?: number
+      validTo?: number
+    }
+  }
+}
 
 /** Electron runs `contextIsolation` preloads in world 999. */
 const ISOLATED_WORLD_ID = 999
