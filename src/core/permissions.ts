@@ -280,10 +280,12 @@ export class PermissionService {
   }
 
   /** Every remembered decision for an origin (the site-information sheet lists these). */
-  listForOrigin(requestingOrigin: string): Array<{ permission: string; decision: Decision }> {
+  listForOrigin(
+    requestingOrigin: string
+  ): Array<{ permission: string; decision: PermissionDecision }> {
     const origin = safeOrigin(requestingOrigin)
     if (!origin) return []
-    const out: Array<{ permission: string; decision: Decision }> = []
+    const out: Array<{ permission: string; decision: PermissionDecision }> = []
     for (const [key, decision] of Object.entries(this.decisions)) {
       const split = key.lastIndexOf('|')
       if (split < 0 || key.slice(0, split) !== origin) continue
