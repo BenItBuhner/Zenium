@@ -98,6 +98,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   urlbarBehavior: 'float-typing',
   phoneBarPosition: 'bottom',
+  pullToRefresh: true,
   glanceEnabled: true,
   glanceTrigger: 'alt',
   pinnedCloseBehavior: 'reset-unload-switch',

@@ -39,6 +39,8 @@ const pagePreload = join(__dirname, '../preload/page.js')
  */
 export class ElectronTabView implements TabView {
   readonly view: WebContentsView
+  /** Captured up front: on Electron 44 `view.webContents` is already undefined when `destroyed` fires. */
+  readonly webContentsId: number
   private host: ElectronWindow | null = null
   private visible = false
 
@@ -66,6 +68,7 @@ export class ElectronTabView implements TabView {
         enableWebSQL: false
       }
     })
+    this.webContentsId = this.view.webContents.id
     this.view.setVisible(false)
     this.wire(tab)
     this.attachTo(host)
@@ -661,11 +664,11 @@ export class ElectronTabViewHost implements TabViewHost {
 
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView {
     const view = new ElectronTabView(host as ElectronWindow, tab, this.sessions, events, (v) => {
-      this.byWebContentsId.delete(v.webContents.id)
-      this.tabIds.delete(v.webContents.id)
+      this.byWebContentsId.delete(v.webContentsId)
+      this.tabIds.delete(v.webContentsId)
     })
-    this.byWebContentsId.set(view.webContents.id, view)
-    this.tabIds.set(view.webContents.id, tab.id)
+    this.byWebContentsId.set(view.webContentsId, view)
+    this.tabIds.set(view.webContentsId, tab.id)
     return view
   }
 

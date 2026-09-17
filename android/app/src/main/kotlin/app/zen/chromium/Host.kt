@@ -77,6 +77,9 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     /** The chrome's `--zen-scrim` token (ARGB): the space-tinted dim under its sheets. */
     var themeScrim = parseColor(DEFAULT_SCRIM)
         private set
+    /** Settings → Look and Feel → Pull to refresh, mirrored by the chrome (on until it says otherwise). */
+    var pullToRefresh = true
+        private set
     /** Previews of the pages a back gesture would return to. */
     val snapshots = HistorySnapshots(activity)
     /** Last: it reads the tabs and fullscreen state above when it decides what back would do. */
@@ -153,6 +156,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             "view.focus" -> { tab?.requestFocus(); reply(null) }
             "view.setBounds" -> { tabs.setBounds(args.str("tabId"), args.obj("rect")); reply(null) }
             "view.setRadius" -> { tabs.setRadius(args.str("tabId"), args.num("radius")); reply(null) }
+            "view.setPullOffset" -> { tab?.setPullOffset(args.num("offset")); reply(null) }
             "view.setVisible" -> { tabs.setVisible(args.str("tabId"), args.bool("visible")); reply(null) }
             "view.bringToFront" -> { tabs.bringToFront(args.str("tabId")); reply(null) }
             "view.download" -> {
@@ -189,6 +193,11 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             }
             "chrome.haptic" -> { haptic(args.str("kind")); reply(null) }
             "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("background"), args.str("scrim")); reply(null) }
+            "chrome.setPullToRefresh" -> {
+                pullToRefresh = args.bool("enabled", true)
+                for (view in tabs.all()) view.applyPullToRefreshMode()
+                reply(null)
+            }
             "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId")); reply(null) }
             "window.setFullscreen" -> { setImmersive(args.bool("fullscreen")); reply(null) }
             "app.quit" -> { activity.finishAndRemoveTask(); reply(null) }
@@ -204,6 +213,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             // --- services --------------------------------------------------------------------------
             "dialog.confirm" -> confirm(args, reply)
             "dialog.openText" -> activity.pickTextFiles(args.arr("extensions")) { files -> reply(files) }
+            "dialog.saveText" -> activity.saveTextFile(args.str("defaultName"), args.str("mimeType"), args.str("text")) { ok -> reply(ok) }
             "clipboard.writeText" -> {
                 val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 cm.setPrimaryClip(ClipData.newPlainText("Zenium", args.str("text")))

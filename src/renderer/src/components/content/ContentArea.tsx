@@ -12,6 +12,7 @@ import { Urlbar } from '../urlbar/Urlbar'
 import { OverlayHost } from '../overlays/OverlayHost'
 import { FindBar } from './FindBar'
 import { GlanceFrame } from './GlanceFrame'
+import { PullIndicator } from './PullIndicator'
 import { SplitChrome } from './SplitChrome'
 import { useLayoutReporter } from './useLayoutReporter'
 
@@ -69,6 +70,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
       data-staged={staged || undefined}
     >
       <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden">
+        {state.capabilities.pullToRefresh && <PullIndicator />}
         {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
         {tab && foreign && !contentHidden && !glanceActive && <ForeignTabPreview tabId={tab.id} />}
         {showSnapshot && (

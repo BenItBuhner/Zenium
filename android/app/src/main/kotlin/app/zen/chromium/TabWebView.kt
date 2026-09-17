@@ -63,6 +63,9 @@ class TabWebView(
     private var lastTouchY = 0f
     var radiusPx = 0f
         private set
+    /** How far the page sits below the top of its frame during a pull-to-refresh (device px). */
+    private var pullOffsetPx = 0f
+    private val pull = PullToRefreshGesture(this, { super.onTouchEvent(it) }) { event -> onPull(event) }
     /** The in-page predictive back in flight on this view, if any (see `PredictiveBack.kt`). */
     var backTransition: PageBackTransition? = null
     /** The history entry the page on screen belongs to (updated as navigations commit). */
@@ -119,9 +122,13 @@ class TabWebView(
         clipToOutline = true
         outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(view: View, outline: Outline) {
-                outline.setRoundRect(0, 0, view.width, view.height, radiusPx)
+                // Pulled down, the page is clipped at the frame's bottom edge, not its own: the
+                // chrome below the frame stays uncovered.
+                val bottom = (view.height - pullOffsetPx).roundToInt().coerceIn(0, view.height)
+                outline.setRoundRect(0, 0, view.width, bottom, radiusPx)
             }
         }
+        applyPullToRefreshMode()
         isFocusableInTouchMode = true
         webViewClient = Client()
         webChromeClient = Chrome()
@@ -155,6 +162,50 @@ class TabWebView(
     fun setRadius(px: Float) {
         radiusPx = px
         invalidateOutline()
+    }
+
+    // --- pull-to-refresh --------------------------------------------------------------------------
+
+    /**
+     * The chrome's pull machine (`lib/pull.ts`) worked out how far down the page sits: move it
+     * there. The page slides as one piece below the frame's top edge, where the chrome – under
+     * this view – draws the indicator in the band that opens up.
+     */
+    fun setPullOffset(offsetCss: Double) {
+        val px = (offsetCss * resources.displayMetrics.density).toFloat().coerceAtLeast(0f)
+        pull.offsetApplied(px / resources.displayMetrics.density)
+        if (px == pullOffsetPx) return
+        pullOffsetPx = px
+        translationY = px
+        invalidateOutline()
+    }
+
+    /** Whether a drag down from the top of this page may become a pull-to-refresh right now. */
+    fun pullToRefreshEligible(): Boolean =
+        host.pullToRefresh && backTransition == null && PullGestureClassifier.refreshable(url)
+
+    /**
+     * With the pull on, the top edge's effect is the pull itself, so the WebView's own glow – which
+     * would flash before the pull takes the finger – stays off; off, the stock edge glow returns.
+     */
+    fun applyPullToRefreshMode() {
+        overScrollMode = if (host.pullToRefresh) View.OVER_SCROLL_NEVER else View.OVER_SCROLL_IF_CONTENT_SCROLLS
+    }
+
+    private fun onPull(event: PullGestureClassifier.Pull) {
+        val (phase, payload) = when (event) {
+            PullGestureClassifier.Pull.Start -> "start" to null
+            is PullGestureClassifier.Pull.Move -> "move" to json("travel" to event.travel.toDouble(), "time" to event.time)
+            is PullGestureClassifier.Pull.Release -> "release" to json("time" to event.time)
+            is PullGestureClassifier.Pull.Cancel -> "cancel" to json("time" to event.time)
+        }
+        if (event !is PullGestureClassifier.Pull.Move) Log.d(PULL_TAG, "$phase on $tabId (${url ?: "no url"})")
+        host.chrome.pullEvent(tabId, phase, payload)
+    }
+
+    override fun onOverScrolled(scrollX: Int, scrollY: Int, clampedX: Boolean, clampedY: Boolean) {
+        super.onOverScrolled(scrollX, scrollY, clampedX, clampedY)
+        pull.onOverScrolled(scrollY, clampedY)
     }
 
     // --- page script (Glance, third-party links, media tracking) -------------------------------
@@ -276,7 +327,8 @@ class TabWebView(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         lastTouchX = event.x
         lastTouchY = event.y
-        return super.onTouchEvent(event)
+        // The pull decides what of the touch the WebView sees (see PullToRefreshGesture).
+        return pull.onTouchEvent(event)
     }
 
     /** Long-press on links/images opens Zen's page menu; text selection stays native. */
@@ -812,6 +864,7 @@ class TabWebView(
     }
 
     companion object {
+        private const val PULL_TAG = "ZenPull"
         private val encoder = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-encode") }
 
         /** Longer than any tool budget (browser_wait_for allows 30 s) but shorter than the socket's. */

@@ -56,7 +56,8 @@ export function androidCapabilities(sdkInt: number): HostCapabilities {
     updates: true,
     share: true,
     clipboardChip: sdkInt >= CLIPBOARD_CHIP_SDK,
-    appLinkSettings: true
+    appLinkSettings: true,
+    pullToRefresh: true
   }
 }
 
@@ -461,7 +462,8 @@ export class AndroidPlatform implements Platform {
     }
     this.dialogs = {
       confirm: (options) => bridge.call<boolean>('dialog.confirm', options),
-      pickTextFiles: (options) => bridge.call<PickedTextFile[]>('dialog.openText', options)
+      pickTextFiles: (options) => bridge.call<PickedTextFile[]>('dialog.openText', options),
+      saveTextFile: (options) => bridge.call<boolean>('dialog.saveText', options)
     }
     this.clipboard = {
       writeText: (text) => bridge.send('clipboard.writeText', { text }),
