@@ -16,9 +16,6 @@ on:
         options:
           - light
           - dark
-  # TEMPORARY: runs the demo on this branch while the fixes are being verified.
-  push:
-    branches: [cursor/android-touchfix-ci-cache-a7c3]
 
 permissions:
   contents: read
