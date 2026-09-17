@@ -7,6 +7,7 @@ import type {
   Container,
   DownloadItem,
   ExtensionInfo,
+  ExtensionUpdateCheck,
   Folder,
   HostCapabilities,
   KeyBinding,
@@ -86,6 +87,8 @@ export interface StateExtras {
   zappingTabId: string | null
   liveFolders: Record<string, LiveFolderConfig>
   extensions: ExtensionInfo[]
+  /** Extensions UI (W1-D): reconcile with the store PR on rebase. */
+  extensionUpdates: ExtensionUpdateCheck
   mods: Mod[]
   sync: SyncStatus
   agents: AgentInfo[]
@@ -119,6 +122,7 @@ export class BrowserState {
     zappingTabId: null,
     liveFolders: {},
     extensions: [],
+    extensionUpdates: { lastCheckedAt: null, checking: false },
     mods: [],
     sync: {
       enabled: false,

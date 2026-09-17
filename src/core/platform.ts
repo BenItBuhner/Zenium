@@ -13,6 +13,7 @@ import type {
   EventName,
   Events,
   ExtensionInfo,
+  ExtensionUpdateCheck,
   HapticKind,
   HostCapabilities,
   KeyBinding,
@@ -487,9 +488,32 @@ export interface ExtensionHost {
   addFromDialog(win: ZenWindow): Promise<void>
   remove(id: string): void
   setEnabled(id: string, enabled: boolean): Promise<void>
-  openPopup(id: string, anchor: Rect, win: ZenWindow): void
+  /** `frame` is where the renderer's popup panel wants the view (see `extension.openPopup`). */
+  openPopup(id: string, anchor: Rect, win: ZenWindow, frame?: PopupFrame): void
   closePopup(): void
   flushSync(): void
+  // Extensions UI (W1-D): reconcile with the store/API PRs on rebase.
+  /** Move the open popup view (and show it once the renderer's frame has popped in). */
+  resizePopup(bounds: Rect, visible: boolean): void
+  /** Update checks across all extensions, for the management page's caption. */
+  updateCheck(): ExtensionUpdateCheck
+  installFromStore(idOrUrl: string, win: ZenWindow): Promise<void>
+  installFromFile(win: ZenWindow): Promise<void>
+  installFromDrop(paths: string[], win: ZenWindow): Promise<void>
+  checkForUpdates(win: ZenWindow): Promise<void>
+  update(id: string, win: ZenWindow): Promise<void>
+  reload(id: string): Promise<void>
+  openOptions(id: string, win: ZenWindow): void
+  setPinned(id: string, pinned: boolean): void
+  setAllowFileAccess(id: string, allow: boolean): Promise<void>
+  /** The user answered an install or permission prompt the host raised. */
+  respondPrompt(requestId: string, accept: boolean): void
+}
+
+/** Where the renderer's popup frame puts the popup view: exact bounds and the inner corner. */
+export interface PopupFrame {
+  bounds: Rect
+  radius: number
 }
 
 /** Cross-device sync through a shared folder; Electron only for now. */

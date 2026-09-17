@@ -1,5 +1,12 @@
 /* eslint-disable @typescript-eslint/no-empty-function -- deliberate no-op host services */
-import type { ExtensionInfo, Rect, ResourceSnapshot, SyncScope, SyncStatus } from '../shared/types'
+import type {
+  ExtensionInfo,
+  ExtensionUpdateCheck,
+  Rect,
+  ResourceSnapshot,
+  SyncScope,
+  SyncStatus
+} from '../shared/types'
 import { emptyResourceSnapshot } from '../shared/defaults'
 import { updateOsOf, type UpdateTarget } from '../shared/updates'
 import type { Browser } from './browser'
@@ -91,6 +98,26 @@ export class NoExtensions implements ExtensionHost {
   }
   closePopup(): void {}
   flushSync(): void {}
+  resizePopup(): void {}
+  updateCheck(): ExtensionUpdateCheck {
+    return { lastCheckedAt: null, checking: false }
+  }
+  async installFromStore(_idOrUrl: string, win: ZenWindow): Promise<void> {
+    this.browser.toast('Extensions are not available on this device.', 'info', win)
+  }
+  async installFromFile(win: ZenWindow): Promise<void> {
+    this.browser.toast('Extensions are not available on this device.', 'info', win)
+  }
+  async installFromDrop(_paths: string[], win: ZenWindow): Promise<void> {
+    this.browser.toast('Extensions are not available on this device.', 'info', win)
+  }
+  async checkForUpdates(): Promise<void> {}
+  async update(): Promise<void> {}
+  async reload(): Promise<void> {}
+  openOptions(): void {}
+  setPinned(): void {}
+  async setAllowFileAccess(): Promise<void> {}
+  respondPrompt(): void {}
 }
 
 const DEFAULT_SCOPE: SyncScope = {

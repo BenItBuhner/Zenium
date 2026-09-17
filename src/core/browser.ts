@@ -148,6 +148,7 @@ export class Browser {
       zappingTabId: this.boosts.zappingTabId(),
       liveFolders: this.liveFolders.all(),
       extensions: this.extensions.list(),
+      extensionUpdates: this.extensions.updateCheck(),
       mods: this.mods.all(),
       sync: this.sync.status(),
       agents: this.agents.list(),
@@ -1018,8 +1019,32 @@ export class Browser {
       'extension.add': (_a, win) => this.extensions.addFromDialog(win),
       'extension.remove': ({ id }) => this.extensions.remove(id),
       'extension.setEnabled': ({ id, enabled }) => this.extensions.setEnabled(id, enabled),
-      'extension.openPopup': ({ id, anchor }, win) => this.extensions.openPopup(id, anchor, win),
+      'extension.openPopup': ({ id, anchor, bounds, radius }, win) =>
+        this.extensions.openPopup(
+          id,
+          anchor,
+          win,
+          bounds ? { bounds, radius: radius ?? 12 } : undefined
+        ),
       'extension.closePopup': () => this.extensions.closePopup(),
+      // Extensions UI (W1-D): reconcile with the store/API PRs on rebase.
+      'extension.resizePopup': ({ bounds, visible }) =>
+        this.extensions.resizePopup(bounds, visible),
+      'extension.installFromStore': ({ idOrUrl }, win) =>
+        this.extensions.installFromStore(idOrUrl, win),
+      'extension.installFromFile': (_a, win) => this.extensions.installFromFile(win),
+      'extension.installFromDrop': ({ paths }, win) => this.extensions.installFromDrop(paths, win),
+      'extension.checkForUpdates': (_a, win) => this.extensions.checkForUpdates(win),
+      'extension.update': ({ id }, win) => this.extensions.update(id, win),
+      'extension.reload': ({ id }) => this.extensions.reload(id),
+      'extension.openOptions': ({ id }, win) => this.extensions.openOptions(id, win),
+      'extension.setPinned': ({ id, pinned }) => this.extensions.setPinned(id, pinned),
+      'extension.setAllowFileAccess': ({ id, allow }) =>
+        this.extensions.setAllowFileAccess(id, allow),
+      'extension.confirmInstall': ({ requestId, accept }) =>
+        this.extensions.respondPrompt(requestId, accept),
+      'extension.respondPermissionRequest': ({ requestId, accept }) =>
+        this.extensions.respondPrompt(requestId, accept),
 
       'mod.add': ({ name, css, source }) => this.mods.add(name, css, source ?? null).id,
       'mod.update': ({ id, patch }) => this.mods.update(id, patch),

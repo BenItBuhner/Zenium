@@ -272,6 +272,29 @@ export interface LiveFolderConfig {
 // Extensions (unpacked Chrome extensions) and Mods (custom chrome CSS)
 // ---------------------------------------------------------------------------
 
+// Extensions UI (W1-D): reconcile with the store/API PRs on rebase. Every field and command in
+// this block is provisional: the store PR owns the install/update fields and commands, the API
+// PR owns `action`; the UI only needs the shapes. Once both land, drop the duplicates here and
+// make the fields required again where those PRs define them so.
+
+/** Where an extension came from; decides the second line of its row and its update source. */
+export type ExtensionSource = 'chrome-web-store' | 'edge-add-ons' | 'crx' | 'zip' | 'unpacked'
+
+export type ExtensionUpdateState = 'up-to-date' | 'available' | 'updating' | 'error'
+
+/** The toolbar action for the active tab (`chrome.action` state, merged with the manifest). */
+export interface ExtensionAction {
+  badgeText: string
+  /** CSS colour string; null → the accent fill. */
+  badgeBackgroundColor: string | null
+  badgeTextColor: string | null
+  title: string
+  /** Data URL of the action icon; null → the manifest icon. */
+  icon: string | null
+  popup: string | null
+  enabled: boolean
+}
+
 export interface ExtensionInfo {
   id: string
   name: string
@@ -285,7 +308,40 @@ export interface ExtensionInfo {
   popup: string | null
   /** Set when the extension could not be loaded (unsupported manifest, missing files…). */
   error: string | null
+  source?: ExtensionSource
+  manifestVersion?: number
+  permissions?: string[]
+  hostPermissions?: string[]
+  /** `options_ui.page` or `options_page`, relative to the extension root. */
+  optionsPage?: string | null
+  /** Shown as a toolbar button; unpinned extensions live in the puzzle-piece menu. */
+  pinned?: boolean
+  allowFileAccess?: boolean
+  installedAt?: number
+  updatedAt?: number
+  updateState?: ExtensionUpdateState
+  updateError?: string
+  /** Chrome's install-prompt warning strings ("Read and change all your data on all websites"). */
+  warnings?: string[]
+  /** Total size on disk in bytes, when the installer recorded it. */
+  sizeBytes?: number
+  action?: ExtensionAction
 }
+
+/** A request main puts to the user before installing or granting permissions. */
+export interface ExtensionPromptRequest {
+  requestId: string
+  name: string
+  icon: string | null
+  warnings: string[]
+}
+
+/** Update checks across all extensions, for the caption on the management page. */
+export interface ExtensionUpdateCheck {
+  lastCheckedAt: number | null
+  checking: boolean
+}
+// End of the provisional extensions block (more of it in Commands and Events below).
 
 export interface Mod {
   id: string
@@ -860,6 +916,8 @@ export interface UIState {
   zappingTabId: string | null
   liveFolders: Record<string, LiveFolderConfig>
   extensions: ExtensionInfo[]
+  /** Extensions UI (W1-D): reconcile with the store PR on rebase. */
+  extensionUpdates?: ExtensionUpdateCheck
   mods: Mod[]
   sync: SyncStatus
   /** Connected AI agents (MCP sessions) and the tabs they drive. */
@@ -1219,8 +1277,33 @@ export interface Commands {
   'extension.add': { args: void; result: void }
   'extension.remove': { args: { id: string }; result: void }
   'extension.setEnabled': { args: { id: string; enabled: boolean }; result: void }
-  'extension.openPopup': { args: { id: string; anchor: Rect }; result: void }
+  /**
+   * Open the action popup (or fire `action.onClicked` when the extension has none). `bounds` are
+   * the exact window-content coordinates for the popup view inside the frame the renderer draws,
+   * `radius` its corner; main reports the content's preferred size back via `extension.popupSize`
+   * and the renderer answers with `extension.resizePopup` once its frame has settled.
+   */
+  'extension.openPopup': {
+    args: { id: string; anchor: Rect; bounds?: Rect; radius?: number }
+    result: void
+  }
   'extension.closePopup': { args: void; result: void }
+  // Extensions UI (W1-D): reconcile with the store/API PRs on rebase.
+  'extension.resizePopup': { args: { bounds: Rect; visible: boolean }; result: void }
+  'extension.installFromStore': { args: { idOrUrl: string }; result: void }
+  'extension.installFromFile': { args: void; result: void }
+  'extension.installFromDrop': { args: { paths: string[] }; result: void }
+  'extension.checkForUpdates': { args: void; result: void }
+  'extension.update': { args: { id: string }; result: void }
+  'extension.reload': { args: { id: string }; result: void }
+  'extension.openOptions': { args: { id: string }; result: void }
+  'extension.setPinned': { args: { id: string; pinned: boolean }; result: void }
+  'extension.setAllowFileAccess': { args: { id: string; allow: boolean }; result: void }
+  'extension.confirmInstall': { args: { requestId: string; accept: boolean }; result: void }
+  'extension.respondPermissionRequest': {
+    args: { requestId: string; accept: boolean }
+    result: void
+  }
 
   'mod.add': { args: { name: string; css: string; source?: string }; result: string }
   'mod.update': {
@@ -1295,6 +1378,17 @@ export interface Events {
   'menu.hide': { menuId: string }
   /** Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts). */
   insets: { top: number; right: number; bottom: number; left: number }
+  // Extensions UI (W1-D): reconcile with the store/API PRs on rebase.
+  /** The popup's document asked for this size (CSS px); the renderer fits its frame around it. */
+  'extension.popupSize': { id: string; width: number; height: number }
+  /** Main closed the popup itself (blur, Escape inside it, a link opened a tab). */
+  'extension.popupClosed': { id: string }
+  /** Ask before installing; the renderer answers with `extension.confirmInstall`. */
+  extensionInstallRequest: ExtensionPromptRequest
+  /** `permissions.request` from a running extension; answered with `extension.respondPermissionRequest`. */
+  extensionPermissionRequest: ExtensionPromptRequest
+  /** An install finished; the renderer toasts it with a Pin action while the extension is unpinned. */
+  'extension.installed': { id: string; name: string; pinned: boolean }
 }
 
 export type EventName = keyof Events
