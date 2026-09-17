@@ -632,6 +632,7 @@
     gap: 8px;
     padding: 6px 4px;
     border-radius: 12px;
+    corner-shape: var(--zen-corner);
     color: var(--zen-muted);
     transition: background 120ms var(--zen-ease);
   }
@@ -644,7 +645,9 @@
   .zen-app-icon svg {
     width: 48px;
     height: 48px;
+    /* The artwork's own corner, so the ring around the picked one runs concentric with it. */
     border-radius: 22.5%;
+    corner-shape: var(--zen-corner);
     transition: transform 120ms var(--zen-ease);
   }
   .zen-app-icon:active svg {
