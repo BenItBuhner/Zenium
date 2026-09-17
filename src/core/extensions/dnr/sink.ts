@@ -2,10 +2,10 @@
  * What the translator hands to Zenium's request-blocking engine, and what comes back.
  *
  * The types below are a structural mirror of the engine's rule contract in
- * `src/core/blocking/rules.ts` on the services branch (`cursor/services-blocking-24d1`, commit
- * 720272b), which is not on `main` yet. Each `Engine*` type is assignable to (and from) its
- * upstream namesake, so once that branch lands this file becomes re-exports and nothing else
- * in `dnr/` changes:
+ * `src/core/blocking/rules.ts` on the services branch (`cursor/services-blocking-24d1`, checked
+ * at commit a9b8876), which is not on `main` yet. Each `Engine*` type is assignable to (and
+ * from) its upstream namesake, so once that branch lands this file becomes re-exports and
+ * nothing else in `dnr/` changes:
  *
  * | here                        | `src/core/blocking/rules.ts`                          |
  * | --------------------------- | ----------------------------------------------------- |
