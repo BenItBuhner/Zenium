@@ -10,9 +10,6 @@ name: Android share demo
 # picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-share-intents-ace7
 
 permissions:
   contents: read
