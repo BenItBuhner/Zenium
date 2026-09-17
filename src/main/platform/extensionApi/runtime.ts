@@ -1,4 +1,10 @@
-import { ApiError, extensionUrl, type ApiContext, type ApiHost, type NamespaceHandlers } from './types'
+import {
+  ApiError,
+  extensionUrl,
+  type ApiContext,
+  type ApiHost,
+  type NamespaceHandlers
+} from './types'
 
 /**
  * `chrome.runtime` members the engine lacks: the install / startup lifecycle events (Electron
@@ -40,7 +46,8 @@ export class RuntimeApi {
 
   private setUninstallURL(ctx: ApiContext, url: unknown): void {
     if (typeof url !== 'string') throw new ApiError('Invalid url')
-    if (url.length > 1023) throw new ApiError('The URL exceeds the maximum length of 1023 characters.')
+    if (url.length > 1023)
+      throw new ApiError('The URL exceeds the maximum length of 1023 characters.')
     if (url !== '' && !/^https?:\/\//i.test(url)) {
       throw new ApiError('Invalid URL: "' + url + '". Only http and https URLs are allowed.')
     }

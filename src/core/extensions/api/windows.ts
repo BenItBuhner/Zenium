@@ -27,7 +27,10 @@ export interface WindowQueryOptions {
 }
 
 /** `windowTypes` defaults to every type Chrome lists (`normal`, `popup`, `panel`, `app`). */
-export function windowMatchesQuery(win: ChromeWindow, options: WindowQueryOptions | undefined): boolean {
+export function windowMatchesQuery(
+  win: ChromeWindow,
+  options: WindowQueryOptions | undefined
+): boolean {
   const types = options?.windowTypes
   if (!types || types.length === 0) return win.type !== 'devtools'
   return types.includes(win.type)

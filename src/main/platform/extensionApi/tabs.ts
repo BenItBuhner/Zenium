@@ -347,7 +347,8 @@ export class TabsApi {
       if (!tab) return undefined
     } else {
       tab = this.tabById(tabId)
-      if (tab.discarded) throw new ApiError(`Cannot discard tab with id: ${tabId}. It is already discarded.`)
+      if (tab.discarded)
+        throw new ApiError(`Cannot discard tab with id: ${tabId}. It is already discarded.`)
       if (this.host.browser.tabs.allVisibleTabIds().has(tab.id)) {
         throw new ApiError(`Cannot discard tab with id: ${tabId}. It is currently visible.`)
       }
@@ -431,7 +432,8 @@ export class TabsApi {
 
   private setZoom(ctx: ApiContext, tabId: unknown, factor: unknown): void {
     const tab = this.tabOrActive(ctx, tabId)
-    if (typeof factor !== 'number' || !Number.isFinite(factor)) throw new ApiError('Invalid zoom factor')
+    if (typeof factor !== 'number' || !Number.isFinite(factor))
+      throw new ApiError('Invalid zoom factor')
     this.host.browser.tabs.setZoom(tab.id, factor === 0 ? 1 : factor)
   }
 
@@ -453,7 +455,11 @@ export class TabsApi {
   /** Strip what an extension without `tabs` / host permission for the URL may not see. */
   private visibleTab(ext: LoadedExtension, tab: ChromeTab): ChromeTab {
     if (this.host.canSeeTab(ext, tab.url ?? '')) return tab
-    const { url: _u, pendingUrl: _p, title: _t, favIconUrl: _f, ...rest } = tab
+    const rest: ChromeTab = { ...tab }
+    delete rest.url
+    delete rest.pendingUrl
+    delete rest.title
+    delete rest.favIconUrl
     return rest
   }
 
@@ -463,7 +469,10 @@ export class TabsApi {
     url: string
   ): TabChangeInfo | null {
     if (this.host.canSeeTab(ext, url)) return info
-    const { url: _u, title: _t, favIconUrl: _f, ...rest } = info
+    const rest: TabChangeInfo = { ...info }
+    delete rest.url
+    delete rest.title
+    delete rest.favIconUrl
     return Object.keys(rest).length > 0 ? rest : null
   }
 

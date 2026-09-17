@@ -23,8 +23,7 @@ export class ExtensionApi {
     const info = this.host.browser.extensions
       .list()
       .find((entry) => entry.path === ctx.extension.path) as
-      | { allowFileAccess?: boolean }
-      | undefined
+      { allowFileAccess?: boolean } | undefined
     return info?.allowFileAccess ?? true
   }
 }

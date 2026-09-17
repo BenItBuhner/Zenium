@@ -93,7 +93,11 @@ export class WindowsApi {
     const q = this.queryOptions(options)
     const out: ChromeWindow[] = []
     for (const id of this.model.windowIds()) {
-      const record = this.model.chromeWindowById(id, q.populate === true, this.urlsFor(ctx.extension))
+      const record = this.model.chromeWindowById(
+        id,
+        q.populate === true,
+        this.urlsFor(ctx.extension)
+      )
       if (record && windowMatchesQuery(record, q)) out.push(record)
     }
     return out
@@ -104,7 +108,8 @@ export class WindowsApi {
     return list.map((url) => {
       if (typeof url !== 'string') throw new ApiError('Invalid url')
       const full = /^[a-z][a-z0-9+.-]*:/i.test(url) ? url : extensionUrl(ctx.extensionId, url)
-      if (/^\s*(javascript|chrome|devtools):/i.test(full)) throw new ApiError(`Invalid url: "${url}".`)
+      if (/^\s*(javascript|chrome|devtools):/i.test(full))
+        throw new ApiError(`Invalid url: "${url}".`)
       return full
     })
   }
@@ -262,7 +267,6 @@ export class WindowsApi {
       })
     }
   }
-
 }
 
 function boundsFrom(d: Record<string, unknown>): Partial<Rectangle> | null {

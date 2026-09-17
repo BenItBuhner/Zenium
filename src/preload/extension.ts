@@ -26,12 +26,10 @@ function makeHost(kind: 'frame' | 'worker'): ShimHost {
   return {
     kind,
     invoke: (namespace, method, args) =>
-      ipcRenderer.invoke(CALL, namespace, method, args).catch(
-        (error: unknown): InvokeResult => ({
-          ok: false,
-          error: error instanceof Error ? error.message : String(error)
-        })
-      ),
+      ipcRenderer.invoke(CALL, namespace, method, args).catch((error: unknown): InvokeResult => ({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      })),
     notify: (name, payload) => ipcRenderer.send(NOTIFY, name, payload),
     onEvent: (listener) => {
       ipcRenderer.on(EVENT, (_event, namespace: string, event: string, args: unknown[]) => {

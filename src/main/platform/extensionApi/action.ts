@@ -55,7 +55,8 @@ export class ActionApi {
     setIcon: (ctx, d) => this.setIcon(ctx, d),
     setPopup: (ctx, d) => this.setPopup(ctx, d),
     getPopup: (ctx, d) => this.getPopup(ctx, d),
-    setBadgeText: (ctx, d) => this.set(ctx, d, 'badgeText', (v) => (typeof v === 'string' ? v : null), 'text'),
+    setBadgeText: (ctx, d) =>
+      this.set(ctx, d, 'badgeText', (v) => (typeof v === 'string' ? v : null), 'text'),
     getBadgeText: (ctx, d) => this.get(ctx, d, 'badgeText'),
     setBadgeBackgroundColor: (ctx, d) =>
       this.set(ctx, d, 'badgeBackgroundColor', parseColor, 'color'),
@@ -100,7 +101,8 @@ export class ActionApi {
   }
 
   private tabIdOf(details: unknown): number | undefined {
-    if (!isRecord(details) || details.tabId === undefined || details.tabId === null) return undefined
+    if (!isRecord(details) || details.tabId === undefined || details.tabId === null)
+      return undefined
     if (!isInteger(details.tabId)) throw new ApiError('Invalid tab id')
     if (!this.host.model.zenTab(details.tabId) && !this.host.model.popupForTabId(details.tabId)) {
       throw new ApiError(`No tab with id: ${details.tabId}.`)

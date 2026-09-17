@@ -59,7 +59,12 @@ export class StorageApi {
     }
   }
 
-  private commit(ctx: ApiContext, area: StorageArea, next: StorageItems, changes: StorageChanges): void {
+  private commit(
+    ctx: ApiContext,
+    area: StorageArea,
+    next: StorageItems,
+    changes: StorageChanges
+  ): void {
     if (area === 'sync') this.host.store.setSyncItems(ctx.extensionId, next)
     else this.fallback.set(`${ctx.extensionId}:${area}`, next)
     if (Object.keys(changes).length > 0) {
@@ -93,7 +98,10 @@ export class StorageApi {
   private remove(ctx: ApiContext, area: unknown, keys: unknown): void {
     const name = this.areaOf(area)
     if (name === 'managed') throw new ApiError('This is a read-only store.')
-    if (typeof keys !== 'string' && !(Array.isArray(keys) && keys.every((k) => typeof k === 'string'))) {
+    if (
+      typeof keys !== 'string' &&
+      !(Array.isArray(keys) && keys.every((k) => typeof k === 'string'))
+    ) {
       throw new ApiError('Invalid keys')
     }
     if (name === 'sync') this.checkSyncRate(ctx.extensionId)

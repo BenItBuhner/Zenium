@@ -283,10 +283,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   }
 
   /** `management.on*` about one extension goes to every other loaded extension. */
-  private tellOthers(
-    event: 'onInstalled' | 'onEnabled' | 'onDisabled',
-    subjectId: string
-  ): void {
+  private tellOthers(event: 'onInstalled' | 'onEnabled' | 'onDisabled', subjectId: string): void {
     const info = this.management.infoFor(subjectId)
     if (!info) return
     this.broadcast('management', event, (ext) => (ext.id === subjectId ? null : [info]))
@@ -423,7 +420,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     const tab = zenTabId ? this.model.tab(zenTabId) : undefined
     if (tab) {
       const win = this.model.windowOfTab(tab)
-      return { tabId: this.model.chromeTabId(tab), windowId: win ? this.model.windowIdOf(win) : undefined }
+      return {
+        tabId: this.model.chromeTabId(tab),
+        windowId: win ? this.model.windowIdOf(win) : undefined
+      }
     }
     const popup = this.model.popupForTabId(frame.webContents.id)
     if (popup) return { tabId: frame.webContents.id, windowId: popup.bw.id }

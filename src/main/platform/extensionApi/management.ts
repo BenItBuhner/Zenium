@@ -85,7 +85,11 @@ export class ManagementApi {
   // Listing
   // ---------------------------------------------------------------------------
 
-  private entries(): Array<{ info: ZeniumExtensionInfo; manifest: ExtensionManifest | null; id: string }> {
+  private entries(): Array<{
+    info: ZeniumExtensionInfo
+    manifest: ExtensionManifest | null
+    id: string
+  }> {
     return this.host.browser.extensions.list().map((info) => {
       const loaded = this.host.allLoaded().find((e) => e.path === info.path)
       const manifest = loaded?.manifest ?? readManifest(info.path)
@@ -94,16 +98,26 @@ export class ManagementApi {
     })
   }
 
-  private entry(id: unknown): { info: ZeniumExtensionInfo; manifest: ExtensionManifest | null; id: string } {
+  private entry(id: unknown): {
+    info: ZeniumExtensionInfo
+    manifest: ExtensionManifest | null
+    id: string
+  } {
     if (typeof id !== 'string') throw new ApiError('Invalid extension id')
     const entry = this.entries().find((e) => e.id === id || e.info.path === id)
     if (!entry) throw new ApiError(`Failed to find extension with id ${id}.`)
     return entry
   }
 
-  private describe(entry: { info: ZeniumExtensionInfo; manifest: ExtensionManifest | null; id: string }): ManagementInfo {
+  private describe(entry: {
+    info: ZeniumExtensionInfo
+    manifest: ExtensionManifest | null
+    id: string
+  }): ManagementInfo {
     const { info, manifest, id } = entry
-    const sets = manifest ? manifestPermissionSets(manifest) : { required: { permissions: [], origins: [] } }
+    const sets = manifest
+      ? manifestPermissionSets(manifest)
+      : { required: { permissions: [], origins: [] } }
     const optionsPage = manifest?.options_ui?.page ?? manifest?.options_page
     const icons = manifest?.icons
       ? Object.entries(manifest.icons)

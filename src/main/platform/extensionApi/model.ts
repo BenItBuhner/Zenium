@@ -80,7 +80,10 @@ export class ApiModel {
 
   /** Chrome window ids of everything `windows.getAll` lists, Zenium windows and popups alike. */
   windowIds(): number[] {
-    const ids = this.browser.allWindows().map((w) => this.windowIdOf(w)).filter((id) => id >= 0)
+    const ids = this.browser
+      .allWindows()
+      .map((w) => this.windowIdOf(w))
+      .filter((id) => id >= 0)
     for (const [id, popup] of this.popups) if (!popup.bw.isDestroyed()) ids.push(id)
     return ids
   }
@@ -290,7 +293,9 @@ export class ApiModel {
     const glanceHost = windows.find((w) => w.glance?.tabId === tab.id)
     if (glanceHost) return this.remember(tab, glanceHost)
     const cached = this.assigned.get(tab.id)
-    const previous = cached ? windows.find((w) => w.id === cached && w.kind === 'synced') : undefined
+    const previous = cached
+      ? windows.find((w) => w.id === cached && w.kind === 'synced')
+      : undefined
     if (previous) return previous
     const synced = windows.filter((w) => w.kind === 'synced')
     const pick =
@@ -339,7 +344,13 @@ export class ApiModel {
   placementOf(tab: Tab): { win: ZenWindow | undefined; index: number } {
     const win = this.windowOfTab(tab)
     const list = win ? this.tabsInWindow(win) : []
-    return { win, index: Math.max(0, list.findIndex((t) => t.id === tab.id)) }
+    return {
+      win,
+      index: Math.max(
+        0,
+        list.findIndex((t) => t.id === tab.id)
+      )
+    }
   }
 
   chromeTab(
@@ -349,7 +360,8 @@ export class ApiModel {
   ): ChromeTab {
     const win = placement.win
     const active = win ? this.isActive(tab, win) : false
-    const highlighted = active || (win ? this.browser.tabs.visibleTabIds(win).includes(tab.id) : false)
+    const highlighted =
+      active || (win ? this.browser.tabs.visibleTabIds(win).includes(tab.id) : false)
     const view = this.browser.tabs.view(tab.id) as ElectronTabView | undefined
     const bounds = view && !view.isDestroyed() ? view.view.getBounds() : undefined
     const record: ChromeTab = {

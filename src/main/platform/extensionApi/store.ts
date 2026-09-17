@@ -32,13 +32,17 @@ export class ApiStore {
   private readonly main: JsonStore<PersistedApi>
   private readonly data: PersistedApi
   private readonly syncIo: StoreIO
-  private readonly syncStores = new Map<string, { store: JsonStore<StorageItems>; items: StorageItems }>()
+  private readonly syncStores = new Map<
+    string,
+    { store: JsonStore<StorageItems>; items: StorageItems }
+  >()
   private readonly managedDir: string
 
   constructor(io: StoreIO, userDataDir: string) {
     this.main = new JsonStore<PersistedApi>(io, 'extension-api.json', 300)
     const loaded = this.main.readSync()
-    this.data = loaded && loaded.version === 1 ? { ...emptyPersisted(), ...loaded } : emptyPersisted()
+    this.data =
+      loaded && loaded.version === 1 ? { ...emptyPersisted(), ...loaded } : emptyPersisted()
     this.syncIo = new FileStoreIO(join(userDataDir, 'zen', 'extension-sync'))
     this.managedDir = join(userDataDir, 'extensions', 'managed')
   }
