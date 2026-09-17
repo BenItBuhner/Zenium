@@ -63,16 +63,19 @@ export function StatusLine({
   suffix?: string
 }): JSX.Element {
   const status = downloadStatus(item)
-  const text = suffix ? (status.text ? `${status.text} · ${suffix}` : suffix) : status.text
   return (
-    <div
-      className={cn(
-        'zen-dl-status truncate text-[13px] leading-[18px] tabular-nums',
-        status.tone === 'warn' && 'zen-dl-status-warn',
-        status.tone === 'danger' && 'zen-dl-status-danger'
+    <div className="zen-dl-status truncate text-[13px] leading-[18px] tabular-nums">
+      {status.text && (
+        <span
+          className={cn(
+            status.tone === 'warn' && 'zen-dl-status-warn',
+            status.tone === 'danger' && 'zen-dl-status-danger'
+          )}
+        >
+          {status.text}
+        </span>
       )}
-    >
-      {text}
+      {suffix && (status.text ? ` · ${suffix}` : suffix)}
     </div>
   )
 }
