@@ -59,4 +59,18 @@ class DomainsTest {
         assertTrue(Domains.isThirdParty("https://a.example/", "chrome-extension://abc/page.html"))
         assertTrue(Domains.isThirdParty("https://a.example/", "about:blank"))
     }
+
+    @Test
+    fun originOfSpellsOriginsLikeChromium() {
+        assertEquals("https://news.example", Domains.originOf("HTTPS://News.Example/story?x=1#top"))
+        assertEquals("https://news.example", Domains.originOf("https://user:pw@news.example:443/"))
+        assertEquals("https://news.example:8443", Domains.originOf("https://news.example:8443/story"))
+        assertEquals("http://news.example", Domains.originOf("http://news.example.:80/"))
+        assertEquals("http://[::1]:8080", Domains.originOf("http://[::1]:8080/x"))
+        assertEquals("wss://push.example", Domains.originOf("wss://push.example/socket"))
+        assertNull(Domains.originOf("chrome-extension://abc/page.html"))
+        assertNull(Domains.originOf("about:blank"))
+        assertNull(Domains.originOf("data:text/html,hi"))
+        assertNull(Domains.originOf("https:///nohost"))
+    }
 }

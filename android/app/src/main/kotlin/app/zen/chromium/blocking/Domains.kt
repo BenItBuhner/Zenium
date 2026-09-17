@@ -119,6 +119,35 @@ object Domains {
     }
 
     /**
+     * The origin of an `http(s)` (or `ws(s)`) URL as Chromium spells it – lowercase scheme and
+     * host, the port when it is not the scheme's default; null for other schemes and for URLs
+     * without a host (the desktop's `originOf` answers null for opaque origins the same way).
+     */
+    fun originOf(url: String): String? {
+        val schemeEnd = url.indexOf("://")
+        if (schemeEnd == -1) return null
+        val scheme = url.substring(0, schemeEnd).lowercase()
+        if (scheme != "http" && scheme != "https" && scheme != "ws" && scheme != "wss") return null
+        val host = hostnameOf(url) ?: return null
+        var end = url.length
+        for (i in schemeEnd + 3 until url.length) {
+            val c = url[i]
+            if (c == '/' || c == '?' || c == '#') {
+                end = i
+                break
+            }
+        }
+        var authority = url.substring(schemeEnd + 3, end)
+        val at = authority.lastIndexOf('@')
+        if (at != -1) authority = authority.substring(at + 1)
+        val portStart = if (authority.startsWith("[")) authority.indexOf(']') + 1 else 0
+        val colon = authority.indexOf(':', portStart)
+        val port = if (colon == -1) null else authority.substring(colon + 1).toIntOrNull()
+        val default = if (scheme == "http" || scheme == "ws") 80 else 443
+        return if (port == null || port == default) "$scheme://$host" else "$scheme://$host:$port"
+    }
+
+    /**
      * The registrable domain of a hostname (`a.b.example.co.uk` → `example.co.uk`). IP literals
      * and single-label hosts are returned unchanged.
      */

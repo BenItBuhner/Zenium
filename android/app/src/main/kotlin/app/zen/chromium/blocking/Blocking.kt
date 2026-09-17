@@ -3,6 +3,7 @@ package app.zen.chromium.blocking
 import android.content.Context
 import android.content.res.AssetManager
 import android.os.SystemClock
+import android.util.Log
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import app.zen.chromium.Storage
@@ -20,7 +21,9 @@ import java.util.zip.GZIPInputStream
  * same documents the desktop reads); this class compiles them into an [EngineSnapshot] on a
  * background thread whenever the index is rewritten and answers `shouldInterceptRequest` from
  * the current snapshot on WebView's IO threads. It also hands the core the bundled snapshot of
- * the default lists (`assets/blocking/`), the `BlockingHost` half of the platform contract.
+ * the default lists (`assets/blocking/`), the `BlockingHost` half of the platform contract, and
+ * hosts the `chrome.webRequest`-style [listeners] the extension platform's emulation registers
+ * (the Android half of the desktop multiplexer's listener contract, see `WebRequest.kt`).
  *
  * One instance per process ([shared]): the browser window's `Host` and every custom tab's
  * `CustomTabHost` read the same files, so they share one compiled snapshot – the default lists
@@ -39,6 +42,11 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     private val builder = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "zen-blocking") }
     private var scheduled: ScheduledFuture<*>? = null
     private var cachedText: Pair<String, TextEngine>? = null
+
+    /** The listener registry; one for every tab and profile, like the desktop multiplexer. */
+    val listeners = WebRequestListeners().also { registry ->
+        registry.onListenerFailure = { registrant, error -> Log.e(TAG, "webRequest listener of $registrant failed", error) }
+    }
 
     /** Wall-clock milliseconds of the last build, for the settings sheet and the demo. */
     @Volatile
@@ -113,24 +121,49 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     // ---------------------------------------------------------------------------------------------
 
     /**
-     * The engine's answer for a page's request, or null to let WebView load it. Runs on an IO
-     * thread: nothing here touches the WebView. Blocked subresources get an empty 403 (the page
-     * sees a failed load, as it would from a cancelled request on the desktop); `$redirect`
-     * filters get an empty resource of the right type instead, like uBlock Origin's neutered
-     * resources; a blocked document is answered with 204 – Chromium drops the navigation without
-     * committing – and the tab is told so it can show the Zenium blocked page.
+     * The answer for a page's request, or null to let WebView load it. Runs on an IO thread:
+     * nothing here touches the WebView. The engine decides first, then the `onBeforeRequest`
+     * listeners ([evaluate]). Blocked subresources get an empty 403 (the page sees a failed load,
+     * as it would from a cancelled request on the desktop); `$redirect` filters get an empty
+     * resource of the right type instead, like uBlock Origin's neutered resources; a blocked
+     * document is answered with 204 – Chromium drops the navigation without committing – and the
+     * tab is told so it can show the Zenium blocked page; a listener's `data:` redirect becomes
+     * the body it encodes.
      */
     fun intercept(tab: BlockingTab, request: WebResourceRequest): WebResourceResponse? {
         val verdict = evaluate(
-            snapshot, tab, request.url.toString(), request.isForMainFrame,
-            request.requestHeaders?.get("Accept"), request.method ?: "GET"
+            snapshot, listeners, tab, request.url.toString(), request.isForMainFrame,
+            request.requestHeaders ?: emptyMap(), request.method ?: "GET"
         )
         return when (verdict) {
             Verdict.Pass -> null
             is Verdict.Empty -> emptyResponse(verdict.status, verdict.reason, "text/plain")
             is Verdict.Neutered -> neuteredResponse(verdict.type)
+            is Verdict.Body -> WebResourceResponse(
+                verdict.mimeType, verdict.charset, 200, "OK",
+                mapOf("Content-Length" to verdict.bytes.size.toString()), ByteArrayInputStream(verdict.bytes)
+            )
         }
     }
+
+    /** `WebViewClient.onReceivedError`: the request failed; the `onErrorOccurred` listeners hear of it. */
+    fun onRequestError(tab: BlockingTab, request: WebResourceRequest, webViewError: Int) {
+        if (!listeners.hasListeners(WebRequestEvent.ON_ERROR_OCCURRED)) return
+        val url = request.url.toString()
+        if (!isHttp(url)) return
+        val record = listeners.recordFor(
+            tab, url, request.method ?: "GET", request.isForMainFrame,
+            ResourceType.guessKnown(url, request.isForMainFrame, request.requestHeaders?.get("Accept"))
+        )
+        listeners.errorOccurred(record, WebRequestListeners.netErrorName(webViewError))
+    }
+
+    /** Register a `chrome.webRequest`-style listener (see `WebRequest.kt`); returns its remover. */
+    fun addListener(event: WebRequestEvent, listener: WebRequestListener, options: ListenerOptions): () -> Unit =
+        listeners.addListener(event, listener, options)
+
+    /** Remove every listener of a registrant (an extension was unloaded). */
+    fun removeListenersOf(registrant: String) = listeners.removeListenersOf(registrant)
 
     /** A main-frame navigation the tab is about to follow (`shouldOverrideUrlLoading`): block it? */
     fun decideNavigation(tab: BlockingTab, url: String): Decision = decideNavigation(snapshot, tab, url)
@@ -201,6 +234,8 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
         .put("lastBuildMs", lastBuildMs)
 
     companion object {
+        private const val TAG = "zen-blocking"
+
         /** The core debounces its index writes; one more beat coalesces a burst of set changes. */
         private const val REBUILD_DELAY_MS = 300L
 
@@ -225,6 +260,63 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
 
         private fun isHttp(url: String): Boolean =
             url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)
+
+        /**
+         * The whole of `shouldInterceptRequest` but the `WebResourceResponse`: the engine's
+         * verdict first ([evaluate] below), then – for a request the engine let through – the
+         * `onBeforeRequest` listeners, whose composed answer is applied the way WebView allows:
+         * a cancel is an empty 403 (204 and the blocked page for a navigation), a `data:` or
+         * `about:blank` redirect is the body it stands for, an `http(s)` redirect of a navigation
+         * is loaded by the tab, an `http(s)` redirect of a subresource cannot be honoured and is
+         * recorded as unsupported. A request that goes out is shown to the `onSendHeaders`
+         * listeners; a cancelled one to the `onErrorOccurred` listeners as
+         * `net::ERR_BLOCKED_BY_CLIENT`, as Chromium does.
+         */
+        fun evaluate(
+            snap: EngineSnapshot,
+            listeners: WebRequestListeners,
+            tab: BlockingTab,
+            url: String,
+            isMainFrame: Boolean,
+            headers: Map<String, String>,
+            method: String
+        ): Verdict {
+            val engine = evaluate(snap, tab, url, isMainFrame, headers["Accept"], method)
+            if (listeners.isEmpty || !isHttp(url)) return engine
+            val record = listeners.begin(tab, url, method, isMainFrame, ResourceType.guessKnown(url, isMainFrame, headers["Accept"]))
+            if (engine !is Verdict.Pass) {
+                if (engine is Verdict.Empty) listeners.errorOccurred(record, WebRequestListeners.BLOCKED_BY_CLIENT)
+                else listeners.end(record)
+                return engine
+            }
+            val composed = listeners.beforeRequest(record)
+            if (composed.cancel) {
+                listeners.errorOccurred(record, WebRequestListeners.BLOCKED_BY_CLIENT)
+                return if (isMainFrame) {
+                    tab.onDocumentBlocked(url)
+                    Verdict.Empty(204, "No Content")
+                } else Verdict.Empty(403, "Forbidden")
+            }
+            val redirect = composed.redirectUrl
+            if (redirect != null) {
+                if (redirect == "about:blank") {
+                    listeners.end(record)
+                    return Verdict.Body("text/html", "utf-8", ByteArray(0))
+                }
+                DataUrl.parse(redirect)?.let {
+                    listeners.end(record)
+                    return Verdict.Body(it.mimeType, it.charset, it.bytes)
+                }
+                if (isMainFrame) {
+                    listeners.end(record)
+                    tab.onDocumentRedirected(redirect)
+                    return Verdict.Empty(204, "No Content")
+                }
+                listeners.unsupported(composed.redirectedBy ?: "", "redirectUrl", url)
+            }
+            listeners.sendHeaders(record, headers)
+            return Verdict.Pass
+        }
 
         /**
          * Decide one request against `snap` and tell `tab` what happened. Everything
@@ -370,11 +462,17 @@ sealed class Verdict {
 
     /** uBlock Origin's neutered stand-in for a `$redirect` filter. */
     class Neutered(val type: ResourceType) : Verdict()
+
+    /** A body a listener's `data:` / `about:blank` redirect stands for, served as 200. */
+    class Body(val mimeType: String, val charset: String?, val bytes: ByteArray) : Verdict()
 }
 
 /** What the engine needs from a tab and tells it (implemented by `TabWebView`). */
 interface BlockingTab {
     val tabId: String
+
+    /** The tab's profile (`default`, a container id or `private`): the listeners' `partition`. */
+    val containerId: String
 
     /** The URL of the document the tab shows; read from any thread. */
     val documentUrl: String?

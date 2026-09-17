@@ -11,7 +11,7 @@ import java.io.File
 import java.util.zip.GZIPInputStream
 
 class BlockingTest {
-    private class FakeTab(override val tabId: String = "tab-1", override var documentUrl: String? = "https://news.example/story") : BlockingTab {
+    private class FakeTab(override val tabId: String = "tab-1", override var documentUrl: String? = "https://news.example/story", override val containerId: String = "default") : BlockingTab {
         var blocked = 0
         val documentsBlocked = ArrayList<String>()
         val redirects = ArrayList<String>()

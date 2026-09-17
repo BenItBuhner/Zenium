@@ -60,7 +60,7 @@ import kotlin.math.roundToInt
 class TabWebView(
     context: Context,
     override var tabId: String,
-    val containerId: String,
+    override val containerId: String,
     host: PageHost
 ) : WebView(context), BlockingTab {
     /** Reassigned once, when a custom tab's page moves into the browser window (`TabHost.adopt`). */
@@ -844,6 +844,7 @@ class TabWebView(
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+            host.blocking.onRequestError(this@TabWebView, request, error.errorCode)
             if (!request.isForMainFrame) return
             loading = false
             host.viewEvent(
