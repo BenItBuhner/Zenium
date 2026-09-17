@@ -1,15 +1,22 @@
 /**
  * Ad and tracker blocking, the host-neutral half: owns the {@link RuleEngine} and its
  * persistence, turns Settings → Privacy and security into rule sets (levels, per-list switches,
- * the user's filters, per-site exceptions, the master switch), keeps the filter lists fresh from
- * their canonical URLs and counts what the hosts' request engines block. Both hosts read the
- * rule sets this service writes under `blocking/` in the profile.
+ * the user's filters), keeps the filter lists fresh from their canonical URLs and counts what the
+ * hosts' request engines block. Both hosts read the rule sets this service writes under
+ * `blocking/` in the profile.
+ *
+ * The master switch and the per-site exceptions are content settings in the permission store
+ * ({@link BLOCKING_PERMISSION}: `allow` as the default switches blocking off, `allow` for an
+ * origin excepts that site), so the site-information sheet lists and resets them with the other
+ * permissions; this service turns them into the two builtin rule sets.
  */
 import {
+  BLOCKING_PERMISSION,
   DEFAULT_FILTER_LISTS,
   FILTER_LIST_MAX_AGE_MS,
   enabledListsFor,
   normalizeSiteException,
+  siteOriginOf,
   type BlockingSettings,
   type BlockingStatus,
   type FilterListDefinition,
@@ -17,7 +24,6 @@ import {
 } from '../../shared/blocking'
 import type { Browser } from '../browser'
 import type { BundledFilterList } from '../platform'
-import { hostMatchesDomain, hostnameOf, registrableDomain } from './domain'
 import { RuleEngine } from './engine'
 import {
   parseListHeader,
@@ -72,6 +78,9 @@ export class BlockingService {
   private counterTimer: ReturnType<typeof setTimeout> | null = null
   private queue: Promise<void> = Promise.resolve()
   private stopped = false
+  private unsubscribePermissions: (() => void) | null = null
+  /** What the last `syncSets` applied, so the next one only touches what changed. */
+  private synced: { userFilters: string; lists: Set<string> } | null = null
 
   constructor(private readonly browser: Browser) {
     this.store = new RuleSetStore(browser.platform.io)
@@ -79,6 +88,11 @@ export class BlockingService {
 
   private get settings(): BlockingSettings {
     return this.browser.state.settings.blocking
+  }
+
+  /** The master switch: blocking is on unless the permission's default allows ads everywhere. */
+  get enabled(): boolean {
+    return this.browser.permissions.defaultFor(BLOCKING_PERMISSION) !== 'allow'
   }
 
   /** Load the persisted rule sets, apply the settings and seed the bundled snapshot. */
@@ -91,7 +105,12 @@ export class BlockingService {
         filterCount: l.filterCount,
         hasFilterText: l.hasFilterText
       })
-    this.syncSets(null)
+    this.syncSets()
+    this.unsubscribePermissions = this.browser.permissions.subscribe((change) => {
+      if (change.permission !== BLOCKING_PERMISSION) return
+      this.syncSets()
+      this.browser.state.commitVolatile()
+    })
     this.ready = true
     void this.seedBundled().then(() => {
       if (this.stopped) return
@@ -103,6 +122,8 @@ export class BlockingService {
 
   stop(): void {
     this.stopped = true
+    this.unsubscribePermissions?.()
+    this.unsubscribePermissions = null
     if (this.startupTimer) clearTimeout(this.startupTimer)
     if (this.sweepTimer) clearInterval(this.sweepTimer)
     if (this.counterTimer) clearTimeout(this.counterTimer)
@@ -115,7 +136,7 @@ export class BlockingService {
 
   status(): BlockingStatus {
     const s = this.settings
-    const enabled = enabledListsFor(s)
+    const enabled = enabledListsFor(s, this.enabled)
     const lists: FilterListStatus[] = []
     let lastUpdatedAt: number | null = null
     let updating = false
@@ -146,6 +167,8 @@ export class BlockingService {
     }
     return {
       ready: this.ready,
+      enabled: this.enabled,
+      siteExceptions: this.siteExceptions(),
       sessionBlocked: this.sessionBlocked,
       lists,
       updating,
@@ -178,37 +201,47 @@ export class BlockingService {
   }
 
   // ---------------------------------------------------------------------------
-  // Settings
+  // Settings, the master switch and per-site exceptions
   // ---------------------------------------------------------------------------
 
-  onSettingsChanged(previous: BlockingSettings): void {
-    this.syncSets(previous)
+  /** `settings.blocking` changed (the caller commits). */
+  onSettingsChanged(): void {
+    this.syncSets()
+  }
+
+  /** Switch blocking on or off everywhere (the permission's default; the store notifies us). */
+  setEnabled(enabled: boolean): void {
+    this.browser.permissions.setDefault(BLOCKING_PERMISSION, enabled ? null : 'allow')
+  }
+
+  /** Origins the user excepted from blocking, sorted. */
+  siteExceptions(): string[] {
+    return this.browser.permissions
+      .listForPermission(BLOCKING_PERMISSION)
+      .filter((entry) => entry.decision === 'allow')
+      .map((entry) => entry.origin)
   }
 
   /** Is `url` on a site the user excepted from blocking? */
   isExcepted(url: string): boolean {
-    const host = hostnameOf(url)
-    return host !== null && this.settings.siteExceptions.some((d) => hostMatchesDomain(host, d))
+    const origin = siteOriginOf(url)
+    return origin !== null && this.browser.permissions.get(BLOCKING_PERMISSION, origin) === 'allow'
   }
 
-  /** The domain a per-site exception for `url` would use, or null for pages without a site. */
+  /** The origin a per-site exception for `url` would use, or null for pages without a site. */
   siteFor(url: string): string | null {
-    const host = hostnameOf(url)
-    if (!host || !/^https?:/i.test(url)) return null
-    return registrableDomain(host)
+    return siteOriginOf(url)
   }
 
-  /** Except (or stop excepting) a site; `site` may be a domain or a URL. */
+  /**
+   * Except (or stop excepting) a site; `site` may be an origin, a URL or a bare host. Stored as
+   * an `allow` decision of the permission for the origin; the store's notification re-syncs the
+   * builtin set.
+   */
   setSiteException(site: string, excepted: boolean): void {
-    const domain = normalizeSiteException(site)
-    if (!domain) return
-    const previous = this.settings
-    const current = previous.siteExceptions.filter((d) => d !== domain)
-    if (excepted) current.push(domain)
-    if (current.length === previous.siteExceptions.length && !excepted) return
-    this.browser.state.settings.blocking = { ...previous, siteExceptions: current }
-    this.syncSets(previous)
-    this.browser.state.commit()
+    const origin = normalizeSiteException(site)
+    if (!origin) return
+    this.browser.permissions.set(BLOCKING_PERMISSION, origin, excepted ? 'allow' : null)
   }
 
   // ---------------------------------------------------------------------------
@@ -217,9 +250,10 @@ export class BlockingService {
 
   /** Refresh one list, or every enabled one, from its canonical URL now. */
   async updateLists(id?: string): Promise<void> {
+    const enabled = enabledListsFor(this.settings, this.enabled)
     const targets = id
       ? this.sources().filter((s) => s.id === id)
-      : this.sources().filter((s) => enabledListsFor(this.settings).has(s.id))
+      : this.sources().filter((s) => enabled.has(s.id))
     if (targets.length === 0) return
     const results = await Promise.all(targets.map((s) => this.enqueue(s.id)))
     const failed = results.filter((ok) => !ok).length
@@ -296,7 +330,7 @@ export class BlockingService {
       console.warn('[zenium] bundled filter lists unavailable:', describeError(error))
       return
     }
-    const enabled = enabledListsFor(this.settings)
+    const enabled = enabledListsFor(this.settings, this.enabled)
     for (const info of infos) {
       const def = DEFAULT_FILTER_LISTS.find((d) => d.id === info.id)
       if (!def || this.stopped) continue
@@ -339,7 +373,7 @@ export class BlockingService {
   private async sweep(): Promise<void> {
     if (this.stopped) return
     const now = Date.now()
-    const enabled = enabledListsFor(this.settings)
+    const enabled = enabledListsFor(this.settings, this.enabled)
     for (const source of this.sources()) {
       if (!enabled.has(source.id) || this.runtime.get(source.id)?.updating) continue
       const summary = this.engine.summary(source.id)
@@ -383,7 +417,7 @@ export class BlockingService {
       if (prepared.count === 0 || /^\s*</.test(response.text))
         throw new Error('the download is not a filter list')
       const header = parseListHeader(response.text)
-      const set = this.listSet(source, enabledListsFor(this.settings).has(id))
+      const set = this.listSet(source, enabledListsFor(this.settings, this.enabled).has(id))
       set.filterText = prepared.text
       set.updatedAt = Date.now()
       if (header.version) set.version = header.version
@@ -425,25 +459,27 @@ export class BlockingService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Make the engine reflect the settings: the two builtin sets, the user's filters, which lists
-   * are on, and which custom lists exist. Sets are only touched when something changed.
+   * Make the engine reflect the settings and the permission store: the two builtin sets, the
+   * user's filters, which lists are on, and which custom lists exist. Sets are only touched when
+   * something changed since the last sync.
    */
-  private syncSets(previous: BlockingSettings | null): void {
+  private syncSets(): void {
     const s = this.settings
-    const off = !s.enabled || s.level === 'off'
+    const previous = this.synced
+    const exceptions = this.siteExceptions()
     this.ensureBuiltin({
       id: BUILTIN_RULE_SETS.globalOff,
       source: 'builtin',
       priority: RULE_SET_PRIORITY.globalOff,
-      enabled: off,
+      enabled: !this.enabled || s.level === 'off',
       rules: [{ id: 1, action: { type: 'allow' }, condition: {} }]
     })
     this.ensureBuiltin({
       id: BUILTIN_RULE_SETS.siteExceptions,
       source: 'builtin',
       priority: RULE_SET_PRIORITY.siteExceptions,
-      enabled: s.siteExceptions.length > 0,
-      rules: s.siteExceptions.map(siteExceptionRule)
+      enabled: exceptions.length > 0,
+      rules: exceptions.map(siteExceptionRule)
     })
 
     const userText = s.userFilters.trim()
@@ -469,8 +505,8 @@ export class BlockingService {
       }
     }
 
-    const enabled = enabledListsFor(s)
-    const wasEnabled = previous ? enabledListsFor(previous) : new Set<string>()
+    const enabled = enabledListsFor(s, this.enabled)
+    const wasEnabled = previous?.lists ?? new Set<string>()
     const wanted = new Set(this.sources().map((source) => source.id))
     for (const summary of this.engine.listRuleSets()) {
       if (summary.source !== 'filter-list') continue
@@ -495,6 +531,7 @@ export class BlockingService {
       if (fresh && this.ready && !this.runtime.get(source.id)?.updating)
         void this.enqueue(source.id)
     }
+    this.synced = { userFilters: s.userFilters, lists: enabled }
   }
 
   private ensureBuiltin(set: RuleSet & { rules: Rule[] }): void {
@@ -505,12 +542,15 @@ export class BlockingService {
   }
 }
 
-/** Everything under a document on `domain` (or its subdomains) is allowed. */
-export function siteExceptionRule(domain: string, index: number): Rule {
+/**
+ * Everything under a document of `origin` is allowed. `|origin/` matches exactly that origin's
+ * documents (scheme, host and port; the slash stops `origin.evil` and other ports).
+ */
+export function siteExceptionRule(origin: string, index: number): Rule {
   return {
     id: index + 1,
     action: { type: 'allowAllRequests' },
-    condition: { requestDomains: [domain], resourceTypes: ['main_frame', 'sub_frame'] }
+    condition: { urlFilter: `|${origin}/`, resourceTypes: ['main_frame', 'sub_frame'] }
   }
 }
 

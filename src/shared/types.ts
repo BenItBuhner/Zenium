@@ -1984,7 +1984,9 @@ export interface Commands {
   }
   /** Refresh one filter list (or every enabled one) from its canonical URL now. */
   'blocking.updateLists': { args: { id?: string }; result: void }
-  /** Except a site (domain or URL) from blocking, or block on it again. */
+  /** The master switch of ad and tracker blocking (the `ads` permission's default). */
+  'blocking.setEnabled': { args: { enabled: boolean }; result: void }
+  /** Except a site (origin, URL or host) from blocking, or block on it again. */
   'blocking.setSiteException': { args: { site: string; excepted: boolean }; result: void }
 }
 

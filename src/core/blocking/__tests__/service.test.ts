@@ -7,7 +7,8 @@ import {
 } from '../../../shared/blocking'
 import type { Tab } from '../../../shared/types'
 import type { Browser } from '../../browser'
-import type { BlockingHost, BundledFilterList, StoreIO } from '../../platform'
+import { PermissionService } from '../../permissions'
+import type { BlockingHost, BundledFilterList, DialogHost, StoreIO } from '../../platform'
 import { BlockingService, siteExceptionRule } from '../service'
 import { BUILTIN_RULE_SETS, USER_RULE_SET_ID, type RequestContext, type RuleSet } from '../rules'
 import { memoryIo } from './store.test'
@@ -17,6 +18,7 @@ type FetchResult = { ok: boolean; status: number; text: string }
 interface Harness {
   browser: Browser
   io: StoreIO & { files: Map<string, string> }
+  permissions: PermissionService
   settings: { blocking: BlockingSettings }
   tabs: Map<string, Tab>
   toasts: string[]
@@ -34,8 +36,12 @@ function harness(
   const toasts: string[] = []
   const fetched: string[] = []
   const commits = { durable: 0, volatile: 0 }
+  const permissions = new PermissionService(io, {
+    confirm: async () => false
+  } as unknown as DialogHost)
   const h: Harness = {
     io,
+    permissions,
     settings,
     tabs,
     toasts,
@@ -45,6 +51,7 @@ function harness(
     browser: null as unknown as Browser
   }
   const browser = {
+    permissions,
     platform: {
       io,
       blocking: options.host,
@@ -130,9 +137,8 @@ describe('BlockingService levels', () => {
     const h = harness()
     const service = start(h)
     const change = (patch: Partial<BlockingSettings>): void => {
-      const previous = h.settings.blocking
-      h.settings.blocking = { ...previous, ...patch }
-      service.onSettingsChanged(previous)
+      h.settings.blocking = { ...h.settings.blocking, ...patch }
+      service.onSettingsChanged()
     }
     change({ level: 'basic' })
     expect(enabledIds(service)).toEqual(['ubo-badware', 'urlhaus'])
@@ -152,10 +158,18 @@ describe('BlockingService levels', () => {
     expect(service.engine.decide(req('https://anything.example/')).matched?.setId).toBe(
       BUILTIN_RULE_SETS.globalOff
     )
-    change({ level: 'balanced', enabled: false })
+    change({ level: 'balanced' })
+    // The master switch is the permission's default; the store's notification syncs the sets.
+    service.setEnabled(false)
+    expect(service.enabled).toBe(false)
+    expect(h.permissions.defaultFor('ads')).toBe('allow')
+    expect(h.commits.volatile).toBeGreaterThan(0)
     expect(enabledIds(service)).toEqual([])
     expect(service.engine.summary(BUILTIN_RULE_SETS.globalOff)?.enabled).toBe(true)
-    change({ enabled: true, lists: { 'ubo-privacy': true, easylist: false } })
+    expect(service.status()).toMatchObject({ enabled: false, siteExceptions: [] })
+    service.setEnabled(true)
+    expect(h.permissions.defaultFor('ads')).toBeUndefined()
+    change({ lists: { 'ubo-privacy': true, easylist: false } })
     expect(enabledIds(service)).toEqual([
       'easyprivacy',
       'peter-lowe',
@@ -175,9 +189,8 @@ describe('BlockingService levels', () => {
       status: 200,
       text: '! Title: uBO privacy\n! Version: 7\n||fingerprint.example^\nexample.com##.x\n'
     })
-    const previous = h.settings.blocking
-    h.settings.blocking = { ...previous, level: 'strict' }
-    service.onSettingsChanged(previous)
+    h.settings.blocking = { ...h.settings.blocking, level: 'strict' }
+    service.onSettingsChanged()
     expect(service.status().lists.find((l) => l.id === 'ubo-privacy')?.updating).toBe(true)
     await settle()
     expect(h.fetched).toEqual([DEFAULT_FILTER_LISTS.find((d) => d.id === 'ubo-privacy')?.url])
@@ -212,8 +225,13 @@ describe('BlockingService site exceptions and user filters', () => {
     expect(service.engine.decide(onTrusted).action).toBe('block')
 
     service.setSiteException('https://www.trusted.example/some/page?x', true)
-    expect(h.settings.blocking.siteExceptions).toEqual(['trusted.example'])
-    expect(h.commits.durable).toBe(1)
+    // Stored as the origin's `ads` decision, where the site-information sheet finds it.
+    expect(h.permissions.listForOrigin('https://www.trusted.example')).toEqual([
+      { permission: 'ads', decision: 'allow' }
+    ])
+    expect(service.siteExceptions()).toEqual(['https://www.trusted.example'])
+    expect(service.status().siteExceptions).toEqual(['https://www.trusted.example'])
+    expect(h.commits.volatile).toBeGreaterThan(0)
     expect(service.engine.decide(onTrusted)).toMatchObject({
       action: 'allow',
       matched: { setId: BUILTIN_RULE_SETS.siteExceptions }
@@ -223,25 +241,40 @@ describe('BlockingService site exceptions and user filters', () => {
         req('https://ads.example/x.js', { documentUrl: 'https://other.example/' })
       ).action
     ).toBe('block')
-    expect(service.isExcepted('https://sub.trusted.example/')).toBe(true)
-    expect(service.isExcepted('https://trusted.example.evil/')).toBe(false)
-    expect(service.siteFor('https://www.trusted.example/x')).toBe('trusted.example')
+    // Exceptions are per origin: another host, scheme or port of the site is not covered.
+    for (const other of [
+      'https://trusted.example/',
+      'https://www.trusted.example.evil/',
+      'http://www.trusted.example/',
+      'https://www.trusted.example:8443/'
+    ]) {
+      expect(service.isExcepted(other)).toBe(false)
+      expect(
+        service.engine.decide(req('https://ads.example/x.js', { documentUrl: other })).action
+      ).toBe('block')
+    }
+    expect(service.isExcepted('https://www.trusted.example/other?y')).toBe(true)
+    expect(service.siteFor('https://www.trusted.example/x')).toBe('https://www.trusted.example')
     expect(service.siteFor('zen://blank')).toBeNull()
     expect(service.siteFor('about:blank')).toBeNull()
 
-    service.setSiteException('TRUSTED.example', true)
-    expect(h.settings.blocking.siteExceptions).toEqual(['trusted.example'])
+    service.setSiteException('WWW.TRUSTED.example', true)
+    expect(service.siteExceptions()).toEqual(['https://www.trusted.example'])
     service.setSiteException('nope', false)
     service.setSiteException('', true)
-    expect(h.commits.durable).toBe(2)
-    service.setSiteException('trusted.example', false)
-    expect(h.settings.blocking.siteExceptions).toEqual([])
+    expect(service.siteExceptions()).toEqual(['https://www.trusted.example'])
+    // The sheet's "reset" reaches the engine through the store's notification.
+    h.permissions.resetOrigin('https://www.trusted.example')
+    expect(service.siteExceptions()).toEqual([])
     expect(service.engine.decide(onTrusted).action).toBe('block')
     expect(service.engine.summary(BUILTIN_RULE_SETS.siteExceptions)?.enabled).toBe(false)
-    expect(siteExceptionRule('a.example', 2)).toEqual({
+    service.setSiteException('https://a.example', true)
+    service.setSiteException('https://a.example', false)
+    expect(h.permissions.listForPermission('ads')).toEqual([])
+    expect(siteExceptionRule('https://a.example', 2)).toEqual({
       id: 3,
       action: { type: 'allowAllRequests' },
-      condition: { requestDomains: ['a.example'], resourceTypes: ['main_frame', 'sub_frame'] }
+      condition: { urlFilter: '|https://a.example/', resourceTypes: ['main_frame', 'sub_frame'] }
     })
   })
 
@@ -249,12 +282,11 @@ describe('BlockingService site exceptions and user filters', () => {
     const h = harness()
     const service = start(h)
     expect(service.engine.has(USER_RULE_SET_ID)).toBe(false)
-    const previous = h.settings.blocking
     h.settings.blocking = {
-      ...previous,
+      ...h.settings.blocking,
       userFilters: '! mine\n||mine.example^\n||broken.example^$bogus\n'
     }
-    service.onSettingsChanged(previous)
+    service.onSettingsChanged()
     expect(service.engine.summary(USER_RULE_SET_ID)).toMatchObject({
       source: 'user',
       priority: 10,
@@ -267,9 +299,8 @@ describe('BlockingService site exceptions and user filters', () => {
     expect(service.status().userFilterErrors).toEqual([
       { line: 3, message: 'Unknown option "bogus"' }
     ])
-    const withFilters = h.settings.blocking
-    h.settings.blocking = { ...withFilters, userFilters: '   ' }
-    service.onSettingsChanged(withFilters)
+    h.settings.blocking = { ...h.settings.blocking, userFilters: '   ' }
+    service.onSettingsChanged()
     expect(service.engine.has(USER_RULE_SET_ID)).toBe(false)
     expect(service.status().userFilterErrors).toEqual([])
   })
@@ -289,9 +320,11 @@ describe('BlockingService custom lists and updates', () => {
             text: '[Adblock Plus 2.0]\n! Title: My List\n! Homepage: https://lists.example/\n0.0.0.0 bad.example\n||worse.example^\n'
           }
         : { ok: false, status: 404, text: '' }
-    const previous = h.settings.blocking
-    h.settings.blocking = { ...previous, customLists: [{ id, url, name: url, enabled: true }] }
-    service.onSettingsChanged(previous)
+    h.settings.blocking = {
+      ...h.settings.blocking,
+      customLists: [{ id, url, name: url, enabled: true }]
+    }
+    service.onSettingsChanged()
     expect(service.engine.summary(id)).toMatchObject({
       source: 'filter-list',
       enabled: true,
@@ -315,9 +348,8 @@ describe('BlockingService custom lists and updates', () => {
     })
     expect(service.store.readFilterText(id)).toBe('||bad.example^\n||worse.example^')
 
-    const withList = h.settings.blocking
-    h.settings.blocking = { ...withList, customLists: [] }
-    service.onSettingsChanged(withList)
+    h.settings.blocking = { ...h.settings.blocking, customLists: [] }
+    service.onSettingsChanged()
     expect(service.engine.has(id)).toBe(false)
     await service.store.flush()
     expect(h.io.files.has(`blocking/${id}.json`)).toBe(false)

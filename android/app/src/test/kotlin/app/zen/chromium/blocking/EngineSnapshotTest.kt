@@ -114,6 +114,30 @@ class EngineSnapshotTest {
         assertEquals(Decision.Action.BLOCK, blockedNav.decide(req("https://malware.example/", ResourceType.MAIN_FRAME, doc = null)).action)
     }
 
+    /** The exact rule `BlockingService.siteExceptionRule` writes for an `ads` permission of an origin. */
+    @Test
+    fun perSiteExceptionsFromThePermissionStoreAreOriginExact() {
+        val exceptions = set(
+            "builtin:site-exceptions", 900,
+            """[{"id":1,"action":{"type":"allowAllRequests"},"condition":{"urlFilter":"|https://www.news.example/","resourceTypes":["main_frame","sub_frame"]}}]"""
+        )
+        val snap = EngineSnapshot(listOf(exceptions), text)
+        val tracker = "https://tracker.net/t.js"
+        val onExcepted = snap.decide(req(tracker, doc = "https://www.news.example/story?x=1"))
+        assertEquals(Decision.Action.ALLOW, onExcepted.action)
+        assertEquals("builtin:site-exceptions", onExcepted.matchedSet)
+        assertEquals(Decision.Action.ALLOW, snap.decide(req("https://www.news.example/", ResourceType.MAIN_FRAME, doc = null)).action)
+        // Another host, scheme or port of the site is a different origin and stays filtered.
+        for (other in listOf(
+            "https://news.example/story",
+            "https://www.news.example.evil/",
+            "http://www.news.example/story",
+            "https://www.news.example:8443/story"
+        )) {
+            assertEquals(other, Decision.Action.BLOCK, snap.decide(req(tracker, doc = other)).action)
+        }
+    }
+
     @Test
     fun theGlobalOffSwitchIsAnAllowOnEverything() {
         val off = set("builtin:global-off", 1000, """[{"id":1,"action":{"type":"allow"},"condition":{}}]""")

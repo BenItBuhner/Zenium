@@ -7,7 +7,8 @@ import {
   levelIncludes,
   listDefaultFor,
   normalizeSiteException,
-  sanitizeBlockingSettings
+  sanitizeBlockingSettings,
+  siteOriginOf
 } from '../blocking'
 
 describe('tracking levels', () => {
@@ -51,22 +52,33 @@ describe('tracking levels', () => {
       'ubo-privacy',
       'urlhaus'
     ])
-    expect(enabledListsFor({ ...s, enabled: false }).size).toBe(0)
+    expect(enabledListsFor(s, false).size).toBe(0)
     expect(enabledListsFor({ ...s, level: 'off' }).size).toBe(0)
   })
 })
 
 describe('normalizeSiteException', () => {
-  it('reduces hosts and URLs to a lowercase domain without www', () => {
-    expect(normalizeSiteException('https://WWW.Example.com/path')).toBe('example.com')
-    expect(normalizeSiteException('  news.example.co.uk. ')).toBe('news.example.co.uk')
-    expect(normalizeSiteException('example.com/x')).toBe('example.com')
-    expect(normalizeSiteException('localhost')).toBe('localhost')
-    expect(normalizeSiteException('10.0.0.1')).toBe('10.0.0.1')
+  it('reduces hosts and URLs to the origin the permission store keys on', () => {
+    expect(normalizeSiteException('https://WWW.Example.com/path')).toBe('https://www.example.com')
+    expect(normalizeSiteException('  news.example.co.uk. ')).toBe('https://news.example.co.uk')
+    expect(normalizeSiteException('example.com/x')).toBe('https://example.com')
+    expect(normalizeSiteException('http://example.com:8080/x')).toBe('http://example.com:8080')
+    expect(normalizeSiteException('localhost:3000')).toBe('https://localhost:3000')
+    expect(normalizeSiteException('10.0.0.1')).toBe('https://10.0.0.1')
     expect(normalizeSiteException('')).toBeNull()
     expect(normalizeSiteException('not a host')).toBeNull()
     expect(normalizeSiteException('http://')).toBeNull()
     expect(normalizeSiteException('word')).toBeNull()
+    expect(normalizeSiteException('zen://blank')).toBeNull()
+    expect(normalizeSiteException('file:///etc/hosts')).toBeNull()
+  })
+
+  it('names the origin of a web page and nothing for internal pages', () => {
+    expect(siteOriginOf('https://www.example.com/a?b#c')).toBe('https://www.example.com')
+    expect(siteOriginOf('http://localhost:8080/')).toBe('http://localhost:8080')
+    expect(siteOriginOf('zen://blocked')).toBeNull()
+    expect(siteOriginOf('about:blank')).toBeNull()
+    expect(siteOriginOf('nonsense')).toBeNull()
   })
 })
 
@@ -74,7 +86,6 @@ describe('sanitizeBlockingSettings', () => {
   it('fills defaults and drops malformed values', () => {
     expect(sanitizeBlockingSettings(undefined)).toEqual(DEFAULT_BLOCKING_SETTINGS)
     const s = sanitizeBlockingSettings({
-      enabled: 'yes' as unknown as boolean,
       level: 'paranoid' as unknown as 'strict',
       lists: { easylist: false, bogus: 'x' as unknown as boolean },
       customLists: [
@@ -85,16 +96,9 @@ describe('sanitizeBlockingSettings', () => {
         { id: 'keep', url: 'https://b.example/l.txt', name: 'B', enabled: false }
       ],
       userFilters: 42 as unknown as string,
-      siteExceptions: [
-        'https://WWW.One.example/',
-        'one.example',
-        'bad host',
-        7 as unknown as string
-      ],
       autoUpdate: false
     })
     expect(s).toEqual({
-      enabled: true,
       level: 'balanced',
       lists: { easylist: false },
       customLists: [
@@ -107,7 +111,6 @@ describe('sanitizeBlockingSettings', () => {
         { id: 'keep', url: 'https://b.example/l.txt', name: 'B', enabled: false }
       ],
       userFilters: '',
-      siteExceptions: ['one.example'],
       autoUpdate: false
     })
     expect(sanitizeBlockingSettings({ userFilters: 'x'.repeat(300_000) }).userFilters.length).toBe(

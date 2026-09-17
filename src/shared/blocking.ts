@@ -37,28 +37,35 @@ export interface CustomFilterList {
   enabled: boolean
 }
 
+/**
+ * The content setting that switches ad and tracker blocking off: `allow` (ads may load) as the
+ * permission's default is the master switch off, `allow` for an origin is a per-site exception.
+ * It lives in `permissions.json` with the prompted permissions (`origin|ads`), so the
+ * site-information sheet lists and resets it like camera or location. Named after Chrome's
+ * "ads" content setting.
+ */
+export const BLOCKING_PERMISSION = 'ads'
+
+/**
+ * How blocking is configured. The master switch and the per-site exceptions are not here: they
+ * are decisions of {@link BLOCKING_PERMISSION} in the permission store (see `BlockingStatus`).
+ */
 export interface BlockingSettings {
-  /** Master switch for ad and tracker blocking. */
-  enabled: boolean
   level: TrackingLevel
   /** Per-list overrides of the level's choice (`false` turns a list off, `true` forces it on). */
   lists: Record<string, boolean>
   customLists: CustomFilterList[]
   /** The user's own filters in ABP / uBlock syntax, one per line. */
   userFilters: string
-  /** Registrable domains (`example.com`) where nothing is blocked. */
-  siteExceptions: string[]
   /** Refresh lists from their canonical URLs on a schedule. */
   autoUpdate: boolean
 }
 
 export const DEFAULT_BLOCKING_SETTINGS: BlockingSettings = {
-  enabled: true,
   level: 'balanced',
   lists: {},
   customLists: [],
   userFilters: '',
-  siteExceptions: [],
   autoUpdate: true
 }
 
@@ -166,11 +173,11 @@ export function levelIncludes(level: TrackingLevel, tier: ListTier): boolean {
 
 /**
  * The default lists a level turns on, after the user's per-list overrides. `off` and a disabled
- * master switch enable nothing.
+ * master switch (`enabled`) enable nothing.
  */
-export function enabledListsFor(settings: BlockingSettings): Set<string> {
+export function enabledListsFor(settings: BlockingSettings, enabled = true): Set<string> {
   const out = new Set<string>()
-  if (!settings.enabled || settings.level === 'off') return out
+  if (!enabled || settings.level === 'off') return out
   for (const list of DEFAULT_FILTER_LISTS) {
     const override = settings.lists[list.id]
     const on = override === undefined ? levelIncludes(settings.level, list.tier) : override
@@ -188,20 +195,38 @@ export function listDefaultFor(level: TrackingLevel, listId: string): boolean {
 
 const DOMAIN_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$/i
 
+/**
+ * The origin a per-site exception is stored under, from a URL or a typed host (`example.com`,
+ * `localhost:3000`; https when no scheme is given). Null when the input is not a web origin.
+ */
 export function normalizeSiteException(input: string): string | null {
-  let host = input.trim().toLowerCase()
-  if (!host) return null
-  if (host.includes('://') || host.includes('/')) {
-    try {
-      host = new URL(host.includes('://') ? host : `https://${host}`).hostname
-    } catch {
-      return null
-    }
+  const text = input.trim()
+  if (!text) return null
+  let url: URL
+  try {
+    url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`)
+  } catch {
+    return null
   }
-  host = host.replace(/^www\./, '').replace(/\.$/, '')
-  return host === 'localhost' || DOMAIN_RE.test(host) || /^\d{1,3}(\.\d{1,3}){3}$/.test(host)
-    ? host
-    : null
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+  const host = url.hostname.replace(/\.$/, '')
+  const valid =
+    host === 'localhost' ||
+    DOMAIN_RE.test(host) ||
+    /^\d{1,3}(\.\d{1,3}){3}$/.test(host) ||
+    (host.startsWith('[') && host.endsWith(']'))
+  if (!valid) return null
+  return `${url.protocol}//${host}${url.port ? `:${url.port}` : ''}`
+}
+
+/** The origin an exception for `url` would be stored under, or null for pages without a site. */
+export function siteOriginOf(url: string): string | null {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.origin : null
+  } catch {
+    return null
+  }
 }
 
 export function sanitizeBlockingSettings(
@@ -227,19 +252,11 @@ export function sanitizeBlockingSettings(
         enabled: item.enabled !== false
       })
     }
-  const siteExceptions: string[] = []
-  if (Array.isArray(s.siteExceptions))
-    for (const raw of s.siteExceptions) {
-      const host = typeof raw === 'string' ? normalizeSiteException(raw) : null
-      if (host && !siteExceptions.includes(host)) siteExceptions.push(host)
-    }
   return {
-    enabled: typeof s.enabled === 'boolean' ? s.enabled : d.enabled,
     level: LEVELS.includes(s.level as TrackingLevel) ? (s.level as TrackingLevel) : d.level,
     lists,
     customLists,
     userFilters: typeof s.userFilters === 'string' ? s.userFilters.slice(0, 200_000) : '',
-    siteExceptions,
     autoUpdate: typeof s.autoUpdate === 'boolean' ? s.autoUpdate : d.autoUpdate
   }
 }
@@ -283,6 +300,10 @@ export interface FilterListStatus {
 export interface BlockingStatus {
   /** The engine has loaded its rule sets and decides requests. */
   ready: boolean
+  /** The master switch: the {@link BLOCKING_PERMISSION} default is not `allow`. */
+  enabled: boolean
+  /** Origins where nothing is blocked (`allow` decisions of the permission), sorted. */
+  siteExceptions: string[]
   /** Requests blocked since the browser started. */
   sessionBlocked: number
   lists: FilterListStatus[]
@@ -297,6 +318,8 @@ export interface BlockingStatus {
 export function emptyBlockingStatus(): BlockingStatus {
   return {
     ready: false,
+    enabled: true,
+    siteExceptions: [],
     sessionBlocked: 0,
     lists: [],
     updating: false,

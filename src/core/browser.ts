@@ -1511,6 +1511,7 @@ export class Browser {
       'passwords.import': ({ conflict }, win) => this.passwords.import(conflict, win),
       'passwords.export': ({ passphrase }, win) => this.passwords.export(passphrase, win),
       'blocking.updateLists': ({ id }) => this.blocking.updateLists(id),
+      'blocking.setEnabled': ({ enabled }) => this.blocking.setEnabled(enabled),
       'blocking.setSiteException': ({ site, excepted }) =>
         this.blocking.setSiteException(site, excepted),
 
@@ -1629,7 +1630,7 @@ export class Browser {
     if (before.agents !== JSON.stringify(s.agents)) this.agents.onSettingsChanged()
     if (before.updates !== JSON.stringify(s.updates)) this.updates.onSettingsChanged()
     if (before.appIcon !== s.appIcon) this.platform.app.setAppIcon?.(s.appIcon)
-    if (before.blocking !== s.blocking) this.blocking.onSettingsChanged(before.blocking)
+    if (before.blocking !== s.blocking) this.blocking.onSettingsChanged()
     this.state.commit()
   }
 
