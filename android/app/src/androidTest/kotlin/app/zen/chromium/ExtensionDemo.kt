@@ -17,6 +17,7 @@ import android.webkit.WebView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewCompat
+import app.zen.chromium.ext.ExtensionFiles
 import app.zen.chromium.ext.ExtensionWebView
 import org.json.JSONArray
 import org.json.JSONObject
@@ -27,10 +28,11 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * Drives the extension emulation layer prototype on an emulator for the `android-ext-prototype`
- * workflow: the workflow sideloads the unpacked demo extensions into `files/zen/extensions/`, this
- * driver adds the probe extension from its assets, seeds a one-tab profile on the local probe page,
- * launches the app and then records, per extension and per stage, what worked:
+ * Drives the extension runtime on an emulator for the `android-ext-prototype` workflow: the
+ * workflow pushes the unpacked demo extensions into `files/zen/extensions/`, this driver lays them
+ * out as store installs with a registry (see [seed]), adds the probe extension from its assets,
+ * seeds a one-tab profile on the local probe page, launches the app and then records, per
+ * extension and per stage, what worked:
  *
  *  - load (the core parsed the manifest and configured it),
  *  - content script (ran, at the right `run_at`, without throwing),
@@ -85,19 +87,90 @@ class ExtensionDemo {
 
     // --- setup -----------------------------------------------------------------------------------
 
+    /**
+     * The runtime runs what the store installed: `<root>/<id>/<version>/` directories and the
+     * records of `extensions.json` pointing at them. The workflow pushes the demo extensions as
+     * unpacked folders (`<root>/<id>/manifest.json`); the driver lays them out as installs, adds the
+     * probe from its assets the same way and writes the registry, so the store attaches every one
+     * of them on start exactly as it attaches a Web Store install.
+     */
     private fun seed() {
         val zen = File(app.filesDir, "zen").apply { mkdirs() }
         zen.listFiles()?.filter { it.isFile }?.forEach { it.delete() }
         instrumentation.context.assets.open("ext-demo-state.json").use { input ->
             File(zen, "state.json").outputStream().use { input.copyTo(it) }
         }
-        val probe = File(zen, "extensions/$PROBE_ID")
+        val root = File(zen, "extensions").apply { mkdirs() }
+        val probe = File(root, PROBE_ID)
         probe.deleteRecursively()
         copyAssets("ext-probe", probe)
         // AAPT drops asset directories whose name starts with `_`, so the probe ships `locales/`.
         File(probe, "locales").renameTo(File(probe, "_locales"))
+        val records = JSONArray()
+        val installed = JSONObject()
+        for (dir in root.listFiles().orEmpty().filter { it.isDirectory && ExtensionFiles.isExtensionId(it.name) }.sortedBy { it.name }) {
+            val versionDir = layOutInstall(dir) ?: continue
+            val manifest = runCatching { JSONObject(File(versionDir, "manifest.json").readText()) }.getOrNull() ?: continue
+            records.put(record(dir.name, versionDir, manifest))
+            installed.put(dir.name, versionDir.name)
+        }
+        results.put("seededInstalls", installed)
+        val registry = JSONObject().put("version", 2).put("extensions", records).put("lastUpdateCheck", JSONObject.NULL)
+        File(zen, "extensions.json").writeText(registry.toString())
         out.deleteRecursively()
         out.mkdirs()
+    }
+
+    /**
+     * `<root>/<id>/manifest.json` (an unpacked folder) becomes `<root>/<id>/<version>/`, which is
+     * returned; a folder already laid out as an install returns its version directory.
+     */
+    private fun layOutInstall(idDir: File): File? {
+        val flat = File(idDir, "manifest.json")
+        if (!flat.isFile) return idDir.listFiles()?.firstOrNull { it.isDirectory && File(it, "manifest.json").isFile }
+        val version = runCatching { JSONObject(flat.readText()).optString("version", "") }.getOrDefault("")
+        val moving = File(idDir.parentFile, "${idDir.name}.moving")
+        moving.deleteRecursively()
+        if (!idDir.renameTo(moving)) return null
+        if (!idDir.mkdirs()) return null
+        val target = File(idDir, ExtensionFiles.versionDirName(version))
+        return if (moving.renameTo(target)) target else null
+    }
+
+    /** A registry record (the desktop's schema, version 2) for an install, from its manifest. */
+    private fun record(id: String, dir: File, manifest: JSONObject): JSONObject {
+        val now = System.currentTimeMillis()
+        val action = manifest.optJSONObject("action") ?: manifest.optJSONObject("browser_action")
+        val options = manifest.optJSONObject("options_ui")?.optString("page", "")?.ifEmpty { null } ?: manifest.optString("options_page", "").ifEmpty { null }
+        val permissions = JSONArray()
+        val hostPermissions = JSONArray()
+        manifest.optJSONArray("permissions")?.let { a ->
+            for (i in 0 until a.length()) {
+                val p = a.optString(i, "")
+                if (p.contains("://") || p == "<all_urls>") hostPermissions.put(p) else if (p.isNotEmpty()) permissions.put(p)
+            }
+        }
+        manifest.optJSONArray("host_permissions")?.let { a -> for (i in 0 until a.length()) hostPermissions.put(a.optString(i, "")) }
+        return JSONObject()
+            .put("id", id)
+            .put("source", "unpacked")
+            .put("path", dir.absolutePath)
+            .put("version", manifest.optString("version", ""))
+            .put("publisher", JSONObject.NULL)
+            .put("updateUrl", JSONObject.NULL)
+            .put("installedAt", now)
+            .put("updatedAt", now)
+            .put("enabled", true)
+            .put("pinned", false)
+            .put("allowFileAccess", false)
+            .put("manifestVersion", manifest.optInt("manifest_version", 2))
+            .put("name", manifest.optString("name", "").takeUnless { it.startsWith("__MSG_") } ?: "")
+            .put("description", manifest.optString("description", "").takeUnless { it.startsWith("__MSG_") } ?: "")
+            .put("permissions", permissions)
+            .put("hostPermissions", hostPermissions)
+            .put("optionsPage", options ?: JSONObject.NULL)
+            .put("popup", action?.optString("default_popup", "")?.ifEmpty { null } ?: JSONObject.NULL)
+            .put("pendingWarnings", JSONObject.NULL)
     }
 
     private fun copyAssets(path: String, target: File) {
@@ -127,7 +200,7 @@ class ExtensionDemo {
         SystemClock.sleep(3_000)
     }
 
-    /** The core scans, parses and configures on start; wait until every sideloaded extension is listed. */
+    /** The store attaches every enabled record on start and the runtime configures it; wait until the seeded extensions are listed. */
     private fun waitForExtensions(): JSONArray {
         var list = JSONArray()
         val started = SystemClock.uptimeMillis()
