@@ -69,6 +69,8 @@ export interface Toast {
   message: string
   kind: ToastKind
   action?: MessageAction
+  /** A leading glyph for the message – the star that just filled (the phone's Saved to Bookmarks). */
+  icon?: 'star'
   /** How long the toast stays before it goes on its own (ms). */
   duration: number
   /** Set once the toast is on its way out: the card animates off and then forgets itself. */
@@ -334,6 +336,7 @@ const EXIT_SWEEP_MS = 800
 
 export interface ToastOptions {
   action?: MessageAction
+  icon?: Toast['icon']
   duration?: number
 }
 
@@ -398,7 +401,7 @@ export function pushToast(
     if (live) dismissToast(live.id)
   }
   const id = ++messageSeq
-  const toast: Toast = { id, message, kind, duration, action: opts.action }
+  const toast: Toast = { id, message, kind, duration, action: opts.action, icon: opts.icon }
   uiStore.set((s) => ({ toasts: [...s.toasts, toast] }))
   armClock(id, duration, () => dismissToast(id))
 }
@@ -798,7 +801,9 @@ export function closeMenu(notifyHost = true): void {
   const menu = uiStore.get().menu
   if (!menu) return
   uiStore.set({ menu: null })
-  if (notifyHost) run('menu.close', { menuId: menu.id })
+  if (localMenus.delete(menu.id)) {
+    // Nothing to tell the host about a menu it never knew.
+  } else if (notifyHost) run('menu.close', { menuId: menu.id })
   invalidateSnapshot()
   returnFocusToPage()
 }
@@ -809,10 +814,15 @@ export function pickMenuItem(itemId: string): void {
   uiStore.set({ menu: null })
   invalidateSnapshot()
   returnFocusToPage()
+  const local = localMenus.get(menu.id)
+  localMenus.delete(menu.id)
   // Run the action once the sheet has been unpainted: hosts that snapshot the window for the
   // dimmed overlay preview (Android's PixelCopy) would otherwise capture the menu itself.
   requestAnimationFrame(() =>
-    requestAnimationFrame(() => run('menu.click', { menuId: menu.id, itemId }))
+    requestAnimationFrame(() => {
+      if (local) local.get(itemId)?.()
+      else run('menu.click', { menuId: menu.id, itemId })
+    })
   )
 }
 
@@ -855,6 +865,57 @@ export function cancelExternalProtocol(requestId: string): void {
   uiStore.set({ externalProtocol: null })
   invalidateSnapshot()
   returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
+// Renderer-built menus: the same descriptor and sheet as the host's menus, with the actions
+// living here (a bookmark row's menu needs nothing the core does not already expose as commands).
+// ---------------------------------------------------------------------------
+
+export interface LocalMenuItem {
+  label: string
+  onSelect: () => void
+  enabled?: boolean
+}
+
+/** A group break; the sheet separates groups by spacing. */
+export const MENU_GAP = 'gap' as const
+
+const localMenus = new Map<string, Map<string, () => void>>()
+let localMenuSeq = 0
+
+export async function showLocalMenu(
+  source: MenuDescriptor['source'],
+  items: ReadonlyArray<LocalMenuItem | typeof MENU_GAP>,
+  activeTabId: string | null,
+  anchor?: { x: number; y: number }
+): Promise<void> {
+  const id = `local_${++localMenuSeq}`
+  const handlers = new Map<string, () => void>()
+  const descriptor: MenuDescriptor = {
+    id,
+    source,
+    x: anchor?.x ?? null,
+    y: anchor?.y ?? null,
+    items: items.map((item, index) => {
+      const itemId = `${id}_${index}`
+      if (item === MENU_GAP)
+        return { id: itemId, type: 'separator', label: '', enabled: true, checked: false, submenu: null }
+      handlers.set(itemId, item.onSelect)
+      return {
+        id: itemId,
+        type: 'normal',
+        label: item.label,
+        enabled: item.enabled ?? true,
+        checked: false,
+        submenu: null
+      }
+    })
+  }
+  const open = uiStore.get().menu
+  if (open) closeMenu()
+  localMenus.set(id, handlers)
+  await showMenu(descriptor, activeTabId)
 }
 
 /** True when a chrome overlay covers the content area (tab views must be hidden). */
