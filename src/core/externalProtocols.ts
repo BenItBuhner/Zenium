@@ -1,6 +1,12 @@
 import type { ExternalProtocolRequest } from '../shared/types'
-import { classifyExternalUrl, intentFallbackUrl, intentPackage } from '../shared/externalProtocols'
+import {
+  classifyExternalUrl,
+  externalPermission,
+  intentFallbackUrl,
+  intentPackage
+} from '../shared/externalProtocols'
 import { getHost } from '../shared/url'
+import { newId } from '../shared/ids'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 
@@ -22,18 +28,26 @@ export interface HostExternalRequest {
 }
 
 interface Pending {
-  request: HostExternalRequest
-  scheme: string
-  canRemember: boolean
+  requestId: string
   win: ZenWindow
+  tabId: string | null
+  url: string
+  scheme: string
+  initiatorUrl: string
+  canRemember: boolean
+  appName: string | null
+  /** Host-callback style (Android): answer the held navigation. */
+  hostRequest: HostExternalRequest | null
+  resolve: ((allow: boolean) => void) | null
 }
 
 /**
- * Links that leave the web (`mailto:`, `tel:`, `intent://`, a site's own app): the host holds
- * the navigation, the core decides. A scheme the user chose "Always allow" for opens without a
- * question when a tap started it; everything else goes through the confirm sheet in the chrome
- * (`externalProtocol.request` → `externalProtocol.respond`). Schemes that reach into the browser
- * or the device never leave, and an `intent://` nobody can open falls back to its web address.
+ * Links that leave the web (`mailto:`, `tel:`, `intent://`, `magnet:`, a custom scheme). The host
+ * holds the navigation (Android) or intercepts it (desktop); the core decides. A remembered
+ * "Always allow" opens without a question: Android stores the scheme in
+ * `settings.externalProtocols`, desktop stores `<origin>|external:<scheme>` through
+ * PermissionService (private windows never persist). Everything else goes through the chrome
+ * (`externalProtocol.request` → `externalProtocol.respond`).
  */
 export class ExternalProtocolService {
   private readonly pending = new Map<string, Pending>()
@@ -44,46 +58,73 @@ export class ExternalProtocolService {
     const { url } = request
     const cls = classifyExternalUrl(url)
     if (cls.kind === 'blocked') {
-      this.answer(request.requestId, false)
+      this.answerHost(request.requestId, false)
       return
     }
     if (request.handler === 'none') {
-      this.answer(request.requestId, false)
+      this.answerHost(request.requestId, false)
       this.noHandler(request, win)
       return
     }
-    // A verified App Link never gets here (the host opens the app); this is a site's app the host
-    // could name but not vouch for, so it asks – and does not remember, the answer is per site.
     const scheme = cls.scheme
-    const canRemember = cls.kind === 'external' && cls.canRemember
-    const remembered = Boolean(this.browser.state.settings.externalProtocols[scheme])
-    // A remembered scheme still needs a tap behind it: a page must not dial on load.
-    if (remembered && request.userGesture) {
-      this.answer(request.requestId, true)
+    const initiatorUrl = this.initiatorOf(request.tabId)
+    const canRemember = this.rememberAllowed(request.tabId, cls.canRemember, false)
+    if (this.alreadyAllowed(scheme, initiatorUrl) && request.userGesture) {
+      this.answerHost(request.requestId, true)
       return
     }
-    // One question per tab: a newer request from the same page takes the sheet over.
-    for (const [id, p] of this.pending) {
-      if (p.request.tabId !== request.tabId) continue
-      if (!request.userGesture) {
-        // A script firing without a tap does not get to replace the question the user is reading.
-        this.answer(request.requestId, false)
-        return
-      }
-      this.pending.delete(id)
-      this.answer(id, false)
-      this.browser.emit('externalProtocol.cancel', { requestId: id }, p.win)
+    if (!request.userGesture && this.hasPendingFor(request.tabId)) {
+      this.answerHost(request.requestId, false)
+      return
     }
-    this.pending.set(request.requestId, { request, scheme, canRemember, win })
-    const payload: ExternalProtocolRequest = {
+    this.replacePendingFor(request.tabId, request.userGesture)
+    this.enqueue({
       requestId: request.requestId,
+      win,
+      tabId: request.tabId,
       url,
       scheme,
+      initiatorUrl,
+      canRemember,
       appName: request.appName,
-      site: this.siteOf(request.tabId),
-      canRemember
-    }
-    this.browser.emit('externalProtocol.request', payload, win)
+      hostRequest: request,
+      resolve: null
+    })
+  }
+
+  /**
+   * Decide whether `url`, requested by the page at `initiatorUrl` in `tabId`, may be handed to
+   * the OS. Resolves once the user answered (or straight away for a remembered "Always allow").
+   * Like Chrome, a tab gets one dialog at a time: requests arriving while it is open are declined.
+   */
+  ask(url: string, initiatorUrl: string, tabId: string | null): Promise<boolean> {
+    const cls = classifyExternalUrl(url)
+    if (cls.kind !== 'external') return Promise.resolve(false)
+    if (tabId && this.hasPendingFor(tabId)) return Promise.resolve(false)
+    const scheme = cls.scheme
+    const canRemember = this.rememberAllowed(tabId, cls.canRemember, true)
+    if (this.alreadyAllowed(scheme, initiatorUrl)) return Promise.resolve(true)
+    const win = tabId ? this.browser.tabs.windowFor(tabId) : this.browser.focusedWindow()
+    const requestId = newId('ext')
+    return new Promise<boolean>((resolve) => {
+      this.enqueue({
+        requestId,
+        win,
+        tabId,
+        url,
+        scheme,
+        initiatorUrl,
+        canRemember,
+        appName: null,
+        hostRequest: null,
+        resolve
+      })
+    })
+  }
+
+  /** Decide and, when allowed, launch: for callers that are not inside a host callback. */
+  async open(url: string, initiatorUrl: string, tabId: string | null): Promise<void> {
+    if (await this.ask(url, initiatorUrl, tabId)) this.browser.platform.shell.openExternal(url)
   }
 
   /** The sheet's answer (or its dismissal, which is a "not now"). */
@@ -91,12 +132,9 @@ export class ExternalProtocolService {
     const p = this.pending.get(requestId)
     if (!p) return
     this.pending.delete(requestId)
-    if (allow && always && p.canRemember) {
-      const { settings } = this.browser.state
-      settings.externalProtocols = { ...settings.externalProtocols, [p.scheme]: true }
-      this.browser.state.commit()
-    }
-    this.answer(requestId, allow)
+    if (allow && always && p.canRemember) this.persist(p)
+    if (p.hostRequest) this.answerHost(requestId, allow)
+    p.resolve?.(allow)
   }
 
   /** Settings: stop opening a scheme without asking. */
@@ -112,14 +150,84 @@ export class ExternalProtocolService {
   /** The tab that asked closed: take its question down. */
   cancelForTab(tabId: string): void {
     for (const [id, p] of this.pending) {
-      if (p.request.tabId !== tabId) continue
+      if (p.tabId !== tabId) continue
       this.pending.delete(id)
-      this.answer(id, false)
-      this.browser.emit('externalProtocol.cancel', { requestId: id }, p.win)
+      if (p.hostRequest) this.answerHost(id, false)
+      if (p.win.alive) p.win.send('externalProtocol.cancel', { requestId: id })
+      p.resolve?.(false)
     }
   }
 
-  private answer(requestId: string, allow: boolean): void {
+  private enqueue(p: Pending): void {
+    this.pending.set(p.requestId, p)
+    const payload: ExternalProtocolRequest = {
+      requestId: p.requestId,
+      url: p.url,
+      scheme: p.scheme,
+      appName: p.appName,
+      site: getHost(p.initiatorUrl) || this.siteOf(p.tabId),
+      tabId: p.tabId,
+      canRemember: p.canRemember
+    }
+    this.browser.emit('externalProtocol.request', payload, p.win)
+  }
+
+  private persist(p: Pending): void {
+    this.browser.permissions.remember(externalPermission(p.scheme), p.initiatorUrl, 'allow')
+    // Android remembers at scheme level; desktop origin keys live in permissions.json only.
+    if (p.hostRequest) {
+      const { settings } = this.browser.state
+      settings.externalProtocols = { ...settings.externalProtocols, [p.scheme]: true }
+      this.browser.state.commit()
+    }
+  }
+
+  private alreadyAllowed(scheme: string, initiatorUrl: string): boolean {
+    if (this.browser.permissions.stored(externalPermission(scheme), initiatorUrl) === 'allow')
+      return true
+    return Boolean(this.browser.state.settings.externalProtocols[scheme])
+  }
+
+  /**
+   * `originScoped` (desktop): "Always allow" needs a real tab and a host, and never a private
+   * window. Android still offers it for the scheme even when the page's host is empty.
+   */
+  private rememberAllowed(tabId: string | null, schemeAllows: boolean, originScoped: boolean): boolean {
+    if (!schemeAllows) return false
+    const tab = this.browser.tabs.tab(tabId)
+    if (tab && this.browser.tabs.isPrivate(tab)) return false
+    if (!originScoped) return true
+    return tab !== undefined && getHost(tab.url) !== ''
+  }
+
+  private initiatorOf(tabId: string | null): string {
+    const tab = tabId ? this.browser.tabs.tab(tabId) : undefined
+    return tab?.url ?? ''
+  }
+
+  private siteOf(tabId: string | null): string {
+    return getHost(this.initiatorOf(tabId))
+  }
+
+  private hasPendingFor(tabId: string | null): boolean {
+    if (!tabId) return false
+    for (const entry of this.pending.values()) if (entry.tabId === tabId) return true
+    return false
+  }
+
+  private replacePendingFor(tabId: string | null, userGesture: boolean): void {
+    if (!tabId) return
+    for (const [id, p] of this.pending) {
+      if (p.tabId !== tabId) continue
+      if (!userGesture) return
+      this.pending.delete(id)
+      if (p.hostRequest) this.answerHost(id, false)
+      this.browser.emit('externalProtocol.cancel', { requestId: id }, p.win)
+      p.resolve?.(false)
+    }
+  }
+
+  private answerHost(requestId: string, allow: boolean): void {
     this.browser.platform.externalProtocols?.respond(requestId, allow)
   }
 
@@ -141,10 +249,5 @@ export class ExternalProtocolService {
       return
     }
     this.browser.toast('No app can open this link', 'info', win)
-  }
-
-  private siteOf(tabId: string | null): string {
-    const tab = tabId ? this.browser.tabs.tab(tabId) : undefined
-    return tab ? getHost(tab.url) : ''
   }
 }

@@ -55,7 +55,8 @@ export function androidCapabilities(sdkInt: number): HostCapabilities {
     updates: true,
     share: true,
     clipboardChip: sdkInt >= CLIPBOARD_CHIP_SDK,
-    appLinkSettings: true
+    appLinkSettings: true,
+    defaultBrowser: false
   }
 }
 

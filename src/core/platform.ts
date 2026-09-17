@@ -9,6 +9,7 @@
  * import from `electron`, `node:*` or the DOM.
  */
 import type {
+  DefaultBrowserOutcome,
   DownloadItem,
   EventName,
   Events,
@@ -187,6 +188,11 @@ export interface TabViewEvents {
   onDestroyed(): void
   /** `window.open` / `target=_blank`. Return how the host should proceed. */
   onOpenWindow(url: string, disposition: WindowOpenDisposition): 'deny' | 'tab' | 'popup'
+  /**
+   * The page navigated to a link another application handles (`mailto:`, `tel:`, `xyz://`) and
+   * the host stopped that navigation; the core asks the user and hands the link to the OS.
+   */
+  onExternalProtocol(url: string): void
   onPageMessage(message: PageMessage): void
 }
 
@@ -591,6 +597,18 @@ export interface UpdateHost {
   cancel(): void
 }
 
+/**
+ * Default-browser registration. Desktop hosts ask the OS (LaunchServices, xdg-settings, the
+ * Windows Default apps page); hosts without it leave `Platform.defaultBrowser` out and report
+ * `capabilities.defaultBrowser: false`.
+ */
+export interface DefaultBrowserHost {
+  /** Whether this app handles http/https links for the current user. */
+  isDefault(): Promise<boolean>
+  /** Ask to become the default; `settings-opened` means the user finishes the choice in the OS. */
+  makeDefault(): Promise<DefaultBrowserOutcome>
+}
+
 export interface Platform {
   readonly info: PlatformInfo
   readonly capabilities: HostCapabilities
@@ -609,6 +627,8 @@ export interface Platform {
   readonly siteData?: SiteDataHost
   /** Hosts that ask before a page may open another app (Android). */
   readonly externalProtocols?: ExternalProtocolHost
+  /** Default-browser status and registration; present exactly when `capabilities.defaultBrowser`. */
+  readonly defaultBrowser?: DefaultBrowserHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Host-backed services; omit for the built-in no-op versions. */

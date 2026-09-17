@@ -5,6 +5,7 @@ import type {
   Boost,
   ClosedTab,
   Container,
+  DefaultBrowserStatus,
   DownloadItem,
   ExtensionInfo,
   Folder,
@@ -92,6 +93,7 @@ export interface StateExtras {
   agents: AgentInfo[]
   agentServer: AgentServerStatus
   updates: UpdateStatus
+  defaultBrowser: DefaultBrowserStatus
 }
 
 /**
@@ -150,7 +152,8 @@ export class BrowserState {
       os: updateOsOf(this.platform),
       arch: 'universal',
       kind: 'dev'
-    })
+    }),
+    defaultBrowser: { isDefault: null }
   })
   searchEngines: SearchEngine[] = DEFAULT_SEARCH_ENGINES
   readonly version: string

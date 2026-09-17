@@ -35,6 +35,7 @@ import { LiveFolderService } from './livefolders'
 import { ModService } from './mods'
 import { SiteInfoService } from './siteInfo'
 import { UpdateService } from './updates'
+import { DefaultBrowserService } from './defaultBrowser'
 import { ExternalProtocolService } from './externalProtocols'
 import { NoExtensions, NoSync, NoUpdateHost, NoopGovernor } from './hostDefaults'
 import {
@@ -113,6 +114,8 @@ export class Browser {
   readonly updates: UpdateService
   /** Connection, cookies, storage and permissions of a tab's site (the site-information sheet). */
   readonly siteInfo: SiteInfoService
+  /** Whether Zenium is the system's default browser, and the request to become it. */
+  readonly defaultBrowser: DefaultBrowserService
   /** Links that leave the web: the confirm sheet and the remembered per-scheme choices. */
   readonly externalProtocols: ExternalProtocolService
   readonly windows = new Map<string, ZenWindow>()
@@ -156,6 +159,7 @@ export class Browser {
       platform.createUpdateHost?.(this) ?? new NoUpdateHost(platform)
     )
     this.siteInfo = new SiteInfoService(this)
+    this.defaultBrowser = new DefaultBrowserService(this)
     this.externalProtocols = new ExternalProtocolService(this)
     this.state.extras = () => ({
       boosts: this.boosts.all(),
@@ -166,7 +170,8 @@ export class Browser {
       sync: this.sync.status(),
       agents: this.agents.list(),
       agentServer: this.agents.serverStatus(),
-      updates: this.updates.status()
+      updates: this.updates.status(),
+      defaultBrowser: this.defaultBrowser.status()
     })
     this.handlers = this.commandHandlers()
   }
@@ -264,6 +269,7 @@ export class Browser {
 
   onWindowFocused(win: ZenWindow): void {
     if (this.state.settings.onboardingDone) this.tabs.claimVisible(win)
+    this.defaultBrowser.onWindowFocused()
   }
 
   onWindowClosing(win: ZenWindow): void {
@@ -336,6 +342,7 @@ export class Browser {
     this.sync.start()
     this.agents.start()
     this.updates.start()
+    this.defaultBrowser.start()
     this.syncShortcuts()
     this.state.commit()
   }
@@ -696,6 +703,7 @@ export class Browser {
     this.quitting = true
     void this.agents.stop()
     this.updates.stop()
+    this.defaultBrowser.stop()
     this.flushSync()
     this.state.freeze()
   }
@@ -1205,6 +1213,10 @@ export class Browser {
       'updates.install': () => this.updates.install(),
       'updates.cancel': () => this.updates.cancel(),
       'updates.openRelease': (_a, win) => this.updates.openRelease(win),
+
+      'defaultBrowser.makeDefault': () => this.defaultBrowser.makeDefault(),
+      'defaultBrowser.refresh': () => this.defaultBrowser.refresh(),
+      'defaultBrowser.dismissPrompt': () => this.defaultBrowser.dismissPrompt(),
 
       'onboarding.complete': ({ searchEngineId, colorScheme, essentials }, win) => {
         if (state.searchEngines.some((e) => e.id === searchEngineId))

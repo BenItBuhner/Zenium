@@ -26,7 +26,8 @@ import {
 } from '../shared/url'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
-import { describeNetError, HTTP_FALLBACK_CODES } from '../shared/zenPages'
+import { describeNetError, HTTP_FALLBACK_CODES, UNKNOWN_URL_SCHEME } from '../shared/zenPages'
+import { isExternalUrl } from '../shared/externalProtocols'
 import { newId } from '../shared/ids'
 import type { PageFlags, TabView, TabViewEvents } from './platform'
 
@@ -305,6 +306,14 @@ export class TabManager {
         const v = view()
         if (code === -3 || !v) return
         this.browser.governor.onLoadFinished(tabId)
+        // ERR_UNKNOWN_URL_SCHEME: a link for another application that slipped past the host's
+        // navigation hook; ask the user instead of showing an error page for it.
+        if (code === UNKNOWN_URL_SCHEME && isExternalUrl(url)) {
+          const tab = this.tab(tabId)
+          update((t) => (t.loading = false))
+          void this.browser.externalProtocols.open(url, tab?.url ?? '', tabId)
+          return
+        }
         const upgradedFrom = this.httpsUpgraded.get(tabId)
         if (upgradedFrom && url.startsWith('https://') && HTTP_FALLBACK_CODES.has(code)) {
           this.httpsUpgraded.delete(tabId)
@@ -398,10 +407,15 @@ export class TabManager {
       },
       onDestroyed: () => undefined,
       onOpenWindow: (url, disposition) => {
-        if (!isNavigableUrl(url) && !url.startsWith('mailto:')) return 'deny'
+        const parent = this.tab(tabId)
+        // `window.open('mailto:…')` and friends: no window, but the same dialog as a plain link.
+        if (isExternalUrl(url)) {
+          void this.browser.externalProtocols.open(url, parent?.url ?? '', tabId)
+          return 'deny'
+        }
+        if (!isNavigableUrl(url)) return 'deny'
         // window.open() with features → a real popup so `window.opener` keeps working (OAuth etc.).
         if (disposition === 'new-window') return 'popup'
-        const parent = this.tab(tabId)
         this.createTab(
           {
             url,
@@ -413,6 +427,10 @@ export class TabManager {
           ownerWindow()
         )
         return 'tab'
+      },
+      onExternalProtocol: (url) => {
+        const tab = this.tab(tabId)
+        void this.browser.externalProtocols.open(url, tab?.url ?? '', tabId)
       },
       onPageMessage: (message) => this.browser.handlePageMessage(tabId, message)
     }

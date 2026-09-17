@@ -60,6 +60,27 @@ export class PermissionService {
     return this.decisions[`${origin}|${permission}`] === 'allow'
   }
 
+  /** The remembered decision of an origin for a permission, or null when it was never asked. */
+  stored(permission: string, requestingUrl: string): Decision | null {
+    const origin = safeOrigin(requestingUrl)
+    if (!origin || origin === 'null') return null
+    return this.decisions[`${origin}|${permission}`] ?? null
+  }
+
+  /**
+   * Record a decision the user made in chrome UI of its own (the external-protocol dialog's
+   * "Always allow"), so it lands in permissions.json next to the prompted ones and the site
+   * information sheet can list and reset it. Origin-less pages cannot remember anything.
+   */
+  remember(permission: string, requestingUrl: string, decision: Decision): void {
+    const origin = safeOrigin(requestingUrl)
+    if (!origin || origin === 'null') return
+    const key = `${origin}|${permission}`
+    if (this.decisions[key] === decision) return
+    this.decisions[key] = decision
+    this.store.write({ version: 1, decisions: this.decisions })
+  }
+
   /** Decide a permission request, prompting the user once per origin+permission. */
   async decide(permission: string, requestingUrl: string): Promise<boolean> {
     if (ALWAYS_ALLOW.has(permission)) return true
