@@ -20,6 +20,7 @@ import {
   type ExtensionPackage,
   type UpdateCheckResult
 } from '../../core/extensions/install'
+import type { ConfirmInstall, InstallConfirmation } from '../../core/extensions/hostStore'
 import { isManagedPath } from '../../core/extensions/installLayout'
 import { stripJsonComments } from '../../core/extensions/manifest'
 import {
@@ -81,19 +82,8 @@ const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 60 * 1000
 const WEBSTORE_APPROVAL_TTL_MS = 10 * 60 * 1000
 const ICON_FETCH_TIMEOUT_MS = 5_000
 
-/** What the install prompt shows; the UI layer replaces `confirmInstall` to draw its own panel. */
-export interface InstallConfirmation {
-  /** A fresh install, a reinstall over an existing version, or approving an update's new permissions. */
-  kind: 'install' | 'update' | 'permissions'
-  name: string
-  /** Data URL of the extension's icon when one is available. */
-  icon: string | null
-  /** Chrome's warning lines for the manifest, in Chrome's order. */
-  warnings: string[]
-  source: ExtensionSource
-}
-
-export type ConfirmInstall = (request: InstallConfirmation, win?: ZenWindow) => Promise<boolean>
+/** The prompt's shape is shared with the Android host (`core/extensions/hostStore.ts`). */
+export type { ConfirmInstall, InstallConfirmation }
 
 export type InstallOutcome =
   | { status: 'installed'; record: ExtensionRecord }

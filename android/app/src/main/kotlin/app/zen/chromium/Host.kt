@@ -31,6 +31,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import app.zen.chromium.blocking.Blocking
+import app.zen.chromium.ext.ExtensionStore
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.json.JSONObject
 import java.io.File
@@ -49,6 +50,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override val blocking = Blocking.shared(activity)
     override val keys = Keys()
     override val permissions = Permissions(this)
+    override val security = Security(this)
     override val downloads = Downloads(activity, this)
     var chrome = ChromeWebView(activity, this)
         private set
@@ -69,6 +71,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** Device credential and biometric prompts, and the Keystore-wrapped password vault key. */
     val reauth = Reauth(activity)
     val vault = VaultKeystore(activity, reauth, io, main)
+    /** The extension store's files and downloads (installs live under `files/zen/extensions`). */
+    val extStore = ExtensionStore(this, io, main)
     override var fullscreenTab: TabWebView? = null
         private set
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
@@ -114,6 +118,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "appIcon" to launcherIcon.current(),
             "files" to storage.readAll(),
             "downloadsDir" to (Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)?.absolutePath ?: ""),
+            // Where the extension store installs; its presence turns the extensions capability on.
+            "extensionsRoot" to extStore.root.absolutePath,
             "insets" to activity.currentInsets(),
             "fullscreen" to immersive
         )
@@ -170,6 +176,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.input" -> if (tab == null) reply(null) else tab.sendAgentInput(args.obj("event")) { reply(null) }
             "view.setFlags" -> { tab?.setFlags(args.obj("flags")); reply(null) }
             "view.setZap" -> { tab?.setZap(args.bool("on")); reply(null) }
+            "view.setPopupsAllowed" -> { tab?.setPopupsAllowed(args.bool("allowed")); reply(null) }
             "view.setBackground" -> {
                 tab?.setBackgroundColor(parseColor(args.str("color", "#ffffff")))
                 reply(null)
@@ -263,6 +270,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "download.showAll" -> { downloads.showAll(); reply(null) }
             "profile.clear" -> { Profiles.clear(args.str("containerId")); reply(null) }
             "permission.respond" -> { permissions.respond(args.str("requestId"), args.bool("allow")); reply(null) }
+            "auth.respond" -> {
+                security.respondAuth(args.str("requestId"), args.strOrNull("username"), args.strOrNull("password"))
+                reply(null)
+            }
+            "security.forgetSession" -> { security.forgetSession(); reply(null) }
 
             // --- AI agents (MCP server) ------------------------------------------------------------
             "agent.start" -> reply(agentServer.start(args.num("port", 41735.0).toInt(), args.bool("lan")))
@@ -275,6 +287,18 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             )
             "update.cancel" -> { updates.cancel(args.str("token")); reply(null) }
             "update.install" -> reply(updates.install(args.str("path")))
+
+            // --- extension store (ext/ExtensionStore.kt; the contract is src/android/extensionStoreIo.ts).
+            //     The runtime that runs extensions has its own methods, in its own block. -------------
+            "extStore.fetch" -> extStore.fetch(args.str("url"), args.num("maxBytes").toLong(), reply)
+            "extStore.unpack" -> extStore.unpack(args, reply)
+            "extStore.discard" -> { extStore.discard(args.str("token")); reply(null) }
+            "extStore.remove" -> extStore.remove(args.str("id"), reply)
+            "extStore.prune" -> extStore.prune(args.str("id"), args.str("keep"), reply)
+            "extStore.sweep" -> extStore.sweep(reply)
+            "extStore.pick" -> extStore.pick(reply)
+            "extStore.takeSideloads" -> reply(extStore.takeSideloads())
+            // --- end of the extension store block -------------------------------------------------------
 
             else -> throw IllegalArgumentException("Unknown method: $method")
         }
@@ -714,6 +738,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         agentServer.stop()
         downloads.destroy()
         updates.shutdown()
+        security.shutdown()
         tabs.destroyAll()
         // Not the request engine: it is the process's, and a custom tab may still be using it.
         // The chrome too: a WebView that outlives its activity keeps its document – and the

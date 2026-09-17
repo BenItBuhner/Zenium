@@ -37,6 +37,7 @@ class CustomTabHost(
     override val downloads = Downloads(activity, this)
     override val permissions = Permissions(this)
     override val externalProtocols = ExternalProtocols(this)
+    override val security = Security(this)
     override val snapshots = HistorySnapshots(activity)
     override val tabs = TabHost(container, this)
     override var fullscreenTab: TabWebView? = null
@@ -61,6 +62,8 @@ class CustomTabHost(
         when (name) {
             "permission.request" -> askPermission(args)
             "externalProtocol.request" -> askExternal(args)
+            // A custom tab has no sign-in dialog: the server's own 401 page shows instead.
+            "auth.request" -> security.respondAuth(args.str("requestId"), null, null)
             "download.started" -> downloadStarted(args)
             "download.done" -> downloadDone(args)
             "download.action" -> downloadAction(args)
@@ -248,6 +251,7 @@ class CustomTabHost(
     }
 
     fun destroy() {
+        security.shutdown()
         tabs.destroyAll()
         downloads.destroy()
     }

@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { useState } from 'react'
-import { FolderOpen, Link2, Plus, Puzzle, Trash2 } from 'lucide-react'
+import { FolderOpen, Link2, Package, Plus, Puzzle, Store, Trash2 } from 'lucide-react'
 import type { Mod, UIState } from '@shared/types'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
@@ -54,6 +54,13 @@ export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
 }
 
 export function ExtensionsSection({ state }: { state: UIState }): JSX.Element {
+  const [storeRef, setStoreRef] = useState('')
+  const installFromStore = (): void => {
+    const ref = storeRef.trim()
+    if (!ref) return
+    run('extension.installFromStore', { ref })
+    setStoreRef('')
+  }
   return (
     <>
       <div className="flex items-start justify-between gap-4">
@@ -65,8 +72,36 @@ export function ExtensionsSection({ state }: { state: UIState }): JSX.Element {
             run in every container.
           </p>
         </div>
-        <Button size="sm" onClick={() => run('extension.add', undefined)}>
-          <FolderOpen className="mr-1.5 h-3.5 w-3.5" /> Load unpacked…
+        <div className="flex shrink-0 gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => run('extension.installFromFile', undefined)}
+          >
+            <Package className="mr-1.5 h-3.5 w-3.5" /> Install from file…
+          </Button>
+          <Button size="sm" onClick={() => run('extension.add', undefined)}>
+            <FolderOpen className="mr-1.5 h-3.5 w-3.5" /> Load unpacked…
+          </Button>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <Store className="h-4 w-4 shrink-0 opacity-60" />
+        <Input
+          placeholder="Extension id or Chrome Web Store / Edge Add-ons link"
+          value={storeRef}
+          onChange={(e) => setStoreRef(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') installFromStore()
+          }}
+        />
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={!storeRef.trim()}
+          onClick={installFromStore}
+        >
+          Install
         </Button>
       </div>
       {state.extensions.length === 0 ? (

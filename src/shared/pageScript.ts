@@ -17,7 +17,7 @@ export interface PageScriptFlags {
 }
 
 export interface PageScriptMessage {
-  type: 'glance' | 'open-tab' | 'navigate' | 'media' | 'zap'
+  type: 'glance' | 'open-tab' | 'navigate' | 'media' | 'zap' | 'activation' | 'popup-blocked'
   url?: string
   x?: number
   y?: number
@@ -34,6 +34,32 @@ export interface PageScriptTransport {
   onZap?(listener: (on: boolean) => void): void
   /** Hosts without native audio-state events ask for media tracking. */
   trackMedia?: boolean
+  /**
+   * Hosts whose engine blocks pop-ups itself (the Android WebView) learn which URLs it refused:
+   * the script runs in the page's world there and can watch `window.open` return null.
+   */
+  reportBlockedPopups?: boolean
+}
+
+/** Keys that never count as a gesture in Chromium's user-activation model. */
+const NON_ACTIVATING_KEYS = new Set(['Escape', 'Shift', 'Control', 'Alt', 'Meta', 'AltGraph'])
+
+/** Consecutive activation reports closer than this are dropped (the clock only needs freshness). */
+const ACTIVATION_REPORT_INTERVAL_MS = 250
+
+/** Whether a DOM event grants user activation (trusted press, tap or non-modifier key). */
+export function isActivatingEvent(e: Event): boolean {
+  if (!e.isTrusted) return false
+  switch (e.type) {
+    case 'pointerdown':
+    case 'mousedown':
+    case 'touchend':
+      return true
+    case 'keydown':
+      return !NON_ACTIVATING_KEYS.has((e as KeyboardEvent).key)
+    default:
+      return false
+  }
 }
 
 export const DEFAULT_PAGE_FLAGS: PageScriptFlags = {
@@ -71,6 +97,8 @@ export function installPageScript(transport: PageScriptTransport): void {
   }
 
   const zap = installZap(transport)
+  installActivationReporter(transport)
+  if (transport.reportBlockedPopups) installPopupObserver(transport)
 
   window.addEventListener(
     'click',
@@ -133,6 +161,76 @@ export function installPageScript(transport: PageScriptTransport): void {
         transport.send({ type: 'media', playing: false })
       }
     })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pop-up blocker: user activation and blocked window.open calls
+// ---------------------------------------------------------------------------
+
+/**
+ * Tells the browser when the user interacts with the page, so a `window.open` that follows can be
+ * told apart from one the page fired on its own. Trusted events only; `navigator.userActivation`
+ * (where the engine has it) is consulted as well so a gesture the listeners missed still counts.
+ */
+function installActivationReporter(transport: PageScriptTransport): void {
+  let lastSent = -Infinity
+  const report = (): void => {
+    const now = Date.now()
+    if (now - lastSent < ACTIVATION_REPORT_INTERVAL_MS) return
+    lastSent = now
+    transport.send({ type: 'activation' })
+  }
+  const onEvent = (e: Event): void => {
+    if (isActivatingEvent(e)) report()
+  }
+  for (const type of ['pointerdown', 'mousedown', 'keydown', 'touchend'])
+    window.addEventListener(type, onEvent, { capture: true, passive: true })
+  // Focus changes ride on gestures too (a tap that lands on a control); consult the engine.
+  window.addEventListener(
+    'focusin',
+    () => {
+      const ua = (navigator as Navigator & { userActivation?: { isActive: boolean } })
+        .userActivation
+      if (ua?.isActive) report()
+    },
+    true
+  )
+}
+
+/**
+ * Watches `window.open`: when the engine returns null while the page has no user activation the
+ * pop-up was blocked, and the browser lists it so the user can open it anyway. A null result
+ * during activation is a `noopener` window that did open, not a block.
+ */
+function installPopupObserver(transport: PageScriptTransport): void {
+  const nativeOpen = window.open
+  const resolve = (url: unknown): string => {
+    const text = url === undefined || url === null ? '' : String(url)
+    try {
+      return new URL(text, document.baseURI).href
+    } catch {
+      return text
+    }
+  }
+  const observed = function (
+    this: Window | undefined,
+    url?: string | URL,
+    target?: string,
+    features?: string
+  ): Window | null {
+    const result = nativeOpen.call(this ?? window, url, target, features)
+    if (result === null) {
+      const ua = (navigator as Navigator & { userActivation?: { isActive: boolean } })
+        .userActivation
+      if (!ua?.isActive) transport.send({ type: 'popup-blocked', url: resolve(url) })
+    }
+    return result
+  }
+  try {
+    Object.defineProperty(window, 'open', { value: observed, configurable: true, writable: true })
+  } catch {
+    /* a frozen window object keeps the engine's open; the blocker still blocks */
   }
 }
 

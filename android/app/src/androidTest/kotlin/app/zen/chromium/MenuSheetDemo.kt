@@ -320,6 +320,10 @@ class MenuSheetDemo {
         Finger().tap(menuButton.exactCenterX(), menuButton.exactCenterY())
     }
 
+    private fun back() {
+        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+    }
+
     /** The menu is up (opening it if a step left it closed); false when it never appeared. */
     private fun ensureMenuOpen(): Boolean {
         if (findByLabel(HANDLE_LABEL) != null) return true

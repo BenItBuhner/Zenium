@@ -42,6 +42,8 @@ export interface ViewEventPayloads {
   found: FindResultInfo
   contextMenu: Partial<PageContextParams>
   pageMessage: PageMessage
+  /** A trusted touch or key reached the WebView (user activation for the pop-up blocker). */
+  activation: void
   destroyed: void
 }
 
@@ -155,6 +157,9 @@ export class AndroidTabView implements TabView {
         ev.onPageMessage(message)
         return
       }
+      case 'activation':
+        ev.onUserActivation()
+        return
       case 'destroyed':
         this.destroyed = true
         ev.onDestroyed()
@@ -302,6 +307,10 @@ export class AndroidTabView implements TabView {
 
   sendPageFlags(flags: PageFlags): void {
     this.bridge.send('view.setFlags', { tabId: this.tabId, flags })
+  }
+
+  setPopupsAllowed(allowed: boolean): void {
+    this.bridge.send('view.setPopupsAllowed', { tabId: this.tabId, allowed })
   }
 
   setZapMode(on: boolean): void {

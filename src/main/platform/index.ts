@@ -37,6 +37,11 @@ import { ElectronSiteData } from './siteData'
 import { ElectronUpdateHost } from './updates'
 import { applyAppIcon } from './appIcon'
 import { createPasswordsHost } from './passwords'
+import {
+  attachSecurityHandlers,
+  permissionCheckDetails,
+  permissionRequestDetails
+} from './security'
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
@@ -296,18 +301,32 @@ export class ElectronPlatform implements Platform {
     })
     this.sessions.get(DEFAULT_CONTAINER_ID)
     this.registerIpc(browser)
+    attachSecurityHandlers(browser, this.views)
     browser.start()
     return browser
   }
 
   private attachPermissions(ses: Session): void {
-    const { permissions } = this.browser
+    const { permissions, external } = this.browser
     ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
       const url = details.requestingUrl || webContents?.getURL() || ''
-      void permissions.decide(permission, url).then(callback)
+      const request = permissionRequestDetails(webContents, details)
+      // Chromium does not tell us whether a page's launch of another application had a
+      // gesture, so the core's own activation tracking decides: without one the launch is
+      // listed with the tab's blocked pop-ups instead of prompting.
+      const tabId = webContents ? this.views.tabIdForWebContents(webContents) : undefined
+      if (permission === 'openExternal' && tabId && request.externalUrl) {
+        void external.request(tabId, request.externalUrl).then(callback)
+        return
+      }
+      void permissions.decide(permission, url, request).then(callback)
     })
-    ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) =>
-      permissions.check(permission, requestingOrigin)
+    ses.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) =>
+      permissions.check(
+        permission,
+        requestingOrigin,
+        permissionCheckDetails(permission, requestingOrigin, details, this.browser)
+      )
     )
   }
 

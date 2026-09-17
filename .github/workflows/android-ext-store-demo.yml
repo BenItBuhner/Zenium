@@ -1,0 +1,51 @@
+name: Android extension store demo
+
+# Records the extension store on a hardware-accelerated Android emulator and uploads the video,
+# the screenshots and what the engine left behind: uBlock Origin Lite and Dark Reader installed
+# from the Chrome Web Store by id through the chrome's command API (the native install prompt
+# answered on screen), the management page listing them, disable and enable, a real update check
+# against the store, uBlock Origin's own .chromium.zip sideloaded through the VIEW intent filter,
+# and an uninstall. ExtensionStoreDemo asserts the records, the files under
+# files/zen/extensions/<id>/<version>/ and the registry document after every step; the driver
+# script adds the memory of every Zenium process and the store's log lines to the artifact.
+# Dispatch-only, like the other demos: it takes about a quarter of an hour. The .zip comes from
+# uBlock Origin's latest GitHub release, fetched on the runner by setup-script. The build, the
+# emulator and the Gradle cache live in android-emulator-demo.yml; this file picks the driver,
+# fetches the package and names the artifact.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ext-store-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Extension store demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-store-demo.sh
+      # The shared demo script chooses the driver from its environment (see its header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ExtensionStoreDemo
+        DEMO_DIR=ext-store-demo
+        DEMO_OUT=artifacts/android-ext-store-demo
+        DEMO_VIDEO=ext-android-store-demo.mp4
+        SIDELOAD_ZIP=artifacts/ext/uBlock0.chromium.zip
+      # uBlock Origin's latest release: the tag comes from the redirect (no API call, no rate
+      # limit), the asset is named after it.
+      setup-script: |
+        mkdir -p artifacts/ext
+        tag=$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/gorhill/uBlock/releases/latest)
+        tag=${tag##*/}
+        echo "uBlock Origin release $tag"
+        curl -fsSL -o artifacts/ext/uBlock0.chromium.zip "https://github.com/gorhill/uBlock/releases/download/$tag/uBlock0_$tag.chromium.zip"
+        ls -la artifacts/ext
+        unzip -l artifacts/ext/uBlock0.chromium.zip | tail -n 3
+      artifact-name: android-ext-store-demo
+      artifact-path: artifacts/android-ext-store-demo/
+      api-level: '34'
+      timeout-minutes: 60
