@@ -149,9 +149,8 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
 
         // 2. The gate tries the device key at once; the Keystore asks for the PIN when the key
         //    wants an authentication, and the list follows.
-        if (waitFor(CLOSE_LABEL, 10_000) == null) error("the manager never opened")
         step("manager open")
-        snap("gate")
+        if (!credentialPromptShowing()) snap("gate")
         unlockThroughGate()
         SystemClock.sleep(1_000)
         snap("list")
@@ -281,10 +280,25 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         val row = reveal(label)
         if (row != null && row.top >= 0 && row.bottom <= height) {
             f.tap(row.exactCenterX(), row.exactCenterY())
-            if (waitFor(CLOSE_LABEL, 6_000) != null) return
+            if (awaitManager(6_000)) return
             step("the tap on the '$label' row did not open the manager; clicking it through accessibility")
         }
         if (!clickByLabel(label)) error("no menu row '$label'")
+        if (!awaitManager(10_000)) error("the manager never opened")
+    }
+
+    /**
+     * The manager's header is in the tree – or the device credential prompt is already in front
+     * of it: the gate asks for the key as soon as it mounts, and while the system window is up
+     * the active window is not the app's.
+     */
+    private fun awaitManager(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (findByLabel(CLOSE_LABEL) != null || credentialPromptShowing()) return true
+            SystemClock.sleep(200)
+        }
+        return false
     }
 
     // --- the gate --------------------------------------------------------------------------------
