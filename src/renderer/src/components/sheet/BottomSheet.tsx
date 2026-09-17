@@ -70,6 +70,8 @@ class SheetMotion {
   detents: SheetDetents = { collapsed: 0, expanded: 0 }
   /** Detent the sheet rests at, or is heading for. */
   resting: Detent = 'collapsed'
+  /** A finger is dragging the sheet. */
+  dragging = false
   /** Where the sheet stood when a predictive back gesture took hold of it. */
   backOrigin: number | null = null
   /** Status-bar inset (px) the expanded sheet keeps clear. */
@@ -112,19 +114,26 @@ class SheetMotion {
 
   /** Head for `target` px with the spring, carrying `velocity` px/s. */
   settleTo(target: number, velocity = 0): void {
-    this.target = target
-    this.backOrigin = null
     this.afterDismiss = null
     // A sheet with one detent keeps the intent it had; only a real choice changes it.
     if (target > 0 && this.detents.collapsed !== this.detents.expanded)
       this.resting = target >= this.detents.expanded ? 'expanded' : 'collapsed'
-    this.spring.start(this.position, velocity, target)
+    this.go(target, velocity)
   }
 
   /** Slide off the screen, then run `then` (a picked menu item) and report the dismissal. */
   dismiss(then?: () => void, velocity = 0): void {
-    this.settleTo(0, velocity)
+    // Already on its way out with nothing new to do at the end: let it carry its momentum.
+    if (this.dismissing && !then) return
     this.afterDismiss = then ?? null
+    this.go(0, velocity)
+  }
+
+  private go(target: number, velocity: number): void {
+    this.target = target
+    this.backOrigin = null
+    // Everything is in place before the spring starts: with reduced motion it rests at once.
+    this.spring.start(this.position, velocity, target)
   }
 
   /** A finger landed while the sheet was moving: freeze it there. Returns false when it was at rest. */
@@ -146,7 +155,8 @@ class SheetMotion {
       this.settleTo(detents.collapsed)
       return
     }
-    if (this.dismissing) return
+    // A finger holding the sheet decides where it goes; the spring stays out of it.
+    if (this.dragging || this.dismissing) return
     const to = detents[this.resting]
     if (this.spring.running) {
       this.target = to
@@ -347,10 +357,12 @@ export function BottomSheet({
   )
 
   const beginDrag = (t: Touch, e: ReactPointerEvent<HTMLDivElement>): void => {
+    const m = motion()
     t.mode = 'sheet'
     t.caught = true
     t.y0 = e.clientY
-    t.dragStart = motion().position
+    t.dragStart = m.position
+    m.dragging = true
     // Captured only now: a capture from pointerdown on would retarget the click of a plain tap
     // away from the row that was tapped.
     e.currentTarget.setPointerCapture(e.pointerId)
@@ -419,6 +431,8 @@ export function BottomSheet({
     const t = touch.current
     if (!t || t.id !== e.pointerId) return
     touch.current = null
+    const m = motion()
+    m.dragging = false
     sheetRef.current?.removeAttribute('data-dragging')
     if (t.mode !== 'sheet') {
       if (t.caught) swallowClick.current = true
@@ -429,7 +443,6 @@ export function BottomSheet({
     const { vy } = cancelled ? { vy: 0 } : t.tracker.velocity(e.timeStamp)
     // The track runs upwards; the finger's y runs down the screen.
     const velocity = -vy
-    const m = motion()
     const target = settleDetent(m.position, velocity, m.detents)
     if (target === 0) m.dismiss(undefined, velocity)
     else m.settleTo(target, velocity)
