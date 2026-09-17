@@ -10,6 +10,7 @@ import type {
 } from './platform'
 import type {
   NewTabPageAction,
+  NewTabPageShortcut,
   NewTabPageState,
   NewTabSettings,
   NewTabShortcut,
@@ -164,6 +165,7 @@ export class NewTabService {
   private readonly ready = new Set<string>()
   private readonly lastPushed = new Map<string, string>()
   private topSitesCache: { key: string; sites: TopSite[] } | null = null
+  private shortcutsCache: { key: string; favicons: Map<string, string | null> } | null = null
   private historyVersion = 0
 
   constructor(private readonly browser: Browser) {
@@ -255,7 +257,7 @@ export class NewTabService {
       shortcutsMode: settings.shortcuts,
       background: settings.background,
       greeting: settings.greeting,
-      shortcuts: this.browser.state.newTabShortcuts.slice(0, MAX_NEW_TAB_SHORTCUTS),
+      shortcuts: settings.shortcuts === 'custom' ? this.shortcuts(isPrivate) : [],
       // Private windows never show what was browsed elsewhere.
       topSites: isPrivate || settings.shortcuts !== 'most-visited' ? [] : this.topSites(),
       backgroundImage: background?.current() ?? null,
@@ -275,6 +277,21 @@ export class NewTabService {
     const sites = this.browser.history.topSites(MAX_NEW_TAB_SHORTCUTS, hidden)
     this.topSitesCache = { key, sites }
     return sites
+  }
+
+  /** The custom tiles with the favicons history knows (none in private windows). */
+  private shortcuts(isPrivate: boolean): NewTabPageShortcut[] {
+    const list = this.browser.state.newTabShortcuts.slice(0, MAX_NEW_TAB_SHORTCUTS)
+    const key = `${this.historyVersion}|${isPrivate}|${list.map((s) => s.url).join('\n')}`
+    if (this.shortcutsCache?.key === key) {
+      const favicons = this.shortcutsCache.favicons
+      return list.map((s) => ({ ...s, favicon: favicons.get(s.url) ?? null }))
+    }
+    const favicons = new Map<string, string | null>()
+    for (const s of list)
+      favicons.set(s.url, isPrivate ? null : this.browser.history.faviconFor(s.url))
+    this.shortcutsCache = { key, favicons }
+    return list.map((s) => ({ ...s, favicon: favicons.get(s.url) ?? null }))
   }
 
   /**
@@ -324,7 +341,8 @@ export class NewTabService {
         return
       }
       case 'search':
-        if (typeof action.text === 'string' && action.text.length > 0 && action.text.length < 200)
+        // Empty text: the search box was clicked – the omnibox opens with nothing typed yet.
+        if (typeof action.text === 'string' && action.text.length < 200)
           this.browser.emit('newtab.opened', { tabId, text: action.text }, win)
         return
       case 'add-shortcut':

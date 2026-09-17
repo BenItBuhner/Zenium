@@ -986,6 +986,11 @@ export interface NewTabShortcut {
   url: string
 }
 
+/** A custom shortcut as the page shows it: with the favicon history knows for its site, if any. */
+export interface NewTabPageShortcut extends NewTabShortcut {
+  favicon: string | null
+}
+
 /** The chrome's theme variables (`themeCssVariables`) for one colour scheme. */
 export interface NewTabThemeVariant {
   /** `--zen-bg`, `--zen-fg`, `--zen-accent` … exactly as the chrome sets them on its root. */
@@ -1009,7 +1014,7 @@ export interface NewTabPageState {
   shortcutsMode: NewTabShortcutsMode
   background: NewTabBackgroundKind
   greeting: boolean
-  shortcuts: NewTabShortcut[]
+  shortcuts: NewTabPageShortcut[]
   topSites: TopSite[]
   /** Address of the custom background image (`zen://newtab-background?v=…`), when one is set. */
   backgroundImage: string | null
