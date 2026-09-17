@@ -18,6 +18,7 @@ val buildWeb = tasks.register<Exec>("buildWeb") {
     inputs.dir(webRoot.resolve("src"))
     outputs.dir(projectDir.resolve("src/main/assets/www"))
     outputs.file(projectDir.resolve("src/main/assets/page.js"))
+    outputs.file(projectDir.resolve("src/main/assets/ext.js"))
     onlyIf { !skipWeb }
 }
 
@@ -188,8 +189,9 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.activity:activity-ktx:1.9.3")
-    // 1.13 adds WebStorageCompat.deleteBrowsingDataForSite (the site-information sheet's "clear all site data").
-    implementation("androidx.webkit:webkit:1.13.0")
+    // 1.13 adds WebStorageCompat.deleteBrowsingDataForSite (the site-information sheet's "clear all site data");
+    // 1.17 adds JS_INJECTION_IN_FRAME_AND_WORLD (isolated worlds for the extension layer, Chromium 146+ WebView).
+    implementation("androidx.webkit:webkit:1.17.0")
     implementation("com.google.android.material:material:1.12.0")
     // Custom Tabs provider: the service other apps bind and the intent extras they send
     // (CustomTabsConnectionService.kt, CustomTabConfig.kt).
@@ -200,8 +202,10 @@ dependencies {
     implementation("androidx.biometric:biometric:1.1.0")
 
     // JVM unit tests (src/test): pure logic such as the screenshot stitching geometry and the
-    // vault key wrapping format.
+    // vault key wrapping format. The extension and vault tests build org.json documents, which
+    // android.jar only stubs.
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250107")
 
     // On-device driver for the gesture demo recording (.github/workflows/android-gesture-demo.yml).
     androidTestImplementation("androidx.test:runner:1.6.2")

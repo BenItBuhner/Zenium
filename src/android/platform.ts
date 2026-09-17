@@ -46,6 +46,7 @@ import readabilityReaderableJs from '@mozilla/readability/Readability-readerable
 import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
 import type { Bridge } from './bridge'
 import { AndroidSiteData } from './siteData'
+import { AndroidExtensionHost, type ExtMessageEvent, type ExtRequestEvent } from './extensions'
 import { AndroidTabViewHost, type ViewEventPayloads } from './views'
 
 /** Android 13 (Tiramisu): the first release whose clipboard shows its own "copied" chip. */
@@ -62,7 +63,7 @@ export function androidCapabilities(sdkInt: number): HostCapabilities {
     pictureInPicture: false,
     viewSource: false,
     windows: false,
-    extensions: false,
+    extensions: true,
     resourceGovernor: false,
     sync: false,
     print: true,
@@ -215,6 +216,11 @@ export interface HostEventPayloads {
   'agent.request': { id: number } & AgentHttpRequest
   /** Bytes of a release APK arriving (`update.download` in flight). */
   'update.progress': { token: string; transferred: number; total: number; bytesPerSecond: number }
+  /** Extension emulation (`ext/Extensions.kt`): a shim message, endpoints that went away, … */
+  'ext.message': ExtMessageEvent
+  'ext.gone': { eps: string[] }
+  'ext.popupClosed': { id: string }
+  'ext.request': ExtRequestEvent
 }
 
 /**
@@ -527,6 +533,7 @@ export class AndroidPlatform implements Platform {
   private readonly downloadTokens = new Map<string, string>()
   private readonly agentTransport: AndroidAgentTransport
   private readonly updateHost: AndroidUpdateHost
+  private extensions: AndroidExtensionHost | null = null
 
   constructor(
     private readonly bridge: Bridge,
@@ -650,6 +657,13 @@ export class AndroidPlatform implements Platform {
     return this.updateHost
   }
 
+  /** The extension emulation layer (prototype): sideloaded unpacked extensions on the system WebView. */
+  createExtensions(browser: Browser): AndroidExtensionHost {
+    const host = new AndroidExtensionHost(this.bridge, browser, () => this.window)
+    this.extensions = host
+    return host
+  }
+
   /** Mozilla's Readability, bundled with the chrome. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string {
     return file === 'Readability.js' ? readabilityJs : readabilityReaderableJs
@@ -673,6 +687,7 @@ export class AndroidPlatform implements Platform {
     const view = this.views.get(tabId)
     if (!view) return
     view.dispatch(name, payload)
+    this.extensions?.onViewEvent(tabId, name, payload)
     if (name === 'destroyed') this.views.forget(tabId)
   }
 
@@ -821,6 +836,18 @@ export class AndroidPlatform implements Platform {
         return
       case 'update.progress':
         this.updateHost.onProgress(payload as HostEventPayloads['update.progress'])
+        return
+      case 'ext.message':
+        this.extensions?.onMessage(payload as HostEventPayloads['ext.message'])
+        return
+      case 'ext.gone':
+        this.extensions?.onGone((payload as HostEventPayloads['ext.gone']).eps)
+        return
+      case 'ext.popupClosed':
+        this.extensions?.onPopupClosed()
+        return
+      case 'ext.request':
+        this.extensions?.onRequest(payload as HostEventPayloads['ext.request'])
         return
       case 'view.adopt': {
         const p = payload as HostEventPayloads['view.adopt']

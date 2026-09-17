@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.view.View
 import android.webkit.WebChromeClient
+import app.zen.chromium.ext.Extensions
 import org.json.JSONObject
 
 /**
@@ -34,6 +35,11 @@ interface PageHost {
      * Look and Feel setting; the chrome draws the disc, so a host without one leaves it off).
      */
     val pullToRefresh: Boolean get() = false
+    /**
+     * The extension emulation layer (prototype), when the host runs one: the browser window does;
+     * a custom tab has no core to run the backgrounds against, so its pages get no content scripts.
+     */
+    val extensions: Extensions? get() = null
 
     /** Something happened to one page: `navigated`, `title`, `startLoading`, … (see [TabWebView]). */
     fun viewEvent(tabId: String, name: String, payload: Any?)
