@@ -110,8 +110,9 @@ class ExtensionDemo {
     }
 
     private fun launch() {
-        val intent = app.packageManager.getLaunchIntentForPackage(app.packageName)
-            ?: error("no launcher activity for ${app.packageName}")
+        // The launcher entry is an icon alias that hands over to MainActivity and finishes at
+        // once; the demo needs the browser's own activity, so it starts that directly.
+        val intent = Intent(app, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         activity = instrumentation.startActivitySync(intent) as MainActivity
         val deadline = SystemClock.uptimeMillis() + 40_000
