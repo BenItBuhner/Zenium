@@ -409,7 +409,7 @@ describe('createEmulatedEngine', () => {
       t: 'call',
       ns: 'contextMenus',
       method: 'create',
-      args: [{ id: 1, title: 'Hi', contexts: ['page'] }]
+      args: [{ title: 'Hi', contexts: ['page'] }, 1]
     })
     expect((h.chrome.contextMenus.create as Fn)({ id: 'own', title: 'x' })).toBe('own')
     let called = false

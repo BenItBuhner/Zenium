@@ -506,22 +506,8 @@ export function createEmulatedEngine(
         }
       }
     }
-    if (granted('contextMenus')) {
-      let menuSeq = 0
-      chrome.contextMenus = {
-        // Synchronous in Chrome: the id comes back at once, the callback reports creation.
-        create: (createProperties: unknown, callback?: unknown) => {
-          const props = { ...((createProperties ?? {}) as Record<string, unknown>) }
-          if (props.id === undefined) props.id = ++menuSeq
-          const done = typeof callback === 'function' ? (callback as Listener) : undefined
-          call('contextMenus', 'create', [props]).then(
-            () => done?.(),
-            (error: unknown) => withLastError(errorMessage(error), () => done?.())
-          )
-          return props.id
-        }
-      }
-    }
+    // contextMenus is the shim's: `create` answers its id synchronously and the wire carries
+    // `[properties, id]` (functions such as `onclick` stay on this side).
     if (granted('idle')) chrome.idle = { setDetectionInterval: () => undefined }
     if (granted('identity'))
       chrome.identity = {

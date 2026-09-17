@@ -855,8 +855,9 @@ export class ExtensionApi {
     }
     switch (method) {
       case 'create': {
+        // The shim sends `[properties, id]`, the id it already answered synchronously.
         const props = asRecord(args[0])
-        const menuId = String(props.id ?? menus.size + 1)
+        const menuId = String(args[1] ?? props.id ?? menus.size + 1)
         menus.set(menuId, props)
         return menuId
       }
