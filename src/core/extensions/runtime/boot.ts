@@ -2,30 +2,36 @@ import type { LocaleMessages, RunAt, RuntimeManifest, ScriptWorld } from './mani
 import { planInjection, type RegisteredContentScript } from './plan'
 
 /**
- * What the host hands the page bootstrap (the script injected at document start into every tab)
- * and the extension-page bootstrap (background page, popup, options page). It is JSON: the host
- * embeds it verbatim into the injected script, next to the content-script sources.
+ * What the host hands the content bootstrap (the script injected at document start into tab
+ * frames) and the extension-page bootstrap (background page, popup, options page). It is JSON:
+ * the host embeds it verbatim into the injected script, next to the content-script sources.
  *
- * Isolation of content scripts in the page's (only) JavaScript world:
- *  - `shadow`: every file of a declaration runs inside one function whose `window`, `self` and
- *    `globalThis` parameters are a Proxy over the real window. Expandos land in a per-extension
- *    store, reads of browser globals fall through to the real window, page globals read as
- *    undefined; bare identifiers still resolve through the real global scope, so a file reading
- *    `forTrusted` after another wrote `globalThis.forTrusted` throws (Vimium). Cheap: no dynamic
- *    scope.
- *  - `with`: the same function body sits inside `with (window)` where `window` is that Proxy, so
- *    bare identifiers resolve through the store and the browser's globals first. Faithful for the
- *    expando pattern; every free identifier lookup becomes a `has` plus a `get` trap. The default.
+ * How content scripts are kept apart from the page:
+ *  - `world`: the unit runs in a real Chromium isolated world of its own (androidx.webkit
+ *    `JS_INJECTION_IN_FRAME_AND_WORLD`, Chromium 146+ WebView). The world's global is the
+ *    content scripts' `window`, `chrome` simply lives on it, and the page's script cannot reach
+ *    either. The default wherever the WebView has worlds.
+ *  - `with`: the fallback for older WebViews. Every file of a declaration runs inside one
+ *    function whose body sits in `with (window)`, where `window` is a Proxy over the real window:
+ *    expandos land in a per-extension store, reads of browser globals fall through to the real
+ *    window, page globals read as undefined, and bare identifiers resolve through the store and
+ *    the browser's globals first. Faithful for the expando pattern, but the page shares the
+ *    prototypes and can observe the scripts' DOM work: the host reports `reducedIsolation`.
  *  - `none`: run against the real window (what `world: "MAIN"` declarations get).
- *  - `world`: the host injects the unit into a real Chromium isolated world (androidx.webkit
- *    `JS_INJECTION_IN_FRAME_AND_WORLD`, Chromium 146+ WebView). The world's own global is the
- *    content scripts' `window`; the bootstrap adds `chrome` to it and no proxy is involved. Used
- *    when the host reports the capability, otherwise `with`.
  */
-export type IsolationMode = 'shadow' | 'with' | 'none' | 'world'
+export type IsolationMode = 'with' | 'none' | 'world'
 
-/** The isolated world an extension's content scripts run in on hosts that have real worlds. */
-export const worldNameFor = (extensionId: string): string => `zenium-ext-${extensionId}`
+/**
+ * Which of an extension's worlds a content unit belongs to: its isolated world (content scripts),
+ * the page's main world (`world: "MAIN"` declarations) or its user-script world
+ * (`chrome.userScripts`, messaging only).
+ */
+export type UnitWorld = 'isolated' | 'main' | 'user'
+
+/** The isolated world an extension's scripts run in on hosts that have real worlds. */
+export function worldNameFor(extensionId: string, world: 'isolated' | 'user' = 'isolated'): string {
+  return world === 'user' ? `zenium-ext-${extensionId}-user` : `zenium-ext-${extensionId}`
+}
 
 export interface BootGroup {
   index: number
@@ -47,6 +53,7 @@ export interface BootGroup {
 export interface ExtensionBoot {
   id: string
   name: string
+  version: string
   manifestVersion: 2 | 3
   permissions: string[]
   hostPermissions: string[]
@@ -61,7 +68,11 @@ export interface ContentBootConfig {
   kind: 'content'
   token: string
   uiLanguage: string
-  extensions: ExtensionBoot[]
+  /** The world this unit runs in; `user` units build a user-script engine (messaging only). */
+  world: UnitWorld
+  /** `user` units: `userScripts.configureWorld({ messaging })`, off by default like Chrome. */
+  userScriptMessaging?: boolean
+  extension: ExtensionBoot
 }
 
 export type PageContext = 'background' | 'popup' | 'options' | 'offscreen' | 'page'
@@ -88,6 +99,7 @@ export function buildExtensionBoot(
   return {
     id,
     name: manifest.name,
+    version: manifest.version,
     manifestVersion: manifest.manifestVersion,
     permissions: manifest.permissions,
     hostPermissions: manifest.hostPermissions,

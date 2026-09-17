@@ -1,4 +1,4 @@
-import type { ContentScriptDeclaration, RuntimeManifest, RunAt } from './manifest'
+import type { ContentScriptDeclaration, RuntimeManifest, RunAt, ScriptWorld } from './manifest'
 import { runAtOrder } from './scheduling'
 
 /**
@@ -47,7 +47,7 @@ export interface InjectionGroup {
   /** Stable per (extension, declaration) so the bootstrap can report which groups ran. */
   index: number
   runAt: RunAt
-  world: 'ISOLATED' | 'MAIN'
+  world: ScriptWorld
   js: string[]
   css: string[]
   declaration: ContentScriptDeclaration
