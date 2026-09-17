@@ -11,6 +11,9 @@ export default defineConfig({
   },
   test: {
     include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
-    environment: 'node'
+    environment: 'node',
+    // Vitest empties every stylesheet import unless told otherwise; `newTabPage.ts` reads main.css
+    // as text (`?raw`) for its token blocks and needs the real file.
+    css: { include: [/\.css\?raw$/] }
   }
 })

@@ -29,10 +29,13 @@ const DRAG_THRESHOLD = 4
 /** Half the grid gap: the caret sits in the middle of the gap before the drop slot. */
 const HALF_GAP = 6
 const UNDO_MS = 8000
-const PRIVATE_ACCENT = '#a98bff'
-const PRIVATE_ACCENT_RGB = '169 139 255'
-const SOLID_LIGHT = '#fbfbfe'
-const SOLID_DARK = '#1c1b22'
+/**
+ * The private window's accent, as the chrome sets it on `.zen-window[data-window-kind='private']`
+ * in main.css (`newTabPage.test.ts` pins the two in step): a private page's controls take the
+ * frame's accent like every other v2 surface in that window.
+ */
+export const PRIVATE_ACCENT = '#a98bff'
+export const PRIVATE_ACCENT_RGB = '169 139 255'
 
 export function installNewTabPage(transport: NewTabTransport): void {
   const boot = (): void => {
@@ -201,18 +204,22 @@ class NewTabPage {
     }
     this.root.dataset.theme = variant.isDark ? 'dark' : 'light'
     this.body.dataset.bg = state.background
-    this.setBackground(this.backgroundValue(state, variant.vars, variant.isDark))
+    this.setBackground(this.backgroundValue(state, variant.vars))
   }
 
-  private backgroundValue(
-    state: NewTabPageState,
-    vars: Record<string, string>,
-    dark: boolean
-  ): string {
+  private backgroundValue(state: NewTabPageState, vars: Record<string, string>): string {
     if (state.background === 'image' && state.backgroundImage)
       return `url("${state.backgroundImage.replace(/"/g, '%22')}") center / cover no-repeat`
-    if (state.background === 'solid') return dark ? SOLID_DARK : SOLID_LIGHT
-    return vars['--zen-bg'] ?? (dark ? SOLID_DARK : SOLID_LIGHT)
+    if (state.background === 'solid') return this.pageColour()
+    return vars['--zen-bg'] ?? this.pageColour()
+  }
+
+  /**
+   * The v2 page surface for the theme just applied, read from the stylesheet (main.css's token
+   * block) rather than kept here, as a literal so that a scheme change still crossfades.
+   */
+  private pageColour(): string {
+    return getComputedStyle(this.root).getPropertyValue('--v2-page').trim()
   }
 
   /** The next background fades in over the current one (600 ms, like the chrome recolouring). */
@@ -505,7 +512,7 @@ class NewTabPage {
     this.menu.textContent = ''
     const items: Array<{ label: string; glyph: NewTabIcon; run: () => void }> = []
     if (this.custom)
-      items.push({ label: 'Edit shortcut', glyph: 'pencil', run: () => this.openDialog(tile) })
+      items.push({ label: 'Edit Shortcut', glyph: 'pencil', run: () => this.openDialog(tile) })
     items.push({ label: 'Remove', glyph: 'trash', run: () => this.remove(tile) })
     for (const item of items) {
       const button = el('button')
