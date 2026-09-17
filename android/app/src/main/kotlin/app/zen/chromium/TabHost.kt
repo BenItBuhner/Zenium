@@ -1,5 +1,7 @@
 package app.zen.chromium
 
+import android.content.Context
+import android.content.MutableContextWrapper
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -9,7 +11,7 @@ import org.json.JSONObject
  * Owns the tab WebViews and places them above the chrome exactly where the core says, in device
  * pixels converted from the chrome's CSS pixels.
  */
-class TabHost(private val container: FrameLayout, private val host: Host) {
+class TabHost(private val container: FrameLayout, private val host: PageHost) {
     private val views = HashMap<String, TabWebView>()
     private var popupSeq = 0
     private val density: Float get() = container.resources.displayMetrics.density
@@ -20,16 +22,55 @@ class TabHost(private val container: FrameLayout, private val host: Host) {
 
     fun tabIdOf(view: View?): String? = (view as? TabWebView)?.tabId
 
-    fun create(tabId: String, containerId: String): TabWebView {
+    /**
+     * `context` is the activity by default; a [MutableContextWrapper] around it lets the page move
+     * to another activity later (see [adopt]), which is what a custom tab creates its page with.
+     */
+    fun create(tabId: String, containerId: String, context: Context = container.context): TabWebView {
         // A view already held under this id is an orphan: the core registers its new view before it
         // asks, so a `destroyed` for the id would land on that new view and mark it dead – a tab
         // that never gets bounds again. Drop the old one without a word.
         views.remove(tabId)?.let(::drop)
-        val view = TabWebView(container.context, tabId, containerId, host)
+        val view = TabWebView(context, tabId, containerId, host)
         view.visibility = View.GONE
         container.addView(view, FrameLayout.LayoutParams(0, 0))
         views[tabId] = view
         return view
+    }
+
+    /**
+     * Take a live page out of this host without destroying it, so another host can [adopt] it:
+     * "Open in Zenium" hands a custom tab's page, history and all, to the browser window.
+     */
+    fun release(tabId: String): TabWebView? {
+        val view = views.remove(tabId) ?: return null
+        host.exitFullscreen(view)
+        view.backTransition?.abort()
+        host.snapshots.forget(tabId)
+        (view.parent as? ViewGroup)?.removeView(view)
+        return view
+    }
+
+    /**
+     * Make a page another host [release]d one of ours. Its context is re-pointed at this window
+     * (dialogs and pickers the page opens from now on belong here), what a new view takes from
+     * its host at creation – the page script and its bridge, the pull-to-refresh mode – is applied
+     * for this host, it starts hidden and unplaced like every new view, and the core is told to
+     * adopt it as an active tab the way it adopts a popup; the core answers with `view.bind`,
+     * which reports the page's URL and title.
+     */
+    fun adopt(view: TabWebView) {
+        val viewId = "handoff_${++popupSeq}"
+        (view.context as? MutableContextWrapper)?.baseContext = container.context
+        view.host = host
+        view.installPageScript()
+        view.applyPullToRefreshMode()
+        view.tabId = viewId
+        view.visibility = View.GONE
+        view.translationX = 0f
+        container.addView(view, FrameLayout.LayoutParams(0, 0))
+        views[viewId] = view
+        host.hostEvent("view.adopt", json("viewId" to viewId, "parentTabId" to null, "active" to true))
     }
 
     /** A `window.open` popup: created before the core knows about it, bound once it does. */
@@ -43,14 +84,14 @@ class TabHost(private val container: FrameLayout, private val host: Host) {
         view.tabId = tabId
         views[tabId] = view
         // Whatever the popup loaded before the core knew its tab id is reported now.
-        host.chrome.viewEvent(tabId, "navigated", view.navState().put("inPage", false))
-        if (!view.title.isNullOrEmpty()) host.chrome.viewEvent(tabId, "title", json("title" to view.title))
+        host.viewEvent(tabId, "navigated", view.navState().put("inPage", false))
+        if (!view.title.isNullOrEmpty()) host.viewEvent(tabId, "title", json("title" to view.title))
     }
 
     fun destroy(tabId: String) {
         val view = views.remove(tabId) ?: return
         drop(view)
-        host.chrome.viewEvent(tabId, "destroyed", null)
+        host.viewEvent(tabId, "destroyed", null)
     }
 
     fun destroyAll() {
@@ -95,7 +136,9 @@ class TabHost(private val container: FrameLayout, private val host: Host) {
         views.remove(tabId)
         container.removeView(dead)
         runCatching { dead.destroy() }
-        val fresh = TabWebView(container.context, tabId, dead.containerId, host)
+        // The dead view's context (a custom tab's page carries a MutableContextWrapper), so the
+        // replacement can still move to another window later.
+        val fresh = TabWebView(dead.context, tabId, dead.containerId, host)
         fresh.visibility = if (visible) View.VISIBLE else View.GONE
         container.addView(fresh, if (index >= 0) index else -1, lp ?: FrameLayout.LayoutParams(0, 0))
         views[tabId] = fresh

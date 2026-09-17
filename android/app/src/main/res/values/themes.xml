@@ -10,4 +10,45 @@
         <item name="colorPrimary">#6264DC</item>
         <item name="colorSecondary">#6264DC</item>
     </style>
+
+    <!-- A custom tab: the browser theme, arriving from the bottom and leaving the same way
+         (Chrome's default; a caller's own start and exit animations take precedence). -->
+    <style name="Theme.Zen.CustomTab">
+        <item name="android:windowAnimationStyle">@style/Animation.Zen.CustomTab</item>
+    </style>
+    <style name="Animation.Zen.CustomTab" parent="@android:style/Animation.Activity">
+        <item name="android:activityOpenEnterAnimation">@anim/cct_slide_in_up</item>
+        <item name="android:activityOpenExitAnimation">@anim/cct_stay</item>
+        <item name="android:activityCloseEnterAnimation">@anim/cct_stay</item>
+        <item name="android:activityCloseExitAnimation">@anim/cct_slide_out_down</item>
+    </style>
+
+    <!-- The custom tab's menu, a phone sheet per the v2 draft (§6): neutral panel, top radius 12,
+         edge to edge under the navigation bar, scrim black .4 light / .55 dark. The 1 px border
+         is drawn by the sheet's content view (CustomTabMenuSheet). -->
+    <style name="ThemeOverlay.Zen.CustomTabSheet" parent="ThemeOverlay.Material3.BottomSheetDialog">
+        <item name="bottomSheetStyle">@style/Widget.Zen.CustomTabSheet</item>
+        <item name="android:backgroundDimAmount">0.4</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+    <style name="ThemeOverlay.Zen.CustomTabSheet.Dark">
+        <item name="bottomSheetStyle">@style/Widget.Zen.CustomTabSheet.Dark</item>
+        <item name="android:backgroundDimAmount">0.55</item>
+    </style>
+    <style name="Widget.Zen.CustomTabSheet" parent="Widget.Material3.BottomSheet.Modal">
+        <item name="backgroundTint">@color/v2_panel_light</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.Zen.CustomTabSheet</item>
+        <item name="shapeAppearanceOverlay">@null</item>
+    </style>
+    <style name="Widget.Zen.CustomTabSheet.Dark">
+        <item name="backgroundTint">@color/v2_panel_dark</item>
+    </style>
+    <style name="ShapeAppearance.Zen.CustomTabSheet" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSizeTopLeft">12dp</item>
+        <item name="cornerSizeTopRight">12dp</item>
+        <item name="cornerSizeBottomLeft">0dp</item>
+        <item name="cornerSizeBottomRight">0dp</item>
+    </style>
 </resources>

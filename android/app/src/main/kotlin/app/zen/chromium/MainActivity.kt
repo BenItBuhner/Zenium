@@ -11,12 +11,9 @@ import android.os.Bundle
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
-import android.webkit.ValueCallback
-import android.webkit.WebChromeClient
 import android.widget.FrameLayout
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsAnimationCompat
@@ -29,7 +26,7 @@ import org.json.JSONObject
  * WebViews above it, and a topmost layer for HTML fullscreen. Rotation, DeX resizing and keyboard
  * changes are handled in place (see `configChanges` in the manifest) so no page ever reloads.
  */
-class MainActivity : AppCompatActivity() {
+class MainActivity : BrowserActivity() {
     private lateinit var root: FrameLayout
     private lateinit var fullscreenLayer: FrameLayout
     lateinit var host: Host
@@ -38,8 +35,6 @@ class MainActivity : AppCompatActivity() {
     private var latestInsets: WindowInsetsCompat? = null
     /** The keyboard is animating for the chrome; its frames are streamed as insets. */
     private var imeAnimating = false
-    private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
-    private var permissionCallback: ((Map<String, Boolean>) -> Unit)? = null
     private var textFilesCallback: ((JSONArray) -> Unit)? = null
     private var saveTextCallback: ((Boolean) -> Unit)? = null
     private var saveTextContent: String = ""
@@ -71,22 +66,6 @@ class MainActivity : AppCompatActivity() {
             files.put(json("name" to displayNameOf(uri), "text" to text))
         }
         callback(files)
-    }
-
-    private val fileChooser = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val callback = fileChooserCallback ?: return@registerForActivityResult
-        fileChooserCallback = null
-        callback.onReceiveValue(
-            if (result.resultCode == Activity.RESULT_OK)
-                WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
-            else null
-        )
-    }
-
-    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
-        val callback = permissionCallback ?: return@registerForActivityResult
-        permissionCallback = null
-        callback(results)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -165,7 +144,19 @@ class MainActivity : AppCompatActivity() {
     private fun handleIntent(intent: Intent?) {
         intent ?: return
         when (intent.action) {
-            Intent.ACTION_VIEW -> intent.dataString?.let { if (it.startsWith("http")) host.chrome.openUrl(it) }
+            Intent.ACTION_VIEW -> when {
+                // Another app's CustomTabsIntent aimed at this activity directly (links normally
+                // arrive through LinkDispatchActivity, which keeps the custom tab in the caller's
+                // task): render it as a custom tab, never as a tab of this window.
+                CustomTabIntents.isCustomTab(intent) -> startActivity(CustomTabIntents.toCustomTabActivity(this, intent))
+                // "Open in Zenium" from a custom tab: the live page arrives as a WebView to adopt.
+                intent.hasExtra(TabHandoff.EXTRA_TOKEN) -> {
+                    val view = TabHandoff.take(intent.getStringExtra(TabHandoff.EXTRA_TOKEN))
+                    if (view != null) host.tabs.adopt(view)
+                    else intent.dataString?.let { if (it.startsWith("http")) host.chrome.openUrl(it) }
+                }
+                else -> intent.dataString?.let { if (it.startsWith("http")) host.chrome.openUrl(it) }
+            }
             // Shared into Zenium: the core routes it (a link opens, text searches with the user's
             // engine, an image gets a page) – see Share.kt and src/shared/shareTarget.ts.
             Intent.ACTION_SEND -> host.share.onReceived(intent)
@@ -245,19 +236,7 @@ class MainActivity : AppCompatActivity() {
         return super.dispatchKeyEvent(event)
     }
 
-    // --- helpers for the WebChromeClients -------------------------------------------------------
-
-    fun showFileChooser(callback: ValueCallback<Array<Uri>>, params: WebChromeClient.FileChooserParams): Boolean {
-        fileChooserCallback?.onReceiveValue(null)
-        fileChooserCallback = callback
-        return try {
-            fileChooser.launch(params.createIntent())
-            true
-        } catch (e: Exception) {
-            fileChooserCallback = null
-            false
-        }
-    }
+    // --- helpers for the core ---------------------------------------------------------------------
 
     /** Let the user pick text files (CSS mods); answers with `[{ name, text }]`. */
     fun pickTextFiles(extensions: JSONArray, callback: (JSONArray) -> Unit) {
@@ -302,12 +281,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
         return uri.lastPathSegment?.substringAfterLast('/') ?: "mod.css"
-    }
-
-    fun requestRuntimePermissions(permissions: List<String>, callback: (Map<String, Boolean>) -> Unit) {
-        permissionCallback?.invoke(emptyMap())
-        permissionCallback = callback
-        permissionLauncher.launch(permissions.toTypedArray())
     }
 }
 

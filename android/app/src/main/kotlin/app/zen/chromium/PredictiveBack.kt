@@ -56,8 +56,21 @@ import kotlin.math.sqrt
  *
  * Registration follows the target: [refresh] re-decides it whenever the chrome's surfaces, the
  * active tab, its history or fullscreen change, except while a gesture is in flight.
+ *
+ * A custom tab has no chrome (`chrome` answers null) and never leaves back to the system: with
+ * `alwaysHandle` the callback stays registered and a back with nothing left to pop runs `onLeave`,
+ * which closes the tab to the app that opened it with that app's exit animation. Its one native
+ * surface (the find bar) is announced through `update(chrome = true)` and dismissed by
+ * `dismissOverlay` when the back commits.
  */
-class PredictiveBack(private val activity: MainActivity, private val host: Host) {
+class PredictiveBack(
+    private val activity: BrowserActivity,
+    private val host: PageHost,
+    private val chrome: () -> ChromeWebView?,
+    private val onLeave: () -> Unit,
+    private val alwaysHandle: Boolean = false,
+    private val dismissOverlay: () -> Boolean = { false }
+) {
     enum class Target { NONE, FULLSCREEN, CHROME, PAGE }
 
     private var chromeHandles = false
@@ -105,7 +118,7 @@ class PredictiveBack(private val activity: MainActivity, private val host: Host)
     fun refresh() {
         if (inFlight) return
         val next = currentTarget()
-        val enabled = next != Target.NONE || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+        val enabled = next != Target.NONE || alwaysHandle || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
         if (enabled != registered) Log.d(TAG, "back would $next (chrome=$chromeHandles tab=$pageTabId): callback ${if (enabled) "on" else "off"}")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             setRegistered(enabled)
@@ -146,7 +159,7 @@ class PredictiveBack(private val activity: MainActivity, private val host: Host)
         inFlight = true
         Log.d(TAG, "gesture from the ${edgeName(edge)} edge: $target")
         when (target) {
-            Target.CHROME -> host.chrome.backEvent("start", json("edge" to edgeName(edge)))
+            Target.CHROME -> chrome()?.backEvent("start", json("edge" to edgeName(edge)))
             Target.PAGE -> page = pageTab()?.let { tab -> PageBackTransition.begin(tab, host, edge) }
             Target.FULLSCREEN, Target.NONE -> Unit
         }
@@ -155,7 +168,7 @@ class PredictiveBack(private val activity: MainActivity, private val host: Host)
     private fun progress(fraction: Float) {
         if (!inFlight) return
         when (target) {
-            Target.CHROME -> host.chrome.backEvent("progress", json("progress" to fraction.toDouble()))
+            Target.CHROME -> chrome()?.backEvent("progress", json("progress" to fraction.toDouble()))
             Target.PAGE -> page?.progress(fraction)
             Target.FULLSCREEN, Target.NONE -> Unit
         }
@@ -168,8 +181,12 @@ class PredictiveBack(private val activity: MainActivity, private val host: Host)
         inFlight = false
         target = Target.NONE
         when (decided) {
-            Target.FULLSCREEN -> host.handleBackInFullscreen()
-            Target.CHROME -> host.chrome.backCommit { handled -> if (!handled) nothingLeft() }
+            Target.FULLSCREEN -> host.fullscreenTab?.let(host::exitFullscreen)
+            Target.CHROME -> {
+                val view = chrome()
+                if (view != null) view.backCommit { handled -> if (!handled) nothingLeft() }
+                else if (!dismissOverlay()) nothingLeft()
+            }
             Target.PAGE -> {
                 val transition = page
                 page = null
@@ -185,7 +202,7 @@ class PredictiveBack(private val activity: MainActivity, private val host: Host)
         Log.d(TAG, "cancel: $target")
         inFlight = false
         when (target) {
-            Target.CHROME -> host.chrome.backEvent("cancel", null)
+            Target.CHROME -> chrome()?.backEvent("cancel", null)
             Target.PAGE -> {
                 page?.cancel()
                 page = null
@@ -199,7 +216,7 @@ class PredictiveBack(private val activity: MainActivity, private val host: Host)
     /** No surface took the back: navigate the page plainly if it can, else leave like Chrome does. */
     private fun nothingLeft() {
         val tab = pageTab()
-        if (tab != null && tab.canGoBack()) tab.goBack() else activity.moveTaskToBack(true)
+        if (tab != null && tab.canGoBack()) tab.goBack() else onLeave()
     }
 
     companion object {
@@ -227,7 +244,7 @@ class PredictiveBack(private val activity: MainActivity, private val host: Host)
  */
 class PageBackTransition private constructor(
     private val tab: TabWebView,
-    private val host: Host,
+    private val host: PageHost,
     edge: Int,
     entry: HistorySnapshots.Entry?,
     item: WebHistoryItem
@@ -384,7 +401,7 @@ class PageBackTransition private constructor(
         tab.translationX = 0f
         (preview.parent as? ViewGroup)?.removeView(preview)
         if (tab.backTransition === this) tab.backTransition = null
-        host.back.onPageTransitionEnded(this)
+        host.onPageTransitionEnded(this)
     }
 
     companion object {
@@ -405,7 +422,7 @@ class PageBackTransition private constructor(
          * no history, another transition finishing – the commit then navigates plainly). A gesture
          * that lands while a cancel is still springing back catches that transition instead.
          */
-        fun begin(tab: TabWebView, host: Host, edge: Int): PageBackTransition? {
+        fun begin(tab: TabWebView, host: PageHost, edge: Int): PageBackTransition? {
             tab.backTransition?.let { running ->
                 if (running.finishing || running.done) return null
                 running.catchUp()

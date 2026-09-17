@@ -10,7 +10,7 @@ import androidx.core.content.ContextCompat
  * Bridges WebView permission prompts to the core's per-site decisions (which prompt the user once
  * and remember the answer), then to Android's runtime permissions.
  */
-class Permissions(private val host: Host) {
+class Permissions(private val host: PageHost) {
     private var seq = 0
     private val pending = HashMap<String, (Boolean) -> Unit>()
 
@@ -22,7 +22,7 @@ class Permissions(private val host: Host) {
     private fun ask(permission: String, url: String, then: (Boolean) -> Unit) {
         val id = "perm_${++seq}"
         pending[id] = then
-        host.chrome.hostEvent("permission.request", json("requestId" to id, "permission" to permission, "url" to url))
+        host.hostEvent("permission.request", json("requestId" to id, "permission" to permission, "url" to url))
     }
 
     fun onPermissionRequest(view: TabWebView, request: PermissionRequest) {

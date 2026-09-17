@@ -42,46 +42,55 @@ import java.util.concurrent.Executors
  * Implements every native method the JS core can call (`window.__zenNative.call`), and owns the
  * platform services the tab WebViews report into. One instance per activity.
  */
-class Host(val activity: MainActivity, private val root: FrameLayout, private val fullscreenLayer: FrameLayout) {
+class Host(override val activity: MainActivity, private val root: FrameLayout, private val fullscreenLayer: FrameLayout) : PageHost {
     val storage = Storage(activity)
-    val keys = Keys()
-    val permissions = Permissions(this)
-    val downloads = Downloads(activity, this)
+    override val keys = Keys()
+    override val permissions = Permissions(this)
+    override val downloads = Downloads(activity, this)
     var chrome = ChromeWebView(activity, this)
         private set
-    val tabs = TabHost(root, this)
+    override val tabs = TabHost(root, this)
     val agentServer = AgentServer(this)
     val updates = Updates(activity, this)
     val siteData = SiteData()
     /** The launcher icon colour (one enabled `activity-alias`), driven by Settings → Look and Feel. */
     val launcherIcon = LauncherIcon(activity)
-    val pageToken: String = SecureRandom().let { r -> ByteArray(16).also(r::nextBytes).joinToString("") { "%02x".format(it) } }
-    val pageScript: String = activity.assets.open("page.js").bufferedReader().readText().replace("__ZEN_TOKEN__", pageToken)
+    override val pageToken: String = SecureRandom().let { r -> ByteArray(16).also(r::nextBytes).joinToString("") { "%02x".format(it) } }
+    override val pageScript: String = activity.assets.open("page.js").bufferedReader().readText().replace("__ZEN_TOKEN__", pageToken)
     private val io = Executors.newCachedThreadPool { r -> Thread(r, "zen-io") }
     private val main = Handler(Looper.getMainLooper())
     /** The share sheet, in both directions (after `io`: it fetches on it). */
     val share = Share(this, io)
     /** Links that leave the web: held here while the core (and the user) decide. */
-    val externalProtocols = ExternalProtocols(this)
-    var fullscreenTab: TabWebView? = null
+    override val externalProtocols = ExternalProtocols(this)
+    override var fullscreenTab: TabWebView? = null
         private set
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
     var immersive = false
         private set
     /** The chrome's colour scheme, so native pieces (the back preview) match it. */
-    var themeDark = false
+    override var themeDark = false
         private set
     /** The chrome's `--zen-scrim` token (ARGB): the space-tinted dim under its sheets. */
-    var themeScrim = parseColor(DEFAULT_SCRIM)
+    override var themeScrim = parseColor(DEFAULT_SCRIM)
         private set
     /** Settings → Look and Feel → Pull to refresh, mirrored by the chrome (on until it says otherwise). */
-    var pullToRefresh = true
+    override var pullToRefresh = true
         private set
     /** Previews of the pages a back gesture would return to. */
-    val snapshots = HistorySnapshots(activity)
+    override val snapshots = HistorySnapshots(activity)
     /** Last: it reads the tabs and fullscreen state above when it decides what back would do. */
-    val back = PredictiveBack(activity, this)
+    val back = PredictiveBack(activity, this, chrome = { chrome }, onLeave = { activity.moveTaskToBack(true) })
     val lifecycle = HostLifecycle()
+
+    // --- what the pages report into (PageHost): all of it goes to the core in the chrome ------------
+
+    override fun viewEvent(tabId: String, name: String, payload: Any?) = chrome.viewEvent(tabId, name, payload)
+    override fun hostEvent(name: String, payload: Any?) = chrome.hostEvent(name, payload)
+    override fun onKey(tabId: String?, input: JSONObject) = chrome.onKey(tabId, input)
+    override fun pullEvent(tabId: String, phase: String, payload: JSONObject?) = chrome.pullEvent(tabId, phase, payload)
+    override fun backChanged() = back.refresh()
+    override fun onPageTransitionEnded(transition: PageBackTransition) = back.onPageTransitionEnded(transition)
 
     // ---------------------------------------------------------------------------------------------
     // Dispatch
@@ -254,7 +263,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     // Fullscreen (HTML element fullscreen and Zen's F11-style fullscreen)
     // ---------------------------------------------------------------------------------------------
 
-    fun enterFullscreen(tab: TabWebView, view: View, callback: WebChromeClient.CustomViewCallback) {
+    override fun enterFullscreen(tab: TabWebView, view: View, callback: WebChromeClient.CustomViewCallback) {
         if (fullscreenTab != null) exitFullscreen(fullscreenTab!!)
         fullscreenTab = tab
         fullscreenCallback = callback
@@ -265,7 +274,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
         back.refresh()
     }
 
-    fun exitFullscreen(tab: TabWebView) {
+    override fun exitFullscreen(tab: TabWebView) {
         if (fullscreenTab !== tab) return
         fullscreenLayer.removeAllViews()
         fullscreenLayer.visibility = View.GONE
@@ -275,13 +284,6 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
         if (!immersive) setSystemBarsHidden(false)
         chrome.viewEvent(tab.tabId, "leaveFullscreen", null)
         back.refresh()
-    }
-
-    /** Back gesture while a video is fullscreen: leave fullscreen first. */
-    fun handleBackInFullscreen(): Boolean {
-        val tab = fullscreenTab ?: return false
-        exitFullscreen(tab)
-        return true
     }
 
     private fun setImmersive(on: Boolean) {
@@ -300,7 +302,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     // Services
     // ---------------------------------------------------------------------------------------------
 
-    fun openExternal(url: String) {
+    override fun openExternal(url: String) {
         val intent = try {
             if (url.startsWith("intent:")) Intent.parseUri(url, Intent.URI_INTENT_SCHEME) else Intent(Intent.ACTION_VIEW, Uri.parse(url))
         } catch (e: Exception) {
