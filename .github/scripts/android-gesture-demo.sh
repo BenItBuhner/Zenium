@@ -1,19 +1,27 @@
 #!/usr/bin/env bash
-# Runs on the workflow runner once the emulator has booted: installs the debug APK and the gesture
-# driver (the GestureDemo instrumentation), records the screen while the driver performs the
-# gestures, and collects the recording, the screenshots and the logs under
-# artifacts/android-gesture-demo/.
+# Runs on the workflow runner once the emulator has booted: installs the debug APK and a demo
+# driver (an instrumentation class such as GestureDemo), records the screen while the driver
+# performs its sequence, and collects the recording, the screenshots and the logs under the
+# artifacts directory.
+#
+# Which demo runs is chosen through the environment (defaults are the URL-pill gesture demo):
+#   DEMO_CLASS  – instrumentation class to run
+#   DEMO_DIR    – handshake directory under the app's files/
+#   DEMO_OUT    – where the artifacts go
+#   DEMO_VIDEO  – file name of the recording
 #
 # Handshake with the driver, through files in the app's private storage (readable via run-as):
-#   files/gesture-demo/record     – written by the driver once its warm-up is done
-#   files/gesture-demo/recording  – written here once screenrecord is rolling
-#   files/gesture-demo/done       – written by the driver when the sequence is over
+#   files/<DEMO_DIR>/record     – written by the driver once its warm-up is done
+#   files/<DEMO_DIR>/recording  – written here once screenrecord is rolling
+#   files/<DEMO_DIR>/done       – written by the driver when the sequence is over
 set -euo pipefail
 
 app_id=app.zen.chromium.debug
 runner=app.zen.chromium.debug.test/androidx.test.runner.AndroidJUnitRunner
-out=artifacts/android-gesture-demo
-video=android-gestures-device-demo.mp4
+demo_class=${DEMO_CLASS:-app.zen.chromium.GestureDemo}
+demo_dir=${DEMO_DIR:-gesture-demo}
+out=${DEMO_OUT:-artifacts/android-gesture-demo}
+video=${DEMO_VIDEO:-android-gestures-device-demo.mp4}
 mkdir -p "$out"
 
 adb wait-for-device
@@ -87,12 +95,12 @@ adb logcat -c || true
 adb logcat -v time > "$out/logcat.txt" &
 logcat_pid=$!
 
-adb shell am instrument -w -e class app.zen.chromium.GestureDemo "$runner" > "$out/instrument.txt" 2>&1 &
+adb shell am instrument -w -e class "$demo_class" "$runner" > "$out/instrument.txt" 2>&1 &
 driver_pid=$!
 
 ready=0
 for _ in $(seq 1 1200); do
-  if adb shell run-as "$app_id" test -f files/gesture-demo/record 2>/dev/null; then
+  if adb shell run-as "$app_id" test -f "files/$demo_dir/record" 2>/dev/null; then
     ready=1
     break
   fi
@@ -113,12 +121,12 @@ fi
 adb shell screenrecord --bit-rate 8000000 --time-limit 170 "/sdcard/$video" &
 recorder_pid=$!
 sleep 1
-adb shell run-as "$app_id" touch files/gesture-demo/recording
+adb shell run-as "$app_id" touch "files/$demo_dir/recording"
 
 # Stop recording when the driver says it is done (it stays alive a little longer so the app is
 # still on screen), or when it dies.
 for _ in $(seq 1 720); do
-  if adb shell run-as "$app_id" test -f files/gesture-demo/done 2>/dev/null; then
+  if adb shell run-as "$app_id" test -f "files/$demo_dir/done" 2>/dev/null; then
     break
   fi
   if ! kill -0 "$driver_pid" 2>/dev/null; then
@@ -133,9 +141,9 @@ sleep 2
 kill "$logcat_pid" "$monitor_pid" 2> /dev/null || true
 
 adb pull "/sdcard/$video" "$out/$video"
-for name in $(adb shell run-as "$app_id" ls files/gesture-demo | tr -d '\r'); do
+for name in $(adb shell run-as "$app_id" ls "files/$demo_dir" | tr -d '\r'); do
   case "$name" in
-    *.png) adb exec-out run-as "$app_id" cat "files/gesture-demo/$name" > "$out/$name" ;;
+    *.png) adb exec-out run-as "$app_id" cat "files/$demo_dir/$name" > "$out/$name" ;;
   esac
 done
 
