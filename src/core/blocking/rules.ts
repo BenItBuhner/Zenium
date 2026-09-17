@@ -70,12 +70,7 @@ export const RESOURCE_TYPES: readonly ResourceType[] = [
 ]
 
 export type RuleActionType =
-  | 'block'
-  | 'allow'
-  | 'allowAllRequests'
-  | 'redirect'
-  | 'upgradeScheme'
-  | 'modifyHeaders'
+  'block' | 'allow' | 'allowAllRequests' | 'redirect' | 'upgradeScheme' | 'modifyHeaders'
 
 export type HeaderOperation = 'append' | 'set' | 'remove'
 

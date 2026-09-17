@@ -63,7 +63,11 @@ import {
 } from '../shared/updates'
 import { BLANK_URL } from '../shared/url'
 import { sanitizePromoState } from '../shared/defaultBrowser'
-import { emptyBlockingStatus, sanitizeBlockingSettings, type BlockingStatus } from '../shared/blocking'
+import {
+  emptyBlockingStatus,
+  sanitizeBlockingSettings,
+  type BlockingStatus
+} from '../shared/blocking'
 import { defer, type StoreIO } from './platform'
 import { sanitizeClosedEntries, summarizeClosed } from './session'
 import type { ZenWindow } from './window'

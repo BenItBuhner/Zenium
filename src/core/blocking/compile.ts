@@ -66,12 +66,17 @@ export function compileRule(rule: Rule): { filters: string[]; unsupported: strin
     case 'redirect':
       return {
         filters: [],
-        unsupported: ['redirect to an arbitrary URL has no filter-text equivalent ($redirect= names a bundled resource)']
+        unsupported: [
+          'redirect to an arbitrary URL has no filter-text equivalent ($redirect= names a bundled resource)'
+        ]
       }
     case 'modifyHeaders':
       return { filters: [], unsupported: ['modifyHeaders has no filter-text equivalent'] }
     default:
-      return { filters: [], unsupported: [`unknown action ${String((a as { type: unknown }).type)}`] }
+      return {
+        filters: [],
+        unsupported: [`unknown action ${String((a as { type: unknown }).type)}`]
+      }
   }
 
   if (a.type !== 'allowAllRequests') {
@@ -80,10 +85,13 @@ export function compileRule(rule: Rule): { filters: string[]; unsupported: strin
       for (const t of c.resourceTypes) {
         const opt = TYPE_OPTION[t]
         if (opt) mapped.add(opt)
-        else unsupported.push(`resource type ${t} is not expressible; the filter is narrower than the rule`)
+        else
+          unsupported.push(
+            `resource type ${t} is not expressible; the filter is narrower than the rule`
+          )
       }
       if (mapped.size === 0)
-        return { filters: [], unsupported: ['no expressible resource types'] }
+        return { filters: [], unsupported: [...unsupported, 'no expressible resource types'] }
       options.push(...mapped)
     }
     if (c.excludedResourceTypes && c.excludedResourceTypes.length > 0) {
@@ -109,20 +117,28 @@ export function compileRule(rule: Rule): { filters: string[]; unsupported: strin
     options.push(`method=${c.excludedRequestMethods.map((m) => `~${m.toLowerCase()}`).join('|')}`)
 
   if (c.isUrlFilterCaseSensitive) options.push('match-case')
-  if (c.tabIds || c.excludedTabIds) unsupported.push('tabIds cannot be expressed; the filter applies to every tab')
+  if (c.tabIds || c.excludedTabIds)
+    unsupported.push('tabIds cannot be expressed; the filter applies to every tab')
   if (c.excludedRequestDomains && c.excludedRequestDomains.length > 0)
-    unsupported.push('excludedRequestDomains cannot be expressed; the filter is broader than the rule')
-  if ((rule.priority ?? 1) > 1) unsupported.push('rule priority is flattened (filter text has none)')
+    unsupported.push(
+      'excludedRequestDomains cannot be expressed; the filter is broader than the rule'
+    )
+  if ((rule.priority ?? 1) > 1)
+    unsupported.push('rule priority is flattened (filter text has none)')
 
   let patterns: string[]
   if (c.regexFilter !== undefined) {
     patterns = [`/${c.regexFilter}/`]
     if (c.requestDomains && c.requestDomains.length > 0)
-      unsupported.push('requestDomains with regexFilter cannot be expressed; the filter is broader than the rule')
+      unsupported.push(
+        'requestDomains with regexFilter cannot be expressed; the filter is broader than the rule'
+      )
   } else if (c.urlFilter) {
     patterns = [c.urlFilter]
     if (c.requestDomains && c.requestDomains.length > 0)
-      unsupported.push('requestDomains with urlFilter cannot be expressed; the filter is broader than the rule')
+      unsupported.push(
+        'requestDomains with urlFilter cannot be expressed; the filter is broader than the rule'
+      )
   } else if (c.requestDomains && c.requestDomains.length > 0) {
     patterns = c.requestDomains.map((d) => `||${d.toLowerCase()}^`)
   } else {

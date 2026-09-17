@@ -505,7 +505,11 @@ export function domainOf(url: string): string | null {
 /** `host` equals `domain` or is one of its subdomains. */
 export function hostMatchesDomain(host: string, domain: string): boolean {
   if (host === domain) return true
-  return host.length > domain.length && host.endsWith(domain) && host[host.length - domain.length - 1] === '.'
+  return (
+    host.length > domain.length &&
+    host.endsWith(domain) &&
+    host[host.length - domain.length - 1] === '.'
+  )
 }
 
 /**

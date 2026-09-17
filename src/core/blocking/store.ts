@@ -94,7 +94,11 @@ export class RuleSetStore {
         delete entry.file
       }
       this.entries.set(entry.id, entry)
-      out.push({ set: this.toRuleSet(entry), filterCount: entry.filterCount, hasFilterText: entry.hasFilterText })
+      out.push({
+        set: this.toRuleSet(entry),
+        filterCount: entry.filterCount,
+        hasFilterText: entry.hasFilterText
+      })
     }
     return out
   }

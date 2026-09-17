@@ -17,7 +17,13 @@ const HEADER_RE = /^!\s*([A-Za-z][A-Za-z ]*?)\s*:\s*(.+?)\s*$/
 
 /** Read the `! Key: value` header block that starts every ABP list (stops at the first filter). */
 export function parseListHeader(text: string): ListHeader {
-  const out: ListHeader = { title: null, version: null, expiresMs: null, homepage: null, licence: null }
+  const out: ListHeader = {
+    title: null,
+    version: null,
+    expiresMs: null,
+    homepage: null,
+    licence: null
+  }
   let seen = 0
   for (const line of lines(text, 60)) {
     const trimmed = line.trim()
@@ -88,7 +94,8 @@ export function countNetworkFilters(text: string): number {
 }
 
 const HOSTS_LINE_RE = /^(?:0\.0\.0\.0|127\.0\.0\.1|::1?|::)\s+([a-z0-9][a-z0-9.-]*)(?:\s+.*)?$/i
-const BARE_HOST_RE = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i
+const BARE_HOST_RE =
+  /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i
 const LOCAL_HOSTS = new Set([
   'localhost',
   'localhost.localdomain',

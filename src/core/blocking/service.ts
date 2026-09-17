@@ -19,7 +19,12 @@ import type { Browser } from '../browser'
 import type { BundledFilterList } from '../platform'
 import { hostMatchesDomain, hostnameOf, registrableDomain } from './domain'
 import { RuleEngine } from './engine'
-import { parseListHeader, prepareListText, validateFilterText, type FilterSyntaxError } from './lists'
+import {
+  parseListHeader,
+  prepareListText,
+  validateFilterText,
+  type FilterSyntaxError
+} from './lists'
 import {
   BUILTIN_RULE_SETS,
   RULE_SET_PRIORITY,
@@ -384,7 +389,11 @@ export class BlockingService {
       if (header.version) set.version = header.version
       if (source.custom) {
         const name = header.title ?? source.name
-        set.attribution = { name, url: header.homepage ?? source.url, licence: header.licence ?? '' }
+        set.attribution = {
+          name,
+          url: header.homepage ?? source.url,
+          licence: header.licence ?? ''
+        }
         this.renameCustomList(id, name)
       }
       this.engine.setRuleSet(set)
@@ -438,7 +447,11 @@ export class BlockingService {
     })
 
     const userText = s.userFilters.trim()
-    if (!previous || previous.userFilters !== s.userFilters || (userText && !this.engine.has(USER_RULE_SET_ID))) {
+    if (
+      !previous ||
+      previous.userFilters !== s.userFilters ||
+      (userText && !this.engine.has(USER_RULE_SET_ID))
+    ) {
       if (userText) {
         const prepared = prepareListText(s.userFilters)
         this.userFilterErrors = validateFilterText(s.userFilters)
@@ -457,6 +470,7 @@ export class BlockingService {
     }
 
     const enabled = enabledListsFor(s)
+    const wasEnabled = previous ? enabledListsFor(previous) : new Set<string>()
     const wanted = new Set(this.sources().map((source) => source.id))
     for (const summary of this.engine.listRuleSets()) {
       if (summary.source !== 'filter-list') continue
@@ -475,9 +489,10 @@ export class BlockingService {
         // Unknown to the engine: register it (disabled sets keep their place in the index).
         this.engine.setRuleSet(this.listSet(source, on))
       }
-      // Newly enabled without content (a custom list just added, a stricter level on a build
-      // without a snapshot): fetch now regardless of the schedule.
-      if (on && this.ready && !(summary?.hasFilterText ?? false) && !this.runtime.get(source.id)?.updating)
+      // Just switched on without content (a custom list added, a stricter level on a build
+      // without a snapshot): fetch now instead of waiting for the next sweep.
+      const fresh = on && !wasEnabled.has(source.id) && !(summary?.hasFilterText ?? false)
+      if (fresh && this.ready && !this.runtime.get(source.id)?.updating)
         void this.enqueue(source.id)
     }
   }

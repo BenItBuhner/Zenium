@@ -263,7 +263,9 @@ export class RuleEngine implements BlockingEngine {
     const hasFilterText =
       input.filterText !== undefined ? input.filterText.length > 0 : Boolean(options.hasFilterText)
     const filterCount =
-      input.filterText !== undefined ? countNetworkFilters(input.filterText) : (options.filterCount ?? 0)
+      input.filterText !== undefined
+        ? countNetworkFilters(input.filterText)
+        : (options.filterCount ?? 0)
     const summary: RuleSetSummary = {
       id: input.id,
       source: input.source,
@@ -392,13 +394,20 @@ export class RuleEngine implements BlockingEngine {
         const decision = decisionFor(r, f)
         if (!decision) continue
         const candidate = { effective: r.effective, rank: r.rank, decision }
-        if (!best || candidate.effective > best.effective || (candidate.effective === best.effective && candidate.rank > best.rank)) {
+        if (
+          !best ||
+          candidate.effective > best.effective ||
+          (candidate.effective === best.effective && candidate.rank > best.rank)
+        ) {
           best = candidate
         }
       }
     }
 
-    if (this.textMatcher && !(best && best.decision.action === 'allow' && best.effective >= TEXT_EFFECTIVE)) {
+    if (
+      this.textMatcher &&
+      !(best && best.decision.action === 'allow' && best.effective >= TEXT_EFFECTIVE)
+    ) {
       if (!best || best.effective <= TEXT_EFFECTIVE) {
         const text = this.textMatcher.match(ctx)
         if (text) {
@@ -409,7 +418,11 @@ export class RuleEngine implements BlockingEngine {
           decision.matched = { setId: TEXT_MATCH_SET_ID, filter: text.filter }
           const rank = RANK[text.action] ?? 0
           const candidate = { effective: TEXT_EFFECTIVE, rank, decision }
-          if (!best || candidate.effective > best.effective || (candidate.effective === best.effective && candidate.rank > best.rank)) {
+          if (
+            !best ||
+            candidate.effective > best.effective ||
+            (candidate.effective === best.effective && candidate.rank > best.rank)
+          ) {
             best = candidate
           }
         }
@@ -440,7 +453,8 @@ export class RuleEngine implements BlockingEngine {
   private orderedSets(): StoredSet[] {
     if (!this.ordered) {
       this.ordered = [...this.sets.values()].sort(
-        (a, b) => b.summary.priority - a.summary.priority || a.summary.id.localeCompare(b.summary.id)
+        (a, b) =>
+          b.summary.priority - a.summary.priority || a.summary.id.localeCompare(b.summary.id)
       )
     }
     return this.ordered

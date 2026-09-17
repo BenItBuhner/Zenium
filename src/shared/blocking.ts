@@ -204,7 +204,9 @@ export function normalizeSiteException(input: string): string | null {
     : null
 }
 
-export function sanitizeBlockingSettings(input: Partial<BlockingSettings> | undefined): BlockingSettings {
+export function sanitizeBlockingSettings(
+  input: Partial<BlockingSettings> | undefined
+): BlockingSettings {
   const d = DEFAULT_BLOCKING_SETTINGS
   const s = input ?? {}
   const lists: Record<string, boolean> = {}

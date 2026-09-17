@@ -67,7 +67,11 @@ export function compileRegexFilter(source: string, caseSensitive = false): RegEx
 }
 
 /** Apply a `regexSubstitution` (`\1`-style groups) after `regex` matched `url`. */
-export function applyRegexSubstitution(regex: RegExp, url: string, substitution: string): string | null {
+export function applyRegexSubstitution(
+  regex: RegExp,
+  url: string,
+  substitution: string
+): string | null {
   const match = regex.exec(url)
   if (!match) return null
   return substitution.replace(/\\(\d)/g, (_, digit: string) => match[Number(digit)] ?? '')
