@@ -33,7 +33,7 @@ import { AgentsSection } from './AgentsSection'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { OverlayShell } from './OverlayShell'
 import { ResourcesSection } from './ResourcesSection'
-import { Choice, Group, Row } from './SettingsPrimitives'
+import { Choice, Group, Row, Segmented } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
 import { SyncSection } from './SyncSection'
 import { UpdatesSection } from './UpdatesSection'
@@ -248,11 +248,9 @@ function LookSection({
             ]}
           />
         </Row>
-        <Row
-          label="Position on phones"
-          hint="Press and hold the address bar to carry it to the other edge of the screen."
-        >
-          <Choice<PhoneBarPosition>
+        <Row label="Position on phones" hint="Hold the address bar to carry it to the other edge.">
+          <Segmented<PhoneBarPosition>
+            label="Position on phones"
             value={s.phoneBarPosition}
             onChange={(v) => set({ phoneBarPosition: v })}
             options={[

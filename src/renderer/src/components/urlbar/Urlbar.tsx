@@ -512,7 +512,7 @@ function SuggestionRow({
     <li
       className={cn(
         'zen-suggestion flex shrink-0 cursor-default items-center gap-3 px-2.5',
-        sheet ? 'h-11' : 'h-9'
+        sheet ? 'zen-suggestion-sheet h-11' : 'h-9'
       )}
       data-selected={selected}
       onMouseEnter={onHover}
@@ -539,8 +539,15 @@ function SuggestionRow({
       ) : (
         <Icon className="h-4 w-4 shrink-0 opacity-60" />
       )}
-      <span className="min-w-0 flex-1 truncate text-[13.5px]">{item.title}</span>
-      <span className="max-w-[45%] truncate text-[12px] text-[var(--zen-muted)]">
+      <span className={cn('min-w-0 flex-1 truncate', sheet ? 'text-[14px]' : 'text-[13.5px]')}>
+        {item.title}
+      </span>
+      <span
+        className={cn(
+          'max-w-[45%] truncate text-[var(--zen-muted)]',
+          sheet ? 'text-[13px]' : 'text-[12px]'
+        )}
+      >
         {item.subtitle}
       </span>
       {item.kind === 'tab' && <ArrowRight className="h-3.5 w-3.5 opacity-50" />}
