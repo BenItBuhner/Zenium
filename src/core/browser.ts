@@ -263,7 +263,7 @@ export class Browser {
   }
 
   onWindowFocused(win: ZenWindow): void {
-    if (this.state.settings.onboardingDone) this.tabs.claimVisible(win)
+    if (this.state.settings.onboardingDone && win.isChromeReady) this.tabs.claimVisible(win)
   }
 
   onWindowClosing(win: ZenWindow): void {

@@ -91,6 +91,10 @@ export class ZenWindow {
     return this.closing
   }
 
+  get isChromeReady(): boolean {
+    return this.chromeReadyOnce
+  }
+
   // ---------------------------------------------------------------------------
   // Selection
   // ---------------------------------------------------------------------------

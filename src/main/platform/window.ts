@@ -68,6 +68,20 @@ export class ElectronWindow implements WindowHost {
     if (init.maximized) win.maximize()
 
     win.once('ready-to-show', () => win.show())
+    win.on('close', () => {
+      if (this.boundsTimer) clearTimeout(this.boundsTimer)
+      zen.onClosing()
+    })
+    win.on('closed', () => {
+      this.stopCompactTracking()
+      zen.onClosed()
+    })
+    const wc = win.webContents
+    wc.on('did-finish-load', () => zen.onChromeReady())
+    // Navigate before attaching the rest of the listeners so the chrome renderer is never left
+    // sitting at an empty URL (that sandboxed guest logs WIN-009).
+    this.loadChrome()
+
     win.on('maximize', () => zen.onWindowStateChanged())
     win.on('unmaximize', () => zen.onWindowStateChanged())
     win.on('enter-full-screen', () => zen.onWindowStateChanged())
@@ -82,17 +96,8 @@ export class ElectronWindow implements WindowHost {
       if (direction === 'left') browser.actions.run('space.next', { sourceTabId: null, win: zen })
       if (direction === 'right') browser.actions.run('space.prev', { sourceTabId: null, win: zen })
     })
-    win.on('close', () => {
-      if (this.boundsTimer) clearTimeout(this.boundsTimer)
-      zen.onClosing()
-    })
-    win.on('closed', () => {
-      this.stopCompactTracking()
-      zen.onClosed()
-    })
     this.startCompactTracking()
 
-    const wc = win.webContents
     wc.on('before-input-event', (event, input) => {
       const key: KeyEventInput = {
         type: input.type as KeyEventInput['type'],
@@ -111,8 +116,10 @@ export class ElectronWindow implements WindowHost {
     })
     wc.on('will-navigate', (event) => event.preventDefault())
     wc.on('context-menu', (event) => event.preventDefault())
-    wc.on('did-finish-load', () => zen.onChromeReady())
+  }
 
+  private loadChrome(): void {
+    const win = this.win
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
       void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
     } else {
