@@ -1,6 +1,7 @@
 import type { UIState } from '@shared/types'
 import { run } from '../api'
 import { SPRING_GENTLE, SPRING_SNAPPY, SpringAnimation } from '../motion/spring'
+import { pushBackSurface } from '../back'
 import { activeSpace, activeTab, tabOrderOf } from '../selectors'
 import { createStore } from '../store'
 import { captureThumbnail, pruneThumbnails } from '../thumbnails'
@@ -8,7 +9,6 @@ import {
   browserStore,
   contentAreaStore,
   invalidateSnapshot,
-  registerBackHandler,
   returnFocusToPage,
   uiStore
 } from '../ui'
@@ -397,6 +397,43 @@ function finishOverviewClose(): void {
   if (!hero) done()
 }
 
+// --- the system back gesture -------------------------------------------------------------------
+
+let backStartProgress = 1
+
+/**
+ * A back gesture began on the open overview: from here the finger drives the same 0…1 track the
+ * pill does, in reverse, so the page grows back out of its card exactly as far as the finger
+ * has travelled.
+ */
+function beginOverviewBack(): void {
+  const overview = stageStore.get().overview
+  if (overview.phase === 'closed') return
+  if (overview.phase === 'settling') overviewSpring.stop()
+  cancelOverviewCommit?.()
+  cancelOverviewCommit = null
+  const hero = currentActiveTabId()
+  // The page morphs into its own card: make sure that card is on screen before measuring it.
+  if (hero)
+    document
+      .querySelector(`.zen-overview [data-tab-id="${hero}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  backStartProgress = Math.min(1, Math.max(0, overview.progress))
+  stageStore.set({ overview: { ...overview, phase: 'dragging', heroTabId: hero } })
+}
+
+function dragOverviewBack(progress: number): void {
+  const overview = stageStore.get().overview
+  if (overview.phase !== 'dragging') return
+  const next = backStartProgress * (1 - progress)
+  if (next !== overview.progress) stageStore.set({ overview: { ...overview, progress: next } })
+}
+
+function cancelOverviewBack(): void {
+  if (stageStore.get().overview.phase !== 'dragging') return
+  settleOverview(1)
+}
+
 /** Drop the overview without animation (another overlay took over, the layout changed). */
 export function dismissOverview(): void {
   overviewSpring.stop()
@@ -422,12 +459,22 @@ export function dismissStage(): void {
 const flags = globalThis as unknown as { __zenStageWired?: boolean }
 if (!flags.__zenStageWired) {
   flags.__zenStageWired = true
-  // Hardware / gesture back closes the overview before anything else.
-  registerBackHandler(() => {
-    const { phase } = stageStore.get().overview
-    if (phase === 'closed') return false
-    closeOverview()
-    return true
+  // The open overview is a back surface: the gesture pulls the page back out of its card.
+  let popOverviewSurface: (() => void) | null = null
+  stageStore.subscribe(() => {
+    const open = stageStore.get().overview.phase !== 'closed'
+    if (open && !popOverviewSurface) {
+      popOverviewSurface = pushBackSurface({
+        name: 'overview',
+        onStart: beginOverviewBack,
+        onProgress: dragOverviewBack,
+        onCommit: () => closeOverview(),
+        onCancel: cancelOverviewBack
+      })
+    } else if (!open && popOverviewSurface) {
+      popOverviewSurface()
+      popOverviewSurface = null
+    }
   })
   // Any other chrome surface (URL bar, panels, drawer, menu) replaces the overview outright.
   uiStore.subscribe(() => {

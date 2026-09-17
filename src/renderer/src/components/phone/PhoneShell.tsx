@@ -4,6 +4,7 @@ import { ArrowLeft, Lock, MoreHorizontal, Plus, Search } from 'lucide-react'
 import type { Space, Tab, UIState } from '@shared/types'
 import { displayUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
+import { useBackDismissal } from '@renderer/lib/back'
 import {
   closeOverview,
   overviewIsOpen,
@@ -77,27 +78,50 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       </main>
       <PhoneStage state={state} />
       {!barHidden && <PhoneBar state={state} />}
-      {ui.drawerOpen && (
-        // Closing on click (not pointerdown) keeps the tap from falling through to the bar below.
-        <div className="absolute inset-0 z-40" onClick={() => closeDrawer()}>
-          <div
-            className={cn(
-              'zen-drawer absolute inset-y-0 flex w-[min(320px,calc(100%-56px))] p-2',
-              side === 'left' ? 'left-0 zen-drawer-left' : 'right-0 zen-drawer-right'
-            )}
-            style={{
-              paddingTop: 'calc(var(--zen-inset-top) + 8px)',
-              paddingBottom: 'calc(var(--zen-inset-bottom) + 8px)'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <DrawerSidebar state={state} isDark={isDark} />
-          </div>
-        </div>
-      )}
+      {ui.drawerOpen && <PhoneDrawer state={state} side={side} isDark={isDark} />}
       <PhoneToasts ui={ui} barVisible={!barHidden} />
       <TabDialogs state={state} />
       {onboarding && <Onboarding state={state} />}
+    </div>
+  )
+}
+
+/** The sidebar drawer over the content; the system back gesture slides it back out of its side. */
+function PhoneDrawer({
+  state,
+  side,
+  isDark
+}: {
+  state: UIState
+  side: 'left' | 'right'
+  isDark: boolean
+}): JSX.Element {
+  const drawerRef = useRef<HTMLDivElement>(null)
+  useBackDismissal('drawer', {
+    travel: 320,
+    render: (v) => {
+      const el = drawerRef.current
+      if (el) el.style.transform = `translateX(${(side === 'left' ? -1 : 1) * v * 100}%)`
+    },
+    dismissed: () => closeDrawer()
+  })
+  return (
+    // Closing on click (not pointerdown) keeps the tap from falling through to the bar below.
+    <div className="absolute inset-0 z-40" onClick={() => closeDrawer()}>
+      <div
+        ref={drawerRef}
+        className={cn(
+          'zen-drawer absolute inset-y-0 flex w-[min(320px,calc(100%-56px))] p-2',
+          side === 'left' ? 'left-0 zen-drawer-left' : 'right-0 zen-drawer-right'
+        )}
+        style={{
+          paddingTop: 'calc(var(--zen-inset-top) + 8px)',
+          paddingBottom: 'calc(var(--zen-inset-bottom) + 8px)'
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <DrawerSidebar state={state} isDark={isDark} />
+      </div>
     </div>
   )
 }

@@ -4,6 +4,7 @@ import { ArrowRight, Bookmark, Clock, Globe, Layers, Search, Terminal } from 'lu
 import type { Rect, Suggestion, UIState } from '@shared/types'
 import { ERROR_URL_PREFIX, BLANK_URL } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
+import { useBackDismissal } from '@renderer/lib/back'
 import { closeUrlbar, type UrlbarState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 
@@ -102,6 +103,20 @@ export function Urlbar({ state, urlbar, area }: Props): JSX.Element {
     },
     [tab, text]
   )
+
+  // The system back gesture lifts the bar away and fades it; commit closes it keeping the draft,
+  // like Escape, cancel springs it back.
+  const panelRef = useRef<HTMLDivElement>(null)
+  useBackDismissal('urlbar', {
+    travel: 240,
+    render: (v) => {
+      const el = panelRef.current
+      if (!el) return
+      el.style.transform = `translateY(${-28 * v}px) scale(${1 - 0.04 * v})`
+      el.style.opacity = String(1 - v)
+    },
+    dismissed: () => close(true)
+  })
 
   const submit = (
     item: Suggestion | null,
@@ -207,6 +222,7 @@ export function Urlbar({ state, urlbar, area }: Props): JSX.Element {
   return (
     <div className="absolute inset-0 z-30" onMouseDown={() => close(true)}>
       <div
+        ref={panelRef}
         className={cn(
           'zen-panel zen-animate-in absolute flex flex-col overflow-hidden',
           floating ? 'rounded-2xl' : 'rounded-xl'

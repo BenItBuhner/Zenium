@@ -1,6 +1,5 @@
 import type { MenuDescriptor, OverlayKind, Rect, UIState, UrlbarOpenMode } from '@shared/types'
 import { cmd, onEvent, run } from './api'
-import { activeTab } from './selectors'
 import { createStore } from './store'
 import { rememberThumbnail, thumbnailOf } from './thumbnails'
 
@@ -311,59 +310,7 @@ export function overlayCoversContent(ui: UiState): boolean {
   )
 }
 
-type BackHandler = () => boolean
-const backHandlers: BackHandler[] = []
-
-/** Let a piece of chrome UI answer the system back gesture before the defaults below. */
-export function registerBackHandler(handler: BackHandler): () => void {
-  backHandlers.push(handler)
-  return () => {
-    const index = backHandlers.indexOf(handler)
-    if (index >= 0) backHandlers.splice(index, 1)
-  }
-}
-
-/**
- * Hardware / gesture back (mobile hosts). Closes the topmost piece of chrome UI, then navigates
- * the active tab back. Returns false when nothing was left to do (the host may background the app).
- */
-export function handleSystemBack(): boolean {
-  const ui = uiStore.get()
-  const state = browserStore.get().state
-  if (ui.menu) {
-    closeMenu()
-    return true
-  }
-  if (ui.urlbar.open) {
-    closeUrlbar()
-    return true
-  }
-  if (ui.overlay !== 'none' && ui.overlay !== 'onboarding') {
-    closeOverlay()
-    return true
-  }
-  if (ui.drawerOpen) {
-    closeDrawer()
-    return true
-  }
-  for (const handler of backHandlers) if (handler()) return true
-  if (state?.glance) {
-    run('glance.close', undefined)
-    return true
-  }
-  if (ui.findOpen && ui.findTabId) {
-    run('find.stop', { tabId: ui.findTabId, keepSelection: true })
-    uiStore.set({ findOpen: false, findTabId: null })
-    returnFocusToPage()
-    return true
-  }
-  const tab = state ? activeTab(state) : null
-  if (tab?.canGoBack) {
-    run('tab.back', { tabId: tab.id })
-    return true
-  }
-  return false
-}
+// The system back gesture (registry of dismissable surfaces, legacy chain) lives in `back.ts`.
 
 // ---------------------------------------------------------------------------
 // Multi-select (Ctrl+click toggles, Shift+click extends from the anchor)

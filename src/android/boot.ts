@@ -9,7 +9,13 @@ import type {
 import { resolveTheme, rgbToHex } from '@shared/theme'
 import { Browser } from '@core/browser'
 import type { KeyEventInput } from '@core/platform'
-import { handleSystemBack } from '@renderer/lib/ui'
+import {
+  backStore,
+  dispatchBackEvent,
+  refreshBackState,
+  type BackEventPayload,
+  type BackPhase
+} from '@renderer/lib/back'
 import { Bridge, getNativeBridge } from './bridge'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
@@ -29,8 +35,12 @@ export interface HostGlobal {
   hostEvent(name: string, json: string): void
   /** Physical key from a page WebView (or null tab for the chrome); returns "consumed". */
   onKey(tabId: string | null, json: string): boolean
-  /** Hardware/gesture back; returns false when the host should background the app. */
-  onBack(): boolean
+  /**
+   * The system back gesture aimed at the chrome: `start` / `progress` / `cancel` as it happens,
+   * `commit` when it is let go (also on its own, from a back button). Returns whether the chrome
+   * had anything for it; a `commit` that returns false leaves the host to background the app.
+   */
+  backEvent(phase: string, json: string | null): boolean
   /** The user tapped the notification / launcher again: bring a URL in. */
   openUrl(url: string): void
 }
@@ -54,6 +64,7 @@ export function bootAndroid(): { browser: Browser; api: ZenApi; preview: boolean
   platform.bind(browser)
   platformRef.current = platform
   syncNativeTheme(bridge, platform, browser)
+  syncBackState(bridge)
   browser.start()
 
   // Shortcuts typed into the chrome itself go through the same table as page keys.
@@ -123,6 +134,18 @@ function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Bro
   systemDark.addEventListener('change', () => apply(browser.state.snapshot(platform.window)))
 }
 
+/**
+ * Tell Kotlin ahead of every back gesture whether the chrome would take it and which tab's page
+ * is up: it registers its back callback only then, so with nothing to pop the system's own
+ * back-to-home animation runs (see `PredictiveBack.kt` and the chrome's `lib/back.ts`).
+ */
+function syncBackState(bridge: Bridge): void {
+  const send = (): void => bridge.send('back.update', backStore.get())
+  backStore.subscribe(send)
+  refreshBackState()
+  send()
+}
+
 function installHostGlobal(bridge: Bridge, platformRef: { current: AndroidPlatform | null }): void {
   const parse = <T>(json: string | null | undefined): T =>
     (json === null || json === undefined || json === '' ? undefined : JSON.parse(json)) as T
@@ -142,7 +165,8 @@ function installHostGlobal(bridge: Bridge, platformRef: { current: AndroidPlatfo
       ),
     onKey: (tabId, json) =>
       platformRef.current?.viewKey(tabId, parse<KeyEventInput>(json)) ?? false,
-    onBack: () => handleSystemBack(),
+    backEvent: (phase, json) =>
+      dispatchBackEvent(phase as BackPhase, parse<BackEventPayload | null>(json)),
     openUrl: (url) => {
       const platform = platformRef.current
       platform?.browser.openExternalUrl(url, platform.window)
