@@ -44,7 +44,12 @@ import {
   type EngineSetKind,
   type RuleSink
 } from './sink'
-import { actionTypePriority, type CompiledRule, type ModifyHeaderInfo, type RulesetSource } from './rules'
+import {
+  actionTypePriority,
+  type CompiledRule,
+  type ModifyHeaderInfo,
+  type RulesetSource
+} from './rules'
 
 /** One ruleset of an extension, as the state machine hands it over. */
 export interface TranslateRuleset {

@@ -143,7 +143,7 @@ function originHost(input: string | undefined): string | undefined {
   if (input === undefined) return undefined
   try {
     const url = new URL(input)
-    if (url.protocol === 'data:' || url.protocol === 'blob:' && url.origin === 'null') {
+    if (url.protocol === 'data:' || (url.protocol === 'blob:' && url.origin === 'null')) {
       return undefined
     }
     return url.hostname === '' ? undefined : url.hostname
@@ -192,7 +192,12 @@ function findFuzzy(text: string, subpattern: string, from = 0): number {
   return -1
 }
 
-function isSubdomainAnchored(url: string, hostBegin: number, hostEnd: number, position: number): boolean {
+function isSubdomainAnchored(
+  url: string,
+  hostBegin: number,
+  hostEnd: number,
+  position: number
+): boolean {
   return (
     position === hostBegin ||
     (position > hostBegin && position <= hostEnd && url[position - 1] === '.')
@@ -250,7 +255,9 @@ function matchesLastSubpattern(
   hostEnd: number,
   subpattern: string
 ): boolean {
-  if (matchesLastSubpatternInternal(anchorLeft, anchorRight, text, hostBegin, hostEnd, subpattern)) {
+  if (
+    matchesLastSubpatternInternal(anchorLeft, anchorRight, text, hostBegin, hostEnd, subpattern)
+  ) {
     return true
   }
   // A trailing separator placeholder also matches the end of the text.
@@ -306,7 +313,14 @@ function matchesPattern(
     if (position < 0) return false
     text = text.slice(position + subpatterns[i]!.length)
   }
-  return matchesLastSubpattern('none', anchorRight, text, 0, 0, subpatterns[subpatterns.length - 1]!)
+  return matchesLastSubpattern(
+    'none',
+    anchorRight,
+    text,
+    0,
+    0,
+    subpatterns[subpatterns.length - 1]!
+  )
 }
 
 /**
@@ -560,7 +574,8 @@ function matchesGlob(text: string, pattern: string): boolean {
       const p = pattern[pi]!
       if (p === '*') {
         result = false
-        for (let skip = 0; ti + skip <= text.length && !result; skip++) result = go(ti + skip, pi + 1)
+        for (let skip = 0; ti + skip <= text.length && !result; skip++)
+          result = go(ti + skip, pi + 1)
       } else if (p === '?') {
         result = go(ti, pi + 1) || (ti < text.length && go(ti + 1, pi + 1))
       } else {
@@ -611,7 +626,9 @@ export function matchesRule(rule: CompiledRule, evaluated: EvaluatedRequest): bo
   if (rule.domainType === 'firstParty' && evaluated.isThirdParty) return false
   if (rule.domainType === 'thirdParty' && !evaluated.isThirdParty) return false
   if (rule.actionType === 'upgradeScheme' && !isUpgradeable(evaluated.url.url)) return false
-  if (!hostMatchesDomainLists(evaluated.url.host, rule.requestDomains, rule.excludedRequestDomains)) {
+  if (
+    !hostMatchesDomainLists(evaluated.url.host, rule.requestDomains, rule.excludedRequestDomains)
+  ) {
     return false
   }
   if (evaluated.initiatorHost === undefined) {
@@ -679,9 +696,11 @@ export function applyRegexSubstitution(
 
 /** `base::EscapeQueryParamValue(value, use_plus = true)`, as applied to transform params. */
 function escapeQueryParam(value: string): string {
-  return encodeURIComponent(value).replace(/%20/g, '+').replace(/[!'()*]/g, (c) => {
-    return `%${c.charCodeAt(0).toString(16).toUpperCase()}`
-  })
+  return encodeURIComponent(value)
+    .replace(/%20/g, '+')
+    .replace(/[!'()*]/g, (c) => {
+      return `%${c.charCodeAt(0).toString(16).toUpperCase()}`
+    })
 }
 
 /**
@@ -734,7 +753,8 @@ export function applyUrlTransform(url: string, transform: URLTransform): string 
   const path = transform.path ?? source.pathname
   let query = source.search
   if (transform.query !== undefined) query = transform.query
-  else if (transform.queryTransform) query = applyQueryTransform(source.search, transform.queryTransform)
+  else if (transform.queryTransform)
+    query = applyQueryTransform(source.search, transform.queryTransform)
   const fragment = transform.fragment ?? source.hash
   const username = transform.username ?? source.username
   const password = transform.password ?? source.password

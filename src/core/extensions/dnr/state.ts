@@ -67,18 +67,22 @@ export const ERROR_DISABLED_STATIC_RULE_COUNT_EXCEEDED =
   'The number of disabled static rules exceeds the disabled rule count limit.'
 export const ERROR_DYNAMIC_RULE_COUNT_EXCEEDED = 'Dynamic rule count exceeded.'
 export const ERROR_DYNAMIC_UNSAFE_RULE_COUNT_EXCEEDED = 'Dynamic unsafe rule count exceeded.'
-export const ERROR_DYNAMIC_REGEX_RULE_COUNT_EXCEEDED = 'Dynamic rule count for regex rules exceeded.'
+export const ERROR_DYNAMIC_REGEX_RULE_COUNT_EXCEEDED =
+  'Dynamic rule count for regex rules exceeded.'
 export const ERROR_SESSION_RULE_COUNT_EXCEEDED = 'Session rule count exceeded.'
 export const ERROR_SESSION_UNSAFE_RULE_COUNT_EXCEEDED = 'Session unsafe rule count exceeded.'
-export const ERROR_SESSION_REGEX_RULE_COUNT_EXCEEDED = 'Session rule count for regex rules exceeded.'
+export const ERROR_SESSION_REGEX_RULE_COUNT_EXCEEDED =
+  'Session rule count for regex rules exceeded.'
 export const ERROR_INCREMENT_WITHOUT_BADGE_TEXT =
   'Cannot increment action count unless displaying action count as badge text.'
 export const ERROR_GET_MATCHED_RULES_MISSING_PERMISSIONS =
   'The extension must have the declarativeNetRequestFeedback permission or have activeTab ' +
   'granted for the specified tab ID in order to call this function.'
 export const ERROR_TAB_NOT_FOUND = 'No tab with id: *.'
-export const ERROR_OVER_QUOTA = 'This request exceeds the MAX_GETMATCHEDRULES_CALLS_PER_INTERVAL quota.'
-export const WARNING_RULESET_FAILED_TO_LOAD = 'Failed to load some of the declarativeNetRequest rulesets.'
+export const ERROR_OVER_QUOTA =
+  'This request exceeds the MAX_GETMATCHEDRULES_CALLS_PER_INTERVAL quota.'
+export const WARNING_RULESET_FAILED_TO_LOAD =
+  'Failed to load some of the declarativeNetRequest rulesets.'
 export const WARNING_ENABLED_RULE_COUNT_EXCEEDED =
   'The number of enabled rules exceeds the API limits. Some rulesets will be ignored.'
 export const WARNING_ENABLED_REGEX_RULE_COUNT_EXCEEDED =
@@ -544,7 +548,11 @@ export class DnrState {
 
   // ---- views for the translator and the matcher --------------------------------------------
 
-  private enabledStaticRulesets(): { id: string; ruleset: StaticRuleset; parsed: ParseRulesetResult }[] {
+  private enabledStaticRulesets(): {
+    id: string
+    ruleset: StaticRuleset
+    parsed: ParseRulesetResult
+  }[] {
     const out: { id: string; ruleset: StaticRuleset; parsed: ParseRulesetResult }[] = []
     for (const id of this.loadedStatics) {
       const ruleset = this.statics.get(id)!
@@ -750,11 +758,15 @@ export class DnrState {
     const total = counts(combined)
     const dynamic = source === 'dynamic'
     if (total.rules > limits.rules) {
-      throw new Error(dynamic ? ERROR_DYNAMIC_RULE_COUNT_EXCEEDED : ERROR_SESSION_RULE_COUNT_EXCEEDED)
+      throw new Error(
+        dynamic ? ERROR_DYNAMIC_RULE_COUNT_EXCEEDED : ERROR_SESSION_RULE_COUNT_EXCEEDED
+      )
     }
     if (total.unsafeRules > limits.unsafeRules) {
       throw new Error(
-        dynamic ? ERROR_DYNAMIC_UNSAFE_RULE_COUNT_EXCEEDED : ERROR_SESSION_UNSAFE_RULE_COUNT_EXCEEDED
+        dynamic
+          ? ERROR_DYNAMIC_UNSAFE_RULE_COUNT_EXCEEDED
+          : ERROR_SESSION_UNSAFE_RULE_COUNT_EXCEEDED
       )
     }
     if (total.regexRules > limits.regexRules) {
@@ -929,7 +941,8 @@ export class DnrState {
     if (tabId !== undefined && tabId !== UNKNOWN_TAB_ID && !this.isValidTabId(tabId)) {
       throw new Error(formatMessage(ERROR_TAB_NOT_FOUND, tabId))
     }
-    if (!this.canGetMatchedRules(tabId)) throw new Error(ERROR_GET_MATCHED_RULES_MISSING_PERMISSIONS)
+    if (!this.canGetMatchedRules(tabId))
+      throw new Error(ERROR_GET_MATCHED_RULES_MISSING_PERMISSIONS)
     const now = this.now()
     if (!options.userGesture && !this.quota.take(now)) throw new Error(ERROR_OVER_QUOTA)
     this.trimUnknownTabMatches(now)

@@ -39,7 +39,8 @@ export const ERROR_INVALID_TEST_URL = 'Invalid test request URL.'
 export const ERROR_INVALID_TEST_INITIATOR = 'Invalid test request initiator.'
 export const ERROR_INVALID_TEST_TAB_ID = 'Invalid test request tab ID.'
 export const ERROR_INVALID_TEST_TOP_URL = 'Invalid test request top URL.'
-export const ERROR_INVALID_RESPONSE_HEADER_OBJECT = 'Values for header "*" must be specified as a list.'
+export const ERROR_INVALID_RESPONSE_HEADER_OBJECT =
+  'Values for header "*" must be specified as a list.'
 export const ERROR_INVALID_RESPONSE_HEADER_NAME = 'Invalid header name "*".'
 export const ERROR_INVALID_RESPONSE_HEADER_VALUE = 'Invalid header value for header "*".'
 
@@ -140,8 +141,10 @@ export function toMatchRequest(request: TestMatchRequestDetails): MatchRequest {
   if (request.responseHeaders !== undefined) {
     const headers: Record<string, string[]> = {}
     for (const [name, values] of Object.entries(request.responseHeaders)) {
-      if (!isValidHeaderName(name)) throw new Error(format(ERROR_INVALID_RESPONSE_HEADER_NAME, name))
-      if (!Array.isArray(values)) throw new Error(format(ERROR_INVALID_RESPONSE_HEADER_OBJECT, name))
+      if (!isValidHeaderName(name))
+        throw new Error(format(ERROR_INVALID_RESPONSE_HEADER_NAME, name))
+      if (!Array.isArray(values))
+        throw new Error(format(ERROR_INVALID_RESPONSE_HEADER_OBJECT, name))
       const list: string[] = []
       for (const value of values) {
         if (typeof value !== 'string' || /[\r\n\0]/.test(value)) {

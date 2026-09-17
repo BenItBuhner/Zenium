@@ -52,12 +52,7 @@ export type EngineResourceType =
   | 'other'
 
 export type EngineRuleActionType =
-  | 'block'
-  | 'allow'
-  | 'allowAllRequests'
-  | 'redirect'
-  | 'upgradeScheme'
-  | 'modifyHeaders'
+  'block' | 'allow' | 'allowAllRequests' | 'redirect' | 'upgradeScheme' | 'modifyHeaders'
 
 export interface EngineHeaderOp {
   header: string
@@ -198,9 +193,7 @@ export interface EngineDecision {
 const SET_ID_PREFIX = 'ext:'
 
 export type EngineSetKind =
-  | { kind: 'static'; rulesetId: string }
-  | { kind: 'dynamic' }
-  | { kind: 'session' }
+  { kind: 'static'; rulesetId: string } | { kind: 'dynamic' } | { kind: 'session' }
 
 /**
  * Engine set id for one of an extension's rulesets: `ext:<id>:static:<rulesetId>`,
