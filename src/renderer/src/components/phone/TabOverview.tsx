@@ -1,7 +1,15 @@
 import type { CSSProperties, JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { PanelLeft, PanelRight, Plus } from 'lucide-react'
-import type { Folder, FolderColor, PhoneBarPosition, Rect, Space, Tab, UIState } from '@shared/types'
+import type {
+  Folder,
+  FolderColor,
+  PhoneBarPosition,
+  Rect,
+  Space,
+  Tab,
+  UIState
+} from '@shared/types'
 import { FOLDER_COLORS } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
