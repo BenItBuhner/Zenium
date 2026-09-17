@@ -14,7 +14,11 @@ import type {
 } from '../platform'
 import type { ZenWindow } from '../window'
 
-/** Electron's capabilities (src/main/platform/index.ts), copied so a change there shows up here. */
+/**
+ * Electron's capabilities, a hand-kept copy of src/main/platform/index.ts: the real object imports
+ * Electron, which a core test cannot load. When a capability is added or flipped there, update it
+ * here too (the `HostCapabilities` type catches an added one, not a changed value).
+ */
 const DESKTOP: HostCapabilities = {
   windowControls: true,
   nativeMenus: true,
@@ -36,7 +40,11 @@ const DESKTOP: HostCapabilities = {
   pullToRefresh: false
 }
 
-/** The Android host on API 34 (`androidCapabilities` in src/android/platform.ts). */
+/**
+ * The Android host on API 34, a hand-kept copy of `androidCapabilities(34)` in
+ * src/android/platform.ts: that module pulls in the WebView bridge and Vite `?raw` imports a
+ * core test cannot load. Keep it in step by hand, as above.
+ */
 const ANDROID: HostCapabilities = {
   windowControls: false,
   nativeMenus: false,

@@ -24,6 +24,8 @@ interface Props {
   tabs: Tab[]
   card: (tab: Tab) => JSX.Element
   onMenu: (folder: Folder) => void
+  /** Columns of the overview grid: a group of two or more spans them all and lays out in as many. */
+  columns: number
   /** The card's element, for the hero morph and the grid's glide. */
   ref: (el: HTMLDivElement | null) => void
 }
@@ -34,7 +36,7 @@ interface Props {
  * header and shows the members' icons instead. The height runs on a spring that a second tap
  * retargets mid-flight.
  */
-export function GroupCard({ folder, tabs, card, onMenu, ref }: Props): JSX.Element {
+export function GroupCard({ folder, tabs, card, onMenu, columns, ref }: Props): JSX.Element {
   const shellRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const collapsed = folder.collapsed
@@ -100,7 +102,8 @@ export function GroupCard({ folder, tabs, card, onMenu, ref }: Props): JSX.Eleme
   const style = {
     '--zen-group-rgb': groupColorChannels(folder.color)
   } as CSSProperties
-  // A group of one takes a single column, like the card it holds; two or more span the row.
+  // A group of one takes a single column, like the card it holds; two or more span the row,
+  // however many columns the window gives it, and lay their cards out in the same columns.
   const single = tabs.length === 1
   return (
     <div
@@ -110,7 +113,7 @@ export function GroupCard({ folder, tabs, card, onMenu, ref }: Props): JSX.Eleme
       }}
       className={cn(
         'zen-group flex flex-col overflow-hidden',
-        single ? 'col-span-1' : 'col-span-2'
+        single ? 'col-span-1' : 'col-span-full'
       )}
       style={style}
       data-drop={`group:${folder.id}`}
@@ -162,8 +165,12 @@ export function GroupCard({ folder, tabs, card, onMenu, ref }: Props): JSX.Eleme
       </div>
       <div
         ref={bodyRef}
-        className={cn('grid gap-3', single ? 'grid-cols-1' : 'grid-cols-2')}
-        style={{ padding: GROUP_PAD, paddingTop: 0 }}
+        className="grid gap-3"
+        style={{
+          padding: GROUP_PAD,
+          paddingTop: 0,
+          gridTemplateColumns: `repeat(${single ? 1 : columns}, minmax(0, 1fr))`
+        }}
         aria-hidden={collapsed || undefined}
       >
         {tabs.map(card)}

@@ -375,6 +375,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                     folder={folder}
                     tabs={members}
                     card={card}
+                    columns={columns}
                     onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
                   />
                 )
