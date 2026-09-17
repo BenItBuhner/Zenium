@@ -7,7 +7,7 @@ import { cn, relativeTime } from '@renderer/lib/utils'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
-import { Choice, Group, Row } from './SettingsPrimitives'
+import { Group, Note, Row, Segmented } from './SettingsPrimitives'
 
 /**
  * Settings → AI Agents: turn the built-in MCP server on, see how to connect, and manage the
@@ -27,9 +27,9 @@ export function AgentsSection({
     set({ agents: { ...a, ...patch } })
   return (
     <>
-      <section>
-        <h3 className="mb-1 text-[15px] font-semibold">AI Agents</h3>
-        <p className="text-[12.5px] text-[var(--zen-muted)]">
+      <section className="px-2.5">
+        <h3 className="zen-settings-heading px-0">AI agents</h3>
+        <p className="zen-settings-hint">
           Let any AI agent drive this browser through a built-in{' '}
           <span className="font-medium">Model Context Protocol</span> server — no extension or
           plugin to install. Agents open their own tabs, read pages and click and type in them; each
@@ -77,12 +77,13 @@ export function AgentsSection({
           label="Default mode for new agents"
           hint="Foreground brings the agent's tab in front of you before each action; background keeps you on your own tab."
         >
-          <Choice
+          <Segmented
+            label="Default mode for new agents"
             value={a.defaultMode}
             onChange={(v) => setAgents({ defaultMode: v })}
             options={[
-              { value: 'foreground', label: 'Foreground (watch it work)' },
-              { value: 'background', label: 'Background (out of your way)' }
+              { value: 'foreground', label: 'Foreground' },
+              { value: 'background', label: 'Background' }
             ]}
           />
         </Row>
@@ -112,31 +113,24 @@ export function AgentsSection({
         </Row>
       </Group>
 
-      <section>
-        <h4 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-[var(--zen-muted)]">
-          Connected agents
-        </h4>
+      <Group title="Connected agents">
         {agents.length === 0 ? (
-          <div className="zen-squircle rounded-xl border border-dashed border-[var(--zen-border)] p-6 text-center text-[12.5px] text-[var(--zen-muted)]">
+          <Note>
             {a.enabled
               ? 'No agents connected. Point an MCP client at the endpoint above.'
               : 'Turn the server on to let agents connect.'}
-          </div>
+          </Note>
         ) : (
-          <div className="flex flex-col gap-2">
-            {agents.map((agent) => (
-              <AgentRow key={agent.id} agent={agent} />
-            ))}
-          </div>
+          agents.map((agent) => <AgentRow key={agent.id} agent={agent} />)
         )}
-      </section>
+      </Group>
 
       {a.approvedNames.length > 0 && (
         <Group title="Remembered agents">
           {a.approvedNames.map((name) => (
             <Row key={name} label={name} hint="Allowed to connect without asking.">
               <Button variant="ghost" size="sm" onClick={() => run('agent.forget', { name })}>
-                <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Forget
+                <Trash2 className="h-3.5 w-3.5" /> Forget
               </Button>
             </Row>
           ))}
@@ -167,10 +161,10 @@ function ConnectionCard({
     2
   )
   return (
-    <div className="zen-squircle flex flex-col gap-3 rounded-xl border border-[var(--zen-border)] p-4">
-      <div className="flex items-center gap-2 text-[13px] font-medium">
-        <Radio className="h-4 w-4 text-[var(--zen-accent)]" /> Connect an agent
-      </div>
+    <section className="flex flex-col gap-3 px-2.5">
+      <h3 className="zen-settings-heading flex items-center gap-2 px-0">
+        <Radio className="h-4 w-4 text-[var(--zen-accent-ink)]" /> Connect an agent
+      </h3>
       <CopyField label="Streamable HTTP endpoint" value={url} />
       <CopyField
         label="Connection token (skips the approval prompt)"
@@ -179,7 +173,7 @@ function ConnectionCard({
         icon={<KeyRound className="h-3.5 w-3.5" />}
       />
       {lanUrls.length > 0 && (
-        <div className="flex items-start gap-2 text-[12px] text-[var(--zen-muted)]">
+        <div className="zen-settings-hint flex items-start gap-2">
           <Wifi className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>
             On the local network: {lanUrls.join(', ')} — only share the token with devices you
@@ -191,8 +185,8 @@ function ConnectionCard({
         <CopyBlock label="mcp.json (URL)" value={httpConfig} />
         <CopyBlock label="mcp.json (command)" value={stdioConfig} />
       </div>
-      <div className="flex items-center justify-between">
-        <span className="text-[11.5px] text-[var(--zen-muted)]">
+      <div className="flex items-center justify-between gap-3">
+        <span className="zen-settings-hint">
           Put the token in an{' '}
           <code className="rounded bg-[var(--zen-element-bg)] px-1">Authorization: Bearer</code>{' '}
           header, or append{' '}
@@ -206,38 +200,35 @@ function ConnectionCard({
           Regenerate token
         </Button>
       </div>
-    </div>
+    </section>
   )
 }
 
 function AgentRow({ agent }: { agent: AgentInfo }): JSX.Element {
   return (
-    <div
-      className="zen-squircle flex items-center gap-3 rounded-xl border border-[var(--zen-border)] p-3"
-      style={{ borderInlineStartWidth: 3, borderInlineStartColor: agent.color }}
-    >
+    <div className="zen-settings-row py-2">
       <div
         className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-white"
         style={{ background: agent.color }}
       >
         <Bot className="h-4 w-4" />
       </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-[13px] font-medium">
+      <div className="zen-settings-text">
+        <div className="zen-settings-label flex items-center gap-2 font-medium">
           <span className="truncate">{agent.name}</span>
           {agent.pending && (
-            <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10.5px] font-medium text-amber-600">
-              awaiting approval
+            <span className="zen-settings-warn rounded-full px-2 py-0.5 text-[10px] font-semibold">
+              Awaiting approval
             </span>
           )}
         </div>
-        <div className="text-[11.5px] text-[var(--zen-muted)]">
+        <div className="zen-settings-hint tabular-nums">
           {agent.transport === 'stdio' ? 'stdio' : 'HTTP'} · {agent.tabIds.length} tab
           {agent.tabIds.length === 1 ? '' : 's'} · {agent.calls} action
           {agent.calls === 1 ? '' : 's'} · active {relativeTime(agent.lastActiveAt)}
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="zen-settings-control gap-1">
         <ModeToggle agent={agent} />
         <Button
           variant="ghost"
@@ -258,9 +249,9 @@ function ModeToggle({ agent }: { agent: AgentInfo }): JSX.Element {
     <button
       type="button"
       className={cn(
-        'zen-squircle rounded-full px-2.5 py-1 text-[11px] font-medium',
+        'rounded-full px-2.5 py-1 text-[11px] font-medium',
         agent.mode === 'foreground'
-          ? 'bg-[var(--zen-accent)]/15 text-[var(--zen-accent)]'
+          ? 'bg-[rgb(var(--zen-accent-rgb)/0.16)] text-[var(--zen-fg)]'
           : 'bg-[var(--zen-element-bg)] text-[var(--zen-muted)]'
       )}
       title={`Switch to ${next} mode`}
@@ -285,10 +276,10 @@ function CopyField({
   const [revealed, setRevealed] = useState(!secret)
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-[11.5px] text-[var(--zen-muted)]">{label}</span>
+      <span className="zen-settings-hint">{label}</span>
       <div className="flex items-center gap-2">
         {icon}
-        <code className="min-w-0 flex-1 truncate rounded-md bg-[var(--zen-element-bg)] px-2 py-1.5 text-[12px]">
+        <code className="min-w-0 flex-1 truncate rounded-lg bg-[var(--zen-element-bg)] px-2.5 py-1.5 text-[12px]">
           {revealed ? value : '•'.repeat(Math.min(40, value.length))}
         </code>
         {secret && (
@@ -306,10 +297,10 @@ function CopyBlock({ label, value }: { label: string; value: string }): JSX.Elem
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between">
-        <span className="text-[11.5px] text-[var(--zen-muted)]">{label}</span>
+        <span className="zen-settings-hint">{label}</span>
         <CopyButton value={value} />
       </div>
-      <pre className="zen-squircle overflow-x-auto rounded-md bg-[var(--zen-element-bg)] p-2 text-[11px] leading-relaxed">
+      <pre className="zen-squircle overflow-x-auto rounded-[10px] bg-[var(--zen-element-bg)] p-2.5 text-[11px] leading-relaxed">
         {value}
       </pre>
     </div>
