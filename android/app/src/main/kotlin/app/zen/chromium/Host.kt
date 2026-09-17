@@ -1,10 +1,13 @@
 package app.zen.chromium
 
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.Handler
@@ -20,6 +23,7 @@ import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebChromeClient
 import android.widget.FrameLayout
+import android.widget.Toast
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -45,7 +49,6 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override val blocking = Blocking.shared(activity)
     override val keys = Keys()
     override val permissions = Permissions(this)
-    val external = ExternalLaunches(this)
     val security = Security(this)
     override val downloads = Downloads(activity, this)
     var chrome = ChromeWebView(activity, this)
@@ -262,7 +265,6 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "download.showAll" -> { downloads.showAll(); reply(null) }
             "profile.clear" -> { Profiles.clear(args.str("containerId")); reply(null) }
             "permission.respond" -> { permissions.respond(args.str("requestId"), args.bool("allow")); reply(null) }
-            "external.respond" -> { external.respond(args.str("requestId"), args.bool("allow")); reply(null) }
             "auth.respond" -> {
                 security.respondAuth(args.str("requestId"), args.strOrNull("username"), args.strOrNull("password"))
                 reply(null)
@@ -336,9 +338,25 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     // Services
     // ---------------------------------------------------------------------------------------------
 
-    /** A launch the core cleared with the user; the Intent is sanitised like a page's would be. */
     override fun openExternal(url: String) {
-        external.open(url)
+        val intent = try {
+            if (url.startsWith("intent:")) Intent.parseUri(url, Intent.URI_INTENT_SCHEME) else Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        } catch (e: Exception) {
+            return
+        }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // Never bounce http(s) back to ourselves.
+        if (intent.data?.scheme in setOf("http", "https") && intent.action == Intent.ACTION_VIEW) {
+            chrome.openUrl(url)
+            return
+        }
+        try {
+            activity.startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            val fallback = intent.getStringExtra("browser_fallback_url")
+            if (fallback != null) chrome.openUrl(fallback)
+            else Toast.makeText(activity, "No app can open this link", Toast.LENGTH_SHORT).show()
+        }
     }
 
     /**

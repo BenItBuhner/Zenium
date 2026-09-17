@@ -63,7 +63,7 @@ const routes = {
     page(
       'Links to other apps',
       `<h1>Links to other apps</h1>
-      <p>This page tries to launch the phone app on its own after a moment; Zenium refuses launches without a tap and lists them.</p>
+      <p>This page tries to launch the phone app on its own after a moment; Zenium never dials without asking (on desktop a launch without a tap is listed with the tab's blocked pop-ups).</p>
       <a href="tel:+15550100">Call +1 555 0100</a>
       <a href="mailto:hello@zenium.example">Write to hello@zenium.example</a>
       <a href="intent://scan/#Intent;scheme=zxing;package=com.google.zxing.client.android;S.browser_fallback_url=http%3A%2F%2F${encodeURIComponent(host)}%2Ffallback;end">Scan a barcode (intent:// with a fallback)</a>

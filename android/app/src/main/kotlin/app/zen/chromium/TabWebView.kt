@@ -778,14 +778,7 @@ class TabWebView(
     // --- WebViewClient ------------------------------------------------------------------------
 
     private inner class Client : WebViewClient() {
-        /**
-         * Web schemes load here; anything else is a request to leave for another app, gated by
-         * the core (a gesture, then the shared prompt).
-         */
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            // mailto:, tel:, intent://, a custom scheme: the core holds it for a gesture and the
-            // shared prompt, and says so with true.
-            if (host.external.onNavigation(this@TabWebView, request)) return true
             val url = request.url
             return when (url.scheme?.lowercase()) {
                 "http", "https" -> {
@@ -793,9 +786,14 @@ class TabWebView(
                     // A tap on another site whose app is installed may open the app instead.
                     host.externalProtocols.appLink(this@TabWebView, request)
                 }
-                else -> {
+                "about", "data", "blob", "javascript" -> {
                     if (interceptNavigation(request)) return true
                     false
+                }
+                else -> {
+                    // mailto:, tel:, intent://, a custom scheme: held until the core (and the user) agree.
+                    host.externalProtocols.request(this@TabWebView, url.toString(), request.hasGesture())
+                    true
                 }
             }
         }

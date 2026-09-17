@@ -210,11 +210,7 @@ export function permissionLabel(permission: string): string {
   const qualifier = colon === -1 ? null : permission.slice(colon + 1)
   const label = PERMISSION_LABELS[name] ?? name
   if (!qualifier) return label
-  if (name === 'openExternal') {
-    if (qualifier.startsWith('package:'))
-      return `Open the app ${qualifier.slice('package:'.length)}`
-    return qualifier === 'intent' ? 'Open apps through intent: links' : `Open ${qualifier}: links`
-  }
+  if (name === 'openExternal') return `Open ${qualifier}: links`
   return `${label} (${qualifier.replace(/^https:\/\//, '')})`
 }
 

@@ -215,16 +215,6 @@ export interface HostEventPayloads {
   /** Pause / Resume / Cancel pressed on the download's system notification. */
   'download.action': { id: string; op: 'pause' | 'resume' | 'cancel' }
   'permission.request': { requestId: string; permission: string; url: string }
-  /** A page wants to hand a link to another app; answered with `external.respond`. */
-  'external.request': {
-    requestId: string
-    tabId: string
-    url: string
-    hasGesture: boolean
-    /** The navigation is a server redirect (never launched without the engine's gesture). */
-    redirect: boolean
-    targetApp: string | null
-  }
   /** A server asked for HTTP credentials; answered with `auth.respond`. */
   'auth.request': { requestId: string; tabId: string; host: string; realm: string; url: string }
   'view.adopt': { viewId: string; parentTabId: string | null; active: boolean }
@@ -892,13 +882,6 @@ export class AndroidPlatform implements Platform {
           .then((allow) =>
             this.bridge.send('permission.respond', { requestId: p.requestId, allow })
           )
-        return
-      }
-      case 'external.request': {
-        const p = payload as HostEventPayloads['external.request']
-        void browser.external
-          .request(p.tabId, p.url, p.hasGesture, p.targetApp ?? undefined, p.redirect)
-          .then((allow) => this.bridge.send('external.respond', { requestId: p.requestId, allow }))
         return
       }
       case 'auth.request': {

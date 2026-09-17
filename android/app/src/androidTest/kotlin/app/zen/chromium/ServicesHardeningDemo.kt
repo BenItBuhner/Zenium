@@ -158,34 +158,38 @@ class ServicesHardeningDemo {
             shot("03-popup-opened-with-a-tap")
         }
 
-        // 2. Links to other apps: the automatic tel: launch is refused (and listed with the chip);
-        //    a tapped tel: link asks; an intent:// link with no app to take it lands on its
-        //    fallback page.
+        // 2. Links to other apps (the external-protocol sheet): the page's own tel: launch on
+        //    load never dials, it asks; a tapped tel: link asks and names the app; an intent://
+        //    link whose app is not installed asks (the scheme is not one the manifest can see)
+        //    and, opened, lands on its fallback page.
         openInApp("http://$SERVER/apps")
         waitFor("Call +1 555 0100", 12_000)
-        if (waitFor("Pop-up blocked", 4_000, prefix = true)) {
-            shot("04-app-launch-blocked-chip")
-            tapLabel(f, "Pop-up blocked", prefix = true)
-            waitFor("Pop-ups blocked", 5_000)
-            shot("05-app-launch-blocked-list")
-            tapLabel(f, "Dismiss")
+        if (waitFor("Not now", 6_000)) {
+            SystemClock.sleep(800)
+            shot("04-app-launch-on-load-asks")
+            tapLabel(f, "Not now")
         } else {
             ensureForeground()
-            shot("04-app-launch-blocked-quietly")
+            shot("04-app-launch-on-load-no-handler")
         }
         SystemClock.sleep(1_500)
         tapLabel(f, "Call +1 555 0100")
-        waitFor("Open", 6_000)
-        SystemClock.sleep(800)
-        shot("06-tel-launch-prompt")
-        tapLabel(f, "Cancel")
+        if (waitFor("Not now", 6_000)) {
+            SystemClock.sleep(800)
+            shot("06-tel-launch-prompt")
+            tapLabel(f, "Not now")
+        } else {
+            shot("06-tel-launch-no-handler")
+        }
         SystemClock.sleep(1_500)
         tapLabel(f, "Scan a barcode (intent:// with a fallback)")
-        waitFor("Open", 6_000)
-        SystemClock.sleep(800)
-        shot("07-intent-launch-prompt")
-        tapLabel(f, "Open")
-        SystemClock.sleep(4_000)
+        if (waitFor("Not now", 6_000)) {
+            SystemClock.sleep(800)
+            shot("07-intent-launch-prompt")
+            tapLabel(f, "Open")
+        }
+        waitFor("No app took the intent", 8_000)
+        SystemClock.sleep(1_500)
         ensureForeground()
         shot("08-intent-fallback-page")
 

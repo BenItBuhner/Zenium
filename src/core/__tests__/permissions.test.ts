@@ -3,7 +3,6 @@ import type { ConfirmOptions, DialogHost, StoreIO } from '../platform'
 import {
   PermissionService,
   decisionKey,
-  externalTarget,
   permissionPromptCopy,
   qualifiedPermission,
   schemeOf,
@@ -134,58 +133,22 @@ describe('PermissionService: external applications', () => {
     ])
   })
 
-  it('names the app or the scheme in the prompt', () => {
-    const named = permissionPromptCopy('openExternal', 'https://example.com', {
-      externalUrl: 'intent://scan/#Intent;scheme=zxing;package=com.example.scanner;end',
-      targetApp: 'Barcode Scanner'
-    })
-    expect(named.message).toBe('Allow example.com to open Barcode Scanner?')
-    expect(named.okLabel).toBe('Open')
-    expect(named.detail).toContain('Zenium')
+  it('names the scheme in the prompt and keys the answer on it', () => {
     const scheme = permissionPromptCopy('openExternal', 'https://example.com', {
       externalUrl: 'zoommtg://zoom.us/join'
     })
     expect(scheme.message).toBe('Allow example.com to open zoommtg: links in another app?')
+    expect(scheme.okLabel).toBe('Open')
+    expect(scheme.detail).toContain('Zenium')
+    expect(scheme.detail).toContain('zoommtg://zoom.us/join')
     expect(scheme.detail).toContain('remembered for zoommtg: links on this site')
-  })
-
-  it('describes an intent: URL by the link scheme and app it wraps, never by the wrapper', () => {
-    const wrapped = 'intent://scan/#Intent;scheme=zxing;package=com.example.scanner;end'
-    expect(externalTarget(wrapped)).toEqual({ scheme: 'zxing', app: 'com.example.scanner' })
-    expect(externalTarget('intent:#Intent;package=com.example.app;end')).toEqual({
-      scheme: 'intent',
-      app: 'com.example.app'
-    })
-    expect(externalTarget('intent://x#Intent;scheme=;end')).toEqual({ scheme: 'intent', app: null })
-    expect(externalTarget('intent://x')).toEqual({ scheme: 'intent', app: null })
-    expect(externalTarget('zxing://scan')).toEqual({ scheme: 'zxing', app: null })
-
-    // The app the user is not shown a label for is still named, not "intent: links".
-    const unresolved = permissionPromptCopy('openExternal', 'https://example.com', {
-      externalUrl: wrapped
-    })
-    expect(unresolved.message).toBe('Allow example.com to open zxing: links in another app?')
-    expect(unresolved.detail).toContain('App: com.example.scanner')
-    expect(unresolved.detail).not.toContain('intent://')
-    const appOnly = permissionPromptCopy('openExternal', 'https://example.com', {
-      externalUrl: 'intent:#Intent;package=com.example.app;end'
-    })
-    expect(appOnly.message).toBe('Allow example.com to open the app com.example.app?')
-    expect(appOnly.detail).toContain('remembered for links to com.example.app on this site')
-
-    // An intent wrapper and the plain link it stands for share one remembered answer.
-    expect(qualifiedPermission('openExternal', { externalUrl: wrapped })).toBe('openExternal:zxing')
-    expect(qualifiedPermission('openExternal', { externalUrl: 'zxing://scan' })).toBe(
-      'openExternal:zxing'
+    const bare = permissionPromptCopy('openExternal', 'https://example.com')
+    expect(bare.message).toBe('Allow example.com to open another app?')
+    expect(bare.detail).toContain('remembered for this site')
+    expect(qualifiedPermission('openExternal', { externalUrl: 'ZoomMtg://x' })).toBe(
+      'openExternal:zoommtg'
     )
-    expect(
-      qualifiedPermission('openExternal', {
-        externalUrl: 'intent:#Intent;package=com.example.app;end'
-      })
-    ).toBe('openExternal:package:com.example.app')
-    expect(qualifiedPermission('openExternal', { externalUrl: 'intent://x' })).toBe(
-      'openExternal:intent'
-    )
+    expect(qualifiedPermission('openExternal', { externalUrl: 'no scheme' })).toBe('openExternal')
   })
 })
 

@@ -52,64 +52,52 @@ function harness(answer: boolean): {
 describe('ExternalLaunches', () => {
   it('needs a gesture: without one the launch is listed, not asked, not opened', async () => {
     const h = harness(true)
-    expect(await h.browser.external.request('t1', 'zoommtg://join', false, 'Zoom')).toBe(false)
+    expect(await h.browser.external.request('t1', 'zoommtg://join')).toBe(false)
     expect(h.asked).toEqual([])
     expect(h.browser.popups.blockedFor('t1')).toEqual([
       { url: 'zoommtg://join', at: h.clock.now, kind: 'external' }
     ])
   })
 
-  it('asks with the app name once the user tapped, and remembers the yes per scheme', async () => {
+  it('asks once the user tapped, and remembers the yes per scheme', async () => {
     const h = harness(true)
-    expect(await h.browser.external.request('t1', 'zoommtg://join', true, 'Zoom')).toBe(true)
+    h.browser.popups.activate('t1')
+    h.clock.now += 2000
+    expect(await h.browser.external.request('t1', 'zoommtg://join')).toBe(true)
     expect(h.asked.length).toBe(1)
-    expect(h.asked[0].message).toBe('Allow shop.example to open Zoom?')
+    expect(h.asked[0].message).toBe('Allow shop.example to open zoommtg: links in another app?')
     expect(h.asked[0].okLabel).toBe('Open')
     // The host launches it (the answer only says whether it may): nothing opened from here.
     expect(h.opened).toEqual([])
     // Same scheme on the same site: no second prompt. Another scheme: asked again.
-    expect(await h.browser.external.request('t1', 'zoommtg://other', true)).toBe(true)
+    expect(await h.browser.external.request('t1', 'zoommtg://other')).toBe(true)
     expect(h.asked.length).toBe(1)
-    expect(await h.browser.external.request('t1', 'tel:+1', true)).toBe(true)
+    expect(await h.browser.external.request('t1', 'tel:+1')).toBe(true)
     expect(h.asked.length).toBe(2)
     expect(h.asked[1].message).toBe('Allow shop.example to open tel: links in another app?')
   })
 
-  it("counts a gesture the core saw moments ago when the engine's flag is missing", async () => {
+  it('a gesture only counts for the activation window', async () => {
     const h = harness(true)
     h.browser.popups.activate('t1')
-    h.clock.now += 2000
-    expect(await h.browser.external.request('t1', 'mailto:a@b.c', false)).toBe(true)
-    expect(h.asked.length).toBe(1)
-  })
-
-  it('a server redirect only launches with the gesture the engine attributes to it', async () => {
-    const h = harness(true)
-    h.browser.popups.activate('t1')
-    // The tap a moment ago does not count for a redirect chain that lands on an app link...
-    expect(await h.browser.external.request('t1', 'zoommtg://join', false, undefined, true)).toBe(
-      false
-    )
+    h.clock.now += 6000
+    expect(await h.browser.external.request('t1', 'mailto:a@b.c')).toBe(false)
     expect(h.asked).toEqual([])
-    expect(h.browser.popups.blockedFor('t1').map((p) => p.url)).toEqual(['zoommtg://join'])
-    // ...but the engine's own verdict (the click that started the chain) does.
-    expect(await h.browser.external.request('t1', 'zoommtg://join', true, undefined, true)).toBe(
-      true
-    )
-    expect(h.asked.length).toBe(1)
+    expect(h.browser.popups.blockedFor('t1').map((p) => p.url)).toEqual(['mailto:a@b.c'])
   })
 
   it('a refusal is not remembered, so the site can ask on the next tap', async () => {
     const h = harness(false)
-    expect(await h.browser.external.request('t1', 'tel:+1', true)).toBe(false)
-    expect(await h.browser.external.request('t1', 'tel:+1', true)).toBe(false)
+    h.browser.popups.activate('t1')
+    expect(await h.browser.external.request('t1', 'tel:+1')).toBe(false)
+    expect(await h.browser.external.request('t1', 'tel:+1')).toBe(false)
     expect(h.asked.length).toBe(2)
     expect(h.browser.permissions.rules()).toEqual([])
   })
 
   it('"open anyway" from the blocked list asks and then opens through the host', async () => {
     const h = harness(true)
-    await h.browser.external.request('t1', 'zoommtg://join', false)
+    await h.browser.external.request('t1', 'zoommtg://join')
     h.browser.popups.open('t1', 'zoommtg://join')
     await new Promise((r) => setTimeout(r, 0))
     expect(h.asked.length).toBe(1)

@@ -310,7 +310,7 @@ export class ElectronPlatform implements Platform {
       // listed with the tab's blocked pop-ups instead of prompting.
       const tabId = webContents ? this.views.tabIdForWebContents(webContents) : undefined
       if (permission === 'openExternal' && tabId && request.externalUrl) {
-        void external.request(tabId, request.externalUrl, false).then(callback)
+        void external.request(tabId, request.externalUrl).then(callback)
         return
       }
       void permissions.decide(permission, url, request).then(callback)
