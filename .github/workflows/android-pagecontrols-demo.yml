@@ -1,0 +1,35 @@
+name: Android page controls demo
+
+# Records the page controls on a hardware-accelerated Android emulator: Desktop Site on Wikipedia
+# (the mobile site, the desktop layout after the toggle, still the desktop layout after a
+# pull-to-refresh, the checkbox remembered in the menu), Dark Theme for This Site on a light-only
+# page with its exception under Look and Feel, Force enable zoom letting a `user-scalable=no` page
+# pinch, the Accessibility default zoom and Include system font size changing the page's text.
+# Dispatch-only, like the gesture demo: it takes about ten minutes and says nothing about a change
+# being correct. The build, the emulator and the Gradle cache live in android-emulator-demo.yml;
+# this file only picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-pagecontrols-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Page controls demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PageControlsDemo
+        DEMO_DIR=pagecontrols-demo
+        DEMO_OUT=artifacts/android-pagecontrols-demo
+        DEMO_VIDEO=android-pagecontrols-demo.mp4
+        DEMO_THEME=dark
+      artifact-name: android-pagecontrols-demo
+      artifact-path: artifacts/android-pagecontrols-demo/

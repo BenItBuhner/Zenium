@@ -265,7 +265,24 @@ abstract class DemoHarness(
     /** Every node in the active window labelled `label`, breadth first. */
     private fun findNodes(label: String): List<AccessibilityNodeInfo> = findNodes { it == label }
 
-    private fun findNodes(matches: (String) -> Boolean): List<AccessibilityNodeInfo> {
+    private fun findNodes(matches: (String) -> Boolean): List<AccessibilityNodeInfo> = findNodesWhere { node ->
+        val description = node.contentDescription?.toString()
+        val text = node.text?.toString()
+        (description != null && matches(description)) || (text != null && matches(text))
+    }
+
+    /**
+     * The first node (breadth-first) that `accept`s, with its state: a row's label and the switch
+     * labelled after it both answer to the label, only one of them is checkable.
+     */
+    protected fun findNodeWhere(accept: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? =
+        findNodesWhere(firstOnly = true, accept).firstOrNull()
+
+    /** Every node in the active window that `accept`s, breadth first (just the first with `firstOnly`). */
+    private fun findNodesWhere(
+        firstOnly: Boolean = false,
+        accept: (AccessibilityNodeInfo) -> Boolean
+    ): List<AccessibilityNodeInfo> {
         val root = ui.rootInActiveWindow ?: return emptyList()
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         val found = ArrayList<AccessibilityNodeInfo>()
@@ -274,9 +291,10 @@ abstract class DemoHarness(
         while (queue.isNotEmpty() && visited < 6_000) {
             val node = queue.removeFirst()
             visited++
-            val description = node.contentDescription?.toString()
-            val text = node.text?.toString()
-            if ((description != null && matches(description)) || (text != null && matches(text))) found += node
+            if (accept(node)) {
+                found += node
+                if (firstOnly) return found
+            }
             for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
         }
         return found

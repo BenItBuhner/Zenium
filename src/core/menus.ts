@@ -4,7 +4,8 @@ import type { MenuItemTemplate, MenuSource, PageContextParams } from './platform
 import { buildSearchUrl } from '../shared/search'
 import { copyConfirmation } from '../shared/clipboard'
 import { displayUrl, getDomain, isNavigableUrl } from '../shared/url'
-import { DEFAULT_CONTAINER_ID, type BookmarkNode } from '../shared/types'
+import { DEFAULT_CONTAINER_ID, type BookmarkNode, type Tab } from '../shared/types'
+import { siteKey } from '../shared/pageControls'
 import { spaceLabel } from '../shared/defaults'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 
@@ -1241,8 +1242,8 @@ export class Menus {
           click: () =>
             active && this.browser.actions.run('page.screenshot', { sourceTabId: active.id, win })
         },
-        // Phone slots: "Add to Home Screen" (W1-7) and the "Desktop Site" checkbox (W1-8) go
-        // here, closing the page group as they do in Chrome.
+        // Phone slot: "Add to Home Screen" (W1-7) goes here, ahead of the page controls.
+        ...when(caps.pageControls, ...this.pageControlItems(active)),
         { type: 'separator' },
         ...when(caps.resourceGovernor, {
           label: 'Resources',
@@ -1290,6 +1291,37 @@ export class Menus {
       win,
       'app'
     )
+  }
+
+  /**
+   * Chrome's page controls in the app menu, closing the page group as "Desktop site" does in
+   * Chrome: "Desktop Site" is the per-site checkbox, and while sites are darkened "Dark Theme for
+   * This Site" is its exception. Both act on the active tab's site, so they wait for a web page.
+   */
+  private pageControlItems(active: Tab | undefined): Template {
+    const { pageControls } = this.browser
+    const web = Boolean(active) && siteKey(active!.url) !== null
+    const items: Template = [
+      {
+        label: 'Desktop Site',
+        type: 'checkbox',
+        enabled: web,
+        checked: web && pageControls.isDesktop(active!),
+        click: () =>
+          active && pageControls.setDesktopSite(active.id, !pageControls.isDesktop(active))
+      }
+    ]
+    if (pageControls.settings.darkenSites) {
+      items.push({
+        label: 'Dark Theme for This Site',
+        type: 'checkbox',
+        enabled: web,
+        checked: web && pageControls.isDarkened(active!),
+        click: () =>
+          active && pageControls.setDarkenSite(active.id, !pageControls.isDarkened(active))
+      })
+    }
+    return items
   }
 
   describe(url: string): string {
