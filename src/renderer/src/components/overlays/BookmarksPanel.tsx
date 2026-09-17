@@ -1,25 +1,23 @@
 import type { JSX } from 'react'
 import { useMemo, useState } from 'react'
-import { Bookmark, Download, Trash2, Upload } from 'lucide-react'
+import { Bookmark, MoreHorizontal, Trash2 } from 'lucide-react'
 import type { BookmarkNode, UIState } from '@shared/types'
 import { BookmarkTree, isBookmarkRoot, searchBookmarks } from '@shared/bookmarks'
 import { displayUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { activeTab } from '@renderer/lib/selectors'
 import { closeOverlay } from '@renderer/lib/ui'
-import { useViewport } from '@renderer/lib/formFactor'
 import { Input } from '../ui/input'
 import { Button } from '../ui/button'
 import { EmptyNote, OverlayShell } from './OverlayShell'
 
 /**
  * The bookmarks overlay on the tree model: every bookmark from every folder with its folder path,
- * search across the tree, import and export. The folder-aware manager and the star dialog are
- * the UI program's surfaces and replace this panel.
+ * search across the tree, and an overflow menu with bookmark all tabs, import and export. The
+ * folder-aware manager and the star dialog are the UI program's surfaces and replace this panel.
  */
 export function BookmarksPanel({ state }: { state: UIState }): JSX.Element {
   const [query, setQuery] = useState('')
-  const phone = useViewport().formFactor === 'phone'
   const tab = activeTab(state)
   const tree = useMemo(() => new BookmarkTree(state.bookmarks), [state.bookmarks])
   const q = query.trim()
@@ -34,11 +32,10 @@ export function BookmarksPanel({ state }: { state: UIState }): JSX.Element {
     closeOverlay()
   }
 
-  /** "Work / Docs": the folders above a bookmark, without the root's name. */
+  /** "Work / Docs": the folders above a bookmark (root to parent), without the root's name. */
   const folderLabel = (node: BookmarkNode): string =>
     tree
       .path(node.id)
-      .slice(0, -1)
       .filter((p) => !isBookmarkRoot(p.id))
       .map((p) => p.title)
       .join(' / ')
@@ -48,24 +45,6 @@ export function BookmarksPanel({ state }: { state: UIState }): JSX.Element {
       title="Bookmarks"
       actions={
         <>
-          <Button
-            variant="ghost"
-            size="sm"
-            title="Import bookmarks from a Netscape HTML file"
-            onClick={() => run('bookmark.import', undefined)}
-          >
-            <Upload className="h-3.5 w-3.5" />
-            {phone ? null : 'Import'}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            title="Export bookmarks as a Netscape HTML file"
-            onClick={() => run('bookmark.export', undefined)}
-          >
-            <Download className="h-3.5 w-3.5" />
-            {phone ? null : 'Export'}
-          </Button>
           {tab && !tab.url.startsWith('zen://') ? (
             <Button
               variant="ghost"
@@ -75,6 +54,20 @@ export function BookmarksPanel({ state }: { state: UIState }): JSX.Element {
               {tab.bookmarked ? 'Remove current' : 'Bookmark current'}
             </Button>
           ) : null}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title="More (bookmark all tabs, import, export)"
+            aria-label="More bookmark actions"
+            onClick={(ev) => {
+              // Anchored under the button on phones; the desktop popup opens at the cursor.
+              const r = ev.currentTarget.getBoundingClientRect()
+              run('bookmark.menu', { x: Math.round(r.left), y: Math.round(r.bottom) })
+            }}
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
         </>
       }
     >

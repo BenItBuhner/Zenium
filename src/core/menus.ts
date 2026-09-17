@@ -240,8 +240,8 @@ export class Menus {
         },
         { type: 'separator' },
         {
-          label: tab.bookmarked ? 'Edit Bookmark…' : 'Bookmark Page…',
-          click: () => this.browser.starTab(tabId, win)
+          label: tab.bookmarked ? 'Remove Bookmark' : 'Bookmark Page',
+          click: () => this.browser.toggleBookmark(tabId, win)
         },
         {
           label: 'Save Page As…',
@@ -474,9 +474,9 @@ export class Menus {
       },
       { type: 'separator' },
       {
-        label: tab.bookmarked ? 'Edit Bookmark…' : 'Bookmark Tab…',
+        label: tab.bookmarked ? 'Remove Bookmark' : 'Bookmark Tab',
         enabled: !tab.url.startsWith('zen://'),
-        click: () => this.browser.starTab(tabId, win)
+        click: () => this.browser.toggleBookmark(tabId, win)
       },
       {
         label: 'Bookmark All Tabs…',
@@ -889,6 +889,24 @@ export class Menus {
     this.popup(template, win, 'bookmark', anchor)
   }
 
+  /**
+   * The overflow menu of the bookmarks surface: what its header has no room for. Native popup
+   * at the anchor on desktop, the menu sheet on phones.
+   */
+  showBookmarksMenu(anchor: { x: number; y: number }, win: ZenWindow): void {
+    this.popup(
+      [
+        { label: 'Bookmark All Tabs…', click: () => this.browser.bookmarkTabs(win) },
+        { type: 'separator' },
+        { label: 'Import Bookmarks…', click: () => void this.browser.importBookmarks(win) },
+        { label: 'Export Bookmarks…', click: () => void this.browser.exportBookmarks(win) }
+      ],
+      win,
+      'bookmark',
+      anchor
+    )
+  }
+
   /** Every folder as a nested submenu ("Move Here" first), minus the selection's own subtrees. */
   private moveToSubmenu(ids: string[]): Template {
     const { bookmarks } = this.browser
@@ -946,14 +964,14 @@ export class Menus {
           label: 'Bookmarks',
           submenu: [
             {
-              label: active?.bookmarked ? 'Edit Bookmark…' : 'Bookmark This Page…',
+              label: active?.bookmarked ? 'Remove Bookmark' : 'Bookmark This Page',
               enabled: Boolean(active && !active.url.startsWith('zen://')),
-              click: () => active && this.browser.starTab(active.id, win)
+              click: () => active && this.browser.toggleBookmark(active.id, win)
             },
             { label: 'Bookmark All Tabs…', click: () => this.browser.bookmarkTabs(win) },
             { type: 'separator' },
             {
-              label: 'Bookmark Manager',
+              label: 'Show Bookmarks',
               click: () => this.browser.emit('overlay.open', { kind: 'bookmarks' }, win)
             },
             { type: 'separator' },

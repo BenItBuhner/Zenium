@@ -1330,6 +1330,8 @@ export interface Commands {
     args: { ids: string[]; folderId: string; x: number; y: number }
     result: void
   }
+  /** The bookmarks surface's overflow menu (bookmark all tabs, import, export) at `x`,`y`. */
+  'bookmark.menu': { args: { x: number; y: number }; result: void }
   'bookmark.cut': { args: { ids: string[] }; result: void }
   'bookmark.copy': { args: { ids: string[] }; result: void }
   'bookmark.paste': { args: { folderId: string; index?: number }; result: void }

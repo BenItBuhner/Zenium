@@ -177,6 +177,8 @@ export class BrowserState {
   private scheduled = false
   /** A persistent commit is waiting for the scheduled tick. */
   private dirty = false
+  /** Callbacks waiting for the scheduled broadcast to have gone out. */
+  private afterBroadcastQueue: Array<() => void> = []
   private shortcutsCache: Shortcut[] | null = null
   /** The last set of synced windows written to disk (used once they are all closed). */
   private lastWindows: PersistedWindow[] = []
@@ -490,6 +492,16 @@ export class BrowserState {
   }
 
   /**
+   * Run `fn` once the broadcast a pending commit scheduled has gone out, or right away when
+   * nothing is pending. Events that name a freshly created record go through here so the window
+   * holds the record before it hears about it (the broadcast is deferred, a plain `emit` is not).
+   */
+  afterBroadcast(fn: () => void): void {
+    if (this.scheduled) this.afterBroadcastQueue.push(fn)
+    else fn()
+  }
+
+  /**
    * One deferred broadcast per tick, whichever kind of commit asked first. A volatile commit that
    * gets in ahead of a persistent one in the same tick must not swallow the disk write.
    */
@@ -502,6 +514,9 @@ export class BrowserState {
       this.dirty = false
       for (const listener of this.listeners) listener()
       if (persist && !this.frozen) this.store.write(this.toPersisted())
+      const queued = this.afterBroadcastQueue
+      this.afterBroadcastQueue = []
+      for (const fn of queued) fn()
     })
   }
 

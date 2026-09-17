@@ -83,7 +83,9 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'folder.startRename',
   'tab.editPinnedUrl',
   'tab.pickIcon',
-  'menu.show'
+  'menu.show',
+  'bookmark.star',
+  'bookmark.edit'
 ])
 
 /**
@@ -419,11 +421,6 @@ export class Browser {
     win.host.setFullScreen(!win.host.isFullScreen())
   }
 
-  /**
-   * The star (Ctrl+D): bookmark the page into the default folder when it is not bookmarked yet,
-   * then open the star dialog to rename, refile or remove it. A second press edits the existing
-   * bookmark instead of adding another one.
-   */
   /** Ctrl+D without a star dialog: add to the default folder, or remove every copy again. */
   toggleBookmark(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
     const tab = this.tabs.tab(tabId)
@@ -438,10 +435,14 @@ export class Browser {
       url: tab.url,
       favicon: tab.favicon
     })
-    if (node)
-      this.toast(`Bookmark added to ${this.bookmarks.pathLabel(node.parentId ?? '')}`, 'info', win)
+    if (node) this.toast(`Bookmark added to ${this.bookmarks.pathLabel(node.id)}`, 'info', win)
   }
 
+  /**
+   * The star: bookmark the page into the default folder when it is not bookmarked yet, then let
+   * the star dialog rename, refile or remove it. A second press edits the existing bookmark
+   * instead of adding another one.
+   */
   starTab(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
     const tab = this.tabs.tab(tabId)
     if (!tab || tab.url.startsWith('zen://')) return
@@ -455,7 +456,9 @@ export class Browser {
       })
     }
     if (!node) return
-    this.emit('bookmark.star', { tabId, nodeId: node.id, created }, win)
+    // The dialog reads the node from the window's state; a new node must get there first.
+    const payload = { tabId, nodeId: node.id, created }
+    this.state.afterBroadcast(() => this.emit('bookmark.star', payload, win))
   }
 
   /** "Bookmark all tabs": the window's current space (or the given tabs) into one new folder. */
@@ -481,7 +484,8 @@ export class Browser {
       'info',
       win
     )
-    this.emit('overlay.open', { kind: 'bookmarks', folderId: folder.id }, win)
+    const folderId = folder.id
+    this.state.afterBroadcast(() => this.emit('overlay.open', { kind: 'bookmarks', folderId }, win))
   }
 
   /** Open a bookmark in the given tab (or a new one) and remember that it was used. */
@@ -1171,6 +1175,7 @@ export class Browser {
       'bookmark.allTabs': (_a, win) => this.bookmarkTabs(win),
       'bookmark.contextMenu': ({ ids, folderId, x, y }, win) =>
         this.menus.showBookmarkContextMenu(ids, folderId, { x, y }, win),
+      'bookmark.menu': ({ x, y }, win) => this.menus.showBookmarksMenu({ x, y }, win),
       'bookmark.cut': ({ ids }) => this.bookmarks.cut(ids),
       'bookmark.copy': ({ ids }) => this.bookmarks.copy(ids),
       'bookmark.paste': ({ folderId, index }) => void this.bookmarks.paste(folderId, index),
