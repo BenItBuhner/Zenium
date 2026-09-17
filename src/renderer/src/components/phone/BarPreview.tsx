@@ -2,9 +2,9 @@ import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Search } from 'lucide-react'
 import type { PhoneBarItemId, PhoneBarLayout } from '@shared/types'
-import { PHONE_BAR_ITEM_IDS, phoneBarGeometry } from '@shared/phoneBar'
+import { BAR_BUTTON, PHONE_BAR_ITEM_IDS, phoneBarGeometry } from '@shared/phoneBar'
 import { displayUrl } from '@shared/url'
-import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
+import { SPRING_SNAPPY, SpringAnimation, type SpringConfig } from '@renderer/lib/motion/spring'
 import { cn } from '@renderer/lib/utils'
 import { BarButton } from './BarButton'
 import type { BarItemContext } from './barItems'
@@ -12,11 +12,14 @@ import type { BarItemContext } from './barItems'
 /**
  * The bar at real size, as the editor's live preview: the controls of `layout` either side of
  * the address pill, laid out by `phoneBarGeometry` rather than by flex so that every change is
- * a rect the elements can spring to. A control that joins slides its neighbours apart and grows
- * in; one that leaves shrinks away while the rest close up; the pill's left edge and width
- * follow on the same spring. The whole catalogue stays mounted (controls out of the bar sit
- * hidden at presence 0), so styles are written per frame straight to the DOM and nothing has
- * to wait for a render to appear or disappear.
+ * a rect the elements can spring to. The controls are the bar's own `BarButton`s, so the
+ * preview measures one and lays the rest out at that size (32 px under a coarse pointer today,
+ * the 44 px target on a fine one) with the same 4 px gaps and 8 px padding as the bar. A
+ * control that joins slides its neighbours apart and grows in; one that leaves shrinks away
+ * while the rest close up; the pill's left edge and width follow on the same spring. The whole
+ * catalogue stays mounted (controls out of the bar sit hidden at presence 0), so styles are
+ * written per frame straight to the DOM and nothing has to wait for a render to appear or
+ * disappear.
  */
 export function BarPreview({
   layout,
@@ -30,23 +33,35 @@ export function BarPreview({
   const host = useRef<HTMLDivElement>(null)
   const nodes = useRef(new Map<string, HTMLElement>())
   const motion = useRef<PreviewMotion | null>(null)
-  const [width, setWidth] = useState(0)
+  const [size, setSize] = useState({ width: 0, button: 0 })
 
   useLayoutEffect(() => {
     const el = host.current
     if (!el) return
-    setWidth(el.clientWidth)
+    // Any control serves as the sample: they are all the same `zen-toolbar-button` box.
+    const sample = nodes.current.get('back')
+    const measure = (): void => {
+      const button = sample?.firstElementChild
+      const next = {
+        width: el.clientWidth,
+        button:
+          button instanceof HTMLElement && button.offsetWidth > 0 ? button.offsetWidth : BAR_BUTTON
+      }
+      setSize((prev) => (prev.width === next.width && prev.button === next.button ? prev : next))
+    }
+    measure()
     if (typeof ResizeObserver !== 'function') return
-    const observer = new ResizeObserver(() => setWidth(el.clientWidth))
+    const observer = new ResizeObserver(measure)
     observer.observe(el)
+    if (sample) observer.observe(sample)
     return () => observer.disconnect()
   }, [])
 
   useLayoutEffect(() => {
-    if (!width) return
+    if (!size.width) return
     const m = (motion.current ??= new PreviewMotion((key) => nodes.current.get(key)))
-    m.update(layout, width)
-  }, [layout, width])
+    m.update(layout, size.width, size.button)
+  }, [layout, size])
 
   useEffect(() => () => motion.current?.stop(), [])
 
@@ -59,13 +74,14 @@ export function BarPreview({
       aria-hidden
     >
       {PHONE_BAR_ITEM_IDS.map((id) => (
+        // The wrapper shrinks to its button and centres it on the bar's axis, as the bar's flex row does.
         <div
           key={id}
           ref={(el) => {
             if (el) nodes.current.set(id, el)
             else nodes.current.delete(id)
           }}
-          className="absolute left-0 top-1.5 h-11 w-11"
+          className="absolute left-0 top-0 flex h-14 items-center"
           style={{ opacity: 0, visibility: 'hidden' }}
         >
           <BarButton id={id} ctx={ctx} inert />
@@ -94,12 +110,20 @@ export function BarPreview({
 const scaleAt = (presence: number): number => 0.6 + 0.4 * presence
 
 /**
+ * The snappy spring for a 0…1 value: its rest thresholds are in px and px/s, so on a unit
+ * value they would call the spring settled at 60 percent and snap it to the end; a hundredth of
+ * each lets presence run to rest as smoothly as a position does.
+ */
+const SPRING_PRESENCE: SpringConfig = { ...SPRING_SNAPPY, restDelta: 0.004, restSpeed: 0.08 }
+
+/**
  * The preview's springs: one per control for its left edge and one for its presence (0 = gone,
  * 1 = in place), two for the pill (left, width). Frames write `transform`, `opacity` and
  * `visibility` (and the pill's width, one small element) to the nodes looked up by key.
  */
 class PreviewMotion {
   private width = 0
+  private button = 0
   private readonly left = new Map<string, number>()
   private readonly presence = new Map<string, number>()
   private pillWidth = 0
@@ -107,11 +131,12 @@ class PreviewMotion {
 
   constructor(private readonly node: (key: string) => HTMLElement | undefined) {}
 
-  update(layout: PhoneBarLayout, width: number): void {
-    // The first paint and a resize place everything at once; edits animate.
-    const animate = this.width === width
+  update(layout: PhoneBarLayout, width: number, button: number): void {
+    // The first paint and a resize (of the bar or its buttons) place everything at once; edits animate.
+    const animate = this.width === width && this.button === button
     this.width = width
-    const g = phoneBarGeometry(layout, width)
+    this.button = button
+    const g = phoneBarGeometry(layout, width, button)
     for (const id of PHONE_BAR_ITEM_IDS) {
       const target = g.items.get(id)
       const inBar = target !== undefined
@@ -165,7 +190,8 @@ class PreviewMotion {
   ): void {
     let spring = this.springs.get(name)
     if (!spring) {
-      spring = new SpringAnimation(SPRING_SNAPPY, paint, paint)
+      const config = name.startsWith('presence:') ? SPRING_PRESENCE : SPRING_SNAPPY
+      spring = new SpringAnimation(config, paint, paint)
       this.springs.set(name, spring)
     }
     if (!animate) {

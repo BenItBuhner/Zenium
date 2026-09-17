@@ -153,24 +153,30 @@ export function phoneBarCapacity(width: number): number {
   return Math.max(0, Math.min(PHONE_BAR_MAX_ITEMS, fit))
 }
 
-/** Width (px) the pill gets in a bar `width` px wide holding `items` items. */
-export function pillWidth(width: number, items: number): number {
-  return Math.max(0, width - 2 * BAR_PADDING - items * (BAR_BUTTON + BAR_GAP))
+/** Width (px) the pill gets in a bar `width` px wide holding `items` items `button` px wide. */
+export function pillWidth(width: number, items: number, button = BAR_BUTTON): number {
+  return Math.max(0, width - 2 * BAR_PADDING - items * (button + BAR_GAP))
 }
 
 export interface PhoneBarGeometry {
-  /** Left edge (px) of each item's 44 px box. */
+  /** Left edge (px) of each item's box (`button` px wide). */
   items: Map<PhoneBarItemId, number>
   /** The pill's left edge and width (px). */
   pill: { left: number; width: number }
 }
 
 /**
- * Where everything sits in a bar `width` px wide drawing `layout`: items 44 px wide at 4 px
- * gaps from either edge (inside the 8 px padding), the pill filling what is left between them.
+ * Where everything sits in a bar `width` px wide drawing `layout`: items `button` px wide (the
+ * 44 px target by default; the live preview passes the size the bar renders its buttons at) at
+ * 4 px gaps from either edge (inside the 8 px padding), the pill filling what is left between
+ * them. Capacity stays a matter of 44 px targets whatever the buttons measure.
  */
-export function phoneBarGeometry(layout: PhoneBarLayout, width: number): PhoneBarGeometry {
-  const step = BAR_BUTTON + BAR_GAP
+export function phoneBarGeometry(
+  layout: PhoneBarLayout,
+  width: number,
+  button = BAR_BUTTON
+): PhoneBarGeometry {
+  const step = button + BAR_GAP
   const items = new Map<PhoneBarItemId, number>()
   layout.left.forEach((id, i) => items.set(id, BAR_PADDING + i * step))
   const right = layout.right.length
@@ -179,7 +185,7 @@ export function phoneBarGeometry(layout: PhoneBarLayout, width: number): PhoneBa
     items,
     pill: {
       left: BAR_PADDING + layout.left.length * step,
-      width: pillWidth(width, layout.left.length + right)
+      width: pillWidth(width, layout.left.length + right, button)
     }
   }
 }

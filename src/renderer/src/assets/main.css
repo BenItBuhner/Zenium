@@ -1474,6 +1474,10 @@
     backdrop-filter: none;
     box-shadow: var(--v2-shadow-sheet);
   }
+  /* Outranks the tinted sheet's dark shadow (v2 §3: dark adds nothing, the border is the edge). */
+  :root[data-theme='dark'] .zen-sheet.zen-bar-editor {
+    box-shadow: var(--v2-shadow-sheet);
+  }
   .zen-bar-editor .zen-sheet-handle {
     background: rgb(var(--v2-text-rgb) / 0.25);
   }

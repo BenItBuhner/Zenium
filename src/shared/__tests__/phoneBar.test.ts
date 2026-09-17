@@ -166,6 +166,19 @@ describe('phoneBarGeometry', () => {
     expect(g.items.size).toBe(0)
     expect(g.pill).toEqual({ left: 8, width: 412 - 16 })
   })
+
+  it('lays out at the size the bar renders its buttons at (32 px under a coarse pointer)', () => {
+    // The live default bar at 412 px, measured: pill at 44 by 252, buttons at 300, 336, 372.
+    const g = phoneBarGeometry({ left: ['back'], right: ['new-tab', 'tabs', 'menu'] }, 412, 32)
+    expect(g.items.get('back')).toBe(8)
+    expect(g.pill).toEqual({ left: 44, width: 252 })
+    expect(g.items.get('new-tab')).toBe(300)
+    expect(g.items.get('tabs')).toBe(336)
+    expect(g.items.get('menu')).toBe(372)
+    expect(pillWidth(412, 4, 32)).toBe(252)
+    // Capacity is a matter of 44 px targets whatever the buttons measure.
+    expect(pillWidth(412, 4)).toBe(412 - 16 - 4 * 48)
+  })
 })
 
 describe('edits', () => {

@@ -568,7 +568,7 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
                 control={
                   <button
                     type="button"
-                    className="zen-toolbar-button h-11 w-11 shrink-0"
+                    className="zen-toolbar-button zen-row-action h-11 w-11 shrink-0"
                     aria-label={`Remove ${barItem(entry).label}`}
                     onClick={() => edit(removePhoneBarItem(layout, entry))}
                   >
@@ -609,7 +609,7 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
               control={
                 <button
                   type="button"
-                  className="zen-toolbar-button h-11 w-11 shrink-0"
+                  className="zen-toolbar-button zen-row-action h-11 w-11 shrink-0"
                   aria-label={`Add ${barItem(id).label}`}
                   aria-disabled={full || undefined}
                   data-disabled={full || undefined}
