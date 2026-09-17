@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.view.View
 import android.webkit.WebChromeClient
+import app.zen.chromium.blocking.Blocking
 import org.json.JSONObject
 
 /**
@@ -16,6 +17,8 @@ interface PageHost {
     /** The page script injected into every document (empty: no script). */
     val pageScript: String
     val pageToken: String
+    /** The request engine every page's requests run through (`shouldInterceptRequest`). */
+    val blocking: Blocking
     val keys: Keys
     val downloads: Downloads
     val permissions: Permissions

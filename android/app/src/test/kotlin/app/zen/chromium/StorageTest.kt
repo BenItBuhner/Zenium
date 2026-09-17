@@ -49,11 +49,24 @@ class StorageTest {
     }
 
     @Test
-    fun namesStayInsideTheDirectory() {
+    fun namesThatEscapeTheDirectoryAreRefused() {
         storage.writeSync("../escape.json", "{}")
-        assertNull(File(dir.parentFile, "escape.json").takeIf { it.exists() })
-        assertEquals("{}", storage.read("../escape.json"))
-        assertEquals(listOf(".._escape.json"), dir.list()!!.toList())
+        assertFalse(File(dir.parentFile, "escape.json").exists())
+        assertNull(storage.read("../escape.json"))
+        assertNull(storage.fileFor("../escape.json"))
+        assertNull(storage.fileFor("a/b/c.json"))
+        assertEquals(emptyList<String>(), dir.list()!!.toList())
         assertNull(storage.read("missing.json"))
+    }
+
+    @Test
+    fun oneDirectoryLevelIsAllowedAndUnsafeCharactersAreReplaced() {
+        storage.writeSync("blocking/index.json", """{"lists":[]}""")
+        assertEquals("""{"lists":[]}""", storage.read("blocking/index.json"))
+        assertTrue(storage.exists("blocking/index.json"))
+        assertEquals("""{"lists":[]}""", storage.readAll().getString(Storage.BLOCKING_INDEX))
+        storage.writeSync("ext storage:x.json", "{}")
+        assertEquals(File(dir, "ext_storage_x.json"), storage.fileFor("ext storage:x.json"))
+        assertEquals("{}", storage.read("ext storage:x.json"))
     }
 }

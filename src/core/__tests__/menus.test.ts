@@ -40,7 +40,8 @@ const DESKTOP: HostCapabilities = {
   appLinkSettings: false,
   pullToRefresh: false,
   passwords: true,
-  defaultBrowser: false
+  defaultBrowser: false,
+  requestBlocking: true
 }
 
 /**
@@ -69,7 +70,8 @@ const ANDROID: HostCapabilities = {
   appLinkSettings: true,
   pullToRefresh: true,
   passwords: true,
-  defaultBrowser: true
+  defaultBrowser: true,
+  requestBlocking: true
 }
 
 function memoryIo(): StoreIO {

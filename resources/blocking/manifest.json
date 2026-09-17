@@ -1,0 +1,75 @@
+{
+  "builtAt": 1789633817801,
+  "lists": [
+    {
+      "id": "urlhaus",
+      "file": "urlhaus.txt.gz",
+      "version": null,
+      "filterCount": 9318,
+      "url": "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-online.txt",
+      "name": "URLhaus malicious URL blocklist",
+      "homepage": "https://gitlab.com/malware-filter/urlhaus-filter",
+      "licence": "CC0-1.0"
+    },
+    {
+      "id": "ubo-badware",
+      "file": "ubo-badware.txt.gz",
+      "version": null,
+      "filterCount": 4140,
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/badware.txt",
+      "name": "uBlock Origin – Badware risks",
+      "homepage": "https://github.com/uBlockOrigin/uAssets",
+      "licence": "GPL-3.0"
+    },
+    {
+      "id": "easylist",
+      "file": "easylist.txt.gz",
+      "version": "202609170807",
+      "filterCount": 56828,
+      "url": "https://easylist.to/easylist/easylist.txt",
+      "name": "EasyList",
+      "homepage": "https://easylist.to/",
+      "licence": "GPL-3.0 / CC BY-SA 3.0"
+    },
+    {
+      "id": "easyprivacy",
+      "file": "easyprivacy.txt.gz",
+      "version": "202609170807",
+      "filterCount": 56064,
+      "url": "https://easylist.to/easylist/easyprivacy.txt",
+      "name": "EasyPrivacy",
+      "homepage": "https://easylist.to/",
+      "licence": "GPL-3.0 / CC BY-SA 3.0"
+    },
+    {
+      "id": "ubo-filters",
+      "file": "ubo-filters.txt.gz",
+      "version": null,
+      "filterCount": 1765,
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters.txt",
+      "name": "uBlock Origin – Ads",
+      "homepage": "https://github.com/uBlockOrigin/uAssets",
+      "licence": "GPL-3.0"
+    },
+    {
+      "id": "peter-lowe",
+      "file": "peter-lowe.txt.gz",
+      "version": null,
+      "filterCount": 3560,
+      "url": "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=adblockplus&showintro=0&mimetype=plaintext",
+      "name": "Peter Lowe’s Ad and tracking server list",
+      "homepage": "https://pgl.yoyo.org/adservers/",
+      "licence": "MCRAE GENERAL PUBLIC LICENSE"
+    },
+    {
+      "id": "ubo-privacy",
+      "file": "ubo-privacy.txt.gz",
+      "version": null,
+      "filterCount": 1435,
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/privacy.txt",
+      "name": "uBlock Origin – Privacy",
+      "homepage": "https://github.com/uBlockOrigin/uAssets",
+      "licence": "GPL-3.0"
+    }
+  ]
+}

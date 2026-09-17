@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zenium blocking demo</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px 20px 32px;
+         background: #f4f4f5; color: #18181b; }
+  @media (prefers-color-scheme: dark) { body { background: #18181b; color: #fafafa; } .row { background: #27272a; border-color: #3f3f46; } }
+  h1 { font-size: 20px; margin: 0 0 4px; font-weight: 600; }
+  p.sub { margin: 0 0 16px; opacity: .7; }
+  .summary { font-size: 28px; font-weight: 600; margin: 0 0 16px; }
+  .summary small { font-size: 14px; font-weight: 400; opacity: .7; display: block; }
+  .row { display: grid; grid-template-columns: 78px 1fr; gap: 10px; align-items: center; padding: 8px 12px; margin: 6px 0;
+         background: #fff; border: 1px solid #e4e4e7; border-radius: 6px; font-size: 13px; }
+  .row code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+  .state { font-weight: 600; letter-spacing: .02em; }
+  .pending .state { color: #a1a1aa; }
+  .blocked .state { color: #b91c1c; }
+  .loaded .state { color: #15803d; }
+  .kind { opacity: .6; font-size: 11px; display: block; }
+</style>
+</head>
+<body>
+<h1>Zenium blocking demo</h1>
+<p class="sub">Each row asks a real ad or tracking host for a resource. A red row never left the browser.</p>
+<div class="summary" id="summary">…<small id="detail">waiting for the requests to settle</small></div>
+<div id="rows"></div>
+<script>
+  const resources = [
+    ['script', 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js', 'Google AdSense (EasyList)'],
+    ['script', 'https://static.doubleclick.net/instream/ad_status.js', 'DoubleClick (EasyList)'],
+    ['script', 'https://cdn.taboola.com/libtrc/unip/1/tfa.js', 'Taboola (EasyList)'],
+    ['script', 'https://c.amazon-adsystem.com/aax2/apstag.js', 'Amazon ads (EasyList)'],
+    ['script', 'https://www.googletagmanager.com/gtag/js?id=G-DEMO', 'Google Tag Manager (EasyPrivacy)'],
+    ['script', 'https://www.google-analytics.com/analytics.js', 'Google Analytics (EasyPrivacy)'],
+    ['script', 'https://connect.facebook.net/en_US/fbevents.js', 'Meta Pixel (EasyPrivacy)'],
+    ['script', 'https://static.hotjar.com/c/hotjar-1.js?sv=6', 'Hotjar (EasyPrivacy)'],
+    ['image', 'https://sb.scorecardresearch.com/p?c1=2&c2=1', 'Comscore beacon (EasyPrivacy)'],
+    ['script', '/ok.js', 'This site\u2019s own script (control)'],
+    ['image', '/ok.png', 'This site\u2019s own image (control)']
+  ]
+  const rows = document.getElementById('rows')
+  const results = new Map()
+  function settle(url, state) {
+    if (results.has(url)) return
+    results.set(url, state)
+    const row = document.getElementById('r' + resources.findIndex((r) => r[1] === url))
+    row.className = 'row ' + state
+    row.querySelector('.state').textContent = state.toUpperCase()
+    if (results.size === resources.length) {
+      const blocked = [...results.values()].filter((s) => s === 'blocked').length
+      const third = resources.filter((r) => r[1].startsWith('https://')).length
+      document.getElementById('summary').firstChild.textContent = `${blocked} of ${third} third-party requests blocked`
+      document.getElementById('detail').textContent =
+        blocked === third
+          ? 'every ad and tracker request was stopped before it left the browser; the site\u2019s own resources loaded'
+          : blocked === 0
+            ? 'nothing was blocked \u2013 blocking is off or this site is excepted'
+            : 'some requests got through'
+      document.title = `${blocked}/${third} blocked \u2013 Zenium blocking demo`
+    }
+  }
+  resources.forEach(([kind, url, label], i) => {
+    const row = document.createElement('div')
+    row.className = 'row pending'
+    row.id = 'r' + i
+    row.innerHTML = `<span class="state">PENDING</span><span><code>${url}</code><span class="kind">${kind} \u00b7 ${label}</span></span>`
+    rows.appendChild(row)
+    let el
+    if (kind === 'script') { el = document.createElement('script'); el.async = true }
+    else el = new Image()
+    el.onload = () => settle(url, 'loaded')
+    el.onerror = () => settle(url, 'blocked')
+    el.src = url
+    if (kind !== 'image') document.body.appendChild(el)
+  })
+</script>
+</body>
+</html>

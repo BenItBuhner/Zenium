@@ -61,6 +61,12 @@ export function createPreviewBridge(): NativeBridge {
       localStorage.setItem(STORAGE_PREFIX + String(name), String(text)),
     'storage.writeSync': ({ name, text }) =>
       localStorage.setItem(STORAGE_PREFIX + String(name), String(text)),
+    'storage.read': ({ name }) => localStorage.getItem(STORAGE_PREFIX + String(name)),
+    'storage.exists': ({ name }) => localStorage.getItem(STORAGE_PREFIX + String(name)) !== null,
+    'storage.remove': ({ name }) => localStorage.removeItem(STORAGE_PREFIX + String(name)),
+    // The preview has no request engine and ships no filter-list snapshot.
+    'blocking.bundled': () => [],
+    'blocking.install': () => null,
     'view.create': ({ tabId }) => {
       const frame = document.createElement('iframe')
       frame.className = 'zen-preview-view'

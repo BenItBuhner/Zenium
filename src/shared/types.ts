@@ -5,6 +5,7 @@
 import type { AppIconId } from './appIcon'
 import type { SiteInfo } from './siteInfo'
 import type { UpdateSettings, UpdateStatus } from './updates'
+import type { BlockingSettings, BlockingStatus } from './blocking'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -69,6 +70,8 @@ export interface HostCapabilities {
    * it one (Android's browser role). Desktop hosts leave this to the platform's own settings.
    */
   defaultBrowser: boolean
+  /** The host runs a request engine that blocks ads and trackers (Settings → Privacy and security). */
+  requestBlocking: boolean
 }
 
 export interface Rect {
@@ -200,6 +203,8 @@ export interface Tab {
   bookmarked: boolean
   /** The page looks like an article Reader View can render (Firefox's "reader mode" icon). */
   readerable: boolean
+  /** Requests the blocking engine stopped for the current document (resets on navigation). */
+  blockedCount: number
 }
 
 /** Colours a tab group (folder) can wear; the phone chrome paints group cards with them. */
@@ -993,6 +998,8 @@ export interface Settings {
   passwords: PasswordSettings
   /** Session counter and cooldowns of the "make Zenium your default browser" prompts. */
   defaultBrowserPromo: DefaultBrowserPromoState
+  /** Ad and tracker blocking (Settings → Privacy and security). */
+  blocking: BlockingSettings
 }
 
 // ---------------------------------------------------------------------------
@@ -1380,6 +1387,8 @@ export interface UIState {
   passwords: PasswordsStatus
   /** Default-browser role: whether Zenium holds it and which prompt (if any) is due. */
   defaultBrowser: DefaultBrowserStatus
+  /** Ad and tracker blocking: lists, their freshness and the session counter. */
+  blocking: BlockingStatus
 }
 
 export interface FindResult {
@@ -1973,6 +1982,12 @@ export interface Commands {
     args: { passphrase?: string }
     result: ReauthOutcome<{ saved: boolean; count: number }>
   }
+  /** Refresh one filter list (or every enabled one) from its canonical URL now. */
+  'blocking.updateLists': { args: { id?: string }; result: void }
+  /** The master switch of ad and tracker blocking (the `ads` permission's default). */
+  'blocking.setEnabled': { args: { enabled: boolean }; result: void }
+  /** Except a site (origin, URL or host) from blocking, or block on it again. */
+  'blocking.setSiteException': { args: { site: string; excepted: boolean }; result: void }
 }
 
 export type CommandName = keyof Commands
