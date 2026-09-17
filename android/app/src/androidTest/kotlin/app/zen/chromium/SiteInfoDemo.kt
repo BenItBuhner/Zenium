@@ -167,13 +167,17 @@ class SiteInfoDemo {
 
         // 4. Drag the sheet away by its grip: peek it down, hold, then let it go.
         dragSheetAway(f)
-        SystemClock.sleep(2_500)
+        SystemClock.sleep(4_000)
 
-        // 5. Next tab (a fling on the pill), then the same sheet on the second site.
+        // 5. Swipe the pill to the next tab (slowly, the way GestureDemo does: the first touch
+        //    snapshots the page before the cards can move), then the same sheet on the second site.
         f.down(pill.right - 10f, pill.exactCenterY())
-        f.moveBy(-0.40f * width, 0f, 120)
+        f.moveBy(-NUDGE, 0f, 60)
+        f.hold(STAGE_WAIT)
+        f.moveBy(-0.60f * width + NUDGE, 0f, 700)
+        f.hold(250)
         f.up()
-        SystemClock.sleep(9_000)
+        SystemClock.sleep(10_000)
         tapSiteIcon(f)
         SystemClock.sleep(3_500)
         shot("05-sheet-bing")
@@ -214,6 +218,7 @@ class SiteInfoDemo {
     private fun dragSheetAway(f: Finger) {
         val sheet = sheetBounds()
         val grip = findByLabel(GRIP_LABEL)
+        Log.i(TAG, "sheet $sheet grip $grip")
         val x = width / 2f
         val y = grip?.exactCenterY() ?: ((sheet?.top ?: (height * 0.35f).toInt()) + 24 * density)
         val travel = (sheet?.height() ?: (height * 0.6f).toInt()).toFloat()
@@ -336,5 +341,9 @@ class SiteInfoDemo {
         private const val SITE_ICON_LABEL = "Site information"
         private const val GRIP_LABEL = "Drag to dismiss"
         private const val STEP_MS = 8L
+        /** Past the 8 CSS px slop at any plausible density, hardly visible on the track. */
+        private const val NUDGE = 30f
+        /** Long enough for the emulator's software GPU to snapshot the page before the swipe. */
+        private const val STAGE_WAIT = 2_400L
     }
 }

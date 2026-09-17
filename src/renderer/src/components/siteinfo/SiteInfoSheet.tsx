@@ -143,7 +143,13 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
           transform: `translate3d(0, ${Math.round(progress * travel)}px, 0)`
         }}
       >
-        <div className="shrink-0 px-3 pb-1 pt-2" aria-label="Drag to dismiss" {...grip}>
+        <div
+          className="shrink-0 px-3 pb-1 pt-2"
+          role="button"
+          tabIndex={-1}
+          aria-label="Drag to dismiss"
+          {...grip}
+        >
           <div className="mx-auto mb-3 h-1 w-9 rounded-full bg-[var(--zen-fg)]/20" />
           <SiteHeader tab={tab} state={state} />
         </div>
@@ -393,7 +399,7 @@ function SiteInfoBody({ tab }: { tab: Tab }): JSX.Element {
               info ? (
                 info.storage.usageBytes !== null && info.storage.usageBytes > 0 ? (
                   formatBytes(info.storage.usageBytes)
-                ) : (
+                ) : storesAnything(info) ? null : (
                   <Quiet>None</Quiet>
                 )
               ) : loading ? (
@@ -727,6 +733,17 @@ function Confirm({
 
 function items(n: number): string {
   return `${n} item${n === 1 ? '' : 's'}`
+}
+
+/** Anything beyond quota-managed storage: Web Storage items or service workers. */
+function storesAnything(info: SiteInfo): boolean {
+  const s = info.storage
+  return (
+    (s.localStorageItems ?? 0) > 0 ||
+    (s.sessionStorageItems ?? 0) > 0 ||
+    (s.serviceWorkers ?? 0) > 0 ||
+    s.origins.length > 0
+  )
 }
 
 function formatDate(ms: number): string {
