@@ -63,7 +63,7 @@ export default defineConfig(
   {
     // Plain Node scripts run by the GitHub Actions workflows and electron-builder hooks; no
     // TypeScript annotations available.
-    files: ['.github/scripts/**/*.mjs', 'build/**/*.mjs'],
+    files: ['.github/scripts/**/*.mjs', 'build/**/*.mjs', 'scripts/win-nsis-7z-filter.js'],
     rules: {
       '@typescript-eslint/explicit-function-return-type': 'off'
     }

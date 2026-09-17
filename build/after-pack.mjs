@@ -12,12 +12,17 @@
 // electron-builder uses for signed builds, so behaviour matches a Developer-ID build as far as an
 // ad-hoc signature allows.
 import { execFileSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { dirname, join, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
+const require = createRequire(import.meta.url)
+const { applyWinNsis7zFilter } = require('../scripts/win-nsis-7z-filter.js')
 
 export default async function afterPack(context) {
+  // Windows arm64 NSIS: pin the 7z payload to BCJ2 so nsis7z.dll can extract zenium.exe.
+  applyWinNsis7zFilter(context)
   if (context.electronPlatformName !== 'darwin') return
   if (process.env.CSC_LINK || process.env.CSC_NAME) return // a real certificate: electron-builder signs
   const app = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`)
