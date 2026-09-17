@@ -34,7 +34,10 @@ export function PullIndicator(): JSX.Element | null {
       const top = offset - DISC - GAP
       let scale = 0.85 + 0.15 * Math.min(1, progress)
       let opacity = 1
-      if (phase === 'finishing') {
+      if (phase === 'refreshing') {
+        // Waiting on the reload at PULL_REST: the full 40 px disc, whatever the spring is doing.
+        scale = 1
+      } else if (phase === 'finishing') {
         // The page springs home from where it waited; the disc goes with it, shrinking away.
         const t = Math.min(1, offset / PULL_REST)
         scale = 0.4 + 0.6 * t

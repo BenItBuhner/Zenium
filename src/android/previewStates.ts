@@ -1,4 +1,4 @@
-import { dispatchPullEvent, PULL_THRESHOLD, pullStore, pullTravelFor } from '@renderer/lib/pull'
+import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
 import { activeTab } from '@renderer/lib/selectors'
 import { browserStore, closeOverlay, openOverlay, uiStore } from '@renderer/lib/ui'
 import { parsePreviewSpec } from './previewSpec'
@@ -32,10 +32,11 @@ function apply(spec: string): void {
     const tab = state ? activeTab(state) : null
     const target = parsePreviewSpec(spec)
 
-    // Every spec starts from idle so states do not stack.
+    // Every spec starts from idle so states do not stack: a pull in flight is put back at once
+    // (a `cancel` would spring home, and the next pull would catch that spring part-way).
     closeOverlay()
     uiStore.set({ findOpen: false, findTabId: null })
-    if (tab && pullStore.get().phase !== 'idle') dispatchPullEvent(tab.id, 'cancel', null)
+    abortPull()
 
     if (target.kind === 'overlay') {
       void openOverlay(target.overlay, tab?.id ?? null).then(() => {
@@ -69,7 +70,9 @@ function apply(spec: string): void {
  */
 function pull(tabId: string, progress: number, released: boolean): void {
   const time = performance.now()
-  const travel = pullTravelFor(progress * PULL_THRESHOLD)
+  // The inverse mapping lands a hair under the threshold in floating point (71.999… for 1), which
+  // reads as unarmed; at the threshold and past it, a hair of extra finger puts the page over it.
+  const travel = pullTravelFor(progress * PULL_THRESHOLD) + (progress >= 1 ? 0.5 : 0)
   dispatchPullEvent(tabId, 'start', null)
   dispatchPullEvent(tabId, 'move', { travel, time })
   if (released) {

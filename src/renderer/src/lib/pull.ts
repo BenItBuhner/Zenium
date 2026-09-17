@@ -364,6 +364,11 @@ export function dispatchPullEvent(
   machine.dispatch(tabId, phase, payload)
 }
 
+/** Put the page back at once and forget any pull in flight (no spring; the preview's reset). */
+export function abortPull(): void {
+  machine.abort()
+}
+
 const flags = globalThis as unknown as { __zenPullWired?: boolean }
 if (!flags.__zenPullWired) {
   flags.__zenPullWired = true
