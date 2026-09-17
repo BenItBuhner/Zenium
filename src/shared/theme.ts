@@ -58,6 +58,23 @@ export function hexToRgb(hex: string): RGB | null {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
 }
 
+/**
+ * A computed CSS colour (`rgb(r, g, b)`, `rgba(r, g, b, a)` or the modern `rgb(r g b / a)`) as
+ * `#rrggbbaa`, the form the Android host's `parseColor` takes – how a chrome token such as
+ * `--zen-scrim` is handed to native views. Null for anything else (`transparent`, `color()`).
+ */
+export function cssColorToHex(value: string): string | null {
+  const m =
+    /^rgba?\(\s*(\d+(?:\.\d+)?)\s*[, ]\s*(\d+(?:\.\d+)?)\s*[, ]\s*(\d+(?:\.\d+)?)\s*(?:[,/]\s*(\d*\.?\d+%?)\s*)?\)$/i.exec(
+      value.trim()
+    )
+  if (!m) return null
+  const alpha =
+    m[4] === undefined ? 1 : m[4].endsWith('%') ? parseFloat(m[4]) / 100 : parseFloat(m[4])
+  const channels: number[] = [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), alpha * 255]
+  return `#${channels.map((v) => clamp(Math.round(v), 0, 255).toString(16).padStart(2, '0')).join('')}`
+}
+
 export function mix(a: RGB, b: RGB, t: number): RGB {
   const k = clamp(t, 0, 1)
   return [

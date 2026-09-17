@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   THEME_PRESETS,
   colorToWheel,
+  cssColorToHex,
   deriveColors,
   hexToRgb,
   hslToRgb,
@@ -25,6 +26,18 @@ describe('colour utilities', () => {
     expect(back.map((c, i) => Math.abs(c - rgb[i]) <= 1).every(Boolean)).toBe(true)
     expect(rgbToHex(rgb)).toBe('#9d7cff')
     expect(hexToRgb('nope')).toBeNull()
+  })
+
+  it('turns a computed CSS colour into #rrggbbaa for the native host', () => {
+    // How Chromium serialises a computed colour with and without alpha.
+    expect(cssColorToHex('rgba(73, 72, 74, 0.28)')).toBe('#49484a47')
+    expect(cssColorToHex('rgb(30, 30, 36)')).toBe('#1e1e24ff')
+    // The token as authored, should a host hand it over unserialised.
+    expect(cssColorToHex('rgb(8 8 10 / 0.45)')).toBe('#08080a73')
+    expect(cssColorToHex('rgb(8 8 10 / 45%)')).toBe('#08080a73')
+    expect(cssColorToHex('transparent')).toBeNull()
+    expect(cssColorToHex('color(srgb 0.1 0.2 0.3)')).toBeNull()
+    expect(cssColorToHex('')).toBeNull()
   })
 
   it('maps wheel positions to colours and back', () => {

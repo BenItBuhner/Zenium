@@ -261,7 +261,8 @@ class PageBackTransition private constructor(
             title = entry?.title?.ifEmpty { null } ?: item.title ?: "",
             subtitle = hostOf(item.url),
             favicon = entry?.favicon ?: item.favicon,
-            dark = host.themeDark
+            dark = host.themeDark,
+            scrim = host.themeScrim
         )
         preview.radius = tab.radiusPx
         val lp = tab.layoutParams as? FrameLayout.LayoutParams
@@ -416,7 +417,7 @@ class PageBackTransition private constructor(
             if (index < 0) return null
             val item = history.getItemAtIndex(index) ?: return null
             val entry = host.snapshots.get(tab.tabId, index, item.url)
-            if (entry == null) Log.d(TAG, "no snapshot for ${item.url}; showing the placeholder")
+            Log.d(TAG, "preview of ${item.url}: ${if (entry == null) "placeholder" else "snapshot"}, scrim #${"%08x".format(host.themeScrim)}")
             // The page being left becomes the forward entry: remember it while it is still whole.
             tab.rememberCurrentPage(force = true)
             return PageBackTransition(tab, host, edge, entry, item)
@@ -431,7 +432,8 @@ class PageBackTransition private constructor(
  * The page that appears under the one sliding away during an in-page back: its snapshot, scaled
  * to the view's width and top-aligned like the chrome's thumbnails, or a quiet placeholder page
  * carrying the site's favicon and title. Draws the parallax, the scrim that lifts as the page
- * arrives and the shadow the departing page casts on it; clipped to the tab's rounded corners.
+ * arrives – the chrome's own `--zen-scrim`, so the dim carries the space's tint like every sheet
+ * in the chrome – and the shadow the departing page casts on it; clipped to the tab's corners.
  */
 class BackPreviewView(context: Context) : View(context) {
     private var bitmap: Bitmap? = null
@@ -439,6 +441,7 @@ class BackPreviewView(context: Context) : View(context) {
     private var title = ""
     private var subtitle = ""
     private var dark = false
+    private var scrim = 0
     private var fraction = 0f
     private var direction = 1f
     private val density = resources.displayMetrics.density
@@ -471,12 +474,14 @@ class BackPreviewView(context: Context) : View(context) {
         }
     }
 
-    fun setContent(bitmap: Bitmap?, title: String, subtitle: String, favicon: Bitmap?, dark: Boolean) {
+    /** `scrim` is the chrome's scrim token as ARGB; its alpha is the dim over a fully covered page. */
+    fun setContent(bitmap: Bitmap?, title: String, subtitle: String, favicon: Bitmap?, dark: Boolean, scrim: Int) {
         this.bitmap = bitmap
         this.title = title
         this.subtitle = subtitle
         this.favicon = favicon
         this.dark = dark
+        this.scrim = scrim
         invalidate()
     }
 
@@ -504,8 +509,9 @@ class BackPreviewView(context: Context) : View(context) {
         } else {
             drawPlaceholder(canvas, w, h)
         }
-        val scrim = SCRIM * (1f - fraction)
-        if (scrim > 0.004f) canvas.drawColor(Color.argb((scrim * 255).toInt(), 0, 0, 0))
+        // The scrim lifts as the page arrives: the token's alpha at the start, none at the end.
+        val alpha = (Color.alpha(scrim) * (1f - fraction)).toInt()
+        if (alpha > 0) canvas.drawColor(Color.argb(alpha, Color.red(scrim), Color.green(scrim), Color.blue(scrim)))
         drawEdgeShadow(canvas, w, h)
     }
 
@@ -561,7 +567,6 @@ class BackPreviewView(context: Context) : View(context) {
 
     companion object {
         private const val PARALLAX = 0.25f
-        private const val SCRIM = 0.32f
         private const val SHADOW_WIDTH = 28f
         private const val SHADOW_COLOR = 0x33000000
         private const val BACKGROUND_LIGHT = 0xFFF2F1F5.toInt()

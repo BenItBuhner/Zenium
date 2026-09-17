@@ -6,7 +6,7 @@ import type {
   Events,
   UIState
 } from '@shared/types'
-import { resolveTheme, rgbToHex } from '@shared/theme'
+import { cssColorToHex, resolveTheme, rgbToHex } from '@shared/theme'
 import { Browser } from '@core/browser'
 import type { KeyEventInput } from '@core/platform'
 import {
@@ -112,10 +112,13 @@ export function bootAndroid(): { browser: Browser; api: ZenApi; preview: boolean
 
 /**
  * Keep the system bars and the window background in step with the active space's theme, so the
- * gradient reaches behind the status bar and its icons stay legible.
+ * gradient reaches behind the status bar and its icons stay legible – and hand the chrome's
+ * `--zen-scrim` token over, so what the host draws natively (the page behind an in-page back)
+ * dims with the same space-tinted scrim as the chrome's own sheets.
  */
 function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Browser): void {
   let last = ''
+  let frame: number | null = null
   const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
   const apply = (state: UIState): void => {
     const space = state.spaces.find((s) => s.id === state.activeSpaceId) ?? state.spaces[0]
@@ -125,13 +128,33 @@ function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Bro
         : state.settings.colorScheme === 'dark'
     const resolved = resolveTheme(space?.theme ?? null, dark)
     const background = rgbToHex(resolved.averageColor)
-    const key = `${dark}|${background}`
-    if (key === last) return
-    last = key
-    bridge.send('chrome.setTheme', { dark, background })
+    // The token is read back from the document a frame later, once React has written the
+    // space's variables (`useTheme`); the state event this runs on precedes that render.
+    if (frame !== null) cancelAnimationFrame(frame)
+    frame = requestAnimationFrame(() => {
+      frame = null
+      const scrim = computedTokenColor('--zen-scrim') ?? ''
+      const key = `${dark}|${background}|${scrim}`
+      if (key === last) return
+      last = key
+      bridge.send('chrome.setTheme', { dark, background, scrim })
+    })
   }
   platform.events.on('state', apply)
   systemDark.addEventListener('change', () => apply(browser.state.snapshot(platform.window)))
+}
+
+/** The colour a chrome CSS token currently computes to, as `#rrggbbaa` (null when unreadable). */
+function computedTokenColor(token: string): string | null {
+  const probe = document.createElement('span')
+  probe.style.display = 'none'
+  probe.style.color = `var(${token})`
+  document.documentElement.appendChild(probe)
+  try {
+    return cssColorToHex(getComputedStyle(probe).color)
+  } finally {
+    probe.remove()
+  }
 }
 
 /**
