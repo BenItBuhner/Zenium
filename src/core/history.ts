@@ -1,6 +1,6 @@
 import type { HistoryEntry } from '../shared/types'
 import { JsonStore } from './store/JsonStore'
-import { isInternalUrl } from '../shared/url'
+import { getDomain, isInternalUrl } from '../shared/url'
 import type { StoreIO } from './platform'
 
 const MAX_ENTRIES = 10_000
@@ -70,6 +70,18 @@ export class HistoryService {
 
   recent(limit: number): HistoryEntry[] {
     return [...this.entries.values()].sort((a, b) => b.lastVisit - a.lastVisit).slice(0, limit)
+  }
+
+  /** The most recently seen favicon per registrable domain (the password manager's site icons). */
+  faviconsByDomain(): Map<string, string> {
+    const out = new Map<string, string>()
+    // Entries are kept in visit order, so later ones win by overwriting.
+    for (const e of this.entries.values()) {
+      if (!e.favicon) continue
+      const domain = getDomain(e.url)
+      if (domain) out.set(domain, e.favicon)
+    }
+    return out
   }
 
   /** Simple frecency-style ranking: substring matches weighted by visits and recency. */

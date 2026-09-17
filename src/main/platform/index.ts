@@ -10,6 +10,7 @@ import type {
   DialogHost,
   NetHost,
   PageMessage,
+  PasswordsHost,
   PickedTextFile,
   Platform,
   PlatformInfo,
@@ -33,6 +34,7 @@ import { ElectronAgentTransport } from '../agent/server'
 import { ElectronSiteData } from './siteData'
 import { ElectronUpdateHost } from './updates'
 import { applyAppIcon } from './appIcon'
+import { createPasswordsHost } from './passwords'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
@@ -52,7 +54,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   share: false,
   clipboardChip: false,
   appLinkSettings: false,
-  pullToRefresh: false
+  pullToRefresh: false,
+  passwords: true
 }
 
 /**
@@ -74,6 +77,7 @@ export class ElectronPlatform implements Platform {
   readonly net: NetHost
   readonly app: AppHost
   readonly siteData: ElectronSiteData
+  readonly passwords: PasswordsHost
   browser!: Browser
 
   constructor(private readonly userDataDir: string) {
@@ -142,6 +146,7 @@ export class ElectronPlatform implements Platform {
         }
       }
     }
+    this.passwords = createPasswordsHost()
     this.clipboard = {
       // Asynchronous since Electron 44; the host contract stays fire-and-forget.
       writeText: (text) =>

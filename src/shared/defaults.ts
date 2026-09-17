@@ -1,8 +1,11 @@
 import type {
   AgentServerStatus,
   AgentSettings,
+  CheckupState,
   Container,
   FolderColor,
+  PasswordSettings,
+  PasswordsStatus,
   ResourceSettings,
   ResourceSnapshot,
   Settings
@@ -26,6 +29,56 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
 
 export function emptyAgentServerStatus(): AgentServerStatus {
   return { running: false, url: null, lanUrls: [], token: '', error: null }
+}
+
+/** Offer to save logins, and ask again a minute after the last re-authentication like Chrome. */
+export const DEFAULT_PASSWORD_SETTINGS: PasswordSettings = {
+  offerToSave: true,
+  reauthGraceSeconds: 60
+}
+
+export const MAX_REAUTH_GRACE_SECONDS = 60 * 60
+
+export function sanitizePasswordSettings(
+  raw: Partial<PasswordSettings> | undefined | null
+): PasswordSettings {
+  const d = DEFAULT_PASSWORD_SETTINGS
+  const r = raw ?? {}
+  const grace = Number(r.reauthGraceSeconds)
+  return {
+    offerToSave: typeof r.offerToSave === 'boolean' ? r.offerToSave : d.offerToSave,
+    reauthGraceSeconds: Number.isFinite(grace)
+      ? Math.max(0, Math.min(MAX_REAUTH_GRACE_SECONDS, Math.round(grace)))
+      : d.reauthGraceSeconds
+  }
+}
+
+export function emptyCheckupState(): CheckupState {
+  return {
+    running: false,
+    checked: 0,
+    total: 0,
+    finishedAt: null,
+    error: null,
+    compromised: [],
+    weak: [],
+    reused: [],
+    unchecked: []
+  }
+}
+
+export function emptyPasswordsStatus(): PasswordsStatus {
+  return {
+    locked: true,
+    protection: { os: false, passphrase: false },
+    osKeystore: false,
+    osReauth: false,
+    count: 0,
+    neverSave: [],
+    revision: 0,
+    error: null,
+    checkup: emptyCheckupState()
+  }
 }
 
 /**
@@ -124,7 +177,8 @@ export const DEFAULT_SETTINGS: Settings = {
   resources: structuredClone(DEFAULT_RESOURCE_SETTINGS),
   agents: structuredClone(DEFAULT_AGENT_SETTINGS),
   updates: structuredClone(DEFAULT_UPDATE_SETTINGS),
-  externalProtocols: {}
+  externalProtocols: {},
+  passwords: structuredClone(DEFAULT_PASSWORD_SETTINGS)
 }
 
 /** Firefox's four default containers plus "No Container". */
