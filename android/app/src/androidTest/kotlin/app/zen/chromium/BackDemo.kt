@@ -261,10 +261,11 @@ class BackDemo {
         SystemClock.sleep(1_800)
         dismissWithBack(0.32f * w, "07-overview-dragging", commitTravel = 0.36f * w, settle = 2_200)
 
-        // 9. The sidebar drawer, from the overview's header.
+        // 9. The sidebar drawer, from the overview's header. Clicked through accessibility: a touch
+        //    on that header starts the overview's own drag, which takes the tap away from the button.
         tapLabelPrefix("Tabs (")
         SystemClock.sleep(1_800)
-        tapLabel("Open sidebar")
+        clickLabel("Open sidebar")
         SystemClock.sleep(1_400)
         dismissWithBack(0.30f * w, "08-drawer-dragging")
 
@@ -372,6 +373,16 @@ class BackDemo {
         Finger().tap(bounds.exactCenterX(), bounds.exactCenterY())
     }
 
+    /** Activate a node by label through accessibility (a DOM click, no pointer events). */
+    private fun clickLabel(label: String) {
+        val node = findNodeByLabel(label)
+        if (node == null) {
+            Log.w(TAG, "no node labelled $label to click")
+            return
+        }
+        if (!node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) Log.w(TAG, "click on $label was refused")
+    }
+
     private fun shot(name: String) {
         val bitmap = ui.takeScreenshot() ?: return
         File(out, "back-$name.png").outputStream().use {
@@ -381,7 +392,10 @@ class BackDemo {
     }
 
     /** Breadth-first search of the active window for a node labelled `label` (aria-label or text). */
-    private fun findByLabel(label: String, prefix: Boolean = false): Rect? {
+    private fun findByLabel(label: String, prefix: Boolean = false): Rect? =
+        findNodeByLabel(label, prefix)?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+
+    private fun findNodeByLabel(label: String, prefix: Boolean = false): AccessibilityNodeInfo? {
         val root = ui.rootInActiveWindow ?: return null
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)
@@ -392,9 +406,7 @@ class BackDemo {
         while (queue.isNotEmpty() && visited < 6_000) {
             val node = queue.removeFirst()
             visited++
-            if (matches(node.contentDescription) || matches(node.text)) {
-                return Rect().also { node.getBoundsInScreen(it) }
-            }
+            if (matches(node.contentDescription) || matches(node.text)) return node
             for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
         }
         return null

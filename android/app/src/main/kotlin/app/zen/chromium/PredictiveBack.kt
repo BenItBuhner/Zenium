@@ -489,27 +489,36 @@ class BackPreviewView(context: Context) : View(context) {
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
         canvas.drawColor(if (dark) BACKGROUND_DARK else BACKGROUND_LIGHT)
-        // The incoming page starts a quarter of the way over and settles as the outgoing one leaves.
-        canvas.save()
-        canvas.translate(-direction * (1f - fraction) * PARALLAX * w, 0f)
         val image = bitmap
         if (image != null && !image.isRecycled) {
+            // The incoming page starts a quarter of the way over and settles as the outgoing one leaves.
+            canvas.save()
+            canvas.translate(-direction * (1f - fraction) * PARALLAX * w, 0f)
             val scale = w / image.width
             dst.set(0f, 0f, w, image.height * scale)
             canvas.drawBitmap(image, null, dst, bitmapPaint)
+            canvas.restore()
         } else {
             drawPlaceholder(canvas, w, h)
         }
-        canvas.restore()
         val scrim = SCRIM * (1f - fraction)
         if (scrim > 0.004f) canvas.drawColor(Color.argb((scrim * 255).toInt(), 0, 0, 0))
         drawEdgeShadow(canvas, w, h)
     }
 
+    /**
+     * The quiet page that stands in for a missing snapshot: the site's favicon, title and host,
+     * centred in the strip the gesture has revealed so far (and in the page once it is all there),
+     * so the identity of where back leads is readable at any point of the swipe.
+     */
     private fun drawPlaceholder(canvas: Canvas, w: Float, h: Float) {
         val fg = if (dark) FOREGROUND_DARK else FOREGROUND_LIGHT
         titlePaint.color = fg
         subtitlePaint.color = fg and 0x00FFFFFF or (0x99 shl 24)
+        val revealed = fraction * w
+        val minHalf = 72f * density
+        val cx = if (direction > 0f) min(w / 2f, max(revealed / 2f, minHalf)) else max(w / 2f, w - max(revealed / 2f, minHalf))
+        val maxWidth = max(120f * density, 2f * min(cx, w - cx) - 24f * density)
         val icon = favicon
         val iconSize = 36f * density
         val gap = 12f * density
@@ -518,18 +527,17 @@ class BackPreviewView(context: Context) : View(context) {
         val total = (if (icon != null) iconSize + gap else 0f) + textHeight
         var y = (h - total) / 2f
         if (icon != null && !icon.isRecycled) {
-            dst.set((w - iconSize) / 2f, y, (w + iconSize) / 2f, y + iconSize)
+            dst.set(cx - iconSize / 2f, y, cx + iconSize / 2f, y + iconSize)
             canvas.drawBitmap(icon, null, dst, bitmapPaint)
             y += iconSize + gap
         }
-        val maxWidth = w - 48f * density
         val shownTitle = TextUtils.ellipsize(title.ifEmpty { subtitle }, titlePaint, maxWidth, TextUtils.TruncateAt.END)
         y += titlePaint.textSize
-        canvas.drawText(shownTitle, 0, shownTitle.length, w / 2f, y, titlePaint)
+        canvas.drawText(shownTitle, 0, shownTitle.length, cx, y, titlePaint)
         if (hasSubtitle && title.isNotEmpty()) {
             val shownHost = TextUtils.ellipsize(subtitle, subtitlePaint, maxWidth, TextUtils.TruncateAt.END)
             y += subtitlePaint.textSize * 1.5f
-            canvas.drawText(shownHost, 0, shownHost.length, w / 2f, y, subtitlePaint)
+            canvas.drawText(shownHost, 0, shownHost.length, cx, y, subtitlePaint)
         }
     }
 
