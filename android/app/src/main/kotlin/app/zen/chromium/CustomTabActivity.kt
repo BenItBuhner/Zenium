@@ -102,8 +102,8 @@ class CustomTabActivity : MainActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(6), 0, dp(6), 0)
             background = GradientDrawable().apply {
-                setColor(colors.toolbar)
-                setStroke(dp(1), hairline(colors.toolbar, colors.dark))
+                setColor(this@CustomTabActivity.colors.toolbar)
+                setStroke(dp(1), hairline(this@CustomTabActivity.colors.dark))
             }
             elevation = dp(2).toFloat()
         }
@@ -187,8 +187,8 @@ class CustomTabActivity : MainActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(8), dp(12), dp(8), dp(12))
             background = GradientDrawable().apply {
-                setColor(if (colors.dark) MENU_DARK else MENU_LIGHT)
-                setStroke(dp(1), if (colors.dark) 0x1fffffff else 0x26000000)
+                setColor(if (this@CustomTabActivity.colors.dark) MENU_DARK else MENU_LIGHT)
+                setStroke(dp(1), if (this@CustomTabActivity.colors.dark) 0x1fffffff else 0x26000000)
                 cornerRadius = dp(12).toFloat()
             }
         }
@@ -314,7 +314,7 @@ class CustomTabActivity : MainActivity() {
         return Color.argb((opacity * 255).toInt(), Color.red(base), Color.green(base), Color.blue(base))
     }
 
-    private fun hairline(color: Int, dark: Boolean): Int =
+    private fun hairline(dark: Boolean): Int =
         if (dark) 0x1fffffff else 0x26000000
 
     private fun hostOf(url: String): String =
