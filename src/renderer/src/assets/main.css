@@ -505,7 +505,19 @@
   .zen-switch:disabled {
     opacity: 0.4;
   }
-  .zen-switch:focus-visible {
+  /*
+   * The keyboard focus ring of every form control: 2px accent at offset 2, so the ring's radius
+   * is the control's radius + 4. Plain CSS on purpose: Tailwind 4's `outline-none` sets
+   * `--tw-outline-style: none`, which its `focus-visible:outline-2` inherits, and the utilities
+   * layer would win over this one anyway.
+   */
+  .zen-select-trigger,
+  .zen-input {
+    outline: none;
+  }
+  .zen-switch:focus-visible,
+  .zen-select-trigger:focus-visible,
+  .zen-input:focus-visible {
     outline: 2px solid var(--zen-accent);
     outline-offset: 2px;
   }
