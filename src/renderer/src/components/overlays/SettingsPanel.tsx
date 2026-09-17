@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { useState } from 'react'
-import { ArrowDown, ArrowUp, Sparkles, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, Globe, Sparkles, Trash2 } from 'lucide-react'
 import type {
   ColorScheme,
   ContainerColor,
@@ -23,6 +23,7 @@ import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS, spaceLabel } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
+import { requestDefaultBrowser } from '@renderer/lib/defaultBrowser'
 import { activeTab } from '@renderer/lib/selectors'
 import { openOverlay, uiStore } from '@renderer/lib/ui'
 import { cn, relativeTime } from '@renderer/lib/utils'
@@ -46,6 +47,7 @@ export type SettingsSection =
   | 'tabs'
   | 'resources'
   | 'search'
+  | 'default-browser'
   | 'spaces'
   | 'containers'
   | 'boosts'
@@ -63,6 +65,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'tabs', label: 'Tab Management' },
   { id: 'resources', label: 'Resources' },
   { id: 'search', label: 'Search' },
+  { id: 'default-browser', label: 'Default browser' },
   { id: 'spaces', label: 'Space Routing' },
   { id: 'containers', label: 'Containers' },
   { id: 'boosts', label: 'Boosts' },
@@ -78,6 +81,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
 /** Sections that only make sense on hosts with the matching feature. */
 const SECTION_CAPABILITY: Partial<Record<SettingsSection, keyof HostCapabilities>> = {
   resources: 'resourceGovernor',
+  'default-browser': 'defaultBrowser',
   extensions: 'extensions',
   agents: 'agents',
   sync: 'sync',
@@ -163,6 +167,7 @@ export function SettingsPanel({
             )}
             {section === 'resources' && <ResourcesSection state={state} set={set} />}
             {section === 'search' && <SearchSection state={state} set={set} />}
+            {section === 'default-browser' && <DefaultBrowserSection state={state} />}
             {section === 'spaces' && <SpaceRoutingSection state={state} set={set} />}
             {section === 'containers' && <ContainersSection state={state} />}
             {section === 'boosts' && <BoostsSection state={state} />}
@@ -526,6 +531,50 @@ function SearchSection({
         <span className="text-[11.5px] text-[var(--zen-muted)]">Type a keyword, then a space</span>
       </Row>
     </Group>
+  )
+}
+
+/** Which browser the OS hands web links to, and the request to make it Zenium. */
+function DefaultBrowserSection({ state }: { state: UIState }): JSX.Element {
+  const isDefault = state.defaultBrowser.isDefault
+  const label = isDefault
+    ? 'Zenium is your default browser'
+    : isDefault === false
+      ? 'Zenium is not your default browser'
+      : 'Zenium may not be your default browser'
+  const hint =
+    !isDefault && state.platform === 'win32'
+      ? 'Windows will open Settings so you can choose Zenium.'
+      : undefined
+  return (
+    <Group title="Default browser">
+      <Row label={label} hint={hint} icon={<StatusGlyph ok={isDefault === true} />}>
+        {isDefault ? (
+          <span />
+        ) : (
+          <Button size="sm" className="rounded-full" onClick={() => void requestDefaultBrowser()}>
+            Make default
+          </Button>
+        )}
+      </Row>
+    </Group>
+  )
+}
+
+/** A 24px status pill: the OK ink on its tint when the state is good, a muted globe otherwise. */
+function StatusGlyph({ ok }: { ok: boolean }): JSX.Element {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        'flex h-6 w-6 shrink-0 items-center justify-center rounded-full',
+        ok
+          ? 'bg-[rgb(var(--zen-ok-rgb)/0.14)] text-[var(--zen-ok)]'
+          : 'bg-[var(--zen-element-bg)] text-[var(--zen-muted)]'
+      )}
+    >
+      {ok ? <Check className="h-3.5 w-3.5" /> : <Globe className="h-3.5 w-3.5" />}
+    </span>
   )
 }
 

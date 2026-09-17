@@ -17,17 +17,23 @@ export function Group({ title, children }: { title: string; children: ReactNode 
 export function Row({
   label,
   hint,
+  icon,
   children
 }: {
   label: string
   hint?: string
+  /** A leading status glyph (a 24px pill), for rows that report a state. */
+  icon?: ReactNode
   children: ReactNode
 }): JSX.Element {
   return (
     <div className="flex min-h-12 items-center gap-4 border-b border-[var(--zen-border)] px-4 py-2 last:border-b-0">
-      <div className="min-w-0 flex-1">
-        <div className="text-[13px]">{label}</div>
-        {hint && <div className="text-[11.5px] text-[var(--zen-muted)]">{hint}</div>}
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        {icon}
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px]">{label}</div>
+          {hint && <div className="text-[11.5px] text-[var(--zen-muted)]">{hint}</div>}
+        </div>
       </div>
       {children}
     </div>

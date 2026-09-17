@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { MonitorSmartphone, Plus } from 'lucide-react'
 import type { Rect, UIState } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
+import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import { captureActiveTab, uiStore, type UiState } from '@renderer/lib/ui'
@@ -10,6 +11,8 @@ import { cn } from '@renderer/lib/utils'
 import { dropStore } from '@renderer/lib/drag'
 import { Urlbar } from '../urlbar/Urlbar'
 import { OverlayHost } from '../overlays/OverlayHost'
+import { DefaultBrowserBanner } from './DefaultBrowserBanner'
+import { ExternalProtocolDialog } from '../ExternalProtocolDialog'
 import { FindBar } from './FindBar'
 import { GlanceFrame } from './GlanceFrame'
 import { SplitChrome } from './SplitChrome'
@@ -62,12 +65,16 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
     (contentHidden || glanceActive) && Boolean(tab) && !staged && !(phone && ui.urlbar.open)
   const dropKey = dropStore.use((s) => s.key)
   const foreign = isForeignTab(state, tab?.id)
+  // The strip sits above the viewport, so the page's placement follows it without any offset.
+  const banner = !phone && wantsDefaultBrowserBanner(state)
 
   return (
     <div
       className="zen-content-frame relative flex h-full min-h-0 flex-col overflow-hidden"
       data-staged={staged || undefined}
     >
+      {banner && <DefaultBrowserBanner />}
+      {state.capabilities.defaultBrowser && <ExternalProtocolDialog />}
       <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden">
         {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
         {tab && foreign && !contentHidden && !glanceActive && <ForeignTabPreview tabId={tab.id} />}

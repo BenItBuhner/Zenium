@@ -101,7 +101,7 @@ export interface UiState {
   menu: MenuDescriptor | null
   /** The site-information sheet (connection, cookies, storage, permissions) is up. */
   siteInfoOpen: boolean
-  /** A page wants to open another app: the external-protocol confirm sheet is up for it. */
+  /** A page wants to open another app: the confirm sheet or "Open <scheme> link?" dialog is up. */
   externalProtocol: ExternalProtocolRequest | null
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets

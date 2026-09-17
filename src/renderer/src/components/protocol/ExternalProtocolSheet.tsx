@@ -13,7 +13,7 @@ import {
 import type { ExternalProtocolRequest } from '@shared/types'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
-import { answerExternalProtocol, uiStore } from '@renderer/lib/ui'
+import { answerExternalProtocol, browserStore, uiStore } from '@renderer/lib/ui'
 import { Button } from '../ui/button'
 import { Switch } from '../ui/switch'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
@@ -27,7 +27,8 @@ import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 export function ExternalProtocolLayer(): JSX.Element | null {
   const request = uiStore.use((s) => s.externalProtocol)
   const viewport = useViewport()
-  if (!request) return null
+  const desktop = browserStore.use((s) => s.state?.capabilities.defaultBrowser === true)
+  if (!request || desktop) return null
   // A new request is a new sheet: its own toggle state, its own presentation.
   return viewport.coarse ? (
     <ProtocolSheet key={request.requestId} request={request} />
