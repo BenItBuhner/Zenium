@@ -13,6 +13,7 @@ import type {
 import { FOLDER_COLORS } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
+import { useViewport } from '@renderer/lib/formFactor'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import {
   closeOverview,
@@ -20,6 +21,7 @@ import {
   type OverviewState
 } from '@renderer/lib/gestures/stage'
 import { groupColorHex, groupsOf, nextGroupColor } from '@renderer/lib/groups'
+import { overviewColumns } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import {
   activeSpace,
@@ -89,6 +91,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const settled = phase === 'open'
   const side = state.settings.sidebarSide
   const isDark = isDarkScheme(state)
+  // A phone on its side gets a row of four smaller cards, as Chrome's grid does.
+  const columns = overviewColumns(useViewport().width)
 
   const rootRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -335,7 +339,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
               return fadeGrid(el)
             }}
             className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-1"
-            style={{ touchAction: 'pan-y', overscrollBehavior: 'contain' }}
+            // The card the page morphs into is scrolled into view: keep it clear of the fades.
+            style={{ touchAction: 'pan-y', overscrollBehavior: 'contain', scrollPaddingBlock: 16 }}
             onScroll={measure}
           >
             {essentials.length > 0 && (
@@ -355,7 +360,10 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                 ))}
               </div>
             )}
-            <div className="grid grid-cols-2 gap-3">
+            <div
+              className="grid gap-3"
+              style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+            >
               {pinned.map(card)}
               {groups.map((folder) => {
                 const members = regular.filter((t) => t.folderId === folder.id)
@@ -467,7 +475,7 @@ function LooseStrip(): JSX.Element {
   const targeted = liftStore.use((s) => s.target === 'loose')
   return (
     <div
-      className="zen-loose-strip col-span-2 flex h-14 items-center justify-center text-[13px] font-medium"
+      className="zen-loose-strip col-span-full flex h-14 items-center justify-center text-[13px] font-medium"
       data-drop="loose"
       data-targeted={targeted || undefined}
     >
