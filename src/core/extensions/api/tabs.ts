@@ -163,8 +163,8 @@ export function tabChangeInfo(before: ChromeTab, after: ChromeTab): TabChangeInf
   return changed ? info : null
 }
 
-export interface TabMove {
-  tabId: number
+export interface TabMove<Id = number> {
+  tabId: Id
   fromIndex: number
   toIndex: number
 }
@@ -174,13 +174,13 @@ export interface TabMove {
  * every tab in between by one; like Chrome, only the tab that was actually moved is reported
  * when one move explains the whole change, otherwise every displaced tab is.
  */
-export function detectTabMoves(before: readonly number[], after: readonly number[]): TabMove[] {
+export function detectTabMoves<Id>(before: readonly Id[], after: readonly Id[]): TabMove<Id>[] {
   if (before.length !== after.length) return []
-  const beforeIndex = new Map<number, number>()
+  const beforeIndex = new Map<Id, number>()
   before.forEach((id, i) => beforeIndex.set(id, i))
   // A different tab set is a creation or removal, which shifts indices without a move event.
   if (after.some((id) => !beforeIndex.has(id))) return []
-  const displaced: TabMove[] = []
+  const displaced: TabMove<Id>[] = []
   after.forEach((id, toIndex) => {
     const fromIndex = beforeIndex.get(id)
     if (fromIndex !== undefined && fromIndex !== toIndex)

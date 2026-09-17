@@ -292,6 +292,22 @@ export interface ExtensionInfo {
   popup: string | null
   /** Set when the extension could not be loaded (unsupported manifest, missing files…). */
   error: string | null
+  /** Effective `chrome.action` state for the active tab (hosts with the API layer only). */
+  action?: ExtensionActionState | null
+}
+
+/** What an extension's toolbar button should show: `chrome.action` state for the active tab. */
+export interface ExtensionActionState {
+  badgeText: string
+  /** CSS colour, or null for the host's default badge colour. */
+  badgeBackgroundColor: string | null
+  badgeTextColor: string | null
+  title: string
+  /** Data URL set through `action.setIcon`, or null for the manifest icon. */
+  icon: string | null
+  /** Full popup URL, or null when a click fires `action.onClicked` instead. */
+  popup: string | null
+  enabled: boolean
 }
 
 export interface Mod {

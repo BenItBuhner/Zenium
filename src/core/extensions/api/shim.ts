@@ -367,6 +367,8 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     listeners: Set<Any>
     pending: Array<{ args: unknown[]; at: number }>
     nativeDelivers: boolean
+    /** With `nativeDelivers`: which host deliveries the engine already made (dropped here). */
+    nativeHandles: (args: unknown[]) => boolean
   }
 
   const events = new Map<string, EventRecord>()
@@ -374,14 +376,15 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   function createEvent(
     fullName: string,
     native: Any,
-    options: { nativeDelivers: boolean }
+    options: { nativeDelivers: boolean; nativeHandles?: (args: unknown[]) => boolean }
   ): EventObject {
     const listeners = new Set<Any>()
     const record: EventRecord = {
       object: null as unknown as EventObject,
       listeners,
       pending: [],
-      nativeDelivers: options.nativeDelivers && Boolean(native)
+      nativeDelivers: options.nativeDelivers && Boolean(native),
+      nativeHandles: options.nativeHandles ?? (() => true)
     }
     const object: EventObject = {
       addListener(fn: Any, ...rest: unknown[]): void {
@@ -448,6 +451,8 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   function deliver(fullName: string, args: unknown[]): void {
     const record = events.get(fullName)
     if (!record) return
+    // The engine already fired this one at our listeners; a second delivery would duplicate it.
+    if (record.nativeDelivers && record.nativeHandles(args)) return
     if (record.listeners.size > 0) {
       record.object.dispatch(...args)
       return
@@ -638,7 +643,11 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     define(
       primaryStorage,
       'onChanged',
-      createEvent('storage.onChanged', nativeOnChanged, { nativeDelivers: host.kind === 'frame' })
+      createEvent('storage.onChanged', nativeOnChanged, {
+        nativeDelivers: host.kind === 'frame',
+        // Documents get local/session changes from the engine; sync/managed only exist host-side.
+        nativeHandles: (args) => args[1] === 'local' || args[1] === 'session'
+      })
     )
     define(primaryStorage, 'AccessLevel', {
       TRUSTED_CONTEXTS: 'TRUSTED_CONTEXTS',
