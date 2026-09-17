@@ -774,6 +774,15 @@ class Session {
         w.show()
         w.focus()
         w.moveTop()
+        // Windows keeps another process's active window above an HWND_TOP request from a
+        // background process (windows-11-arm leaves a first-logon terminal in the foreground, so
+        // every screenshot showed it over the app). A TOPMOST round trip ends with HWND_NOTOPMOST,
+        // which places the window above every non-topmost window regardless of activation.
+        if (process.platform === 'win32') {
+          const wasOnTop = w.isAlwaysOnTop()
+          w.setAlwaysOnTop(true)
+          w.setAlwaysOnTop(wasOnTop)
+        }
       }
       if (app.focus) app.focus({ steal: true })
     }, windowId)
