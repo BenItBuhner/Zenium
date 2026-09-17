@@ -28,14 +28,21 @@
   /*
    * A sheet's header (9.16): 48 after the chassis's 20 grip strip, so the first row starts at 68
    * and the grabber's 44 band (9.9) is the strip plus this header's upper 24. The title is
-   * 17/600 at line-height 22, centred; a trailing 44 control would sit at 2 px margins.
+   * 17/600 at line-height 22, centred; the 46 px sides leave room for a trailing 44 control at
+   * 2 px margins, which then sits absolutely so the title stays centred on the sheet.
    */
   .zen-phone-sheet-header {
+    position: relative;
     display: flex;
     height: 48px;
     align-items: center;
     justify-content: center;
     padding: 0 46px;
+  }
+  .zen-phone-sheet-header > .zen-toolbar-button {
+    position: absolute;
+    top: 2px;
+    right: 2px;
   }
   .zen-phone-sheet-title {
     min-width: 0;
