@@ -602,7 +602,7 @@ function Card({
           {title}
         </h3>
         {value !== undefined && value !== null && (
-          <span className="shrink-0 text-[14px] font-semibold">{value}</span>
+          <div className="shrink-0 text-[14px] font-semibold">{value}</div>
         )}
       </header>
       {children}
