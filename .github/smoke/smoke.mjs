@@ -152,6 +152,16 @@ on run argv
           set frontmost to true
         end try
         repeat with w in windows
+          -- NSAlert panels (Electron message boxes, its stock error box) expose their buttons as
+          -- direct children of the window; sheets are attached to a parent window.
+          try
+            repeat with b in buttons of w
+              if (name of b as text) is wanted then
+                click b
+                return "clicked " & wanted & " in window '" & (name of w as text) & "' (" & (role description of w as text) & ")"
+              end if
+            end repeat
+          end try
           try
             repeat with sh in sheets of w
               repeat with b in buttons of sh
@@ -197,6 +207,16 @@ on run argv
       tell process procName
         repeat with w in windows
           set end of out to ("window: '" & (name of w as text) & "' role " & (role description of w as text))
+          if (role description of w as text) is not "standard window" then
+            try
+              repeat with t in static texts of w
+                set end of out to ("  text: " & (value of t as text))
+              end repeat
+              repeat with b in buttons of w
+                set end of out to ("  button: " & (name of b as text))
+              end repeat
+            end try
+          end if
           try
             repeat with sh in sheets of w
               set end of out to ("  sheet with " & (count of buttons of sh) & " buttons")

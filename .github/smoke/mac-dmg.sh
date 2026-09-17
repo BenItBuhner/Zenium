@@ -160,11 +160,17 @@ if [ -n "${APP:-}" ]; then
   log "--- Gatekeeper dialog after 6 s (UI scripting)"
   FACTS="$(dialog_facts CoreServicesUIAgent Finder Zen)"
   printf '%s\n' "$FACTS" | tee -a "$TXT"
+  # The "Verifying" progress window already has unnamed buttons ("missing value"): only a named
+  # button (Move to Trash / Done / Open / Cancel) means the verdict dialog is up. macOS 15 scans
+  # the whole 400 MB bundle before it answers, which takes well over a minute on the Intel runner.
   WAITED=6
-  while [ "$WAITED" -lt 60 ]; do
-    case "$FACTS" in
-      *button:*) break ;;
-    esac
+  while [ "$WAITED" -lt 150 ]; do
+    if printf '%s\n' "$FACTS" | grep -q 'button: [A-Za-z]' && ! printf '%s\n' "$FACTS" | grep -q 'button: missing value'; then
+      break
+    fi
+    if printf '%s\n' "$FACTS" | grep -q 'button: \(Move to Trash\|Done\|Open\|OK\)'; then
+      break
+    fi
     sleep 3
     WAITED=$((WAITED + 3))
     FACTS="$(dialog_facts CoreServicesUIAgent Finder Zen)"
