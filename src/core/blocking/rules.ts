@@ -263,18 +263,27 @@ export const BUILTIN_RULE_SETS = {
   siteExceptions: 'builtin:site-exceptions'
 } as const
 
-/** Priority bands. Consumers pick a value inside their band. */
+/**
+ * Priority bands. Consumers pick a value inside their band (a band runs up to the next one).
+ * Zenium's own sets – lists, the user's filters, per-site exceptions and the global switch –
+ * sit below the extensions' band on purpose: turning Zenium's blocking off or excepting a site
+ * must not switch off an extension's declarativeNetRequest rules, just as Chromium's "Ads"
+ * content setting leaves extensions alone.
+ */
 export const RULE_SET_PRIORITY = {
   /** Subscribed filter lists (EasyList, …). */
   filterList: 1,
-  /** Rule sets translated from extensions' declarativeNetRequest rules. */
-  dnr: 5,
   /** The user's own filters. */
   user: 10,
   /** Per-site exceptions. */
   siteExceptions: 900,
   /** The global off switch. */
-  globalOff: 1000
+  globalOff: 1000,
+  /**
+   * Rule sets translated from extensions' declarativeNetRequest rules: `dnr + n` for the n-th
+   * installed extension, so the most recently installed wins a conflict, as in Chromium.
+   */
+  dnr: 2000
 } as const
 
 export const USER_RULE_SET_ID = 'user'

@@ -149,6 +149,29 @@ class EngineSnapshotTest {
     }
 
     @Test
+    fun extensionsDnrSetsOutrankTheSwitchAndTheSiteExceptions() {
+        val off = set("builtin:global-off", 1000, """[{"id":1,"action":{"type":"allow"},"condition":{}}]""")
+        val exceptions = set(
+            "builtin:site-exceptions", 900,
+            """[{"id":1,"action":{"type":"allowAllRequests"},"condition":{"urlFilter":"|https://news.example/","resourceTypes":["main_frame"]}}]"""
+        )
+        val lists = set("lists", 1, "[${block(1, "||ads.example^")}]")
+        val older = set("dnr:older", 2001, "[${block(1, "||ads.example^")}]", source = "dnr")
+        val newer = set(
+            "dnr:newer", 2002,
+            """[{"id":1,"action":{"type":"allow"},"condition":{"urlFilter":"||ads.example^"}}]""", source = "dnr"
+        )
+        val request = req("https://ads.example/x.js")
+        assertEquals(Decision.Action.ALLOW, EngineSnapshot(listOf(lists, exceptions, off), text).decide(request).action)
+        val blocked = EngineSnapshot(listOf(lists, exceptions, off, older), text).decide(request)
+        assertEquals(Decision.Action.BLOCK, blocked.action)
+        assertEquals("dnr:older", blocked.matchedSet)
+        val allowed = EngineSnapshot(listOf(lists, exceptions, off, older, newer), text).decide(request)
+        assertEquals(Decision.Action.ALLOW, allowed.action)
+        assertEquals("dnr:newer", allowed.matchedSet)
+    }
+
+    @Test
     fun redirectAndUpgradeRulesCarryTheirTarget() {
         val sets = listOf(
             set("dnr", 5, """[{"id":1,"action":{"type":"upgradeScheme"},"condition":{"urlFilter":"||news.example^","resourceTypes":["main_frame"]}},

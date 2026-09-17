@@ -265,6 +265,46 @@ describe('RuleEngine priority resolution', () => {
     expect(e.decide(req('https://any/')).action).toBe('block')
   })
 
+  it("keeps extensions' declarativeNetRequest sets above the switch and the site exceptions", () => {
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set(BUILTIN_RULE_SETS.globalOff, [allow(1, {})], {
+        source: 'builtin',
+        priority: RULE_SET_PRIORITY.globalOff
+      })
+    )
+    e.setRuleSet(
+      set(
+        BUILTIN_RULE_SETS.siteExceptions,
+        [
+          {
+            id: 1,
+            action: { type: 'allowAllRequests' },
+            condition: { urlFilter: '|https://news.example/', resourceTypes: ['main_frame'] }
+          }
+        ],
+        { source: 'builtin', priority: RULE_SET_PRIORITY.siteExceptions }
+      )
+    )
+    // Zenium's own blocking is off and the site is excepted...
+    e.setRuleSet(set('ads', [block(1, { urlFilter: '||ads.example^' })], { priority: 1 }))
+    const ctx = req('https://ads.example/x.js', { documentUrl: 'https://news.example/story' })
+    expect(e.decide(ctx).action).toBe('allow')
+    // ...yet an extension's translated rule still blocks, and the newer extension wins.
+    e.setRuleSet(
+      set('dnr:older', [block(1, { urlFilter: '||ads.example^' })], {
+        priority: RULE_SET_PRIORITY.dnr + 1
+      })
+    )
+    expect(e.decide(ctx)).toMatchObject({ action: 'block', matched: { setId: 'dnr:older' } })
+    e.setRuleSet(
+      set('dnr:newer', [allow(1, { urlFilter: '||ads.example^' })], {
+        priority: RULE_SET_PRIORITY.dnr + 2
+      })
+    )
+    expect(e.decide(ctx)).toMatchObject({ action: 'allow', matched: { setId: 'dnr:newer' } })
+  })
+
   it('applies modifyHeaders unless an allow of equal or higher priority matched', () => {
     const e = new RuleEngine()
     e.setRuleSet(
