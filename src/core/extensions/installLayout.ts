@@ -26,6 +26,13 @@ export interface LayoutFs {
 export const STAGING_DIR = '.staging'
 
 const MAX_VERSION_DIR_ATTEMPTS = 100
+const MAX_RENAME_ATTEMPTS = 3
+
+/** The rename target came into existence between the probe and the rename (POSIX or Windows). */
+function targetTaken(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code
+  return code === 'EEXIST' || code === 'ENOTEMPTY' || code === 'EPERM'
+}
 
 /** A version is safe as a directory name; anything else (unpacked folders can be odd) is escaped. */
 export function versionDirName(version: string): string {
@@ -60,7 +67,7 @@ function stagingToken(): string {
 
 /**
  * Writes a package through `write(stagingDir)` and moves it to its final version directory,
- * which is returned. The staging directory is removed again if writing fails.
+ * which is returned. The staging directory is removed again if writing or the move fails.
  */
 export async function installIntoLayout(
   fs: LayoutFs,
@@ -74,9 +81,16 @@ export async function installIntoLayout(
   try {
     await write(staging)
     await fs.mkdir(fs.join(root, id))
-    const target = await pickVersionDir(fs, root, id, version)
-    await fs.rename(staging, target)
-    return target
+    for (let attempt = 1; ; attempt++) {
+      const target = await pickVersionDir(fs, root, id, version)
+      try {
+        await fs.rename(staging, target)
+        return target
+      } catch (error) {
+        // A concurrent install of the same version claimed the directory first: pick again.
+        if (attempt >= MAX_RENAME_ATTEMPTS || !targetTaken(error)) throw error
+      }
+    }
   } catch (error) {
     await fs.remove(staging).catch(() => undefined)
     throw error
