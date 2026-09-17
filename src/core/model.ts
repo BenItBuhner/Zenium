@@ -122,7 +122,8 @@ export function createTabRecord(
     lastActiveAt: init.lastActiveAt ?? now,
     errorCode: null,
     bookmarked: init.bookmarked ?? false,
-    readerable: false
+    readerable: false,
+    blockedCount: 0
   }
 }
 

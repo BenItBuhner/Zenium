@@ -129,7 +129,8 @@ export class WebstoreBridge {
   /**
    * Gives a persistent session's pages the store preload. The client-hint rewrite that makes the
    * store render its install button for the same sessions is `webstoreClientHints` in
-   * `requestHeaders.ts`, which the platform attaches next to this.
+   * `requestHeaders.ts`, registered with the webRequest multiplexer, which owns the session's
+   * one `onBeforeSendHeaders` listener.
    */
   attach(ses: Session): void {
     if (ses.getPreloadScripts().some((script) => script.id === WEBSTORE_PRELOAD_ID)) return
