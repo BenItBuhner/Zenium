@@ -19,9 +19,10 @@ import { displayUrl, getDomain } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { isPrivateWindow } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
-import { openOverlay, openUrlbar } from '@renderer/lib/ui'
+import { openOverlay, openUrlbar, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { useLongPress } from '../phone/useLongPress'
+import { PillChip } from '../urlbar/PillChip'
 import { WindowControls } from '../WindowControls'
 
 interface Props {
@@ -71,6 +72,13 @@ export function NavRow({
     tab && isWebPage && state.boosts.some((b) => b.domain === getDomain(tab.url) && b.enabled)
   )
   const extensions = state.extensions.filter((e) => e.enabled && !e.error && e.popup)
+  // What the chips have open, for their `aria-expanded`.
+  const siteInfoOpen = uiStore.use((s) => s.siteInfoOpen)
+  const boostsOpen = uiStore.use((s) => s.overlay === 'boosts')
+  const openField = (): void =>
+    void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, {
+      attached: state.settings.urlbarBehavior !== 'always-float'
+    })
   return (
     <div className={cn('zen-no-drag flex items-center gap-0.5', compact && 'flex-col', className)}>
       <NavigationButton
@@ -102,96 +110,94 @@ export function NavRow({
         {tab?.loading ? <X className="h-4 w-4" /> : <RotateCw className="h-4 w-4" />}
       </button>
       {!compact && (
-        <button
-          type="button"
+        /*
+          The pill is a group, not a button: the address and each chip inside it are buttons of
+          their own, so every one is in the tab order and a screen reader gets a node for each
+          (a button's descendants would collapse into one). A click on the pill itself – its
+          padding, the address – opens the URL bar; the chips stop their clicks. The address
+          comes first in the DOM so Tab reaches the field before its chips (design language v2
+          §9.22); the site icon is drawn ahead of it with `order-first`.
+        */
+        <div
+          role="group"
+          aria-label="Address"
           className="zen-squircle group/pill mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--zen-element-bg)] px-2.5 text-left hover:bg-[var(--zen-element-bg-hover)]"
           title={tab?.url ?? 'Search or enter address'}
-          onClick={() =>
-            void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, {
-              attached: state.settings.urlbarBehavior !== 'always-float'
-            })
-          }
+          onClick={openField}
         >
+          <button type="button" className="flex h-full min-w-0 flex-1 items-center text-left">
+            <span
+              className={cn(
+                'min-w-0 flex-1 truncate text-[12.5px]',
+                !url && 'text-[var(--zen-muted)]'
+              )}
+            >
+              {url || 'Search or enter address'}
+            </span>
+          </button>
           {isPrivate ? (
-            <VenetianMask className="h-3.5 w-3.5 shrink-0 opacity-70" />
+            <VenetianMask className="order-first h-3.5 w-3.5 shrink-0 opacity-70" />
           ) : url && tab ? (
             // The site icon: connection state at a glance, site information on click.
-            <span
-              role="button"
-              tabIndex={-1}
-              className="-ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] hover:opacity-100"
+            <PillChip
+              label="Site information"
               title={secure ? 'Connection is secure · Site information' : 'Site information'}
-              aria-label="Site information"
-              onClick={(e) => {
-                e.stopPropagation()
+              popup="dialog"
+              expanded={siteInfoOpen}
+              className="order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] hover:opacity-100"
+              onActivate={(e) => {
                 const r = e.currentTarget.getBoundingClientRect()
                 void openSiteInfo(tab, { x: r.left, y: r.top, width: r.width, height: r.height })
               }}
             >
               {secure ? <Lock className="h-3 w-3" /> : <Search className="h-3 w-3" />}
-            </span>
+            </PillChip>
           ) : (
-            <Search className="h-3 w-3 shrink-0 opacity-60" />
+            <Search className="order-first h-3 w-3 shrink-0 opacity-60" />
           )}
-          <span
-            className={cn(
-              'min-w-0 flex-1 truncate text-[12.5px]',
-              !url && 'text-[var(--zen-muted)]'
-            )}
-          >
-            {url || 'Search or enter address'}
-          </span>
           {tab && (tab.readerable || isReader) && (
-            <span
-              role="button"
-              tabIndex={-1}
+            <PillChip
+              label="Reader View"
+              title={isReader ? 'Exit Reader View (Ctrl+Alt+R)' : 'Enter Reader View (Ctrl+Alt+R)'}
+              pressed={isReader}
               className={cn(
                 'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
                 isReader && 'text-[var(--zen-accent)] opacity-100'
               )}
-              title={isReader ? 'Exit Reader View (Ctrl+Alt+R)' : 'Enter Reader View (Ctrl+Alt+R)'}
-              onClick={(e) => {
-                e.stopPropagation()
-                run('reader.toggle', { tabId: tab.id })
-              }}
+              onActivate={() => run('reader.toggle', { tabId: tab.id })}
             >
               <BookOpenText className="h-3.5 w-3.5" />
-            </span>
+            </PillChip>
           )}
           {tab && isWebPage && !isPrivate && (
-            <span
-              role="button"
-              tabIndex={-1}
+            // Shown on hover, and while the keyboard is inside the pill so Tab can reach it.
+            <PillChip
+              label={boosted ? 'Edit Boost for this site' : 'Boost this site'}
+              title={boosted ? 'Edit Boost for this site' : 'Boost this site'}
+              popup="dialog"
+              expanded={boostsOpen}
               className={cn(
                 'h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
                 boosted
                   ? 'flex text-[var(--zen-accent)] opacity-100'
-                  : 'hidden group-hover/pill:flex'
+                  : 'hidden group-hover/pill:flex group-focus-within/pill:flex'
               )}
-              title={boosted ? 'Edit Boost for this site' : 'Boost this site'}
-              onClick={(e) => {
-                e.stopPropagation()
-                void openOverlay('boosts', tab.id)
-              }}
+              onActivate={() => void openOverlay('boosts', tab.id)}
             >
               <Sparkles className="h-3.5 w-3.5" />
-            </span>
+            </PillChip>
           )}
           {url && (
-            <span
-              role="button"
-              tabIndex={-1}
-              className="hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex"
+            <PillChip
+              label="Copy URL"
               title="Copy URL (Ctrl+Shift+C)"
-              onClick={(e) => {
-                e.stopPropagation()
-                if (tab) run('tab.copyUrl', { tabId: tab.id })
-              }}
+              className="hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex group-focus-within/pill:flex"
+              onActivate={() => tab && run('tab.copyUrl', { tabId: tab.id })}
             >
               <Copy className="h-3 w-3" />
-            </span>
+            </PillChip>
           )}
-        </button>
+        </div>
       )}
       {!compact && extensions.slice(0, 4).map((ext) => <ExtensionButton key={ext.id} ext={ext} />)}
       <button
