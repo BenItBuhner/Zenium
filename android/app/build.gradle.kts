@@ -11,7 +11,7 @@ val webRoot = rootProject.projectDir.parentFile
 val skipWeb = project.hasProperty("skipWeb")
 val buildWeb = tasks.register<Exec>("buildWeb") {
     group = "build"
-    description = "Builds the Zen chrome and page script into app/src/main/assets"
+    description = "Builds the Zenium chrome and page script into app/src/main/assets"
     workingDir = webRoot
     val npm = if (System.getProperty("os.name").lowercase().contains("win")) "npm.cmd" else "npm"
     commandLine(npm, "run", "build:android:web")
@@ -70,21 +70,38 @@ val appVersionCode: Int =
 
 /**
  * Release signing comes from the environment (CI secrets) or from Gradle properties, e.g. in
- * ~/.gradle/gradle.properties. Without a keystore the release build is signed with the debug key
- * so it still installs, but every such build carries a different signature and cannot upgrade an
- * earlier install in place.
+ * ~/.gradle/gradle.properties. Without a keystore the release build falls back to the CI debug
+ * key below.
  */
 fun signingSetting(env: String, property: String): String? =
     (System.getenv(env) ?: project.findProperty(property)?.toString())?.takeIf { it.isNotBlank() }
 
 val releaseKeystore = signingSetting("ZEN_ANDROID_KEYSTORE_FILE", "zen.android.keystoreFile")
 
+/**
+ * `android/ci-debug.keystore` is committed to the repository with a well-known password. It is a
+ * *debug* key – anyone can sign with it, exactly like Android's standard debug keystore – but it
+ * is the *same* key on every machine and every CI run. Android's own debug key is generated per
+ * machine, so every CI runner would sign with a different key and no debug-keyed APK could ever
+ * upgrade another in place. With this key every debug build (CI artifacts, GitHub releases built
+ * without ANDROID_KEYSTORE_*) upgrades the previous one, including through the in-app updater,
+ * which only ever installs an APK whose SHA-256 matches the release manifest. Switching to the
+ * project release keystore later means one final uninstall for users of debug-keyed builds.
+ */
+val ciDebugKeystore = rootProject.file("ci-debug.keystore")
+val ciDebugAlias = "zenium-ci-debug"
+val ciDebugPassword = "zenium-ci-debug"
+
 android {
+    // The code package (R, BuildConfig, relative class names in the manifest). It moves together
+    // with the Kotlin sources in a later pass; the app's identity on the device is applicationId.
     namespace = "app.zen.chromium"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "app.zen.chromium"
+        // Zenium is a new app to Android: it installs alongside the old app.zen.chromium "Zen"
+        // (v0.2.0 and earlier), which nothing can migrate; the updater says so (src/core/updates.ts).
+        applicationId = "io.github.benitbuhner.zenium"
         minSdk = 26
         targetSdk = 35
         versionCode = appVersionCode
@@ -100,6 +117,12 @@ android {
     }
 
     signingConfigs {
+        getByName("debug") {
+            storeFile = ciDebugKeystore
+            storePassword = ciDebugPassword
+            keyAlias = ciDebugAlias
+            keyPassword = ciDebugPassword
+        }
         if (releaseKeystore != null) {
             create("release") {
                 storeFile = rootProject.file(releaseKeystore)
@@ -122,8 +145,8 @@ android {
                 signingConfigs.getByName("release")
             } else {
                 logger.warn(
-                    "No release keystore configured (ZEN_ANDROID_KEYSTORE_FILE); the release APK will be " +
-                        "signed with the debug key and cannot upgrade a properly signed install."
+                    "No release keystore configured (ZEN_ANDROID_KEYSTORE_FILE); the release APK is signed " +
+                        "with the committed CI debug key (android/ci-debug.keystore), not a release key."
                 )
                 signingConfigs.getByName("debug")
             }
@@ -154,9 +177,9 @@ android {
     }
 }
 
-// app/build/outputs/apk/<type>/zen-chromium-<version>-<type>.apk instead of app-<type>.apk
+// app/build/outputs/apk/<type>/zenium-<version>-<type>.apk instead of app-<type>.apk
 base {
-    archivesName.set("zen-chromium-$appVersion")
+    archivesName.set("zenium-$appVersion")
 }
 
 tasks.named("preBuild") { dependsOn(buildWeb) }
@@ -165,8 +188,11 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.activity:activity-ktx:1.9.3")
-    implementation("androidx.webkit:webkit:1.12.1")
+    // 1.13 adds WebStorageCompat.deleteBrowsingDataForSite (the site-information sheet's "clear all site data").
+    implementation("androidx.webkit:webkit:1.13.0")
     implementation("com.google.android.material:material:1.12.0")
+    // The share sheet's "QR code" action draws the link as a code (Share.kt); pure Java, no camera.
+    implementation("com.google.zxing:core:3.5.3")
 
     // JVM unit tests (src/test): pure logic such as the screenshot stitching geometry.
     testImplementation("junit:junit:4.13.2")

@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Zen"
+rootProject.name = "Zenium"
 include(":app")

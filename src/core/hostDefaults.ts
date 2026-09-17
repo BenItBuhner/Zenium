@@ -160,6 +160,10 @@ export class NoUpdateHost implements UpdateHost {
     return null
   }
 
+  packageName(): null {
+    return null
+  }
+
   async download(): Promise<null> {
     throw new Error(
       'This build cannot download updates; get the new version from the release page.'

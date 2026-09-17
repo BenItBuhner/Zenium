@@ -39,10 +39,15 @@ export function createPreviewBridge(): NativeBridge {
     canGoForward: false
   })
 
+  // `?sdk=32` stands in for an older release (below 33 the chrome confirms copies itself).
+  const sdkInt = Number(new URLSearchParams(location.search).get('sdk')) || 34
+
   const handlers: Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>> = {
     boot: (): BootInfo => ({
       version: 'preview',
+      sdkInt,
       signer: null,
+      packageName: null,
       files,
       downloadsDir: '/Downloads',
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
@@ -125,12 +130,44 @@ export function createPreviewBridge(): NativeBridge {
     'view.eval': () => {
       throw new Error('not available in the preview host')
     },
+    // Find in page: a same-origin frame is searched for real; a cross-origin one (any live site)
+    // cannot be read, so it gets a stand-in count derived from the text (0 to 9 matches, so both
+    // the found and the not-found states can be reached), enough for the find bar to lay out.
+    'view.find': ({ tabId, text, forward, newSession }) => {
+      const frame = views.get(String(tabId))
+      if (!frame) return
+      const result = findInFrame(frame, String(text), Boolean(forward), Boolean(newSession))
+      viewEvent(String(tabId), 'found', { ...result, finalUpdate: true })
+    },
+    'view.stopFind': ({ tabId }) => {
+      const frame = views.get(String(tabId))
+      if (frame) finds.delete(frame)
+    },
     'view.savePage': () => null,
     'view.screenshot': () => null,
+    'view.certificate': () => null,
+    // The preview has no cookie jar of its own to look into; the sheet shows the connection only.
+    'site.cookies': () => [],
+    'site.storage': () => ({ usageBytes: null, quotaBytes: null, origins: [] }),
+    'site.clearCookies': () => ({ removed: 0, remaining: 0 }),
+    'site.clearStorage': () => ({ ok: true, scope: 'origins' }),
     'dialog.confirm': ({ message, detail }) => window.confirm(`${message}\n\n${detail ?? ''}`),
     'clipboard.writeText': ({ text }) => void navigator.clipboard?.writeText(String(text)),
     'clipboard.writeImage': () => false,
     'app.openExternal': ({ url }) => void window.open(String(url), '_blank'),
+    // The browser's own share sheet where there is one; otherwise the share is just logged.
+    'app.share': async ({ title, text, url, imageUrl }) => {
+      const data = {
+        title: title ? String(title) : undefined,
+        text: text ? String(text) : undefined,
+        url: url ? String(url) : imageUrl ? String(imageUrl) : undefined
+      }
+      if (typeof navigator.share === 'function') await navigator.share(data).catch(() => undefined)
+      else console.info('[zen preview] share', data)
+    },
+    'app.openAppLinkSettings': () => console.info('[zen preview] open-by-default settings'),
+    'externalProtocol.respond': ({ requestId, allow }) =>
+      console.info('[zen preview] external protocol', requestId, allow ? 'allowed' : 'refused'),
     'net.fetch': async ({ url }) => {
       try {
         const res = await fetch(String(url))
@@ -153,6 +190,50 @@ export function createPreviewBridge(): NativeBridge {
     const handler = handlers[call.method]
     if (!handler) return undefined
     return handler((call.args ?? {}) as Record<string, unknown>)
+  }
+
+  const finds = new WeakMap<HTMLIFrameElement, { text: string; matches: number; active: number }>()
+
+  /** Match count and active ordinal for `text`, stepping through the matches on repeated calls. */
+  function findInFrame(
+    frame: HTMLIFrameElement,
+    text: string,
+    forward: boolean,
+    newSession: boolean
+  ): { activeMatchOrdinal: number; matches: number } {
+    const needle = text.toLowerCase()
+    if (!needle) {
+      finds.delete(frame)
+      return { activeMatchOrdinal: 0, matches: 0 }
+    }
+    const previous = finds.get(frame)
+    const continuing = previous !== undefined && previous.text === needle && !newSession
+    const matches = continuing ? previous.matches : countMatches(frame, needle)
+    let active = 0
+    if (matches > 0) {
+      active = continuing ? ((previous.active - 1 + (forward ? 1 : matches - 1)) % matches) + 1 : 1
+    }
+    finds.set(frame, { text: needle, matches, active })
+    return { activeMatchOrdinal: active, matches }
+  }
+
+  function countMatches(frame: HTMLIFrameElement, needle: string): number {
+    let body: HTMLElement | null = null
+    try {
+      body = frame.contentDocument?.body ?? null
+    } catch {
+      /* cross-origin */
+    }
+    if (body) {
+      const haystack = (body.innerText || body.textContent || '').toLowerCase()
+      let count = 0
+      for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, at + 1))
+        count++
+      return count
+    }
+    let hash = 0
+    for (const ch of needle) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
+    return hash % 10
   }
 
   const snapshots = new WeakMap<HTMLIFrameElement, { key: string; data: string | null }>()

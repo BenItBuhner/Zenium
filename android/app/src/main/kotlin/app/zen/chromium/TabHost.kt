@@ -47,6 +47,8 @@ class TabHost(private val container: FrameLayout, private val host: Host) {
     fun destroy(tabId: String) {
         val view = views.remove(tabId) ?: return
         host.exitFullscreen(view)
+        view.backTransition?.abort()
+        host.snapshots.forget(tabId)
         (view.parent as? ViewGroup)?.removeView(view)
         view.stopLoading()
         view.destroy()
@@ -62,6 +64,7 @@ class TabHost(private val container: FrameLayout, private val host: Host) {
         val tabId = dead.tabId
         val lp = dead.layoutParams as? FrameLayout.LayoutParams
         val visible = dead.visibility == View.VISIBLE
+        dead.backTransition?.abort()
         val index = container.indexOfChild(dead)
         views.remove(tabId)
         container.removeView(dead)

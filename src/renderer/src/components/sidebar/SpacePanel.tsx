@@ -2,6 +2,8 @@ import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { Brush, ChevronDown, ChevronRight, Plus } from 'lucide-react'
 import type { Folder, Space, Tab, UIState } from '@shared/types'
+import { FOLDER_COLORS } from '@shared/defaults'
+import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { dropStore } from '@renderer/lib/drag'
 import { pinnedOf, regularOf } from '@renderer/lib/selectors'
@@ -26,10 +28,12 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
   const folders = Object.values(state.folders).filter((f) => f.spaceId === space.id)
   const activeTabId = space.activeTabId
   const showSeparator = state.settings.showTabSeparator && (pinned.length > 0 || regular.length > 0)
+  const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
 
   return (
     <div className="flex h-full w-full shrink-0 flex-col" aria-hidden={!isActive}>
       <div
+        ref={fade}
         className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden px-2 pb-1"
         onDoubleClick={(e) => {
           // Zen: double-clicking empty sidebar space opens a new tab.
@@ -231,6 +235,12 @@ function FolderRow({
       >
         {dragging && <div data-drop={`folder:${folder.id}`} className="absolute inset-0 z-10" />}
         <span className="text-sm leading-none">{folder.icon}</span>
+        {folder.color && !compact && (
+          <span
+            className="h-2 w-2 shrink-0 rounded-full"
+            style={{ background: FOLDER_COLORS[folder.color] }}
+          />
+        )}
         {!compact &&
           (renaming ? (
             <FolderRename folder={folder} />

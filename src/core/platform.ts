@@ -13,16 +13,20 @@ import type {
   EventName,
   Events,
   ExtensionInfo,
+  HapticKind,
   HostCapabilities,
   KeyBinding,
   Platform as PlatformOs,
   Rect,
   ResourceSnapshot,
+  SharePayload,
   SyncScope,
   SyncStatus,
   Tab
 } from '../shared/types'
+import type { AppIconId } from '../shared/appIcon'
 import type { KeyInput } from '../shared/shortcuts'
+import type { SiteCertificate, SiteCookie } from '../shared/siteInfo'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '../shared/updates'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
@@ -255,6 +259,10 @@ export interface TabView {
    * to `snapshot()` (viewport only).
    */
   capture?(options: AgentCaptureOptions): Promise<AgentCapture | null>
+
+  // Site information (optional).
+  /** Certificate of the main frame's connection; null on http pages or when unavailable. */
+  certificate?(): Promise<SiteCertificate | null>
 }
 
 export interface TabViewHost {
@@ -288,6 +296,8 @@ export interface WindowHost {
   close(): void
   /** Bounds to remember for session restore (null when the host has no movable windows). */
   normalBounds(): Rect | null
+  /** Brief vibration for a gesture landmark; hosts without haptics leave this out. */
+  haptic?(kind: HapticKind): void
 }
 
 export interface WindowCreateInit {
@@ -371,6 +381,22 @@ export interface ShellHost {
   openExternal(url: string): void
   openPath(path: string): Promise<void>
   showItemInFolder(path: string): void
+  /**
+   * The system share sheet (`capabilities.share`). Resolves once the sheet is up; hosts without
+   * one leave it out and the core copies the link instead.
+   */
+  share?(payload: SharePayload): Promise<void>
+  /** The OS screen for which links open in this app (`capabilities.appLinkSettings`). */
+  openAppLinkSettings?(): void
+}
+
+/**
+ * A page asked to leave the web. The host holds the navigation, describes it to the core with
+ * `Browser.externalProtocols.request`, and the core answers here once the user (or a remembered
+ * choice) has decided; `allow` hands the link to the other app.
+ */
+export interface ExternalProtocolHost {
+  respond(requestId: string, allow: boolean): void
 }
 
 export interface NetHost {
@@ -400,12 +426,40 @@ export interface SessionHost {
   clearPrivate(): Promise<void>
 }
 
+/** Stored data of a site as the host's storage layer reports it. */
+export interface SiteStorageReading {
+  usageBytes: number | null
+  quotaBytes: number | null
+  /** Origins of the site that hold data. */
+  origins: string[]
+}
+
+/**
+ * Cookies and stored data of one site inside a container, for the site-information sheet.
+ * Cookie values never cross this boundary – names and attributes are all the chrome shows.
+ */
+export interface SiteDataHost {
+  /** The cookies a page at `url` receives (its host's and its parent domains'). */
+  cookies(containerId: string, url: string): Promise<SiteCookie[]>
+  storage(containerId: string, site: string): Promise<SiteStorageReading>
+  /** Remove the cookies a page at `url` receives; resolves with how many went away. */
+  clearCookies(containerId: string, url: string): Promise<number>
+  /** Delete the stored data of `site` (hosts that can) or of the given origins (the rest). */
+  clearStorage(containerId: string, site: string, origins: string[]): Promise<void>
+}
+
 export interface AppHost {
   quit(): void
   /** Quit and start again (after changing the process profile). */
   relaunch(): void
   /** The last browser window closed (desktop hosts quit here except on macOS). */
   lastWindowClosed(): void
+  /**
+   * Show the app under this icon colour from now on: the launcher alias on Android, the window
+   * and taskbar icons (Windows, Linux) or the Dock icon (macOS) on desktop. Called once at start
+   * with the persisted choice and again whenever the setting changes.
+   */
+  setAppIcon?(id: AppIconId): void
 }
 
 // ---------------------------------------------------------------------------
@@ -506,6 +560,8 @@ export interface UpdateHost {
   publicKeys(): string[]
   /** Android: hex SHA-256 of the certificate the running app is signed with. */
   signer(): string | null
+  /** Android: the running app's applicationId; null on hosts where packages have no identity. */
+  packageName(): string | null
   /**
    * Fetch and verify `asset`. Resolves with the local file for `installer` mode (opened by
    * `install`) or null when the update is staged for an in-place install. Rejects with an error
@@ -535,6 +591,10 @@ export interface Platform {
   readonly downloads: DownloadHost
   readonly sessions: SessionHost
   readonly app: AppHost
+  /** Cookies and storage per site; hosts without it show a sheet with the connection only. */
+  readonly siteData?: SiteDataHost
+  /** Hosts that ask before a page may open another app (Android). */
+  readonly externalProtocols?: ExternalProtocolHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Host-backed services; omit for the built-in no-op versions. */

@@ -601,7 +601,7 @@ const zenSpaces: AgentTool = {
     name: 'zen_spaces',
     title: 'Spaces',
     description:
-      "List, create or switch Zen spaces (workspaces that group tabs). New tabs open in the space shown to the user unless you pass spaceId to browser_tabs; create your own space to keep your work separate from the user's tabs.",
+      "List, create or switch Zenium spaces (workspaces that group tabs). New tabs open in the space shown to the user unless you pass spaceId to browser_tabs; create your own space to keep your work separate from the user's tabs.",
     inputSchema: schema(
       {
         action: { type: 'string', enum: ['list', 'create', 'switch'] },
@@ -1623,7 +1623,7 @@ export const AGENT_TOOLS: AgentTool[] = [
 
 export function agentInstructions(mode: AgentMode, allowScripts: boolean): string {
   return [
-    "You are controlling the user's Zen browser (Chromium) through its built-in MCP server. The user – and possibly other agents – share this browser, so:",
+    "You are controlling the user's Zenium browser (Chromium) through its built-in MCP server. The user – and possibly other agents – share this browser, so:",
     '- Call zen_status first: it tells you your name and colour, your mode, the spaces, every open tab (position, id, title, URL) and which agent drives which tab.',
     '- Open your own tab with browser_tabs {"action":"new","url":"…"} (or just browser_navigate) instead of taking over tabs you do not own. Tabs driven by another agent are refused. Page tools act on your current tab unless you pass tabId (an id, a unique id prefix, or the tab\'s position in the list).',
     '- browser_snapshot returns the page as an accessibility tree whose elements carry [ref=eN] handles; pass the eN as target to browser_click, browser_type, browser_hover, browser_select_option and browser_take_screenshot. target also takes a CSS selector or text=Visible label, and browser_click / browser_hover take x,y viewport coordinates instead. Every action returns a fresh snapshot.',

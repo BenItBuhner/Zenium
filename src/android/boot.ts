@@ -6,10 +6,16 @@ import type {
   Events,
   UIState
 } from '@shared/types'
-import { resolveTheme, rgbToHex } from '@shared/theme'
+import { cssColorToHex, resolveTheme, rgbToHex } from '@shared/theme'
 import { Browser } from '@core/browser'
 import type { KeyEventInput } from '@core/platform'
-import { handleSystemBack } from '@renderer/lib/ui'
+import {
+  backStore,
+  dispatchBackEvent,
+  refreshBackState,
+  type BackEventPayload,
+  type BackPhase
+} from '@renderer/lib/back'
 import { Bridge, getNativeBridge } from './bridge'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
@@ -29,8 +35,12 @@ export interface HostGlobal {
   hostEvent(name: string, json: string): void
   /** Physical key from a page WebView (or null tab for the chrome); returns "consumed". */
   onKey(tabId: string | null, json: string): boolean
-  /** Hardware/gesture back; returns false when the host should background the app. */
-  onBack(): boolean
+  /**
+   * The system back gesture aimed at the chrome: `start` / `progress` / `cancel` as it happens,
+   * `commit` when it is let go (also on its own, from a back button). Returns whether the chrome
+   * had anything for it; a `commit` that returns false leaves the host to background the app.
+   */
+  backEvent(phase: string, json: string | null): boolean
   /** The user tapped the notification / launcher again: bring a URL in. */
   openUrl(url: string): void
 }
@@ -54,6 +64,7 @@ export function bootAndroid(): { browser: Browser; api: ZenApi; preview: boolean
   platform.bind(browser)
   platformRef.current = platform
   syncNativeTheme(bridge, platform, browser)
+  syncBackState(bridge)
   browser.start()
 
   // Shortcuts typed into the chrome itself go through the same table as page keys.
@@ -101,10 +112,13 @@ export function bootAndroid(): { browser: Browser; api: ZenApi; preview: boolean
 
 /**
  * Keep the system bars and the window background in step with the active space's theme, so the
- * gradient reaches behind the status bar and its icons stay legible.
+ * gradient reaches behind the status bar and its icons stay legible – and hand the chrome's
+ * `--zen-scrim` token over, so what the host draws natively (the page behind an in-page back)
+ * dims with the same space-tinted scrim as the chrome's own sheets.
  */
 function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Browser): void {
   let last = ''
+  let frame: number | null = null
   const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
   const apply = (state: UIState): void => {
     const space = state.spaces.find((s) => s.id === state.activeSpaceId) ?? state.spaces[0]
@@ -114,13 +128,45 @@ function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Bro
         : state.settings.colorScheme === 'dark'
     const resolved = resolveTheme(space?.theme ?? null, dark)
     const background = rgbToHex(resolved.averageColor)
-    const key = `${dark}|${background}`
-    if (key === last) return
-    last = key
-    bridge.send('chrome.setTheme', { dark, background })
+    // The token is read back from the document a frame later, once React has written the
+    // space's variables (`useTheme`); the state event this runs on precedes that render.
+    if (frame !== null) cancelAnimationFrame(frame)
+    frame = requestAnimationFrame(() => {
+      frame = null
+      const scrim = computedTokenColor('--zen-scrim') ?? ''
+      const key = `${dark}|${background}|${scrim}`
+      if (key === last) return
+      last = key
+      bridge.send('chrome.setTheme', { dark, background, scrim })
+    })
   }
   platform.events.on('state', apply)
   systemDark.addEventListener('change', () => apply(browser.state.snapshot(platform.window)))
+}
+
+/** The colour a chrome CSS token currently computes to, as `#rrggbbaa` (null when unreadable). */
+function computedTokenColor(token: string): string | null {
+  const probe = document.createElement('span')
+  probe.style.display = 'none'
+  probe.style.color = `var(${token})`
+  document.documentElement.appendChild(probe)
+  try {
+    return cssColorToHex(getComputedStyle(probe).color)
+  } finally {
+    probe.remove()
+  }
+}
+
+/**
+ * Tell Kotlin ahead of every back gesture whether the chrome would take it and which tab's page
+ * is up: it registers its back callback only then, so with nothing to pop the system's own
+ * back-to-home animation runs (see `PredictiveBack.kt` and the chrome's `lib/back.ts`).
+ */
+function syncBackState(bridge: Bridge): void {
+  const send = (): void => bridge.send('back.update', backStore.get())
+  backStore.subscribe(send)
+  refreshBackState()
+  send()
 }
 
 function installHostGlobal(bridge: Bridge, platformRef: { current: AndroidPlatform | null }): void {
@@ -142,7 +188,8 @@ function installHostGlobal(bridge: Bridge, platformRef: { current: AndroidPlatfo
       ),
     onKey: (tabId, json) =>
       platformRef.current?.viewKey(tabId, parse<KeyEventInput>(json)) ?? false,
-    onBack: () => handleSystemBack(),
+    backEvent: (phase, json) =>
+      dispatchBackEvent(phase as BackPhase, parse<BackEventPayload | null>(json)),
     openUrl: (url) => {
       const platform = platformRef.current
       platform?.browser.openExternalUrl(url, platform.window)

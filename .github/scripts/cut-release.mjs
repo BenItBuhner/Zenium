@@ -78,7 +78,7 @@ if (flags.dryRun) {
   restore()
   console.log('Dry run: nothing was committed, tagged or pushed. Without --dry-run this would run:')
   console.log(`$ git commit -am "chore(release): ${tag}"`)
-  console.log(`$ git tag -a ${tag} -m "Zen on Chromium ${next}"`)
+  console.log(`$ git tag -a ${tag} -m "Zenium ${next}"`)
   console.log(`$ git push ${flags.remote} ${flags.branch} refs/tags/${tag}`)
   process.exit(0)
 }
@@ -95,7 +95,7 @@ if (!flags.yes) {
 
 run('git', ['add', 'package.json', 'package-lock.json'])
 run('git', ['commit', '-m', `chore(release): ${tag}`])
-run('git', ['tag', '-a', tag, '-m', `Zen on Chromium ${next}`])
+run('git', ['tag', '-a', tag, '-m', `Zenium ${next}`])
 run('git', ['push', flags.remote, flags.branch, `refs/tags/${tag}`])
 
 const origin = git('remote', 'get-url', flags.remote)

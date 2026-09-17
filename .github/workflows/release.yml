@@ -183,7 +183,9 @@ jobs:
               if [[ -n "$MAC_CSC_LINK" ]]; then
                 export CSC_LINK="$MAC_CSC_LINK" CSC_KEY_PASSWORD="$MAC_CSC_KEY_PASSWORD"
               else
-                # No certificate: do not search the runner keychain, ship the app unsigned.
+                # No certificate: do not search the runner keychain. build/after-pack.mjs then
+                # ad-hoc signs the bundle (resource seal, hardened runtime) before the DMG / zip
+                # are built; the macos-verify job checks the result on both architectures.
                 export CSC_IDENTITY_AUTO_DISCOVERY=false
                 unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
               fi
@@ -217,8 +219,11 @@ jobs:
             # so both can sit in one release (the app asks for latest-arm64.yml on ARM Windows).
             mv release/assets/latest.yml release/assets/latest-arm64.yml
           fi
-          printf '{"platform":"%s","signed":%s,"notarized":%s}\n' \
-            "${{ matrix.name }}" "${{ steps.signing.outputs.signed }}" "${{ steps.signing.outputs.notarized }}" \
+          # adhoc: macOS bundle sealed with an ad-hoc signature because no Developer ID is configured.
+          adhoc=false
+          if [[ "${{ matrix.name }}" == macos && "${{ steps.signing.outputs.signed }}" != true ]]; then adhoc=true; fi
+          printf '{"platform":"%s","signed":%s,"notarized":%s,"adhoc":%s}\n' \
+            "${{ matrix.name }}" "${{ steps.signing.outputs.signed }}" "${{ steps.signing.outputs.notarized }}" "$adhoc" \
             > "release/meta/${{ matrix.name }}.json"
           ls -l release/assets
       - uses: actions/upload-artifact@v7
@@ -270,8 +275,10 @@ jobs:
             echo "ZEN_ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
             echo "signing=release" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::ANDROID_KEYSTORE_BASE64 is not configured; the release APK is signed with a debug key and will not upgrade other builds in place"
-            echo "signing=debug" >> "$GITHUB_OUTPUT"
+            # Gradle falls back to android/ci-debug.keystore: a debug key, but the same one in every
+            # run, so debug-keyed releases upgrade each other in place.
+            echo "::notice::ANDROID_KEYSTORE_BASE64 is not configured; the APK is signed with the committed CI debug key (android/ci-debug.keystore), not a release key"
+            echo "signing=ci-debug" >> "$GITHUB_OUTPUT"
           fi
       - name: Assemble release APK
         working-directory: android
@@ -285,8 +292,18 @@ jobs:
             echo "::error::Expected exactly one release APK, found: ${apks[*]:-none}"
             exit 1
           fi
-          target="release/assets/zen-chromium-${{ needs.prepare.outputs.version }}.apk"
+          target="release/assets/zenium-${{ needs.prepare.outputs.version }}.apk"
           cp "${apks[0]}" "$target"
+          # The applicationId goes into the update manifest: an installed app with another id
+          # (app.zen.chromium, before the rename) gets this APK installed alongside, not over it,
+          # and the app explains that instead of comparing signing keys.
+          aapt="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)"
+          package="$("$aapt" dump badging "$target" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
+          if [[ -z "$package" ]]; then
+            echo "::error::Could not read the applicationId from the APK (aapt dump badging)"
+            exit 1
+          fi
+          echo "APK applicationId: $package"
           apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
           "$apksigner" verify --print-certs "$target" | tee "$RUNNER_TEMP/certs.txt"
           # The signing certificate's digest goes into the update manifest: Android only upgrades
@@ -297,7 +314,18 @@ jobs:
           if [[ -z "$signer" ]]; then
             echo "::warning::Could not read the APK signing certificate digest from apksigner; the manifest will not carry it"
           fi
-          printf '{"platform":"android","signing":"%s","signer":"%s"}\n' "${{ steps.keystore.outputs.signing }}" "$signer" > release/meta/android.json
+          if [[ "${{ steps.keystore.outputs.signing }}" == ci-debug ]]; then
+            # The whole point of the committed key is a signer that never changes: prove it.
+            expected="$(keytool -exportcert -rfc -keystore android/ci-debug.keystore -storepass zenium-ci-debug -alias zenium-ci-debug \
+              | openssl x509 -noout -fingerprint -sha256 | sed 's/.*=//; s/://g' | tr 'A-F' 'a-f')"
+            if [[ "$signer" != "$expected" ]]; then
+              echo "::error::APK signer $signer is not the committed CI debug key $expected (did Gradle fall back to a per-machine debug key?)"
+              exit 1
+            fi
+            echo "APK signed with the committed CI debug key $expected"
+          fi
+          printf '{"platform":"android","signing":"%s","signer":"%s","packageName":"%s"}\n' \
+            "${{ steps.keystore.outputs.signing }}" "$signer" "$package" > release/meta/android.json
           cat release/meta/android.json
           ls -l release/assets
       - uses: actions/upload-artifact@v7
@@ -308,9 +336,75 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+  macos-verify:
+    name: macOS bundle check (${{ matrix.arch }})
+    needs: [prepare, desktop]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest # Apple Silicon
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-macos
+          path: release
+      - name: Unpack the ${{ matrix.arch }} archive and disk image
+        run: |
+          set -euo pipefail
+          zip="release/assets/zenium-$VERSION-$ARCH.zip"
+          dmg="release/assets/zenium-$VERSION-$ARCH.dmg"
+          ls -l "$zip" "$dmg"
+          mkdir -p "$RUNNER_TEMP/zip" && ditto -x -k "$zip" "$RUNNER_TEMP/zip"
+          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg" "$dmg" > /dev/null
+          echo "APP_ZIP=$RUNNER_TEMP/zip/Zenium.app" >> "$GITHUB_ENV"
+          echo "APP_DMG=$RUNNER_TEMP/dmg/Zenium.app" >> "$GITHUB_ENV"
+      - name: Signature and resource seal
+        # The whole point of the ad-hoc signature: a sealed bundle that codesign accepts strictly.
+        # With a Developer ID configured this step verifies that signature instead.
+        run: |
+          set -euo pipefail
+          for app in "$APP_ZIP" "$APP_DMG"; do
+            echo "== $app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            codesign -dvv "$app" 2>&1 | grep -E '^(Identifier|Signature|CodeDirectory|Sealed Resources|TeamIdentifier)' | sed 's/^/   /'
+            codesign -dvv "$app" 2>&1 | grep -q '^Sealed Resources version=' || { echo "::error::$app has no resource seal"; exit 1; }
+            file "$app/Contents/MacOS/Zenium" | sed 's/^/   /'
+          done
+          echo "== Gatekeeper assessment (informational; an ad-hoc signature is rejected, but as 'unsigned', not 'damaged')"
+          spctl --assess --type execute --verbose=4 "$APP_ZIP" 2>&1 | sed 's/^/   /' || true
+      - name: Launch smoke test
+        # A hardened-runtime ad-hoc signature with the wrong entitlements would kill the app at
+        # startup; a launch that survives 20 s proves the bundle runs on this architecture.
+        run: |
+          set -euo pipefail
+          "$APP_ZIP/Contents/MacOS/Zenium" > "$RUNNER_TEMP/zenium.log" 2>&1 &
+          pid=$!
+          sleep 20
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "Zenium $VERSION ($ARCH) is running after 20 s (pid $pid)"
+            kill "$pid" || true
+          else
+            wait "$pid" || code=$?
+            echo "::error::Zenium exited early with code ${code:-?}"
+            cat "$RUNNER_TEMP/zenium.log"
+            exit 1
+          fi
+      - name: Detach
+        if: always()
+        run: hdiutil detach "$RUNNER_TEMP/dmg" > /dev/null 2>&1 || true
+
   assemble:
     name: Manifest, checksums, notes
-    needs: [prepare, desktop, android]
+    needs: [prepare, desktop, android, macos-verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -366,8 +460,11 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: release-bundle
+          # The publish job regenerates the notes (with the changelog); it needs the per-platform
+          # signing facts in release/meta as much as the packages.
           path: |
             release/assets
+            release/meta
             release/notes.md
           if-no-files-found: error
           retention-days: 7

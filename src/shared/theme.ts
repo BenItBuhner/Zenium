@@ -58,6 +58,23 @@ export function hexToRgb(hex: string): RGB | null {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
 }
 
+/**
+ * A computed CSS colour (`rgb(r, g, b)`, `rgba(r, g, b, a)` or the modern `rgb(r g b / a)`) as
+ * `#rrggbbaa`, the form the Android host's `parseColor` takes – how a chrome token such as
+ * `--zen-scrim` is handed to native views. Null for anything else (`transparent`, `color()`).
+ */
+export function cssColorToHex(value: string): string | null {
+  const m =
+    /^rgba?\(\s*(\d+(?:\.\d+)?)\s*[, ]\s*(\d+(?:\.\d+)?)\s*[, ]\s*(\d+(?:\.\d+)?)\s*(?:[,/]\s*(\d*\.?\d+%?)\s*)?\)$/i.exec(
+      value.trim()
+    )
+  if (!m) return null
+  const alpha =
+    m[4] === undefined ? 1 : m[4].endsWith('%') ? parseFloat(m[4]) / 100 : parseFloat(m[4])
+  const channels: number[] = [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), alpha * 255]
+  return `#${channels.map((v) => clamp(Math.round(v), 0, 255).toString(16).padStart(2, '0')).join('')}`
+}
+
 export function mix(a: RGB, b: RGB, t: number): RGB {
   const k = clamp(t, 0, 1)
   return [
@@ -234,13 +251,28 @@ export const PRIVATE_THEME: SpaceTheme = {
 
 /** Preset gradients offered in the theme picker / onboarding. */
 export const THEME_PRESETS: Array<{ name: string; theme: SpaceTheme }> = [
-  { name: 'Zen Purple', theme: makeTheme('#9d7cff', ['#ff8bd1']) },
+  { name: 'Zenium Purple', theme: makeTheme('#9d7cff', ['#ff8bd1']) },
   { name: 'Ocean', theme: makeTheme('#4fa3ff', ['#5af0d6']) },
   { name: 'Forest', theme: makeTheme('#4caf50', ['#c8e06e']) },
   { name: 'Sunset', theme: makeTheme('#ff7a59', ['#ffc857', '#ff4f9a']) },
   { name: 'Rose', theme: makeTheme('#ff6b9d', ['#ffb3c6']) },
   { name: 'Slate', theme: makeTheme('#7d8ba1', ['#a9b8cf']) }
 ]
+
+/**
+ * Base colour of panels, sheets and popovers: paper (or near-black) carrying the space's own
+ * colour, the way Zen's popups are a few percent of the primary colour over white or `#101010`.
+ */
+export function panelBase(resolved: ResolvedTheme): RGB {
+  return resolved.isDark
+    ? mix(resolved.averageColor, [16, 16, 16], 0.45)
+    : mix(resolved.averageColor, [255, 255, 255], 0.7)
+}
+
+/** Base colour of the scrim under sheets and drawers: the space darkened, never flat black. */
+export function scrimBase(resolved: ResolvedTheme): RGB {
+  return mix(resolved.averageColor, [0, 0, 0], 0.7)
+}
 
 export function themeCssVariables(resolved: ResolvedTheme): Record<string, string> {
   const fg: RGB = resolved.isDark ? [240, 240, 245] : [30, 30, 36]
@@ -253,6 +285,8 @@ export function themeCssVariables(resolved: ResolvedTheme): Record<string, strin
     '--zen-fg-rgb': fgRgb,
     '--zen-accent': rgbToHex(resolved.accent),
     '--zen-accent-rgb': resolved.accent.join(' '),
+    '--zen-panel-rgb': panelBase(resolved).join(' '),
+    '--zen-scrim-rgb': scrimBase(resolved).join(' '),
     '--zen-texture': String(resolved.texture)
   }
 }

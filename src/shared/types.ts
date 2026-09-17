@@ -2,6 +2,8 @@
  * Types shared between the main process, the preload script and the renderer.
  * Everything here must be JSON-serialisable (it crosses the IPC boundary).
  */
+import type { AppIconId } from './appIcon'
+import type { SiteInfo } from './siteInfo'
 import type { UpdateSettings, UpdateStatus } from './updates'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
@@ -39,6 +41,15 @@ export interface HostCapabilities {
   agents: boolean
   /** The host checks GitHub Releases for new versions and can fetch / apply them. */
   updates: boolean
+  /** The host has a system share sheet (`app.share`); menus offer Share items when true. */
+  share: boolean
+  /**
+   * The OS itself confirms copies with a clipboard chip (Android 13+); the chrome then stays
+   * quiet instead of toasting "Link copied" a second time.
+   */
+  clipboardChip: boolean
+  /** The host has a system screen for which links open in this app (Android's Open by default). */
+  appLinkSettings: boolean
 }
 
 export interface Rect {
@@ -172,12 +183,18 @@ export interface Tab {
   readerable: boolean
 }
 
+/** Colours a tab group (folder) can wear; the phone chrome paints group cards with them. */
+export type FolderColor =
+  'grey' | 'blue' | 'red' | 'yellow' | 'green' | 'pink' | 'purple' | 'cyan' | 'orange'
+
 export interface Folder {
   id: string
   spaceId: string
   name: string
   icon: string
   collapsed: boolean
+  /** Group colour; folders made before groups had colours (or on desktop) carry none. */
+  color?: FolderColor | null
 }
 
 export interface Space {
@@ -521,6 +538,10 @@ export type ThirdPartyPinnedBehavior = 'new-tab' | 'glance' | 'same-tab'
 export type ColorScheme = 'system' | 'light' | 'dark'
 export type SidebarSide = 'left' | 'right'
 export type NewTabPosition = 'end' | 'after-current'
+/** Screen edge the phone layout docks its address bar to. */
+export type PhoneBarPosition = 'top' | 'bottom'
+/** Haptic feedback the chrome asks the host for (mobile hosts; no-op elsewhere). */
+export type HapticKind = 'lift' | 'tick' | 'dock'
 
 export interface CompactModeSettings {
   enabled: boolean
@@ -532,6 +553,8 @@ export interface CompactModeSettings {
 
 export interface Settings {
   colorScheme: ColorScheme
+  /** Colour of the app icon (launcher alias on Android, window / Dock icon on desktop). */
+  appIcon: AppIconId
   toolbarLayout: ToolbarLayout
   sidebarSide: SidebarSide
   sidebarWidth: number
@@ -542,6 +565,8 @@ export interface Settings {
   borderless: boolean
   compactMode: CompactModeSettings
   urlbarBehavior: UrlbarBehavior
+  /** Phone layout: where the address bar (and its gestures) live. Long-press the pill to move it. */
+  phoneBarPosition: PhoneBarPosition
   glanceEnabled: boolean
   glanceTrigger: GlanceTrigger
   pinnedCloseBehavior: PinnedCloseBehavior
@@ -567,6 +592,62 @@ export interface Settings {
   resources: ResourceSettings
   agents: AgentSettings
   updates: UpdateSettings
+  /**
+   * Non-web schemes (`mailto`, `tel`, `sms`, `market`, …) the user chose "Always allow" for in the
+   * external-protocol sheet: pages may hand links of that scheme to the app without asking again.
+   */
+  externalProtocols: Record<string, boolean>
+}
+
+// ---------------------------------------------------------------------------
+// Sharing and external protocols
+// ---------------------------------------------------------------------------
+
+/** What `app.share` hands to the system share sheet. */
+export interface SharePayload {
+  /** Shown as the preview's title (the page title, or the link text). */
+  title?: string
+  /** Plain text to share when there is no URL. */
+  text?: string
+  url?: string
+  /**
+   * An image to share as a file: the host fetches it (with the tab's cookies) and shares the
+   * bytes rather than the address.
+   */
+  imageUrl?: string
+  /** The tab the share started from (the sheet's own actions – screenshot, print – work on it). */
+  tabId?: string
+  /** The page's favicon (a `data:` or `http(s)` URL) for the preview thumbnail. */
+  favicon?: string
+}
+
+/**
+ * One of the browser's own buttons in the system share sheet (Android 14's action row): the
+ * host reports the tap, the core carries it out on the tab the share started from.
+ */
+export interface ShareAction {
+  kind: 'copy' | 'screenshot' | 'print'
+  url: string
+  tabId: string | null
+}
+
+/**
+ * A page wants to leave the web (`mailto:`, `tel:`, `intent://`, a custom scheme) or a site's
+ * native app could open the link: the chrome shows a confirm sheet and answers through
+ * `externalProtocol.respond`.
+ */
+export interface ExternalProtocolRequest {
+  requestId: string
+  /** The address the page wants to open, as the page gave it. */
+  url: string
+  /** Its scheme, lower-case (`mailto`, `tel`, `intent`, `https` for an app link). */
+  scheme: string
+  /** Name of the app that would open it, when the host could tell; null for "another app". */
+  appName: string | null
+  /** Host of the page that asked; empty when unknown. */
+  site: string
+  /** Whether the sheet offers to remember the choice for this scheme. */
+  canRemember: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -958,6 +1039,15 @@ export interface Commands {
   'app.listSpaces': { args: void; result: Array<{ id: string; name: string; icon: string }> }
   'app.openExternal': { args: { url: string }; result: void }
   'app.quit': { args: void; result: void }
+  /** System share sheet (`capabilities.share`); hosts without one copy the link and toast. */
+  'app.share': { args: SharePayload; result: void }
+  /** Android's "Open by default" screen for this app (`capabilities.appLinkSettings`). */
+  'app.openAppLinkSettings': { args: void; result: void }
+  /** The external-protocol sheet's answer (`always` remembers the scheme in settings). */
+  'externalProtocol.respond': {
+    args: { requestId: string; allow: boolean; always: boolean }
+    result: void
+  }
 
   'layout.report': { args: LayoutReport; result: void }
 
@@ -1034,9 +1124,22 @@ export interface Commands {
   'space.closeUnpinned': { args: { spaceId?: string }; result: void }
   'space.contextMenu': { args: { spaceId: string }; result: void }
 
-  'folder.create': { args: { spaceId: string; name: string; icon: string }; result: string }
+  'folder.create': {
+    args: {
+      spaceId: string
+      name: string
+      icon: string
+      color?: FolderColor
+      /** Start an inline rename of the new folder (default); off for folders made by a gesture. */
+      rename?: boolean
+    }
+    result: string
+  }
   'folder.update': {
-    args: { folderId: string; patch: Partial<Pick<Folder, 'name' | 'icon' | 'collapsed'>> }
+    args: {
+      folderId: string
+      patch: Partial<Pick<Folder, 'name' | 'icon' | 'collapsed' | 'color'>>
+    }
     result: void
   }
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
@@ -1050,6 +1153,8 @@ export interface Commands {
   'focus.content': { args: void; result: void }
   /** Renderer → main: chrome UI opened, take keyboard focus. */
   'focus.chrome': { args: void; result: void }
+  /** Renderer → host: a gesture reached a landmark (pick-up, midpoint, dock); vibrate briefly. */
+  haptic: { args: { kind: HapticKind }; result: void }
   'media.toggle': { args: { tabId: string }; result: void }
 
   'split.create': { args: { tabIds: string[]; layout: SplitLayout }; result: void }
@@ -1091,6 +1196,15 @@ export interface Commands {
   'urlbar.runCommand': { args: { action: string }; result: void }
 
   'overlay.snapshot': { args: { tabId: string }; result: string | null }
+
+  /** Connection, cookies, storage and permissions of the tab's site (null for an unknown tab). */
+  'site.info': { args: { tabId: string }; result: SiteInfo | null }
+  /** Remove the cookies of the tab's site; resolves with how many were removed. */
+  'site.clearCookies': { args: { tabId: string }; result: { removed: number } }
+  /** Remove cookies, storage and permissions of the tab's site and reload the page. */
+  'site.clearData': { args: { tabId: string }; result: void }
+  /** Forget one permission decision of the site (or all of them) and reload the page. */
+  'site.resetPermissions': { args: { tabId: string; permission?: string }; result: void }
 
   /** Take a fresh resource sample right now and return it. */
   'resources.snapshot': { args: void; result: ResourceSnapshot }
@@ -1275,6 +1389,10 @@ export interface Events {
   /** Hosts without native menus ask the renderer to show one. */
   'menu.show': MenuDescriptor
   'menu.hide': { menuId: string }
+  /** A page wants to open another app: show the confirm sheet (answered by `externalProtocol.respond`). */
+  'externalProtocol.request': ExternalProtocolRequest
+  /** The request was withdrawn (its tab closed, another one took its place). */
+  'externalProtocol.cancel': { requestId: string }
   /** Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts). */
   insets: { top: number; right: number; bottom: number; left: number }
 }

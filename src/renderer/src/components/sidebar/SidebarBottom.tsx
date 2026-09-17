@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { Bot, Palette, Pause, Play, Plus, Volume2, VolumeX } from 'lucide-react'
 import type { MediaState, Space, UIState } from '@shared/types'
 import { resolveTheme, rgbToHex } from '@shared/theme'
+import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { dropStore } from '@renderer/lib/drag'
 import { activeTab, isLocalWindow, tabTitle } from '@renderer/lib/selectors'
@@ -27,6 +28,8 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
   const media = state.media.filter((m) => state.tabs[m.tabId]).slice(0, 3)
 
   const agents = state.agents.filter((a) => !a.pending)
+  // The space row scrolls sideways when expanded and downwards when the sidebar is compact.
+  const fadeSpaces = useFadeEdges<HTMLDivElement>({ axis: 'auto', size: 20 })
 
   return (
     <div className="flex flex-col gap-1 px-2 pb-2 pt-1">
@@ -57,6 +60,7 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
       {!local && (
         <div className={cn('flex items-center gap-1', compact && 'flex-col')}>
           <div
+            ref={fadeSpaces}
             className={cn(
               'flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overflow-y-hidden py-0.5 [scrollbar-width:none]',
               compact && 'flex-col'

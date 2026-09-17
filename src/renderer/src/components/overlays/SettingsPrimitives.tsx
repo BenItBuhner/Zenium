@@ -34,6 +34,42 @@ export function Row({
   )
 }
 
+/** Two or three options as one pill; the picked one wears the accent tint. */
+export function Segmented<T extends string>({
+  value,
+  options,
+  onChange,
+  label
+}: {
+  value: T
+  options: Array<{ value: T; label: string }>
+  onChange: (v: T) => void
+  /** Name of the choice for assistive tech (the row label is not associated). */
+  label: string
+}): JSX.Element {
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      className="zen-segmented flex shrink-0 items-center rounded-full p-0.5"
+    >
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          role="radio"
+          aria-checked={o.value === value}
+          data-active={o.value === value}
+          className="zen-segment h-8 min-w-[72px] rounded-full px-3.5 text-[13px] font-medium"
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export function Choice<T extends string>({
   value,
   options,

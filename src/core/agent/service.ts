@@ -54,8 +54,8 @@ const SESSION_IDLE_MS = 30 * 60 * 1000
 const SESSIONLESS_IDLE_MS = 10 * 60 * 1000
 /** How long a requested navigation may take to report that it has started (see `waitForLoad`). */
 const NAVIGATION_START_GRACE_MS = 1500
-const SERVER_NAME = 'zen-browser'
-/** Endpoint + token, read by the `zen --mcp` shim (see main/agent/shim.ts). */
+const SERVER_NAME = 'zenium'
+/** Endpoint + token, read by the `zenium --mcp` shim (see main/agent/shim.ts). */
 const AGENT_FILE = 'agent.json'
 
 /** One connected agent: its MCP session plus everything Zen knows about it. */
@@ -108,7 +108,7 @@ export class AgentService implements SessionStore, McpHandlers {
     this.transport = browser.platform.createAgentTransport?.(browser) ?? null
     this.protocol = new McpProtocol(this, {
       name: SERVER_NAME,
-      title: 'Zen Browser',
+      title: 'Zenium',
       version: browser.platform.info.version
     })
     this.http = new StreamableHttp(this)
@@ -458,7 +458,7 @@ export class AgentService implements SessionStore, McpHandlers {
       .confirm(
         {
           message: `Allow "${s.name}" to control this browser?`,
-          detail: `An AI agent (${s.name}${s.version ? ' ' + s.version : ''}) is connecting ${where} through Zen's MCP server. Once allowed it can open tabs, read pages and click and type in them. You can disconnect it at any time in Settings → AI Agents.`,
+          detail: `An AI agent (${s.name}${s.version ? ' ' + s.version : ''}) is connecting ${where} through Zenium's MCP server. Once allowed it can open tabs, read pages and click and type in them. You can disconnect it at any time in Settings → AI Agents.`,
           okLabel: 'Allow',
           cancelLabel: 'Deny'
         },

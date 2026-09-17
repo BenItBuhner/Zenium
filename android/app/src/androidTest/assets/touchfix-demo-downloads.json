@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "dl_1",
+      "url": "https://downloads.example.com/zenium-0.3.3-arm64.apk",
+      "filename": "zenium-0.3.3-arm64.apk",
+      "savePath": "/Downloads/zenium-0.3.3-arm64.apk",
+      "totalBytes": 48217088,
+      "receivedBytes": 48217088,
+      "state": "completed",
+      "startedAt": "{{now-3h}}",
+      "mimeType": "application/vnd.android.package-archive"
+    },
+    {
+      "id": "dl_2",
+      "url": "https://downloads.example.com/design-language.pdf",
+      "filename": "design-language.pdf",
+      "savePath": "/Downloads/design-language.pdf",
+      "totalBytes": 2411520,
+      "receivedBytes": 2411520,
+      "state": "completed",
+      "startedAt": "{{now-6h}}",
+      "mimeType": "application/pdf"
+    },
+    {
+      "id": "dl_3",
+      "url": "https://downloads.example.com/coffee-roast-chart.png",
+      "filename": "coffee-roast-chart.png",
+      "savePath": "/Downloads/coffee-roast-chart.png",
+      "totalBytes": 918336,
+      "receivedBytes": 367334,
+      "state": "interrupted",
+      "startedAt": "{{now-9h}}",
+      "mimeType": "image/png"
+    },
+    {
+      "id": "dl_4",
+      "url": "https://downloads.example.com/rfc2324.txt",
+      "filename": "rfc2324.txt",
+      "savePath": "/Downloads/rfc2324.txt",
+      "totalBytes": 21504,
+      "receivedBytes": 8602,
+      "state": "cancelled",
+      "startedAt": "{{now-12h}}",
+      "mimeType": "text/plain"
+    }
+  ]
+}

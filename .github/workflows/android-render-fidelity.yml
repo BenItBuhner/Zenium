@@ -1,0 +1,96 @@
+name: Android render fidelity
+
+# Loads the same pages in the debug build and in the emulator's Chrome and records how each page
+# was served and laid out (user-agent string and client hints, request headers, viewport, the fonts
+# text was drawn with, the computed style of Google's "Sign in" control) next to screenshots of
+# both, so a rendering difference on a phone can be pinned on the WebView setup or on the site. When
+# main's CI has a debug APK, that build runs first so the change shows side by side. Dispatch-only:
+# it takes about twenty minutes and produces evidence to read, not a verdict.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: android-render-fidelity-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  compare:
+    name: Compare with Chrome on an API 34 emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools platforms;android-35 build-tools;35.0.0
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
+      - run: npm ci
+      - name: Build the chrome and page script
+        run: npm run build:android:web
+      - name: Assemble the debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug -PskipWeb --no-daemon --stacktrace
+      - name: Locate the APK and fetch main's for comparison
+        id: apk
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk=$(find android/app/build/outputs/apk/debug -name '*.apk' -print -quit)
+          echo "path=$apk" >> "$GITHUB_OUTPUT"
+          run_id=$(gh run list --workflow ci.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$run_id" ] && gh run download "$run_id" --name zenium-android-debug --dir artifacts/main-apk; then
+            before=$(find artifacts/main-apk -name '*.apk' -print -quit)
+            echo "main's debug APK from run $run_id: $before"
+            echo "before=$before" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::no debug APK from main's CI to compare against; recording this build only"
+          fi
+      - name: Enable KVM for the emulator
+        # https://github.blog/changelog/2023-02-23-hardware-accelerated-android-virtualization-on-actions-windows-and-linux-larger-hosted-runners/
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
+      - name: Load the pages in both browsers
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          RENDER_APK: ${{ steps.apk.outputs.path }}
+          RENDER_BEFORE_APK: ${{ steps.apk.outputs.before }}
+          RENDER_OUT: artifacts/render-fidelity
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 3
+          # Heavy pages have frozen the guest at 4 GB; the runner has 16 GB.
+          ram-size: 6144M
+          heap-size: 512M
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: node .github/scripts/render-fidelity.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-render-fidelity
+          path: artifacts/render-fidelity/
+          if-no-files-found: warn
+          retention-days: 14

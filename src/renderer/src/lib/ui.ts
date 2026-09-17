@@ -1,6 +1,12 @@
-import type { MenuDescriptor, OverlayKind, Rect, UIState, UrlbarOpenMode } from '@shared/types'
+import type {
+  ExternalProtocolRequest,
+  MenuDescriptor,
+  OverlayKind,
+  Rect,
+  UIState,
+  UrlbarOpenMode
+} from '@shared/types'
 import { cmd, onEvent, run } from './api'
-import { activeTab } from './selectors'
 import { createStore } from './store'
 import { rememberThumbnail, thumbnailOf } from './thumbnails'
 
@@ -93,6 +99,10 @@ export interface UiState {
   drawerOpen: boolean
   /** A renderer-hosted context menu (hosts without native menus). */
   menu: MenuDescriptor | null
+  /** The site-information sheet (connection, cookies, storage, permissions) is up. */
+  siteInfoOpen: boolean
+  /** A page wants to open another app: the external-protocol confirm sheet is up for it. */
+  externalProtocol: ExternalProtocolRequest | null
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
   /**
@@ -134,6 +144,8 @@ export const uiStore = createStore<UiState>(
     spaceSlideDirection: 0,
     drawerOpen: false,
     menu: null,
+    siteInfoOpen: false,
+    externalProtocol: null,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false
   },
@@ -200,6 +212,8 @@ export function returnFocusToPage(): void {
     !ui.findOpen &&
     !ui.drawerOpen &&
     !ui.menu &&
+    !ui.siteInfoOpen &&
+    !ui.externalProtocol &&
     !ui.stageActive
   )
     run('focus.content', undefined)
@@ -215,6 +229,8 @@ export function invalidateSnapshot(): void {
     !ui.compactHover &&
     !ui.drawerOpen &&
     !ui.menu &&
+    !ui.siteInfoOpen &&
+    !ui.externalProtocol &&
     !ui.stageActive
   ) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
@@ -251,13 +267,6 @@ export function closeUrlbar(): void {
 // Phone drawer & renderer-hosted menus
 // ---------------------------------------------------------------------------
 
-export async function openDrawer(activeTabId: string | null): Promise<void> {
-  if (uiStore.get().drawerOpen) return
-  await captureActiveTab(activeTabId)
-  run('focus.chrome', undefined)
-  uiStore.set({ drawerOpen: true })
-}
-
 export function closeDrawer(): void {
   if (!uiStore.get().drawerOpen) return
   uiStore.set({ drawerOpen: false })
@@ -293,6 +302,47 @@ export function pickMenuItem(itemId: string): void {
   )
 }
 
+// ---------------------------------------------------------------------------
+// External protocols (a page wants to open another app)
+// ---------------------------------------------------------------------------
+
+/** Requests the core withdrew before their sheet was up (the page capture was still in flight). */
+const withdrawnRequests = new Set<string>()
+
+/** The core asked: put the confirm sheet up over a capture of the page that asked. */
+export async function showExternalProtocol(
+  request: ExternalProtocolRequest,
+  activeTabId: string | null
+): Promise<void> {
+  await captureActiveTab(activeTabId)
+  if (withdrawnRequests.delete(request.requestId)) return
+  uiStore.set({ externalProtocol: request })
+}
+
+/**
+ * The sheet's answer, or its dismissal (`allow` false): one answer per request; the sheet is
+ * taken down either way.
+ */
+export function answerExternalProtocol(requestId: string, allow: boolean, always: boolean): void {
+  const current = uiStore.get().externalProtocol
+  if (!current || current.requestId !== requestId) return
+  uiStore.set({ externalProtocol: null })
+  run('externalProtocol.respond', { requestId, allow, always })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/** The core withdrew the question (its tab closed, a newer one took over). */
+export function cancelExternalProtocol(requestId: string): void {
+  if (uiStore.get().externalProtocol?.requestId !== requestId) {
+    withdrawnRequests.add(requestId)
+    return
+  }
+  uiStore.set({ externalProtocol: null })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
 /** True when a chrome overlay covers the content area (tab views must be hidden). */
 export function overlayCoversContent(ui: UiState): boolean {
   return (
@@ -301,63 +351,13 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.drag !== null ||
     ui.drawerOpen ||
     ui.menu !== null ||
+    ui.siteInfoOpen ||
+    ui.externalProtocol !== null ||
     ui.stageActive
   )
 }
 
-type BackHandler = () => boolean
-const backHandlers: BackHandler[] = []
-
-/** Let a piece of chrome UI answer the system back gesture before the defaults below. */
-export function registerBackHandler(handler: BackHandler): () => void {
-  backHandlers.push(handler)
-  return () => {
-    const index = backHandlers.indexOf(handler)
-    if (index >= 0) backHandlers.splice(index, 1)
-  }
-}
-
-/**
- * Hardware / gesture back (mobile hosts). Closes the topmost piece of chrome UI, then navigates
- * the active tab back. Returns false when nothing was left to do (the host may background the app).
- */
-export function handleSystemBack(): boolean {
-  const ui = uiStore.get()
-  const state = browserStore.get().state
-  if (ui.menu) {
-    closeMenu()
-    return true
-  }
-  if (ui.urlbar.open) {
-    closeUrlbar()
-    return true
-  }
-  if (ui.overlay !== 'none' && ui.overlay !== 'onboarding') {
-    closeOverlay()
-    return true
-  }
-  if (ui.drawerOpen) {
-    closeDrawer()
-    return true
-  }
-  for (const handler of backHandlers) if (handler()) return true
-  if (state?.glance) {
-    run('glance.close', undefined)
-    return true
-  }
-  if (ui.findOpen && ui.findTabId) {
-    run('find.stop', { tabId: ui.findTabId, keepSelection: true })
-    uiStore.set({ findOpen: false, findTabId: null })
-    returnFocusToPage()
-    return true
-  }
-  const tab = state ? activeTab(state) : null
-  if (tab?.canGoBack) {
-    run('tab.back', { tabId: tab.id })
-    return true
-  }
-  return false
-}
+// The system back gesture (registry of dismissable surfaces, legacy chain) lives in `back.ts`.
 
 // ---------------------------------------------------------------------------
 // Multi-select (Ctrl+click toggles, Shift+click extends from the anchor)

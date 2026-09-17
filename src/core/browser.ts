@@ -5,9 +5,13 @@ import type {
   EventName,
   Events,
   Folder,
+  FolderColor,
   KeyBinding,
   MediaState,
+  SearchEngine,
   Settings,
+  ShareAction,
+  SharePayload,
   Space,
   WindowKind
 } from '../shared/types'
@@ -29,7 +33,9 @@ import { BoostService } from './boosts'
 import { ReaderService } from './reader'
 import { LiveFolderService } from './livefolders'
 import { ModService } from './mods'
+import { SiteInfoService } from './siteInfo'
 import { UpdateService } from './updates'
+import { ExternalProtocolService } from './externalProtocols'
 import { NoExtensions, NoSync, NoUpdateHost, NoopGovernor } from './hostDefaults'
 import {
   activeSpace,
@@ -44,10 +50,14 @@ import {
 } from './model'
 import { getDomain, inputToUrl } from '../shared/url'
 import { buildSearchUrl, matchEngineKeyword } from '../shared/search'
+import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
+import { copyConfirmation } from '../shared/clipboard'
+import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { ONBOARDING_ESSENTIALS } from '../shared/defaults'
 import { PRIVATE_THEME, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
+import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 
@@ -101,9 +111,15 @@ export class Browser {
   readonly agents: AgentService
   /** Release checks against GitHub and the download / install flow. */
   readonly updates: UpdateService
+  /** Connection, cookies, storage and permissions of a tab's site (the site-information sheet). */
+  readonly siteInfo: SiteInfoService
+  /** Links that leave the web: the confirm sheet and the remembered per-scheme choices. */
+  readonly externalProtocols: ExternalProtocolService
   readonly windows = new Map<string, ZenWindow>()
   quitting = false
   private readonly handlers: CommandHandlers
+  /** Images shared into the browser, shown by `zen://image?id=…` while the app runs. */
+  private readonly sharedImages = new Map<string, string>()
 
   constructor(readonly platform: Platform) {
     this.state = new BrowserState(
@@ -139,6 +155,8 @@ export class Browser {
       this,
       platform.createUpdateHost?.(this) ?? new NoUpdateHost(platform)
     )
+    this.siteInfo = new SiteInfoService(this)
+    this.externalProtocols = new ExternalProtocolService(this)
     this.state.extras = () => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -225,7 +243,7 @@ export class Browser {
       bounds: win.initialBounds,
       maximized: win.initialMaximized,
       cascadeFrom: win.cascadeFrom,
-      title: win.isPrivate ? 'Zen (Private Browsing)' : 'Zen',
+      title: win.isPrivate ? 'Zenium (Private Browsing)' : 'Zenium',
       backgroundColor: rgbToHex(theme.averageColor)
     })
     this.governor.watchWindow(win)
@@ -309,6 +327,9 @@ export class Browser {
         : this.state.restoredWindows.slice(0, 1)
     if (restore.length === 0) this.createWindow({ kind: 'synced' })
     for (const persisted of restore) this.createWindow({ kind: 'synced', persisted })
+    // The host may have come up under another icon (a fresh install with a restored profile,
+    // a launcher alias flipped back by an update); the persisted choice wins.
+    this.platform.app.setAppIcon?.(this.state.settings.appIcon)
     this.governor.start()
     this.liveFolders.start()
     void this.extensions.start()
@@ -417,10 +438,16 @@ export class Browser {
     this.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
   }
 
-  createFolder(spaceId: string, name: string, icon: string, win?: ZenWindow): Folder {
-    const folder = createFolder(this.state.model, spaceId, name, icon)
+  createFolder(
+    spaceId: string,
+    name: string,
+    icon: string,
+    win?: ZenWindow,
+    options: { color?: FolderColor; rename?: boolean } = {}
+  ): Folder {
+    const folder = createFolder(this.state.model, spaceId, name, icon, options.color)
     this.state.commit()
-    this.emit('folder.startRename', { folderId: folder.id }, win)
+    if (options.rename !== false) this.emit('folder.startRename', { folderId: folder.id }, win)
     return folder
   }
 
@@ -433,7 +460,7 @@ export class Browser {
 
   updateFolder(
     folderId: string,
-    patch: Partial<Pick<Folder, 'name' | 'icon' | 'collapsed'>>
+    patch: Partial<Pick<Folder, 'name' | 'icon' | 'collapsed' | 'color'>>
   ): void {
     const folder = this.state.model.folders[folderId]
     if (!folder) return
@@ -539,6 +566,129 @@ export class Browser {
     if (routed && routed !== win.activeSpaceId) this.tabs.switchSpace(routed, win, tab.id)
     win.host.show()
     win.host.focus()
+  }
+
+  /** The user's search engine (the one picked in Settings, or the first one). */
+  defaultSearchEngine(): SearchEngine {
+    const engines = this.state.searchEngines
+    return engines.find((e) => e.id === this.state.settings.searchEngineId) ?? engines[0]
+  }
+
+  /**
+   * Zenium as a share target: what another app sent (`ACTION_SEND`, `ACTION_WEB_SEARCH`). A URL
+   * opens in a tab, text is a search with the user's engine, an image opens as a page of its own.
+   */
+  openSharedIntent(intent: SharedIntent, win: ZenWindow = this.ensureWindow()): void {
+    const route = routeSharedIntent(intent)
+    switch (route.kind) {
+      case 'url':
+        this.openExternalUrl(route.url, win)
+        return
+      case 'search':
+        this.openExternalUrl(buildSearchUrl(this.defaultSearchEngine(), route.query), win)
+        return
+      case 'image': {
+        // The bytes stay in memory and the tab keeps a short address, not megabytes of data URL.
+        const id = newId('image')
+        this.sharedImages.set(id, route.dataUrl)
+        this.openExternalUrl(`${IMAGE_URL_PREFIX}?id=${id}`, win)
+        return
+      }
+      case 'none':
+        this.toast('Nothing to open in the shared content', 'info', win)
+        win.host.show()
+        win.host.focus()
+    }
+  }
+
+  /** The image behind a `zen://image?id=…` page, or null once the app restarted. */
+  sharedImage(id: string): string | null {
+    return this.sharedImages.get(id) ?? null
+  }
+
+  /**
+   * Put text on the clipboard and say so where the chrome is the one to say it (Android below
+   * 13; see `copyConfirmation`). Desktop stays as it was: silent, or `desktopConfirmation` where
+   * it always had a toast of its own.
+   */
+  copyText(
+    text: string,
+    confirmation: string,
+    win?: ZenWindow,
+    desktopConfirmation: string | null = null
+  ): void {
+    this.platform.clipboard.writeText(text)
+    const toast = copyConfirmation(
+      this.state.platform,
+      this.state.capabilities,
+      confirmation,
+      desktopConfirmation
+    )
+    if (toast) this.toast(toast, 'info', win)
+  }
+
+  /**
+   * Share through the system sheet; a host without one copies the link and says so, which is
+   * what "share" can mean on a desktop without a share target.
+   */
+  async share(payload: SharePayload, win: ZenWindow = this.focusedWindow()): Promise<void> {
+    const { shell } = this.platform
+    if (this.state.capabilities.share && shell.share) {
+      try {
+        await shell.share(payload)
+      } catch (error) {
+        this.toast(`Could not share: ${(error as Error).message}`, 'error', win)
+      }
+      return
+    }
+    const text = payload.url ?? payload.imageUrl ?? payload.text
+    if (text) this.copyText(text, 'Link copied', win)
+  }
+
+  /** Share a tab's page: its title and address, with its favicon as the preview. */
+  shareTab(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
+    const tab = this.tabs.tab(tabId)
+    if (!tab || !/^https?:/i.test(tab.url)) {
+      this.toast('This page cannot be shared', 'info', win)
+      return
+    }
+    void this.share(
+      {
+        title: tab.customTitle ?? tab.title,
+        url: tab.url,
+        tabId,
+        favicon: tab.favicon ?? undefined
+      },
+      win
+    )
+  }
+
+  /**
+   * The browser's own row in the system share sheet (Android 14: Copy link, Screenshot, Print):
+   * the host reports the tap once the sheet has closed; the tab the share started from does it.
+   */
+  onShareAction(action: ShareAction, win: ZenWindow): void {
+    if (action.kind === 'copy') {
+      this.copyText(action.url, 'Link copied', win)
+      return
+    }
+    const tab = action.tabId ? this.tabs.tab(action.tabId) : undefined
+    if (!tab) {
+      this.toast('The page is no longer open', 'info', win)
+      return
+    }
+    this.actions.run(action.kind === 'print' ? 'page.print' : 'page.screenshot', {
+      sourceTabId: tab.id,
+      win
+    })
+  }
+
+  /** The system's screen for which links open in this app (Android's "Open by default"). */
+  openAppLinkSettings(win: ZenWindow): void {
+    const { shell } = this.platform
+    if (this.state.capabilities.appLinkSettings && shell.openAppLinkSettings)
+      shell.openAppLinkSettings()
+    else this.toast('Link handling is set in the system settings on this device.', 'info', win)
   }
 
   shutdown(): void {
@@ -691,6 +841,10 @@ export class Browser {
         if (/^(https?|mailto):/.test(url)) platform.shell.openExternal(url)
       },
       'app.quit': () => platform.app.quit(),
+      'app.share': (payload, win) => this.share(payload, win),
+      'app.openAppLinkSettings': (_a, win) => this.openAppLinkSettings(win),
+      'externalProtocol.respond': ({ requestId, allow, always }) =>
+        this.externalProtocols.respond(requestId, allow, always),
       'layout.report': (report, win) => win.applyLayout(report),
 
       'tab.create': (opts, win) => tabs.createTab(opts, win).id,
@@ -787,8 +941,8 @@ export class Browser {
       'space.closeUnpinned': ({ spaceId }, win) => tabs.closeUnpinned(spaceId, win),
       'space.contextMenu': ({ spaceId }, win) => this.menus.showSpaceContextMenu(spaceId, win),
 
-      'folder.create': ({ spaceId, name, icon }, win) =>
-        this.createFolder(spaceId, name, icon, win).id,
+      'folder.create': ({ spaceId, name, icon, color, rename }, win) =>
+        this.createFolder(spaceId, name, icon, win, { color, rename }).id,
       'folder.update': ({ folderId, patch }) => this.updateFolder(folderId, patch),
       'folder.delete': ({ folderId, unpack }) => this.deleteFolder(folderId, unpack),
       'folder.contextMenu': ({ folderId }, win) => this.menus.showFolderContextMenu(folderId, win),
@@ -796,6 +950,7 @@ export class Browser {
       'app.menu': (_a, win) => this.menus.showAppMenu(win),
       'focus.content': (_a, win) => win.focusContent(),
       'focus.chrome': (_a, win) => win.focusChrome(),
+      haptic: ({ kind }, win) => win.haptic(kind),
       'media.toggle': ({ tabId }) => {
         const view = tabs.view(tabId)
         if (!view) return
@@ -840,6 +995,12 @@ export class Browser {
         this.actions.run(action as AnyAction, { sourceTabId: null, win }),
 
       'overlay.snapshot': ({ tabId }, win) => win.snapshot(tabId),
+
+      'site.info': ({ tabId }) => this.siteInfo.info(tabId),
+      'site.clearCookies': ({ tabId }) => this.siteInfo.clearCookies(tabId),
+      'site.clearData': ({ tabId }) => this.siteInfo.clearData(tabId),
+      'site.resetPermissions': ({ tabId, permission }) =>
+        this.siteInfo.resetPermissions(tabId, permission),
 
       'resources.snapshot': () => this.governor.sample(),
       'resources.trim': () => this.governor.trim(),
@@ -1068,6 +1229,7 @@ export class Browser {
       glance: s.glanceEnabled,
       trigger: s.glanceTrigger,
       thirdParty: s.thirdPartyOnPinned,
+      appIcon: s.appIcon,
       windowSync: s.windowSync,
       resources: JSON.stringify(s.resources),
       unload: `${s.unloadEnabled}:${s.unloadTimeoutMinutes}:${s.unloadExcludedDomains.join(',')}`,
@@ -1095,6 +1257,8 @@ export class Browser {
           ...s.updates,
           ...(value as Partial<Settings['updates']>)
         })
+      } else if (key === 'appIcon') {
+        s.appIcon = sanitizeAppIcon(value)
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }
@@ -1124,6 +1288,7 @@ export class Browser {
     }
     if (before.agents !== JSON.stringify(s.agents)) this.agents.onSettingsChanged()
     if (before.updates !== JSON.stringify(s.updates)) this.updates.onSettingsChanged()
+    if (before.appIcon !== s.appIcon) this.platform.app.setAppIcon?.(s.appIcon)
     this.state.commit()
   }
 

@@ -109,7 +109,7 @@ export function Onboarding({ state }: { state: UIState }): JSX.Element {
 
         {step === 'welcome' && (
           <div className="flex flex-col gap-4">
-            <h1 className="text-2xl font-semibold tracking-tight">Welcome to Zen</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">Welcome to Zenium</h1>
             <p className="text-[14px] leading-relaxed text-[var(--zen-muted)]">
               A calmer way to browse, now running on Chromium. Vertical tabs, Spaces, Essentials,
               Glance, Split View, Compact Mode, Boosts and Live Folders — synced across your devices
@@ -222,7 +222,7 @@ export function Onboarding({ state }: { state: UIState }): JSX.Element {
 
         {step === 'features' && (
           <div className="flex flex-col gap-4">
-            <h2 className="text-xl font-semibold">What makes Zen, Zen</h2>
+            <h2 className="text-xl font-semibold">What makes Zenium, Zenium</h2>
             <div className="grid grid-cols-2 gap-2">
               {FEATURES.map((f) => (
                 <div

@@ -77,7 +77,7 @@ output('tag', tag)
 output('ref', ref)
 output('prerelease', String(prerelease))
 output('publish', String(publish))
-output('title', `Zen on Chromium v${version}`)
+output('title', `Zenium v${version}`)
 
 summary(
   [

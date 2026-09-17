@@ -1,0 +1,38 @@
+name: Android menu sheet demo
+
+# Records the phone chrome's menu sheet (drag, fling, catch, fading scroll edges; the Settings
+# panel's fading edges too) on a hardware-accelerated Android emulator, once in each colour
+# scheme, and uploads the videos and screenshots. Dispatch-only, like the gesture demo: it takes
+# about ten minutes and has nothing to say about a change being correct. Same emulator caveats as
+# android-gesture-demo.yml: an API 34 Google APIs image on a software GPU gives a handful of
+# frames per second. The build, the emulator and its caches live in android-emulator-demo.yml;
+# this file only picks the driver and runs it once per colour scheme.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-menu-sheet-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Menu sheet demo (${{ matrix.theme }})
+    strategy:
+      fail-fast: false
+      matrix:
+        theme: [light, dark]
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.MenuSheetDemo
+        DEMO_DIR=menu-demo
+        DEMO_OUT=artifacts/android-menu-sheet-demo
+        DEMO_VIDEO=menu-sheet-demo-${{ matrix.theme }}.mp4
+        DEMO_THEME=${{ matrix.theme }}
+      artifact-name: android-menu-sheet-demo-${{ matrix.theme }}
+      artifact-path: artifacts/android-menu-sheet-demo/

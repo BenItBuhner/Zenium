@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "url": "https://en.wikipedia.org/wiki/Coffee",
+      "title": "Coffee - Wikipedia",
+      "visitCount": 3,
+      "lastVisit": "{{now-1h}}",
+      "favicon": null
+    },
+    {
+      "url": "https://example.com/",
+      "title": "Example Domain",
+      "visitCount": 7,
+      "lastVisit": "{{now-2h}}",
+      "favicon": null
+    },
+    {
+      "url": "https://news.ycombinator.com/",
+      "title": "Hacker News",
+      "visitCount": 12,
+      "lastVisit": "{{now-5h}}",
+      "favicon": null
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Tea",
+      "title": "Tea - Wikipedia",
+      "visitCount": 2,
+      "lastVisit": "{{now-20h}}",
+      "favicon": null
+    },
+    {
+      "url": "https://www.rfc-editor.org/rfc/rfc1149.html",
+      "title": "RFC 1149: IP Datagrams on Avian Carriers",
+      "visitCount": 1,
+      "lastVisit": "{{now-25h}}",
+      "favicon": null
+    },
+    {
+      "url": "https://github.com/BenItBuhner/Zenium",
+      "title": "BenItBuhner/Zenium: a Zen-style browser",
+      "visitCount": 5,
+      "lastVisit": "{{now-30h}}",
+      "favicon": null
+    },
+    {
+      "url": "https://developer.mozilla.org/en-US/docs/Web/API/Window/matchMedia",
+      "title": "Window: matchMedia() method - Web APIs | MDN",
+      "visitCount": 2,
+      "lastVisit": "{{now-35h}}",
+      "favicon": null
+    },
+    {
+      "url": "https://info.cern.ch/hypertext/WWW/TheProject.html",
+      "title": "World Wide Web",
+      "visitCount": 1,
+      "lastVisit": "{{now-40h}}",
+      "favicon": null
+    }
+  ]
+}

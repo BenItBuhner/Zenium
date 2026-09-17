@@ -1,0 +1,28 @@
+name: Android back demo
+
+# Records the predictive back gesture – over a page's history, the three-dot menu and the tab
+# overview, and finally the system's back-to-home with nothing left to pop – on a
+# hardware-accelerated Android 15 emulator and uploads the video and screenshots. Dispatch-only:
+# it takes about ten minutes and has nothing to say about a change being correct. The recording
+# comes from an API 35 Google APIs image on a software GPU, so expect a handful of frames per
+# second; a phone does all of this in a frame. The build, the emulator and its caches live in
+# android-emulator-demo.yml; this file only picks the driver and the system image.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-back-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Back demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-back-demo.sh
+      api-level: '35'
+      artifact-name: android-back-demo
+      artifact-path: artifacts/android-back-demo/

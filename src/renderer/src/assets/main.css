@@ -13,24 +13,63 @@
 }
 
 :root {
-  /* Overwritten from JS by the active space theme. */
+  /*
+   * Overwritten from JS by the active space theme (`themeCssVariables`). The space colours the
+   * whole window: panels and the scrim are tints of its gradient's average, emitted as rgb
+   * triples so alpha can be applied where they are used. These are the base window's values.
+   */
   --zen-bg: #f2f1f5;
   --zen-bg-solid: #f2f1f5;
   --zen-fg: #1e1e24;
   --zen-fg-rgb: 30 30 36;
   --zen-accent: #6264dc;
   --zen-accent-rgb: 98 100 220;
+  --zen-panel-rgb: 251 251 252;
+  --zen-scrim-rgb: 73 72 74;
   --zen-texture: 0;
 
+  /* Ink and fills: alphas of the foreground. */
   --zen-element-bg: rgb(var(--zen-fg-rgb) / 0.07);
   --zen-element-bg-hover: rgb(var(--zen-fg-rgb) / 0.12);
   --zen-element-bg-active: rgb(var(--zen-fg-rgb) / 0.16);
   --zen-border: rgb(var(--zen-fg-rgb) / 0.12);
   --zen-muted: rgb(var(--zen-fg-rgb) / 0.6);
-  --zen-panel-bg: rgb(255 255 255 / 0.74);
+  --zen-faint: rgb(var(--zen-fg-rgb) / 0.4);
+  /*
+   * The accent as ink (text, glyphs) and as a fill (the one primary control, a toggle that is
+   * on): the space colour held to a lightness that reads. The raw accent stands in where
+   * relative colour syntax is missing; see the @supports block below.
+   */
+  --zen-accent-ink: var(--zen-accent);
+  --zen-accent-fill: var(--zen-accent);
+  --zen-on-accent: #fff;
+  /* Status colours: ink, plus an rgb triple for a tint of at most 16%. Never a filled surface. */
+  --zen-ok: #1f8a4c;
+  --zen-ok-rgb: 31 138 76;
+  --zen-warn: #b45f06;
+  --zen-warn-rgb: 180 95 6;
+  --zen-danger: #c43434;
+  --zen-danger-rgb: 196 52 52;
+
+  /* Surfaces over the window: the space-tinted panel colour, blurred; a tinted scrim under them. */
+  --zen-panel-bg: rgb(var(--zen-panel-rgb) / 0.8);
+  --zen-scrim: rgb(var(--zen-scrim-rgb) / 0.28);
+  --zen-blur-panel: blur(24px) saturate(1.2);
+  --zen-blur-hero: blur(40px) saturate(1.1);
+  /* Elevation: 1 a resting card, 2 an active or dragged one, --zen-shadow (3) a panel. */
+  --zen-shadow-1: 0 1px 2px rgb(0 0 0 / 0.06), 0 8px 24px rgb(0 0 0 / 0.1);
+  --zen-shadow-2: 0 2px 4px rgb(0 0 0 / 0.08), 0 18px 44px rgb(0 0 0 / 0.18);
   --zen-shadow: 0 18px 50px rgb(0 0 0 / 0.22), 0 2px 8px rgb(0 0 0 / 0.12);
+  /*
+   * The content frame's edge: a hairline outline and a shallow ambient shadow. On the phone the
+   * page morphs from this into an overview card (--zen-shadow-1); `lib/motion/elevation.ts`
+   * mirrors both and interpolates them layer by layer – keep them in step.
+   */
+  --zen-frame-shadow: 0 0 0 1px rgb(var(--zen-fg-rgb) / 0.08), 0 2px 14px rgb(0 0 0 / 0.08);
   --zen-padding: 8px;
   --zen-content-radius: 12px;
+  /* Corner radius of a tab card in the phone's overview (the page morphs 12px ↔ 14px). */
+  --zen-card-radius: 14px;
   /* Height of the phone's bottom bar without the gesture-bar inset. */
   --zen-phone-bar: 56px;
   --zen-sidebar-width: 240px;
@@ -42,8 +81,37 @@
 }
 
 :root[data-theme='dark'] {
-  --zen-panel-bg: rgb(28 28 34 / 0.84);
+  --zen-panel-rgb: 23 23 25;
+  --zen-scrim-rgb: 8 8 10;
+  --zen-on-accent: #101010;
+  --zen-ok: #6fd39a;
+  --zen-ok-rgb: 111 211 154;
+  --zen-warn: #f2b35c;
+  --zen-warn-rgb: 242 179 92;
+  --zen-danger: #ff8080;
+  --zen-danger-rgb: 255 128 128;
+  --zen-panel-bg: rgb(var(--zen-panel-rgb) / 0.86);
+  --zen-scrim: rgb(var(--zen-scrim-rgb) / 0.45);
+  /* Dark elevation: the light opacities times 2.2, plus a one-pixel inner light hairline. */
+  --zen-shadow-1:
+    0 1px 2px rgb(0 0 0 / 0.2), 0 8px 24px rgb(0 0 0 / 0.32),
+    inset 0 0 0 1px rgb(255 255 255 / 0.06);
+  --zen-shadow-2:
+    0 2px 4px rgb(0 0 0 / 0.24), 0 18px 44px rgb(0 0 0 / 0.5),
+    inset 0 0 0 1px rgb(255 255 255 / 0.06);
   --zen-shadow: 0 18px 50px rgb(0 0 0 / 0.55), 0 2px 8px rgb(0 0 0 / 0.35);
+}
+
+/* Zen clamps its primary colour's lightness before using it as ink or a fill; so does the chrome. */
+@supports (color: oklch(from red clamp(0.3, l, 0.6) c h)) {
+  :root {
+    --zen-accent-ink: oklch(from var(--zen-accent) clamp(0.35, l, 0.6) c h);
+    --zen-accent-fill: oklch(from var(--zen-accent) clamp(0.35, l, 0.6) c h);
+  }
+  :root[data-theme='dark'] {
+    --zen-accent-ink: oklch(from var(--zen-accent) clamp(0.7, l, 0.85) c h);
+    --zen-accent-fill: oklch(from var(--zen-accent) clamp(0.55, l, 0.7) c h);
+  }
 }
 
 /* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME); zero on desktop. */
@@ -108,18 +176,20 @@
     -webkit-app-region: no-drag;
   }
 
-  /* Opt-in squircle corners for anything with a border-radius (Chromium 139+). */
+  /*
+   * Opt-in squircle corners for anything with a border-radius (Chromium 139+). Not for the
+   * content frame or the cards a page turns into: the hosts clip the live page with a circular
+   * round rect, and the outline around it (and every card it morphs into) must be the same
+   * shape, or the two corners are visibly off from each other.
+   */
   .zen-squircle,
   .zen-tab,
   .zen-essential,
   .zen-panel,
-  .zen-content-frame,
+  .zen-omnibox-sheet,
   .zen-toolbar-button,
   .zen-kbd,
-  .zen-suggestion,
-  .zen-stage-card,
-  .zen-overview-card,
-  .zen-overview-new {
+  .zen-suggestion {
     corner-shape: var(--zen-corner);
   }
 
@@ -276,18 +346,17 @@
 
   .zen-panel {
     background: var(--zen-panel-bg);
-    backdrop-filter: blur(24px) saturate(1.2);
+    backdrop-filter: var(--zen-blur-panel);
     border: 1px solid rgb(var(--zen-fg-rgb) / 0.1);
     border-radius: 16px;
     box-shadow: var(--zen-shadow);
   }
 
+  /* The 1px outline is a spread shadow: its corners are the page's radius plus 1px, concentric. */
   .zen-content-frame {
     background: var(--zen-bg-solid);
     border-radius: var(--zen-content-radius);
-    box-shadow:
-      0 0 0 1px rgb(var(--zen-fg-rgb) / 0.08),
-      0 2px 14px rgb(0 0 0 / 0.08);
+    box-shadow: var(--zen-frame-shadow);
   }
 
   .zen-space-strip {
@@ -425,26 +494,6 @@
     opacity: 1;
   }
 }
-@keyframes zen-drawer-left {
-  from {
-    transform: translateX(-24px);
-    opacity: 0;
-  }
-  to {
-    transform: none;
-    opacity: 1;
-  }
-}
-@keyframes zen-drawer-right {
-  from {
-    transform: translateX(24px);
-    opacity: 0;
-  }
-  to {
-    transform: none;
-    opacity: 1;
-  }
-}
 @keyframes zen-fade {
   from {
     opacity: 0;
@@ -453,38 +502,239 @@
     opacity: 1;
   }
 }
+/*
+ * The address pill growing into the omnibox field as the bar's buttons make room: the field's
+ * backdrop starts over the pill's slot (shifted past the back button, scaled to the pill's
+ * width) and stretches to the whole band – transform only, no layout per frame.
+ */
+@keyframes zen-field-grow {
+  from {
+    transform: translateX(var(--zen-field-shift, 48px)) scaleX(var(--zen-field-scale, 0.5));
+  }
+  to {
+    transform: none;
+  }
+}
 @layer components {
   .zen-sheet-in {
     animation: zen-sheet-in 220ms var(--zen-ease);
   }
-  .zen-drawer-left {
-    animation: zen-drawer-left 200ms var(--zen-ease);
-  }
-  .zen-drawer-right {
-    animation: zen-drawer-right 200ms var(--zen-ease);
-  }
   .zen-animate-fade {
     animation: zen-fade 160ms var(--zen-ease);
-  }
-  .zen-drawer > aside {
-    height: 100%;
   }
   .zen-phone-bar {
     background: transparent;
   }
+  .zen-phone-bar-lifted > button:not(.zen-phone-pill) {
+    pointer-events: none;
+  }
+  /* The slot an address pill left behind while it is being carried: a shallow well. */
+  .zen-pill-well {
+    background: rgb(var(--zen-fg-rgb) / 0.04);
+    box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.06);
+    transition: background 160ms var(--zen-ease);
+  }
+  .zen-pill-well-target {
+    background: rgb(var(--zen-fg-rgb) / 0.09);
+  }
+  /*
+   * The carried pill: the pill's own look, moved with transforms only. Picking it up is a level
+   * swap – a resting card in the bar, a dragged card once lifted – on a fixed transition, never
+   * a shadow animated per frame.
+   */
+  .zen-pill-ghost {
+    background: var(--zen-bg-solid);
+    box-shadow: var(--zen-shadow-1);
+    transition: box-shadow 200ms var(--zen-ease);
+    will-change: transform;
+  }
+  .zen-pill-ghost[data-lifted='true'] {
+    box-shadow: var(--zen-shadow-2);
+  }
+  /*
+   * The phone's omnibox: the content frame becomes the suggestions surface – the space-tinted
+   * panel over the window, blurred like every panel – and the field a raised card in the bar
+   * band. Depth, not lines, separates them.
+   */
+  .zen-omnibox-sheet {
+    background: var(--zen-panel-bg);
+    backdrop-filter: var(--zen-blur-panel);
+    border-radius: var(--zen-content-radius);
+    box-shadow:
+      0 0 0 1px rgb(var(--zen-fg-rgb) / 0.08),
+      0 2px 14px rgb(0 0 0 / 0.08);
+    will-change: transform, opacity;
+  }
+  .zen-omnibox-field {
+    position: relative;
+  }
+  /* The field's backdrop is its own layer so the grow animation scales it, not the content. */
+  .zen-omnibox-field::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--zen-panel-bg);
+    box-shadow: var(--zen-shadow-1);
+    transform-origin: 0 50%;
+    animation: zen-field-grow 220ms var(--zen-ease);
+  }
+  .zen-omnibox-field > * {
+    position: relative;
+    animation: zen-fade 220ms var(--zen-ease);
+  }
+  /*
+   * Selected text in the chrome takes the space's accent at 30 %, never the browser's default
+   * blue; the accent-fill shade so it stays legible on dark, with the raw accent for WebViews
+   * that cannot mix colours.
+   */
+  .zen-omnibox-field input::selection {
+    background: rgb(var(--zen-accent-rgb) / 0.3);
+    background: color-mix(in srgb, var(--zen-accent-fill) 30%, transparent);
+    color: var(--zen-fg);
+  }
+  /* Rows sit 4 px inside the sheet: concentric with its corners whatever the frame radius is. */
+  .zen-suggestion-sheet {
+    border-radius: calc(var(--zen-content-radius) - 4px);
+  }
+  /* Two-way choice as one pill: a quiet track, the picked half in the accent tint. */
+  .zen-segmented {
+    background: var(--zen-element-bg);
+  }
+  .zen-segment {
+    color: var(--zen-muted);
+    transition:
+      background 120ms var(--zen-ease),
+      color 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  .zen-segment:active {
+    transform: scale(0.98);
+  }
+  .zen-segment[data-active='true'] {
+    background: rgb(var(--zen-accent-rgb) / 0.16);
+    color: var(--zen-fg);
+  }
+  /*
+   * Settings → Look and Feel → App icon: the icon is its own swatch, a caption under it; the
+   * picked one wears the accent ring the theme swatches use (2px at offset 2), keyboard focus the
+   * same ring. Phones get the 56 touch size.
+   */
+  .zen-app-icon-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+    gap: 4px;
+  }
+  .zen-app-icon {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 4px;
+    border-radius: 12px;
+    corner-shape: var(--zen-corner);
+    color: var(--zen-muted);
+    transition: background 120ms var(--zen-ease);
+  }
+  /* Hover only where a pointer hovers: a tap would otherwise leave the fill stuck on a phone. */
+  @media (hover: hover) {
+    .zen-app-icon:hover {
+      background: var(--zen-element-bg);
+    }
+  }
+  .zen-app-icon svg {
+    width: 48px;
+    height: 48px;
+    /* The artwork's own corner, so the ring around the picked one runs concentric with it. */
+    border-radius: 22.5%;
+    corner-shape: var(--zen-corner);
+    transition: transform 120ms var(--zen-ease);
+  }
+  .zen-app-icon:active svg {
+    transform: scale(0.98);
+  }
+  .zen-app-icon[aria-checked='true'] svg,
+  .zen-app-icon:focus-visible svg {
+    outline: 2px solid var(--zen-accent);
+    outline-offset: 2px;
+  }
+  .zen-app-icon:focus-visible {
+    outline: none;
+  }
+  .zen-app-icon[aria-checked='true'] {
+    color: var(--zen-fg);
+  }
+  .zen-app-icon-name {
+    font-size: 11.5px;
+    line-height: 1.25;
+  }
+  .zen-app-icon[aria-checked='true'] .zen-app-icon-name {
+    font-weight: 500;
+  }
+
+  /*
+   * The phone's Spaces drawer: a translucent panel flush with its screen edge, rounded on the
+   * side that faces the content, lifted by shadow alone. Its position is set per frame from
+   * `drawerStore.progress`.
+   */
+  .zen-drawer-panel {
+    background: var(--zen-panel-bg);
+    backdrop-filter: var(--zen-blur-panel);
+    box-shadow: var(--zen-shadow);
+    corner-shape: var(--zen-corner);
+    will-change: transform;
+  }
+  .zen-drawer-panel[data-side='left'] {
+    border-radius: 0 24px 24px 0;
+  }
+  .zen-drawer-panel[data-side='right'] {
+    border-radius: 24px 0 0 24px;
+  }
+  /* Space rows share the sidebar tab's fill language; a row in the hand lifts off the list. */
+  .zen-space-row {
+    corner-shape: var(--zen-corner);
+    transition:
+      background 120ms var(--zen-ease),
+      box-shadow 200ms var(--zen-ease);
+  }
+  .zen-space-row:active {
+    background: var(--zen-element-bg);
+  }
+  .zen-space-row[data-active='true'] {
+    background: var(--zen-element-bg-active);
+    box-shadow: inset 0 0 0 1px rgb(var(--zen-fg-rgb) / 0.05);
+  }
+  .zen-space-row[data-held] {
+    background: var(--zen-bg-solid);
+    box-shadow: var(--zen-shadow-2);
+  }
+
+  /*
+   * Scrim behind the overview's Spaces drawer: the space's own dark at the design language's
+   * strength; how much of it shows (opacity 0 → 1) is the drawer's progress.
+   */
+  .zen-overview-scrim {
+    background: var(--zen-scrim);
+  }
+  .zen-group-swatch {
+    transition: transform 140ms var(--zen-ease);
+  }
+  .zen-group-swatch:active {
+    transform: scale(0.92);
+  }
+  .zen-group-swatch-selected {
+    box-shadow: inset 0 0 0 2px var(--zen-swatch);
+  }
 
   /*
    * The phone's gesture stage. Cards stand in for pages, so they wear the content frame's own
-   * radius and hairline; depth comes from elevation, never from extra borders.
+   * radius, outline and elevation – the swap from page to card is invisible.
    */
   .zen-stage-card {
     overflow: hidden;
     border-radius: var(--zen-content-radius);
     background: var(--zen-bg-solid);
-    box-shadow:
-      0 0 0 1px rgb(var(--zen-fg-rgb) / 0.08),
-      0 2px 8px rgb(0 0 0 / 0.08),
-      0 16px 44px rgb(0 0 0 / 0.18);
+    box-shadow: var(--zen-frame-shadow);
     will-change: transform;
     transform-origin: center;
   }
@@ -515,42 +765,346 @@
     );
   }
 
-  /* Tab overview cards: title row above the thumbnail, elevation marks the active one. */
+  /*
+   * Tab overview cards: title row above the thumbnail. Every card has the same elevation – the
+   * hero morphs into exactly this look – and the active one is marked by its tinted title row.
+   */
   .zen-overview-card {
-    border-radius: 14px;
+    border-radius: var(--zen-card-radius);
     background: var(--zen-bg-solid);
-    box-shadow:
-      0 1px 2px rgb(0 0 0 / 0.06),
-      0 8px 24px rgb(0 0 0 / 0.1);
-    transition:
-      transform 140ms var(--zen-ease),
-      box-shadow 200ms var(--zen-ease);
+    box-shadow: var(--zen-shadow-1);
+    transition: transform 140ms var(--zen-ease);
   }
   .zen-overview-card:active {
     transform: scale(0.975);
-  }
-  .zen-overview-card[data-active='true'] {
-    box-shadow:
-      0 2px 4px rgb(0 0 0 / 0.08),
-      0 18px 44px rgb(0 0 0 / 0.18);
   }
   .zen-overview-card[data-active='true'] > header {
     background: rgb(var(--zen-accent-rgb) / 0.14);
   }
   .zen-overview-new {
-    border-radius: 14px;
+    border-radius: var(--zen-card-radius);
     background: rgb(var(--zen-fg-rgb) / 0.06);
     transition: background 140ms var(--zen-ease);
   }
   .zen-overview-new:active {
     background: rgb(var(--zen-fg-rgb) / 0.12);
   }
+  /* A card another card is about to be dropped on tucks itself in to receive it. */
+  .zen-overview-card-target {
+    transform: scale(0.92);
+    box-shadow:
+      var(--zen-shadow-1),
+      0 0 0 2px rgb(var(--zen-accent-rgb) / 0.55);
+  }
+  /*
+   * The card in the hand is positioned per frame; its elevation is a level swap (2 while held,
+   * back to 1 as it lands), never a per-frame shadow.
+   */
+  .zen-overview-ghost {
+    box-shadow: var(--zen-shadow-2);
+    transform-origin: center;
+    transition: box-shadow 200ms var(--zen-ease);
+    will-change: transform, left, top;
+  }
+  .zen-overview-ghost[data-landing] {
+    box-shadow: var(--zen-shadow-1);
+  }
+
+  /*
+   * Tab groups: a tinted card wrapping the members' cards. Its corners are the card radius plus
+   * the 6px inset, so the nested corners stay concentric; the container is a squircle, the
+   * cards inside stay round with the page they morph into. `--zen-group-rgb` is the group colour.
+   */
+  .zen-group {
+    border-radius: calc(var(--zen-card-radius) + 6px);
+    background: rgb(var(--zen-group-rgb) / 0.13);
+    corner-shape: var(--zen-corner);
+    transition: box-shadow 200ms var(--zen-ease);
+  }
+  .zen-group[data-targeted] {
+    box-shadow: 0 0 0 2px rgb(var(--zen-group-rgb) / 0.6);
+  }
+  .zen-group-header {
+    border-radius: calc(var(--zen-card-radius) + 6px);
+    corner-shape: var(--zen-corner);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-group-header:active {
+    background: rgb(var(--zen-group-rgb) / 0.12);
+  }
+  .zen-group-dot {
+    background: rgb(var(--zen-group-rgb));
+    box-shadow: 0 0 0 3px rgb(var(--zen-group-rgb) / 0.25);
+  }
+  /* Landing strip below the grid while a grouped card is in the hand. */
+  .zen-loose-strip {
+    border-radius: var(--zen-card-radius);
+    corner-shape: var(--zen-corner);
+    color: var(--zen-muted);
+    background: rgb(var(--zen-fg-rgb) / 0.05);
+    transition:
+      background 140ms var(--zen-ease),
+      color 140ms var(--zen-ease);
+  }
+  .zen-loose-strip[data-targeted] {
+    color: var(--zen-fg);
+    background: rgb(var(--zen-fg-rgb) / 0.12);
+  }
+  /* Along the top of a grouped tab's card on the swipe track. */
+  .zen-group-ribbon {
+    color: var(--zen-fg);
+    background: rgb(var(--zen-group-rgb) / 0.22);
+    backdrop-filter: blur(12px) saturate(1.2);
+    will-change: opacity;
+  }
+  /* Titles of the phone's overview, drawer and sheets. */
+  .zen-title {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+  }
+  /* Its edges fade through `useFadeEdges`, only where there is more to scroll to. */
   .zen-overview-strip {
     scrollbar-width: none;
+    scroll-snap-type: x proximity;
   }
   .zen-overview-strip::-webkit-scrollbar {
     display: none;
   }
+
+  /*
+   * The site-information sheet. Surfaces nest concentrically: the sheet's corner minus its
+   * padding is the cards' corner (--zen-sheet-inner), and a card's corner minus its padding is
+   * the corner of anything inside it. Sections are told apart by spacing and tone, not lines.
+   */
+  .zen-sheet {
+    --zen-sheet-inner: 16px;
+    padding-left: 12px;
+    padding-right: 12px;
+    border-radius: 28px 28px 0 0;
+    background: var(--zen-panel-bg);
+    backdrop-filter: var(--zen-blur-panel);
+    box-shadow:
+      0 -1px 0 rgb(255 255 255 / 0.35) inset,
+      0 -12px 48px rgb(0 0 0 / 0.22);
+    corner-shape: var(--zen-corner);
+    will-change: transform;
+  }
+  :root[data-theme='dark'] .zen-sheet {
+    box-shadow:
+      0 -1px 0 rgb(255 255 255 / 0.08) inset,
+      0 -12px 48px rgb(0 0 0 / 0.5);
+  }
+  .zen-sheet-panel {
+    --zen-sheet-inner: 12px;
+    border-radius: 24px;
+  }
+  .zen-sheet-card {
+    border-radius: var(--zen-sheet-inner);
+    background: rgb(var(--zen-fg-rgb) / 0.055);
+    corner-shape: var(--zen-corner);
+  }
+  .zen-sheet-badge {
+    border-radius: 9999px;
+    background: rgb(var(--zen-fg-rgb) / 0.08);
+    color: var(--zen-fg);
+  }
+  .zen-sheet-badge-secure {
+    background: rgb(34 160 96 / 0.16);
+    color: rgb(22 125 72);
+  }
+  :root[data-theme='dark'] .zen-sheet-badge-secure {
+    color: rgb(112 214 156);
+  }
+  .zen-sheet-badge-warn {
+    background: rgb(214 122 24 / 0.18);
+    color: rgb(178 92 8);
+  }
+  :root[data-theme='dark'] .zen-sheet-badge-warn {
+    color: rgb(245 178 96);
+  }
+  .zen-sheet-action {
+    border-radius: var(--zen-sheet-inner);
+    background: var(--zen-element-bg);
+    color: var(--zen-fg);
+    corner-shape: var(--zen-corner);
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  .zen-sheet-action:active:not(:disabled) {
+    background: var(--zen-element-bg-hover);
+    transform: scale(0.985);
+  }
+  .zen-sheet-action:disabled {
+    opacity: 0.5;
+  }
+  .zen-sheet-action[data-danger] {
+    color: rgb(196 52 52);
+  }
+  :root[data-theme='dark'] .zen-sheet-action[data-danger] {
+    color: rgb(255 128 128);
+  }
+  .zen-sheet-confirm {
+    border-radius: var(--zen-sheet-inner);
+    background: rgb(var(--zen-fg-rgb) / 0.055);
+    corner-shape: var(--zen-corner);
+  }
+  .zen-sheet-action-inner {
+    border-radius: calc(var(--zen-sheet-inner) - 8px);
+    background: rgb(var(--zen-fg-rgb) / 0.08);
+  }
+  .zen-sheet-text-button {
+    border-radius: 6px;
+  }
+  .zen-sheet-text-button:active:not(:disabled) {
+    opacity: 0.6;
+  }
+}
+
+@layer components {
+  /*
+   * A `.zen-sheet` with two detents (`BottomSheet`): height and transform are written per frame
+   * by the sheet's motion, so it starts at nothing and every pan on it is the sheet's. Its rows
+   * are the sidebar's rows – same type, the chrome's base radius, a press shows as the element
+   * tone – with sections set apart by spacing rather than rules.
+   */
+  /* The scrim is the space's own dark, never flat black; the sheet fades it in with its position. */
+  .zen-sheet-scrim {
+    background: var(--zen-scrim);
+    touch-action: none;
+    will-change: opacity;
+  }
+  .zen-sheet-detents {
+    height: 0;
+    touch-action: none;
+    transform: translate3d(0, 0, 0);
+  }
+  .zen-sheet-handle-hit {
+    display: flex;
+    width: 100%;
+    height: 20px;
+    align-items: center;
+    justify-content: center;
+  }
+  .zen-sheet-handle {
+    width: 32px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgb(var(--zen-fg-rgb) / 0.25);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-sheet[data-dragging='true'] .zen-sheet-handle {
+    background: rgb(var(--zen-fg-rgb) / 0.4);
+  }
+  /* The body scrolls on its own only while the sheet rests expanded; otherwise a pan is a drag. */
+  .zen-sheet-scroll {
+    touch-action: pan-y;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+  }
+  .zen-sheet-scroll::-webkit-scrollbar {
+    display: none;
+  }
+  .zen-sheet[data-locked='true'] .zen-sheet-scroll {
+    touch-action: none;
+  }
+  .zen-sheet-item {
+    display: flex;
+    width: 100%;
+    height: 48px;
+    align-items: center;
+    gap: 12px;
+    padding: 0 12px;
+    border-radius: 10px;
+    corner-shape: var(--zen-corner);
+    color: var(--zen-fg);
+    text-align: left;
+    font-size: var(--zen-sidebar-font);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-sheet-item:active:not(:disabled) {
+    background: var(--zen-element-bg-hover);
+  }
+  .zen-sheet-item:disabled {
+    opacity: 0.4;
+  }
+  /* A row under a finger that is dragging the sheet is not being pressed. */
+  .zen-sheet[data-dragging='true'] .zen-sheet-item:active {
+    background: transparent;
+  }
+}
+
+/*
+ * Fading scroll edges (`useFadeEdges`). The scroll container is masked, so content dissolves
+ * into whatever is behind it – no gradient overlay, no assumption about the background. The
+ * depth of each edge is a registered length: 0 at an edge with nothing past it, the fade size
+ * once there is, eased between the two.
+ */
+@property --zen-fade-start {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@property --zen-fade-end {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+[data-fade-axis] {
+  transition:
+    --zen-fade-start 180ms var(--zen-ease),
+    --zen-fade-end 180ms var(--zen-ease);
+}
+[data-fade-axis='y'] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+}
+[data-fade-axis='x'] {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+}
+
+/*
+ * A sheet coming up pushes the page back: the content frame recedes (scale 1 → .97, its corner
+ * 14 → 20) and the bottom bar fades out, both from the sheet's own progress – `--zen-recede`,
+ * 0…1, written per frame by the sheet along with its scrim. The frame is promoted only while a
+ * sheet is up (`data-receding`).
+ */
+:root[data-form-factor='phone'] .zen-content-frame {
+  transform: scale(calc(1 - 0.03 * var(--zen-recede, 0)));
+  border-radius: calc(var(--zen-content-radius) + 6px * var(--zen-recede, 0));
+}
+:root[data-form-factor='phone'][data-receding] .zen-content-frame {
+  will-change: transform;
+}
+:root[data-form-factor='phone'] .zen-phone-bar {
+  opacity: calc(1 - var(--zen-recede, 0));
 }
 
 /* Mobile hosts: keep the chrome out of the status bar, cutouts, gesture bar and keyboard. */
@@ -571,8 +1125,21 @@
   height: 42px;
   border-radius: 11px;
 }
-:root[data-pointer='coarse'] .zen-tab .zen-tab-close {
+/* Hover-revealed row actions (close a tab, remove an entry) have nothing to hover under a finger. */
+:root[data-pointer='coarse'] .zen-tab .zen-tab-close,
+:root[data-pointer='coarse'] .zen-row-action {
   opacity: 1;
+}
+/* A row's Remove button fills its 44 px row rather than the 32 px coarse toolbar size. */
+:root[data-pointer='coarse'] .zen-row-action {
+  width: 44px;
+  height: 44px;
+}
+/* The phone find bar: 44 px targets in one row with the field. */
+:root[data-pointer='coarse'] .zen-find-phone .zen-toolbar-button {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
 }
 :root[data-pointer='coarse'] .zen-essential {
   height: 48px;
@@ -593,6 +1160,16 @@
 }
 :root[data-form-factor='phone'] .zen-space-strip {
   transition-duration: 260ms;
+}
+:root[data-form-factor='phone'] .zen-app-icon-grid {
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+}
+:root[data-form-factor='phone'] .zen-app-icon svg {
+  width: 56px;
+  height: 56px;
+}
+:root[data-form-factor='phone'] .zen-app-icon-name {
+  font-size: 12px;
 }
 /* Settings on a phone: the section list becomes a row of chips above the content. */
 :root[data-form-factor='phone'] .zen-settings > div > div {

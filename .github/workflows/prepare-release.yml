@@ -118,7 +118,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json
           git commit -m "chore(release): $TAG"
-          git tag -a "$TAG" -m "Zen on Chromium $VERSION"
+          git tag -a "$TAG" -m "Zenium $VERSION"
           git push origin "HEAD:$GITHUB_REF_NAME"
           git push origin "refs/tags/$TAG"
       - name: Start the Release workflow

@@ -8,7 +8,9 @@ import type {
   GlanceTrigger,
   HostCapabilities,
   NewTabPosition,
+  PhoneBarPosition,
   PinnedCloseBehavior,
+  Platform,
   Settings,
   SidebarSide,
   ThirdPartyPinnedBehavior,
@@ -19,6 +21,7 @@ import type {
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS, spaceLabel } from '@shared/defaults'
+import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { activeTab } from '@renderer/lib/selectors'
 import { openOverlay, uiStore } from '@renderer/lib/ui'
@@ -28,10 +31,11 @@ import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
 import { AgentsSection } from './AgentsSection'
+import { AppIconGroup } from './AppIconPicker'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { OverlayShell } from './OverlayShell'
 import { ResourcesSection } from './ResourcesSection'
-import { Choice, Group, Row } from './SettingsPrimitives'
+import { Choice, Group, Row, Segmented } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
 import { SyncSection } from './SyncSection'
 import { UpdatesSection } from './UpdatesSection'
@@ -126,10 +130,16 @@ export function SettingsPanel({
   const setSection = (id: SettingsSection): void => uiStore.set({ overlaySection: id })
   const s = state.settings
   const set = (patch: Partial<Settings>): void => run('settings.update', patch)
+  // The section list scrolls down on desktop and sideways as a row of chips on phones.
+  const fadeNav = useFadeEdges<HTMLElement>({ axis: 'auto', size: 24 })
+  const fadeContent = useFadeEdges<HTMLDivElement>({ axis: 'y' })
   return (
     <OverlayShell title="Settings" variant="full" className="zen-settings">
       <div className="flex h-full">
-        <nav className="w-52 shrink-0 overflow-y-auto border-r border-[var(--zen-border)] p-2">
+        <nav
+          ref={fadeNav}
+          className="w-52 shrink-0 overflow-y-auto border-r border-[var(--zen-border)] p-2"
+        >
           {sections.map((item) => (
             <button
               key={item.id}
@@ -144,9 +154,9 @@ export function SettingsPanel({
             </button>
           ))}
         </nav>
-        <div className="min-w-0 flex-1 overflow-y-auto p-6">
+        <div ref={fadeContent} className="min-w-0 flex-1 overflow-y-auto p-6">
           <div className="mx-auto flex max-w-2xl flex-col gap-6">
-            {section === 'look' && <LookSection s={s} set={set} />}
+            {section === 'look' && <LookSection s={s} set={set} platform={state.platform} />}
             {section === 'compact' && <CompactSection s={s} set={set} />}
             {section === 'tabs' && (
               <TabsSection s={s} set={set} windows={state.capabilities.windows} />
@@ -176,10 +186,12 @@ export function SettingsPanel({
 
 function LookSection({
   s,
-  set
+  set,
+  platform
 }: {
   s: Settings
   set: (p: Partial<Settings>) => void
+  platform: Platform
 }): JSX.Element {
   return (
     <>
@@ -228,7 +240,8 @@ function LookSection({
           <Switch checked={s.borderless} onCheckedChange={(v) => set({ borderless: v })} />
         </Row>
       </Group>
-      <Group title="Zen URL Bar">
+      <AppIconGroup value={s.appIcon} platform={platform} onChange={(id) => set({ appIcon: id })} />
+      <Group title="URL Bar">
         <Row label="Floating behaviour">
           <Choice<UrlbarBehavior>
             value={s.urlbarBehavior}
@@ -237,6 +250,17 @@ function LookSection({
               { value: 'float-typing', label: 'Floating only when typing' },
               { value: 'always-float', label: 'Always floating' },
               { value: 'normal', label: 'Normal (attached to top)' }
+            ]}
+          />
+        </Row>
+        <Row label="Position on phones" hint="Hold the address bar to carry it to the other edge.">
+          <Segmented<PhoneBarPosition>
+            label="Position on phones"
+            value={s.phoneBarPosition}
+            onChange={(v) => set({ phoneBarPosition: v })}
+            options={[
+              { value: 'bottom', label: 'Bottom' },
+              { value: 'top', label: 'Top' }
             ]}
           />
         </Row>
@@ -354,7 +378,7 @@ function TabsSection({
         <Group title="Window Sync">
           <Row
             label="Tabs across windows"
-            hint="Zen mirrors your spaces and tabs in every window. Choose 'pinned only' to keep unpinned tabs per window."
+            hint="Zenium mirrors your spaces and tabs in every window. Choose 'pinned only' to keep unpinned tabs per window."
           >
             <Choice<WindowSyncMode>
               value={s.windowSync}
@@ -773,7 +797,7 @@ function AboutSection({
   return (
     <Group title="About">
       <Row
-        label="Zen (Chromium port)"
+        label="Zenium"
         hint={`Version ${state.version} · running on Chromium via ${engineHost}${
           newer ? ` · ${newer.version} is available` : ''
         }`}

@@ -1,14 +1,18 @@
 import { app, Menu } from 'electron'
+import { join } from 'node:path'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { registerZenScheme } from './platform/protocol'
 import { ElectronPlatform } from './platform'
+import { moveLegacyDirectory } from './platform/legacyPaths'
 import { applyResourceSwitches } from './platform/resources/startup'
 import { runStdioShim } from './agent/shim'
 import type { Browser } from '../core/browser'
 
-app.setName('Zen')
+app.setName('Zenium')
+/** The product name up to v0.2.0; its userData directory is taken over on the first launch. */
+const LEGACY_APP_NAME = 'Zen'
 
-// `zen --mcp`: relay stdio to the running browser's MCP server and exit – no windows, no lock.
+// `zenium --mcp`: relay stdio to the running browser's MCP server and exit – no windows, no lock.
 if (process.argv.slice(1).includes('--mcp')) {
   app.disableHardwareAcceleration()
   app.commandLine.appendSwitch('disable-gpu')
@@ -18,13 +22,26 @@ if (process.argv.slice(1).includes('--mcp')) {
 }
 
 function main(): void {
+  // Before anything reads userData (and before `ready` creates it): a profile written by the app
+  // while it was called Zen moves to the Zenium directory, so tabs, spaces and settings survive
+  // the rename. The MCP shim above never migrates – it only runs while the browser is running.
+  try {
+    moveLegacyDirectory(
+      join(app.getPath('appData'), LEGACY_APP_NAME),
+      app.getPath('userData'),
+      (message) => console.warn('[zen] profile:', message)
+    )
+  } catch (error) {
+    console.error('[zen] profile: could not take over the Zen user data directory:', error)
+  }
+
   // Must run before `ready`.
   registerZenScheme()
   // Renderer process limit, V8 heap caps, GPU profile … are Chromium command-line switches and
   // can only be applied before the browser process finishes starting up.
   applyResourceSwitches(app.getPath('userData'))
 
-  // Shortcuts are handled by Zen's own table, not by menu accelerators. macOS still needs an
+  // Shortcuts are handled by Zenium's own table, not by menu accelerators. macOS still needs an
   // application menu for the standard Edit roles (Cmd+C/V/X/A only work through them there).
   if (process.platform === 'darwin') {
     Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }]))
@@ -39,7 +56,7 @@ function main(): void {
   }
   let browser: Browser | null = null
 
-  /** `zen [--blank-window|--private-window] [url]` (Zen ships the same `--blank-window` flag). */
+  /** `zenium [--blank-window|--private-window] [url]` (Zen Browser ships the same `--blank-window` flag). */
   const openFromArgv = (argv: string[]): void => {
     if (!browser) return
     const url = argv.find((a) => /^https?:\/\//.test(a))
@@ -59,7 +76,9 @@ function main(): void {
   app.on('second-instance', (_event, argv) => openFromArgv(argv))
 
   app.whenReady().then(() => {
-    electronApp.setAppUserModelId('app.zen-browser.chromium')
+    // Must equal electron-builder's appId: the installer stamps it on the shortcuts, and Windows
+    // groups taskbar buttons and notifications by it.
+    electronApp.setAppUserModelId('io.github.benitbuhner.zenium')
     app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
     const platform = new ElectronPlatform(app.getPath('userData'))

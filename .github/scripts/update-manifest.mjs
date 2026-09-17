@@ -227,8 +227,16 @@ async function build() {
       signed: entry.os === 'android' ? info.signing === 'release' : info.signed === true
     }
     if (entry.os === 'macos') asset.notarized = info.notarized === true
-    if (entry.os === 'android')
+    if (entry.os === 'android') {
       asset.signer = /^[0-9a-f]{64}$/i.test(info.signer ?? '') ? info.signer.toLowerCase() : null
+      // The applicationId: an installed app with another one cannot be upgraded by this APK, it
+      // gets a second app instead (the rename from app.zen.chromium to io.github.benitbuhner.zenium).
+      asset.packageName =
+        typeof info.packageName === 'string' &&
+        /^[A-Za-z][\w]*(\.[A-Za-z][\w]*)+$/.test(info.packageName)
+          ? info.packageName
+          : null
+    }
     assets.push(asset)
   }
   if (unknown.length > 0)
@@ -250,7 +258,7 @@ async function build() {
 
   const manifest = {
     schemaVersion: SCHEMA_VERSION,
-    name: 'Zen on Chromium',
+    name: 'Zenium',
     version,
     tag,
     prerelease: version.includes('-'),

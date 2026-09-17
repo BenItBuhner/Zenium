@@ -1,9 +1,9 @@
 {
-  "name": "zen-chromium",
-  "version": "0.2.0",
-  "description": "Zen Browser ported to Chromium: Zen's Spaces, Essentials, Glance, Split View and Compact Mode on the Blink engine (Electron on desktop, the system WebView on Android).",
+  "name": "zenium",
+  "version": "0.3.8",
+  "description": "Zenium: Zen Browser's Spaces, Essentials, Glance, Split View and Compact Mode on the Blink engine (Electron on desktop, the system WebView on Android).",
   "main": "./out/main/index.js",
-  "author": "Zen Chromium contributors",
+  "author": "Zenium contributors",
   "license": "MIT",
   "private": true,
   "scripts": {
@@ -27,6 +27,7 @@
     "build:android:web": "vite build -c vite.android.config.ts && vite build -c vite.android.config.ts --mode page",
     "build:android": "npm run build:android:web && cd android && ./gradlew assembleDebug -PskipWeb",
     "build:android:release": "npm run build:android:web && cd android && ./gradlew assembleRelease -PskipWeb",
+    "icons": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/app-icons.ts",
     "release": "node .github/scripts/cut-release.mjs"
   },
   "dependencies": {

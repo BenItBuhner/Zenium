@@ -1,0 +1,32 @@
+name: Android site info demo
+
+# Records the phone chrome's site-information sheet (opened from the site icon in the address
+# pill: connection, cookies, storage, permissions, and clearing them) on a hardware-accelerated
+# Android emulator and uploads the video and screenshots. Dispatch-only, like the gesture demo:
+# it takes about ten minutes and says nothing about a change being correct. Same caveats as the
+# gesture demo about frame rate and the software GPU. The build, the emulator and the Gradle cache
+# live in android-emulator-demo.yml; this file only picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-siteinfo-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Site info demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SiteInfoDemo
+        DEMO_DIR=siteinfo-demo
+        DEMO_OUT=artifacts/android-siteinfo-demo
+        DEMO_VIDEO=siteinfo-demo.mp4
+      artifact-name: android-siteinfo-demo
+      artifact-path: artifacts/android-siteinfo-demo/

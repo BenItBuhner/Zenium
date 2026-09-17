@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "decisions": {
+    "https://www.google.com|geolocation": "allow",
+    "https://www.google.com|notifications": "deny"
+  }
+}

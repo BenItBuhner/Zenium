@@ -15,6 +15,8 @@ import android.os.Looper
 import android.print.PrintAttributes
 import android.print.PrintManager
 import android.provider.MediaStore
+import android.provider.Settings
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
@@ -46,14 +48,32 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     val tabs = TabHost(root, this)
     val agentServer = AgentServer(this)
     val updates = Updates(activity, this)
+    val siteData = SiteData()
+    /** The launcher icon colour (one enabled `activity-alias`), driven by Settings → Look and Feel. */
+    val launcherIcon = LauncherIcon(activity)
     val pageToken: String = SecureRandom().let { r -> ByteArray(16).also(r::nextBytes).joinToString("") { "%02x".format(it) } }
     val pageScript: String = activity.assets.open("page.js").bufferedReader().readText().replace("__ZEN_TOKEN__", pageToken)
     private val io = Executors.newCachedThreadPool { r -> Thread(r, "zen-io") }
     private val main = Handler(Looper.getMainLooper())
-    private var fullscreenTab: TabWebView? = null
+    /** The share sheet, in both directions (after `io`: it fetches on it). */
+    val share = Share(this, io)
+    /** Links that leave the web: held here while the core (and the user) decide. */
+    val externalProtocols = ExternalProtocols(this)
+    var fullscreenTab: TabWebView? = null
+        private set
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
     var immersive = false
         private set
+    /** The chrome's colour scheme, so native pieces (the back preview) match it. */
+    var themeDark = false
+        private set
+    /** The chrome's `--zen-scrim` token (ARGB): the space-tinted dim under its sheets. */
+    var themeScrim = parseColor(DEFAULT_SCRIM)
+        private set
+    /** Previews of the pages a back gesture would return to. */
+    val snapshots = HistorySnapshots(activity)
+    /** Last: it reads the tabs and fullscreen state above when it decides what back would do. */
+    val back = PredictiveBack(activity, this)
 
     // ---------------------------------------------------------------------------------------------
     // Dispatch
@@ -63,7 +83,12 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     fun dispatchSync(method: String, args: JSONObject): Any? = when (method) {
         "boot" -> json(
             "version" to BuildConfig.VERSION_NAME,
+            // The OS release decides a few capabilities (the clipboard chip, the share sheet's row).
+            "sdkInt" to Build.VERSION.SDK_INT,
             "signer" to Updates.signerSha256(activity),
+            // The applicationId; a release whose APK carries another one installs as a new app.
+            "packageName" to activity.packageName,
+            "appIcon" to launcherIcon.current(),
             "files" to storage.readAll(),
             "downloadsDir" to (Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)?.absolutePath ?: ""),
             "insets" to activity.currentInsets(),
@@ -131,6 +156,15 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             "view.snapshot" -> if (tab == null) reply(null) else tab.snapshot(reply)
             "view.screenshot" -> if (tab == null) reply(null) else tab.screenshot { png -> saveToDownloads(args.str("name"), "image/png", png, reply) }
             "view.capture" -> if (tab == null) reply(null) else tab.capture(args.str("mode", "viewport"), args.optJSONObject("region"), args.str("format", "jpeg"), reply)
+            "view.certificate" -> reply(tab?.certificateInfo())
+
+            // --- site information (cookies and storage of a site, per container) -------------------
+            "site.cookies" -> reply(siteData.cookies(args.str("containerId", Profiles.DEFAULT_CONTAINER), args.str("url")))
+            "site.storage" -> siteData.storage(args.str("containerId", Profiles.DEFAULT_CONTAINER), args.str("site"), reply)
+            "site.clearCookies" -> siteData.clearCookies(args.str("containerId", Profiles.DEFAULT_CONTAINER), args.str("url"), reply)
+            "site.clearStorage" -> siteData.clearStorage(
+                args.str("containerId", Profiles.DEFAULT_CONTAINER), args.str("site"), args.arr("origins"), reply
+            )
 
             // --- chrome / window / app -----------------------------------------------------------
             "chrome.focus" -> { chrome.requestFocus(); reply(null) }
@@ -145,12 +179,18 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
                 imm.hideSoftInputFromWindow(chrome.windowToken, 0)
                 reply(null)
             }
-            "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("background")); reply(null) }
+            "chrome.haptic" -> { haptic(args.str("kind")); reply(null) }
+            "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("background"), args.str("scrim")); reply(null) }
+            "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId")); reply(null) }
             "window.setFullscreen" -> { setImmersive(args.bool("fullscreen")); reply(null) }
             "app.quit" -> { activity.finishAndRemoveTask(); reply(null) }
             "app.background" -> { activity.moveTaskToBack(true); reply(null) }
             "app.openExternal" -> { openExternal(args.str("url")); reply(null) }
             "app.openPath" -> { downloads.open(args.str("path"), ""); reply(null) }
+            "app.setIcon" -> { launcherIcon.apply(args.str("id"), activity); reply(null) }
+            "app.share" -> share.share(args, reply)
+            "app.openAppLinkSettings" -> { openAppLinkSettings(); reply(null) }
+            "externalProtocol.respond" -> { externalProtocols.respond(args.str("requestId"), args.bool("allow")); reply(null) }
             "keys.setShortcuts" -> { keys.setShortcuts(args.arr("bindings")); reply(null) }
 
             // --- services --------------------------------------------------------------------------
@@ -158,7 +198,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             "dialog.openText" -> activity.pickTextFiles(args.arr("extensions")) { files -> reply(files) }
             "clipboard.writeText" -> {
                 val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cm.setPrimaryClip(ClipData.newPlainText("Zen", args.str("text")))
+                cm.setPrimaryClip(ClipData.newPlainText("Zenium", args.str("text")))
                 reply(null)
             }
             "clipboard.writeImage" -> copyImage(args.str("url"), reply)
@@ -207,6 +247,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
         fullscreenLayer.visibility = View.VISIBLE
         setSystemBarsHidden(true)
         chrome.viewEvent(tab.tabId, "enterFullscreen", null)
+        back.refresh()
     }
 
     fun exitFullscreen(tab: TabWebView) {
@@ -218,6 +259,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
         fullscreenTab = null
         if (!immersive) setSystemBarsHidden(false)
         chrome.viewEvent(tab.tabId, "leaveFullscreen", null)
+        back.refresh()
     }
 
     /** Back gesture while a video is fullscreen: leave fullscreen first. */
@@ -264,6 +306,25 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
         }
     }
 
+    /**
+     * Android's "Open by default" screen for Zenium (which links open in it, Android 12+); older
+     * releases have it inside the app's details page.
+     */
+    private fun openAppLinkSettings() {
+        val app = Uri.parse("package:${activity.packageName}")
+        val screens = ArrayList<Intent>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) screens.add(Intent(Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS, app))
+        screens.add(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, app))
+        for (screen in screens) {
+            try {
+                activity.startActivity(screen)
+                return
+            } catch (e: ActivityNotFoundException) {
+                // The next screen down is on every device.
+            }
+        }
+    }
+
     private fun confirm(args: JSONObject, reply: (Any?) -> Unit) {
         var answered = false
         val done = { ok: Boolean -> if (!answered) { answered = true; reply(ok) } }
@@ -276,7 +337,26 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             .show()
     }
 
-    private fun applyTheme(dark: Boolean, background: String) {
+    /**
+     * The system's own haptics for the chrome's gestures – the long-press pick-up, a notch as the
+     * dragged address bar passes the middle of the screen, and the click of it docking – so they
+     * feel like every other long-press and snap on the device.
+     */
+    private fun haptic(kind: String) {
+        val constant = when (kind) {
+            "lift" -> HapticFeedbackConstants.LONG_PRESS
+            "tick" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) HapticFeedbackConstants.SEGMENT_TICK
+                else HapticFeedbackConstants.CLOCK_TICK
+            "dock" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) HapticFeedbackConstants.CONFIRM
+                else HapticFeedbackConstants.CONTEXT_CLICK
+            else -> return
+        }
+        chrome.performHapticFeedback(constant)
+    }
+
+    private fun applyTheme(dark: Boolean, background: String, scrim: String) {
+        themeDark = dark
+        if (scrim.isNotEmpty()) themeScrim = parseColor(scrim)
         val color = parseColor(background.ifEmpty { if (dark) "#16161b" else "#f2f1f5" })
         root.setBackgroundColor(color)
         activity.window.decorView.setBackgroundColor(color)
@@ -287,7 +367,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
 
     private fun print(tab: TabWebView) {
         val manager = activity.getSystemService(Context.PRINT_SERVICE) as PrintManager
-        val name = tab.title?.ifEmpty { null } ?: "Zen page"
+        val name = tab.title?.ifEmpty { null } ?: "Zenium page"
         manager.print(name, tab.createPrintDocumentAdapter(name), PrintAttributes.Builder().build())
     }
 
@@ -301,7 +381,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     }
 
     /** Store bytes as a file in the public Downloads collection; resolves with a path or URI. */
-    private fun saveToDownloads(name: String, mimeType: String, bytes: ByteArray?, reply: (Any?) -> Unit) {
+    fun saveToDownloads(name: String, mimeType: String, bytes: ByteArray?, reply: (Any?) -> Unit) {
         if (bytes == null) {
             reply(null)
             return
@@ -402,6 +482,9 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     }
 
     companion object {
+        /** The chrome's base light scrim (`--zen-scrim` before any space theme is applied). */
+        private const val DEFAULT_SCRIM = "#49484a47"
+
         fun parseColor(css: String): Int = runCatching {
             // #rrggbbaa (Electron style) → Android ARGB.
             if (css.length == 9 && css.startsWith("#")) {

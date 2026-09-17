@@ -78,7 +78,7 @@ export function BookmarksPanel({ state }: { state: UIState }): JSX.Element {
               </button>
               <button
                 type="button"
-                className="zen-toolbar-button h-6 w-6 opacity-0 group-hover:opacity-100"
+                className="zen-toolbar-button zen-row-action h-6 w-6 opacity-0 group-hover:opacity-100"
                 title="Remove bookmark"
                 onClick={() => run('bookmark.remove', { id: b.id })}
               >

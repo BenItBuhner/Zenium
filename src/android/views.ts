@@ -1,5 +1,6 @@
 import type { KeyBinding, Rect, Tab } from '@shared/types'
-import { zenPageHtml, type ReaderPageLookup } from '@shared/zenPages'
+import type { SiteCertificate } from '@shared/siteInfo'
+import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@shared/zenPages'
 import type {
   AgentCapture,
   AgentCaptureOptions,
@@ -59,7 +60,7 @@ export class AndroidTabView implements TabView {
   constructor(
     readonly tabId: string,
     private readonly bridge: Bridge,
-    private readonly reader: ReaderPageLookup
+    private readonly pages: ZenPageLookups = { reader: () => null, image: () => null }
   ) {}
 
   /** Route a Kotlin event to the core. */
@@ -168,7 +169,7 @@ export class AndroidTabView implements TabView {
       this.bridge.send('view.loadHtml', {
         tabId: this.tabId,
         url,
-        html: zenPageHtml(url, this.reader)
+        html: zenPageHtml(url, this.pages.reader, this.pages.image)
       })
       return
     }
@@ -376,6 +377,22 @@ export class AndroidTabView implements TabView {
     return false
   }
 
+  /** `WebView.getCertificate()` of the main frame (null on http pages). */
+  async certificate(): Promise<SiteCertificate | null> {
+    const raw = await this.bridge.call<Partial<SiteCertificate> | null>('view.certificate', {
+      tabId: this.tabId
+    })
+    if (!raw || typeof raw !== 'object') return null
+    const time = (v: unknown): number | null => (typeof v === 'number' && v > 0 ? v : null)
+    return {
+      subject: typeof raw.subject === 'string' ? raw.subject : '',
+      issuer: typeof raw.issuer === 'string' ? raw.issuer : '',
+      validFrom: time(raw.validFrom),
+      validTo: time(raw.validTo),
+      protocol: typeof raw.protocol === 'string' && raw.protocol ? raw.protocol : null
+    }
+  }
+
   replaceMisspelling(): void {
     // The system keyboard owns spelling on Android.
   }
@@ -385,16 +402,23 @@ export class AndroidTabView implements TabView {
   }
 }
 
+/** What the `zen://` pages need from the core (bound once it exists). */
+export interface ZenPageLookups {
+  /** Resolves `zen://reader` articles. */
+  reader: ReaderPageLookup
+  /** Resolves `zen://image` pictures shared into the browser. */
+  image: ImagePageLookup
+}
+
 /** Creates and tracks the JS mirrors of Kotlin's tab WebViews. */
 export class AndroidTabViewHost implements TabViewHost {
   private readonly views = new Map<string, AndroidTabView>()
-  /** Resolves `zen://reader` articles; bound once the core exists. */
-  reader: ReaderPageLookup = () => null
+  readonly pages: ZenPageLookups = { reader: () => null, image: () => null }
 
   constructor(private readonly bridge: Bridge) {}
 
   createView(tab: Tab, events: TabViewEvents): TabView {
-    const view = new AndroidTabView(tab.id, this.bridge, (id) => this.reader(id))
+    const view = new AndroidTabView(tab.id, this.bridge, this.pages)
     view.events = events
     this.views.set(tab.id, view)
     this.bridge.send('view.create', { tabId: tab.id, containerId: tab.containerId })
@@ -403,7 +427,7 @@ export class AndroidTabViewHost implements TabViewHost {
 
   /** Register a view Kotlin created itself (a `window.open` popup adopted as a tab). */
   registerAdopted(tabId: string): AndroidTabView {
-    const view = new AndroidTabView(tabId, this.bridge, (id) => this.reader(id))
+    const view = new AndroidTabView(tabId, this.bridge, this.pages)
     this.views.set(tabId, view)
     return view
   }

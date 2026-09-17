@@ -41,6 +41,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
+import kotlin.math.roundToInt
 
 /**
  * One tab's page. Mirrors what Electron's `WebContentsView` gives the core: navigation events,
@@ -57,10 +58,18 @@ class TabWebView(
     private var loading = false
     private var lastTouchX = 0f
     private var lastTouchY = 0f
-    private var radiusPx = 0f
+    var radiusPx = 0f
+        private set
+    /** The in-page predictive back in flight on this view, if any (see `PredictiveBack.kt`). */
+    var backTransition: PageBackTransition? = null
+    /** The history entry the page on screen belongs to (updated as navigations commit). */
+    private var committedIndex = -1
+    private var committedUrl = ""
+    private var lastRememberedAt = 0L
     private var replyProxy: JavaScriptReplyProxy? = null
     private var currentFlags: JSONObject = json("glanceEnabled" to true, "glanceTrigger" to "alt", "thirdParty" to null)
     private var pendingFlags = false
+    private var zoomFactor = 1.0
     var muted = false
         private set
     /** True while `onPageStarted` has fired and `onPageFinished` has not. */
@@ -83,9 +92,16 @@ class TabWebView(
             mediaPlaybackRequiresUserGesture = true
             mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             if (WebViewFeature.isFeatureSupported(WebViewFeature.SAFE_BROWSING_ENABLE)) safeBrowsingEnabled = true
-            // Sites treat the "; wv" token as an embedded view and serve degraded pages.
-            userAgentString = userAgentString.replace("; wv", "").replace(Regex("Version/\\d+\\.\\d+ "), "")
+            // Chrome's typographic defaults rather than WebView's: text a page leaves unstyled is
+            // serif (Android maps Chrome's "Times New Roman" to it), and small text is not pushed
+            // up to 8 px – Chrome has no floor for absolute sizes and 6 px for relative ones.
+            standardFontFamily = "serif"
+            minimumFontSize = 1
+            minimumLogicalFontSize = 6
         }
+        // Present as the browser it is, not as an app's embedded view (see UserAgent).
+        UserAgent.apply(settings, BuildConfig.VERSION_NAME)
+        applyTextZoom()
         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
         setBackgroundColor(Color.WHITE)
         clipToOutline = true
@@ -384,11 +400,105 @@ class TabWebView(
         }
     }
 
+    // --- history snapshots (the previews behind predictive back) ----------------------------------
+
+    /**
+     * Remember what the page on screen looks like, keyed to the history entry it belongs to, for
+     * the back preview that will one day slide it in again. Called on the way out of a page –
+     * before a link click, a URL bar load or a history traversal moves the view on – while the
+     * page is still the one painted. Cheap to call liberally: it copies the window at most every
+     * few hundred milliseconds and never while the view is hidden or mid back-gesture (the copy
+     * would be of the preview, not of the page).
+     */
+    fun rememberCurrentPage(force: Boolean = false) {
+        if (backTransition != null) return
+        val now = SystemClock.uptimeMillis()
+        if (!force && now - lastRememberedAt < REMEMBER_THROTTLE_MS) return
+        if (width <= 0 || height <= 0 || !isShown) return
+        val index = committedIndex
+        val url = committedUrl
+        if (index < 0 || url.isEmpty() || url == "about:blank") return
+        // The entry must still be the one on screen: a commit that already replaced it is the
+        // new page, and a copy of the window now would be of the old one under the new name.
+        val history = copyBackForwardList()
+        if (history.currentIndex != index || history.getItemAtIndex(index)?.url != url) return
+        lastRememberedAt = now
+        captureBitmap(minOf(1f, HistorySnapshots.MAX_WIDTH.toFloat() / width)) { bitmap ->
+            if (bitmap != null) remember(index, url, bitmap)
+        }
+    }
+
+    private fun remember(index: Int, url: String, bitmap: Bitmap) {
+        val pageTitle = title ?: ""
+        host.snapshots.remember(HistorySnapshots.Entry(tabId, index, url, pageTitle, favicon, bitmap))
+    }
+
+    /** The navigation has committed: which entry is on screen now, and which snapshots still hold. */
+    private fun onHistoryCommitted() {
+        val history = copyBackForwardList()
+        committedIndex = history.currentIndex
+        committedUrl = history.currentItem?.url ?: url ?: ""
+        host.snapshots.validate(tabId, history)
+    }
+
+    /**
+     * Downscaled RGB_565 copy of this view's pixels as they are on screen (null when it cannot be
+     * copied: hidden, unsized). Shared by the overlay snapshot and the history previews.
+     */
+    private fun captureBitmap(scale: Float, callback: (Bitmap?) -> Unit) {
+        if (width <= 0 || height <= 0 || !isShown) {
+            callback(null)
+            return
+        }
+        val bitmap = Bitmap.createBitmap((width * scale).toInt().coerceAtLeast(1), (height * scale).toInt().coerceAtLeast(1), Bitmap.Config.RGB_565)
+        val location = IntArray(2)
+        getLocationInWindow(location)
+        val rect = Rect(location[0], location[1], location[0] + width, location[1] + height)
+        try {
+            PixelCopy.request(host.activity.window, rect, bitmap, { result ->
+                callback(if (result == PixelCopy.SUCCESS) bitmap else null)
+            }, Handler(Looper.getMainLooper()))
+        } catch (e: Exception) {
+            // Software fallback (e.g. before the window is attached).
+            runCatching {
+                val canvas = Canvas(bitmap)
+                canvas.scale(scale, scale)
+                draw(canvas)
+            }.onSuccess { callback(bitmap) }.onFailure { callback(null) }
+        }
+    }
+
     // --- operations used by the core -------------------------------------------------------------
 
     fun loadHtml(url: String, html: String) {
+        rememberCurrentPage()
         pageStarted = false
         loadDataWithBaseURL(url, html, "text/html", "utf-8", url)
+    }
+
+    override fun loadUrl(url: String) {
+        rememberCurrentPage()
+        super.loadUrl(url)
+    }
+
+    override fun loadUrl(url: String, additionalHttpHeaders: MutableMap<String, String>) {
+        rememberCurrentPage()
+        super.loadUrl(url, additionalHttpHeaders)
+    }
+
+    override fun reload() {
+        rememberCurrentPage()
+        super.reload()
+    }
+
+    override fun goBack() {
+        rememberCurrentPage()
+        super.goBack()
+    }
+
+    override fun goForward() {
+        rememberCurrentPage()
+        super.goForward()
     }
 
     fun setMuted(muted: Boolean) {
@@ -400,8 +510,19 @@ class TabWebView(
         )
     }
 
+    /** Zenium's per-tab zoom; WebView has no page zoom, so it scales the text. */
     fun setZoom(factor: Double) {
-        settings.textZoom = (factor * 100).toInt().coerceIn(25, 500)
+        zoomFactor = factor
+        applyTextZoom()
+    }
+
+    /**
+     * Text at the size the page asked for, times Zenium's zoom. WebView would start every tab at the
+     * system font scale (a phone set to large text got every page 130% larger), which Chrome does
+     * not do: its pages ignore the system font size and offer page zoom instead, as Zenium does.
+     */
+    private fun applyTextZoom() {
+        settings.textZoom = (zoomFactor * 100).roundToInt().coerceIn(25, 500)
     }
 
     fun find(text: String, forward: Boolean, newSession: Boolean) {
@@ -414,38 +535,27 @@ class TabWebView(
 
     /** Downscaled JPEG of what is on screen right now, for the dimmed preview behind overlays. */
     fun snapshot(callback: (String?) -> Unit) {
-        val window = host.activity.window
-        if (width <= 0 || height <= 0 || !isShown) {
+        if (backTransition != null) {
             callback(null)
             return
         }
         val scale = if (width > 1400) 1400f / width else 0.5f
-        val bitmap = Bitmap.createBitmap((width * scale).toInt().coerceAtLeast(1), (height * scale).toInt().coerceAtLeast(1), Bitmap.Config.RGB_565)
-        val location = IntArray(2)
-        getLocationInWindow(location)
-        val rect = Rect(location[0], location[1], location[0] + width, location[1] + height)
-        val finish: (Boolean) -> Unit = { ok ->
-            if (!ok) {
+        // The chrome asks just before it hides the page (menu, URL bar, overview): the copy is the
+        // last chance to remember this history entry before a load from within that UI replaces it.
+        val index = committedIndex
+        val url = committedUrl
+        captureBitmap(scale) { bitmap ->
+            if (bitmap == null) {
                 callback(null)
-            } else {
-                encoder.execute {
-                    val out = ByteArrayOutputStream()
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 62, out)
-                    bitmap.recycle()
-                    val data = "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
-                    Handler(Looper.getMainLooper()).post { callback(data) }
-                }
+                return@captureBitmap
             }
-        }
-        try {
-            PixelCopy.request(window, rect, bitmap, { result -> finish(result == PixelCopy.SUCCESS) }, Handler(Looper.getMainLooper()))
-        } catch (e: Exception) {
-            // Software fallback (e.g. before the window is attached).
-            runCatching {
-                val canvas = Canvas(bitmap)
-                canvas.scale(scale, scale)
-                draw(canvas)
-            }.onSuccess { finish(true) }.onFailure { finish(false) }
+            if (index >= 0 && url.isNotEmpty() && url == (copyBackForwardList().currentItem?.url ?: "")) remember(index, url, bitmap)
+            encoder.execute {
+                val out = ByteArrayOutputStream()
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 62, out)
+                val data = "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+                Handler(Looper.getMainLooper()).post { callback(data) }
+            }
         }
     }
 
@@ -496,21 +606,49 @@ class TabWebView(
         "canGoForward" to canGoForward()
     )
 
+    /** The main frame's certificate for the site-information sheet, or null on an insecure page. */
+    fun certificateInfo(): JSONObject? {
+        val cert = certificate ?: return null
+        val subject = cert.issuedTo
+        val issuer = cert.issuedBy
+        return json(
+            "subject" to (subject?.cName?.ifEmpty { null } ?: subject?.oName ?: ""),
+            "issuer" to (issuer?.oName?.ifEmpty { null } ?: issuer?.cName ?: ""),
+            "validFrom" to cert.validNotBeforeDate?.time,
+            "validTo" to cert.validNotAfterDate?.time,
+            "protocol" to null
+        )
+    }
+
     // --- WebViewClient ------------------------------------------------------------------------
 
     private inner class Client : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val url = request.url
             return when (url.scheme?.lowercase()) {
-                "http", "https", "about", "data", "blob", "javascript" -> false
+                "http", "https" -> {
+                    // A link (or script) is about to take the page elsewhere: the last moment it is
+                    // whole on screen, and the best one for its back preview.
+                    if (request.isForMainFrame && !request.isRedirect) rememberCurrentPage()
+                    // A tap on another site whose app is installed may open the app instead.
+                    host.externalProtocols.appLink(this@TabWebView, request)
+                }
+                "about", "data", "blob", "javascript" -> {
+                    if (request.isForMainFrame && !request.isRedirect) rememberCurrentPage()
+                    false
+                }
                 else -> {
-                    host.openExternal(url.toString())
+                    // mailto:, tel:, intent://, a custom scheme: held until the core (and the user) agree.
+                    host.externalProtocols.request(this@TabWebView, url.toString(), request.hasGesture())
                     true
                 }
             }
         }
 
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+            // Navigations with no link click ahead of them (forms, history.back(), redirects).
+            rememberCurrentPage()
+            backTransition?.onNavigation(PageBackTransition.NavigationEvent.STARTED)
             pageStarted = true
             loading = true
             failPendingEvals("the page navigated away before the script finished")
@@ -520,10 +658,17 @@ class TabWebView(
         }
 
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+            onHistoryCommitted()
+            backTransition?.onNavigation(PageBackTransition.NavigationEvent.HISTORY_UPDATED)
             if (!loading) {
                 // pushState / hash navigation after the page finished loading.
                 host.chrome.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", true))
             }
+            host.back.refresh()
+        }
+
+        override fun onPageCommitVisible(view: WebView, url: String) {
+            backTransition?.onNavigation(PageBackTransition.NavigationEvent.COMMIT_VISIBLE)
         }
 
         override fun onPageFinished(view: WebView, url: String) {
@@ -532,8 +677,10 @@ class TabWebView(
             if (pendingFlags) {
                 evaluateJavascript(host.pageScript, null)
             }
+            backTransition?.onNavigation(PageBackTransition.NavigationEvent.FINISHED)
             host.chrome.viewEvent(tabId, "stopLoading", navState())
             if (muted) setMuted(true)
+            host.back.refresh()
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -628,6 +775,9 @@ class TabWebView(
 
         /** Longer than any tool budget (browser_wait_for allows 30 s) but shorter than the socket's. */
         private const val EVAL_TIMEOUT_MS = 45_000L
+
+        /** A redirect chain or a burst of pushStates must not copy the window once per hop. */
+        private const val REMEMBER_THROTTLE_MS = 300L
 
         /** Where the visual viewport sits in the layout viewport (non-zero only while pinch-zoomed). */
         private const val VISUAL_OFFSET_SCRIPT =

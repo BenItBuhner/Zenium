@@ -1,8 +1,10 @@
-import type { EventName, Events, HostCapabilities } from '@shared/types'
+import type { EventName, Events, HapticKind, HostCapabilities, ShareAction } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { newId } from '@shared/ids'
+import type { SharedIntent } from '@shared/shareTarget'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '@shared/updates'
 import { Browser } from '@core/browser'
+import type { HostExternalRequest } from '@core/externalProtocols'
 import { RendererMenuHost } from '@core/rendererMenus'
 import type { ZenWindow } from '@core/window'
 import type {
@@ -11,6 +13,7 @@ import type {
   ClipboardHost,
   DialogHost,
   DownloadHost,
+  ExternalProtocolHost,
   KeyEventInput,
   NetHost,
   PickedTextFile,
@@ -27,30 +30,46 @@ import readabilityJs from '@mozilla/readability/Readability.js?raw'
 import readabilityReaderableJs from '@mozilla/readability/Readability-readerable.js?raw'
 import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
 import type { Bridge } from './bridge'
+import { AndroidSiteData } from './siteData'
 import { AndroidTabViewHost, type ViewEventPayloads } from './views'
 
-export const ANDROID_CAPABILITIES: HostCapabilities = {
-  windowControls: false,
-  nativeMenus: false,
-  windowDrag: false,
-  devtools: false,
-  compactReveal: false,
-  pictureInPicture: false,
-  viewSource: false,
-  windows: false,
-  extensions: false,
-  resourceGovernor: false,
-  sync: false,
-  print: true,
-  agents: true,
-  updates: true
+/** Android 13 (Tiramisu): the first release whose clipboard shows its own "copied" chip. */
+const CLIPBOARD_CHIP_SDK = 33
+
+/** What the Android host can do for the chrome; a few points depend on the OS release. */
+export function androidCapabilities(sdkInt: number): HostCapabilities {
+  return {
+    windowControls: false,
+    nativeMenus: false,
+    windowDrag: false,
+    devtools: false,
+    compactReveal: false,
+    pictureInPicture: false,
+    viewSource: false,
+    windows: false,
+    extensions: false,
+    resourceGovernor: false,
+    sync: false,
+    print: true,
+    agents: true,
+    updates: true,
+    share: true,
+    clipboardChip: sdkInt >= CLIPBOARD_CHIP_SDK,
+    appLinkSettings: true
+  }
 }
 
 /** Everything Kotlin hands over synchronously before the chrome renders. */
 export interface BootInfo {
   version: string
+  /** `Build.VERSION.SDK_INT` of the device (the newest release the preview host stands in for). */
+  sdkInt: number
   /** Hex SHA-256 of the certificate this APK is signed with (null in the preview host). */
   signer: string | null
+  /** The applicationId this APK was installed under (null in the preview host). */
+  packageName: string | null
+  /** The launcher icon colour whose alias is enabled right now (the core re-applies its own). */
+  appIcon?: string
   /** Persisted JSON documents by name (state.json, history.json, …). */
   files: Record<string, string>
   downloadsDir: string
@@ -64,6 +83,12 @@ export interface HostEventPayloads {
   focus: { focused: boolean }
   fullscreen: { fullscreen: boolean }
   openUrl: { url: string }
+  /** Another app shared into Zenium (`ACTION_SEND`) or asked it to search (`ACTION_WEB_SEARCH`). */
+  intent: SharedIntent
+  /** A page wants to open another app; Kotlin holds the navigation until `externalProtocol.respond`. */
+  'externalProtocol.request': HostExternalRequest
+  /** A tap on one of Zenium's own buttons in the system share sheet (Android 14). */
+  'share.action': ShareAction
   pause: void
   'download.started': {
     token: string
@@ -104,7 +129,8 @@ class AndroidUpdateHost implements UpdateHost {
 
   constructor(
     private readonly bridge: Bridge,
-    private readonly signerSha256: string | null
+    private readonly signerSha256: string | null,
+    private readonly installedPackage: string | null
   ) {}
 
   target(): UpdateTarget {
@@ -120,6 +146,10 @@ class AndroidUpdateHost implements UpdateHost {
 
   signer(): string | null {
     return this.signerSha256
+  }
+
+  packageName(): string | null {
+    return this.installedPackage
   }
 
   async download(
@@ -166,7 +196,7 @@ class AndroidUpdateHost implements UpdateHost {
     if (result.ok) return
     if (result.reason === 'permission')
       throw new Error(
-        'Android needs permission first: allow Zen to install apps in the screen that just opened, then tap Install again.'
+        'Android needs permission first: allow Zenium to install apps in the screen that just opened, then tap Install again.'
       )
     throw new Error(result.reason || 'could not start the package installer')
   }
@@ -294,6 +324,10 @@ export class AndroidWindowHost implements WindowHost {
     this.bridge.send('chrome.focus')
   }
 
+  haptic(kind: HapticKind): void {
+    this.bridge.send('chrome.haptic', { kind })
+  }
+
   openChromeDevTools(): void {
     // Chrome's remote inspector (chrome://inspect) attaches to the chrome WebView.
   }
@@ -370,7 +404,7 @@ class AndroidStoreIO implements StoreIO {
  */
 export class AndroidPlatform implements Platform {
   readonly info: PlatformInfo
-  readonly capabilities = ANDROID_CAPABILITIES
+  readonly capabilities: HostCapabilities
   readonly io: AndroidStoreIO
   readonly events = new InProcessEvents()
   readonly windows: WindowHostFactory
@@ -383,6 +417,8 @@ export class AndroidPlatform implements Platform {
   readonly downloads: DownloadHost
   readonly sessions: SessionHost
   readonly app: AppHost
+  readonly siteData: AndroidSiteData
+  readonly externalProtocols: ExternalProtocolHost
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
@@ -395,10 +431,12 @@ export class AndroidPlatform implements Platform {
     boot: BootInfo
   ) {
     this.info = { os: 'android', version: boot.version }
+    this.capabilities = androidCapabilities(boot.sdkInt)
     this.io = new AndroidStoreIO(bridge, boot.files)
     this.agentTransport = new AndroidAgentTransport(bridge)
-    this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null)
+    this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null, boot.packageName ?? null)
     this.views = new AndroidTabViewHost(bridge)
+    this.siteData = new AndroidSiteData(bridge)
     this.menus = new RendererMenuHost()
     this.windows = {
       create: (win: ZenWindow): WindowHost => {
@@ -423,7 +461,12 @@ export class AndroidPlatform implements Platform {
     this.shell = {
       openExternal: (url) => bridge.send('app.openExternal', { url }),
       openPath: (path) => bridge.call('app.openPath', { path }),
-      showItemInFolder: () => bridge.send('download.showAll')
+      showItemInFolder: () => bridge.send('download.showAll'),
+      share: (payload) => bridge.call('app.share', payload),
+      openAppLinkSettings: () => bridge.send('app.openAppLinkSettings')
+    }
+    this.externalProtocols = {
+      respond: (requestId, allow) => bridge.send('externalProtocol.respond', { requestId, allow })
     }
     this.net = {
       fetchText: async (url, options) => {
@@ -454,14 +497,17 @@ export class AndroidPlatform implements Platform {
     this.app = {
       quit: () => bridge.send('app.quit'),
       relaunch: () => bridge.send('app.quit'),
-      lastWindowClosed: () => undefined
+      lastWindowClosed: () => undefined,
+      // Kotlin flips the launcher alias that carries this colour (LauncherIcon.kt).
+      setAppIcon: (id) => bridge.send('app.setIcon', { id })
     }
     this.events.send('insets', boot.insets)
   }
 
   bind(browser: Browser): void {
     this.browser = browser
-    this.views.reader = (id) => browser.reader.pageHtml(id)
+    this.views.pages.reader = (id) => browser.reader.pageHtml(id)
+    this.views.pages.image = (id) => browser.sharedImage(id)
   }
 
   createAgentTransport(): AgentTransport {
@@ -528,6 +574,18 @@ export class AndroidPlatform implements Platform {
       }
       case 'openUrl':
         browser.openExternalUrl((payload as HostEventPayloads['openUrl']).url, this.window)
+        return
+      case 'intent':
+        browser.openSharedIntent(payload as HostEventPayloads['intent'], this.window)
+        return
+      case 'externalProtocol.request':
+        browser.externalProtocols.request(
+          payload as HostEventPayloads['externalProtocol.request'],
+          this.window
+        )
+        return
+      case 'share.action':
+        browser.onShareAction(payload as HostEventPayloads['share.action'], this.window)
         return
       case 'pause':
         browser.flushSync()

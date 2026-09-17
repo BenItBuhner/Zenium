@@ -1,6 +1,7 @@
 import type { UIState } from '@shared/types'
 import { run } from '../api'
 import { SPRING_GENTLE, SPRING_SNAPPY, SpringAnimation } from '../motion/spring'
+import { pushBackSurface } from '../back'
 import { activeSpace, activeTab, tabOrderOf } from '../selectors'
 import { createStore } from '../store'
 import { captureThumbnail, pruneThumbnails } from '../thumbnails'
@@ -8,7 +9,6 @@ import {
   browserStore,
   contentAreaStore,
   invalidateSnapshot,
-  registerBackHandler,
   returnFocusToPage,
   uiStore
 } from '../ui'
@@ -48,6 +48,18 @@ export interface OverviewState {
   progress: number
   /** Tab whose card the page morphs out of (opening) or into (closing). */
   heroTabId: string | null
+  /** Where the overview is heading: open (1) or closed (0). Decides what a settling one is. */
+  target: 0 | 1
+}
+
+/**
+ * Whether the grid takes taps. It does the moment the overview is on its way open – while the
+ * spring still runs, not once it has come to rest: the last few pixels of a settle are invisible
+ * but take a good part of a second, and a tap during them must not be lost. Closing (the page
+ * growing back out of a card) and a finger-driven drag are not tappable states.
+ */
+export function overviewInteractive(overview: OverviewState): boolean {
+  return overview.phase === 'open' || (overview.phase === 'settling' && overview.target === 1)
 }
 
 export interface StageState {
@@ -59,7 +71,12 @@ export interface StageState {
 export const CARD_GAP = 16
 
 const TABS_IDLE: TabSwitchState = { phase: 'idle', order: [], position: 0, origin: 0, advance: 1 }
-const OVERVIEW_CLOSED: OverviewState = { phase: 'closed', progress: 0, heroTabId: null }
+const OVERVIEW_CLOSED: OverviewState = {
+  phase: 'closed',
+  progress: 0,
+  heroTabId: null,
+  target: 0
+}
 
 export const stageStore = createStore<StageState>(
   { tabs: TABS_IDLE, overview: OVERVIEW_CLOSED },
@@ -87,10 +104,19 @@ function currentActiveTabId(): string | null {
 
 let tabsShown = false
 let overviewShown = false
+/** Other layers standing in for the page (the address bar being carried to the other edge). */
+const layersShown = new Set<string>()
 
 function syncStageActive(): void {
-  const active = tabsShown || overviewShown
+  const active = tabsShown || overviewShown || layersShown.size > 0
   if (uiStore.get().stageActive !== active) uiStore.set({ stageActive: active })
+}
+
+/** A stage layer outside this module started (or stopped) drawing in place of the page. */
+export function setStageLayerShown(layer: string, shown: boolean): void {
+  if (shown) layersShown.add(layer)
+  else layersShown.delete(layer)
+  syncStageActive()
 }
 
 /**
@@ -153,6 +179,13 @@ export function prepareStage(state: UIState): void {
   if (!tab) return
   pruneThumbnails((id) => Boolean(state.tabs[id]))
   pendingCapture = captureThumbnail(tab.id)
+}
+
+/** Hand the capture `prepareStage` started to another gesture (null when there is none). */
+export function takePendingCapture(): Promise<unknown> | null {
+  const capture = pendingCapture
+  pendingCapture = null
+  return capture
 }
 
 /** Start dragging the tab track. Returns false when there is no tab to move away from. */
@@ -289,7 +322,7 @@ function showOverview(state: UIState): void {
   const overview = stageStore.get().overview
   if (overview.phase !== 'closed') return
   stageStore.set({
-    overview: { phase: 'dragging', progress: 0, heroTabId: hero?.id ?? null }
+    overview: { phase: 'dragging', progress: 0, heroTabId: hero?.id ?? null, target: 1 }
   })
   run('focus.chrome', undefined)
   const show = (): void => {
@@ -353,7 +386,7 @@ export function releaseOverview(velocity: number): void {
 function settleOverview(target: 0 | 1, velocity = 0): void {
   const overview = stageStore.get().overview
   const travel = overviewTravel()
-  stageStore.set({ overview: { ...overview, phase: 'settling' } })
+  stageStore.set({ overview: { ...overview, phase: 'settling', target } })
   overviewSpring.start(overview.progress * travel, velocity, target * travel)
 }
 
@@ -397,6 +430,43 @@ function finishOverviewClose(): void {
   if (!hero) done()
 }
 
+// --- the system back gesture -------------------------------------------------------------------
+
+let backStartProgress = 1
+
+/**
+ * A back gesture began on the open overview: from here the finger drives the same 0…1 track the
+ * pill does, in reverse, so the page grows back out of its card exactly as far as the finger
+ * has travelled.
+ */
+function beginOverviewBack(): void {
+  const overview = stageStore.get().overview
+  if (overview.phase === 'closed') return
+  if (overview.phase === 'settling') overviewSpring.stop()
+  cancelOverviewCommit?.()
+  cancelOverviewCommit = null
+  const hero = currentActiveTabId()
+  // The page morphs into its own card: make sure that card is on screen before measuring it.
+  if (hero)
+    document
+      .querySelector(`.zen-overview [data-tab-id="${hero}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  backStartProgress = Math.min(1, Math.max(0, overview.progress))
+  stageStore.set({ overview: { ...overview, phase: 'dragging', heroTabId: hero } })
+}
+
+function dragOverviewBack(progress: number): void {
+  const overview = stageStore.get().overview
+  if (overview.phase !== 'dragging') return
+  const next = backStartProgress * (1 - progress)
+  if (next !== overview.progress) stageStore.set({ overview: { ...overview, progress: next } })
+}
+
+function cancelOverviewBack(): void {
+  if (stageStore.get().overview.phase !== 'dragging') return
+  settleOverview(1)
+}
+
 /** Drop the overview without animation (another overlay took over, the layout changed). */
 export function dismissOverview(): void {
   overviewSpring.stop()
@@ -422,20 +492,28 @@ export function dismissStage(): void {
 const flags = globalThis as unknown as { __zenStageWired?: boolean }
 if (!flags.__zenStageWired) {
   flags.__zenStageWired = true
-  // Hardware / gesture back closes the overview before anything else.
-  registerBackHandler(() => {
-    const { phase } = stageStore.get().overview
-    if (phase === 'closed') return false
-    closeOverview()
-    return true
+  // The open overview is a back surface: the gesture pulls the page back out of its card.
+  let popOverviewSurface: (() => void) | null = null
+  stageStore.subscribe(() => {
+    const open = stageStore.get().overview.phase !== 'closed'
+    if (open && !popOverviewSurface) {
+      popOverviewSurface = pushBackSurface({
+        name: 'overview',
+        onStart: beginOverviewBack,
+        onProgress: dragOverviewBack,
+        onCommit: () => closeOverview(),
+        onCancel: cancelOverviewBack
+      })
+    } else if (!open && popOverviewSurface) {
+      popOverviewSurface()
+      popOverviewSurface = null
+    }
   })
-  // Any other chrome surface (URL bar, panels, drawer, menu) replaces the overview outright.
+  // Chrome that takes over the content area (the URL bar, panels) replaces the overview
+  // outright. The Spaces drawer and the menu sheets open over the overview and leave it in place.
   uiStore.subscribe(() => {
     const ui = uiStore.get()
-    if (
-      (ui.urlbar.open || ui.overlay !== 'none' || ui.drawerOpen || ui.menu) &&
-      stageStore.get().overview.phase !== 'closed'
-    )
+    if ((ui.urlbar.open || ui.overlay !== 'none') && stageStore.get().overview.phase !== 'closed')
       dismissOverview()
   })
 }

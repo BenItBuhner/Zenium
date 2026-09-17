@@ -28,7 +28,9 @@ import { ExtensionService } from './extensions'
 import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
 import { ElectronAgentTransport } from '../agent/server'
+import { ElectronSiteData } from './siteData'
 import { ElectronUpdateHost } from './updates'
+import { applyAppIcon } from './appIcon'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
@@ -44,7 +46,10 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   sync: true,
   print: true,
   agents: true,
-  updates: true
+  updates: true,
+  share: false,
+  clipboardChip: false,
+  appLinkSettings: false
 }
 
 /**
@@ -65,6 +70,7 @@ export class ElectronPlatform implements Platform {
   readonly shell: ShellHost
   readonly net: NetHost
   readonly app: AppHost
+  readonly siteData: ElectronSiteData
   browser!: Browser
 
   constructor(userDataDir: string) {
@@ -73,6 +79,7 @@ export class ElectronPlatform implements Platform {
     this.windows = new ElectronWindowFactory()
     this.sessions = new SessionManager(buildUserAgent())
     this.views = new ElectronTabViewHost(this.sessions)
+    this.siteData = new ElectronSiteData(this.sessions)
     this.menus = new ElectronMenus()
     this.downloads = new ElectronDownloads(() => this.browser.state.settings.askWhereToSave)
     this.dialogs = {
@@ -149,7 +156,15 @@ export class ElectronPlatform implements Platform {
       },
       lastWindowClosed: () => {
         if (process.platform !== 'darwin') app.quit()
-      }
+      },
+      setAppIcon: (id) =>
+        applyAppIcon(
+          id,
+          this.browser
+            .allWindows()
+            .map((win) => browserWindowOf(win))
+            .filter((bw): bw is Electron.BrowserWindow => bw !== undefined)
+        )
     }
   }
 

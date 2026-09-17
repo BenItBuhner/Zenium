@@ -160,9 +160,9 @@ function ConnectionCard({
   lanUrls: string[]
   token: string
 }): JSX.Element {
-  const httpConfig = JSON.stringify({ mcpServers: { zen: { url } } }, null, 2)
+  const httpConfig = JSON.stringify({ mcpServers: { zenium: { url } } }, null, 2)
   const stdioConfig = JSON.stringify(
-    { mcpServers: { zen: { command: 'zen', args: ['--mcp'] } } },
+    { mcpServers: { zenium: { command: 'zenium', args: ['--mcp'] } } },
     null,
     2
   )

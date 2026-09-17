@@ -16,3 +16,5 @@ android/.kotlin
 *.aab
 *.keystore
 *.jks
+# The committed CI debug keystore (well-known password, debug builds only) – see android/app/build.gradle.kts.
+!android/ci-debug.keystore

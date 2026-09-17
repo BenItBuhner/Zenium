@@ -123,8 +123,18 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         js("window.__zenHost&&__zenHost.onKey($tab,${JSONObject.quote(input.toString())})")
     }
 
-    fun onBack(callback: (Boolean) -> Unit) {
-        evaluateJavascript("window.__zenHost?__zenHost.onBack():false") { result -> callback(result == "true") }
+    /**
+     * A back gesture aimed at the chrome: `start` (with the swipe edge), `progress` (0…1) and
+     * `cancel` are fire-and-forget; the topmost chrome surface moves with them (see the chrome's
+     * `lib/back.ts`).
+     */
+    fun backEvent(phase: String, payload: JSONObject?) {
+        js("window.__zenHost&&__zenHost.backEvent(${JSONObject.quote(phase)},${JSONObject.quote(encodeResult(payload))})")
+    }
+
+    /** Commit the gesture; answers whether the chrome had anything to dismiss or navigate. */
+    fun backCommit(callback: (Boolean) -> Unit) {
+        evaluateJavascript("window.__zenHost?__zenHost.backEvent('commit',null):false") { result -> callback(result == "true") }
     }
 
     fun openUrl(url: String) {
