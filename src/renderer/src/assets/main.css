@@ -1381,6 +1381,100 @@
   padding: 12px;
 }
 
+@layer components {
+  /*
+   * The phone bar's controls (`BarButton`). One with nothing to do right now is drawn dimmed
+   * rather than disabled: it still takes the hold that opens the bar's editor.
+   */
+  .zen-toolbar-button[data-disabled] {
+    opacity: 0.3;
+  }
+  .zen-toolbar-button[data-disabled]:hover,
+  .zen-toolbar-button[data-disabled]:active {
+    background: transparent;
+    transform: none;
+    opacity: 0.3;
+  }
+  /* Reload and Stop share one slot: the glyph that is not current is faded out, never removed. */
+  .zen-glyph-swap > * {
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-glyph-swap > [data-shown='false'] {
+    opacity: 0;
+  }
+
+  /* The Tabs button's hold: a small panel of two rows, the menu's rows at the panel's radius minus its padding. */
+  .zen-quick-menu-item {
+    display: flex;
+    width: 100%;
+    height: 44px;
+    align-items: center;
+    gap: 12px;
+    padding: 0 12px;
+    border-radius: 10px;
+    corner-shape: var(--zen-corner);
+    color: var(--zen-fg);
+    text-align: left;
+    font-size: var(--zen-sidebar-font);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-quick-menu-item:active:not(:disabled) {
+    background: var(--zen-element-bg-hover);
+  }
+  .zen-quick-menu-item:disabled {
+    opacity: 0.4;
+  }
+
+  /*
+   * The bar's editor (`BarEditorSheet`): the sheet's rows, holding their own controls, moved
+   * per frame by transform alone. A row in the hand lifts off the list – a level swap to the
+   * dragged card's shadow on the solid surface – and follows the finger.
+   */
+  .zen-bar-row {
+    position: relative;
+    display: flex;
+    height: 48px;
+    align-items: center;
+    gap: 12px;
+    padding: 0 2px 0 8px;
+    border-radius: 10px;
+    corner-shape: var(--zen-corner);
+    color: var(--zen-fg);
+    font-size: var(--zen-sidebar-font);
+    user-select: none;
+    -webkit-user-select: none;
+    transition:
+      background 120ms var(--zen-ease),
+      box-shadow 200ms var(--zen-ease);
+  }
+  .zen-bar-row-pressable:active {
+    background: var(--zen-element-bg-hover);
+  }
+  .zen-bar-row[data-held] {
+    z-index: 1;
+    background: var(--zen-bg-solid);
+    box-shadow: var(--zen-shadow-2);
+  }
+  /* A touch that starts on the handle is a drag from the first pixel, never a scroll. */
+  .zen-bar-handle {
+    color: var(--zen-faint);
+    touch-action: none;
+  }
+  .zen-bar-heading {
+    padding: 8px 12px 4px;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.006em;
+    line-height: 1.25;
+  }
+  .zen-bar-caption {
+    padding: 0 12px 4px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--zen-muted);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.01ms !important;
