@@ -10,9 +10,6 @@ name: Android pill chips accessibility demo
 # android-emulator-demo.yml; this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  # TEMPORARY: the verification run for the pill chips PR; removed once it has run.
-  push:
-    branches: [cursor/pill-chips-tab-order-8f4b]
 
 permissions:
   contents: read
