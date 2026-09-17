@@ -1897,6 +1897,20 @@
 }
 
 /*
+ * The address pill's hover-only actions (boost, copy) yield when the pill is narrow, so the star
+ * chip stays where the pointer finds it instead of being pushed out under the menu button.
+ * Unlayered: it has to beat the `group-hover` utility that reveals them.
+ */
+.zen-pill {
+  container-type: inline-size;
+}
+@container (width < 170px) {
+  .zen-pill-extra {
+    display: none;
+  }
+}
+
+/*
  * The manager page's header (v2 §9.7): a 22/600 title and no hairline at rest. Unlayered on
  * purpose: OverlayShell's header carries utility classes (`border-b`, `text-[14px]`), and the
  * utilities layer would beat anything in `@layer components`.
