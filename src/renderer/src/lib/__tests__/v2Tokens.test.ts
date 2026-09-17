@@ -26,7 +26,9 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   [
     '.zen-sheet.zen-bar-editor {',
     '/* The editor draws a hairline when its rows scroll under the header'
-  ]
+  ],
+  // The downloads bubble, toolbar button and zen://downloads page (components/downloads, overlays/DownloadsPanel.tsx).
+  ['.zen-dl-surface {', '@keyframes zen-dl-pop-out {']
 ]
 
 /** Custom-property names declared inside the first `selector {` block found after `from`. */
@@ -156,6 +158,15 @@ describe('design language v2 tokens', () => {
     // Inside: the ring and selection derive from the accent, and the shared focus-ring rule reads the ring.
     expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(3)
     expect(inside).toMatch(/\[class\^='zen-v2-'\]:focus-visible/)
+  })
+
+  it('gives the downloads surfaces no colour of their own', () => {
+    const from = css.indexOf('.zen-dl-surface {')
+    const to = css.indexOf('@keyframes zen-dl-pop-out {', from)
+    expect(from).toBeGreaterThanOrEqual(0)
+    expect(to).toBeGreaterThan(from)
+    // Every tone comes from the block (or Zen's accent and status inks); no literal colours.
+    expect(css.slice(from, to)).not.toMatch(/#[0-9a-f]{3,8}\b/i)
   })
 })
 
