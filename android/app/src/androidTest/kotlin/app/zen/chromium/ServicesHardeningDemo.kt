@@ -9,6 +9,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.net.Uri
+import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
@@ -167,7 +168,7 @@ class ServicesHardeningDemo {
         if (waitFor("Not now", 6_000)) {
             SystemClock.sleep(800)
             shot("04-app-launch-on-load-asks")
-            tapLabel(f, "Not now")
+            answerSheet(f, "Not now")
         } else {
             ensureForeground()
             shot("04-app-launch-on-load-no-handler")
@@ -177,7 +178,7 @@ class ServicesHardeningDemo {
         if (waitFor("Not now", 6_000)) {
             SystemClock.sleep(800)
             shot("06-tel-launch-prompt")
-            tapLabel(f, "Not now")
+            answerSheet(f, "Not now")
         } else {
             shot("06-tel-launch-no-handler")
         }
@@ -186,9 +187,9 @@ class ServicesHardeningDemo {
         if (waitFor("Not now", 6_000)) {
             SystemClock.sleep(800)
             shot("07-intent-launch-prompt")
-            tapLabel(f, "Open")
+            answerSheet(f, "Open")
         }
-        waitFor("No app took the intent", 8_000)
+        waitFor("No app took the intent", 12_000)
         SystemClock.sleep(1_500)
         ensureForeground()
         shot("08-intent-fallback-page")
@@ -212,29 +213,84 @@ class ServicesHardeningDemo {
         SystemClock.sleep(600)
         pressKey(KeyEvent.KEYCODE_ENTER)
         step("submitted with Enter")
-        waitFor("Signed in as zenium", 10_000)
+        waitFor("Signed in as zenium", 15_000)
         SystemClock.sleep(1_500)
         shot("11-http-auth-signed-in")
     }
 
     /**
-     * Focus the field under `label` and type into it (the field is the label's own child),
-     * replacing whatever it holds.
+     * Put `text` into the field named `label` (the input's accessible name is its label's text).
+     * The value is set through the accessibility action, which lands whole; a lagging emulator
+     * drops injected keystrokes, so typing is only the fallback, and either way the field is read
+     * back before moving on.
      */
     private fun fill(f: Finger, label: String, text: String) {
-        val field = findAllByLabel(label).filter { it.width() > 0 }.maxByOrNull { it.height() }
+        val field = findNodes(label).firstOrNull { it.isEditable }
+            ?: findNodes(label).firstNotNullOfOrNull { editableWithin(it) }
         if (field == null) {
             step("no field labelled '$label'")
             return
         }
-        // The input sits below the caption inside the label; aim at its lower half.
-        f.tap(field.exactCenterX(), field.bottom - field.height() * 0.28f)
-        SystemClock.sleep(700)
-        pressKey(KeyEvent.KEYCODE_A, KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON)
-        SystemClock.sleep(150)
-        type(text)
-        SystemClock.sleep(400)
+        field.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        SystemClock.sleep(300)
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        val set = field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        SystemClock.sleep(500)
+        if (set && holds(label, text)) {
+            step("filled '$label'")
+            return
+        }
+        step("setText on '$label' ${if (set) "did not land" else "was refused"}; typing instead")
+        val bounds = Rect().also(field::getBoundsInScreen)
+        for (attempt in 1..3) {
+            f.tap(bounds.exactCenterX(), bounds.exactCenterY())
+            SystemClock.sleep(700)
+            pressKey(KeyEvent.KEYCODE_A, KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON)
+            SystemClock.sleep(150)
+            type(text)
+            SystemClock.sleep(600)
+            if (holds(label, text)) break
+            step("typing into '$label' lost characters (attempt $attempt)")
+        }
         step("filled '$label'")
+    }
+
+    /** Whether the field named `label` holds `text` (a password field reports it masked). */
+    private fun holds(label: String, text: String): Boolean {
+        val field = findNodes(label).firstOrNull { it.isEditable } ?: return false
+        val value = field.text?.toString() ?: return false
+        return value == text || (field.isPassword && value.length == text.length)
+    }
+
+    private fun editableWithin(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(node)
+        var visited = 0
+        while (queue.isNotEmpty() && visited < 500) {
+            val n = queue.removeFirst()
+            visited++
+            if (n.isEditable) return n
+            for (i in 0 until n.childCount) n.getChild(i)?.let(queue::add)
+        }
+        return null
+    }
+
+    /**
+     * Answer the external-app sheet. A lagging emulator drops a tap now and then; the sheet
+     * still being up says so, and the tap is repeated.
+     */
+    private fun answerSheet(f: Finger, label: String) {
+        for (attempt in 1..3) {
+            if (!tapLabel(f, label)) return
+            val deadline = SystemClock.uptimeMillis() + 3_000
+            while (SystemClock.uptimeMillis() < deadline) {
+                if (findByLabel("Not now") == null) return
+                SystemClock.sleep(250)
+            }
+            step("the sheet is still up after '$label' (attempt $attempt)")
+        }
     }
 
     private fun type(text: String) {
@@ -306,10 +362,13 @@ class ServicesHardeningDemo {
      * With `prefix`, a node whose text starts with the label and a space matches as well: a button
      * made of several spans ("Pop-up blocked" and "Show") is one node with their texts joined.
      */
-    private fun findAllByLabel(label: String, prefix: Boolean = false): List<Rect> {
+    private fun findAllByLabel(label: String, prefix: Boolean = false): List<Rect> =
+        findNodes(label, prefix).map { node -> Rect().also(node::getBoundsInScreen) }
+
+    private fun findNodes(label: String, prefix: Boolean = false): List<AccessibilityNodeInfo> {
         val root = ui.rootInActiveWindow ?: return emptyList()
         val queue = ArrayDeque<AccessibilityNodeInfo>()
-        val found = ArrayList<Rect>()
+        val found = ArrayList<AccessibilityNodeInfo>()
         queue.add(root)
         var visited = 0
         val matches = { text: CharSequence? ->
@@ -318,9 +377,7 @@ class ServicesHardeningDemo {
         while (queue.isNotEmpty() && visited < 8_000) {
             val node = queue.removeFirst()
             visited++
-            if (matches(node.contentDescription) || matches(node.text)) {
-                found += Rect().also { node.getBoundsInScreen(it) }
-            }
+            if (matches(node.contentDescription) || matches(node.text)) found += node
             for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
         }
         return found
