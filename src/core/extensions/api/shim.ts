@@ -10,6 +10,7 @@
  * evaluate it verbatim. Everything it needs arrives through its two arguments.
  */
 import type { ApiSpec, MethodSpec, ParamSpec, ParamType } from './spec'
+import type { StorageChanges, StorageItems } from './storage'
 
 export type InvokeResult = { ok: true; value: unknown } | { ok: false; error: string }
 
@@ -52,8 +53,36 @@ export interface ShimDiagnostics {
   manifestVersion: 2 | 3
 }
 
+/**
+ * The engine's objects the shim patches in place (`globalThis`, `chrome`, its namespaces and
+ * their native members). Nothing else is typed this way: values the shim builds or receives
+ * from extensions are `unknown` and narrowed.
+ */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the shim reflects over untyped globals
 type Any = any
+
+/** The parts of the manifest the shim reads; everything else is opaque. */
+interface ManifestShape {
+  manifest_version?: unknown
+  background?: unknown
+}
+
+/** A native `chrome.Event` the shim keeps registering listeners on (documents' storage events). */
+interface NativeEvent {
+  addListener(fn: Listener, ...rest: unknown[]): void
+  removeListener(fn: Listener): void
+}
+
+type Listener = (...args: unknown[]) => unknown
+
+/** Stand-in for another view's `window` (`extension.getViews`); see `viewStub`. */
+interface ViewStub {
+  location: URL | { href: string }
+  closed: boolean
+  close(): void
+  focus(): void
+  postMessage(): void
+}
 
 export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnostics {
   const g = globalThis as Any
@@ -100,8 +129,9 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     }
   }
 
-  const manifest: Any = safely(() => chrome.runtime.getManifest()) ?? {}
+  const manifest: ManifestShape = safely(() => chrome.runtime.getManifest()) ?? {}
   const manifestVersion: 2 | 3 = manifest.manifest_version === 2 ? 2 : 3
+  const background = isObject(manifest.background) ? manifest.background : null
   const extensionUrl: string =
     safely(() => String(chrome.runtime.getURL(''))) ??
     (typeof g.location === 'object' && g.location
@@ -111,9 +141,9 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   const isBackgroundPage =
     host.kind === 'frame' &&
     manifestVersion === 2 &&
-    Boolean(manifest.background) &&
-    (manifest.background.page
-      ? ownUrl === extensionUrl + String(manifest.background.page).replace(/^\/+/, '')
+    background !== null &&
+    (background.page
+      ? ownUrl === extensionUrl + String(background.page).replace(/^\/+/, '')
       : ownUrl === extensionUrl + '_generated_background_page.html')
 
   // ---------------------------------------------------------------------------
@@ -328,38 +358,37 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   }
 
   function invoke(namespace: string, method: string, args: unknown[]): Promise<unknown> {
-    return host.invoke(namespace, method, args).then((result) => {
-      if (result && (result as InvokeResult).ok) return (result as { value: unknown }).value
+    return host.invoke(namespace, method, args).then((result: unknown) => {
+      if (isObject(result) && result.ok === true) return result.value
       const message =
-        result && typeof (result as Any).error === 'string'
-          ? (result as { error: string }).error
-          : 'Unknown error'
+        isObject(result) && typeof result.error === 'string' ? result.error : 'Unknown error'
       throw new Error(message)
     })
   }
 
   /** ImageData cannot cross process boundaries; ship its pixels instead. */
-  function serializeIconDetails(details: Any): Any {
-    if (!details || typeof details !== 'object') return details
-    const out: Any = { ...details }
-    const convert = (image: Any): Any => {
-      if (image && typeof image === 'object' && 'data' in image && 'width' in image) {
+  function serializeIconDetails(details: unknown): unknown {
+    if (!isObject(details)) return details
+    const out: Record<string, unknown> = { ...details }
+    const convert = (image: unknown): unknown => {
+      if (isObject(image) && 'data' in image && 'width' in image) {
         return { width: image.width, height: image.height, data: image.data }
       }
       return image
     }
-    if (out.imageData && typeof out.imageData === 'object') {
-      if ('data' in out.imageData && 'width' in out.imageData) {
-        out.imageData = convert(out.imageData)
+    const imageData = out.imageData
+    if (isObject(imageData)) {
+      if ('data' in imageData && 'width' in imageData) {
+        out.imageData = convert(imageData)
       } else {
-        const sizes: Any = {}
-        for (const key of Object.keys(out.imageData)) sizes[key] = convert(out.imageData[key])
+        const sizes: Record<string, unknown> = {}
+        for (const key of Object.keys(imageData)) sizes[key] = convert(imageData[key])
         out.imageData = sizes
       }
     }
     // Chrome resolves icon paths against the calling context's URL (`../icons/x.png` from a
     // worker at `background/index.js`), not the extension root; only this side knows that URL.
-    const resolve = (path: Any): Any => {
+    const resolve = (path: unknown): unknown => {
       if (typeof path !== 'string') return path
       try {
         return new URL(path, globalThis.location.href).href
@@ -367,11 +396,12 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
         return path
       }
     }
-    if (typeof out.path === 'string') {
-      out.path = resolve(out.path)
-    } else if (out.path && typeof out.path === 'object') {
-      const sizes: Any = {}
-      for (const key of Object.keys(out.path)) sizes[key] = resolve(out.path[key])
+    const path = out.path
+    if (typeof path === 'string') {
+      out.path = resolve(path)
+    } else if (isObject(path)) {
+      const sizes: Record<string, unknown> = {}
+      for (const key of Object.keys(path)) sizes[key] = resolve(path[key])
       out.path = sizes
     }
     return out
@@ -387,13 +417,11 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       const callback = takeCallback(raw)
       let value = inert.value
       if (inert.id) {
-        const first: Any = raw[0]
+        const first: unknown = raw[0]
         const own =
           typeof first === 'string'
             ? first
-            : first &&
-                typeof first === 'object' &&
-                (typeof first.id === 'string' || typeof first.id === 'number')
+            : isObject(first) && (typeof first.id === 'string' || typeof first.id === 'number')
               ? first.id
               : undefined
         inertIds += 1
@@ -407,7 +435,11 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     }
   }
 
-  function makeMethod(namespace: string, name: string, method: MethodSpec): Any {
+  function makeMethod(
+    namespace: string,
+    name: string,
+    method: MethodSpec
+  ): (...raw: unknown[]) => unknown {
     const qualified = `${namespace}.${name}(${method.params
       .map(
         (p) =>
@@ -428,12 +460,10 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   // Events
   // ---------------------------------------------------------------------------
 
-  type Listener = (...args: unknown[]) => unknown
-
   interface EventObject {
-    addListener(fn: Any, ...rest: unknown[]): void
-    removeListener(fn: Any): void
-    hasListener(fn: Any): boolean
+    addListener(fn: unknown, ...rest: unknown[]): void
+    removeListener(fn: unknown): void
+    hasListener(fn: unknown): boolean
     hasListeners(): boolean
     dispatch(...args: unknown[]): unknown[]
   }
@@ -492,7 +522,7 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
 
   function createEvent(
     fullName: string,
-    native: Any,
+    native: NativeEvent | undefined,
     options: { nativeDelivers: boolean; nativeHandles?: (args: unknown[]) => boolean }
   ): EventObject {
     const listeners = new Map<Listener, number | null>()
@@ -509,9 +539,9 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       return count
     }
     const object: EventObject = {
-      addListener(fn: Any, ...rest: unknown[]): void {
+      addListener(fn: unknown, ...rest: unknown[]): void {
         if (!isFunction(fn) || listeners.has(fn)) return
-        if (record.nativeDelivers) safely(() => native.addListener(fn, ...rest))
+        if (record.nativeDelivers) safely(() => native?.addListener(fn, ...rest))
         const filters = urlFilters(fullName, rest[0])
         if (filters) {
           filterIds += 1
@@ -534,15 +564,16 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
           }
         }
       },
-      removeListener(fn: Any): void {
-        if (record.nativeDelivers) safely(() => native.removeListener(fn))
+      removeListener(fn: unknown): void {
+        if (!isFunction(fn)) return
+        if (record.nativeDelivers) safely(() => native?.removeListener(fn))
         if (!listeners.has(fn)) return
         const filterId = listeners.get(fn) ?? null
         listeners.delete(fn)
         if (filterId !== null) host.notify('unlisten', { event: fullName, filterId })
         else if (unfilteredCount() === 0) host.notify('unlisten', { event: fullName })
       },
-      hasListener(fn: Any): boolean {
+      hasListener(fn: unknown): boolean {
         return isFunction(fn) && listeners.has(fn)
       },
       hasListeners(): boolean {
@@ -728,13 +759,19 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     MAX_SUSTAINED_WRITE_OPERATIONS_PER_MINUTE: 1000000
   }
 
-  function callNativeArea(area: Any, method: Any, args: unknown[]): Promise<unknown> {
+  /** The engine's callback-style area method, awaited; `runtime.lastError` becomes the rejection. */
+  function callNativeArea(
+    area: object,
+    method: (...args: unknown[]) => unknown,
+    args: unknown[]
+  ): Promise<unknown> {
     return new Promise((resolve, reject) => {
       try {
         method.call(area, ...args, (result: unknown) => {
-          const error = safely(() => chrome.runtime.lastError)
-          if (error) reject(new Error(String(error.message ?? error)))
-          else resolve(result)
+          const error: unknown = safely(() => chrome.runtime.lastError)
+          if (error) {
+            reject(new Error(String(isObject(error) && error.message ? error.message : error)))
+          } else resolve(result)
         })
       } catch (error) {
         reject(error)
@@ -750,8 +787,8 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     }
   }
 
-  function hostArea(storage: Any, areaName: string): Any {
-    const area: Any = {}
+  function hostArea(storage: Any, areaName: string): Record<string, unknown> {
+    const area: Record<string, unknown> = {}
     const qualifiedFor = (name: string): string => `storage.${areaName}.${name}`
     const routed = (name: string, params: ParamSpec[]): void => {
       define(area, name, function (...raw: unknown[]): unknown {
@@ -780,13 +817,16 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   }
 
   function wrapNativeArea(area: Any, areaName: string): void {
-    const nativeSet = safely(() => area.set)
-    const nativeGet = safely(() => area.get)
-    const nativeRemove = safely(() => area.remove)
-    const nativeClear = safely(() => area.clear)
-    if (typeof nativeSet !== 'function' || typeof nativeGet !== 'function') return
-    const read = (keys: unknown): Promise<Any> => callNativeArea(area, nativeGet, [keys])
-    const notify = (changes: Any): void => {
+    const nativeSet: unknown = safely(() => area.set)
+    const nativeGet: unknown = safely(() => area.get)
+    const nativeRemove: unknown = safely(() => area.remove)
+    const nativeClear: unknown = safely(() => area.clear)
+    if (!isFunction(nativeSet) || !isFunction(nativeGet)) return
+    const read = async (keys: unknown): Promise<StorageItems> => {
+      const items = await callNativeArea(area, nativeGet, [keys])
+      return isObject(items) ? items : {}
+    }
+    const notify = (changes: StorageChanges): void => {
       if (Object.keys(changes).length > 0)
         host.notify('storage-changed', { area: areaName, changes })
     }
@@ -794,14 +834,13 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       const callback = takeCallback(raw)
       const items = raw[0]
       const work = (async (): Promise<void> => {
-        if (!items || typeof items !== 'object')
-          throw signatureError(`storage.${areaName}.set(object items)`)
-        const keys = Object.keys(items as object)
-        const before = (await read(keys)) ?? {}
+        if (!isObject(items)) throw signatureError(`storage.${areaName}.set(object items)`)
+        const keys = Object.keys(items)
+        const before = await read(keys)
         await callNativeArea(area, nativeSet, [items])
-        const changes: Any = {}
+        const changes: StorageChanges = {}
         for (const key of keys) {
-          const newValue = (items as Any)[key]
+          const newValue = items[key]
           if (newValue === undefined) continue
           const had = Object.prototype.hasOwnProperty.call(before, key)
           if (had && sameJson(before[key], newValue)) continue
@@ -811,16 +850,21 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       })()
       return settle(`storage.${areaName}.set`, work, callback)
     })
-    if (typeof nativeRemove === 'function') {
+    if (isFunction(nativeRemove)) {
       define(area, 'remove', function (...raw: unknown[]): unknown {
         const callback = takeCallback(raw)
         const keys = raw[0]
         const work = (async (): Promise<void> => {
-          const list = typeof keys === 'string' ? [keys] : Array.isArray(keys) ? keys : null
+          const list: string[] | null =
+            typeof keys === 'string'
+              ? [keys]
+              : Array.isArray(keys)
+                ? keys.filter((k): k is string => typeof k === 'string')
+                : null
           if (!list) throw signatureError(`storage.${areaName}.remove(string|array keys)`)
-          const before = (await read(list)) ?? {}
+          const before = await read(list)
           await callNativeArea(area, nativeRemove, [keys])
-          const changes: Any = {}
+          const changes: StorageChanges = {}
           for (const key of list) {
             if (Object.prototype.hasOwnProperty.call(before, key))
               changes[key] = { oldValue: before[key] }
@@ -830,20 +874,20 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
         return settle(`storage.${areaName}.remove`, work, callback)
       })
     }
-    if (typeof nativeClear === 'function') {
+    if (isFunction(nativeClear)) {
       define(area, 'clear', function (...raw: unknown[]): unknown {
         const callback = takeCallback(raw)
         const work = (async (): Promise<void> => {
-          const before = (await read(null)) ?? {}
+          const before = await read(null)
           await callNativeArea(area, nativeClear, [])
-          const changes: Any = {}
+          const changes: StorageChanges = {}
           for (const key of Object.keys(before)) changes[key] = { oldValue: before[key] }
           notify(changes)
         })()
         return settle(`storage.${areaName}.clear`, work, callback)
       })
     }
-    const nativeEvent = safely(() => area.onChanged)
+    const nativeEvent: NativeEvent | undefined = safely(() => area.onChanged)
     define(
       area,
       'onChanged',
@@ -887,8 +931,8 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   // ---------------------------------------------------------------------------
 
   let views: ExtensionView[] = []
-  function viewStub(view: ExtensionView): Any {
-    let url: Any
+  function viewStub(view: ExtensionView): ViewStub {
+    let url: URL | { href: string }
     try {
       url = new URL(view.url)
     } catch {
@@ -923,10 +967,10 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       defineGetter(extension, 'onRequestExternal', () => runtime.onMessageExternal)
     }
     if (host.kind === 'frame') {
-      define(extension, 'getViews', (fetchProperties?: Any): Any[] => {
-        const out: Any[] = []
+      define(extension, 'getViews', (fetchProperties?: unknown): unknown[] => {
+        const out: unknown[] = []
         for (const view of views) {
-          if (fetchProperties && typeof fetchProperties === 'object') {
+          if (isObject(fetchProperties)) {
             if (fetchProperties.type && fetchProperties.type !== view.type) continue
             if (fetchProperties.tabId !== undefined && fetchProperties.tabId !== view.tabId)
               continue
@@ -940,16 +984,17 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
         }
         return out
       })
-      // The background page's `window` is only reachable from the background page itself: the
-      // engine puts every extension document in its own process, so a popup gets null (Chrome
-      // returns the shared window there; extensions fall back to messaging when it is null).
-      define(extension, 'getBackgroundPage', (): Any => (isBackgroundPage ? g : null))
+      // The background page's `window` is only reachable from the background page itself: a
+      // popup or options page has no JavaScript path to another document's global (Chrome's
+      // binding gets it from the renderer's frame list), so it gets null and the extension falls
+      // back to messaging, as it must under MV3 anyway.
+      define(extension, 'getBackgroundPage', (): unknown => (isBackgroundPage ? g : null))
       if (!isFunction(safely(() => runtime.getBackgroundPage))) {
         define(runtime, 'getBackgroundPage', function (...raw: unknown[]): unknown {
           const callback = takeCallback(raw)
           const qualified = 'runtime.getBackgroundPage(optional function callback)'
           const work =
-            manifestVersion === 2 && manifest.background
+            manifestVersion === 2 && background !== null
               ? Promise.resolve(isBackgroundPage ? g : null)
               : Promise.reject(new Error('You do not have a background page.'))
           return settle(qualified, work, callback)
