@@ -258,6 +258,10 @@ function ExtensionButton({ ext }: { ext: UIState['extensions'][number] }): JSX.E
           anchor: { x: r.left, y: r.top, width: r.width, height: r.height }
         })
       }}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        run('extension.actionContextMenu', { id: ext.id, x: e.clientX, y: e.clientY })
+      }}
     >
       {ext.icon ? (
         <img src={ext.icon} alt="" className="h-4 w-4 rounded-[3px]" draggable={false} />

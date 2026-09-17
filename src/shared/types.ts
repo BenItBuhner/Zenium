@@ -368,6 +368,20 @@ export interface ExtensionInfo {
   updateCheckedAt: number | null
   /** Effective `chrome.action` state for the active tab; absent while the extension is not loaded. */
   action?: ExtensionAction
+  /** The manifest's `commands` with the shortcut each one is bound to; absent while not loaded. */
+  commands?: ExtensionCommandInfo[]
+  /** Why some commands stayed unbound (a Zenium shortcut or another extension holds the key). */
+  commandConflicts?: string[]
+}
+
+/** One `chrome.commands` entry as the extensions page shows it. */
+export interface ExtensionCommandInfo {
+  name: string
+  description: string
+  /** The bound key in the user's shortcut label form, or null when unbound. */
+  shortcut: string | null
+  /** The `_execute_action` family: the key opens the toolbar action instead of `onCommand`. */
+  executesAction: boolean
 }
 
 /** What an extension's toolbar button should show: `chrome.action` state for the active tab. */
@@ -1964,6 +1978,8 @@ export interface Commands {
   'extension.openOptions': { args: { id: string }; result: void }
   'extension.openPopup': { args: { id: string; anchor: Rect }; result: void }
   'extension.closePopup': { args: void; result: void }
+  /** Context menu of an extension's toolbar button (its `contextMenus` items plus Zenium's). */
+  'extension.actionContextMenu': { args: { id: string; x?: number; y?: number }; result: void }
 
   'mod.add': { args: { name: string; css: string; source?: string }; result: string }
   'mod.update': {

@@ -115,7 +115,26 @@ describe('translateRule', () => {
       urlFilter: '/Pixel?',
       isUrlFilterCaseSensitive: true,
       requestDomains: ['tracker.example', 'stats.example'],
-      excludedRequestDomains: ['good.stats.example']
+      excludedRequestDomains: ['good.stats.example'],
+      excludedResourceTypes: ['main_frame']
+    })
+  })
+
+  test('a rule that names no resource types excludes main_frame, as Chrome does', () => {
+    const [generic, included, excluded] = compileAll([
+      rule(1, { type: 'block' }, { urlFilter: '/ads.' }),
+      rule(2, { type: 'block' }, { urlFilter: '/ads.', resourceTypes: ['main_frame', 'script'] }),
+      rule(3, { type: 'block' }, { urlFilter: '/ads.', excludedResourceTypes: ['image'] })
+    ])
+    expect(translateRule(generic!)).toMatchObject({
+      condition: { urlFilter: '/ads.', excludedResourceTypes: ['main_frame'] }
+    })
+    expect(translateRule(included!)).toMatchObject({
+      condition: { urlFilter: '/ads.', resourceTypes: ['main_frame', 'script'] }
+    })
+    expect((translateRule(included!) as EngineRule).condition.excludedResourceTypes).toBeUndefined()
+    expect(translateRule(excluded!)).toMatchObject({
+      condition: { urlFilter: '/ads.', excludedResourceTypes: ['image'] }
     })
   })
 

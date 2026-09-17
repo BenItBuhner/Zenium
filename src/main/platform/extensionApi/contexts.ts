@@ -1,7 +1,14 @@
 import type { ServiceWorkerMain, Session, WebContents, WebFrameMain } from 'electron'
-import type { ExtensionView } from '../../../core/extensions/api/shim'
+import type { EventDelivery, ExtensionView } from '../../../core/extensions/api/shim'
+import { matchesAnyUrlFilter, type UrlFilter } from '../../../core/extensions/api/urlFilter'
 
 export type FrameKind = ExtensionView['type']
+
+/**
+ * Listeners registered with `addListener(fn, { url: [...] })` (webNavigation): the shim numbers
+ * them per context and the host matches the event URL here, before fan-out.
+ */
+export type ListenerFilters = Map<string, Map<number, UrlFilter[]>>
 
 export interface FrameContext {
   key: string
@@ -13,7 +20,10 @@ export interface FrameContext {
   kind: FrameKind
   manifestVersion: 2 | 3
   isBackgroundPage: boolean
+  /** Events with at least one unfiltered listener. */
   listeners: Set<string>
+  /** Filtered listeners by event name and filter id. */
+  filters: ListenerFilters
   /** Chrome tab id of the page hosting this frame (extension pages opened as tabs). */
   tabId?: number
   windowId?: number
@@ -26,6 +36,7 @@ export interface WorkerContext {
   worker: ServiceWorkerMain
   session: Session
   listeners: Set<string>
+  filters: ListenerFilters
   startedAt: number
   /**
    * `ServiceWorkerMain.send` is silently dropped while the worker's running status is still
@@ -33,7 +44,7 @@ export interface WorkerContext {
    * Deliveries wait in `outbox` until the engine reports the worker running.
    */
   running: boolean
-  outbox: Array<{ namespace: string; event: string; args: unknown[] }>
+  outbox: Array<{ namespace: string; event: string; args: unknown[]; delivery?: EventDelivery }>
 }
 
 export type WorkerRunningStatus = 'starting' | 'running' | 'stopping' | 'stopped'
@@ -43,6 +54,19 @@ export interface DispatchOptions {
   wake?: boolean
   /** Only contexts in sessions passing this filter (`storage.local` belongs to one partition). */
   session?: (session: Session) => boolean
+  /**
+   * The URL the event is about: listeners registered with URL filters only receive it when one
+   * of their filters matches (`webNavigation`). Without it every listener receives the event.
+   */
+  url?: string
+}
+
+/** A `listen` / `unlisten` notification from the shim. */
+export interface ListenPayload {
+  event: string
+  /** Set for a filtered listener; absent for the unfiltered kind. */
+  filterId?: number
+  filters?: UrlFilter[]
 }
 
 export interface HelloPayload {
@@ -57,6 +81,7 @@ interface PendingEvent {
   namespace: string
   event: string
   args: unknown[]
+  url?: string
   at: number
 }
 
@@ -137,7 +162,8 @@ export class ContextRegistry {
       manifestVersion: payload.manifestVersion,
       isBackgroundPage: payload.isBackgroundPage,
       // A hello means a new document: whatever the previous one listened to is gone with it.
-      listeners: new Set()
+      listeners: new Set(),
+      filters: new Map()
     }
     Object.assign(context, this.hooks.placeFrame(context))
     this.frames.set(key, context)
@@ -156,6 +182,7 @@ export class ContextRegistry {
       worker,
       session,
       listeners: new Set(),
+      filters: new Map(),
       startedAt: Date.now(),
       running: this.runningWorkers.has(key),
       outbox: []
@@ -186,21 +213,24 @@ export class ContextRegistry {
   private workerRunning(context: WorkerContext): void {
     context.running = true
     const queued = context.outbox.splice(0)
-    for (const item of queued) this.sendToWorker(context, item.namespace, item.event, item.args)
+    for (const item of queued) {
+      this.sendToWorker(context, item.namespace, item.event, item.args, item.delivery)
+    }
   }
 
   private sendToWorker(
     context: WorkerContext,
     namespace: string,
     event: string,
-    args: unknown[]
+    args: unknown[],
+    delivery?: EventDelivery
   ): void {
     if (!context.running) {
-      if (context.outbox.length < 100) context.outbox.push({ namespace, event, args })
+      if (context.outbox.length < 100) context.outbox.push({ namespace, event, args, delivery })
       return
     }
     try {
-      context.worker.send('zen-ext:event', namespace, event, args)
+      context.worker.send('zen-ext:event', namespace, event, args, delivery)
       // Chrome extends the worker's lifetime while the listeners the event triggered run.
       keepAlive(context.worker, EVENT_KEEPALIVE_MS)
     } catch {
@@ -231,9 +261,15 @@ export class ContextRegistry {
     return this.workers.get(workerKey(worker, session))
   }
 
-  listen(context: FrameContext | WorkerContext, event: string, on: boolean): void {
-    const name = normalizeEventName(event)
-    if (on) context.listeners.add(name)
+  listen(context: FrameContext | WorkerContext, payload: ListenPayload, on: boolean): void {
+    const name = normalizeEventName(payload.event)
+    if (payload.filterId !== undefined) {
+      const byId = context.filters.get(name) ?? new Map<number, UrlFilter[]>()
+      if (on) byId.set(payload.filterId, payload.filters ?? [])
+      else byId.delete(payload.filterId)
+      if (byId.size === 0) context.filters.delete(name)
+      else context.filters.set(name, byId)
+    } else if (on) context.listeners.add(name)
     else context.listeners.delete(name)
     if ('worker' in context && on) {
       const remembered = this.workerEvents.get(context.extensionId) ?? new Set<string>()
@@ -299,8 +335,29 @@ export class ContextRegistry {
   hasListener(extensionId: string, namespace: string, event: string): boolean {
     const name = normalizeEventName(`${namespace}.${event}`)
     if (this.workerEvents.get(extensionId)?.has(name)) return true
-    if (this.framesOf(extensionId).some((f) => f.listeners.has(name))) return true
-    return this.workersOf(extensionId).some((w) => w.listeners.has(name))
+    const wants = (c: FrameContext | WorkerContext): boolean =>
+      c.listeners.has(name) || c.filters.has(name)
+    if (this.framesOf(extensionId).some(wants)) return true
+    return this.workersOf(extensionId).some(wants)
+  }
+
+  /**
+   * What a context should receive of `name` for an event about `url`: `undefined` for every
+   * listener (no URL, or the context registered nothing yet), else which listeners match. Null
+   * when nothing in the context wants it.
+   */
+  private deliveryFor(
+    context: FrameContext | WorkerContext,
+    name: string,
+    url: string | undefined
+  ): EventDelivery | null | undefined {
+    const filters = context.filters.get(name)
+    if (url === undefined || !filters) return context.listeners.has(name) ? undefined : null
+    const matched: number[] = []
+    for (const [id, list] of filters) if (matchesAnyUrlFilter(url, list)) matched.push(id)
+    const unfiltered = context.listeners.has(name)
+    if (!unfiltered && matched.length === 0) return null
+    return { unfiltered, matched }
   }
 
   // ---------------------------------------------------------------------------
@@ -325,9 +382,13 @@ export class ContextRegistry {
     for (const frame of this.framesOf(extensionId)) {
       if (options.session && !options.session(frame.session)) continue
       if (frame.isBackgroundPage) background = true
-      if (!frame.listeners.has(name) && !(options.wake && frame.isBackgroundPage)) continue
+      let delivery = this.deliveryFor(frame, name, options.url)
+      if (delivery === null) {
+        if (!(options.wake && frame.isBackgroundPage)) continue
+        delivery = undefined
+      }
       try {
-        frame.frame.send('zen-ext:event', namespace, event, args)
+        frame.frame.send('zen-ext:event', namespace, event, args, delivery)
       } catch {
         /* frame went away */
       }
@@ -338,8 +399,12 @@ export class ContextRegistry {
       // A worker whose top-level script is still running has not registered anything yet; when
       // it listened to this event in an earlier life the shim queues the delivery for it.
       const fresh = Date.now() - worker.startedAt < STARTUP_KEEPALIVE_MS && remembered
-      if (!worker.listeners.has(name) && !options.wake && !fresh) continue
-      this.sendToWorker(worker, namespace, event, args)
+      let delivery = this.deliveryFor(worker, name, options.url)
+      if (delivery === null) {
+        if (!options.wake && !fresh) continue
+        delivery = undefined
+      }
+      this.sendToWorker(worker, namespace, event, args, delivery)
     }
     if (background) return
     // No background context is alive. A worker that registered the event before it stopped, or a
@@ -349,7 +414,11 @@ export class ContextRegistry {
     const primary = this.hooks.sessionsFor(extensionId)[0]
     if (options.session && primary && !options.session(primary)) return
     const queue = this.pendingBackground.get(extensionId) ?? []
-    if (queue.length < 100) queue.push({ namespace, event, args, at: Date.now() })
+    if (queue.length < 100) {
+      const pending: PendingEvent = { namespace, event, args, at: Date.now() }
+      if (options.url !== undefined) pending.url = options.url
+      queue.push(pending)
+    }
     this.pendingBackground.set(extensionId, queue)
     void this.wake(extensionId)
   }
@@ -378,7 +447,9 @@ export class ContextRegistry {
     const now = Date.now()
     for (const item of queue) {
       if (now - item.at > PENDING_TTL_MS) continue
-      this.dispatch(extensionId, item.namespace, item.event, item.args, { wake: true })
+      const options: DispatchOptions = { wake: true }
+      if (item.url !== undefined) options.url = item.url
+      this.dispatch(extensionId, item.namespace, item.event, item.args, options)
     }
   }
 

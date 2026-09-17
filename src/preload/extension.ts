@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { installExtensionApi, type InvokeResult, type ShimHost } from '../core/extensions/api/shim'
+import {
+  installExtensionApi,
+  type EventDelivery,
+  type InvokeResult,
+  type ShimHost
+} from '../core/extensions/api/shim'
 import { API_SPEC } from '../core/extensions/api/spec'
 
 /**
@@ -32,15 +37,28 @@ function makeHost(kind: 'frame' | 'worker'): ShimHost {
       })),
     notify: (name, payload) => ipcRenderer.send(NOTIFY, name, payload),
     onEvent: (listener) => {
-      ipcRenderer.on(EVENT, (_event, namespace: string, event: string, args: unknown[]) => {
-        try {
-          listener(namespace, event, Array.isArray(args) ? args : [])
-        } catch (error) {
-          console.error('[zenium] extension event listener failed', error)
+      ipcRenderer.on(
+        EVENT,
+        (_event, namespace: string, event: string, args: unknown[], delivery: unknown) => {
+          try {
+            listener(namespace, event, Array.isArray(args) ? args : [], eventDelivery(delivery))
+          } catch (error) {
+            console.error('[zenium] extension event listener failed', error)
+          }
         }
-      })
+      )
     }
   }
+}
+
+/** The router's addressing of a delivery to filtered listeners; absent means everyone. */
+function eventDelivery(raw: unknown): EventDelivery | undefined {
+  if (raw === null || typeof raw !== 'object') return undefined
+  const record = raw as Record<string, unknown>
+  const matched = Array.isArray(record.matched)
+    ? record.matched.filter((id): id is number => typeof id === 'number')
+    : []
+  return { unfiltered: record.unfiltered === true, matched }
 }
 
 /**

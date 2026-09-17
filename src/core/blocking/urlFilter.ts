@@ -9,8 +9,12 @@ export type UrlPredicate = (url: string) => boolean
 const SEPARATOR = '(?:[^a-zA-Z0-9_\\-.%]|$)'
 const HOSTNAME_ANCHOR = '^[a-zA-Z][a-zA-Z0-9+.\\-]*://(?:[^/?#]*\\.)?'
 
+/**
+ * Everything that is not `*` or `^` is literal in a `urlFilter`, including a `|` that is neither
+ * the first nor the last character (Chromium's `UrlPattern` only reads anchors at the ends).
+ */
 function escapeRegExp(s: string): string {
-  return s.replace(/[.+?${}()[\]\\/]/g, '\\$&')
+  return s.replace(/[.+?${}()[\]\\/|]/g, '\\$&')
 }
 
 /**
