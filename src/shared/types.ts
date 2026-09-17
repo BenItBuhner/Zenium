@@ -1539,6 +1539,8 @@ export interface Commands {
   /** The tab's back/forward stack for the long-press list on the back / forward buttons. */
   'tab.navigationEntries': { args: { tabId: string }; result: NavigationSnapshot }
   'tab.goToIndex': { args: { tabId: string; index: number }; result: void }
+  /** The back/forward list as a menu (long press / right click on the back and forward buttons). */
+  'tab.navigationMenu': { args: { tabId: string }; result: void }
   'tab.setZoom': { args: { tabId: string; delta: number | null }; result: void }
   'tab.contextMenu': { args: { tabId: string }; result: void }
   'tab.toggleDevtools': { args: { tabId: string }; result: void }

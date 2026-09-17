@@ -469,6 +469,11 @@ export class HistoryService {
     return favicon === v.favicon ? v : { ...v, favicon }
   }
 
+  /** Last known favicon of a URL (the back/forward list decorates its rows with it). */
+  faviconFor(url: string): string | null {
+    return this.entries.get(url)?.favicon ?? null
+  }
+
   // --- deletion ---------------------------------------------------------------
 
   deleteVisits(ids: string[]): void {

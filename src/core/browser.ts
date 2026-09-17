@@ -1126,6 +1126,7 @@ export class Browser {
       'tab.reopenClosed': (_a, win) => this.session.reopenClosed(win),
       'tab.navigationEntries': ({ tabId }) => tabs.navigationEntries(tabId),
       'tab.goToIndex': ({ tabId, index }) => tabs.goToIndex(tabId, index),
+      'tab.navigationMenu': ({ tabId }, win) => this.menus.showNavigationMenu(tabId, win),
       'tab.setZoom': ({ tabId, delta }) =>
         delta === null ? tabs.setZoom(tabId, 1) : tabs.adjustZoom(tabId, delta),
       'tab.contextMenu': ({ tabId }, win) => this.menus.showTabContextMenu(tabId, win),
