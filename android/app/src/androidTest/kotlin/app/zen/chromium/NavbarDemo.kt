@@ -3,7 +3,6 @@ package app.zen.chromium
 import android.accessibilityservice.AccessibilityService
 import android.os.SystemClock
 import android.util.Log
-import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Test
@@ -88,21 +87,24 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         shot("08-custom-bar")
 
         // 7. Forward: dimmed with nowhere to go, live once a page has been left and come back from.
-        note("Forward enabled on a fresh tab", enabled("Forward"))
+        expect("Forward is dimmed on a fresh tab", enabled("Forward") == false)
         navigateWithinTab()
         tap("Back")
-        SystemClock.sleep(3_000)
-        note("Forward enabled after going back", enabled("Forward"))
+        expect("Back returns to the first page", waitForAddress(12_000) { FIRST_HOST in it })
+        SystemClock.sleep(1_200)
+        expect("Forward is live after going back", enabled("Forward") == true)
         shot("09-forward-enabled")
         tap("Forward")
-        SystemClock.sleep(3_500)
+        expect("Forward returns to the second page", waitForAddress(12_000) { SECOND_HOST in it })
+        SystemClock.sleep(2_500)
 
-        // 8. Reload becomes Stop while the page loads, and Reload again once it has.
+        // 8. Reload becomes Stop while the page loads, and Reload again once it has. The second
+        //    page is an article, not example.com: its load is long enough to catch.
         tap("Reload")
-        val stopSeen = waitFor("Stop", 3_000) != null
+        val stopSeen = seenSoon("Stop", 6_000)
         shot("10-stop-while-loading")
         expect("Reload swaps to Stop while loading", stopSeen)
-        expect("Stop swaps back to Reload", waitFor("Reload", 20_000) != null)
+        expect("Stop swaps back to Reload", waitFor("Reload", 30_000) != null)
         SystemClock.sleep(1_000)
 
         // 9. The tab count: the Tabs button's hold opens its quick menu instead of the editor, Close
@@ -117,9 +119,7 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         expect("the count rolled down", waitFor("Tabs (${before - 1})", 4_000) != null)
         SystemClock.sleep(1_500)
         tap("New tab")
-        SystemClock.sleep(2_500)
-        typeText("example.org")
-        pressEnter()
+        typeAddress("example.org")
         expect("the bar is back after the new tab", waitForBar())
         SystemClock.sleep(2_000)
         expect("the count is up again", waitFor("Tabs ($before)", 4_000) != null)
@@ -194,19 +194,29 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
 
     // --- the bar at work ---------------------------------------------------------------------
 
-    /** Follow the page's link (example.com's "More information..."), or type an address. */
+    /** Leave the seeded page for an article, within the tab, through the URL bar. */
     private fun navigateWithinTab() {
-        val link = waitFor("More information...", 6_000)
-        if (link != null) {
-            Finger().tap(link.exactCenterX(), link.exactCenterY())
-        } else {
-            Log.w(tag, "no link on the page; typing an address instead")
-            Finger().tap(pillCenterX, pillY)
-            SystemClock.sleep(2_500)
-            typeText("example.org")
-            pressEnter()
+        val from = address()
+        Finger().tap(pillCenterX, pillY)
+        typeAddress(SECOND_PAGE)
+        val arrived = waitForAddress(15_000) { SECOND_HOST in it }
+        Log.i(tag, "navigated from $from to ${address()}${if (arrived) "" else " (still loading)"}")
+        SystemClock.sleep(3_000)
+    }
+
+    /**
+     * Type into the URL bar once it is up and the keyboard has settled (the first keyboard of a
+     * run comes up slowly, and keys sent before it is ready are lost), then Go.
+     */
+    private fun typeAddress(text: String) {
+        val deadline = SystemClock.uptimeMillis() + 6_000
+        while (findNode { it.startsWith("Search engine:") } == null && SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(200)
         }
-        SystemClock.sleep(6_000)
+        SystemClock.sleep(2_000)
+        instrumentation.sendStringSync(text)
+        SystemClock.sleep(600)
+        instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
     }
 
     /** The pill's hold carries the whole bar to the top edge (the page slides down under it). */
@@ -250,6 +260,34 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
     /** Whether the control labelled `label` is enabled (`aria-disabled` dims a bar button). */
     private fun enabled(label: String): Boolean? = findNode { it == label }?.isEnabled
 
+    /** The address the pill shows (`Address, example.com`), or null while the URL bar hides the bar. */
+    private fun address(): String? {
+        val node = findNode { it.startsWith("$PILL_LABEL,") } ?: return null
+        val label = node.contentDescription?.toString() ?: node.text?.toString() ?: return null
+        return label.removePrefix("$PILL_LABEL,").trim()
+    }
+
+    /** Poll until the pill's address satisfies `matches`. */
+    private fun waitForAddress(timeoutMs: Long, matches: (String) -> Boolean): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val now = address()
+            if (now != null && matches(now)) return true
+            SystemClock.sleep(200)
+        }
+        Log.w(tag, "address still ${address()}")
+        return false
+    }
+
+    /** Like [waitFor] without pausing between polls: for a state that lasts a moment (Stop). */
+    private fun seenSoon(label: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (findByLabel(label) != null) return true
+        }
+        return false
+    }
+
     /** Poll until the address pill is back on screen (the URL bar hides the bar while it is up). */
     private fun waitForBar(timeoutMs: Long = 8_000): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -265,9 +303,6 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         if (!ok) failures.add(name)
     }
 
-    /** Recorded, not asserted: what the tree reports is worth reading but not worth a red run. */
-    private fun note(name: String, value: Any?) = Log.i(tag, "note \"$name\": $value")
-
     // --- input -----------------------------------------------------------------------------------
 
     private fun tap(label: String) {
@@ -279,17 +314,10 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
     }
 
-    private fun typeText(text: String) {
-        val events = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray()) ?: return
-        for (event in events) {
-            ui.injectInputEvent(event, true)
-            SystemClock.sleep(40)
-        }
-    }
-
-    private fun pressEnter() {
-        val now = SystemClock.uptimeMillis()
-        ui.injectInputEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0), true)
-        ui.injectInputEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER, 0), true)
+    private companion object {
+        /** The seeded active tab's host and the page the demo leaves it for. */
+        const val FIRST_HOST = "example.com"
+        const val SECOND_PAGE = "en.wikipedia.org/wiki/Damping"
+        const val SECOND_HOST = "wikipedia.org"
     }
 }
