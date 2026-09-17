@@ -705,8 +705,9 @@
 @layer components {
   /*
    * A `.zen-sheet` with two detents (`BottomSheet`): height and transform are written per frame
-   * by the sheet's motion, so it starts at nothing and every pan on it is the sheet's. Rows nest
-   * inside `.zen-sheet-card` groups with the sheet's concentric radii (card corner minus padding).
+   * by the sheet's motion, so it starts at nothing and every pan on it is the sheet's. Its rows
+   * are the sidebar's rows – same type, the chrome's base radius, a press shows as the element
+   * tone – with sections set apart by spacing rather than rules.
    */
   .zen-sheet-scrim {
     background: #000;
@@ -750,14 +751,15 @@
   .zen-sheet-item {
     display: flex;
     width: 100%;
-    height: 48px;
+    height: 44px;
     align-items: center;
-    gap: 12px;
-    padding: 0 14px;
-    border-radius: calc(var(--zen-sheet-inner) - 4px);
+    gap: 10px;
+    padding: 0 12px;
+    border-radius: var(--radius-zen);
     corner-shape: var(--zen-corner);
+    color: var(--zen-fg);
     text-align: left;
-    font-size: 15px;
+    font-size: var(--zen-sidebar-font);
     transition: background 120ms var(--zen-ease);
   }
   .zen-sheet-item:active:not(:disabled) {

@@ -48,10 +48,10 @@ interface MenuNav {
 }
 
 /**
- * The menu as a draggable sheet: sections are `.zen-sheet-card` groups of rows set apart by
- * spacing and a faint lift instead of rules, with radii nested concentrically (sheet 28 − 12
- * padding = card 16, card 16 − 4 padding = row 12). Picking a row slides the sheet away first,
- * so the host never snapshots the menu when it dims the page for whatever the row opens.
+ * The menu as a draggable sheet, laid out like the rest of the chrome: rows in the sidebar's
+ * type and radius, sections told apart by spacing alone, a title row like the drawer's. Picking
+ * a row slides the sheet away first, so the host never snapshots the menu when it dims the page
+ * for whatever the row opens.
  */
 function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const [nav, setNav] = useState<MenuNav>({ path: [], direction: 0 })
@@ -80,31 +80,38 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
       contentKey={`${menu.id}:${path.map((item) => item.id).join('/')}`}
       handleLabel="Resize menu"
       header={
-        <div className="flex h-11 items-center gap-1">
+        <div className="flex h-10 items-center gap-1 pb-1">
           {path.length > 0 && (
             <button
               type="button"
-              className="zen-toolbar-button h-9 w-9"
+              className="zen-toolbar-button h-8 w-8"
               onClick={() => setNav((n) => ({ path: n.path.slice(0, -1), direction: -1 }))}
               aria-label="Back"
             >
-              <ChevronLeft className="h-[18px] w-[18px]" />
+              <ChevronLeft className="h-4 w-4" />
             </button>
           )}
-          <span className="min-w-0 flex-1 truncate px-2 text-[15px] font-semibold">{title}</span>
+          <span
+            className={cn(
+              'min-w-0 flex-1 truncate text-[14px] font-semibold',
+              path.length === 0 && 'px-3'
+            )}
+          >
+            {title}
+          </span>
         </div>
       }
     >
       <div
         key={path.length}
         className={cn(
-          'flex flex-col gap-2 pb-2 pt-1',
+          'flex flex-col gap-2.5 pb-1',
           nav.direction > 0 && 'zen-drawer-right',
           nav.direction < 0 && 'zen-drawer-left'
         )}
       >
         {groups.map((group, index) => (
-          <ul key={index} className="zen-sheet-card p-1">
+          <ul key={index} className="flex flex-col">
             {group.map((item) => (
               <li key={item.id}>
                 <button
@@ -118,11 +125,9 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
                 >
                   <span className="min-w-0 flex-1 truncate">{item.label}</span>
                   {(item.type === 'checkbox' || item.type === 'radio') && item.checked && (
-                    <Check className="h-[18px] w-[18px] shrink-0" />
+                    <Check className="h-4 w-4 shrink-0" />
                   )}
-                  {item.submenu && (
-                    <ChevronRight className="h-[18px] w-[18px] shrink-0 opacity-50" />
-                  )}
+                  {item.submenu && <ChevronRight className="h-4 w-4 shrink-0 opacity-60" />}
                 </button>
               </li>
             ))}
