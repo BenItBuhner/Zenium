@@ -408,7 +408,14 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     const rect = rectOf(cells.current.get(`group:${folder.id}`))
     if (rect)
       depart([
-        { key: `group:${folder.id}`, kind: 'group', folder, tabs: membersOf(folder.id), rect }
+        {
+          key: `group:${folder.id}`,
+          kind: 'group',
+          folder,
+          tabs: membersOf(folder.id),
+          rect,
+          columns
+        }
       ])
     run('folder.delete', { folderId: folder.id, unpack: false })
   }
