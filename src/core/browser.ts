@@ -51,6 +51,7 @@ import {
 import { getDomain, inputToUrl } from '../shared/url'
 import { buildSearchUrl, matchEngineKeyword } from '../shared/search'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
+import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { ONBOARDING_ESSENTIALS } from '../shared/defaults'
@@ -606,12 +607,24 @@ export class Browser {
   }
 
   /**
-   * Put text on the clipboard and say so – unless the OS shows its own clipboard chip (Android
-   * 13+), in which case a second confirmation would only repeat it.
+   * Put text on the clipboard and say so where the chrome is the one to say it (Android below
+   * 13; see `copyConfirmation`). Desktop stays as it was: silent, or `desktopConfirmation` where
+   * it always had a toast of its own.
    */
-  copyText(text: string, confirmation: string, win?: ZenWindow): void {
+  copyText(
+    text: string,
+    confirmation: string,
+    win?: ZenWindow,
+    desktopConfirmation: string | null = null
+  ): void {
     this.platform.clipboard.writeText(text)
-    if (!this.state.capabilities.clipboardChip) this.toast(confirmation, 'info', win)
+    const toast = copyConfirmation(
+      this.state.platform,
+      this.state.capabilities,
+      confirmation,
+      desktopConfirmation
+    )
+    if (toast) this.toast(toast, 'info', win)
   }
 
   /**

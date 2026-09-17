@@ -2,6 +2,7 @@ import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { MenuItemTemplate, MenuSource, PageContextParams } from './platform'
 import { buildSearchUrl } from '../shared/search'
+import { copyConfirmation } from '../shared/clipboard'
 import { displayUrl, getDomain, isNavigableUrl } from '../shared/url'
 import { DEFAULT_CONTAINER_ID } from '../shared/types'
 import { spaceLabel } from '../shared/defaults'
@@ -332,9 +333,13 @@ export class Menus {
     const copied =
       (await view.copyImageAt(x, y).catch(() => false)) ||
       (await this.browser.platform.clipboard.writeImageFromUrl(srcUrl))
-    if (!copied) this.browser.toast('Could not copy image', 'error', win)
-    else if (!this.browser.state.capabilities.clipboardChip)
-      this.browser.toast('Image copied', 'info', win)
+    if (!copied) {
+      this.browser.toast('Could not copy image', 'error', win)
+      return
+    }
+    const { platform, capabilities } = this.browser.state
+    const toast = copyConfirmation(platform, capabilities, 'Image copied')
+    if (toast) this.browser.toast(toast, 'info', win)
   }
 
   // ---------------------------------------------------------------------------
