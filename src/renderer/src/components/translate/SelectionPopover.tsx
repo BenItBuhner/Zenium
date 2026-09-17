@@ -1,5 +1,5 @@
-import type { JSX, ReactNode } from 'react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { JSX, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Check, Copy, Languages } from 'lucide-react'
 import type { TranslateSelectionResult } from '@shared/translate'
 import type { UIState } from '@shared/types'
@@ -8,25 +8,30 @@ import { cmd } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab } from '@renderer/lib/selectors'
-import { closeTranslateSelection, languageOptions, translateStateOf } from '@renderer/lib/translate'
+import {
+  closeTranslateSelection,
+  languageOptions,
+  placeAtPoint,
+  POPOVER_MARGIN,
+  translateStateOf
+} from '@renderer/lib/translate'
 import {
   browserStore,
   contentAreaStore,
   uiStore,
   type TranslateSelectionRequest
 } from '@renderer/lib/ui'
-import { cn, formatBytes } from '@renderer/lib/utils'
+import { formatBytes } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { Menulist, TranslateButton } from './controls'
+import { wrapTab } from './focus'
 
-const PANEL_WIDTH = 360
-const MARGIN = 8
-/** Gap between the point the user asked at and the panel. */
-const GAP = 12
+/** The popover's fixed width (§9.20: 400 for a row with a menulist and text that wraps). */
+const PANEL_WIDTH = 400
 
 /**
  * Selection translation: the text the user selected, translated into a language they read, as
- * a panel anchored where they asked on the desktop and a sheet on phones. Mounted once above
+ * a popover anchored where they asked on the desktop and a sheet on phones. Mounted once above
  * whichever shell is up (Root); the core opens it with the `translate.selection` event from
  * the context menu.
  */
@@ -130,21 +135,25 @@ function useCopy(text: string | null): { copied: boolean; copy: () => void } {
   }
 }
 
-/** The header row: which language the text is in, and the menulist for the one it goes into. */
+/**
+ * The languages row (§9.21: 40 tall around its 32 px menulist on the desktop, 48 around 40 on a
+ * phone): which language the text is in, and the menulist for the one it goes into.
+ */
 function LanguagesRow({
   state,
   translation,
-  className
+  glyph
 }: {
   state: UIState
   translation: Translation
-  className?: string
+  /** A leading glyph, where the surface's header has none (the phone sheet). */
+  glyph?: boolean
 }): JSX.Element {
   const source = translation.result?.source ?? null
   return (
-    <div className={cn('flex items-center gap-2', className)}>
-      <Languages className="zen-translate-glyph" aria-hidden />
-      <span className="zen-translate-caption min-w-0 flex-1 truncate">
+    <div className="zen-translate-row">
+      {glyph && <Languages className="zen-translate-glyph" aria-hidden />}
+      <span className="min-w-0 flex-1 truncate">
         {source ? `${languageName(source)} to` : 'Translate to'}
       </span>
       <Menulist
@@ -191,9 +200,15 @@ function ResultText({
 }
 
 // ---------------------------------------------------------------------------
-// Desktop and tablet: a panel where the user asked
+// Desktop and tablet: a popover where the user asked
 // ---------------------------------------------------------------------------
 
+/**
+ * The popover (§9.20, §9.23): 400 wide, a title block – glyph and "Translation" – over a body
+ * that scrolls under it once the popover reaches 60% of the window, and a footer that hugs its
+ * one button. Focus moves onto its menulist when it opens, Tab wraps inside it, Escape closes it
+ * and the page gets focus back (§9.22); an outside click closes it too. No X.
+ */
 function Popover({
   request,
   state
@@ -204,13 +219,17 @@ function Popover({
   const translation = useSelectionTranslation(request)
   const { copied, copy } = useCopy(translation.result?.translation ?? null)
   const ref = useRef<HTMLDivElement>(null)
+  const body = useRef<HTMLDivElement>(null)
+  const titleId = useId()
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
-  const width = Math.min(PANEL_WIDTH, window.innerWidth - 2 * MARGIN)
+  const [scrolled, setScrolled] = useState(false)
 
   useBackSurface({ name: 'translate-selection', onCommit: () => closeTranslateSelection() })
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
+      // A menulist's list is up over the popover: Escape is the list's (it closes the list).
+      if (uiStore.get().menulistOpen) return
       e.preventDefault()
       e.stopImmediatePropagation()
       closeTranslateSelection()
@@ -218,13 +237,19 @@ function Popover({
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [])
+  // On open, focus moves into the popover: its first field (the menulist), else the popover.
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const field = el.querySelector<HTMLElement>('.zen-v2-menulist:not(:disabled)')
+    ;(field ?? el).focus({ preventScroll: true })
+  }, [])
 
-  // Below the point the user asked at (above it when there is no room), inside the window.
+  // At the point the user asked at, inside the window.
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
     const place = (): void => {
-      const height = el.offsetHeight
       const area = contentAreaStore.get().area ?? {
         x: 0,
         y: 0,
@@ -234,38 +259,57 @@ function Popover({
       // Where the user asked, in window pixels; a request without a point sits high in the page.
       const ax = area.x + (request.x ?? area.width / 2)
       const ay = area.y + (request.y ?? area.height / 3)
-      let top = ay + GAP
-      if (top + height > window.innerHeight - MARGIN) top = ay - GAP - height
-      setPos({
-        left: Math.max(MARGIN, Math.min(ax - width / 2, window.innerWidth - width - MARGIN)),
-        top: Math.max(MARGIN, Math.min(top, window.innerHeight - height - MARGIN))
-      })
+      setPos(
+        placeAtPoint(
+          ax,
+          ay,
+          { width: window.innerWidth, height: window.innerHeight },
+          { width: PANEL_WIDTH, height: el.offsetHeight }
+        )
+      )
     }
     place()
     const ro = new ResizeObserver(place)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [request, width])
+  }, [request])
+
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (ref.current) wrapTab(ref.current, e)
+  }
 
   return (
     <div className="fixed inset-0 z-[80]" onMouseDown={() => closeTranslateSelection()}>
       <div
         ref={ref}
         role="dialog"
-        aria-label="Translation"
-        className="zen-translate-panel zen-animate-pop absolute flex flex-col gap-2"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="zen-translate-panel zen-animate-pop absolute"
         style={{
-          left: pos?.left ?? MARGIN,
-          top: pos?.top ?? MARGIN,
-          width,
+          left: pos?.left ?? POPOVER_MARGIN,
+          top: pos?.top ?? POPOVER_MARGIN,
           visibility: pos ? 'visible' : 'hidden'
         }}
         onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={onKeyDown}
       >
-        <LanguagesRow state={state} translation={translation} />
-        <p className="zen-translate-original">{request.text}</p>
-        <div className="zen-translate-rule" />
-        <ResultText request={request} state={state} translation={translation} />
+        <div className="zen-translate-title-block" data-scrolled={scrolled || undefined}>
+          <Languages aria-hidden />
+          <h2 id={titleId} className="zen-translate-title">
+            Translation
+          </h2>
+        </div>
+        <div
+          ref={body}
+          className="zen-translate-panel-body"
+          onScroll={() => setScrolled((body.current?.scrollTop ?? 0) > 0)}
+        >
+          <LanguagesRow state={state} translation={translation} />
+          <p className="zen-translate-original">{request.text}</p>
+          <div className="zen-translate-rule" />
+          <ResultText request={request} state={state} translation={translation} />
+        </div>
         <div className="zen-translate-footer">
           <TranslateButton disabled={!translation.result} onClick={copy}>
             {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
@@ -322,7 +366,7 @@ function PhoneSheet({
       }
     >
       <div className="flex flex-col gap-3 px-3 pb-3">
-        <LanguagesRow state={state} translation={translation} className="min-h-11" />
+        <LanguagesRow state={state} translation={translation} glyph />
         <p className="zen-translate-original">{request.text}</p>
         <div className="zen-translate-rule" />
         <ResultText request={request} state={state} translation={translation} />

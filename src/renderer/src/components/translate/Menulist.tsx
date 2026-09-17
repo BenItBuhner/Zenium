@@ -5,6 +5,7 @@ import { Check, ChevronDown } from 'lucide-react'
 import {
   menulistClosed,
   menulistOpened,
+  placePopover,
   prepareMenulist,
   type LanguageOption
 } from '@renderer/lib/translate'
@@ -15,10 +16,9 @@ import { browserStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
-/** Space between the trigger and its popover, and between the popover and the window's edges. */
-const GAP = 4
-const MARGIN = 8
-/** The popover shows at least this many rows before it flips above the trigger. */
+/** The popover's fixed width (§9.20: 320 for a list without trailing controls). */
+const WIDTH = 320
+/** The popover shows at least this many rows before it flips above the trigger's bar. */
 const MIN_ROWS = 5
 const ROW = 28
 const PAD = 6
@@ -28,6 +28,13 @@ const PAD = 6
  * as a `--v2-panel` popover under itself on the desktop – 28 px rows, the current one marked with
  * a trailing check – and as a bottom sheet of 44 px rows on phones, the current one carrying a
  * radio glyph; picking an option closes either. Never the platform's own `<select>` popup.
+ *
+ * The popover is a desktop popover of §9.20: 320 wide whatever its rows hold, its top border on
+ * the bottom edge of the bar or row the trigger sits in, start-aligned with the trigger (end-
+ * aligned when the trigger is in the trailing half of its bar), 8 px inside the window, at most
+ * 60% of the window tall. It takes the keyboard while it is up (§9.22): arrows, Home, End and
+ * type-ahead move, Enter picks, Tab stays inside, Escape closes and hands focus back to the
+ * trigger.
  *
  * Either list overhangs the content area, where the host draws the page above the chrome, so
  * while it is up the page gives way to its snapshot (as under the sheets), through the ui store.
@@ -126,26 +133,15 @@ export function Menulist({
 // Desktop and tablet: a popover under the trigger
 // ---------------------------------------------------------------------------
 
-interface Placement {
-  left: number
-  top: number
-  minWidth: number
-  maxHeight: number
-}
-
-/** Where a popover of `count` rows goes for a trigger at `rect`: below it, or above when that has more room. */
-function placeUnder(rect: DOMRect, count: number): Placement {
-  const below = window.innerHeight - rect.bottom - GAP - MARGIN
-  const above = rect.top - GAP - MARGIN
-  const wanted = count * ROW + 2 * PAD + 2
-  const flip = below < Math.min(wanted, MIN_ROWS * ROW + 2 * PAD) && above > below
-  const maxHeight = Math.max(ROW + 2 * PAD, Math.min(wanted, flip ? above : below))
-  return {
-    left: Math.max(MARGIN, Math.min(rect.left, window.innerWidth - rect.width - MARGIN)),
-    top: flip ? rect.top - GAP - maxHeight : rect.bottom + GAP,
-    minWidth: rect.width,
-    maxHeight
-  }
+/**
+ * The bar the trigger sits in, whose bottom edge the popover's top border sits on (§9.20: gap 0
+ * to the bar, which is 4 px under a 32 px control in a 40 px bar or row): the translate bar, a
+ * settings or panel row, else whatever holds the trigger.
+ */
+function anchorBar(trigger: HTMLElement): Element {
+  return (
+    trigger.closest('.zen-translate-bar, .zen-translate-row') ?? trigger.parentElement ?? trigger
+  )
 }
 
 function Popover({
@@ -173,18 +169,23 @@ function Popover({
     return index >= 0 ? index : 0
   })
 
-  // Under the trigger, at least as wide, inside the window; above it when there is more room there.
+  // On the bottom edge of the trigger's bar, aligned with the trigger, inside the window.
   useLayoutEffect(() => {
     const el = anchor.current
     const popup = list.current
     if (!el || !popup) return
-    const { left, top, minWidth, maxHeight } = placeUnder(
+    const { left, top, maxHeight } = placePopover(
       el.getBoundingClientRect(),
-      options.length
+      anchorBar(el).getBoundingClientRect(),
+      { width: window.innerWidth, height: window.innerHeight },
+      {
+        width: WIDTH,
+        wanted: options.length * ROW + 2 * PAD + 2,
+        minHeight: MIN_ROWS * ROW + 2 * PAD
+      }
     )
     popup.style.left = `${left}px`
     popup.style.top = `${top}px`
-    popup.style.minWidth = `${minWidth}px`
     popup.style.maxHeight = `${maxHeight}px`
     popup.style.visibility = 'visible'
   }, [anchor, options.length])
@@ -228,8 +229,10 @@ function Popover({
         break
       }
       case 'Escape':
-      case 'Tab':
         onClose()
+        break
+      case 'Tab':
+        // The list is the popover's only stop: Tab wraps onto it (§9.22), Escape leaves.
         break
       default: {
         // Type-ahead on the first letter, from the row after the active one.
