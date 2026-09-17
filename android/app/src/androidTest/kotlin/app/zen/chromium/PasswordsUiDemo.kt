@@ -175,7 +175,7 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         SystemClock.sleep(700)
 
         // 5. The generator: a password, then a passphrase.
-        pickCategory(f, "Generator", "Generate another", snapMenu = "category-menu")
+        pickCategory(f, "Passwords", "Generator", "Generate another", snapMenu = "category-menu")
         SystemClock.sleep(800)
         snap("generator")
         tapLabel(f, "Generate another")
@@ -185,7 +185,7 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         snap("generator-passphrase")
 
         // 6. The checkup: HIBP range queries, strength and reuse over the seeded logins.
-        pickCategory(f, "Checkup", "Check now")
+        pickCategory(f, "Generator", "Checkup", "Check now")
         SystemClock.sleep(700)
         snap("checkup")
         step("running the checkup")
@@ -200,7 +200,7 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
 
         // 7. The settings; the re-authentication menulist set to Every time, so the copy below
         //    asks again although the reveal just verified the user.
-        pickCategory(f, "Settings", "Lock now")
+        pickCategory(f, "Checkup", "Settings", "Lock now")
         SystemClock.sleep(700)
         snap("settings")
         setGraceToEveryTime(f)
@@ -208,7 +208,7 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         snap("settings-every-time")
 
         // 8. The prompt sheet: the device prompt behind a copy dismissed, the passphrase asked for.
-        pickCategory(f, "Passwords", "Add login")
+        pickCategory(f, "Settings", "Passwords", "Add login")
         openLogin(f, DETAIL_USERNAME)
         step("copying the password")
         tapLabel(f, "Copy password")
@@ -361,33 +361,71 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
     }
 
     /**
-     * Pick a category from the phone header's menulist (a combobox named "Category"), and wait
-     * for something only that view shows. `snapMenu` takes a still of the open menu.
+     * Pick a category from the phone header's menulist, and wait for something only that view
+     * shows. Accessibility names the combobox after its value – the current view's label, `from`
+     * – not after its aria-label, and the page's own container is labelled "Passwords", so the
+     * option is told from it by being clickable. `snapMenu` takes a still of the open menu.
      */
-    private fun pickCategory(f: Finger, label: String, expect: String, snapMenu: String? = null) {
-        step("category: $label")
+    private fun pickCategory(f: Finger, from: String, label: String, expect: String, snapMenu: String? = null) {
+        step("category: $from -> $label")
+        if (pickOption(f, from, label, snapMenu) { waitFor(expect, 6_000) != null }) return
+        dumpNames("the manager after picking $label")
+        error("could not switch to $label")
+    }
+
+    /**
+     * Open the menulist reading `reading` and choose `label`; `applied` says whether the choice
+     * took. Two attempts, each ending with the menu closed again if it stayed open.
+     */
+    private fun pickOption(
+        f: Finger,
+        reading: String,
+        label: String,
+        snapMenu: String? = null,
+        applied: () -> Boolean
+    ): Boolean {
         for (attempt in 1..2) {
-            if (!tapControl(f, CATEGORY_LABEL)) clickByLabel(CATEGORY_LABEL)
-            val option = waitFor(label, 4_000)
+            if (!tapControl(f, reading)) {
+                step("no menulist reading '$reading' (attempt $attempt)")
+                dumpNames("the view")
+                continue
+            }
+            val option = waitForOption(label, 4_000)
             if (option == null) {
-                step("the category menu did not open (attempt $attempt)")
+                step("the menu did not open (attempt $attempt)")
                 continue
             }
             SystemClock.sleep(500)
             if (snapMenu != null && attempt == 1) snap(snapMenu)
             f.tap(option.exactCenterX(), option.exactCenterY())
-            if (waitFor(expect, 6_000) != null) return
-            step("the tap on '$label' did not switch the view; clicking it through accessibility")
-            if (findByLabel(label) != null && clickByLabel(label) && waitFor(expect, 6_000) != null) return
-            if (findByLabel(label) != null) {
+            if (applied()) return true
+            step("the tap on '$label' did not apply; clicking it through accessibility")
+            if (clickOption(label) && applied()) return true
+            if (optionNode(label) != null) {
                 // The menu is still open: back closes it and nothing else.
                 back()
                 SystemClock.sleep(800)
             }
         }
-        dumpNames("the manager after picking $label")
-        error("could not switch to $label")
+        return false
     }
+
+    /** A menu option: a clickable node of the app named `label` with a place on screen. */
+    private fun optionNode(label: String): AccessibilityNodeInfo? = nodes { node ->
+        node.packageName?.toString() == app.packageName && node.isVisibleToUser && node.isClickable && node.isNamed(label)
+    }.firstOrNull { node -> Rect().also(node::getBoundsInScreen).let { it.width() > 0 && it.height() > 0 } }
+
+    private fun waitForOption(label: String, timeoutMs: Long): Rect? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            optionNode(label)?.let { return Rect().also(it::getBoundsInScreen) }
+            SystemClock.sleep(200)
+        }
+        return null
+    }
+
+    private fun clickOption(label: String): Boolean =
+        optionNode(label)?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
 
     /** Select a radio row (named after its label, then its description) and wait for the view to follow. */
     private fun chooseRadio(f: Finger, label: String, expect: String) {
@@ -422,30 +460,19 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
 
     /**
      * The settings' "Ask again before showing or copying" menulist to Every time, through its
-     * menu; the settings command is the fallback so the copy below is sure to ask.
+     * menu (the combobox is named after the value it reads, so that is looked up first); the
+     * settings command is the fallback so the copy below is sure to ask.
      */
     private fun setGraceToEveryTime(f: Finger) {
         step("re-authentication grace: Every time")
-        for (attempt in 1..2) {
-            if (!tapControl(f, GRACE_LABEL)) clickByLabel(GRACE_LABEL)
-            val option = waitFor("Every time", 4_000)
-            if (option == null) {
-                step("the grace menu did not open (attempt $attempt)")
-                continue
-            }
-            SystemClock.sleep(500)
-            if (attempt == 1) snap("settings-grace-menu")
-            f.tap(option.exactCenterX(), option.exactCenterY())
-            if (awaitGrace(0, 5_000)) return
-            step("the tap on 'Every time' did not apply; clicking it through accessibility")
-            if (findByLabel("Every time") != null && clickByLabel("Every time") && awaitGrace(0, 5_000)) return
-            if (findByLabel("Every time") != null) {
-                back()
-                SystemClock.sleep(800)
-            }
+        val current = zen("app.getState").getJSONObject("settings").getJSONObject("passwords")
+        val reading = GRACE_LABELS[current.getInt("reauthGraceSeconds")]
+        if (reading == null) {
+            step("the grace menulist reads a value the driver does not know (${current.getInt("reauthGraceSeconds")} s)")
+        } else if (pickOption(f, reading, "Every time", "settings-grace-menu") { awaitGrace(0, 5_000) }) {
+            return
         }
         step("setting the grace period through the settings command instead")
-        val current = zen("app.getState").getJSONObject("settings").getJSONObject("passwords")
         zen("settings.update", JSONObject().put("passwords", current.put("reauthGraceSeconds", 0)))
     }
 
@@ -582,7 +609,8 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
 
     /**
      * Bounds of the app's control named `label` (its text or aria-label). A clickable match wins
-     * over a plain one: a settings row's label text repeats the name of the menulist beside it.
+     * over a plain one: the page's container is labelled "Passwords", as the header's menulist
+     * reads while the list is the view.
      */
     private fun findControl(label: String): Rect? {
         val matches = nodes { node ->
@@ -724,8 +752,15 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         private const val MENU_LABEL = "Menu"
         private const val HANDLE_LABEL = "Resize menu"
         private const val CLOSE_LABEL = "Close (Esc)"
-        private const val CATEGORY_LABEL = "Category"
-        private const val GRACE_LABEL = "Ask again before showing or copying"
+        /** What the settings' re-authentication menulist reads for each grace period it offers. */
+        private val GRACE_LABELS = mapOf(
+            0 to "Every time",
+            30 to "After 30 seconds",
+            60 to "After 1 minute",
+            300 to "After 5 minutes",
+            900 to "After 15 minutes",
+            3600 to "After 1 hour"
+        )
         /** The login the detail steps open: the one username that appears once. */
         private const val DETAIL_USERNAME = "grace.hopper"
         /**
