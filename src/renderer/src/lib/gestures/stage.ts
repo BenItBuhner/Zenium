@@ -492,11 +492,12 @@ if (!flags.__zenStageWired) {
       popOverviewSurface = null
     }
   })
-  // Any other chrome surface (URL bar, panels, drawer, menu) replaces the overview outright.
+  // Any other chrome surface (URL bar, panels, menu) replaces the overview outright; the Spaces
+  // drawer is the exception, it opens over the overview and leaves it in place.
   uiStore.subscribe(() => {
     const ui = uiStore.get()
     if (
-      (ui.urlbar.open || ui.overlay !== 'none' || ui.drawerOpen || ui.menu) &&
+      (ui.urlbar.open || ui.overlay !== 'none' || ui.menu) &&
       stageStore.get().overview.phase !== 'closed'
     )
       dismissOverview()

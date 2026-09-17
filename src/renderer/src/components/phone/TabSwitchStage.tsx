@@ -1,6 +1,7 @@
-import type { JSX } from 'react'
+import type { CSSProperties, JSX } from 'react'
 import type { Rect, UIState } from '@shared/types'
 import type { TabSwitchState } from '@renderer/lib/gestures/stage'
+import { groupColorChannels, groupOf } from '@renderer/lib/groups'
 import { TabPreview } from './TabPreview'
 
 interface Props {
@@ -13,18 +14,22 @@ interface Props {
 /**
  * The tab track during a sideways swipe: every tab is a card the size of the page, laid out
  * side by side and moved as one with the finger. Cards leaving the centre shrink a little and
- * dim, so depth tells you which one you are about to land on.
+ * dim, so depth tells you which one you are about to land on. Tabs of a group sit next to each
+ * other on the track and wear the group's name along their top edge while the track is moving.
  */
 export function TabSwitchStage({ state, tabs, area }: Props): JSX.Element {
-  const { order, position, advance } = tabs
+  const { order, position, advance, origin } = tabs
   const first = Math.max(0, Math.floor(position) - 1)
   const last = Math.min(order.length - 1, Math.ceil(position) + 1)
+  // The ribbon has nothing to add to a page that is at rest: it fades in with the movement.
+  const moving = Math.min(1, Math.abs(position - origin) * 2.5)
   const cards: JSX.Element[] = []
   for (let index = first; index <= last; index++) {
     const tab = state.tabs[order[index]]
     if (!tab) continue
     const offset = index - position
     const distance = Math.min(1, Math.abs(offset))
+    const group = groupOf(state, tab)
     cards.push(
       <div
         key={tab.id}
@@ -38,6 +43,20 @@ export function TabSwitchStage({ state, tabs, area }: Props): JSX.Element {
         }}
       >
         <TabPreview tab={tab} />
+        {group && (
+          <div
+            className="zen-group-ribbon absolute inset-x-0 top-0 flex h-7 items-center gap-2 px-3 text-[12px] font-semibold"
+            style={
+              {
+                opacity: moving,
+                '--zen-group-rgb': groupColorChannels(group.color)
+              } as CSSProperties
+            }
+          >
+            <span className="zen-group-dot h-2 w-2 shrink-0 rounded-full" />
+            <span className="min-w-0 truncate">{group.name}</span>
+          </div>
+        )}
         <div className="zen-stage-dim absolute inset-0" style={{ opacity: 0.22 * distance }} />
       </div>
     )

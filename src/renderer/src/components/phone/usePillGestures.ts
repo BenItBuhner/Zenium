@@ -221,16 +221,25 @@ export type OverviewHandleHandlers = Omit<PillGestureHandlers, 'onClick' | 'onCo
 
 /**
  * Dragging the open overview by its header pushes it back out towards the bar, with the same
- * physics as the pill; a touch during its animation catches it just the same.
+ * physics as the pill; a touch during its animation catches it just the same. A touch that does
+ * not move stays a tap: the drag (and the pointer capture that goes with it) only begins once
+ * the finger has crossed the slop, so the header's buttons still receive their clicks.
  */
 export function useOverviewHandle({ edge }: { edge: PhoneBarPosition }): OverviewHandleHandlers {
-  const touch = useRef<{ id: number; y0: number; tracker: VelocityTracker } | null>(null)
+  const touch = useRef<{
+    id: number
+    x0: number
+    y0: number
+    dragging: boolean
+    tracker: VelocityTracker
+  } | null>(null)
   const inward = edge === 'bottom' ? -1 : 1
 
   const finish = (e: ReactPointerEvent<HTMLElement>, cancelled: boolean): void => {
     const t = touch.current
     if (!t || t.id !== e.pointerId) return
     touch.current = null
+    if (!t.dragging) return
     const { vy } = cancelled ? { vy: 0 } : t.tracker.velocity(e.timeStamp)
     releaseOverview(vy * inward)
   }
@@ -240,16 +249,30 @@ export function useOverviewHandle({ edge }: { edge: PhoneBarPosition }): Overvie
       if (e.button !== 0 || touch.current) return
       const state = browserStore.get().state
       if (!state) return
-      if (!catchOverview()) beginOverviewDrag(state)
       const tracker = new VelocityTracker()
       tracker.add(e.timeStamp, e.clientX, e.clientY)
-      touch.current = { id: e.pointerId, y0: e.clientY, tracker }
-      e.currentTarget.setPointerCapture(e.pointerId)
+      // Mid-flight the header has no working controls, so a catch may take the touch at once.
+      const dragging = catchOverview()
+      touch.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dragging, tracker }
+      if (dragging) e.currentTarget.setPointerCapture(e.pointerId)
     },
     onPointerMove: (e) => {
       const t = touch.current
       if (!t || t.id !== e.pointerId) return
       track(t.tracker, e)
+      if (!t.dragging) {
+        const dx = e.clientX - t.x0
+        const dy = e.clientY - t.y0
+        if (Math.hypot(dx, dy) < SLOP) return
+        const state = browserStore.get().state
+        if (!state || Math.abs(dx) > Math.abs(dy) || !beginOverviewDrag(state)) {
+          touch.current = null
+          return
+        }
+        t.dragging = true
+        t.y0 = e.clientY
+        e.currentTarget.setPointerCapture(e.pointerId)
+      }
       dragOverview((e.clientY - t.y0) * inward)
     },
     onPointerUp: (e) => finish(e, false),

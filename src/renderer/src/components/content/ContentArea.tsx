@@ -113,13 +113,15 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   )
 }
 
-/** Chrome that dims the page behind it and is not the gesture stage (URL bar, panels, drawer…). */
+/**
+ * Chrome that dims the page behind it and is not the gesture stage (URL bar, panels, menus).
+ * The phone's Spaces drawer is not counted: it slides over the overview, which keeps the stage.
+ */
 function overlayCoversContentBesidesStage(ui: UiState): boolean {
   return (
     ui.overlay !== 'none' ||
     ui.urlbar.open ||
     ui.drag !== null ||
-    ui.drawerOpen ||
     ui.menu !== null ||
     ui.siteInfoOpen
   )
