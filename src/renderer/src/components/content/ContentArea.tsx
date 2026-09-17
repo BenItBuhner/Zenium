@@ -64,53 +64,60 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   const dropKey = dropStore.use((s) => s.key)
   const foreign = isForeignTab(state, tab?.id)
 
+  // Overlays are hosted beside the frame, not inside it: on phones the frame recedes (scales to
+  // .97) under a sheet, and a sheet mounted within it would shrink with the page – its 44 px
+  // targets measured 42.7. The wrapper has the frame's box and no transform of its own.
   return (
-    <div
-      className="zen-content-frame relative flex h-full min-h-0 flex-col overflow-hidden"
-      data-staged={staged || undefined}
-    >
-      <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden">
-        {state.capabilities.pullToRefresh && <PullIndicator />}
-        {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
-        {tab && foreign && !contentHidden && !glanceActive && <ForeignTabPreview tabId={tab.id} />}
-        {showSnapshot && (
-          <div className="absolute inset-0">
-            {ui.snapshot && ui.snapshotTabId === (glanceActive ? glanceParentId : tab?.id) ? (
-              <img
-                src={ui.snapshot}
-                alt=""
-                className="h-full w-full object-cover object-top"
-                draggable={false}
+    <div className="relative flex h-full min-h-0 flex-col">
+      <div
+        className="zen-content-frame relative flex h-full min-h-0 flex-col overflow-hidden"
+        data-staged={staged || undefined}
+      >
+        <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden">
+          {state.capabilities.pullToRefresh && <PullIndicator />}
+          {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
+          {tab && foreign && !contentHidden && !glanceActive && (
+            <ForeignTabPreview tabId={tab.id} />
+          )}
+          {showSnapshot && (
+            <div className="absolute inset-0">
+              {ui.snapshot && ui.snapshotTabId === (glanceActive ? glanceParentId : tab?.id) ? (
+                <img
+                  src={ui.snapshot}
+                  alt=""
+                  className="h-full w-full object-cover object-top"
+                  draggable={false}
+                />
+              ) : null}
+              <div
+                className={cn(
+                  'absolute inset-0 bg-black/35 transition-opacity',
+                  ui.drag && 'bg-black/20'
+                )}
               />
-            ) : null}
-            <div
-              className={cn(
-                'absolute inset-0 bg-black/35 transition-opacity',
-                ui.drag && 'bg-black/20'
-              )}
+            </div>
+          )}
+          {group && local && !contentHidden && !glanceActive && (
+            <SplitChrome state={state} group={group} area={local} activeTabId={tab?.id ?? null} />
+          )}
+          {ui.drag && local && tab && <SplitDropZones dropKey={dropKey} />}
+          {glanceActive && state.glance && local && (
+            <GlanceFrame state={state} glance={state.glance} area={local} ready={ui.glanceReady} />
+          )}
+          {ui.urlbar.open && local && !phone && (
+            <Urlbar
+              key={`${ui.urlbar.mode}-${ui.urlbar.tabId ?? 'new'}`}
+              state={state}
+              urlbar={ui.urlbar}
+              area={local}
             />
-          </div>
+          )}
+        </div>
+        {ui.findOpen && ui.findTabId && state.tabs[ui.findTabId] && (
+          <FindBar state={state} tabId={ui.findTabId} />
         )}
-        {group && local && !contentHidden && !glanceActive && (
-          <SplitChrome state={state} group={group} area={local} activeTabId={tab?.id ?? null} />
-        )}
-        {ui.drag && local && tab && <SplitDropZones dropKey={dropKey} />}
-        {glanceActive && state.glance && local && (
-          <GlanceFrame state={state} glance={state.glance} area={local} ready={ui.glanceReady} />
-        )}
-        {ui.urlbar.open && local && !phone && (
-          <Urlbar
-            key={`${ui.urlbar.mode}-${ui.urlbar.tabId ?? 'new'}`}
-            state={state}
-            urlbar={ui.urlbar}
-            area={local}
-          />
-        )}
-        {ui.overlay !== 'none' && <OverlayHost state={state} ui={ui} />}
       </div>
-      {ui.findOpen && ui.findTabId && state.tabs[ui.findTabId] && (
-        <FindBar state={state} tabId={ui.findTabId} />
-      )}
+      {ui.overlay !== 'none' && <OverlayHost state={state} ui={ui} />}
     </div>
   )
 }

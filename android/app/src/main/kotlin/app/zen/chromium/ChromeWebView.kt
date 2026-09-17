@@ -12,7 +12,9 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewAssetLoader
+import app.zen.chromium.ext.ExtensionStore
 import org.json.JSONObject
+import java.io.File
 
 /**
  * The WebView that renders Zen's chrome (sidebar, bottom bar, overlays) and runs the browser core.
@@ -23,6 +25,11 @@ import org.json.JSONObject
 class ChromeWebView(context: Context, private val host: Host) : WebView(context) {
     private val loader = WebViewAssetLoader.Builder()
         .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
+        // The extension store's package files (downloads and picked documents) and the installed
+        // extensions' files, streamed to the core without a trip through the JS bridge
+        // (ext/ExtensionStore.kt, src/android/extensionStoreIo.ts).
+        .addPathHandler(PACKAGES_PATH, WebViewAssetLoader.InternalStoragePathHandler(context, File(context.cacheDir, ExtensionStore.PACKAGES_DIR)))
+        .addPathHandler(EXTENSION_FILES_PATH, WebViewAssetLoader.InternalStoragePathHandler(context, File(context.filesDir, ExtensionStore.ROOT_DIR)))
         .build()
     var ready = false
         private set
@@ -173,5 +180,9 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
 
     companion object {
         const val APP_ORIGIN = "https://appassets.androidplatform.net"
+        /** Package files by token (`extensionStoreIo.ts` PACKAGES_PATH). */
+        const val PACKAGES_PATH = "/ext-packages/"
+        /** Installed extension files, `<id>/<version>/<path>` (`extensionStoreIo.ts` FILES_PATH). */
+        const val EXTENSION_FILES_PATH = "/ext-files/"
     }
 }
