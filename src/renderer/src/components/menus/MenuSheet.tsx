@@ -2,10 +2,11 @@ import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronLeft, ChevronRight } from 'lucide-react'
 import type { MenuDescriptor, MenuItemDescriptor } from '@shared/types'
-import { useBackDismissal, useBackSurface } from '@renderer/lib/back'
+import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
-import { closeMenu, lastPointer, pickMenuItem, uiStore } from '@renderer/lib/ui'
+import { closeMenu, lastPointer, pickMenuItem } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
 /**
  * Renders a `menu.show` descriptor for hosts without native popup menus. Touch gets a bottom
@@ -14,104 +15,146 @@ import { cn } from '@renderer/lib/utils'
  */
 export function MenuSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const viewport = useViewport()
-  const sheet = viewport.coarse
-  // Escape closes either variant (hardware keyboards exist on tablets and DeX too).
+  return viewport.coarse ? <MenuBottomSheet menu={menu} /> : <Popover menu={menu} />
+}
+
+/** Escape closes either variant (hardware keyboards exist on tablets and DeX too). */
+function useEscape(close: () => void): void {
+  const latest = useRef(close)
+  useEffect(() => {
+    latest.current = close
+  })
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopImmediatePropagation()
-        closeMenu()
+        latest.current()
       }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [])
-  return sheet ? <BottomSheet menu={menu} /> : <Popover menu={menu} />
 }
 
 // ---------------------------------------------------------------------------
 // Bottom sheet (touch)
 // ---------------------------------------------------------------------------
 
-function BottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
-  const [path, setPath] = useState<MenuItemDescriptor[]>([])
-  const current = path.length ? (path[path.length - 1].submenu ?? []) : menu.items
-  const insets = uiStore.use((s) => s.insets)
-  const title = path.length ? path[path.length - 1].label : sourceTitle(menu.source)
+interface MenuNav {
+  path: MenuItemDescriptor[]
+  /** Which way the last drill went; 0 until the first one, so the root list does not slide in. */
+  direction: 1 | -1 | 0
+}
 
-  // The system back gesture: the sheet follows the finger down, shrinking a little, while the
-  // scrim thins out; commit finishes the slide and closes, cancel springs it back up.
-  const scrimRef = useRef<HTMLDivElement>(null)
-  const sheetRef = useRef<HTMLDivElement>(null)
-  useBackDismissal('menu', {
-    travel: 360,
-    render: (v) => {
-      const sheet = sheetRef.current
-      const scrim = scrimRef.current
-      if (sheet) sheet.style.transform = `translateY(${v * 100}%) scale(${1 - 0.06 * v})`
-      if (scrim) scrim.style.backgroundColor = `rgb(0 0 0 / ${0.4 * (1 - v)})`
-    },
-    dismissed: () => closeMenu()
+/**
+ * The menu as a draggable sheet, laid out like the rest of the chrome: rows in the sidebar's
+ * type and radius, sections told apart by spacing alone, a title row like the drawer's. Picking
+ * a row slides the sheet away first, so the host never snapshots the menu when it dims the page
+ * for whatever the row opens.
+ */
+function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
+  const [nav, setNav] = useState<MenuNav>({ path: [], direction: 0 })
+  const { path } = nav
+  const title = path.length ? path[path.length - 1].label : sourceTitle(menu.source)
+  const groups = useMemo(
+    () => groupItems(path.length ? (path[path.length - 1].submenu ?? []) : menu.items),
+    [path, menu.items]
+  )
+  const sheet = useRef<BottomSheetHandle>(null)
+
+  // The system back gesture drives the sheet's own dismissal: the finger pulls it down, commit
+  // slides it away, cancel springs it back; the back button and Escape slide it away too.
+  useBackSurface({
+    name: 'menu',
+    onProgress: (progress) => sheet.current?.backProgress(progress),
+    onCommit: () => sheet.current?.commitBack(),
+    onCancel: () => sheet.current?.cancelBack()
   })
+  useEscape(() => sheet.current?.dismiss())
 
   return (
-    <div
-      ref={scrimRef}
-      className="fixed inset-0 z-[90] flex flex-col justify-end bg-black/40 zen-animate-fade"
-      onClick={() => closeMenu()}
-    >
-      <div
-        ref={sheetRef}
-        className="zen-panel zen-sheet-in mx-auto w-full max-w-[520px] rounded-b-none rounded-t-2xl border-b-0 pb-1"
-        style={{ paddingBottom: Math.max(8, insets.bottom), transformOrigin: '50% 100%' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-[var(--zen-fg)]/20" />
-        <div className="flex h-11 items-center gap-1 px-2">
+    <BottomSheet
+      ref={sheet}
+      onDismissed={() => closeMenu()}
+      contentKey={`${menu.id}:${path.map((item) => item.id).join('/')}`}
+      handleLabel="Resize menu"
+      header={
+        <div className="flex h-9 items-center gap-1">
           {path.length > 0 && (
             <button
               type="button"
-              className="zen-toolbar-button h-9 w-9"
-              onClick={() => setPath((p) => p.slice(0, -1))}
+              className="zen-toolbar-button h-11 w-11 shrink-0"
+              style={{ borderRadius: 12 }}
+              onClick={() => setNav((n) => ({ path: n.path.slice(0, -1), direction: -1 }))}
               aria-label="Back"
             >
-              <ChevronLeft className="h-4 w-4" />
+              <ChevronLeft className="h-5 w-5" strokeWidth={1.75} />
             </button>
           )}
-          <span className="min-w-0 flex-1 truncate px-2 text-[13px] font-semibold">{title}</span>
+          <span
+            className={cn(
+              'min-w-0 flex-1 truncate text-[17px] font-semibold leading-tight tracking-[-0.012em]',
+              path.length === 0 && 'px-3'
+            )}
+          >
+            {title}
+          </span>
         </div>
-        <ul className="max-h-[60vh] overflow-y-auto px-2">
-          {current.map((item) =>
-            item.type === 'separator' ? (
-              <li key={item.id} className="my-1 h-px bg-[var(--zen-border)]" />
-            ) : (
+      }
+    >
+      <div
+        key={path.length}
+        className={cn(
+          'flex flex-col gap-2 pb-1',
+          nav.direction > 0 && 'zen-drawer-right',
+          nav.direction < 0 && 'zen-drawer-left'
+        )}
+      >
+        {groups.map((group, index) => (
+          <ul key={index} className="flex flex-col">
+            {group.map((item) => (
               <li key={item.id}>
                 <button
                   type="button"
                   disabled={!item.enabled}
-                  className={cn(
-                    'flex h-12 w-full items-center gap-3 rounded-xl px-3 text-left text-[14px]',
-                    'active:bg-[var(--zen-element-bg-hover)] disabled:opacity-40'
-                  )}
+                  className="zen-sheet-item"
                   onClick={() => {
-                    if (item.submenu) setPath((p) => [...p, item])
-                    else pickMenuItem(item.id)
+                    if (item.submenu) setNav((n) => ({ path: [...n.path, item], direction: 1 }))
+                    else sheet.current?.dismiss(() => pickMenuItem(item.id))
                   }}
                 >
                   <span className="min-w-0 flex-1 truncate">{item.label}</span>
                   {(item.type === 'checkbox' || item.type === 'radio') && item.checked && (
-                    <Check className="h-4 w-4" />
+                    <Check className="h-5 w-5 shrink-0" strokeWidth={1.75} />
                   )}
-                  {item.submenu && <ChevronRight className="h-4 w-4 opacity-60" />}
+                  {item.submenu && (
+                    <ChevronRight className="h-5 w-5 shrink-0 opacity-60" strokeWidth={1.75} />
+                  )}
                 </button>
               </li>
-            )
-          )}
-        </ul>
+            ))}
+          </ul>
+        ))}
       </div>
-    </div>
+    </BottomSheet>
   )
+}
+
+/** Rows between separators form a group; the separators themselves are not drawn. */
+function groupItems(items: MenuItemDescriptor[]): MenuItemDescriptor[][] {
+  const groups: MenuItemDescriptor[][] = []
+  let group: MenuItemDescriptor[] = []
+  for (const item of items) {
+    if (item.type === 'separator') {
+      if (group.length) groups.push(group)
+      group = []
+    } else {
+      group.push(item)
+    }
+  }
+  if (group.length) groups.push(group)
+  return groups
 }
 
 function sourceTitle(source: MenuDescriptor['source']): string {
@@ -153,13 +196,13 @@ function itemOffsets(items: MenuItemDescriptor[]): number[] {
 }
 
 function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
+  useBackSurface({ name: 'menu', onCommit: () => closeMenu() })
+  useEscape(() => closeMenu())
   // Anchor at the click that opened the menu (pointer position captured before the round trip).
   const anchor = useMemo(
     () => ({ x: menu.x ?? lastPointer.x, y: menu.y ?? lastPointer.y }),
     [menu.id, menu.x, menu.y] // eslint-disable-line react-hooks/exhaustive-deps
   )
-  // A popover has nothing to slide: the back gesture simply closes it.
-  useBackSurface({ name: 'menu', onCommit: () => closeMenu() })
   return (
     <div
       className="fixed inset-0 z-[90]"

@@ -19,6 +19,7 @@ import type {
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS, spaceLabel } from '@shared/defaults'
+import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { activeTab } from '@renderer/lib/selectors'
 import { openOverlay, uiStore } from '@renderer/lib/ui'
@@ -126,10 +127,16 @@ export function SettingsPanel({
   const setSection = (id: SettingsSection): void => uiStore.set({ overlaySection: id })
   const s = state.settings
   const set = (patch: Partial<Settings>): void => run('settings.update', patch)
+  // The section list scrolls down on desktop and sideways as a row of chips on phones.
+  const fadeNav = useFadeEdges<HTMLElement>({ axis: 'auto', size: 24 })
+  const fadeContent = useFadeEdges<HTMLDivElement>({ axis: 'y' })
   return (
     <OverlayShell title="Settings" variant="full" className="zen-settings">
       <div className="flex h-full">
-        <nav className="w-52 shrink-0 overflow-y-auto border-r border-[var(--zen-border)] p-2">
+        <nav
+          ref={fadeNav}
+          className="w-52 shrink-0 overflow-y-auto border-r border-[var(--zen-border)] p-2"
+        >
           {sections.map((item) => (
             <button
               key={item.id}
@@ -144,7 +151,7 @@ export function SettingsPanel({
             </button>
           ))}
         </nav>
-        <div className="min-w-0 flex-1 overflow-y-auto p-6">
+        <div ref={fadeContent} className="min-w-0 flex-1 overflow-y-auto p-6">
           <div className="mx-auto flex max-w-2xl flex-col gap-6">
             {section === 'look' && <LookSection s={s} set={set} />}
             {section === 'compact' && <CompactSection s={s} set={set} />}

@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useState } from 'react'
 import { FolderOpen, Link2, Plus, Puzzle, Trash2 } from 'lucide-react'
 import type { Mod, UIState } from '@shared/types'
+import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { cn } from '@renderer/lib/utils'
 import { Button } from '../ui/button'
@@ -14,6 +15,7 @@ type Tab = 'extensions' | 'mods'
 /** Zen's "Add-ons and Themes" (Ctrl+Shift+A): unpacked extensions and chrome CSS mods. */
 export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
   const [tab, setTab] = useState<Tab>('extensions')
+  const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
   return (
     <OverlayShell title="Add-ons and Themes" variant="full">
       <div className="flex h-full">
@@ -37,7 +39,7 @@ export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
             </button>
           ))}
         </nav>
-        <div className="min-w-0 flex-1 overflow-y-auto p-6">
+        <div ref={fade} className="min-w-0 flex-1 overflow-y-auto p-6">
           <div className="mx-auto flex max-w-2xl flex-col gap-5">
             {tab === 'extensions' ? (
               <ExtensionsSection state={state} />

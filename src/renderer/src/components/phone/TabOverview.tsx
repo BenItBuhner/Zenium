@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { PanelLeft, Plus, X } from 'lucide-react'
 import type { Folder, Rect, Space, Tab, UIState } from '@shared/types'
+import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { closeOverview, type OverviewState } from '@renderer/lib/gestures/stage'
 import {
@@ -54,6 +55,7 @@ export function TabOverview({ state, overview, area }: Props): JSX.Element {
 
   const rootRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const fadeGrid = useFadeEdges<HTMLDivElement>({ axis: 'y' })
   const cells = useRef(new Map<string, HTMLElement>())
   const [heroCell, setHeroCell] = useState<Rect | null>(null)
   const handle = useOverviewHandle({ edge: 'bottom' })
@@ -160,7 +162,10 @@ export function TabOverview({ state, overview, area }: Props): JSX.Element {
           </header>
           {state.spaces.length > 1 && <SpaceStrip spaces={state.spaces} activeId={space.id} />}
           <div
-            ref={scrollRef}
+            ref={(el) => {
+              scrollRef.current = el
+              return fadeGrid(el)
+            }}
             className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-1"
             style={{ touchAction: 'pan-y', overscrollBehavior: 'contain' }}
             onScroll={measure}
@@ -314,8 +319,12 @@ function NewTabCard(): JSX.Element {
 }
 
 function SpaceStrip({ spaces, activeId }: { spaces: Space[]; activeId: string }): JSX.Element {
+  const fade = useFadeEdges<HTMLDivElement>({ axis: 'x', size: 24 })
   return (
-    <div className="zen-overview-strip flex shrink-0 gap-2 overflow-x-auto px-3 pb-2 pt-1">
+    <div
+      ref={fade}
+      className="zen-overview-strip flex shrink-0 gap-2 overflow-x-auto px-3 pb-2 pt-1"
+    >
       {spaces.map((s) => (
         <button
           key={s.id}

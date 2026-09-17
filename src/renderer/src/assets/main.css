@@ -623,7 +623,7 @@
     padding-right: 12px;
     border-radius: 28px 28px 0 0;
     background: var(--zen-panel-bg);
-    backdrop-filter: blur(28px) saturate(1.25);
+    backdrop-filter: var(--zen-blur-panel);
     box-shadow:
       0 -1px 0 rgb(255 255 255 / 0.35) inset,
       0 -12px 48px rgb(0 0 0 / 0.22);
@@ -700,6 +700,150 @@
   .zen-sheet-text-button:active:not(:disabled) {
     opacity: 0.6;
   }
+}
+
+@layer components {
+  /*
+   * A `.zen-sheet` with two detents (`BottomSheet`): height and transform are written per frame
+   * by the sheet's motion, so it starts at nothing and every pan on it is the sheet's. Its rows
+   * are the sidebar's rows – same type, the chrome's base radius, a press shows as the element
+   * tone – with sections set apart by spacing rather than rules.
+   */
+  /* The scrim is the space's own dark, never flat black; the sheet fades it in with its position. */
+  .zen-sheet-scrim {
+    background: var(--zen-scrim);
+    touch-action: none;
+    will-change: opacity;
+  }
+  .zen-sheet-detents {
+    height: 0;
+    touch-action: none;
+    transform: translate3d(0, 0, 0);
+  }
+  .zen-sheet-handle-hit {
+    display: flex;
+    width: 100%;
+    height: 20px;
+    align-items: center;
+    justify-content: center;
+  }
+  .zen-sheet-handle {
+    width: 32px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgb(var(--zen-fg-rgb) / 0.25);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-sheet[data-dragging='true'] .zen-sheet-handle {
+    background: rgb(var(--zen-fg-rgb) / 0.4);
+  }
+  /* The body scrolls on its own only while the sheet rests expanded; otherwise a pan is a drag. */
+  .zen-sheet-scroll {
+    touch-action: pan-y;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+  }
+  .zen-sheet-scroll::-webkit-scrollbar {
+    display: none;
+  }
+  .zen-sheet[data-locked='true'] .zen-sheet-scroll {
+    touch-action: none;
+  }
+  .zen-sheet-item {
+    display: flex;
+    width: 100%;
+    height: 48px;
+    align-items: center;
+    gap: 12px;
+    padding: 0 12px;
+    border-radius: 10px;
+    corner-shape: var(--zen-corner);
+    color: var(--zen-fg);
+    text-align: left;
+    font-size: var(--zen-sidebar-font);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-sheet-item:active:not(:disabled) {
+    background: var(--zen-element-bg-hover);
+  }
+  .zen-sheet-item:disabled {
+    opacity: 0.4;
+  }
+  /* A row under a finger that is dragging the sheet is not being pressed. */
+  .zen-sheet[data-dragging='true'] .zen-sheet-item:active {
+    background: transparent;
+  }
+}
+
+/*
+ * Fading scroll edges (`useFadeEdges`). The scroll container is masked, so content dissolves
+ * into whatever is behind it – no gradient overlay, no assumption about the background. The
+ * depth of each edge is a registered length: 0 at an edge with nothing past it, the fade size
+ * once there is, eased between the two.
+ */
+@property --zen-fade-start {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@property --zen-fade-end {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+[data-fade-axis] {
+  transition:
+    --zen-fade-start 180ms var(--zen-ease),
+    --zen-fade-end 180ms var(--zen-ease);
+}
+[data-fade-axis='y'] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+}
+[data-fade-axis='x'] {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+}
+
+/*
+ * A sheet coming up pushes the page back: the content frame recedes (scale 1 → .97, its corner
+ * 14 → 20) and the bottom bar fades out, both from the sheet's own progress – `--zen-recede`,
+ * 0…1, written per frame by the sheet along with its scrim. The frame is promoted only while a
+ * sheet is up (`data-receding`).
+ */
+:root[data-form-factor='phone'] .zen-content-frame {
+  transform: scale(calc(1 - 0.03 * var(--zen-recede, 0)));
+  border-radius: calc(var(--zen-content-radius) + 6px * var(--zen-recede, 0));
+}
+:root[data-form-factor='phone'][data-receding] .zen-content-frame {
+  will-change: transform;
+}
+:root[data-form-factor='phone'] .zen-phone-bar {
+  opacity: calc(1 - var(--zen-recede, 0));
 }
 
 /* Mobile hosts: keep the chrome out of the status bar, cutouts, gesture bar and keyboard. */
