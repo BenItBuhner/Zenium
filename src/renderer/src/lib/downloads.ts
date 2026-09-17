@@ -159,7 +159,7 @@ export function onDownloadFinished(
   const finished = downloadsUi.get().unseen
   if (
     state === 'completed' &&
-    browser.settings.downloads.showWhenDone &&
+    browser.settings.downloads.openPanelOnComplete &&
     !isPhone() &&
     !open &&
     uiStore.get().overlay !== 'downloads' &&

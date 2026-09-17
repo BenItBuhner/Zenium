@@ -9,6 +9,7 @@ import type {
 } from './types'
 import { DEFAULT_CONTAINER_ID } from './types'
 import { APP_ICON_DEFAULT } from './appIcon'
+import { DEFAULT_DOWNLOAD_SETTINGS } from './downloads'
 import { DEFAULT_UPDATE_SETTINGS } from './updates'
 
 /** Off until the user turns it on in Settings → AI Agents; loopback only, approval required. */
@@ -113,6 +114,7 @@ export const DEFAULT_SETTINGS: Settings = {
   newTabPosition: 'end',
   restoreSession: true,
   askWhereToSave: false,
+  downloads: structuredClone(DEFAULT_DOWNLOAD_SETTINGS),
   onboardingDone: false,
   showTabSeparator: true,
   ctrlTabCyclesWithinSection: false,

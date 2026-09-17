@@ -2,7 +2,7 @@ import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Download } from 'lucide-react'
 import type { DownloadItem, UIState } from '@shared/types'
-import { downloadStatus, isActiveDownload, needsDangerDecision } from '@shared/downloads'
+import { downloadStatus, displayNameOf, engineFieldsOf, isActiveDownload, needsDangerDecision } from '@shared/downloads'
 import { run } from '@renderer/lib/api'
 import {
   DOWNLOAD_LINGER_MS,
@@ -121,7 +121,6 @@ function Bubble({ state }: { state: UIState }): JSX.Element {
                 key={item.id}
                 item={item}
                 highlighted={item.id === ui.highlightId}
-                retry={state.capabilities.downloadFiles}
               />
             ))}
           </ul>
@@ -133,12 +132,10 @@ function Bubble({ state }: { state: UIState }): JSX.Element {
 
 function BubbleRow({
   item,
-  highlighted,
-  retry
+  highlighted
 }: {
   item: DownloadItem
   highlighted: boolean
-  retry: boolean
 }): JSX.Element {
   const ref = useRef<HTMLLIElement>(null)
   useEffect(() => {
@@ -146,8 +143,9 @@ function BubbleRow({
   }, [highlighted])
   const status = downloadStatus(item)
   const active = isActiveDownload(item)
+  const extra = engineFieldsOf(item)
   const openable =
-    item.state === 'completed' && !needsDangerDecision(item) && item.dangerDecision !== 'discarded'
+    item.state === 'completed' && extra.removed !== true && !needsDangerDecision(item)
   const dangerous = needsDangerDecision(item)
   return (
     <li
@@ -174,12 +172,12 @@ function BubbleRow({
         <div
           className={cn(
             'truncate text-[13px] font-medium leading-[1.25]',
-            (item.state === 'cancelled' || item.dangerDecision === 'discarded') &&
+            (item.state === 'cancelled' || extra.removed) &&
               'text-[var(--zen-muted)]'
           )}
           title={item.savePath || item.url}
         >
-          {item.filename}
+          {displayNameOf(item)}
         </div>
         <div
           className={cn(
@@ -203,7 +201,7 @@ function BubbleRow({
         <DangerPills item={item} />
       ) : (
         <div className="zen-download-actions flex shrink-0 items-center gap-0.5">
-          <DownloadActions item={item} retry={retry} />
+          <DownloadActions item={item} retry={false} />
         </div>
       )}
     </li>

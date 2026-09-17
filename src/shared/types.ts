@@ -383,6 +383,26 @@ export interface DownloadItem {
   mimeType: string
 }
 
+/** Desktop chrome keys; the services engine stores the same shape once it lands. */
+export interface DownloadSettings {
+  /** Folder new files go to; `null` means the system Downloads folder. */
+  directory: string | null
+  notifyOnComplete: boolean
+  /** Edge-like: open the bubble when a transfer starts. Chrome 112+ leaves this off. */
+  openPanelOnStart: boolean
+  /** Chrome 112+: open the partial bubble when the last in-progress download finishes. */
+  openPanelOnComplete: boolean
+  autoOpenTypes: string[]
+  /** Keep the toolbar button visible even when nothing is downloading. */
+  alwaysShowButton: boolean
+}
+
+export interface DownloadsProgress {
+  received: number
+  total: number
+  indeterminate: boolean
+}
+
 // ---------------------------------------------------------------------------
 // Search
 // ---------------------------------------------------------------------------
@@ -583,6 +603,7 @@ export interface Settings {
   restoreSession: boolean
   /** Firefox's "Always ask you where to save files"; off saves straight into the Downloads folder. */
   askWhereToSave: boolean
+  downloads: DownloadSettings
   onboardingDone: boolean
   showTabSeparator: boolean
   ctrlTabCyclesWithinSection: boolean
@@ -915,6 +936,10 @@ export interface UIState {
   compactSidebarRevealed: boolean
   window: WindowState
   downloads: DownloadItem[]
+  /** Aggregate of in-flight transfers for the toolbar ring (contract `downloadsProgress`). */
+  downloadsProgress: DownloadsProgress
+  /** Folder the host is saving into (system Downloads unless Settings names another). */
+  downloadsDir: string
   bookmarks: Bookmark[]
   recentlyClosedCount: number
   media: MediaState[]
@@ -1235,6 +1260,15 @@ export interface Commands {
   'download.open': { args: { id: string }; result: void }
   'download.remove': { args: { id: string }; result: void }
   'download.clearCompleted': { args: void; result: void }
+  /** Contract alias of `download.clearCompleted`. */
+  'download.removeCompleted': { args: void; result: void }
+  'download.openFolder': { args: void; result: void }
+  'download.chooseDirectory': { args: void; result: string | null }
+  'download.dragOut': { args: { id: string }; result: void }
+  'download.openPanel': { args: void; result: void }
+  'download.retry': { args: { id: string }; result: void }
+  'download.acceptDanger': { args: { id: string }; result: void }
+  'download.discard': { args: { id: string }; result: void }
 
   'find.start': {
     /** `newSession` starts a fresh search for `text`; otherwise steps to the next/previous match. */
@@ -1384,6 +1418,12 @@ export interface Events {
   }
   /** Show the bubble with this item (a completion notification was clicked). */
   'downloads.show': { id: string | null }
+  /** Contract-shaped change feed (mapped from the current engine's list updates). */
+  'download.changed': {
+    item: DownloadItem
+    kind: 'started' | 'progress' | 'done' | 'removed'
+  }
+  'download.danger': { id: string }
   toast: { message: string; kind?: 'info' | 'error' }
   /** Link hover status text (Firefox shows this in the bottom corner). */
   status: { text: string }

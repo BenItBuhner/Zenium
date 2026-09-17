@@ -17,7 +17,7 @@ import {
   type LucideIcon
 } from 'lucide-react'
 import type { DownloadItem } from '@shared/types'
-import { fileGlyphFor, needsDangerDecision, type FileGlyph } from '@shared/downloads'
+import { fileGlyphFor, needsDangerDecision, engineFieldsOf, type FileGlyph } from '@shared/downloads'
 import { run } from '@renderer/lib/api'
 import { cn } from '@renderer/lib/utils'
 
@@ -43,7 +43,7 @@ export function FileTypeGlyph({
   className?: string
 }): JSX.Element {
   const Icon = GLYPHS[fileGlyphFor(item.filename, item.mimeType)]
-  const dimmed = item.state === 'cancelled' || item.dangerDecision === 'discarded'
+  const dimmed = item.state === 'cancelled' || engineFieldsOf(item).removed === true
   return (
     <span
       className={cn(
@@ -122,7 +122,8 @@ export function DownloadActions({
   showInFolder?: boolean
 }): JSX.Element {
   const id = item.id
-  const onDisk = item.state === 'completed' && item.dangerDecision !== 'discarded'
+  const extra = engineFieldsOf(item)
+  const onDisk = item.state === 'completed' && extra.removed !== true
   return (
     <>
       {item.state === 'progressing' && (
@@ -164,7 +165,7 @@ export function DangerPills({ item }: { item: DownloadItem }): JSX.Element {
         className="zen-download-pill"
         onClick={(e) => {
           e.stopPropagation()
-          run('download.keep', { id: item.id })
+          run('download.acceptDanger', { id: item.id })
         }}
       >
         Keep

@@ -27,6 +27,7 @@ import type {
 } from '../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../shared/types'
 import { sanitizeAppIcon } from '../shared/appIcon'
+import { downloadsProgressOf, sanitizeDownloadSettings } from '../shared/downloads'
 import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
@@ -105,6 +106,8 @@ export class BrowserState {
   shortcutOverrides: Record<string, KeyBinding | null> = {}
   bookmarks: Bookmark[] = []
   downloads: DownloadItem[] = []
+  /** Folder new files land in (host Downloads unless Settings names another). */
+  downloadsDir = ''
   recentlyClosed: ClosedTab[] = []
   media: MediaState[] = []
   devtoolsOpenFor = new Set<string>()
@@ -195,6 +198,7 @@ export class BrowserState {
     this.settings.resources = sanitizeResourceSettings(data.settings?.resources)
     this.settings.agents = sanitizeAgentSettings(data.settings?.agents)
     this.settings.updates = sanitizeUpdateSettings(data.settings?.updates)
+    this.settings.downloads = sanitizeDownloadSettings(data.settings?.downloads)
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     this.bookmarks = Array.isArray(data.bookmarks) ? data.bookmarks : []
     if (Array.isArray(data.windows) && data.windows.length) {
@@ -432,6 +436,8 @@ export class BrowserState {
       compactSidebarRevealed: win.compactSidebarRevealed,
       window: win.windowState(),
       downloads: this.downloads,
+      downloadsProgress: downloadsProgressOf(this.downloads),
+      downloadsDir: this.downloadsDir,
       bookmarks: this.bookmarks,
       recentlyClosedCount: this.recentlyClosed.length,
       media: this.media,
