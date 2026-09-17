@@ -1,10 +1,15 @@
-import type { DownloadItem, UIState } from '@shared/types'
-import { isActiveDownload } from '@shared/downloads'
+import type { UIState } from '@shared/types'
 import { run } from './api'
 import { isPhone } from './formFactor'
 import { reducedMotion } from './motion/spring'
 import { activeTab } from './selectors'
 import { createStore } from './store'
+import {
+  BUBBLE_POP_MS,
+  DOWNLOAD_LINGER_MS,
+  shouldAutoOpenPartialBubble,
+  type DownloadsUi
+} from './downloadsLogic'
 import {
   browserStore,
   captureActiveTab,
@@ -14,28 +19,14 @@ import {
   uiStore
 } from './ui'
 
-/** How long the toolbar button (and the auto-opened bubble) stay once everything finished. */
-export const DOWNLOAD_LINGER_MS = 5000
-/** The bubble's pop animation, played forwards on open and backwards on close. */
-export const BUBBLE_POP_MS = 180
-
-export interface DownloadsUi {
-  /** The bubble is up (or playing its exit while `closing`). */
-  open: boolean
-  closing: boolean
-  /** Ids the partial bubble shows (null → the whole list). */
-  partial: string[] | null
-  /** The bubble opened by itself and leaves again after five idle seconds. */
-  autoClose: boolean
-  /** Row to draw attention to (a notification was clicked). */
-  highlightId: string | null
-  /** Finished while the bubble was closed; the button's badge counts them. */
-  unseen: string[]
-  /** Bumped once per started download: the button pulses. */
-  pulse: number
-  /** The button stays until this time after the last transfer finished (0 → no hold). */
-  lingerUntil: number
-}
+export {
+  BUBBLE_POP_MS,
+  DOWNLOAD_LINGER_MS,
+  bubbleItems,
+  downloadButtonVisible,
+  shouldAutoOpenPartialBubble,
+  type DownloadsUi
+} from './downloadsLogic'
 
 export const downloadsUi = createStore<DownloadsUi>(
   {
@@ -88,8 +79,6 @@ export async function openDownloadBubble(
     highlightId: options.highlightId ?? null,
     unseen: []
   })
-  // The list has been looked at: a failed transfer no longer needs the taskbar's error state.
-  run('download.acknowledge', undefined)
 }
 
 /** Close with the exit animation (Escape, outside click, the auto-close timer). */
@@ -134,9 +123,17 @@ export function toggleDownloadBubble(activeTabId: string | null): void {
 }
 
 /** A transfer began: the button appears (if it was not there) and pulses. */
-export function onDownloadStarted(): void {
+export function onDownloadStarted(browser?: UIState): void {
   holdButton(0)
   downloadsUi.set((s) => ({ pulse: s.pulse + 1 }))
+  if (
+    browser?.settings.downloads.openPanelOnStart &&
+    !isPhone() &&
+    !bubbleIsOpen() &&
+    uiStore.get().overlay !== 'downloads'
+  ) {
+    void openDownloadBubble({ takeFocus: false })
+  }
 }
 
 /**
@@ -158,12 +155,15 @@ export function onDownloadFinished(
   holdButton(Date.now() + DOWNLOAD_LINGER_MS)
   const finished = downloadsUi.get().unseen
   if (
-    state === 'completed' &&
-    browser.settings.downloads.openPanelOnComplete &&
-    !isPhone() &&
-    !open &&
-    uiStore.get().overlay !== 'downloads' &&
-    finished.length > 0
+    shouldAutoOpenPartialBubble({
+      finishedState: state,
+      stillActive,
+      openPanelOnComplete: browser.settings.downloads.openPanelOnComplete,
+      bubbleOpen: open,
+      overlayIsDownloads: uiStore.get().overlay === 'downloads',
+      phone: isPhone(),
+      finishedCount: finished.length
+    })
   ) {
     void openDownloadBubble({ partial: finished, autoClose: true })
   }
@@ -194,23 +194,6 @@ function holdButton(until: number): void {
     },
     Math.max(0, until - Date.now())
   )
-}
-
-/** Whether the toolbar shows the downloads button right now (`lingerUntil` resets when it ends). */
-export function downloadButtonVisible(browser: UIState, ui: DownloadsUi): boolean {
-  return (
-    browser.settings.downloads.alwaysShowButton ||
-    browser.downloads.some(isActiveDownload) ||
-    ui.open ||
-    ui.lingerUntil > 0
-  )
-}
-
-/** The records the bubble lists: the partial set while it exists, else everything. */
-export function bubbleItems(items: DownloadItem[], partial: string[] | null): DownloadItem[] {
-  if (!partial) return items
-  const shown = items.filter((i) => partial.includes(i.id))
-  return shown.length > 0 ? shown : items
 }
 
 const flags = globalThis as unknown as { __zenDownloadsWired?: boolean }

@@ -420,6 +420,25 @@ export interface DownloadHost {
   showInFolder(item: DownloadItem): void
 }
 
+/**
+ * Desktop OS chrome for downloads (taskbar/dock, notifications, folder picker, drag-out).
+ * Optional: Android uses its own downloader notifications. Not the transfer host.
+ */
+export interface DownloadsShell {
+  defaultDirectory(): string
+  openDirectory(path: string): void
+  chooseDirectory(win: ZenWindow, defaultPath: string): Promise<string | null>
+  startFileDrag(item: DownloadItem, win: ZenWindow): void
+  setProgress(
+    items: ReadonlyArray<Pick<DownloadItem, 'state' | 'receivedBytes' | 'totalBytes'>>
+  ): void
+  notifyCompleted(
+    item: DownloadItem,
+    options: { notify: boolean; badge: number; onActivate: () => void }
+  ): void
+  clearBadge(): void
+}
+
 export interface SessionHost {
   clearContainerData(containerId: string): Promise<void>
   /** Wipe the private-browsing session once its last window closed. */
@@ -589,6 +608,8 @@ export interface Platform {
   readonly shell: ShellHost
   readonly net: NetHost
   readonly downloads: DownloadHost
+  /** Desktop taskbar/dock progress, notifications, folder picker and drag-out. */
+  readonly downloadsShell?: DownloadsShell
   readonly sessions: SessionHost
   readonly app: AppHost
   /** Cookies and storage per site; hosts without it show a sheet with the connection only. */

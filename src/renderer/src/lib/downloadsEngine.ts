@@ -1,17 +1,24 @@
 import type { DownloadItem } from '@shared/types'
 import { engineFieldsOf, isActiveDownload } from '@shared/downloads'
-import { run } from './api'
+import { cmd, run } from './api'
 
 /**
- * Thin adapter over the current downloads core. Names match the services contract; calls map
- * onto the commands that exist on main today. Retry / Keep / Discard / Open when done stay
- * unavailable until the engine exposes them.
+ * Commands the services engine will add. False on today's core; the chrome hides the matching
+ * controls. Do not call `download.retry` / `acceptDanger` / `discard` / `setOpenWhenDone` until
+ * these flip — those names are not on the current host.
  */
-export const downloadEngine = {
+export const downloadEngineCapabilities = {
   retry: false,
   acceptDanger: false,
   discard: false,
-  setOpenWhenDone: false,
+  setOpenWhenDone: false
+}
+
+/**
+ * Thin adapter over the current downloads core. Names match the services contract; calls map
+ * onto the commands that exist on main today.
+ */
+export const downloadEngine = {
   pause(id: string): void {
     run('download.pause', { id })
   },
@@ -37,25 +44,13 @@ export const downloadEngine = {
     run('download.openFolder', undefined)
   },
   chooseDirectory(): Promise<string | null> {
-    return run('download.chooseDirectory', undefined)
+    return cmd('download.chooseDirectory', undefined).catch(() => null)
   },
   dragOut(id: string): void {
     run('download.dragOut', { id })
   },
   openPanel(): void {
     run('download.openPanel', undefined)
-  },
-  retryItem(id: string): void {
-    if (!this.retry) return
-    run('download.retry', { id })
-  },
-  acceptDanger(id: string): void {
-    if (!this.acceptDanger) return
-    run('download.acceptDanger', { id })
-  },
-  discard(id: string): void {
-    if (!this.discard) return
-    run('download.discard', { id })
   }
 }
 
@@ -64,13 +59,13 @@ export function canOpenDownload(item: DownloadItem): boolean {
 }
 
 export function needsKeepDiscard(item: DownloadItem): boolean {
-  if (!downloadEngine.acceptDanger && !downloadEngine.discard) return false
+  if (!downloadEngineCapabilities.acceptDanger && !downloadEngineCapabilities.discard) return false
   const extra = engineFieldsOf(item)
   return Boolean(extra.danger && extra.danger.level !== 'safe' && extra.dangerAccepted !== true)
 }
 
 export function canRetryDownload(item: DownloadItem): boolean {
-  if (!downloadEngine.retry) return false
+  if (!downloadEngineCapabilities.retry) return false
   return item.state === 'interrupted' || item.state === 'cancelled'
 }
 

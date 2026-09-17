@@ -56,4 +56,11 @@ describe('BrowserState commits', () => {
     await tick()
     expect(calls).toBe(1)
   })
+
+  it('defaults Chrome 112+ downloads settings on a fresh profile', () => {
+    const s = state(fakeIo())
+    expect(s.settings.downloads.openPanelOnComplete).toBe(true)
+    expect(s.settings.downloads.alwaysShowButton).toBe(false)
+    expect(s.settings.downloads.notifyOnComplete).toBe(false)
+  })
 })

@@ -75,6 +75,7 @@ export function inputToUrl(raw: string): string | null {
       const rest = input.slice('about:'.length)
       if (rest === 'blank' || rest === 'newtab' || rest === 'home') return BLANK_URL
       if (rest === 'preferences' || rest === 'settings') return 'zen://settings'
+      if (rest === 'downloads') return 'zen://downloads'
       return BLANK_URL
     }
     return input

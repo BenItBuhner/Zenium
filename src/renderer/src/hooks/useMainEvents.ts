@@ -67,7 +67,7 @@ export function useMainEvents(): void {
         uiStore.set({ findOpen: true, findTabId: tabId })
         if (again) window.dispatchEvent(new CustomEvent('zen-find-again', { detail: again }))
       }),
-      onEvent('downloads.started', () => onDownloadStarted()),
+      onEvent('downloads.started', () => onDownloadStarted(browserStore.get().state ?? undefined)),
       onEvent('downloads.finished', ({ id, state, active }) => {
         const browser = browserStore.get().state
         if (browser) onDownloadFinished(id, state, active, browser)

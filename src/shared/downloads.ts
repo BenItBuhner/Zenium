@@ -137,7 +137,8 @@ export function needsDangerDecision(item: DownloadItem): boolean {
 // File-type glyph (chrome only; not the engine danger table)
 // ---------------------------------------------------------------------------
 
-export type FileGlyph = 'text' | 'image' | 'archive' | 'video' | 'audio' | 'code' | 'package' | 'file'
+export type FileGlyph =
+  'text' | 'image' | 'archive' | 'video' | 'audio' | 'code' | 'package' | 'file'
 
 const COMPOUND_EXTENSION = /\.tar\.(gz|bz2|xz|zst|lz|lzma)$/i
 
@@ -405,6 +406,8 @@ export function downloadStatus(item: DownloadItem): DownloadStatus {
   }
 }
 
-export function isSettledDownload(state: DownloadState): boolean {
+export function isSettledDownload(
+  state: DownloadState
+): state is Extract<DownloadState, 'completed' | 'cancelled' | 'interrupted'> {
   return state === 'completed' || state === 'cancelled' || state === 'interrupted'
 }

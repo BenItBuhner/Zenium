@@ -23,6 +23,7 @@ import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS, spaceLabel } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
+import { downloadEngine } from '@renderer/lib/downloadsEngine'
 import { activeTab } from '@renderer/lib/selectors'
 import { openOverlay, uiStore } from '@renderer/lib/ui'
 import { cn, relativeTime } from '@renderer/lib/utils'
@@ -300,22 +301,19 @@ function DownloadsSection({
 }): JSX.Element {
   const s = state.settings
   const d = s.downloads
-  const files = state.capabilities.downloadFiles
-  const location = d.location || state.downloadsDir
+  const location = d.directory || state.downloadsDir
   return (
-    <>
+    <div data-zen-settings-downloads>
       <Group title="Saving">
-        {files && (
-          <Row label="Location" hint={location || 'The system Downloads folder'}>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => run('download.chooseLocation', undefined)}
-            >
-              Change
-            </Button>
-          </Row>
-        )}
+        <Row label="Location" hint={location || 'The system Downloads folder'}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void downloadEngine.chooseDirectory()}
+          >
+            Change
+          </Button>
+        </Row>
         <Row label="Ask where to save each file">
           <Switch checked={s.askWhereToSave} onCheckedChange={(v) => set({ askWhereToSave: v })} />
         </Row>
@@ -326,8 +324,17 @@ function DownloadsSection({
           hint="Open the downloads bubble once the last download in progress finishes."
         >
           <Switch
-            checked={d.showWhenDone}
-            onCheckedChange={(v) => set({ downloads: { ...d, showWhenDone: v } })}
+            checked={d.openPanelOnComplete}
+            onCheckedChange={(v) => set({ downloads: { ...d, openPanelOnComplete: v } })}
+          />
+        </Row>
+        <Row
+          label="Show downloads when they start"
+          hint="Open the downloads bubble as soon as a file begins downloading."
+        >
+          <Switch
+            checked={d.openPanelOnStart}
+            onCheckedChange={(v) => set({ downloads: { ...d, openPanelOnStart: v } })}
           />
         </Row>
         <Row label="Show a notification when a download finishes">
@@ -347,20 +354,14 @@ function DownloadsSection({
             onCheckedChange={(v) => set({ downloads: { ...d, alwaysShowButton: v } })}
           />
         </Row>
-        {files && (
-          <Row label="Downloads folder">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => run('download.openFolder', undefined)}
-            >
-              <FolderOpen className="h-3.5 w-3.5" />
-              Open downloads folder
-            </Button>
-          </Row>
-        )}
+        <Row label="Downloads folder">
+          <Button variant="secondary" size="sm" onClick={() => downloadEngine.openFolder()}>
+            <FolderOpen className="h-3.5 w-3.5" />
+            Open downloads folder
+          </Button>
+        </Row>
       </Group>
-    </>
+    </div>
   )
 }
 

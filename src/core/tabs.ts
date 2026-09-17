@@ -874,6 +874,11 @@ export class TabManager {
   navigate(tabId: string, url: string, opts: { upgradedFrom?: string } = {}): void {
     const tab = this.tab(tabId)
     if (!tab || !isNavigableUrl(url)) return
+    if (url.replace(/\/$/, '') === 'zen://downloads') {
+      const win = this.windowFor(tabId) ?? this.browser.focusedWindow()
+      this.browser.emit('overlay.open', { kind: 'downloads' }, win)
+      return
+    }
     tab.url = url
     tab.title = titleForUrl(url)
     tab.errorCode = null

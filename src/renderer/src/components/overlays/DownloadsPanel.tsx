@@ -8,12 +8,11 @@ import {
   engineFieldsOf,
   filterDownloads,
   groupDownloadsByDay,
-  isActiveDownload,
-  needsDangerDecision
+  isActiveDownload
 } from '@shared/downloads'
 import { displayUrl } from '@shared/url'
-import { run } from '@renderer/lib/api'
 import { cn } from '@renderer/lib/utils'
+import { canOpenDownload, downloadEngine, needsKeepDiscard } from '@renderer/lib/downloadsEngine'
 import {
   DangerPills,
   DownloadActions,
@@ -39,6 +38,7 @@ export function DownloadsPanel({ state }: { state: UIState }): JSX.Element {
     <OverlayShell
       title="Downloads"
       variant="full"
+      className="zen-download-page"
       actions={
         <>
           {files && (
@@ -46,25 +46,24 @@ export function DownloadsPanel({ state }: { state: UIState }): JSX.Element {
               variant="ghost"
               size="sm"
               title={state.downloadsDir}
-              onClick={() => run('download.openFolder', undefined)}
+              onClick={() => downloadEngine.openFolder()}
             >
               <FolderOpen className="h-3.5 w-3.5" />
               Open downloads folder
             </Button>
           )}
           {clearable && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => run('download.clearCompleted', undefined)}
-            >
+            <Button variant="ghost" size="sm" onClick={() => downloadEngine.removeCompleted()}>
               Clear all
             </Button>
           )}
         </>
       }
     >
-      <div className="mx-auto flex w-full max-w-[720px] flex-col gap-4 px-4 pb-6 pt-4">
+      <div
+        className="mx-auto flex w-full max-w-[720px] flex-col gap-4 px-4 pb-6 pt-4"
+        data-zen-downloads-page
+      >
         <div className="relative">
           <Search
             className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--zen-muted)]"
@@ -106,34 +105,34 @@ export function DownloadsPanel({ state }: { state: UIState }): JSX.Element {
 function PageRow({ item, files }: { item: DownloadItem; files: boolean }): JSX.Element {
   const status = downloadStatus(item)
   const active = isActiveDownload(item)
-  const dangerous = needsDangerDecision(item)
+  const dangerous = needsKeepDiscard(item)
   const extra = engineFieldsOf(item)
-  const onDisk = item.state === 'completed' && extra.removed !== true && !needsDangerDecision(item)
+  const onDisk = canOpenDownload(item)
   const source = displayUrl(extra.referrer || item.url)
   return (
     <li
       className={cn(
-        'zen-download-row group/row flex items-center gap-3 rounded-[6px] px-2',
-        active ? 'min-h-10 py-1' : 'h-10',
+        'zen-download-row zen-download-row-page group/row flex items-center gap-3 rounded-[8px] px-2',
+        active ? 'min-h-[52px] py-1' : 'min-h-[52px]',
         onDisk && 'cursor-default'
       )}
       data-state={item.state}
+      data-zen-download-id={item.id}
       draggable={onDisk && files}
       onDragStart={(e) => {
-        // The OS drag is the host's: hand the file over and drop the HTML5 one.
         e.preventDefault()
-        run('download.dragOut', { id: item.id })
+        downloadEngine.dragOut(item.id)
       }}
-      onClick={() => onDisk && run('download.open', { id: item.id })}
+      onClick={() => onDisk && downloadEngine.open(item.id)}
       onKeyDown={(e) => {
         if (onDisk && (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
           e.preventDefault()
-          run('download.open', { id: item.id })
+          downloadEngine.open(item.id)
         }
       }}
       tabIndex={0}
       role={onDisk ? 'button' : undefined}
-      aria-label={`${item.filename}. ${status.text}`}
+      aria-label={`${displayNameOf(item)}. ${status.text}`}
     >
       <FileTypeGlyph item={item} size="compact" />
       <div className="min-w-0 flex-1">
@@ -141,8 +140,7 @@ function PageRow({ item, files }: { item: DownloadItem; files: boolean }): JSX.E
           <span
             className={cn(
               'min-w-0 truncate text-[13px] font-medium leading-[1.25]',
-              (item.state === 'cancelled' || extra.removed) &&
-                'text-[var(--zen-muted)]'
+              (item.state === 'cancelled' || extra.removed) && 'text-[var(--zen-muted)]'
             )}
             title={item.savePath || item.url}
           >
@@ -176,9 +174,7 @@ function PageRow({ item, files }: { item: DownloadItem; files: boolean }): JSX.E
         <DangerPills item={item} />
       ) : (
         <div className="zen-download-actions flex shrink-0 items-center gap-0.5">
-          {files && (
-            <DownloadActions item={item} retry={false} />
-          )}
+          {files && <DownloadActions item={item} />}
         </div>
       )}
     </li>

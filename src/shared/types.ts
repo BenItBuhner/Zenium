@@ -1266,9 +1266,6 @@ export interface Commands {
   'download.chooseDirectory': { args: void; result: string | null }
   'download.dragOut': { args: { id: string }; result: void }
   'download.openPanel': { args: void; result: void }
-  'download.retry': { args: { id: string }; result: void }
-  'download.acceptDanger': { args: { id: string }; result: void }
-  'download.discard': { args: { id: string }; result: void }
 
   'find.start': {
     /** `newSession` starts a fresh search for `text`; otherwise steps to the next/previous match. */

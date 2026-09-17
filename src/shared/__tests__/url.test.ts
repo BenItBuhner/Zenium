@@ -37,6 +37,8 @@ describe('isProbablyUrl / inputToUrl', () => {
     expect(inputToUrl('devbox:8080')).toBe('http://devbox:8080')
     expect(inputToUrl('about:newtab')).toBe(BLANK_URL)
     expect(inputToUrl('about:preferences')).toBe('zen://settings')
+    expect(inputToUrl('about:downloads')).toBe('zen://downloads')
+    expect(inputToUrl('zen://downloads')).toBe('zen://downloads')
     expect(inputToUrl('search terms')).toBeNull()
   })
 })

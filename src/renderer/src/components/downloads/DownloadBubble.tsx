@@ -2,8 +2,8 @@ import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Download } from 'lucide-react'
 import type { DownloadItem, UIState } from '@shared/types'
-import { downloadStatus, displayNameOf, engineFieldsOf, isActiveDownload, needsDangerDecision } from '@shared/downloads'
-import { run } from '@renderer/lib/api'
+import { downloadStatus, displayNameOf, engineFieldsOf, isActiveDownload } from '@shared/downloads'
+import { canOpenDownload, downloadEngine, needsKeepDiscard } from '@renderer/lib/downloadsEngine'
 import {
   DOWNLOAD_LINGER_MS,
   bubbleItems,
@@ -88,9 +88,10 @@ function Bubble({ state }: { state: UIState }): JSX.Element {
         aria-label="Downloads"
         tabIndex={-1}
         className={cn(
-          'zen-panel zen-download-bubble absolute flex flex-col p-3 outline-none',
+          'zen-download-bubble absolute flex flex-col p-3 outline-none',
           ui.closing ? 'zen-animate-pop-out' : 'zen-animate-pop'
         )}
+        data-zen-downloads-bubble
         style={{ left: pos.left, top: pos.top, width }}
         onMouseDown={(e) => e.stopPropagation()}
         onMouseEnter={() => setHeld(true)}
@@ -101,8 +102,8 @@ function Bubble({ state }: { state: UIState }): JSX.Element {
         }}
       >
         <header className="flex h-8 shrink-0 items-center gap-2 pl-1">
-          <h2 className="flex-1 text-[15px] font-semibold tracking-[-0.012em]">Downloads</h2>
-          <button type="button" className="zen-download-pill" onClick={showAll}>
+          <h2 className="flex-1 text-[17px] font-semibold tracking-[-0.012em]">Downloads</h2>
+          <button type="button" className="zen-download-btn" onClick={showAll}>
             Show all
           </button>
         </header>
@@ -117,11 +118,7 @@ function Bubble({ state }: { state: UIState }): JSX.Element {
             style={{ maxHeight: VISIBLE_ROWS * ROW_HEIGHT + 8 }}
           >
             {items.map((item) => (
-              <BubbleRow
-                key={item.id}
-                item={item}
-                highlighted={item.id === ui.highlightId}
-              />
+              <BubbleRow key={item.id} item={item} highlighted={item.id === ui.highlightId} />
             ))}
           </ul>
         )}
@@ -144,36 +141,35 @@ function BubbleRow({
   const status = downloadStatus(item)
   const active = isActiveDownload(item)
   const extra = engineFieldsOf(item)
-  const openable =
-    item.state === 'completed' && extra.removed !== true && !needsDangerDecision(item)
-  const dangerous = needsDangerDecision(item)
+  const openable = canOpenDownload(item)
+  const dangerous = needsKeepDiscard(item)
   return (
     <li
       ref={ref}
       className={cn(
-        'zen-download-row group/row relative flex h-[60px] items-center gap-3 rounded-[6px] px-2',
+        'zen-download-row group/row relative flex min-h-[52px] items-center gap-3 rounded-[8px] px-2',
         openable && 'cursor-default',
         highlighted && 'zen-download-row-marked'
       )}
       data-state={item.state}
-      onClick={() => openable && run('download.open', { id: item.id })}
+      data-zen-download-id={item.id}
+      onClick={() => openable && downloadEngine.open(item.id)}
       onKeyDown={(e) => {
         if (openable && (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
           e.preventDefault()
-          run('download.open', { id: item.id })
+          downloadEngine.open(item.id)
         }
       }}
       tabIndex={0}
       role={openable ? 'button' : undefined}
-      aria-label={`${item.filename}. ${status.text}`}
+      aria-label={`${displayNameOf(item)}. ${status.text}`}
     >
       <FileTypeGlyph item={item} />
       <div className="min-w-0 flex-1">
         <div
           className={cn(
             'truncate text-[13px] font-medium leading-[1.25]',
-            (item.state === 'cancelled' || extra.removed) &&
-              'text-[var(--zen-muted)]'
+            (item.state === 'cancelled' || extra.removed) && 'text-[var(--zen-muted)]'
           )}
           title={item.savePath || item.url}
         >
@@ -201,7 +197,7 @@ function BubbleRow({
         <DangerPills item={item} />
       ) : (
         <div className="zen-download-actions flex shrink-0 items-center gap-0.5">
-          <DownloadActions item={item} retry={false} />
+          <DownloadActions item={item} />
         </div>
       )}
     </li>

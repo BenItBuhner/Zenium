@@ -20,7 +20,8 @@ import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { FileStoreIO } from './storeIo'
 import { SessionManager, buildUserAgent } from './sessions'
 import { installZenProtocol } from './protocol'
-import { ElectronDownloads } from './downloads'
+import { ElectronDownloads, downloadDir } from './downloads'
+import { ElectronDownloadsShell } from './downloadsShell'
 import { ElectronMenus } from './menus'
 import { ElectronTabViewHost, copyImageFromUrl } from './views'
 import { ElectronWindowFactory, type ElectronWindow } from './window'
@@ -65,6 +66,7 @@ export class ElectronPlatform implements Platform {
   readonly menus: ElectronMenus
   readonly sessions: SessionManager
   readonly downloads: ElectronDownloads
+  readonly downloadsShell: ElectronDownloadsShell
   readonly dialogs: DialogHost
   readonly clipboard: ClipboardHost
   readonly shell: ShellHost
@@ -81,7 +83,11 @@ export class ElectronPlatform implements Platform {
     this.views = new ElectronTabViewHost(this.sessions)
     this.siteData = new ElectronSiteData(this.sessions)
     this.menus = new ElectronMenus()
-    this.downloads = new ElectronDownloads(() => this.browser.state.settings.askWhereToSave)
+    this.downloads = new ElectronDownloads(
+      () => this.browser.state.settings.askWhereToSave,
+      () => this.browser.state.settings.downloads.directory || downloadDir()
+    )
+    this.downloadsShell = new ElectronDownloadsShell()
     this.dialogs = {
       confirm: async (options: ConfirmOptions, win?: ZenWindow) => {
         const bw = browserWindowOf(win)

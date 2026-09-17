@@ -32,7 +32,10 @@ export class ElectronDownloads implements DownloadHost {
   private readonly reserved = new Set<string>()
   private service: DownloadService | null = null
 
-  constructor(private readonly askWhereToSave: () => boolean) {}
+  constructor(
+    private readonly askWhereToSave: () => boolean,
+    private readonly directory: () => string = downloadDir
+  ) {}
 
   bind(service: DownloadService): void {
     this.service = service
@@ -54,7 +57,7 @@ export class ElectronDownloads implements DownloadHost {
     let reservedPath: string | null = null
     if (!this.askWhereToSave() && !item.getSavePath()) {
       reservedPath = uniquePath(
-        downloadDir(),
+        this.directory(),
         item.getFilename() || 'download',
         (p) => existsSync(p) || this.reserved.has(p)
       )

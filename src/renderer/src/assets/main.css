@@ -963,9 +963,8 @@
   }
 
   /*
-   * Downloads. The toolbar button wears a progress ring (stroke-dashoffset only) and a count
-   * badge; a start plays the fill-and-scale pulse. Rows in the bubble (60) and on the page (40)
-   * share the glyph box, the 3px bar (transform only) and hover-revealed actions.
+   * Downloads (v2 draft): opaque panel, 8 radius, 1px border + 0 2px 6px shadow.
+   * Status colour is ink only. Buttons 32 / radius 4 / weight 500. No pills, no blur.
    */
   .zen-download-button {
     overflow: visible;
@@ -978,8 +977,8 @@
     content: '';
     position: absolute;
     inset: -6px;
-    border-radius: 9px;
-    background: rgb(var(--zen-accent-rgb) / 0.2);
+    border-radius: 6px;
+    background: rgb(var(--zen-fg-rgb) / 0.08);
     opacity: 0;
   }
   .zen-download-body-pulse {
@@ -1001,7 +1000,10 @@
     transition: stroke-dashoffset 260ms var(--zen-ease);
   }
   .zen-download-ring-paused .zen-download-ring-value {
-    stroke: var(--zen-faint);
+    stroke: rgb(21 20 26 / 0.69);
+  }
+  :root[data-theme='dark'] .zen-download-ring-paused .zen-download-ring-value {
+    stroke: rgb(251 251 254 / 0.69);
   }
   .zen-download-ring-spin {
     transform-origin: 50% 50%;
@@ -1027,32 +1029,54 @@
     animation: zen-pop 180ms var(--zen-ease);
   }
   .zen-download-badge-failed {
-    background: var(--zen-danger);
+    background: transparent;
+    color: #c43434;
+    box-shadow: inset 0 0 0 1px currentColor;
+  }
+  :root[data-theme='dark'] .zen-download-badge-failed {
+    color: #ff8080;
   }
   .zen-download-bubble {
-    --zen-inner: 6px;
+    background: #f4f4f4;
+    border: 1px solid rgb(0 0 0 / 0.15);
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
+    color: #15141a;
+  }
+  :root[data-theme='dark'] .zen-download-bubble {
+    background: #1f1f1f;
+    border-color: rgb(255 255 255 / 0.12);
+    color: #fbfbfe;
   }
   .zen-download-glyph {
-    border-radius: 10px;
-    background: rgb(var(--zen-fg-rgb) / 0.07);
-    color: var(--zen-fg);
-    corner-shape: var(--zen-corner);
+    border-radius: 8px;
+    background: rgb(21 20 26 / 0.06);
+    color: inherit;
+  }
+  :root[data-theme='dark'] .zen-download-glyph {
+    background: rgb(251 251 254 / 0.08);
   }
   .zen-download-row {
     outline: none;
+    border-radius: 8px;
     transition: background 120ms var(--zen-ease);
   }
   .zen-download-row:hover,
   .zen-download-row:focus-visible,
   .zen-download-row:focus-within {
-    background: var(--zen-element-bg);
+    background: rgb(21 20 26 / 0.06);
+  }
+  :root[data-theme='dark'] .zen-download-row:hover,
+  :root[data-theme='dark'] .zen-download-row:focus-visible,
+  :root[data-theme='dark'] .zen-download-row:focus-within {
+    background: rgb(251 251 254 / 0.08);
   }
   .zen-download-row:focus-visible {
     outline: 2px solid var(--zen-accent);
-    outline-offset: 2px;
+    outline-offset: 0;
   }
   .zen-download-row-marked {
-    background: rgb(var(--zen-accent-rgb) / 0.16);
+    background: color-mix(in srgb, var(--zen-accent) 16%, transparent);
   }
   .zen-download-actions {
     opacity: 0;
@@ -1068,43 +1092,77 @@
     position: relative;
     height: 3px;
     overflow: hidden;
-    border-radius: 9999px;
-    background: rgb(var(--zen-fg-rgb) / 0.12);
+    border-radius: 2px;
+    background: rgb(21 20 26 / 0.12);
+  }
+  :root[data-theme='dark'] .zen-download-bar {
+    background: rgb(251 251 254 / 0.14);
   }
   .zen-download-bar-fill {
     position: absolute;
     inset: 0;
-    border-radius: 9999px;
     background: var(--zen-accent-fill);
     transform-origin: 0 50%;
     transition: transform 260ms var(--zen-ease);
   }
   .zen-download-bar[data-paused] .zen-download-bar-fill {
-    background: var(--zen-faint);
+    background: rgb(21 20 26 / 0.4);
+  }
+  :root[data-theme='dark'] .zen-download-bar[data-paused] .zen-download-bar-fill {
+    background: rgb(251 251 254 / 0.4);
   }
   .zen-download-bar-sweep {
     width: 40%;
     animation: zen-progress 1.1s var(--zen-ease) infinite;
   }
-  .zen-download-pill {
+  .zen-download-btn {
     display: inline-flex;
     align-items: center;
-    height: 26px;
-    padding: 0 10px;
-    border-radius: 9999px;
-    background: var(--zen-element-bg);
-    color: var(--zen-fg);
-    font-size: 12.5px;
+    justify-content: center;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: 4px;
+    background: rgb(21 20 26 / 0.1);
+    color: inherit;
+    font-size: 13px;
     font-weight: 500;
     transition:
       background 120ms var(--zen-ease),
       transform 120ms var(--zen-ease);
   }
-  .zen-download-pill:hover {
-    background: var(--zen-element-bg-hover);
+  :root[data-theme='dark'] .zen-download-btn {
+    background: rgb(251 251 254 / 0.1);
   }
-  .zen-download-pill:active {
+  .zen-download-btn:hover {
+    background: rgb(21 20 26 / 0.16);
+  }
+  :root[data-theme='dark'] .zen-download-btn:hover {
+    background: rgb(251 251 254 / 0.16);
+  }
+  .zen-download-btn:active {
     transform: scale(0.98);
+  }
+  .zen-download-btn[data-danger] {
+    color: #c43434;
+  }
+  :root[data-theme='dark'] .zen-download-btn[data-danger] {
+    color: #ff8080;
+  }
+  .zen-download-page.zen-panel {
+    background: #fbfbfe;
+    backdrop-filter: none;
+    border: 1px solid rgb(0 0 0 / 0.15);
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
+    color: #15141a;
+  }
+  :root[data-theme='dark'] .zen-download-page.zen-panel {
+    background: #1c1b22;
+    border-color: rgb(255 255 255 / 0.12);
+    color: #fbfbfe;
+  }
+  .zen-download-row-page .zen-download-actions {
+    opacity: 1;
   }
   .zen-animate-pop-out {
     animation: zen-pop-out 180ms var(--zen-ease) forwards;

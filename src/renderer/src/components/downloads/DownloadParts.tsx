@@ -17,8 +17,13 @@ import {
   type LucideIcon
 } from 'lucide-react'
 import type { DownloadItem } from '@shared/types'
-import { fileGlyphFor, needsDangerDecision, engineFieldsOf, type FileGlyph } from '@shared/downloads'
-import { run } from '@renderer/lib/api'
+import { fileGlyphFor, engineFieldsOf, type FileGlyph } from '@shared/downloads'
+import {
+  canRetryDownload,
+  canResumeDownload,
+  downloadEngine,
+  needsKeepDiscard
+} from '@renderer/lib/downloadsEngine'
 import { cn } from '@renderer/lib/utils'
 
 const GLYPHS: Record<FileGlyph, LucideIcon> = {
@@ -48,7 +53,7 @@ export function FileTypeGlyph({
     <span
       className={cn(
         'zen-download-glyph flex shrink-0 items-center justify-center',
-        size === 'row' ? 'h-8 w-8' : 'h-6 w-6 rounded-md',
+        size === 'row' ? 'h-8 w-8' : 'h-6 w-6',
         dimmed && 'opacity-50',
         className
       )}
@@ -59,7 +64,7 @@ export function FileTypeGlyph({
   )
 }
 
-/** The 3px pill: the accent fill scales from the left; unknown totals sweep. */
+/** The 3px bar: the accent fill scales from the left; unknown totals sweep. */
 export function DownloadProgressBar({ item }: { item: DownloadItem }): JSX.Element {
   const known = item.totalBytes > 0
   const value = known ? Math.min(1, item.receivedBytes / item.totalBytes) : 0
@@ -109,76 +114,74 @@ function IconAction({
 
 /**
  * The row's controls for its state: Pause / Resume and Cancel while in flight, Retry after a
- * failure, Show in folder when the file exists, and Remove from list for anything settled.
+ * failure (when the engine exposes it), Show in folder when the file exists, and Remove from
+ * list for anything settled.
  */
 export function DownloadActions({
   item,
-  retry,
   showInFolder = true
 }: {
   item: DownloadItem
-  /** The host can restart failed transfers. */
-  retry: boolean
   showInFolder?: boolean
 }): JSX.Element {
   const id = item.id
   const extra = engineFieldsOf(item)
   const onDisk = item.state === 'completed' && extra.removed !== true
+  const resumeInterrupted = item.state === 'interrupted' && canResumeDownload(item)
+  const retry = canRetryDownload(item) && !resumeInterrupted
   return (
     <>
       {item.state === 'progressing' && (
-        <IconAction title="Pause" icon={Pause} onClick={() => run('download.pause', { id })} />
+        <IconAction title="Pause" icon={Pause} onClick={() => downloadEngine.pause(id)} />
       )}
-      {item.state === 'paused' && (
-        <IconAction title="Resume" icon={Play} onClick={() => run('download.resume', { id })} />
+      {(item.state === 'paused' || resumeInterrupted) && (
+        <IconAction title="Resume" icon={Play} onClick={() => downloadEngine.resume(id)} />
       )}
       {(item.state === 'progressing' || item.state === 'paused') && (
-        <IconAction title="Cancel" icon={X} onClick={() => run('download.cancel', { id })} />
+        <IconAction title="Cancel" icon={X} onClick={() => downloadEngine.cancel(id)} />
       )}
-      {retry && (item.state === 'interrupted' || item.state === 'cancelled') && (
-        <IconAction title="Retry" icon={RotateCw} onClick={() => run('download.retry', { id })} />
-      )}
-      {onDisk && showInFolder && !needsDangerDecision(item) && (
+      {retry && <IconAction title="Retry" icon={RotateCw} onClick={() => undefined} />}
+      {onDisk && showInFolder && !needsKeepDiscard(item) && (
         <IconAction
           title="Show in folder"
           icon={FolderOpen}
-          onClick={() => run('download.showInFolder', { id })}
+          onClick={() => downloadEngine.showInFolder(id)}
         />
       )}
       {item.state !== 'progressing' && item.state !== 'paused' && (
         <IconAction
           title="Remove from list"
           icon={Trash2}
-          onClick={() => run('download.remove', { id })}
+          onClick={() => downloadEngine.remove(id)}
         />
       )}
     </>
   )
 }
 
-/** Keep / Delete for a file the danger table flagged; Delete trashes it. */
-export function DangerPills({ item }: { item: DownloadItem }): JSX.Element {
+/** Keep / Discard for a file the danger table flagged; hidden until the engine lands. */
+export function DangerPills({ item }: { item: DownloadItem }): JSX.Element | null {
+  if (!needsKeepDiscard(item)) return null
   return (
     <div className="flex shrink-0 items-center gap-1.5">
       <button
         type="button"
-        className="zen-download-pill"
+        className="zen-download-btn"
         onClick={(e) => {
           e.stopPropagation()
-          run('download.acceptDanger', { id: item.id })
         }}
       >
         Keep
       </button>
       <button
         type="button"
-        className="zen-download-pill text-[var(--zen-danger)]"
+        className="zen-download-btn"
+        data-danger=""
         onClick={(e) => {
           e.stopPropagation()
-          run('download.discard', { id: item.id })
         }}
       >
-        Delete
+        Discard
       </button>
     </div>
   )
