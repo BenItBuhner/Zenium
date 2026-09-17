@@ -192,6 +192,15 @@ export interface BookmarkEditRequest {
   type: BookmarkNodeType
 }
 
+/** A selection the core asked the chrome to translate (the `translate.selection` event). */
+export interface TranslateSelectionRequest {
+  tabId: string
+  text: string
+  /** Where the user asked, in CSS pixels of the page view; null when unknown. */
+  x: number | null
+  y: number | null
+}
+
 export interface UiState {
   overlay: OverlayKind
   overlaySpaceId: string | null
@@ -305,6 +314,8 @@ export interface UiState {
   defaultBrowserPrompt: boolean
   /** "Add to Home screen": the install sheet (manifest) or the name-edit sheet, when open. */
   install: WebAppInstallPrompt | null
+  /** The selection-translation popover (desktop) or sheet (phone) is up for this selection. */
+  translateSelection: TranslateSelectionRequest | null
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
   /**
@@ -392,6 +403,7 @@ export const uiStore = createStore<UiState>(
     downloadsOpen: false,
     defaultBrowserPrompt: false,
     install: null,
+    translateSelection: null,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false,
     hoverCard: HOVER_CARD_HIDDEN,
@@ -712,6 +724,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
     !ui.install &&
+    !ui.translateSelection &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     !ui.newTabShortcutDialog &&
@@ -759,6 +772,7 @@ export function invalidateSnapshot(): void {
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
     !ui.install &&
+    !ui.translateSelection &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     ui.hoverCard.tabId === null &&
@@ -1266,6 +1280,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.downloadsOpen ||
     ui.defaultBrowserPrompt ||
     ui.install !== null ||
+    ui.translateSelection !== null ||
     ui.stageActive ||
     ui.zoomBubble !== null ||
     ui.hoverCard.tabId !== null ||
