@@ -41,6 +41,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
+import kotlin.math.roundToInt
 
 /**
  * One tab's page. Mirrors what Electron's `WebContentsView` gives the core: navigation events,
@@ -61,6 +62,7 @@ class TabWebView(
     private var replyProxy: JavaScriptReplyProxy? = null
     private var currentFlags: JSONObject = json("glanceEnabled" to true, "glanceTrigger" to "alt", "thirdParty" to null)
     private var pendingFlags = false
+    private var zoomFactor = 1.0
     var muted = false
         private set
     /** True while `onPageStarted` has fired and `onPageFinished` has not. */
@@ -83,9 +85,16 @@ class TabWebView(
             mediaPlaybackRequiresUserGesture = true
             mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             if (WebViewFeature.isFeatureSupported(WebViewFeature.SAFE_BROWSING_ENABLE)) safeBrowsingEnabled = true
-            // Sites treat the "; wv" token as an embedded view and serve degraded pages.
-            userAgentString = userAgentString.replace("; wv", "").replace(Regex("Version/\\d+\\.\\d+ "), "")
+            // Chrome's typographic defaults rather than WebView's: text a page leaves unstyled is
+            // serif (Android maps Chrome's "Times New Roman" to it), and small text is not pushed
+            // up to 8 px – Chrome has no floor for absolute sizes and 6 px for relative ones.
+            standardFontFamily = "serif"
+            minimumFontSize = 1
+            minimumLogicalFontSize = 6
         }
+        // Present as the browser it is, not as an app's embedded view (see UserAgent).
+        UserAgent.apply(settings, BuildConfig.VERSION_NAME)
+        applyTextZoom()
         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
         setBackgroundColor(Color.WHITE)
         clipToOutline = true
@@ -400,8 +409,19 @@ class TabWebView(
         )
     }
 
+    /** Zenium's per-tab zoom; WebView has no page zoom, so it scales the text. */
     fun setZoom(factor: Double) {
-        settings.textZoom = (factor * 100).toInt().coerceIn(25, 500)
+        zoomFactor = factor
+        applyTextZoom()
+    }
+
+    /**
+     * Text at the size the page asked for, times Zenium's zoom. WebView would start every tab at the
+     * system font scale (a phone set to large text got every page 130% larger), which Chrome does
+     * not do: its pages ignore the system font size and offer page zoom instead, as Zenium does.
+     */
+    private fun applyTextZoom() {
+        settings.textZoom = (zoomFactor * 100).roundToInt().coerceIn(25, 500)
     }
 
     fun find(text: String, forward: Boolean, newSession: Boolean) {
