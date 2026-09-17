@@ -5,10 +5,10 @@
 # WebView renderer killed and hangs it, and collects the recording, the screenshots, the driver's
 # report and the logs under artifacts/android-wake-demo/<take>/.
 #
-# Two takes when BEFORE_APK_DIR names a directory with the APK built from main: `before` (that
-# APK, report only) and `after` (this checkout's APK). WAKE_ASSERT=true makes the driver fail the
-# `after` take when the chrome is not painted or does not answer after a scenario (the regression
-# check); anything else only reports.
+# Two takes when BEFORE_APK_DIR names a directory with an APK built from main (the workflow's
+# setup-script builds it): `before` (that APK, report only) and `after` (this checkout's APK).
+# WAKE_ASSERT=true makes the driver fail the `after` take when the chrome is not painted or does
+# not answer after a scenario (the regression check); anything else only reports.
 #
 # Handshake with the driver, through files in the app's private storage (readable via run-as):
 #   files/wake-demo/record             – written by the driver once the browser is up
@@ -120,8 +120,13 @@ run_take() {
   local dir="$out/$take" video="wake-$take.mp4"
   mkdir -p "$dir"
   echo "==== take $take: $apk (assert=$assert)"
-  adb install -r -g "$apk"
-  adb install -r -g "$test_apk"
+  # -d: the second take may carry a lower versionCode than the first (a branch behind main).
+  # Checked by hand: called through `||`, this function runs with `set -e` suspended.
+  if ! adb install -r -d -g "$apk" || ! adb install -r -d -g "$test_apk"; then
+    echo "::error::could not install the APKs for the $take take"
+    return 1
+  fi
+  adb shell dumpsys package "$app_id" | grep -E "versionName|versionCode" | head -n 2 || true
 
   adb logcat -c || true
   # Every buffer: the events log carries the activity lifecycle (wm_on_stop_called and friends)
@@ -203,6 +208,10 @@ run_take() {
 status=0
 if [ -n "${BEFORE_APK_DIR:-}" ]; then
   before_apk=$(find "$BEFORE_APK_DIR" -name '*.apk' -print -quit)
+  if [ -z "$before_apk" ]; then
+    echo "::error::no APK under $BEFORE_APK_DIR for the before take"
+    exit 1
+  fi
   echo "before: $before_apk"
   run_take before "$before_apk" false || echo "the before take reported failures (expected where the bug reproduces)"
   adb shell am force-stop "$app_id" || true
