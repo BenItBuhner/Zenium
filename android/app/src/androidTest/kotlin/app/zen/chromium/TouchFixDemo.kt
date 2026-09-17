@@ -4,6 +4,8 @@ import android.accessibilityservice.AccessibilityService
 import android.graphics.Rect
 import android.os.SystemClock
 import android.util.Log
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Test
@@ -67,6 +69,7 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
     override fun demo() {
         // 1. History: every row shows its Remove button; tapping one removes the entry.
         openPanel("History", "Remove from history")
+        dismissKeyboard()
         shot("01-history")
         tapFirst("Remove from history")
         SystemClock.sleep(1_500)
@@ -76,6 +79,7 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
 
         // 2. Bookmarks, the same way.
         openPanel("Bookmarks", "Remove bookmark")
+        dismissKeyboard()
         shot("03-bookmarks")
         tapFirst("Remove bookmark")
         SystemClock.sleep(1_500)
@@ -90,8 +94,12 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
         SystemClock.sleep(1_500)
 
         // 4. Find in page on example.com: type a phrase, the counter reads 1/n, step to the next.
-        openPanel("Find in Page…", FIND_FIELD)
-        SystemClock.sleep(1_000)
+        //    The field itself has no label the tree reports (its name is the hint), so the bar
+        //    is recognised by its Next button and the field is tapped by position, left of it.
+        openPanel("Find in Page…", "Next match")
+        val prev = findByLabel("Previous match") ?: error("no find bar buttons")
+        Finger().tap(width * 0.25f, prev.exactCenterY())
+        SystemClock.sleep(1_500)
         instrumentation.sendStringSync("example")
         SystemClock.sleep(3_000)
         shot("06-find")
@@ -124,6 +132,18 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
 
     private fun back() {
         ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+    }
+
+    /** The panels focus their search field on open, which raises the keyboard; back takes it down first. */
+    private fun dismissKeyboard() {
+        var up = false
+        instrumentation.runOnMainSync {
+            val root = activity.window.decorView
+            up = ViewCompat.getRootWindowInsets(root)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        }
+        if (!up) return
+        back()
+        SystemClock.sleep(1_500)
     }
 
     /**
@@ -160,6 +180,5 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
         private val STAMP = Regex("\"\\{\\{now(?:-(\\d+)h)?\\}\\}\"")
         private const val MENU_LABEL = "Menu"
         private const val HANDLE_LABEL = "Resize menu"
-        private const val FIND_FIELD = "Find in page"
     }
 }
