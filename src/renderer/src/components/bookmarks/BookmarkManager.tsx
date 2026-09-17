@@ -79,6 +79,8 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
   const [rawFocusId, setFocusId] = useState<string | null>(null)
   const [rawRenamingId, setRenamingId] = useState<string | null>(null)
   const [treeOpen, setTreeOpen] = useState(false)
+  // The list's toolbar gets its hairline only while rows are scrolled under it (v2 §9.7).
+  const [scrolled, setScrolled] = useState(false)
   const [selectMode, setSelectMode] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -658,7 +660,13 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
           <section className="flex min-h-0 min-w-0 flex-1 flex-col">
             {phone && <div className="px-3 pt-3 pb-1">{search}</div>}
             {!phone && <div className="px-3 pt-2">{search}</div>}
-            <div className={cn('flex shrink-0 items-center gap-1.5 px-3', phone ? 'h-11' : 'h-10')}>
+            <div
+              data-scrolled={scrolled || undefined}
+              className={cn(
+                'zen-bm-toolbar flex shrink-0 items-center gap-1.5 px-3',
+                phone ? 'h-11' : 'h-10'
+              )}
+            >
               {phone && (
                 <button
                   type="button"
@@ -711,6 +719,7 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
               data-bm-drop={searching ? undefined : `list:${folderId}`}
               data-target={target?.position === 'append' || undefined}
               className="zen-bm-list relative min-h-0 flex-1 overflow-y-auto px-2 pb-2 outline-none"
+              onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
               onKeyDown={onListKeyDown}
               onClick={(e) => {
                 if (e.target === e.currentTarget) clearSelection()

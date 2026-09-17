@@ -1607,6 +1607,23 @@
     box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
     color: var(--zen-fg);
   }
+  /* Page header (v2 §9.7): a 22/600 title and no hairline at rest; the list's toolbar is the
+   * sticky edge rows scroll under, so that is where the 1px line appears while scrolled. */
+  .zen-bm-page > header {
+    border-color: transparent;
+  }
+  .zen-bm-page > header > h2 {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.014em;
+  }
+  .zen-bm-toolbar {
+    border-bottom: 1px solid transparent;
+    transition: border-color 120ms var(--zen-ease);
+  }
+  .zen-bm-toolbar[data-scrolled='true'] {
+    border-color: var(--zen-v2-panel-border);
+  }
   .zen-bm-dialog-title {
     font-size: 17px;
     font-weight: 600;
