@@ -11,10 +11,6 @@ name: Android layout demo
 # cache live in android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  # TEMPORARY: one recording of the fix branch; removed before review.
-  push:
-    branches:
-      - cursor/android-phone-layout-menu-fixes-cda4
 
 permissions:
   contents: read
