@@ -28,7 +28,7 @@ concurrency:
 
 env:
   NODE_VERSION: 22
-  DEMO: ${{ inputs.demo || 'omnibox' }}
+  DEMO: ${{ inputs.demo || 'gestures' }}
 
 jobs:
   record:
