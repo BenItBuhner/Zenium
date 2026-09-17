@@ -35,10 +35,16 @@ export class ElectronMenus implements MenuHost {
 
   private toElectron(item: MenuItemTemplate): MenuItemConstructorOptions {
     if (item.type === 'separator') return { type: 'separator' }
+    // An explicit `type: 'normal'` makes Electron ignore `submenu`: submenu items must say so.
     const out: MenuItemConstructorOptions = {
       label: item.label,
       enabled: item.enabled,
-      type: item.type === 'checkbox' || item.type === 'radio' ? item.type : 'normal'
+      type:
+        item.type === 'checkbox' || item.type === 'radio'
+          ? item.type
+          : item.submenu
+            ? 'submenu'
+            : 'normal'
     }
     if (item.type === 'checkbox' || item.type === 'radio') out.checked = item.checked
     if (item.role) out.role = item.role
