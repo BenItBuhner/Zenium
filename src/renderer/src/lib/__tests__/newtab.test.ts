@@ -113,14 +113,34 @@ describe('composeTiles', () => {
 })
 
 describe('tileLabel', () => {
-  it('is the site name from the title, or the host when there is none that fits', () => {
+  it('is the site name from a front page title, or the host when there is none that fits', () => {
     expect(tileLabel('YouTube', 'https://www.youtube.com/')).toBe('YouTube')
     expect(tileLabel('Hacker News - Top', 'https://news.ycombinator.com/')).toBe('Hacker News')
     expect(tileLabel('GitHub · Where software is built', 'https://github.com/')).toBe('GitHub')
+    expect(tileLabel("GitHub: Let's build from here", 'https://github.com/')).toBe('GitHub')
     expect(tileLabel('', 'https://www.example.com/x')).toBe('example.com')
     expect(tileLabel('A very long page title that goes on and on', 'https://long.example/')).toBe(
       'long.example'
     )
     expect(tileLabel('', 'nonsense')).toBe('nonsense')
+  })
+
+  it('takes the site suffix of a page inside a site, or its host when the title has none', () => {
+    expect(tileLabel('Coffee - Wikipedia', 'https://en.wikipedia.org/wiki/Coffee')).toBe(
+      'Wikipedia'
+    )
+    expect(
+      tileLabel('corner-shape - CSS | MDN', 'https://developer.mozilla.org/en-US/docs/Web/CSS/x')
+    ).toBe('MDN')
+    expect(tileLabel('Cat video - YouTube', 'https://www.youtube.com/watch?v=1')).toBe('YouTube')
+    expect(tileLabel('RFC 2324: HTCPCP/1.0', 'https://www.rfc-editor.org/rfc/rfc2324.html')).toBe(
+      'rfc-editor.org'
+    )
+    expect(
+      tileLabel('BenItBuhner/Zenium: a Zen-style browser', 'https://github.com/BenItBuhner/Zenium')
+    ).toBe('github.com')
+    expect(tileLabel('Long title - A site whose name is far too long', 'https://x.example/a')).toBe(
+      'x.example'
+    )
   })
 })

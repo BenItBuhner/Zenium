@@ -1,6 +1,6 @@
 import type { CSSProperties, JSX } from 'react'
 import { useEffect, useMemo, useState } from 'react'
-import { Camera, Globe, Mic, Search, Settings2 } from 'lucide-react'
+import { Camera, Globe, Mic, Search, Settings } from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
 import { getHost } from '@shared/url'
 import { MAX_TOP_SITES, newTabSections } from '@shared/newtab'
@@ -87,7 +87,7 @@ export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
         aria-label="Customise the new tab page"
         onClick={openCustomize}
       >
-        <Settings2 className="h-5 w-5" strokeWidth={1.75} />
+        <Settings className="h-5 w-5" strokeWidth={1.75} />
       </button>
     </div>
   )

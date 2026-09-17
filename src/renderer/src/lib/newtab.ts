@@ -373,14 +373,35 @@ export function composeTiles(opts: {
 /** Longest caption a tile carries before the host stands in for the title. */
 const TILE_LABEL_MAX = 18
 
+/** Separators titles put between a page's name and the site's ("Coffee - Wikipedia"). */
+const SITE_SEPARATOR = /\s+[-|·—–]\s+/
+
+/** Whether the URL is a site's front page rather than a page inside it. */
+function isFrontPage(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return (parsed.pathname === '/' || parsed.pathname === '') && !parsed.search
+  } catch {
+    return false
+  }
+}
+
 /**
- * The caption under a tile: the site's name as its title gives it ("YouTube", "Hacker News"),
- * cut before the first " - " / " | " / " · " / " — " separator, or the host when the title is
- * missing or too long for one line under a 56 tile.
+ * The caption under a tile: the site's name. A front page's title starts with it ("YouTube",
+ * "Hacker News - Top", "GitHub: Let's build from here"); a page inside a site ends with it
+ * ("Coffee - Wikipedia", "corner-shape - CSS | MDN"), and when such a title has no site suffix
+ * the host stands for the site. The host also stands in when the name would not fit on one line
+ * under a 56 tile.
  */
 export function tileLabel(title: string, url: string): string {
   const host = tileHost(url)
-  const name = title.split(/\s+[-|·—–:]\s+/)[0]?.trim() ?? ''
+  let name = ''
+  if (isFrontPage(url) || !host) {
+    name = title.split(/\s+[-|·—–]\s+|:\s+/)[0]?.trim() ?? ''
+  } else {
+    const parts = title.split(SITE_SEPARATOR)
+    name = parts.length > 1 ? (parts[parts.length - 1]?.trim() ?? '') : ''
+  }
   if (name && name.length <= TILE_LABEL_MAX) return name
-  return host || name || url
+  return host || title.trim() || url
 }
