@@ -28,6 +28,6 @@ class CustomTabsLaunchTest {
         val colors = CustomTabColorSchemeResolver.resolve(0xff336699.toInt(), CustomTabsIntent.COLOR_SCHEME_LIGHT, false)
 
         assertEquals(0xff336699.toInt(), colors.toolbar)
-        assertEquals(0xff2e5e8c.toInt(), colors.navigationBar)
+        assertEquals(0xff2e5d8c.toInt(), colors.navigationBar)
     }
 }
