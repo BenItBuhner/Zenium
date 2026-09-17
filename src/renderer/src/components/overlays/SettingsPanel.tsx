@@ -134,6 +134,7 @@ export function SettingsPanel({
             <button
               key={item.id}
               type="button"
+              aria-current={section === item.id || undefined}
               className={cn(
                 'zen-squircle flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
                 section === item.id && 'bg-[var(--zen-element-bg-active)] font-medium'

@@ -91,7 +91,9 @@
   --zen-shadow-2:
     0 2px 4px rgb(0 0 0 / 0.24), 0 18px 44px rgb(0 0 0 / 0.5),
     inset 0 0 0 1px rgb(255 255 255 / 0.06);
-  --zen-shadow: 0 18px 50px rgb(0 0 0 / 0.55), 0 2px 8px rgb(0 0 0 / 0.35);
+  --zen-shadow:
+    0 18px 50px rgb(0 0 0 / 0.55), 0 2px 8px rgb(0 0 0 / 0.35),
+    inset 0 0 0 1px rgb(255 255 255 / 0.08);
 }
 
 /* Zen clamps its primary colour's lightness before using it as ink or a fill; so does the chrome. */
@@ -334,10 +336,10 @@
     filter: grayscale(0.5);
   }
 
+  /* Panels, menus and popovers: tint, blur and elevation; the only line is dark mode's inner hairline. */
   .zen-panel {
     background: var(--zen-panel-bg);
     backdrop-filter: var(--zen-blur-panel);
-    border: 1px solid rgb(var(--zen-fg-rgb) / 0.1);
     border-radius: 16px;
     box-shadow: var(--zen-shadow);
   }
@@ -472,6 +474,41 @@
     font-family: var(--font-sans);
     background: var(--zen-element-bg);
     border: 1px solid var(--zen-border);
+  }
+
+  /*
+   * Toggles (`components/ui/switch.tsx`): a 44 x 26 pill, fg 16% off and the accent fill on. The
+   * thumb's position is written by a spring, so only the track colour transitions here.
+   */
+  .zen-switch {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+    width: 44px;
+    height: 26px;
+    border-radius: 9999px;
+    background: var(--zen-element-bg-active);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-switch[data-state='checked'] {
+    background: var(--zen-accent-fill);
+  }
+  .zen-switch:disabled {
+    opacity: 0.4;
+  }
+  .zen-switch:focus-visible {
+    outline: 2px solid var(--zen-accent);
+    outline-offset: 2px;
+  }
+  .zen-switch-thumb {
+    position: absolute;
+    top: 2px;
+    left: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 9999px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
   }
 }
 
@@ -743,23 +780,128 @@
 :root[data-form-factor='phone'] .zen-space-strip {
   transition-duration: 260ms;
 }
-/* Settings on a phone: the section list becomes a row of chips above the content. */
+/*
+ * Settings primitives (`overlays/SettingsPrimitives.tsx`, `ui/select.tsx`, `ui/input.tsx`) at
+ * touch size: rows 48 with a 10 squircle, controls 40, type one step larger. Phones and coarse
+ * pointers both qualify; a tablet keeps the desktop layout with these targets.
+ */
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-row {
+  min-height: 48px;
+  padding: 8px 12px;
+  gap: 12px;
+  border-radius: 10px;
+  corner-shape: var(--zen-corner);
+}
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-row-label {
+  font-size: 14px;
+}
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-row-hint {
+  font-size: 12px;
+}
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-group-title {
+  padding-left: 12px;
+  padding-right: 12px;
+  font-size: 14px;
+}
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) :is(.zen-select-trigger, .zen-input) {
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 10px;
+  corner-shape: var(--zen-corner);
+  font-size: 14px;
+}
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-select-content {
+  border-radius: 16px;
+  font-size: 14px;
+}
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-select-item {
+  height: 44px;
+  border-radius: 10px;
+  corner-shape: var(--zen-corner);
+}
+/*
+ * A phone row that holds a select or a text field stacks, so a long value never starves the
+ * label: text full width, the control full width beneath it. Rows with a toggle or a button
+ * stay side by side.
+ */
+:root[data-form-factor='phone'] .zen-row:has(.zen-select-trigger, .zen-input) {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+:root[data-form-factor='phone'] .zen-row:has(.zen-select-trigger, .zen-input) > * {
+  flex: none;
+}
+:root[data-form-factor='phone'] .zen-row:has(.zen-select-trigger, .zen-input) > .zen-row-control {
+  width: 100%;
+  justify-content: flex-start;
+}
+:root[data-form-factor='phone']
+  .zen-row:has(.zen-select-trigger, .zen-input)
+  > .zen-row-control
+  > :is(.zen-select-trigger, .zen-input) {
+  flex: 1 1 160px;
+  max-width: 100%;
+}
+/* Groups are told apart by 16px and a heading: the cards and their borders are gone. */
+.zen-settings nav + div > div {
+  gap: 16px;
+}
+
+/* Settings on a phone: the section list becomes a strip of pills above the content. */
 :root[data-form-factor='phone'] .zen-settings > div > div {
   flex-direction: column;
 }
 :root[data-form-factor='phone'] .zen-settings nav {
   display: flex;
   width: auto;
-  gap: 4px;
+  gap: 6px;
+  padding: 8px 12px;
   overflow-x: auto;
   border-right: 0;
-  border-bottom: 1px solid var(--zen-border);
   scrollbar-width: none;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: 12px;
+}
+/* Fading edges until the strip is driven by `useFadeEdges`, which masks by scroll position. */
+:root[data-form-factor='phone'] .zen-settings nav:not([data-fade-axis]) {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 16px,
+    #000 calc(100% - 16px),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 16px,
+    #000 calc(100% - 16px),
+    transparent
+  );
+}
+:root[data-form-factor='phone'] .zen-settings nav::-webkit-scrollbar {
+  display: none;
 }
 :root[data-form-factor='phone'] .zen-settings nav > button {
   width: auto;
   flex-shrink: 0;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 9999px;
+  corner-shape: round;
+  background: var(--zen-element-bg);
+  font-size: 13px;
+  font-weight: 500;
   white-space: nowrap;
+  scroll-snap-align: start;
+  transition: background 120ms var(--zen-ease);
+}
+:root[data-form-factor='phone'] .zen-settings nav > button:active {
+  background: var(--zen-element-bg-hover);
+}
+:root[data-form-factor='phone'] .zen-settings nav > button[aria-current] {
+  background: rgb(var(--zen-accent-rgb) / 0.16);
 }
 :root[data-form-factor='phone'] .zen-settings nav + div {
   padding: 12px;
