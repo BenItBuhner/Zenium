@@ -182,6 +182,7 @@ class TabWebView(
             is PullGestureClassifier.Pull.Release -> "release" to json("time" to event.time)
             is PullGestureClassifier.Pull.Cancel -> "cancel" to json("time" to event.time)
         }
+        if (event !is PullGestureClassifier.Pull.Move) Log.d(PULL_TAG, "$phase on $tabId (${url ?: "no url"})")
         host.chrome.pullEvent(tabId, phase, payload)
     }
 
@@ -828,6 +829,7 @@ class TabWebView(
     }
 
     companion object {
+        private const val PULL_TAG = "ZenPull"
         private val encoder = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-encode") }
 
         /** Longer than any tool budget (browser_wait_for allows 30 s) but shorter than the socket's. */

@@ -1,0 +1,46 @@
+name: Android pull-to-refresh demo
+
+# Records pull-to-refresh on a hardware-accelerated Android emulator and uploads the video and
+# screenshots: a page pulled a little and let go, pulled past the threshold and reloaded under the
+# spinning disc, caught mid-flight and pushed back, the address pill's fling still switching tabs,
+# scrolling inside the page and a drag from mid-page not pulling, the Look and Feel switch turning
+# it off, and a pull with the address bar at the top. Dispatch-only, like the gesture demo: it says
+# nothing about a change being correct. The build, the emulator and its caches live in
+# android-emulator-demo.yml; this file only picks the driver and the colour scheme.
+on:
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: Colour scheme the profile is seeded with
+        type: choice
+        default: light
+        options:
+          - light
+          - dark
+  # TEMPORARY, removed before the PR is marked ready: worker tokens cannot dispatch workflows.
+  push:
+    branches:
+      - cursor/android-pull-to-refresh-7f3a
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ptr-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Pull-to-refresh demo (${{ inputs.theme || 'light' }})
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PullToRefreshDemo
+        DEMO_DIR=ptr-demo
+        DEMO_OUT=artifacts/android-ptr-demo
+        DEMO_VIDEO=ptr-demo-${{ inputs.theme || 'light' }}.mp4
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+      artifact-name: android-ptr-demo-${{ inputs.theme || 'light' }}
+      artifact-path: artifacts/android-ptr-demo/
