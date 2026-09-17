@@ -227,6 +227,23 @@
   --v2-icon: 20px;
 }
 
+/*
+ * One focus ring for every v2 control (§1, §9.6): 2px accent, offset 0 in light and -2 in dark, on
+ * any element whose class starts with zen-v2-. Coarse pointers keep it: the generic suppressor
+ * further down (`button:focus-visible { outline: none }`) does not apply to v2 controls.
+ */
+[class^='zen-v2-']:focus-visible,
+[class*=' zen-v2-']:focus-visible,
+:root[data-pointer='coarse'] [class^='zen-v2-']:focus-visible,
+:root[data-pointer='coarse'] [class*=' zen-v2-']:focus-visible {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: 0;
+}
+:root[data-theme='dark'] [class^='zen-v2-']:focus-visible,
+:root[data-theme='dark'] [class*=' zen-v2-']:focus-visible {
+  outline-offset: -2px;
+}
+
 /* Zen clamps its primary colour's lightness before using it as ink or a fill; so does the chrome. */
 @supports (color: oklch(from red clamp(0.3, l, 0.6) c h)) {
   :root {

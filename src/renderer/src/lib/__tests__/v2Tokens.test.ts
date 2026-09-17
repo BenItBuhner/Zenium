@@ -125,7 +125,8 @@ describe('design language v2 tokens', () => {
     const outside = css.slice(0, lightBlockStart) + css.slice(blockEnd)
     expect(outside.match(/var\(--v2-/g) ?? []).toHaveLength(0)
     const inside = css.slice(lightBlockStart, blockEnd)
-    // Only token-to-token references inside the block: the ring and selection derive from the accent.
-    expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(2)
+    // Inside: the ring and selection derive from the accent, and the shared focus-ring rule reads the ring.
+    expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(3)
+    expect(inside).toMatch(/\[class\^='zen-v2-'\]:focus-visible/)
   })
 })
