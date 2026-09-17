@@ -70,6 +70,12 @@ class FakeHost implements DownloadHost {
   async chooseDirectory(): Promise<string | null> {
     return '/picked'
   }
+  /** Where a parked partial goes; null means the host could not keep it. */
+  parkTo: ((item: DownloadItem) => string | null) | null = null
+  park(item: DownloadItem): string | null {
+    this.calls.push({ method: 'park', id: item.id })
+    return this.parkTo ? this.parkTo(item) : null
+  }
   count(method: keyof DownloadHost): number {
     return this.calls.filter((c) => c.method === method).length
   }
@@ -741,6 +747,64 @@ describe('persistence and migration', () => {
     expect(restored.bytesPerSecond).toBe(0)
     second.service.resume(restored.id)
     expect(second.host.count('resume')).toBe(1)
+  })
+
+  it('on quit parks the partial files of regular in-flight rows and ignores the teardown', async () => {
+    const io = new MemoryIO()
+    const first = harness({}, io)
+    first.host.parkTo = (item) => item.savePath.replace('.zeniumdownload', '.quit.zeniumdownload')
+    const running = begin(first)
+    first.service.progress(running.id, { receivedBytes: 300, state: 'progressing' })
+    const paused = begin(first, { filename: 'b.bin', savePath: '/dl/b.bin.zeniumdownload' })
+    first.service.progress(paused.id, { receivedBytes: 100, state: 'paused' })
+    const secret = begin(first, {
+      filename: 'c.bin',
+      savePath: '/dl/c.bin.zeniumdownload',
+      containerId: PRIVATE_CONTAINER_ID
+    })
+    const done = begin(first, { filename: 'd.bin', savePath: '/dl/d.bin.zeniumdownload' })
+    first.service.finish(done.id, 'completed', { receivedBytes: 1000 })
+    await flush()
+
+    first.service.shutdown()
+    expect(first.host.ids('park').sort()).toEqual([paused.id, running.id].sort())
+    expect(running.savePath).toBe('/dl/report.pdf.quit.zeniumdownload')
+    expect(paused.savePath).toBe('/dl/b.bin.quit.zeniumdownload')
+    expect(secret.savePath).toBe('/dl/c.bin.zeniumdownload')
+
+    // Chromium now cancels the live items: nothing of that reaches the rows or the files.
+    first.service.finish(running.id, 'cancelled', { receivedBytes: 300 })
+    first.service.progress(paused.id, { receivedBytes: 100, state: 'interrupted' })
+    expect(running.state).toBe('progressing')
+    expect(running.savePath).toBe('/dl/report.pdf.quit.zeniumdownload')
+    expect(first.host.count('deletePartial')).toBe(0)
+    first.service.flushSync()
+
+    const second = harness({}, io)
+    const restored = second.service.item(running.id)!
+    expect(restored).toMatchObject({
+      state: 'interrupted',
+      error: 'shutdown',
+      canResume: true,
+      savePath: '/dl/report.pdf.quit.zeniumdownload',
+      receivedBytes: 300
+    })
+    expect(second.service.item(paused.id)!.savePath).toBe('/dl/b.bin.quit.zeniumdownload')
+    expect(second.service.item(secret.id)).toBeUndefined()
+    expect(second.service.item(done.id)!.state).toBe('completed')
+    second.service.resume(restored.id)
+    expect(second.host.ids('resume')).toEqual([restored.id])
+  })
+
+  it('on quit a host that cannot keep a partial leaves the row as it was', () => {
+    const h = harness()
+    const item = begin(h)
+    h.service.progress(item.id, { receivedBytes: 10, state: 'progressing' })
+    h.service.shutdown()
+    h.service.shutdown()
+    expect(h.host.count('park')).toBe(1)
+    expect(item.savePath).toBe('/dl/report.pdf.zeniumdownload')
+    expect(stored(h).items[0]!.savePath).toBe('/dl/report.pdf.zeniumdownload')
   })
 
   it('reads records written by earlier builds of this schema', () => {

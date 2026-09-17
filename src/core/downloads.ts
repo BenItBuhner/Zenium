@@ -198,6 +198,8 @@ export class DownloadService {
   private readonly transfers = new Map<string, Transfer>()
   private readonly registry: DangerVerdictRegistry
   private readonly now: () => number
+  /** Set by `shutdown()`: the rows are frozen as persisted, later host reports are teardown noise. */
+  private quitting = false
 
   constructor(
     io: StoreIO,
@@ -372,6 +374,7 @@ export class DownloadService {
       state: Extract<DownloadState, 'progressing' | 'paused' | 'interrupted'>
     }
   ): void {
+    if (this.quitting) return
     const record = this.item(id)
     // Finished records never come back to life; a resumable interruption does (interrupted → progressing).
     if (!record || record.state === 'completed' || record.state === 'cancelled') return
@@ -403,6 +406,7 @@ export class DownloadService {
     state: Extract<DownloadState, 'completed' | 'cancelled' | 'interrupted'>,
     patch: ProgressPatch = {}
   ): void {
+    if (this.quitting) return
     const record = this.item(id)
     if (!record || record.state === 'completed' || record.state === 'cancelled') return
     const transfer = this.transfers.get(id)
@@ -620,6 +624,31 @@ export class DownloadService {
 
   flushSync(): void {
     this.store.flushSync()
+  }
+
+  /**
+   * The app is quitting. The host's engine is about to cancel every in-flight transfer and
+   * delete its partial file (Chromium does on shutdown), so each regular in-flight row asks the
+   * host to keep the file and records where it went; the row then loads as `interrupted` with
+   * `error: 'shutdown'` and "Resume" continues from the kept bytes. Private rows are not kept.
+   * Reports arriving after this point are ignored, so the teardown cannot mark the rows cancelled
+   * or delete what was just kept. Followed by `flushSync()`.
+   */
+  shutdown(): void {
+    if (this.quitting) return
+    this.quitting = true
+    const park = this.host.park?.bind(this.host)
+    if (!park) return
+    let changed = false
+    for (const item of this.items) {
+      if (!isInFlight(item.state) || item.private || !item.savePath) continue
+      const kept = park(item)
+      if (kept && kept !== item.savePath) {
+        item.savePath = kept
+        changed = true
+      }
+    }
+    if (changed) this.persist()
   }
 
   // ---------------------------------------------------------------------------

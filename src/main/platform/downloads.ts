@@ -8,7 +8,7 @@ import {
   type WebContents
 } from 'electron'
 import { basename, dirname, join } from 'node:path'
-import { existsSync, mkdirSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs'
 import { copyFile, rename, rm } from 'node:fs/promises'
 import { PRIVATE_CONTAINER_ID, type DownloadItem } from '../../shared/types'
 import { PARTIAL_SUFFIX, finalName as stripPartial } from '../../shared/downloads'
@@ -80,6 +80,8 @@ export class ElectronDownloads implements DownloadHost {
   private readonly pendingDialogs = new Map<string, Promise<void>>()
   private readonly sessions = new Map<string, Session>()
   private service: DownloadService | null = null
+  /** Set by `park`: Chromium's teardown of the live items is not to be reported as cancels. */
+  private quitting = false
   private tabIdFor: (source: WebContents) => string | null = () => null
   private parentWindow: (sourceTabId: string | null) => BrowserWindow | undefined = () => undefined
 
@@ -193,6 +195,7 @@ export class ElectronDownloads implements DownloadHost {
       savePath: item.getSavePath() || record.savePath
     })
     item.on('updated', (_e, state) => {
+      if (this.quitting) return
       service.progress(record.id, {
         ...fields(),
         etag: item.getETag() || undefined,
@@ -206,6 +209,8 @@ export class ElectronDownloads implements DownloadHost {
     })
     item.once('done', (_e, state) => {
       this.live.delete(record.id)
+      // On quit Chromium cancels the item itself; the record was parked and persisted already.
+      if (this.quitting) return
       if (state === 'completed') {
         service.finish(record.id, 'completed', fields())
       } else if (state === 'cancelled') {
@@ -374,6 +379,32 @@ export class ElectronDownloads implements DownloadHost {
     this.forget(item.id)
     // Only ever delete what we wrote ourselves: partial and quarantined files carry the suffix.
     if (item.savePath.endsWith(PARTIAL_SUFFIX)) await rm(item.savePath, { force: true })
+  }
+
+  /**
+   * Quitting: Chromium cancels every in-flight item during shutdown and deletes the file at the
+   * path it knows, so the partial is renamed out of its reach first. It goes next to the intended
+   * final file (the chosen folder with "ask where to save"), or stays in its own folder when that
+   * is another volume; a still-open handle keeps writing into the renamed file on POSIX. Returns
+   * null when the rename failed (Windows keeps the file locked): the record then resumes from zero.
+   */
+  park(item: DownloadItem): string | null {
+    this.quitting = true
+    const partial = item.savePath
+    if (!partial || !partial.endsWith(PARTIAL_SUFFIX) || !existsSync(partial)) return null
+    const target = this.finalPaths.get(item.id) ?? join(dirname(partial), item.finalName)
+    const parkedName = `${basename(target)}.${Date.now().toString(36)}${PARTIAL_SUFFIX}`
+    for (const dir of [dirname(target), dirname(partial)]) {
+      const parked = join(dir, parkedName)
+      try {
+        mkdirSync(dir, { recursive: true })
+        renameSync(partial, parked)
+        return parked
+      } catch {
+        // Another volume or a locked file: try the partial's own folder, then give up.
+      }
+    }
+    return null
   }
 
   showInFolder(item: DownloadItem): void {

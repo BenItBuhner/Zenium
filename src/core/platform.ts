@@ -456,6 +456,12 @@ export interface DownloadHost {
   showInFolder(item: DownloadItem): void
   /** Folder picker for Settings › Downloads; resolves with the chosen directory or null. */
   chooseDirectory?(win?: ZenWindow): Promise<string | null>
+  /**
+   * The app is quitting and the host's engine is about to tear the in-flight transfer down
+   * (Chromium cancels it and deletes its file): keep the partial file and return where it now
+   * lives, or null when it could not be kept. Synchronous: it runs from the quit handler.
+   */
+  park?(item: DownloadItem): string | null
 }
 
 export interface SessionHost {

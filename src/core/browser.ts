@@ -872,6 +872,7 @@ export class Browser {
     this.quitting = true
     void this.agents.stop()
     this.updates.stop()
+    this.downloads.shutdown()
     this.flushSync()
     this.state.freeze()
   }
