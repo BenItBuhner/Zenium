@@ -2531,8 +2531,7 @@
   /*
    * A row: at least 44 tall, growing with its text and never clamping. What trails the text is
    * centred on the row (section 9.18); the leading control alone sits on the first text line
-   * (section 9.2: 20 on a 20 line, so no offset on phones). The press fill keeps 8 px from the
-   * sheet's edge.
+   * (section 9.2, the offset on the box itself). The press fill keeps 8 px from the sheet's edge.
    */
   .zen-v2-row {
     display: flex;
@@ -2545,8 +2544,8 @@
     border-radius: var(--v2-radius-control);
     color: var(--v2-text);
     text-align: left;
-    font-size: 15px;
-    line-height: 20px;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
     transition: background 120ms var(--zen-ease);
   }
   .zen-v2-row:active:not(:disabled) {
@@ -2558,14 +2557,31 @@
   .zen-sheet[data-dragging='true'] .zen-v2-row:active {
     background: transparent;
   }
-  /* Checkbox: a 20 square (16 on desktop) at radius 2, the accent filled in with a white check. */
+  /*
+   * A row holding a control (section 9.21): the control's height plus 8, the 4 above and below
+   * being the row's own padding rather than a list gap, so rows touch and adjacent controls sit
+   * 8 apart. The controls centre on the row (section 9.18).
+   */
+  .zen-v2-control-row {
+    display: flex;
+    min-height: calc(var(--v2-control) + 8px);
+    align-items: center;
+    gap: 8px;
+    padding: 4px 16px;
+  }
+  /*
+   * Checkbox: the token's square (20 under a finger, 16 on desktop) at radius 2, the accent filled
+   * in with a white check. Leading, it sits on the first text line (section 9.2): its top is
+   * (line − box) / 2 below the line's top – 0 on phones, 2 on desktop – and it never grows the line.
+   */
   .zen-v2-check,
   .zen-v2-radio {
     display: inline-flex;
     flex-shrink: 0;
     align-self: flex-start;
-    width: 20px;
-    height: 20px;
+    width: var(--v2-checkbox);
+    height: var(--v2-checkbox);
+    margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
     align-items: center;
     justify-content: center;
     border: 1px solid rgb(var(--v2-text-rgb) / 0.4);
@@ -2589,14 +2605,14 @@
   .zen-v2-check[data-checked] > svg {
     opacity: 1;
   }
-  /* Radio: a 20 ring; picked, the ring turns accent and a 10 dot fills its middle. */
+  /* Radio: the token's ring; picked, the ring turns accent and a dot of half its size fills its middle. */
   .zen-v2-radio {
     border-radius: 9999px;
   }
   .zen-v2-radio::after {
     content: '';
-    width: 10px;
-    height: 10px;
+    width: calc(var(--v2-checkbox) / 2);
+    height: calc(var(--v2-checkbox) / 2);
     border-radius: 9999px;
     background: var(--v2-accent);
     transform: scale(0);

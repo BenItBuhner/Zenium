@@ -185,7 +185,7 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
               onSelect={() => pickWallpaper('image')}
             />
           </div>
-          <div className="flex gap-2 px-4 pt-2">
+          <div className="zen-v2-control-row">
             <button
               type="button"
               className="zen-v2-button"
