@@ -1112,7 +1112,10 @@ export class Browser {
         this.permissions.forgetRule(origin, permission),
       'permissions.reset': () => this.permissions.reset(),
       'security.respond': ({ id, response }) => this.security.respond(id, response),
-      'security.forgetSession': () => this.security.forgetSession(),
+      'security.forgetSession': () => {
+        this.security.forgetSession()
+        void platform.sessions.clearAuthCache?.()
+      },
       'app.openExternal': ({ url }) => {
         if (/^(https?|mailto):/.test(url)) platform.shell.openExternal(url)
       },

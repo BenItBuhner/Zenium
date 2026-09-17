@@ -15,15 +15,19 @@ export class ExternalLaunches {
 
   /**
    * Whether the page in `tabId` may hand `url` to another app now. `hostGesture` is the engine's
-   * own verdict; a gesture the core saw itself moments ago counts as well.
+   * own verdict; a gesture the core saw itself moments ago counts as well, except for a server
+   * redirect (`redirect`), which the engine attributes to the click that started the chain, so
+   * one without a gesture never launches anything.
    */
   async request(
     tabId: string,
     url: string,
     hostGesture: boolean,
-    targetApp?: string
+    targetApp?: string,
+    redirect = false
   ): Promise<boolean> {
-    const gesture = hostGesture || this.browser.popups.activation(tabId).isActive(this.now())
+    const gesture =
+      hostGesture || (!redirect && this.browser.popups.activation(tabId).isActive(this.now()))
     if (!gesture) {
       this.browser.popups.record(tabId, url, 'external')
       return false

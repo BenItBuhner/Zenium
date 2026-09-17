@@ -67,6 +67,11 @@ export class SessionManager implements SessionHost {
   async clearPrivate(): Promise<void> {
     await this.clearContainerData(PRIVATE_CONTAINER_ID)
   }
+
+  /** Chromium keeps accepted HTTP credentials per session; without this a site never asks again. */
+  async clearAuthCache(): Promise<void> {
+    await Promise.all(this.all().map((ses) => ses.clearAuthCache()))
+  }
 }
 
 /**

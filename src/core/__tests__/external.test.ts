@@ -83,6 +83,22 @@ describe('ExternalLaunches', () => {
     expect(h.asked.length).toBe(1)
   })
 
+  it('a server redirect only launches with the gesture the engine attributes to it', async () => {
+    const h = harness(true)
+    h.browser.popups.activate('t1')
+    // The tap a moment ago does not count for a redirect chain that lands on an app link...
+    expect(await h.browser.external.request('t1', 'zoommtg://join', false, undefined, true)).toBe(
+      false
+    )
+    expect(h.asked).toEqual([])
+    expect(h.browser.popups.blockedFor('t1').map((p) => p.url)).toEqual(['zoommtg://join'])
+    // ...but the engine's own verdict (the click that started the chain) does.
+    expect(await h.browser.external.request('t1', 'zoommtg://join', true, undefined, true)).toBe(
+      true
+    )
+    expect(h.asked.length).toBe(1)
+  })
+
   it('a refusal is not remembered, so the site can ask on the next tap', async () => {
     const h = harness(false)
     expect(await h.browser.external.request('t1', 'tel:+1', true)).toBe(false)

@@ -221,6 +221,8 @@ export interface HostEventPayloads {
     tabId: string
     url: string
     hasGesture: boolean
+    /** The navigation is a server redirect (never launched without the engine's gesture). */
+    redirect: boolean
     targetApp: string | null
   }
   /** A server asked for HTTP credentials; answered with `auth.respond`. */
@@ -695,7 +697,8 @@ export class AndroidPlatform implements Platform {
     }
     this.sessions = {
       clearContainerData: (containerId) => bridge.call('profile.clear', { containerId }),
-      clearPrivate: () => bridge.call('profile.clear', { containerId: PRIVATE_CONTAINER_ID })
+      clearPrivate: () => bridge.call('profile.clear', { containerId: PRIVATE_CONTAINER_ID }),
+      clearAuthCache: () => bridge.call('security.forgetSession', {})
     }
     this.app = {
       quit: () => bridge.send('app.quit'),
@@ -894,7 +897,7 @@ export class AndroidPlatform implements Platform {
       case 'external.request': {
         const p = payload as HostEventPayloads['external.request']
         void browser.external
-          .request(p.tabId, p.url, p.hasGesture, p.targetApp ?? undefined)
+          .request(p.tabId, p.url, p.hasGesture, p.targetApp ?? undefined, p.redirect)
           .then((allow) => this.bridge.send('external.respond', { requestId: p.requestId, allow }))
         return
       }

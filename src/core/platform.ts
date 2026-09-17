@@ -502,6 +502,11 @@ export interface SessionHost {
   clearContainerData(containerId: string): Promise<void>
   /** Wipe the private-browsing session once its last window closed. */
   clearPrivate(): Promise<void>
+  /**
+   * Drop the HTTP credentials and client-certificate choices the engine itself cached for this
+   * session, so a site asks again (the core forgets its own copies alongside).
+   */
+  clearAuthCache?(): Promise<void>
 }
 
 /** Stored data of a site as the host's storage layer reports it. */
