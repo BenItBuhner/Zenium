@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   BLANK_URL,
+  displayHost,
   displayUrl,
   errorPageUrl,
   getDomain,
@@ -56,6 +57,38 @@ describe('displayUrl', () => {
     expect(
       displayUrl('zen://reader/?id=article_1&url=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FZen')
     ).toBe('en.wikipedia.org/wiki/Zen')
+  })
+})
+
+describe('displayHost', () => {
+  it('shows the site alone, never the path or query', () => {
+    expect(displayHost('https://www.google.com/search?q=android+parity&oq=and')).toBe('google.com')
+    expect(displayHost('https://en.wikipedia.org/wiki/Zen_(browser)#History')).toBe(
+      'en.wikipedia.org'
+    )
+    expect(displayHost('http://example.com')).toBe('example.com')
+    expect(displayHost('https://user:pw@example.com/private')).toBe('example.com')
+  })
+
+  it('keeps a non-default port and drops the default one', () => {
+    expect(displayHost('http://localhost:5173/app/index.html')).toBe('localhost:5173')
+    expect(displayHost('https://example.com:443/')).toBe('example.com')
+  })
+
+  it('shows the site an error or reader page stands in for', () => {
+    expect(
+      displayHost(errorPageUrl(-105, 'ERR_NAME_NOT_RESOLVED', 'https://nope.invalid/deep/path'))
+    ).toBe('nope.invalid')
+    expect(
+      displayHost('zen://reader/?id=article_1&url=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FZen')
+    ).toBe('en.wikipedia.org')
+  })
+
+  it('falls back to the display form where there is no site', () => {
+    expect(displayHost(BLANK_URL)).toBe('')
+    expect(displayHost('')).toBe('')
+    expect(displayHost('zen://settings')).toBe('zen://settings')
+    expect(displayHost('file:///home/me/notes.html')).toBe('file:///home/me/notes.html')
   })
 })
 

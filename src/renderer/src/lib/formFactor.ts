@@ -1,27 +1,23 @@
+import { useEffect } from 'react'
+import { classifyViewport, type ViewportMetrics } from '@shared/formFactor'
+import type { FormFactor } from '@shared/types'
+import { run } from './api'
 import { createStore } from './store'
 
+export type { FormFactor }
+
 /**
- * How the chrome should lay itself out. Derived from the window, not from the platform: a phone
- * held sideways or a Samsung DeX session gets the desktop layout, a narrow window on a laptop
- * gets the phone one.
+ * How the chrome should lay itself out. Derived from the window and its pointer, not from the
+ * platform (see `classifyViewport`): a Samsung DeX session gets the desktop layout, a narrow
+ * window on a laptop gets the phone one, and a phone stays a phone whichever way it is held.
  *
- *  - `phone`   – width < 600 CSS px: bottom bar, sidebar in a drawer, sheets instead of popovers.
- *  - `tablet`  – ≥ 600 px with a coarse pointer: desktop layout with touch-sized controls.
+ *  - `phone`   – bottom bar, sidebar in a drawer, sheets instead of popovers.
+ *  - `tablet`  – a touch screen with room for the desktop layout, with touch-sized controls.
  *  - `desktop` – everything else.
  */
-export type FormFactor = 'phone' | 'tablet' | 'desktop'
-
-export interface ViewportInfo {
+export interface ViewportInfo extends ViewportMetrics {
   formFactor: FormFactor
-  width: number
-  height: number
-  /** Primary pointer is a finger (`pointer: coarse`). */
-  coarse: boolean
-  /** The primary pointer can hover (mouse / trackpad). */
-  hover: boolean
 }
-
-const PHONE_MAX_WIDTH = 600
 
 function compute(): ViewportInfo {
   const width = window.innerWidth
@@ -31,8 +27,8 @@ function compute(): ViewportInfo {
   // hover is a finger. A mouse (DeX, tablet trackpad) brings hover back and gets desktop sizing.
   const coarse =
     window.matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints > 0 && !hover)
-  const formFactor: FormFactor = width < PHONE_MAX_WIDTH ? 'phone' : coarse ? 'tablet' : 'desktop'
-  return { formFactor, width, height, coarse, hover }
+  const metrics = { width, height, coarse, hover }
+  return { formFactor: classifyViewport(metrics), ...metrics }
 }
 
 export const viewportStore = createStore<ViewportInfo>(compute(), 'viewport')
@@ -67,6 +63,16 @@ if (!flags.__zenViewportWatched) {
 
 export function useViewport(): ViewportInfo {
   return viewportStore.use()
+}
+
+/**
+ * Tell the core which layout the chrome shows: it builds the app menu and the command list for
+ * it. Sent once the chrome is up (the API exists by then) and again whenever the class changes.
+ */
+export function useFormFactorReport(formFactor: FormFactor): void {
+  useEffect(() => {
+    run('window.formFactor', { formFactor })
+  }, [formFactor])
 }
 
 export function isPhone(): boolean {

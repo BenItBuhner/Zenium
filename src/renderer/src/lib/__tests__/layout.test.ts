@@ -5,6 +5,7 @@ import {
   SPLIT_HEADER,
   glanceRect,
   gutterRects,
+  overviewColumns,
   placementsFor,
   splitPaneRects
 } from '../layout'
@@ -56,5 +57,17 @@ describe('split layout', () => {
     expect(g.width).toBeCloseTo(850)
     expect(g.x).toBeCloseTo(100 + 75)
     expect(g.y).toBeCloseTo(50 + 45)
+  })
+})
+
+describe('phone overview grid', () => {
+  it('gets more columns as the window widens, like Chrome', () => {
+    expect(overviewColumns(360)).toBe(2)
+    expect(overviewColumns(412)).toBe(2)
+    expect(overviewColumns(599)).toBe(2)
+    expect(overviewColumns(600)).toBe(3)
+    expect(overviewColumns(799)).toBe(3)
+    expect(overviewColumns(800)).toBe(4)
+    expect(overviewColumns(915)).toBe(4)
   })
 })

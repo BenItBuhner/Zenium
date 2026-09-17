@@ -134,6 +134,17 @@ export function gutterRects(
   return gutters
 }
 
+/**
+ * Columns of the phone tab overview for a window this wide: Chrome's span counts (two under
+ * 600 dp, three under 800, four beyond), so a phone on its side gets a row of smaller cards
+ * rather than two cards taller than the screen.
+ */
+export function overviewColumns(width: number): number {
+  if (width < 600) return 2
+  if (width < 800) return 3
+  return 4
+}
+
 export function layoutLabel(layout: SplitLayout): string {
   return layout === 'grid' ? 'Grid' : layout === 'vertical' ? 'Side by side' : 'Stacked'
 }

@@ -58,8 +58,13 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
 
   useEffect(() => {
     const el = inputRef.current
-    el?.focus()
-    el?.select()
+    if (!el) return
+    el.focus()
+    // Everything selected, read from the start: `select()` alone puts the caret end at the tail
+    // and scrolls a long URL so only its query is visible. A backward selection keeps the focus
+    // end – the one the field scrolls to – at the origin.
+    el.setSelectionRange(0, el.value.length, 'backward')
+    el.scrollLeft = 0
   }, [])
 
   const fetchSuggestions = useCallback(

@@ -120,6 +120,33 @@ export function getHost(url: string): string {
   }
 }
 
+/**
+ * The address as a phone's URL pill shows it: the site alone, like Chrome's steady-state
+ * omnibox, so a long path or query can never push the domain out of the pill. `www.` is trimmed
+ * as in `displayUrl`; a non-default port stays (a dev server is told apart by it); error and
+ * Reader View pages show the site they stand in for. Other schemes (`file:`, `zen://settings`)
+ * have no site to show and fall back to `displayUrl`.
+ */
+export function displayHost(url: string): string {
+  if (!url || url === BLANK_URL) return ''
+  if (url.startsWith(ERROR_URL_PREFIX) || url.startsWith(READER_URL_PREFIX)) {
+    try {
+      const original = new URL(url).searchParams.get('url')
+      return original ? displayHost(original) : ''
+    } catch {
+      return ''
+    }
+  }
+  if (!/^https?:\/\//i.test(url)) return displayUrl(url)
+  try {
+    const host = new URL(url).host
+    const site = host.startsWith('www.') ? host.slice(4) : host
+    return site || displayUrl(url)
+  } catch {
+    return displayUrl(url)
+  }
+}
+
 const SECOND_LEVEL = new Set(['co', 'com', 'org', 'net', 'gov', 'edu', 'ac', 'or', 'ne', 'go'])
 
 /** Approximate registrable domain (eTLD+1) – good enough for "same site" checks. */
