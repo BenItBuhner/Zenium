@@ -1,13 +1,12 @@
 package app.zen.chromium
 
 import android.app.PendingIntent
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
@@ -56,6 +55,7 @@ class CustomTabActivity : MainActivity() {
         tab.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
             topMargin = dp(TOOLBAR_HEIGHT_DP)
         }
+        tab.visibility = View.VISIBLE
 
         toolbar = buildToolbar()
         pageRoot.addView(toolbar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(TOOLBAR_HEIGHT_DP), Gravity.TOP))
@@ -107,17 +107,16 @@ class CustomTabActivity : MainActivity() {
             }
             elevation = dp(2).toFloat()
         }
-        val close = iconButton("Close custom tab").apply {
-            setImageBitmap(closeIcon())
+        val close = closeButton().apply {
             setOnClickListener { finishCustomTab() }
         }
         val secure = ImageView(this).apply {
             contentDescription = "Secure"
             setImageResource(android.R.drawable.ic_lock_lock)
-            imageTintList = android.content.res.ColorStateList.valueOf(foreground(colors.toolbar, colors.dark, 0.72f))
+            imageTintList = android.content.res.ColorStateList.valueOf(foreground(colors.dark, 0.72f))
         }
         title = TextView(this).apply {
-            setTextColor(foreground(colors.toolbar, colors.dark, 1f))
+            setTextColor(foreground(colors.dark, 1f))
             textSize = 14f
             maxLines = 2
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -208,7 +207,7 @@ class CustomTabActivity : MainActivity() {
                 }
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
         }
-        item("Copy Link") { copyLink() }
+        item("Share") { shareCurrentPage() }
         item("Open in Zenium") { openInZenium() }
         item("Reload") { tab.reload() }
         callerMenuItems().forEach { (label, pending) -> item(label) { sendPendingIntent(pending) } }
@@ -230,9 +229,14 @@ class CustomTabActivity : MainActivity() {
         }
     }
 
-    private fun copyLink() {
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("Zenium link", latestUrl))
+    private fun shareCurrentPage() {
+        host.share.share(
+            json(
+                "title" to tab.title?.toString()?.takeIf(String::isNotBlank),
+                "url" to latestUrl,
+                "tabId" to CUSTOM_TAB_ID
+            )
+        ) {}
     }
 
     private fun openInZenium() {
@@ -265,12 +269,12 @@ class CustomTabActivity : MainActivity() {
 
     private fun resolveColors(intent: Intent): CustomTabColors {
         val requested = intent.getIntExtra(CustomTabsIntent.EXTRA_COLOR_SCHEME, CustomTabsIntent.COLOR_SCHEME_SYSTEM)
-        val selected = if (requested == CustomTabsIntent.COLOR_SCHEME_DARK) {
-            CustomTabsIntent.COLOR_SCHEME_DARK
-        } else {
-            CustomTabsIntent.COLOR_SCHEME_LIGHT
-        }
         val systemDark = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+        val selected = when (requested) {
+            CustomTabsIntent.COLOR_SCHEME_DARK -> CustomTabsIntent.COLOR_SCHEME_DARK
+            CustomTabsIntent.COLOR_SCHEME_LIGHT -> CustomTabsIntent.COLOR_SCHEME_LIGHT
+            else -> if (systemDark) CustomTabsIntent.COLOR_SCHEME_DARK else CustomTabsIntent.COLOR_SCHEME_LIGHT
+        }
         val params: CustomTabColorSchemeParams = CustomTabsIntent.getColorSchemeParams(intent, selected)
         return CustomTabColorSchemeResolver.resolve(params.toolbarColor, requested, systemDark)
     }
@@ -278,13 +282,44 @@ class CustomTabActivity : MainActivity() {
     private fun iconButton(description: String): ImageButton = ImageButton(this).apply {
         contentDescription = description
         background = selectableBackground()
-        imageTintList = android.content.res.ColorStateList.valueOf(foreground(colors.toolbar, colors.dark, 1f))
+        imageTintList = android.content.res.ColorStateList.valueOf(foreground(colors.dark, 1f))
         scaleType = ImageView.ScaleType.CENTER_INSIDE
         adjustViewBounds = true
         layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
     }
 
-    private fun closeIcon(): Bitmap? = parcelable(intent.extras ?: Bundle.EMPTY, CustomTabsIntent.EXTRA_CLOSE_BUTTON_ICON)
+    private fun closeButton(): ImageButton {
+        val supplied = parcelable<Bitmap>(intent.extras ?: Bundle.EMPTY, CustomTabsIntent.EXTRA_CLOSE_BUTTON_ICON)
+        return iconButton("Close custom tab").apply {
+            imageTintList = null
+            setImageBitmap(supplied ?: defaultCloseIcon())
+        }
+    }
+
+    private fun defaultCloseIcon(): Bitmap {
+        val size = dp(20)
+        val inset = dp(4).toFloat()
+        return Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).also { bitmap ->
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = foreground(colors.dark, 1f)
+                strokeWidth = 1.75f * resources.displayMetrics.density
+                strokeCap = Paint.Cap.ROUND
+                style = Paint.Style.STROKE
+            }
+            val canvas = Canvas(bitmap)
+            if (intent.getIntExtra(
+                    CustomTabsIntent.EXTRA_CLOSE_BUTTON_POSITION,
+                    CustomTabsIntent.CLOSE_BUTTON_POSITION_DEFAULT
+                ) == CustomTabsIntent.CLOSE_BUTTON_POSITION_END
+            ) {
+                canvas.drawLine(inset, inset, size - inset, size - inset, paint)
+                canvas.drawLine(size - inset, inset, inset, size - inset, paint)
+            } else {
+                canvas.drawLine(size - inset, inset, inset, size / 2f, paint)
+                canvas.drawLine(inset, size / 2f, size - inset, size - inset, paint)
+            }
+        }
+    }
 
     private fun selectableBackground(): android.graphics.drawable.Drawable {
         val outValue = android.util.TypedValue()
@@ -309,7 +344,7 @@ class CustomTabActivity : MainActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) bundle.getParcelable(key, T::class.java)
         else bundle.getParcelable(key) as? T
 
-    private fun foreground(color: Int, dark: Boolean, opacity: Float): Int {
+    private fun foreground(dark: Boolean, opacity: Float): Int {
         val base = if (dark) Color.WHITE else Color.BLACK
         return Color.argb((opacity * 255).toInt(), Color.red(base), Color.green(base), Color.blue(base))
     }

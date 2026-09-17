@@ -82,22 +82,22 @@ class CustomTabsDemo {
             )
         }
         SystemClock.sleep(1_000)
-        shot("$name-toolbar")
+        shot("toolbar-$name")
         ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
         SystemClock.sleep(1_000)
-        shot("$name-back")
+        shot("back-$name")
         click("More options")
-        waitFor("Copy Link", 5_000)
-        shot("$name-menu")
+        waitFor("Share", 5_000)
+        shot("menu-$name")
         click("Open in Zenium")
         waitFor("Address", 15_000)
-        shot("$name-open-in-zenium")
+        shot("open-in-zenium-$name")
 
         launchCustomTab(scheme, toolbarColor)
         waitFor("Close custom tab", 15_000)
         click("Close custom tab")
         waitFor("Address", 10_000)
-        shot("$name-close")
+        shot("close-$name")
     }
 
     private fun launchCustomTab(scheme: Int, toolbarColor: Int) {
