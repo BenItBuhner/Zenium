@@ -32,6 +32,7 @@ import { useLongPress } from '../phone/useLongPress'
 import { PillChip } from '../urlbar/PillChip'
 import { WindowControls } from '../WindowControls'
 import { ZoomChip } from '../zoom/ZoomChip'
+import { DownloadButton } from '../downloads/DownloadButton'
 
 interface Props {
   state: UIState
@@ -330,6 +331,7 @@ export function NavRow({
         </div>
       )}
       {!compact && extensions.slice(0, 4).map((ext) => <ExtensionButton key={ext.id} ext={ext} />)}
+      <DownloadButton state={state} activeTabId={tab?.id ?? null} />
       <button
         ref={menuButton}
         type="button"
