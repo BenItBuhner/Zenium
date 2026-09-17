@@ -61,6 +61,19 @@ function install(kind: 'frame' | 'worker'): void {
   }
 }
 
-if (typeof location !== 'undefined' && location.protocol === 'chrome-extension:') {
+/**
+ * The document's URL, or the worker's script URL. A service-worker preload world has no
+ * `location` of its own; the main world (the worker itself) does.
+ */
+function contextUrl(): string {
+  if (typeof location !== 'undefined' && location) return location.href
+  try {
+    return String(contextBridge.executeInMainWorld({ func: () => globalThis.location.href }))
+  } catch {
+    return ''
+  }
+}
+
+if (contextUrl().startsWith('chrome-extension://')) {
   install(process.type === 'service-worker' ? 'worker' : 'frame')
 }
