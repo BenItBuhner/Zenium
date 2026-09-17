@@ -121,8 +121,9 @@ class PasswordsEngineDemo : DemoHarness("passwords-demo-state.json", "services-p
         assertEquals("export: $export", "ok", export.getString("status"))
         val exported = export.getJSONObject("value")
         assertEquals(LOGINS.size, exported.getInt("count"))
-        assertTrue("the picker should have produced a file: $exported", !exported.isNull("path"))
-        File(out, "exported-name.txt").writeText(exported.getString("path"))
+        assertTrue("the picker should have produced a file: $exported", exported.getBoolean("saved"))
+        // The picker was told to suggest the manager's default name and the demo accepted it as is.
+        File(out, "exported-name.txt").writeText(EXPORT_NAME)
 
         // 8. Import the sample CSV through the open-document picker; one row duplicates a saved login.
         val import = zen("passwords.import", JSONObject().put("conflict", "skip"), onPicker = { pickDocument(CSV_NAME) })
@@ -394,6 +395,8 @@ class PasswordsEngineDemo : DemoHarness("passwords-demo-state.json", "services-p
         /** Set by the workflow with `locksettings set-pin` before the driver starts. */
         private const val PIN = "1234"
         private const val CSV_NAME = "zenium-sample-passwords.csv"
+        /** The name `passwords.export` suggests to the create-document picker. */
+        private const val EXPORT_NAME = "Zenium Passwords.csv"
         private val LOGINS = listOf(
             Triple("https://accounts.example.com/login", "ada.lovelace@example.com", "Tr0ub4dor&3-demo"),
             Triple("https://bank.example/login", "ada.lovelace@example.com", "correct horse battery staple"),
