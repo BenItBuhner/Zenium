@@ -46,6 +46,7 @@ import {
   type ListenerOptions,
   type RequestHandler,
   type TabResolver,
+  type WebRequestBase,
   type WebRequestEvent,
   type WebRequestListener
 } from './webRequest'
@@ -55,6 +56,7 @@ export type {
   HeaderRewriteOptions,
   ListenerFilter,
   ListenerOptions,
+  WebRequestBase,
   WebRequestDetails,
   WebRequestEvent,
   WebRequestListener
@@ -86,13 +88,16 @@ export class BlockingHandler implements RequestHandler {
 
   constructor(
     private readonly decider: BlockingDecider,
-    private readonly csp: CspSource | null
+    private readonly csp: CspSource | null,
+    /** Told about every decision a named rule took, with the request it was about. */
+    private readonly observer: ((request: HostRequest, decision: Decision) => void) | null = null
   ) {}
 
   onBeforeRequest(request: HostRequest): BeforeRequestResult {
     const { ctx } = request
     if (!/^(https?|wss?):/i.test(ctx.url)) return undefined
     const decision = this.decider.decide(ctx)
+    if (decision.matched && this.observer) this.observer(request, decision)
     switch (decision.action) {
       case 'block':
         this.decider.recordBlocked(request.tabId)
@@ -427,8 +432,8 @@ export function bundledListsDirectory(): string {
 // Wiring
 // ---------------------------------------------------------------------------
 
-/** A decision that named a rule, with the request it was about. */
-export type DecisionListener = (ctx: RequestContext, decision: Decision) => void
+/** A decision that named a rule, with the request (in `chrome.webRequest` shape) it was about. */
+export type DecisionListener = (request: WebRequestBase, decision: Decision) => void
 
 /** Everything desktop blocking needs, created once per app and attached to every session. */
 export class ElectronBlocking {
@@ -452,16 +457,13 @@ export class ElectronBlocking {
     this.multiplexer.register(
       new BlockingHandler(
         {
-          decide: (ctx) => {
-            const decision = blocking.engine.decide(ctx)
-            if (decision.matched && this.decisionListeners.size > 0) {
-              for (const listener of this.decisionListeners) listener(ctx, decision)
-            }
-            return decision
-          },
+          decide: (ctx) => blocking.engine.decide(ctx),
           recordBlocked: (tabId, count) => blocking.recordBlocked(tabId, count)
         },
-        this.matcher
+        this.matcher,
+        (request, decision) => {
+          for (const listener of this.decisionListeners) listener(request.base, decision)
+        }
       )
     )
     blocking.engine.setTextMatcher(this.matcher)

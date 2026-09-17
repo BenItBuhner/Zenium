@@ -63,10 +63,13 @@ export class NotificationsApi {
   // Routed calls
   // ---------------------------------------------------------------------------
 
-  /** `create(notificationId?, options)`: the shim drops the callback, the id stays optional. */
+  /**
+   * `create(notificationId?, options)`: the shim drops the callback and aligns the optional id
+   * to its slot (`undefined` when omitted), but a bare `(options)` call is accepted as well.
+   */
   private create(ctx: ApiContext, first: unknown, second: unknown): string {
     const explicit = typeof first === 'string' ? first : null
-    const raw = explicit === null ? first : second
+    const raw = explicit !== null || first === undefined || first === null ? second : first
     const id = explicit || newNotificationId()
     try {
       checkNotificationId(id)

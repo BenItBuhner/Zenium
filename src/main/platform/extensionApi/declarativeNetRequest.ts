@@ -1,5 +1,5 @@
 import { rm } from 'node:fs/promises'
-import type { Decision, RequestContext } from '../../../core/blocking/rules'
+import type { Decision } from '../../../core/blocking/rules'
 import {
   createDeclarativeNetRequestApi,
   type DeclarativeNetRequestApi,
@@ -23,6 +23,7 @@ import {
   type UpdateStaticRulesOptions
 } from '../../../core/extensions/dnr/state'
 import { DnrTranslator } from '../../../core/extensions/dnr/translate'
+import type { WebRequestBase } from '../blocking'
 import type { ActionApi } from './action'
 import type { ActiveTabGrants } from './activeTab'
 import { createDnrFileIO, dnrStateFile } from './dnrIo'
@@ -58,8 +59,6 @@ export class DeclarativeNetRequestHostApi {
   private readonly pool = createGlobalStaticRulePool()
   /** One sync at a time per extension, in order. */
   private readonly syncing = new Map<string, Promise<void>>()
-  /** Chrome's `requestId`s are opaque decimal strings; numbered per process here. */
-  private requestSerial = 0
 
   constructor(
     private readonly host: ApiHost,
@@ -178,25 +177,23 @@ export class DeclarativeNetRequestHostApi {
    * is an extension's, the record feeds `getMatchedRules`, the action count (allow rules do not
    * count) and, for unpacked extensions, `onRuleMatchedDebug` with Chrome's request details.
    */
-  decided(ctx: RequestContext, decision: Decision): void {
+  decided(base: WebRequestBase, decision: Decision): void {
     const routed = routeDecision(decision)
     if (!routed) return
     const entry = this.entries.get(routed.extensionId)
     if (!entry) return
-    const tab = ctx.tabId === undefined ? undefined : this.host.model.tab(ctx.tabId)
+    const tab = base.tabId === null ? undefined : this.host.model.tab(base.tabId)
     const tabId = tab ? this.host.model.chromeTabId(tab) : UNKNOWN_TAB_ID
-    const frameId = ctx.frameId ?? (ctx.type === 'main_frame' ? 0 : -1)
-    this.requestSerial += 1
     const request: RequestDetails = {
-      requestId: String(this.requestSerial),
-      url: ctx.url,
-      method: ctx.method,
-      frameId,
-      parentFrameId: frameId === 0 ? -1 : 0,
+      requestId: base.requestId,
+      url: base.url,
+      method: base.method,
+      frameId: base.frameId,
+      parentFrameId: base.parentFrameId,
       tabId,
-      type: ctx.type
+      type: base.resourceType
     }
-    if (ctx.initiator !== undefined) request.initiator = ctx.initiator
+    if (base.initiator !== null) request.initiator = base.initiator
     entry.state.recordMatch({
       ruleId: routed.ruleId,
       rulesetId: routed.rulesetId,

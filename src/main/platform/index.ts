@@ -284,8 +284,8 @@ export class ElectronPlatform implements Platform {
     this.requestBlocking.start()
     // Decisions the engine took by an extension's rule feed getMatchedRules, the action badge
     // count and onRuleMatchedDebug.
-    this.requestBlocking.onDecision((ctx, decision) =>
-      extensionApi.declarativeNetRequest.decided(ctx, decision)
+    this.requestBlocking.onDecision((request, decision) =>
+      extensionApi.declarativeNetRequest.decided(request, decision)
     )
     // The stores' header rewrites (Chrome's brand for the Chrome Web Store, Edge's user agent
     // and brand for Edge Add-ons) run as builtin handlers of the multiplexer, which owns each
