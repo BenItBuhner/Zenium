@@ -286,7 +286,6 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
               autoComplete="off"
               autoCapitalize="off"
               autoCorrect="off"
-              inputMode="url"
               enterKeyHint="go"
               className="h-full min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-[var(--zen-muted)]"
             />
