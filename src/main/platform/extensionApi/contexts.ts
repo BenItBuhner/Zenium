@@ -248,6 +248,46 @@ export class ContextRegistry {
     return context
   }
 
+  /**
+   * Whether `context` is still the live registration of its frame or worker: a new document in
+   * the same frame (or a restarted worker) registers a new context object, and everything the
+   * old one registered went with it.
+   */
+  isLive(context: FrameContext | WorkerContext): boolean {
+    if ('worker' in context) {
+      return !context.worker.isDestroyed() && this.workers.get(context.key) === context
+    }
+    if (this.frames.get(context.key) !== context) return false
+    if (this.stale(context)) {
+      this.frames.delete(context.key)
+      return false
+    }
+    return true
+  }
+
+  /**
+   * Deliver `namespace.event` to one context, addressed by `delivery`, whatever it registered
+   * (the caller keeps its own listener table, as the `webRequest` emulation does). A worker that
+   * is not running yet keeps the delivery in its outbox.
+   */
+  sendTo(
+    context: FrameContext | WorkerContext,
+    namespace: string,
+    event: string,
+    args: unknown[],
+    delivery?: EventDelivery
+  ): void {
+    if ('worker' in context) {
+      this.sendToWorker(context, namespace, event, args, delivery)
+      return
+    }
+    try {
+      context.frame.send('zen-ext:event', namespace, event, args, delivery)
+    } catch {
+      /* frame went away */
+    }
+  }
+
   /** Gone, or navigated to a page that is not this extension's any more (no hello follows). */
   private stale(context: FrameContext): boolean {
     if (context.frame.isDestroyed() || context.webContents.isDestroyed()) return true

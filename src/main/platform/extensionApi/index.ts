@@ -23,7 +23,12 @@ import type { ZenWindow } from '../../../core/window'
 import type { ExtensionManifest } from '../../../core/extensions/manifest'
 import type { PermissionSet } from '../../../core/extensions/api/permissions'
 import type { InvokeResult } from '../../../core/extensions/api/shim'
-import { API_SPEC, STORAGE_METHODS, isSpecMethod } from '../../../core/extensions/api/spec'
+import {
+  API_SPEC,
+  STORAGE_METHODS,
+  WEB_REQUEST_INTERNAL_METHODS,
+  isSpecMethod
+} from '../../../core/extensions/api/spec'
 import { normalizeEventFilters, type UrlFilter } from '../../../core/extensions/api/urlFilter'
 import type { RuleSink } from '../../../core/extensions/dnr/sink'
 import type { KeyEventInput, MenuItemTemplate, PageContextParams } from '../../../core/platform'
@@ -68,6 +73,7 @@ import {
   type Sender
 } from './types'
 import { WebNavigationApi } from './webNavigation'
+import { WebRequestApi } from './webRequest'
 import { WindowsApi } from './windows'
 
 /** IPC channels between the context-side shim (through its preload) and this router. */
@@ -134,6 +140,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly notifications: NotificationsApi
   readonly cookies: CookiesApi
   readonly declarativeNetRequest: DeclarativeNetRequestHostApi
+  readonly webRequest: WebRequestApi
 
   private readonly namespaces: Record<string, NamespaceHandlers>
   private readonly extensions = new Map<string, LoadedExtension>()
@@ -185,6 +192,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       this.activeTab,
       join(userDataDir, 'zen', 'extension-dnr')
     )
+    this.webRequest = new WebRequestApi(this)
     this.namespaces = {
       tabs: this.tabs.handlers,
       windows: this.windows.handlers,
@@ -200,7 +208,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       commands: this.commands.handlers,
       notifications: this.notifications.handlers,
       cookies: this.cookies.handlers,
-      declarativeNetRequest: this.declarativeNetRequest.handlers
+      declarativeNetRequest: this.declarativeNetRequest.handlers,
+      webRequest: this.webRequest.handlers
     }
     // A tab's outermost document changed: `activeTab` grants for another origin end and the
     // declarativeNetRequest action counts start over.
@@ -346,6 +355,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.permissions.unload(ext.id)
     this.commands.unload(ext.id)
     this.declarativeNetRequest.unload(ext.id)
+    this.webRequest.unload(ext.id)
     this.contextMenus.forget(ext.id)
     this.notifications.forget(ext.id)
     this.activeTab.forget(ext.id)
@@ -426,7 +436,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       const known =
         routed === 'storage'
           ? (STORAGE_METHODS as readonly string[]).includes(method)
-          : isSpecMethod(API_SPEC, namespace, method)
+          : routed === 'webRequest'
+            ? (WEB_REQUEST_INTERNAL_METHODS as readonly string[]).includes(method)
+            : isSpecMethod(API_SPEC, namespace, method)
       const handlers = this.namespaces[routed]
       if (!known || !handlers || !Object.prototype.hasOwnProperty.call(handlers, method)) {
         throw new ApiError(`${namespace}.${method} is not available in Zenium.`)
@@ -474,6 +486,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         return
       case 'storage-changed':
         this.storage.changed(ctx, payload)
+        return
+      case 'webRequest-answer':
+        this.webRequest.answer(ctx, payload)
         return
       default:
         return

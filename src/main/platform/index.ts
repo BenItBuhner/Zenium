@@ -291,6 +291,8 @@ export class ElectronPlatform implements Platform {
     extensionService.onChange((event) => extensionApi.registryChanged(event))
     this.requestBlocking = new ElectronBlocking(browser, this.views, this.profileDir)
     this.requestBlocking.start()
+    // Extensions' chrome.webRequest listeners run over the same hook, after the rule engine.
+    extensionApi.webRequest.attach(this.requestBlocking)
     // Decisions the engine took by an extension's rule feed getMatchedRules, the action badge
     // count and onRuleMatchedDebug.
     this.requestBlocking.onDecision((request, decision) =>
