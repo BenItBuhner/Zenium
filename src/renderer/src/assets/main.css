@@ -1553,6 +1553,11 @@
   height: 44px;
   border-radius: 9999px;
 }
+:root[data-form-factor='phone'] .zen-overlay-header .zen-toolbar-button svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.75;
+}
 /*
  * Touch rows (§8.11): 48 tall at a 10 squircle with type one step larger, on phones and on any
  * coarse pointer – a tablet keeps the desktop layout but gets the touch metrics.
