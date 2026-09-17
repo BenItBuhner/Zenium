@@ -18,7 +18,13 @@ import type {
 } from '../../shared/types'
 import { JsonStore } from '../../core/store/JsonStore'
 import type { Browser } from '../../core/browser'
-import type { ExtensionHost, PopupFrame } from '../../core/platform'
+import type {
+  ExtensionHost,
+  KeyEventInput,
+  MenuItemTemplate,
+  PageContextParams,
+  PopupFrame
+} from '../../core/platform'
 import type { ZenWindow } from '../../core/window'
 import {
   checkForUpdates,
@@ -336,6 +342,7 @@ export class ExtensionService implements ExtensionHost {
       const ext = this.loadedById.get(record.id)
       const manifest = (ext?.manifest as Manifest | undefined) ?? readManifest(record.path)
       const update = this.updates.get(record.id) ?? NO_UPDATE_INFO
+      const commands = ext && this.api ? this.api.commandsInfo(ext.id) : null
       return {
         id: record.id,
         name: ext?.name || record.name || manifest?.name || basename(record.path) || 'Extension',
@@ -364,9 +371,28 @@ export class ExtensionService implements ExtensionHost {
         availableVersion: update.availableVersion,
         updateError: update.error,
         updateCheckedAt: update.checkedAt,
-        action: (ext && this.api ? this.api.actionState(ext.id) : null) ?? undefined
+        action: (ext && this.api ? this.api.actionState(ext.id) : null) ?? undefined,
+        ...(commands ? { commands: commands.commands, commandConflicts: commands.conflicts } : {})
       }
     })
+  }
+
+  // ---------------------------------------------------------------------------
+  // Menus and keys (the chrome.* layer answers; nothing without it)
+  // ---------------------------------------------------------------------------
+
+  pageContextMenuItems(tabId: string, params: PageContextParams): MenuItemTemplate[] {
+    return this.api ? this.api.pageContextMenuItems(tabId, params) : []
+  }
+
+  actionContextMenuItems(id: string, win: ZenWindow): MenuItemTemplate[] {
+    const record = this.record(id)
+    if (!record || !this.loadedById.has(record.id)) return []
+    return this.api ? this.api.actionContextMenuItems(record.id, win) : []
+  }
+
+  handleKey(input: KeyEventInput, win: ZenWindow): boolean {
+    return this.api ? this.api.handleKey(input, win) : false
   }
 
   private icon(path: string, version: string, manifest: Manifest | null): string | null {

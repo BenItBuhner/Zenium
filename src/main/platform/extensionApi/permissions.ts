@@ -62,8 +62,13 @@ export class PermissionsApi {
   canSeeTab(extensionId: string, url: string): boolean {
     const grants = this.grants(extensionId)
     if (grants.permissions.some((p) => TAB_REVEALING.includes(p))) return true
+    return this.hasHostAccess(extensionId, url)
+  }
+
+  /** Whether a granted host permission covers `url`. */
+  hasHostAccess(extensionId: string, url: string): boolean {
     if (!url) return false
-    return matchesAnyPattern(url, grants.origins)
+    return matchesAnyPattern(url, this.grants(extensionId).origins)
   }
 
   private getAll(ctx: ApiContext): PermissionSet {

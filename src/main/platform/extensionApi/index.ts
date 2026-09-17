@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import {
   DEFAULT_CONTAINER_ID,
   type ExtensionAction,
+  type ExtensionCommandInfo,
   type ExtensionInfo
 } from '../../../shared/types'
 import type { StoreIO } from '../../../core/platform'
@@ -23,21 +24,31 @@ import type { ExtensionManifest } from '../../../core/extensions/manifest'
 import type { PermissionSet } from '../../../core/extensions/api/permissions'
 import type { InvokeResult } from '../../../core/extensions/api/shim'
 import { API_SPEC, STORAGE_METHODS, isSpecMethod } from '../../../core/extensions/api/spec'
+import { normalizeEventFilters, type UrlFilter } from '../../../core/extensions/api/urlFilter'
+import type { RuleSink } from '../../../core/extensions/dnr/sink'
+import type { KeyEventInput, MenuItemTemplate, PageContextParams } from '../../../core/platform'
 import type { RegistryEvent } from '../extensions'
 import type { SessionManager } from '../sessions'
 import type { ElectronTabViewHost } from '../views'
 import { ActionApi } from './action'
+import { ActiveTabGrants } from './activeTab'
 import { AlarmsApi } from './alarms'
+import { CommandsApi } from './commands'
+import { ContextMenusApi } from './contextMenus'
 import {
   ContextRegistry,
   type DispatchOptions,
   type FrameContext,
   type FrameKind,
-  type HelloPayload
+  type HelloPayload,
+  type ListenPayload
 } from './contexts'
+import { CookiesApi } from './cookies'
+import { DeclarativeNetRequestHostApi } from './declarativeNetRequest'
 import { ExtensionApi } from './extension'
 import { ManagementApi } from './management'
 import { ApiModel, type ModelSnapshot } from './model'
+import { NotificationsApi } from './notifications'
 import { PermissionsApi } from './permissions'
 import { RuntimeApi } from './runtime'
 import { ApiStore } from './store'
@@ -48,6 +59,7 @@ import {
   extensionIdFromUrl,
   extensionIdOfFrame,
   extensionUrl,
+  isInteger,
   isRecord,
   type ApiContext,
   type ApiHost,
@@ -55,6 +67,7 @@ import {
   type NamespaceHandlers,
   type Sender
 } from './types'
+import { WebNavigationApi } from './webNavigation'
 import { WindowsApi } from './windows'
 
 /** IPC channels between the context-side shim (through its preload) and this router. */
@@ -73,11 +86,22 @@ const extensionPreload = join(__dirname, '../preload/extension.js')
 export interface ExtensionApiHooks {
   /** Effective `chrome.action` state for the active tab, for `ExtensionInfo.action`. */
   actionState(extensionId: string): ExtensionAction | null
+  /** The manifest's commands with their bindings, for `ExtensionInfo.commands`; null when not loaded. */
+  commandsInfo(
+    extensionId: string
+  ): { commands: ExtensionCommandInfo[]; conflicts: string[] } | null
   /**
    * The popup page a toolbar click should open (extension-relative), or null when nothing opens:
    * the action is disabled on the tab, or it has no popup and `action.onClicked` was fired instead.
+   * The click is a user gesture on the extension: it grants `activeTab` on the active tab.
    */
   popupForClick(extensionId: string, win: ZenWindow): string | null
+  /** `chrome.contextMenus` items for a page's context menu (see `ExtensionHost`). */
+  pageContextMenuItems(tabId: string, params: PageContextParams): MenuItemTemplate[]
+  /** The items an extension adds to its own toolbar button's context menu. */
+  actionContextMenuItems(extensionId: string, win: ZenWindow): MenuItemTemplate[]
+  /** A key press no Zenium shortcut claimed; true when an extension command took it. */
+  handleKey(input: KeyEventInput, win: ZenWindow): boolean
 }
 
 type FrameSender = Extract<Sender, { kind: 'frame' }>
@@ -103,6 +127,13 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly permissions: PermissionsApi
   readonly extension: ExtensionApi
   readonly management: ManagementApi
+  readonly activeTab: ActiveTabGrants
+  readonly webNavigation: WebNavigationApi
+  readonly contextMenus: ContextMenusApi
+  readonly commands: CommandsApi
+  readonly notifications: NotificationsApi
+  readonly cookies: CookiesApi
+  readonly declarativeNetRequest: DeclarativeNetRequestHostApi
 
   private readonly namespaces: Record<string, NamespaceHandlers>
   private readonly extensions = new Map<string, LoadedExtension>()
@@ -113,13 +144,17 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   private readonly watchedWindows = new WeakSet<BrowserWindow>()
   private snapshot: ModelSnapshot | null = null
   private tickTimer: ReturnType<typeof setTimeout> | null = null
+  /** The shortcut table the commands were last resolved against. */
+  private shortcutsSeen: unknown = null
 
   constructor(
     readonly browser: Browser,
     readonly sessions: SessionManager,
     private readonly views: ElectronTabViewHost,
     io: StoreIO,
-    userDataDir: string
+    userDataDir: string,
+    /** Where `declarativeNetRequest` rule sets go: the request-blocking engine. */
+    ruleSink: RuleSink
   ) {
     this.model = new ApiModel(browser, views)
     this.store = new ApiStore(io, userDataDir)
@@ -137,6 +172,19 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.permissions = new PermissionsApi(this)
     this.extension = new ExtensionApi(this)
     this.management = new ManagementApi(this)
+    this.activeTab = new ActiveTabGrants(this)
+    this.webNavigation = new WebNavigationApi(this)
+    this.contextMenus = new ContextMenusApi(this, this.activeTab)
+    this.commands = new CommandsApi(this, this.action, this.activeTab)
+    this.notifications = new NotificationsApi(this)
+    this.cookies = new CookiesApi(this)
+    this.declarativeNetRequest = new DeclarativeNetRequestHostApi(
+      this,
+      ruleSink,
+      this.action,
+      this.activeTab,
+      join(userDataDir, 'zen', 'extension-dnr')
+    )
     this.namespaces = {
       tabs: this.tabs.handlers,
       windows: this.windows.handlers,
@@ -146,7 +194,19 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       alarms: this.alarms.handlers,
       permissions: this.permissions.handlers,
       extension: this.extension.handlers,
-      management: this.management.handlers
+      management: this.management.handlers,
+      webNavigation: this.webNavigation.handlers,
+      contextMenus: this.contextMenus.handlers,
+      commands: this.commands.handlers,
+      notifications: this.notifications.handlers,
+      cookies: this.cookies.handlers,
+      declarativeNetRequest: this.declarativeNetRequest.handlers
+    }
+    // A tab's outermost document changed: `activeTab` grants for another origin end and the
+    // declarativeNetRequest action counts start over.
+    this.webNavigation.onMainFrameCommitted = (tabId, url) => {
+      this.activeTab.navigated(tabId, url)
+      this.declarativeNetRequest.tabNavigated(tabId)
     }
   }
 
@@ -163,6 +223,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       this.notify(frameSender(event), kind, payload)
     )
     this.browser.state.subscribe(() => this.scheduleTick())
+    // Every tab view, the ones alive already included: `webNavigation.*` comes from their events.
+    this.views.onViewCreated((view) => this.webNavigation.attach(view))
     app.on('before-quit', () => this.flushSync())
   }
 
@@ -175,6 +237,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       case 'installed':
       case 'updated':
         this.tellOthers('onInstalled', event.id)
+        // A newer install ranks above the older extensions' declarativeNetRequest rules.
+        this.declarativeNetRequest.installOrderChanged()
         return
       case 'enabled':
         this.tellOthers('onEnabled', event.id)
@@ -186,6 +250,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         this.seen.delete(event.id)
         this.runtime.openUninstallUrl(event.id)
         this.store.forget(event.id)
+        this.declarativeNetRequest.uninstalled(event.id)
         this.registry.forget(event.id, { keepWorkerEvents: false })
         this.broadcast('management', 'onUninstalled', () => [event.id])
         return
@@ -193,9 +258,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   }
 
   /** A persistent (extension-capable) session: preloads, worker IPC, load / unload tracking. */
-  attachSession(ses: Session): void {
+  attachSession(ses: Session, containerId: string): void {
     if (this.attachedSessions.has(ses)) return
     this.attachedSessions.add(ses)
+    this.cookies.attachSession(ses, containerId)
     const registered = ses.getPreloadScripts().map((script) => script.id)
     if (!registered.includes(FRAME_PRELOAD_ID)) {
       ses.registerPreloadScript({
@@ -259,6 +325,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.registry.restoreWorkerEvents(ext.id, this.store.workerEvents(ext.id))
     this.permissions.load(loaded)
     this.alarms.load(ext.id)
+    this.commands.load(loaded)
+    // After the permissions: the state exists only for extensions holding the permission.
+    this.declarativeNetRequest.load(loaded)
     // Existing tabs are the baseline, not a burst of `tabs.onCreated`.
     if (!this.snapshot) this.snapshot = this.model.snapshot()
     const firstEver = this.store.installedVersion(ext.id) === undefined
@@ -275,6 +344,11 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.extensions.delete(ext.id)
     this.alarms.unload(ext.id)
     this.permissions.unload(ext.id)
+    this.commands.unload(ext.id)
+    this.declarativeNetRequest.unload(ext.id)
+    this.contextMenus.forget(ext.id)
+    this.notifications.forget(ext.id)
+    this.activeTab.forget(ext.id)
     this.action.forget(ext.id)
     this.storage.forget(ext.id)
     this.registry.forget(ext.id, { keepWorkerEvents: true })
@@ -390,7 +464,12 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       case 'listen':
       case 'unlisten':
         if (context && isRecord(payload) && typeof payload.event === 'string') {
-          this.registry.listen(context, payload.event, kind === 'listen')
+          const listen: ListenPayload = { event: payload.event }
+          if (isInteger(payload.filterId)) {
+            listen.filterId = payload.filterId
+            listen.filters = eventFilters(payload.filters)
+          }
+          this.registry.listen(context, listen, kind === 'listen')
         }
         return
       case 'storage-changed':
@@ -467,7 +546,15 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   }
 
   canSeeTab(extension: LoadedExtension, url: string): boolean {
-    return this.permissions.canSeeTab(extension.id, url)
+    return (
+      this.permissions.canSeeTab(extension.id, url) || this.activeTab.allowsUrl(extension.id, url)
+    )
+  }
+
+  hostAccess(extensionId: string, url: string): boolean {
+    return (
+      this.permissions.hasHostAccess(extensionId, url) || this.activeTab.allowsUrl(extensionId, url)
+    )
   }
 
   grants(extensionId: string): PermissionSet {
@@ -511,12 +598,34 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     return this.action.stateFor(extensionId)
   }
 
+  commandsInfo(
+    extensionId: string
+  ): { commands: ExtensionCommandInfo[]; conflicts: string[] } | null {
+    return this.commands.infoFor(extensionId)
+  }
+
   popupForClick(extensionId: string, win: ZenWindow): string | null {
     const { popup, enabled } = this.action.clickState(extensionId, win)
     if (!enabled) return null
+    const active = this.browser.tabs.activeTabFor(win)
+    if (active) this.activeTab.grant(extensionId, active)
     if (popup) return popup
     this.action.clicked(extensionId, win)
     return null
+  }
+
+  pageContextMenuItems(tabId: string, params: PageContextParams): MenuItemTemplate[] {
+    const tab = this.model.tab(tabId)
+    if (!tab) return []
+    return this.contextMenus.pageMenuItems(tab, params)
+  }
+
+  actionContextMenuItems(extensionId: string, win: ZenWindow): MenuItemTemplate[] {
+    return this.contextMenus.actionMenuItems(extensionId, win)
+  }
+
+  handleKey(input: KeyEventInput, win: ZenWindow): boolean {
+    return this.commands.handleKey(input, win)
   }
 
   // ---------------------------------------------------------------------------
@@ -529,12 +638,22 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       return
     }
     this.watchWindows()
+    const { shortcuts } = this.browser.state
+    if (shortcuts !== this.shortcutsSeen) {
+      // The user rebound a Zenium shortcut: commands are resolved against the new table.
+      const first = this.shortcutsSeen === null
+      this.shortcutsSeen = shortcuts
+      if (!first) this.commands.refresh()
+    }
     const next = this.model.snapshot()
     const prev = this.snapshot
     this.snapshot = next
     if (!prev) return
     for (const [zenId, before] of prev.tabs) {
-      if (!next.tabs.has(zenId)) this.action.tabRemoved(before.chrome.id)
+      if (next.tabs.has(zenId)) continue
+      this.action.tabRemoved(before.chrome.id)
+      this.activeTab.tabRemoved(before.chrome.id)
+      this.declarativeNetRequest.tabRemoved(before.chrome.id)
     }
     this.tabs.diff(prev, next)
     this.windows.diff(prev, next)
@@ -576,6 +695,15 @@ function startTask(worker: ServiceWorkerMain): { end(): void } | null {
     return worker.startTask()
   } catch {
     return null
+  }
+}
+
+/** The `UrlFilter`s of a filtered listener; a malformed list matches nothing but is not fatal. */
+function eventFilters(raw: unknown): UrlFilter[] {
+  try {
+    return normalizeEventFilters({ url: raw }) ?? []
+  } catch {
+    return [{ urlEquals: '\u0000' }]
   }
 }
 

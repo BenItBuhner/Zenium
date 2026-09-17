@@ -60,6 +60,17 @@ describe('urlFilter anchors', () => {
     expect(compileUrlFilter('/ad.php?id=')('https://a.example/adXphp?id=1')).toBe(false)
     expect(urlFilterToRegExpSource('a(b)c')).toContain('\\(b\\)')
   })
+
+  it('a | inside the pattern is a literal character, not an alternation', () => {
+    // EasyList ships `/adiframe|*|adtech;` (via uBlock Origin Lite); read as a regex alternation
+    // its middle branch `.*` matched every URL, main frames included.
+    const m = compileUrlFilter('/adiframe|*|adtech;')
+    expect(m('http://127.0.0.1/ads.html')).toBe(false)
+    expect(m('https://a.example/page?x=1')).toBe(false)
+    expect(m('https://a.example/adiframe|foo|adtech;')).toBe(true)
+    expect(urlFilterToRegExpSource('a|b')).toBe('a\\|b')
+    expect(urlFilterToRegExpSource('|a|b|')).toBe('^a\\|b$')
+  })
 })
 
 describe('regexFilter', () => {

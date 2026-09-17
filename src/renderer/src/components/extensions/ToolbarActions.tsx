@@ -1,7 +1,7 @@
 import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Pin, PinOff, Puzzle, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { Pin, PinOff, Puzzle, SlidersHorizontal } from 'lucide-react'
 import type { ExtensionInfo, Rect, UIState } from '@shared/types'
 import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
 import { anchorOf } from '@renderer/lib/anchor'
@@ -18,8 +18,7 @@ import {
   pinnedActions
 } from '@renderer/lib/extensions/toolbar'
 import { activeTab } from '@renderer/lib/selectors'
-import { closeOverlay, openOverlay, uiStore } from '@renderer/lib/ui'
-import { LocalMenu, type LocalMenuEntry } from '../menus/LocalMenu'
+import { openOverlay, uiStore } from '@renderer/lib/ui'
 import { ExtensionIcon } from './ExtensionIcon'
 import { V2IconButton } from './v2'
 
@@ -60,7 +59,7 @@ export function ToolbarActions({
   return (
     <>
       {shown.map((ext) => (
-        <ActionButton key={ext.id} ext={ext} state={state} />
+        <ActionButton key={ext.id} ext={ext} />
       ))}
       <button
         type="button"
@@ -94,9 +93,8 @@ export function ToolbarActions({
 // One pinned action
 // ---------------------------------------------------------------------------
 
-function ActionButton({ ext, state }: { ext: ExtensionInfo; state: UIState }): JSX.Element {
+function ActionButton({ ext }: { ext: ExtensionInfo }): JSX.Element {
   const ref = useRef<HTMLButtonElement>(null)
-  const [menu, setMenu] = useState<Rect | null>(null)
   const open = uiStore.use((s) => s.extensionPopup?.id === ext.id)
   // A click on the button whose popup is up closes it (main's blur handler closes it too, but
   // the click would otherwise reopen it straight away).
@@ -134,8 +132,10 @@ function ActionButton({ ext, state }: { ext: ExtensionInfo; state: UIState }): J
           if (r) openExtensionPopup(ext.id, anchorOf(r), Boolean(ext.action?.popup ?? ext.popup))
         }}
         onContextMenu={(e) => {
+          // The core's menu (#104): the extension's own `contextMenus` items, then Zenium's.
           e.preventDefault()
-          setMenu(anchorOf(e.currentTarget))
+          closeExtensionPopup()
+          run('extension.actionContextMenu', { id: ext.id, x: e.clientX, y: e.clientY })
         }}
       >
         <ExtensionIcon icon={actionIcon(ext)} size={16} box={16} />
@@ -149,55 +149,8 @@ function ActionButton({ ext, state }: { ext: ExtensionInfo; state: UIState }): J
           </span>
         )}
       </button>
-      {menu && (
-        <LocalMenu
-          anchor={menu}
-          title={ext.name}
-          items={actionMenu(ext, state)}
-          context
-          onClose={() => setMenu(null)}
-        />
-      )}
     </>
   )
-}
-
-/** Right-click on a toolbar action. */
-function actionMenu(ext: ExtensionInfo, state: UIState): LocalMenuEntry[] {
-  const items: LocalMenuEntry[] = []
-  if (ext.optionsPage) {
-    items.push({
-      id: 'options',
-      label: 'Options',
-      icon: SlidersHorizontal,
-      // The options page opens in a tab; an overlay that is up (Add-ons, Settings) would hide it.
-      onSelect: () => {
-        closeOverlay()
-        run('extension.openOptions', { id: ext.id })
-      }
-    })
-  }
-  items.push({
-    id: 'unpin',
-    label: 'Unpin from Toolbar',
-    icon: PinOff,
-    onSelect: () => run('extension.setToolbarPinned', { id: ext.id, pinned: false })
-  })
-  items.push({
-    id: 'manage',
-    label: 'Manage Extensions',
-    icon: Puzzle,
-    onSelect: () => void openOverlay('addons', activeTab(state)?.id ?? null)
-  })
-  items.push({ id: 'sep', type: 'separator' })
-  items.push({
-    id: 'remove',
-    label: 'Remove',
-    icon: Trash2,
-    danger: true,
-    onSelect: () => run('extension.remove', { id: ext.id })
-  })
-  return items
 }
 
 // ---------------------------------------------------------------------------

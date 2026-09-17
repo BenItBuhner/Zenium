@@ -1,15 +1,20 @@
 import { protocol, type Session } from 'electron'
 import { ZEN_SCHEME, zenPageHtml, type ReaderPageLookup } from '../../shared/zenPages'
+import { EXTENSION_RESOURCE_SCHEME_PRIVILEGES } from './extensionApi/resourceOrigin'
 
 export { ZEN_SCHEME, describeNetError } from '../../shared/zenPages'
 
-/** Must run before `app.ready`: lets `zen://` behave like a normal secure origin. */
+/**
+ * Must run before `app.ready` (and only once): lets `zen://` behave like a normal secure origin,
+ * and `zen-extension://` (extensions' `use_dynamic_url` resources) like one pages may fetch from.
+ */
 export function registerZenScheme(): void {
   protocol.registerSchemesAsPrivileged([
     {
       scheme: ZEN_SCHEME,
       privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: false }
-    }
+    },
+    EXTENSION_RESOURCE_SCHEME_PRIVILEGES
   ])
 }
 

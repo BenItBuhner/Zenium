@@ -29,6 +29,7 @@ import type {
 } from '../../core/platform'
 import type { SessionManager } from './sessions'
 import { downloadDir } from './downloads'
+import { frameIdOf } from './extensionApi/frames'
 import type { ElectronWindow } from './window'
 
 const pagePreload = join(__dirname, '../preload/page.js')
@@ -64,6 +65,16 @@ export function isActivatingInput(input: Electron.InputEvent): boolean {
 }
 
 /**
+ * What the host knows about a navigation it started itself, for `webNavigation.onCommitted`'s
+ * transition type; consumed by the next main-frame commit.
+ */
+export interface ViewNavigationHint {
+  reload?: boolean
+  history?: boolean
+  typed?: boolean
+}
+
+/**
  * A tab page hosted in a `WebContentsView`. The view is a child of whichever window currently
  * owns the tab's live page (Zen's window sync moves it between windows).
  */
@@ -80,6 +91,12 @@ export class ElectronTabView implements TabView {
   private readonly wc: WebContents
   private host: ElectronWindow | null = null
   private visible = false
+  private navigationHint: ViewNavigationHint | null = null
+  /**
+   * A `window.open` / `target=_blank` the core may turn into a tab (`onCreatedNavigationTarget`);
+   * returns the function that withdraws the announcement when it does not.
+   */
+  onNavigationTarget: ((source: WebContents, url: string) => () => void) | null = null
 
   constructor(
     host: ElectronWindow,
@@ -151,7 +168,18 @@ export class ElectronTabView implements TabView {
     wc.on('devtools-closed', () => ev.onDevtoolsClosed())
     wc.on('found-in-page', (_e, result) => ev.onFoundInPage(result))
     wc.on('zoom-changed', (_e, direction) => ev.onZoomChanged(direction))
-    wc.on('context-menu', (_e, params) => ev.onContextMenu(params))
+    wc.on('context-menu', (_e, params) => {
+      // Extension context menus need Chrome's frame view of the click: the top document's URL,
+      // the clicked sub-frame's URL (empty for the top document) and its frame id.
+      const frame = params.frame ?? null
+      const frameId = frame ? frameIdOf(frame) : 0
+      ev.onContextMenu({
+        ...params,
+        pageURL: params.pageURL || wc.getURL(),
+        frameURL: frameId === 0 ? '' : params.frameURL,
+        frameId
+      })
+    })
     wc.on('before-input-event', (event, input) => {
       const key: KeyEventInput = {
         type: input.type as KeyEventInput['type'],
@@ -193,8 +221,11 @@ export class ElectronTabView implements TabView {
       if (isActivatingInput(input)) ev.onUserActivation()
     })
     wc.setWindowOpenHandler(({ url, disposition }) => {
+      // Announced before the core creates the tab, so the new view finds the pending target.
+      const cancelTarget = this.onNavigationTarget?.(wc, url)
       // Electron does not say whether the user asked; the core knows from the activation clock.
       const verdict = ev.onOpenWindow(url, disposition as WindowOpenDisposition, null)
+      if (verdict !== 'tab') cancelTarget?.()
       if (verdict === 'popup') {
         return {
           action: 'allow',
@@ -218,7 +249,17 @@ export class ElectronTabView implements TabView {
   // --- navigation -----------------------------------------------------------
 
   loadURL(url: string): void {
+    // Address-bar entries and programmatic loads both arrive here; Chrome reports the latter as
+    // `link` too, so no `typed` claim is made without knowing the source.
+    this.navigationHint = {}
     void this.wc.loadURL(url).catch(() => undefined)
+  }
+
+  /** The hint for the next main-frame commit, consumed once (`webNavigation.onCommitted`). */
+  takeNavigationHint(): ViewNavigationHint {
+    const hint = this.navigationHint ?? {}
+    this.navigationHint = null
+    return hint
   }
 
   getURL(): string {
@@ -749,6 +790,7 @@ function electronKeyCode(key: string): string {
 export class ElectronTabViewHost implements TabViewHost {
   private readonly byWebContentsId = new Map<number, ElectronTabView>()
   private readonly tabIds = new Map<number, string>()
+  private readonly viewListeners = new Set<(view: ElectronTabView) => void>()
 
   constructor(private readonly sessions: SessionManager) {}
 
@@ -759,10 +801,18 @@ export class ElectronTabViewHost implements TabViewHost {
       this.byWebContentsId.delete(id)
       this.tabIds.delete(id)
     })
-    id = view.webContents.id
+    id = view.webContentsId
     this.byWebContentsId.set(id, view)
     this.tabIds.set(id, tab.id)
+    for (const listener of this.viewListeners) listener(view)
     return view
+  }
+
+  /** Follow every tab view for its lifetime (the ones already alive included). */
+  onViewCreated(listener: (view: ElectronTabView) => void): () => void {
+    this.viewListeners.add(listener)
+    for (const view of this.byWebContentsId.values()) listener(view)
+    return () => this.viewListeners.delete(listener)
   }
 
   tabIdForWebContents(wc: WebContents): string | undefined {

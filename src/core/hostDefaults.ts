@@ -10,7 +10,15 @@ import type {
 import { emptyResourceSnapshot } from '../shared/defaults'
 import { updateOsOf, type UpdateTarget } from '../shared/updates'
 import type { Browser } from './browser'
-import type { ExtensionHost, Governor, Platform, SyncHost, TabView, UpdateHost } from './platform'
+import type {
+  ExtensionHost,
+  Governor,
+  MenuItemTemplate,
+  Platform,
+  SyncHost,
+  TabView,
+  UpdateHost
+} from './platform'
 import type { ZenWindow } from './window'
 
 /**
@@ -126,6 +134,15 @@ export class NoExtensions implements ExtensionHost {
   }
   resizePopup(): void {}
   closePopup(): void {}
+  pageContextMenuItems(): MenuItemTemplate[] {
+    return []
+  }
+  actionContextMenuItems(): MenuItemTemplate[] {
+    return []
+  }
+  handleKey(): boolean {
+    return false
+  }
   respondPrompt(): void {}
   flushSync(): void {}
 }

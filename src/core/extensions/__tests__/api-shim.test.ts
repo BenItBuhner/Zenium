@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { installExtensionApi, type InvokeResult, type ShimHost } from '../api/shim'
+import {
+  installExtensionApi,
+  type EventDelivery,
+  type InvokeResult,
+  type ShimHost
+} from '../api/shim'
 import { API_SPEC } from '../api/spec'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tests poke at the patched globals
@@ -9,11 +14,14 @@ interface FakeHost extends ShimHost {
   calls: Array<{ namespace: string; method: string; args: unknown[] }>
   notifications: Array<{ kind: string; payload: unknown }>
   push(namespace: string, event: string, ...args: unknown[]): void
+  pushDelivery(namespace: string, event: string, args: unknown[], delivery: EventDelivery): void
   respond: (namespace: string, method: string, args: unknown[]) => InvokeResult
 }
 
 function fakeHost(kind: 'frame' | 'worker' = 'worker'): FakeHost {
-  let listener: ((namespace: string, event: string, args: unknown[]) => void) | null = null
+  let listener:
+    ((namespace: string, event: string, args: unknown[], delivery?: EventDelivery) => void) | null =
+    null
   const host: FakeHost = {
     kind,
     calls: [],
@@ -31,6 +39,9 @@ function fakeHost(kind: 'frame' | 'worker' = 'worker'): FakeHost {
     },
     push(namespace, event, ...args) {
       listener?.(namespace, event, args)
+    },
+    pushDelivery(namespace, event, args, delivery) {
+      listener?.(namespace, event, args, delivery)
     }
   }
   return host
@@ -147,36 +158,108 @@ describe('installExtensionApi', () => {
     expect(g.chrome.browserAction).toBeUndefined()
   })
 
-  it('gives the part-2 namespaces their shape without touching the host', async () => {
+  it('routes the part-2 namespaces to the host and answers cookies.getPartitionKey itself', async () => {
     installExtensionApi(host, API_SPEC)
-    const seen: unknown[] = []
-    g.chrome.webNavigation.onCommitted.addListener((d: unknown) => seen.push(d))
-    g.chrome.commands.onCommand.addListener(() => undefined)
-    g.chrome.contextMenus.onClicked.addListener(() => undefined)
-    let created = false
-    expect(g.chrome.contextMenus.create({ id: 'zen', title: 'Zen' }, () => (created = true))).toBe(
-      'zen'
-    )
-    const generated = g.chrome.contextMenus.create({ title: 'x' })
-    expect(typeof generated).toBe('number')
-    await Promise.resolve()
-    await new Promise((r) => setTimeout(r, 0))
-    expect(created).toBe(true)
+    host.respond = (namespace, method) => {
+      if (namespace === 'notifications' && method === 'create') return { ok: true, value: 'n1' }
+      if (namespace === 'notifications' && method === 'getPermissionLevel')
+        return { ok: true, value: 'granted' }
+      if (namespace === 'cookies' && method === 'getAll') return { ok: true, value: [] }
+      if (namespace === 'commands' && method === 'getAll') return { ok: true, value: [] }
+      return { ok: true, value: null }
+    }
     await expect(g.chrome.notifications.create('n1', { type: 'basic' })).resolves.toBe('n1')
-    await expect(g.chrome.notifications.create({ type: 'basic' })).resolves.toMatch(/^\d+$/)
-    await expect(g.chrome.notifications.getPermissionLevel()).resolves.toBe('denied')
+    await expect(g.chrome.notifications.getPermissionLevel()).resolves.toBe('granted')
     await expect(g.chrome.cookies.getAll({ domain: 'a.test' })).resolves.toEqual([])
     await expect(g.chrome.cookies.get({ url: 'https://a.test', name: 'x' })).resolves.toBeNull()
-    await expect(g.chrome.webNavigation.getAllFrames({ tabId: 1 })).resolves.toEqual([])
+    await expect(g.chrome.webNavigation.getFrame({ tabId: 1, frameId: 0 })).resolves.toBeNull()
     await expect(g.chrome.commands.getAll()).resolves.toEqual([])
-    await new Promise<void>((resolve) => g.chrome.contextMenus.removeAll(() => resolve()))
+    expect(host.calls.map((c) => `${c.namespace}.${c.method}`)).toEqual([
+      'notifications.create',
+      'notifications.getPermissionLevel',
+      'cookies.getAll',
+      'cookies.get',
+      'webNavigation.getFrame',
+      'commands.getAll'
+    ])
+    // Zenium has no per-site cookie partitions: the key is answered on this side.
+    await expect(g.chrome.cookies.getPartitionKey({ tabId: 1 })).resolves.toEqual({
+      partitionKey: {}
+    })
+    expect(host.calls).toHaveLength(6)
     expect(g.chrome.contextMenus.ContextType.ACTION).toBe('action')
+    expect(g.chrome.declarativeNetRequest.DYNAMIC_RULESET_ID).toBe('_dynamic')
     expect(g.browser.webNavigation.onCommitted).toBe(g.chrome.webNavigation.onCommitted)
-    expect(host.calls).toEqual([])
-    expect(seen).toEqual([])
-    expect(host.notifications.map((n) => (n.payload as Any).event)).toContain(
-      'webNavigation.onCommitted'
+  })
+
+  it('contextMenus.create returns the id synchronously and keeps onclick on this side', async () => {
+    installExtensionApi(host, API_SPEC)
+    const clicks: unknown[] = []
+    const listened: unknown[] = []
+    g.chrome.contextMenus.onClicked.addListener((info: unknown) => listened.push(info))
+    let created = false
+    const id = g.chrome.contextMenus.create(
+      { id: 'zen', title: 'Zen', onclick: (...args: unknown[]) => clicks.push(args) },
+      () => (created = true)
     )
+    expect(id).toBe('zen')
+    const generated = g.chrome.contextMenus.create({ title: 'x' })
+    expect(generated).toBe(1)
+    await flush()
+    expect(created).toBe(true)
+    // `onclick` is a function: it cannot cross to the host, a flag says one was given.
+    expect(host.calls[0]).toMatchObject({
+      namespace: 'contextMenus',
+      method: 'create',
+      args: [{ id: 'zen', title: 'Zen', onclick: true }, 'zen']
+    })
+    expect(host.calls[1]).toMatchObject({ method: 'create', args: [{ title: 'x' }, 1] })
+    host.push('contextMenus', 'onClicked', { menuItemId: 'zen', editable: false }, { id: 3 })
+    expect(clicks).toEqual([[{ menuItemId: 'zen', editable: false }, { id: 3 }]])
+    expect(listened).toEqual([{ menuItemId: 'zen', editable: false }])
+    await new Promise<void>((resolve) => g.chrome.contextMenus.removeAll(() => resolve()))
+    host.push('contextMenus', 'onClicked', { menuItemId: 'zen' })
+    expect(clicks).toHaveLength(1)
+  })
+
+  it('registers URL-filtered listeners with the host and delivers by filter id', () => {
+    installExtensionApi(host, API_SPEC)
+    const everyone: unknown[] = []
+    const filtered: unknown[] = []
+    g.chrome.webNavigation.onCommitted.addListener((d: unknown) => everyone.push(d))
+    g.chrome.webNavigation.onCommitted.addListener((d: unknown) => filtered.push(d), {
+      url: [{ hostSuffix: 'example.com' }]
+    })
+    expect(host.notifications.filter((n) => n.kind === 'listen').map((n) => n.payload)).toEqual([
+      { event: 'webNavigation.onCommitted' },
+      {
+        event: 'webNavigation.onCommitted',
+        filterId: 1,
+        filters: [{ hostSuffix: 'example.com' }]
+      }
+    ])
+    expect(() =>
+      g.chrome.webNavigation.onCommitted.addListener(() => undefined, { url: 'nope' })
+    ).toThrow(/Expected array of UrlFilter objects/)
+    // The host addresses each delivery: everyone, or only the filters that matched.
+    host.pushDelivery('webNavigation', 'onCommitted', [{ url: 'https://a.test/' }], {
+      unfiltered: true,
+      matched: []
+    })
+    host.pushDelivery('webNavigation', 'onCommitted', [{ url: 'https://example.com/' }], {
+      unfiltered: true,
+      matched: [1]
+    })
+    host.push('webNavigation', 'onCommitted', { url: 'https://everyone.test/' })
+    expect(everyone.map((d: Any) => d.url)).toEqual([
+      'https://a.test/',
+      'https://example.com/',
+      'https://everyone.test/'
+    ])
+    expect(filtered.map((d: Any) => d.url)).toEqual([
+      'https://example.com/',
+      'https://everyone.test/'
+    ])
   })
 
   it('exposes browserAction instead of action for MV2', () => {

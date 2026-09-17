@@ -269,9 +269,48 @@ export class Menus {
       )
     }
     template.push({ type: 'separator' }, ...this.boostsSubmenu(tabId, win), { type: 'separator' })
+    // Extension items sit where Chrome puts them: after the browser's own entries, before
+    // "Inspect Element".
+    const extensionItems = this.browser.extensions.pageContextMenuItems(tabId, params, win)
+    if (extensionItems.length > 0) template.push(...extensionItems, { type: 'separator' })
     if (caps.devtools)
       template.push({ label: 'Inspect Element', click: () => view.openDevTools('inspect') })
     this.popup(template, win, 'page')
+  }
+
+  // ---------------------------------------------------------------------------
+  // Extension toolbar button
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The context menu of an extension's toolbar button: Chrome's layout of the extension's own
+   * `contextMenus` items (`action` / `browser_action` contexts) above the browser's entries.
+   */
+  showExtensionActionMenu(id: string, win: ZenWindow, anchor?: { x: number; y: number }): void {
+    const { extensions } = this.browser
+    const info = extensions.list().find((entry) => entry.id === id)
+    if (!info) return
+    const template: Template = [{ label: info.name, enabled: false }, { type: 'separator' }]
+    const own = extensions.actionContextMenuItems(id, win)
+    if (own.length > 0) template.push(...own, { type: 'separator' })
+    template.push(
+      {
+        label: 'Options',
+        enabled: info.enabled && Boolean(info.optionsPage),
+        click: () => extensions.openOptions(id, win)
+      },
+      {
+        label: info.toolbarPinned ? 'Unpin from Toolbar' : 'Pin to Toolbar',
+        click: () => extensions.setToolbarPinned(id, !info.toolbarPinned)
+      },
+      { type: 'separator' },
+      { label: 'Remove from Zenium', click: () => void extensions.remove(id) },
+      {
+        label: 'Manage Extensions',
+        click: () => this.browser.actions.run('addons.open', { sourceTabId: null, win })
+      }
+    )
+    this.popup(template, win, 'app', anchor)
   }
 
   /** Zen 1.20: Boosts live in the page context menu (and the site control button). */

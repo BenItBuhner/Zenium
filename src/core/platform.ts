@@ -29,6 +29,12 @@ import type {
 import type { AppIconId } from '../shared/appIcon'
 import type { KeyInput } from '../shared/shortcuts'
 import type { SiteCertificate, SiteCookie } from '../shared/siteInfo'
+import type {
+  ByteSource,
+  EngineAssets,
+  EngineRelayResponse,
+  EngineTransport
+} from '../shared/translateEngine'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '../shared/updates'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
@@ -93,6 +99,12 @@ export interface PageContextParams {
   isEditable: boolean
   misspelledWord: string
   dictionarySuggestions: string[]
+  /** URL of the top-level document (extension context menus report it as `pageUrl`). */
+  pageURL?: string
+  /** URL of the sub-frame the click landed in; empty for the top-level document. */
+  frameURL?: string
+  /** Chrome's frame id of the clicked frame: 0 for the top-level document. */
+  frameId?: number
   editFlags: {
     canUndo: boolean
     canRedo: boolean
@@ -362,7 +374,10 @@ export interface MenuItemTemplate {
   enabled?: boolean
   checked?: boolean
   role?: MenuRole
-  /** A favicon (`data:` URL) shown before the label where the host's menus can (recently closed). */
+  /**
+   * A favicon or extension icon (`data:` URL) shown before the label where the host's menus can
+   * (recently closed entries, `chrome.contextMenus` items).
+   */
   icon?: string | null
   submenu?: MenuItemTemplate[]
   click?: () => void
@@ -635,6 +650,18 @@ export interface ExtensionHost {
   /** Move the open popup view (and show it once the renderer's frame has popped in). */
   resizePopup(bounds: Rect, visible: boolean): void
   closePopup(): void
+  /**
+   * The `chrome.contextMenus` items extensions add to a page's context menu, already grouped
+   * per extension the way Chrome does; empty when nothing matches the click.
+   */
+  pageContextMenuItems(tabId: string, params: PageContextParams, win: ZenWindow): MenuItemTemplate[]
+  /** The items an extension adds to its own toolbar button's context menu. */
+  actionContextMenuItems(id: string, win: ZenWindow): MenuItemTemplate[]
+  /**
+   * A key press no Zenium shortcut claimed: true when an extension command is bound to it and
+   * the host dispatched it (`commands.onCommand`, or the toolbar action for `_execute_action`).
+   */
+  handleKey(input: KeyEventInput, win: ZenWindow): boolean
   /** The user answered an install or permission prompt the host raised. */
   respondPrompt(requestId: string, accept: boolean): void
   flushSync(): void
@@ -802,6 +829,53 @@ export interface BlockingHost {
   installBundled(set: RuleSet, file: string): Promise<BundledFilterList | null>
 }
 
+/** One file of a translation model to fetch from the registry's CDN. */
+export interface TranslateModelDownload {
+  url: string
+  /** File name inside the host's model directory. */
+  name: string
+  /** Byte count and hex SHA-256 the registry states; a mismatch fails the download. */
+  size: number
+  sha256: string
+}
+
+/**
+ * Translation model files on the device (`<userData>/zen/translate/` on desktop, the app's files
+ * on Android). Models are downloaded on first use and never bundled.
+ */
+export interface TranslateModelStore {
+  /** Names and sizes of the stored files. */
+  list(): Promise<{ name: string; size: number }[]>
+  /**
+   * Fetch one file, verifying size and checksum; `onProgress` receives the bytes so far. A failed
+   * or aborted download leaves nothing behind.
+   */
+  download(
+    file: TranslateModelDownload,
+    onProgress: (received: number) => void,
+    signal?: AbortSignal
+  ): Promise<void>
+  delete(names: string[]): Promise<void>
+  /** A stored file as the engine worker takes it: its bytes, or a URL of the chrome's own origin. */
+  source(name: string): Promise<ByteSource>
+}
+
+/**
+ * The host side of page translation. The Bergamot engine runs in a Web Worker of the chrome
+ * document; the core drives it through the transport and keeps the models the store holds.
+ */
+export interface TranslateHost {
+  /** Start an engine worker (the core creates one lazily and stops it when idle). */
+  createEngine(): EngineTransport
+  /** The runtime binaries shipped with the app (Bergamot, fastText and its lid.176 model). */
+  assets(): Promise<EngineAssets>
+  readonly models: TranslateModelStore
+  /** The user's UI languages (BCP-47), most preferred first; seeds the preferred-language list. */
+  readonly locales: readonly string[]
+  /** Hosts whose engine is relayed through the chrome receive its answers here. */
+  onRelayResponse?(response: EngineRelayResponse): void
+}
+
 export interface Platform {
   readonly info: PlatformInfo
   readonly capabilities: HostCapabilities
@@ -826,6 +900,8 @@ export interface Platform {
   readonly blocking?: BlockingHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
+  /** Offline page translation; hosts without it report the feature as unavailable. */
+  readonly translate?: TranslateHost
   /** Host-backed services; omit for the built-in no-op versions. */
   createGovernor?(browser: Browser): Governor
   createExtensions?(browser: Browser): ExtensionHost

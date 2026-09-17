@@ -4,6 +4,8 @@
  */
 import type { AppIconId } from './appIcon'
 import type { SiteInfo } from './siteInfo'
+import type { TranslatePreferences, TranslateSelectionResult, TranslateUIState } from './translate'
+import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 
@@ -362,6 +364,20 @@ export interface ExtensionInfo {
   updateCheckedAt: number | null
   /** Effective `chrome.action` state for the active tab; absent while the extension is not loaded. */
   action?: ExtensionAction
+  /** The manifest's `commands` with the shortcut each one is bound to; absent while not loaded. */
+  commands?: ExtensionCommandInfo[]
+  /** Why some commands stayed unbound (a Zenium shortcut or another extension holds the key). */
+  commandConflicts?: string[]
+}
+
+/** One `chrome.commands` entry as the extensions page shows it. */
+export interface ExtensionCommandInfo {
+  name: string
+  description: string
+  /** The bound key in the user's shortcut label form, or null when unbound. */
+  shortcut: string | null
+  /** The `_execute_action` family: the key opens the toolbar action instead of `onCommand`. */
+  executesAction: boolean
 }
 
 /** What an extension's toolbar button should show: `chrome.action` state for the active tab. */
@@ -1490,6 +1506,8 @@ export interface UIState {
   securityPrompts: SecurityPrompt[]
   /** Ad and tracker blocking: lists, their freshness and the session counter. */
   blocking: BlockingStatus
+  /** Page translation: preferences, models on the device and the per-tab translation state. */
+  translate: TranslateUIState
 }
 
 export interface FindResult {
@@ -1993,6 +2011,8 @@ export interface Commands {
     result: void
   }
   'extension.closePopup': { args: void; result: void }
+  /** Context menu of an extension's toolbar button (its `contextMenus` items plus Zenium's). */
+  'extension.actionContextMenu': { args: { id: string; x?: number; y?: number }; result: void }
   // ---- PROVISIONAL: extensions UI (PR #68) ------------------------------------------------------
   // Added by the UI wave ahead of the engine; `src/main/platform/extensions.ts` implements them
   // as they stand. The API layer (#91) landed without competing names (`ExtensionAction` above is
@@ -2135,6 +2155,32 @@ export interface Commands {
   'blocking.setEnabled': { args: { enabled: boolean }; result: void }
   /** Except a site (origin, URL or host) from blocking, or block on it again. */
   'blocking.setSiteException': { args: { site: string; excepted: boolean }; result: void }
+  /** Translate the tab's page (into the default target when `target` is omitted). */
+  'translate.page': {
+    args: { tabId: string; target?: string; source?: string }
+    result: void
+  }
+  /** Show the original page again. */
+  'translate.revert': { args: { tabId: string }; result: void }
+  /** Close the translation offer for this page load. */
+  'translate.dismiss': { args: { tabId: string }; result: void }
+  /** Translate the tab's selection (or `text`); null when nothing is selected. */
+  'translate.selection': {
+    args: { tabId: string; text?: string; target?: string }
+    result: TranslateSelectionResult | null
+  }
+  'translate.setPreferences': { args: Partial<TranslatePreferences>; result: void }
+  /** Always translate, never translate, or ask for pages in `language`. */
+  'translate.setLanguageRule': {
+    args: { language: string; rule: 'always' | 'never' | 'ask' }
+    result: void
+  }
+  /** Never offer to translate the tab's site (or offer again). */
+  'translate.setSiteRule': { args: { tabId: string; never: boolean }; result: void }
+  'translate.downloadModel': { args: { from: string; to: string }; result: void }
+  'translate.removeModel': { args: { from: string; to: string }; result: void }
+  /** The chrome renderer hands back an answer of the engine worker it runs for the core. */
+  'translate.engineResponse': { args: EngineRelayResponse; result: void }
 }
 
 export type CommandName = keyof Commands
@@ -2190,6 +2236,11 @@ export interface Events {
   insets: { top: number; right: number; bottom: number; left: number }
   /** A login was deleted; `passwords.restore` brings it back for a while. */
   'passwords.removed': { id: string; site: string }
+  /**
+   * The core asks this window's renderer to run a translation engine request (Electron only;
+   * the payload carries `ArrayBuffer`s, so it is structured-cloned rather than JSON).
+   */
+  'translate.engine': EngineRelayRequest
   // ---- PROVISIONAL: extensions UI (PR #68), see the matching block in `Commands` --------------
   /** The popup's document asked for this size (CSS px); the renderer fits its frame around it. */
   'extension.popupSize': { id: string; width: number; height: number }
