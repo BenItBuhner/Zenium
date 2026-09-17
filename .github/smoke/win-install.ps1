@@ -89,7 +89,7 @@ switch ($Action) {
     if (-not $installDir) { $installDir = $defaultDir }
     $info.installDir = $installDir
     $info.installDirExists = Test-Path $installDir
-    $info.binaries = Get-Binaries $installDir
+    $info.binaries = @(Get-Binaries $installDir)
     $info.installDirEntries = @(Get-ChildItem -Path $installDir -ErrorAction SilentlyContinue | ForEach-Object { if ($_.PSIsContainer) { "$($_.Name)/" } else { "$($_.Name) ($([math]::Round($_.Length / 1MB, 1)) MB)" } })
     $info.installSizeMB = [math]::Round((Get-ChildItem -Path $installDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
     $exe = Join-Path $installDir "$Match.exe"
