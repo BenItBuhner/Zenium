@@ -43,11 +43,20 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
             <div
               key={t.id}
               className={cn(
-                'zen-toast zen-panel px-2.5 py-1.5 text-[12px]',
-                t.kind === 'error' && 'text-red-500'
+                'zen-toast zen-panel flex items-center gap-2 px-2.5 py-1.5 text-[12px]',
+                t.kind === 'error' && 'text-[var(--zen-danger)]'
               )}
             >
-              {t.message}
+              <span className="min-w-0 flex-1">{t.message}</span>
+              {t.action && (
+                <button
+                  type="button"
+                  className="zen-ext-chip -my-0.5 h-6 shrink-0 px-2 text-[12px]"
+                  onClick={t.action.run}
+                >
+                  {t.action.label}
+                </button>
+              )}
             </div>
           ))}
         </div>

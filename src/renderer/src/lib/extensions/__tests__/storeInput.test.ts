@@ -27,9 +27,11 @@ describe('parseStoreInput', () => {
     expect(
       parseStoreInput(`https://microsoftedge.microsoft.com/addons/detail/dark-reader/${edgeId}`)
     ).toEqual({ ref: edgeId, id: edgeId, store: 'edge-add-ons' })
-    expect(parseStoreInput(`chromewebstore.google.com/detail/dark-reader/${DARK_READER}`)).toEqual(
-      { ref: DARK_READER, id: DARK_READER, store: 'chrome-web-store' }
-    )
+    expect(parseStoreInput(`chromewebstore.google.com/detail/dark-reader/${DARK_READER}`)).toEqual({
+      ref: DARK_READER,
+      id: DARK_READER,
+      store: 'chrome-web-store'
+    })
   })
 
   it('rejects anything else', () => {

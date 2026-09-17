@@ -480,11 +480,16 @@ function PhoneToasts({
         <div
           key={t.id}
           className={cn(
-            'zen-toast zen-panel px-3.5 py-2 text-[13px]',
-            t.kind === 'error' && 'text-red-500'
+            'zen-toast zen-panel pointer-events-auto flex items-center gap-3 px-3.5 py-2 text-[13px]',
+            t.kind === 'error' && 'text-[var(--zen-danger)]'
           )}
         >
-          {t.message}
+          <span className="min-w-0 flex-1">{t.message}</span>
+          {t.action && (
+            <button type="button" className="zen-ext-chip -my-1 shrink-0" onClick={t.action.run}>
+              {t.action.label}
+            </button>
+          )}
         </div>
       ))}
     </div>

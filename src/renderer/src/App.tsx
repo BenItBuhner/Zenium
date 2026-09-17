@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import type { UIState } from '@shared/types'
 import type { ResolvedTheme } from '@shared/theme'
 import { run } from '@renderer/lib/api'
+import { closeExtensionPopup } from '@renderer/lib/extensions/popup'
 import { isPhone, useViewport } from '@renderer/lib/formFactor'
 import { activeTab } from '@renderer/lib/selectors'
 import {
@@ -22,6 +23,8 @@ import { useMainEvents } from '@renderer/hooks/useMainEvents'
 import { useTheme } from '@renderer/hooks/useTheme'
 import { ContentArea } from './components/content/ContentArea'
 import { DragGhost } from './components/DragGhost'
+import { ExtensionPromptDialog } from './components/extensions/ExtensionPromptDialog'
+import { PopupFrame } from './components/extensions/PopupFrame'
 import { ModStyles } from './components/ModStyles'
 import { Onboarding } from './components/overlays/Onboarding'
 import { PhoneShell } from './components/phone/PhoneShell'
@@ -42,10 +45,17 @@ export function App(): JSX.Element {
   usePointerTracking()
   const ui = uiStore.use()
 
-  if (viewport.formFactor === 'phone') {
-    return <PhoneShell state={state} ui={ui} isDark={theme.isDark} />
-  }
-  return <DesktopShell state={state} theme={theme} />
+  return (
+    <>
+      {viewport.formFactor === 'phone' ? (
+        <PhoneShell state={state} ui={ui} isDark={theme.isDark} />
+      ) : (
+        <DesktopShell state={state} theme={theme} />
+      )}
+      <PopupFrame />
+      <ExtensionPromptDialog />
+    </>
+  )
 }
 
 /** Desktop, tablet and DeX: Zen's vertical sidebar next to the content card. */
@@ -90,13 +100,15 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   useEffect(() => {
     if (!sidebarHidden && ui.compactHover) uiStore.set({ compactHover: false })
   }, [sidebarHidden, ui.compactHover])
-  // Any click in the chrome dismisses an open extension popup (it lives outside the DOM).
+  // Any click in the chrome dismisses an open extension popup (its document lives outside the
+  // DOM; the frame around it and the button that opened it stop the event themselves).
   useEffect(() => {
-    if (!state.extensions.some((e) => e.enabled)) return
-    const onDown = (): void => run('extension.closePopup', undefined)
+    const onDown = (): void => {
+      if (uiStore.get().extensionPopup) closeExtensionPopup()
+    }
     window.addEventListener('mousedown', onDown)
     return () => window.removeEventListener('mousedown', onDown)
-  }, [state.extensions])
+  }, [])
   // Main tracks the real cursor (works over the page view and the frameless resize border).
   useEffect(() => {
     const onReveal = (e: Event): void => {
@@ -218,6 +230,12 @@ function useGlobalKeys(state: UIState): void {
       const ui = uiStore.get()
       if (ui.urlbar.open) return // handled by the URL bar input
       if (ui.menu) return // handled by the menu layer
+      if (ui.extensionPrompts.length) return // the prompt dialog answers Escape itself
+      if (ui.extensionPopup) {
+        e.preventDefault()
+        closeExtensionPopup()
+        return
+      }
       if (ui.overlay !== 'none') {
         e.preventDefault()
         closeOverlay()

@@ -13,6 +13,12 @@ import {
 } from '@renderer/lib/ui'
 import { activeTab } from '@renderer/lib/selectors'
 import { browserStore } from '@renderer/lib/ui'
+import { run } from '@renderer/lib/api'
+import {
+  closeExtensionPopup,
+  enqueueExtensionPrompt,
+  popupSizeReported
+} from '@renderer/lib/extensions/popup'
 
 function currentActiveTabId(): string | null {
   const state: UIState | null = browserStore.get().state
@@ -76,6 +82,21 @@ export function useMainEvents(): void {
       }),
       onEvent('compact.reveal', ({ revealed }) =>
         window.dispatchEvent(new CustomEvent('zen-compact-reveal', { detail: revealed }))
+      ),
+      onEvent('extension.popupSize', ({ id, width, height }) =>
+        popupSizeReported(id, width, height)
+      ),
+      onEvent('extension.popupClosed', () => closeExtensionPopup(false)),
+      onEvent('extensionInstallRequest', (prompt) => enqueueExtensionPrompt(prompt)),
+      onEvent('extensionPermissionRequest', (prompt) => enqueueExtensionPrompt(prompt)),
+      onEvent('extension.installed', ({ id, name, pinned }) =>
+        pushToast(
+          `${name} was added to Zenium`,
+          'info',
+          pinned
+            ? undefined
+            : { label: 'Pin', run: () => run('extension.setPinned', { id, pinned: true }) }
+        )
       ),
       onEvent('menu.show', (menu) => void showMenu(menu, currentActiveTabId())),
       onEvent('menu.hide', ({ menuId }) => {

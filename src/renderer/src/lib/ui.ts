@@ -1,4 +1,11 @@
-import type { MenuDescriptor, OverlayKind, Rect, UIState, UrlbarOpenMode } from '@shared/types'
+import type {
+  ExtensionPromptRequest,
+  MenuDescriptor,
+  OverlayKind,
+  Rect,
+  UIState,
+  UrlbarOpenMode
+} from '@shared/types'
 import { cmd, onEvent, run } from './api'
 import { createStore } from './store'
 import { rememberThumbnail, thumbnailOf } from './thumbnails'
@@ -41,6 +48,19 @@ export interface Toast {
   id: number
   message: string
   kind: 'info' | 'error'
+  /** One follow-up the toast offers ("Pin"); picking it dismisses the toast. */
+  action?: { label: string; run: () => void }
+}
+
+/** An extension popup the renderer is framing (the document itself is main's WebContentsView). */
+export interface ExtensionPopupState {
+  id: string
+  /** The toolbar button it hangs from, in window coordinates. */
+  anchor: Rect
+  /** The document's preferred size once it reported one. */
+  content: { width: number; height: number } | null
+  /** The frame is up: the size arrived, or the wait for it ran out. */
+  shown: boolean
 }
 
 export interface DragState {
@@ -101,6 +121,10 @@ export interface UiState {
    * page, which must be hidden underneath it.
    */
   stageActive: boolean
+  /** The open extension popup's frame, or null. */
+  extensionPopup: ExtensionPopupState | null
+  /** Install and permission prompts waiting for an answer, oldest first; the first is shown. */
+  extensionPrompts: ExtensionPromptRequest[]
 }
 
 /** Where the content area is, in window coordinates (measured by the layout reporter). */
@@ -137,16 +161,43 @@ export const uiStore = createStore<UiState>(
     menu: null,
     siteInfoOpen: false,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
-    stageActive: false
+    stageActive: false,
+    extensionPopup: null,
+    extensionPrompts: []
   },
   'ui'
 )
 
 let toastSeq = 0
-export function pushToast(message: string, kind: 'info' | 'error' = 'info'): void {
+/** A toast stays 2.8s, or 6s when it offers an action the user may want to reach. */
+export function pushToast(
+  message: string,
+  kind: 'info' | 'error' = 'info',
+  action?: Toast['action']
+): void {
   const id = ++toastSeq
-  uiStore.set((s) => ({ toasts: [...s.toasts, { id, message, kind }] }))
-  setTimeout(() => uiStore.set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 2800)
+  const toast: Toast = action
+    ? {
+        id,
+        message,
+        kind,
+        action: {
+          label: action.label,
+          run: () => {
+            dismissToast(id)
+            action.run()
+          }
+        }
+      }
+    : { id, message, kind }
+  uiStore.set((s) => ({ toasts: [...s.toasts, toast] }))
+  setTimeout(() => dismissToast(id), action ? 6000 : 2800)
+}
+
+export function dismissToast(id: number): void {
+  uiStore.set((s) =>
+    s.toasts.some((t) => t.id === id) ? { toasts: s.toasts.filter((t) => t.id !== id) } : {}
+  )
 }
 
 /** Capture the active tab before a chrome overlay hides it. */

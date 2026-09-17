@@ -1,9 +1,10 @@
 import type { JSX } from 'react'
 import { useState } from 'react'
-import { FolderOpen, Link2, Plus, Puzzle, Trash2 } from 'lucide-react'
+import { FolderOpen, Link2, Plus, Trash2 } from 'lucide-react'
 import type { Mod, UIState } from '@shared/types'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
+import { ExtensionsPage } from '../extensions/ExtensionsPage'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
@@ -51,68 +52,9 @@ export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
   )
 }
 
+/** The Extensions tab: the management page (components/extensions/ExtensionsPage). */
 export function ExtensionsSection({ state }: { state: UIState }): JSX.Element {
-  return (
-    <>
-      <div className="flex items-start justify-between gap-4 px-2.5">
-        <div>
-          <h3 className="zen-settings-heading px-0">Extensions</h3>
-          <p className="zen-settings-hint mt-1">
-            Load unpacked Chrome extensions (a folder with a <code>manifest.json</code>). Content
-            scripts, storage, webRequest, scripting and DevTools panels are supported; extensions
-            run in every container.
-          </p>
-        </div>
-        <Button size="sm" onClick={() => run('extension.add', undefined)}>
-          <FolderOpen className="h-3.5 w-3.5" /> Load unpacked…
-        </Button>
-      </div>
-      {state.extensions.length === 0 ? (
-        <EmptyNote>No extensions yet.</EmptyNote>
-      ) : (
-        <ul className="zen-settings-rows">
-          {state.extensions.map((ext) => (
-            <li key={ext.id} className="zen-settings-row py-2">
-              {ext.icon ? (
-                <img src={ext.icon} alt="" className="h-8 w-8 rounded-lg" draggable={false} />
-              ) : (
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--zen-element-bg)]">
-                  <Puzzle className="h-4 w-4 opacity-60" />
-                </span>
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="flex items-baseline gap-2">
-                  <span className="zen-settings-label truncate font-medium">{ext.name}</span>
-                  {ext.version && (
-                    <span className="zen-settings-hint tabular-nums">v{ext.version}</span>
-                  )}
-                </div>
-                <div className="zen-settings-hint truncate" title={ext.path}>
-                  {ext.error ? (
-                    <span className="text-[var(--zen-danger)]">{ext.error}</span>
-                  ) : (
-                    ext.description || ext.path
-                  )}
-                </div>
-              </div>
-              <Switch
-                checked={ext.enabled}
-                onCheckedChange={(v) => run('extension.setEnabled', { id: ext.id, enabled: v })}
-              />
-              <button
-                type="button"
-                className="zen-toolbar-button h-7 w-7"
-                title="Remove"
-                onClick={() => run('extension.remove', { id: ext.id })}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </>
-  )
+  return <ExtensionsPage state={state} />
 }
 
 export function ModsSection({ state }: { state: UIState }): JSX.Element {

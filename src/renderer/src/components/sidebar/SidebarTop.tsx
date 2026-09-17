@@ -7,7 +7,6 @@ import {
   Copy,
   Lock,
   MoreHorizontal,
-  Puzzle,
   RotateCw,
   Search,
   Sparkles,
@@ -16,12 +15,17 @@ import {
 } from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
 import { displayUrl, getDomain } from '@shared/url'
+import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { run } from '@renderer/lib/api'
 import { isPrivateWindow } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { openOverlay, openUrlbar } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { ToolbarActions } from '../extensions/ToolbarActions'
 import { WindowControls } from '../WindowControls'
+
+/** Back, forward, reload, the puzzle piece and the menu: always in the row, never folded. */
+const FIXED_BUTTONS = 5
 
 interface Props {
   state: UIState
@@ -69,9 +73,13 @@ export function NavRow({
   const boosted = Boolean(
     tab && isWebPage && state.boosts.some((b) => b.domain === getDomain(tab.url) && b.enabled)
   )
-  const extensions = state.extensions.filter((e) => e.enabled && !e.error && e.popup)
+  const row = useRef<HTMLDivElement>(null)
+  const rowWidth = useElementWidth(row)
   return (
-    <div className={cn('zen-no-drag flex items-center gap-0.5', compact && 'flex-col', className)}>
+    <div
+      ref={row}
+      className={cn('zen-no-drag flex items-center gap-0.5', compact && 'flex-col', className)}
+    >
       <button
         type="button"
         className="zen-toolbar-button"
@@ -194,7 +202,12 @@ export function NavRow({
           )}
         </button>
       )}
-      {!compact && extensions.slice(0, 4).map((ext) => <ExtensionButton key={ext.id} ext={ext} />)}
+      <ToolbarActions
+        state={state}
+        rowWidth={compact ? null : rowWidth}
+        fixedButtons={FIXED_BUTTONS}
+        compact={compact}
+      />
       <button
         type="button"
         className="zen-toolbar-button"
@@ -204,32 +217,5 @@ export function NavRow({
         <MoreHorizontal className="h-4 w-4" />
       </button>
     </div>
-  )
-}
-
-/** Browser-action button of a loaded extension; its popup opens anchored below the button. */
-function ExtensionButton({ ext }: { ext: UIState['extensions'][number] }): JSX.Element {
-  const ref = useRef<HTMLButtonElement>(null)
-  return (
-    <button
-      ref={ref}
-      type="button"
-      className="zen-toolbar-button"
-      title={ext.name}
-      onClick={() => {
-        const r = ref.current?.getBoundingClientRect()
-        if (!r) return
-        run('extension.openPopup', {
-          id: ext.id,
-          anchor: { x: r.left, y: r.top, width: r.width, height: r.height }
-        })
-      }}
-    >
-      {ext.icon ? (
-        <img src={ext.icon} alt="" className="h-4 w-4 rounded-[3px]" draggable={false} />
-      ) : (
-        <Puzzle className="h-4 w-4" />
-      )}
-    </button>
   )
 }

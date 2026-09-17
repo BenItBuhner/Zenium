@@ -63,9 +63,10 @@ describe('fitToolbarActions', () => {
 
   it('a row without a pill (compact) only reserves its fixed buttons', () => {
     const rowWidth = 4 * slot + 3 * slot
-    expect(
-      fitToolbarActions({ rowWidth, fixedButtons: 4, pinned: 5, minPillWidth: 0 })
-    ).toEqual({ shown: 3, hidden: 2 })
+    expect(fitToolbarActions({ rowWidth, fixedButtons: 4, pinned: 5, minPillWidth: 0 })).toEqual({
+      shown: 3,
+      hidden: 2
+    })
   })
 })
 

@@ -45,7 +45,10 @@ export function parseCssColor(input: string | null | undefined): Rgba | null {
   }
   const arr = /^\[\s*([^\]]*)\]$/.exec(text)
   if (arr) {
-    const parts = arr[1].split(/[\s,]+/).filter(Boolean).map(Number)
+    const parts = arr[1]
+      .split(/[\s,]+/)
+      .filter(Boolean)
+      .map(Number)
     if (parts.length < 3 || parts.some((n) => !Number.isFinite(n))) return null
     const [r, g, b, a = 255] = parts
     return { r: clamp255(r), g: clamp255(g), b: clamp255(b), a: clamp01(a / 255) }
@@ -132,9 +135,12 @@ export interface BadgeStyle {
  * fill with `--zen-on-accent` ink; with one, the extension's colour and whichever ink reads on it
  * (or the extension's own text colour when it set one).
  */
-export function badgeStyle(action: Pick<ExtensionAction, 'badgeBackgroundColor' | 'badgeTextColor'>): BadgeStyle {
+export function badgeStyle(
+  action: Pick<ExtensionAction, 'badgeBackgroundColor' | 'badgeTextColor'>
+): BadgeStyle {
   const bg = parseCssColor(action.badgeBackgroundColor)
-  if (!bg || bg.a === 0) return { background: 'var(--zen-accent-fill)', color: 'var(--zen-on-accent)' }
+  if (!bg || bg.a === 0)
+    return { background: 'var(--zen-accent-fill)', color: 'var(--zen-on-accent)' }
   const background = `rgb(${bg.r} ${bg.g} ${bg.b}${bg.a < 1 ? ` / ${bg.a.toFixed(2)}` : ''})`
   const text = parseCssColor(action.badgeTextColor)
   if (text && text.a > 0) return { background, color: `rgb(${text.r} ${text.g} ${text.b})` }

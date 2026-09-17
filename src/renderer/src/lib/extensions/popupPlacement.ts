@@ -43,6 +43,36 @@ export interface PopupPlacementInput {
   margin?: number
 }
 
+export interface AnchoredRect extends Rect {
+  side: 'left' | 'right'
+}
+
+/**
+ * A desktop panel under its trigger (design-language.md §8.1): `gap` below it with the
+ * trigger's centre `inset` into the panel's leading edge, hanging from the panel's right edge
+ * instead when the left alignment would leave the window, and kept `margin` from every edge.
+ */
+export function anchorBelow(
+  anchor: Rect,
+  size: PopupSize,
+  viewport: PopupSize,
+  { gap = POPUP_GAP, margin = POPUP_MARGIN, inset = POPUP_ANCHOR_INSET } = {}
+): AnchoredRect {
+  const centre = anchor.x + anchor.width / 2
+  let left = centre - inset
+  let side: AnchoredRect['side'] = 'left'
+  if (left + size.width > viewport.width - margin) {
+    left = centre + inset - size.width
+    side = 'right'
+  }
+  left = Math.round(clamp(left, margin, Math.max(margin, viewport.width - margin - size.width)))
+  let top = anchor.y + anchor.height + gap
+  if (top + size.height > viewport.height - margin) {
+    top = Math.max(margin, viewport.height - margin - size.height)
+  }
+  return { x: left, y: Math.round(top), width: size.width, height: size.height, side }
+}
+
 /**
  * Where an action popup goes: a level-3 frame 8px below its button with the button's centre
  * inside the frame's first 40px, hanging from the frame's right edge instead when the left
@@ -71,16 +101,7 @@ export function placePopup({
   const width = innerWidth + 2 * padding
   const height = innerHeight + 2 * padding
 
-  const centre = anchor.x + anchor.width / 2
-  let left = centre - POPUP_ANCHOR_INSET
-  let side: PopupPlacement['side'] = 'left'
-  if (left + width > viewport.width - margin) {
-    left = centre + POPUP_ANCHOR_INSET - width
-    side = 'right'
-  }
-  left = Math.round(clamp(left, margin, Math.max(margin, viewport.width - margin - width)))
-
-  const frame = { x: left, y: Math.round(top), width, height }
+  const { side, ...frame } = anchorBelow(anchor, { width, height }, viewport, { gap, margin })
   return {
     frame,
     inner: {
