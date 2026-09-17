@@ -110,7 +110,7 @@ export function ExtensionDetails({
                 <Value title={ext.path}>{sourceLabel(ext.source)}</Value>
               )}
             </V2Row>
-            <V2Row label="Id">
+            <V2Row label="ID">
               <Value tabular>{ext.id}</Value>
             </V2Row>
             <V2Row label="Version">

@@ -51,19 +51,32 @@
   }
   /*
    * The page header (§9.7): the title 22/600 with 16 below, no line at rest; once content
-   * scrolls under it a hairline appears at its bottom edge.
+   * scrolls under it a hairline appears at its bottom edge. The 16 is 14 here plus 2 at the
+   * top of the column that follows, so a focused first control's 2px ring (offset 0 in light)
+   * has room below the header instead of painting under it.
    */
   .zen-v2-header {
     position: sticky;
     top: 0;
     z-index: 2;
     background: var(--v2-page);
-    padding: 24px 0 16px;
-    box-shadow: 0 1px 0 transparent;
-    transition: box-shadow 120ms var(--zen-ease);
+    padding: 24px 0 14px;
   }
-  .zen-v2-header[data-scrolled] {
-    box-shadow: 0 1px 0 var(--v2-border);
+  .zen-v2-header + .zen-v2-column {
+    padding-top: 2px;
+  }
+  /* The hairline is its own element fading in (v1 §7.4: opacity per frame, not a box-shadow). */
+  .zen-v2-header::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 1px;
+    background: var(--v2-border);
+    opacity: 0;
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-v2-header[data-scrolled]::after {
+    opacity: 1;
   }
   /* Embedded in another page's column (Settings): its column and scrolling, a static header. */
   .zen-v2[data-embedded] .zen-v2-column {
@@ -72,8 +85,11 @@
   }
   .zen-v2[data-embedded] .zen-v2-header {
     position: static;
-    padding-top: 0;
+    padding: 0 0 16px;
     background: transparent;
+  }
+  .zen-v2[data-embedded] .zen-v2-header::after {
+    display: none;
   }
   .zen-v2-header-row {
     display: flex;
@@ -528,6 +544,10 @@
     font-size: 14px;
     line-height: 15px;
   }
+  /* A context menu (a right-click) is radius 6 (§2); the popovers under a `···` stay at 8. */
+  .zen-v2-menu[data-context] {
+    border-radius: var(--v2-radius-inner);
+  }
   .zen-v2-menu-item {
     display: flex;
     align-items: center;
@@ -647,20 +667,20 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* The sub-line, in any tone: at most two lines, then an ellipsis (§9.2). */
   .zen-ext-sub {
-    display: block;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
     font-size: var(--v2-font-small);
     line-height: var(--v2-line-small);
     color: var(--v2-text-deemphasized);
     font-variant-numeric: tabular-nums;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
   .zen-ext-sub[data-tone='danger'] {
     color: var(--v2-danger);
-    white-space: normal;
-    overflow-wrap: anywhere;
   }
   .zen-ext-sub[data-tone='warn'] {
     color: var(--v2-warn);
@@ -735,8 +755,25 @@
   /* --- Extensions: toolbar, panel, popup, dialog ------------------------------------------ */
 
   /*
+   * An action the extension turned off for this tab (`chrome.action.disable`) keeps its button
+   * and dims to the v2 disabled treatment (§9.3) instead of vanishing and returning per tab. It
+   * is `aria-disabled`, not `disabled`, so its context menu still opens; a click does nothing.
+   */
+  .zen-toolbar-button.zen-ext-action[aria-disabled='true'],
+  .zen-toolbar-button.zen-ext-action[aria-disabled='true']:hover,
+  .zen-toolbar-button.zen-ext-action[aria-disabled='true']:active {
+    opacity: 0.4;
+    background: transparent;
+    transform: none;
+  }
+  .zen-ext-panel-row [aria-disabled='true'] {
+    opacity: 0.4;
+  }
+
+  /*
    * The toolbar badge (`chrome.action.setBadgeText`): a 10/600 pill (the pill's one use, §2)
-   * over the button's corner, in the extension's colour when it set one, else the accent.
+   * over the button's corner, in the extension's colour when it set one, else the accent. No
+   * knockout ring, as Chrome: one in a fixed colour would halo over a themed sidebar.
    */
   .zen-ext-badge {
     position: absolute;
@@ -753,7 +790,6 @@
     font-weight: var(--v2-weight-heading);
     line-height: 1;
     font-variant-numeric: tabular-nums;
-    box-shadow: 0 0 0 2px var(--zen-bg-solid);
     pointer-events: none;
   }
 
@@ -818,8 +854,13 @@
 
   /*
    * Behind a prompt (§9.5, §6): the content frame alone dims with the dialog scrim on a desktop
-   * and the sheet scrim on a phone; the sidebar and toolbar stay as they are.
+   * and the sheet scrim on a phone; the sidebar and toolbar stay as they are. The dim fades in
+   * over the dialog's own 180ms, whether the layer mounts with the class or takes it later.
    */
+  .zen-ext-scrim-modal,
+  .zen-ext-scrim-sheet {
+    animation: zen-v2-fade 180ms var(--zen-ease);
+  }
   .zen-ext-scrim-modal {
     background: var(--v2-scrim-modal);
   }
@@ -871,17 +912,17 @@
   .zen-ext-dialog .zen-v2-button {
     min-width: 96px;
   }
-  /* The phone sheet variant has the sheet's own padding and full-width buttons. */
+  /*
+   * The phone sheet variant has the sheet's own padding; its buttons keep the row, right-aligned
+   * at the sheet's end at 40 and their natural width, the primary last (Firefox Android, §6).
+   */
   [data-form-factor='phone'] .zen-ext-dialog {
     width: auto;
     max-width: none;
     padding: 4px 16px 8px;
   }
-  [data-form-factor='phone'] .zen-ext-dialog-buttons {
-    flex-direction: column-reverse;
-  }
-  [data-form-factor='phone'] .zen-ext-dialog-buttons .zen-v2-button {
-    width: 100%;
+  [data-form-factor='phone'] .zen-ext-dialog .zen-v2-button {
+    min-width: 0;
   }
 }
 

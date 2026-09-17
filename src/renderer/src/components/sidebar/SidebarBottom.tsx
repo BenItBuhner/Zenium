@@ -49,9 +49,10 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
             >
               <span className="min-w-0 flex-1">{t.message}</span>
               {t.action && (
+                // A v2 secondary button (§6) inside the shipped toast until the toast is redone.
                 <button
                   type="button"
-                  className="zen-ext-chip -my-0.5 h-6 shrink-0 px-2 text-[12px]"
+                  className="zen-v2 zen-v2-button -my-0.5 shrink-0"
                   onClick={t.action.run}
                 >
                   {t.action.label}

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { parseStoreInput, sourceLabel, storePageUrl, versionAndSource } from '../storeInput'
+import {
+  fromSource,
+  parseStoreInput,
+  sourceLabel,
+  storePageUrl,
+  versionAndSource
+} from '../storeInput'
 
 const DARK_READER = 'eimadpbcbfnmbkopoojfekhnkhdbieeh'
 
@@ -56,6 +62,15 @@ describe('labels', () => {
   it('builds the second line', () => {
     expect(versionAndSource('4.9.132', 'chrome-web-store')).toBe('v4.9.132 · Chrome Web Store')
     expect(versionAndSource('', 'unpacked')).toBe('Unpacked')
+  })
+
+  it("writes the dialog's source as prose, not the registry's enum names", () => {
+    expect(fromSource('chrome-web-store')).toBe('From the Chrome Web Store')
+    expect(fromSource('edge-add-ons')).toBe('From Edge Add-ons')
+    expect(fromSource('crx')).toBe('From a CRX file')
+    expect(fromSource('zip')).toBe('From a ZIP file')
+    expect(fromSource('unpacked')).toBe('From an unpacked folder')
+    expect(fromSource(undefined)).toBe('From an unpacked folder')
   })
 
   it('links to the store page only for store installs with a real id', () => {

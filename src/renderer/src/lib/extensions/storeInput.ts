@@ -40,6 +40,23 @@ export function sourceLabel(source: ExtensionSource | undefined): string {
   }
 }
 
+/** The install dialog's second line: where the package came from, as prose. */
+export function fromSource(source: ExtensionSource | undefined): string {
+  switch (source) {
+    case 'chrome-web-store':
+      return 'From the Chrome Web Store'
+    case 'edge-add-ons':
+      return 'From Edge Add-ons'
+    case 'crx':
+      return 'From a CRX file'
+    case 'zip':
+      return 'From a ZIP file'
+    case 'unpacked':
+    default:
+      return 'From an unpacked folder'
+  }
+}
+
 /** The store listing for an installed extension, when its source has one. */
 export function storePageUrl(source: ExtensionSource | undefined, id: string): string | null {
   if (!isExtensionId(id)) return null

@@ -34,6 +34,8 @@ interface Props {
   onClose: () => void
   /** Title of the phone sheet (the thing the menu is about). */
   title?: string
+  /** Opened by a right-click rather than from a `···`: a context menu, radius 6 (v2 draft §2). */
+  context?: boolean
 }
 
 function isSeparator(entry: LocalMenuEntry): entry is LocalMenuSeparator {
@@ -42,9 +44,10 @@ function isSeparator(entry: LocalMenuEntry): entry is LocalMenuSeparator {
 
 /**
  * A menu the renderer owns (v2 draft §6 menus): on a mouse a bordered panel at radius 8 under
- * its control with 31 rows, a 16 icon each when any has one, hairline separators and danger
- * rows in the danger ink; on a finger the same rows at 44 in a bottom sheet. Escape and an
- * outside click (or a tap on the scrim) close it; there is no scrim on the desktop (§9.5).
+ * its control (6 for a context menu, §2) with 31 rows, a 16 icon each when any has one, hairline
+ * separators and danger rows in the danger ink; on a finger the same rows at 44 in a bottom
+ * sheet. Escape and an outside click (or a tap on the scrim) close it; there is no scrim on the
+ * desktop (§9.5).
  *
  * The page's view composites above the chrome, so while the menu is up the content frame shows
  * the page's capture instead (`useFloatingChrome`), as it does for the main-process menus.
@@ -76,7 +79,7 @@ function useEscape(close: () => void): void {
   }, [])
 }
 
-function PopoverMenu({ anchor, items, onClose }: Props): JSX.Element {
+function PopoverMenu({ anchor, items, onClose, context }: Props): JSX.Element {
   useEscape(onClose)
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ left: number; top: number; side: 'left' | 'right' } | null>(null)
@@ -108,6 +111,7 @@ function PopoverMenu({ anchor, items, onClose }: Props): JSX.Element {
         ref={ref}
         role="menu"
         className="zen-v2 zen-v2-panel zen-v2-menu zen-animate-pop fixed select-none"
+        data-context={context || undefined}
         style={{
           left: pos?.left ?? anchor.x,
           top: pos?.top ?? anchor.y + anchor.height + 8,

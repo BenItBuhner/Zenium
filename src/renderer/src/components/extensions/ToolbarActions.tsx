@@ -10,6 +10,7 @@ import { badgeLabel, badgeStyle } from '@renderer/lib/extensions/badge'
 import { closeExtensionPopup, openExtensionPopup } from '@renderer/lib/extensions/popup'
 import { anchorBelow } from '@renderer/lib/extensions/popupPlacement'
 import {
+  actionEnabled,
   actionIcon,
   actionTitle,
   actionable,
@@ -102,19 +103,21 @@ function ActionButton({ ext, state }: { ext: ExtensionInfo; state: UIState }): J
   const closing = useRef(false)
   const badge = ext.action ? badgeLabel(ext.action.badgeText) : ''
   const badgeColours = ext.action ? badgeStyle(ext.action) : null
-  const disabled = ext.action?.enabled === false
+  // Off for this tab (`chrome.action.disable`): the button stays, dimmed (§9.3), a click does
+  // nothing, the context menu still opens – so `aria-disabled` rather than `disabled`.
+  const off = !actionEnabled(ext)
   return (
     <>
       <button
         ref={ref}
         type="button"
-        className="zen-toolbar-button relative"
+        className="zen-toolbar-button zen-ext-action relative"
         title={actionTitle(ext)}
         aria-label={actionTitle(ext)}
         aria-haspopup={ext.popup ? 'dialog' : undefined}
         aria-expanded={ext.popup ? open : undefined}
+        aria-disabled={off || undefined}
         data-active={open || undefined}
-        disabled={disabled}
         onMouseDown={(e) => {
           closing.current = uiStore.get().extensionPopup?.id === ext.id
           // Keep the app-wide "mousedown closes the popup" from racing this button's own click.
@@ -126,6 +129,7 @@ function ActionButton({ ext, state }: { ext: ExtensionInfo; state: UIState }): J
             closeExtensionPopup()
             return
           }
+          if (off) return
           const r = ref.current
           if (r) openExtensionPopup(ext.id, anchorOf(r), Boolean(ext.action?.popup ?? ext.popup))
         }}
@@ -150,6 +154,7 @@ function ActionButton({ ext, state }: { ext: ExtensionInfo; state: UIState }): J
           anchor={menu}
           title={ext.name}
           items={actionMenu(ext, state)}
+          context
           onClose={() => setMenu(null)}
         />
       )}
@@ -232,6 +237,7 @@ function ExtensionsPanel({
     return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose])
   const openFromPanel = (ext: ExtensionInfo): void => {
+    if (!actionEnabled(ext)) return
     onClose()
     openExtensionPopup(ext.id, anchor, Boolean(ext.action?.popup ?? ext.popup))
   }
@@ -264,6 +270,7 @@ function ExtensionsPanel({
                 type="button"
                 className="flex h-full min-w-0 flex-1 items-center gap-2 text-left"
                 title={actionTitle(ext)}
+                aria-disabled={!actionEnabled(ext) || undefined}
                 onClick={() => openFromPanel(ext)}
               >
                 <ExtensionIcon icon={actionIcon(ext)} size={16} box={16} />

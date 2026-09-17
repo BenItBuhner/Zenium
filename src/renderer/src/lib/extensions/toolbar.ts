@@ -52,9 +52,18 @@ export function fitToolbarActions({
   return { shown, hidden: pinned - shown }
 }
 
-/** Extensions that can act from the toolbar: enabled, loaded, and either popup- or click-driven. */
+/**
+ * Extensions with a place in the toolbar: enabled and loaded. One whose action the extension
+ * turned off for this tab (`chrome.action.disable`) stays in the list and dims (§9.3), as in
+ * Chrome; a button that vanished and returned per tab would read as a bug.
+ */
 export function actionable(extensions: readonly ExtensionInfo[]): ExtensionInfo[] {
-  return extensions.filter((e) => e.enabled && !e.error && (e.action?.enabled ?? true))
+  return extensions.filter((e) => e.enabled && !e.error)
+}
+
+/** Whether the action takes a click right now (`chrome.action.enable`/`disable`, on by default). */
+export function actionEnabled(ext: ExtensionInfo): boolean {
+  return ext.action?.enabled ?? true
 }
 
 /** The toolbar's pinned actions, in list order (the puzzle panel holds the rest). */

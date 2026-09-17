@@ -445,7 +445,12 @@ function PhoneToasts({
         >
           <span className="min-w-0 flex-1">{t.message}</span>
           {t.action && (
-            <button type="button" className="zen-ext-chip -my-1 shrink-0" onClick={t.action.run}>
+            // A v2 secondary button (§6, 40 under a finger) inside the shipped toast.
+            <button
+              type="button"
+              className="zen-v2 zen-v2-button -my-1 shrink-0"
+              onClick={t.action.run}
+            >
               {t.action.label}
             </button>
           )}

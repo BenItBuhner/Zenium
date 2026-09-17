@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import type { ExtensionPromptRequest } from '@shared/types'
 import { answerExtensionPrompt } from '@renderer/lib/extensions/popup'
-import { sourceLabel } from '@renderer/lib/extensions/storeInput'
+import { fromSource } from '@renderer/lib/extensions/storeInput'
 import { useViewport } from '@renderer/lib/formFactor'
 import { contentAreaStore, uiStore } from '@renderer/lib/ui'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
@@ -60,13 +60,13 @@ function copyFor(prompt: ExtensionPromptRequest): Copy {
     case 'update':
       return {
         title: `Update "${prompt.name}"?`,
-        subtitle: prompt.source ? `From ${sourceLabel(prompt.source)}` : null,
+        subtitle: prompt.source ? fromSource(prompt.source) : null,
         accept: 'Update extension'
       }
     default:
       return {
         title: `Add "${prompt.name}"?`,
-        subtitle: prompt.source ? `From ${sourceLabel(prompt.source)}` : null,
+        subtitle: prompt.source ? fromSource(prompt.source) : null,
         accept: 'Add extension'
       }
   }

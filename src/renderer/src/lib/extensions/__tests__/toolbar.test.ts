@@ -4,6 +4,7 @@ import {
   MIN_PILL_WIDTH,
   TOOLBAR_BUTTON,
   TOOLBAR_GAP,
+  actionEnabled,
   actionIcon,
   actionTitle,
   actionable,
@@ -88,25 +89,33 @@ describe('fitToolbarActions', () => {
 })
 
 describe('action selectors', () => {
-  it('actionable drops disabled, broken and action-disabled extensions', () => {
+  const actionOff = ext({
+    id: '4',
+    action: {
+      badgeText: '',
+      badgeBackgroundColor: null,
+      badgeTextColor: null,
+      title: '',
+      icon: null,
+      popup: null,
+      enabled: false
+    }
+  })
+
+  it('actionable drops disabled and broken extensions and keeps one whose action is off', () => {
     const list = [
       ext({ id: '1' }),
       ext({ id: '2', enabled: false }),
       ext({ id: '3', error: 'broken' }),
-      ext({
-        id: '4',
-        action: {
-          badgeText: '',
-          badgeBackgroundColor: null,
-          badgeTextColor: null,
-          title: '',
-          icon: null,
-          popup: null,
-          enabled: false
-        }
-      })
+      actionOff
     ]
-    expect(actionable(list).map((e) => e.id)).toEqual(['1'])
+    expect(actionable(list).map((e) => e.id)).toEqual(['1', '4'])
+  })
+
+  it('actionEnabled reads chrome.action.enable/disable, on when the engine has said nothing', () => {
+    expect(actionEnabled(ext({ id: '1' }))).toBe(true)
+    expect(actionEnabled(actionOff)).toBe(false)
+    expect(actionEnabled(ext({ action: { ...actionOff.action!, enabled: true } }))).toBe(true)
   })
 
   it('pinnedActions keeps list order and unpinned ones out', () => {
