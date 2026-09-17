@@ -13,7 +13,7 @@ import {
 import { join } from 'node:path'
 import {
   DEFAULT_CONTAINER_ID,
-  type ExtensionActionState,
+  type ExtensionAction,
   type ExtensionInfo
 } from '../../../shared/types'
 import type { StoreIO } from '../../../core/platform'
@@ -72,7 +72,7 @@ const extensionPreload = join(__dirname, '../preload/extension.js')
 /** What `ExtensionService` asks the API layer (the only coupling between the two). */
 export interface ExtensionApiHooks {
   /** Effective `chrome.action` state for the active tab, for `ExtensionInfo.action`. */
-  actionState(extensionId: string): ExtensionActionState | null
+  actionState(extensionId: string): ExtensionAction | null
   /**
    * The popup page a toolbar click should open (extension-relative), or null when nothing opens:
    * the action is disabled on the tab, or it has no popup and `action.onClicked` was fired instead.
@@ -507,7 +507,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   // ExtensionApiHooks (what ExtensionService asks)
   // ---------------------------------------------------------------------------
 
-  actionState(extensionId: string): ExtensionActionState | null {
+  actionState(extensionId: string): ExtensionAction | null {
     return this.action.stateFor(extensionId)
   }
 

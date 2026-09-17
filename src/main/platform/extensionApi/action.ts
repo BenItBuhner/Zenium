@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { extname, resolve, sep } from 'node:path'
 import { deflateSync } from 'node:zlib'
-import type { ExtensionActionState } from '../../../shared/types'
+import type { ExtensionAction } from '../../../shared/types'
 import type { ZenWindow } from '../../../core/window'
 import type { ExtensionManifest } from '../../../core/extensions/manifest'
 import {
@@ -240,7 +240,7 @@ export class ActionApi {
   }
 
   /** The state the toolbar should show for an extension right now (its active tab). */
-  stateFor(extensionId: string): ExtensionActionState | null {
+  stateFor(extensionId: string): ExtensionAction | null {
     const ext = this.host.loaded(extensionId)
     if (!ext) return null
     const win = this.host.model.lastFocusedWindow()

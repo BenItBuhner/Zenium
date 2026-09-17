@@ -336,7 +336,7 @@ export class ExtensionService implements ExtensionHost {
         availableVersion: update.availableVersion,
         updateError: update.error,
         updateCheckedAt: update.checkedAt,
-        action: ext && this.api ? this.api.actionState(ext.id) : null
+        action: (ext && this.api ? this.api.actionState(ext.id) : null) ?? undefined
       }
     })
   }
