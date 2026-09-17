@@ -18,9 +18,6 @@ on:
         options:
           - gestures
           - omnibox
-  push:
-    branches:
-      - cursor/omnibox-keyboard-and-pill-docking-5d02
 
 permissions:
   contents: read
