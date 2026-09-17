@@ -2,7 +2,8 @@ name: Android services-hardening demo
 
 # Temporary, removed before the branch is marked ready: records the pop-up blocker, the
 # external-app prompt and the HTTP sign-in dialog on an emulator against a demo server on the
-# runner, and notes what the system says about the app's backup eligibility.
+# runner, and notes what the system says about the app's backup eligibility. The build, the
+# emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
   push:
     branches: [cursor/services-hardening-24d1]
@@ -10,64 +11,11 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: android-services-hardening-demo-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  NODE_VERSION: 22
-
 jobs:
   record:
-    name: Record on an API 34 emulator
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: 17
-      - uses: android-actions/setup-android@v4
-        with:
-          packages: platform-tools platforms;android-35 build-tools;35.0.0
-          log-accepted-android-sdk-licenses: false
-      - uses: gradle/actions/setup-gradle@v6
-        with:
-          cache-read-only: true
-      - run: npm ci
-      - name: Build the chrome and page script
-        run: npm run build:android:web
-      - name: Assemble the debug APK and the demo driver
-        working-directory: android
-        run: ./gradlew assembleDebug assembleDebugAndroidTest -PskipWeb --no-daemon --stacktrace
-      - name: Enable KVM for the emulator
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          ls -la /dev/kvm
-      - name: Record the security prompts
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 34
-          target: google_apis
-          arch: x86_64
-          profile: pixel_6
-          cores: 3
-          ram-size: 4096M
-          heap-size: 512M
-          disable-animations: false
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: bash .github/scripts/services-hardening-demo.sh
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: android-services-hardening-demo
-          path: artifacts/android-services-hardening-demo/
-          if-no-files-found: warn
-          retention-days: 7
+    name: Services hardening demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/services-hardening-demo.sh
+      artifact-name: android-services-hardening-demo
+      artifact-path: artifacts/android-services-hardening-demo/

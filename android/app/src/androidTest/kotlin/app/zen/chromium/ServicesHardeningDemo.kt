@@ -139,25 +139,40 @@ class ServicesHardeningDemo {
     private fun demo() {
         val f = Finger()
 
-        // 1. The page opened a pop-up on its own: blocked, the chip says so, the list offers Open.
-        waitFor("Pop-up blocked", 12_000, prefix = true)
-        shot("01-popup-blocked-chip")
-        tapLabel(f, "Pop-up blocked", prefix = true)
-        waitFor("Pop-ups blocked", 5_000)
-        shot("02-popup-blocked-list")
-        tapLabel(f, "Open")
-        SystemClock.sleep(4_000)
-        shot("03-popup-opened-deliberately")
+        // 1. The page opened a pop-up on its own: blocked. With the chrome's chip (the UI branch)
+        //    the chip says so and its list offers Open; without it (the engine branch) the page's
+        //    own text says so and a tap on the page's button opens one, as a gesture allows.
+        waitFor("The automatic pop-up was blocked.", 12_000)
+        if (waitFor("Pop-up blocked", 3_000, prefix = true)) {
+            shot("01-popup-blocked-chip")
+            tapLabel(f, "Pop-up blocked", prefix = true)
+            waitFor("Pop-ups blocked", 5_000)
+            shot("02-popup-blocked-list")
+            tapLabel(f, "Open")
+            SystemClock.sleep(4_000)
+            shot("03-popup-opened-deliberately")
+        } else {
+            shot("01-popup-blocked-page")
+            tapLabel(f, "Open a pop-up (with a tap)")
+            SystemClock.sleep(4_000)
+            shot("03-popup-opened-with-a-tap")
+        }
 
-        // 2. Links to other apps: the automatic tel: launch is refused and listed; a tapped tel:
-        //    link asks; an intent:// link with no app to take it lands on its fallback page.
+        // 2. Links to other apps: the automatic tel: launch is refused (and listed with the chip);
+        //    a tapped tel: link asks; an intent:// link with no app to take it lands on its
+        //    fallback page.
         openInApp("http://$SERVER/apps")
-        waitFor("Pop-up blocked", 12_000, prefix = true)
-        shot("04-app-launch-blocked-chip")
-        tapLabel(f, "Pop-up blocked", prefix = true)
-        waitFor("Pop-ups blocked", 5_000)
-        shot("05-app-launch-blocked-list")
-        tapLabel(f, "Dismiss")
+        waitFor("Call +1 555 0100", 12_000)
+        if (waitFor("Pop-up blocked", 4_000, prefix = true)) {
+            shot("04-app-launch-blocked-chip")
+            tapLabel(f, "Pop-up blocked", prefix = true)
+            waitFor("Pop-ups blocked", 5_000)
+            shot("05-app-launch-blocked-list")
+            tapLabel(f, "Dismiss")
+        } else {
+            ensureForeground()
+            shot("04-app-launch-blocked-quietly")
+        }
         SystemClock.sleep(1_500)
         tapLabel(f, "Call +1 555 0100")
         waitFor("Open", 6_000)
