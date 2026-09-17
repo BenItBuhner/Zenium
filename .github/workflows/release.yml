@@ -129,6 +129,13 @@ jobs:
           - name: windows-arm64
             os: windows-latest
             args: --win --arm64
+            # electron-builder's bundled 7-Zip (24.09) packs the ARM64 executables of the NSIS payload
+            # with its ARM64 branch filter (7-Zip 23+), which the installer's Nsis7z extractor cannot
+            # decode: the installer exited 0 without zenium.exe and the six Chromium DLLs. Pinning the
+            # older single-stream BCJ filter keeps every entry decodable. The x64 payload never used
+            # that filter and is left as it is. electron-builder >= 26.15.6 pins BCJ for every NSIS
+            # payload itself (electron-userland/electron-builder#9988); drop this with that bump.
+            sevenzip_filter: BCJ
           - name: macos
             os: macos-latest
             args: --mac # x64 and arm64 disk images + zips, see electron-builder.yml
@@ -177,13 +184,18 @@ jobs:
       - name: Bundle main, preload and renderer
         run: npx electron-vite build
       - name: Package
+        env:
+          # Only the 7z payload of an NSIS installer reads this (see the matrix); empty = 7-Zip default.
+          ELECTRON_BUILDER_7Z_FILTER: ${{ matrix.sevenzip_filter }}
         run: |
           case "${{ matrix.name }}" in
             macos)
               if [[ -n "$MAC_CSC_LINK" ]]; then
                 export CSC_LINK="$MAC_CSC_LINK" CSC_KEY_PASSWORD="$MAC_CSC_KEY_PASSWORD"
               else
-                # No certificate: do not search the runner keychain, ship the app unsigned.
+                # No certificate: do not search the runner keychain. build/after-pack.mjs then
+                # ad-hoc signs the bundle (resource seal, hardened runtime) before the DMG / zip
+                # are built; the macos-verify job checks the result on both architectures.
                 export CSC_IDENTITY_AUTO_DISCOVERY=false
                 unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
               fi
@@ -217,8 +229,11 @@ jobs:
             # so both can sit in one release (the app asks for latest-arm64.yml on ARM Windows).
             mv release/assets/latest.yml release/assets/latest-arm64.yml
           fi
-          printf '{"platform":"%s","signed":%s,"notarized":%s}\n' \
-            "${{ matrix.name }}" "${{ steps.signing.outputs.signed }}" "${{ steps.signing.outputs.notarized }}" \
+          # adhoc: macOS bundle sealed with an ad-hoc signature because no Developer ID is configured.
+          adhoc=false
+          if [[ "${{ matrix.name }}" == macos && "${{ steps.signing.outputs.signed }}" != true ]]; then adhoc=true; fi
+          printf '{"platform":"%s","signed":%s,"notarized":%s,"adhoc":%s}\n' \
+            "${{ matrix.name }}" "${{ steps.signing.outputs.signed }}" "${{ steps.signing.outputs.notarized }}" "$adhoc" \
             > "release/meta/${{ matrix.name }}.json"
           ls -l release/assets
       - uses: actions/upload-artifact@v7
@@ -331,9 +346,75 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+  macos-verify:
+    name: macOS bundle check (${{ matrix.arch }})
+    needs: [prepare, desktop]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest # Apple Silicon
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-macos
+          path: release
+      - name: Unpack the ${{ matrix.arch }} archive and disk image
+        run: |
+          set -euo pipefail
+          zip="release/assets/zenium-$VERSION-$ARCH.zip"
+          dmg="release/assets/zenium-$VERSION-$ARCH.dmg"
+          ls -l "$zip" "$dmg"
+          mkdir -p "$RUNNER_TEMP/zip" && ditto -x -k "$zip" "$RUNNER_TEMP/zip"
+          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg" "$dmg" > /dev/null
+          echo "APP_ZIP=$RUNNER_TEMP/zip/Zenium.app" >> "$GITHUB_ENV"
+          echo "APP_DMG=$RUNNER_TEMP/dmg/Zenium.app" >> "$GITHUB_ENV"
+      - name: Signature and resource seal
+        # The whole point of the ad-hoc signature: a sealed bundle that codesign accepts strictly.
+        # With a Developer ID configured this step verifies that signature instead.
+        run: |
+          set -euo pipefail
+          for app in "$APP_ZIP" "$APP_DMG"; do
+            echo "== $app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            codesign -dvv "$app" 2>&1 | grep -E '^(Identifier|Signature|CodeDirectory|Sealed Resources|TeamIdentifier)' | sed 's/^/   /'
+            codesign -dvv "$app" 2>&1 | grep -q '^Sealed Resources version=' || { echo "::error::$app has no resource seal"; exit 1; }
+            file "$app/Contents/MacOS/Zenium" | sed 's/^/   /'
+          done
+          echo "== Gatekeeper assessment (informational; an ad-hoc signature is rejected, but as 'unsigned', not 'damaged')"
+          spctl --assess --type execute --verbose=4 "$APP_ZIP" 2>&1 | sed 's/^/   /' || true
+      - name: Launch smoke test
+        # A hardened-runtime ad-hoc signature with the wrong entitlements would kill the app at
+        # startup; a launch that survives 20 s proves the bundle runs on this architecture.
+        run: |
+          set -euo pipefail
+          "$APP_ZIP/Contents/MacOS/Zenium" > "$RUNNER_TEMP/zenium.log" 2>&1 &
+          pid=$!
+          sleep 20
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "Zenium $VERSION ($ARCH) is running after 20 s (pid $pid)"
+            kill "$pid" || true
+          else
+            wait "$pid" || code=$?
+            echo "::error::Zenium exited early with code ${code:-?}"
+            cat "$RUNNER_TEMP/zenium.log"
+            exit 1
+          fi
+      - name: Detach
+        if: always()
+        run: hdiutil detach "$RUNNER_TEMP/dmg" > /dev/null 2>&1 || true
+
   assemble:
     name: Manifest, checksums, notes
-    needs: [prepare, desktop, android]
+    needs: [prepare, desktop, android, macos-verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:

@@ -47,7 +47,10 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   sync: true,
   print: true,
   agents: true,
-  updates: true
+  updates: true,
+  share: false,
+  clipboardChip: false,
+  appLinkSettings: false
 }
 
 /**

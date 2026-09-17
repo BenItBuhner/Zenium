@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Three finder patterns and a few modules: "QR code" in the share sheet's action row. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="M2,2 h8 v8 h-8 Z M4,4 v4 h4 v-4 Z M5,5 h2 v2 h-2 Z M14,2 h8 v8 h-8 Z M16,4 v4 h4 v-4 Z M17,5 h2 v2 h-2 Z M2,14 h8 v8 h-8 Z M4,16 v4 h4 v-4 Z M5,17 h2 v2 h-2 Z M14,14 h2 v2 h-2 Z M18,14 h4 v2 h-4 Z M14,18 h2 v4 h-2 Z M18,18 h2 v2 h-2 Z M20,20 h2 v2 h-2 Z M18,20 h-2 v2 h2 Z" />
+</vector>

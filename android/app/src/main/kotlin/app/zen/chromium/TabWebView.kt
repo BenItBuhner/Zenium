@@ -626,14 +626,20 @@ class TabWebView(
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val url = request.url
             return when (url.scheme?.lowercase()) {
-                "http", "https", "about", "data", "blob", "javascript" -> {
+                "http", "https" -> {
                     // A link (or script) is about to take the page elsewhere: the last moment it is
                     // whole on screen, and the best one for its back preview.
+                    if (request.isForMainFrame && !request.isRedirect) rememberCurrentPage()
+                    // A tap on another site whose app is installed may open the app instead.
+                    host.externalProtocols.appLink(this@TabWebView, request)
+                }
+                "about", "data", "blob", "javascript" -> {
                     if (request.isForMainFrame && !request.isRedirect) rememberCurrentPage()
                     false
                 }
                 else -> {
-                    host.openExternal(url.toString())
+                    // mailto:, tel:, intent://, a custom scheme: held until the core (and the user) agree.
+                    host.externalProtocols.request(this@TabWebView, url.toString(), request.hasGesture())
                     true
                 }
             }

@@ -19,7 +19,7 @@ function fakeBridge(): { bridge: Bridge; calls: Array<{ method: string; args: un
 describe('AndroidTabView.executeJavaScript', () => {
   it('passes expressions through and wraps statement lists into a function', async () => {
     const { bridge, calls } = fakeBridge()
-    const view = new AndroidTabView('tab_1', bridge, () => null)
+    const view = new AndroidTabView('tab_1', bridge)
     await view.executeJavaScript('document.title')
     await view.executeJavaScript('(() => { for (const el of []) el.remove(); return true })()')
     await view.executeJavaScript(
@@ -35,7 +35,7 @@ describe('AndroidTabView.executeJavaScript', () => {
 
   it('sends capture requests with the mode, region and format', async () => {
     const { bridge, calls } = fakeBridge()
-    const view = new AndroidTabView('tab_1', bridge, () => null)
+    const view = new AndroidTabView('tab_1', bridge)
     await view.capture({
       mode: 'region',
       format: 'png',
