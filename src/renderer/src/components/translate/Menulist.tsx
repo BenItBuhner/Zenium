@@ -2,9 +2,16 @@ import type { JSX, KeyboardEvent, RefObject } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown } from 'lucide-react'
-import type { LanguageOption } from '@renderer/lib/translate'
+import {
+  menulistClosed,
+  menulistOpened,
+  prepareMenulist,
+  type LanguageOption
+} from '@renderer/lib/translate'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
+import { activeTab } from '@renderer/lib/selectors'
+import { browserStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
@@ -21,6 +28,9 @@ const PAD = 6
  * as a `--v2-panel` popover under itself on the desktop – 28 px rows, the current one marked with
  * a trailing check – and as a bottom sheet of 44 px rows on phones, the current one carrying a
  * radio glyph; picking an option closes either. Never the platform's own `<select>` popup.
+ *
+ * Either list overhangs the content area, where the host draws the page above the chrome, so
+ * while it is up the page gives way to its snapshot (as under the sheets), through the ui store.
  */
 export function Menulist({
   value,
@@ -43,16 +53,34 @@ export function Menulist({
 }): JSX.Element {
   const phone = useViewport().formFactor === 'phone'
   const [open, setOpen] = useState(false)
+  const opening = useRef(false)
   const trigger = useRef<HTMLButtonElement>(null)
   const current = options.find((o) => o.value === value) ?? null
 
-  const pick = (next: string): void => {
-    setOpen(false)
-    if (next !== value) onChange(next)
+  // The page's snapshot stands in for it while the list is up (and comes down with it, also when
+  // the menulist unmounts with its list open).
+  useEffect(() => {
+    if (!open) return
+    menulistOpened()
+    return () => menulistClosed()
+  }, [open])
+
+  const openList = (): void => {
+    if (open || opening.current) return
+    opening.current = true
+    const state = browserStore.get().state
+    void prepareMenulist(state ? (activeTab(state)?.id ?? null) : null).then(() => {
+      opening.current = false
+      setOpen(true)
+    })
   }
   const close = (): void => {
     setOpen(false)
     trigger.current?.focus({ preventScroll: true })
+  }
+  const pick = (next: string): void => {
+    close()
+    if (next !== value) onChange(next)
   }
 
   return (
@@ -66,11 +94,11 @@ export function Menulist({
         aria-expanded={open}
         disabled={disabled}
         data-placeholder={current ? undefined : true}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => (open ? close() : openList())}
         onKeyDown={(e) => {
           if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
             e.preventDefault()
-            setOpen(true)
+            openList()
           }
         }}
       >

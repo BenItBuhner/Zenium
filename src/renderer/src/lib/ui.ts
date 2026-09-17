@@ -316,6 +316,8 @@ export interface UiState {
   install: WebAppInstallPrompt | null
   /** The selection-translation popover (desktop) or sheet (phone) is up for this selection. */
   translateSelection: TranslateSelectionRequest | null
+  /** A menulist's list (a popover, or a sheet on phones) is up; it overhangs the content area. */
+  menulistOpen: boolean
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
   /**
@@ -404,6 +406,7 @@ export const uiStore = createStore<UiState>(
     defaultBrowserPrompt: false,
     install: null,
     translateSelection: null,
+    menulistOpen: false,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false,
     hoverCard: HOVER_CARD_HIDDEN,
@@ -725,6 +728,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.defaultBrowserPrompt &&
     !ui.install &&
     !ui.translateSelection &&
+    !ui.menulistOpen &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     !ui.newTabShortcutDialog &&
@@ -773,6 +777,7 @@ export function invalidateSnapshot(): void {
     !ui.defaultBrowserPrompt &&
     !ui.install &&
     !ui.translateSelection &&
+    !ui.menulistOpen &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     ui.hoverCard.tabId === null &&
@@ -1281,6 +1286,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.defaultBrowserPrompt ||
     ui.install !== null ||
     ui.translateSelection !== null ||
+    ui.menulistOpen ||
     ui.stageActive ||
     ui.zoomBubble !== null ||
     ui.hoverCard.tabId !== null ||
