@@ -25,6 +25,7 @@ import { ElectronMenus } from './menus'
 import { ElectronTabViewHost, copyImageFromUrl } from './views'
 import { ElectronWindowFactory, type ElectronWindow } from './window'
 import { ExtensionService } from './extensions'
+import { ExtensionApiHost } from './extensionApi'
 import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
 import { ElectronAgentTransport } from '../agent/server'
@@ -70,7 +71,7 @@ export class ElectronPlatform implements Platform {
   readonly siteData: ElectronSiteData
   browser!: Browser
 
-  constructor(userDataDir: string) {
+  constructor(private readonly userDataDir: string) {
     this.info = { os: process.platform as PlatformOs, version: app.getVersion() }
     this.io = new FileStoreIO(join(userDataDir, 'zen'))
     this.windows = new ElectronWindowFactory()
@@ -203,6 +204,15 @@ export class ElectronPlatform implements Platform {
     this.browser = browser
     this.windows.bind(browser)
     this.downloads.bind(browser.downloads)
+    const extensionApi = new ExtensionApiHost(
+      browser,
+      this.sessions,
+      this.views,
+      this.io,
+      this.userDataDir
+    )
+    extensionApi.install()
+    ;(browser.extensions as ExtensionService).attachApi(extensionApi)
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
       this.attachPermissions(ses)
@@ -210,8 +220,10 @@ export class ElectronPlatform implements Platform {
         browser.onDownloadStarted(source ? (this.views.tabIdForWebContents(source) ?? null) : null)
       )
       ses.setSpellCheckerLanguages(['en-US'])
-      if (this.sessions.isPersistent(containerId))
+      if (this.sessions.isPersistent(containerId)) {
+        extensionApi.attachSession(ses)
         void (browser.extensions as ExtensionService).attachSession()
+      }
     })
     this.sessions.get(DEFAULT_CONTAINER_ID)
     this.registerIpc(browser)

@@ -159,5 +159,15 @@ export function errorPageUrl(code: number, description: string, url: string): st
 export function isNavigableUrl(url: string): boolean {
   if (!url) return false
   const scheme = url.slice(0, url.indexOf(':')).toLowerCase()
-  return ['http', 'https', 'file', 'zen', 'view-source', 'data', 'blob', 'ftp'].includes(scheme)
+  return [
+    'http',
+    'https',
+    'file',
+    'zen',
+    'view-source',
+    'data',
+    'blob',
+    'ftp',
+    'chrome-extension'
+  ].includes(scheme)
 }

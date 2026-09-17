@@ -6,6 +6,7 @@ import { JsonStore } from '../../core/store/JsonStore'
 import type { Browser } from '../../core/browser'
 import type { ExtensionHost } from '../../core/platform'
 import type { ZenWindow } from '../../core/window'
+import type { ExtensionApiHooks } from './extensionApi'
 import type { SessionManager } from './sessions'
 import type { ElectronWindow } from './window'
 
@@ -39,6 +40,8 @@ export class ExtensionService implements ExtensionHost {
   private readonly errors = new Map<string, string>()
   private readonly store: JsonStore<Persisted>
   private popup: { view: WebContentsView; win: ZenWindow } | null = null
+  /** The chrome.* API layer (`platform/extensionApi`): toolbar state and click routing. */
+  private api: ExtensionApiHooks | null = null
 
   constructor(
     private readonly browser: Browser,
@@ -49,6 +52,10 @@ export class ExtensionService implements ExtensionHost {
     if (data?.version === 1 && Array.isArray(data.extensions)) {
       this.entries = data.extensions.filter((e) => e && typeof e.path === 'string')
     }
+  }
+
+  attachApi(api: ExtensionApiHooks): void {
+    this.api = api
   }
 
   async start(): Promise<void> {
@@ -107,7 +114,8 @@ export class ExtensionService implements ExtensionHost {
         enabled: entry.enabled,
         icon: iconDataUrl(entry.path, manifest),
         popup: action?.default_popup ?? null,
-        error: this.errors.get(entry.path) ?? null
+        error: this.errors.get(entry.path) ?? null,
+        action: ext && this.api ? this.api.actionState(ext.id) : null
       }
     })
   }
@@ -178,7 +186,10 @@ export class ExtensionService implements ExtensionHost {
     const entry = this.entries.find((e) => this.loaded.get(e.path)?.id === id || e.path === id)
     const ext = entry ? this.loaded.get(entry.path) : undefined
     const info = entry ? this.list().find((e) => e.path === entry.path) : undefined
-    if (!entry || !ext || !info?.popup) return
+    if (!entry || !ext) return
+    // `chrome.action.setPopup` overrides the manifest; an empty popup fires `action.onClicked`.
+    const popupPath = this.api ? this.api.popupForClick(ext.id, win) : info?.popup
+    if (!popupPath) return
     const ses = this.sessions.persistent()[0]?.[1]
     if (!ses) return
     const view = new WebContentsView({
@@ -232,7 +243,7 @@ export class ExtensionService implements ExtensionHost {
       return { action: 'deny' }
     })
     void wc
-      .loadURL(`chrome-extension://${ext.id}/${info.popup.replace(/^\/+/, '')}`)
+      .loadURL(`chrome-extension://${ext.id}/${popupPath.replace(/^\/+/, '')}`)
       .catch(() => undefined)
   }
 

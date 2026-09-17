@@ -218,13 +218,13 @@ export class ActionApi {
   // Browser-side hooks
   // ---------------------------------------------------------------------------
 
-  /** Extension-relative popup path for the active tab of `win`; empty when the click is an event. */
-  popupFor(extensionId: string, win: ZenWindow): string {
+  /** What a toolbar click in `win` does: open `popup`, or fire `onClicked` when it is empty. */
+  clickState(extensionId: string, win: ZenWindow): { popup: string; enabled: boolean } {
     const ext = this.host.loaded(extensionId)
-    if (!ext) return ''
+    if (!ext) return { popup: '', enabled: false }
     const active = this.host.browser.tabs.activeTabFor(win)
     const values = this.effective(ext, active ? this.host.model.chromeTabId(active) : undefined)
-    return values.enabled ? values.popup : ''
+    return { popup: values.popup, enabled: values.enabled }
   }
 
   /** The toolbar button was pressed and the extension has no popup: `onClicked(tab)`. */

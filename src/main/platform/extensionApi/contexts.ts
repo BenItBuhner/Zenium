@@ -115,7 +115,6 @@ export class ContextRegistry {
     kind: FrameKind
   ): FrameContext {
     const key = frameKey(frame)
-    const existing = this.frames.get(key)
     const context: FrameContext = {
       key,
       extensionId,
@@ -126,8 +125,8 @@ export class ContextRegistry {
       kind: payload.isBackgroundPage ? 'background' : kind,
       manifestVersion: payload.manifestVersion,
       isBackgroundPage: payload.isBackgroundPage,
-      // A navigation re-runs the shim: the old document's listeners are gone.
-      listeners: existing && existing.url === payload.url ? existing.listeners : new Set()
+      // A hello means a new document: whatever the previous one listened to is gone with it.
+      listeners: new Set()
     }
     Object.assign(context, this.hooks.placeFrame(context))
     this.frames.set(key, context)
@@ -163,11 +162,18 @@ export class ContextRegistry {
   frameFor(frame: WebFrameMain): FrameContext | undefined {
     const context = this.frames.get(frameKey(frame))
     if (!context) return undefined
-    if (context.frame.isDestroyed() || context.webContents.isDestroyed()) {
+    if (this.stale(context)) {
       this.frames.delete(context.key)
       return undefined
     }
     return context
+  }
+
+  /** Gone, or navigated to a page that is not this extension's any more (no hello follows). */
+  private stale(context: FrameContext): boolean {
+    if (context.frame.isDestroyed() || context.webContents.isDestroyed()) return true
+    const url = context.frame.url
+    return url !== '' && !url.startsWith(`chrome-extension://${context.extensionId}/`)
   }
 
   workerFor(worker: ServiceWorkerMain, session: Session): WorkerContext | undefined {
@@ -209,7 +215,7 @@ export class ContextRegistry {
     const out: FrameContext[] = []
     for (const [key, context] of this.frames) {
       if (context.extensionId !== extensionId) continue
-      if (context.frame.isDestroyed() || context.webContents.isDestroyed()) {
+      if (this.stale(context)) {
         this.frames.delete(key)
         continue
       }
