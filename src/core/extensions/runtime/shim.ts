@@ -41,6 +41,12 @@ export interface ShimConfig {
   /** Frame URL the endpoint runs in. */
   url: string
   isTopFrame: boolean
+  /**
+   * The endpoint runs in a real isolated world (content scripts on a WebView with world injection).
+   * A frame then has one endpoint per extension world plus one for main-world scripts; the host
+   * routes `scripting.executeScript` through the world's own endpoint.
+   */
+  world?: boolean
 }
 
 export interface ShimTransport {
@@ -717,7 +723,14 @@ export function createChromeShim(
     }
   }
 
-  post({ t: 'hello', ctx: config.context, ext: config.id, url: config.url, top: config.isTopFrame })
+  post({
+    t: 'hello',
+    ctx: config.context,
+    ext: config.id,
+    url: config.url,
+    top: config.isTopFrame,
+    ...(config.world ? { world: true } : {})
+  })
 
   return {
     chrome,

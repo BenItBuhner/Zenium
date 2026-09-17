@@ -141,6 +141,18 @@ declare const __zenExtBoot: Boot
   }
 
   const nonce = Math.random().toString(36).slice(2, 10) + (Date.now() % 1e6).toString(36)
+  /**
+   * Kotlin drops a frame's endpoints when its main frame says hello for a different document. One
+   * document can run several units, each with its own copy of this script (one per origin-rule set
+   * that matches, and with real isolated worlds one per extension plus the main-world unit), so the
+   * id has to come from the document: `performance.timeOrigin` is the navigation start, identical
+   * in every world of the frame and different for every navigation.
+   */
+  const docId =
+    typeof performance === 'object' && performance && performance.timeOrigin > 0
+      ? Math.round(performance.timeOrigin).toString(36)
+      : nonce
+  const endpointIdFor = (ext: ExtensionBoot): string => `${docId}.${nonce}.${ext.id.slice(0, 8)}`
   const realWindow = window
 
   // --- isolation ---------------------------------------------------------------------------------
@@ -258,7 +270,7 @@ declare const __zenExtBoot: Boot
   const transport = { post }
 
   function makeShim(ext: ExtensionBoot, context: ShimContextKind, frame: FrameContext): ChromeShim {
-    const endpointId = `${nonce}.${ext.id.slice(0, 8)}`
+    const endpointId = endpointIdFor(ext)
     const shim = createChromeShim(
       {
         id: ext.id,
@@ -271,7 +283,8 @@ declare const __zenExtBoot: Boot
         token: boot.config.token,
         endpointId,
         url: frame.url,
-        isTopFrame: frame.isTopFrame
+        isTopFrame: frame.isTopFrame,
+        world: ext.isolation === 'world'
       },
       transport,
       primordials
@@ -564,7 +577,7 @@ declare const __zenExtBoot: Boot
         primordials.stringify({
           t: 'closePopup',
           token: boot.config.token,
-          ep: `${nonce}.${ext.id.slice(0, 8)}`
+          ep: endpointIdFor(ext)
         })
       )
     const report = (): void => {
@@ -576,7 +589,7 @@ declare const __zenExtBoot: Boot
         primordials.stringify({
           t: 'popupSize',
           token: boot.config.token,
-          ep: `${nonce}.${ext.id.slice(0, 8)}`,
+          ep: endpointIdFor(ext),
           width,
           height
         })

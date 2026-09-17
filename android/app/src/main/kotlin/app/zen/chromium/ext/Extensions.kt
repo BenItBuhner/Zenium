@@ -78,8 +78,11 @@ class Extensions(private val host: Host) {
 
     /**
      * A frame (or extension page) that said hello. `url` is the document's `location.href` at
-     * hello time and `nonce` the bootstrap instance that spoke (one per document, shared by every
-     * extension in a content frame): together they tell a new document from the one before it.
+     * hello time and `doc` the bootstrap's document id (the endpoint id's first segment, derived
+     * from the document's `performance.timeOrigin`, so every unit of one document, in whichever
+     * world, reports the same id): a main frame saying hello with another `doc` is a new document.
+     * `world` marks an endpoint inside a real isolated world (the `world` unit of its extension) as
+     * opposed to the frame's main-world endpoint.
      */
     class Endpoint(
         val view: WebView,
@@ -88,7 +91,8 @@ class Extensions(private val host: Host) {
         val extensionId: String,
         val isMainFrame: Boolean,
         val url: String,
-        val nonce: String
+        val doc: String,
+        val world: Boolean
     )
 
     /**
@@ -423,8 +427,12 @@ class Extensions(private val host: Host) {
         )
         if (isolatedWorlds) {
             // `__zenExtExec` lives in the extension's world, out of `evaluateJavascript`'s reach; the
-            // main frame's reply proxy executes in the frame and world it came from.
-            val endpoint = endpoints.values.firstOrNull { it.view === tab && it.extensionId == ext && it.context == "content" && it.isMainFrame }
+            // main frame's reply proxy executes in the frame and world it came from. A frame has the
+            // extension's world endpoint and, for `world: "MAIN"` scripts, a main-world one: pick
+            // the one the injection asks for, the other if only that one exists.
+            val wantMain = args.obj("payload").optString("world") == "MAIN"
+            val candidates = endpoints.values.filter { it.view === tab && it.extensionId == ext && it.context == "content" && it.isMainFrame }
+            val endpoint = candidates.firstOrNull { it.world != wantMain } ?: candidates.firstOrNull()
             if (endpoint == null) {
                 reply(Host.Rejection("The extension has no content-script world in that tab yet"))
                 return
@@ -515,8 +523,8 @@ class Extensions(private val host: Host) {
     }
 
     /** A main frame said hello: whatever else the view registered under another bootstrap is the old document. */
-    private fun onNewDocument(view: WebView, nonce: String) {
-        val dead = endpoints.filterValues { it.view === view && it.nonce != nonce }.keys.toList()
+    private fun onNewDocument(view: WebView, doc: String) {
+        val dead = endpoints.filterValues { it.view === view && it.doc != doc }.keys.toList()
         if (dead.isNotEmpty()) gone(dead)
     }
 
@@ -542,9 +550,11 @@ class Extensions(private val host: Host) {
         when (message.str("t")) {
             "hello" -> {
                 val context = message.str("ctx", kind)
-                val nonce = ep.substringBefore('.')
-                if (isMainFrame) onNewDocument(view, nonce)
-                endpoints[ep] = Endpoint(view, proxy, context, message.str("ext"), isMainFrame, message.str("url"), nonce)
+                val doc = ep.substringBefore('.')
+                if (isMainFrame) onNewDocument(view, doc)
+                endpoints[ep] = Endpoint(
+                    view, proxy, context, message.str("ext"), isMainFrame, message.str("url"), doc, message.optBoolean("world")
+                )
             }
             "popupSize" -> {
                 popup?.resize(message.optInt("width"), message.optInt("height"))
