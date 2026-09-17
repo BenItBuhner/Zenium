@@ -1447,6 +1447,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* The overflow chevron, and a bookmark without a name: the icon alone (Chrome). */
+  .zen-bm-chip[data-icon-only='true'] {
+    padding: 0 6px;
+  }
   .zen-bm-chip[data-icon-only='true'] .zen-bm-chip-label {
     display: none;
   }

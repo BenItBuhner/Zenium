@@ -186,8 +186,9 @@ export function BookmarksBar({
     if (!tabDrag || !dropKey?.startsWith('bookmark:')) return null
     const [, parentId, index] = dropKey.split(':')
     if (parentId !== BOOKMARKS_BAR_ID) return { kind: 'folder', folderId: parentId }
-    return index === '' ? null : { kind: 'slot', index: Number(index) }
-  }, [dropKey, tabDrag])
+    // The strip's free space files the tab after the last chip: the caret shows there.
+    return { kind: 'slot', index: index === '' ? visibleCount : Number(index) }
+  }, [dropKey, tabDrag, visibleCount])
   const outsideHover = tabHover ?? external
 
   const slotAt = (x: number): { index: number; folderId: string | null } => {
@@ -387,6 +388,8 @@ export function BookmarksBar({
             data-open={menu?.anchorId === node.id}
             data-lifted={liftedId === node.id}
             data-target={dropFolderId === node.id}
+            data-icon-only={node.type === 'url' && !node.title ? true : undefined}
+            aria-label={node.type === 'url' && !node.title ? nodeLabel(node) : undefined}
             aria-hidden={i >= visibleCount || undefined}
             tabIndex={i === focusIndex && i < visibleCount ? 0 : -1}
             className="zen-bm-chip"
@@ -407,8 +410,10 @@ export function BookmarksBar({
               else openNode(node, e)
             }}
             onAuxClick={(e) => {
-              if (e.button === 1 && node.type === 'url')
-                run('bookmark.open', { id: node.id, newTab: true, tabId })
+              if (e.button !== 1) return
+              // Middle click: the page in a background tab; a folder's pages all at once (Chrome).
+              if (node.type === 'url') run('bookmark.open', { id: node.id, newTab: true, tabId })
+              else run('bookmark.openAll', { ids: [node.id] })
             }}
             onContextMenu={(e) => contextMenu(e, node)}
           >
