@@ -46,23 +46,38 @@ class HostLifecycleTest {
     }
 
     @Test
-    fun `a visible chrome document needs no repair`() {
+    fun `a visible, mounted chrome document needs no repair`() {
+        assertEquals(HostLifecycle.Repair.NONE, lifecycle.repairAfterProbe("visible:ok", 0))
+        assertEquals(HostLifecycle.Repair.NONE, lifecycle.repairAfterProbe("visible:ok", 1))
+        // An older probe answer without the mount check still counts as fine.
         assertEquals(HostLifecycle.Repair.NONE, lifecycle.repairAfterProbe("visible", 0))
-        assertEquals(HostLifecycle.Repair.NONE, lifecycle.repairAfterProbe("visible", 1))
+    }
+
+    @Test
+    fun `a visible chrome document with nothing in it is asked once more, then rebuilt`() {
+        assertEquals(HostLifecycle.Repair.RETRY, lifecycle.repairAfterProbe("visible:empty", 0))
+        assertEquals(HostLifecycle.Repair.REBUILD, lifecycle.repairAfterProbe("visible:empty", 1))
     }
 
     @Test
     fun `a hidden chrome document is re-attached once, then rebuilt`() {
-        assertEquals(HostLifecycle.Repair.REATTACH, lifecycle.repairAfterProbe("hidden", 0))
-        assertEquals(HostLifecycle.Repair.REBUILD, lifecycle.repairAfterProbe("hidden", 1))
-        assertEquals(HostLifecycle.Repair.REATTACH, lifecycle.repairAfterProbe("prerender", 0))
+        assertEquals(HostLifecycle.Repair.REATTACH, lifecycle.repairAfterProbe("hidden:ok", 0))
+        assertEquals(HostLifecycle.Repair.REBUILD, lifecycle.repairAfterProbe("hidden:ok", 1))
+        assertEquals(HostLifecycle.Repair.REATTACH, lifecycle.repairAfterProbe("prerender:empty", 0))
     }
 
     @Test
-    fun `a renderer that does not answer is asked once more, then replaced`() {
+    fun `a renderer that does not answer is asked once more, then ended`() {
         assertEquals(HostLifecycle.Repair.RETRY, lifecycle.repairAfterProbe(null, 0))
-        assertEquals(HostLifecycle.Repair.REBUILD, lifecycle.repairAfterProbe(null, 1))
-        assertEquals(HostLifecycle.Repair.REBUILD, lifecycle.repairAfterProbe(null, 2))
+        assertEquals(HostLifecycle.Repair.TERMINATE, lifecycle.repairAfterProbe(null, 1))
+        assertEquals(HostLifecycle.Repair.TERMINATE, lifecycle.repairAfterProbe(null, 2))
+    }
+
+    @Test
+    fun `the probe script asks for the visibility state and whether the chrome is mounted`() {
+        assertTrue(HostLifecycle.PROBE_SCRIPT.contains("document.visibilityState"))
+        assertTrue(HostLifecycle.PROBE_SCRIPT.contains("getElementById('root')"))
+        assertTrue(HostLifecycle.PROBE_SCRIPT.contains(":empty") || HostLifecycle.PROBE_SCRIPT.contains("'empty'"))
     }
 
     @Test

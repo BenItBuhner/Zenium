@@ -28,6 +28,8 @@ import androidx.core.content.FileProvider
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.json.JSONObject
 import java.io.File
@@ -493,6 +495,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
 
     private var probeRun: Runnable? = null
     private var probeDeadline: Runnable? = null
+    private var pendingRepair: Runnable? = null
 
     private fun scheduleProbe(attempt: Int, delayMs: Long) {
         cancelProbe()
@@ -506,14 +509,17 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
         probeRun = null
         probeDeadline?.let(main::removeCallbacks)
         probeDeadline = null
+        pendingRepair?.let(main::removeCallbacks)
+        pendingRepair = null
     }
 
     /**
      * The wake watchdog. A WebView whose window is resumed but whose contents the platform left
-     * hidden paints nothing, and a renderer that was frozen with the app and never thawed answers
-     * nothing; both look the same from the outside – a blank browser – and neither reports itself.
-     * So the chrome document is asked how it is doing (`document.visibilityState`), and
-     * [HostLifecycle.repairAfterProbe] decides what that calls for.
+     * hidden paints nothing; a renderer whose main thread is wedged answers nothing; a chrome
+     * whose UI unmounted itself paints its background and nothing else. All three look the same
+     * from the outside – a blank browser – and none reports itself. So the chrome document is
+     * asked how it is doing ([HostLifecycle.PROBE_SCRIPT]), and [HostLifecycle.repairAfterProbe]
+     * decides what that calls for.
      */
     private fun probe(attempt: Int) {
         probeRun = null
@@ -530,7 +536,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
         }
         probeDeadline = deadline
         main.postDelayed(deadline, HostLifecycle.PROBE_TIMEOUT_MS)
-        target.evaluateJavascript("document.visibilityState") { result ->
+        target.evaluateJavascript(HostLifecycle.PROBE_SCRIPT) { result ->
             if (settled) return@evaluateJavascript
             settled = true
             main.removeCallbacks(deadline)
@@ -542,9 +548,9 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     private fun onProbeAnswer(target: ChromeWebView, answer: String?, attempt: Int) {
         if (target !== chrome || !activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
         when (lifecycle.repairAfterProbe(answer, attempt)) {
-            HostLifecycle.Repair.NONE -> Log.d(TAG, "wake probe: chrome visible")
+            HostLifecycle.Repair.NONE -> Log.i(TAG, "wake probe: chrome $answer")
             HostLifecycle.Repair.RETRY -> {
-                Log.w(TAG, "wake probe: no answer from the chrome renderer; asking once more")
+                Log.w(TAG, "wake probe: ${if (answer == null) "no answer from the chrome renderer" else "chrome document $answer"}; asking once more")
                 scheduleProbe(attempt + 1, 0)
             }
             HostLifecycle.Repair.REATTACH -> {
@@ -554,10 +560,55 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
                 scheduleProbe(attempt + 1, HostLifecycle.PROBE_DELAY_MS)
             }
             HostLifecycle.Repair.REBUILD -> {
-                Log.e(TAG, "wake probe: chrome ${if (answer == null) "renderer unresponsive" else "document still $answer"}; rebuilding the chrome")
+                Log.e(TAG, "wake probe: chrome document still $answer; rebuilding the chrome")
+                rebuildChrome(target)
+            }
+            HostLifecycle.Repair.TERMINATE -> {
+                Log.e(TAG, "wake probe: chrome renderer unresponsive; ending the renderer process")
+                terminateRenderer(target)
+            }
+        }
+    }
+
+    /**
+     * End the renderer process behind the chrome (and, with it, every tab's): its
+     * `onRenderProcessGone` then rebuilds the chrome around a fresh renderer, which is the only way
+     * out when the process no longer answers – a new WebView would land in the same wedged
+     * process. Where the platform cannot end it (an old WebView), the rebuild happens directly and
+     * the wedged process is left to the system; and should the `onRenderProcessGone` not follow,
+     * the rebuild happens anyway after a grace period.
+     */
+    private fun terminateRenderer(target: ChromeWebView) {
+        val process = if (WebViewFeature.isFeatureSupported(WebViewFeature.GET_WEB_VIEW_RENDERER)) {
+            WebViewCompat.getWebViewRenderProcess(target)
+        } else null
+        val ended = process != null &&
+            WebViewFeature.isFeatureSupported(WebViewFeature.WEB_VIEW_RENDERER_TERMINATE) &&
+            runCatching { process.terminate() }.getOrDefault(false)
+        if (!ended) {
+            Log.w(TAG, "the renderer process could not be ended; rebuilding the chrome in place")
+            rebuildChrome(target)
+            return
+        }
+        val fallback = Runnable {
+            pendingRepair = null
+            if (chrome === target) {
+                Log.w(TAG, "no onRenderProcessGone after ending the renderer; rebuilding the chrome anyway")
                 rebuildChrome(target)
             }
         }
+        pendingRepair = fallback
+        main.postDelayed(fallback, HostLifecycle.TERMINATE_GRACE_MS)
+    }
+
+    /**
+     * A new document started loading in the chrome WebView (the chrome reloaded itself). The core
+     * that owned the tab views went with the old document; the one booting recreates every tab
+     * from the persisted state, so the views here are orphans and go.
+     */
+    fun onChromeDocumentReplaced() {
+        cancelProbe()
+        tabs.dropAll()
     }
 
     /**

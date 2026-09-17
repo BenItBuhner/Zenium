@@ -3,39 +3,57 @@ package app.zen.chromium
 import kotlin.math.min
 
 /**
- * The policies behind the activity lifecycle and a lost WebView renderer, kept free of Android
- * types so they run under plain JUnit (`HostLifecycleTest`); `MainActivity` and `Host` act on
- * them.
+ * The policies behind the activity lifecycle and a lost or wedged WebView renderer, kept free of
+ * Android types so they run under plain JUnit (`HostLifecycleTest`); `MainActivity` and `Host`
+ * act on them.
  *
  * A word on what is *not* here: the WebViews are never paused (`WebView.onPause` /
  * `pauseTimers`). A page playing audio in the background keeps playing in Chrome, and so it does
  * in Zenium; a paused WebView that is not resumed is also the classic way to a blank one. What a
- * wake needs instead is a fresh frame and a chrome laid out against the window it is coming back
- * to, which is what [Host.onStart] does.
+ * wake needs instead is a fresh frame, a chrome laid out against the window it is coming back
+ * to, and a check that the chrome really is painting – which is what [Host.onStart] and the wake
+ * probe do.
  */
 class HostLifecycle(private val clock: () -> Long = System::currentTimeMillis) {
     private var lastRebuildAt = 0L
     private var rapidRebuilds = 0
 
     /** What a wake probe of the chrome calls for (see [repairAfterProbe]). */
-    enum class Repair { NONE, RETRY, REATTACH, REBUILD }
+    enum class Repair {
+        /** The chrome document is visible and has its UI: nothing to do. */
+        NONE,
+        /** Inconclusive; ask once more. */
+        RETRY,
+        /** Take the WebViews off the window and put them back, so the platform re-announces their visibility. */
+        REATTACH,
+        /** Replace the chrome WebView; the renderer itself answers, so a fresh document in it will do. */
+        REBUILD,
+        /** The renderer does not answer: end the renderer process, so the rebuild gets a fresh one. */
+        TERMINATE
+    }
 
     /**
      * What to do about the chrome once the window is back on screen, given how its document
-     * answered a `document.visibilityState` probe on `attempt` (0-based; `null` is no answer
-     * within the deadline).
+     * answered the wake probe on `attempt` (0-based). The probe evaluates [PROBE_SCRIPT] and
+     * answers `<visibilityState>:<ok|empty>`; `null` is no answer within the deadline.
      *
-     *  - `visible`: the WebView's contents are shown and it paints; nothing to do.
+     *  - `visible:ok`: the WebView's contents are shown, it paints and the chrome is mounted.
+     *  - `visible:empty`: the document is shown but its root has nothing in it – the chrome's UI is
+     *    gone (a chrome that unmounted itself). Asked once more, then rebuilt.
      *  - anything else (`hidden`): the platform left the WebView's contents hidden although the
      *    window is resumed, and a hidden page produces no frames – a blank chrome. Taking the view
      *    off the window and putting it back resets that, once; a second hidden answer means the
      *    reset did not take, and the chrome is rebuilt.
-     *  - no answer: the renderer is wedged (frozen with the app and never thawed, say) or gone
-     *    without a word. Asked once more, then the chrome is rebuilt around a fresh renderer.
+     *  - no answer: the renderer's main thread is wedged, or gone without a word. Asked once more,
+     *    then the renderer process is ended – a fresh WebView in the same process would hang with
+     *    it – and the chrome rebuilt around a new one.
      */
     fun repairAfterProbe(answer: String?, attempt: Int): Repair = when {
-        answer == null -> if (attempt == 0) Repair.RETRY else Repair.REBUILD
-        answer == "visible" -> Repair.NONE
+        answer == null -> if (attempt == 0) Repair.RETRY else Repair.TERMINATE
+        answer.startsWith("visible") -> when {
+            answer.endsWith(":empty") -> if (attempt == 0) Repair.RETRY else Repair.REBUILD
+            else -> Repair.NONE
+        }
         else -> if (attempt == 0) Repair.REATTACH else Repair.REBUILD
     }
 
@@ -70,6 +88,14 @@ class HostLifecycle(private val clock: () -> Long = System::currentTimeMillis) {
          */
         const val PROBE_DELAY_MS = 1_500L
         const val PROBE_TIMEOUT_MS = 5_000L
+
+        /** After the renderer was told to end, how long to wait for its `onRenderProcessGone` before rebuilding anyway. */
+        const val TERMINATE_GRACE_MS = 3_000L
+
+        /** What the wake probe asks the chrome document; see [repairAfterProbe] for the answers. */
+        const val PROBE_SCRIPT =
+            "(function(){var r=document.getElementById('root');" +
+                "return document.visibilityState+':'+(r&&r.childElementCount>0?'ok':'empty')})()"
 
         /** `ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN` and `TRIM_MEMORY_BACKGROUND`, without the Android dependency. */
         const val TRIM_MEMORY_UI_HIDDEN = 20

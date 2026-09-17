@@ -21,7 +21,10 @@ class TabHost(private val container: FrameLayout, private val host: Host) {
     fun tabIdOf(view: View?): String? = (view as? TabWebView)?.tabId
 
     fun create(tabId: String, containerId: String): TabWebView {
-        views[tabId]?.let { destroy(tabId) }
+        // A view already held under this id is an orphan: the core registers its new view before it
+        // asks, so a `destroyed` for the id would land on that new view and mark it dead – a tab
+        // that never gets bounds again. Drop the old one without a word.
+        views.remove(tabId)?.let(::drop)
         val view = TabWebView(container.context, tabId, containerId, host)
         view.visibility = View.GONE
         container.addView(view, FrameLayout.LayoutParams(0, 0))
@@ -46,12 +49,7 @@ class TabHost(private val container: FrameLayout, private val host: Host) {
 
     fun destroy(tabId: String) {
         val view = views.remove(tabId) ?: return
-        host.exitFullscreen(view)
-        view.backTransition?.abort()
-        host.snapshots.forget(tabId)
-        (view.parent as? ViewGroup)?.removeView(view)
-        view.stopLoading()
-        view.destroy()
+        drop(view)
         host.chrome.viewEvent(tabId, "destroyed", null)
     }
 
@@ -60,20 +58,24 @@ class TabHost(private val container: FrameLayout, private val host: Host) {
     }
 
     /**
-     * Every view, without a word to the chrome: for a chrome whose renderer is gone and which is
-     * about to be rebuilt. The core that boots in its place recreates the tabs from the persisted
+     * Every view, without a word to the chrome: for a chrome whose renderer is gone or whose
+     * document is being replaced. The core that boots next recreates the tabs from the persisted
      * state, so nothing here must survive under a tab id it will ask for.
      */
     fun dropAll() {
-        for (view in views.values.toList()) {
-            host.exitFullscreen(view)
-            view.backTransition?.abort()
-            (view.parent as? ViewGroup)?.removeView(view)
-            view.stopLoading()
-            runCatching { view.destroy() }
-        }
+        for (view in views.values.toList()) drop(view)
         views.clear()
         host.snapshots.clear()
+    }
+
+    /** Tear a view down (already removed from [views]); the chrome is not told. */
+    private fun drop(view: TabWebView) {
+        host.exitFullscreen(view)
+        view.backTransition?.abort()
+        host.snapshots.forget(view.tabId)
+        (view.parent as? ViewGroup)?.removeView(view)
+        view.stopLoading()
+        runCatching { view.destroy() }
     }
 
     /**
