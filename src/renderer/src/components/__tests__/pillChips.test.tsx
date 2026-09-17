@@ -202,13 +202,22 @@ describe('desktop pill (NavRow)', () => {
     expect(uiStore.get().siteInfoOpen).toBe(false)
   })
 
-  it('reveals the hover-only chips while the keyboard is inside the pill', () => {
+  it('reveals the hover-only chips while the keyboard is on one of the chips', () => {
     const el = render(<NavRow state={state(page)} tab={page} compact={false} />)
+    const pill = el.querySelector<HTMLElement>('[role="group"]')!
+    // Every chip carries the marker and sits in the chips' focus scope; the address does neither.
+    const field = focusable(pill)[0]
+    expect(el.querySelectorAll('[data-pill-chip]').length).toBe(4)
+    expect(field.hasAttribute('data-pill-chip')).toBe(false)
+    const scope = pill.querySelector<HTMLElement>('.group\\/chips')!
+    expect(scope.className).toContain('contents')
+    expect(scope.contains(field)).toBe(false)
+    expect(scope.querySelectorAll('[data-pill-chip]').length).toBe(4)
     for (const label of ['Boost this site', 'Copy URL']) {
       const chip = el.querySelector<HTMLElement>(`[aria-label="${label}"]`)!
       expect(chip.className).toContain('hidden')
       expect(chip.className).toContain('group-hover/pill:flex')
-      expect(chip.className).toContain('group-focus-within/pill:flex')
+      expect(chip.className).toContain('group-focus-within/chips:flex')
     }
   })
 

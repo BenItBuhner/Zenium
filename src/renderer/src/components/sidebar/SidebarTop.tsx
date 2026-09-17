@@ -135,68 +135,80 @@ export function NavRow({
               {url || 'Search or enter address'}
             </span>
           </button>
-          {isPrivate ? (
-            <VenetianMask className="order-first h-3.5 w-3.5 shrink-0 opacity-70" />
-          ) : url && tab ? (
-            // The site icon: connection state at a glance, site information on click.
-            <PillChip
-              label="Site information"
-              title={secure ? 'Connection is secure · Site information' : 'Site information'}
-              popup="dialog"
-              expanded={siteInfoOpen}
-              className="order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] hover:opacity-100"
-              onActivate={(e) => {
-                const r = e.currentTarget.getBoundingClientRect()
-                void openSiteInfo(tab, { x: r.left, y: r.top, width: r.width, height: r.height })
-              }}
-            >
-              {secure ? <Lock className="h-3 w-3" /> : <Search className="h-3 w-3" />}
-            </PillChip>
-          ) : (
-            <Search className="order-first h-3 w-3 shrink-0 opacity-60" />
-          )}
-          {tab && (tab.readerable || isReader) && (
-            <PillChip
-              label="Reader View"
-              title={isReader ? 'Exit Reader View (Ctrl+Alt+R)' : 'Enter Reader View (Ctrl+Alt+R)'}
-              pressed={isReader}
-              className={cn(
-                'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
-                isReader && 'text-[var(--zen-accent)] opacity-100'
-              )}
-              onActivate={() => run('reader.toggle', { tabId: tab.id })}
-            >
-              <BookOpenText className="h-3.5 w-3.5" />
-            </PillChip>
-          )}
-          {tab && isWebPage && !isPrivate && (
-            // Shown on hover, and while the keyboard is inside the pill so Tab can reach it.
-            <PillChip
-              label={boosted ? 'Edit Boost for this site' : 'Boost this site'}
-              title={boosted ? 'Edit Boost for this site' : 'Boost this site'}
-              popup="dialog"
-              expanded={boostsOpen}
-              className={cn(
-                'h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
-                boosted
-                  ? 'flex text-[var(--zen-accent)] opacity-100'
-                  : 'hidden group-hover/pill:flex group-focus-within/pill:flex'
-              )}
-              onActivate={() => void openOverlay('boosts', tab.id)}
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-            </PillChip>
-          )}
-          {url && (
-            <PillChip
-              label="Copy URL"
-              title="Copy URL (Ctrl+Shift+C)"
-              className="hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex group-focus-within/pill:flex"
-              onActivate={() => tab && run('tab.copyUrl', { tabId: tab.id })}
-            >
-              <Copy className="h-3 w-3" />
-            </PillChip>
-          )}
+          {/*
+            The chips, in one focus scope of their own (`display: contents`, so they stay flex
+            items of the pill): the hover-only Boost and Copy chips also show while the keyboard
+            is on one of the chips, so Tab can reach them – but not while the address itself is
+            focused, when they would squeeze the address out of a narrow pill. A `:focus-within`
+            scope rather than `:has(:focus-visible)`: Chromium blocks a Tab whose target is
+            unfocusable in the instant between blurring the old chip and focusing the next, and
+            only `:focus-within` on their common ancestor holds through that instant.
+          */}
+          <span className="contents group/chips">
+            {isPrivate ? (
+              <VenetianMask className="order-first h-3.5 w-3.5 shrink-0 opacity-70" />
+            ) : url && tab ? (
+              // The site icon: connection state at a glance, site information on click.
+              <PillChip
+                label="Site information"
+                title={secure ? 'Connection is secure · Site information' : 'Site information'}
+                popup="dialog"
+                expanded={siteInfoOpen}
+                className="order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] hover:opacity-100"
+                onActivate={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect()
+                  void openSiteInfo(tab, { x: r.left, y: r.top, width: r.width, height: r.height })
+                }}
+              >
+                {secure ? <Lock className="h-3 w-3" /> : <Search className="h-3 w-3" />}
+              </PillChip>
+            ) : (
+              <Search className="order-first h-3 w-3 shrink-0 opacity-60" />
+            )}
+            {tab && (tab.readerable || isReader) && (
+              <PillChip
+                label="Reader View"
+                title={
+                  isReader ? 'Exit Reader View (Ctrl+Alt+R)' : 'Enter Reader View (Ctrl+Alt+R)'
+                }
+                pressed={isReader}
+                className={cn(
+                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  isReader && 'text-[var(--zen-accent)] opacity-100'
+                )}
+                onActivate={() => run('reader.toggle', { tabId: tab.id })}
+              >
+                <BookOpenText className="h-3.5 w-3.5" />
+              </PillChip>
+            )}
+            {tab && isWebPage && !isPrivate && (
+              <PillChip
+                label={boosted ? 'Edit Boost for this site' : 'Boost this site'}
+                title={boosted ? 'Edit Boost for this site' : 'Boost this site'}
+                popup="dialog"
+                expanded={boostsOpen}
+                className={cn(
+                  'h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  boosted
+                    ? 'flex text-[var(--zen-accent)] opacity-100'
+                    : 'hidden group-hover/pill:flex group-focus-within/chips:flex'
+                )}
+                onActivate={() => void openOverlay('boosts', tab.id)}
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+              </PillChip>
+            )}
+            {url && (
+              <PillChip
+                label="Copy URL"
+                title="Copy URL (Ctrl+Shift+C)"
+                className="hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex group-focus-within/chips:flex"
+                onActivate={() => tab && run('tab.copyUrl', { tabId: tab.id })}
+              >
+                <Copy className="h-3 w-3" />
+              </PillChip>
+            )}
+          </span>
         </div>
       )}
       {!compact && extensions.slice(0, 4).map((ext) => <ExtensionButton key={ext.id} ext={ext} />)}

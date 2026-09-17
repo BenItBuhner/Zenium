@@ -40,7 +40,8 @@ export interface PillChipProps extends ChipButtonProps {
  * in the tab order after the pill's field, with its own label, `aria-haspopup` and
  * `aria-expanded` when it opens a sheet or popover, `aria-pressed` when it toggles. It carries
  * no look of its own – the caller's classes draw it – and takes its focus ring from the
- * chrome's `:focus-visible` rule like the toolbar buttons around it.
+ * chrome's `:focus-visible` rule like the toolbar buttons around it. `data-pill-chip` marks it
+ * for tests and accessibility drivers.
  */
 export function PillChip({
   label,
@@ -64,6 +65,7 @@ export function PillChip({
     <button
       type="button"
       tabIndex={0}
+      data-pill-chip=""
       aria-label={label}
       aria-haspopup={popup}
       aria-expanded={popup ? Boolean(expanded) : undefined}
