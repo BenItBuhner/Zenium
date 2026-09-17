@@ -54,6 +54,8 @@ export interface BootInfo {
   signer: string | null
   /** The applicationId this APK was installed under (null in the preview host). */
   packageName: string | null
+  /** The launcher icon colour whose alias is enabled right now (the core re-applies its own). */
+  appIcon?: string
   /** Persisted JSON documents by name (state.json, history.json, …). */
   files: Record<string, string>
   downloadsDir: string
@@ -468,7 +470,9 @@ export class AndroidPlatform implements Platform {
     this.app = {
       quit: () => bridge.send('app.quit'),
       relaunch: () => bridge.send('app.quit'),
-      lastWindowClosed: () => undefined
+      lastWindowClosed: () => undefined,
+      // Kotlin flips the launcher alias that carries this colour (LauncherIcon.kt).
+      setAppIcon: (id) => bridge.send('app.setIcon', { id })
     }
     this.events.send('insets', boot.insets)
   }

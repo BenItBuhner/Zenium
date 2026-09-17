@@ -10,7 +10,7 @@ import type {
   WindowHost,
   WindowHostFactory
 } from '../../core/platform'
-import icon from '../../../resources/icon.png?asset'
+import { windowIcon } from './appIcon'
 
 const MIN_WIDTH = 640
 const MIN_HEIGHT = 420
@@ -51,7 +51,10 @@ export class ElectronWindow implements WindowHost {
       backgroundColor: init.backgroundColor,
       autoHideMenuBar: true,
       title: init.title,
-      ...(process.platform === 'linux' ? { icon } : {}),
+      // Windows and Linux take the icon per window (macOS shows the bundle's, or the Dock's).
+      ...(process.platform === 'darwin'
+        ? {}
+        : { icon: windowIcon(browser.state.settings.appIcon) }),
       webPreferences: {
         preload: join(__dirname, '../preload/index.js'),
         sandbox: true,

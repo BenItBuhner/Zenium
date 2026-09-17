@@ -30,6 +30,7 @@ import { SyncEngine } from '../sync/engine'
 import { ElectronAgentTransport } from '../agent/server'
 import { ElectronSiteData } from './siteData'
 import { ElectronUpdateHost } from './updates'
+import { applyAppIcon } from './appIcon'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
@@ -152,7 +153,15 @@ export class ElectronPlatform implements Platform {
       },
       lastWindowClosed: () => {
         if (process.platform !== 'darwin') app.quit()
-      }
+      },
+      setAppIcon: (id) =>
+        applyAppIcon(
+          id,
+          this.browser
+            .allWindows()
+            .map((win) => browserWindowOf(win))
+            .filter((bw): bw is Electron.BrowserWindow => bw !== undefined)
+        )
     }
   }
 

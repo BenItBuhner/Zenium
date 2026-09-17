@@ -1,0 +1,84 @@
+name: Android app icon demo
+
+# Records Settings → Look and Feel → App icon on a hardware-accelerated Android emulator: the
+# swatch grid, a colour being picked, the launcher's app drawer showing the switched icon (plain
+# and with Android 13's themed icons on) and Recents – once in each colour scheme. Dispatch-only,
+# like the other demos; same emulator caveats as android-gesture-demo.yml.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-appicon-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  record:
+    name: Record on an API 34 emulator (${{ matrix.theme }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        theme: [light, dark]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools platforms;android-35 build-tools;35.0.0
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
+      - run: npm ci
+      - name: Build the chrome and page script
+        run: npm run build:android:web
+      - name: Assemble the debug APK and the demo driver
+        working-directory: android
+        run: ./gradlew assembleDebug assembleDebugAndroidTest -PskipWeb --no-daemon --stacktrace
+      - name: Enable KVM for the emulator
+        # https://github.blog/changelog/2023-02-23-hardware-accelerated-android-virtualization-on-actions-windows-and-linux-larger-hosted-runners/
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
+      - name: Record the app icon setting
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          DEMO_CLASS: app.zen.chromium.AppIconDemo
+          DEMO_DIR: appicon-demo
+          DEMO_OUT: artifacts/android-appicon-demo
+          DEMO_VIDEO: appicon-demo-${{ matrix.theme }}.mp4
+          DEMO_THEME: ${{ matrix.theme }}
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 3
+          ram-size: 4096M
+          heap-size: 512M
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: bash .github/scripts/android-gesture-demo.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-appicon-demo-${{ matrix.theme }}
+          path: artifacts/android-appicon-demo/
+          if-no-files-found: warn
+          retention-days: 14

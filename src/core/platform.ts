@@ -23,6 +23,7 @@ import type {
   SyncStatus,
   Tab
 } from '../shared/types'
+import type { AppIconId } from '../shared/appIcon'
 import type { KeyInput } from '../shared/shortcuts'
 import type { SiteCertificate, SiteCookie } from '../shared/siteInfo'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '../shared/updates'
@@ -436,6 +437,12 @@ export interface AppHost {
   relaunch(): void
   /** The last browser window closed (desktop hosts quit here except on macOS). */
   lastWindowClosed(): void
+  /**
+   * Show the app under this icon colour from now on: the launcher alias on Android, the window
+   * and taskbar icons (Windows, Linux) or the Dock icon (macOS) on desktop. Called once at start
+   * with the persisted choice and again whenever the setting changes.
+   */
+  setAppIcon?(id: AppIconId): void
 }
 
 // ---------------------------------------------------------------------------

@@ -615,6 +615,62 @@
     background: rgb(var(--zen-accent-rgb) / 0.16);
     color: var(--zen-fg);
   }
+  /*
+   * Settings → Look and Feel → App icon: the icon is its own swatch, a caption under it; the
+   * picked one wears the accent ring the theme swatches use (2px at offset 2), keyboard focus the
+   * same ring. Phones get the 56 touch size.
+   */
+  .zen-app-icon-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+    gap: 4px;
+  }
+  .zen-app-icon {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 4px;
+    border-radius: 12px;
+    corner-shape: var(--zen-corner);
+    color: var(--zen-muted);
+    transition: background 120ms var(--zen-ease);
+  }
+  /* Hover only where a pointer hovers: a tap would otherwise leave the fill stuck on a phone. */
+  @media (hover: hover) {
+    .zen-app-icon:hover {
+      background: var(--zen-element-bg);
+    }
+  }
+  .zen-app-icon svg {
+    width: 48px;
+    height: 48px;
+    /* The artwork's own corner, so the ring around the picked one runs concentric with it. */
+    border-radius: 22.5%;
+    corner-shape: var(--zen-corner);
+    transition: transform 120ms var(--zen-ease);
+  }
+  .zen-app-icon:active svg {
+    transform: scale(0.98);
+  }
+  .zen-app-icon[aria-checked='true'] svg,
+  .zen-app-icon:focus-visible svg {
+    outline: 2px solid var(--zen-accent);
+    outline-offset: 2px;
+  }
+  .zen-app-icon:focus-visible {
+    outline: none;
+  }
+  .zen-app-icon[aria-checked='true'] {
+    color: var(--zen-fg);
+  }
+  .zen-app-icon-name {
+    font-size: 11.5px;
+    line-height: 1.25;
+  }
+  .zen-app-icon[aria-checked='true'] .zen-app-icon-name {
+    font-weight: 500;
+  }
 
   /*
    * The phone's Spaces drawer: a translucent panel flush with its screen edge, rounded on the
@@ -1091,6 +1147,16 @@
 }
 :root[data-form-factor='phone'] .zen-space-strip {
   transition-duration: 260ms;
+}
+:root[data-form-factor='phone'] .zen-app-icon-grid {
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+}
+:root[data-form-factor='phone'] .zen-app-icon svg {
+  width: 56px;
+  height: 56px;
+}
+:root[data-form-factor='phone'] .zen-app-icon-name {
+  font-size: 12px;
 }
 /* Settings on a phone: the section list becomes a row of chips above the content. */
 :root[data-form-factor='phone'] .zen-settings > div > div {

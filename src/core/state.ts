@@ -26,6 +26,7 @@ import type {
   UIState
 } from '../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../shared/types'
+import { sanitizeAppIcon } from '../shared/appIcon'
 import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
@@ -190,6 +191,7 @@ export class BrowserState {
     this.settings.compactMode = { ...DEFAULT_SETTINGS.compactMode, ...data.settings?.compactMode }
     // Compact mode's "persistent sidebar" toggle is transient by design.
     this.settings.compactMode.sidebarPersistent = false
+    this.settings.appIcon = sanitizeAppIcon(data.settings?.appIcon)
     this.settings.resources = sanitizeResourceSettings(data.settings?.resources)
     this.settings.agents = sanitizeAgentSettings(data.settings?.agents)
     this.settings.updates = sanitizeUpdateSettings(data.settings?.updates)

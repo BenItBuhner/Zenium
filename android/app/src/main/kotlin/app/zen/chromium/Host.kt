@@ -48,6 +48,8 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     val agentServer = AgentServer(this)
     val updates = Updates(activity, this)
     val siteData = SiteData()
+    /** The launcher icon colour (one enabled `activity-alias`), driven by Settings → Look and Feel. */
+    val launcherIcon = LauncherIcon(activity)
     val pageToken: String = SecureRandom().let { r -> ByteArray(16).also(r::nextBytes).joinToString("") { "%02x".format(it) } }
     val pageScript: String = activity.assets.open("page.js").bufferedReader().readText().replace("__ZEN_TOKEN__", pageToken)
     private val io = Executors.newCachedThreadPool { r -> Thread(r, "zen-io") }
@@ -79,6 +81,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             "signer" to Updates.signerSha256(activity),
             // The applicationId; a release whose APK carries another one installs as a new app.
             "packageName" to activity.packageName,
+            "appIcon" to launcherIcon.current(),
             "files" to storage.readAll(),
             "downloadsDir" to (Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)?.absolutePath ?: ""),
             "insets" to activity.currentInsets(),
@@ -177,6 +180,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             "app.background" -> { activity.moveTaskToBack(true); reply(null) }
             "app.openExternal" -> { openExternal(args.str("url")); reply(null) }
             "app.openPath" -> { downloads.open(args.str("path"), ""); reply(null) }
+            "app.setIcon" -> { launcherIcon.apply(args.str("id"), activity); reply(null) }
             "keys.setShortcuts" -> { keys.setShortcuts(args.arr("bindings")); reply(null) }
 
             // --- services --------------------------------------------------------------------------

@@ -60,6 +60,9 @@ abstract class DemoHarness(
     /** The recorded sequence. */
     protected abstract fun demo()
 
+    /** A chance to edit the seeded profile's JSON (a colour scheme from the `theme` argument, say). */
+    protected open fun patchState(json: String): String = json
+
     /** Seed, launch, warm up, hand over to the recorder, run the sequence. */
     protected fun runDemo() {
         val info = ui.serviceInfo
@@ -86,16 +89,16 @@ abstract class DemoHarness(
     private fun seedProfile() {
         val zen = File(app.filesDir, "zen").apply { mkdirs() }
         zen.listFiles()?.forEach { it.delete() }
-        instrumentation.context.assets.open(stateAsset).use { input ->
-            File(zen, "state.json").outputStream().use { input.copyTo(it) }
-        }
+        val json = instrumentation.context.assets.open(stateAsset).bufferedReader().use { it.readText() }
+        File(zen, "state.json").writeText(patchState(json))
         out.deleteRecursively()
         out.mkdirs()
     }
 
     private fun launch() {
-        val intent = app.packageManager.getLaunchIntentForPackage(app.packageName)
-            ?: error("no launcher activity for ${app.packageName}")
+        // The launcher entry is an icon alias that hands over to MainActivity and finishes at
+        // once; the demo needs the browser's own activity, so it starts that directly.
+        val intent = Intent(app, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         activity = instrumentation.startActivitySync(intent)
         // The chrome is a WebView booting the browser core: wait for the address pill to show up.
@@ -269,6 +272,17 @@ abstract class DemoHarness(
         findNode(label)?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
         SystemClock.sleep(1_500)
         return findByLabel(label)
+    }
+
+    /**
+     * Click the nearest clickable ancestor of a labelled node through the accessibility tree – the
+     * bounds it reports for content inside a scrolled list lag behind on the emulator, so a touch
+     * at them would miss. False when the label is not on screen.
+     */
+    protected fun clickByLabel(label: String): Boolean {
+        var node = findNode(label) ?: return false
+        while (!node.isClickable) node = node.parent ?: return false
+        return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
     }
 
     /** Poll for a label for up to `timeoutMs`. */
