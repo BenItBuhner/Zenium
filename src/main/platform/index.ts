@@ -70,7 +70,7 @@ export class ElectronPlatform implements Platform {
   readonly siteData: ElectronSiteData
   browser!: Browser
 
-  constructor(userDataDir: string) {
+  constructor(private readonly userDataDir: string) {
     this.info = { os: process.platform as PlatformOs, version: app.getVersion() }
     this.io = new FileStoreIO(join(userDataDir, 'zen'))
     this.windows = new ElectronWindowFactory()
@@ -182,7 +182,7 @@ export class ElectronPlatform implements Platform {
   }
 
   createExtensions(browser: Browser): ExtensionService {
-    return new ExtensionService(browser, this.sessions)
+    return new ExtensionService(browser, this.sessions, this.userDataDir)
   }
 
   createSync(browser: Browser): SyncEngine {

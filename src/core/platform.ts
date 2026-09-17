@@ -491,9 +491,23 @@ export interface Governor {
 export interface ExtensionHost {
   start(): Promise<void>
   list(): ExtensionInfo[]
+  /** Load an unpacked folder picked in a native dialog. */
   addFromDialog(win: ZenWindow): Promise<void>
-  remove(id: string): void
-  setEnabled(id: string, enabled: boolean): Promise<void>
+  /** Install a `.crx` or `.zip` picked in a native dialog. */
+  installFromFileDialog(win: ZenWindow): Promise<void>
+  /** Install from a store by extension id or listing URL. */
+  installFromStore(
+    ref: string,
+    store: 'chrome-web-store' | 'edge-add-ons' | null,
+    win?: ZenWindow
+  ): Promise<void>
+  remove(id: string): Promise<void>
+  setEnabled(id: string, enabled: boolean, win?: ZenWindow): Promise<void>
+  setPinned(id: string, pinned: boolean): void
+  reload(id: string): Promise<void>
+  checkForUpdates(win?: ZenWindow): Promise<void>
+  update(id: string, win?: ZenWindow): Promise<void>
+  openOptions(id: string, win: ZenWindow): void
   openPopup(id: string, anchor: Rect, win: ZenWindow): void
   closePopup(): void
   flushSync(): void

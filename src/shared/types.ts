@@ -279,6 +279,12 @@ export interface LiveFolderConfig {
 // Extensions (unpacked Chrome extensions) and Mods (custom chrome CSS)
 // ---------------------------------------------------------------------------
 
+/** Where an extension came from; store installs update through their store. */
+export type ExtensionSource = 'chrome-web-store' | 'edge-add-ons' | 'crx' | 'zip' | 'unpacked'
+
+/** What the last update check found for an extension (`unknown` until one ran or when it cannot update). */
+export type ExtensionUpdateState = 'unknown' | 'up-to-date' | 'available' | 'updating' | 'error'
+
 export interface ExtensionInfo {
   id: string
   name: string
@@ -292,6 +298,33 @@ export interface ExtensionInfo {
   popup: string | null
   /** Set when the extension could not be loaded (unsupported manifest, missing files…). */
   error: string | null
+  source: ExtensionSource
+  /** Who signed the package: a store, or `unknown` for other signed CRX files; null when unsigned. */
+  publisher: 'chrome-web-store' | 'edge-add-ons' | 'unknown' | null
+  /** Where updates come from (the store endpoint or `manifest.update_url`); null when it cannot update. */
+  updateUrl: string | null
+  installedAt: number
+  updatedAt: number
+  /** Pinned extensions are left out of update checks. */
+  pinned: boolean
+  /** Chrome's "Allow access to file URLs"; off by default. */
+  allowFileAccess: boolean
+  manifestVersion: number
+  permissions: string[]
+  hostPermissions: string[]
+  /** `options_ui.page` or `options_page`, relative to the extension root. */
+  optionsPage: string | null
+  /** The install prompt's warning lines Chrome would show for this manifest. */
+  warnings: string[]
+  /** Warning lines an update added; the extension stays disabled until they are approved. */
+  pendingWarnings: string[] | null
+  updateState: ExtensionUpdateState
+  /** The version the last check offered, while `updateState` is `available` or `updating`. */
+  availableVersion: string | null
+  /** Why the last update check or install failed, while `updateState` is `error`. */
+  updateError: string | null
+  /** When this extension was last checked for updates, or null when never. */
+  updateCheckedAt: number | null
 }
 
 export interface Mod {
@@ -1239,8 +1272,20 @@ export interface Commands {
   'liveFolder.remove': { args: { folderId: string }; result: void }
 
   'extension.add': { args: void; result: void }
+  /** Picks a `.crx` or `.zip` file and installs it. */
+  'extension.installFromFile': { args: void; result: void }
+  /** Installs from the Chrome Web Store or Edge Add-ons by id or listing URL. */
+  'extension.installFromStore': {
+    args: { ref: string; store?: 'chrome-web-store' | 'edge-add-ons' }
+    result: void
+  }
   'extension.remove': { args: { id: string }; result: void }
   'extension.setEnabled': { args: { id: string; enabled: boolean }; result: void }
+  'extension.setPinned': { args: { id: string; pinned: boolean }; result: void }
+  'extension.reload': { args: { id: string }; result: void }
+  'extension.checkForUpdates': { args: void; result: void }
+  'extension.update': { args: { id: string }; result: void }
+  'extension.openOptions': { args: { id: string }; result: void }
   'extension.openPopup': { args: { id: string; anchor: Rect }; result: void }
   'extension.closePopup': { args: void; result: void }
 

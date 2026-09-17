@@ -142,6 +142,9 @@ export interface PermissionWarningSource {
   manifest_version?: number
   permissions?: unknown[]
   host_permissions?: unknown[]
+  /** Accepted for convenience; optional permissions never warn at install time. */
+  optional_permissions?: unknown[]
+  optional_host_permissions?: unknown[]
   content_scripts?: Array<{ matches?: unknown[] }>
   devtools_page?: string
   chrome_url_overrides?: { newtab?: string }
