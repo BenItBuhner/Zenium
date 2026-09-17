@@ -1,0 +1,166 @@
+name: Android emulator demo
+
+# The recipe behind the Android demo workflows, shared through workflow_call: build the chrome and
+# page script, the debug APK and the instrumentation driver, boot a hardware-accelerated emulator,
+# run a driver script against it and upload whatever the script leaves under the artifact path.
+# A caller picks the driver, names the artifact and, when the driver reads its configuration from
+# the environment, hands that over too:
+#
+#   jobs:
+#     record:
+#       uses: ./.github/workflows/android-emulator-demo.yml
+#       with:
+#         script: .github/scripts/android-gesture-demo.sh
+#         artifact-name: android-gesture-demo
+#         artifact-path: artifacts/android-gesture-demo/
+#
+# script-env (NAME=value lines) is exported before setup-script and the driver run; setup-script is
+# for what a demo needs beyond the build (another APK, a tool), and runs from the repository root.
+#
+# One cache. gradle/actions/setup-gradle restores the Gradle user home, and only runs on main write
+# it back (cache-read-only everywhere else, which is also the action's default): a branch reads what
+# main's CI and demos saved and never publishes entries of its own. The AVD is not cached: in PR #34
+# restoring the 2.8 GB snapshot took 28 to 33 s against the 28 s it saved on boot, a miss cost about
+# 2 min more, and one entry is 28 percent of the 10 GB cache quota.
+on:
+  workflow_call:
+    inputs:
+      script:
+        description: Bash driver run once the emulator is up, as a path from the repository root
+        required: true
+        type: string
+      artifact-name:
+        description: Name of the uploaded artifact
+        required: true
+        type: string
+      artifact-path:
+        description: What the driver leaves behind; uploaded even when the driver fails
+        required: true
+        type: string
+      script-env:
+        description: Environment for setup-script and the driver, one NAME=value per line
+        required: false
+        type: string
+        default: ''
+      setup-script:
+        description: Bash run from the repository root after the build and before the emulator
+        required: false
+        type: string
+        default: ''
+      api-level:
+        description: API level of the system image, e.g. 34 or 35-ext15
+        required: false
+        type: string
+        default: '34'
+      target:
+        description: System image target
+        required: false
+        type: string
+        default: google_apis
+      arch:
+        description: System image architecture
+        required: false
+        type: string
+        default: x86_64
+      profile:
+        description: Hardware profile of the AVD
+        required: false
+        type: string
+        default: pixel_6
+      gradle-tasks:
+        description: Gradle tasks and properties that build what the driver installs
+        required: false
+        type: string
+        default: assembleDebug assembleDebugAndroidTest -PskipWeb
+      disable-animations:
+        description: Set the animator scales to 0 for the run (the WebView then reports prefers-reduced-motion)
+        required: false
+        type: boolean
+        default: false
+      timeout-minutes:
+        description: Job timeout
+        required: false
+        type: number
+        default: 45
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  record:
+    name: Record on an API ${{ inputs.api-level }} emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    concurrency:
+      # One emulator per demo and ref; a newer push supersedes the run still in progress.
+      group: android-emulator-demo-${{ github.workflow }}-${{ inputs.artifact-name }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools platforms;android-35 build-tools;35.0.0
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - run: npm ci
+      - name: Build the chrome and page script
+        run: npm run build:android:web
+      - name: Assemble the debug APK and the demo driver
+        working-directory: android
+        env:
+          GRADLE_TASKS: ${{ inputs.gradle-tasks }}
+        run: |
+          read -ra tasks <<< "$GRADLE_TASKS"
+          ./gradlew "${tasks[@]}" --no-daemon --stacktrace
+      - name: Pass the caller's environment to the driver
+        if: inputs.script-env != ''
+        env:
+          SCRIPT_ENV: ${{ inputs.script-env }}
+        run: |
+          while IFS= read -r line; do
+            case "$line" in ''|'#'*) continue ;; esac
+            printf '%s\n' "$line" >> "$GITHUB_ENV"
+          done <<< "$SCRIPT_ENV"
+      - name: Prepare what the demo needs beyond the build
+        if: inputs.setup-script != ''
+        run: ${{ inputs.setup-script }}
+      - name: Enable KVM for the emulator
+        # https://github.blog/changelog/2023-02-23-hardware-accelerated-android-virtualization-on-actions-windows-and-linux-larger-hosted-runners/
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
+      - name: Boot the emulator and run the driver
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ inputs.api-level }}
+          target: ${{ inputs.target }}
+          arch: ${{ inputs.arch }}
+          profile: ${{ inputs.profile }}
+          cores: 3
+          ram-size: 4096M
+          heap-size: 512M
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          disable-animations: ${{ inputs.disable-animations }}
+          script: bash ${{ inputs.script }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ inputs.artifact-path }}
+          if-no-files-found: warn
+          retention-days: 14
