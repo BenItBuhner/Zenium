@@ -7,8 +7,6 @@ name: Android site info demo
 # gesture demo about frame rate and the software GPU.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/android-site-info-3504]
 
 permissions:
   contents: read
