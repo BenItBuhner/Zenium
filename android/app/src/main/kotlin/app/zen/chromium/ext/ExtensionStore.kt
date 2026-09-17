@@ -56,12 +56,14 @@ class ExtensionStore(private val host: Host, private val io: ExecutorService, pr
     fun fetch(url: String, maxBytes: Long, reply: (Any?) -> Unit) {
         val limit = if (maxBytes > 0) maxBytes else DEFAULT_MAX_PACKAGE_BYTES
         io.execute {
+            val started = System.nanoTime()
             val result = runCatching { fetcher.fetch(url, limit) }
             main.post {
                 result.fold(
                     { r ->
                         val token = r.file?.name
                         if (token != null) live.add(token)
+                        Log.i(TAG, "fetched $url: HTTP ${r.status}, ${r.size} bytes in ${(System.nanoTime() - started) / 1_000_000} ms")
                         reply(json("status" to r.status, "url" to r.url, "size" to r.size, "token" to token))
                     },
                     { e -> reply(Host.Rejection(e.message ?: e.javaClass.simpleName)) }
