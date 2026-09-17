@@ -1,0 +1,359 @@
+/*
+ * The phone history and bookmarks panels, the bookmark editor and the phone toast, built against
+ * the design-language v2 draft (sections 1 to 3, 6 and 9) on the shared `--v2-*` tokens: neutral
+ * panel surfaces with a hairline border, rows of 44 that grow with their content, rectangular
+ * 40 px fields and buttons, 44 icon buttons with 20 px glyphs, colour only as ink. Motion stays
+ * v1 section 7. Every value is a token so the surfaces re-tune with the block in main.css.
+ */
+@layer components {
+  /* A panel that takes the content card's place: the neutral panel with a hairline edge, no blur. */
+  .zen-phone-panel {
+    background: var(--v2-panel);
+    backdrop-filter: none;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-sheet);
+    box-shadow: var(--v2-shadow-panel);
+    color: var(--v2-text);
+  }
+  /* The 56 header's title (panels and sheets): hierarchy by size, weights 400 and 600 only. */
+  .zen-phone-title {
+    font-size: var(--v2-font-heading);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+    color: var(--v2-text);
+  }
+  /*
+   * What stays put above a scrolling list (the search field). No line at rest; once the list has
+   * scrolled under it a 1 px hairline appears at its bottom edge (9.7). Painted above the list.
+   */
+  .zen-phone-top {
+    position: relative;
+    z-index: 1;
+    transition: box-shadow 120ms var(--zen-ease);
+  }
+  .zen-phone-top[data-scrolled='true'] {
+    box-shadow: 0 1px 0 var(--v2-border);
+  }
+  /* The list itself: the sheets' rule, no classic scrollbar (Android's is an overlay that hides). */
+  .zen-phone-list {
+    scrollbar-width: none;
+  }
+  .zen-phone-list::-webkit-scrollbar {
+    display: none;
+  }
+  .zen-phone-empty {
+    padding: 40px 16px;
+    text-align: center;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    color: var(--v2-text-deemphasized);
+  }
+
+  /*
+   * Rows (9.2): a minimum height that grows with the content, never a clamp; 44 for one line,
+   * 64 for a label with a description. The leading glyph sits on the first text line.
+   */
+  .zen-list-row {
+    position: relative;
+    display: flex;
+    width: 100%;
+    min-height: var(--v2-row);
+    align-items: flex-start;
+    gap: 12px;
+    padding: 0 12px;
+    border-radius: var(--v2-radius-control);
+    color: var(--v2-text);
+    text-align: left;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-list-row[data-two-line='true'] {
+    min-height: var(--v2-row-two-line);
+  }
+  .zen-list-row:active {
+    background: var(--v2-fill);
+  }
+  .zen-list-row[data-selected='true'],
+  .zen-list-row[data-selected='true']:active {
+    background: var(--v2-nav-active);
+  }
+  /* The leading 20 box: a glyph or favicon, or the row's checkbox while rows are being picked. */
+  .zen-list-lead {
+    display: flex;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    /* Centred on the first text line: the row's 12 padding, and the line is as tall as the box. */
+    margin-top: 12px;
+  }
+  .zen-list-favicon {
+    width: 100%;
+    height: 100%;
+    border-radius: var(--v2-radius-checkbox);
+  }
+  /* A 20 square checkbox at radius 2: bordered when off, the accent with a white check when on. */
+  .zen-list-checkbox {
+    width: var(--v2-checkbox);
+    height: var(--v2-checkbox);
+    border: 1px solid color-mix(in srgb, var(--v2-text) 41%, transparent);
+    border-radius: var(--v2-radius-checkbox);
+    background: var(--v2-page);
+    color: transparent;
+    transition:
+      background 120ms var(--zen-ease),
+      border-color 120ms var(--zen-ease);
+  }
+  .zen-list-checkbox[data-checked='true'] {
+    border-color: var(--v2-accent);
+    background: var(--v2-accent);
+    color: var(--v2-on-accent);
+  }
+  .zen-list-checkbox[data-checked='true'] > svg {
+    animation: zen-pop 180ms var(--zen-ease);
+  }
+  .zen-list-text {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    padding: 12px 0;
+  }
+  .zen-list-title {
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-list-subtitle {
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+  }
+  /* A trailing value (a folder's count); trailing controls are the 44 icon buttons. */
+  .zen-list-value {
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+    font-variant-numeric: tabular-nums;
+  }
+  /* Trailing content sits centred; a 44 control's glyph then lands 12 from the row's edge. */
+  .zen-list-trailing {
+    display: flex;
+    align-self: center;
+    align-items: center;
+    flex-shrink: 0;
+    margin-right: -12px;
+  }
+  /* A group's heading (a day, "Recently closed"): a 15/600 sub-heading, sentence case, 20 above. */
+  .zen-list-heading {
+    padding: 20px 12px 4px;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+    color: var(--v2-text);
+  }
+  .zen-list-heading:first-child {
+    padding-top: 4px;
+  }
+
+  /* A row being swiped away slides over the quiet fill carrying the trash glyph in the danger ink. */
+  .zen-swipe {
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--v2-radius-control);
+  }
+  .zen-swipe-under {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    background: var(--v2-fill);
+    color: var(--v2-danger);
+    opacity: 0;
+  }
+  .zen-swipe-under[data-side='left'] {
+    justify-content: flex-start;
+  }
+  .zen-swipe-under[data-side='right'] {
+    justify-content: flex-end;
+  }
+  .zen-swipe-content {
+    position: relative;
+    background: var(--v2-panel);
+  }
+  .zen-swipe[data-moving='true'] .zen-swipe-content {
+    will-change: transform;
+  }
+  .zen-swipe[data-moving='true'] .zen-list-row:active {
+    background: transparent;
+  }
+
+  /* A field (section 6): 40 tall, rectangular, a hairline border; focus is the 2 px accent ring. */
+  .zen-field {
+    display: flex;
+    height: var(--v2-control);
+    align-items: center;
+    gap: 8px;
+    padding: 0 8px 0 12px;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-control);
+    background: var(--v2-page);
+    color: var(--v2-text);
+  }
+  .zen-field:focus-within {
+    outline: 2px solid var(--v2-ring);
+    outline-offset: 0;
+  }
+  .zen-field > input {
+    min-width: 0;
+    flex: 1;
+    height: 100%;
+    border: 0;
+    background: transparent;
+    outline: none;
+    font-size: var(--v2-font-body);
+    color: var(--v2-text);
+  }
+  .zen-field > input::placeholder {
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-field > input::-webkit-search-cancel-button {
+    display: none;
+  }
+  .zen-field > input:disabled {
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-field-icon {
+    flex-shrink: 0;
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-field-clear {
+    display: flex;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--v2-radius-control);
+    color: var(--v2-text-deemphasized);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-field-clear:active {
+    background: var(--v2-fill);
+  }
+  .zen-field-label {
+    font-size: var(--v2-font-small);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+  }
+
+  /*
+   * Buttons of the editor (section 6): 40 tall on a phone, rectangular, weight 500. Secondary is
+   * the text's own alpha as a fill, primary the accent with its ink, danger the secondary in the
+   * danger ink; a press scales to .98.
+   */
+  .zen-sheet-button {
+    display: inline-flex;
+    height: var(--v2-control);
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 0 16px;
+    border-radius: var(--v2-radius-control);
+    background: var(--v2-fill);
+    color: var(--v2-text);
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-button);
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease),
+      opacity 120ms var(--zen-ease);
+  }
+  .zen-sheet-button:active:not(:disabled) {
+    background: var(--v2-fill-hover);
+    transform: scale(0.98);
+  }
+  .zen-sheet-button:disabled {
+    opacity: 0.4;
+  }
+  .zen-sheet-button[data-variant='primary'],
+  .zen-sheet-button[data-variant='primary']:active:not(:disabled) {
+    background: var(--v2-accent);
+    color: var(--v2-on-accent);
+  }
+  .zen-sheet-button[data-variant='danger'] {
+    color: var(--v2-danger);
+  }
+
+  /* The editor on the shared sheet chassis: the neutral dialog surface at radius 12 with a hairline. */
+  .zen-phone-editor {
+    border: 1px solid var(--v2-border);
+    border-bottom: 0;
+    border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
+    background: var(--v2-panel);
+    backdrop-filter: none;
+    box-shadow: var(--v2-shadow-sheet);
+    color: var(--v2-text);
+  }
+
+  /* The phone toast: a small panel (hairline, radius 8, the panel shadow); its action is accent ink. */
+  .zen-phone-toast {
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-card);
+    background: var(--v2-panel);
+    box-shadow: var(--v2-shadow-panel);
+    color: var(--v2-text);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-phone-toast[data-kind='error'] {
+    color: var(--v2-danger);
+  }
+  .zen-toast-action {
+    height: 32px;
+    margin: -6px -8px -6px 4px;
+    padding: 0 10px;
+    border-radius: var(--v2-radius-control);
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-button);
+    color: var(--v2-accent);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-toast-action:active {
+    background: var(--v2-fill);
+  }
+  /* The star that just filled (v1 section 7 motion). */
+  .zen-toast-star {
+    color: var(--v2-accent);
+    animation: zen-star-pop 260ms var(--zen-ease);
+  }
+}
+@keyframes zen-star-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.18);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+/*
+ * Icon buttons of these surfaces (9.3): the 44 box with a 20 glyph, radius 8. Unlayered like the
+ * chrome's own coarse-pointer rule, which would otherwise size them at 32; folds into the shared
+ * `zen-toolbar-button` once its three sizes land.
+ */
+:root[data-pointer='coarse'] .zen-phone-panel .zen-toolbar-button,
+:root[data-pointer='coarse'] .zen-phone-editor .zen-toolbar-button {
+  width: var(--v2-icon-button);
+  height: var(--v2-icon-button);
+  border-radius: var(--v2-radius-card);
+}

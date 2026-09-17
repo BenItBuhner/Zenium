@@ -7,15 +7,15 @@ import { cn } from '@renderer/lib/utils'
 import { useRowGestures } from './useRowGestures'
 
 /**
- * The phone panels' list vocabulary (design-language 8.1, 8.2, 8.6, 8.7): a 56 header with a
- * 17/600 title and 44 icon buttons, the selection header that stands in for it, the search
- * field, day and folder headings, and the 48 row with its leading 32 box – swipeable to delete
- * where the list allows it. Styles live under `.zen-list-*`, `.zen-field` and `.zen-swipe` in
- * main.css; the panels' shared behaviour (undoable deletes, the in-panel back step) is in
- * `phonePanel.ts`.
+ * The phone panels' list vocabulary (design-language v2 draft, sections 5, 6 and 9): a 56 header
+ * with a 17/600 title and 44 icon buttons, the selection header that stands in for it, the
+ * search field, day and folder headings, and rows of 44 (64 with a description) that grow with
+ * their content – swipeable to delete where the list allows it. Styles live under `.zen-list-*`,
+ * `.zen-field` and `.zen-swipe` in `phonePanels.css`; the panels' shared behaviour (undoable
+ * deletes, the in-panel back step, the header's scrolled line) is in `phonePanel.ts`.
  */
 
-/** A 44 icon button of a header (glyph 20, stroke 1.75). */
+/** A 44 icon button (glyph 20, stroke 1.75; the box is sized in `phonePanels.css`). */
 export function PhoneIconButton({
   label,
   onClick,
@@ -31,7 +31,6 @@ export function PhoneIconButton({
     <button
       type="button"
       className="zen-toolbar-button h-11 w-11 shrink-0"
-      style={{ borderRadius: 12 }}
       aria-label={label}
       title={label}
       disabled={disabled}
@@ -58,7 +57,7 @@ export function PhoneHeader({
   return (
     <header className="flex h-14 shrink-0 items-center gap-1 px-2">
       {leading}
-      <h2 className={cn('zen-title min-w-0 flex-1 truncate', !leading && 'px-3')}>{title}</h2>
+      <h2 className={cn('zen-phone-title min-w-0 flex-1 truncate', !leading && 'px-3')}>{title}</h2>
       {actions}
       <PhoneIconButton label="Close" onClick={onClose}>
         <X className="h-5 w-5" strokeWidth={1.75} />
@@ -82,7 +81,7 @@ export function PhoneSelectionHeader({
       <PhoneIconButton label="Stop selecting" onClick={onExit}>
         <X className="h-5 w-5" strokeWidth={1.75} />
       </PhoneIconButton>
-      <h2 className="zen-title min-w-0 flex-1 truncate tabular-nums" aria-live="polite">
+      <h2 className="zen-phone-title min-w-0 flex-1 truncate tabular-nums" aria-live="polite">
         {count} selected
       </h2>
       {actions}
@@ -90,22 +89,29 @@ export function PhoneSelectionHeader({
   )
 }
 
+/**
+ * The search field pinned above a list. It is the bottom of what stays put, so it carries the
+ * hairline that appears once the list has scrolled under it (v2 draft 9.7).
+ */
 export function PhoneSearchField({
   value,
   onChange,
   placeholder,
-  autoFocus
+  autoFocus,
+  scrolled = false
 }: {
   value: string
   onChange: (value: string) => void
   placeholder: string
   autoFocus?: boolean
+  /** The list below has moved off its top. */
+  scrolled?: boolean
 }): JSX.Element {
   const ref = useRef<HTMLInputElement>(null)
   return (
-    <div className="shrink-0 px-3 pb-2">
+    <div className="zen-phone-top shrink-0 px-4 pb-3" data-scrolled={scrolled}>
       <div className="zen-field">
-        <Search className="zen-field-icon h-4 w-4" aria-hidden />
+        <Search className="zen-field-icon h-4 w-4" strokeWidth={1.75} aria-hidden />
         <input
           ref={ref}
           type="search"
@@ -136,9 +142,14 @@ export function PhoneSearchField({
   )
 }
 
-/** A group's heading (a day, a folder section): 14/600, sentence case, 16 above. */
+/** A group's heading (a day, a folder section): a 15/600 sub-heading, sentence case, 20 above. */
 export function PhoneGroupHeading({ children }: { children: ReactNode }): JSX.Element {
   return <h3 className="zen-list-heading">{children}</h3>
+}
+
+/** What a list says when it has nothing to show: one deemphasised line, sentence case. */
+export function PhoneEmptyNote({ children }: { children: ReactNode }): JSX.Element {
+  return <p className="zen-phone-empty">{children}</p>
 }
 
 /** A favicon in the row's leading box, or the fallback glyph. */
@@ -165,11 +176,11 @@ export function RowFavicon({
 }
 
 export interface PhoneListRowProps {
-  /** The 20 glyph or favicon of the leading 32 box. */
+  /** The 20 glyph or favicon of the leading box. */
   icon: ReactNode
   title: string
   subtitle?: ReactNode
-  /** A 44 control, or a 13 fg-60% value; hidden while selecting. */
+  /** A 44 control, or a 13 deemphasised value; hidden while selecting. */
   trailing?: ReactNode
   /** Selection mode is on for the list. */
   selecting?: boolean
@@ -181,7 +192,7 @@ export interface PhoneListRowProps {
   ariaLabel?: string
 }
 
-/** One 48 row of a phone list. */
+/** One row of a phone list: 44 tall, 64 with a subtitle, growing with its content. */
 export function PhoneListRow({
   icon,
   title,
@@ -211,18 +222,28 @@ export function PhoneListRow({
       aria-label={ariaLabel ?? title}
       tabIndex={0}
       data-selected={selected}
+      data-two-line={Boolean(subtitle)}
       className="zen-list-row select-none"
       style={{ touchAction: onSwipeDelete && !selecting ? 'pan-y' : undefined }}
       {...gestures}
     >
-      <span className={cn('zen-list-lead', selected && 'zen-list-check')} aria-hidden>
-        {selected ? <Check className="h-5 w-5" strokeWidth={2} /> : icon}
+      <span className="zen-list-lead" aria-hidden>
+        {selecting ? (
+          <span
+            className="zen-list-checkbox flex items-center justify-center"
+            data-checked={selected}
+          >
+            <Check className="h-4 w-4" strokeWidth={2.5} />
+          </span>
+        ) : (
+          icon
+        )}
       </span>
-      <span className="flex min-w-0 flex-1 flex-col justify-center gap-px">
+      <span className="zen-list-text">
         <span className="zen-list-title truncate">{title}</span>
         {subtitle && <span className="zen-list-subtitle truncate">{subtitle}</span>}
       </span>
-      {!selecting && trailing}
+      {!selecting && trailing && <span className="zen-list-trailing">{trailing}</span>}
     </div>
   )
   if (!onSwipeDelete) return row

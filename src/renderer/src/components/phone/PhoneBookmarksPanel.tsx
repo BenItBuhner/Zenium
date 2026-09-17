@@ -12,7 +12,6 @@ import {
 import type { BookmarkNode, UIState } from '@shared/types'
 import { isBookmarkRoot, searchBookmarks } from '@shared/bookmarks'
 import { displayUrl } from '@shared/url'
-import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { editBookmark } from '@renderer/lib/bookmarkEdit'
 import {
@@ -41,8 +40,9 @@ import {
   uiStore,
   type LocalMenuItem
 } from '@renderer/lib/ui'
-import { EmptyNote, OverlayShell } from '../overlays/OverlayShell'
+import { OverlayShell } from '../overlays/OverlayShell'
 import {
+  PhoneEmptyNote,
   PhoneHeader,
   PhoneIconButton,
   PhoneListRow,
@@ -50,12 +50,18 @@ import {
   PhoneSelectionHeader,
   RowFavicon
 } from './PhoneList'
-import { removeWithUndo, useBookmarkTree, usePanelStep, usePendingDeletes } from './phonePanel'
+import {
+  removeWithUndo,
+  useBookmarkTree,
+  usePanelStep,
+  usePendingDeletes,
+  useScrolled
+} from './phonePanel'
 
 const SEARCH_LIMIT = 200
 
 /**
- * Bookmarks on a phone (design-language 8.1, 8.2, 8.7, 8.8): one folder at a time under a 56
+ * Bookmarks on a phone (design-language v2 draft, sections 5, 6 and 9): one folder at a time under a 56
  * header – folders as rows that push in, bookmarks as rows with favicon, title and address and
  * a trailing menu (edit, open in a new tab, copy the link, delete) – with a search field over
  * the whole tree. A long press starts selection mode, whose header replaces the panel's; the
@@ -72,7 +78,7 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
   const [query, setQuery] = useState('')
   const [rawSelection, setSelection] = useState<Selection>(NO_SELECTION)
   const pending = usePendingDeletes()
-  const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
+  const [attachList, listScrolled] = useScrolled<HTMLDivElement>()
 
   // A folder deleted elsewhere (sync, another window) unwinds the stack to what still exists.
   const stack = useMemo(() => pruneFolderStack(tree, rawStack), [tree, rawStack])
@@ -287,17 +293,28 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
   )
 
   return (
-    <OverlayShell title="Bookmarks" variant="full" header={header} scroll={false}>
-      <PhoneSearchField value={query} onChange={setQuery} placeholder="Search bookmarks" />
-      <div ref={fade} className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+    <OverlayShell
+      title="Bookmarks"
+      variant="full"
+      header={header}
+      scroll={false}
+      className="zen-phone-panel"
+    >
+      <PhoneSearchField
+        value={query}
+        onChange={setQuery}
+        placeholder="Search bookmarks"
+        scrolled={listScrolled}
+      />
+      <div ref={attachList} className="zen-phone-list min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {rows.length === 0 ? (
-          <EmptyNote>
+          <PhoneEmptyNote>
             {searching
               ? 'No matching bookmarks.'
               : folderId === null || isBookmarkRoot(folderId)
                 ? 'Pages you bookmark will show up here.'
                 : 'This folder is empty.'}
-          </EmptyNote>
+          </PhoneEmptyNote>
         ) : (
           rows.map((node) => (
             <BookmarkNodeRow
@@ -373,7 +390,9 @@ function BookmarkNodeRow({
           <>
             <span className="zen-list-value shrink-0">{folderCountLabel(childCount)}</span>
             {menuButton ?? (
-              <ChevronRight className="mr-2 h-5 w-5 shrink-0 opacity-60" strokeWidth={1.75} />
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center" aria-hidden>
+                <ChevronRight className="h-5 w-5 opacity-60" strokeWidth={1.75} />
+              </span>
             )}
           </>
         ) : (

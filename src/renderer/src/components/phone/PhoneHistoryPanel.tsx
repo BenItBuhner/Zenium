@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { Ellipsis, Globe, History, Trash2, X } from 'lucide-react'
 import type { UIState } from '@shared/types'
 import { displayUrl, getHost } from '@shared/url'
-import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import {
   clearBrowsingDataSheet,
@@ -22,8 +21,9 @@ import {
 } from '@renderer/lib/multiSelect'
 import { activeTab } from '@renderer/lib/selectors'
 import { closeOverlay, MENU_GAP, showLocalMenu } from '@renderer/lib/ui'
-import { EmptyNote, OverlayShell } from '../overlays/OverlayShell'
+import { OverlayShell } from '../overlays/OverlayShell'
 import {
+  PhoneEmptyNote,
   PhoneGroupHeading,
   PhoneHeader,
   PhoneIconButton,
@@ -32,7 +32,7 @@ import {
   PhoneSelectionHeader,
   RowFavicon
 } from './PhoneList'
-import { removeWithUndo, usePanelStep, usePendingDeletes } from './phonePanel'
+import { removeWithUndo, usePanelStep, usePendingDeletes, useScrolled } from './phonePanel'
 
 const LIMIT = 300
 
@@ -43,8 +43,8 @@ interface Loaded {
 }
 
 /**
- * History on a phone (design-language 8.1, 8.2, 8.7): visits grouped by day under a 56 header
- * and a search field, one 48 row per visit with its favicon, title, site and time. A row opens
+ * History on a phone (design-language v2 draft, sections 5, 6 and 9): visits grouped by day under
+ * a 56 header and a search field, one row per visit with its favicon, title, site and time. A row opens
  * the page; its trailing control or a sideways swipe removes it (undoable from the toast); a
  * long press starts selection mode, whose header replaces the panel's and acts on every picked
  * row. The top row clears the whole history, undoable like the rest, until shared services'
@@ -58,7 +58,7 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
   const [closed, setClosed] = useState<ClosedEntrySummary[]>([])
   const [rawSelection, setSelection] = useState<Selection>(NO_SELECTION)
   const pending = usePendingDeletes()
-  const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
+  const [attachList, listScrolled] = useScrolled<HTMLDivElement>()
 
   useEffect(() => {
     let cancelled = false
@@ -208,9 +208,14 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
 
   const searching = query.trim().length > 0
   return (
-    <OverlayShell title="History" header={header} scroll={false}>
-      <PhoneSearchField value={query} onChange={setQuery} placeholder="Search history" />
-      <div ref={fade} className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+    <OverlayShell title="History" header={header} scroll={false} className="zen-phone-panel">
+      <PhoneSearchField
+        value={query}
+        onChange={setQuery}
+        placeholder="Search history"
+        scrolled={listScrolled}
+      />
+      <div ref={attachList} className="zen-phone-list min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {!searching && rows.length > 0 && (
           <PhoneListRow
             icon={<Trash2 className="h-5 w-5" strokeWidth={1.75} />}
@@ -227,9 +232,9 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
           </section>
         )}
         {rows.length === 0 ? (
-          <EmptyNote>
+          <PhoneEmptyNote>
             {searching ? 'No matching pages.' : 'Pages you visit will show up here.'}
-          </EmptyNote>
+          </PhoneEmptyNote>
         ) : (
           groups.map((group) => (
             <section key={group.dayKey} aria-label={group.label}>

@@ -41,6 +41,7 @@ import { TabPreview } from './TabPreview'
 import { TabsQuickMenu } from './TabsQuickMenu'
 import { useBarHold, type BarHoldHandlers } from './useBarHold'
 import { usePillGestures, type PillGestureHandlers } from './usePillGestures'
+import './phonePanels.css'
 
 interface Props {
   state: UIState

@@ -74,9 +74,10 @@ export function BookmarkEditSheet({
       onDismissed={closeBookmarkEditor}
       contentKey={`${edit.id ?? 'new'}:${folder ? 'folder' : 'url'}:${waiting ? 'waiting' : 'ready'}`}
       handleLabel="Resize editor"
+      className="zen-phone-editor"
       header={
         <div className="flex h-9 items-center">
-          <span className="zen-title min-w-0 flex-1 truncate px-3">{title}</span>
+          <span className="zen-phone-title min-w-0 flex-1 truncate px-1">{title}</span>
         </div>
       }
     >

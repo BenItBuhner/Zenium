@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type RefCallback } from 'react'
 import type { UIState } from '@shared/types'
 import { BookmarkTree } from '@shared/bookmarks'
 import { useBackSurface } from '@renderer/lib/back'
@@ -55,6 +55,26 @@ export function usePanelStep(enabled: boolean, step: () => void): void {
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [enabled])
+}
+
+/**
+ * Whether a scroller has moved off its top: what stays put above it draws its hairline only then
+ * (v2 draft 9.7, in place of a fading edge under the header). Attach the callback to the element
+ * that scrolls, like `useFadeEdges`; the boolean is the current answer.
+ */
+export function useScrolled<T extends HTMLElement>(): [attach: RefCallback<T>, scrolled: boolean] {
+  const [scrolled, setScrolled] = useState(false)
+  const attach = useCallback((el: T | null) => {
+    if (!el) return
+    const onScroll = (): void => setScrolled(el.scrollTop > 0)
+    onScroll()
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      el.removeEventListener('scroll', onScroll)
+      setScrolled(false)
+    }
+  }, [])
+  return [attach, scrolled]
 }
 
 /** Index over the mirrored bookmark nodes; rebuilt when the core pushes a new list. */
