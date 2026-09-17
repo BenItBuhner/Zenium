@@ -161,6 +161,7 @@ async function launch({ profileName, extraArgs = [], extraEnv = {} }) {
     await sleep(250)
   }
   if (!chrome) throw new Error('chrome .zen-window never appeared')
+  await sleep(800)
   return { app, chrome, stderr, pageErrors, userData }
 }
 
@@ -244,6 +245,44 @@ async function windowFacts(app) {
       visible: w.isVisible()
     }))
   )
+}
+
+/**
+ * Playwright's `app.windows()` often misses a newly created BrowserWindow; read the chrome
+ * attribute from each window's webContents instead.
+ */
+async function windowChromeKinds(app) {
+  return app.evaluate(async ({ BrowserWindow }) => {
+    const out = []
+    for (const w of BrowserWindow.getAllWindows()) {
+      let chrome = null
+      try {
+        chrome = await w.webContents.executeJavaScript(
+          `document.querySelector('.zen-window')?.getAttribute('data-window-chrome') ?? null`
+        )
+      } catch {
+        chrome = null
+      }
+      out.push({
+        id: w.id,
+        chrome,
+        bounds: w.getBounds(),
+        url: w.webContents.getURL()
+      })
+    }
+    return out
+  })
+}
+
+async function waitForPopupChrome(app, timeoutMs = 12000) {
+  const deadline = Date.now() + timeoutMs
+  let last = []
+  while (Date.now() < deadline) {
+    last = await windowChromeKinds(app)
+    if (last.some((w) => w.chrome === 'popup')) return last
+    await sleep(250)
+  }
+  return last
 }
 
 async function closeApp(session) {
@@ -377,25 +416,27 @@ async function runMain() {
     const windowsBefore = (await windowFacts(session.app)).length
     await loadExample(session.app, session.chrome)
     const example = await waitForTab(session.app, 'https://example.com')
+    const windowOpened = session.app.waitForEvent('window', { timeout: 10000 }).catch(() => null)
     await session.app.evaluate(({ webContents }, id) => {
       const wc = webContents.fromId(id)
       return wc.executeJavaScript(
         "window.open('https://example.com','_blank','width=500,height=400') && true"
       )
     }, example.id)
-    await sleep(2500)
-    const afterPopup = await windowFacts(session.app)
-    const chromePages = session.app.windows().filter((p) => /index\.html/.test(p.url()))
-    let popupChrome = null
-    for (const p of chromePages) {
-      const kind = await p.locator('.zen-window').getAttribute('data-window-chrome').catch(() => null)
-      if (kind === 'popup') popupChrome = p
+    const newPage = await windowOpened
+    if (newPage) {
+      await newPage
+        .waitForSelector('.zen-window[data-window-chrome="popup"]', { timeout: 10000 })
+        .catch(() => null)
     }
+    const popupKinds = await waitForPopupChrome(session.app)
+    const afterPopup = await windowFacts(session.app)
+    const hasPopupChrome = popupKinds.some((w) => w.chrome === 'popup')
     osScreenshot(IS_WIN ? '04-windows-popup.png' : '04-macos-popup.png')
     check(
       'popup-opens-zenium-window',
-      afterPopup.length > windowsBefore && popupChrome !== null,
-      { windowsBefore, after: afterPopup.length, popupChrome: Boolean(popupChrome) }
+      afterPopup.length > windowsBefore && hasPopupChrome,
+      { windowsBefore, after: afterPopup.length, popupChrome: hasPopupChrome, kinds: popupKinds }
     )
 
     const shiftBefore = (await windowFacts(session.app)).length
