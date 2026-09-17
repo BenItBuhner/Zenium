@@ -62,6 +62,20 @@ describe('CredentialStore lifecycle', () => {
     expect(second.keys.unwraps).toBe(1)
   })
 
+  it('keeps a login added right before the vault is locked', async () => {
+    const first = setup()
+    await first.store.unlock()
+    const kept = first.store.add({ url: 'https://a.example', username: 'u', password: 'p' })
+    // Lock before the queued write has sealed anything: the write must still land in full.
+    first.store.lock()
+    expect(first.store.unlocked()).toBe(false)
+    await first.store.flush()
+
+    const second = reopen(first)
+    await second.store.unlock(undefined, false)
+    expect(second.store.list()).toEqual([kept])
+  })
+
   it('requires a passphrase without an OS keystore and opens with it later', async () => {
     const first = setup({ os: false })
     expect(await code(first.store.unlock())).toBe('locked')

@@ -46,6 +46,12 @@ export interface ImportRow {
 
 export type Protection = { os: boolean; passphrase: boolean }
 
+/** The plaintext state one write seals (see `snapshot`). */
+interface Snapshot {
+  credentials: Map<string, Credential>
+  neverSave: string[]
+}
+
 const MAX_FIELD = 4096
 const MAX_NOTES = 16 * 1024
 
@@ -154,7 +160,8 @@ export class CredentialStore {
     this.neverSaveDomains = []
     this.sealed = new Map()
     this.file = file
-    await this.enqueue(() => this.commit(key, file))
+    const plain = this.snapshot()
+    await this.enqueue(() => this.commit(key, file, plain))
     this.onChange()
   }
 
@@ -197,7 +204,8 @@ export class CredentialStore {
     if (!file.keyWrap.os && (await this.keys.osAvailable().catch(() => false))) {
       try {
         file.keyWrap = { ...file.keyWrap, os: await this.keys.wrap(key) }
-        await this.enqueue(() => this.commit(key, file))
+        const plain = this.snapshot()
+        await this.enqueue(() => this.commit(key, file, plain))
       } catch {
         // Not fatal: the passphrase keeps working.
       }
@@ -237,7 +245,8 @@ export class CredentialStore {
       ...file.keyWrap,
       passphrase: await wrapWithPassphrase(this.keys, file.vaultId, key, passphrase)
     }
-    await this.enqueue(() => this.commit(key, file))
+    const plain = this.snapshot()
+    await this.enqueue(() => this.commit(key, file, plain))
     this.onChange()
   }
 
@@ -523,21 +532,30 @@ export class CredentialStore {
     const seq = ++this.writeSeq
     const key = this.requireKey()
     const file = this.requireFile()
+    const plain = this.snapshot()
     void this.enqueue(async () => {
       for (const id of ids) {
-        const credential = this.credentials.get(id)
+        const credential = plain.credentials.get(id)
         if (credential) this.sealed.set(id, await encryptEntry(key, file.vaultId, credential))
       }
       if (seq !== this.writeSeq) return
-      await this.commit(key, file)
+      await this.commit(key, file, plain)
     }).then(() => this.onChange())
   }
 
+  /**
+   * The plaintext a queued write seals, taken when the write is queued: a `lock()` that empties
+   * the live maps before the write lands must not empty the document.
+   */
+  private snapshot(): Snapshot {
+    return { credentials: new Map(this.credentials), neverSave: [...this.neverSaveDomains] }
+  }
+
   /** Seal the manifest, assemble the document and write it atomically. */
-  private async commit(key: Uint8Array, file: VaultFile): Promise<void> {
+  private async commit(key: Uint8Array, file: VaultFile, plain: Snapshot): Promise<void> {
     const now = Date.now()
     const entries: VaultEntry[] = []
-    for (const [id, credential] of this.credentials) {
+    for (const [id, credential] of plain.credentials) {
       let entry = this.sealed.get(id)
       if (!entry) {
         entry = await encryptEntry(key, file.vaultId, credential)
@@ -549,7 +567,7 @@ export class CredentialStore {
       key,
       file.vaultId,
       entries.map((e) => e.id),
-      this.neverSaveDomains,
+      plain.neverSave,
       now
     )
     file.entries = entries
