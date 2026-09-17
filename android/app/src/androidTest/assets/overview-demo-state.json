@@ -1,0 +1,175 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_work",
+  "spaces": [
+    {
+      "id": "space_work",
+      "name": "Work",
+      "icon": "💼",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          { "c": [96, 110, 235], "x": 0.3, "y": 0.35, "isPrimary": true },
+          { "c": [214, 92, 160], "x": 0.7, "y": 0.65 }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 40
+      },
+      "tabIds": [
+        "tab_www",
+        "tab_damping",
+        "tab_example",
+        "tab_hn",
+        "tab_rfc",
+        "tab_tea",
+        "tab_coffee"
+      ],
+      "activeTabId": "tab_example",
+      "pinnedCollapsed": false
+    },
+    {
+      "id": "space_personal",
+      "name": "Personal",
+      "icon": "🌿",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [{ "c": [52, 168, 120], "x": 0.5, "y": 0.5, "isPrimary": true }],
+        "opacity": 0.5,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 0
+      },
+      "tabIds": ["tab_htcpcp", "tab_avian"],
+      "activeTabId": "tab_htcpcp",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [
+    {
+      "id": "folder_research",
+      "spaceId": "space_work",
+      "name": "Research",
+      "icon": "📚",
+      "collapsed": false,
+      "color": "blue"
+    }
+  ],
+  "tabs": [
+    {
+      "id": "tab_www",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": "folder_research",
+      "url": "https://info.cern.ch/hypertext/WWW/TheProject.html",
+      "title": "World Wide Web",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_damping",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": "folder_research",
+      "url": "https://en.wikipedia.org/wiki/Damping",
+      "title": "Damping - Wikipedia",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_example",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://example.com/",
+      "title": "Example Domain",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_hn",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://news.ycombinator.com/",
+      "title": "Hacker News",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_rfc",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://www.rfc-editor.org/rfc/rfc2324.html",
+      "title": "RFC 2324: Hyper Text Coffee Pot Control Protocol (HTCPCP/1.0)",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_tea",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://en.wikipedia.org/wiki/Tea",
+      "title": "Tea - Wikipedia",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_coffee",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://en.wikipedia.org/wiki/Coffee",
+      "title": "Coffee - Wikipedia",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_htcpcp",
+      "spaceId": "space_personal",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://www.rfc-editor.org/rfc/rfc1149.html",
+      "title": "RFC 1149: A Standard for the Transmission of IP Datagrams on Avian Carriers",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_avian",
+      "spaceId": "space_personal",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://www.rfc-editor.org/rfc/rfc2549.html",
+      "title": "RFC 2549: IP over Avian Carriers with Quality of Service",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "updates": { "autoCheck": false, "autoDownload": false, "channel": "stable" }
+  },
+  "shortcutOverrides": {},
+  "bookmarks": [],
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_work",
+      "selection": { "space_work": "tab_example", "space_personal": "tab_htcpcp" },
+      "compact": false
+    }
+  ]
+}
