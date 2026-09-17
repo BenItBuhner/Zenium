@@ -1048,6 +1048,9 @@
   .zen-spin {
     animation: zen-spin 900ms linear infinite;
   }
+  .zen-toast {
+    animation: zen-toast-in 180ms var(--zen-ease);
+  }
 
   /*
    * Messages (v2 draft §1–§3, §6, read through the shared `--v2-*` tokens): a toast at the
@@ -1055,7 +1058,8 @@
    * border, radius 8, the panel shadow. The one action is a secondary button (the control height,
    * 32 or 40 on a phone, radius 4 or 6, text at 10 % for a fill). Motion is the card's transform,
    * written per frame by `useMessageMotion`; nothing here moves on its own. `data-moving`
-   * promotes a card only while a spring or a finger drives it.
+   * promotes a card only while a spring or a finger drives it. The phone and Android show these;
+   * the desktop sidebar's `.zen-toast` above is untouched until the desktop program adopts them.
    */
   .zen-message {
     position: relative;
@@ -1088,10 +1092,10 @@
     padding: 4px 0;
     overflow-wrap: anywhere;
   }
-  .zen-toast:not([data-action]) {
+  .zen-message-toast:not([data-action]) {
     padding-right: 14px;
   }
-  .zen-toast[data-kind='error'] .zen-message-text {
+  .zen-message-toast[data-kind='error'] .zen-message-text {
     color: var(--v2-danger);
   }
   /* The desktop sidebar's toast: the small type, a 28 button, in the sidebar's own column. */
@@ -1104,7 +1108,7 @@
   .zen-message-compact .zen-message-text {
     padding: 3px 0;
   }
-  .zen-message-compact.zen-toast:not([data-action]) {
+  .zen-message-compact.zen-message-toast:not([data-action]) {
     padding-right: 10px;
   }
   .zen-message-compact .zen-message-button {

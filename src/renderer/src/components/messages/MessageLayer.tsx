@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useState } from 'react'
-import { coverBandStore, uiStore } from '@renderer/lib/ui'
+import { claimMessageCards, coverBandStore, uiStore } from '@renderer/lib/ui'
 import { BannerCard } from './BannerCard'
 import { bannerSlots, coverFor } from './stack'
 import { ToastCard } from './ToastCard'
@@ -10,7 +10,8 @@ import { ToastCard } from './ToastCard'
  * newest on top, older ones pushed down), the toast sits at its bottom edge. The layer clips to
  * the frame so cards arrive from and leave by its edges, and it tells the layout reporter how
  * much of the frame's edges the cards cover, so the host clips the page out from under them and
- * lets touches through to them (`coverBandStore`).
+ * lets touches through to them (`coverBandStore`). While it is mounted, messages follow the cards'
+ * semantics (`claimMessageCards`).
  */
 export function MessageLayer(): JSX.Element | null {
   const toasts = uiStore.use((s) => s.toasts)
@@ -19,6 +20,7 @@ export function MessageLayer(): JSX.Element | null {
   const measure = useCallback((id: number, height: number): void => {
     setHeights((prev) => (prev[id] === height ? prev : { ...prev, [id]: height }))
   }, [])
+  useEffect(() => claimMessageCards(), [])
 
   const live = banners.filter((b) => !b.leaving)
   const { y, height: stackHeight } = bannerSlots(banners.map((b) => heights[b.id] ?? 0))

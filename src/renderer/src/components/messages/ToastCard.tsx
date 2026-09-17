@@ -35,7 +35,7 @@ export function ToastCard({ toast, compact, onMeasure }: Props): JSX.Element {
         ref.current = el
         if (el && onMeasure) onMeasure(toast.id, el.offsetHeight)
       }}
-      className={cn('zen-message zen-toast', compact && 'zen-message-compact')}
+      className={cn('zen-message zen-message-toast', compact && 'zen-message-compact')}
       data-kind={toast.kind}
       data-action={toast.action ? '' : undefined}
       role="status"

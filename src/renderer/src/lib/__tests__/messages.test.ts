@@ -7,6 +7,7 @@ const {
   MAX_BANNERS,
   TOAST_ACTION_DURATION,
   TOAST_DURATION,
+  claimMessageCards,
   dismissBanner,
   dismissToast,
   forgetBanner,
@@ -26,12 +27,63 @@ const toasts = (): Toast[] => uiStore.get().toasts
 const banners = (): Banner[] => uiStore.get().banners
 const live = <T extends { leaving?: boolean }>(items: T[]): T[] => items.filter((m) => !m.leaving)
 
+/** The phone shell (or the Android sidebar) is up: messages are on the cards. */
+let releaseCards: (() => void) | null = null
+
 beforeEach(() => {
   vi.useFakeTimers()
   uiStore.set({ toasts: [], banners: [] })
+  releaseCards = claimMessageCards()
 })
 afterEach(() => {
+  releaseCards?.()
+  releaseCards = null
   vi.useRealTimers()
+})
+
+describe('plain toasts (the desktop sidebar, no card mounted)', () => {
+  beforeEach(() => {
+    releaseCards?.()
+    releaseCards = null
+  })
+
+  it('every toast joins the column and lives its full time, identical ones too', () => {
+    pushToast('Saved')
+    pushToast('Saved')
+    pushToast('Copied', 'error')
+    expect(toasts().map((t) => [t.message, t.kind, Boolean(t.leaving)])).toEqual([
+      ['Saved', 'info', false],
+      ['Saved', 'info', false],
+      ['Copied', 'error', false]
+    ])
+    vi.advanceTimersByTime(TOAST_DURATION - 1)
+    expect(toasts()).toHaveLength(3)
+    vi.advanceTimersByTime(1)
+    expect(toasts()).toHaveLength(0)
+  })
+
+  it('a dismissed toast or banner goes at once: there is no card to move it', () => {
+    pushToast('Once')
+    dismissToast(toasts()[0].id)
+    expect(toasts()).toHaveLength(0)
+    const onDismiss = vi.fn()
+    const id = showBanner({ title: 'Plain', onDismiss })
+    dismissBanner(id, 'close')
+    expect(banners()).toHaveLength(0)
+    expect(onDismiss).toHaveBeenCalledWith('close')
+  })
+
+  it('a claim switches the semantics on for the cards, and its release off again', () => {
+    const release = claimMessageCards()
+    pushToast('Saved')
+    pushToast('Copied')
+    expect(toasts().map((t) => Boolean(t.leaving))).toEqual([true, false])
+    release()
+    uiStore.set({ toasts: [] })
+    pushToast('Saved')
+    pushToast('Copied')
+    expect(toasts().map((t) => Boolean(t.leaving))).toEqual([false, false])
+  })
 })
 
 describe('toasts', () => {

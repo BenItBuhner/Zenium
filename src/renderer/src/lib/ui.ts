@@ -313,14 +313,37 @@ export const TOAST_ACTION_DURATION = 5000
 /** Banners beyond this many push the oldest out. */
 export const MAX_BANNERS = 3
 /**
- * A card animates itself off and then forgets itself; with no card mounted (a desktop window
- * with the sidebar collapsed) the message is swept out after the exit would have ended anyway.
+ * A card animates itself off and then forgets itself; should none report (the card unmounted
+ * mid-exit) the message is swept out after the exit would have ended anyway.
  */
 const EXIT_SWEEP_MS = 800
 
 export interface ToastOptions {
   action?: MessageAction
   duration?: number
+}
+
+/**
+ * The shells that show messages on the animated cards (`components/messages`: the phone shell,
+ * the Android sidebar) claim so while mounted. On the cards one toast is live at a time, a
+ * repeat restarts its clock, and a dismissed message animates off before it is forgotten.
+ * Without a claim the desktop sidebar's plain column of toasts keeps the semantics it always
+ * had: every toast joins the column, lives its full time and simply goes. The desktop program
+ * moves desktop over by mounting the cards, which is the claim.
+ */
+const cardHosts = new Set<symbol>()
+
+/** Say that messages are shown on the cards from now on; call the return value when they stop. */
+export function claimMessageCards(): () => void {
+  const token = Symbol('message cards')
+  cardHosts.add(token)
+  return () => {
+    cardHosts.delete(token)
+  }
+}
+
+function onCards(): boolean {
+  return cardHosts.size > 0
 }
 
 let messageSeq = 0
@@ -341,9 +364,10 @@ function disarmClock(id: number): number | null {
 }
 
 /**
- * Show a toast. One toast is live at a time: a new one sends the current one off (the two pass
- * each other), except that the same message again just restarts its clock, so a key held down
- * does not stack a column of identical toasts.
+ * Show a toast. On the cards one toast is live at a time: a new one sends the current one off
+ * (the two pass each other), except that the same message again just restarts its clock, so a
+ * key held down does not stack a column of identical toasts. The plain desktop column takes
+ * every toast as it always did.
  */
 export function pushToast(
   message: string,
@@ -351,23 +375,32 @@ export function pushToast(
   opts: ToastOptions = {}
 ): void {
   const duration = opts.duration ?? (opts.action ? TOAST_ACTION_DURATION : TOAST_DURATION)
-  const live = uiStore.get().toasts.find((t) => !t.leaving)
-  if (live && live.message === message && live.kind === kind && !opts.action && !live.action) {
-    armClock(live.id, duration, () => dismissToast(live.id))
-    return
+  if (onCards()) {
+    const live = uiStore.get().toasts.find((t) => !t.leaving)
+    if (live && live.message === message && live.kind === kind && !opts.action && !live.action) {
+      armClock(live.id, duration, () => dismissToast(live.id))
+      return
+    }
+    if (live) dismissToast(live.id)
   }
-  if (live) dismissToast(live.id)
   const id = ++messageSeq
   const toast: Toast = { id, message, kind, duration, action: opts.action }
   uiStore.set((s) => ({ toasts: [...s.toasts, toast] }))
   armClock(id, duration, () => dismissToast(id))
 }
 
-/** Send a toast on its way; the card slides off and calls `forgetToast` when it is gone. */
+/**
+ * Send a toast on its way: its card slides off and calls `forgetToast` when it is gone; a plain
+ * toast (no card to move it) just goes.
+ */
 export function dismissToast(id: number): void {
   disarmClock(id)
   const toast = uiStore.get().toasts.find((t) => t.id === id)
   if (!toast || toast.leaving) return
+  if (!onCards()) {
+    forgetToast(id)
+    return
+  }
   uiStore.set((s) => ({ toasts: s.toasts.map((t) => (t.id === id ? { ...t, leaving: true } : t)) }))
   setTimeout(() => forgetToast(id), EXIT_SWEEP_MS)
 }
@@ -419,10 +452,14 @@ export function dismissBanner(id: number, reason: BannerDismissReason = 'program
   disarmClock(id)
   const banner = uiStore.get().banners.find((b) => b.id === id)
   if (!banner || banner.leaving) return
-  uiStore.set((s) => ({
-    banners: s.banners.map((b) => (b.id === id ? { ...b, leaving: true } : b))
-  }))
-  setTimeout(() => forgetBanner(id), EXIT_SWEEP_MS)
+  if (onCards()) {
+    uiStore.set((s) => ({
+      banners: s.banners.map((b) => (b.id === id ? { ...b, leaving: true } : b))
+    }))
+    setTimeout(() => forgetBanner(id), EXIT_SWEEP_MS)
+  } else {
+    forgetBanner(id)
+  }
   banner.onDismiss?.(reason)
 }
 

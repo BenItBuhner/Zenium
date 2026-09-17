@@ -83,6 +83,10 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   const banner = !phone && !state.window.fullscreen && wantsDefaultBrowserBanner(state)
   const crashRestore = !phone ? state.crashRestore : null
 
+  // The load bar is the phone's (and Android's at any width); the desktop program has not adopted
+  // it yet, so Electron's wide layout renders the frame alone as it did.
+  const loadBar = phone || state.platform === 'android'
+
   // Overlays are hosted beside the frame, not inside it: on phones the frame recedes (scales to
   // .97) under a sheet, and a sheet mounted within it would shrink with the page – its 44 px
   // targets measured 42.7. The wrapper has the frame's box and no transform of its own.
@@ -157,7 +161,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
         )}
       </div>
       {/* The bar is the frame's edge: it recedes with the frame, and overlays cover both. */}
-      <LoadProgress tab={tab} hidden={contentHidden || glanceActive || foreign} />
+      {loadBar && <LoadProgress tab={tab} hidden={contentHidden || glanceActive || foreign} />}
       {ui.overlay !== 'none' && <OverlayHost state={state} ui={ui} />}
     </div>
   )
