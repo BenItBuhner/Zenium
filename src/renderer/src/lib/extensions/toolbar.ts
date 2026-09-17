@@ -4,8 +4,12 @@ import type { ExtensionInfo } from '@shared/types'
 export const TOOLBAR_BUTTON = 28
 export const TOOLBAR_GAP = 2
 
-/** Narrowest address pill worth keeping before actions start folding into the puzzle menu. */
-export const MIN_PILL_WIDTH = 140
+/**
+ * Narrowest address pill worth keeping before actions start folding into the puzzle menu: the
+ * site icon and about ten characters of host. A 240 sidebar is under it with no actions at all,
+ * so there every action lives in the panel until the sidebar is widened.
+ */
+export const MIN_PILL_WIDTH = 120
 
 export interface ToolbarFit {
   /** Pinned actions that get their own 28 button, in pin order. */

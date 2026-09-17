@@ -161,7 +161,8 @@ export class ExtensionService implements ExtensionHost {
         pinned: entry.pinned ?? false,
         allowFileAccess: entry.allowFileAccess ?? false,
         installedAt: entry.installedAt,
-        updateState: 'up-to-date'
+        updateState: 'up-to-date',
+        warnings: permissionWarnings(manifest)
       }
     })
   }
@@ -266,12 +267,34 @@ export class ExtensionService implements ExtensionHost {
     await this.installFromDrop([result.filePaths[0]], win)
   }
 
-  /** Dropped or picked paths: a folder with a manifest loads unpacked; packages wait for the store PR. */
+  /**
+   * Dropped or picked paths: a folder with a manifest is confirmed like a store install and then
+   * loaded unpacked; packages wait for the store PR.
+   */
   async installFromDrop(paths: string[], win: ZenWindow): Promise<void> {
     for (const path of paths) {
       const stat = statOf(path)
       if (stat?.isDirectory()) {
-        await this.add(path, win)
+        if (this.entries.some((e) => e.path === path)) {
+          this.browser.toast('This extension is already installed.', 'info', win)
+          continue
+        }
+        const manifest = readManifest(path)
+        if (!manifest) {
+          this.browser.toast('That folder has no manifest.json.', 'error', win)
+          continue
+        }
+        const accepted = await this.ask(
+          {
+            kind: 'install',
+            name: manifest.name ?? path.split(/[\\/]/).pop() ?? 'Extension',
+            icon: iconDataUrl(path, manifest),
+            warnings: permissionWarnings(manifest),
+            source: 'unpacked'
+          },
+          win
+        )
+        if (accepted) await this.add(path, win)
         continue
       }
       const ext = extname(path).toLowerCase()
@@ -508,6 +531,66 @@ function roundRect(r: Rect): Rect {
 
 function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
+}
+
+// Extensions UI (W1-D): reconcile with the store PR on rebase – its `permissionMessages.ts`
+// owns the full table; this is the handful of Chrome's install-warning strings the UI needs to
+// show real rows until then.
+const PERMISSION_WARNINGS: Record<string, string> = {
+  tabs: 'Read your browsing history',
+  history: 'Read and change your browsing history on all your signed-in devices',
+  bookmarks: 'Read and change your bookmarks',
+  downloads: 'Manage your downloads',
+  clipboardRead: 'Read data you copy and paste',
+  clipboardWrite: 'Modify data you copy and paste',
+  notifications: 'Display notifications',
+  geolocation: 'Detect your physical location',
+  management: 'Manage your apps, extensions, and themes',
+  nativeMessaging: 'Communicate with cooperating native applications',
+  privacy: 'Change your privacy-related settings',
+  topSites: 'Read a list of your most frequently visited websites',
+  webNavigation: 'Read your browsing history',
+  sessions: 'Read your recently closed tabs',
+  contentSettings: 'Change your settings that control websites’ access to features',
+  debugger: 'Access the page debugger backend',
+  proxy: 'Read and change your proxy settings',
+  pageCapture: 'Save the content of pages you visit',
+  desktopCapture: 'Capture content of your screen',
+  tabCapture: 'Capture content of your tabs',
+  identity: 'Know your email address',
+  declarativeNetRequestFeedback: 'Read your browsing history',
+  ttsEngine: 'Read all text spoken using synthesized speech',
+  browsingData: 'Clear browsing data'
+}
+const ALL_HOSTS = /^(<all_urls>|\*:\/\/\*\/|https?:\/\/\*\/|file:\/\/\/\*)/
+
+function permissionWarnings(manifest: Manifest | null): string[] {
+  if (!manifest) return []
+  const permissions = strings(manifest.permissions)
+  const hosts = [
+    ...strings(manifest.host_permissions),
+    ...permissions.filter((p) => p.includes('/'))
+  ]
+  const out: string[] = []
+  if (hosts.some((h) => ALL_HOSTS.test(h)))
+    out.push('Read and change all your data on all websites')
+  else {
+    const named = hosts
+      .map((h) => h.replace(/^\*:\/\/|^https?:\/\//, '').replace(/\/.*$/, ''))
+      .filter((h) => h.length > 0 && h !== '*')
+    const unique = [...new Set(named)]
+    if (unique.length > 0)
+      out.push(
+        unique.length <= 3
+          ? `Read and change your data on ${unique.join(', ')}`
+          : 'Read and change your data on a number of websites'
+      )
+  }
+  for (const permission of permissions) {
+    const message = PERMISSION_WARNINGS[permission]
+    if (message && !out.includes(message)) out.push(message)
+  }
+  return out
 }
 
 function statOf(path: string): ReturnType<typeof statSync> | null {
