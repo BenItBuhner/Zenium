@@ -14,11 +14,6 @@ name: Android extension store demo
 # fetches the package and names the artifact.
 on:
   workflow_dispatch:
-  # TEMPORARY: runs on pushes to the store branch while the engine PR is verified; removed
-  # before the PR is ready.
-  push:
-    branches:
-      - cursor/android-extension-store-registry-5223
 
 permissions:
   contents: read
