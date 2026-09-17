@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.util.Log
 import android.webkit.ConsoleMessage
@@ -45,12 +46,6 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         overScrollMode = OVER_SCROLL_NEVER
         isVerticalScrollBarEnabled = false
         isHorizontalScrollBarEnabled = false
-        // The one renderer process every WebView of the app shares runs the browser core in this
-        // view. By default its priority is waived whenever the view is not visible – the screen
-        // turning off is enough – which makes it the low-memory killer's first pick during every
-        // screen-off and turns a wake into a reboot of the browser. Keep it as important as the
-        // app itself; while the app is stopped that is no more than the app already gets.
-        setRendererPriorityPolicy(RENDERER_PRIORITY_IMPORTANT, false)
         addJavascriptInterface(JsBridge(host), "__zenNative")
         webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
@@ -62,6 +57,17 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
                 if (url.startsWith(APP_ORIGIN) || url.startsWith(BuildConfig.DEV_SERVER_URL.ifEmpty { "\u0000" })) return false
                 host.openExternal(url)
                 return true
+            }
+
+            override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                // A document after the first: the chrome reloaded itself (its error screen offers
+                // that). Everything queued was for the core in the old document; the host drops the
+                // tab views that core owned, and the new one recreates them.
+                if (!ready) return
+                ready = false
+                whenReady.clear()
+                Log.w("ZenChrome", "the chrome document is being replaced ($url); dropping the old core's tab views")
+                host.onChromeDocumentReplaced()
             }
 
             override fun onPageFinished(view: WebView, url: String) {
