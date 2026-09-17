@@ -229,12 +229,11 @@ class BackDemo {
         commitSwipe()
         SystemClock.sleep(2_800)
 
-        // 4. The URL bar: opened from the pill; the keyboard is put away first (a back with the
-        //    keyboard up goes to the keyboard), then the bar lifts away with the finger.
+        // 4. The URL bar: opened from the pill; its input is blurred first (with the keyboard up,
+        //    back belongs to the keyboard), then the bar lifts away with the finger.
         tapLabel("Address")
-        SystemClock.sleep(1_500)
-        hideKeyboard()
-        SystemClock.sleep(600)
+        SystemClock.sleep(1_200)
+        blurChrome()
         dismissWithBack(0.30f * w, "03-urlbar-dragging")
 
         // 5. The three-dot menu: dragged a third of the way and let go (springs back up), then
@@ -243,15 +242,16 @@ class BackDemo {
         SystemClock.sleep(1_200)
         dismissWithBack(0.30f * w, "04-menu-dragging")
 
-        // 6. A panel: History, from the menu.
+        // 6. A panel: History, from the menu (its search field takes the keyboard; blur it too).
         tapLabel("Menu")
         SystemClock.sleep(1_200)
         tapLabel("History")
-        SystemClock.sleep(1_600)
+        SystemClock.sleep(1_200)
+        blurChrome()
         dismissWithBack(0.30f * w, "05-panel-dragging")
 
         // 7. The site information sheet, from the pill's site icon.
-        tapLabel("Site information")
+        tapSiteIcon()
         SystemClock.sleep(1_800)
         dismissWithBack(0.30f * w, "06-siteinfo-dragging")
 
@@ -288,11 +288,33 @@ class BackDemo {
         SystemClock.sleep(settle)
     }
 
-    private fun hideKeyboard() {
+    /**
+     * Take focus off the chrome's input: the keyboard goes away with it, and so does the
+     * keyboard's own back callback, which otherwise takes the next swipe (as it should).
+     */
+    private fun blurChrome() {
         instrumentation.runOnMainSync {
-            val imm = activity.getSystemService(InputMethodManager::class.java)
-            imm?.hideSoftInputFromWindow(activity.host.chrome.windowToken, 0)
+            activity.host.chrome.evaluateJavascript("document.activeElement&&document.activeElement.blur()", null)
+            activity.getSystemService(InputMethodManager::class.java)
+                ?.hideSoftInputFromWindow(activity.host.chrome.windowToken, 0)
         }
+        SystemClock.sleep(1_800)
+    }
+
+    /** The site icon at the start of the address pill (by label, else by where it sits in the pill). */
+    private fun tapSiteIcon() {
+        val icon = findByLabel("Site information")
+        if (icon != null) {
+            Finger().tap(icon.exactCenterX(), icon.exactCenterY())
+            return
+        }
+        val pill = findByLabel(PILL_LABEL)
+        if (pill == null) {
+            Log.w(TAG, "no pill to tap the site icon in")
+            return
+        }
+        val density = app.resources.displayMetrics.density
+        Finger().tap(pill.left + 24f * density, pill.exactCenterY())
     }
 
     private fun beat() = SystemClock.sleep(1_400)
