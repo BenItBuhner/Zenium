@@ -760,6 +760,11 @@ export interface DownloadSettings {
    * types automatically"); dangerous types never auto-open.
    */
   autoOpenTypes: string[]
+  /**
+   * Desktop toolbar (the desktop program's additive key): keep the downloads button in the toolbar
+   * when nothing is downloading, like Chrome's pinned button or Edge's default.
+   */
+  alwaysShowButton: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -1861,6 +1866,10 @@ export interface Commands {
   'download.chooseDirectory': { args: void; result: string | null }
   /** Show the downloads panel (Ctrl/Cmd+J, the app menu, a completion notification). */
   'download.openPanel': { args: void; result: void }
+  /** Desktop UI plumbing: begin an OS drag of a finished file out of the downloads page. */
+  'download.dragOut': { args: { id: string }; result: void }
+  /** Desktop UI plumbing: open the folder downloads are saved to in the file manager. */
+  'download.openFolder': { args: void; result: void }
 
   'find.start': {
     /** `newSession` starts a fresh search for `text`; otherwise steps to the next/previous match. */
@@ -2143,6 +2152,8 @@ export interface Events {
   'download.changed': { item: DownloadItem; kind: DownloadChangeKind }
   /** A dangerous or suspicious download finished and waits for Keep / Discard. */
   'download.danger': { id: string }
+  /** Desktop shell: show the downloads bubble with this item marked (a notification was clicked). */
+  'downloads.reveal': { id: string | null }
   toast: { message: string; kind?: 'info' | 'error' }
   /** Link hover status text (Firefox shows this in the bottom corner). */
   status: { text: string }

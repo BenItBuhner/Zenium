@@ -23,6 +23,7 @@ import { FileStoreIO } from './storeIo'
 import { SessionManager, buildUserAgent } from './sessions'
 import { installZenProtocol } from './protocol'
 import { ElectronDownloads } from './downloads'
+import { ElectronDownloadsShell } from './downloadsShell'
 import { ElectronMenus } from './menus'
 import { ElectronTabViewHost, copyImageFromUrl } from './views'
 import { ElectronWindowFactory, type ElectronWindow } from './window'
@@ -96,6 +97,8 @@ export class ElectronPlatform implements Platform {
   /** The webRequest multiplexer and text matcher; created with the browser in `start`. */
   requestBlocking!: ElectronBlocking
   readonly translate: ElectronTranslateHost
+  /** Taskbar progress, dock badge and completion notifications for downloads. */
+  downloadsShell: ElectronDownloadsShell | null = null
   browser!: Browser
   private readonly profileDir: string
 
@@ -112,10 +115,13 @@ export class ElectronPlatform implements Platform {
     this.views = new ElectronTabViewHost(this.sessions)
     this.siteData = new ElectronSiteData(this.sessions)
     this.menus = new ElectronMenus()
-    this.downloads = new ElectronDownloads(() => {
-      const downloads = resolveDownloadSettings(this.browser.state.settings)
-      return { askWhereToSave: downloads.askWhereToSave, directory: downloads.directory }
-    })
+    this.downloads = new ElectronDownloads(
+      () => {
+        const downloads = resolveDownloadSettings(this.browser.state.settings)
+        return { askWhereToSave: downloads.askWhereToSave, directory: downloads.directory }
+      },
+      () => this.browser.state.settings.appIcon
+    )
     this.dialogs = {
       confirm: async (options: ConfirmOptions, win?: ZenWindow) => {
         const bw = browserWindowOf(win)
@@ -301,6 +307,7 @@ export class ElectronPlatform implements Platform {
     // session's one onBeforeSendHeaders slot; persistent sessions only, like the store preload.
     this.requestBlocking.registerHeaderRewrite(webstoreClientHints, { persistentOnly: true })
     this.requestBlocking.registerHeaderRewrite(edgeStoreUserAgent, { persistentOnly: true })
+    this.downloadsShell = new ElectronDownloadsShell(browser)
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
       extensionResources.install(ses)

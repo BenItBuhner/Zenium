@@ -511,6 +511,10 @@ export interface DownloadHost {
    * lives, or null when it could not be kept. Synchronous: it runs from the quit handler.
    */
   park?(item: DownloadItem): string | null
+  /** Desktop UI plumbing: begin a native drag of a finished file out of the chrome. */
+  startFileDrag?(item: DownloadItem, win: ZenWindow): void
+  /** Desktop UI plumbing: open the folder downloads land in with the system file manager. */
+  openDownloadsFolder?(): void
 }
 
 export interface SessionHost {
