@@ -215,7 +215,7 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         if (awaitCredentialPrompt(10_000)) {
             SystemClock.sleep(900)
             step("dismissing the device prompt with back")
-            back()
+            if (!dismissCredentialPrompt()) error("the device prompt did not close")
         } else {
             step("no credential prompt for the copy")
         }
@@ -605,6 +605,41 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         SystemClock.sleep(800)
     }
 
+    /**
+     * Leave the credential prompt unanswered: back closes the PIN field's keyboard first and the
+     * prompt itself next, so it is pressed until the prompt is gone (the core counts that as a
+     * refusal and asks for the passphrase instead). A Cancel control of the prompt is the fallback.
+     */
+    private fun dismissCredentialPrompt(): Boolean {
+        for (attempt in 1..4) {
+            if (attempt == 3) {
+                dumpNames("the credential prompt", CREDENTIAL_PACKAGES)
+                val cancel = nodes { node ->
+                    node.packageName?.toString() in CREDENTIAL_PACKAGES && node.isClickable &&
+                        (node.isNamed("Cancel") || node.isNamed("Back"))
+                }.firstOrNull()
+                if (cancel != null) {
+                    step("clicking the prompt's ${cancel.contentDescription ?: cancel.text}")
+                    cancel.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                } else {
+                    back()
+                }
+            } else {
+                back()
+            }
+            val deadline = SystemClock.uptimeMillis() + 2_500
+            while (SystemClock.uptimeMillis() < deadline) {
+                if (!credentialPromptShowing()) {
+                    step("the device prompt went after $attempt press${if (attempt > 1) "es" else ""}")
+                    return true
+                }
+                SystemClock.sleep(200)
+            }
+            step("the device prompt is still up (attempt $attempt)")
+        }
+        return false
+    }
+
     // --- finding, tapping, typing ----------------------------------------------------------------
 
     /**
@@ -666,10 +701,10 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         return node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
     }
 
-    /** The names of the app's visible nodes, into the step log, when a lookup has failed. */
-    private fun dumpNames(where: String) {
+    /** The names of the visible nodes of `packages` (the app's), into the step log, when a lookup has failed. */
+    private fun dumpNames(where: String, packages: Set<String> = setOf(app.packageName)) {
         val names = nodes { node ->
-            node.packageName?.toString() == app.packageName && node.isVisibleToUser &&
+            node.packageName?.toString() in packages && node.isVisibleToUser &&
                 (!node.text.isNullOrBlank() || !node.contentDescription.isNullOrBlank())
         }.map { node ->
             val name = (node.contentDescription?.takeIf { it.isNotBlank() } ?: node.text).toString().trim()
