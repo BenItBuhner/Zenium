@@ -78,6 +78,9 @@ class TabWebView(
             allowContentAccess = false
             loadWithOverviewMode = true
             useWideViewPort = true
+            // Chrome boosts the text of desktop layouts shown zoomed out so it stays legible;
+            // WebView's default algorithm leaves it at the size of the 980 px layout.
+            layoutAlgorithm = WebSettings.LayoutAlgorithm.TEXT_AUTOSIZING
             setSupportZoom(true)
             builtInZoomControls = true
             displayZoomControls = false
@@ -417,8 +420,9 @@ class TabWebView(
     }
 
     /**
-     * Chrome sizes text by the system font scale (its "Text scaling" defaults to it); WebView
-     * leaves text at 100% unless told, so a phone set to large text got small pages here.
+     * Chrome sizes text by the system font scale; WebView leaves text at 100% unless told, so a
+     * phone set to large text got small pages here. With text autosizing on, the zoom is applied
+     * the way Chrome applies its font scale factor rather than as a flat text zoom.
      */
     private fun applyTextZoom() {
         val fontScale = resources.configuration.fontScale.toDouble()
