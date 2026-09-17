@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { useState } from 'react'
-import { ArrowDown, ArrowUp, Sparkles, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, FolderOpen, Sparkles, Trash2 } from 'lucide-react'
 import type {
   ColorScheme,
   ContainerColor,
@@ -44,6 +44,7 @@ export type SettingsSection =
   | 'look'
   | 'compact'
   | 'tabs'
+  | 'downloads'
   | 'resources'
   | 'search'
   | 'spaces'
@@ -61,6 +62,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'look', label: 'Look and Feel' },
   { id: 'compact', label: 'Compact Mode' },
   { id: 'tabs', label: 'Tab Management' },
+  { id: 'downloads', label: 'Downloads' },
   { id: 'resources', label: 'Resources' },
   { id: 'search', label: 'Search' },
   { id: 'spaces', label: 'Space Routing' },
@@ -161,6 +163,7 @@ export function SettingsPanel({
             {section === 'tabs' && (
               <TabsSection s={s} set={set} windows={state.capabilities.windows} />
             )}
+            {section === 'downloads' && <DownloadsSection state={state} set={set} />}
             {section === 'resources' && <ResourcesSection state={state} set={set} />}
             {section === 'search' && <SearchSection state={state} set={set} />}
             {section === 'spaces' && <SpaceRoutingSection state={state} set={set} />}
@@ -288,6 +291,79 @@ function LookSection({
   )
 }
 
+function DownloadsSection({
+  state,
+  set
+}: {
+  state: UIState
+  set: (p: Partial<Settings>) => void
+}): JSX.Element {
+  const s = state.settings
+  const d = s.downloads
+  const files = state.capabilities.downloadFiles
+  const location = d.location || state.downloadsDir
+  return (
+    <>
+      <Group title="Saving">
+        {files && (
+          <Row label="Location" hint={location || 'The system Downloads folder'}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => run('download.chooseLocation', undefined)}
+            >
+              Change
+            </Button>
+          </Row>
+        )}
+        <Row label="Ask where to save each file">
+          <Switch checked={s.askWhereToSave} onCheckedChange={(v) => set({ askWhereToSave: v })} />
+        </Row>
+      </Group>
+      <Group title="When a download finishes">
+        <Row
+          label="Show downloads when done"
+          hint="Open the downloads bubble once the last download in progress finishes."
+        >
+          <Switch
+            checked={d.showWhenDone}
+            onCheckedChange={(v) => set({ downloads: { ...d, showWhenDone: v } })}
+          />
+        </Row>
+        <Row label="Show a notification when a download finishes">
+          <Switch
+            checked={d.notifyOnComplete}
+            onCheckedChange={(v) => set({ downloads: { ...d, notifyOnComplete: v } })}
+          />
+        </Row>
+      </Group>
+      <Group title="Toolbar">
+        <Row
+          label="Always show downloads button"
+          hint="Keep the button in the toolbar even when nothing is downloading."
+        >
+          <Switch
+            checked={d.alwaysShowButton}
+            onCheckedChange={(v) => set({ downloads: { ...d, alwaysShowButton: v } })}
+          />
+        </Row>
+        {files && (
+          <Row label="Downloads folder">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => run('download.openFolder', undefined)}
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+              Open downloads folder
+            </Button>
+          </Row>
+        )}
+      </Group>
+    </>
+  )
+}
+
 function CompactSection({
   s,
   set
@@ -369,9 +445,6 @@ function TabsSection({
         </Row>
         <Row label="Restore previous session on startup">
           <Switch checked={s.restoreSession} onCheckedChange={(v) => set({ restoreSession: v })} />
-        </Row>
-        <Row label="Always ask where to save downloads">
-          <Switch checked={s.askWhereToSave} onCheckedChange={(v) => set({ askWhereToSave: v })} />
         </Row>
       </Group>
       {windows && (
