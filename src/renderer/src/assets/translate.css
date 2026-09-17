@@ -14,11 +14,6 @@
 .zen-translate-danger {
   color: var(--v2-danger);
 }
-.zen-translate-title {
-  font-size: var(--v2-font-heading);
-  font-weight: var(--v2-weight-heading);
-  line-height: 24px;
-}
 .zen-translate-glyph {
   flex-shrink: 0;
   width: var(--v2-icon);
@@ -59,17 +54,23 @@
   stroke-width: var(--v2-icon-stroke);
 }
 
-/* A menulist: the platform's own popup behind a bordered, filled box with a chevron. */
+/*
+ * A menulist (§9.13): a bordered, filled box with the picked option and a chevron. Its popup is
+ * never the platform's: a popover under the trigger on the desktop, a sheet on phones (below).
+ */
 .zen-translate-menulist {
   position: relative;
   display: inline-flex;
   flex-shrink: 0;
   min-width: 0;
 }
-.zen-translate-menulist > select {
+.zen-translate-menulist > .zen-v2-menulist {
+  display: inline-flex;
   width: 100%;
   height: var(--v2-control);
-  padding: 0 28px 0 10px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 10px;
   border: 1px solid var(--v2-border);
   border-radius: var(--v2-radius-control);
   background: var(--v2-fill);
@@ -78,34 +79,95 @@
   font-size: var(--v2-font-body);
   font-weight: var(--v2-weight-button);
   line-height: var(--v2-line-body);
-  text-overflow: ellipsis;
-  appearance: none;
+  text-align: left;
   transition: background 120ms var(--zen-ease);
 }
-.zen-translate-menulist > select:hover:not(:disabled) {
+.zen-translate-menulist > .zen-v2-menulist:hover:not(:disabled),
+.zen-translate-menulist > .zen-v2-menulist[aria-expanded='true'] {
   background: var(--v2-fill-hover);
 }
-.zen-translate-menulist > select:disabled {
+.zen-translate-menulist > .zen-v2-menulist:disabled {
   opacity: 0.4;
 }
-/* The popup itself is the platform's, but its rows keep to the panel colours (Chromium honours these). */
-.zen-translate-menulist > select > option {
-  background: var(--v2-panel);
-  color: var(--v2-text);
+.zen-translate-menulist > .zen-v2-menulist > span {
+  min-width: 0;
+  flex: 1;
 }
-.zen-translate-menulist > svg {
-  position: absolute;
-  top: 50%;
-  right: 8px;
+.zen-translate-menulist > .zen-v2-menulist > svg {
+  flex-shrink: 0;
   width: var(--v2-icon);
   height: var(--v2-icon);
   stroke-width: var(--v2-icon-stroke);
-  transform: translateY(-50%);
-  color: var(--v2-text);
-  pointer-events: none;
 }
-.zen-translate-menulist > select:disabled + svg {
-  opacity: 0.4;
+/* The popover: a --v2-panel at radius 12 and padding 6, 28 px rows at radius 6, a trailing check. */
+.zen-translate-menulist-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+}
+.zen-translate-menulist-popup {
+  position: fixed;
+  max-width: min(360px, calc(100vw - 16px));
+  padding: 6px;
+  margin: 0;
+  overflow-y: auto;
+  border: 1px solid var(--v2-border);
+  border-radius: 12px;
+  background: var(--v2-panel);
+  box-shadow: var(--v2-shadow-panel);
+  color: var(--v2-text);
+  font-size: 14px;
+  line-height: var(--v2-line-body);
+  list-style: none;
+  outline: none;
+  scrollbar-width: thin;
+}
+.zen-translate-menulist-popup > li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  cursor: default;
+}
+.zen-translate-menulist-popup > li[data-active] {
+  background: var(--v2-fill);
+}
+.zen-translate-menulist-popup > li:active {
+  background: var(--v2-fill-hover);
+}
+.zen-translate-menulist-popup > li > svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.5;
+}
+/* The sheet: 44 px rows in the sheet's list style, the current option carrying a radio glyph. */
+.zen-translate-menulist-rows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0 0 4px;
+  list-style: none;
+}
+.zen-translate-menulist-sheet .zen-sheet-item {
+  height: var(--v2-row);
+  border-radius: var(--v2-radius-inner);
+  font-size: var(--v2-font-body);
+}
+.zen-translate-menulist-sheet .zen-sheet-item:active:not(:disabled) {
+  background: var(--v2-fill);
+}
+/* The checked radio of §9.14 as a marker: a 20 px accent circle around a 6 px dot of the surface. */
+.zen-translate-radio {
+  flex-shrink: 0;
+  width: var(--v2-checkbox);
+  height: var(--v2-checkbox);
+  border: calc((var(--v2-checkbox) - 6px) / 2) solid var(--v2-accent);
+  border-radius: 50%;
+  background: var(--v2-panel);
 }
 
 /*
@@ -249,6 +311,10 @@
   padding: 8px 8px 8px 16px;
   font-size: var(--v2-font-body);
 }
+/* The action inside the phone bar's row hugs its label with an 88 px minimum (§9.11). */
+:root[data-form-factor='phone'] .zen-translate-bar > .zen-translate-button {
+  min-width: 88px;
+}
 /* The phone bar's two lines: what is happening, then the pair at the description size. */
 .zen-translate-text {
   display: flex;
@@ -323,6 +389,31 @@
 div:has(> .zen-sheet.zen-translate-sheet) > .zen-sheet-scrim {
   background: var(--v2-scrim);
 }
+/*
+ * A phone sheet's header (§9.16): after the 20 px grip strip, 48 tall with the title 17/600 at
+ * line-height 22, centred; the first row starts at 68.
+ */
+.zen-translate-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 48px;
+  padding: 0 44px;
+  font-size: var(--v2-font-heading);
+  font-weight: var(--v2-weight-heading);
+  line-height: 22px;
+  text-align: center;
+}
+/* A sheet's footer actions fill the width on phones (§9.11); the desktop panel's hug and right-align. */
+.zen-translate-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+:root[data-form-factor='phone'] .zen-translate-footer > .zen-translate-button {
+  flex: 1;
+}
 
 /* --- Settings > Languages (§6 settings page, §5 density) ------------------------------------ */
 
@@ -371,6 +462,19 @@ div:has(> .zen-sheet.zen-translate-sheet) > .zen-sheet-scrim {
 }
 .zen-translate-row + .zen-translate-row {
   border-top: 1px solid var(--v2-card-border);
+}
+/* An empty list (§9.17): one sentence at 15/400 and 69%, centred inside a 32 px gutter, top-anchored. */
+.zen-translate-empty {
+  min-height: var(--v2-row);
+  padding: 6px 32px;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  text-align: center;
+}
+:root[data-form-factor='phone'] .zen-translate-empty {
+  padding: 12px 32px;
 }
 .zen-translate-row-add > .zen-translate-menulist {
   min-width: 220px;

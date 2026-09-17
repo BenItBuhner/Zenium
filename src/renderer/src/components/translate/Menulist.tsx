@@ -1,0 +1,355 @@
+import type { JSX, KeyboardEvent, RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { Check, ChevronDown } from 'lucide-react'
+import type { LanguageOption } from '@renderer/lib/translate'
+import { useBackSurface } from '@renderer/lib/back'
+import { useViewport } from '@renderer/lib/formFactor'
+import { cn } from '@renderer/lib/utils'
+import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
+
+/** Space between the trigger and its popover, and between the popover and the window's edges. */
+const GAP = 4
+const MARGIN = 8
+/** The popover shows at least this many rows before it flips above the trigger. */
+const MIN_ROWS = 5
+const ROW = 28
+const PAD = 6
+
+/**
+ * A menulist on the v2 draft (§9.13): a bordered trigger with a chevron that opens its options
+ * as a `--v2-panel` popover under itself on the desktop – 28 px rows, the current one marked with
+ * a trailing check – and as a bottom sheet of 44 px rows on phones, the current one carrying a
+ * radio glyph; picking an option closes either. Never the platform's own `<select>` popup.
+ */
+export function Menulist({
+  value,
+  options,
+  onChange,
+  label,
+  placeholder,
+  disabled,
+  className
+}: {
+  /** The picked value; null shows `placeholder`. */
+  value: string | null
+  options: LanguageOption[]
+  onChange: (value: string) => void
+  /** Accessible name, and the title of the phone's sheet (the visible text is the value). */
+  label: string
+  placeholder?: string
+  disabled?: boolean
+  className?: string
+}): JSX.Element {
+  const phone = useViewport().formFactor === 'phone'
+  const [open, setOpen] = useState(false)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const current = options.find((o) => o.value === value) ?? null
+
+  const pick = (next: string): void => {
+    setOpen(false)
+    if (next !== value) onChange(next)
+  }
+  const close = (): void => {
+    setOpen(false)
+    trigger.current?.focus({ preventScroll: true })
+  }
+
+  return (
+    <span className={cn('zen-translate-menulist', className)}>
+      <button
+        ref={trigger}
+        type="button"
+        className="zen-v2-menulist"
+        aria-label={label}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled}
+        data-placeholder={current ? undefined : true}
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault()
+            setOpen(true)
+          }
+        }}
+      >
+        <span className="truncate">{current?.label ?? placeholder ?? ''}</span>
+        <ChevronDown aria-hidden />
+      </button>
+      {open &&
+        (phone ? (
+          <Sheet title={label} value={value} options={options} onPick={pick} onClose={close} />
+        ) : (
+          <Popover
+            anchor={trigger}
+            label={label}
+            value={value}
+            options={options}
+            onPick={pick}
+            onClose={close}
+          />
+        ))}
+    </span>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Desktop and tablet: a popover under the trigger
+// ---------------------------------------------------------------------------
+
+interface Placement {
+  left: number
+  top: number
+  minWidth: number
+  maxHeight: number
+}
+
+/** Where a popover of `count` rows goes for a trigger at `rect`: below it, or above when that has more room. */
+function placeUnder(rect: DOMRect, count: number): Placement {
+  const below = window.innerHeight - rect.bottom - GAP - MARGIN
+  const above = rect.top - GAP - MARGIN
+  const wanted = count * ROW + 2 * PAD + 2
+  const flip = below < Math.min(wanted, MIN_ROWS * ROW + 2 * PAD) && above > below
+  const maxHeight = Math.max(ROW + 2 * PAD, Math.min(wanted, flip ? above : below))
+  return {
+    left: Math.max(MARGIN, Math.min(rect.left, window.innerWidth - rect.width - MARGIN)),
+    top: flip ? rect.top - GAP - maxHeight : rect.bottom + GAP,
+    minWidth: rect.width,
+    maxHeight
+  }
+}
+
+function Popover({
+  anchor,
+  label,
+  value,
+  options,
+  onPick,
+  onClose
+}: {
+  anchor: RefObject<HTMLButtonElement | null>
+  label: string
+  value: string | null
+  options: LanguageOption[]
+  onPick: (value: string) => void
+  onClose: () => void
+}): JSX.Element {
+  const list = useRef<HTMLUListElement>(null)
+  const latest = useRef(onClose)
+  useEffect(() => {
+    latest.current = onClose
+  })
+  const [active, setActive] = useState(() => {
+    const index = options.findIndex((o) => o.value === value)
+    return index >= 0 ? index : 0
+  })
+
+  // Under the trigger, at least as wide, inside the window; above it when there is more room there.
+  useLayoutEffect(() => {
+    const el = anchor.current
+    const popup = list.current
+    if (!el || !popup) return
+    const { left, top, minWidth, maxHeight } = placeUnder(
+      el.getBoundingClientRect(),
+      options.length
+    )
+    popup.style.left = `${left}px`
+    popup.style.top = `${top}px`
+    popup.style.minWidth = `${minWidth}px`
+    popup.style.maxHeight = `${maxHeight}px`
+    popup.style.visibility = 'visible'
+  }, [anchor, options.length])
+
+  // The list takes the keyboard while it is open and shows the current option straight away.
+  useEffect(() => {
+    list.current?.focus({ preventScroll: true })
+  }, [])
+  useEffect(() => {
+    list.current?.querySelector<HTMLElement>('[data-active]')?.scrollIntoView({ block: 'nearest' })
+  }, [active])
+  // The window moved under the popover, or the user left it: the popover is stale.
+  useEffect(() => {
+    const away = (): void => latest.current()
+    window.addEventListener('resize', away)
+    window.addEventListener('blur', away)
+    return () => {
+      window.removeEventListener('resize', away)
+      window.removeEventListener('blur', away)
+    }
+  }, [])
+
+  const onKeyDown = (e: KeyboardEvent<HTMLUListElement>): void => {
+    switch (e.key) {
+      case 'ArrowDown':
+        setActive((i) => Math.min(options.length - 1, i + 1))
+        break
+      case 'ArrowUp':
+        setActive((i) => Math.max(0, i - 1))
+        break
+      case 'Home':
+        setActive(0)
+        break
+      case 'End':
+        setActive(options.length - 1)
+        break
+      case 'Enter':
+      case ' ': {
+        const option = options[active]
+        if (option) onPick(option.value)
+        break
+      }
+      case 'Escape':
+      case 'Tab':
+        onClose()
+        break
+      default: {
+        // Type-ahead on the first letter, from the row after the active one.
+        if (e.key.length !== 1 || e.altKey || e.ctrlKey || e.metaKey) return
+        const letter = e.key.toLowerCase()
+        const from = active + 1
+        const next = options.findIndex(
+          (o, i) => i >= from && o.label.toLowerCase().startsWith(letter)
+        )
+        const wrapped =
+          next >= 0 ? next : options.findIndex((o) => o.label.toLowerCase().startsWith(letter))
+        if (wrapped >= 0) setActive(wrapped)
+        else return
+      }
+    }
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  return createPortal(
+    <div
+      className="zen-translate-menulist-layer"
+      onMouseDown={(e) => {
+        e.stopPropagation()
+        onClose()
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        onClose()
+      }}
+    >
+      <ul
+        ref={list}
+        role="listbox"
+        aria-label={label}
+        tabIndex={-1}
+        className="zen-translate-menulist-popup zen-animate-pop"
+        style={{ visibility: 'hidden' }}
+        onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={onKeyDown}
+      >
+        {options.map((option, index) => {
+          const selected = option.value === value
+          return (
+            <li
+              key={option.value}
+              role="option"
+              aria-selected={selected}
+              data-active={index === active || undefined}
+              onPointerMove={() => {
+                if (index !== active) setActive(index)
+              }}
+              onClick={() => onPick(option.value)}
+            >
+              <span className="min-w-0 flex-1 truncate">{option.label}</span>
+              {selected && <Check aria-hidden />}
+            </li>
+          )
+        })}
+      </ul>
+    </div>,
+    document.body
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Phone: a sheet
+// ---------------------------------------------------------------------------
+
+function Sheet({
+  title,
+  value,
+  options,
+  onPick,
+  onClose
+}: {
+  title: string
+  value: string | null
+  options: LanguageOption[]
+  onPick: (value: string) => void
+  onClose: () => void
+}): JSX.Element {
+  const sheet = useRef<BottomSheetHandle>(null)
+  const picked = useRef<string | null>(null)
+
+  useBackSurface({
+    name: 'menulist',
+    onProgress: (progress) => sheet.current?.backProgress(progress),
+    onCommit: () => sheet.current?.commitBack(),
+    onCancel: () => sheet.current?.cancelBack()
+  })
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      sheet.current?.dismiss()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
+  // The current option is in view when the sheet comes up (once the sheet has laid itself out).
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>('.zen-translate-menulist-sheet [aria-selected="true"]')
+        ?.scrollIntoView({ block: 'center' })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [])
+
+  return createPortal(
+    <BottomSheet
+      ref={sheet}
+      className="zen-translate-sheet zen-translate-menulist-sheet"
+      handleLabel="Resize list"
+      onDismissed={() => {
+        const next = picked.current
+        if (next !== null) onPick(next)
+        else onClose()
+      }}
+      header={
+        <div className="zen-translate-sheet-header">
+          <span className="truncate">{title}</span>
+        </div>
+      }
+    >
+      <ul role="listbox" aria-label={title} className="zen-translate-menulist-rows">
+        {options.map((option) => {
+          const selected = option.value === value
+          return (
+            <li key={option.value} role="option" aria-selected={selected}>
+              <button
+                type="button"
+                className="zen-sheet-item"
+                onClick={() => {
+                  picked.current = option.value
+                  sheet.current?.dismiss()
+                }}
+              >
+                <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                {selected && <span className="zen-translate-radio" aria-hidden />}
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </BottomSheet>,
+    document.body
+  )
+}

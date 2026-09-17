@@ -1,15 +1,17 @@
 import type { ButtonHTMLAttributes, JSX, ReactNode } from 'react'
-import { Check, ChevronDown } from 'lucide-react'
-import type { LanguageOption } from '@renderer/lib/translate'
+import { Check } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 import '@renderer/assets/translate.css'
+
+export { Menulist } from './Menulist'
 
 /**
  * The translate surfaces' controls, on the v2 draft's Proton vocabulary (§6): rectangular
  * buttons and menulists at radius 4, 16 px checkboxes, icon buttons in the toolbar box. Sizes
  * come from the density tokens, so the same components are 32 px on the desktop and 40–44 px
  * under a finger. The secondary button is main.css's `.zen-v2-button`; the primary and danger
- * variants and the other controls are styled in `assets/translate.css`.
+ * variants and the other controls are styled in `assets/translate.css`. The menulist, with its
+ * popover and sheet, is `Menulist.tsx`.
  */
 
 /** A button: secondary by default (text at 10%), `primary` in the accent, `danger` in danger ink. */
@@ -30,53 +32,6 @@ export function TranslateButton({
       data-danger={danger || undefined}
       {...props}
     />
-  )
-}
-
-/** A bordered menulist with a chevron, on the platform's own popup. */
-export function Menulist({
-  value,
-  options,
-  onChange,
-  label,
-  placeholder,
-  disabled,
-  className
-}: {
-  /** The picked value; null shows `placeholder`. */
-  value: string | null
-  options: LanguageOption[]
-  onChange: (value: string) => void
-  /** Accessible name (the visible text is the value). */
-  label: string
-  placeholder?: string
-  disabled?: boolean
-  className?: string
-}): JSX.Element {
-  return (
-    <span className={cn('zen-translate-menulist', className)}>
-      <select
-        className="zen-v2-menulist"
-        value={value ?? ''}
-        aria-label={label}
-        disabled={disabled}
-        onChange={(e) => {
-          if (e.target.value) onChange(e.target.value)
-        }}
-      >
-        {(value === null || placeholder) && (
-          <option value="" disabled>
-            {placeholder ?? ''}
-          </option>
-        )}
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown aria-hidden />
-    </span>
   )
 }
 

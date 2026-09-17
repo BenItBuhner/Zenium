@@ -266,7 +266,7 @@ function Popover({
         <p className="zen-translate-original">{request.text}</p>
         <div className="zen-translate-rule" />
         <ResultText request={request} state={state} translation={translation} />
-        <div className="flex justify-end pt-1">
+        <div className="zen-translate-footer">
           <TranslateButton disabled={!translation.result} onClick={copy}>
             {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
             {copied ? 'Copied' : 'Copy'}
@@ -316,17 +316,17 @@ function PhoneSheet({
       onDismissed={() => closeTranslateSelection()}
       contentKey={`${request.tabId}:${translation.loading ? 'loading' : 'done'}`}
       header={
-        <div className="flex h-11 items-center px-3">
-          <span className="zen-translate-title min-w-0 flex-1 truncate">Translation</span>
+        <div className="zen-translate-sheet-header">
+          <span className="truncate">Translation</span>
         </div>
       }
     >
-      <div className="flex flex-col gap-3 px-3 pb-3 pt-1">
+      <div className="flex flex-col gap-3 px-3 pb-3">
         <LanguagesRow state={state} translation={translation} className="min-h-11" />
         <p className="zen-translate-original">{request.text}</p>
         <div className="zen-translate-rule" />
         <ResultText request={request} state={state} translation={translation} />
-        <div className="flex justify-end pt-1">
+        <div className="zen-translate-footer">
           <TranslateButton disabled={!translation.result} onClick={copy}>
             {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
             {copied ? 'Copied' : 'Copy'}
