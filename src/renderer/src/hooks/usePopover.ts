@@ -42,10 +42,19 @@ export function usePopover(
   const [opener] = useState<HTMLElement | null>(() =>
     document.activeElement instanceof HTMLElement ? document.activeElement : null
   )
+  const latestReturnTo = useRef(returnTo)
+  useEffect(() => {
+    latestReturnTo.current = returnTo
+  })
+  // The root from the moment focus moved into it, for the unmount cleanup: a popover that holds
+  // its first paint (renders null until the content capture is in place) has no root yet when
+  // the layout effect below first runs, so the cleanup cannot resolve it then.
+  const entered = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     const root = ref.current
     if (!active || !root) return
+    entered.current = root
     const el =
       initial === 'container'
         ? root
@@ -81,19 +90,16 @@ export function usePopover(
   }, [active, ref])
 
   useLayoutEffect(() => {
-    const root = ref.current
-    // The anchor outlives its popover, so it can be resolved now rather than at cleanup.
-    const target =
-      returnTo === undefined
-        ? opener
-        : returnTo && 'current' in returnTo
-          ? returnTo.current
-          : returnTo
     return () => {
+      // A layout cleanup runs before React detaches refs and removes the node, so the root is
+      // intact and focus, if it is inside, has not yet been lost to the removal.
+      const root = entered.current
       if (!root || !root.contains(document.activeElement)) return
+      const back = latestReturnTo.current
+      const target = back === undefined ? opener : back && 'current' in back ? back.current : back
       target?.focus({ preventScroll: true })
     }
-  }, [ref, returnTo, opener])
+  }, [opener])
 }
 
 /**

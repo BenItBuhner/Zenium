@@ -441,9 +441,14 @@ export function overlayCoversContent(ui: UiState): boolean {
  * Hold the content frame for a renderer-hosted popover: the page is captured, then the view is
  * hidden behind the capture until `release`. `ready` resolves once the capture is in place (false
  * when released first), so the popover can hold its first paint until the view no longer covers
- * it.
+ * it. On release the page gets keyboard focus back only if it had it (v2 draft §9.22): a popover
+ * opened from a focused chrome control (`pageHadFocus` false) leaves focus in the chrome, on the
+ * control it returned to.
  */
-export function holdFloatingChrome(activeTabId: string | null): {
+export function holdFloatingChrome(
+  activeTabId: string | null,
+  { pageHadFocus = true }: { pageHadFocus?: boolean } = {}
+): {
   ready: Promise<boolean>
   release: () => void
 } {
@@ -463,7 +468,7 @@ export function holdFloatingChrome(activeTabId: string | null): {
       held = false
       uiStore.set((s) => ({ floatingChrome: Math.max(0, s.floatingChrome - 1) }))
       invalidateSnapshot()
-      returnFocusToPage()
+      if (pageHadFocus) returnFocusToPage()
     }
   }
 }

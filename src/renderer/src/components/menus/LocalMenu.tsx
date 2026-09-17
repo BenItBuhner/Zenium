@@ -8,6 +8,7 @@ import { useArrowKeys, usePopover } from '@renderer/hooks/usePopover'
 import type { Anchor } from '@renderer/lib/anchor'
 import { anchorBelow } from '@renderer/lib/extensions/popupPlacement'
 import { useViewport } from '@renderer/lib/formFactor'
+import { openedFromKeyboard } from '@renderer/lib/popover'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
 export interface LocalMenuItem {
@@ -56,15 +57,28 @@ function isSeparator(entry: LocalMenuEntry): entry is LocalMenuSeparator {
  */
 export function LocalMenu(props: Props): JSX.Element | null {
   const viewport = useViewport()
-  const ready = useFloatingChrome()
+  // Opened from the keyboard (the control shows its focus ring): the first item takes focus
+  // rather than the menu, and the page, which did not have focus, does not get it back (§9.22).
+  const [fromKeyboard] = useState(openedFromKeyboard)
+  const ready = useFloatingChrome({ pageHadFocus: !fromKeyboard })
   if (!ready) return null
   return createPortal(
-    viewport.coarse ? <SheetMenu {...props} /> : <PopoverMenu {...props} />,
+    viewport.coarse ? (
+      <SheetMenu {...props} />
+    ) : (
+      <PopoverMenu {...props} fromKeyboard={fromKeyboard} />
+    ),
     document.body
   )
 }
 
-function PopoverMenu({ anchor, items, onClose, context }: Props): JSX.Element {
+function PopoverMenu({
+  anchor,
+  items,
+  onClose,
+  context,
+  fromKeyboard
+}: Props & { fromKeyboard: boolean }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ left: number; top: number; side: 'left' | 'right' } | null>(null)
   useLayoutEffect(() => {
@@ -79,9 +93,7 @@ function PopoverMenu({ anchor, items, onClose, context }: Props): JSX.Element {
     )
     setPos({ left: placed.x, top: placed.y, side: placed.side })
   }, [anchor, items.length])
-  // Opened from the keyboard (the control shows its focus ring) the first item takes focus;
-  // opened by pointer the menu itself does, and the arrow keys start at the first item (§9.22).
-  const [fromKeyboard] = useState(() => document.activeElement?.matches(':focus-visible') ?? false)
+  // Opened by pointer the menu itself takes focus, and the arrow keys start at the first item.
   usePopover(ref, {
     onClose,
     active: pos !== null,

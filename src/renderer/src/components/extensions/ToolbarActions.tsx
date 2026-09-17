@@ -10,6 +10,7 @@ import { run } from '@renderer/lib/api'
 import { badgeLabel, badgeStyle } from '@renderer/lib/extensions/badge'
 import { closeExtensionPopup, openExtensionPopup } from '@renderer/lib/extensions/popup'
 import { POPOVER_WIDTH, anchorBelow } from '@renderer/lib/extensions/popupPlacement'
+import { openedFromKeyboard } from '@renderer/lib/popover'
 import {
   actionEnabled,
   actionIcon,
@@ -183,8 +184,11 @@ function ExtensionsPanel({
   onClose: () => void
 }): JSX.Element | null {
   const ref = useRef<HTMLDivElement>(null)
+  // Opened from the keyboard (the button shows its focus ring) the page did not have focus and
+  // does not get it back on close: focus stays on the button the panel returns it to (§9.22).
+  const [fromKeyboard] = useState(openedFromKeyboard)
   // The panel overhangs the content frame: it paints once the page's capture is in place.
-  const ready = useFloatingChrome()
+  const ready = useFloatingChrome({ pageHadFocus: !fromKeyboard })
   const [pos, setPos] = useState<{ left: number; top: number; side: 'left' | 'right' } | null>(null)
   const [scrolled, setScrolled] = useState(false)
   useLayoutEffect(() => {

@@ -8,6 +8,7 @@ import { useArrowKeys, usePopover } from '@renderer/hooks/usePopover'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { anchorBelow } from '@renderer/lib/extensions/popupPlacement'
 import { useViewport } from '@renderer/lib/formFactor'
+import { openedFromKeyboard } from '@renderer/lib/popover'
 import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { V2Radio } from './v2'
@@ -89,7 +90,9 @@ function MenulistPopover<T extends string>({
   onPick,
   onClose
 }: PopupProps<T>): JSX.Element | null {
-  const ready = useFloatingChrome()
+  // Opened from the keyboard the page did not have focus and does not get it back (§9.22).
+  const [fromKeyboard] = useState(openedFromKeyboard)
+  const ready = useFloatingChrome({ pageHadFocus: !fromKeyboard })
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ left: number; top: number; side: 'left' | 'right' } | null>(null)
   useLayoutEffect(() => {

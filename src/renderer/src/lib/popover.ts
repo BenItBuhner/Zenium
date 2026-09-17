@@ -14,6 +14,16 @@ export function claimPopover(close: () => void): () => void {
   }
 }
 
+/**
+ * Whether the popover about to open was reached with the keyboard: the control that has focus
+ * shows its focus ring (`:focus-visible`), which a pointer click on it would not have given it.
+ * A menu then focuses its first item rather than itself, and the page – which did not have
+ * focus – does not get it back when the popover closes (§9.22).
+ */
+export function openedFromKeyboard(): boolean {
+  return document.activeElement?.matches(':focus-visible') ?? false
+}
+
 /** Focusable descendants in tab order, as Tab would visit them. */
 export function focusableIn(root: HTMLElement): HTMLElement[] {
   const selector =
