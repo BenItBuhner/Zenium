@@ -966,6 +966,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.zoomBubble !== null ||
     ui.hoverCard.tabId !== null ||
     ui.newTabShortcutDialog !== null ||
+    // The star bubble and the bookmark editor are sheets over the page (design review of #38, item 1).
     bookmarkChromeOpen(ui)
   )
 }
