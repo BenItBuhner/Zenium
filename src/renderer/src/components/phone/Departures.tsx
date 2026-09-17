@@ -4,7 +4,7 @@ import { ChevronDown } from 'lucide-react'
 import type { Rect } from '@shared/types'
 import { groupColorChannels } from '@renderer/lib/groups'
 import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
-import { departed, departStore, type Departure } from './departures'
+import { departed, departStore, type Departure } from './departureStore'
 import { GROUP_HEADER, GROUP_PAD, GroupBadge } from './GroupCard'
 import { CardBody } from './OverviewCard'
 

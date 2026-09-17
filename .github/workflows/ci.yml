@@ -30,6 +30,22 @@ jobs:
       - run: npm ci
       - run: npm run check
 
+  bundle-windows:
+    name: Bundle on a case-insensitive filesystem
+    # Linux resolves `./Departures` and `./departures` to different files; Windows and macOS do
+    # not. Bundling on Windows here catches module-name collisions before they break the
+    # Windows and macOS release jobs (v0.3.18 was lost to exactly that).
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx electron-vite build
+
   workflows:
     name: Workflow lint (actionlint)
     runs-on: ubuntu-latest
