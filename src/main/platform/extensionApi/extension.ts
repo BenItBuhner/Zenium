@@ -15,15 +15,11 @@ export class ExtensionApi {
     setUpdateUrlData: () => undefined
   }
 
-  /**
-   * Chrome's "Allow access to file URLs" toggle. The registry exposes it as
-   * `ExtensionInfo.allowFileAccess`; hosts without the field load extensions with file access.
-   */
+  /** Chrome's "Allow access to file URLs" toggle, kept in the registry. */
   private allowsFileAccess(ctx: ApiContext): boolean {
     const info = this.host.browser.extensions
       .list()
-      .find((entry) => entry.path === ctx.extension.path) as
-      { allowFileAccess?: boolean } | undefined
-    return info?.allowFileAccess ?? true
+      .find((entry) => entry.id === ctx.extensionId || entry.path === ctx.extension.path)
+    return info?.allowFileAccess ?? false
   }
 }

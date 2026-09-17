@@ -1,10 +1,9 @@
-import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { ExtensionInfo as ZeniumExtensionInfo } from '../../../shared/types'
-import type { ExtensionManifest } from '../../../core/extensions/manifest'
-import { idFromDigestPrefix } from '../../../core/extensions/bytes'
-import { manifestPermissionSets } from '../../../core/extensions/api/permissions'
+import type { ExtensionInfo as ZeniumExtensionInfo, ExtensionSource } from '../../../shared/types'
+import { stripJsonComments, type ExtensionManifest } from '../../../core/extensions/manifest'
+import { permissionWarningLines } from '../../../core/extensions/permissionMessages'
+import { warningPlatform } from '../extensions'
 import {
   ApiError,
   extensionUrl,
@@ -40,9 +39,10 @@ export interface ManagementInfo {
 }
 
 /**
- * `chrome.management` over the browser's extension list. `getSelf` stays native (it works);
- * enabling, disabling and removal go through `ExtensionService`, and the install / enable /
- * disable / uninstall events are broadcast to every other extension.
+ * `chrome.management` over the browser's extension registry. `getSelf` stays native (it works);
+ * enabling, disabling and removal go through `ExtensionService`, the warning texts come from the
+ * store core's `permissionMessages`, and the install / enable / disable / uninstall events are
+ * broadcast to every other extension.
  */
 export class ManagementApi {
   constructor(private readonly host: ApiHost) {}
@@ -54,18 +54,16 @@ export class ManagementApi {
     setEnabled: (ctx, id, enabled) => this.setEnabled(ctx, id, enabled),
     uninstall: (ctx, id, options) => this.uninstall(ctx, id, options, false),
     uninstallSelf: (ctx, options) => this.uninstall(ctx, ctx.extensionId, options, true),
-    // Permission warning texts arrive with the store's `permissionMessages` module.
-    getPermissionWarningsById: (_ctx, id) => {
-      this.entry(id)
-      return []
-    },
+    getPermissionWarningsById: (_ctx, id) => this.entry(id).info.warnings,
     getPermissionWarningsByManifest: (_ctx, manifestStr) => {
+      let manifest: unknown
       try {
-        JSON.parse(String(manifestStr))
+        manifest = JSON.parse(stripJsonComments(String(manifestStr)))
       } catch {
         throw new ApiError('Invalid manifest.')
       }
-      return []
+      if (!isRecord(manifest)) throw new ApiError('Invalid manifest.')
+      return permissionWarningLines(manifest, warningPlatform())
     },
     launchApp: (_ctx, id) => {
       throw new ApiError(`Extension ${String(id)} is not an app.`)
@@ -85,16 +83,16 @@ export class ManagementApi {
   // Listing
   // ---------------------------------------------------------------------------
 
+  /** The registry keeps Chromium's id for every extension, loaded or not. */
   private entries(): Array<{
     info: ZeniumExtensionInfo
     manifest: ExtensionManifest | null
     id: string
   }> {
     return this.host.browser.extensions.list().map((info) => {
-      const loaded = this.host.allLoaded().find((e) => e.path === info.path)
+      const loaded = this.host.loaded(info.id)
       const manifest = loaded?.manifest ?? readManifest(info.path)
-      const id = loaded?.id ?? (manifest ? extensionIdFor(info.path, manifest) : info.id)
-      return { info, manifest, id }
+      return { info, manifest, id: info.id }
     })
   }
 
@@ -115,10 +113,6 @@ export class ManagementApi {
     id: string
   }): ManagementInfo {
     const { info, manifest, id } = entry
-    const sets = manifest
-      ? manifestPermissionSets(manifest)
-      : { required: { permissions: [], origins: [] } }
-    const optionsPage = manifest?.options_ui?.page ?? manifest?.options_page
     const icons = manifest?.icons
       ? Object.entries(manifest.icons)
           .map(([size, path]) => ({ size: Number(size), url: extensionUrl(id, path) }))
@@ -135,16 +129,21 @@ export class ManagementApi {
       mayDisable: true,
       mayEnable: info.error === null,
       enabled: info.enabled && info.error === null,
+      disabledReason: info.enabled
+        ? undefined
+        : info.pendingWarnings && info.pendingWarnings.length > 0
+          ? 'permissions_increase'
+          : 'unknown',
       isApp: false,
       type: 'extension',
       homepageUrl: manifest?.homepage_url,
-      updateUrl: manifest?.update_url,
+      updateUrl: info.updateUrl ?? manifest?.update_url,
       offlineEnabled: manifest?.offline_enabled ?? false,
-      optionsUrl: optionsPage ? extensionUrl(id, optionsPage) : '',
+      optionsUrl: info.optionsPage ? extensionUrl(id, info.optionsPage) : '',
       icons,
-      permissions: [...sets.required.permissions],
-      hostPermissions: [...sets.required.origins],
-      installType: manifest?.update_url ? 'normal' : 'development'
+      permissions: [...info.permissions],
+      hostPermissions: [...info.hostPermissions],
+      installType: installTypeOf(info.source)
     }
   }
 
@@ -172,7 +171,7 @@ export class ManagementApi {
     if (entry.id === ctx.extensionId && !enabled) {
       throw new ApiError('An extension cannot disable itself through the management API.')
     }
-    await this.host.browser.extensions.setEnabled(entry.info.path, enabled)
+    await this.host.browser.extensions.setEnabled(entry.id, enabled, ctx.window)
   }
 
   private async uninstall(
@@ -197,28 +196,32 @@ export class ManagementApi {
       )
       if (!accepted) throw new ApiError('The user did not accept the uninstall.')
     }
-    this.host.browser.extensions.remove(entry.info.path)
+    await this.host.browser.extensions.remove(entry.id)
   }
 }
 
 function readManifest(path: string): ExtensionManifest | null {
   try {
-    return JSON.parse(readFileSync(join(path, 'manifest.json'), 'utf8')) as ExtensionManifest
+    return JSON.parse(
+      stripJsonComments(readFileSync(join(path, 'manifest.json'), 'utf8'))
+    ) as ExtensionManifest
   } catch {
     return null
   }
 }
 
-/**
- * The id Chromium assigns: from the manifest's `key` when present, otherwise from the install
- * path (`crx_file::id_util::GenerateIdForPath`, which hashes the path's bytes).
- */
-export function extensionIdFor(path: string, manifest: { key?: string }): string {
-  const hash = createHash('sha256')
-  if (typeof manifest.key === 'string' && manifest.key.length > 0) {
-    hash.update(Buffer.from(manifest.key, 'base64'))
-  } else {
-    hash.update(Buffer.from(path, process.platform === 'win32' ? 'utf16le' : 'utf8'))
+/** Chrome's `installType` for where the extension came from. */
+function installTypeOf(source: ExtensionSource): ManagementInfo['installType'] {
+  switch (source) {
+    case 'chrome-web-store':
+    case 'edge-add-ons':
+      return 'normal'
+    case 'crx':
+    case 'zip':
+      return 'sideload'
+    case 'unpacked':
+      return 'development'
+    default:
+      return 'other'
   }
-  return idFromDigestPrefix(new Uint8Array(hash.digest()))
 }

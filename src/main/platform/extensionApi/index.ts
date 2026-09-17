@@ -23,6 +23,7 @@ import type { ExtensionManifest } from '../../../core/extensions/manifest'
 import type { PermissionSet } from '../../../core/extensions/api/permissions'
 import type { InvokeResult } from '../../../core/extensions/api/shim'
 import { API_SPEC, STORAGE_METHODS, isSpecMethod } from '../../../core/extensions/api/spec'
+import type { RegistryEvent } from '../extensions'
 import type { SessionManager } from '../sessions'
 import type { ElectronTabViewHost } from '../views'
 import { ActionApi } from './action'
@@ -67,9 +68,6 @@ const WORKER_PRELOAD_ID = 'zen-extension-worker'
 /** One bundle for both context types: a sandboxed preload cannot load a shared chunk. */
 const extensionPreload = join(__dirname, '../preload/extension.js')
 
-/** How long after an unload the registry is given to settle before disable and removal are told apart. */
-const UNLOAD_SETTLE_MS = 250
-
 /** What `ExtensionService` asks the API layer (the only coupling between the two). */
 export interface ExtensionApiHooks {
   /** Effective `chrome.action` state for the active tab, for `ExtensionInfo.action`. */
@@ -109,8 +107,6 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   private readonly extensions = new Map<string, LoadedExtension>()
   /** Loaded at least once in this process: `runtime.onStartup` goes with the first load only. */
   private readonly seen = new Set<string>()
-  /** Unloaded in this process while still installed; loading again is `management.onEnabled`. */
-  private readonly disabled = new Set<string>()
   private readonly attachedSessions = new WeakSet<Session>()
   private readonly wiredWorkers = new WeakSet<ServiceWorkerMain>()
   private readonly watchedWindows = new WeakSet<BrowserWindow>()
@@ -167,6 +163,32 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     )
     this.browser.state.subscribe(() => this.scheduleTick())
     app.on('before-quit', () => this.flushSync())
+  }
+
+  /**
+   * The registry's own events: `management.on*` for the other extensions, and the uninstall URL
+   * once an extension is gone for good (a disable or a reload keeps its stored state).
+   */
+  registryChanged(event: RegistryEvent): void {
+    switch (event.type) {
+      case 'installed':
+      case 'updated':
+        this.tellOthers('onInstalled', event.id)
+        return
+      case 'enabled':
+        this.tellOthers('onEnabled', event.id)
+        return
+      case 'disabled':
+        this.tellOthers('onDisabled', event.id)
+        return
+      case 'uninstalled':
+        this.seen.delete(event.id)
+        this.runtime.openUninstallUrl(event.id)
+        this.store.forget(event.id)
+        this.registry.forget(event.id, { keepWorkerEvents: false })
+        this.broadcast('management', 'onUninstalled', () => [event.id])
+        return
+    }
   }
 
   /** A persistent (extension-capable) session: preloads, worker IPC, load / unload tracking. */
@@ -240,11 +262,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     // Existing tabs are the baseline, not a burst of `tabs.onCreated`.
     if (!this.snapshot) this.snapshot = this.model.snapshot()
     const firstEver = this.store.installedVersion(ext.id) === undefined
-    const reEnabled = this.disabled.delete(ext.id)
     this.runtime.lifecycle(ext.id, ext.version, !this.seen.has(ext.id) && !firstEver)
     this.seen.add(ext.id)
-    if (firstEver) this.tellOthers('onInstalled', ext.id)
-    else if (reEnabled) this.tellOthers('onEnabled', ext.id)
     this.commitUi()
   }
 
@@ -259,27 +278,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.action.forget(ext.id)
     this.storage.forget(ext.id)
     this.registry.forget(ext.id, { keepWorkerEvents: true })
-    this.disabled.add(ext.id)
     this.commitUi()
-    setTimeout(() => this.settleUnload(ext.id, ext.path), UNLOAD_SETTLE_MS)
-  }
-
-  /** Disabled, removed for good, or already back (a reload)? The registry knows by now. */
-  private settleUnload(extensionId: string, path: string): void {
-    if (this.extensions.has(extensionId)) return
-    const installed = this.browser.extensions
-      .list()
-      .some((info) => info.id === extensionId || info.path === path)
-    if (installed) {
-      this.tellOthers('onDisabled', extensionId)
-      return
-    }
-    this.disabled.delete(extensionId)
-    this.seen.delete(extensionId)
-    this.runtime.openUninstallUrl(extensionId)
-    this.store.forget(extensionId)
-    this.registry.forget(extensionId, { keepWorkerEvents: false })
-    this.broadcast('management', 'onUninstalled', () => [extensionId])
   }
 
   /** `management.on*` about one extension goes to every other loaded extension. */
@@ -589,8 +588,7 @@ function helloPayloadFrom(payload: unknown): HelloPayload {
   }
 }
 
-/** Store and file installs carry a `source`; hosts without the field only load unpacked folders. */
+/** Unpacked folders are Chrome's "development" installs: no 30-second alarm floor, for one. */
 function isUnpacked(info: ExtensionInfo | undefined): boolean {
-  const source = (info as { source?: string } | undefined)?.source
-  return source === undefined || source === 'unpacked'
+  return info === undefined || info.source === 'unpacked'
 }

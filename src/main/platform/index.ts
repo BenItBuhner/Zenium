@@ -221,7 +221,9 @@ export class ElectronPlatform implements Platform {
       this.userDataDir
     )
     extensionApi.install()
-    ;(browser.extensions as ExtensionService).attachApi(extensionApi)
+    const extensionService = browser.extensions as ExtensionService
+    extensionService.attachApi(extensionApi)
+    extensionService.onChange((event) => extensionApi.registryChanged(event))
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
       this.attachPermissions(ses)
