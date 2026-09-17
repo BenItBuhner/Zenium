@@ -135,6 +135,31 @@ export function createPreviewBridge(): NativeBridge {
     'site.clearCookies': () => ({ removed: 0, remaining: 0 }),
     'site.clearStorage': () => ({ ok: true, scope: 'origins' }),
     'dialog.confirm': ({ message, detail }) => window.confirm(`${message}\n\n${detail ?? ''}`),
+    'dialog.openText': ({ extensions }) =>
+      new Promise<Array<{ name: string; text: string }>>((resolve) => {
+        const input = document.createElement('input')
+        input.type = 'file'
+        input.multiple = true
+        const exts = Array.isArray(extensions) ? extensions.map((e) => `.${String(e)}`) : []
+        if (exts.length) input.accept = exts.join(',')
+        input.onchange = async () => {
+          const files = [...(input.files ?? [])]
+          resolve(
+            await Promise.all(files.map(async (f) => ({ name: f.name, text: await f.text() })))
+          )
+        }
+        input.oncancel = () => resolve([])
+        input.click()
+      }),
+    'dialog.saveText': ({ defaultName, mimeType, text }) => {
+      const blob = new Blob([String(text)], { type: String(mimeType) })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = String(defaultName)
+      a.click()
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+      return true
+    },
     'clipboard.writeText': ({ text }) => void navigator.clipboard?.writeText(String(text)),
     'clipboard.writeImage': () => false,
     'app.openExternal': ({ url }) => void window.open(String(url), '_blank'),

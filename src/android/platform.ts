@@ -428,7 +428,8 @@ export class AndroidPlatform implements Platform {
     }
     this.dialogs = {
       confirm: (options) => bridge.call<boolean>('dialog.confirm', options),
-      pickTextFiles: (options) => bridge.call<PickedTextFile[]>('dialog.openText', options)
+      pickTextFiles: (options) => bridge.call<PickedTextFile[]>('dialog.openText', options),
+      saveTextFile: (options) => bridge.call<boolean>('dialog.saveText', options)
     }
     this.clipboard = {
       writeText: (text) => bridge.send('clipboard.writeText', { text }),

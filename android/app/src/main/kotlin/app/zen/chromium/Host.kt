@@ -182,6 +182,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             // --- services --------------------------------------------------------------------------
             "dialog.confirm" -> confirm(args, reply)
             "dialog.openText" -> activity.pickTextFiles(args.arr("extensions")) { files -> reply(files) }
+            "dialog.saveText" -> activity.saveTextFile(args.str("defaultName"), args.str("mimeType"), args.str("text")) { ok -> reply(ok) }
             "clipboard.writeText" -> {
                 val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 cm.setPrimaryClip(ClipData.newPlainText("Zenium", args.str("text")))
