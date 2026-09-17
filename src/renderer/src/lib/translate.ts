@@ -125,6 +125,32 @@ export function closeTranslateSelection(): void {
   returnFocusToPage()
 }
 
+// ---------------------------------------------------------------------------
+// The menulists' lists
+// ---------------------------------------------------------------------------
+
+/**
+ * A menulist is about to open its list. The list overhangs the content area, where the page
+ * view is drawn above the chrome, so the page gives way to its snapshot while the list is up (as
+ * under the sheets and the selection popover); a surface that already stands over the page has
+ * the snapshot in place. Resolves once the list may show.
+ */
+export async function prepareMenulist(activeTabId: string | null): Promise<void> {
+  if (uiStore.get().overlay === 'none') await captureActiveTab(activeTabId)
+}
+
+/** The list is up. */
+export function menulistOpened(): void {
+  uiStore.set({ menulistOpen: true })
+}
+
+/** The list is gone; the page comes back unless another surface still stands over it. */
+export function menulistClosed(): void {
+  if (!uiStore.get().menulistOpen) return
+  uiStore.set({ menulistOpen: false })
+  invalidateSnapshot()
+}
+
 const flags = globalThis as unknown as { __zenTranslateWired?: boolean }
 if (!flags.__zenTranslateWired) {
   flags.__zenTranslateWired = true
