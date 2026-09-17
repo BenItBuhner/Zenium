@@ -2,6 +2,7 @@ import type {
   EventName,
   Events,
   FindResult,
+  FormFactor,
   GlanceState,
   HapticKind,
   LayoutReport,
@@ -53,6 +54,11 @@ export class ZenWindow {
   compactEnabled: boolean
   compactSidebarPersistent = false
   htmlFullscreenTabId: string | null = null
+  /**
+   * The layout the chrome is showing, as it reports it (`window.formFactor`); the desktop layout
+   * until the chrome says otherwise. The app menu and the command list are built for it.
+   */
+  formFactor: FormFactor = 'desktop'
   lastFocusedAt = 0
   readonly initialBounds: Rect | null
   readonly initialMaximized: boolean

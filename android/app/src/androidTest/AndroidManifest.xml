@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The instrumentation APK's own manifest, merged with the one AGP generates. It adds the pretend
+  third-party app the custom tabs demo opens Zenium from (CustomTabCallerActivity.java): a real
+  other package and process, so a custom tab it starts is a genuine cross-app custom tab and
+  closing it lands back in it. Exported because the driver, which runs in Zenium's process,
+  starts it; singleTask so a later start hands it the next custom tab to open (onNewIntent).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="Nimbus News">
+        <activity
+            android:name="app.zen.chromium.CustomTabCallerActivity"
+            android:exported="true"
+            android:label="Nimbus News"
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+    </application>
+</manifest>

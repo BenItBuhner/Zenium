@@ -476,11 +476,16 @@ class Extensions(private val host: Host) {
     // Tab WebViews
     // ---------------------------------------------------------------------------------------------
 
-    /** Called from every tab WebView's constructor: the bridge listener plus the current units. */
+    /**
+     * Called from every tab WebView's constructor, and again when a custom tab's page is adopted by
+     * the browser window: the bridge listener plus the current units, once per view (the WebView
+     * rejects a second listener under the same name).
+     */
     fun attach(view: TabWebView) {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ||
             !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
         ) return
+        if (handlers.containsKey(view)) return
         WebViewCompat.addWebMessageListener(view, BRIDGE, setOf("*")) { v, message, origin, isMainFrame, proxy ->
             onBridgeMessage(v, message.data, origin, isMainFrame, proxy, "content")
         }

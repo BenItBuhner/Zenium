@@ -102,7 +102,11 @@ export class SuggestionService {
       })
     }
 
-    for (const cmd of searchCommands(query)) {
+    const commands = searchCommands(query, {
+      capabilities: state.capabilities,
+      formFactor: win.formFactor
+    })
+    for (const cmd of commands) {
       results.push({
         id: `cmd:${cmd.id}`,
         kind: 'command',

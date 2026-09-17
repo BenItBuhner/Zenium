@@ -20,7 +20,7 @@ import java.io.File
  * reported to the core as they progress. The manager cannot pause/resume on request, so those
  * controls are no-ops here; cancel removes the transfer.
  */
-class Downloads(private val context: Context, private val host: Host) {
+class Downloads(private val context: Context, private val host: PageHost) {
     private val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
     private val main = Handler(Looper.getMainLooper())
 
@@ -55,7 +55,7 @@ class Downloads(private val context: Context, private val host: Host) {
         }
         val token = "dm-$id"
         live[token] = Live(id, token)
-        host.chrome.hostEvent(
+        host.hostEvent(
             "download.started",
             json(
                 "token" to token, "url" to url, "filename" to filename,
@@ -135,7 +135,7 @@ class Downloads(private val context: Context, private val host: Host) {
                         finish(l, "completed", path, title)
                     }
                     DownloadManager.STATUS_FAILED -> finish(l, "interrupted", localUri, title)
-                    else -> host.chrome.hostEvent(
+                    else -> host.hostEvent(
                         "download.progress",
                         json(
                             "token" to l.token, "receivedBytes" to received, "totalBytes" to total.coerceAtLeast(0),
@@ -151,7 +151,7 @@ class Downloads(private val context: Context, private val host: Host) {
     private fun finish(l: Live, state: String, savePath: String, filename: String) {
         live.remove(l.token)
         l.coreId?.let { byCoreId.remove(it) }
-        host.chrome.hostEvent(
+        host.hostEvent(
             "download.done",
             json("token" to l.token, "state" to state, "savePath" to savePath, "filename" to filename)
         )

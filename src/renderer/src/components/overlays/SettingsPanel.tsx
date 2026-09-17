@@ -23,8 +23,9 @@ import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS, spaceLabel } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
+import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab } from '@renderer/lib/selectors'
-import { openOverlay, uiStore } from '@renderer/lib/ui'
+import { openBarEditor, openOverlay, uiStore } from '@renderer/lib/ui'
 import { cn, relativeTime } from '@renderer/lib/utils'
 import { ContainerIcon } from '../ContainerIcon'
 import { Button } from '../ui/button'
@@ -157,7 +158,13 @@ export function SettingsPanel({
         <div ref={fadeContent} className="min-w-0 flex-1 overflow-y-auto p-6">
           <div className="mx-auto flex max-w-2xl flex-col gap-6">
             {section === 'look' && (
-              <LookSection s={s} set={set} platform={state.platform} caps={state.capabilities} />
+              <LookSection
+                s={s}
+                set={set}
+                platform={state.platform}
+                caps={state.capabilities}
+                activeTabId={activeTab(state)?.id ?? null}
+              />
             )}
             {section === 'compact' && <CompactSection s={s} set={set} />}
             {section === 'tabs' && (
@@ -190,13 +197,17 @@ function LookSection({
   s,
   set,
   platform,
-  caps
+  caps,
+  activeTabId
 }: {
   s: Settings
   set: (p: Partial<Settings>) => void
   platform: Platform
   caps: HostCapabilities
+  activeTabId: string | null
 }): JSX.Element {
+  // The bar and its editor only exist in the phone layout.
+  const phone = useViewport().formFactor === 'phone'
   return (
     <>
       <Group title="Appearance">
@@ -268,6 +279,20 @@ function LookSection({
             ]}
           />
         </Row>
+        {phone && (
+          <Row
+            label="Navigation bar"
+            hint="Choose the controls beside the address bar and their order. Holding a control in the bar opens this too."
+          >
+            <Button
+              variant="secondary"
+              className="zen-v2-button shrink-0"
+              onClick={() => void openBarEditor(activeTabId)}
+            >
+              Customise
+            </Button>
+          </Row>
+        )}
       </Group>
       {caps.pullToRefresh && (
         <Group title="Pages">

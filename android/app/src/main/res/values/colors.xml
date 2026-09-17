@@ -2,4 +2,28 @@
 <resources>
     <color name="zen_background">#F2F1F5</color>
     <color name="zen_background_dark">#16161B</color>
+
+    <!--
+      The v2 design draft's measured colours (design-language-v2-draft.md §1), for what the app
+      draws natively: the custom tab's toolbar and menu sheet. One block, so the values can be
+      re-tuned once; nothing below is used per-view as a literal.
+    -->
+    <!-- Window and toolbar chrome without a theme. -->
+    <color name="v2_window_light">#E9E9E9</color>
+    <color name="v2_window_dark">#131313</color>
+    <!-- Page. -->
+    <color name="v2_page_light">#FBFBFE</color>
+    <color name="v2_page_dark">#1C1B22</color>
+    <!-- Panel, popover, menu, phone sheet. -->
+    <color name="v2_panel_light">#F4F4F4</color>
+    <color name="v2_panel_dark">#1F1F1F</color>
+    <!-- Hairline: rgb(0 0 0 / .15) and rgb(255 255 255 / .12). -->
+    <color name="v2_border_light">#26000000</color>
+    <color name="v2_border_dark">#1FFFFFFF</color>
+    <!-- Text; deemphasised text is this at 69%. -->
+    <color name="v2_text_light">#15141A</color>
+    <color name="v2_text_dark">#FBFBFE</color>
+    <!-- Scrim behind sheets: rgb(0 0 0 / .4) and .55. -->
+    <color name="v2_scrim_light">#66000000</color>
+    <color name="v2_scrim_dark">#8C000000</color>
 </resources>

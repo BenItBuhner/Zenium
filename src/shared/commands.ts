@@ -1,4 +1,11 @@
-import type { CommandDescriptor } from './types'
+import type { CommandDescriptor, FormFactor, HostCapabilities } from './types'
+
+/**
+ * The layouts with a sidebar and a window of their own: what Compact Mode, the sidebar toggles,
+ * Split View and Fullscreen act on. The phone layout has none of these, so those commands would
+ * do nothing there.
+ */
+const SIDEBAR_LAYOUTS: FormFactor[] = ['desktop', 'tablet']
 
 /**
  * Zen's "Command Bar": actions that can be run by typing their name into the URL bar.
@@ -8,19 +15,22 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     id: 'compact',
     label: 'Toggle Compact Mode',
     keywords: ['compact', 'mode', 'hide sidebar'],
-    action: 'compact.toggle'
+    action: 'compact.toggle',
+    layouts: SIDEBAR_LAYOUTS
   },
   {
     id: 'compact-sidebar',
     label: 'Toggle Floating Sidebar',
     keywords: ['sidebar', 'floating'],
-    action: 'compact.toggleSidebar'
+    action: 'compact.toggleSidebar',
+    layouts: SIDEBAR_LAYOUTS
   },
   {
     id: 'sidebar',
     label: 'Toggle Sidebar Width',
     keywords: ['sidebar', 'collapse', 'expand'],
-    action: 'sidebar.toggle'
+    action: 'sidebar.toggle',
+    layouts: SIDEBAR_LAYOUTS
   },
   {
     id: 'new-space',
@@ -50,31 +60,36 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     id: 'split-grid',
     label: 'Split View: Grid',
     keywords: ['split', 'grid'],
-    action: 'split.grid'
+    action: 'split.grid',
+    layouts: SIDEBAR_LAYOUTS
   },
   {
     id: 'split-vertical',
     label: 'Split View: Vertical',
     keywords: ['split', 'vertical', 'side by side'],
-    action: 'split.vertical'
+    action: 'split.vertical',
+    layouts: SIDEBAR_LAYOUTS
   },
   {
     id: 'split-horizontal',
     label: 'Split View: Horizontal',
     keywords: ['split', 'horizontal', 'stack'],
-    action: 'split.horizontal'
+    action: 'split.horizontal',
+    layouts: SIDEBAR_LAYOUTS
   },
   {
     id: 'unsplit',
     label: 'Unsplit View',
     keywords: ['split', 'unsplit', 'remove'],
-    action: 'split.unsplit'
+    action: 'split.unsplit',
+    layouts: SIDEBAR_LAYOUTS
   },
   {
     id: 'new-split',
     label: 'New Empty Split View',
     keywords: ['split', 'empty', 'new'],
-    action: 'split.newEmpty'
+    action: 'split.newEmpty',
+    layouts: SIDEBAR_LAYOUTS
   },
   {
     id: 'pin',
@@ -135,7 +150,8 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     id: 'fullscreen',
     label: 'Toggle Fullscreen',
     keywords: ['fullscreen', 'full screen'],
-    action: 'page.fullscreen'
+    action: 'page.fullscreen',
+    layouts: SIDEBAR_LAYOUTS
   },
   { id: 'zoom-in', label: 'Zoom In', keywords: ['zoom', 'in', 'bigger'], action: 'zoom.in' },
   { id: 'zoom-out', label: 'Zoom Out', keywords: ['zoom', 'out', 'smaller'], action: 'zoom.out' },
@@ -176,9 +192,16 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     id: 'devtools',
     label: 'Toggle Developer Tools',
     keywords: ['devtools', 'inspect', 'developer'],
-    action: 'devtools.toggle'
+    action: 'devtools.toggle',
+    requires: 'devtools'
   },
-  { id: 'print', label: 'Print Page', keywords: ['print'], action: 'page.print' },
+  {
+    id: 'print',
+    label: 'Print Page',
+    keywords: ['print'],
+    action: 'page.print',
+    requires: 'print'
+  },
   {
     // Zen 1.20.1: type "New Boost" to boost the current site.
     id: 'new-boost',
@@ -196,65 +219,93 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     id: 'new-window',
     label: 'New Window',
     keywords: ['window', 'new'],
-    action: 'window.new'
+    action: 'window.new',
+    requires: 'windows'
   },
   {
     id: 'new-blank-window',
     label: 'New Blank Window',
     keywords: ['window', 'blank', 'unsynced'],
-    action: 'window.newUnsynced'
+    action: 'window.newUnsynced',
+    requires: 'windows'
   },
   {
     id: 'new-private-window',
     label: 'New Private Window',
     keywords: ['window', 'private', 'incognito'],
-    action: 'window.newPrivate'
+    action: 'window.newPrivate',
+    requires: 'windows'
   },
   {
     id: 'addons',
     label: 'Add-ons and Themes',
     keywords: ['addons', 'extensions', 'mods'],
-    action: 'addons.open'
+    action: 'addons.open',
+    requires: 'extensions'
   },
   {
     id: 'source',
     label: 'View Page Source',
     keywords: ['source', 'html'],
-    action: 'page.viewSource'
+    action: 'page.viewSource',
+    requires: 'viewSource'
   },
   {
     id: 'freeze-others',
     label: 'Freeze Other Tabs',
     keywords: ['freeze', 'sleep', 'suspend', 'tabs', 'background'],
-    action: 'tab.freezeOthers'
+    action: 'tab.freezeOthers',
+    requires: 'resourceGovernor'
   },
   {
     id: 'wake-all',
     label: 'Wake All Tabs',
     keywords: ['wake', 'thaw', 'unfreeze', 'resume', 'tabs'],
-    action: 'tab.wakeAll'
+    action: 'tab.wakeAll',
+    requires: 'resourceGovernor'
   },
   {
     id: 'trim',
     label: 'Free Up Memory Now',
     keywords: ['memory', 'free', 'trim', 'unload', 'purge', 'ram', 'cpu'],
-    action: 'resources.trim'
+    action: 'resources.trim',
+    requires: 'resourceGovernor'
   },
   {
     id: 'resources',
     label: 'Resource Budgets',
     keywords: ['resources', 'memory', 'cpu', 'gpu', 'budget', 'limit', 'performance'],
-    action: 'resources.open'
+    action: 'resources.open',
+    requires: 'resourceGovernor'
   }
 ]
 
-export function searchCommands(query: string): CommandDescriptor[] {
+/** Where a URL bar is: what its host can do and the layout its chrome is in. */
+export interface CommandContext {
+  capabilities: HostCapabilities
+  formFactor: FormFactor
+}
+
+/** Whether the command would do anything on this host, in this layout. */
+export function commandAvailable(cmd: CommandDescriptor, ctx: CommandContext): boolean {
+  if (cmd.layouts && !cmd.layouts.includes(ctx.formFactor)) return false
+  return cmd.requires === undefined || ctx.capabilities[cmd.requires]
+}
+
+/**
+ * The commands matching what was typed, at most four. Given a context, only those that work
+ * there: a phone is not offered Compact Mode or Split View, a host without windows no New Window.
+ */
+export function searchCommands(query: string, ctx?: CommandContext): CommandDescriptor[] {
   const q = query.trim().toLowerCase()
   if (!q) return []
-  return URLBAR_COMMANDS.filter((c) => {
-    const label = c.label.toLowerCase()
-    if (label.includes(q)) return true
-    const words = q.split(/\s+/)
-    return words.every((w) => label.includes(w) || c.keywords.some((k) => k.includes(w)))
-  }).slice(0, 4)
+  const offered = ctx ? URLBAR_COMMANDS.filter((c) => commandAvailable(c, ctx)) : URLBAR_COMMANDS
+  return offered
+    .filter((c) => {
+      const label = c.label.toLowerCase()
+      if (label.includes(q)) return true
+      const words = q.split(/\s+/)
+      return words.every((w) => label.includes(w) || c.keywords.some((k) => k.includes(w)))
+    })
+    .slice(0, 4)
 }
