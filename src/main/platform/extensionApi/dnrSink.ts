@@ -1,6 +1,7 @@
 import type { RuleEngine } from '../../../core/blocking/engine'
 import type { Decision, RequestContext } from '../../../core/blocking/rules'
 import type { EngineRuleSet, RuleSink } from '../../../core/extensions/dnr/sink'
+import type { ExtensionResourceOrigin } from './resourceOrigin'
 
 /**
  * Where the declarativeNetRequest translator's rule sets go on desktop: straight into the core's
@@ -15,10 +16,17 @@ import type { EngineRuleSet, RuleSink } from '../../../core/extensions/dnr/sink'
  * Decisions come back the other way: `ElectronBlocking.onDecision` reports every decision that
  * named a rule, and `DeclarativeNetRequestHostApi.decided` routes the ones from an extension's
  * set into its matched-rule log, action count and `onRuleMatchedDebug`.
+ *
+ * Redirects to an extension's `use_dynamic_url` resources are rewritten on the way in to the
+ * origin Zenium serves them from (`resourceOrigin.ts`); Chromium refuses them at the static
+ * `chrome-extension://<id>/` URL.
  */
-export function createDnrSink(engine: RuleEngine): RuleSink {
+export function createDnrSink(
+  engine: RuleEngine,
+  resources?: Pick<ExtensionResourceOrigin, 'rewriteSet'>
+): RuleSink {
   return {
-    setRuleSet: (set) => engine.setRuleSet(set),
+    setRuleSet: (set) => engine.setRuleSet(resources ? resources.rewriteSet(set) : set),
     removeRuleSet: (id) => engine.removeRuleSet(id)
   }
 }

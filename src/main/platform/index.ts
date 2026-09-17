@@ -30,6 +30,7 @@ import { ExtensionService } from './extensions'
 import { WebstoreBridge } from './webstoreBridge'
 import { ExtensionApiHost } from './extensionApi'
 import { createDnrSink } from './extensionApi/dnrSink'
+import { ExtensionResourceOrigin } from './extensionApi/resourceOrigin'
 import { edgeStoreUserAgent, webstoreClientHints } from './requestHeaders'
 import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
@@ -267,6 +268,9 @@ export class ElectronPlatform implements Platform {
       return tabId ? browser.tabs.ownerOf(tabId) : undefined
     })
     webstore.install()
+    // Extensions' `use_dynamic_url` resources are served from a per-run origin of Zenium's (the
+    // lookup runs once the API host below exists).
+    const extensionResources = new ExtensionResourceOrigin((id) => extensionApi.loaded(id))
     const extensionApi = new ExtensionApiHost(
       browser,
       this.sessions,
@@ -274,7 +278,7 @@ export class ElectronPlatform implements Platform {
       this.io,
       this.userDataDir,
       // Extensions' declarativeNetRequest rule sets go straight into the request-blocking engine.
-      createDnrSink(browser.blocking.engine)
+      createDnrSink(browser.blocking.engine, extensionResources)
     )
     extensionApi.install()
     const extensionService = browser.extensions as ExtensionService
@@ -294,6 +298,7 @@ export class ElectronPlatform implements Platform {
     this.requestBlocking.registerHeaderRewrite(edgeStoreUserAgent, { persistentOnly: true })
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
+      extensionResources.install(ses)
       // The one webRequest listener set of the session; every request hook goes through it.
       this.requestBlocking.attach(ses, containerId)
       this.attachPermissions(ses)
