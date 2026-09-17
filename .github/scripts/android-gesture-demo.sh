@@ -30,6 +30,18 @@ out=${DEMO_OUT:-artifacts/android-gesture-demo}
 video=${DEMO_VIDEO:-android-gestures-device-demo.mp4}
 mkdir -p "$out"
 
+# The hosted runners' nested emulator dies silently now and then, a minute or two into a demo
+# (every guest process stops logging at once, adb reports the device offline, the qemu process
+# exits a minute later with nothing in the host kernel log; seen across programs' demos). A
+# marker tells such a death from a driver failure, so the workflow can boot once more for the
+# former and never for the latter.
+note_emulator_death() {
+  if [ "$(adb get-state 2> /dev/null || true)" != "device" ]; then
+    echo "adb lost the device before the driver was done" > "$out/emulator-died"
+  fi
+}
+trap note_emulator_death EXIT
+
 adb wait-for-device
 nproc
 free -m
