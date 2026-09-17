@@ -54,6 +54,8 @@ class ExtensionDemo {
     private val stages = JSONObject()
     private var width = 0
     private var height = 0
+    /** The seeded probe tab; every measurement targets it explicitly (other tabs come and go). */
+    private var probeTab = ""
 
     @Test
     fun record() {
@@ -155,7 +157,11 @@ class ExtensionDemo {
 
     private fun visibleDemo() {
         // 1. The probe page with every content script: Dark Reader darkens it, the probe reports.
-        val probeTab = activeTabId()
+        // The seeded tab is found by URL, not taken as "the active tab": Return YouTube Dislike's
+        // background opens its changelog with `tabs.create` on install, which is active by then.
+        probeTab = tabIdByUrl("$BASE/probe.html") ?: createTab("$BASE/probe.html")
+        chromeInvoke("tab.activate", """{"tabId":${JSONObject.quote(probeTab)}}""")
+        SystemClock.sleep(500)
         chromeInvoke("tab.reload", """{"tabId":${JSONObject.quote(probeTab)}}""")
         val probeView = waitForView(probeTab)
         waitFor(30_000) { if (tabEval(probeView, PROBE_DONE) == "true") true else null }
@@ -345,7 +351,9 @@ class ExtensionDemo {
         // The price of `with (proxy)` isolation: the same loop in a plain function scope and under
         // a `with` over a proxy with the bootstrap's `has`/`get` traps (median of 5). On the probe
         // page: the benchmark builds functions with `new Function`, which a strict CSP forbids.
-        val probeView = waitForView(activeTabId())
+        chromeInvoke("tab.activate", """{"tabId":${JSONObject.quote(probeTab)}}""")
+        SystemClock.sleep(500)
+        val probeView = waitForView(probeTab)
         results.put("withProxyBenchmark", json(tabEval(probeView, WITH_BENCH, 60)))
         // Content-script fetches under a strict page CSP (main-world limitation).
         val cspTab = createTab("$BASE/csp.html")
@@ -383,7 +391,7 @@ class ExtensionDemo {
 
     /** Reload the probe tab `n` times and report navigation timing plus the bootstrap's own numbers. */
     private fun timing(n: Int): JSONArray {
-        val tab = activeTabId()
+        val tab = probeTab
         val list = JSONArray()
         repeat(n) {
             chromeInvoke("tab.reload", """{"tabId":${JSONObject.quote(tab)}}""")
@@ -502,20 +510,18 @@ class ExtensionDemo {
 
     private fun state(): JSONObject = json(chromeInvoke("app.getState", null))
 
-    private fun activeTabId(): String {
-        val state = state()
-        val spaces = state.optJSONArray("spaces") ?: JSONArray()
-        val active = state.optString("activeSpaceId")
-        for (i in 0 until spaces.length()) {
-            val space = spaces.getJSONObject(i)
-            if (space.optString("id") == active) return space.optString("activeTabId")
-        }
-        return state.optString("activeTabId")
-    }
-
     private fun createTab(url: String): String {
         val raw = chromeInvoke("tab.create", """{"url":${JSONObject.quote(url)},"active":true}""")
         return raw.trim('"')
+    }
+
+    /** The id of the first tab whose URL starts with `prefix`, or null. */
+    private fun tabIdByUrl(prefix: String): String? {
+        val tabs = state().optJSONObject("tabs") ?: return null
+        for (tabId in tabs.keys()) {
+            if (tabs.optJSONObject(tabId)?.optString("url")?.startsWith(prefix) == true) return tabId
+        }
+        return null
     }
 
     private fun waitForView(tabId: String): TabWebView =
