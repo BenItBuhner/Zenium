@@ -551,6 +551,95 @@
   .zen-overview-strip::-webkit-scrollbar {
     display: none;
   }
+
+  /*
+   * The site-information sheet. Surfaces nest concentrically: the sheet's corner minus its
+   * padding is the cards' corner (--zen-sheet-inner), and a card's corner minus its padding is
+   * the corner of anything inside it. Sections are told apart by spacing and tone, not lines.
+   */
+  .zen-sheet {
+    --zen-sheet-inner: 16px;
+    padding-left: 12px;
+    padding-right: 12px;
+    border-radius: 28px 28px 0 0;
+    background: var(--zen-panel-bg);
+    backdrop-filter: blur(28px) saturate(1.25);
+    box-shadow:
+      0 -1px 0 rgb(255 255 255 / 0.35) inset,
+      0 -12px 48px rgb(0 0 0 / 0.22);
+    corner-shape: var(--zen-corner);
+    will-change: transform;
+  }
+  :root[data-theme='dark'] .zen-sheet {
+    box-shadow:
+      0 -1px 0 rgb(255 255 255 / 0.08) inset,
+      0 -12px 48px rgb(0 0 0 / 0.5);
+  }
+  .zen-sheet-panel {
+    --zen-sheet-inner: 12px;
+    border-radius: 24px;
+  }
+  .zen-sheet-card {
+    border-radius: var(--zen-sheet-inner);
+    background: rgb(var(--zen-fg-rgb) / 0.055);
+    corner-shape: var(--zen-corner);
+  }
+  .zen-sheet-badge {
+    border-radius: 9999px;
+    background: rgb(var(--zen-fg-rgb) / 0.08);
+    color: var(--zen-fg);
+  }
+  .zen-sheet-badge-secure {
+    background: rgb(34 160 96 / 0.16);
+    color: rgb(22 125 72);
+  }
+  :root[data-theme='dark'] .zen-sheet-badge-secure {
+    color: rgb(112 214 156);
+  }
+  .zen-sheet-badge-warn {
+    background: rgb(214 122 24 / 0.18);
+    color: rgb(178 92 8);
+  }
+  :root[data-theme='dark'] .zen-sheet-badge-warn {
+    color: rgb(245 178 96);
+  }
+  .zen-sheet-action {
+    border-radius: var(--zen-sheet-inner);
+    background: var(--zen-element-bg);
+    color: var(--zen-fg);
+    corner-shape: var(--zen-corner);
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  .zen-sheet-action:active:not(:disabled) {
+    background: var(--zen-element-bg-hover);
+    transform: scale(0.985);
+  }
+  .zen-sheet-action:disabled {
+    opacity: 0.5;
+  }
+  .zen-sheet-action[data-danger] {
+    color: rgb(196 52 52);
+  }
+  :root[data-theme='dark'] .zen-sheet-action[data-danger] {
+    color: rgb(255 128 128);
+  }
+  .zen-sheet-confirm {
+    border-radius: var(--zen-sheet-inner);
+    background: rgb(var(--zen-fg-rgb) / 0.055);
+    corner-shape: var(--zen-corner);
+  }
+  .zen-sheet-action-inner {
+    border-radius: calc(var(--zen-sheet-inner) - 8px);
+    background: rgb(var(--zen-fg-rgb) / 0.08);
+  }
+  .zen-sheet-text-button {
+    border-radius: 6px;
+  }
+  .zen-sheet-text-button:active:not(:disabled) {
+    opacity: 0.6;
+  }
 }
 
 /* Mobile hosts: keep the chrome out of the status bar, cutouts, gesture bar and keyboard. */
