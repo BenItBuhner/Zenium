@@ -36,7 +36,10 @@ export function createPreviewBridge(): NativeBridge {
   }
   // Like Kotlin's outline: the page shows between the strips, and no lower than the frame's
   // bottom edge while a pull holds it down.
-  const applyClip = (frame: HTMLIFrameElement, clip: { pull: number; cover: ContentCover }): void => {
+  const applyClip = (
+    frame: HTMLIFrameElement,
+    clip: { pull: number; cover: ContentCover }
+  ): void => {
     const radius = frame.style.borderRadius || '0px'
     const bottom = Math.max(clip.cover.bottom, clip.pull)
     frame.style.clipPath =
