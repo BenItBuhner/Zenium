@@ -73,9 +73,9 @@ class BookmarksDemo : DemoHarness("bookmarks-demo-state.json", "bookmarks", "boo
         instrumentation.sendStringSync("docs")
         SystemClock.sleep(2_000)
         shot("06-search")
-        repeat(4) { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DEL) }
-        SystemClock.sleep(600)
-        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+        // Injected keys show no soft keyboard, so there is nothing for BACK to dismiss: a BACK here
+        // closes the panel instead. Clear the field key by key and carry on in the panel.
+        clearField(6)
         SystemClock.sleep(1_200)
 
         // 5. Export through the document picker: Downloads, then Save.
@@ -93,7 +93,7 @@ class BookmarksDemo : DemoHarness("bookmarks-demo-state.json", "bookmarks", "boo
         SystemClock.sleep(1_000)
 
         // 6. Close the panel; a URL bar suggestion carries the bookmark's folder path.
-        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+        closePanel()
         SystemClock.sleep(1_800)
         tap(PILL_LABEL)
         SystemClock.sleep(2_000)
@@ -110,6 +110,22 @@ class BookmarksDemo : DemoHarness("bookmarks-demo-state.json", "bookmarks", "boo
     private fun tap(label: String) {
         val target = waitFor(label, 8_000) ?: error("no $label to tap")
         Finger().tap(target.exactCenterX(), target.exactCenterY())
+    }
+
+    /** Delete up to [keys] characters from the focused field, one injected key at a time. */
+    private fun clearField(keys: Int) {
+        instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_MOVE_END)
+        repeat(keys) {
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DEL)
+            SystemClock.sleep(150)
+        }
+    }
+
+    /** The panel header's Close button; BACK only as a fallback, since it is what closed it before. */
+    private fun closePanel() {
+        val close = waitFor(CLOSE_LABEL, 3_000)
+        if (close != null) Finger().tap(close.exactCenterX(), close.exactCenterY())
+        else ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
     }
 
     /**
@@ -172,5 +188,7 @@ class BookmarksDemo : DemoHarness("bookmarks-demo-state.json", "bookmarks", "boo
         const val FIXTURE = "chrome-bookmarks.html"
         /** aria-label of the panel header's overflow button. */
         const val MORE_LABEL = "More bookmark actions"
+        /** title of the overlay header's close button (OverlayShell). */
+        const val CLOSE_LABEL = "Close (Esc)"
     }
 }
