@@ -27,8 +27,8 @@ import kotlin.math.roundToInt
  * Drives the phone chrome's menu sheet with synthesized touches so the `android-menu-sheet-demo`
  * workflow can record it on an emulator: the sheet springing up to its peek, the handle dragged
  * up to expand and down to collapse, a mid-drag reversal, the body scrolled with its edges
- * fading, a pull on the body collapsing the sheet again, a fling that dismisses it, the opening
- * animation caught by a finger, and the Settings panel scrolled for its own fading edges.
+ * fading, a pull on the body collapsing the sheet again, a fling that dismisses it – caught on the
+ * way out once, let go the second time – and the Settings panel scrolled for its own fading edges.
  *
  * Same handshake as `GestureDemo`, through files under the app's `files/menu-demo/`: `record`
  * once the warm-up is done, `recording` from the workflow once screenrecord is rolling, `done`
@@ -233,27 +233,31 @@ class MenuSheetDemo {
         f.up()
         beat()
 
-        // 8. Fling it away.
+        // 8. Fling it away – and catch it on the way out: a finger landing on the layer while the
+        //    sheet moves freezes it where it is, then carries it back up to the peek.
+        grip = handleY()
+        f.down(x, grip)
+        f.moveBy(0f, 0.3f * height, 110)
+        f.up()
+        SystemClock.sleep(80)
+        f.down(x, height - insetBottom - 0.12f * height)
+        f.hold(250)
+        shot("03-caught-mid-flight")
+        f.hold(450)
+        f.moveBy(0f, -0.35f * height, 700)
+        f.hold(300)
+        f.up()
+        beat()
+
+        // 9. This time let it go.
         grip = handleY()
         f.down(x, grip)
         f.moveBy(0f, 0.3f * height, 110)
         f.up()
         beat()
 
-        // 9. Catch: open the menu and grab the sheet while it is still rising, then finish the
-        //    motion by hand.
-        openMenu()
-        if (awaitHandle()) {
-            f.down(x, peekHandleY())
-            f.hold(700)
-            shot("03-caught-mid-flight")
-            f.moveBy(0f, -0.5f * (expanded() - peek), 700)
-            f.hold(300)
-            f.up()
-        }
-        beat()
-
-        // 10. Into Settings: expand, scroll to the end, pick the row; the sheet slides away first.
+        // 10. Into Settings: open, expand, scroll to the end, pick the row; the sheet slides away
+        //     before the panel comes up.
         if (!ensureMenuOpen()) return
         grip = handleY()
         f.down(x, grip)
@@ -264,14 +268,14 @@ class MenuSheetDemo {
         f.moveBy(0f, -0.6f * height, 500)
         f.up()
         beat()
-        val settings = findByLabel("Settings")
-        if (settings != null) f.tap(settings.exactCenterX(), settings.exactCenterY())
-        else if (findByLabel(HANDLE_LABEL) != null) back()
+        // Rows are picked through the accessibility tree: the bounds it reports for content
+        // inside a scrolled list lag behind on the emulator, a touch at them would miss.
+        if (!clickByLabel("Settings") && findByLabel(HANDLE_LABEL) != null) back()
         SystemClock.sleep(2_500)
 
         // 11. Settings on a phone: section chips above the content. Scroll a long section so the
         //     content fades at the top and bottom, and the chip row at its ends.
-        findByLabel("Tab Management")?.let { f.tap(it.exactCenterX(), it.exactCenterY()) }
+        clickByLabel("Tab Management")
         SystemClock.sleep(1_200)
         val contentY = height / 2f
         f.down(x, contentY + 0.15f * height)
@@ -320,10 +324,7 @@ class MenuSheetDemo {
     /** Screen y of the handle wherever the sheet is now (the peek when the tree does not say). */
     private fun handleY(): Float = findByLabel(HANDLE_LABEL)?.exactCenterY() ?: peekHandleY()
 
-    /**
-     * Wait for the sheet to enter the accessibility tree – it is on its way up by then – so a
-     * touch can catch it. False when it never showed up.
-     */
+    /** Wait for the sheet to enter the accessibility tree. False when it never showed up. */
     private fun awaitHandle(): Boolean {
         val deadline = SystemClock.uptimeMillis() + 6_000
         while (SystemClock.uptimeMillis() < deadline) {
@@ -331,6 +332,13 @@ class MenuSheetDemo {
             SystemClock.sleep(30)
         }
         return false
+    }
+
+    /** Click the nearest clickable node labelled `label` through accessibility. False when there is none. */
+    private fun clickByLabel(label: String): Boolean {
+        var node = findNodeByLabel(label) ?: return false
+        while (!node.isClickable) node = node.parent ?: return false
+        return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
     }
 
     private fun shot(name: String) {
@@ -341,8 +349,12 @@ class MenuSheetDemo {
         bitmap.recycle()
     }
 
+    /** Screen bounds of the node labelled `label` (aria-label or text), if there is one. */
+    private fun findByLabel(label: String): Rect? =
+        findNodeByLabel(label)?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+
     /** Breadth-first search of the active window for a node labelled `label` (aria-label or text). */
-    private fun findByLabel(label: String): Rect? {
+    private fun findNodeByLabel(label: String): AccessibilityNodeInfo? {
         val root = ui.rootInActiveWindow ?: return null
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)
@@ -351,7 +363,7 @@ class MenuSheetDemo {
             val node = queue.removeFirst()
             visited++
             if (node.contentDescription?.toString() == label || node.text?.toString() == label) {
-                return Rect().also { node.getBoundsInScreen(it) }
+                return node
             }
             for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
         }
