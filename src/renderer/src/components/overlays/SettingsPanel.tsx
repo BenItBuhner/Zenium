@@ -24,7 +24,7 @@ import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { activeTab } from '@renderer/lib/selectors'
 import { openOverlay, uiStore } from '@renderer/lib/ui'
-import { cn, relativeTime } from '@renderer/lib/utils'
+import { relativeTime } from '@renderer/lib/utils'
 import { ContainerIcon } from '../ContainerIcon'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -33,7 +33,7 @@ import { AgentsSection } from './AgentsSection'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { OverlayShell } from './OverlayShell'
 import { ResourcesSection } from './ResourcesSection'
-import { Choice, Group, Row, Segmented } from './SettingsPrimitives'
+import { Choice, Group, Note, Row, Segmented } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
 import { SyncSection } from './SyncSection'
 import { UpdatesSection } from './UpdatesSection'
@@ -133,27 +133,23 @@ export function SettingsPanel({
   const fadeContent = useFadeEdges<HTMLDivElement>({ axis: 'y' })
   return (
     <OverlayShell title="Settings" variant="full" className="zen-settings">
-      <div className="flex h-full">
-        <nav
-          ref={fadeNav}
-          className="w-52 shrink-0 overflow-y-auto border-r border-[var(--zen-border)] p-2"
-        >
+      <div className="zen-settings-body">
+        <nav ref={fadeNav} className="zen-settings-nav" aria-label="Settings sections">
           {sections.map((item) => (
             <button
               key={item.id}
               type="button"
-              className={cn(
-                'zen-squircle flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
-                section === item.id && 'bg-[var(--zen-element-bg-active)] font-medium'
-              )}
+              className="zen-settings-nav-item"
+              data-active={section === item.id}
+              aria-current={section === item.id ? 'page' : undefined}
               onClick={() => setSection(item.id)}
             >
               {item.label}
             </button>
           ))}
         </nav>
-        <div ref={fadeContent} className="min-w-0 flex-1 overflow-y-auto p-6">
-          <div className="mx-auto flex max-w-2xl flex-col gap-6">
+        <div ref={fadeContent} className="zen-settings-content">
+          <div className="zen-settings-page">
             {section === 'look' && <LookSection s={s} set={set} />}
             {section === 'compact' && <CompactSection s={s} set={set} />}
             {section === 'tabs' && (
@@ -193,11 +189,12 @@ function LookSection({
     <>
       <Group title="Appearance">
         <Row label="Colour scheme">
-          <Choice<ColorScheme>
+          <Segmented<ColorScheme>
+            label="Colour scheme"
             value={s.colorScheme}
             onChange={(v) => set({ colorScheme: v })}
             options={[
-              { value: 'system', label: 'Follow system' },
+              { value: 'system', label: 'System' },
               { value: 'light', label: 'Light' },
               { value: 'dark', label: 'Dark' }
             ]}
@@ -205,15 +202,16 @@ function LookSection({
         </Row>
         <Row
           label="Toolbar layout"
-          hint="Single: everything lives in the sidebar. Multiple: a top toolbar holds navigation."
+          hint="Single: everything lives in the sidebar. Multiple: a top toolbar holds navigation. Collapsed: the toolbar folds away."
         >
-          <Choice<ToolbarLayout>
+          <Segmented<ToolbarLayout>
+            label="Toolbar layout"
             value={s.toolbarLayout}
             onChange={(v) => set({ toolbarLayout: v })}
             options={[
-              { value: 'single', label: 'Single toolbar' },
-              { value: 'multiple', label: 'Multiple toolbars' },
-              { value: 'collapsed', label: 'Collapsed toolbar' }
+              { value: 'single', label: 'Single' },
+              { value: 'multiple', label: 'Multiple' },
+              { value: 'collapsed', label: 'Collapsed' }
             ]}
           />
         </Row>
@@ -236,15 +234,19 @@ function LookSection({
           <Switch checked={s.borderless} onCheckedChange={(v) => set({ borderless: v })} />
         </Row>
       </Group>
-      <Group title="URL Bar">
-        <Row label="Floating behaviour">
-          <Choice<UrlbarBehavior>
+      <Group title="URL bar">
+        <Row
+          label="Floating URL bar"
+          hint="Floating lifts the URL bar into a panel over the page; attached keeps it at the top."
+        >
+          <Segmented<UrlbarBehavior>
+            label="Floating URL bar"
             value={s.urlbarBehavior}
             onChange={(v) => set({ urlbarBehavior: v })}
             options={[
-              { value: 'float-typing', label: 'Floating only when typing' },
-              { value: 'always-float', label: 'Always floating' },
-              { value: 'normal', label: 'Normal (attached to top)' }
+              { value: 'float-typing', label: 'While typing' },
+              { value: 'always-float', label: 'Always' },
+              { value: 'normal', label: 'Attached' }
             ]}
           />
         </Row>
@@ -268,7 +270,8 @@ function LookSection({
           <Switch checked={s.glanceEnabled} onCheckedChange={(v) => set({ glanceEnabled: v })} />
         </Row>
         <Row label="Trigger">
-          <Choice<GlanceTrigger>
+          <Segmented<GlanceTrigger>
+            label="Glance trigger"
             value={s.glanceTrigger}
             onChange={(v) => set({ glanceTrigger: v })}
             options={[
@@ -292,7 +295,7 @@ function CompactSection({
 }): JSX.Element {
   const cm = s.compactMode
   return (
-    <Group title="Compact Mode">
+    <Group title="Compact mode">
       <Row
         label="Enable compact mode"
         hint="Ctrl+S. Hidden bars reappear when you hover the window edge."
@@ -341,11 +344,12 @@ function TabsSection({
     <>
       <Group title="Tabs">
         <Row label="Open new tabs">
-          <Choice<NewTabPosition>
+          <Segmented<NewTabPosition>
+            label="Where new tabs open"
             value={s.newTabPosition}
             onChange={(v) => set({ newTabPosition: v })}
             options={[
-              { value: 'end', label: 'At the end of the list' },
+              { value: 'end', label: 'At the end' },
               { value: 'after-current', label: 'Below the current tab' }
             ]}
           />
@@ -370,18 +374,19 @@ function TabsSection({
         </Row>
       </Group>
       {windows && (
-        <Group title="Window Sync">
+        <Group title="Window sync">
           <Row
             label="Tabs across windows"
-            hint="Zenium mirrors your spaces and tabs in every window. Choose 'pinned only' to keep unpinned tabs per window."
+            hint="Zenium mirrors your spaces and tabs in every window. Pinned only keeps unpinned tabs per window; off makes windows independent."
           >
-            <Choice<WindowSyncMode>
+            <Segmented<WindowSyncMode>
+              label="Tabs across windows"
               value={s.windowSync}
               onChange={(v) => set({ windowSync: v })}
               options={[
-                { value: 'all', label: 'Sync all tabs' },
-                { value: 'pinned', label: 'Sync only pinned tabs in spaces' },
-                { value: 'off', label: 'Off – windows are independent' }
+                { value: 'all', label: 'All tabs' },
+                { value: 'pinned', label: 'Pinned only' },
+                { value: 'off', label: 'Off' }
               ]}
             />
           </Row>
@@ -399,7 +404,7 @@ function TabsSection({
           </Row>
         </Group>
       )}
-      <Group title="Pinned Tabs & Essentials">
+      <Group title="Pinned tabs and Essentials">
         <Row label="When closing a pinned tab">
           <Choice<PinnedCloseBehavior>
             value={s.pinnedCloseBehavior}
@@ -421,14 +426,18 @@ function TabsSection({
             onCheckedChange={(v) => set({ pinnedResetOnStartup: v })}
           />
         </Row>
-        <Row label="Third-party links on pinned & essential tabs">
-          <Choice<ThirdPartyPinnedBehavior>
+        <Row
+          label="Links to other sites from pinned and essential tabs"
+          hint="Where a link that leaves the pinned site opens."
+        >
+          <Segmented<ThirdPartyPinnedBehavior>
+            label="Links to other sites from pinned tabs"
             value={s.thirdPartyOnPinned}
             onChange={(v) => set({ thirdPartyOnPinned: v })}
             options={[
-              { value: 'new-tab', label: 'Open in their own tab' },
-              { value: 'glance', label: 'Open in Glance' },
-              { value: 'same-tab', label: 'Open in the same tab' }
+              { value: 'new-tab', label: 'New tab' },
+              { value: 'glance', label: 'Glance' },
+              { value: 'same-tab', label: 'Same tab' }
             ]}
           />
         </Row>
@@ -452,7 +461,7 @@ function TabsSection({
           />
         </Row>
       </Group>
-      <Group title="Tab Unloading">
+      <Group title="Tab unloading">
         <Row
           label="Unload inactive tabs"
           hint="Frees memory by unloading tabs you haven't used for a while. Freezing, budgets and the live-page cap live under Resources."
@@ -552,11 +561,7 @@ function SpaceRoutingSection({
         them.
       </p>
       <Group title="Routes">
-        {Object.keys(routing).length === 0 && (
-          <div className="px-4 py-6 text-center text-[12.5px] text-[var(--zen-muted)]">
-            No routes yet.
-          </div>
-        )}
+        {Object.keys(routing).length === 0 && <Note>No routes yet.</Note>}
         {Object.entries(routing).map(([d, sid]) => {
           const space = state.spaces.find((s) => s.id === sid)
           return (
@@ -578,7 +583,7 @@ function SpaceRoutingSection({
         })}
       </Group>
       <Group title="Add route">
-        <div className="flex items-center gap-2 p-3">
+        <div className="flex items-center gap-2 px-2.5 py-1">
           <Input
             placeholder="domain.com"
             value={domain}
@@ -665,14 +670,10 @@ function ContainersSection({ state }: { state: UIState }): JSX.Element {
             )}
           </Row>
         ))}
-        {editable.length === 0 && (
-          <div className="px-4 py-4 text-center text-[12.5px] text-[var(--zen-muted)]">
-            Only the default container exists.
-          </div>
-        )}
+        {editable.length === 0 && <Note>Only the default container exists.</Note>}
       </Group>
       <Group title="New container">
-        <div className="flex flex-wrap items-center gap-2 p-3">
+        <div className="flex flex-wrap items-center gap-2 px-2.5 py-1">
           <Input
             placeholder="Name"
             value={name}
@@ -726,14 +727,12 @@ function BoostsSection({ state }: { state: UIState }): JSX.Element {
           disabled={!canBoostCurrent}
           onClick={() => tab && void openOverlay('boosts', tab.id)}
         >
-          <Sparkles className="mr-1.5 h-3.5 w-3.5" /> Boost current site
+          <Sparkles className="h-3.5 w-3.5" /> Boost current site
         </Button>
       </div>
       <Group title="Active boosts">
         {state.boosts.length === 0 && (
-          <div className="px-4 py-6 text-center text-[12.5px] text-[var(--zen-muted)]">
-            No boosts yet. Open a site and click the sparkle in the address bar.
-          </div>
+          <Note>No boosts yet. Open a site and click the sparkle in the address bar.</Note>
         )}
         {state.boosts.map((b) => {
           const parts = [
@@ -752,7 +751,7 @@ function BoostsSection({ state }: { state: UIState }): JSX.Element {
             >
               {b.tint && (
                 <span
-                  className="h-3 w-3 rounded-full ring-1 ring-black/10"
+                  className="h-3 w-3 rounded-full ring-1 ring-[rgb(var(--zen-fg-rgb)/0.12)]"
                   style={{ background: b.tint }}
                 />
               )}
