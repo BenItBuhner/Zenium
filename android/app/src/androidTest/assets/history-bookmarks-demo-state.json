@@ -1,0 +1,241 @@
+{
+  "version": 3,
+  "activeSpaceId": "space_main",
+  "spaces": [
+    {
+      "id": "space_main",
+      "name": "Browse",
+      "icon": "🧭",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          {
+            "c": [
+              96,
+              110,
+              235
+            ],
+            "x": 0.3,
+            "y": 0.35,
+            "isPrimary": true
+          },
+          {
+            "c": [
+              214,
+              92,
+              160
+            ],
+            "x": 0.7,
+            "y": 0.65
+          }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 40
+      },
+      "tabIds": [
+        "tab_example",
+        "tab_coffee"
+      ],
+      "activeTabId": "tab_example",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [],
+  "tabs": [
+    {
+      "id": "tab_example",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://example.com/",
+      "title": "Example Domain",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_coffee",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://en.wikipedia.org/wiki/Coffee",
+      "title": "Coffee - Wikipedia",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "updates": {
+      "autoCheck": false,
+      "autoDownload": false,
+      "channel": "stable"
+    }
+  },
+  "shortcutOverrides": {},
+  "bookmarkTree": {
+    "schemaVersion": 1,
+    "nodes": [
+      {
+        "id": "1",
+        "parentId": null,
+        "index": 0,
+        "type": "folder",
+        "title": "Bookmarks bar",
+        "dateAdded": 0
+      },
+      {
+        "id": "2",
+        "parentId": null,
+        "index": 1,
+        "type": "folder",
+        "title": "Other bookmarks",
+        "dateAdded": 0
+      },
+      {
+        "id": "3",
+        "parentId": null,
+        "index": 2,
+        "type": "folder",
+        "title": "Mobile bookmarks",
+        "dateAdded": 0
+      },
+      {
+        "id": "f_reading",
+        "parentId": "3",
+        "index": 0,
+        "type": "folder",
+        "title": "Reading",
+        "dateAdded": 1788625600000,
+        "dateGroupModified": 1788992800000
+      },
+      {
+        "id": "f_work",
+        "parentId": "3",
+        "index": 1,
+        "type": "folder",
+        "title": "Work",
+        "dateAdded": 1788532000000
+      },
+      {
+        "id": "b_hn",
+        "parentId": "3",
+        "index": 2,
+        "type": "url",
+        "title": "Hacker News",
+        "dateAdded": 1788438400000,
+        "url": "https://news.ycombinator.com/",
+        "favicon": "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%23f26522%22%2F%3E%3Ctext%20x%3D%2216%22%20y%3D%2221.5%22%20font-family%3D%22Inter%2CRoboto%2CHelvetica%2CArial%2Csans-serif%22%20font-size%3D%2216%22%20font-weight%3D%22700%22%20fill%3D%22%23fff%22%20text-anchor%3D%22middle%22%3EY%3C%2Ftext%3E%3C%2Fsvg%3E"
+      },
+      {
+        "id": "b_mdn",
+        "parentId": "3",
+        "index": 3,
+        "type": "url",
+        "title": "corner-shape - CSS | MDN",
+        "dateAdded": 1788344800000,
+        "url": "https://developer.mozilla.org/en-US/docs/Web/CSS/corner-shape",
+        "favicon": "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%231b1b1b%22%2F%3E%3Ctext%20x%3D%2216%22%20y%3D%2221.5%22%20font-family%3D%22Inter%2CRoboto%2CHelvetica%2CArial%2Csans-serif%22%20font-size%3D%2216%22%20font-weight%3D%22700%22%20fill%3D%22%23fff%22%20text-anchor%3D%22middle%22%3EM%3C%2Ftext%3E%3C%2Fsvg%3E"
+      },
+      {
+        "id": "b_rfc",
+        "parentId": "3",
+        "index": 4,
+        "type": "url",
+        "title": "RFC 2324: Hyper Text Coffee Pot Control Protocol",
+        "dateAdded": 1788251200000,
+        "url": "https://www.rfc-editor.org/rfc/rfc2324.html",
+        "favicon": "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%233b5bdb%22%2F%3E%3Ctext%20x%3D%2216%22%20y%3D%2221.5%22%20font-family%3D%22Inter%2CRoboto%2CHelvetica%2CArial%2Csans-serif%22%20font-size%3D%2216%22%20font-weight%3D%22700%22%20fill%3D%22%23fff%22%20text-anchor%3D%22middle%22%3ER%3C%2Ftext%3E%3C%2Fsvg%3E"
+      },
+      {
+        "id": "b_www",
+        "parentId": "3",
+        "index": 5,
+        "type": "url",
+        "title": "World Wide Web",
+        "dateAdded": 1788157600000,
+        "url": "https://info.cern.ch/hypertext/WWW/TheProject.html",
+        "favicon": "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%230b7285%22%2F%3E%3Ctext%20x%3D%2216%22%20y%3D%2221.5%22%20font-family%3D%22Inter%2CRoboto%2CHelvetica%2CArial%2Csans-serif%22%20font-size%3D%2216%22%20font-weight%3D%22700%22%20fill%3D%22%23fff%22%20text-anchor%3D%22middle%22%3EW%3C%2Ftext%3E%3C%2Fsvg%3E"
+      },
+      {
+        "id": "b_zen",
+        "parentId": "3",
+        "index": 6,
+        "type": "url",
+        "title": "Zenium on GitHub",
+        "dateAdded": 1788064000000,
+        "url": "https://github.com/BenItBuhner/Zenium",
+        "favicon": "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%2324292f%22%2F%3E%3Ctext%20x%3D%2216%22%20y%3D%2221.5%22%20font-family%3D%22Inter%2CRoboto%2CHelvetica%2CArial%2Csans-serif%22%20font-size%3D%2216%22%20font-weight%3D%22700%22%20fill%3D%22%23fff%22%20text-anchor%3D%22middle%22%3EZ%3C%2Ftext%3E%3C%2Fsvg%3E"
+      },
+      {
+        "id": "b_damping",
+        "parentId": "f_reading",
+        "index": 0,
+        "type": "url",
+        "title": "Damping - Wikipedia",
+        "dateAdded": 1788625600000,
+        "url": "https://en.wikipedia.org/wiki/Damping",
+        "favicon": "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%23333%22%2F%3E%3Ctext%20x%3D%2216%22%20y%3D%2221.5%22%20font-family%3D%22Inter%2CRoboto%2CHelvetica%2CArial%2Csans-serif%22%20font-size%3D%2216%22%20font-weight%3D%22700%22%20fill%3D%22%23fff%22%20text-anchor%3D%22middle%22%3EW%3C%2Ftext%3E%3C%2Fsvg%3E"
+      },
+      {
+        "id": "b_spring",
+        "parentId": "f_reading",
+        "index": 1,
+        "type": "url",
+        "title": "Spring physics for UI motion",
+        "dateAdded": 1788532000000,
+        "url": "https://example.org/spring-motion",
+        "favicon": "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%232f9e44%22%2F%3E%3Ctext%20x%3D%2216%22%20y%3D%2221.5%22%20font-family%3D%22Inter%2CRoboto%2CHelvetica%2CArial%2Csans-serif%22%20font-size%3D%2216%22%20font-weight%3D%22700%22%20fill%3D%22%23fff%22%20text-anchor%3D%22middle%22%3ES%3C%2Ftext%3E%3C%2Fsvg%3E"
+      },
+      {
+        "id": "b_squircle",
+        "parentId": "f_reading",
+        "index": 2,
+        "type": "url",
+        "title": "Squircles, superellipses and corner-shape",
+        "dateAdded": 1788438400000,
+        "url": "https://example.org/squircles",
+        "favicon": "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%239c36b5%22%2F%3E%3Ctext%20x%3D%2216%22%20y%3D%2221.5%22%20font-family%3D%22Inter%2CRoboto%2CHelvetica%2CArial%2Csans-serif%22%20font-size%3D%2216%22%20font-weight%3D%22700%22%20fill%3D%22%23fff%22%20text-anchor%3D%22middle%22%3EQ%3C%2Ftext%3E%3C%2Fsvg%3E"
+      },
+      {
+        "id": "b_ci",
+        "parentId": "f_work",
+        "index": 0,
+        "type": "url",
+        "title": "Actions · BenItBuhner/Zenium",
+        "dateAdded": 1788625600000,
+        "url": "https://github.com/BenItBuhner/Zenium/actions",
+        "favicon": "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%2324292f%22%2F%3E%3Ctext%20x%3D%2216%22%20y%3D%2221.5%22%20font-family%3D%22Inter%2CRoboto%2CHelvetica%2CArial%2Csans-serif%22%20font-size%3D%2216%22%20font-weight%3D%22700%22%20fill%3D%22%23fff%22%20text-anchor%3D%22middle%22%3EZ%3C%2Ftext%3E%3C%2Fsvg%3E"
+      },
+      {
+        "id": "b_design",
+        "parentId": "f_work",
+        "index": 1,
+        "type": "url",
+        "title": "Zenium design language",
+        "dateAdded": 1788532000000,
+        "url": "https://example.org/design-language",
+        "favicon": "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%23e8590c%22%2F%3E%3Ctext%20x%3D%2216%22%20y%3D%2221.5%22%20font-family%3D%22Inter%2CRoboto%2CHelvetica%2CArial%2Csans-serif%22%20font-size%3D%2216%22%20font-weight%3D%22700%22%20fill%3D%22%23fff%22%20text-anchor%3D%22middle%22%3ED%3C%2Ftext%3E%3C%2Fsvg%3E"
+      }
+    ]
+  },
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_main",
+      "selection": {
+        "space_main": "tab_example"
+      },
+      "compact": false
+    }
+  ]
+}
