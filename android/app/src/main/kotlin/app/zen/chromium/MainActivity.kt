@@ -29,11 +29,11 @@ import org.json.JSONObject
  * WebViews above it, and a topmost layer for HTML fullscreen. Rotation, DeX resizing and keyboard
  * changes are handled in place (see `configChanges` in the manifest) so no page ever reloads.
  */
-class MainActivity : AppCompatActivity() {
+open class MainActivity : AppCompatActivity() {
     private lateinit var root: FrameLayout
     private lateinit var fullscreenLayer: FrameLayout
     lateinit var host: Host
-        private set
+        protected set
     private var insets = JSONObject()
     private var latestInsets: WindowInsetsCompat? = null
     /** The keyboard is animating for the chrome; its frames are streamed as insets. */
@@ -74,6 +74,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // CustomTabActivity shares the activity-level upload, permission and fullscreen plumbing,
+        // but deliberately builds a native provider surface instead of the browser chrome.
+        if (this is CustomTabActivity) return
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         root = FrameLayout(this)
@@ -147,6 +150,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleIntent(intent: Intent?) {
         intent ?: return
+        if (CustomTabsLaunch.isCustomTabsLaunch(intent)) {
+            val customTab = Intent(intent).setClass(this, CustomTabActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+            }
+            startActivity(customTab)
+            // MainActivity is singleTask: without consuming this, a configuration change replays
+            // the Custom Tabs launch and opens a second provider window.
+            intent.action = null
+            return
+        }
         when (intent.action) {
             Intent.ACTION_VIEW -> intent.dataString?.let { if (it.startsWith("http")) host.chrome.openUrl(it) }
             Intent.ACTION_SEND -> {
