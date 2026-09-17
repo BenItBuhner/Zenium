@@ -9,6 +9,8 @@
 #   DEMO_DIR    – handshake directory under the app's files/
 #   DEMO_OUT    – where the artifacts go
 #   DEMO_VIDEO  – file name of the recording
+#   DEMO_THEME  – colour scheme a driver seeds its profile with (`light` or `dark`), passed to
+#                 the instrumentation as the `theme` argument; drivers without a theme ignore it
 #
 # Handshake with the driver, through files in the app's private storage (readable via run-as):
 #   files/<DEMO_DIR>/record     – written by the driver once its warm-up is done
@@ -97,7 +99,7 @@ adb logcat -c || true
 adb logcat -v time > "$out/logcat.txt" &
 logcat_pid=$!
 
-adb shell am instrument -w -e class "$demo_class" "$runner" > "$out/instrument.txt" 2>&1 &
+adb shell am instrument -w -e class "$demo_class" -e theme "${DEMO_THEME:-light}" "$runner" > "$out/instrument.txt" 2>&1 &
 driver_pid=$!
 
 ready=0

@@ -32,8 +32,10 @@ import kotlin.math.roundToInt
  *
  * Same handshake as `GestureDemo`, through files under the app's `files/menu-demo/`: `record`
  * once the warm-up is done, `recording` from the workflow once screenrecord is rolling, `done`
- * when the sequence is over. Screenshots land next to them as `menu-*.png`. It only asserts that
- * it could run; what the chrome does with the touches is what the recording is for.
+ * when the sequence is over. Screenshots land next to them as `menu-sheet-<theme>-*.png`; the
+ * `theme` instrumentation argument (`light`, the default, or `dark`) picks the colour scheme the
+ * profile is seeded with. It only asserts that it could run; what the chrome does with the
+ * touches is what the recording is for.
  */
 @RunWith(AndroidJUnit4::class)
 class MenuSheetDemo {
@@ -41,6 +43,9 @@ class MenuSheetDemo {
     private val ui: UiAutomation = instrumentation.uiAutomation
     private val app: Context = instrumentation.targetContext
     private val out = File(app.filesDir, "menu-demo")
+    private val theme = InstrumentationRegistry.getArguments().getString("theme").let {
+        if (it == "dark") "dark" else "light"
+    }
     private val density = app.resources.displayMetrics.density
     private lateinit var activity: Activity
     private var width = 0
@@ -73,9 +78,10 @@ class MenuSheetDemo {
     private fun seedProfile() {
         val zen = File(app.filesDir, "zen").apply { mkdirs() }
         zen.listFiles()?.forEach { it.delete() }
-        instrumentation.context.assets.open("gesture-demo-state.json").use { input ->
-            File(zen, "state.json").outputStream().use { input.copyTo(it) }
+        val state = instrumentation.context.assets.open("gesture-demo-state.json").use { input ->
+            input.bufferedReader().readText()
         }
+        File(zen, "state.json").writeText(state.replace("\"colorScheme\": \"light\"", "\"colorScheme\": \"$theme\""))
         out.deleteRecursively()
         out.mkdirs()
     }
@@ -173,17 +179,19 @@ class MenuSheetDemo {
         // 1. The menu springs up to its peek; the list fades out at the bottom edge.
         openMenu()
         SystemClock.sleep(1_800)
-        shot("01-open-peek")
+        shot("collapsed")
 
         // 2. Drag the handle up: the sheet grows under the finger, then settles expanded.
         var grip = handleY()
         f.down(x, grip)
         f.moveBy(0f, -0.35f * (expanded() - peek), 700)
         f.hold(600)
+        shot("dragging")
         f.moveBy(0f, -0.45f * (expanded() - peek), 500)
         f.hold(250)
         f.up()
         beat()
+        shot("expanded")
 
         // 3. Drag it down again slowly: collapses back to the peek.
         grip = handleY()
@@ -216,7 +224,7 @@ class MenuSheetDemo {
         f.down(x, bodyY)
         f.moveBy(0f, -0.2f * height, 700)
         f.hold(700)
-        shot("02-expanded-scrolled")
+        shot("expanded-scrolled")
         f.moveBy(0f, -0.35f * height, 600)
         f.hold(500)
         f.up()
@@ -242,7 +250,7 @@ class MenuSheetDemo {
         SystemClock.sleep(80)
         f.down(x, height - insetBottom - 0.12f * height)
         f.hold(250)
-        shot("03-caught-mid-flight")
+        shot("caught")
         f.hold(450)
         f.moveBy(0f, -0.35f * height, 700)
         f.hold(300)
@@ -281,7 +289,7 @@ class MenuSheetDemo {
         f.down(x, contentY + 0.15f * height)
         f.moveBy(0f, -0.3f * height, 700)
         f.hold(700)
-        shot("04-settings-fades")
+        shot("settings")
         f.moveBy(0f, -0.2f * height, 500)
         f.hold(300)
         f.up()
@@ -343,7 +351,7 @@ class MenuSheetDemo {
 
     private fun shot(name: String) {
         val bitmap = ui.takeScreenshot() ?: return
-        File(out, "menu-$name.png").outputStream().use {
+        File(out, "menu-sheet-$theme-$name.png").outputStream().use {
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
         }
         bitmap.recycle()

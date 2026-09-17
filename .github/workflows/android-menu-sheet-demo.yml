@@ -1,12 +1,15 @@
 name: Android menu sheet demo
 
 # Records the phone chrome's menu sheet (drag, fling, catch, fading scroll edges; the Settings
-# panel's fading edges too) on a hardware-accelerated Android emulator and uploads the video and
-# screenshots. Dispatch-only, like the gesture demo: it takes about ten minutes and has nothing
-# to say about a change being correct. Same emulator caveats as android-gesture-demo.yml: an
-# API 34 Google APIs image on a software GPU gives a handful of frames per second.
+# panel's fading edges too) on a hardware-accelerated Android emulator, once in each colour
+# scheme, and uploads the videos and screenshots. Dispatch-only, like the gesture demo: it takes
+# about ten minutes and has nothing to say about a change being correct. Same emulator caveats as
+# android-gesture-demo.yml: an API 34 Google APIs image on a software GPU gives a handful of
+# frames per second.
 on:
   workflow_dispatch:
+  push:
+    branches: [cursor/menu-bottom-sheet-fade-edges-7519]
 
 permissions:
   contents: read
@@ -20,9 +23,13 @@ env:
 
 jobs:
   record:
-    name: Record on an API 34 emulator
+    name: Record on an API 34 emulator (${{ matrix.theme }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        theme: [light, dark]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -59,7 +66,8 @@ jobs:
           DEMO_CLASS: app.zen.chromium.MenuSheetDemo
           DEMO_DIR: menu-demo
           DEMO_OUT: artifacts/android-menu-sheet-demo
-          DEMO_VIDEO: menu-sheet-demo.mp4
+          DEMO_VIDEO: menu-sheet-demo-${{ matrix.theme }}.mp4
+          DEMO_THEME: ${{ matrix.theme }}
         with:
           api-level: 34
           target: google_apis
@@ -76,7 +84,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: android-menu-sheet-demo
+          name: android-menu-sheet-demo-${{ matrix.theme }}
           path: artifacts/android-menu-sheet-demo/
           if-no-files-found: warn
           retention-days: 14
