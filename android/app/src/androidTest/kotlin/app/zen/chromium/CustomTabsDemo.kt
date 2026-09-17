@@ -146,9 +146,14 @@ class CustomTabsDemo {
     private fun currentCustomTab(): CustomTabActivity {
         val deadline = SystemClock.uptimeMillis() + 10_000
         while (SystemClock.uptimeMillis() < deadline) {
-            val activities = androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
-                .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)
-            activities.filterIsInstance<CustomTabActivity>().firstOrNull()?.let { return it }
+            var current: CustomTabActivity? = null
+            instrumentation.runOnMainSync {
+                current = androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                    .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)
+                    .filterIsInstance<CustomTabActivity>()
+                    .firstOrNull()
+            }
+            current?.let { return it }
             SystemClock.sleep(100)
         }
         error("CustomTabActivity did not resume")
