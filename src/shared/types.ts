@@ -537,12 +537,57 @@ export interface ImportResult {
 // History, bookmarks, downloads
 // ---------------------------------------------------------------------------
 
+/** Per-URL aggregate (the "place"): what the omnibox ranks and the top-sites tiles read. */
 export interface HistoryEntry {
   url: string
   title: string
   visitCount: number
   lastVisit: number
   favicon: string | null
+  firstVisit?: number
+  /** Visits that started from typed input (weigh more in frecency). */
+  typedCount?: number
+}
+
+export type HistoryTransition = 'link' | 'typed' | 'reload' | 'redirect' | 'restored' | 'other'
+
+/** One visit of a page (the history page lists these, newest first, grouped by day). */
+export interface HistoryVisit {
+  /** Stable and unique per visit. */
+  id: string
+  url: string
+  title: string
+  favicon: string | null
+  /** Milliseconds since the epoch. */
+  visitTime: number
+  transition: HistoryTransition
+  tabId?: string
+}
+
+export interface HistoryQuery {
+  /** Every whitespace-separated term must occur in the title or URL (case-insensitive). */
+  text?: string
+  /** Inclusive lower bound of `visitTime`. */
+  fromMs?: number
+  /** Exclusive upper bound of `visitTime`. */
+  toMs?: number
+  /** Only visits of this host (or its subdomains). */
+  host?: string
+  limit: number
+  offset?: number
+}
+
+export interface HistoryDayGroup {
+  /** Local calendar day, `YYYY-MM-DD`. */
+  dayKey: string
+  visits: HistoryVisit[]
+}
+
+export interface TopSite {
+  url: string
+  title: string
+  favicon: string | null
+  score: number
 }
 
 /** Legacy flat bookmark (state.json v1–v2); migrated into the tree on load. */
@@ -1305,6 +1350,8 @@ export interface UIState {
   /** Every bookmark node (roots included), ordered parent-first, then by index. */
   bookmarks: BookmarkNode[]
   recentlyClosedCount: number
+  /** Newest first, at most 10 – enough for menus to render without a round trip. */
+  recentlyClosed: ClosedEntrySummary[]
   media: MediaState[]
   findResult: FindResult | null
   /** Tab id whose devtools are open (for the toolbar indicator). */
@@ -1394,13 +1441,16 @@ export interface MenuItemDescriptor {
   label: string
   enabled: boolean
   checked: boolean
+  /** A favicon (`data:` or remote URL) the renderer may show before the label. */
+  icon?: string | null
   submenu: MenuItemDescriptor[] | null
 }
 
 export interface MenuDescriptor {
   id: string
   items: MenuItemDescriptor[]
-  source: 'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app' | 'bookmark'
+  source:
+    'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app' | 'bookmark' | 'history'
   /** Anchor in chrome CSS pixels, when known. */
   x: number | null
   y: number | null
@@ -1485,7 +1535,13 @@ export interface Commands {
   }
   'tab.moveToSpace': { args: { tabId: string; spaceId: string }; result: void }
   'tab.moveToFolder': { args: { tabId: string; folderId: string | null }; result: void }
+  /** Restore the newest recently closed entry (a window entry as a whole window). */
   'tab.reopenClosed': { args: void; result: void }
+  /** The tab's back/forward stack for the long-press list on the back / forward buttons. */
+  'tab.navigationEntries': { args: { tabId: string }; result: NavigationSnapshot }
+  'tab.goToIndex': { args: { tabId: string; index: number }; result: void }
+  /** The back/forward list as a menu (long press / right click on the back and forward buttons). */
+  'tab.navigationMenu': { args: { tabId: string }; result: void }
   'tab.setZoom': { args: { tabId: string; delta: number | null }; result: void }
   'tab.contextMenu': { args: { tabId: string }; result: void }
   'tab.toggleDevtools': { args: { tabId: string }; result: void }
@@ -1619,6 +1675,29 @@ export interface Commands {
   'history.recent': { args: { limit: number }; result: HistoryEntry[] }
   'history.delete': { args: { url: string }; result: void }
   'history.clear': { args: void; result: void }
+  'history.visits': { args: { query: HistoryQuery }; result: HistoryVisit[] }
+  'history.grouped': { args: { query: HistoryQuery }; result: HistoryDayGroup[] }
+  'history.topSites': { args: { n: number; excludedHosts?: string[] }; result: TopSite[] }
+  /** Visits with `fromMs <= visitTime < toMs`. */
+  'history.count': { args: { fromMs: number; toMs: number }; result: number }
+  'history.deleteVisits': { args: { ids: string[] }; result: void }
+  'history.deleteUrls': { args: { urls: string[] }; result: void }
+  'history.deleteDay': { args: { dayKey: string }; result: void }
+  /** Removes the visits in range and returns how many went. */
+  'history.deleteRange': { args: { fromMs: number; toMs: number }; result: number }
+  /** Open the history page (`zen://history`). */
+  'history.open': { args: void; result: void }
+  /** Context menu of a history row (open in new tab / window / private window, copy, remove…). */
+  'history.contextMenu': { args: { visitId: string; url: string }; result: void }
+  /** Menu of a day heading on the history page (delete the day). */
+  'history.dayMenu': { args: { dayKey: string; count: number }; result: void }
+
+  'session.recentlyClosed': { args: void; result: ClosedEntrySummary[] }
+  'session.restoreClosed': { args: { id: string }; result: void }
+  'session.clearRecentlyClosed': { args: void; result: void }
+
+  /** Copy arbitrary text (history rows, menus) through the host clipboard. */
+  'clipboard.writeText': { args: { text: string }; result: void }
 
   /** Bookmark the tab's page in the default folder, or remove its bookmarks (toast feedback). */
   'bookmark.toggle': { args: { tabId: string }; result: void }
@@ -1713,6 +1792,8 @@ export interface Commands {
   /** Zen's "New blank window" (Ctrl+Shift+N): an independent, temporary tab list. */
   'window.newUnsynced': { args: void; result: void }
   'window.newPrivate': { args: void; result: void }
+  /** Open a URL in a new window of the given kind (history rows: "Open in New / Private Window"). */
+  'window.openUrl': { args: { url: string; kind: WindowKind }; result: void }
   /** Blank windows: move every local tab back into one of the real spaces. */
   'window.moveTabsToSpace': { args: { spaceId: string }; result: void }
 
@@ -1940,6 +2021,9 @@ export interface Events {
   'externalProtocol.request': ExternalProtocolRequest
   /** The request was withdrawn (its tab closed, another one took its place). */
   'externalProtocol.cancel': { requestId: string }
+  /** History changed: visits are throttled to twice a second, deletions arrive at once. */
+  'history.changed': { kind: 'visit' | 'delete' | 'clear' }
+  'session.recentlyClosedChanged': void
   /** Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts). */
   insets: { top: number; right: number; bottom: number; left: number }
   /** A login was deleted; `passwords.restore` brings it back for a while. */
@@ -1949,12 +2033,50 @@ export interface Events {
 export type EventName = keyof Events
 
 // ---------------------------------------------------------------------------
-// Recently closed tabs (kept in main only, count exposed to UI)
+// Recently closed tabs and windows (persisted in state.json, summaries in the snapshot)
 // ---------------------------------------------------------------------------
 
-export interface ClosedTab {
+/** A page's back/forward stack (URLs and titles only) and which entry is current. */
+export interface NavigationSnapshot {
+  entries: Array<{ url: string; title: string }>
+  index: number
+}
+
+export interface ClosedTabEntry {
+  kind: 'tab'
+  id: string
+  closedAt: number
   tab: Tab
   spaceId: string | null
+  folderId: string | null
+  /** Position inside its section (essentials, pinned or regular) when it was closed. */
   index: number
-  closedAt: number
+  windowId: string | null
+  navigation: NavigationSnapshot | null
 }
+
+export interface ClosedWindowEntry {
+  kind: 'window'
+  id: string
+  closedAt: number
+  windowKind: WindowKind
+  bounds: Rect | null
+  activeTabId: string | null
+  tabs: ClosedTabEntry[]
+}
+
+export type ClosedEntry = ClosedTabEntry | ClosedWindowEntry
+
+/** What menus and the history page show for a closed entry (no full tab records). */
+export interface ClosedEntrySummary {
+  id: string
+  kind: 'tab' | 'window'
+  title: string
+  url: string | null
+  favicon: string | null
+  closedAt: number
+  tabCount: number
+}
+
+/** The pre-visit-model name; new code uses `ClosedTabEntry`. */
+export type ClosedTab = ClosedTabEntry

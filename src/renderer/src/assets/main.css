@@ -1585,6 +1585,201 @@
   mask-image: none;
 }
 
+/* ---------------------------------------------------------------------------
+ * History page (design language v2 draft: plain page surface, 32 px rows, 15/600 day headings).
+ * ------------------------------------------------------------------------- */
+.zen-history {
+  --zen-page-bg: #fbfbfe;
+  --zen-page-fg: #15141a;
+  --zen-page-fg-soft: rgb(21 20 26 / 0.69);
+  --zen-page-hover: rgb(21 20 26 / 0.06);
+  --zen-page-active: rgb(21 20 26 / 0.1);
+  --zen-page-line: rgb(0 0 0 / 0.15);
+  --zen-page-control: color-mix(in srgb, var(--zen-accent) 40%, #000);
+  --zen-page-menu-bg: #f4f4f4;
+  --zen-page-menu-line: rgb(0 0 0 / 0.15);
+  --zen-page-mark: rgb(255 214 0 / 0.45);
+  background: var(--zen-page-bg);
+  color: var(--zen-page-fg);
+  font-size: 15px;
+  line-height: 1.3;
+}
+:root[data-theme='dark'] .zen-history {
+  --zen-page-bg: #1c1b22;
+  --zen-page-fg: #fbfbfe;
+  --zen-page-fg-soft: rgb(251 251 254 / 0.69);
+  --zen-page-hover: rgb(251 251 254 / 0.08);
+  --zen-page-active: rgb(251 251 254 / 0.12);
+  --zen-page-line: rgb(255 255 255 / 0.12);
+  --zen-page-control: color-mix(in srgb, var(--zen-accent) 40%, #fff);
+  --zen-page-menu-bg: #1f1f1f;
+  --zen-page-menu-line: rgb(255 255 255 / 0.12);
+  --zen-page-mark: rgb(255 214 0 / 0.3);
+}
+.zen-history mark {
+  background: var(--zen-page-mark);
+  color: inherit;
+  border-radius: 2px;
+}
+.zen-history-soft {
+  color: var(--zen-page-fg-soft);
+}
+.zen-history-title {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 28px;
+}
+.zen-history-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  height: 40px;
+  background: var(--zen-page-bg);
+  font-size: 15px;
+  font-weight: 600;
+}
+.zen-history-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 4px;
+}
+.zen-history-row:hover,
+.zen-history-row:focus-within {
+  background: var(--zen-page-hover);
+}
+.zen-history-row[data-selected='true'] {
+  background: color-mix(in srgb, var(--zen-page-control) 14%, transparent);
+}
+.zen-history-row .zen-history-hover {
+  visibility: hidden;
+}
+.zen-history-row:hover .zen-history-hover,
+.zen-history-row:focus-within .zen-history-hover,
+.zen-history [data-selecting='true'] .zen-history-hover {
+  visibility: visible;
+}
+.zen-history-time {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+/* 16 px checkbox, radius 2, accent when checked. */
+.zen-history-check {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex-shrink: 0;
+  border: 1px solid var(--zen-page-fg-soft);
+  border-radius: 2px;
+  background: transparent;
+  display: inline-grid;
+  place-content: center;
+  cursor: pointer;
+}
+.zen-history-check:checked {
+  border-color: var(--zen-page-control);
+  background: var(--zen-page-control);
+}
+.zen-history-check:checked::after {
+  content: '';
+  width: 4px;
+  height: 8px;
+  margin-top: -2px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+:root[data-theme='dark'] .zen-history-check:checked::after {
+  border-color: #1c1b22;
+}
+/* Icon buttons 28 px with 16 px glyphs; text buttons 32 px, radius 4, weight 500. */
+.zen-history-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  color: var(--zen-page-fg);
+  flex-shrink: 0;
+}
+.zen-history-icon-btn:hover {
+  background: var(--zen-page-hover);
+}
+.zen-history-icon-btn:active {
+  background: var(--zen-page-active);
+}
+.zen-history-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 4px;
+  border: 1px solid var(--zen-page-line);
+  background: transparent;
+  color: var(--zen-page-fg);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.zen-history-btn:hover {
+  background: var(--zen-page-hover);
+}
+.zen-history-btn:active {
+  background: var(--zen-page-active);
+}
+.zen-history-btn[data-primary='true'] {
+  border-color: transparent;
+  background: var(--zen-page-control);
+  color: #fff;
+}
+:root[data-theme='dark'] .zen-history-btn[data-primary='true'] {
+  color: #1c1b22;
+}
+.zen-history-btn[data-primary='true']:hover {
+  filter: brightness(1.08);
+}
+.zen-history-input {
+  height: 32px;
+  width: 100%;
+  border-radius: 4px;
+  border: 1px solid var(--zen-page-line);
+  background: transparent;
+  padding: 0 10px 0 32px;
+  color: var(--zen-page-fg);
+  font-size: 15px;
+  outline: none;
+}
+.zen-history-input:focus {
+  border-color: var(--zen-page-control);
+  box-shadow: 0 0 0 1px var(--zen-page-control);
+}
+.zen-history-input::placeholder {
+  color: var(--zen-page-fg-soft);
+}
+/* Floating action row for the multi-selection (a small panel per v2: radius 8, hairline, soft shadow). */
+.zen-history-actions {
+  position: sticky;
+  bottom: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  margin: 0 auto;
+  padding: 8px 8px 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--zen-page-menu-line);
+  background: var(--zen-page-menu-bg);
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.01ms !important;
