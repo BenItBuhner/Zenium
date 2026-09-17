@@ -718,6 +718,7 @@ export class TabManager {
     const tab = this.tab(tabId)
     if (!tab || this.view(tabId) || view.isDestroyed()) return undefined
     this.browser.platform.views.retargetView?.(view, tabId)
+    view.attachTo(win.host)
     view.setBackgroundColor(this.backgroundFor(tab.url))
     view.setVisible(false)
     this.views.set(tabId, view)

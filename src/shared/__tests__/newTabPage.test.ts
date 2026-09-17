@@ -71,4 +71,11 @@ describe('zen://newtab tokens', () => {
     expect(resolveTheme(PRIVATE_THEME, false).isDark).toBe(true)
     expect(resolveTheme(PRIVATE_THEME, true).isDark).toBe(true)
   })
+
+  it('hides with the attribute whatever display a class sets (the private badge is inline-flex)', () => {
+    expect(NEW_TAB_PAGE_STYLE).toMatch(/^\s*\[hidden\] \{ display: none !important; \}$/m)
+    expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-private \{\s*display: inline-flex;/)
+    // The badge starts hidden in a normal window; the script shows it from `isPrivate` only.
+    expect(newTabPageHtml()).toContain('<div class="zen-private" id="zen-private" hidden>Private</div>')
+  })
 })

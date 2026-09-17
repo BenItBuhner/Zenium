@@ -72,6 +72,8 @@ export const NEW_TAB_PAGE_STYLE = `
   button, input { font: inherit; color: inherit; }
   button { cursor: default; }
   svg { stroke-width: var(--v2-icon-stroke); }
+  /* The script shows and hides with the attribute; a class setting display must not win over it. */
+  [hidden] { display: none !important; }
   /* One focus ring (v2 §1): outside on buttons, tiles, radios and rows; inside on text fields. */
   :focus-visible { outline: 2px solid var(--v2-ring); outline-offset: 2px; }
   .zen-search:focus-within, .zen-field:focus-visible { outline: 2px solid var(--v2-ring); outline-offset: -2px; }
@@ -112,7 +114,6 @@ export const NEW_TAB_PAGE_STYLE = `
   /* Empty state (v2 §9.17): one sentence at 69%, 32 px under the search box. */
   .zen-empty { margin: 32px 0 0; text-align: center; color: rgb(var(--zen-fg-rgb) / 0.69); }
   .zen-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; width: min(568px, 100%); margin-top: 28px; }
-  .zen-grid[hidden] { display: none; }
   .zen-tile { position: relative; width: 104px; touch-action: none; }
   .zen-tile-link {
     display: flex; flex-direction: column; align-items: center; gap: 8px; box-sizing: border-box;
@@ -176,7 +177,6 @@ export const NEW_TAB_PAGE_STYLE = `
     border-radius: var(--v2-radius-card); box-shadow: var(--v2-shadow-panel);
     transform-origin: 100% 100%; animation: zen-pop 180ms var(--zen-ease);
   }
-  .zen-panel[hidden] { display: none; }
   .zen-panel h2 { margin: 0 0 16px; font-size: var(--v2-font-heading); line-height: 22px; font-weight: var(--v2-weight-heading); }
   .zen-panel h3 { margin: 12px 0 4px; font-size: var(--v2-font-body); line-height: var(--v2-line-body); font-weight: var(--v2-weight-heading); }
   .zen-panel h3:first-of-type { margin-top: 0; }
@@ -227,7 +227,6 @@ export const NEW_TAB_PAGE_STYLE = `
     border-radius: var(--v2-radius-inner); box-shadow: var(--v2-shadow-panel);
     animation: zen-pop 180ms var(--zen-ease);
   }
-  .zen-menu[hidden] { display: none; }
   .zen-menu button {
     display: flex; align-items: center; gap: 10px; box-sizing: border-box; width: 100%; height: var(--v2-menu-row); padding: 0 10px;
     border: 0; border-radius: var(--v2-radius-control); background: transparent; text-align: left;
@@ -244,7 +243,6 @@ export const NEW_TAB_PAGE_STYLE = `
     border-radius: var(--v2-radius-card); box-shadow: var(--v2-shadow-panel);
     animation: zen-pop 180ms var(--zen-ease);
   }
-  .zen-toast[hidden] { display: none; }
 
   @keyframes zen-pop { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: none; } }
   @keyframes zen-fade { from { opacity: 0; } to { opacity: 1; } }

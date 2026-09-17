@@ -584,6 +584,11 @@ export class NewTabService {
     } catch {
       return
     }
+    // The page loads off the window and joins it only when adopted (`TabManager.attachView`): a
+    // document committing in a child view takes the window's keyboard focus even while hidden,
+    // which would swallow shortcuts and the typing that follows Ctrl+T. Loading detached is as
+    // fast, and showing a loaded view moves no focus.
+    view.detach()
     view.setBackgroundColor('#00000000')
     view.setVisible(false)
     view.setBounds(win.contentRect() ?? fallbackRect(win))

@@ -44,6 +44,8 @@ interface Recorded {
   readonly loads: string[]
   readonly pushes: NewTabPageState[]
   destroyed: boolean
+  /** Whether the view is a child of a window (`createView` attaches; `detach` undoes it). */
+  attached: boolean
 }
 
 interface Fixture {
@@ -89,13 +91,20 @@ function fixture(opts: { newTabPage?: boolean; withBackground?: boolean } = {}):
           events,
           loads: [],
           pushes: [],
-          destroyed: false
+          destroyed: false,
+          attached: true
         }
         views.push(record)
         let url = ''
         return stub<TabView>({
           isDestroyed: () => record.destroyed,
           isVisible: () => false,
+          attachTo: () => {
+            record.attached = true
+          },
+          detach: () => {
+            record.attached = false
+          },
           hasDocument: () => url !== '',
           getURL: () => url,
           getTitle: () => '',
@@ -270,6 +279,8 @@ describe('NewTabService: preloading', () => {
     const preloads = f.views.filter((v) => v.tabId.startsWith('newtab_preload'))
     expect(preloads).toHaveLength(1)
     expect(preloads[0].loads).toEqual([NEW_TAB_URL])
+    // It loads off the window: a document committing in a hidden child view would take focus.
+    expect(preloads[0].attached).toBe(false)
     // It is not a tab.
     expect(Object.values(f.browser.state.model.tabs).some((t) => t.url === NEW_TAB_URL)).toBe(false)
     // The page gets its state pushed like a live one.
@@ -280,8 +291,10 @@ describe('NewTabService: preloading', () => {
     f.browser.handleCommand(win, 'newtab.open', undefined)
     const tab = activeTab(f)
     expect(tab?.url).toBe(NEW_TAB_URL)
-    // Adopted: the preloaded view now answers for the tab; no view was created for it.
+    // Adopted: the preloaded view now answers for the tab and joins the window; no view was
+    // created for it.
     expect(preloads[0].tabId).toBe(tab?.id)
+    expect(preloads[0].attached).toBe(true)
     expect(f.browser.tabs.view(tab!.id)).toBeDefined()
     expect(f.views.filter((v) => v.tabId === tab?.id && v !== preloads[0])).toHaveLength(0)
     // Its host events now reach the tab.
