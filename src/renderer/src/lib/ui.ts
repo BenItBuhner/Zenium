@@ -275,7 +275,10 @@ export function invalidateSnapshot(): void {
 // Bookmark chrome over the page: the star bubble, the bar's panels, the dialogs
 // ---------------------------------------------------------------------------
 
-type BookmarkChrome = Pick<UiState, 'starDialog' | 'bookmarkEdit' | 'bookmarkAllTabs' | 'barMenuOpen'>
+type BookmarkChrome = Pick<
+  UiState,
+  'starDialog' | 'bookmarkEdit' | 'bookmarkAllTabs' | 'barMenuOpen'
+>
 
 /** Whether any of it is up. The manager owns its own edit dialog while it is open. */
 export function bookmarkChromeOpen(ui: UiState): boolean {
