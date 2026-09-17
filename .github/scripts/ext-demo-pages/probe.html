@@ -23,9 +23,17 @@
         images: {}
       }
       window.pageGlobal = 42
-      document.querySelector = function () {
-        return 'patched'
-      }
+      // A page-side patch of a DOM method the extensions can observe (same realm) or not (own
+      // world). It delegates, so extensions that call it keep working: an earlier version
+      // returned a string and broke Dark Reader's theme detection on this page.
+      ;(function () {
+        var original = document.querySelector
+        var patched = function () {
+          return original.apply(this, arguments)
+        }
+        patched.pagePatched = true
+        document.querySelector = patched
+      })()
     </script>
     <title>Zenium extension probe page</title>
     <link rel="stylesheet" href="probe-page.css" />

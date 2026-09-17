@@ -13,7 +13,7 @@
     probeVarFromStartGroup: typeof probeVar,
     probeExpandoFromStartGroup: typeof window.probeExpando,
     // Prototype patches by the page are visible to the main world.
-    querySelectorPatched: document.querySelector('body') === 'patched',
+    querySelectorPatched: document.querySelector.pagePatched === true,
     currentScript: document.currentScript === null ? 'null' : typeof document.currentScript,
     cssVariable: getComputedStyle(document.documentElement)
       .getPropertyValue('--zen-probe-css')
