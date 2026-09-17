@@ -5,10 +5,11 @@ import { Star } from 'lucide-react'
 import type { Rect, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
-import { closeBookmarkChrome } from '@renderer/lib/ui'
+import { closeBookmarkChrome, openBookmarkChrome } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { FolderField } from './FolderField'
 import { useBookmarkTree } from './tree'
+import { useEscapeTrap } from './escape'
 
 export interface StarTarget {
   tabId: string
@@ -64,6 +65,7 @@ export function StarDialog({
   )
 
   const close = useCallback((): void => closeBookmarkChrome({ starDialog: null }), [])
+  useEscapeTrap(!nested, close)
 
   // Removed elsewhere (another window, sync) while open: nothing left to edit.
   useEffect(() => {
@@ -96,13 +98,20 @@ export function StarDialog({
   const moveTo = (folderId: string): void => {
     if (folderId !== node.parentId) run('bookmark.move', { ids: [node.id], parentId: folderId })
   }
+  const more = (): void => {
+    void openBookmarkChrome(
+      {
+        starDialog: null,
+        bookmarkEdit: { id: node.id, parentId: node.parentId ?? '', type: 'url' }
+      },
+      star.tabId
+    )
+  }
 
   const onKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key !== 'Escape') return
     e.preventDefault()
     e.stopPropagation()
-    // A nested level (the folder list or tree) closes first.
-    if (!nested) close()
   }
 
   const body = (
@@ -148,6 +157,9 @@ export function StarDialog({
             onClick={remove}
           >
             Remove
+          </button>
+          <button type="button" className="zen-button" onClick={more}>
+            More
           </button>
           <button type="submit" className="zen-button" data-variant="primary">
             Done

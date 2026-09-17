@@ -150,6 +150,8 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
         {showBar && <BookmarksBar state={state} tab={tab} />}
         <div className="relative min-h-0 flex-1">
           <ContentArea state={state} ui={ui} />
+          {/* Bookmark dialogs dim only this frame; the star bubble portals to the window. */}
+          <TabDialogs state={state} />
         </div>
       </main>
 
@@ -184,7 +186,6 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
       )}
 
       {ui.drag && <DragGhost state={state} drag={ui.drag} />}
-      <TabDialogs state={state} />
       {onboarding && <Onboarding state={state} />}
     </div>
   )
@@ -227,6 +228,8 @@ function useGlobalKeys(state: UIState): void {
       const ui = uiStore.get()
       if (ui.urlbar.open) return // handled by the URL bar input
       if (ui.menu) return // handled by the menu layer
+      // Dialogs, choosers and overflow menus take Escape first (capture traps).
+      if (ui.bookmarkEdit || ui.starDialog || ui.bookmarkAllTabs || ui.barMenuOpen) return
       if (ui.overlay !== 'none') {
         e.preventDefault()
         closeOverlay()

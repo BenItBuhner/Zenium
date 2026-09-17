@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useState } from 'react'
 import { ArrowDown, ArrowUp, Check, Sparkles, Trash2 } from 'lucide-react'
 import type {
+  BookmarksBarMode,
   ColorScheme,
   ContainerColor,
   ContainerIcon as ContainerIconName,
@@ -262,6 +263,35 @@ function LookSection({
       </Group>
       {caps.pageControls && <SitesGroups s={s} set={set} />}
       <AppIconGroup value={s.appIcon} platform={platform} onChange={(id) => set({ appIcon: id })} />
+      <Group title="Bookmarks">
+        <Row
+          label="Show bookmarks bar"
+          hint="Always, only on the new tab page, or never. Compact mode hides it with the toolbar."
+        >
+          <Choice<BookmarksBarMode>
+            value={s.bookmarksBar}
+            onChange={(v) => set({ bookmarksBar: v })}
+            options={[
+              { value: 'always', label: 'Always' },
+              { value: 'newtab', label: 'Only on new tab page' },
+              { value: 'never', label: 'Never' }
+            ]}
+          />
+        </Row>
+        <Row
+          label="Import and export"
+          hint="Netscape HTML files that Chrome, Edge and Firefox share."
+        >
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => void run('bookmark.import', undefined)}>
+              Import
+            </Button>
+            <Button variant="secondary" onClick={() => void run('bookmark.export', undefined)}>
+              Export
+            </Button>
+          </div>
+        </Row>
+      </Group>
       <Group title="URL Bar">
         <Row label="Floating behaviour">
           <Choice<UrlbarBehavior>

@@ -5,6 +5,7 @@ import type { BookmarkTree } from '@shared/bookmarks'
 import { recentFolders } from '@shared/bookmarks'
 import { cn } from '@renderer/lib/utils'
 import { FolderChooser } from './FolderChooser'
+import { useEscapeTrap } from './escape'
 
 interface Props {
   tree: BookmarkTree
@@ -59,6 +60,9 @@ export function FolderField({
     setListOpen(false)
     if (id !== value) onChange(id)
   }
+
+  useEscapeTrap(listOpen, () => setListOpen(false))
+  useEscapeTrap(chooser, () => setChooser(false))
 
   const onListKeyDown = (e: React.KeyboardEvent): void => {
     const rows = [...(listRef.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])]
