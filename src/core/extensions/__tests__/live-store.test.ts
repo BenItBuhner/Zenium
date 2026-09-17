@@ -14,6 +14,7 @@ import { CrxError } from '../crx'
 import { InstallError, checkForUpdate, installFromCrx, installFromZip } from '../install'
 import {
   crxDownloadUrl,
+  isExtensionId,
   parseOmahaResponse,
   parseStorePageUrl,
   updateCheckUrl,
@@ -69,6 +70,11 @@ describe.runIf(LIVE)('live store install', () => {
     async () => {
       const failures: string[] = []
       for (const id of requestedIds()) {
+        if (!isExtensionId(id)) {
+          record({ id, ok: false, error: 'not a valid extension id' })
+          failures.push(`${id}: not a valid extension id`)
+          continue
+        }
         const stores: StoreId[] = ['chrome-web-store', 'edge-add-ons']
         let response: Awaited<ReturnType<StoreFetch>> | null = null
         let store: StoreId | null = null

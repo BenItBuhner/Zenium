@@ -42,10 +42,14 @@ export interface ZipLimits {
   maxEntrySize: number
 }
 
+/**
+ * Generous by design: the limits guard against zip bombs, not disk budgets (hosts enforce those).
+ * Real store packages are large; Adblock Plus 4.44 unpacks to 319 MiB of bundled rule sets.
+ */
 export const DEFAULT_ZIP_LIMITS: ZipLimits = {
   maxEntries: 50_000,
-  maxTotalSize: 256 * 1024 * 1024,
-  maxEntrySize: 256 * 1024 * 1024
+  maxTotalSize: 1024 * 1024 * 1024,
+  maxEntrySize: 512 * 1024 * 1024
 }
 
 export type ZipMethod = 0 | 8
