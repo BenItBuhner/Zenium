@@ -147,6 +147,38 @@ describe('installExtensionApi', () => {
     expect(g.chrome.browserAction).toBeUndefined()
   })
 
+  it('gives the part-2 namespaces their shape without touching the host', async () => {
+    installExtensionApi(host, API_SPEC)
+    const seen: unknown[] = []
+    g.chrome.webNavigation.onCommitted.addListener((d: unknown) => seen.push(d))
+    g.chrome.commands.onCommand.addListener(() => undefined)
+    g.chrome.contextMenus.onClicked.addListener(() => undefined)
+    let created = false
+    expect(g.chrome.contextMenus.create({ id: 'zen', title: 'Zen' }, () => (created = true))).toBe(
+      'zen'
+    )
+    const generated = g.chrome.contextMenus.create({ title: 'x' })
+    expect(typeof generated).toBe('number')
+    await Promise.resolve()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(created).toBe(true)
+    await expect(g.chrome.notifications.create('n1', { type: 'basic' })).resolves.toBe('n1')
+    await expect(g.chrome.notifications.create({ type: 'basic' })).resolves.toMatch(/^\d+$/)
+    await expect(g.chrome.notifications.getPermissionLevel()).resolves.toBe('denied')
+    await expect(g.chrome.cookies.getAll({ domain: 'a.test' })).resolves.toEqual([])
+    await expect(g.chrome.cookies.get({ url: 'https://a.test', name: 'x' })).resolves.toBeNull()
+    await expect(g.chrome.webNavigation.getAllFrames({ tabId: 1 })).resolves.toEqual([])
+    await expect(g.chrome.commands.getAll()).resolves.toEqual([])
+    await new Promise<void>((resolve) => g.chrome.contextMenus.removeAll(() => resolve()))
+    expect(g.chrome.contextMenus.ContextType.ACTION).toBe('action')
+    expect(g.browser.webNavigation.onCommitted).toBe(g.chrome.webNavigation.onCommitted)
+    expect(host.calls).toEqual([])
+    expect(seen).toEqual([])
+    expect(host.notifications.map((n) => (n.payload as Any).event)).toContain(
+      'webNavigation.onCommitted'
+    )
+  })
+
   it('exposes browserAction instead of action for MV2', () => {
     installNativeGlobals(2)
     const diag = installExtensionApi(host, API_SPEC)

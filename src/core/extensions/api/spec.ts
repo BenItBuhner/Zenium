@@ -21,6 +21,15 @@ export interface MethodSpec {
   params: ParamSpec[]
   /** Leave the engine's binding alone when it exists (it works natively). */
   keepNative?: boolean
+  /**
+   * Answered on the context side, never reaching the host: the shape of a member the browser
+   * layer does not implement yet, so an extension that touches it while starting runs on.
+   * `value` goes to the callback or promise; `id` answers with the caller's own id (a string
+   * first argument or `createProperties.id`) or a generated one of that type; `sync` also returns
+   * the id synchronously (`contextMenus.create`). Browser layer part 2 turns these into routed
+   * calls by deleting the flag and adding the host handler.
+   */
+  inert?: { value?: unknown; id?: 'number' | 'string'; sync?: boolean }
 }
 
 export interface EventSpec {
@@ -35,6 +44,12 @@ export interface NamespaceSpec {
   constants?: Record<string, number | string | Record<string, string>>
   /** Only exists in this manifest version (`action` is MV3, `browserAction` MV2). */
   manifestVersion?: 2 | 3
+  /**
+   * The whole namespace is a shape (every method `inert`, events that nothing fires yet):
+   * absent from the engine, pending in the browser layer, but registered against at start-up
+   * by many extensions, which would otherwise never get past their first statement.
+   */
+  shape?: true
 }
 
 export type ApiSpec = Record<string, NamespaceSpec>
@@ -228,6 +243,139 @@ export const API_SPEC: ApiSpec = {
         OPEN_AS_PINNED_TAB: 'OPEN_AS_PINNED_TAB',
         OPEN_AS_WINDOW: 'OPEN_AS_WINDOW',
         OPEN_FULL_SCREEN: 'OPEN_FULL_SCREEN'
+      }
+    }
+  },
+
+  // Browser layer part 2 namespaces, as shapes. Electron 44 has none of them, and of the top 30
+  // Chrome Web Store extensions 15 register a webNavigation listener, 13 a contextMenus one, 11
+  // commands.onCommand, 9 touch cookies and 7 notifications – at the top of their background
+  // script, where an undefined namespace ends the extension before it does anything else.
+  // Events never fire and methods answer with Chrome's empty results until part 2 lands.
+  webNavigation: {
+    shape: true,
+    methods: {
+      getFrame: { params: [object('details')], inert: { value: null } },
+      getAllFrames: { params: [object('details')], inert: { value: [] } }
+    },
+    events: {
+      onBeforeNavigate: {},
+      onCommitted: {},
+      onDOMContentLoaded: {},
+      onCompleted: {},
+      onErrorOccurred: {},
+      onCreatedNavigationTarget: {},
+      onReferenceFragmentUpdated: {},
+      onTabReplaced: {},
+      onHistoryStateUpdated: {}
+    },
+    constants: {
+      TransitionType: {
+        LINK: 'link',
+        TYPED: 'typed',
+        AUTO_BOOKMARK: 'auto_bookmark',
+        AUTO_SUBFRAME: 'auto_subframe',
+        MANUAL_SUBFRAME: 'manual_subframe',
+        GENERATED: 'generated',
+        START_PAGE: 'start_page',
+        FORM_SUBMIT: 'form_submit',
+        RELOAD: 'reload',
+        KEYWORD: 'keyword',
+        KEYWORD_GENERATED: 'keyword_generated'
+      },
+      TransitionQualifier: {
+        CLIENT_REDIRECT: 'client_redirect',
+        SERVER_REDIRECT: 'server_redirect',
+        FORWARD_BACK: 'forward_back',
+        FROM_ADDRESS_BAR: 'from_address_bar'
+      }
+    }
+  },
+  contextMenus: {
+    shape: true,
+    methods: {
+      create: { params: [object('createProperties')], inert: { id: 'number', sync: true } },
+      update: {
+        params: [{ name: 'id', type: ['integer', 'string'] }, object('updateProperties')],
+        inert: {}
+      },
+      remove: { params: [{ name: 'menuItemId', type: ['integer', 'string'] }], inert: {} },
+      removeAll: { params: [], inert: {} }
+    },
+    events: { onClicked: {} },
+    constants: {
+      ACTION_MENU_TOP_LEVEL_LIMIT: 6,
+      ContextType: {
+        ALL: 'all',
+        PAGE: 'page',
+        FRAME: 'frame',
+        SELECTION: 'selection',
+        LINK: 'link',
+        EDITABLE: 'editable',
+        IMAGE: 'image',
+        VIDEO: 'video',
+        AUDIO: 'audio',
+        LAUNCHER: 'launcher',
+        BROWSER_ACTION: 'browser_action',
+        PAGE_ACTION: 'page_action',
+        ACTION: 'action'
+      },
+      ItemType: { NORMAL: 'normal', CHECKBOX: 'checkbox', RADIO: 'radio', SEPARATOR: 'separator' }
+    }
+  },
+  commands: {
+    shape: true,
+    methods: { getAll: { params: [], inert: { value: [] } } },
+    events: { onCommand: {} }
+  },
+  notifications: {
+    shape: true,
+    methods: {
+      create: {
+        params: [{ name: 'notificationId', type: 'string', optional: true }, object('options')],
+        inert: { id: 'string' }
+      },
+      update: { params: [string('notificationId'), object('options')], inert: { value: false } },
+      clear: { params: [string('notificationId')], inert: { value: false } },
+      getAll: { params: [], inert: { value: {} } },
+      getPermissionLevel: { params: [], inert: { value: 'denied' } }
+    },
+    events: {
+      onClosed: {},
+      onClicked: {},
+      onButtonClicked: {},
+      onPermissionLevelChanged: {},
+      onShowSettings: {}
+    },
+    constants: {
+      TemplateType: { BASIC: 'basic', IMAGE: 'image', LIST: 'list', PROGRESS: 'progress' },
+      PermissionLevel: { GRANTED: 'granted', DENIED: 'denied' }
+    }
+  },
+  cookies: {
+    shape: true,
+    methods: {
+      get: { params: [object('details')], inert: { value: null } },
+      getAll: { params: [object('details')], inert: { value: [] } },
+      set: { params: [object('details')], inert: { value: null } },
+      remove: { params: [object('details')], inert: { value: null } },
+      getAllCookieStores: { params: [], inert: { value: [] } },
+      getPartitionKey: { params: [object('details')], inert: { value: { partitionKey: {} } } }
+    },
+    events: { onChanged: {} },
+    constants: {
+      SameSiteStatus: {
+        NO_RESTRICTION: 'no_restriction',
+        LAX: 'lax',
+        STRICT: 'strict',
+        UNSPECIFIED: 'unspecified'
+      },
+      OnChangedCause: {
+        EVICTED: 'evicted',
+        EXPIRED: 'expired',
+        EXPLICIT: 'explicit',
+        EXPIRED_OVERWRITE: 'expired_overwrite',
+        OVERWRITE: 'overwrite'
       }
     }
   }

@@ -351,6 +351,36 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     return out
   }
 
+  let inertIds = 0
+  /** A member that answers on this side (see `MethodSpec.inert`): no validation, no host call. */
+  function makeInertMethod(
+    qualified: string,
+    inert: NonNullable<MethodSpec['inert']>
+  ): (...raw: unknown[]) => unknown {
+    return function (...raw: unknown[]): unknown {
+      const callback = takeCallback(raw)
+      let value = inert.value
+      if (inert.id) {
+        const first: Any = raw[0]
+        const own =
+          typeof first === 'string'
+            ? first
+            : first &&
+                typeof first === 'object' &&
+                (typeof first.id === 'string' || typeof first.id === 'number')
+              ? first.id
+              : undefined
+        inertIds += 1
+        value = own ?? (inert.id === 'number' ? inertIds : String(inertIds))
+      }
+      if (inert.sync) {
+        if (callback) setTimeout(() => callback(), 0)
+        return value
+      }
+      return settle(qualified, Promise.resolve(value), callback)
+    }
+  }
+
   function makeMethod(namespace: string, name: string, method: MethodSpec): Any {
     const qualified = `${namespace}.${name}(${method.params
       .map(
@@ -358,6 +388,7 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
           `${p.optional ? 'optional ' : ''}${Array.isArray(p.type) ? p.type.join('|') : p.type} ${p.name}`
       )
       .join(', ')})`
+    if (method.inert) return makeInertMethod(qualified, method.inert)
     const routed = namespace === 'browserAction' ? 'action' : namespace
     return function (this: unknown, ...raw: unknown[]): unknown {
       const callback = takeCallback(raw)
@@ -488,8 +519,9 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     const targets = roots.map((root) => namespaceOn(root, namespace))
     for (const [name, method] of Object.entries(nsSpec.methods)) {
       const fn = makeMethod(namespace, name, method)
+      const keepNative = method.keepNative || Boolean(method.inert)
       for (const target of targets) {
-        if (method.keepNative && typeof safely(() => target[name]) === 'function') continue
+        if (keepNative && typeof safely(() => target[name]) === 'function') continue
         define(target, name, fn)
       }
     }
@@ -497,7 +529,8 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       const fullName = `${namespace}.${name}`
       const primary = targets[0]
       const native = safely(() => primary[name])
-      if (eventSpec.keepNative && native && typeof native.addListener === 'function') continue
+      const keepNative = eventSpec.keepNative || Boolean(nsSpec.shape)
+      if (keepNative && native && typeof native.addListener === 'function') continue
       const object = createEvent(fullName, native, {
         nativeDelivers: Boolean(eventSpec.nativeInFrames) && host.kind === 'frame'
       })
