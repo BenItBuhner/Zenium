@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zenium ad-request page</title>
+    <link rel="stylesheet" href="probe-page.css" />
+    <script>
+      // Each third-party request below is in uBlock Origin Lite's default rulesets. With the
+      // emulation layer's declarativeNetRequest matcher active they must fail; the local control
+      // request must succeed.
+      window.__ads = {}
+      function mark(name, state) {
+        window.__ads[name] = state
+      }
+    </script>
+  </head>
+  <body>
+    <main>
+      <h1>Ad and tracker requests</h1>
+      <p>
+        Requests to Google Tag Manager, Google Analytics, AdSense and DoubleClick, plus a local
+        control.
+      </p>
+      <ul>
+        <li>gtag: <span id="gtag">pending</span></li>
+        <li>analytics: <span id="analytics">pending</span></li>
+        <li>adsbygoogle: <span id="adsbygoogle">pending</span></li>
+        <li>doubleclick: <span id="doubleclick">pending</span></li>
+        <li>control: <span id="control">pending</span></li>
+      </ul>
+    </main>
+    <script>
+      var probes = {
+        gtag: 'https://www.googletagmanager.com/gtag/js?id=G-ZENIUMTEST',
+        analytics: 'https://www.google-analytics.com/analytics.js',
+        adsbygoogle: 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js',
+        doubleclick: 'https://securepubads.g.doubleclick.net/tag/js/gpt.js',
+        control: 'probe-page.css?control=1'
+      }
+      Object.keys(probes).forEach(function (name) {
+        var url = probes[name]
+        var el = document.createElement(name === 'control' ? 'link' : 'script')
+        if (name === 'control') {
+          el.rel = 'stylesheet'
+          el.href = url
+        } else el.src = url
+        el.onload = function () {
+          mark(name, 'loaded')
+          document.getElementById(name).textContent = 'loaded'
+        }
+        el.onerror = function () {
+          mark(name, 'error')
+          document.getElementById(name).textContent = 'blocked / failed'
+        }
+        document.head.appendChild(el)
+      })
+    </script>
+  </body>
+</html>

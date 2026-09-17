@@ -84,6 +84,8 @@ class Extensions(private val host: Host) {
     private val endpoints = HashMap<String, Endpoint>()
     private val backgrounds = HashMap<String, ExtensionWebView>()
     private var popup: ExtensionPopup? = null
+    /** Last request decisions ("allow|block|… type micros url"), kept while `debug` for instrumentation. */
+    val decisions = ArrayDeque<String>()
 
     val origin = ORIGIN_SUFFIX
 
@@ -369,6 +371,10 @@ class Extensions(private val host: Host) {
         val started = System.nanoTime()
         val decision = rules?.decide(url.toString(), initiator, type, request.method ?: "GET")
         val micros = (System.nanoTime() - started) / 1_000
+        if (debug) synchronized(decisions) {
+            if (decisions.size >= 400) decisions.removeFirst()
+            decisions.addLast("${decisionName(decision)} $type ${micros}us $url")
+        }
         if (observe) {
             val payload = json(
                 "tabId" to tab?.tabId, "url" to url.toString(), "type" to type, "method" to (request.method ?: "GET"),
@@ -430,6 +436,15 @@ class Extensions(private val host: Host) {
     }
 
     fun servedFor(id: String): Served? = served[id]
+
+    /** The hidden background WebView of an enabled extension (instrumentation reads its console). */
+    fun backgroundView(id: String): ExtensionWebView? = backgrounds[id]
+
+    /** The document-start script units currently installed in every tab (origins and size). */
+    fun scriptUnits(): List<ScriptUnit> = units
+
+    /** The WebView of the open popup / options sheet, if any. */
+    fun popupView(): ExtensionWebView? = popup?.webView
 
     // ---------------------------------------------------------------------------------------------
     // Background pages and popups

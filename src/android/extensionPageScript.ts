@@ -76,6 +76,9 @@ interface GroupStat {
   at: number
   /** ms the group's own code took. */
   ms: number
+  /** `document.readyState` and the number of nodes under `<html>` when the group ran. */
+  readyState: string
+  nodes: number
   error: string | null
 }
 
@@ -299,6 +302,10 @@ declare const __zenExtBoot: Boot
 
   function runGroup(scope: Scope, group: BootGroup, stats: Stats | null): void {
     const started = performance.now()
+    const readyState = document.readyState
+    const nodes = document.documentElement
+      ? document.documentElement.getElementsByTagName('*').length
+      : 0
     let error: string | null = null
     for (const path of group.css) {
       const key = `${scope.ext.id}/${path}`
@@ -325,6 +332,8 @@ declare const __zenExtBoot: Boot
         runAt: group.runAt,
         at: started - t0,
         ms: performance.now() - started,
+        readyState,
+        nodes,
         error
       })
   }

@@ -27,6 +27,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.SslErrorHandler
 import android.webkit.ValueCallback
+import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -81,6 +82,9 @@ class TabWebView(
      */
     @Volatile var currentUrl: String? = null
         private set
+
+    /** The last console warnings and errors of the page (extension diagnostics). */
+    val console = ArrayDeque<String>()
 
     init {
         Profiles.apply(this, containerId)
@@ -735,6 +739,17 @@ class TabWebView(
     private inner class Chrome : WebChromeClient() {
         override fun onReceivedTitle(view: WebView, title: String?) {
             host.chrome.viewEvent(tabId, "title", json("title" to (title ?: "")))
+        }
+
+        /** Warnings and errors only, for the extension layer's diagnostics (pages log a lot). */
+        override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+            if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR || message.messageLevel() == ConsoleMessage.MessageLevel.WARNING) {
+                synchronized(console) {
+                    console.addLast("${message.messageLevel()} ${message.sourceId()}:${message.lineNumber()} ${message.message()}")
+                    while (console.size > 100) console.removeFirst()
+                }
+            }
+            return false
         }
 
         override fun onReceivedIcon(view: WebView, icon: Bitmap) {

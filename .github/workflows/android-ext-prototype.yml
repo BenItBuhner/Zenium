@@ -1,0 +1,83 @@
+name: Android extension prototype
+
+# Exercises the extension emulation layer prototype on a hardware-accelerated Android emulator:
+# probes what the system WebView is and is not (EngineProbe), sideloads five Chrome Web Store
+# extensions fetched as CRX3 packages, drives them through the emulation layer while recording
+# the screen (ExtensionDemo), and uploads the recording, the screenshots and the JSON results.
+# Dispatch-only: it takes a quarter of an hour and reports findings, not correctness.
+on:
+  workflow_dispatch:
+  push:
+    branches: [cursor/android-extension-emulation-prototype-f955]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ext-prototype-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 22
+  # Dark Reader, Vimium, Return YouTube Dislike, Stylus, uBlock Origin Lite.
+  DEMO_EXTENSIONS: eimadpbcbfnmbkopoojfekhnkhdbieeh dbepggeogbaibhgnhhndojpepiihcmeb gebbhagfogifgggkldgodflihgfeippi clngdbkpkpeebahjckkjfobafhncgmne ddkjiahejlhfcafbddmgiahcphecmpfh
+
+jobs:
+  record:
+    name: Probe and record on an API 34 emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools platforms;android-35 build-tools;35.0.0
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
+      - run: npm ci
+      - name: Build the chrome, the page script and the extension bootstrap
+        run: npm run build:android:web
+      - name: Assemble the debug APK and the instrumentation driver
+        working-directory: android
+        run: ./gradlew assembleDebug assembleDebugAndroidTest -PskipWeb --no-daemon --stacktrace
+      - name: Fetch the demo extensions from the Chrome Web Store
+        run: echo "$DEMO_EXTENSIONS" | xargs node .github/scripts/fetch-crx.mjs artifacts/ext
+      - name: Enable KVM for the emulator
+        # https://github.blog/changelog/2023-02-23-hardware-accelerated-android-virtualization-on-actions-windows-and-linux-larger-hosted-runners/
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
+      - name: Probe the engine and record the demo
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 3
+          ram-size: 4096M
+          heap-size: 512M
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: bash .github/scripts/android-ext-prototype.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-ext-prototype
+          path: |
+            artifacts/android-ext-prototype/
+            artifacts/ext/fetch.json
+          if-no-files-found: warn
+          retention-days: 14
