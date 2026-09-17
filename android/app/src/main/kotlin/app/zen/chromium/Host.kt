@@ -492,7 +492,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     private fun print(tab: TabWebView) {
         val manager = activity.getSystemService(Context.PRINT_SERVICE) as PrintManager
         val name = tab.title?.ifEmpty { null } ?: "Zenium page"
-        manager.print(name, tab.createPrintDocumentAdapter(name), PrintAttributes.Builder().build())
+        // Through PrintRelay: the WebView's PDF write must never wait on the spooler (BH-01).
+        val adapter = PrintRelay(tab.createPrintDocumentAdapter(name), File(activity.cacheDir, "print"), io)
+        manager.print(name, adapter, PrintAttributes.Builder().build())
     }
 
     private fun savePage(tab: TabWebView, name: String, reply: (Any?) -> Unit) {

@@ -1,6 +1,7 @@
 import { useRef, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import type { PhoneBarPosition } from '@shared/types'
 import { beginDock, catchDock, dockAlong, dragDock, releaseDock } from '@renderer/lib/gestures/dock'
+import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
 import {
   beginOverviewDrag,
   beginTabSwitch,
@@ -156,7 +157,7 @@ export function usePillGestures({ edge, onTap }: PillGestureOptions): PillGestur
     }
     touch.current = t
     const target = e.currentTarget
-    target.setPointerCapture(e.pointerId)
+    capturePointer(target, e.pointerId)
     if (mode === 'pending' && !overviewIsOpen()) {
       // The pill only relocates from a stationary press: any swipe cancels this first.
       t.longPress = setTimeout(() => {
@@ -305,7 +306,7 @@ export function useOverviewHandle({ edge }: { edge: PhoneBarPosition }): Overvie
         tracker,
         release: claimTouchMoves(e.currentTarget)
       }
-      if (dragging) e.currentTarget.setPointerCapture(e.pointerId)
+      if (dragging) capturePointer(e.currentTarget, e.pointerId)
     },
     onPointerMove: (e) => {
       const t = touch.current
@@ -323,7 +324,7 @@ export function useOverviewHandle({ edge }: { edge: PhoneBarPosition }): Overvie
         }
         t.dragging = true
         t.y0 = e.clientY
-        e.currentTarget.setPointerCapture(e.pointerId)
+        capturePointer(e.currentTarget, e.pointerId)
       }
       dragOverview((e.clientY - t.y0) * inward)
     },
