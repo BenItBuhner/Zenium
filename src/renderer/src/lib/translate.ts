@@ -69,6 +69,23 @@ export function pairLabel(source: string | null, target: string | null): string 
   return from || to
 }
 
+/** Reasons a host gives for a model download that never reached the server: network plumbing. */
+const UNREACHABLE =
+  /net::ERR_|Failed to fetch|fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|Unable to resolve host|UnknownHostException|SocketTimeoutException|Network is unreachable/i
+
+/**
+ * The caption of the bar's error state. The core hands over the reason the engine or the host
+ * gave; for a download that never reached the model server that is the platform's network error
+ * code, which all mean the same thing to the reader. Everything else is shown as a sentence.
+ */
+export function errorCaption(error: string | null | undefined): string | null {
+  const reason = error?.trim() ?? ''
+  if (!reason) return null
+  if (UNREACHABLE.test(reason)) return 'The model server could not be reached.'
+  const sentence = reason.charAt(0).toUpperCase() + reason.slice(1)
+  return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`
+}
+
 export interface LanguageOption {
   value: string
   label: string
