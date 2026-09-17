@@ -139,6 +139,7 @@ export interface MessageSender {
   tab?: Record<string, unknown>
   frameId?: number
   documentId?: string
+  documentLifecycle?: 'prerender' | 'active' | 'cached' | 'pending_deletion'
 }
 
 interface PendingCall {

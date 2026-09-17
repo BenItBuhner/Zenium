@@ -204,6 +204,11 @@ export class MessageRouter {
       const tab = endpoint.tabId ? this.outbox.tabFor(endpoint.tabId) : null
       if (tab) info.tab = tab
       info.frameId = endpoint.frameId
+      // Chrome 106+ identifies the sending document (extensions key per-document state on it:
+      // Dark Reader's dark-theme detection, for one); the endpoint id is per document here, as
+      // in `runtime.getContexts`.
+      info.documentId = endpoint.id
+      info.documentLifecycle = 'active'
       try {
         info.origin = new URL(endpoint.url).origin
       } catch {
