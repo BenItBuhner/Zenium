@@ -3,6 +3,9 @@ import { run } from '@renderer/lib/api'
 import { activeTab } from '@renderer/lib/selectors'
 import { captureActiveTab, invalidateSnapshot, returnFocusToPage, uiStore } from '@renderer/lib/ui'
 
+/** How long a security dialog waits for the page's picture before it shows over a blank one. */
+const SNAPSHOT_WAIT_MS = 250
+
 /** What a remembered per-site answer lets the site do, phrased after "may" / "may not". */
 const RULE_LABELS: Record<string, string> = {
   popups: 'open pop-up windows',
@@ -76,9 +79,16 @@ export function blockedPopupsOf(state: UIState, tabId: string | null | undefined
   return (tabId && state.blockedPopups[tabId]) || []
 }
 
-/** A security dialog is about to show over `tabId` (null for a proxy challenge with no page). */
+/**
+ * A security dialog is about to show over `tabId` (null for a proxy challenge with no page). The
+ * page is waiting on the answer and may not have painted yet, so the dialog does not wait long
+ * for its picture: the host hides the page either way.
+ */
 export async function openSecurityPrompt(tabId: string | null): Promise<void> {
-  await captureActiveTab(tabId)
+  await Promise.race([
+    captureActiveTab(tabId),
+    new Promise<void>((resolve) => setTimeout(resolve, SNAPSHOT_WAIT_MS))
+  ])
   run('focus.chrome', undefined)
   uiStore.set({ securityPromptOpen: true })
 }

@@ -33,6 +33,9 @@ import type { ElectronWindow } from './window'
 
 const pagePreload = join(__dirname, '../preload/page.js')
 
+/** How long a page gets to hand over a frame before an overlay opens without its picture. */
+const SNAPSHOT_TIMEOUT_MS = 600
+
 /** Keys that never count as a gesture in Chromium's user-activation model. */
 const NON_ACTIVATING_KEYS = new Set(['Escape', 'Shift', 'Control', 'Alt', 'Meta', 'AltGr'])
 
@@ -434,11 +437,19 @@ export class ElectronTabView implements TabView {
     return result.filePath
   }
 
-  /** JPEG snapshot of the page, used to keep a dimmed preview behind overlays (URL bar, Glance). */
+  /**
+   * JPEG snapshot of the page, used to keep a dimmed preview behind overlays (URL bar, Glance).
+   * A page that has not painted yet (still in its TLS handshake, waiting on a sign-in) gives
+   * `capturePage` nothing to copy and the promise never settles: the overlay that asked must not
+   * wait on it, so an unanswered capture counts as no picture.
+   */
   async snapshot(): Promise<string | null> {
     try {
-      const image = await this.wc.capturePage()
-      if (image.isEmpty()) return null
+      const image = await Promise.race([
+        this.wc.capturePage(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), SNAPSHOT_TIMEOUT_MS))
+      ])
+      if (!image || image.isEmpty()) return null
       const size = image.getSize()
       const scaled = size.width > 1400 ? image.resize({ width: 1400 }) : image
       return `data:image/jpeg;base64,${scaled.toJPEG(65).toString('base64')}`
