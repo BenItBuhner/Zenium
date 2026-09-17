@@ -567,7 +567,9 @@ export class AndroidExtensionHost implements ExtensionHost {
         id: ep,
         extensionId,
         context,
-        tabId: context === 'content' ? event.tabId : null,
+        // Extension pages opened as tabs report their tab like content frames do (Chrome sets
+        // `sender.tab` for them); popups and background pages have none.
+        tabId: context === 'content' || context === 'page' ? event.tabId : null,
         frameId: context === 'content' ? (event.top ? 0 : this.nextFrameId++) : 0,
         url: String(message.url ?? event.origin)
       })

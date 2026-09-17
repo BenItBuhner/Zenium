@@ -75,7 +75,20 @@ class Extensions(private val host: Host) {
         val pageConfig: String
     )
 
-    class Endpoint(val view: WebView, val proxy: JavaScriptReplyProxy, val context: String, val extensionId: String, val isMainFrame: Boolean)
+    /**
+     * A frame (or extension page) that said hello. `url` is the document's `location.href` at
+     * hello time and `nonce` the bootstrap instance that spoke (one per document, shared by every
+     * extension in a content frame): together they tell a new document from the one before it.
+     */
+    class Endpoint(
+        val view: WebView,
+        val proxy: JavaScriptReplyProxy,
+        val context: String,
+        val extensionId: String,
+        val isMainFrame: Boolean,
+        val url: String,
+        val nonce: String
+    )
 
     /**
      * Real isolated worlds: `JS_INJECTION_IN_FRAME_AND_WORLD` (androidx.webkit 1.17, Chromium 146+
@@ -107,6 +120,12 @@ class Extensions(private val host: Host) {
      */
     val callStats = HashMap<String, IntArray>()
     private val pendingCalls = HashMap<String, String>()
+    /**
+     * Times `onPageStarted` arrived after the new document's bootstrap had already said hello
+     * (evidence for the ordering `onDocumentGone` tolerates), for instrumentation.
+     */
+    var lateOnPageStarted = 0
+        private set
 
     val origin = ORIGIN_SUFFIX
 
@@ -400,6 +419,15 @@ class Extensions(private val host: Host) {
     private fun installUnits(view: WebView) {
         handlers.remove(view)?.forEach { runCatching { it.remove() } }
         val list = ArrayList<ScriptHandler>()
+        // Extension pages opened as tabs (options pages, a changelog the background opens with
+        // `tabs.create`): the page bootstrap on the extension's own origin, registered ahead of the
+        // content units so it is the one that claims the frame's bridge object.
+        for (ext in served.values) {
+            val handler = runCatching {
+                WebViewCompat.addDocumentStartJavaScript(view, pageScript(ext, "page"), setOf("https://${ext.id}$ORIGIN_SUFFIX"))
+            }.getOrNull() ?: continue
+            list.add(handler)
+        }
         for (unit in units) {
             val handler = runCatching { addUnit(view, unit, unit.origins) }
                 .recoverCatching {
@@ -428,9 +456,27 @@ class Extensions(private val host: Host) {
         return WebViewCompat.addJavaScriptOnEvent(view, unit.script, WebViewCompat.INJECTION_EVENT_DOCUMENT_START, origins, world)
     }
 
-    /** The main frame of a tab navigated or the tab died: every endpoint in it is gone. */
-    fun onDocumentGone(view: WebView) {
-        val dead = endpoints.filterValues { it.view === view }.keys.toList()
+    /**
+     * `onPageStarted(url)` of a WebView: the previous document's endpoints are gone. The callback
+     * is posted at commit and can land after the new document's bootstrap already said hello
+     * (measured on the emulator: background pages register and make their first calls before
+     * it arrives), so endpoints of a main frame that reported exactly the new URL are kept.
+     * Passing no URL (the view is going away) drops everything.
+     */
+    fun onDocumentGone(view: WebView, url: String? = null) {
+        val mine = endpoints.filterValues { it.view === view }
+        val kept = if (url == null) emptyMap() else mine.filterValues { it.isMainFrame && it.url == url }
+        if (kept.isNotEmpty()) {
+            lateOnPageStarted++
+            Log.d(TAG, "onPageStarted($url) after ${kept.size} endpoint(s) of the new document said hello; kept")
+        }
+        val dead = mine.keys.filter { it !in kept }
+        if (dead.isNotEmpty()) gone(dead)
+    }
+
+    /** A main frame said hello: whatever else the view registered under another bootstrap is the old document. */
+    private fun onNewDocument(view: WebView, nonce: String) {
+        val dead = endpoints.filterValues { it.view === view && it.nonce != nonce }.keys.toList()
         if (dead.isNotEmpty()) gone(dead)
     }
 
@@ -456,7 +502,9 @@ class Extensions(private val host: Host) {
         when (message.str("t")) {
             "hello" -> {
                 val context = message.str("ctx", kind)
-                endpoints[ep] = Endpoint(view, proxy, context, message.str("ext"), isMainFrame)
+                val nonce = ep.substringBefore('.')
+                if (isMainFrame) onNewDocument(view, nonce)
+                endpoints[ep] = Endpoint(view, proxy, context, message.str("ext"), isMainFrame, message.str("url"), nonce)
             }
             "popupSize" -> {
                 popup?.resize(message.optInt("width"), message.optInt("height"))
@@ -479,8 +527,10 @@ class Extensions(private val host: Host) {
     // ---------------------------------------------------------------------------------------------
 
     /**
-     * Every WebView's `shouldInterceptRequest` (background thread). Tab pages: web-accessible
-     * resources of the extension origin, then the DNR decision. Extension WebViews: any file.
+     * Every WebView's `shouldInterceptRequest` (background thread). Tab pages: a top-level
+     * navigation to an extension origin gets any file (Chrome lets any extension page open as a
+     * tab), other frames only its web-accessible resources; then the DNR decision. Extension
+     * WebViews: any file.
      */
     fun intercept(request: WebResourceRequest, tab: TabWebView?, extensionPage: Served?): WebResourceResponse? {
         val url = request.url
@@ -489,7 +539,13 @@ class Extensions(private val host: Host) {
             val id = hostName.removeSuffix(ORIGIN_SUFFIX)
             val ext = served[id] ?: return notFound()
             val path = (url.path ?: "/").trimStart('/')
-            if (extensionPage == null && !ext.webAccessible.any { it.matches(path) }) return notFound()
+            val origin = "https://$hostName/"
+            val ownPage = tab != null && (
+                request.isForMainFrame ||
+                    request.requestHeaders?.get("Referer")?.startsWith(origin) == true ||
+                    tab.currentUrl?.startsWith(origin) == true
+                )
+            if (extensionPage == null && !ownPage && !ext.webAccessible.any { it.matches(path) }) return notFound()
             return serve(ext, path)
         }
         if (extensionPage != null) return null

@@ -116,14 +116,19 @@ jobs:
         run: ./gradlew assembleDebug assembleDebugAndroidTest -PskipWeb --no-daemon --stacktrace
       - name: Fetch the demo extensions from the Chrome Web Store
         run: echo "$DEMO_EXTENSIONS" | xargs node .github/scripts/fetch-crx.mjs artifacts/ext
-      - name: Fetch a Chromium snapshot SystemWebView.apk
+      # The plain `Android` snapshot is armeabi-v7a only and its libwebviewchromium.so cannot be
+      # dlopen'ed on an x86_64 emulator; `AndroidDesktop_x64` ships the same com.android.webview
+      # (minSdk 29) with x86_64 and x86 native code.
+      - name: Fetch a Chromium snapshot SystemWebView.apk (x86_64)
         run: |
-          rev=$(curl -fsSL https://commondatastorage.googleapis.com/chromium-browser-snapshots/Android/LAST_CHANGE)
+          rev=$(curl -fsSL https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64/LAST_CHANGE)
           echo "chromium snapshot revision $rev"
-          curl -fsSL -o /tmp/chrome-android.zip "https://commondatastorage.googleapis.com/chromium-browser-snapshots/Android/$rev/chrome-android.zip"
+          curl -fsSL -o /tmp/chrome-android-desktop.zip "https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64/$rev/chrome-android-desktop.zip"
           mkdir -p artifacts/webview
-          unzip -j -o /tmp/chrome-android.zip chrome-android/apks/SystemWebView.apk -d artifacts/webview
-          curl -fsSL "https://commondatastorage.googleapis.com/chromium-browser-snapshots/Android/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+          unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+          rm -f /tmp/chrome-android-desktop.zip
+          curl -fsSL "https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+          unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
           ls -la artifacts/webview
       - name: Enable KVM for the emulator
         run: |

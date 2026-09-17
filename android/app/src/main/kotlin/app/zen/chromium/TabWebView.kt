@@ -668,7 +668,7 @@ class TabWebView(
             loading = true
             currentUrl = url
             failPendingEvals("the page navigated away before the script finished")
-            host.extensions.onDocumentGone(this@TabWebView)
+            host.extensions.onDocumentGone(this@TabWebView, url)
             host.chrome.viewEvent(tabId, "startLoading", null)
             host.chrome.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", false))
             if (muted) setMuted(true)

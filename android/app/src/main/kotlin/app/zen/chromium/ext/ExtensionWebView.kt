@@ -39,7 +39,8 @@ class ExtensionWebView(
             allowContentAccess = false
             mediaPlaybackRequiresUserGesture = false
         }
-        setBackgroundColor(Color.TRANSPARENT)
+        // Chrome paints popups white until the document says otherwise; the hidden background view has nothing to paint.
+        setBackgroundColor(if (context == "background") Color.TRANSPARENT else Color.WHITE)
         webViewClient = Client()
         webChromeClient = Chrome()
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
@@ -74,7 +75,7 @@ class ExtensionWebView(
         }
 
         override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
-            extensions.onDocumentGone(view)
+            extensions.onDocumentGone(view, url)
         }
     }
 

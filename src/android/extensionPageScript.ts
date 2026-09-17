@@ -6,7 +6,7 @@ import type {
 } from '@core/extensions/runtime/boot'
 import type { ContentScriptDeclaration } from '@core/extensions/runtime/manifest'
 import { contentScriptAppliesTo, type FrameContext } from '@core/extensions/runtime/matchPatterns'
-import { extensionOrigin } from '@core/extensions/runtime/plan'
+import { EXTENSION_ORIGIN_SUFFIX, extensionOrigin } from '@core/extensions/runtime/plan'
 import {
   scheduleRunAt,
   type LifecycleHooks,
@@ -462,6 +462,9 @@ declare const __zenExtBoot: Boot
   // --- content mode ------------------------------------------------------------------------------
 
   if (boot.config.kind === 'content') {
+    // Extension pages open as tabs too (options pages, a changelog opened with `tabs.create`);
+    // Chrome injects no content scripts into chrome-extension:// documents and neither do we.
+    if (location.hostname.endsWith(EXTENSION_ORIGIN_SUFFIX)) return
     const frame = frameContext()
     const stats: Stats | null = boot.debug
       ? { frame: frame.url, matchMs: 0, bootMs: 0, applied: 0, groups: [] }

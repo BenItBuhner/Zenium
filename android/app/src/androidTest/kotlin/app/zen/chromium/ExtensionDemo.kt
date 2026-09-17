@@ -184,19 +184,26 @@ class ExtensionDemo {
         SystemClock.sleep(800)
 
         // 3. The probe's popup: tabs, storage, messaging and executeScript from the page context.
-        popupDemo(PROBE_ID, "03-probe-popup", 20_000) { view -> tabEval(view, "document.title") == "probe-popup-ready" }?.let { view ->
+        // The probe page is made the active tab first: Return YouTube Dislike opens its changelog
+        // as a tab on install, and `executeScript` targets the active tab.
+        chromeInvoke("tab.activate", """{"tabId":${JSONObject.quote(probeTab)}}""")
+        SystemClock.sleep(800)
+        results.put("extensionTabPages", extensionTabPages())
+        val probePopupReady = popupDemo(PROBE_ID, "03-probe-popup", 20_000, { view -> tabEval(view, "document.title") == "probe-popup-ready" }) { view ->
             val report = json(tabEval(view, "JSON.stringify(window.__popupReport || null)"))
             results.put("probePopup", report)
             val steps = report.optJSONObject("steps") ?: JSONObject()
-            stage(PROBE_ID, "popup", if (steps.has("activeTab") && steps.optJSONObject("background") != null) "PASS" else "FAIL", steps.toString())
-        } ?: stage(PROBE_ID, "popup", "FAIL", "popup never reported ready")
+            stage(PROBE_ID, "popup", if (steps.has("activeTab") && steps.optJSONObject("background") != null) "PASS" else "PARTIAL", steps.toString().take(600))
+        }
+        if (!probePopupReady) stage(PROBE_ID, "popup", "FAIL", "popup never reported ready")
 
         // 4. Dark Reader's popup.
-        popupDemo(DARK_READER, "04-dark-reader-popup", 15_000) { view -> tabEval(view, "String(document.body && document.body.innerText.length > 40)") == "true" }?.let { view ->
+        val darkPopup = popupDemo(DARK_READER, "04-dark-reader-popup", 15_000, { view -> tabEval(view, "String(document.body && document.body.innerText.length > 40)") == "true" }) { view ->
             val text = tabEval(view, "document.body.innerText.slice(0, 300)")
             results.put("darkReaderPopupText", text)
             stage(DARK_READER, "popup", "PASS", text.take(120))
-        } ?: stage(DARK_READER, "popup", "FAIL", "popup document stayed empty")
+        }
+        if (!darkPopup) stage(DARK_READER, "popup", "FAIL", "popup document stayed empty")
 
         // 5. uBlock Origin Lite: the ad-request page, then its popup.
         val adsTab = createTab("$BASE/ads.html")
@@ -206,29 +213,43 @@ class ExtensionDemo {
         shot("05-ubol-ads-page")
         val ads = json(tabEval(adsView, "JSON.stringify(window.__ads || {})"))
         results.put("adsPage", ads)
-        val blockedDecisions = decisions().filter { it.startsWith("block") }
-        results.put("blockDecisions", JSONArray(blockedDecisions.takeLast(40)))
-        val trackers = listOf("gtag", "analytics", "adsbygoogle", "doubleclick")
-        val blocked = trackers.count { ads.optString(it) == "error" }
+        val all = decisions()
+        results.put("decisions", JSONArray(all.takeLast(80)))
+        results.put("decisionMicros", decisionMicros(all))
+        // uBOL's rules answer these with `redirect` to a neutered script in its web-accessible
+        // resources (Chrome does the same, and the page's onload still fires), so the verdict comes
+        // from the layer's own decision log: block or redirect for the four trackers, none for the control.
+        val trackerUrls = mapOf(
+            "gtag" to "https://www.googletagmanager.com/gtag/js",
+            "analytics" to "https://www.google-analytics.com/analytics.js",
+            "adsbygoogle" to "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js",
+            "doubleclick" to "https://securepubads.g.doubleclick.net/tag/js/gpt.js"
+        )
+        val verdicts = trackerUrls.mapValues { (_, url) -> all.lastOrNull { it.endsWith(" $url") || it.contains(" $url?") }?.substringBefore(' ') ?: "unseen" }
+        val control = all.lastOrNull { it.contains("probe-page.css?control=1") }?.substringBefore(' ') ?: "unseen"
+        results.put("trackerDecisions", JSONObject().apply { verdicts.forEach { (k, v) -> put(k, v) } }.put("control", control))
+        val stopped = verdicts.values.count { it == "block" || it == "redirect" }
         stage(
             UBOL, "coreFunction",
             when {
-                blocked == trackers.size && ads.optString("control") == "loaded" -> "PASS"
-                blocked > 0 -> "PARTIAL"
+                stopped == trackerUrls.size && ads.optString("control") == "loaded" && control != "block" -> "PASS"
+                stopped > 0 -> "PARTIAL"
                 else -> "FAIL"
             },
-            "blocked $blocked/${trackers.size} tracker scripts, control=${ads.optString("control")}, ${blockedDecisions.size} block decisions"
+            "decisions ${verdicts.entries.joinToString { "${it.key}=${it.value}" }}, control=${ads.optString("control")}/$control, page saw ${trackerUrls.keys.count { ads.optString(it) == "error" }} onerror"
         )
-        popupDemo(UBOL, "06-ubol-popup", 15_000) { view -> tabEval(view, "String(document.body && document.body.innerText.length > 20)") == "true" }?.let { view ->
+        val ubolPopup = popupDemo(UBOL, "06-ubol-popup", 15_000, { view -> tabEval(view, "String(document.body && document.body.innerText.length > 20)") == "true" }) { view ->
             stage(UBOL, "popup", "PASS", tabEval(view, "document.body.innerText.slice(0, 200)").take(120))
-        } ?: stage(UBOL, "popup", "FAIL", "popup document stayed empty")
+        }
+        if (!ubolPopup) stage(UBOL, "popup", "FAIL", "popup document stayed empty")
 
         // 6. Stylus: the popup for the probe page (no styles installed: the empty state).
         chromeInvoke("tab.activate", """{"tabId":${JSONObject.quote(probeTab)}}""")
         SystemClock.sleep(1_500)
-        popupDemo(STYLUS, "07-stylus-popup", 15_000) { view -> tabEval(view, "String(document.body && document.body.innerText.length > 20)") == "true" }?.let { view ->
+        val stylusPopup = popupDemo(STYLUS, "07-stylus-popup", 15_000, { view -> tabEval(view, "String(document.body && document.body.innerText.length > 20)") == "true" }) { view ->
             stage(STYLUS, "popup", "PASS", tabEval(view, "document.body.innerText.slice(0, 200)").take(120))
-        } ?: stage(STYLUS, "popup", "FAIL", "popup document stayed empty")
+        }
+        if (!stylusPopup) stage(STYLUS, "popup", "FAIL", "popup document stayed empty")
 
         // 7. Return YouTube Dislike on a real watch page (network permitting).
         val ytTab = createTab("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
@@ -293,8 +314,12 @@ class ExtensionDemo {
         }
     }
 
-    /** Open an extension's popup through the core, wait for `ready`, screenshot, return the WebView. */
-    private fun popupDemo(id: String, shotName: String, timeoutMs: Long, ready: (WebView) -> Boolean): WebView? {
+    /**
+     * Open an extension's popup through the core, wait for `ready`, screenshot, hand the live
+     * WebView to `use` (the sheet is dismissed – and its WebView destroyed – right after), and
+     * report whether the popup became ready at all.
+     */
+    private fun popupDemo(id: String, shotName: String, timeoutMs: Long, ready: (WebView) -> Boolean, use: (WebView) -> Unit): Boolean {
         chromeInvoke("extension.openPopup", """{"id":${JSONObject.quote(id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
         val view = waitFor(timeoutMs, 400) {
             val v = popupView()
@@ -302,27 +327,32 @@ class ExtensionDemo {
         }
         SystemClock.sleep(1_200)
         shot(shotName)
-        val console = popupView()?.console?.let { synchronized(it) { it.toList() } } ?: emptyList()
+        val live = popupView()
+        val console = live?.console?.let { synchronized(it) { it.toList() } } ?: emptyList()
         results.put("popupConsole-$id", JSONArray(console.takeLast(20)))
-        return view.also {
-            SystemClock.sleep(800)
-            chromeInvoke("extension.closePopup", null)
-            SystemClock.sleep(900)
-        }
+        if (live != null) results.put("popupUrl-$id", tabEval(live, "location.href + ' title=' + document.title + ' text=' + (document.body ? document.body.innerText.length : -1)"))
+        if (view != null) use(view)
+        SystemClock.sleep(800)
+        chromeInvoke("extension.closePopup", null)
+        SystemClock.sleep(900)
+        return view != null
     }
 
     // --- measurements after the recording -------------------------------------------------------
 
     private fun measurements() {
+        // The price of `with (proxy)` isolation: the same loop in a plain function scope and under
+        // a `with` over a proxy with the bootstrap's `has`/`get` traps (median of 5). On the probe
+        // page: the benchmark builds functions with `new Function`, which a strict CSP forbids.
+        val probeView = waitForView(activeTabId())
+        results.put("withProxyBenchmark", json(tabEval(probeView, WITH_BENCH, 60)))
         // Content-script fetches under a strict page CSP (main-world limitation).
         val cspTab = createTab("$BASE/csp.html")
         val cspView = waitForView(cspTab)
         waitFor(30_000) { if (tabEval(cspView, PROBE_DONE) == "true") true else null }
         results.put("cspPage", json(tabEval(cspView, PROBE_REPORT)))
-        // The price of `with (proxy)` isolation: the same loop in a plain function scope and under
-        // a `with` over a proxy with the bootstrap's `has`/`get` traps (median of 5).
-        results.put("withProxyBenchmark", json(tabEval(cspView, WITH_BENCH)))
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(cspTab)},"force":true}""")
+        instrumentation.runOnMainSync { results.put("lateOnPageStarted", host.extensions.lateOnPageStarted) }
 
         // Background pages: console output and errors of every extension.
         val backgrounds = JSONObject()
@@ -506,6 +536,50 @@ class ExtensionDemo {
         return list
     }
 
+    /** Matcher latency from the decision log ("verdict type <micros>us url"): count, median, p90, max. */
+    private fun decisionMicros(all: List<String>): JSONObject {
+        val micros = all.mapNotNull { line -> line.split(' ').getOrNull(2)?.removeSuffix("us")?.toLongOrNull() }.sorted()
+        if (micros.isEmpty()) return JSONObject().put("count", 0)
+        return JSONObject()
+            .put("count", micros.size)
+            .put("medianUs", micros[micros.size / 2])
+            .put("p90Us", micros[(micros.size * 9) / 10])
+            .put("maxUs", micros.last())
+            .put("firstUs", all.firstOrNull()?.split(' ')?.getOrNull(2))
+    }
+
+    /**
+     * Tabs whose document is an extension page (Return YouTube Dislike opens its changelog on
+     * install): does the page render, and does it have `chrome.runtime`?
+     */
+    private fun extensionTabPages(): JSONArray {
+        val list = JSONArray()
+        val tabs = state().optJSONObject("tabs") ?: JSONObject()
+        for (tabId in tabs.keys()) {
+            val tab = tabs.optJSONObject(tabId) ?: continue
+            val url = tab.optString("url")
+            if (!url.contains(".ext.zenium.invalid/")) continue
+            var view: TabWebView? = null
+            instrumentation.runOnMainSync { view = host.tabs.get(tabId) }
+            val v = view
+            val entry = JSONObject().put("tabId", tabId).put("url", url)
+            if (v != null) {
+                entry.put(
+                    "page",
+                    json(
+                        tabEval(
+                            v,
+                            "JSON.stringify({title: document.title, text: document.body ? document.body.innerText.length : -1, " +
+                                "runtimeId: (typeof chrome === 'object' && chrome.runtime) ? chrome.runtime.id : null, readyState: document.readyState})"
+                        )
+                    )
+                )
+            }
+            list.put(entry)
+        }
+        return list
+    }
+
     private fun consoleOf(view: TabWebView): List<String> {
         var list: List<String> = emptyList()
         instrumentation.runOnMainSync { list = synchronized(view.console) { view.console.toList() } }
@@ -528,7 +602,7 @@ class ExtensionDemo {
     }
 
     /** `evaluateJavascript` on the main thread; JSON strings are decoded to their text. */
-    private fun tabEval(view: WebView, script: String): String {
+    private fun tabEval(view: WebView, script: String, timeoutSeconds: Long = 10): String {
         val latch = CountDownLatch(1)
         var value = "null"
         instrumentation.runOnMainSync {
@@ -537,7 +611,7 @@ class ExtensionDemo {
                 latch.countDown()
             }
         }
-        latch.await(10, TimeUnit.SECONDS)
+        latch.await(timeoutSeconds, TimeUnit.SECONDS)
         return value
     }
 
