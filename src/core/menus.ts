@@ -2,6 +2,7 @@ import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { MenuItemTemplate, MenuSource, PageContextParams } from './platform'
 import { buildSearchUrl } from '../shared/search'
+import { copyConfirmation } from '../shared/clipboard'
 import { displayUrl, getDomain, isNavigableUrl } from '../shared/url'
 import { DEFAULT_CONTAINER_ID } from '../shared/types'
 import { spaceLabel } from '../shared/defaults'
@@ -107,8 +108,16 @@ export class Menus {
         { type: 'separator' },
         {
           label: 'Copy Link',
-          click: () => this.browser.platform.clipboard.writeText(params.linkURL)
+          click: () => this.browser.copyText(params.linkURL, 'Link copied', win)
         },
+        ...(caps.share
+          ? [
+              {
+                label: 'Share Link…',
+                click: () => void this.browser.share({ url: params.linkURL, tabId }, win)
+              }
+            ]
+          : []),
         { label: 'Save Link As…', click: () => view.downloadURL(params.linkURL) },
         { type: 'separator' }
       )
@@ -134,8 +143,16 @@ export class Menus {
         },
         {
           label: 'Copy Image Link',
-          click: () => this.browser.platform.clipboard.writeText(params.srcURL)
+          click: () => this.browser.copyText(params.srcURL, 'Link copied', win)
         },
+        ...(caps.share
+          ? [
+              {
+                label: 'Share Image…',
+                click: () => void this.browser.share({ imageUrl: params.srcURL, tabId }, win)
+              }
+            ]
+          : []),
         { label: 'Save Image As…', click: () => view.downloadURL(params.srcURL) },
         { type: 'separator' }
       )
@@ -144,7 +161,7 @@ export class Menus {
       template.push(
         {
           label: params.mediaType === 'video' ? 'Copy Video Link' : 'Copy Audio Link',
-          click: () => this.browser.platform.clipboard.writeText(params.srcURL)
+          click: () => this.browser.copyText(params.srcURL, 'Link copied', win)
         },
         {
           label: params.mediaType === 'video' ? 'Save Video As…' : 'Save Audio As…',
@@ -313,10 +330,16 @@ export class Menus {
   ): Promise<void> {
     const view = this.browser.tabs.view(tabId)
     if (!view) return
-    const copied = await view.copyImageAt(x, y).catch(() => false)
-    if (copied) return
-    const ok = await this.browser.platform.clipboard.writeImageFromUrl(srcUrl)
-    if (!ok) this.browser.toast('Could not copy image', 'error', win)
+    const copied =
+      (await view.copyImageAt(x, y).catch(() => false)) ||
+      (await this.browser.platform.clipboard.writeImageFromUrl(srcUrl))
+    if (!copied) {
+      this.browser.toast('Could not copy image', 'error', win)
+      return
+    }
+    const { platform, capabilities } = this.browser.state
+    const toast = copyConfirmation(platform, capabilities, 'Image copied')
+    if (toast) this.browser.toast(toast, 'info', win)
   }
 
   // ---------------------------------------------------------------------------
@@ -328,6 +351,7 @@ export class Menus {
     const tab = tabs.tab(tabId)
     if (!tab) return
     const m = state.model
+    const caps = state.capabilities
     const active = tabs.activeTabFor(win)
     const space = win.activeSpace()
     const local = Boolean(win.localSpace)
@@ -450,6 +474,12 @@ export class Menus {
       {
         label: 'Share',
         submenu: [
+          ...(caps.share
+            ? [
+                { label: 'Share…', click: () => this.browser.shareTab(tabId, win) },
+                { type: 'separator' as const }
+              ]
+            : []),
           { label: 'Copy Link', click: () => tabs.copyUrl(tabId) },
           { label: 'Copy Link as Markdown', click: () => tabs.copyUrl(tabId, true) },
           {
@@ -854,6 +884,15 @@ export class Menus {
           enabled: Boolean(active) && this.browser.reader.canRead(active),
           click: () => active && this.browser.reader.toggle(active.id, win)
         },
+        ...(caps.share
+          ? [
+              {
+                label: 'Share…',
+                enabled: Boolean(active) && /^https?:/i.test(active!.url),
+                click: () => active && this.browser.shareTab(active.id, win)
+              }
+            ]
+          : []),
         {
           label: 'Print…',
           enabled: Boolean(active) && caps.print,

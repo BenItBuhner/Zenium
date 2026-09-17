@@ -3,11 +3,13 @@ import type { UIState } from '@shared/types'
 import { onEvent } from '@renderer/lib/api'
 import { isPhone } from '@renderer/lib/formFactor'
 import {
+  cancelExternalProtocol,
   closeMenu,
   closeUrlbar,
   openOverlay,
   openUrlbar,
   pushToast,
+  showExternalProtocol,
   showMenu,
   uiStore
 } from '@renderer/lib/ui'
@@ -102,6 +104,11 @@ export function useMainEvents(): void {
       onEvent('menu.hide', ({ menuId }) => {
         if (uiStore.get().menu?.id === menuId) closeMenu(false)
       }),
+      onEvent(
+        'externalProtocol.request',
+        (request) => void showExternalProtocol(request, currentActiveTabId())
+      ),
+      onEvent('externalProtocol.cancel', ({ requestId }) => cancelExternalProtocol(requestId)),
       onEvent('insets', (insets) => {
         uiStore.set({ insets })
         const root = document.documentElement.style

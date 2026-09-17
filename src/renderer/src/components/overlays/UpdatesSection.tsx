@@ -6,7 +6,7 @@ import { run } from '@renderer/lib/api'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { Button } from '../ui/button'
 import { Switch } from '../ui/switch'
-import { Group, Row, Segmented } from './SettingsPrimitives'
+import { Choice, Group, Row } from './SettingsPrimitives'
 
 /**
  * Settings → Updates. One status card driven by the core's `UpdateStatus` (check → available →
@@ -57,20 +57,19 @@ export function UpdatesSection({
               : 'Beta receives pre-releases (x.y.z-beta.n) as well as final releases.'
           }
         >
-          <Segmented<UpdateChannel>
-            label="Release channel"
+          <Choice<UpdateChannel>
             value={prefs.channel}
             onChange={(v) => set({ updates: { ...prefs, channel: v } })}
             options={[
               { value: 'stable', label: 'Stable' },
-              { value: 'beta', label: 'Beta' }
+              { value: 'beta', label: 'Beta (pre-releases)' }
             ]}
           />
         </Row>
       </Group>
       <Group title="How updates are applied">
         <Row label={installLabel(u)} hint={describeUpdateTarget(u.target)}>
-          <span className="zen-settings-hint">
+          <span className="text-[11.5px] text-[var(--zen-muted)]">
             {u.target.os}
             {u.target.arch !== 'universal' ? ` · ${u.target.arch}` : ''}
           </span>
@@ -84,7 +83,7 @@ export function UpdatesSection({
           }
         >
           <ShieldCheck
-            className={`h-4 w-4 ${u.signature === 'verified' ? 'text-[var(--zen-ok)]' : 'text-[var(--zen-muted)]'}`}
+            className={`h-4 w-4 ${u.signature === 'verified' ? 'text-[var(--zen-accent)]' : 'text-[var(--zen-muted)]'}`}
           />
         </Row>
       </Group>
@@ -125,33 +124,32 @@ function StatusCard({
   const release = u.release
   const busy = u.phase === 'checking' || u.phase === 'downloading'
   return (
-    <section className="zen-settings-rows">
-      <div className="zen-settings-row items-start py-2">
-        <StatusGlyph status={u} busy={busy} />
-        <div className="zen-settings-text">
-          <div className="zen-settings-label font-medium">{headline(u)}</div>
-          <div className="zen-settings-hint">{detail(u)}</div>
+    <section className="zen-squircle overflow-hidden rounded-xl border border-[var(--zen-border)]">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[13.5px] font-medium">{headline(u)}</div>
+          <div className="text-[11.5px] text-[var(--zen-muted)]">{detail(u)}</div>
         </div>
-        <div className="zen-settings-control">
+        <div className="flex shrink-0 items-center gap-2">
           {u.phase === 'downloading' ? (
             <Button variant="secondary" size="sm" onClick={() => run('updates.cancel', undefined)}>
-              <X className="h-3.5 w-3.5" /> Cancel
+              <X className="mr-1.5 h-3.5 w-3.5" /> Cancel
             </Button>
           ) : u.phase === 'ready' ? (
             <Button size="sm" onClick={() => run('updates.install', undefined)}>
               {u.mode === 'in-place' ? (
                 <>
-                  <RotateCw className="h-3.5 w-3.5" /> Restart to update
+                  <RotateCw className="mr-1.5 h-3.5 w-3.5" /> Restart to update
                 </>
               ) : (
                 <>
-                  <Download className="h-3.5 w-3.5" /> Install
+                  <Download className="mr-1.5 h-3.5 w-3.5" /> Install
                 </>
               )}
             </Button>
           ) : u.phase === 'available' && canDownload ? (
             <Button size="sm" onClick={() => run('updates.download', undefined)}>
-              <Download className="h-3.5 w-3.5" /> Download {release?.version}
+              <Download className="mr-1.5 h-3.5 w-3.5" /> Download {release?.version}
             </Button>
           ) : (
             <Button
@@ -160,61 +158,34 @@ function StatusCard({
               disabled={busy}
               onClick={() => run('updates.check', undefined)}
             >
-              <RefreshCw className={`h-3.5 w-3.5 ${busy ? 'zen-spin' : ''}`} /> Check now
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${busy ? 'zen-spin' : ''}`} /> Check now
             </Button>
           )}
         </div>
       </div>
       {u.phase === 'downloading' && u.progress && (
-        <div className="px-2.5 pb-2 pl-[58px]">
+        <div className="px-4 pb-3">
           <div className="h-1 overflow-hidden rounded-full bg-[var(--zen-element-bg-active)]">
             <div
-              className="h-full rounded-full bg-[var(--zen-accent-fill)] transition-[width]"
+              className="h-full rounded-full bg-[var(--zen-accent)] transition-[width]"
               style={{ width: `${Math.max(2, Math.min(100, u.progress.percent))}%` }}
             />
           </div>
         </div>
       )}
       {release && (
-        <div className="zen-settings-row">
-          <div className="zen-settings-hint min-w-0 flex-1 truncate tabular-nums">
+        <div className="flex items-center gap-3 border-t border-[var(--zen-border)] px-4 py-2.5 text-[12px]">
+          <div className="min-w-0 flex-1 truncate text-[var(--zen-muted)]">
             {release.tag}
             {release.prerelease ? ' · pre-release' : ''}
             {release.asset ? ` · ${release.asset.name} (${formatBytes(release.asset.size)})` : ''}
           </div>
           <Button variant="ghost" size="sm" onClick={() => run('updates.openRelease', undefined)}>
-            <ExternalLink className="h-3.5 w-3.5" /> Release notes
+            <ExternalLink className="mr-1.5 h-3.5 w-3.5" /> Release notes
           </Button>
         </div>
       )}
     </section>
-  )
-}
-
-/** The state of the update at a glance: a status glyph in a pill tint of its ink. */
-function StatusGlyph({ status: u, busy }: { status: UpdateStatus; busy: boolean }): JSX.Element {
-  const tone =
-    u.phase === 'error'
-      ? 'text-[var(--zen-danger)] bg-[rgb(var(--zen-danger-rgb)/0.14)]'
-      : u.phase === 'up-to-date' || u.phase === 'ready'
-        ? 'text-[var(--zen-ok)] bg-[rgb(var(--zen-ok-rgb)/0.14)]'
-        : 'text-[var(--zen-accent-ink)] bg-[rgb(var(--zen-accent-rgb)/0.16)]'
-  const Icon =
-    u.phase === 'error'
-      ? X
-      : u.phase === 'up-to-date'
-        ? ShieldCheck
-        : u.phase === 'ready'
-          ? RotateCw
-          : u.phase === 'available' || u.phase === 'downloading'
-            ? Download
-            : RefreshCw
-  return (
-    <span
-      className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${tone}`}
-    >
-      <Icon className={`h-4 w-4 ${busy && u.phase === 'checking' ? 'zen-spin' : ''}`} />
-    </span>
   )
 }
 

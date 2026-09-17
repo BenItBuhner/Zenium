@@ -16,10 +16,41 @@
 !define ZEN_LEGACY_INSTALL_KEY "Software\${ZEN_LEGACY_GUID}"
 !define ZEN_LEGACY_EXECUTABLE "zen.exe"
 
+; The app icon colour picked in Settings → Look and Feel. The running app can change its window
+; and taskbar icon, but the Start menu and desktop shortcuts carry the icon the installer gave
+; them, so the app records the choice here (src/main/platform/appIcon.ts) and every update
+; re-points the shortcuts it just created at the matching multi-size ICO shipped with the app.
+!define ZEN_APP_ICON_KEY "Software\Zenium"
+!define ZEN_APP_ICON_VALUE "AppIcon"
+
 !macro customInstall
   ; Declared here rather than at file scope: makensis also compiles this script for the
   ; uninstaller, where the macro is not inserted, and treats an unreferenced variable as a
   ; warning (electron-builder turns warnings into errors).
+  Var /GLOBAL zenAppIcon
+  Var /GLOBAL zenAppIconFile
+
+  ClearErrors
+  ReadRegStr $zenAppIcon HKEY_CURRENT_USER "${ZEN_APP_ICON_KEY}" "${ZEN_APP_ICON_VALUE}"
+  ${if} $zenAppIcon != ""
+    StrCpy $zenAppIconFile "$INSTDIR\resources\app.asar.unpacked\resources\icons\$zenAppIcon\icon.ico"
+    ${if} ${FileExists} "$zenAppIconFile"
+      ${if} ${FileExists} "$newStartMenuLink"
+        CreateShortCut "$newStartMenuLink" "$appExe" "" "$zenAppIconFile" 0 "" "" "${APP_DESCRIPTION}"
+        ClearErrors
+        WinShell::SetLnkAUMI "$newStartMenuLink" "${APP_ID}"
+      ${endIf}
+      ${if} ${FileExists} "$newDesktopLink"
+        CreateShortCut "$newDesktopLink" "$appExe" "" "$zenAppIconFile" 0 "" "" "${APP_DESCRIPTION}"
+        ClearErrors
+        WinShell::SetLnkAUMI "$newDesktopLink" "${APP_ID}"
+      ${endIf}
+      System::Call 'Shell32::SHChangeNotify(i 0x8000000, i 0, i 0, i 0)'
+      DetailPrint "Shortcuts use the $zenAppIcon app icon"
+    ${endIf}
+  ${endIf}
+  ClearErrors
+
   Var /GLOBAL zenLegacyUninstallString
   Var /GLOBAL zenLegacyUninstaller
   Var /GLOBAL zenLegacyInstallDir

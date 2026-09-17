@@ -2,11 +2,13 @@ import type {
   AgentServerStatus,
   AgentSettings,
   Container,
+  FolderColor,
   ResourceSettings,
   ResourceSnapshot,
   Settings
 } from './types'
 import { DEFAULT_CONTAINER_ID } from './types'
+import { APP_ICON_DEFAULT } from './appIcon'
 import { DEFAULT_UPDATE_SETTINGS } from './updates'
 
 /** Off until the user turns it on in Settings → AI Agents; loopback only, approval required. */
@@ -81,6 +83,7 @@ export function emptyResourceSnapshot(): ResourceSnapshot {
 
 export const DEFAULT_SETTINGS: Settings = {
   colorScheme: 'system',
+  appIcon: APP_ICON_DEFAULT,
   toolbarLayout: 'single',
   sidebarSide: 'left',
   sidebarWidth: 240,
@@ -117,7 +120,8 @@ export const DEFAULT_SETTINGS: Settings = {
   windowSync: 'all',
   resources: structuredClone(DEFAULT_RESOURCE_SETTINGS),
   agents: structuredClone(DEFAULT_AGENT_SETTINGS),
-  updates: structuredClone(DEFAULT_UPDATE_SETTINGS)
+  updates: structuredClone(DEFAULT_UPDATE_SETTINGS),
+  externalProtocols: {}
 }
 
 /** Firefox's four default containers plus "No Container". */
@@ -139,6 +143,19 @@ export const CONTAINER_COLORS: Record<Container['color'], string> = {
   pink: '#ff4bda',
   purple: '#af51f5',
   toolbar: '#8f8f9d'
+}
+
+/** Tab group colours, in the order a new group picks the first one its space is not using yet. */
+export const FOLDER_COLORS: Record<FolderColor, string> = {
+  blue: '#4c8dff',
+  green: '#34b56f',
+  orange: '#f0913c',
+  purple: '#9b6bff',
+  pink: '#f26fa8',
+  cyan: '#2fb7c9',
+  yellow: '#e2b53a',
+  red: '#ee5f5b',
+  grey: '#8a8f9c'
 }
 
 /** Privacy- and productivity-focused sites, mirroring Zen's onboarding essentials picks. */

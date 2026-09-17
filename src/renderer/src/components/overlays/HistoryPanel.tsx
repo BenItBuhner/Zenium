@@ -94,7 +94,7 @@ export function HistoryPanel({ state }: { state: UIState }): JSX.Element {
               </span>
               <button
                 type="button"
-                className="zen-toolbar-button h-6 w-6 opacity-0 group-hover:opacity-100"
+                className="zen-toolbar-button zen-row-action h-6 w-6 opacity-0 group-hover:opacity-100"
                 title="Remove from history"
                 onClick={() => {
                   run('history.delete', { url: e.url })

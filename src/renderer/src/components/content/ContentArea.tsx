@@ -83,8 +83,8 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
             ) : null}
             <div
               className={cn(
-                'zen-overlay-scrim absolute inset-0 transition-opacity',
-                ui.drag && 'opacity-60'
+                'absolute inset-0 bg-black/35 transition-opacity',
+                ui.drag && 'bg-black/20'
               )}
             />
           </div>
@@ -113,16 +113,13 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   )
 }
 
-/** Chrome that dims the page behind it and is not the gesture stage (URL bar, panels, drawer…). */
+/**
+ * Chrome that takes the content area over from the gesture stage (URL bar, panels, a tab drag).
+ * The phone's Spaces drawer and the menu sheets are not counted: they open over the overview,
+ * which keeps the stage – and the snapshot must not show through the grid behind them.
+ */
 function overlayCoversContentBesidesStage(ui: UiState): boolean {
-  return (
-    ui.overlay !== 'none' ||
-    ui.urlbar.open ||
-    ui.drag !== null ||
-    ui.drawerOpen ||
-    ui.menu !== null ||
-    ui.siteInfoOpen
-  )
+  return ui.overlay !== 'none' || ui.urlbar.open || ui.drag !== null || ui.siteInfoOpen
 }
 
 /**

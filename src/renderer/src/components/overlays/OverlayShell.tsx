@@ -10,19 +10,13 @@ import { cn } from '@renderer/lib/utils'
 interface Props {
   title: string
   children: ReactNode
-  /**
-   * `dock` → left-docked panel; `dialog` → centred card; `full` → the content frame itself, the
-   * way Zen's preferences are a page in the content area. On phones dock and full both fill it.
-   */
+  /** `dock` → left-docked sidebar panel; `dialog` → centred card; `full` → fills the content area. */
   variant?: 'dock' | 'dialog' | 'full'
   actions?: ReactNode
   className?: string
 }
 
-/**
- * Common chrome for panels that open over the content area: a level-3 surface with a 44 header
- * (56 on phones) – title at the left, one trailing close button, no rule under it.
- */
+/** Common chrome for panels that open over the content area. */
 export function OverlayShell({
   title,
   children,
@@ -45,7 +39,6 @@ export function OverlayShell({
     dismissed: () => closeOverlay()
   })
   const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
-  const fills = variant === 'full' || (variant === 'dock' && phone)
   return (
     <div className="absolute inset-0 z-30 flex" onMouseDown={() => closeOverlay()}>
       <div
@@ -53,24 +46,24 @@ export function OverlayShell({
         style={{ transformOrigin: '50% 100%' }}
         className={cn(
           'zen-panel zen-animate-in flex flex-col overflow-hidden',
-          fills && 'zen-overlay-fill flex-1',
-          variant === 'dock' && !phone && 'm-3 w-[380px] max-w-full',
+          // Docked panels take the whole content card on phones; dialogs hug the bottom edge.
+          variant === 'dock' && (phone ? 'm-2 flex-1' : 'm-3 w-[380px] max-w-full'),
           variant === 'dialog' &&
             (phone
               ? 'mx-2 mb-2 mt-auto w-auto max-h-[calc(100%-16px)]'
               : 'm-auto w-[560px] max-w-[calc(100%-32px)] max-h-[calc(100%-32px)]'),
+          variant === 'full' && (phone ? 'm-2 flex-1' : 'm-3 flex-1'),
           className
         )}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <header className="zen-overlay-header">
-          <h2 className="zen-overlay-title">{title}</h2>
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--zen-border)] px-4">
+          <h2 className="flex-1 text-[14px] font-semibold">{title}</h2>
           {actions}
           <button
             type="button"
-            className="zen-toolbar-button"
+            className="zen-toolbar-button h-7 w-7"
             title="Close (Esc)"
-            aria-label="Close"
             onClick={() => closeOverlay()}
           >
             <X className="h-4 w-4" />

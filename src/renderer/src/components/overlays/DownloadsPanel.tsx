@@ -118,7 +118,7 @@ function DownloadRow({ item }: { item: DownloadItem }): JSX.Element {
           )}
           <button
             type="button"
-            className="zen-toolbar-button h-7 w-7 opacity-0 group-hover:opacity-100"
+            className="zen-toolbar-button zen-row-action h-7 w-7 opacity-0 group-hover:opacity-100"
             title="Remove from list"
             onClick={() => run('download.remove', { id: item.id })}
           >

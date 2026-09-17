@@ -20,10 +20,12 @@ import type {
   Platform as PlatformOs,
   Rect,
   ResourceSnapshot,
+  SharePayload,
   SyncScope,
   SyncStatus,
   Tab
 } from '../shared/types'
+import type { AppIconId } from '../shared/appIcon'
 import type { KeyInput } from '../shared/shortcuts'
 import type { SiteCertificate, SiteCookie } from '../shared/siteInfo'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '../shared/updates'
@@ -380,6 +382,22 @@ export interface ShellHost {
   openExternal(url: string): void
   openPath(path: string): Promise<void>
   showItemInFolder(path: string): void
+  /**
+   * The system share sheet (`capabilities.share`). Resolves once the sheet is up; hosts without
+   * one leave it out and the core copies the link instead.
+   */
+  share?(payload: SharePayload): Promise<void>
+  /** The OS screen for which links open in this app (`capabilities.appLinkSettings`). */
+  openAppLinkSettings?(): void
+}
+
+/**
+ * A page asked to leave the web. The host holds the navigation, describes it to the core with
+ * `Browser.externalProtocols.request`, and the core answers here once the user (or a remembered
+ * choice) has decided; `allow` hands the link to the other app.
+ */
+export interface ExternalProtocolHost {
+  respond(requestId: string, allow: boolean): void
 }
 
 export interface NetHost {
@@ -437,6 +455,12 @@ export interface AppHost {
   relaunch(): void
   /** The last browser window closed (desktop hosts quit here except on macOS). */
   lastWindowClosed(): void
+  /**
+   * Show the app under this icon colour from now on: the launcher alias on Android, the window
+   * and taskbar icons (Windows, Linux) or the Dock icon (macOS) on desktop. Called once at start
+   * with the persisted choice and again whenever the setting changes.
+   */
+  setAppIcon?(id: AppIconId): void
 }
 
 // ---------------------------------------------------------------------------
@@ -597,6 +621,8 @@ export interface Platform {
   readonly app: AppHost
   /** Cookies and storage per site; hosts without it show a sheet with the connection only. */
   readonly siteData?: SiteDataHost
+  /** Hosts that ask before a page may open another app (Android). */
+  readonly externalProtocols?: ExternalProtocolHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Host-backed services; omit for the built-in no-op versions. */
