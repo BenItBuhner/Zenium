@@ -7,8 +7,6 @@ name: Android menu sheet demo
 # API 34 Google APIs image on a software GPU gives a handful of frames per second.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/menu-bottom-sheet-fade-edges-7519]
 
 permissions:
   contents: read
