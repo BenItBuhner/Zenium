@@ -8,6 +8,7 @@ import {
   Copy,
   File,
   Info,
+  Languages,
   Lock,
   MoreHorizontal,
   RotateCw,
@@ -27,6 +28,7 @@ import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@rendere
 import { isPrivateWindow } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { APP_MENU_EVENT, hint, openAppMenu } from '@renderer/lib/shortcuts'
+import { barStateOf, isTranslating, translateStateOf } from '@renderer/lib/translate'
 import { openOverlay, openUrlbar, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { StarChip } from '../bookmarks/StarChip'
@@ -143,6 +145,10 @@ export function NavRow({
     return () => window.removeEventListener(APP_MENU_EVENT, fromKeyboard)
   }, [])
   const blocked = blockedPopupsOf(state, tab?.id)
+  // Translation: the glyph stays once the page has been offered or translated (in the accent
+  // while the translation shows), and comes up on hover for every other web page.
+  const translation = tab && isWebPage ? translateStateOf(state, tab.id) : null
+  const translateBarUp = tab ? barStateOf(state, tab.id) !== null : false
   return (
     <div
       ref={row}
@@ -350,6 +356,27 @@ export function NavRow({
                     {blocked.length}
                   </span>
                 )}
+              </PillChip>
+            )}
+            {tab && isWebPage && state.translate.available && (
+              <PillChip
+                label={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
+                title={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
+                className={cn(
+                  'h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  translation &&
+                    isTranslating(translation) &&
+                    'text-[var(--zen-accent)] opacity-100',
+                  translation
+                    ? 'flex'
+                    : 'hidden group-hover/pill:flex group-focus-within/chips:flex'
+                )}
+                onActivate={() => {
+                  if (translateBarUp) run('translate.dismiss', { tabId: tab.id })
+                  else run('translate.offer', { tabId: tab.id })
+                }}
+              >
+                <Languages className="h-3.5 w-3.5" />
               </PillChip>
             )}
             {tab && isWebPage && !isPrivate && (

@@ -10,6 +10,7 @@ import { useViewport } from '@renderer/lib/formFactor'
 import { isPageTab } from '@renderer/lib/pages'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
+import { barStateOf } from '@renderer/lib/translate'
 import { captureActiveTab, panelAloneOverContent, uiStore, type UiState } from '@renderer/lib/ui'
 import { extensionChromeAloneOverContent } from '@renderer/lib/extensions/scrim'
 import { cn } from '@renderer/lib/utils'
@@ -19,6 +20,7 @@ import { Urlbar } from '../urlbar/Urlbar'
 import { NewTabPage } from '../newtab/NewTabPage'
 import { OverlayHost } from '../overlays/OverlayHost'
 import { InternalPageHost } from '../pages/InternalPageHost'
+import { TranslateBar } from '../translate/TranslateBar'
 import { CoverImage } from './CoverImage'
 import { CrashRestoreBanner } from './CrashRestoreBanner'
 import { DefaultBrowserBanner } from './DefaultBrowserBanner'
@@ -103,6 +105,11 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
     !(phone && ui.urlbar.open) &&
     !newTabPage
   const dropKey = dropStore.use((s) => s.key)
+  // The translate bar shares the frame with the live page, under the strips and directly above
+  // the page; chrome that stands in for the page (panels, the gesture stage) takes the whole frame.
+  const translateBar = barStateOf(state, tab?.id)
+  const showTranslateBar =
+    translateBar !== null && !foreign && ui.overlay === 'none' && !ui.stageActive
 
   // The load bar is the phone's (and Android's at any width); the desktop program has not adopted
   // it yet, so Electron's wide layout renders the frame alone as it did.
@@ -129,6 +136,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
             {banner && <DefaultBrowserBanner state={state} />}
           </div>
         )}
+        {showTranslateBar && <TranslateBar state={state} tab={translateBar} />}
         <div className="flex min-h-0 flex-1 flex-row">
           {/* A tab dragged onto the page (past the split zones at its edges) tears off into a new window. */}
           <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden" data-tear-zone>
