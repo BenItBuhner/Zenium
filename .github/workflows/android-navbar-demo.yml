@@ -1,0 +1,36 @@
+name: Android navigation bar demo
+
+# Records the phone chrome's customisable navigation bar on a hardware-accelerated Android
+# emulator and uploads the video and screenshots: a hold on the bar opening its editor, Forward
+# dragged into the bar and Menu to the other side of the address pill, Reset, a full bar refusing
+# a seventh control, the customised bar at work (Forward dimmed until there is somewhere to go,
+# Reload becoming Stop while a page loads, the tab count rolling), the pill's swipe still switching
+# tabs, and the same bar carried to the top edge. Dispatch-only, like the gesture demo: it takes
+# about ten minutes and says nothing about a change being correct beyond the driver's own checks
+# (NavbarDemo fails the run when one does not hold). Same caveats as the gesture demo about frame
+# rate and the software GPU. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file only picks the driver.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-navbar-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: navigation bar demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.NavbarDemo
+        DEMO_DIR=navbar-demo
+        DEMO_OUT=artifacts/android-navbar-demo
+        DEMO_VIDEO=android-navbar-demo.mp4
+      artifact-name: android-navbar-demo
+      artifact-path: artifacts/android-navbar-demo/

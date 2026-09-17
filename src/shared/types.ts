@@ -9,6 +9,16 @@ import type { UpdateSettings, UpdateStatus } from './updates'
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
 /**
+ * How the chrome lays itself out, decided by the renderer from the window and its pointer (see
+ * `lib/formFactor.ts`) and reported to the core, which builds menus and command lists for it.
+ *
+ *  - `phone`   – bottom bar, sidebar in a drawer, sheets instead of popovers.
+ *  - `tablet`  – desktop layout with touch-sized controls.
+ *  - `desktop` – everything else.
+ */
+export type FormFactor = 'phone' | 'tablet' | 'desktop'
+
+/**
  * What the host can do for the chrome. The renderer adapts its UI to these rather than to the
  * platform name (e.g. a DeX desktop session is still `android`, but has a mouse and keyboard).
  */
@@ -631,6 +641,30 @@ export type SidebarSide = 'left' | 'right'
 export type NewTabPosition = 'end' | 'after-current'
 /** Screen edge the phone layout docks its address bar to. */
 export type PhoneBarPosition = 'top' | 'bottom'
+/**
+ * A control the phone's bar can host (see `shared/phoneBar.ts` for the catalogue). The address
+ * pill is not one of them: it is always there, in the flexible slot between the two sides.
+ */
+export type PhoneBarItemId =
+  | 'back'
+  | 'forward'
+  | 'reload'
+  | 'home'
+  | 'share'
+  | 'bookmark'
+  | 'bookmarks'
+  | 'history'
+  | 'downloads'
+  | 'tabs'
+  | 'new-tab'
+  | 'menu'
+  | 'spaces'
+  | 'find'
+/** Which controls sit on either side of the address pill; both sides read left to right as drawn. */
+export interface PhoneBarLayout {
+  left: PhoneBarItemId[]
+  right: PhoneBarItemId[]
+}
 /** Haptic feedback the chrome asks the host for (mobile hosts; no-op elsewhere). */
 export type HapticKind = 'lift' | 'tick' | 'dock'
 
@@ -658,6 +692,8 @@ export interface Settings {
   urlbarBehavior: UrlbarBehavior
   /** Phone layout: where the address bar (and its gestures) live. Long-press the pill to move it. */
   phoneBarPosition: PhoneBarPosition
+  /** Phone layout: the controls either side of the address pill (Settings › Navigation bar). */
+  phoneBar: PhoneBarLayout
   /** Touch hosts: drag down from the top of a page to reload it. */
   pullToRefresh: boolean
   glanceEnabled: boolean
@@ -1080,6 +1116,10 @@ export interface CommandDescriptor {
     | 'tab.wakeAll'
     | 'resources.trim'
     | 'resources.open'
+  /** The host capability the command needs; not offered where it is false. */
+  requires?: keyof HostCapabilities
+  /** The layouts the command does something in; absent means all of them. */
+  layouts?: FormFactor[]
 }
 
 // ---------------------------------------------------------------------------
@@ -1390,6 +1430,8 @@ export interface Commands {
   'window.toggleMaximize': { args: void; result: void }
   'window.close': { args: void; result: void }
   'window.toggleFullscreen': { args: void; result: void }
+  /** Renderer → main: the layout the chrome settled on (sent on start and whenever it changes). */
+  'window.formFactor': { args: { formFactor: FormFactor }; result: void }
   /** Zen: a new synced window starts at the current space showing the same tabs. */
   'window.new': { args: void; result: void }
   /** Zen's "New blank window" (Ctrl+Shift+N): an independent, temporary tab list. */

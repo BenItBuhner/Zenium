@@ -59,6 +59,7 @@ import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { ONBOARDING_ESSENTIALS, spaceLabel } from '../shared/defaults'
+import { sanitizePhoneBar } from '../shared/phoneBar'
 import { PRIVATE_THEME, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
@@ -1258,6 +1259,9 @@ export class Browser {
         win.host.isMaximized() ? win.host.unmaximize() : win.host.maximize(),
       'window.close': (_a, win) => win.host.close(),
       'window.toggleFullscreen': (_a, win) => this.toggleFullscreen(win),
+      'window.formFactor': ({ formFactor }, win) => {
+        win.formFactor = formFactor
+      },
       'window.new': (_a, win) => void this.openWindow('synced', win),
       'window.newUnsynced': (_a, win) => void this.openWindow('unsynced', win),
       'window.newPrivate': (_a, win) => void this.openWindow('private', win),
@@ -1426,6 +1430,8 @@ export class Browser {
         })
       } else if (key === 'appIcon') {
         s.appIcon = sanitizeAppIcon(value)
+      } else if (key === 'phoneBar') {
+        s.phoneBar = sanitizePhoneBar(value)
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }

@@ -1,7 +1,14 @@
 import type { JSX, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight, Bookmark, Clock, Globe, Layers, Search, Terminal, X } from 'lucide-react'
-import type { PhoneBarPosition, Rect, Suggestion, UIState } from '@shared/types'
+import type { PhoneBarLayout, PhoneBarPosition, Rect, Suggestion, UIState } from '@shared/types'
+import {
+  BAR_BUTTON,
+  BAR_GAP,
+  BAR_PADDING,
+  phoneBarForHost,
+  phoneBarOffered
+} from '@shared/phoneBar'
 import { ERROR_URL_PREFIX, BLANK_URL } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
@@ -58,8 +65,13 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
 
   useEffect(() => {
     const el = inputRef.current
-    el?.focus()
-    el?.select()
+    if (!el) return
+    el.focus()
+    // Everything selected, read from the start: `select()` alone puts the caret end at the tail
+    // and scrolls a long URL so only its query is visible. A backward selection keeps the focus
+    // end – the one the field scrolls to – at the origin.
+    el.setSelectionRange(0, el.value.length, 'backward')
+    el.scrollLeft = 0
   }, [])
 
   const fetchSuggestions = useCallback(
@@ -286,7 +298,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
         field={
           <div
             className="zen-omnibox-field flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full pl-2 pr-1.5"
-            style={fieldGrowFrom()}
+            style={fieldGrowFrom(
+              phoneBarForHost(state.settings.phoneBar, phoneBarOffered(state.capabilities))
+            )}
           >
             <span
               role="img"
@@ -475,22 +489,20 @@ function PhoneSheet({
   )
 }
 
-/** Width of the bar's buttons either side of the pill: back (44) + gap, and 3 × (gap + 44). */
-const PILL_SLOT_LEFT = 48
-const PILL_SLOT_RIGHT = 144
-
 /**
  * Where the grow animation starts: the pill's slot as a shift and a scale of the band's inner
- * width, so the field's backdrop sets out exactly from where the pill was.
+ * width, so the field's backdrop sets out exactly from where the pill was. The slot is what the
+ * bar's buttons leave it: 44 px plus a 4 px gap for each control either side of the pill.
  */
-function fieldGrowFrom(): React.CSSProperties {
+function fieldGrowFrom(layout: PhoneBarLayout): React.CSSProperties {
   const { width } = viewportStore.get()
   const { left, right } = uiStore.get().insets
-  const band = width - left - right - 16
-  const scale =
-    band > PILL_SLOT_LEFT + PILL_SLOT_RIGHT ? (band - PILL_SLOT_LEFT - PILL_SLOT_RIGHT) / band : 0.5
+  const slotLeft = layout.left.length * (BAR_BUTTON + BAR_GAP)
+  const slotRight = layout.right.length * (BAR_BUTTON + BAR_GAP)
+  const band = width - left - right - 2 * BAR_PADDING
+  const scale = band > slotLeft + slotRight ? (band - slotLeft - slotRight) / band : 0.5
   return {
-    '--zen-field-shift': `${PILL_SLOT_LEFT}px`,
+    '--zen-field-shift': `${slotLeft}px`,
     '--zen-field-scale': scale.toFixed(3)
   } as React.CSSProperties
 }

@@ -1,5 +1,6 @@
 import type { Boost, Container, Space } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
+import { sanitizePhoneBar } from '../../shared/phoneBar'
 import {
   createTabRecord,
   getSpace,
@@ -216,6 +217,8 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         Object.assign(state.settings, rest)
         if (compactMode)
           Object.assign(state.settings.compactMode, compactMode, { sidebarPersistent: false })
+        // Another device's build may know bar items this one does not (or the other way round).
+        if ('phoneBar' in rest) state.settings.phoneBar = sanitizePhoneBar(rest.phoneBar)
         break
       }
       case 'shortcuts': {

@@ -16,7 +16,16 @@ const css = readFileSync(fileURLToPath(new URL('../../assets/main.css', import.m
  */
 const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The pull-to-refresh disc (components/content/PullIndicator.tsx).
-  ['.zen-ptr-disc {', '.zen-space-strip {']
+  ['.zen-ptr-disc {', '.zen-space-strip {'],
+  // The Settings > Look and Feel > Navigation bar button (components/overlays/SettingsPanel.tsx).
+  ['.zen-v2-button {', '/* Safe-area insets pushed by mobile hosts'],
+  // The Tabs button's hold menu (components/phone/TabsQuickMenu.tsx).
+  ['.zen-quick-menu {', '.zen-sheet.zen-bar-editor {'],
+  // The navigation bar's editor (components/phone/BarEditorSheet.tsx, BarPreview.tsx).
+  [
+    '.zen-sheet.zen-bar-editor {',
+    '/* The editor draws a hairline when its rows scroll under the header'
+  ]
 ]
 
 /** Custom-property names declared inside the first `selector {` block found after `from`. */

@@ -215,6 +215,7 @@ function chromeHandlesBack(ui: UiState, state: UIState | null): boolean {
     (ui.overlay !== 'none' && ui.overlay !== 'onboarding') ||
     ui.drawerOpen ||
     ui.siteInfoOpen ||
+    ui.barEditorOpen ||
     Boolean(state?.glance) ||
     (ui.findOpen && ui.findTabId !== null)
   )
