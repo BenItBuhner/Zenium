@@ -10,9 +10,6 @@ name: Android translate demo
 # android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  # TEMPORARY while the engine PR is verified; removed before the PR is marked ready.
-  push:
-    branches: [cursor/services-translate-24d1]
 
 permissions:
   contents: read
