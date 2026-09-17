@@ -585,10 +585,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
      * which recreates every tab from `state.json` and reloads the pages on screen. A chrome that
      * dies again right away is retried with a growing delay rather than in a tight loop.
      */
-    fun onChromeGone(dead: ChromeWebView) {
-        cancelProbe()
-        rebuildChrome(dead)
-    }
+    fun onChromeGone(dead: ChromeWebView) = rebuildChrome(dead)
 
     /**
      * Replace the chrome WebView (and every tab, which shares its renderer) with a fresh one that
@@ -621,9 +618,15 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     }
 
     fun destroy() {
+        cancelProbe()
         agentServer.stop()
         updates.shutdown()
         tabs.destroyAll()
+        // The chrome too: a WebView that outlives its activity keeps its document – and the
+        // browser core inside it – running against a host that is gone, and would even rebuild
+        // itself if its renderer died.
+        (chrome.parent as? ViewGroup)?.removeView(chrome)
+        runCatching { chrome.destroy() }
         io.shutdownNow()
     }
 
