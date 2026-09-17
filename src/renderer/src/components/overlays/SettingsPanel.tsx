@@ -56,19 +56,19 @@ export type SettingsSection =
   | 'about'
 
 const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
-  { id: 'look', label: 'Look and Feel' },
-  { id: 'compact', label: 'Compact Mode' },
-  { id: 'tabs', label: 'Tab Management' },
+  { id: 'look', label: 'Look and feel' },
+  { id: 'compact', label: 'Compact mode' },
+  { id: 'tabs', label: 'Tab management' },
   { id: 'resources', label: 'Resources' },
   { id: 'search', label: 'Search' },
-  { id: 'spaces', label: 'Space Routing' },
+  { id: 'spaces', label: 'Space routing' },
   { id: 'containers', label: 'Containers' },
   { id: 'boosts', label: 'Boosts' },
   { id: 'mods', label: 'Mods' },
   { id: 'extensions', label: 'Extensions' },
-  { id: 'agents', label: 'AI Agents' },
+  { id: 'agents', label: 'AI agents' },
   { id: 'sync', label: 'Sync' },
-  { id: 'shortcuts', label: 'Keyboard Shortcuts' },
+  { id: 'shortcuts', label: 'Keyboard shortcuts' },
   { id: 'updates', label: 'Updates' },
   { id: 'about', label: 'About' }
 ]
@@ -556,8 +556,8 @@ function SpaceRoutingSection({
   }
   return (
     <>
-      <p className="text-[13px] text-[var(--zen-muted)]">
-        Space Routing opens links from the listed domains in a specific space, wherever you click
+      <p className="zen-settings-hint px-2.5 text-[12.5px]">
+        Space routing opens links from the listed domains in a specific space, wherever you click
         them.
       </p>
       <Group title="Routes">
@@ -612,7 +612,7 @@ function ContainersSection({ state }: { state: UIState }): JSX.Element {
   const editable = state.containers.filter((c) => c.id !== DEFAULT_CONTAINER_ID)
   return (
     <>
-      <p className="text-[13px] text-[var(--zen-muted)]">
+      <p className="zen-settings-hint px-2.5 text-[12.5px]">
         Containers keep cookies and site data separate, so you can stay logged into several accounts
         on the same site. Assign a container to a space to isolate it. The order here is used
         wherever containers are listed.
@@ -717,8 +717,8 @@ function BoostsSection({ state }: { state: UIState }): JSX.Element {
   )
   return (
     <>
-      <div className="flex items-start justify-between gap-4">
-        <p className="text-[13px] text-[var(--zen-muted)]">
+      <div className="zen-settings-lead">
+        <p className="zen-settings-hint text-[12.5px]">
           Boosts change how a website looks: tint its colours, swap fonts, zap elements away or
           force dark mode. They apply to every page of the site and stay until you remove them.
         </p>

@@ -16,7 +16,7 @@ export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
   const [tab, setTab] = useState<Tab>('extensions')
   const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
   return (
-    <OverlayShell title="Add-ons and Themes" variant="full" className="zen-settings">
+    <OverlayShell title="Add-ons and themes" variant="full" className="zen-settings">
       <div className="zen-settings-body">
         <nav className="zen-settings-nav" aria-label="Add-on kinds">
           {(
@@ -54,7 +54,7 @@ export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
 export function ExtensionsSection({ state }: { state: UIState }): JSX.Element {
   return (
     <>
-      <div className="flex items-start justify-between gap-4 px-2.5">
+      <div className="zen-settings-lead">
         <div>
           <h3 className="zen-settings-heading px-0">Extensions</h3>
           <p className="zen-settings-hint mt-1">
@@ -120,7 +120,7 @@ export function ModsSection({ state }: { state: UIState }): JSX.Element {
   const [url, setUrl] = useState('')
   return (
     <>
-      <div className="flex items-start justify-between gap-4 px-2.5">
+      <div className="zen-settings-lead">
         <div>
           <h3 className="zen-settings-heading px-0">Mods</h3>
           <p className="zen-settings-hint mt-1">

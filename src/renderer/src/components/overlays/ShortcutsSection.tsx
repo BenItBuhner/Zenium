@@ -82,7 +82,7 @@ export function ShortcutsSection({ state }: { state: UIState }): JSX.Element | n
         </Button>
       </div>
       <p className="zen-settings-hint px-2.5">
-        Click a shortcut to change it. Press Backspace while editing to unbind, Esc to cancel.
+        Choose a shortcut to change it. Press Backspace while editing to unbind, Esc to cancel.
       </p>
       {GROUP_ORDER.map((group) => {
         const items = state.shortcuts.filter(

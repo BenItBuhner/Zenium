@@ -843,6 +843,22 @@
     font-size: 12.5px;
     color: var(--zen-muted);
   }
+  /* A page's lead: heading and description at the left, its one action at the right. */
+  .zen-settings-lead {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 0 10px;
+  }
+  .zen-settings-lead > :last-child {
+    flex-shrink: 0;
+  }
+  /* Addresses, headers and versions mentioned inline are values, not code: sans, tabular. */
+  .zen-settings code:not(pre code) {
+    font-family: var(--font-sans);
+    font-variant-numeric: tabular-nums;
+  }
   /* Two-way choice as one pill: a quiet track, the picked half in the accent tint. */
   .zen-segmented {
     background: var(--zen-element-bg);
@@ -1556,13 +1572,38 @@
   border-radius: 9999px;
 }
 /*
- * Settings on a phone: the section list is a strip of chips over the content (§8.4), rows are
- * 48 tall at radius 10, and a row whose control is a field or a select stacks it under the label
- * so neither starves the other for width.
+ * Touch rows (§8.11): 48 tall at a 10 squircle with type one step larger, on phones and on any
+ * coarse pointer – a tablet keeps the desktop layout but gets the touch metrics.
  */
-:root[data-form-factor='phone'] .zen-settings {
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-settings {
   --zen-row-radius: 10px;
 }
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-settings-heading {
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-settings-row {
+  gap: 12px;
+  min-height: 48px;
+  padding: 6px 12px;
+  corner-shape: var(--zen-corner);
+}
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-settings-label {
+  font-size: 14px;
+}
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-settings-hint {
+  font-size: 12px;
+}
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-settings-note {
+  font-size: 13px;
+}
+:root:is([data-form-factor='phone'], [data-pointer='coarse']) .zen-settings-nav-item {
+  height: 36px;
+}
+/*
+ * Settings on a phone: the section list is a strip of chips over the content (§8.4), and a row
+ * whose control is a field or a select stacks it under the label (the container query below).
+ */
 :root[data-form-factor='phone'] .zen-settings-body {
   flex-direction: column;
 }
@@ -1597,24 +1638,7 @@
   padding: 4px 12px 12px;
 }
 :root[data-form-factor='phone'] .zen-settings-heading {
-  margin-bottom: 4px;
   padding: 0 12px;
-  font-size: 14px;
-}
-:root[data-form-factor='phone'] .zen-settings-row {
-  gap: 12px;
-  min-height: 48px;
-  padding: 6px 12px;
-  corner-shape: var(--zen-corner);
-}
-:root[data-form-factor='phone'] .zen-settings-label {
-  font-size: 14px;
-}
-:root[data-form-factor='phone'] .zen-settings-hint {
-  font-size: 12px;
-}
-:root[data-form-factor='phone'] .zen-settings-note {
-  font-size: 13px;
 }
 :root[data-pointer='coarse'] .zen-settings .zen-segment {
   height: 40px;
@@ -1630,6 +1654,15 @@
     align-items: stretch;
     gap: 8px;
     padding-bottom: 10px;
+  }
+  .zen-settings-lead {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 0 12px;
+  }
+  .zen-settings-lead > :last-child {
+    align-self: flex-start;
   }
   .zen-settings-row[data-stack] .zen-settings-control {
     max-width: none;

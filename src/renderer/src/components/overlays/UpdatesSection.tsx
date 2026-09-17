@@ -1,7 +1,12 @@
 import type { JSX } from 'react'
 import { Download, ExternalLink, RefreshCw, RotateCw, ShieldCheck, X } from 'lucide-react'
 import type { Settings, UIState } from '@shared/types'
-import { describeUpdateTarget, type UpdateChannel, type UpdateStatus } from '@shared/updates'
+import {
+  describeUpdateTarget,
+  type UpdateChannel,
+  type UpdateOs,
+  type UpdateStatus
+} from '@shared/updates'
 import { run } from '@renderer/lib/api'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { Button } from '../ui/button'
@@ -71,7 +76,7 @@ export function UpdatesSection({
       <Group title="How updates are applied">
         <Row label={installLabel(u)} hint={describeUpdateTarget(u.target)}>
           <span className="zen-settings-hint">
-            {u.target.os}
+            {osLabel(u.target.os)}
             {u.target.arch !== 'universal' ? ` · ${u.target.arch}` : ''}
           </span>
         </Row>
@@ -90,6 +95,17 @@ export function UpdatesSection({
       </Group>
     </>
   )
+}
+
+const OS_LABELS: Record<UpdateOs, string> = {
+  windows: 'Windows',
+  macos: 'macOS',
+  linux: 'Linux',
+  android: 'Android'
+}
+
+function osLabel(os: UpdateOs): string {
+  return OS_LABELS[os]
 }
 
 function installLabel(u: UpdateStatus): string {
