@@ -2,7 +2,6 @@ package app.zen.chromium
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -78,9 +77,6 @@ class TabWebView(
             allowContentAccess = false
             loadWithOverviewMode = true
             useWideViewPort = true
-            // Chrome boosts the text of desktop layouts shown zoomed out so it stays legible;
-            // WebView's default algorithm leaves it at the size of the 980 px layout.
-            layoutAlgorithm = WebSettings.LayoutAlgorithm.TEXT_AUTOSIZING
             setSupportZoom(true)
             builtInZoomControls = true
             displayZoomControls = false
@@ -413,25 +409,19 @@ class TabWebView(
         )
     }
 
-    /** Zen's per-tab zoom; WebView has no page zoom, so it scales the text like Chrome's text scaling. */
+    /** Zen's per-tab zoom; WebView has no page zoom, so it scales the text. */
     fun setZoom(factor: Double) {
         zoomFactor = factor
         applyTextZoom()
     }
 
     /**
-     * Chrome sizes text by the system font scale; WebView leaves text at 100% unless told, so a
-     * phone set to large text got small pages here. With text autosizing on, the zoom is applied
-     * the way Chrome applies its font scale factor rather than as a flat text zoom.
+     * Text at the size the page asked for, times Zen's zoom. WebView would start every tab at the
+     * system font scale (a phone set to large text got every page 130% larger), which Chrome does
+     * not do: its pages ignore the system font size and offer page zoom instead, as Zen does.
      */
     private fun applyTextZoom() {
-        val fontScale = resources.configuration.fontScale.toDouble()
-        settings.textZoom = (zoomFactor * fontScale * 100).roundToInt().coerceIn(25, 500)
-    }
-
-    override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig)
-        applyTextZoom()
+        settings.textZoom = (zoomFactor * 100).roundToInt().coerceIn(25, 500)
     }
 
     fun find(text: String, forward: Boolean, newSession: Boolean) {
