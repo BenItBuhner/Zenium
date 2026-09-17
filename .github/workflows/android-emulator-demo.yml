@@ -77,6 +77,11 @@ on:
         required: false
         type: boolean
         default: false
+      extra-emulator-options:
+        description: Appended to the emulator command line (e.g. -writable-system for a driver that replaces a system app)
+        required: false
+        type: string
+        default: ''
       timeout-minutes:
         description: Job timeout
         required: false
@@ -154,7 +159,7 @@ jobs:
           cores: 3
           ram-size: 4096M
           heap-size: 512M
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none ${{ inputs.extra-emulator-options }}
           disable-animations: ${{ inputs.disable-animations }}
           script: bash ${{ inputs.script }}
       - uses: actions/upload-artifact@v7

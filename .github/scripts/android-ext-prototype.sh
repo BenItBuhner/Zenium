@@ -22,6 +22,21 @@ ext_dir=${EXT_DIR:-artifacts/ext}
 pages=.github/scripts/ext-demo-pages
 mkdir -p "$out"
 
+# SOFT_FAIL=1: a best-effort run (the swapped-WebView job) reports what it found and never fails
+# the workflow; a job calling a reusable workflow cannot set continue-on-error.
+fail() {
+  if [ -n "${SOFT_FAIL:-}" ]; then
+    echo "::warning::$1 (best effort, not failing the job)"
+    exit 0
+  fi
+  echo "::error::$1"
+  exit 1
+}
+
+# What the run was fed, next to what it produced.
+cp -f "$ext_dir/fetch.json" "$out/fetch.json" 2> /dev/null || true
+cp -f artifacts/webview/REVISIONS.json "$out/webview-REVISIONS.json" 2> /dev/null || true
+
 adb wait-for-device
 nproc
 free -m
@@ -140,12 +155,11 @@ for _ in $(seq 1 1600); do
   sleep 0.25
 done
 if [ "$ready" -ne 1 ]; then
-  echo "::error::the demo driver never reached the recording handshake"
   cat "$out/instrument.txt" || true
   adb exec-out run-as "$app_id" cat files/ext-demo/results.json > "$out/results.json" 2>/dev/null || true
   sleep 4
   kill "$logcat_pid" "$monitor_pid" "$http_pid" 2> /dev/null || true
-  exit 1
+  fail "the demo driver never reached the recording handshake"
 fi
 
 # screenrecord stops itself after three minutes; record in parts until the driver is done and
@@ -201,4 +215,4 @@ done
 
 cat "$out/instrument.txt"
 ls -la "$out"
-grep -q '^OK (' "$out/instrument.txt"
+grep -q '^OK (' "$out/instrument.txt" || fail "the demo driver did not finish cleanly"
