@@ -74,7 +74,7 @@ export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JS
           autoComplete="off"
           className={
             phone
-              ? 'h-full min-w-0 flex-1 bg-transparent text-[14px] outline-none placeholder:text-[var(--zen-faint)]'
+              ? 'h-full min-w-0 flex-1 bg-transparent text-[14px] outline-none placeholder:text-[var(--zen-muted)]'
               : 'h-7 w-72 rounded-md bg-[var(--zen-element-bg)] px-2 text-[13px] outline-none ring-1 ring-transparent focus:ring-[var(--zen-accent)]/60'
           }
           onChange={(e) => {
