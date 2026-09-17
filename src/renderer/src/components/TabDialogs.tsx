@@ -6,7 +6,6 @@ import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { BlockedPopupsPanel } from './security/BlockedPopupsPanel'
 import { SecurityPrompts } from './security/SecurityPromptDialog'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
@@ -29,13 +28,12 @@ const TAB_ICONS = [
 
 /**
  * Small dialogs that belong to a tab and are shown by every layout: the pinned-URL editor and icon
- * picker from tab context menus, the blocked pop-ups list, and the security prompts (HTTP sign-in,
- * certificate choice) the page's requests wait on.
+ * picker from tab context menus, and the security prompts (HTTP sign-in, certificate choice) the
+ * page's requests wait on.
  */
 export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const pinnedTabId = uiStore.use((s) => s.editingPinnedUrlTabId)
   const iconTabId = uiStore.use((s) => s.iconPickerTabId)
-  const popups = uiStore.use((s) => s.blockedPopupsPanel)
   const pinnedTab = pinnedTabId ? state.tabs[pinnedTabId] : undefined
   const iconTab = iconTabId ? state.tabs[iconTabId] : undefined
   return (
@@ -45,7 +43,6 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       ) : iconTab ? (
         <IconPickerDialog tab={iconTab} />
       ) : null}
-      {popups && <BlockedPopupsPanel state={state} panel={popups} />}
       <SecurityPrompts state={state} />
     </>
   )

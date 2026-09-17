@@ -1,7 +1,6 @@
 import type { JSX, ReactNode } from 'react'
 import { useRef } from 'react'
 import {
-  AppWindow,
   ArrowLeft,
   ArrowRight,
   BookOpenText,
@@ -23,7 +22,6 @@ import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { openOverlay, openUrlbar } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { useLongPress } from '../phone/useLongPress'
-import { blockedPopupsOf, openBlockedPopups } from '@renderer/lib/security'
 import { WindowControls } from '../WindowControls'
 
 interface Props {
@@ -73,7 +71,6 @@ export function NavRow({
     tab && isWebPage && state.boosts.some((b) => b.domain === getDomain(tab.url) && b.enabled)
   )
   const extensions = state.extensions.filter((e) => e.enabled && !e.error && e.popup)
-  const blocked = blockedPopupsOf(state, tab?.id)
   return (
     <div className={cn('zen-no-drag flex items-center gap-0.5', compact && 'flex-col', className)}>
       <NavigationButton
@@ -159,23 +156,6 @@ export function NavRow({
               }}
             >
               <BookOpenText className="h-3.5 w-3.5" />
-            </span>
-          )}
-          {tab && blocked.length > 0 && (
-            <span
-              role="button"
-              tabIndex={-1}
-              className="zen-animate-pop flex h-5 shrink-0 items-center gap-1 rounded-md bg-[var(--zen-element-bg-hover)] px-1 text-[var(--zen-accent)] hover:bg-[var(--zen-element-bg-active)]"
-              title={blocked.length === 1 ? 'Pop-up blocked' : `${blocked.length} pop-ups blocked`}
-              onClick={(e) => {
-                e.stopPropagation()
-                void openBlockedPopups(tab.id, e.currentTarget.getBoundingClientRect())
-              }}
-            >
-              <AppWindow className="h-3.5 w-3.5" />
-              {blocked.length > 1 && (
-                <span className="text-[10.5px] font-semibold tabular-nums">{blocked.length}</span>
-              )}
             </span>
           )}
           {tab && isWebPage && !isPrivate && (

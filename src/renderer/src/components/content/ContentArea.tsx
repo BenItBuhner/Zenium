@@ -133,7 +133,6 @@ function overlayCoversContentBesidesStage(ui: UiState): boolean {
     ui.urlbar.open ||
     ui.drag !== null ||
     ui.siteInfoOpen ||
-    ui.blockedPopupsPanel !== null ||
     ui.securityPromptOpen
   )
 }

@@ -86,11 +86,6 @@ export interface UiState {
   editingPinnedUrlTabId: string | null
   /** Tab whose icon picker is open. */
   iconPickerTabId: string | null
-  /**
-   * The list of pop-ups the blocker refused for a tab, anchored under the address pill's
-   * indicator (window coordinates) or, without an anchor, as a sheet.
-   */
-  blockedPopupsPanel: { tabId: string; anchor: Rect | null } | null
   /** An HTTP sign-in or certificate dialog is up over the page (the page waits for it). */
   securityPromptOpen: boolean
   /** Zen's multi-select: tabs picked with Ctrl / Shift+click (acted on together). */
@@ -148,7 +143,6 @@ export const uiStore = createStore<UiState>(
     renamingFolderId: null,
     editingPinnedUrlTabId: null,
     iconPickerTabId: null,
-    blockedPopupsPanel: null,
     securityPromptOpen: false,
     selectedTabIds: [],
     selectionAnchorId: null,
@@ -231,7 +225,6 @@ export function returnFocusToPage(): void {
     !ui.externalProtocol &&
     !ui.barEditorOpen &&
     !ui.tabsMenu &&
-    !ui.blockedPopupsPanel &&
     !ui.securityPromptOpen &&
     !ui.stageActive
   )
@@ -252,7 +245,6 @@ export function invalidateSnapshot(): void {
     !ui.externalProtocol &&
     !ui.barEditorOpen &&
     !ui.tabsMenu &&
-    !ui.blockedPopupsPanel &&
     !ui.securityPromptOpen &&
     !ui.stageActive
   ) {
@@ -378,7 +370,6 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.externalProtocol !== null ||
     ui.barEditorOpen ||
     ui.tabsMenu !== null ||
-    ui.blockedPopupsPanel !== null ||
     ui.securityPromptOpen ||
     ui.stageActive
   )

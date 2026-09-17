@@ -15,7 +15,6 @@ import {
   openSecurityPrompt
 } from '@renderer/lib/security'
 import { cn } from '@renderer/lib/utils'
-import { useSpringPresence } from '@renderer/hooks/useSpringPresence'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
@@ -32,32 +31,12 @@ const SCHEME_NAMES: Record<string, string> = {
  * until its tab is the active one. Answers go back to the core, which resumes the request.
  */
 export function SecurityPrompts({ state }: { state: UIState }): JSX.Element | null {
-  const next = currentSecurityPrompt(state)
-  // The dialog outlives its prompt by one exit animation, so the one on screen is kept here and
-  // only replaced once the previous one has left (derived state, set during render).
-  const [shown, setShown] = useState<SecurityPrompt | null>(next)
-  if (!shown && next) setShown(next)
-  if (!shown) return null
-  return (
-    <SecurityPromptDialog
-      key={shown.id}
-      prompt={shown}
-      leaving={shown.id !== next?.id}
-      onGone={() => setShown(null)}
-    />
-  )
+  const prompt = currentSecurityPrompt(state)
+  if (!prompt) return null
+  return <SecurityPromptDialog key={prompt.id} prompt={prompt} />
 }
 
-function SecurityPromptDialog({
-  prompt,
-  leaving,
-  onGone
-}: {
-  prompt: SecurityPrompt
-  leaving: boolean
-  onGone: () => void
-}): JSX.Element {
-  const { style, close, closing } = useSpringPresence(onGone, '50% 40%')
+function SecurityPromptDialog({ prompt }: { prompt: SecurityPrompt }): JSX.Element {
   const answered = useRef(false)
 
   // The page's views hide under chrome overlays; its snapshot stands in while the dialog is up.
@@ -72,16 +51,10 @@ function SecurityPromptDialog({
     }
   }, [prompt.tabId])
 
-  // The core dropped the prompt (answered elsewhere, tab navigated or closed): leave quietly.
-  useEffect(() => {
-    if (leaving) close()
-  }, [leaving, close])
-
   const respond = (response: SecurityPromptResponse | null): void => {
     if (answered.current) return
     answered.current = true
     run('security.respond', { id: prompt.id, response })
-    close()
   }
 
   useEffect(() => {
@@ -95,14 +68,11 @@ function SecurityPromptDialog({
   })
 
   return (
-    <div
-      className={cn('absolute inset-0 z-50 flex items-center justify-center')}
-      style={{ opacity: style.opacity, pointerEvents: closing ? 'none' : undefined }}
-      role="presentation"
-    >
+    <div className="absolute inset-0 z-50 flex items-center justify-center" role="presentation">
       <div
-        className="zen-panel w-[440px] max-w-[calc(100%-32px)] overflow-hidden rounded-2xl"
-        style={style}
+        className={cn(
+          'zen-panel zen-animate-pop w-[440px] max-w-[calc(100%-32px)] overflow-hidden'
+        )}
         role="dialog"
         aria-modal="true"
         onMouseDown={(e) => e.stopPropagation()}

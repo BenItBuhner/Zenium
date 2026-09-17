@@ -36,7 +36,6 @@ import { AppIconGroup } from './AppIconPicker'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { OverlayShell } from './OverlayShell'
 import { ResourcesSection } from './ResourcesSection'
-import { SecuritySection } from './SecuritySection'
 import { Choice, Group, Row, Segmented } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
 import { SyncSection } from './SyncSection'
@@ -54,7 +53,6 @@ export type SettingsSection =
   | 'mods'
   | 'extensions'
   | 'agents'
-  | 'security'
   | 'sync'
   | 'shortcuts'
   | 'updates'
@@ -72,7 +70,6 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'mods', label: 'Mods' },
   { id: 'extensions', label: 'Extensions' },
   { id: 'agents', label: 'AI Agents' },
-  { id: 'security', label: 'Security' },
   { id: 'sync', label: 'Sync' },
   { id: 'shortcuts', label: 'Keyboard Shortcuts' },
   { id: 'updates', label: 'Updates' },
@@ -181,7 +178,6 @@ export function SettingsPanel({
             {section === 'mods' && <ModsSection state={state} />}
             {section === 'extensions' && <ExtensionsSection state={state} />}
             {section === 'agents' && <AgentsSection state={state} set={set} />}
-            {section === 'security' && <SecuritySection state={state} />}
             {section === 'sync' && <SyncSection state={state} />}
             {section === 'shortcuts' && <ShortcutsSection state={state} />}
             {section === 'updates' && <UpdatesSection state={state} set={set} />}
