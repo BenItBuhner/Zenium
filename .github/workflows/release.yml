@@ -270,8 +270,10 @@ jobs:
             echo "ZEN_ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
             echo "signing=release" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::ANDROID_KEYSTORE_BASE64 is not configured; the release APK is signed with a debug key and will not upgrade other builds in place"
-            echo "signing=debug" >> "$GITHUB_OUTPUT"
+            # Gradle falls back to android/ci-debug.keystore: a debug key, but the same one in every
+            # run, so debug-keyed releases upgrade each other in place.
+            echo "::notice::ANDROID_KEYSTORE_BASE64 is not configured; the APK is signed with the committed CI debug key (android/ci-debug.keystore), not a release key"
+            echo "signing=ci-debug" >> "$GITHUB_OUTPUT"
           fi
       - name: Assemble release APK
         working-directory: android
@@ -296,6 +298,16 @@ jobs:
           signer="$(sed -n 's/.*certificate SHA-256 digest: *\([0-9a-fA-F]\{64\}\).*/\1/p' "$RUNNER_TEMP/certs.txt" | head -1 | tr 'A-F' 'a-f')"
           if [[ -z "$signer" ]]; then
             echo "::warning::Could not read the APK signing certificate digest from apksigner; the manifest will not carry it"
+          fi
+          if [[ "${{ steps.keystore.outputs.signing }}" == ci-debug ]]; then
+            # The whole point of the committed key is a signer that never changes: prove it.
+            expected="$(keytool -exportcert -rfc -keystore android/ci-debug.keystore -storepass zenium-ci-debug -alias zenium-ci-debug \
+              | openssl x509 -noout -fingerprint -sha256 | sed 's/.*=//; s/://g' | tr 'A-F' 'a-f')"
+            if [[ "$signer" != "$expected" ]]; then
+              echo "::error::APK signer $signer is not the committed CI debug key $expected (did Gradle fall back to a per-machine debug key?)"
+              exit 1
+            fi
+            echo "APK signed with the committed CI debug key $expected"
           fi
           printf '{"platform":"android","signing":"%s","signer":"%s"}\n' "${{ steps.keystore.outputs.signing }}" "$signer" > release/meta/android.json
           cat release/meta/android.json
