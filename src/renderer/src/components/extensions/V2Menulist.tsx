@@ -95,10 +95,10 @@ function MenulistPopover<T extends string>({
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
-    const rect = el.getBoundingClientRect()
+    // Layout size, not the client rect, which the pop animation's first frame scales to .94.
     const placed = anchorBelow(
       anchor,
-      { width: rect.width, height: rect.height },
+      { width: el.offsetWidth, height: el.offsetHeight },
       { width: window.innerWidth, height: window.innerHeight }
     )
     setPos({ left: placed.x, top: placed.y, side: placed.side })

@@ -190,10 +190,10 @@ function ExtensionsPanel({
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
-    const rect = el.getBoundingClientRect()
+    // Layout height, not the client rect's, which the pop animation's first frame scales to .94.
     const placed = anchorBelow(
       anchor,
-      { width: PANEL_WIDTH, height: rect.height },
+      { width: PANEL_WIDTH, height: el.offsetHeight },
       { width: window.innerWidth, height: window.innerHeight }
     )
     setPos({ left: placed.x, top: placed.y, side: placed.side })

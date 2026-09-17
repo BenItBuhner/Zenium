@@ -70,10 +70,11 @@ function PopoverMenu({ anchor, items, onClose, context }: Props): JSX.Element {
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
-    const rect = el.getBoundingClientRect()
+    // Layout size, not the client rect: the pop animation's first frame is scaled to .94, and
+    // an end-aligned menu measured through it would land 6% of its width off.
     const placed = anchorBelow(
       anchor,
-      { width: rect.width, height: rect.height },
+      { width: el.offsetWidth, height: el.offsetHeight },
       { width: window.innerWidth, height: window.innerHeight }
     )
     setPos({ left: placed.x, top: placed.y, side: placed.side })
