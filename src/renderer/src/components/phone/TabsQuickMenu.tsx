@@ -14,9 +14,9 @@ const GAP = 8
 const MARGIN = 8
 
 /**
- * The Tabs button's hold: a small panel anchored to the button – New tab and Close tab – above
- * a bar docked at the bottom, below one docked at the top. It is a panel like the desktop's
- * popovers, sized for a thumb; a tap anywhere else, the system back or Escape closes it.
+ * The Tabs button's hold: a small menu anchored to the button – New Tab and Close Tab – above
+ * a bar docked at the bottom, below one docked at the top. It is a menu on the v2 draft's
+ * panel, sized for a thumb; a tap anywhere else, the system back or Escape closes it.
  */
 export function TabsQuickMenu({
   state,
@@ -80,17 +80,16 @@ export function TabsQuickMenu({
     <div
       className="absolute inset-0 z-[60]"
       onClick={onClose}
-      onContextMenu={(e) => {
-        e.preventDefault()
-        onClose()
-      }}
+      // The hold that opened the menu ends with the platform's long-press (a context menu
+      // event) landing here: not a dismissal, and not the WebView's own menu either.
+      onContextMenu={(e) => e.preventDefault()}
     >
       <div
         ref={panel}
         role="menu"
         aria-label="Tabs"
         className={cn(
-          'zen-panel zen-animate-pop absolute flex flex-col p-1.5',
+          'zen-quick-menu zen-animate-pop absolute flex flex-col',
           edge === 'bottom' ? 'origin-bottom' : 'origin-top'
         )}
         style={{ left, width: WIDTH, ...vertical }}
@@ -103,7 +102,7 @@ export function TabsQuickMenu({
           onClick={() => pick(() => window.dispatchEvent(new CustomEvent('zen-new-tab')))}
         >
           <Plus className="h-5 w-5 shrink-0" strokeWidth={1.75} />
-          <span className="min-w-0 flex-1 truncate">New tab</span>
+          <span className="min-w-0 flex-1 truncate">New Tab</span>
         </button>
         <button
           type="button"
@@ -113,7 +112,7 @@ export function TabsQuickMenu({
           onClick={() => pick(() => tab && run('tab.close', { tabId: tab.id }))}
         >
           <X className="h-5 w-5 shrink-0" strokeWidth={1.75} />
-          <span className="min-w-0 flex-1 truncate">Close tab</span>
+          <span className="min-w-0 flex-1 truncate">Close Tab</span>
         </button>
       </div>
     </div>

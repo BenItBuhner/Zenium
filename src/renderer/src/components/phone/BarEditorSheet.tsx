@@ -27,7 +27,7 @@ import { BarPreview } from './BarPreview'
 import { barContext, barItem, type BarItemContext } from './barItems'
 
 /** Height of a row in either list: what one step of a drag is worth. */
-const ROW = 48
+const ROW = 44
 /** How long a finger rests on a row before the row comes off the list. */
 const HOLD_MS = 400
 /**
@@ -36,7 +36,7 @@ const HOLD_MS = 400
  */
 const SLOP = 6
 /** A finger this close to the list's edge scrolls it while a row is in the hand. */
-const EDGE = 48
+const EDGE = 32
 /** Fastest edge scroll, px per frame. */
 const EDGE_SPEED = 12
 
@@ -48,9 +48,12 @@ interface Drag {
   from: 'bar' | 'available'
   /** The layout at lift: what the lists are rendered from until the drop. */
   base: PhoneBarLayout
-  /** Layout tops (px, list content coordinates) of the bar list, the Available heading and list. */
+  /**
+   * Layout tops (px, list content coordinates) of the body, the bar list and the Available
+   * list – the latter as it is once the hole the held row left has closed.
+   */
+  bodyTop: number
   barTop: number
-  headTop: number
   availTop: number
   /** The held row's layout top and the finger's offset within it. */
   rowTop: number
@@ -75,10 +78,11 @@ export function BarEditorLayer(): JSX.Element | null {
  * The sheet that rearranges the phone bar (Settings › Navigation bar, or a hold on the bar):
  * the bar itself as a live preview, then the controls in it – in order, with the address pill
  * among them so a control can be dropped on either side – and the controls it could hold.
- * Rows are picked up with their handle, or by holding them, and dragged; the others step
- * aside on the snappy spring and the row lands where it was let go. A tap on a row's trailing
- * control adds or removes it, and every change is saved at once (the bar behind updates with
- * the rest of the settings), so the sheet needs no Done.
+ * Rows are picked up with their handle, or by holding them, and dragged: the hole they leave
+ * closes on the snappy spring, a caret between the rows marks where they will land, and on
+ * release every row springs to its new place. A tap on a row's trailing control adds or
+ * removes it, and every change is saved at once (the bar behind updates with the rest of the
+ * settings), so the sheet needs no Done.
  */
 function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
@@ -212,9 +216,7 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
     clientY: number
   ): boolean => {
     const sc = scroller()
-    if (!sc || !barList.current || !availList.current || drag.current) return false
-    const head = nodes.current.get('head')
-    if (!head) return false
+    if (!sc || !body.current || !barList.current || !availList.current || drag.current) return false
     const base = latest.current
     const rowTop = layoutTop(el, id)
     const contentY = clientY - sc.getBoundingClientRect().top + sc.scrollTop
@@ -224,9 +226,9 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
       id,
       from,
       base,
+      bodyTop: visualTop(body.current),
       barTop: visualTop(barList.current),
-      headTop: layoutTop(head, 'head'),
-      availTop: visualTop(availList.current),
+      availTop: visualTop(availList.current) - (from === 'bar' ? ROW : 0),
       rowTop,
       grab: contentY - rowTop,
       pointerY: clientY,
@@ -243,11 +245,12 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
       /* the pointer is gone */
     }
     run('haptic', { kind: 'lift' })
+    closeHole(d)
     autoScroll.current = requestAnimationFrame(scrollTick)
     return true
   }
 
-  /** The finger moved (or the list scrolled under it): move the row and re-aim the others. */
+  /** The finger moved (or the list scrolled under it): move the row and re-aim the caret. */
   const track = (): void => {
     const d = drag.current
     const sc = scroller()
@@ -279,25 +282,46 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
     d.target = target
     d.draft = draft
     setHeld({ ...d })
-    aim(d)
+    settle('caret', caretY(d))
   }
 
-  /** Aim every other element at its place under the draft: draft top minus base top. */
-  const aim = (d: Drag): void => {
-    const baseSeq = phoneBarSequence(d.base)
-    const draftSeq = phoneBarSequence(d.draft)
-    const baseAvail = phoneBarAvailable(d.base)
-    const draftAvail = phoneBarAvailable(d.draft)
-    const grow = (draftSeq.length - baseSeq.length) * ROW
-    for (const key of baseSeq) {
-      if (key === d.id) continue
-      settle(key, (draftSeq.indexOf(key) - baseSeq.indexOf(key)) * ROW)
+  /**
+   * The hole a lifted row leaves closes at once: every row after it in its list – and, when it
+   * came out of the bar, the Available heading and list too – moves up one row on the spring.
+   */
+  const closeHole = (d: Drag): void => {
+    const seq = phoneBarSequence(d.base)
+    const avail = phoneBarAvailable(d.base)
+    if (d.from === 'bar') {
+      const at = seq.indexOf(d.id)
+      seq.forEach((key, i) => {
+        if (key !== d.id) settle(key, i > at ? -ROW : 0)
+      })
+      settle('head', -ROW)
+      for (const key of avail) settle(key, -ROW)
+    } else {
+      const at = avail.indexOf(d.id)
+      avail.forEach((key, i) => {
+        if (key !== d.id) settle(key, i > at ? -ROW : 0)
+      })
     }
-    settle('head', grow)
-    for (const key of baseAvail) {
-      if (key === d.id) continue
-      settle(key, grow + (draftAvail.indexOf(key) - baseAvail.indexOf(key)) * ROW)
+    paint('caret', caretY(d))
+  }
+
+  /**
+   * Where the caret sits (px from the body's top) for the drop `d` is aiming at: the gap
+   * before the row the held one would become, in either list as it is with the hole closed.
+   */
+  const caretY = (d: Drag): number => {
+    let y: number
+    if (d.target.kind === 'bar') {
+      y = d.barTop + d.target.position * ROW
+    } else {
+      const avail = phoneBarAvailable(d.draft)
+      const at = avail.indexOf(d.id)
+      y = d.availTop + (at < 0 ? avail.length : at) * ROW
     }
+    return y - d.bodyTop
   }
 
   const scrollTick = (): void => {
@@ -430,6 +454,18 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [])
+  // The header gets its hairline once the rows have scrolled under it, and loses it at the top.
+  useEffect(() => {
+    const sc = scroller()
+    const sheetEl = sc?.closest<HTMLElement>('.zen-sheet')
+    if (!sc || !sheetEl) return
+    const sync = (): void => {
+      sheetEl.dataset.scrolled = String(sc.scrollTop > 0)
+    }
+    sync()
+    sc.addEventListener('scroll', sync, { passive: true })
+    return () => sc.removeEventListener('scroll', sync)
+  }, [])
 
   const ctx = barContext(state, false)
   const shown = held?.draft ?? layout
@@ -453,7 +489,7 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
       className="zen-bar-editor"
       header={
         <div className="flex h-9 items-center gap-1 pl-3">
-          <span className="zen-title min-w-0 flex-1 truncate">Navigation bar</span>
+          <h2 className="zen-bar-title min-w-0 flex-1 truncate">Navigation Bar</h2>
           <button
             type="button"
             className="zen-toolbar-button h-11 w-11 shrink-0"
@@ -468,7 +504,7 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
     >
       <div
         ref={body}
-        className="flex flex-col pb-1"
+        className="relative flex flex-col pb-1 pt-1"
         onClickCapture={(e) => {
           if (!swallowClick.current) return
           swallowClick.current = false
@@ -478,6 +514,19 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
         onContextMenu={(e) => e.preventDefault()}
       >
         <BarPreview layout={shown} ctx={ctx} className="-mx-3 mb-2" />
+        {held && (
+          <div
+            ref={(el) => {
+              if (el) {
+                nodes.current.set('caret', el)
+                // Aimed at lift, before it was mounted: take up the position it was given.
+                paint('caret', offsets.current.get('caret') ?? 0)
+              } else nodes.current.delete('caret')
+            }}
+            className="zen-bar-caret"
+            aria-hidden
+          />
+        )}
         <h3 className="zen-bar-heading">In the bar</h3>
         <ul ref={barList} className="flex flex-col" aria-label="In the bar">
           {sequence.map((entry) =>
@@ -496,9 +545,7 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
                   <Search className="h-5 w-5" strokeWidth={1.75} />
                 </span>
                 <span className="min-w-0 flex-1 truncate">Address bar</span>
-                <span className="shrink-0 pr-3 text-[13px] text-[var(--zen-muted)]">
-                  Always shown
-                </span>
+                <span className="zen-bar-note shrink-0 pr-3">Always shown</span>
               </li>
             ) : (
               <ItemRow

@@ -256,6 +256,59 @@
   }
 }
 
+/*
+ * The v2 draft of the design language, for the surfaces built against it while the direction
+ * is being confirmed (the navigation bar's editor is one): Zen's measured in-content palette –
+ * neutral near-white and near-black surfaces, a hairline where v1 had a tone change, ink at
+ * 69 percent for what is secondary, the accent as Zen mixes it for controls – and the shadows
+ * of a panel and a dialog. One block, so every value can be re-tuned once.
+ */
+:root {
+  --v2-page: #fbfbfe;
+  --v2-card: #f4f4f7;
+  --v2-card-border: #e7e7e8;
+  --v2-panel: #f4f4f4;
+  --v2-border: rgb(0 0 0 / 0.15);
+  --v2-text: #15141a;
+  --v2-text-rgb: 21 20 26;
+  --v2-text-deemphasized: rgb(var(--v2-text-rgb) / 0.69);
+  /* A secondary control's fill and a row's press: the text at 10 percent. */
+  --v2-fill: rgb(var(--v2-text-rgb) / 0.1);
+  --v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #000);
+  --v2-on-accent: #fff;
+  --v2-scrim: rgb(0 0 0 / 0.4);
+  --v2-shadow-panel: 0 2px 6px rgb(0 0 0 / 0.2);
+  --v2-shadow-dialog: 0 10px 8px rgb(0 0 0 / 0.15);
+}
+:root[data-theme='dark'] {
+  --v2-page: #1c1b22;
+  --v2-card: #19181f;
+  --v2-card-border: #302f38;
+  --v2-panel: #1f1f1f;
+  --v2-border: rgb(255 255 255 / 0.12);
+  --v2-text: #fbfbfe;
+  --v2-text-rgb: 251 251 254;
+  --v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #fff);
+  --v2-on-accent: #15141a;
+  --v2-scrim: rgb(0 0 0 / 0.55);
+}
+/* A v2 secondary button at the phone's size: 40 tall, radius 6, 15/500, the text at 10 percent. */
+.zen-v2-button {
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 6px;
+  background: var(--v2-fill);
+  color: var(--v2-text);
+  font-size: 15px;
+  font-weight: 500;
+  transition:
+    background 120ms var(--zen-ease),
+    transform 120ms var(--zen-ease);
+}
+.zen-v2-button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
 /* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME); zero on desktop. */
 :root {
   --zen-inset-top: 0px;
@@ -1403,7 +1456,19 @@
     opacity: 0;
   }
 
-  /* The Tabs button's hold: a small panel of two rows, the menu's rows at the panel's radius minus its padding. */
+  /*
+   * The Tabs button's hold: a menu of two rows on the v2 draft's panel – neutral, a hairline
+   * edge at radius 8, the panel shadow – with the rows at the panel's radius minus its padding.
+   */
+  .zen-quick-menu {
+    padding: 4px;
+    border: 1px solid var(--v2-border);
+    border-radius: 8px;
+    background: var(--v2-panel);
+    box-shadow: var(--v2-shadow-panel);
+    color: var(--v2-text);
+    corner-shape: var(--zen-corner);
+  }
   .zen-quick-menu-item {
     display: flex;
     width: 100%;
@@ -1411,68 +1476,124 @@
     align-items: center;
     gap: 12px;
     padding: 0 12px;
-    border-radius: 10px;
-    corner-shape: var(--zen-corner);
-    color: var(--zen-fg);
+    border-radius: 4px;
+    color: var(--v2-text);
     text-align: left;
-    font-size: var(--zen-sidebar-font);
+    font-size: 14px;
     transition: background 120ms var(--zen-ease);
   }
   .zen-quick-menu-item:active:not(:disabled) {
-    background: var(--zen-element-bg-hover);
+    background: var(--v2-fill);
   }
   .zen-quick-menu-item:disabled {
     opacity: 0.4;
   }
 
   /*
-   * The bar's editor (`BarEditorSheet`): the sheet's rows, holding their own controls, moved
-   * per frame by transform alone. A row in the hand lifts off the list – a level swap to the
-   * dragged card's shadow on the solid surface – and follows the finger.
+   * The bar's editor (`BarEditorSheet`), on the v2 draft: the dialog surface with a hairline
+   * edge at radius 12 in place of the tinted sheet, a 17/600 title, 44 px rows at 15/400, and a
+   * hairline under the header only once the rows have scrolled under it. Rows move per frame by
+   * transform alone. A row in the hand lifts to the dragged card's level – two percent larger,
+   * a touch translucent – and follows the finger while a caret marks where it will land.
    */
+  .zen-sheet.zen-bar-editor {
+    border: 1px solid var(--v2-border);
+    border-bottom: 0;
+    border-radius: 12px 12px 0 0;
+    background: var(--v2-panel);
+    color: var(--v2-text);
+    backdrop-filter: none;
+    box-shadow: var(--v2-shadow-dialog);
+  }
+  .zen-bar-editor .zen-sheet-handle {
+    background: rgb(var(--v2-text-rgb) / 0.25);
+  }
+  .zen-bar-editor .zen-sheet-grip {
+    transition: box-shadow 120ms var(--zen-ease);
+  }
+  .zen-bar-editor[data-scrolled='true'] .zen-sheet-grip {
+    box-shadow: 0 1px 0 var(--v2-border);
+  }
+  .zen-bar-title {
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 24px;
+    letter-spacing: -0.01em;
+  }
   .zen-bar-row {
     position: relative;
     display: flex;
-    height: 48px;
+    min-height: 44px;
     align-items: center;
     gap: 12px;
-    padding: 0 2px 0 8px;
-    border-radius: 10px;
+    padding: 0 0 0 8px;
+    border-radius: 8px;
     corner-shape: var(--zen-corner);
-    color: var(--zen-fg);
-    font-size: var(--zen-sidebar-font);
+    color: var(--v2-text);
+    font-size: 15px;
+    line-height: 20px;
     user-select: none;
     -webkit-user-select: none;
     transition:
       background 120ms var(--zen-ease),
-      box-shadow 200ms var(--zen-ease);
+      box-shadow 200ms var(--zen-ease),
+      opacity 120ms var(--zen-ease),
+      scale 120ms var(--zen-ease);
+  }
+  /* Row glyphs at the phone's stroke; the bar's own glyphs keep theirs. */
+  .zen-bar-row svg {
+    stroke-width: 1.75;
   }
   .zen-bar-row-pressable:active {
-    background: var(--zen-element-bg-hover);
+    background: var(--v2-fill);
   }
   .zen-bar-row[data-held] {
     z-index: 1;
-    background: var(--zen-bg-solid);
+    background: var(--v2-panel);
     box-shadow: var(--zen-shadow-2);
+    opacity: 0.9;
+    scale: 1.02;
   }
   /* A touch that starts on the handle is a drag from the first pixel, never a scroll. */
   .zen-bar-handle {
-    color: var(--zen-faint);
+    color: var(--v2-text-deemphasized);
     touch-action: none;
   }
+  /* Where the held row will land: a 2 px accent line between rows, moved on the spring. */
+  .zen-bar-caret {
+    position: absolute;
+    top: -1px;
+    left: 8px;
+    right: 8px;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--v2-accent);
+    pointer-events: none;
+    will-change: transform;
+  }
   .zen-bar-heading {
-    padding: 8px 12px 4px;
-    font-size: 14px;
+    padding: 8px 12px 2px;
+    font-size: 15px;
     font-weight: 600;
-    letter-spacing: -0.006em;
-    line-height: 1.25;
+    line-height: 20px;
   }
   .zen-bar-caption {
-    padding: 0 12px 4px;
-    font-size: 12px;
-    line-height: 1.4;
-    color: var(--zen-muted);
+    padding: 0 12px 6px;
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--v2-text-deemphasized);
   }
+  .zen-bar-note {
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--v2-text-deemphasized);
+  }
+}
+
+/* The editor draws a hairline when its rows scroll under the header; the fading edge would say the same twice. */
+.zen-bar-editor [data-fade-axis='y'] {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

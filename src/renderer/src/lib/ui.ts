@@ -105,6 +105,8 @@ export interface UiState {
   externalProtocol: ExternalProtocolRequest | null
   /** Phone layout: the sheet that rearranges the bar's controls is up. */
   barEditorOpen: boolean
+  /** Phone layout: the Tabs button's quick menu is up, anchored to the button (window px). */
+  tabsMenu: Rect | null
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
   /**
@@ -149,6 +151,7 @@ export const uiStore = createStore<UiState>(
     siteInfoOpen: false,
     externalProtocol: null,
     barEditorOpen: false,
+    tabsMenu: null,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false
   },
@@ -218,6 +221,7 @@ export function returnFocusToPage(): void {
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
     !ui.barEditorOpen &&
+    !ui.tabsMenu &&
     !ui.stageActive
   )
     run('focus.content', undefined)
@@ -236,6 +240,7 @@ export function invalidateSnapshot(): void {
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
     !ui.barEditorOpen &&
+    !ui.tabsMenu &&
     !ui.stageActive
   ) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
@@ -359,6 +364,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.siteInfoOpen ||
     ui.externalProtocol !== null ||
     ui.barEditorOpen ||
+    ui.tabsMenu !== null ||
     ui.stageActive
   )
 }
@@ -380,6 +386,24 @@ export async function openBarEditor(activeTabId: string | null): Promise<void> {
 export function closeBarEditor(): void {
   if (!uiStore.get().barEditorOpen) return
   uiStore.set({ barEditorOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/**
+ * The Tabs button's quick menu. It overhangs the content area, where the page view is drawn
+ * above the chrome, so the page gives way to its snapshot while the menu is up, as it does for
+ * the sheets.
+ */
+export async function openTabsMenu(anchor: Rect, activeTabId: string | null): Promise<void> {
+  if (uiStore.get().overlay === 'none') await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ tabsMenu: anchor })
+}
+
+export function closeTabsMenu(): void {
+  if (!uiStore.get().tabsMenu) return
+  uiStore.set({ tabsMenu: null })
   invalidateSnapshot()
   returnFocusToPage()
 }

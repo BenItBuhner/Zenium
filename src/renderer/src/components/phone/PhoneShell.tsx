@@ -1,7 +1,7 @@
 import type { CSSProperties, JSX } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { Lock, Search } from 'lucide-react'
-import type { PhoneBarPosition, Rect, Space, Tab, UIState } from '@shared/types'
+import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
 import {
   contentShift,
@@ -16,8 +16,10 @@ import { activeSpace, activeTab } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import {
   closeBarEditor,
+  closeTabsMenu,
   contentAreaStore,
   openBarEditor,
+  openTabsMenu,
   openUrlbar,
   type UiState
 } from '@renderer/lib/ui'
@@ -68,20 +70,20 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     lastActive.current = activeTabId
   }, [activeTabId, ui.drawerOpen])
 
-  // Leaving the phone layout (rotation, DeX) drops a half-carried bar and the bar's editor.
+  // Leaving the phone layout (rotation, DeX) drops a half-carried bar, the bar's editor and menu.
   useEffect(
     () => () => {
       dismissDock()
       closeBarEditor()
+      closeTabsMenu()
     },
     []
   )
 
-  // A hold on the Tabs button: its quick menu, anchored to the button.
-  const [tabsMenu, setTabsMenu] = useState<Rect | null>(null)
+  // A hold on the Tabs button: its quick menu, anchored to the button; any other hold, the editor.
   const hold = useBarHold({
     onHold: (item, rect) => {
-      if (item === 'tabs') setTabsMenu(rect)
+      if (item === 'tabs') void openTabsMenu(rect, activeTabId)
       else void openBarEditor(activeTabId)
     }
   })
@@ -161,13 +163,8 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       {barHidden && <Urlbar state={state} urlbar={ui.urlbar} area={null} phoneEdge={edge} />}
       {dock.phase !== 'idle' && <BarDockLayer state={state} pill={pill} />}
       {ui.drawerOpen && <SpacesDrawer state={state} isDark={isDark} />}
-      {tabsMenu && !barHidden && (
-        <TabsQuickMenu
-          state={state}
-          anchor={tabsMenu}
-          edge={edge}
-          onClose={() => setTabsMenu(null)}
-        />
+      {ui.tabsMenu && !barHidden && (
+        <TabsQuickMenu state={state} anchor={ui.tabsMenu} edge={edge} onClose={closeTabsMenu} />
       )}
       <PhoneToasts ui={ui} barEdge={barHidden ? null : edge} />
       <TabDialogs state={state} />

@@ -25,8 +25,8 @@ import org.junit.runner.RunWith
 class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo") {
     override val tag = "NavbarDemo"
 
-    /** One row of either editor list in screen px: 48 CSS px at the device's density. */
-    private val row get() = 48 * density
+    /** One row of either editor list in screen px: 44 CSS px at the device's density. */
+    private val row get() = 44 * density
     private val failures = ArrayList<String>()
 
     @Test
@@ -106,12 +106,12 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         SystemClock.sleep(1_000)
 
         // 9. The tab count: the Tabs button's hold opens its quick menu instead of the editor, Close
-        //    tab rolls the count down; New tab (through the URL bar) takes it back up.
+        //    Tab rolls the count down; the bar's New tab (through the URL bar) takes it back up.
         val before = tabCount() ?: error("no tab count on the Tabs button")
         holdBarButton("Tabs ($before)")
-        expect("a hold on Tabs opens its quick menu", waitFor("Close tab", 4_000) != null)
+        expect("a hold on Tabs opens its quick menu", waitFor("Close Tab", 4_000) != null)
         shot("11-tabs-quick-menu")
-        tap("Close tab")
+        tap("Close Tab")
         SystemClock.sleep(250)
         shot("12-count-rolling")
         expect("the count rolled down", waitFor("Tabs (${before - 1})", 4_000) != null)

@@ -284,7 +284,11 @@ function LookSection({
             label="Navigation bar"
             hint="Choose the controls beside the address bar and their order. Holding a control in the bar opens this too."
           >
-            <Button variant="secondary" size="sm" onClick={() => void openBarEditor(activeTabId)}>
+            <Button
+              variant="secondary"
+              className="zen-v2-button shrink-0"
+              onClick={() => void openBarEditor(activeTabId)}
+            >
               Customise
             </Button>
           </Row>
