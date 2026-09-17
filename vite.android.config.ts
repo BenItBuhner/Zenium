@@ -20,9 +20,11 @@ const aliases = {
 }
 
 export default defineConfig(({ mode }) => {
-  if (mode === 'ext') {
-    // The extension bootstrap (content scripts and extension pages); Kotlin wraps it with the
-    // per-install config and sources, so it must stay a plain IIFE over the `__zenExtBoot` global.
+  if (mode === 'ext' || mode === 'ext-janitor') {
+    // The extension bootstrap (content scripts and extension pages) and the main-world transport
+    // janitor; Kotlin wraps each with its per-install config (and, for the bootstrap, the
+    // sources), so they must stay plain IIFEs over the `__zenExtBoot` global.
+    const janitor = mode === 'ext-janitor'
     return {
       resolve: { alias: aliases },
       define: { 'process.env.NODE_ENV': JSON.stringify('production') },
@@ -31,10 +33,12 @@ export default defineConfig(({ mode }) => {
         emptyOutDir: false,
         minify: true,
         lib: {
-          entry: resolve('src/android/extensionPageScript.ts'),
-          name: 'zenExt',
+          entry: resolve(
+            janitor ? 'src/android/extensionTransport.ts' : 'src/android/extensionBootstrap.ts'
+          ),
+          name: janitor ? 'zenExtJanitor' : 'zenExt',
           formats: ['iife'],
-          fileName: () => 'ext.js'
+          fileName: () => (janitor ? 'ext-janitor.js' : 'ext.js')
         }
       }
     }

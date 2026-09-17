@@ -19,6 +19,7 @@ val buildWeb = tasks.register<Exec>("buildWeb") {
     outputs.dir(projectDir.resolve("src/main/assets/www"))
     outputs.file(projectDir.resolve("src/main/assets/page.js"))
     outputs.file(projectDir.resolve("src/main/assets/ext.js"))
+    outputs.file(projectDir.resolve("src/main/assets/ext-janitor.js"))
     onlyIf { !skipWeb }
 }
 

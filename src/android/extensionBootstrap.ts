@@ -2,6 +2,7 @@ import type {
   BootConfig,
   BootGroup,
   BootStats,
+  ContentBootConfig,
   ExtensionBoot,
   IsolationMode
 } from '@core/extensions/runtime/boot'
@@ -25,6 +26,7 @@ import {
   installTrustedTypesShield,
   type Any
 } from './extensionIsolation'
+import type { ClaimedTransport, TransportJanitor } from './extensionTransport'
 
 /**
  * The extension bootstrap Kotlin injects at document start into tab WebViews (content mode) and
@@ -54,8 +56,12 @@ import {
  * Transport is the WebMessageListener object `__zenExtBridge` of the world: messages go up with
  * `postMessage`, replies come back through its `onmessage` (the frame's JavaScriptReplyProxy for
  * that world). The object is captured and deleted from the global before any page script can
- * see it; in the main world the transport janitor (`extensionTransport.ts`) has usually done
- * that already and hands it over through `__zenExtTransport.claim(token)`.
+ * see it; in the main world the transport janitor (`extensionTransport.ts`) has done that
+ * already and hands it over through `__zenExtTransport.claim(token)`, and the runtime and exec
+ * objects go into the slots it reserved. A late boot (`config.late`) is this same script
+ * evaluated by the host into a document that predates the extension's world (or on a WebView
+ * without worlds): no groups run, but `scripting.executeScript` / `insertCSS` get a scope and a
+ * bridge to work with.
  */
 type GroupFunction = (
   this: unknown,
@@ -80,10 +86,6 @@ interface Bridge {
   addEventListener?(type: 'message', listener: (event: { data: string }) => void): void
 }
 
-interface Transport {
-  claim(token: string): Bridge | undefined
-}
-
 interface Runtime {
   attach(boot: Boot): void
 }
@@ -96,7 +98,7 @@ declare const __zenExtBoot: Boot
   const g = globalThis as typeof globalThis & {
     __zenExtBridge?: Bridge
     __zenExtRuntime?: Runtime
-    __zenExtTransport?: Transport
+    __zenExtTransport?: TransportJanitor
   }
   const installed = g.__zenExtRuntime
   if (installed) {
@@ -105,22 +107,40 @@ declare const __zenExtBoot: Boot
   }
 
   // --- transport ---------------------------------------------------------------------------------
-  let bridge: Bridge | undefined = g.__zenExtBridge
-  if (bridge) {
+  // The main world of a tab frame: the janitor took the bridge off the global before any page
+  // script ran and lends it to the holder of the token, so nothing the page did can have replaced
+  // it. Isolated worlds and extension pages meet the bridge directly: nothing runs there first.
+  let janitor: TransportJanitor | undefined
+  let transport: ClaimedTransport | undefined
+  const rawBridge = g.__zenExtBridge
+  if (rawBridge) {
     try {
       delete g.__zenExtBridge
     } catch {
       /* leave it; the object only carries JSON */
     }
+    const rawPost = rawBridge.postMessage
+    transport = {
+      post: (message) => rawPost.call(rawBridge, message),
+      listen: (sink) => {
+        if (rawBridge.addEventListener) rawBridge.addEventListener('message', sink)
+        else rawBridge.onmessage = sink
+      },
+      primordials: capturePrimordials()
+    }
   } else {
-    const transport = g.__zenExtTransport
-    if (transport && typeof transport.claim === 'function')
-      bridge = transport.claim(boot.config.token)
+    janitor = g.__zenExtTransport
+    if (janitor && typeof janitor.claim === 'function') {
+      try {
+        transport = janitor.claim(boot.config.token)
+      } catch {
+        transport = undefined
+      }
+    }
   }
-  if (!bridge) return
-  const rawPost = bridge.postMessage
-  const post = (message: string): void => rawPost.call(bridge, message)
-  const primordials: Primordials = capturePrimordials()
+  if (!transport) return
+  const post = transport.post
+  const primordials: Primordials = transport.primordials
   const sources: Record<string, GroupFunction> = Object.assign(
     Object.create(null) as Record<string, GroupFunction>,
     boot.sources
@@ -130,7 +150,7 @@ declare const __zenExtBoot: Boot
     boot.css
   )
   const engines = new Map<string, EmulatedEngine>()
-  const onBridgeMessage = (event: { data: string }): void => {
+  transport.listen((event) => {
     let message: Record<string, unknown>
     try {
       message = primordials.parse(event.data) as Record<string, unknown>
@@ -139,9 +159,24 @@ declare const __zenExtBoot: Boot
     }
     const engine = engines.get(String(message.ep))
     if (engine) engine.receive(message)
+  })
+
+  /**
+   * Expose a runtime object in the main world: through the janitor's reserved slots when it is
+   * there (they are getters no page script can redefine), else as a frozen own property.
+   */
+  const expose = (name: '__zenExtRuntime' | '__zenExtExec', value: object): void => {
+    try {
+      Object.defineProperty(g, name, {
+        value,
+        writable: false,
+        configurable: false,
+        enumerable: false
+      })
+    } catch {
+      /* the name exists already (a second bootstrap of the same world): keep the first */
+    }
   }
-  if (bridge.addEventListener) bridge.addEventListener('message', onBridgeMessage)
-  else bridge.onmessage = onBridgeMessage
 
   const nonce = Math.random().toString(36).slice(2, 10) + (Date.now() % 1e6).toString(36)
   /**
@@ -157,7 +192,7 @@ declare const __zenExtBoot: Boot
       : nonce
   const endpointIdFor = (ext: ExtensionBoot): string => `${docId}.${nonce}.${ext.id.slice(0, 8)}`
   const realWindow = window as unknown as Any
-  const transport = { post }
+  const engineTransport = { post }
 
   // --- frame context ---------------------------------------------------------------------------
 
@@ -207,7 +242,7 @@ declare const __zenExtBoot: Boot
         isTopFrame: frame.isTopFrame,
         world
       },
-      transport,
+      engineTransport,
       primordials,
       { root }
     )
@@ -318,7 +353,8 @@ declare const __zenExtBoot: Boot
   // Chrome injects no content scripts into chrome-extension:// documents and neither do we.
   if (location.hostname.endsWith(EXTENSION_ORIGIN_SUFFIX)) return
 
-  const unitWorld = boot.config.world
+  const content: ContentBootConfig = boot.config
+  const unitWorld = content.world
   const frame = frameContext()
   const attached: ExtensionBoot[] = []
   const builtins = collectBuiltins(realWindow)
@@ -326,7 +362,7 @@ declare const __zenExtBoot: Boot
     ? {
         frame: frame.url,
         world: unitWorld,
-        isolation: boot.config.extension.isolation,
+        isolation: content.extension.isolation,
         startedAt: t0,
         matchMs: 0,
         bootMs: 0,
@@ -393,7 +429,7 @@ declare const __zenExtBoot: Boot
       return scope
     }
     const context: EngineContextKind = unitWorld === 'user' ? 'userScript' : 'content'
-    const messaging = unitWorld !== 'user' || boot.config.userScriptMessaging === true
+    const messaging = unitWorld !== 'user' || content.userScriptMessaging === true
     let root: Any
     if (isolation === 'world') {
       shieldWorld(ext)
@@ -494,13 +530,6 @@ declare const __zenExtBoot: Boot
     const w = scope.window
     return (fn as GroupFunction).call(w, w, w, w, scope.chrome, scope.browser)
   }
-  if (!('__zenExtExec' in g))
-    Object.defineProperty(g, '__zenExtExec', {
-      value: exec,
-      writable: false,
-      configurable: false,
-      enumerable: false
-    })
 
   // --- matching and scheduling -----------------------------------------------------------------
 
@@ -511,12 +540,18 @@ declare const __zenExtBoot: Boot
     setTimeout: (cb, ms) => void primordials.setTimeout(cb, ms)
   }
 
-  /** Match one unit's extension against this frame and schedule what applies. */
-  const apply = (ext: ExtensionBoot, started: number): void => {
+  /**
+   * Match one unit's extension against this frame and schedule what applies. A late boot (the
+   * host evaluated the bootstrap in a document that predates the extension's world) carries no
+   * groups: it only gives `exec` a scope and a bridge, and says hello like any other endpoint.
+   */
+  const apply = (ext: ExtensionBoot, late: boolean, started: number): void => {
     if (!attached.some((e) => e.id === ext.id)) attached.push(ext)
     const due: BootGroup[] = []
-    for (const group of ext.groups) if (contentScriptAppliesTo(group, frame)) due.push(group)
+    if (!late)
+      for (const group of ext.groups) if (contentScriptAppliesTo(group, frame)) due.push(group)
     if (stats) stats.matchMs += performance.now() - started
+    if (late) scopeFor(ext, ext.isolation === 'none' ? 'with' : ext.isolation)
     for (const group of due) {
       const scope = scopeFor(ext, isolationOf(ext, group))
       scheduleRunAt(group.runAt, hooks, () => runGroup(scope, group))
@@ -526,21 +561,21 @@ declare const __zenExtBoot: Boot
       stats.bootMs += performance.now() - started
     }
   }
-  apply(boot.config.extension, t0)
+  apply(content.extension, content.late === true, t0)
 
   const runtime: Runtime = {
     attach(other) {
       const t = performance.now()
-      if (other.config.token !== boot.config.token || other.config.kind !== 'content') return
+      if (other.config.token !== content.token || other.config.kind !== 'content') return
       Object.assign(sources, other.sources)
       Object.assign(cssTexts, other.css)
-      apply(other.config.extension, t)
+      apply(other.config.extension, other.config.late === true, t)
     }
   }
-  Object.defineProperty(g, '__zenExtRuntime', {
-    value: runtime,
-    writable: false,
-    configurable: false,
-    enumerable: false
-  })
+  Object.freeze(runtime)
+  if (janitor) janitor.install(content.token, runtime, exec as (...args: unknown[]) => unknown)
+  else {
+    expose('__zenExtRuntime', runtime)
+    expose('__zenExtExec', exec)
+  }
 })()
