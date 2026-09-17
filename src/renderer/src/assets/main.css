@@ -980,6 +980,289 @@
   }
 }
 
+@layer components {
+  /*
+   * Bookmarks. The bar is a strip of chips in the chrome gutter above the content frame, its
+   * folders open menu panels, the star sits in the address pill and the dialogs are panels.
+   * Fills are ink alphas, the accent marks the insertion point and a filled star; no borders.
+   */
+  .zen-bm-bar {
+    display: flex;
+    align-items: center;
+    height: 30px;
+    gap: 4px;
+    padding: 0 2px 4px;
+  }
+  .zen-bm-strip {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    overflow: hidden;
+  }
+  .zen-bm-chip {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 9999px;
+    color: var(--zen-fg);
+    font-size: 12.5px;
+    font-weight: 500;
+    white-space: nowrap;
+    outline: none;
+    transition:
+      background 120ms var(--zen-ease),
+      opacity 120ms var(--zen-ease);
+  }
+  .zen-bm-chip:hover {
+    background: var(--zen-element-bg-hover);
+  }
+  .zen-bm-chip[data-open='true'] {
+    background: var(--zen-element-bg-active);
+  }
+  .zen-bm-chip:focus-visible {
+    outline: 2px solid var(--zen-accent);
+    outline-offset: 2px;
+  }
+  /* A folder chip about to receive a drop wears the accent tint like a selected row. */
+  .zen-bm-chip[data-target='true'] {
+    background: rgb(var(--zen-accent-rgb) / 0.16);
+  }
+  /* The chip in the hand keeps its slot while its ghost travels. */
+  .zen-bm-chip[data-lifted='true'] {
+    visibility: hidden;
+  }
+  /* Chips past the strip's right edge stay laid out (so they can be measured) but unseen. */
+  .zen-bm-chip[data-overflow='true'] {
+    visibility: hidden;
+  }
+  .zen-bm-chip-label {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .zen-bm-chip[data-icon-only='true'] .zen-bm-chip-label {
+    display: none;
+  }
+  /* The chip travelling with the pointer: a level-2 lift of the chip it stands in for. */
+  .zen-bm-ghost {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 100;
+    pointer-events: none;
+    background: var(--zen-panel-bg);
+    box-shadow: var(--zen-shadow-2);
+    will-change: transform;
+  }
+  .zen-bm-empty {
+    padding: 0 8px;
+    color: var(--zen-muted);
+    font-size: 12.5px;
+    white-space: nowrap;
+  }
+
+  /* The insertion point of a drag: a 2px accent line with pill ends, never a border on a chip. */
+  .zen-bm-insert {
+    position: absolute;
+    pointer-events: none;
+    background: var(--zen-accent);
+    border-radius: 9999px;
+    transition: opacity 100ms var(--zen-ease);
+  }
+  .zen-bm-insert::before,
+  .zen-bm-insert::after {
+    content: '';
+    position: absolute;
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    background: var(--zen-accent);
+  }
+  .zen-bm-insert[data-axis='x'] {
+    width: 2px;
+  }
+  .zen-bm-insert[data-axis='x']::before {
+    top: -3px;
+    left: -2px;
+  }
+  .zen-bm-insert[data-axis='x']::after {
+    bottom: -3px;
+    left: -2px;
+  }
+  .zen-bm-insert[data-axis='y'] {
+    height: 2px;
+  }
+  .zen-bm-insert[data-axis='y']::before {
+    top: -2px;
+    left: -3px;
+  }
+  .zen-bm-insert[data-axis='y']::after {
+    top: -2px;
+    right: -3px;
+  }
+
+  /* A folder's panel and the overflow panel: a desktop menu (§8.8), rows 28 at radius 6. */
+  .zen-bm-menu {
+    width: 240px;
+    padding: 6px;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .zen-bm-menu-row {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 8px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 6px;
+    color: var(--zen-fg);
+    font-size: 12.5px;
+    text-align: left;
+    outline: none;
+    transition:
+      background 120ms var(--zen-ease),
+      opacity 120ms var(--zen-ease);
+  }
+  .zen-bm-menu-row:hover,
+  .zen-bm-menu-row[data-active='true'] {
+    background: var(--zen-element-bg-hover);
+  }
+  .zen-bm-menu-row[data-target='true'] {
+    background: rgb(var(--zen-accent-rgb) / 0.16);
+  }
+  .zen-bm-menu-row[data-lifted='true'] {
+    opacity: 0.4;
+  }
+  .zen-bm-menu-title {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 28px;
+    padding-right: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.006em;
+  }
+  .zen-bm-menu-level {
+    will-change: transform;
+  }
+  /* A panel leaves the way it came: the pop, played backwards. */
+  .zen-animate-pop-out {
+    animation: zen-pop 180ms var(--zen-ease) reverse forwards;
+  }
+
+  /* The star in the address pill: the outline fills in 120 ms, then pops once it is filled. */
+  .zen-bm-star svg {
+    fill: currentColor;
+    fill-opacity: 0;
+    transition: fill-opacity 120ms var(--zen-ease);
+  }
+  .zen-bm-star[data-filled='true'] {
+    color: var(--zen-accent-ink);
+    opacity: 1;
+  }
+  .zen-bm-star[data-filled='true'] svg {
+    fill-opacity: 1;
+  }
+  .zen-bm-star[data-pop='true'] svg {
+    animation: zen-star-pop 180ms var(--zen-ease) 120ms;
+  }
+
+  /* Fields and buttons of the bookmark dialogs (§8.6, §8.3): fills without borders. */
+  .zen-field {
+    display: block;
+    width: 100%;
+    height: 28px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--zen-element-bg);
+    color: var(--zen-fg);
+    font-size: 13px;
+    outline: none;
+  }
+  .zen-field::placeholder {
+    color: var(--zen-faint);
+  }
+  .zen-field::selection {
+    background: rgb(var(--zen-accent-rgb) / 0.3);
+    color: var(--zen-fg);
+  }
+  .zen-field:focus-visible {
+    outline: 2px solid var(--zen-accent);
+    outline-offset: 2px;
+  }
+  .zen-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 12px;
+    border-radius: 8px;
+    background: var(--zen-element-bg);
+    color: var(--zen-fg);
+    font-size: 12.5px;
+    font-weight: 500;
+    white-space: nowrap;
+    outline: none;
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease),
+      opacity 120ms var(--zen-ease);
+  }
+  .zen-button:hover:not(:disabled) {
+    background: var(--zen-element-bg-hover);
+  }
+  .zen-button:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+  .zen-button:disabled {
+    opacity: 0.4;
+  }
+  .zen-button:focus-visible {
+    outline: 2px solid var(--zen-accent);
+    outline-offset: 2px;
+  }
+  .zen-button[data-variant='primary'] {
+    background: var(--zen-accent-fill);
+    color: var(--zen-on-accent);
+    font-weight: 600;
+  }
+  .zen-button[data-variant='primary']:hover:not(:disabled) {
+    background: var(--zen-accent-fill);
+    filter: brightness(1.08);
+  }
+  .zen-button[data-variant='danger'] {
+    color: var(--zen-danger);
+  }
+  .zen-button[data-variant='quiet'] {
+    background: transparent;
+  }
+  .zen-button[data-variant='quiet']:hover:not(:disabled) {
+    background: var(--zen-element-bg);
+  }
+}
+
+@keyframes zen-star-pop {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.25);
+  }
+}
+
 /*
  * Fading scroll edges (`useFadeEdges`). The scroll container is masked, so content dissolves
  * into whatever is behind it – no gradient overlay, no assumption about the background. The
