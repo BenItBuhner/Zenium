@@ -24,14 +24,15 @@ export function OverlayShell({
   className
 }: Props): JSX.Element {
   const phone = useViewport().formFactor === 'phone'
-  // The system back gesture: the panel sinks and fades with the finger; commit closes it.
+  // The system back gesture: the panel recedes towards the bottom edge, shrinking and fading
+  // with the finger; commit closes it, cancel springs it back.
   const panelRef = useRef<HTMLDivElement>(null)
   useBackDismissal('overlay', {
-    travel: 320,
+    travel: 360,
     render: (v) => {
       const el = panelRef.current
       if (!el) return
-      el.style.transform = `translateY(${40 * v}px) scale(${1 - 0.05 * v})`
+      el.style.transform = `translateY(${30 * v}%) scale(${1 - 0.1 * v})`
       el.style.opacity = String(1 - v)
     },
     dismissed: () => closeOverlay()

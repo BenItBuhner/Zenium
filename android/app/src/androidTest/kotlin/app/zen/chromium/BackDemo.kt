@@ -332,7 +332,8 @@ class BackDemo {
     private fun edgeSwipe(dx: Float, hold: Long, during: () -> Unit = {}) {
         ensureForeground()
         val f = Finger()
-        f.down(EDGE_X, height * 0.5f)
+        // Below the middle, so the system's arrow does not sit on the preview's centred identity.
+        f.down(EDGE_X, height * 0.6f)
         f.moveBy(dx, 0f, 650)
         f.hold(hold)
         during()

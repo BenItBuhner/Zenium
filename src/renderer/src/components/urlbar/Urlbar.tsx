@@ -104,16 +104,17 @@ export function Urlbar({ state, urlbar, area }: Props): JSX.Element {
     [tab, text]
   )
 
-  // The system back gesture lifts the bar away and fades it; commit closes it keeping the draft,
-  // like Escape, cancel springs it back.
+  // The system back gesture lifts the bar away like a sheet off the top edge, fading as it goes;
+  // commit closes it keeping the draft, like Escape, cancel springs it back.
   const panelRef = useRef<HTMLDivElement>(null)
   useBackDismissal('urlbar', {
-    travel: 240,
+    travel: 320,
     render: (v) => {
       const el = panelRef.current
       if (!el) return
-      el.style.transform = `translateY(${-28 * v}px) scale(${1 - 0.04 * v})`
-      el.style.opacity = String(1 - v)
+      el.style.transformOrigin = '50% 0%'
+      el.style.transform = `translateY(${-100 * v}%) scale(${1 - 0.06 * v})`
+      el.style.opacity = String(1 - 0.7 * v)
     },
     dismissed: () => close(true)
   })
