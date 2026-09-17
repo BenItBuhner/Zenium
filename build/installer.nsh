@@ -16,12 +16,15 @@
 !define ZEN_LEGACY_INSTALL_KEY "Software\${ZEN_LEGACY_GUID}"
 !define ZEN_LEGACY_EXECUTABLE "zen.exe"
 
-Var /GLOBAL zenLegacyUninstallString
-Var /GLOBAL zenLegacyUninstaller
-Var /GLOBAL zenLegacyInstallDir
-Var /GLOBAL zenLegacyResult
-
 !macro customInstall
+  ; Declared here rather than at file scope: makensis also compiles this script for the
+  ; uninstaller, where the macro is not inserted, and treats an unreferenced variable as a
+  ; warning (electron-builder turns warnings into errors).
+  Var /GLOBAL zenLegacyUninstallString
+  Var /GLOBAL zenLegacyUninstaller
+  Var /GLOBAL zenLegacyInstallDir
+  Var /GLOBAL zenLegacyResult
+
   ClearErrors
   ReadRegStr $zenLegacyUninstallString HKEY_CURRENT_USER "${ZEN_LEGACY_UNINSTALL_KEY}" UninstallString
   ${if} $zenLegacyUninstallString != ""
