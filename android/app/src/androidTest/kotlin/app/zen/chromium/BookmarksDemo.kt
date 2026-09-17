@@ -72,9 +72,9 @@ class BookmarksDemo : DemoHarness("bookmarks-demo-state.json", "bookmarks", "boo
         tap("Export Bookmarks…")
         SystemClock.sleep(3_500)
         openDownloads()
-        val save = waitForText("Save", 8_000) ?: error("no Save button in the picker")
+        waitForText("Save", 8_000) ?: error("no Save button in the picker")
         shot("06-export-picker")
-        Finger().tap(save.exactCenterX(), save.exactCenterY())
+        clickSave()
         SystemClock.sleep(4_000)
         ensureForeground()
         shot("07-exported")
@@ -153,6 +153,19 @@ class BookmarksDemo : DemoHarness("bookmarks-demo-state.json", "bookmarks", "boo
         } else {
             Log.w(tag, "no Downloads root in the picker; going with what it shows")
         }
+    }
+
+    /**
+     * The picker's Save button through accessibility (ACTION_CLICK on the clickable ancestor of
+     * the "SAVE" text). A finger tap at its centre never reached DocumentsUI on the emulator: the
+     * button sits against the bottom edge, where the navigation bar window takes the touch.
+     */
+    private fun clickSave() {
+        var node = nodeWhere { it.text?.toString()?.equals("Save", ignoreCase = true) == true }
+            ?: error("no Save button to click")
+        while (!node.isClickable) node = node.parent ?: error("Save has no clickable ancestor")
+        if (!node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) error("Save did not accept the click")
+        Log.i(tag, "clicked Save through accessibility")
     }
 
     /** The panel's search box: the input whose hint reads "Search bookmarks". */
