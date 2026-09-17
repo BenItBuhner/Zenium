@@ -320,7 +320,7 @@ class HistoryBookmarksDemo :
     /** The editor's name field while it holds `value`. */
     private fun nameField(value: String): Rect? =
         findNodeWhere { it.className == "android.widget.EditText" && it.text?.startsWith(value) == true }
-            ?.bounds()
+            ?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
             .also { if (it == null) Log.w(tag, "no name field holding '$value'") }
 
     private fun click(label: String): Boolean =
