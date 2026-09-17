@@ -53,14 +53,18 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
 
     /**
      * Make a page another host [release]d one of ours. Its context is re-pointed at this window
-     * (dialogs and pickers the page opens from now on belong here), it starts hidden and unplaced
-     * like every new view, and the core is told to adopt it as an active tab the way it adopts a
-     * popup; the core answers with `view.bind`, which reports the page's URL and title.
+     * (dialogs and pickers the page opens from now on belong here), what a new view takes from
+     * its host at creation – the page script and its bridge, the pull-to-refresh mode – is applied
+     * for this host, it starts hidden and unplaced like every new view, and the core is told to
+     * adopt it as an active tab the way it adopts a popup; the core answers with `view.bind`,
+     * which reports the page's URL and title.
      */
     fun adopt(view: TabWebView) {
         val viewId = "handoff_${++popupSeq}"
         (view.context as? MutableContextWrapper)?.baseContext = container.context
         view.host = host
+        view.installPageScript()
+        view.applyPullToRefreshMode()
         view.tabId = viewId
         view.visibility = View.GONE
         view.translationX = 0f

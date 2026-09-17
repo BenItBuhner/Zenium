@@ -35,6 +35,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.JavaScriptReplyProxy
+import androidx.webkit.ScriptHandler
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -74,6 +75,10 @@ class TabWebView(
     private var committedUrl = ""
     private var lastRememberedAt = 0L
     private var replyProxy: JavaScriptReplyProxy? = null
+    /** Whether the bridge object the page script posts through is registered on this view. */
+    private var bridgeInstalled = false
+    /** The document-start registration of the current host's script (null without the feature). */
+    private var documentScript: ScriptHandler? = null
     private var currentFlags: JSONObject = json("glanceEnabled" to true, "glanceTrigger" to "alt", "thirdParty" to null)
     private var pendingFlags = false
     private var zoomFactor = 1.0
@@ -196,23 +201,47 @@ class TabWebView(
 
     // --- page script (Glance, third-party links, media tracking) -------------------------------
 
-    private fun installPageScript() {
+    /**
+     * Install the current host's page script and the bridge it talks through. Runs at creation
+     * and again when the view changes hosts (`TabHost.adopt`): whatever an earlier host installed
+     * comes down first – its script carries that host's token – and evaluations still waiting on
+     * that bridge are failed rather than left to time out. A document already loaded gets the new
+     * script on its next navigation.
+     */
+    internal fun installPageScript() {
+        if (bridgeInstalled || documentScript != null) uninstallPageScript()
         val script = host.pageScript
         // A host without the core (a custom tab) has nothing to talk to the page about.
         if (script.isEmpty()) return
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-            WebViewCompat.addWebMessageListener(this, "__zenPageBridge", setOf("*")) { _, message, _, isMainFrame, proxy ->
+            WebViewCompat.addWebMessageListener(this, PAGE_BRIDGE, setOf("*")) { _, message, _, isMainFrame, proxy ->
                 if (!isMainFrame) return@addWebMessageListener
                 onPageMessage(message, proxy)
             }
         } else {
-            addJavascriptInterface(LegacyPageBridge(), "__zenPageBridge")
+            addJavascriptInterface(LegacyPageBridge(), PAGE_BRIDGE)
         }
+        bridgeInstalled = true
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-            WebViewCompat.addDocumentStartJavaScript(this, script, setOf("*"))
+            documentScript = WebViewCompat.addDocumentStartJavaScript(this, script, setOf("*"))
         } else {
             pendingFlags = true // inject on page finished instead (see Client)
         }
+    }
+
+    private fun uninstallPageScript() {
+        documentScript?.remove()
+        documentScript = null
+        if (bridgeInstalled) {
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+                WebViewCompat.removeWebMessageListener(this, PAGE_BRIDGE)
+            } else {
+                removeJavascriptInterface(PAGE_BRIDGE)
+            }
+            bridgeInstalled = false
+        }
+        replyProxy = null
+        failPendingEvals("the page changed hosts")
     }
 
     private fun onPageMessage(message: WebMessageCompat, proxy: JavaScriptReplyProxy?) {
@@ -855,6 +884,8 @@ class TabWebView(
 
     companion object {
         private const val PULL_TAG = "ZenPull"
+        /** The object the page script posts to (and the wrappers in [evaluate] and [postToPage] name). */
+        private const val PAGE_BRIDGE = "__zenPageBridge"
         private val encoder = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-encode") }
 
         /** Longer than any tool budget (browser_wait_for allows 30 s) but shorter than the socket's. */
