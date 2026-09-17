@@ -12,8 +12,10 @@
 # BEFORE_APK_DIR names the directory holding the "before" debug APK (skipped when unset or empty).
 set -euo pipefail
 
-app_id=app.zen.chromium.debug
-runner=app.zen.chromium.debug.test/androidx.test.runner.AndroidJUnitRunner
+# applicationId of the debug build (android/app/build.gradle.kts); the instrumentation APK is
+# "<applicationId>.test" and the driver classes keep the Kotlin package app.zen.chromium.
+app_id=io.github.benitbuhner.zenium.debug
+runner=io.github.benitbuhner.zenium.debug.test/androidx.test.runner.AndroidJUnitRunner
 test_class=app.zen.chromium.GestureDemo#omnibox
 out=artifacts/android-omnibox-demo
 video=omnibox-relocation-demo.mp4
