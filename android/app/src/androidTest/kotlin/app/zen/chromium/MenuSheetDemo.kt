@@ -241,7 +241,15 @@ class MenuSheetDemo {
         f.up()
         beat()
 
-        // 8. Fling it away – and catch it on the way out: a finger landing on the layer while the
+        // 8. A submenu: the sheet shrinks to fit it, the title row grows a back chevron.
+        if (clickByLabel("Zoom")) {
+            SystemClock.sleep(1_500)
+            shot("submenu")
+            clickByLabel("Back", enabledOnly = true)
+            beat()
+        }
+
+        // 9. Fling it away – and catch it on the way out: a finger landing on the layer while the
         //    sheet moves freezes it where it is, then carries it back up to the peek.
         grip = handleY()
         f.down(x, grip)
@@ -257,14 +265,14 @@ class MenuSheetDemo {
         f.up()
         beat()
 
-        // 9. This time let it go.
+        // 10. This time let it go.
         grip = handleY()
         f.down(x, grip)
         f.moveBy(0f, 0.3f * height, 110)
         f.up()
         beat()
 
-        // 10. Into Settings: open, expand, scroll to the end, pick the row; the sheet slides away
+        // 11. Into Settings: open, expand, scroll to the end, pick the row; the sheet slides away
         //     before the panel comes up.
         if (!ensureMenuOpen()) return
         grip = handleY()
@@ -281,7 +289,7 @@ class MenuSheetDemo {
         if (!clickByLabel("Settings") && findByLabel(HANDLE_LABEL) != null) back()
         SystemClock.sleep(2_500)
 
-        // 11. Settings on a phone: section chips above the content. Scroll a long section so the
+        // 12. Settings on a phone: section chips above the content. Scroll a long section so the
         //     content fades at the top and bottom, and the chip row at its ends.
         clickByLabel("Tab Management")
         SystemClock.sleep(1_200)
@@ -342,9 +350,12 @@ class MenuSheetDemo {
         return false
     }
 
-    /** Click the nearest clickable node labelled `label` through accessibility. False when there is none. */
-    private fun clickByLabel(label: String): Boolean {
-        var node = findNodeByLabel(label) ?: return false
+    /**
+     * Click the nearest clickable node labelled `label` through accessibility. False when there
+     * is none. `enabledOnly` skips disabled matches (the bar's own Back button under the sheet).
+     */
+    private fun clickByLabel(label: String, enabledOnly: Boolean = false): Boolean {
+        var node = findNodeByLabel(label, enabledOnly) ?: return false
         while (!node.isClickable) node = node.parent ?: return false
         return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
     }
@@ -362,7 +373,7 @@ class MenuSheetDemo {
         findNodeByLabel(label)?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
 
     /** Breadth-first search of the active window for a node labelled `label` (aria-label or text). */
-    private fun findNodeByLabel(label: String): AccessibilityNodeInfo? {
+    private fun findNodeByLabel(label: String, enabledOnly: Boolean = false): AccessibilityNodeInfo? {
         val root = ui.rootInActiveWindow ?: return null
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)
@@ -370,7 +381,10 @@ class MenuSheetDemo {
         while (queue.isNotEmpty() && visited < 6_000) {
             val node = queue.removeFirst()
             visited++
-            if (node.contentDescription?.toString() == label || node.text?.toString() == label) {
+            if (
+                (node.contentDescription?.toString() == label || node.text?.toString() == label) &&
+                (!enabledOnly || node.isEnabled)
+            ) {
                 return node
             }
             for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
