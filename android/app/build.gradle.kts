@@ -211,6 +211,9 @@ dependencies {
     // JVM unit tests (src/test): pure logic such as the screenshot stitching geometry and the
     // vault key wrapping format.
     testImplementation("junit:junit:4.13.2")
+    // The request engine's rule sets are org.json documents; the real library stands in for the
+    // android.jar stubs (which throw) so the blocking tests can parse them on the JVM.
+    testImplementation("org.json:json:20240303")
 
     // On-device driver for the gesture demo recording (.github/workflows/android-gesture-demo.yml).
     androidTestImplementation("androidx.test:runner:1.6.2")

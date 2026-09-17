@@ -18,6 +18,8 @@ import type { ZenWindow } from '@core/window'
 import type {
   AgentTransport,
   AppHost,
+  BlockingHost,
+  BundledFilterList,
   ClipboardHost,
   DialogHost,
   DownloadHost,
@@ -41,6 +43,8 @@ import type {
 import { KeyWrapError, type KeyWrapFailure } from '@core/platform'
 import { PBKDF2_PARAMS, deriveWithWebCrypto } from '@core/credentials/kdf'
 import { fromBase64, toBase64 } from '@core/credentials/crypto'
+import type { RuleSet } from '@core/blocking/rules'
+import { INDEX_FILE } from '@core/blocking/store'
 import readabilityJs from '@mozilla/readability/Readability.js?raw'
 import readabilityReaderableJs from '@mozilla/readability/Readability-readerable.js?raw'
 import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
@@ -478,24 +482,82 @@ export class AndroidWindowHost implements WindowHost {
   }
 }
 
-class AndroidStoreIO implements StoreIO {
+/**
+ * The root documents (and the small rule-set index) arrive with the boot payload and are
+ * mirrored in memory; documents in a folder – the filter lists' text under `blocking/`, megabytes
+ * each – stay on disk and are read through the bridge when asked for.
+ */
+export class AndroidStoreIO implements StoreIO {
   constructor(
     private readonly bridge: Bridge,
     private readonly files: Record<string, string>
   ) {}
 
+  private mirrored(name: string): boolean {
+    return !name.includes('/') || name === INDEX_FILE || name in this.files
+  }
+
   readSync(name: string): string | null {
-    return this.files[name] ?? null
+    const cached = this.files[name]
+    if (cached !== undefined) return cached
+    if (!name.includes('/')) return null
+    return this.bridge.callSync<string | null | undefined>('storage.read', { name }) ?? null
+  }
+
+  exists(name: string): boolean {
+    if (name in this.files) return true
+    return this.bridge.callSync<boolean | undefined>('storage.exists', { name }) === true
   }
 
   async write(name: string, text: string): Promise<void> {
-    this.files[name] = text
+    if (this.mirrored(name)) this.files[name] = text
     await this.bridge.call('storage.write', { name, text })
   }
 
   writeSync(name: string, text: string): void {
-    this.files[name] = text
+    if (this.mirrored(name)) this.files[name] = text
     this.bridge.callSync('storage.writeSync', { name, text })
+  }
+
+  async remove(name: string): Promise<void> {
+    delete this.files[name]
+    await this.bridge.call('storage.remove', { name })
+  }
+}
+
+/** The bundled filter-list snapshot lives in the APK's assets; Kotlin copies it into the profile. */
+class AndroidBlockingHost implements BlockingHost {
+  constructor(private readonly bridge: Bridge) {}
+
+  async bundledLists(): Promise<BundledFilterList[]> {
+    const raw = await this.bridge.call<unknown[] | null>('blocking.bundled')
+    if (!Array.isArray(raw)) return []
+    return raw.flatMap((l) => {
+      const list = bundledListFrom(l)
+      return list ? [list] : []
+    })
+  }
+
+  async installBundled(set: RuleSet, file: string): Promise<BundledFilterList | null> {
+    return bundledListFrom(await this.bridge.call<unknown>('blocking.install', { set, file }))
+  }
+}
+
+/** Kotlin's description of a bundled list, checked field by field. */
+export function bundledListFrom(raw: unknown): BundledFilterList | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  if (
+    typeof o.id !== 'string' ||
+    typeof o.builtAt !== 'number' ||
+    typeof o.filterCount !== 'number'
+  )
+    return null
+  return {
+    id: o.id,
+    version: typeof o.version === 'string' ? o.version : null,
+    builtAt: o.builtAt,
+    filterCount: o.filterCount
   }
 }
 
@@ -522,6 +584,7 @@ export class AndroidPlatform implements Platform {
   readonly siteData: AndroidSiteData
   readonly externalProtocols: ExternalProtocolHost
   readonly passwords: PasswordsHost
+  readonly blocking: BlockingHost
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
@@ -540,6 +603,7 @@ export class AndroidPlatform implements Platform {
     this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null, boot.packageName ?? null)
     this.views = new AndroidTabViewHost(bridge)
     this.siteData = new AndroidSiteData(bridge)
+    this.blocking = new AndroidBlockingHost(bridge)
     this.menus = new RendererMenuHost()
     this.windows = {
       create: (win: ZenWindow): WindowHost => {

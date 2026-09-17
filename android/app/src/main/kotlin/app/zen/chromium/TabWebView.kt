@@ -31,6 +31,7 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -39,28 +40,38 @@ import androidx.webkit.ScriptHandler
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import app.zen.chromium.blocking.BlockingTab
+import app.zen.chromium.blocking.Decision
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.roundToInt
 
 /**
  * One tab's page. Mirrors what Electron's `WebContentsView` gives the core: navigation events,
  * title/favicon, load failures mapped to Chromium net error codes, HTML fullscreen, find-in-page,
- * downloads, permission prompts, popups and the injected Zen page script.
+ * downloads, permission prompts, popups, the injected Zen page script and the request engine's
+ * verdicts (`shouldInterceptRequest`, on WebView's IO threads).
  */
 @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
 class TabWebView(
     context: Context,
-    var tabId: String,
+    override var tabId: String,
     val containerId: String,
     host: PageHost
-) : WebView(context) {
+) : WebView(context), BlockingTab {
     /** Reassigned once, when a custom tab's page moves into the browser window (`TabHost.adopt`). */
     var host: PageHost = host
         internal set
     private var loading = false
+    /** The document the page's requests belong to; written on the main thread, read on IO threads. */
+    @Volatile
+    private var currentDocument: String? = null
+    private val blockedPending = AtomicInteger(0)
+    private val blockedFlushScheduled = AtomicBoolean(false)
     private var lastTouchX = 0f
     private var lastTouchY = 0f
     var radiusPx = 0f
@@ -565,6 +576,7 @@ class TabWebView(
 
     override fun loadUrl(url: String) {
         rememberCurrentPage()
+        if (url.startsWith("http", ignoreCase = true)) currentDocument = url
         super.loadUrl(url)
     }
 
@@ -707,6 +719,38 @@ class TabWebView(
         )
     }
 
+    // --- request blocking (BlockingTab) -------------------------------------------------------
+
+    override val documentUrl: String?
+        get() = currentDocument
+
+    /** Coalesce the IO threads' counts into one `blocked` event per beat for the chrome. */
+    override fun onRequestsBlocked(count: Int) {
+        blockedPending.addAndGet(count)
+        if (blockedFlushScheduled.compareAndSet(false, true)) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                blockedFlushScheduled.set(false)
+                val n = blockedPending.getAndSet(0)
+                if (n > 0) host.viewEvent(tabId, "blocked", json("count" to n))
+            }, BLOCKED_FLUSH_MS)
+        }
+    }
+
+    /** The engine stopped a navigation: the core shows the Zenium blocked page for `url`. */
+    override fun onDocumentBlocked(url: String) {
+        Handler(Looper.getMainLooper()).post {
+            loading = false
+            host.viewEvent(
+                tabId, "failLoad",
+                json("code" to BLOCKED_BY_CLIENT, "description" to "ERR_BLOCKED_BY_CLIENT", "url" to url)
+            )
+        }
+    }
+
+    override fun onDocumentRedirected(url: String) {
+        Handler(Looper.getMainLooper()).post { loadUrl(url) }
+    }
+
     // --- WebViewClient ------------------------------------------------------------------------
 
     private inner class Client : WebViewClient() {
@@ -714,14 +758,12 @@ class TabWebView(
             val url = request.url
             return when (url.scheme?.lowercase()) {
                 "http", "https" -> {
-                    // A link (or script) is about to take the page elsewhere: the last moment it is
-                    // whole on screen, and the best one for its back preview.
-                    if (request.isForMainFrame && !request.isRedirect) rememberCurrentPage()
+                    if (interceptNavigation(request)) return true
                     // A tap on another site whose app is installed may open the app instead.
                     host.externalProtocols.appLink(this@TabWebView, request)
                 }
                 "about", "data", "blob", "javascript" -> {
-                    if (request.isForMainFrame && !request.isRedirect) rememberCurrentPage()
+                    if (interceptNavigation(request)) return true
                     false
                 }
                 else -> {
@@ -732,10 +774,40 @@ class TabWebView(
             }
         }
 
+        /**
+         * The engine's word on a main-frame navigation: true when it took the navigation over
+         * (onto the Zenium blocked page, or to the redirect target), false when the page may go.
+         */
+        private fun interceptNavigation(request: WebResourceRequest): Boolean {
+            if (!request.isForMainFrame) return false
+            val target = request.url.toString()
+            val decision = host.blocking.decideNavigation(this@TabWebView, target)
+            when (decision.action) {
+                Decision.Action.BLOCK -> {
+                    onDocumentBlocked(target)
+                    return true
+                }
+                Decision.Action.REDIRECT, Decision.Action.UPGRADE -> {
+                    decision.redirectUrl?.let { loadUrl(it) }
+                    return true
+                }
+                Decision.Action.ALLOW -> {}
+            }
+            // A link (or script) is about to take the page elsewhere: the last moment it is whole
+            // on screen, and the best one for its back preview.
+            if (!request.isRedirect) rememberCurrentPage()
+            currentDocument = target
+            return false
+        }
+
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+            host.blocking.intercept(this@TabWebView, request)
+
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             // Navigations with no link click ahead of them (forms, history.back(), redirects).
             rememberCurrentPage()
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.STARTED)
+            currentDocument = url
             pageStarted = true
             loading = true
             failPendingEvals("the page navigated away before the script finished")
@@ -745,6 +817,7 @@ class TabWebView(
         }
 
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+            currentDocument = url
             onHistoryCommitted()
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.HISTORY_UPDATED)
             if (!loading) {
@@ -893,6 +966,12 @@ class TabWebView(
 
         /** A redirect chain or a burst of pushStates must not copy the window once per hop. */
         private const val REMEMBER_THROTTLE_MS = 300L
+
+        /** Blocked-request counts reach the chrome at most this often per tab. */
+        private const val BLOCKED_FLUSH_MS = 150L
+
+        /** `net::ERR_BLOCKED_BY_CLIENT`, what the core's blocked page is keyed on. */
+        private const val BLOCKED_BY_CLIENT = -20
 
         /** Where the visual viewport sits in the layout viewport (non-zero only while pinch-zoomed). */
         private const val VISUAL_OFFSET_SCRIPT =
