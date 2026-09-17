@@ -180,8 +180,13 @@ export function useBarDrag({
         if (x >= visual.left + inset && x <= visual.right - inset)
           return { kind: 'folder', folderId: node.id }
       }
+      // The slot is read off the chips as drawn: crossing a chip's midpoint sends it to the
+      // other side of the pointer, never through it, so the gap keeps following the pointer.
       let index = 0
-      for (const { rect } of others) if (x > rect.left + rect.width / 2) index++
+      for (const { node, rect } of others) {
+        const visual = motion.visualRect(node.id) ?? rect
+        if (x > visual.left + visual.width / 2) index++
+      }
       let lineX: number
       if (index > liftedAt) lineX = others[index - 1].rect.right - current.width / 2
       else if (index < liftedAt) lineX = others[index].rect.left + current.width / 2
