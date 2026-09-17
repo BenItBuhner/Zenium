@@ -7,11 +7,14 @@ import { NavRow } from './sidebar/SidebarTop'
 export function Toolbar({
   state,
   tab,
-  floating
+  floating,
+  trailingInset = 0
 }: {
   state: UIState
   tab: Tab | null
   floating?: boolean
+  /** Room (px) kept clear at the trailing end for native caption buttons drawn over the row. */
+  trailingInset?: number
 }): JSX.Element {
   return (
     <div
@@ -19,6 +22,7 @@ export function Toolbar({
         'zen-drag flex h-10 items-center gap-1 px-1',
         floating && 'zen-panel zen-animate-in'
       )}
+      style={trailingInset > 0 ? { paddingRight: trailingInset + 4 } : undefined}
     >
       <NavRow state={state} tab={tab} compact={false} className="flex-1" />
     </div>

@@ -1,5 +1,6 @@
 import { app, clipboard, dialog, ipcMain, nativeTheme, net, shell, type Session } from 'electron'
 import { readFileSync } from 'node:fs'
+import { release } from 'node:os'
 import { basename, join } from 'node:path'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { Browser } from '../../core/browser'
@@ -32,9 +33,12 @@ import { ElectronAgentTransport } from '../agent/server'
 import { ElectronSiteData } from './siteData'
 import { ElectronUpdateHost } from './updates'
 import { applyAppIcon } from './appIcon'
+import { supportsWindowMaterial } from './appShell'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
+  windowControlsOverlay: process.platform === 'win32',
+  windowMaterial: supportsWindowMaterial(process.platform, release()),
   nativeMenus: true,
   windowDrag: true,
   devtools: true,

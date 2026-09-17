@@ -3,10 +3,13 @@ import { Minus, Square, X, Copy } from 'lucide-react'
 import { run } from '@renderer/lib/api'
 import { useBrowser } from '@renderer/lib/ui'
 
-/** Linux/Windows window buttons (macOS uses native traffic lights, mobile hosts have none). */
+/**
+ * Linux window buttons. macOS uses native traffic lights, Windows draws its own over the chrome
+ * (Window Controls Overlay) and mobile hosts have none.
+ */
 export function WindowControls({ compact = false }: { compact?: boolean }): JSX.Element | null {
   const state = useBrowser()
-  if (!state.capabilities.windowControls) return null
+  if (!state.capabilities.windowControls || state.capabilities.windowControlsOverlay) return null
   if (compact) {
     return (
       <div className="zen-no-drag flex items-center">

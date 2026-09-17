@@ -40,6 +40,8 @@ const CLIPBOARD_CHIP_SDK = 33
 export function androidCapabilities(sdkInt: number): HostCapabilities {
   return {
     windowControls: false,
+    windowControlsOverlay: false,
+    windowMaterial: false,
     nativeMenus: false,
     windowDrag: false,
     devtools: false,

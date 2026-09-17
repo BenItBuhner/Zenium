@@ -9,10 +9,12 @@ import type {
   KeyBinding,
   MediaState,
   SearchEngine,
+  Rect,
   Settings,
   ShareAction,
   SharePayload,
   Space,
+  WindowChrome,
   WindowKind
 } from '../shared/types'
 import { BrowserState, type PersistedWindow } from './state'
@@ -48,14 +50,14 @@ import {
   reorderContainer,
   reorderSpace
 } from './model'
-import { getDomain, inputToUrl } from '../shared/url'
+import { BLANK_URL, getDomain, inputToUrl } from '../shared/url'
 import { buildSearchUrl, matchEngineKeyword } from '../shared/search'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { ONBOARDING_ESSENTIALS } from '../shared/defaults'
-import { PRIVATE_THEME, resolveTheme, rgbToHex } from '../shared/theme'
+import { PRIVATE_THEME, captionColors, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
@@ -212,6 +214,16 @@ export class Browser {
     kind: WindowKind
     from?: ZenWindow
     persisted?: PersistedWindow
+    /** Toolbar-only chrome for a page's sized popup (default: the full sidebar chrome). */
+    chrome?: WindowChrome
+    /** Where a popup asked to be; full windows cascade from `from` or restore their bounds. */
+    bounds?: Rect | null
+    /**
+     * First tab: a URL to open, `null` for none (the caller adopts a page right away), or – by
+     * default – whatever the window kind implies (blank / private windows start with an empty
+     * tab and the URL bar open).
+     */
+    initialTab?: string | null
   }): ZenWindow {
     const m = this.state.model
     const id = opts.persisted?.id ?? newId('window')
@@ -236,17 +248,26 @@ export class Browser {
       m.localSpaces[localSpace.id] = localSpace
       activeSpaceId = localSpace.id
     }
+    const chrome = opts.chrome ?? 'full'
     const win = new ZenWindow(this, {
       id,
       kind: opts.kind,
-      bounds: opts.persisted?.bounds ?? null,
+      chrome,
+      material: this.state.capabilities.windowMaterial
+        ? this.state.settings.windowMaterial
+        : 'none',
+      bounds: opts.bounds ?? opts.persisted?.bounds ?? null,
       maximized: opts.persisted?.maximized ?? false,
       activeSpaceId,
       selection: opts.persisted?.selection ?? {},
       compact:
-        opts.persisted?.compact ?? from?.compactEnabled ?? this.state.settings.compactMode.enabled,
+        chrome === 'popup'
+          ? false
+          : (opts.persisted?.compact ??
+            from?.compactEnabled ??
+            this.state.settings.compactMode.enabled),
       localSpace,
-      cascadeFrom: from
+      cascadeFrom: opts.bounds ? undefined : from
     })
     this.windows.set(id, win)
     const theme = resolveTheme(win.activeSpace().theme, this.darkScheme())
@@ -255,16 +276,30 @@ export class Browser {
       maximized: win.initialMaximized,
       cascadeFrom: win.cascadeFrom,
       title: win.isPrivate ? 'Zenium (Private Browsing)' : 'Zenium',
-      backgroundColor: rgbToHex(theme.averageColor)
+      chrome,
+      material: win.material,
+      backgroundColor: rgbToHex(theme.averageColor),
+      captionColors: captionColors(theme)
     })
     this.governor.watchWindow(win)
-    if (localSpace) {
+    if (opts.initialTab) {
+      this.tabs.createTab({ url: opts.initialTab, active: true }, win)
+    } else if (localSpace && opts.initialTab === undefined) {
       // Blank / private windows start with an empty tab and the URL bar open.
       const tab = this.tabs.createTab({ active: true, load: false }, win)
       win.select(localSpace, tab.id)
     }
     this.state.commit()
     return win
+  }
+
+  /** Native caption buttons follow the theme of the space each window shows. */
+  private syncCaptionColors(): void {
+    const dark = this.darkScheme()
+    for (const win of this.allWindows()) {
+      if (!win.host.setCaptionColors) continue
+      win.host.setCaptionColors(captionColors(resolveTheme(win.activeSpace().theme, dark)))
+    }
   }
 
   /** Whether the chrome renders dark: the Appearance setting, or the OS scheme when it follows it. */
@@ -277,7 +312,11 @@ export class Browser {
   /** The chrome of `win` finished loading for the first time. */
   onChromeReady(win: ZenWindow): void {
     if (this.state.settings.onboardingDone) this.tabs.claimVisible(win)
-    if (win.localSpace) setTimeout(() => this.emit('urlbar.toggle', { mode: 'new-tab' }, win), 150)
+    // A blank / private window that opened on an empty tab starts in the URL bar.
+    const local = win.localSpace
+    const active = local ? this.tabs.tab(win.selectedTabIn(local)) : undefined
+    if (local && win.chrome === 'full' && (!active || active.url === BLANK_URL))
+      setTimeout(() => this.emit('urlbar.toggle', { mode: 'new-tab' }, win), 150)
   }
 
   onWindowFocused(win: ZenWindow): void {
@@ -337,6 +376,7 @@ export class Browser {
     }
     this.state.subscribe(() => {
       for (const win of this.allWindows()) win.send('state', this.state.snapshot(win))
+      this.syncCaptionColors()
     })
     // Zen restores every synced window (and the space each one was in).
     const restore =

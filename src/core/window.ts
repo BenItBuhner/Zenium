@@ -7,7 +7,9 @@ import type {
   LayoutReport,
   Rect,
   Space,
+  WindowChrome,
   WindowKind,
+  WindowMaterial,
   WindowState
 } from '../shared/types'
 import type { Browser } from './browser'
@@ -18,6 +20,8 @@ import type { WindowHost } from './platform'
 export interface WindowInit {
   id: string
   kind: WindowKind
+  chrome: WindowChrome
+  material: WindowMaterial
   bounds: Rect | null
   maximized: boolean
   activeSpaceId: string
@@ -41,6 +45,8 @@ export interface WindowInit {
 export class ZenWindow {
   readonly id: string
   readonly kind: WindowKind
+  readonly chrome: WindowChrome
+  readonly material: WindowMaterial
   host!: WindowHost
   activeSpaceId: string
   /** Per-space selected tab of this window (falls back to the space's last selection). */
@@ -68,6 +74,8 @@ export class ZenWindow {
   ) {
     this.id = init.id
     this.kind = init.kind
+    this.chrome = init.chrome
+    this.material = init.material
     this.activeSpaceId = init.activeSpaceId
     this.localSpace = init.localSpace
     this.compactEnabled = init.compact
@@ -128,6 +136,8 @@ export class ZenWindow {
     return {
       id: this.id,
       kind: this.kind,
+      chrome: this.chrome,
+      material: this.material,
       maximized: alive ? this.host.isMaximized() : this.initialMaximized,
       fullscreen: alive ? this.host.isFullScreen() : false,
       focused: alive ? this.host.isFocused() : false,

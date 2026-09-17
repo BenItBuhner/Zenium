@@ -203,6 +203,22 @@
     --zen-accent: #a98bff;
     --zen-accent-rgb: 169 139 255;
   }
+  /*
+   * Windows 11 Mica: the OS paints its material wherever the window is see-through, so the
+   * chrome stops covering it and lays the space gradient over it as a tint instead.
+   */
+  :root[data-material='mica'] body,
+  :root[data-material='mica'] .zen-window {
+    background: transparent;
+  }
+  :root[data-material='mica'] .zen-window::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--zen-bg);
+    opacity: 0.6;
+    pointer-events: none;
+  }
 
   .zen-texture {
     pointer-events: none;

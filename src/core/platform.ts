@@ -23,9 +23,12 @@ import type {
   SharePayload,
   SyncScope,
   SyncStatus,
-  Tab
+  Tab,
+  WindowChrome,
+  WindowMaterial
 } from '../shared/types'
 import type { AppIconId } from '../shared/appIcon'
+import type { CaptionColors } from '../shared/theme'
 import type { KeyInput } from '../shared/shortcuts'
 import type { SiteCertificate, SiteCookie } from '../shared/siteInfo'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '../shared/updates'
@@ -299,6 +302,8 @@ export interface WindowHost {
   normalBounds(): Rect | null
   /** Brief vibration for a gesture landmark; hosts without haptics leave this out. */
   haptic?(kind: HapticKind): void
+  /** Recolour the native caption buttons drawn over the chrome (hosts with an overlay). */
+  setCaptionColors?(colors: CaptionColors): void
 }
 
 export interface WindowCreateInit {
@@ -307,8 +312,12 @@ export interface WindowCreateInit {
   /** Offset the new window from this one (new windows cascade like Firefox). */
   cascadeFrom: ZenWindow | null
   title: string
+  chrome: WindowChrome
+  material: WindowMaterial
   /** Solid colour approximating the space gradient, painted before the chrome loads. */
   backgroundColor: string
+  /** Colours for native caption buttons drawn over the chrome. */
+  captionColors: CaptionColors
 }
 
 export interface WindowHostFactory {

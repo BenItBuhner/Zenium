@@ -15,6 +15,14 @@ export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 export interface HostCapabilities {
   /** Host draws its own window frame – no minimise / maximise / close buttons in the chrome. */
   windowControls: boolean
+  /**
+   * The OS draws native minimise / maximise / close buttons over the chrome's top corner
+   * (Windows 11's Window Controls Overlay, which is what gives the maximise button Snap
+   * Layouts). The chrome keeps that region clear and draws no buttons of its own.
+   */
+  windowControlsOverlay: boolean
+  /** Windows can be backed by a system material (Windows 11 Mica) behind a translucent chrome. */
+  windowMaterial: boolean
   /** Context menus are native popups; when false the renderer renders `menu.show` events. */
   nativeMenus: boolean
   /** The chrome can be dragged by `-webkit-app-region: drag` regions. */
@@ -104,6 +112,13 @@ export const PRIVATE_CONTAINER_ID = 'private'
 export type WindowKind = 'synced' | 'unsynced' | 'private'
 /** Which tabs new synced windows share: everything, pinned/essential only, or nothing. */
 export type WindowSyncMode = 'all' | 'pinned' | 'off'
+/**
+ * What a window's chrome shows: the sidebar with spaces and tabs, or – for the sized windows
+ * pages open with `window.open(url, name, 'width=…')` – a single toolbar row above the page.
+ */
+export type WindowChrome = 'full' | 'popup'
+/** System-drawn material behind a translucent chrome (Windows 11). */
+export type WindowMaterial = 'none' | 'mica'
 
 // ---------------------------------------------------------------------------
 // Themes (Zen's gradient theme picker)
@@ -563,6 +578,8 @@ export interface Settings {
   sidebarExpandOnHover: boolean
   /** Remove the browser padding / rounded content area. */
   borderless: boolean
+  /** Windows 11: draw new windows on the system's Mica material behind a translucent chrome. */
+  windowMaterial: WindowMaterial
   compactMode: CompactModeSettings
   urlbarBehavior: UrlbarBehavior
   /** Phone layout: where the address bar (and its gestures) live. Long-press the pill to move it. */
@@ -880,6 +897,9 @@ export type OverlayKind =
 export interface WindowState {
   id: string
   kind: WindowKind
+  chrome: WindowChrome
+  /** The material this window was created with (windows keep it for their lifetime). */
+  material: WindowMaterial
   maximized: boolean
   fullscreen: boolean
   focused: boolean

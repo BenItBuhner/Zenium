@@ -156,7 +156,14 @@ export function SettingsPanel({
         </nav>
         <div ref={fadeContent} className="min-w-0 flex-1 overflow-y-auto p-6">
           <div className="mx-auto flex max-w-2xl flex-col gap-6">
-            {section === 'look' && <LookSection s={s} set={set} platform={state.platform} />}
+            {section === 'look' && (
+              <LookSection
+                s={s}
+                set={set}
+                platform={state.platform}
+                windowMaterial={state.capabilities.windowMaterial}
+              />
+            )}
             {section === 'compact' && <CompactSection s={s} set={set} />}
             {section === 'tabs' && (
               <TabsSection s={s} set={set} windows={state.capabilities.windows} />
@@ -187,11 +194,14 @@ export function SettingsPanel({
 function LookSection({
   s,
   set,
-  platform
+  platform,
+  windowMaterial
 }: {
   s: Settings
   set: (p: Partial<Settings>) => void
   platform: Platform
+  /** The host can back windows with a system material (Windows 11 Mica). */
+  windowMaterial: boolean
 }): JSX.Element {
   return (
     <>
@@ -239,6 +249,17 @@ function LookSection({
         <Row label="Remove browser padding" hint="Hide the rounded frame around web content.">
           <Switch checked={s.borderless} onCheckedChange={(v) => set({ borderless: v })} />
         </Row>
+        {windowMaterial && (
+          <Row
+            label="Use Windows transparency effects"
+            hint="Let the desktop show through the window frame (Mica). Applies to new windows."
+          >
+            <Switch
+              checked={s.windowMaterial === 'mica'}
+              onCheckedChange={(v) => set({ windowMaterial: v ? 'mica' : 'none' })}
+            />
+          </Row>
+        )}
       </Group>
       <AppIconGroup value={s.appIcon} platform={platform} onChange={(id) => set({ appIcon: id })} />
       <Group title="URL Bar">

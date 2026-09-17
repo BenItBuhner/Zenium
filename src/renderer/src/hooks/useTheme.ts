@@ -28,6 +28,7 @@ export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): Re
     for (const [key, value] of Object.entries(themeCssVariables(resolved)))
       root.style.setProperty(key, value)
     root.dataset.theme = resolved.isDark ? 'dark' : 'light'
+    root.dataset.material = state.window.material
     root.style.colorScheme = resolved.isDark ? 'dark' : 'light'
     root.style.setProperty('--zen-sidebar-width', `${state.settings.sidebarWidth}px`)
     const borderless = state.settings.borderless || state.window.fullscreen
@@ -40,7 +41,8 @@ export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): Re
     formFactor,
     state.settings.sidebarWidth,
     state.settings.borderless,
-    state.window.fullscreen
+    state.window.fullscreen,
+    state.window.material
   ])
 
   return resolved

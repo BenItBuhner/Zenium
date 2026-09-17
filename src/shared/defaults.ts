@@ -90,6 +90,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sidebarExpanded: true,
   sidebarExpandOnHover: false,
   borderless: false,
+  windowMaterial: 'none',
   compactMode: {
     enabled: false,
     hideSidebar: true,

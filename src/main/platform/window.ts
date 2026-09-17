@@ -1,7 +1,8 @@
 import { BrowserWindow, screen, shell } from 'electron'
 import { join } from 'node:path'
 import { is } from '@electron-toolkit/utils'
-import type { EventName, Events, Rect } from '../../shared/types'
+import type { EventName, Events, Rect, WindowChrome } from '../../shared/types'
+import { CAPTION_HEIGHT, type CaptionColors } from '../../shared/theme'
 import type { Browser } from '../../core/browser'
 import type { ZenWindow } from '../../core/window'
 import type {
@@ -14,8 +15,16 @@ import { windowIcon } from './appIcon'
 
 const MIN_WIDTH = 640
 const MIN_HEIGHT = 420
+/** Popups are as small as the page asked for, within reason. */
+const POPUP_MIN_WIDTH = 320
+const POPUP_MIN_HEIGHT = 200
 /** Width (px) of the edge zone that reveals the sidebar in compact mode. */
 const COMPACT_REVEAL_ZONE = 14
+/**
+ * Windows 11 draws the caption buttons itself (Window Controls Overlay), which is what gives the
+ * maximise button its Snap Layouts flyout. macOS keeps its traffic lights; Linux draws Zenium's.
+ */
+const CAPTION_OVERLAY = process.platform === 'win32'
 
 /**
  * The Electron side of one `ZenWindow`: a frameless `BrowserWindow` whose web contents render
@@ -27,10 +36,11 @@ export class ElectronWindow implements WindowHost {
   private boundsTimer: ReturnType<typeof setTimeout> | null = null
   private compactTimer: ReturnType<typeof setInterval> | null = null
   private compactLastSent: boolean | null = null
+  private captionColors: CaptionColors
 
   constructor(
     private readonly browser: Browser,
-    private readonly zen: ZenWindow,
+    readonly zen: ZenWindow,
     init: WindowCreateInit
   ) {
     let initial = init.bounds
@@ -38,17 +48,32 @@ export class ElectronWindow implements WindowHost {
       const b = (init.cascadeFrom.host as ElectronWindow).win.getNormalBounds()
       initial = { x: b.x + 28, y: b.y + 28, width: b.width, height: b.height }
     }
-    const bounds = sanitizeBounds(initial)
+    const bounds = sanitizeBounds(initial, init.chrome)
     const isMac = process.platform === 'darwin'
+    const mica = init.material === 'mica' && process.platform === 'win32'
+    this.captionColors = init.captionColors
     this.win = new BrowserWindow({
       ...bounds,
-      minWidth: MIN_WIDTH,
-      minHeight: MIN_HEIGHT,
+      minWidth: init.chrome === 'popup' ? POPUP_MIN_WIDTH : MIN_WIDTH,
+      minHeight: init.chrome === 'popup' ? POPUP_MIN_HEIGHT : MIN_HEIGHT,
       show: false,
       frame: false,
-      titleBarStyle: isMac ? 'hiddenInset' : undefined,
-      trafficLightPosition: isMac ? { x: 14, y: 14 } : undefined,
-      backgroundColor: init.backgroundColor,
+      titleBarStyle: isMac ? 'hiddenInset' : CAPTION_OVERLAY ? 'hidden' : undefined,
+      // Centred on the 38px header row (12px lights: 16 + 6 = 22 = 6 + 32 / 2).
+      trafficLightPosition: isMac ? { x: 14, y: 16 } : undefined,
+      titleBarOverlay: CAPTION_OVERLAY
+        ? {
+            color: init.captionColors.color,
+            symbolColor: init.captionColors.symbolColor,
+            height: CAPTION_HEIGHT
+          }
+        : undefined,
+      // A material window paints its web contents on a see-through background (no
+      // `transparent`, which would cost the resize border); the chrome leaves the material
+      // visible through its gradient.
+      ...(mica
+        ? { backgroundMaterial: 'mica' as const }
+        : { backgroundColor: init.backgroundColor }),
       autoHideMenuBar: true,
       title: init.title,
       // Windows and Linux take the icon per window (macOS shows the bundle's, or the Dock's).
@@ -193,6 +218,14 @@ export class ElectronWindow implements WindowHost {
     return this.alive ? this.win.getNormalBounds() : null
   }
 
+  setCaptionColors(colors: CaptionColors): void {
+    if (!CAPTION_OVERLAY || !this.alive) return
+    const current = this.captionColors
+    if (colors.color === current.color && colors.symbolColor === current.symbolColor) return
+    this.captionColors = colors
+    this.win.setTitleBarOverlay({ color: colors.color, symbolColor: colors.symbolColor })
+  }
+
   // ---------------------------------------------------------------------------
   // Bounds persistence
   // ---------------------------------------------------------------------------
@@ -275,7 +308,7 @@ export class ElectronWindowFactory implements WindowHostFactory {
   }
 }
 
-function sanitizeBounds(saved: Rect | null): Rect {
+function sanitizeBounds(saved: Rect | null, chrome: WindowChrome): Rect {
   const primary = screen.getPrimaryDisplay().workArea
   const fallback: Rect = {
     width: Math.min(1280, primary.width - 40),
@@ -286,8 +319,10 @@ function sanitizeBounds(saved: Rect | null): Rect {
       primary.y + Math.max(0, Math.round((primary.height - Math.min(820, primary.height - 40)) / 2))
   }
   if (!saved) return fallback
-  const width = Math.max(MIN_WIDTH, Math.min(saved.width, primary.width))
-  const height = Math.max(MIN_HEIGHT, Math.min(saved.height, primary.height))
+  const minWidth = chrome === 'popup' ? POPUP_MIN_WIDTH : MIN_WIDTH
+  const minHeight = chrome === 'popup' ? POPUP_MIN_HEIGHT : MIN_HEIGHT
+  const width = Math.max(minWidth, Math.min(saved.width, primary.width))
+  const height = Math.max(minHeight, Math.min(saved.height, primary.height))
   // Make sure the window is visible on some display.
   const visibleOnSomeDisplay = screen.getAllDisplays().some((d) => {
     const a = d.workArea
