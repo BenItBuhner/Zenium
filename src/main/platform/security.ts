@@ -29,6 +29,21 @@ export function permissionRequestDetails(
   return out
 }
 
+/**
+ * The site a client-certificate request is for. Despite its name in the API, Electron passes the
+ * server's `host:port` (`localhost:8443`), which `new URL` would read as a scheme; a full URL
+ * is accepted as well.
+ */
+export function hostOf(urlOrHostPort: string): string {
+  const text = urlOrHostPort.trim()
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return text
+  try {
+    return new URL(text).host || text
+  } catch {
+    return text
+  }
+}
+
 export function describeCertificate(cert: Certificate): ClientCertificateInfo {
   return {
     fingerprint: cert.fingerprint,
@@ -69,12 +84,7 @@ export function attachSecurityHandlers(browser: Browser, views: ElectronTabViewH
   app.on('select-client-certificate', (event, webContents, url, certificates, callback) => {
     event.preventDefault()
     const tabId = webContents ? (views.tabIdForWebContents(webContents) ?? null) : null
-    let host = url
-    try {
-      host = new URL(url).host
-    } catch {
-      /* keep the raw string */
-    }
+    const host = hostOf(url)
     // A null certificate continues the request without one (Chromium's
     // ContinueWithCertificate(nullptr)); the typings only spell out the "pick one" case.
     const answer = callback as (certificate: Certificate | null) => void

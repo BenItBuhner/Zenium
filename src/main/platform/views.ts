@@ -742,12 +742,15 @@ export class ElectronTabViewHost implements TabViewHost {
   constructor(private readonly sessions: SessionManager) {}
 
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView {
-    const view = new ElectronTabView(host as ElectronWindow, tab, this.sessions, events, (v) => {
-      this.byWebContentsId.delete(v.webContentsId)
-      this.tabIds.delete(v.webContentsId)
+    // The view no longer has web contents by the time `destroyed` fires: the id is kept here.
+    let id = -1
+    const view = new ElectronTabView(host as ElectronWindow, tab, this.sessions, events, () => {
+      this.byWebContentsId.delete(id)
+      this.tabIds.delete(id)
     })
-    this.byWebContentsId.set(view.webContentsId, view)
-    this.tabIds.set(view.webContentsId, tab.id)
+    id = view.webContents.id
+    this.byWebContentsId.set(id, view)
+    this.tabIds.set(id, tab.id)
     return view
   }
 
