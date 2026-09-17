@@ -75,7 +75,10 @@ async function windowsMakeDefault(): Promise<DefaultBrowserOutcome> {
   const build = Number(release().split('.')[2] ?? 0)
   const pages =
     build >= WINDOWS_11_BUILD
-      ? [`ms-settings:defaultapps?registeredAppUser=${WINDOWS_REGISTERED_APP}`, 'ms-settings:defaultapps']
+      ? [
+          `ms-settings:defaultapps?registeredAppUser=${WINDOWS_REGISTERED_APP}`,
+          'ms-settings:defaultapps'
+        ]
       : ['ms-settings:defaultapps']
   for (const page of pages) {
     try {

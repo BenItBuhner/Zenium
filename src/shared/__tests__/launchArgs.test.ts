@@ -4,7 +4,12 @@ import { launchArgToUrl, parseLaunchArgs, pathToFileUrl } from '../launchArgs'
 describe('parseLaunchArgs', () => {
   it('collects web URLs in order and ignores Chromium switches', () => {
     const launch = parseLaunchArgs(
-      ['--no-sandbox', 'https://example.org/a?b=c#d', '--original-process-start-time=1', 'http://x.test'],
+      [
+        '--no-sandbox',
+        'https://example.org/a?b=c#d',
+        '--original-process-start-time=1',
+        'http://x.test'
+      ],
       '/home/me'
     )
     expect(launch).toEqual({
@@ -77,9 +82,9 @@ describe('parseLaunchArgs', () => {
   })
 
   it('treats bare hosts as https URLs and drops words and foreign schemes', () => {
-    expect(parseLaunchArgs(['example.org', 'zen', 'mailto:a@b.c', 'about:blank'], '/').urls).toEqual([
-      'https://example.org'
-    ])
+    expect(
+      parseLaunchArgs(['example.org', 'zen', 'mailto:a@b.c', 'about:blank'], '/').urls
+    ).toEqual(['https://example.org'])
     expect(parseLaunchArgs(['zen://settings', 'javascript:alert(1)'], '/').urls).toEqual([])
   })
 
