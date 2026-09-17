@@ -25,10 +25,19 @@ import java.io.File
 import kotlin.math.max
 
 /**
- * Temporary driver for the `android-services-hardening-demo` workflow: records the pop-up blocker,
- * the external-app prompt (tel: and an intent:// with a fallback) and the HTTP sign-in dialog
- * against the demo server the runner hosts (10.0.2.2:8787). Only asserts that it could run through
- * the sequence; the recording and the screenshots show what the chrome did.
+ * Records the pop-up blocker, the external-app prompt (tel: and an intent:// with a fallback) and
+ * the HTTP sign-in dialog on an emulator, for a caller of the reusable `android-emulator-demo`
+ * workflow. Only asserts that it could run through the sequence; the recording and the
+ * screenshots show what the chrome did.
+ *
+ * The caller hosts a plain HTTP server on the runner (the emulator reaches it as 10.0.2.2:8787)
+ * with three pages: `/popups` opens a window by itself 1.5 s after loading (reporting "The
+ * automatic pop-up was blocked." or "The pop-up opened by itself.") and has a button "Open a
+ * pop-up (with a tap)"; `/apps` navigates to a `tel:` URL by itself after 1.5 s and links to
+ * "Call +1 555 0100" (`tel:`) and "Scan a barcode (intent:// with a fallback)", an `intent://` for
+ * an app that is not installed whose `browser_fallback_url` is a page on the same server headed
+ * "No app took the intent"; `/protected` answers 401 with a Basic challenge unless signed in as
+ * zenium / secret, then shows "Signed in as zenium".
  *
  * Handshake with the workflow (files under the app's `files/services-hardening-demo/`), as in
  * GestureDemo: `record` once the warm-up is done, wait for `recording`, `done` at the end.
