@@ -619,7 +619,10 @@ function ItemRow({
         >
           <GripVertical className="h-5 w-5" strokeWidth={1.75} />
         </span>
-      ) : null}
+      ) : (
+        // Keeps the glyphs of both lists in one column; a hold still picks the row up.
+        <span className="h-8 w-8 shrink-0" />
+      )}
       <span className="flex h-8 w-8 shrink-0 items-center justify-center">{item.glyph(ctx)}</span>
       <span className="min-w-0 flex-1 truncate">{item.label}</span>
       {control}
