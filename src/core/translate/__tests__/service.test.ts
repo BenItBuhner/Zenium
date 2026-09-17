@@ -348,6 +348,13 @@ describe('TranslateService', () => {
     const translated = transport.posted.filter((m) => m.op === 'translate')
     expect(translated[0]).toMatchObject({ html: true })
     expect(h.service.uiState().installed.map((m) => `${m.from}-${m.to}`)).toEqual(['es-en'])
+    const models = h.service.modelInfo()
+    expect(models.length).toBeGreaterThan(20)
+    expect(models.filter((m) => m.installed).map((m) => `${m.from}-${m.to}`)).toEqual(['es-en'])
+    expect(models.find((m) => m.from === 'en' && m.to === 'es')).toMatchObject({
+      installed: false,
+      bytes: expect.any(Number)
+    })
 
     h.service.revert(TAB)
     expect(state(h)).toMatchObject({ status: 'offered', progress: null, error: null })
