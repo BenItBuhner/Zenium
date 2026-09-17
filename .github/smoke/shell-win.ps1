@@ -81,6 +81,8 @@ function Get-RegValue([string]$key, [string]$name) {
 }
 
 function List-JumpLists([string]$recent) {
+  # Empty when the shell cannot resolve the Recent folder (USERPROFILE pointing at a bare directory).
+  if (-not $recent) { return @() }
   $dir = Join-Path $recent 'CustomDestinations'
   if (-not (Test-Path $dir)) { return @() }
   return @(Get-ChildItem -Path $dir -Filter '*.customDestinations-ms' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })

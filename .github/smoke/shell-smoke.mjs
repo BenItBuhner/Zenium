@@ -610,22 +610,22 @@ function overlayMatchesChrome(flip) {
 }
 
 // Windows writes a taskbar jump list to Recent\CustomDestinations\<hash>.customDestinations-ms,
-// where <hash> is the CRC-64 (ECMA polynomial, MSB first, all-ones start) of the UTF-16LE
-// upper-cased AppUserModelID.
+// where <hash> is a reflected (LSB-first) CRC-64 with 0x92C64265D32139A4 as the reflected
+// polynomial, all-ones start, no final xor, over the UTF-16LE upper-cased AppUserModelID.
+// Checked against Microsoft.Windows.Explorer -> f01b4d95cf55d32a and two files this smoke's
+// probe wrote on the runner.
 function appIdHash(aumid) {
   const POLY = 0x92c64265d32139a4n
   const MASK = 0xffffffffffffffffn
   const table = []
   for (let i = 0; i < 256; i++) {
-    let crc = BigInt(i) << 56n
-    for (let k = 0; k < 8; k++) {
-      crc = crc & (1n << 63n) ? ((crc << 1n) ^ POLY) & MASK : (crc << 1n) & MASK
-    }
+    let crc = BigInt(i)
+    for (let k = 0; k < 8; k++) crc = crc & 1n ? (crc >> 1n) ^ POLY : crc >> 1n
     table.push(crc)
   }
   let crc = MASK
   for (const b of Buffer.from(aumid.toUpperCase(), 'utf16le')) {
-    crc = (table[Number(((crc >> 56n) ^ BigInt(b)) & 0xffn)] ^ ((crc << 8n) & MASK)) & MASK
+    crc = table[Number((crc ^ BigInt(b)) & 0xffn)] ^ (crc >> 8n)
   }
   return crc.toString(16).padStart(16, '0')
 }
@@ -651,7 +651,8 @@ function listJumpLists(dirs) {
 }
 
 const JUMP_PROBE_ID = 'Zenium.ShellSmoke.Probe'
-const RECENT_ITEMS_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced'
+const EXPLORER_ADVANCED_KEY =
+  'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced'
 const recentItems = { changed: false, original: null }
 
 function jumpListProbe(env) {
@@ -665,7 +666,7 @@ function jumpListProbe(env) {
 function setRecentItemsTracking(on) {
   return sh('reg', [
     'add',
-    RECENT_ITEMS_KEY,
+    EXPLORER_ADVANCED_KEY,
     '/v',
     'Start_TrackDocs',
     '/t',
@@ -737,6 +738,56 @@ function jumpListPreflight() {
 function restoreRecentItemsTracking() {
   if (!IS_WIN || !recentItems.changed) return
   setRecentItemsTracking(recentItems.original === 1)
+}
+
+// Windows 11 shows the Snap Layouts flyout over a hovered Maximize button only when the
+// Multitasking setting "Show snap layouts when I hover over a window's maximize button" is on;
+// Windows Server ships it off. Switched on for the hover screenshot (evidence, not a check).
+const snapFlyout = { changed: false, original: null }
+
+function readRegDword(key, name) {
+  const r = sh('reg', ['query', key, '/v', name])
+  const m = r.stdout.match(/REG_DWORD\s+0x([0-9a-f]+)/i)
+  return m ? parseInt(m[1], 16) : null
+}
+
+function enableSnapFlyout() {
+  if (!IS_WIN) return
+  const original = readRegDword(EXPLORER_ADVANCED_KEY, 'EnableSnapAssistFlyout')
+  result.snapFlyout = { original }
+  if (original === 1) return
+  snapFlyout.changed = true
+  snapFlyout.original = original
+  result.snapFlyout.set = sh('reg', [
+    'add',
+    EXPLORER_ADVANCED_KEY,
+    '/v',
+    'EnableSnapAssistFlyout',
+    '/t',
+    'REG_DWORD',
+    '/d',
+    '1',
+    '/f'
+  ]).status
+}
+
+function restoreSnapFlyout() {
+  if (!IS_WIN || !snapFlyout.changed) return
+  if (snapFlyout.original === null) {
+    sh('reg', ['delete', EXPLORER_ADVANCED_KEY, '/v', 'EnableSnapAssistFlyout', '/f'])
+  } else {
+    sh('reg', [
+      'add',
+      EXPLORER_ADVANCED_KEY,
+      '/v',
+      'EnableSnapAssistFlyout',
+      '/t',
+      'REG_DWORD',
+      '/d',
+      String(snapFlyout.original),
+      '/f'
+    ])
+  }
 }
 
 function setOsDark(on) {
@@ -955,7 +1006,10 @@ async function sessionMain() {
       const taskbar = taskbarButtons()
       result.sessions.main.taskbar = taskbar
       const zeniumButtons = taskbar.buttons.filter((b) => /zenium/i.test(String(b.name)))
-      const taskbarAumids = zeniumButtons.map((b) => String(b.automationId))
+      // The Windows 11 taskbar exposes a button's AppUserModelID as "Appid: <id>".
+      const taskbarAumids = zeniumButtons.map((b) =>
+        String(b.automationId).replace(/^Appid:\s*/i, '')
+      )
       const detail = {
         expectedFile: expected,
         foundInBeforeRecall: found.map(([d]) => d),
@@ -1376,6 +1430,11 @@ async function main() {
     } catch (e) {
       result.jumpListPreflight = { error: String(e && e.stack ? e.stack : e) }
     }
+    try {
+      enableSnapFlyout()
+    } catch (e) {
+      result.snapFlyout = { error: String(e && e.message ? e.message : e) }
+    }
   }
   for (const [name, fn] of steps) {
     try {
@@ -1386,6 +1445,7 @@ async function main() {
     }
   }
   restoreRecentItemsTracking()
+  restoreSnapFlyout()
   result.finishedAt = new Date().toISOString()
   const failed = Object.entries(result.checks).filter(([, v]) => !v.ok)
   result.failed = failed.map(([k]) => k)
