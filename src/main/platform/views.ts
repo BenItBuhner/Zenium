@@ -65,6 +65,10 @@ export class ElectronTabView implements TabView {
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
+        // Preloads reach sub-frames too: the extension API layer's preload installs `chrome.*`
+        // in extension iframes (content-script UIs, extension pages embedding their own
+        // frames); `page.ts` keeps to the top document.
+        nodeIntegrationInSubFrames: true,
         webSecurity: true,
         allowRunningInsecureContent: false,
         spellcheck: true,

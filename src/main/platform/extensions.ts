@@ -977,7 +977,9 @@ export class ExtensionService implements ExtensionHost {
         session: ses,
         sandbox: true,
         contextIsolation: true,
-        nodeIntegration: false
+        nodeIntegration: false,
+        // The API layer's preload must reach iframes the popup embeds.
+        nodeIntegrationInSubFrames: true
       }
     })
     view.setBackgroundColor('#00000000')

@@ -103,6 +103,18 @@ export function extensionIdFromUrl(url: string): string | null {
   return match ? match[1] : null
 }
 
+/**
+ * The extension a frame belongs to. Sub-frames an extension page creates as `about:blank` or
+ * `srcdoc` have no extension URL of their own but inherit the origin, and Chrome gives them the
+ * API too; the origin settles those.
+ */
+export function extensionIdOfFrame(frame: WebFrameMain): string | null {
+  const fromUrl = extensionIdFromUrl(frame.url)
+  if (fromUrl) return fromUrl
+  const match = /^chrome-extension:\/\/([a-p]{32})$/.exec(frame.origin)
+  return match ? match[1] : null
+}
+
 export function isInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value)
 }

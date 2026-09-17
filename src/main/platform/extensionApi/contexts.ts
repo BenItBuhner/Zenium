@@ -222,7 +222,9 @@ export class ContextRegistry {
   private stale(context: FrameContext): boolean {
     if (context.frame.isDestroyed() || context.webContents.isDestroyed()) return true
     const url = context.frame.url
-    return url !== '' && !url.startsWith(`chrome-extension://${context.extensionId}/`)
+    if (url === '' || url.startsWith(`chrome-extension://${context.extensionId}/`)) return false
+    // `about:blank` / `srcdoc` sub-frames carry the extension's origin without its URL.
+    return context.frame.origin !== `chrome-extension://${context.extensionId}`
   }
 
   workerFor(worker: ServiceWorkerMain, session: Session): WorkerContext | undefined {

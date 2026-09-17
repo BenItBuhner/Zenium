@@ -74,6 +74,17 @@ function contextUrl(): string {
   }
 }
 
-if (contextUrl().startsWith('chrome-extension://')) {
+/**
+ * Extension documents and workers, including the sub-frames an extension page or a content
+ * script embeds (`chrome-extension://` iframes in web pages, `about:blank` children that inherit
+ * the extension's origin). Reached in every frame because the hosting views enable
+ * `nodeIntegrationInSubFrames`.
+ */
+function isExtensionContext(): boolean {
+  if (contextUrl().startsWith('chrome-extension://')) return true
+  return typeof origin === 'string' && /^chrome-extension:\/\/[a-p]{32}$/.test(origin)
+}
+
+if (isExtensionContext()) {
   install(process.type === 'service-worker' ? 'worker' : 'frame')
 }

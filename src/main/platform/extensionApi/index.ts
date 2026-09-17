@@ -46,6 +46,7 @@ import { TabsApi } from './tabs'
 import {
   ApiError,
   extensionIdFromUrl,
+  extensionIdOfFrame,
   extensionUrl,
   isRecord,
   type ApiContext,
@@ -304,8 +305,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   /** Who is calling, verified from the frame URL / worker scope; never from the payload. */
   private contextFor(sender: Sender | null): ApiContext {
     if (!sender) throw new ApiError('Unauthorised')
-    const origin = sender.kind === 'frame' ? sender.frame.url : sender.worker.scope
-    const extensionId = extensionIdFromUrl(origin)
+    const extensionId =
+      sender.kind === 'frame'
+        ? extensionIdOfFrame(sender.frame)
+        : extensionIdFromUrl(sender.worker.scope)
     const extension = extensionId ? this.extensions.get(extensionId) : undefined
     if (!extensionId || !extension) throw new ApiError('Unauthorised')
     const session = sender.kind === 'frame' ? sender.webContents.session : sender.session
