@@ -521,13 +521,13 @@ function overlayProbe(page) {
         const el = document.elementFromPoint(x, y)
         // app-region is not inherited: the nearest ancestor that sets it decides whether the
         // spot drags the window (Chromium builds the drag region from those boxes).
-        let region = null
+        let appRegion = null
         for (let node = el; node && node !== document.documentElement; node = node.parentElement) {
           const style = getComputedStyle(node)
           const v =
             style.getPropertyValue('app-region') || style.getPropertyValue('-webkit-app-region')
           if (v && v !== 'none' && v !== 'auto') {
-            region = v
+            appRegion = v
             break
           }
         }
@@ -536,7 +536,7 @@ function overlayProbe(page) {
           y: Math.round(y),
           tag: el ? el.tagName.toLowerCase() : null,
           classes: el ? String(el.className).slice(0, 80) : null,
-          appRegion: region,
+          appRegion,
           interactive: el
             ? el.closest('button, input, a, select, textarea, [role="button"]') !== null
             : false
