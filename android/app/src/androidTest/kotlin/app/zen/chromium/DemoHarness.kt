@@ -100,7 +100,7 @@ abstract class DemoHarness(
         activity = instrumentation.startActivitySync(intent)
         // The chrome is a WebView booting the browser core: wait for the address pill to show up.
         val deadline = SystemClock.uptimeMillis() + 30_000
-        while (findByLabel(PILL_LABEL) == null && SystemClock.uptimeMillis() < deadline) {
+        while (findByLabelPrefix(PILL_LABEL) == null && SystemClock.uptimeMillis() < deadline) {
             SystemClock.sleep(500)
         }
         SystemClock.sleep(4_000)
@@ -122,7 +122,7 @@ abstract class DemoHarness(
         val insets = windowInsets()
         width = insets.windowWidth
         height = insets.windowHeight
-        val found = findByLabel(PILL_LABEL)?.takeIf { it.top > height * 0.6 && it.width() > 100 * density }
+        val found = findByLabelPrefix(PILL_LABEL)?.takeIf { it.top > height * 0.6 && it.width() > 100 * density }
         pill = found ?: computedPill(insets.bottom)
         pillY = pill.exactCenterY()
         pillCenterX = pill.exactCenterX()
@@ -231,9 +231,17 @@ abstract class DemoHarness(
 
     /** Breadth-first search of the active window for a node labelled `label` (aria-label or text). */
     protected fun findByLabel(label: String): Rect? =
-        findNode(label)?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+        findNode { it == label }?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
 
-    private fun findNode(label: String): AccessibilityNodeInfo? {
+    /** Like [findByLabel] for labels that carry a changing suffix (`Address, example.com`). */
+    protected fun findByLabelPrefix(prefix: String): Rect? =
+        findNode { it == prefix || it.startsWith("$prefix,") }?.let { node ->
+            Rect().also { node.getBoundsInScreen(it) }
+        }
+
+    private fun findNode(label: String): AccessibilityNodeInfo? = findNode { it == label }
+
+    private fun findNode(matches: (String) -> Boolean): AccessibilityNodeInfo? {
         val root = ui.rootInActiveWindow ?: return null
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)
@@ -241,7 +249,9 @@ abstract class DemoHarness(
         while (queue.isNotEmpty() && visited < 6_000) {
             val node = queue.removeFirst()
             visited++
-            if (node.contentDescription?.toString() == label || node.text?.toString() == label) return node
+            val description = node.contentDescription?.toString()
+            val text = node.text?.toString()
+            if ((description != null && matches(description)) || (text != null && matches(text))) return node
             for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
         }
         return null
@@ -346,6 +356,7 @@ abstract class DemoHarness(
     }
 
     companion object {
+        /** The pill's label carries the address after a comma (`Address, example.com`). */
         const val PILL_LABEL = "Address"
         private const val STEP_MS = 8L
         /** Past the 8 CSS px slop at any plausible density, hardly visible on the track. */

@@ -1,14 +1,28 @@
 name: Android overview demo
 
 # Records the phone chrome's tab overview on a hardware-accelerated Android emulator and uploads
-# the video and screenshots: the page morphing into its card at a slow drag, the Spaces drawer,
-# tab groups made by holding and by dropping a card on another, collapsing, moving a tab between
-# groups, and the group ribbon on the pill's swipe track. Dispatch-only, like the gesture demo:
-# it takes about ten minutes and says nothing about a change being correct. Same caveats as the
-# gesture demo about frame rate and the software GPU (springs advance at most 64 ms per frame,
-# so at a handful of frames per second they run slower than on a phone).
+# the video and screenshots. Two sequences (the `demo` input): `overview` – the page morphing
+# into its card at a slow drag, the Spaces drawer, tab groups made by holding and by dropping a
+# card on another, collapsing, moving a tab between groups, and the group ribbon on the pill's
+# swipe track; `first-tap` – the overview opened by the tabs button and by the pill swipe, with a
+# card tapped a fixed time after each open, to show that the first tap picks it. Dispatch-only,
+# like the gesture demo: it takes about ten minutes and says nothing about a change being correct.
+# Same caveats as the gesture demo about frame rate and the software GPU (springs advance at most
+# 64 ms per frame, so at a handful of frames per second they run slower than on a phone).
 on:
   workflow_dispatch:
+    inputs:
+      demo:
+        description: Sequence to record
+        type: choice
+        default: overview
+        options:
+          - overview
+          - first-tap
+  # TEMPORARY (removed before the PR is marked ready): the branch's author cannot dispatch
+  # workflows, so the first-tap recording runs on push.
+  push:
+    branches: [cursor/overview-first-tap-f378]
 
 permissions:
   contents: read
@@ -19,6 +33,8 @@ concurrency:
 
 env:
   NODE_VERSION: 22
+  # The push trigger has no inputs: it records the first-tap sequence.
+  DEMO: ${{ inputs.demo || 'first-tap' }}
 
 jobs:
   record:
@@ -55,13 +71,13 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
           ls -la /dev/kvm
-      - name: Record the overview and its groups
+      - name: Record the sequence
         uses: reactivecircus/android-emulator-runner@v2
         env:
-          DEMO_CLASS: app.zen.chromium.OverviewDemo
-          DEMO_DIR: overview-demo
+          DEMO_CLASS: ${{ env.DEMO == 'first-tap' && 'app.zen.chromium.FirstTapDemo' || 'app.zen.chromium.OverviewDemo' }}
+          DEMO_DIR: ${{ env.DEMO == 'first-tap' && 'firsttap-demo' || 'overview-demo' }}
           DEMO_OUT: artifacts/android-overview-demo
-          DEMO_VIDEO: overview-groups-demo.mp4
+          DEMO_VIDEO: ${{ env.DEMO == 'first-tap' && 'overview-firsttap-fix.mp4' || 'overview-groups-demo.mp4' }}
         with:
           api-level: 34
           target: google_apis
