@@ -203,6 +203,15 @@ class SiteInfoDemo {
         }
     }
 
+    private fun tapLabel(f: Finger, label: String): Boolean {
+        val target = findByLabel(label) ?: run {
+            Log.w(TAG, "no node labelled '$label'")
+            return false
+        }
+        f.tap(target.exactCenterX(), target.exactCenterY())
+        return true
+    }
+
     /** The open sheet is the dialog labelled like the icon; the grip is its top edge. */
     private fun sheetBounds(): Rect? =
         findAllByLabel(SITE_ICON_LABEL).filter { it.width() > width * 0.8 }.maxByOrNull { it.height() }

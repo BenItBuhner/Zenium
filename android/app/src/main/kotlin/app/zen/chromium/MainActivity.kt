@@ -18,6 +18,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
+import app.zen.chromium.ext.ExtensionStore
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -66,6 +67,13 @@ class MainActivity : BrowserActivity() {
             files.put(json("name" to displayNameOf(uri), "text" to text))
         }
         callback(files)
+    }
+
+    private var packageCallback: ((Uri?) -> Unit)? = null
+    private val packagePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val callback = packageCallback ?: return@registerForActivityResult
+        packageCallback = null
+        callback(uri)
     }
 
     private var defaultBrowserCallback: ((Any?) -> Unit)? = null
@@ -152,6 +160,13 @@ class MainActivity : BrowserActivity() {
 
     private fun handleIntent(intent: Intent?) {
         intent ?: return
+        when (intent.action) {
+            // A .crx or .zip opened with or shared to Zenium installs as an extension.
+            Intent.ACTION_VIEW, Intent.ACTION_SEND -> if (host.extStore.sideload(intent)) {
+                intent.action = null
+                return
+            }
+        }
         when (intent.action) {
             Intent.ACTION_VIEW -> when {
                 // Another app's CustomTabsIntent aimed at this activity directly (links normally
@@ -281,6 +296,18 @@ class MainActivity : BrowserActivity() {
             saveTextCallback = null
             saveTextContent = ""
             callback(false)
+        }
+    }
+
+    /** Let the user pick a `.crx` or `.zip` to install as an extension; answers with the document, or null. */
+    fun pickExtensionPackage(callback: (Uri?) -> Unit) {
+        packageCallback?.invoke(null)
+        packageCallback = callback
+        try {
+            packagePicker.launch(ExtensionStore.PICKER_MIME_TYPES)
+        } catch (e: Exception) {
+            packageCallback = null
+            callback(null)
         }
     }
 
