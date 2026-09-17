@@ -172,6 +172,17 @@ export class Browser {
     )
     this.state.liveWindows = () => this.allWindows()
     this.state.load()
+    if (platform.theme) {
+      const theme = platform.theme
+      theme.setSource(this.state.settings.colorScheme)
+      this.state.systemDark = theme.systemDark()
+      theme.onChanged(() => {
+        const dark = theme.systemDark()
+        if (dark === this.state.systemDark) return
+        this.state.systemDark = dark
+        this.state.commitVolatile()
+      })
+    }
     this.history = new HistoryService(platform.io)
     this.bookmarks = new BookmarkService(this.state)
     this.downloads = new DownloadService(
@@ -328,7 +339,7 @@ export class Browser {
       cascadeFrom: from
     })
     this.windows.set(id, win)
-    const theme = resolveTheme(win.activeSpace().theme, this.state.settings.colorScheme === 'dark')
+    const theme = resolveTheme(win.activeSpace().theme, this.darkScheme())
     win.host = this.platform.windows.create(win, {
       bounds: win.initialBounds,
       maximized: win.initialMaximized,
@@ -345,6 +356,13 @@ export class Browser {
     }
     this.state.commit()
     return win
+  }
+
+  /** Whether the chrome renders dark: the Appearance setting, or the OS scheme when it follows it. */
+  darkScheme(): boolean {
+    const scheme = this.state.settings.colorScheme
+    if (scheme === 'system') return this.state.systemDark ?? false
+    return scheme === 'dark'
   }
 
   /** The chrome of `win` finished loading for the first time. */
@@ -1677,6 +1695,7 @@ export class Browser {
         if (state.searchEngines.some((e) => e.id === searchEngineId))
           state.settings.searchEngineId = searchEngineId
         state.settings.colorScheme = colorScheme
+        this.platform.theme?.setSource(colorScheme)
         state.settings.onboardingDone = true
         for (const url of essentials) {
           const known = ONBOARDING_ESSENTIALS.find((e) => e.url === url)
@@ -1711,6 +1730,7 @@ export class Browser {
       trigger: s.glanceTrigger,
       thirdParty: s.thirdPartyOnPinned,
       appIcon: s.appIcon,
+      colorScheme: s.colorScheme,
       windowSync: s.windowSync,
       resources: JSON.stringify(s.resources),
       unload: `${s.unloadEnabled}:${s.unloadTimeoutMinutes}:${s.unloadExcludedDomains.join(',')}`,
@@ -1774,6 +1794,7 @@ export class Browser {
     ) {
       this.tabs.broadcastPageFlags()
     }
+    if (before.colorScheme !== s.colorScheme) this.platform.theme?.setSource(s.colorScheme)
     if (before.windowSync !== s.windowSync) {
       // Leaving "pinned only" shares every tab again; entering it keeps existing tabs shared.
       if (s.windowSync !== 'pinned')

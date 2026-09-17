@@ -1,4 +1,4 @@
-import { app, clipboard, dialog, ipcMain, net, shell, type Session } from 'electron'
+import { app, clipboard, dialog, ipcMain, nativeTheme, net, shell, type Session } from 'electron'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
@@ -14,7 +14,8 @@ import type {
   PickedTextFile,
   Platform,
   PlatformInfo,
-  ShellHost
+  ShellHost,
+  ThemeHost
 } from '../../core/platform'
 import type { ZenWindow } from '../../core/window'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
@@ -91,6 +92,7 @@ export class ElectronPlatform implements Platform {
   readonly shell: ShellHost
   readonly net: NetHost
   readonly app: AppHost
+  readonly theme: ThemeHost
   readonly siteData: ElectronSiteData
   readonly passwords: PasswordsHost
   readonly blocking: ElectronBundledLists
@@ -224,6 +226,13 @@ export class ElectronPlatform implements Platform {
         ),
       isDefaultBrowser: async () => null,
       requestDefaultBrowser: async () => null
+    }
+    this.theme = {
+      systemDark: () => nativeTheme.shouldUseDarkColors,
+      onChanged: (listener) => void nativeTheme.on('updated', listener),
+      setSource: (scheme) => {
+        nativeTheme.themeSource = scheme
+      }
     }
   }
 
