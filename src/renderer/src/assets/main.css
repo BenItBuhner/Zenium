@@ -1530,6 +1530,10 @@
   .zen-bm-menu-row:focus-visible {
     background: var(--zen-element-bg-hover);
   }
+  /* Bar panels: the active row follows the pointer, so hover by itself draws nothing. */
+  [data-bar-panel] .zen-bm-menu-row:hover:not([data-active='true']):not([data-target='true']) {
+    background: transparent;
+  }
   .zen-bm-menu-row:disabled {
     opacity: 0.4;
   }

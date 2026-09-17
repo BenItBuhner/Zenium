@@ -285,30 +285,38 @@ export function BarMenu({
         }}
       >
         {list.length === 0 && <div className="zen-bm-menu-row opacity-40">Empty</div>}
-        {list.map((node, i) => (
-          <button
-            key={node.id}
-            type="button"
-            role="menuitem"
-            tabIndex={-1}
-            data-bar-drop={live ? `row:${node.id}` : undefined}
-            data-active={live && i === active}
-            data-target={dropTarget?.kind === 'folder' && dropTarget.folderId === node.id}
-            data-lifted={node.id === liftedId}
-            className="zen-bm-menu-row"
-            title={node.url ?? undefined}
-            onPointerMove={() => live && active !== i && setActive(() => i)}
-            onClick={(e) => activate(node, e.ctrlKey || e.metaKey)}
-            onAuxClick={(e) => {
-              if (e.button === 1 && node.type === 'url') open(node, true)
-            }}
-            onContextMenu={(e) => contextMenu(e, node)}
-          >
-            <BookmarkIcon node={node} className="h-4 w-4 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">{nodeLabel(node)}</span>
-            {node.type === 'folder' && <ChevronRight className="h-4 w-4 shrink-0 opacity-60" />}
-          </button>
-        ))}
+        {list.map((node, i) => {
+          // One highlight, native-menu style: the active row follows the pointer (also when a
+          // level slides in under a resting pointer), and the keyboard moves it from there.
+          const follow = (): void => {
+            if (live && active !== i) setActive(() => i)
+          }
+          return (
+            <button
+              key={node.id}
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              data-bar-drop={live ? `row:${node.id}` : undefined}
+              data-active={live && i === active}
+              data-target={dropTarget?.kind === 'folder' && dropTarget.folderId === node.id}
+              data-lifted={node.id === liftedId}
+              className="zen-bm-menu-row"
+              title={node.url ?? undefined}
+              onPointerEnter={follow}
+              onPointerMove={follow}
+              onClick={(e) => activate(node, e.ctrlKey || e.metaKey)}
+              onAuxClick={(e) => {
+                if (e.button === 1 && node.type === 'url') open(node, true)
+              }}
+              onContextMenu={(e) => contextMenu(e, node)}
+            >
+              <BookmarkIcon node={node} className="h-4 w-4 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">{nodeLabel(node)}</span>
+              {node.type === 'folder' && <ChevronRight className="h-4 w-4 shrink-0 opacity-60" />}
+            </button>
+          )
+        })}
         {live && dropTarget?.kind === 'row' && dropTarget.parentId === folderId && (
           <RowInsertLine target={dropTarget} />
         )}
