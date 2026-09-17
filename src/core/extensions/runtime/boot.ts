@@ -72,7 +72,45 @@ export interface ContentBootConfig {
   world: UnitWorld
   /** `user` units: `userScripts.configureWorld({ messaging })`, off by default like Chrome. */
   userScriptMessaging?: boolean
+  /**
+   * A late boot: the host evaluates the bootstrap in the main world of a document that predates
+   * the extension's world (or on a WebView without worlds) so that `scripting.executeScript` /
+   * `insertCSS` have a scope to run in. No groups, `with` isolation, reduced isolation.
+   */
+  late?: boolean
   extension: ExtensionBoot
+}
+
+/** One content-script group's run, as the debug bootstrap records it (`__zenExtStats`). */
+export interface BootGroupStat {
+  ext: string
+  group: number
+  runAt: RunAt
+  /** ms since the bootstrap started when the group ran. */
+  at: number
+  /** ms the group's own code took. */
+  ms: number
+  /** `document.readyState` and the number of nodes under `<html>` when the group ran. */
+  readyState: string
+  nodes: number
+  error: string | null
+}
+
+/** What a debug bootstrap exposes per world as `__zenExtStats` (the doc-start budget). */
+export interface BootStats {
+  frame: string
+  world: UnitWorld | 'page'
+  isolation: IsolationMode
+  /** ms after the navigation started when the bootstrap began running. */
+  startedAt: number
+  /** ms spent matching declarations against the frame. */
+  matchMs: number
+  /** ms the bootstrap itself took (transport, matching, scheduling; not the scripts). */
+  bootMs: number
+  applied: number
+  groups: BootGroupStat[]
+  /** The Trusted Types shield of an isolated world: policy created, sinks patched. */
+  trustedTypes: { policy: boolean; patched: number } | null
 }
 
 export type PageContext = 'background' | 'popup' | 'options' | 'offscreen' | 'page'
