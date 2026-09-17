@@ -267,8 +267,12 @@ the keystore given by the environment or by Gradle properties (for example in
 | `ZEN_ANDROID_KEY_ALIAS`         | `zen.android.keyAlias`         |                                  |
 | `ZEN_ANDROID_KEY_PASSWORD`      | `zen.android.keyPassword`      |                                  |
 
-Without a keystore the release APK is signed with the debug key: it installs, but it cannot
-upgrade an installation signed with another key in place.
+Without a keystore the release APK (like every debug build) is signed with the committed CI debug
+key `android/ci-debug.keystore` (alias and password `zenium-ci-debug`). It is a debug key that
+anyone can sign with, but it is the same key everywhere, so debug-keyed builds – CI artifacts,
+local builds, GitHub releases made without the keystore secrets – upgrade each other in place,
+including through the in-app updater. Moving to the project release key later means one final
+uninstall for those installs.
 
 Developing the mobile chrome without a device:
 
@@ -369,7 +373,7 @@ are built unsigned and the release notes tell users how to open them:
 | `MAC_CERTIFICATE_P12_BASE64`, `MAC_CERTIFICATE_PASSWORD`                                            | Sign the macOS app with a Developer ID Application certificate (`base64 -w0 certificate.p12`)                                              |
 | `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`                                          | Notarize the signed macOS app                                                                                                              |
 | `WINDOWS_CERTIFICATE_P12_BASE64`, `WINDOWS_CERTIFICATE_PASSWORD`                                    | Authenticode-sign the Windows installers                                                                                                   |
-| `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | Sign the APK with a release keystore (`base64 -w0 release.keystore`); until then it is signed with a debug key and cannot upgrade in place |
+| `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | Sign the APK with a release keystore (`base64 -w0 release.keystore`); until then it is signed with the committed CI debug key (`android/ci-debug.keystore`), which upgrades other CI-debug-keyed builds in place but is not a release key |
 
 ## Notes
 

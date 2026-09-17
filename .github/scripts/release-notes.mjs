@@ -296,6 +296,8 @@ const windowsSigned = ['windows-x64', 'windows-arm64'].every((key) => meta[key]?
 const macSigned = meta.macos?.signed === true
 const macNotarized = meta.macos?.notarized === true
 const androidReleaseKey = meta.android?.signing === 'release'
+/** The committed CI debug key: not a release key, but the same signer in every build. */
+const androidCiDebugKey = meta.android?.signing === 'ci-debug'
 
 const appImageX64 =
   rows.find((row) => row.key === 'linux-appimage-x64')?.file ??
@@ -367,7 +369,9 @@ const installing = [
   'Download the APK on the device and open it; allow installs from your browser when Android asks. Requires Android 8.0 or newer; containers need a WebView from Chrome 111 or newer.',
   androidReleaseKey
     ? 'The APK is signed with the project release key, so it upgrades earlier releases in place.'
-    : '**This APK is signed with a temporary CI key.** It installs fine, but Android will refuse to upgrade an installation from another release over it (and vice versa): uninstall the previous version first. Once the maintainers configure a release keystore, upgrades become seamless.',
+    : androidCiDebugKey
+      ? "The APK is signed with the repository's CI debug key (`android/ci-debug.keystore`, the same key for every release built without the project keystore), so it upgrades other CI-debug-keyed builds in place, including through the in-app updater. Android treats it like any debug-signed app. Installs from before this key (v0.2.0 and earlier) must be uninstalled once; switching to the project release key later will need one more uninstall."
+      : '**This APK is signed with a temporary CI key.** It installs fine, but Android will refuse to upgrade an installation from another release over it (and vice versa): uninstall the previous version first. Once the maintainers configure a release keystore, upgrades become seamless.',
   '',
   '</details>'
 ].filter((line) => line !== null)
@@ -392,7 +396,9 @@ const updating = [
     : '- **macOS**: this build is not signed by Apple, so macOS cannot swap it in place; Zen downloads the disk image, verifies it and opens it for you to drag over the old app.',
   androidReleaseKey
     ? '- **Android** downloads the APK, verifies it and hands it to the package installer.'
-    : '- **Android**: the APK is signed with a temporary CI key, so it cannot replace an earlier install in place; Zen tells you to uninstall first.',
+    : androidCiDebugKey
+      ? '- **Android** downloads the APK, verifies it and hands it to the package installer; it upgrades any build signed with the CI debug key in place (older installs: uninstall once).'
+      : '- **Android**: the APK is signed with a temporary CI key, so it cannot replace an earlier install in place; Zen tells you to uninstall first.',
   manifestSigned
     ? null
     : '- The manifest is not signed yet (no `UPDATE_MANIFEST_SIGNING_KEY` configured); the app relies on HTTPS and the per-file SHA-256.',
