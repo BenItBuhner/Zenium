@@ -9,12 +9,16 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * The first tap on a freshly opened tab overview. Opens the overview – by the tabs button and by
- * the pill swipe – and taps a card a fixed time after the open began, with OS-level touch input
- * (UiAutomation injects real `MotionEvent`s through the same `InputManager` path `adb shell
- * input tap` uses, so the WebView sees a finger: gesture recognition, hover emulation and all).
- * Each trial reports whether that first tap picked the card (the overview closed) and, if not,
- * whether a second tap did. The recording shows the same.
+ * The first tap on the tab overview, with OS-level touch input (UiAutomation injects real
+ * `MotionEvent`s through the same `InputManager` path `adb shell input tap` uses, so the WebView
+ * sees a finger: gesture recognition, fling handling, hover emulation and all).
+ *
+ * A phone opens the overview in a frame; on the emulator's software GPU it takes over a second to
+ * appear, by which time its spring has settled – so besides the literal sequences (open, tap the
+ * moment the grid shows) the trials recreate the two states a phone puts a quick tap into while
+ * the grid is already on screen: the overview still settling (a pull towards closed, let go with
+ * the finger stopped, springs back open) and the ~300 ms after a fast pill release (a flick up on
+ * the pill, then a tap). Every first tap must pick the card; the run fails otherwise.
  *
  * Driven by the `android-overview-demo` workflow's `first-tap` sequence. See [DemoHarness].
  */
@@ -25,12 +29,14 @@ class FirstTapDemo : DemoHarness("firsttap-demo-state.json", "firsttap", "firstt
     private lateinit var tabsButton: Rect
     private lateinit var cardA: Rect
     private lateinit var cardB: Rect
-    /** Which of the two first-row cards is the active tab (its card is the one the page morphs from). */
+    /** Which of the two first-row cards is the active tab (the one the page morphs from). */
     private var activeIsA = true
+    private val failures = ArrayList<String>()
 
     @Test
     fun record() {
         runDemo()
+        if (failures.isNotEmpty()) error("first tap lost in: ${failures.joinToString()}")
     }
 
     /**
@@ -55,58 +61,94 @@ class FirstTapDemo : DemoHarness("firsttap-demo-state.json", "firsttap", "firstt
     }
 
     override fun demo() {
-        // Opened by the tabs button: taps at increasing delays from the button tap.
-        for (delay in longArrayOf(700, 1_200, 2_000, 3_500)) trial("button", delay)
-        // Opened by the pill swipe: delays from the release.
-        for (delay in longArrayOf(700, 1_500, 3_000)) trial("pill", delay)
+        // 1. The literal sequences: open, tap the moment the grid shows.
+        trial("button, tap as the grid appears") { openByButton(); waitFor("Spaces", 8_000); 0 }
+        trial("pill swipe, tap as the grid appears") { openByPill(); waitFor("Spaces", 8_000); 0 }
+        // 2. The grid on screen and still settling: pull it a third of the way towards closed with
+        //    the pill, stop, let go – it springs back open – and tap right away.
+        trial("re-settle after a stopped release, tap at 150 ms") { openByButton(); waitForOverview(); pullAndStop(); 150 }
+        trial("re-settle after a stopped release, tap at 400 ms") { openByButton(); waitForOverview(); pullAndStop(); 400 }
+        // 3. Right after a fast release: a flick up on the pill with the grid open, then a tap.
+        trial("flick on the pill, tap at 150 ms") { openByButton(); waitForOverview(); flickPill(); 150 }
+        trial("flick on the pill, tap at 300 ms") { openByButton(); waitForOverview(); flickPill(); 300 }
+        // 4. And the plain case for reference.
+        trial("settled overview, tap") { openByButton(); waitForOverview(); 0 }
     }
 
     /**
-     * One trial: open, wait `delayMs` from the moment the open began, tap the first-row card that
-     * is not the active tab, and see whether the overview closed. A first tap that did nothing is
-     * followed by a second one, to show whether that is what makes it work.
+     * One trial: `setup` gets the overview into its state and answers how long to wait before the
+     * tap; then the first-row card that is not the active tab is tapped and the overview must be
+     * gone. A lost first tap is followed by a second one, for the record.
      */
-    private fun trial(how: String, delayMs: Long) {
+    private fun trial(name: String, setup: () -> Long) {
         val target = if (activeIsA) cardB else cardA
-        val t0 = when (how) {
-            "pill" -> swipeOverviewOpen()
-            else -> {
-                Finger().tap(tabsButton.exactCenterX(), tabsButton.exactCenterY())
-                SystemClock.uptimeMillis()
-            }
-        }
-        // When the accessibility tree first shows the overview's header: a bound on its appearance.
-        val seenAt = waitFor("Spaces", delayMs)?.let { SystemClock.uptimeMillis() - t0 }
-        val remaining = t0 + delayMs - SystemClock.uptimeMillis()
-        if (remaining > 0) SystemClock.sleep(remaining)
-        val tapAt = SystemClock.uptimeMillis() - t0
+        val delay = setup()
+        if (delay > 0) SystemClock.sleep(delay)
+        val t0 = SystemClock.uptimeMillis()
         Finger().tap(target.exactCenterX(), target.exactCenterY())
-        SystemClock.sleep(2_000)
-        val firstWorked = findByLabel("Spaces") == null
+        val firstWorked = waitGone("Spaces", 4_000)
         var secondWorked = false
         if (!firstWorked) {
             Finger().tap(target.exactCenterX(), target.exactCenterY())
-            SystemClock.sleep(2_000)
-            secondWorked = findByLabel("Spaces") == null
+            secondWorked = waitGone("Spaces", 4_000)
         }
         Log.i(
             tag,
-            "trial how=$how delay=$delayMs tapAt=${tapAt}ms headerSeenAt=${seenAt ?: "never"}ms " +
-                "firstTapWorked=$firstWorked secondTapWorked=$secondWorked"
+            "trial \"$name\" delay=${delay}ms firstTapWorked=$firstWorked secondTapWorked=$secondWorked " +
+                "(${SystemClock.uptimeMillis() - t0}ms)"
         )
+        if (!firstWorked) failures.add(name)
         if (firstWorked || secondWorked) activeIsA = !activeIsA
         closeOverviewIfOpen()
         SystemClock.sleep(2_500)
     }
 
-    /** Pull the overview in from the pill and let go; returns the moment of the release. */
-    private fun swipeOverviewOpen(): Long {
+    private fun openByButton() {
+        Finger().tap(tabsButton.exactCenterX(), tabsButton.exactCenterY())
+    }
+
+    /** Pull the overview in from the pill and let go fast. */
+    private fun openByPill() {
         val f = Finger()
         f.down(pillCenterX, pillY)
         f.settleIn(0f, -NUDGE)
-        f.moveBy(0f, -0.75f * overviewTravel + NUDGE, 500)
+        f.moveBy(0f, -0.75f * overviewTravel + NUDGE, 400)
         f.up()
-        return SystemClock.uptimeMillis()
+    }
+
+    /** The overview on screen and at rest (the emulator needs a while for both). */
+    private fun waitForOverview() {
+        waitFor("Spaces", 8_000) ?: error("the overview never showed")
+        SystemClock.sleep(3_000)
+    }
+
+    /** With the overview open: drag the pill a third of the travel towards closed, stop, let go. */
+    private fun pullAndStop() {
+        val f = Finger()
+        f.down(pillCenterX, pillY)
+        f.moveBy(0f, NUDGE, 60)
+        f.moveBy(0f, 0.3f * overviewTravel, 350)
+        f.hold(400)
+        f.up()
+    }
+
+    /** With the overview open: a quick flick up on the pill (past the open end; it springs back). */
+    private fun flickPill() {
+        val f = Finger()
+        f.down(pillCenterX, pillY)
+        f.moveBy(0f, -NUDGE, 40)
+        f.moveBy(0f, -0.4f * overviewTravel, 120)
+        f.up()
+    }
+
+    /** Poll until `label` has left the accessibility tree; false when it is still there after `timeoutMs`. */
+    private fun waitGone(label: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (findByLabel(label) == null) return true
+            SystemClock.sleep(150)
+        }
+        return false
     }
 
     private fun closeOverviewIfOpen() {

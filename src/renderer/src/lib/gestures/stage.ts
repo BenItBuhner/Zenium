@@ -48,6 +48,18 @@ export interface OverviewState {
   progress: number
   /** Tab whose card the page morphs out of (opening) or into (closing). */
   heroTabId: string | null
+  /** Where the overview is heading: open (1) or closed (0). Decides what a settling one is. */
+  target: 0 | 1
+}
+
+/**
+ * Whether the grid takes taps. It does the moment the overview is on its way open – while the
+ * spring still runs, not once it has come to rest: the last few pixels of a settle are invisible
+ * but take a good part of a second, and a tap during them must not be lost. Closing (the page
+ * growing back out of a card) and a finger-driven drag are not tappable states.
+ */
+export function overviewInteractive(overview: OverviewState): boolean {
+  return overview.phase === 'open' || (overview.phase === 'settling' && overview.target === 1)
 }
 
 export interface StageState {
@@ -59,7 +71,12 @@ export interface StageState {
 export const CARD_GAP = 16
 
 const TABS_IDLE: TabSwitchState = { phase: 'idle', order: [], position: 0, origin: 0, advance: 1 }
-const OVERVIEW_CLOSED: OverviewState = { phase: 'closed', progress: 0, heroTabId: null }
+const OVERVIEW_CLOSED: OverviewState = {
+  phase: 'closed',
+  progress: 0,
+  heroTabId: null,
+  target: 0
+}
 
 export const stageStore = createStore<StageState>(
   { tabs: TABS_IDLE, overview: OVERVIEW_CLOSED },
@@ -305,7 +322,7 @@ function showOverview(state: UIState): void {
   const overview = stageStore.get().overview
   if (overview.phase !== 'closed') return
   stageStore.set({
-    overview: { phase: 'dragging', progress: 0, heroTabId: hero?.id ?? null }
+    overview: { phase: 'dragging', progress: 0, heroTabId: hero?.id ?? null, target: 1 }
   })
   run('focus.chrome', undefined)
   const show = (): void => {
@@ -369,7 +386,7 @@ export function releaseOverview(velocity: number): void {
 function settleOverview(target: 0 | 1, velocity = 0): void {
   const overview = stageStore.get().overview
   const travel = overviewTravel()
-  stageStore.set({ overview: { ...overview, phase: 'settling' } })
+  stageStore.set({ overview: { ...overview, phase: 'settling', target } })
   overviewSpring.start(overview.progress * travel, velocity, target * travel)
 }
 
