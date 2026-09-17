@@ -98,6 +98,8 @@ class FakeHost implements TranslateHost {
   readonly models = new MemoryStore()
   readonly locales: readonly string[]
   transports: FakeTransport[] = []
+  /** What the next engine's detector answers (the engine is created lazily). */
+  detection: { language: string; confidence: number } | null = null
 
   constructor(locales: readonly string[] = ['en-US']) {
     this.locales = locales
@@ -105,6 +107,7 @@ class FakeHost implements TranslateHost {
 
   createEngine(): EngineTransport {
     const transport = new FakeTransport()
+    if (this.detection) transport.detection = this.detection
     this.transports.push(transport)
     return transport
   }
@@ -445,6 +448,20 @@ describe('TranslateService', () => {
     h.host.transports[0].detection = { language: 'gl', confidence: 0.3 }
     const result = await h.service.translateSelection(TAB, { text: 'Bo día' })
     expect(result?.source).toBe('es')
+  })
+
+  it('hands a selection already in the only preferred language back untranslated', async () => {
+    const h = harness()
+    active = h.service
+    h.host.detection = { language: 'en', confidence: 0.99 }
+    const result = await h.service.translateSelection(TAB, { text: 'Already in English.' })
+    expect(result).toEqual({
+      text: 'Already in English.',
+      source: 'en',
+      target: 'en',
+      translation: 'Already in English.'
+    })
+    expect(h.host.transports[0].posted.find((m) => m.op === 'translate')).toBeUndefined()
   })
 
   it('persists preferences (and only a refreshed registry) to translate.json', async () => {

@@ -787,6 +787,8 @@ export class TranslateService {
       if (!source) throw new Error('Zenium could not tell what language the selection is in.')
       let target = options.target ?? this.prefs.preferred[0] ?? defaultTarget(this.prefs, source)
       if (target === source) target = defaultTarget(this.prefs, source)
+      // Already in the only language the user reads (a selection on a translated page, say).
+      if (target === source) return { text, source, target, translation: text }
       const route = this.registry.route({ from: source, to: target })
       if (!route) throw new Error(`Zenium has no translation model from ${source} to ${target}.`)
       const entry = this.tabs.get(tabId)
