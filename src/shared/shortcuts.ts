@@ -657,6 +657,13 @@ const DEFS: Def[] = [
     mods: { accel: true }
   },
   {
+    // Firefox binds Ctrl+Shift+D here; Zen gave that to "Pin / Unpin Tab", so this ships unbound.
+    id: 'bookmarkAllTabsKb',
+    action: 'bookmark.allTabs',
+    group: 'historyAndBookmarks',
+    label: 'Bookmark All Tabs'
+  },
+  {
     id: 'viewBookmarksSidebarKb',
     action: 'bookmark.sidebar',
     group: 'historyAndBookmarks',

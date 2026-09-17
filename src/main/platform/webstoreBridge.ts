@@ -13,12 +13,10 @@ import {
   EMPTY_REFERRER_CHAIN,
   WEBSTORE_CHANNEL,
   WEBSTORE_EVENT_CHANNEL,
-  WEBSTORE_URL_PATTERNS,
   installStatusFor,
   isWebstorePage,
   managementInfoFor,
   parseBeginInstallDetails,
-  withChromeClientHints,
   type ManagementEvent,
   type ManagementMember,
   type WebstoreMv2DeprecationStatus,
@@ -33,13 +31,6 @@ const WEBSTORE_PRELOAD_ID = 'zenium-webstore'
 const webstorePreload = join(__dirname, '../preload/webstore.js')
 
 const UNINSTALL_CANCELLED_ERROR = 'The user did not accept the uninstall.'
-
-/** Request headers for the store's servers, with Chrome's brand in the client hints. */
-export function rewriteStoreRequestHeaders(
-  headers: Record<string, string>
-): Record<string, string> {
-  return withChromeClientHints(headers, process.versions.chrome)
-}
 
 type Handler = (args: unknown[], context: CallContext) => Promise<WebstoreReply> | WebstoreReply
 
@@ -136,17 +127,13 @@ export class WebstoreBridge {
   }
 
   /**
-   * Gives a persistent session's pages the store preload, and presents the session to the
-   * store's servers as Chrome: the page request's client hints decide whether the store renders
-   * its install button or "Switch to Chrome". Electron keeps one `onBeforeSendHeaders` listener
-   * per session, so a layer that needs its own must call `rewriteStoreRequestHeaders` from it.
+   * Gives a persistent session's pages the store preload. The client-hint rewrite that makes the
+   * store render its install button for the same sessions is `webstoreClientHints` in
+   * `requestHeaders.ts`, which the platform attaches next to this.
    */
   attach(ses: Session): void {
     if (ses.getPreloadScripts().some((script) => script.id === WEBSTORE_PRELOAD_ID)) return
     ses.registerPreloadScript({ type: 'frame', id: WEBSTORE_PRELOAD_ID, filePath: webstorePreload })
-    ses.webRequest.onBeforeSendHeaders({ urls: WEBSTORE_URL_PATTERNS }, (details, callback) => {
-      callback({ requestHeaders: rewriteStoreRequestHeaders(details.requestHeaders) })
-    })
   }
 
   private async handle(

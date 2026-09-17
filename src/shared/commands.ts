@@ -148,9 +148,15 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     action: 'bookmark.add'
   },
   {
+    id: 'bookmark-all-tabs',
+    label: 'Bookmark All Tabs',
+    keywords: ['bookmark', 'all', 'tabs', 'folder'],
+    action: 'bookmark.allTabs'
+  },
+  {
     id: 'bookmarks',
     label: 'Show Bookmarks',
-    keywords: ['bookmarks', 'library'],
+    keywords: ['bookmarks', 'library', 'manager'],
     action: 'bookmarks.open'
   },
   { id: 'history', label: 'Show History', keywords: ['history', 'recent'], action: 'history.open' },

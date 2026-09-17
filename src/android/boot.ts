@@ -16,6 +16,12 @@ import {
   type BackEventPayload,
   type BackPhase
 } from '@renderer/lib/back'
+import {
+  dispatchPullEvent,
+  setPullHost,
+  type PullEventPayload,
+  type PullEventPhase
+} from '@renderer/lib/pull'
 import { Bridge, getNativeBridge } from './bridge'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
@@ -43,6 +49,11 @@ export interface HostGlobal {
    * had anything for it; a `commit` that returns false leaves the host to background the app.
    */
   backEvent(phase: string, json: string | null): boolean
+  /**
+   * A pull-to-refresh on a tab's page as the host recognises it: `start`, then `move` with the
+   * finger's travel, then `release` or `cancel` (see `PullGestureClassifier.kt`).
+   */
+  pullEvent(tabId: string, phase: string, json: string | null): void
   /** The user tapped the notification / launcher again: bring a URL in. */
   openUrl(url: string): void
 }
@@ -67,6 +78,7 @@ export function bootAndroid(): { browser: Browser; api: ZenApi; preview: boolean
   platformRef.current = platform
   syncNativeTheme(bridge, platform, browser)
   syncBackState(bridge)
+  syncPullToRefresh(bridge, platform)
   browser.start()
 
   // Shortcuts typed into the chrome itself go through the same table as page keys.
@@ -171,6 +183,25 @@ function syncBackState(bridge: Bridge): void {
   send()
 }
 
+/**
+ * Pull-to-refresh: the host recognises the gesture on the page WebView and streams it to the
+ * chrome's `lib/pull.ts`, which answers with the one value it works out – how far down the page
+ * sits – for the host to move the page by. The Settings switch is mirrored to the host, which
+ * then leaves such drags to the page like any other.
+ */
+function syncPullToRefresh(bridge: Bridge, platform: AndroidPlatform): void {
+  setPullHost({
+    setOffset: (tabId, offset) => bridge.send('view.setPullOffset', { tabId, offset })
+  })
+  let last: boolean | null = null
+  platform.events.on('state', (state: UIState) => {
+    const enabled = state.settings.pullToRefresh
+    if (enabled === last) return
+    last = enabled
+    bridge.send('chrome.setPullToRefresh', { enabled })
+  })
+}
+
 function installHostGlobal(bridge: Bridge, platformRef: { current: AndroidPlatform | null }): void {
   const parse = <T>(json: string | null | undefined): T =>
     (json === null || json === undefined || json === '' ? undefined : JSON.parse(json)) as T
@@ -192,6 +223,8 @@ function installHostGlobal(bridge: Bridge, platformRef: { current: AndroidPlatfo
       platformRef.current?.viewKey(tabId, parse<KeyEventInput>(json)) ?? false,
     backEvent: (phase, json) =>
       dispatchBackEvent(phase as BackPhase, parse<BackEventPayload | null>(json)),
+    pullEvent: (tabId, phase, json) =>
+      dispatchPullEvent(tabId, phase as PullEventPhase, parse<PullEventPayload | null>(json)),
     openUrl: (url) => {
       const platform = platformRef.current
       platform?.browser.openExternalUrl(url, platform.window)

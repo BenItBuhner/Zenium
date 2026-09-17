@@ -149,6 +149,15 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         js("window.__zenHost&&__zenHost.backEvent(${JSONObject.quote(phase)},${JSONObject.quote(encodeResult(payload))})")
     }
 
+    /**
+     * A pull-to-refresh on a tab's page as the WebView recognises it: `start`, `move` (with the
+     * finger's travel in CSS px) and `release` or `cancel`; the chrome's `lib/pull.ts` moves the
+     * page and reloads it (see `PullToRefreshGesture.kt`).
+     */
+    fun pullEvent(tabId: String, phase: String, payload: JSONObject?) {
+        js("window.__zenHost&&__zenHost.pullEvent(${JSONObject.quote(tabId)},${JSONObject.quote(phase)},${JSONObject.quote(encodeResult(payload))})")
+    }
+
     /** Commit the gesture; answers whether the chrome had anything to dismiss or navigate. */
     fun backCommit(callback: (Boolean) -> Unit) {
         evaluateJavascript("window.__zenHost?__zenHost.backEvent('commit',null):false") { result -> callback(result == "true") }
