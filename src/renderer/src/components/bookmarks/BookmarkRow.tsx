@@ -49,7 +49,7 @@ export function BookmarkIcon({
   return <Globe className={cn('opacity-50', className)} />
 }
 
-/** One line of the manager's list: a bookmark or a folder. */
+/** One line of the manager's list: a bookmark or a folder, its URL or size under the name. */
 export function BookmarkRow({
   node,
   path,
@@ -81,35 +81,28 @@ export function BookmarkRow({
       aria-selected={selected}
       data-bm-id={node.id}
       data-bm-drop={`row:${node.id}`}
-      className={cn(
-        'zen-squircle group relative flex select-none items-center gap-3 rounded-lg px-2.5 outline-none transition-[background,box-shadow,opacity] duration-100',
-        compact ? 'h-[52px]' : 'h-11',
-        selected ? 'bg-[rgb(var(--zen-accent-rgb)/0.14)]' : 'hover:bg-[var(--zen-element-bg)]',
-        focused && 'shadow-[inset_0_0_0_1.5px_rgb(var(--zen-accent-rgb)/0.55)]',
-        dropInto &&
-          'bg-[rgb(var(--zen-accent-rgb)/0.14)] shadow-[inset_0_0_0_1.5px_rgb(var(--zen-accent-rgb)/0.7)]',
-        lifted && 'opacity-40'
-      )}
+      data-focused={focused || undefined}
+      data-target={dropInto || undefined}
+      data-lifted={lifted || undefined}
+      className="zen-bm-row group"
       onPointerDown={(e) => onPointerDown(e, node)}
       onClick={(e) => onClick(e, node)}
       onDoubleClick={(e) => onDoubleClick(e, node)}
       onAuxClick={(e) => onAuxClick(e, node)}
       onContextMenu={(e) => onContextMenu(e, node)}
     >
-      <BookmarkIcon node={node} className="h-4 w-4 shrink-0" />
-      <div className="flex min-w-0 flex-1 flex-col justify-center">
+      <BookmarkIcon node={node} className="zen-bm-row-icon" />
+      <div className="flex min-w-0 flex-1 flex-col">
         {renaming ? (
-          <RenameField title={node.title} onDone={(title) => onRenamed(node, title)} />
+          <div className="flex h-5 items-center">
+            <RenameField title={node.title} onDone={(title) => onRenamed(node, title)} />
+          </div>
         ) : (
-          <div className="truncate text-[13px]">{nodeLabel(node)}</div>
+          <div className="zen-bm-row-title">{nodeLabel(node)}</div>
         )}
-        <div className="truncate text-[11.5px] text-[var(--zen-muted)]">{subtitle}</div>
+        <div className="zen-bm-row-desc">{subtitle}</div>
       </div>
-      {!compact && (
-        <span className="w-[72px] shrink-0 text-right text-[11px] text-[var(--zen-muted)]">
-          {relativeTime(node.dateAdded)}
-        </span>
-      )}
+      {!compact && <span className="zen-bm-row-meta">{relativeTime(node.dateAdded)}</span>}
     </div>
   )
 }

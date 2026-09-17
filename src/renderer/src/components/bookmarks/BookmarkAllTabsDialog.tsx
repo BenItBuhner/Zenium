@@ -1,6 +1,5 @@
 import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { FolderPlus } from 'lucide-react'
 import type { UIState } from '@shared/types'
 import { BOOKMARKS_BAR_ID, recentFolders } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
@@ -53,16 +52,16 @@ export function BookmarkAllTabsDialog({
   return (
     <div
       className={cn(
-        'zen-animate-in absolute inset-0 z-50 flex zen-bm-scrim',
+        'zen-animate-in zen-bm-scrim absolute inset-0 z-50 flex',
         phone ? 'items-end' : 'items-center justify-center'
       )}
       onMouseDown={close}
     >
       <form
         role="dialog"
-        aria-label="Bookmark all tabs"
+        aria-label="Bookmark All Tabs"
         className={cn(
-          'zen-panel zen-animate-pop zen-bm-dialog flex max-h-[calc(100%-24px)] flex-col gap-3',
+          'zen-animate-pop zen-bm-dialog flex max-h-[calc(100%-24px)] flex-col gap-3',
           phone ? 'mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] w-auto flex-1' : 'w-[400px]'
         )}
         onMouseDown={(e) => e.stopPropagation()}
@@ -77,18 +76,11 @@ export function BookmarkAllTabsDialog({
           save()
         }}
       >
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[rgb(var(--zen-accent-rgb)/0.16)] text-[var(--zen-accent-ink)]">
-            <FolderPlus className="h-4 w-4" />
-          </span>
-          <div className="min-w-0">
-            <h2 className="zen-bm-dialog-title">Bookmark all tabs</h2>
-            <p className="text-[12.5px] text-[var(--zen-muted)]">
-              {count === 1
-                ? '1 page goes into a new folder'
-                : `${count} pages go into a new folder`}
-            </p>
-          </div>
+        <div className="min-w-0">
+          <h2 className="zen-bm-dialog-title">Bookmark All Tabs</h2>
+          <p className="zen-bm-dim mt-1 text-[13px]">
+            {count === 1 ? '1 page goes into a new folder' : `${count} pages go into a new folder`}
+          </p>
         </div>
         <label className="zen-bm-label">
           Name

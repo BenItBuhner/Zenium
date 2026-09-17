@@ -57,11 +57,11 @@ export function EditBookmarkDialog({
 
   const title = node
     ? folder
-      ? 'Rename folder'
-      : 'Edit bookmark'
+      ? 'Rename Folder'
+      : 'Edit Bookmark'
     : folder
-      ? 'New folder'
-      : 'Add bookmark'
+      ? 'New Folder'
+      : 'Add Bookmark'
   const target = folder ? null : inputToUrl(url.trim())
   const valid = folder ? name.trim().length > 0 : Boolean(target)
   const save = (): void => {
@@ -85,7 +85,7 @@ export function EditBookmarkDialog({
   return (
     <div
       className={cn(
-        'zen-animate-in absolute inset-0 z-50 flex zen-bm-scrim',
+        'zen-animate-in zen-bm-scrim absolute inset-0 z-50 flex',
         phone ? 'items-end' : 'items-center justify-center'
       )}
       onMouseDown={close}
@@ -94,7 +94,7 @@ export function EditBookmarkDialog({
         role="dialog"
         aria-label={title}
         className={cn(
-          'zen-panel zen-animate-pop zen-bm-dialog flex flex-col gap-3',
+          'zen-animate-pop zen-bm-dialog flex flex-col gap-3',
           phone ? 'mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] w-auto flex-1' : 'w-[400px]'
         )}
         onMouseDown={(e) => e.stopPropagation()}

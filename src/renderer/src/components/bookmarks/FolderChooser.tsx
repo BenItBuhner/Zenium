@@ -72,11 +72,8 @@ export function FolderChooser({
           role="treeitem"
           aria-selected={selected}
           aria-expanded={children.length ? open : undefined}
-          className={cn(
-            'flex h-8 items-center gap-0.5 rounded-lg pr-2 text-[13px]',
-            selected ? 'bg-[var(--zen-element-bg-active)]' : 'hover:bg-[var(--zen-element-bg)]',
-            off && 'opacity-40'
-          )}
+          data-off={off || undefined}
+          className="zen-bm-pick-row"
           style={{ paddingLeft: 2 + depth * 14 }}
         >
           <button
@@ -84,13 +81,13 @@ export function FolderChooser({
             tabIndex={-1}
             aria-label={open ? 'Collapse' : 'Expand'}
             className={cn(
-              'flex h-6 w-6 shrink-0 items-center justify-center rounded-md opacity-60 hover:opacity-100',
+              'flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] opacity-60 hover:opacity-100',
               !children.length && 'invisible'
             )}
             onClick={() => toggle(node.id)}
           >
             <ChevronRight
-              className={cn('h-3.5 w-3.5 transition-transform duration-150', open && 'rotate-90')}
+              className={cn('h-4 w-4 transition-transform duration-150', open && 'rotate-90')}
             />
           </button>
           <Folder className="h-4 w-4 shrink-0 opacity-70" />
@@ -125,12 +122,8 @@ export function FolderChooser({
         {tree.roots().map((r) => renderFolder(r, 0))}
       </ul>
       {allowCreate && (
-        <button
-          type="button"
-          className="mt-1 flex h-8 items-center gap-2 self-start rounded-lg px-2.5 text-[12.5px] hover:bg-[var(--zen-element-bg)]"
-          onClick={() => void create()}
-        >
-          <FolderPlus className="h-4 w-4 opacity-70" />
+        <button type="button" className="zen-button mt-2 self-start" onClick={() => void create()}>
+          <FolderPlus className="h-4 w-4" />
           New folder
         </button>
       )}

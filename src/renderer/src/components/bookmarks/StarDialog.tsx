@@ -1,11 +1,11 @@
 import type { JSX } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Star } from 'lucide-react'
-import type { Rect, UIState } from '@shared/types'
+import type { BookmarkNode, Rect, UIState } from '@shared/types'
+import type { BookmarkTree } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
-import { closeBookmarkChrome, openBookmarkChrome } from '@renderer/lib/ui'
+import { browserStore, closeBookmarkChrome, openBookmarkChrome } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { FolderField } from './FolderField'
 import { useBookmarkTree } from './tree'
@@ -21,11 +21,20 @@ export interface StarTarget {
 
 const WIDTH = 340
 const MARGIN = 8
+/** How long a bubble waits for the node its event names before giving up on it. */
+const ARRIVAL_GRACE_MS = 2000
+
+const close = (): void => closeBookmarkChrome({ starDialog: null })
 
 /**
  * Chrome's star bubble: the page was bookmarked the moment the star was pressed; this names and
  * files it. "Remove" takes the bookmark back; "Done", Escape, a click outside or the star itself
  * keep it, with whatever name is in the field.
+ *
+ * The `bookmark.star` event and the state push that carries a new node are separate messages
+ * from the main process and can arrive in either order, so the bubble waits for the node to show
+ * up rather than reading a missing one as removed; only a node that was there and went away
+ * (deleted elsewhere, sync) closes it, and one that never comes closes it after a grace period.
  */
 export function StarDialog({
   state,
@@ -36,11 +45,42 @@ export function StarDialog({
 }): JSX.Element | null {
   const tree = useBookmarkTree(state)
   const node = tree.get(star.nodeId)
+  const seen = useRef(node !== undefined)
+
+  useEffect(() => {
+    if (node) {
+      seen.current = true
+      return
+    }
+    if (seen.current) {
+      close()
+      return
+    }
+    const timer = window.setTimeout(close, ARRIVAL_GRACE_MS)
+    return () => window.clearTimeout(timer)
+  }, [node])
+
+  if (!node) return null
+  return <StarBubble tree={tree} node={node} star={star} />
+}
+
+function StarBubble({
+  tree,
+  node,
+  star
+}: {
+  tree: BookmarkTree
+  node: BookmarkNode
+  star: StarTarget
+}): JSX.Element {
   const phone = useViewport().formFactor === 'phone'
-  const [name, setName] = useState(node?.title ?? '')
+  const [name, setName] = useState(node.title)
   const [nested, setNested] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  const removed = useRef(false)
+
+  useEscapeTrap(!nested, close)
 
   useEffect(() => {
     nameRef.current?.focus()
@@ -48,32 +88,21 @@ export function StarDialog({
   }, [])
 
   // Whatever closes the bubble, the name in the field is kept: a rename is committed as the
-  // bubble unmounts, unless the bookmark itself was removed.
-  const pending = useRef<{ id: string; title: string; original: string } | null>(null)
+  // bubble unmounts, unless the bookmark itself was removed (here or elsewhere).
+  const pending = useRef({ id: node.id, title: name, original: node.title })
   useEffect(() => {
-    pending.current = node ? { id: node.id, title: name, original: node.title } : null
+    pending.current = { id: node.id, title: name, original: node.title }
   }, [name, node])
-  const removed = useRef(false)
   useEffect(
     () => () => {
       const p = pending.current
-      if (!p || removed.current) return
+      if (removed.current) return
       const title = p.title.trim()
-      if (title && title !== p.original) run('bookmark.update', { id: p.id, title })
+      const alive = (browserStore.get().state?.bookmarks ?? []).some((n) => n.id === p.id)
+      if (alive && title && title !== p.original) run('bookmark.update', { id: p.id, title })
     },
     []
   )
-
-  const close = useCallback((): void => closeBookmarkChrome({ starDialog: null }), [])
-  useEscapeTrap(!nested, close)
-
-  // Removed elsewhere (another window, sync) while open: nothing left to edit.
-  useEffect(() => {
-    if (!node) {
-      removed.current = true
-      close()
-    }
-  }, [close, node])
 
   // A click anywhere else keeps the bookmark and puts the bubble away; the star chip toggles
   // the bubble itself.
@@ -86,10 +115,9 @@ export function StarDialog({
     }
     window.addEventListener('pointerdown', onDown, true)
     return () => window.removeEventListener('pointerdown', onDown, true)
-  }, [close, phone])
+  }, [phone])
 
-  if (!node) return null
-
+  const title = star.created ? 'Bookmark Added' : 'Edit Bookmark'
   const remove = (): void => {
     removed.current = true
     run('bookmark.remove', { ids: [node.id] })
@@ -116,12 +144,7 @@ export function StarDialog({
 
   const body = (
     <>
-      <div className="flex items-center gap-2.5">
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[rgb(var(--zen-accent-rgb)/0.16)] text-[var(--zen-accent-ink)]">
-          <Star className="h-4 w-4" fill="currentColor" />
-        </span>
-        <h2 className="zen-bm-dialog-title">{star.created ? 'Bookmark added' : 'Edit bookmark'}</h2>
-      </div>
+      <h2 className="zen-bm-dialog-title">{title}</h2>
       <form
         className="mt-3 flex min-h-0 flex-col gap-3"
         onSubmit={(e) => {
@@ -140,7 +163,7 @@ export function StarDialog({
             autoComplete="off"
           />
         </label>
-        <div className="zen-bm-label">
+        <div className="zen-bm-label min-h-0">
           Folder
           <FolderField
             tree={tree}
@@ -172,14 +195,14 @@ export function StarDialog({
   if (phone) {
     return (
       <div
-        className="zen-animate-in absolute inset-0 z-50 flex items-end bg-[var(--zen-scrim)]"
+        className="zen-animate-in zen-bm-scrim absolute inset-0 z-50 flex items-end"
         onMouseDown={close}
       >
         <div
           ref={panelRef}
           role="dialog"
-          aria-label={star.created ? 'Bookmark added' : 'Edit bookmark'}
-          className="zen-panel zen-animate-pop zen-bm-dialog mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] flex max-h-[calc(100%-24px)] w-auto flex-1 flex-col"
+          aria-label={title}
+          className="zen-animate-pop zen-bm-dialog mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] flex max-h-[calc(100%-24px)] w-auto flex-1 flex-col"
           onMouseDown={(e) => e.stopPropagation()}
           onKeyDown={onKeyDown}
         >
@@ -202,9 +225,9 @@ export function StarDialog({
     <div
       ref={panelRef}
       role="dialog"
-      aria-label={star.created ? 'Bookmark added' : 'Edit bookmark'}
+      aria-label={title}
       className={cn(
-        'zen-panel zen-animate-pop zen-bm-dialog fixed z-[70] flex flex-col',
+        'zen-animate-pop zen-bm-bubble fixed z-[70] flex flex-col',
         'max-h-[calc(100vh-72px)]'
       )}
       style={{ left, top, width: WIDTH }}

@@ -22,7 +22,7 @@ export function Breadcrumb({
   return (
     <nav
       aria-label="Folder path"
-      className={cn('flex min-w-0 items-center gap-0.5 overflow-x-auto text-[13px]', className)}
+      className={cn('flex min-w-0 items-center gap-0.5 overflow-x-auto', className)}
     >
       {segments.map((node, i) => {
         const last = i === segments.length - 1
@@ -31,20 +31,14 @@ export function Breadcrumb({
             key={node.id}
             className="flex min-w-0 shrink-0 items-center gap-0.5 last:min-w-0 last:shrink"
           >
-            {i > 0 && <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-40" />}
+            {i > 0 && <ChevronRight className="zen-bm-dim h-4 w-4 shrink-0" />}
             <button
               type="button"
               data-bm-drop={last ? undefined : `into:${node.id}`}
+              data-target={dropFolderId === node.id || undefined}
               aria-current={last ? 'location' : undefined}
               disabled={last}
-              className={cn(
-                'zen-squircle max-w-[220px] truncate rounded-md px-1.5 py-0.5 transition-[background,box-shadow] duration-100',
-                last
-                  ? 'font-semibold'
-                  : 'text-[var(--zen-muted)] hover:bg-[var(--zen-element-bg)] hover:text-[var(--zen-fg)]',
-                dropFolderId === node.id &&
-                  'bg-[rgb(var(--zen-accent-rgb)/0.14)] text-[var(--zen-fg)] shadow-[inset_0_0_0_1.5px_rgb(var(--zen-accent-rgb)/0.7)]'
-              )}
+              className="zen-bm-crumb"
               onClick={() => onOpen(node.id)}
             >
               {node.title}

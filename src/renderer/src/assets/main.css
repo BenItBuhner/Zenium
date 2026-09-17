@@ -300,6 +300,34 @@
   background: color-mix(in srgb, var(--v2-on-accent) 30%, var(--v2-accent));
 }
 
+/*
+ * v2 draft tokens (docs/design-language-v2-draft.md §1–3) for the surfaces built against it, the
+ * bookmark chrome first: neutral opaque pages and panels, Zen's control accent (the space accent
+ * mixed 40% into black or white, so a saturated space still gives a readable navy or steel), the
+ * ink on it, the nav column's active fill and the scrim that dims only the content frame.
+ */
+:root {
+  --zen-v2-page: #fbfbfe;
+  --zen-v2-panel: #f4f4f4;
+  --zen-v2-panel-border: rgb(0 0 0 / 0.15);
+  --zen-v2-nav-active: #e9ecf2;
+  --zen-v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #000);
+  --zen-v2-accent-ink: #fff;
+  --zen-v2-scrim: rgb(21 20 26 / 0.45);
+  /* Deemphasised text is the text at 69%; a selected row is the space accent at 16%. */
+  --zen-bm-dim: color-mix(in srgb, var(--zen-fg) 69%, transparent);
+  --zen-bm-selection: color-mix(in srgb, var(--zen-accent) 16%, transparent);
+}
+:root[data-theme='dark'] {
+  --zen-v2-page: #1c1b22;
+  --zen-v2-panel: #1f1f1f;
+  --zen-v2-panel-border: rgb(255 255 255 / 0.12);
+  --zen-v2-nav-active: #252630;
+  --zen-v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #fff);
+  --zen-v2-accent-ink: #15141a;
+  --zen-v2-scrim: rgb(0 0 0 / 0.55);
+}
+
 /* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME); zero on desktop. */
 :root {
   --zen-inset-top: 0px;
@@ -1353,8 +1381,10 @@
 
 @layer components {
   /*
-   * Bookmarks. The bar is a strip of chips in the chrome gutter above the content frame, its
-   * folders open menu panels, the star sits in the address pill and the dialogs are panels.
+   * Bookmarks, built to the v2 draft (docs/design-language-v2-draft.md §1–3, §6, §9): the bar
+   * is a strip of chips in the chrome gutter above the content frame, its folders open neutral
+   * opaque menu panels, the star sits in the address pill with its bubble anchored under it,
+   * the dialogs dim only the content frame and the manager is a page.
    */
   .zen-bm-bar {
     display: flex;
@@ -1398,12 +1428,13 @@
     background: var(--zen-element-bg-active);
   }
   .zen-bm-chip:focus-visible {
-    outline: 2px solid var(--zen-accent);
-    outline-offset: 2px;
+    outline: 2px solid var(--zen-v2-accent);
+    outline-offset: 0;
   }
+  /* Drop-into target: keeps its size, gains the hover fill and a 2px inset accent outline. */
   .zen-bm-chip[data-target='true'] {
     background: var(--zen-element-bg-hover);
-    box-shadow: inset 0 0 0 2px var(--zen-accent);
+    box-shadow: inset 0 0 0 2px var(--zen-v2-accent);
   }
   .zen-bm-chip[data-lifted='true'] {
     visibility: hidden;
@@ -1419,30 +1450,42 @@
   .zen-bm-chip[data-icon-only='true'] .zen-bm-chip-label {
     display: none;
   }
+  /*
+   * What travels under the pointer: lifted to level 2, scale(1.02) at 90%. The drag hooks place
+   * the ghost with an inline transform, so the scale is the separate property.
+   */
   .zen-bm-ghost {
     position: fixed;
     top: 0;
     left: 0;
     z-index: 100;
     pointer-events: none;
-    background: var(--zen-panel-bg);
+    will-change: transform;
+  }
+  .zen-bm-lift {
+    background: var(--zen-v2-panel);
+    border: 1px solid var(--zen-v2-panel-border);
     opacity: 0.9;
     box-shadow: var(--zen-shadow-2);
-    transform: scale(1.02);
-    will-change: transform;
+    scale: 1.02;
+  }
+  /* The list's empty space is the append target of a drag. */
+  .zen-bm-list[data-target='true'] {
+    background: var(--zen-element-bg);
+    box-shadow: inset 0 0 0 2px var(--zen-v2-accent);
   }
   .zen-bm-empty {
     padding: 0 8px;
-    color: var(--zen-muted);
+    color: var(--zen-bm-dim);
     font-size: 12.5px;
     white-space: nowrap;
   }
 
-  /* Insertion caret: 2 px accent line, radius 1. */
+  /* Insertion caret: a 2px accent line, radius 1, 8px short of either end. */
   .zen-bm-insert {
     position: absolute;
     pointer-events: none;
-    background: var(--zen-accent);
+    background: var(--zen-v2-accent);
     border-radius: 1px;
     transition: opacity 100ms var(--zen-ease);
   }
@@ -1456,21 +1499,17 @@
     width: auto;
   }
 
-  /* A folder's panel and the overflow panel. */
+  /* Menus: a folder's panel, the overflow panel, the folder field's list, the manager's menu. */
   .zen-bm-menu {
     width: 240px;
     padding: 4px;
     border-radius: 8px;
+    corner-shape: var(--zen-corner);
     overflow: hidden;
-    background: #f4f4f4;
-    border: 1px solid rgb(0 0 0 / 0.15);
+    background: var(--zen-v2-panel);
+    border: 1px solid var(--zen-v2-panel-border);
     box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
-    backdrop-filter: none;
-  }
-  :root[data-theme='dark'] .zen-bm-menu,
-  [data-theme='dark'] .zen-bm-menu {
-    background: #1f1f1f;
-    border-color: rgb(255 255 255 / 0.12);
+    color: var(--zen-fg);
   }
   .zen-bm-menu-row {
     display: flex;
@@ -1487,15 +1526,29 @@
     outline: none;
   }
   .zen-bm-menu-row:hover,
-  .zen-bm-menu-row[data-active='true'] {
+  .zen-bm-menu-row[data-active='true'],
+  .zen-bm-menu-row:focus-visible {
     background: var(--zen-element-bg-hover);
+  }
+  .zen-bm-menu-row:disabled {
+    opacity: 0.4;
   }
   .zen-bm-menu-row[data-target='true'] {
     background: var(--zen-element-bg-hover);
-    box-shadow: inset 0 0 0 2px var(--zen-accent);
+    box-shadow: inset 0 0 0 2px var(--zen-v2-accent);
   }
   .zen-bm-menu-row[data-lifted='true'] {
     opacity: 0.4;
+  }
+  .zen-bm-menu-sep {
+    height: 1px;
+    margin: 4px 0;
+    background: var(--zen-v2-panel-border);
+  }
+  .zen-bm-menu-heading {
+    padding: 6px 8px 2px;
+    color: var(--zen-bm-dim);
+    font-size: 13px;
   }
   .zen-bm-menu-title {
     display: flex;
@@ -1510,15 +1563,6 @@
   .zen-bm-menu-level {
     will-change: transform;
   }
-  /* A panel leaves the way it came: the pop, played backwards; a scrim fades back out. */
-  .zen-animate-pop-out {
-    animation: zen-pop 180ms var(--zen-ease) reverse forwards;
-    pointer-events: none;
-  }
-  .zen-animate-out {
-    animation: zen-fade-in 160ms var(--zen-ease) reverse forwards;
-    pointer-events: none;
-  }
 
   /* The star in the address pill: the outline fills in 120 ms (the pop follows in script). */
   .zen-bm-star svg {
@@ -1530,29 +1574,41 @@
     fill-opacity: 1;
   }
 
-  /* The star bubble and the bookmark dialogs. */
-  .zen-bm-scrim {
-    background: rgb(21 20 26 / 0.45);
+  /*
+   * The star bubble is a panel anchored under the star (no scrim); the dialogs sit over a scrim
+   * that dims only the content frame; the manager is a page.
+   */
+  .zen-bm-bubble {
+    padding: 16px;
+    border-radius: 8px;
+    corner-shape: var(--zen-corner);
+    background: var(--zen-v2-panel);
+    border: 1px solid var(--zen-v2-panel-border);
+    box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
+    color: var(--zen-fg);
   }
-  :root[data-theme='dark'] .zen-bm-scrim,
-  [data-theme='dark'] .zen-bm-scrim {
-    background: rgb(0 0 0 / 0.55);
+  .zen-bm-scrim {
+    background: var(--zen-v2-scrim);
   }
   .zen-bm-dialog {
     padding: 16px;
     border-radius: 12px;
-    background: #f4f4f4;
-    border: 1px solid rgb(0 0 0 / 0.15);
+    corner-shape: var(--zen-corner);
+    background: var(--zen-v2-panel);
+    border: 1px solid var(--zen-v2-panel-border);
     box-shadow: 0 10px 8px rgb(0 0 0 / 0.15);
-    backdrop-filter: none;
+    color: var(--zen-fg);
   }
-  :root[data-theme='dark'] .zen-bm-dialog,
-  [data-theme='dark'] .zen-bm-dialog {
-    background: #1f1f1f;
-    border-color: rgb(255 255 255 / 0.12);
+  .zen-bm-page {
+    border-radius: 8px;
+    background: var(--zen-v2-page);
+    backdrop-filter: none;
+    border: 1px solid var(--zen-v2-panel-border);
+    box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
+    color: var(--zen-fg);
   }
   .zen-bm-dialog-title {
-    font-size: 15px;
+    font-size: 17px;
     font-weight: 600;
     letter-spacing: -0.012em;
     line-height: 1.25;
@@ -1561,12 +1617,183 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    color: color-mix(in srgb, var(--zen-fg) 69%, transparent);
+    color: var(--zen-bm-dim);
     font-size: 13px;
     font-weight: 400;
   }
+  .zen-bm-dim {
+    color: var(--zen-bm-dim);
+  }
 
-  /* Fields and buttons of the bookmark dialogs. */
+  /*
+   * Manager rows (v2 §9.2): label 15/20 over a 13/18 description, 6px block padding, so a row is
+   * 52 and grows with its content; the icon sits on the first text line.
+   */
+  .zen-bm-row {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    min-height: 52px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    color: var(--zen-fg);
+    outline: none;
+    user-select: none;
+    transition:
+      background 100ms var(--zen-ease),
+      box-shadow 100ms var(--zen-ease),
+      opacity 100ms var(--zen-ease);
+  }
+  .zen-bm-row:hover {
+    background: var(--zen-element-bg);
+  }
+  .zen-bm-row[aria-selected='true'] {
+    background: var(--zen-bm-selection);
+  }
+  .zen-bm-row[data-focused='true'] {
+    outline: 2px solid var(--zen-v2-accent);
+    outline-offset: -2px;
+  }
+  .zen-bm-row[data-target='true'] {
+    background: var(--zen-element-bg);
+    box-shadow: inset 0 0 0 2px var(--zen-v2-accent);
+  }
+  .zen-bm-row[data-lifted='true'] {
+    opacity: 0.4;
+  }
+  .zen-bm-row-icon {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    margin-top: 2px;
+  }
+  .zen-bm-row-title {
+    overflow: hidden;
+    font-size: 15px;
+    line-height: 20px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .zen-bm-row-desc {
+    overflow: hidden;
+    color: var(--zen-bm-dim);
+    font-size: 13px;
+    line-height: 18px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .zen-bm-row-meta {
+    flex-shrink: 0;
+    width: 88px;
+    color: var(--zen-bm-dim);
+    font-size: 13px;
+    line-height: 20px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The folder tree is the page's nav column: 34px items, the shown folder filled with a 3px bar. */
+  .zen-bm-tree-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    height: 34px;
+    padding-right: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    color: var(--zen-fg);
+    font-size: 15px;
+    transition:
+      background 100ms var(--zen-ease),
+      box-shadow 100ms var(--zen-ease);
+  }
+  .zen-bm-tree-row:hover {
+    background: var(--zen-element-bg);
+  }
+  .zen-bm-tree-row[aria-selected='true'] {
+    background: var(--zen-v2-nav-active);
+  }
+  .zen-bm-tree-row[aria-selected='true']::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 3px;
+    background: var(--zen-v2-accent);
+  }
+  .zen-bm-tree-row[data-target='true'] {
+    background: var(--zen-element-bg);
+    box-shadow: inset 0 0 0 2px var(--zen-v2-accent);
+  }
+
+  /* The folder chooser's rows inside a dialog: single line, 32 tall. */
+  .zen-bm-pick-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    height: 32px;
+    padding-right: 8px;
+    border-radius: 4px;
+    color: var(--zen-fg);
+    font-size: 13px;
+  }
+  .zen-bm-pick-row:hover {
+    background: var(--zen-element-bg);
+  }
+  .zen-bm-pick-row[aria-selected='true'] {
+    background: var(--zen-bm-selection);
+  }
+  .zen-bm-pick-row[data-off='true'] {
+    opacity: 0.4;
+  }
+
+  /* Breadcrumb segments: buttons and drop-into targets. */
+  .zen-bm-crumb {
+    max-width: 220px;
+    overflow: hidden;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--zen-bm-dim);
+    font-size: 15px;
+    line-height: 20px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition:
+      background 100ms var(--zen-ease),
+      box-shadow 100ms var(--zen-ease);
+  }
+  .zen-bm-crumb:hover:not(:disabled) {
+    background: var(--zen-element-bg);
+    color: var(--zen-fg);
+  }
+  .zen-bm-crumb[aria-current='location'] {
+    color: var(--zen-fg);
+    font-weight: 600;
+  }
+  .zen-bm-crumb[data-target='true'] {
+    background: var(--zen-element-bg);
+    box-shadow: inset 0 0 0 2px var(--zen-v2-accent);
+    color: var(--zen-fg);
+  }
+
+  /* In-place title editor: a 24px field on the row, focus ring only. */
+  .zen-bm-rename {
+    height: 24px;
+    min-width: 0;
+    flex: 1;
+    padding: 0 6px;
+    border-radius: 4px;
+    background: var(--zen-v2-page);
+    color: var(--zen-fg);
+    font: inherit;
+    outline: 2px solid var(--zen-v2-accent);
+    outline-offset: 0;
+  }
+
+  /* Proton-like controls of the bookmark chrome: 32 tall, radius 4, 1px border on fields. */
   .zen-select {
     display: flex;
     width: 100%;
@@ -1585,7 +1812,7 @@
     background: var(--zen-element-bg);
   }
   .zen-select:focus-visible {
-    outline: 2px solid var(--zen-accent);
+    outline: 2px solid var(--zen-v2-accent);
     outline-offset: 0;
   }
   .zen-field {
@@ -1604,8 +1831,11 @@
     color: var(--zen-faint);
   }
   .zen-field:focus-visible {
-    outline: 2px solid var(--zen-accent);
+    outline: 2px solid var(--zen-v2-accent);
     outline-offset: 0;
+  }
+  .zen-field::-webkit-search-cancel-button {
+    display: none;
   }
   .zen-button {
     display: inline-flex;
@@ -1617,7 +1847,7 @@
     border-radius: 4px;
     background: color-mix(in srgb, var(--zen-fg) 10%, transparent);
     color: var(--zen-fg);
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 500;
     white-space: nowrap;
     outline: none;
@@ -1632,17 +1862,12 @@
     opacity: 0.4;
   }
   .zen-button:focus-visible {
-    outline: 2px solid var(--zen-accent);
+    outline: 2px solid var(--zen-v2-accent);
     outline-offset: 0;
   }
   .zen-button[data-variant='primary'] {
-    background: color-mix(in srgb, var(--zen-accent) 40%, #000);
-    color: #fff;
-  }
-  :root[data-theme='dark'] .zen-button[data-variant='primary'],
-  [data-theme='dark'] .zen-button[data-variant='primary'] {
-    background: color-mix(in srgb, var(--zen-accent) 40%, #fff);
-    color: #15141a;
+    background: var(--zen-v2-accent);
+    color: var(--zen-v2-accent-ink);
   }
   .zen-button[data-variant='primary']:hover:not(:disabled) {
     filter: brightness(1.08);
@@ -1655,16 +1880,6 @@
   }
   .zen-button[data-variant='quiet']:hover:not(:disabled) {
     background: color-mix(in srgb, var(--zen-fg) 10%, transparent);
-  }
-}
-
-@keyframes zen-star-pop {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.25);
   }
 }
 

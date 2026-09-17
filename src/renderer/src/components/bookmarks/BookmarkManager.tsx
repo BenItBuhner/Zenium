@@ -32,7 +32,6 @@ import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab } from '@renderer/lib/selectors'
 import { browserStore, closeOverlay, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { Input } from '../ui/input'
 import { EmptyNote, OverlayShell } from '../overlays/OverlayShell'
 import { BookmarkIcon, BookmarkRow } from './BookmarkRow'
 import { Breadcrumb } from './Breadcrumb'
@@ -111,7 +110,11 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
   useFlip(listRef, rowIds.join('|'))
 
   const canReorder = !searching && sort === 'manual'
-  const { drag, target, startDrag, ghostRef } = useBookmarkDrag({ tree, canReorder })
+  const { drag, target, startDrag, ghostRef } = useBookmarkDrag({
+    tree,
+    canReorder,
+    scrollRef: listRef
+  })
   const dropFolderId =
     target && (target.position === 'into' || target.position === 'append') ? target.parentId : null
 
@@ -557,29 +560,30 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
   const current = tree.get(folderId)
   const lifted = new Set(drag && !drag.settling ? drag.ids : [])
   const search = (
-    <div className="relative">
-      <Input
+    <div className={cn('relative', phone ? 'w-full' : 'w-[260px]')}>
+      <input
         ref={searchRef}
         type="search"
         placeholder="Search bookmarks"
         aria-label="Search bookmarks"
         value={query}
         spellCheck={false}
+        autoComplete="off"
         onChange={(e) => changeQuery(e.target.value)}
         onKeyDown={onSearchKeyDown}
-        className={cn(phone ? 'h-10' : 'h-8 w-[240px]', query && 'pr-8')}
+        className={cn('zen-field text-[15px]', phone ? 'h-10' : 'h-8', query && 'pr-8')}
       />
       {query && (
         <button
           type="button"
           aria-label="Clear search"
-          className="absolute top-1/2 right-1.5 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md opacity-60 hover:opacity-100"
+          className="absolute top-1/2 right-1 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[4px] opacity-60 hover:opacity-100"
           onClick={() => {
             changeQuery('')
             searchRef.current?.focus()
           }}
         >
-          <X className="h-3.5 w-3.5" />
+          <X className="h-4 w-4" />
         </button>
       )}
     </div>
@@ -606,6 +610,7 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
       <OverlayShell
         title="Bookmarks"
         variant="full"
+        className="zen-bm-page"
         actions={
           <div className="flex items-center gap-1.5">
             {tab && !tab.url.startsWith('zen://') && (
@@ -669,7 +674,7 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
                 </button>
               )}
               {searching ? (
-                <span className="truncate text-[13px] font-semibold">
+                <span className="truncate text-[15px] font-semibold">
                   Results for “{query.trim()}”
                 </span>
               ) : (
@@ -681,7 +686,7 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
                   className="min-w-0 flex-1"
                 />
               )}
-              <span className="ml-auto shrink-0 text-[11px] text-[var(--zen-muted)]">
+              <span className="zen-bm-dim ml-auto shrink-0 text-[13px] tabular-nums">
                 {summary}
               </span>
               {coarse && !selectMode && count > 0 && (
@@ -704,11 +709,8 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
               aria-activedescendant={focusId ? `bm-row-${focusId}` : undefined}
               tabIndex={0}
               data-bm-drop={searching ? undefined : `list:${folderId}`}
-              className={cn(
-                'relative min-h-0 flex-1 overflow-y-auto px-2 pb-2 outline-none',
-                target?.position === 'append' &&
-                  'shadow-[inset_0_0_0_2px_rgb(var(--zen-accent-rgb)/0.5)]'
-              )}
+              data-target={target?.position === 'append' || undefined}
+              className="zen-bm-list relative min-h-0 flex-1 overflow-y-auto px-2 pb-2 outline-none"
               onKeyDown={onListKeyDown}
               onClick={(e) => {
                 if (e.target === e.currentTarget) clearSelection()
@@ -807,11 +809,11 @@ function DragGhost({
       className="pointer-events-none fixed top-0 left-0 z-[60] will-change-transform"
       style={{ width: drag.width }}
     >
-      <div className="zen-panel flex h-11 items-center gap-3 rounded-lg px-2.5 shadow-[0_8px_28px_rgb(0_0_0/0.22)]">
+      <div className="zen-bm-lift flex h-[52px] items-center gap-3 rounded-[4px] px-2.5">
         <BookmarkIcon node={first} className="h-4 w-4 shrink-0" />
-        <span className="min-w-0 flex-1 truncate text-[13px]">{nodeLabel(first)}</span>
+        <span className="min-w-0 flex-1 truncate text-[15px]">{nodeLabel(first)}</span>
         {drag.ids.length > 1 && (
-          <span className="rounded-full bg-[var(--zen-accent)] px-2 py-0.5 text-[11px] font-semibold text-white">
+          <span className="rounded-full bg-[var(--zen-v2-accent)] px-2 py-0.5 text-[11px] font-semibold text-[var(--zen-v2-accent-ink)] tabular-nums">
             {drag.ids.length}
           </span>
         )}
@@ -924,7 +926,7 @@ function OverflowMenu({
       type="button"
       role={checked === undefined ? 'menuitem' : 'menuitemradio'}
       aria-checked={checked}
-      className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2 text-left text-[13px] hover:bg-[var(--zen-element-bg-hover)]"
+      className="zen-bm-menu-row"
       onClick={() => {
         setOpen(false)
         onSelect()
@@ -932,9 +934,19 @@ function OverflowMenu({
     >
       <span className="flex h-4 w-4 items-center justify-center opacity-70">{icon}</span>
       <span className="flex-1">{label}</span>
-      {checked && <Check className="h-3.5 w-3.5" />}
+      {checked && <Check className="h-4 w-4" />}
     </button>
   )
+
+  // Arrow keys walk the rows; Escape is trapped above so it closes the menu, not the manager.
+  const onMenuKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    const rows = [...(ref.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])]
+    const at = rows.indexOf(document.activeElement as HTMLElement)
+    const step = e.key === 'ArrowDown' ? 1 : -1
+    rows[(at + step + rows.length) % rows.length]?.focus()
+    e.preventDefault()
+  }
 
   return (
     <div ref={ref} className="relative">
@@ -951,20 +963,15 @@ function OverflowMenu({
       {open && (
         <div
           role="menu"
-          className="zen-panel zen-animate-pop absolute top-[calc(100%+6px)] right-0 z-20 flex w-[232px] flex-col gap-px p-1.5"
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') {
-              e.preventDefault()
-              e.stopPropagation()
-              setOpen(false)
-            }
-          }}
+          className="zen-bm-menu zen-animate-pop absolute top-[calc(100%+6px)] right-0 z-20"
+          onKeyDown={onMenuKeyDown}
         >
-          {item('Add new bookmark…', <Plus className="h-4 w-4" />, onAddBookmark)}
-          {item('Add new folder', <FolderPlus className="h-4 w-4" />, onAddFolder)}
-          <div className="my-1 px-2 text-[11px] font-medium text-[var(--zen-muted)]">Sort by</div>
+          {item('Add New Bookmark…', <Plus className="h-4 w-4" />, onAddBookmark)}
+          {item('Add New Folder', <FolderPlus className="h-4 w-4" />, onAddFolder)}
+          <div className="zen-bm-menu-sep" />
+          <div className="zen-bm-menu-heading">Sort by</div>
           {item(
-            'Manual order',
+            'Manual Order',
             <ListChecks className="h-4 w-4" />,
             () => onSort('manual'),
             sort === 'manual'
@@ -972,14 +979,14 @@ function OverflowMenu({
           {item('Name', <ArrowDownAZ className="h-4 w-4" />, () => onSort('name'), sort === 'name')}
           {item('URL', <Link className="h-4 w-4" />, () => onSort('url'), sort === 'url')}
           {item(
-            'Date added',
+            'Date Added',
             <Clock className="h-4 w-4" />,
             () => onSort('dateAdded'),
             sort === 'dateAdded'
           )}
-          <div className="my-1 h-px" />
-          {item('Import bookmarks…', <Upload className="h-4 w-4" />, onImport)}
-          {item('Export bookmarks…', <Download className="h-4 w-4" />, onExport)}
+          <div className="zen-bm-menu-sep" />
+          {item('Import Bookmarks…', <Upload className="h-4 w-4" />, onImport)}
+          {item('Export Bookmarks…', <Download className="h-4 w-4" />, onExport)}
         </div>
       )}
     </div>

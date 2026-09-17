@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { BookmarkTree } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
 import { SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
+import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import { forbiddenTargets } from './tree'
 
 /**
@@ -38,9 +39,14 @@ interface Options {
   tree: BookmarkTree
   /** Manual order and not searching: rows may be dropped between siblings. */
   canReorder: boolean
+  /** The scrolling list: it autoscrolls while the pointer drags within 32px of its edges. */
+  scrollRef?: React.RefObject<HTMLElement | null>
 }
 
 const DRAG_THRESHOLD = 5
+/** Autoscroll band at the list's top and bottom edges, and the fastest scroll per frame. */
+const AUTOSCROLL_EDGE = 32
+const AUTOSCROLL_MAX_STEP = 14
 
 /**
  * Pointer-driven drag and drop for the manager. Position follows the pointer directly (direct
@@ -48,7 +54,7 @@ const DRAG_THRESHOLD = 5
  * line gliding between slots, rows making room – runs on springs, so a new grab mid-flight simply
  * takes over the motion.
  */
-export function useBookmarkDrag({ tree, canReorder }: Options): {
+export function useBookmarkDrag({ tree, canReorder, scrollRef }: Options): {
   drag: BookmarkDrag | null
   target: DropTarget | null
   startDrag: (e: React.PointerEvent, ids: string[], rowEl: HTMLElement) => void
@@ -57,8 +63,10 @@ export function useBookmarkDrag({ tree, canReorder }: Options): {
   const [drag, setDrag] = useState<BookmarkDrag | null>(null)
   const [target, setTarget] = useState<DropTarget | null>(null)
   const ghostRef = useRef<HTMLDivElement | null>(null)
-  const springs = useRef<{ x: SpringAnimation; y: SpringAnimation } | null>(null)
+  const settle = useRef<SpringAnimation | null>(null)
   const live = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  const pointer = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  const velocity = useRef(new VelocityTracker())
   const dragRef = useRef<BookmarkDrag | null>(null)
   const treeRef = useRef(tree)
   const reorderRef = useRef(canReorder)
@@ -73,13 +81,12 @@ export function useBookmarkDrag({ tree, canReorder }: Options): {
     if (el) el.style.transform = `translate3d(${x}px, ${y}px, 0)`
   }, [])
 
-  const stopSprings = useCallback((): void => {
-    springs.current?.x.stop()
-    springs.current?.y.stop()
-    springs.current = null
+  const stopSettle = useCallback((): void => {
+    settle.current?.stop()
+    settle.current = null
   }, [])
 
-  useEffect(() => () => stopSprings(), [stopSprings])
+  useEffect(() => () => stopSettle(), [stopSettle])
 
   const resolveTarget = useCallback((x: number, y: number, ids: string[]): DropTarget | null => {
     const el = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-bm-drop]')
@@ -127,6 +134,10 @@ export function useBookmarkDrag({ tree, canReorder }: Options): {
     }
   }, [])
 
+  /**
+   * The ghost glides to where it belongs – its origin (cancelled) or the drop slot – on one
+   * spring along the straight path, launched with the pointer's release velocity.
+   */
   const finish = useCallback(
     (settleTo: { x: number; y: number } | null): void => {
       const current = dragRef.current
@@ -136,30 +147,29 @@ export function useBookmarkDrag({ tree, canReorder }: Options): {
         dragRef.current = null
         setDrag(null)
       }
-      if (!settleTo) {
+      const ghost = ghostRef.current
+      const from = live.current
+      const dx = settleTo ? settleTo.x - from.x : 0
+      const dy = settleTo ? settleTo.y - from.y : 0
+      const distance = Math.hypot(dx, dy)
+      if (!settleTo || distance < 0.5) {
         settled()
         return
       }
-      // The ghost glides to where it belongs: its origin (cancelled) or the drop slot.
-      const ghost = ghostRef.current
-      const from = live.current
-      const x = new SpringAnimation(
+      const ux = dx / distance
+      const uy = dy / distance
+      const { vx, vy } = velocity.current.velocity(performance.now())
+      const spring = new SpringAnimation(
         SPRING_GENTLE,
-        (v) => placeGhost(v, live.current.y),
-        () => undefined
-      )
-      const y = new SpringAnimation(
-        SPRING_GENTLE,
-        (v) => placeGhost(live.current.x, v),
+        (s) => placeGhost(from.x + ux * s, from.y + uy * s),
         () => {
           if (ghost) ghost.style.opacity = '0'
           setTimeout(settled, 120)
         }
       )
-      springs.current = { x, y }
-      x.start(from.x, 0, settleTo.x)
-      y.start(from.y, 0, settleTo.y)
+      settle.current = spring
       if (ghost) ghost.style.transition = 'opacity 120ms ease-out'
+      spring.start(0, vx * ux + vy * uy, distance)
     },
     [placeGhost]
   )
@@ -172,15 +182,44 @@ export function useBookmarkDrag({ tree, canReorder }: Options): {
       const rect = rowEl.getBoundingClientRect()
       const pointerId = e.pointerId
       let dragging = false
+      let frame: number | null = null
       // Grabbing while a previous ghost is still settling takes over from its motion.
-      stopSprings()
+      stopSettle()
       if (dragRef.current) {
         dragRef.current = null
         setDrag(null)
       }
+      velocity.current.reset()
+      velocity.current.add(e.timeStamp, startX, startY)
+
+      // Near the list's top or bottom edge the list scrolls under the pointer, faster the
+      // closer to the edge, and the target under the (still) pointer is re-read as it does.
+      const autoscroll = (): void => {
+        frame = null
+        const el = scrollRef?.current
+        const current = dragRef.current
+        if (!el || !current || current.settling) return
+        const box = el.getBoundingClientRect()
+        const { x, y } = pointer.current
+        let step = 0
+        if (x >= box.left && x <= box.right) {
+          if (y < box.top + AUTOSCROLL_EDGE)
+            step = -((box.top + AUTOSCROLL_EDGE - y) / AUTOSCROLL_EDGE)
+          else if (y > box.bottom - AUTOSCROLL_EDGE)
+            step = (y - (box.bottom - AUTOSCROLL_EDGE)) / AUTOSCROLL_EDGE
+        }
+        if (step !== 0) {
+          const before = el.scrollTop
+          el.scrollTop += Math.max(-1, Math.min(1, step)) * AUTOSCROLL_MAX_STEP
+          if (el.scrollTop !== before) setTarget(resolveTarget(x, y, ids))
+        }
+        frame = requestAnimationFrame(autoscroll)
+      }
 
       const onMove = (ev: PointerEvent): void => {
         if (ev.pointerId !== pointerId) return
+        pointer.current = { x: ev.clientX, y: ev.clientY }
+        velocity.current.add(ev.timeStamp, ev.clientX, ev.clientY)
         if (!dragging) {
           if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_THRESHOLD) return
           dragging = true
@@ -198,6 +237,7 @@ export function useBookmarkDrag({ tree, canReorder }: Options): {
           }
           dragRef.current = next
           setDrag(next)
+          if (frame === null) frame = requestAnimationFrame(autoscroll)
         }
         placeGhost(ev.clientX - (startX - rect.left), ev.clientY - (startY - rect.top))
         setTarget(resolveTarget(ev.clientX, ev.clientY, ids))
@@ -208,37 +248,43 @@ export function useBookmarkDrag({ tree, canReorder }: Options): {
         window.removeEventListener('pointerup', onUp)
         window.removeEventListener('pointercancel', onCancel)
         window.removeEventListener('keydown', onKey, true)
+        if (frame !== null) cancelAnimationFrame(frame)
+        frame = null
         document.body.style.cursor = ''
+      }
+
+      const letGo = (): void => {
+        setTarget(null)
+        const current = dragRef.current
+        if (!current) return
+        setDrag({ ...current, settling: true })
+        finish({ x: current.originX, y: current.originY })
       }
 
       const onUp = (ev: PointerEvent): void => {
         if (ev.pointerId !== pointerId) return
         cleanup()
         if (!dragging) return
+        velocity.current.add(ev.timeStamp, ev.clientX, ev.clientY)
         const drop = resolveTarget(ev.clientX, ev.clientY, ids)
+        if (!drop) {
+          letGo()
+          return
+        }
         setTarget(null)
         const current = dragRef.current
         if (!current) return
-        if (drop) {
-          run('bookmark.move', { ids, parentId: drop.parentId, index: drop.index })
-          const slot = document.querySelector<HTMLElement>(`[data-bm-drop="row:${drop.rowId}"]`)
-          const to = slot?.getBoundingClientRect()
-          setDrag({ ...current, settling: true })
-          finish(to ? { x: to.left, y: to.top } : null)
-        } else {
-          setDrag({ ...current, settling: true })
-          finish({ x: current.originX, y: current.originY })
-        }
+        run('bookmark.move', { ids, parentId: drop.parentId, index: drop.index })
+        const slot = document.querySelector<HTMLElement>(`[data-bm-drop="row:${drop.rowId}"]`)
+        const to = slot?.getBoundingClientRect()
+        setDrag({ ...current, settling: true })
+        finish(to ? { x: to.left, y: to.top } : null)
       }
 
       const onCancel = (ev: PointerEvent): void => {
         if (ev.pointerId !== pointerId) return
         cleanup()
-        setTarget(null)
-        const current = dragRef.current
-        if (!current) return
-        setDrag({ ...current, settling: true })
-        finish({ x: current.originX, y: current.originY })
+        letGo()
       }
 
       const onKey = (ev: KeyboardEvent): void => {
@@ -247,11 +293,7 @@ export function useBookmarkDrag({ tree, canReorder }: Options): {
         ev.preventDefault()
         ev.stopPropagation()
         cleanup()
-        setTarget(null)
-        const current = dragRef.current
-        if (!current) return
-        setDrag({ ...current, settling: true })
-        finish({ x: current.originX, y: current.originY })
+        letGo()
       }
 
       window.addEventListener('pointermove', onMove)
@@ -259,7 +301,7 @@ export function useBookmarkDrag({ tree, canReorder }: Options): {
       window.addEventListener('pointercancel', onCancel)
       window.addEventListener('keydown', onKey, true)
     },
-    [finish, placeGhost, resolveTarget, stopSprings]
+    [finish, placeGhost, resolveTarget, scrollRef, stopSettle]
   )
 
   // The ghost mounts after the first move: put it under the pointer right away.

@@ -65,11 +65,5 @@ export function DropIndicator({
     []
   )
 
-  return (
-    <div
-      ref={ref}
-      aria-hidden
-      className="pointer-events-none absolute top-0 left-0 z-10 h-0.5 rounded-full bg-[var(--zen-accent)] opacity-0 transition-opacity duration-100 before:absolute before:top-[-3px] before:left-[-4px] before:h-2 before:w-2 before:rounded-full before:bg-[var(--zen-accent)] before:content-['']"
-    />
-  )
+  return <div ref={ref} aria-hidden className="zen-bm-insert top-0 left-0 z-10 h-0.5 opacity-0" />
 }

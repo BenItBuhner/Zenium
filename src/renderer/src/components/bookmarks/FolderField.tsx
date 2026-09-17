@@ -121,7 +121,7 @@ export function FolderField({
           ref={listRef}
           role="listbox"
           aria-label="Folder"
-          className="zen-panel zen-bm-menu zen-animate-pop absolute inset-x-0 top-[calc(100%+4px)] z-10 w-auto"
+          className="zen-bm-menu zen-animate-pop absolute inset-x-0 top-[calc(100%+4px)] z-10 w-auto"
           onKeyDown={onListKeyDown}
         >
           {options.map((f) => (
@@ -139,7 +139,8 @@ export function FolderField({
               </button>
             </li>
           ))}
-          <li className="mt-1">
+          <li>
+            <div className="zen-bm-menu-sep" />
             <button
               type="button"
               role="option"

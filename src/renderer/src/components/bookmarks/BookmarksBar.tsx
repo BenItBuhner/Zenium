@@ -504,7 +504,7 @@ export function BookmarksBar({
           <div
             ref={ghostRef}
             aria-hidden
-            className="zen-bm-chip zen-bm-ghost"
+            className="zen-bm-chip zen-bm-ghost zen-bm-lift"
             style={{ width: drag.width, height: drag.height }}
           >
             <BookmarkIcon node={drag.node} className="h-4 w-4 shrink-0" />

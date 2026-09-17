@@ -48,13 +48,9 @@ export function FolderTree({
           aria-selected={current}
           aria-expanded={children.length ? open : undefined}
           data-bm-drop={`into:${node.id}`}
-          className={cn(
-            'zen-squircle flex h-8 items-center gap-0.5 rounded-lg pr-2 text-[13px] transition-[background,box-shadow] duration-100',
-            current ? 'bg-[var(--zen-element-bg-active)]' : 'hover:bg-[var(--zen-element-bg)]',
-            dropFolderId === node.id &&
-              'bg-[rgb(var(--zen-accent-rgb)/0.14)] shadow-[inset_0_0_0_1.5px_rgb(var(--zen-accent-rgb)/0.7)]'
-          )}
-          style={{ paddingLeft: 2 + depth * 14 }}
+          data-target={dropFolderId === node.id || undefined}
+          className="zen-bm-tree-row"
+          style={{ paddingLeft: 4 + depth * 14 }}
           onContextMenu={(e) => onContextMenu(node.id, e)}
         >
           <button
@@ -62,7 +58,7 @@ export function FolderTree({
             tabIndex={-1}
             aria-label={open ? 'Collapse' : 'Expand'}
             className={cn(
-              'flex h-6 w-6 shrink-0 items-center justify-center rounded-md opacity-60 hover:opacity-100',
+              'flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] opacity-60 hover:opacity-100',
               !children.length && 'invisible'
             )}
             onClick={(e) => {
@@ -71,7 +67,7 @@ export function FolderTree({
             }}
           >
             <ChevronRight
-              className={cn('h-3.5 w-3.5 transition-transform duration-150', open && 'rotate-90')}
+              className={cn('h-4 w-4 transition-transform duration-150', open && 'rotate-90')}
             />
           </button>
           <button

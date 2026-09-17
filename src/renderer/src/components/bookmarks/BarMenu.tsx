@@ -306,7 +306,7 @@ export function BarMenu({
           >
             <BookmarkIcon node={node} className="h-4 w-4 shrink-0" />
             <span className="min-w-0 flex-1 truncate">{nodeLabel(node)}</span>
-            {node.type === 'folder' && <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
+            {node.type === 'folder' && <ChevronRight className="h-4 w-4 shrink-0 opacity-60" />}
           </button>
         ))}
         {live && dropTarget?.kind === 'row' && dropTarget.parentId === folderId && (
@@ -326,7 +326,7 @@ export function BarMenu({
       tabIndex={-1}
       data-bar-panel
       data-append-target={dropTarget?.kind === 'append' && dropTarget.parentId === folderId}
-      className="zen-panel zen-bm-menu zen-animate-pop fixed z-[80] outline-none"
+      className="zen-bm-menu zen-animate-pop fixed z-[80] outline-none"
       style={{ left, top, width: WIDTH }}
       onKeyDown={onKeyDown}
     >

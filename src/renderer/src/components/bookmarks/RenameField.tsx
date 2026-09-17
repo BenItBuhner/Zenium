@@ -29,10 +29,7 @@ export function RenameField({
   return (
     <input
       ref={ref}
-      className={cn(
-        'h-6 min-w-0 flex-1 rounded-md bg-[var(--zen-element-bg)] px-1.5 text-[13px] text-[var(--zen-fg)] outline-none ring-1 ring-[var(--zen-accent)]/60',
-        className
-      )}
+      className={cn('zen-bm-rename', className)}
       value={value}
       spellCheck={false}
       onChange={(e) => setValue(e.target.value)}
