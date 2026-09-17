@@ -1570,6 +1570,13 @@ export interface LayoutReport {
   glance: { tabId: string; rect: Rect; radius: number } | null
   /** When true no tab views should be visible (a chrome overlay covers the content area). */
   contentHidden: boolean
+  /**
+   * What hides the content while `contentHidden`: chrome UI that takes the keyboard (an overlay,
+   * the URL bar, a menu – the default when left out), or a popup with a view of its own that owns
+   * the keyboard while it is up (an extension's action popup in the renderer's frame). The core
+   * moves focus to the chrome for the former and leaves it alone for the latter.
+   */
+  hiddenBy?: 'chrome' | 'popup'
 }
 
 // ---------------------------------------------------------------------------

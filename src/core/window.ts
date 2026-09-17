@@ -275,9 +275,14 @@ export class ZenWindow {
     }
     if (this.pendingContentFocus && !report.contentHidden) this.focusContent()
     // With no page visible (empty space / chrome overlay / preview of a page shown in another
-    // window) keyboard input must go to the chrome, otherwise shortcuts stop working.
+    // window) keyboard input must go to the chrome, otherwise shortcuts stop working. A page
+    // hidden behind a popup that owns the keyboard itself (an extension popup's view) is the one
+    // exception: taking focus would blur the popup, and a popup closes on blur.
     const showsOwnPage = [...wanted.keys()].some((id) => owned.has(id))
-    if (report.contentHidden || (!showsOwnPage && !glance)) this.focusChrome()
+    const wantsChromeFocus = report.contentHidden
+      ? report.hiddenBy !== 'popup'
+      : !showsOwnPage && !glance
+    if (wantsChromeFocus) this.focusChrome()
   }
 
   /**
