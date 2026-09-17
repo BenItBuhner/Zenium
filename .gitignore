@@ -3,6 +3,7 @@ dist
 out
 .DS_Store
 .eslintcache
+*.tsbuildinfo
 *.log*
 agent-tools/
 android/app/src/main/assets/www
