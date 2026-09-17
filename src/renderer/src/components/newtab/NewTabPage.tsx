@@ -221,7 +221,7 @@ function TopSiteTile({ site, tabId }: { site: TopSiteTile; tabId: string }): JSX
   return (
     <button
       type="button"
-      className="zen-ntp-site-button flex w-full min-w-0 flex-col items-center gap-1.5"
+      className="zen-v2-shortcut flex w-full min-w-0 flex-col items-center gap-1.5"
       aria-label={label}
       {...hold.handlers}
       onClick={() => {
