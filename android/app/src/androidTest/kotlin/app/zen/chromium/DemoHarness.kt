@@ -256,7 +256,7 @@ abstract class DemoHarness(
      */
     protected fun reveal(vararg labels: String): Rect? {
         val label = labels.firstOrNull { findNode(it) != null } ?: return null
-        findNode(label)?.performAction(AccessibilityNodeInfo.ACTION_SHOW_ON_SCREEN)
+        findNode(label)?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
         SystemClock.sleep(1_500)
         return findByLabel(label)
     }
