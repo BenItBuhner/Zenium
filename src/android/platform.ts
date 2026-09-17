@@ -90,6 +90,8 @@ export interface HostEventPayloads {
   /** A tap on one of Zenium's own buttons in the system share sheet (Android 14). */
   'share.action': ShareAction
   pause: void
+  /** The window is coming back on screen after being hidden (screen off, another app in front). */
+  resume: void
   'download.started': {
     token: string
     url: string
@@ -589,6 +591,11 @@ export class AndroidPlatform implements Platform {
         return
       case 'pause':
         browser.flushSync()
+        return
+      case 'resume':
+        // Re-apply the last layout, so every page view is placed and shown for the window the
+        // chrome returns to; Kotlin asks its WebViews for a fresh frame alongside.
+        this.zenWindow?.relayout()
         return
       case 'download.started': {
         const p = payload as HostEventPayloads['download.started']

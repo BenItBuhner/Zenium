@@ -39,7 +39,7 @@ const pagePreload = join(__dirname, '../preload/page.js')
  */
 export class ElectronTabView implements TabView {
   readonly view: WebContentsView
-  /** Kept from creation: `view.webContents` is already gone when `destroyed` fires. */
+  /** Captured up front: on Electron 44 `view.webContents` is already undefined when `destroyed` fires. */
   readonly webContentsId: number
   private host: ElectronWindow | null = null
   private visible = false
