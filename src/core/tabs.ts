@@ -707,6 +707,30 @@ export class TabManager {
     return { tab, events: this.eventsFor(tab.id) }
   }
 
+  /**
+   * Give a tab without a page a live view that already exists (a new tab page preloaded off
+   * screen under a placeholder id). The view already hangs in `win`; from now on its host events
+   * must reach the returned sink. Undefined when the tab is unknown or already has a page.
+   */
+  attachView(view: TabView, tabId: string, win: ZenWindow): TabViewEvents | undefined {
+    const tab = this.tab(tabId)
+    if (!tab || this.view(tabId) || view.isDestroyed()) return undefined
+    this.browser.platform.views.retargetView?.(view, tabId)
+    view.setBackgroundColor(this.backgroundFor(tab.url))
+    view.setVisible(false)
+    this.views.set(tabId, view)
+    this.owners.set(tabId, win)
+    this.browser.governor.onViewCreated(tabId, view)
+    tab.discarded = false
+    tab.frozen = false
+    tab.cpuThrottle = 1
+    tab.loading = false
+    tab.title = view.getTitle() || titleForUrl(tab.url)
+    if (tab.muted) view.setMuted(true)
+    if (tab.zoom !== 1) view.setZoom(tab.zoom)
+    return this.eventsFor(tabId)
+  }
+
   /** Which window a tab belongs to under the current window-sync mode (null = shared). */
   ownerWindowIdFor(tab: Tab, space: Space, win: ZenWindow): string | null {
     if (space.windowId) return space.windowId

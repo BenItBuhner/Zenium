@@ -17,6 +17,7 @@ import type {
   HostCapabilities,
   KeyBinding,
   NavigationSnapshot,
+  NewTabPageState,
   Platform as PlatformOs,
   Rect,
   ResourceSnapshot,
@@ -307,13 +308,35 @@ export interface TabView {
   // Site information (optional).
   /** Certificate of the main frame's connection; null on http pages or when unavailable. */
   certificate?(): Promise<SiteCertificate | null>
+
+  // The new tab page (optional – hosts without `capabilities.newTabPage` leave it out).
+  /** Push fresh state into a `zen://newtab` page (theme, settings, shortcuts, most visited). */
+  sendNewTabState?(state: NewTabPageState): void
 }
 
 export interface TabViewHost {
   /** Create the live page for `tab`, attached to `host`'s window. */
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView
+  /**
+   * A view created for one tab id now belongs to another (a new tab page preloaded under a
+   * placeholder id becomes a real tab); hosts that map their web contents to tabs update the map.
+   */
+  retargetView?(view: TabView, tabId: string): void
   /** Shortcut table changed – hosts that pre-filter native key events refresh their copy. */
   setShortcuts?(bindings: KeyBinding[]): void
+}
+
+/**
+ * The custom background image of the new tab page. The host owns the bytes (a copy of the picked
+ * file in its profile directory, served to the page under `zen://newtab-background`); the core
+ * only ever sees the address it hands the page.
+ */
+export interface NewTabBackgroundHost {
+  /** Address of the current image, or null when none is set. */
+  current(): string | null
+  /** Let the user pick an image file; resolves with its new address, or null when cancelled. */
+  pick(win: ZenWindow): Promise<string | null>
+  clear(): Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -878,6 +901,8 @@ export interface Platform {
   readonly passwords?: PasswordsHost
   /** Bundled filter-list snapshots; hosts without it start unprotected until the lists download. */
   readonly blocking?: BlockingHost
+  /** The new tab page's custom background image; hosts without it offer no "Image" option. */
+  readonly newTabBackground?: NewTabBackgroundHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Offline page translation; hosts without it report the feature as unavailable. */

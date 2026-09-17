@@ -609,6 +609,7 @@ export class BrowserState {
       window: win.windowState(),
       ...this.downloadsFor(win),
       bookmarks: this.bookmarks,
+      newTabShortcuts: this.newTabShortcuts,
       recentlyClosedCount: this.recentlyClosed.length,
       recentlyClosed: this.recentlyClosed.slice(0, 10).map(summarizeClosed),
       media: this.media,

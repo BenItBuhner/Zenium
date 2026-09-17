@@ -986,13 +986,23 @@ export interface NewTabShortcut {
   url: string
 }
 
+/** The chrome's theme variables (`themeCssVariables`) for one colour scheme. */
+export interface NewTabThemeVariant {
+  /** `--zen-bg`, `--zen-fg`, `--zen-accent` … exactly as the chrome sets them on its root. */
+  vars: Record<string, string>
+  /** Whether the resolved gradient reads as dark (the chrome's `data-theme`). */
+  isDark: boolean
+}
+
 /**
  * Everything `zen://newtab` renders. The host hands the initial state to the page before its
  * first paint and pushes a fresh one whenever a space theme, a setting or the grid changes.
+ * The page does no colour maths: both schemes arrive resolved and the page picks one, following
+ * the system when the setting says so.
  */
 export interface NewTabPageState {
-  /** Theme of the tab's space (null for the default look), resolved by the page for its scheme. */
-  theme: SpaceTheme | null
+  light: NewTabThemeVariant
+  dark: NewTabThemeVariant
   colorScheme: ColorScheme
   /** Private window: the private accent and a "Private" label. */
   isPrivate: boolean
@@ -1003,25 +1013,31 @@ export interface NewTabPageState {
   topSites: TopSite[]
   /** Address of the custom background image (`zen://newtab-background?v=…`), when one is set. */
   backgroundImage: string | null
-  /** The host can open an image file picker (`dialogs.pickImageFile`). */
+  /** The host can open an image file picker. */
   canPickImage: boolean
 }
 
-/** Actions the new tab page asks the browser for (one-way; the browser answers with state). */
+/**
+ * Actions the new tab page asks the browser for (one-way; the browser answers with state).
+ * Tiles are plain links, so opening one needs no action: the page navigates like any page.
+ */
 export type NewTabPageAction =
   | { type: 'ready' }
+  /** Text typed into the page's search box: open the omnibox over this tab with it. */
   | { type: 'search'; text: string }
-  | { type: 'open'; url: string; background: boolean }
   | { type: 'add-shortcut'; title: string; url: string }
   | { type: 'update-shortcut'; id: string; title: string; url: string }
   | { type: 'remove-shortcut'; id: string }
   | { type: 'restore-shortcut'; id: string; title: string; url: string; index: number }
   | { type: 'reorder-shortcuts'; ids: string[] }
+  /** "Most visited": remove a site's tile (its host goes on a local block list) and undo that. */
+  | { type: 'hide-site'; url: string }
+  | { type: 'unhide-site'; url: string }
   | { type: 'set-shortcuts-mode'; mode: NewTabShortcutsMode }
   | { type: 'set-background'; background: NewTabBackgroundKind }
   | { type: 'set-greeting'; greeting: boolean }
   | { type: 'pick-background-image' }
-  | { type: 'shortcut-context-menu'; id: string }
+  | { type: 'clear-background-image' }
 
 export interface Settings {
   colorScheme: ColorScheme
@@ -1508,6 +1524,8 @@ export interface UIState {
   downloadsProgress: DownloadsProgress
   /** Every bookmark node (roots included), ordered parent-first, then by index. */
   bookmarks: BookmarkNode[]
+  /** "My shortcuts" of the new tab page, in grid order (Settings edits them). */
+  newTabShortcuts: NewTabShortcut[]
   recentlyClosedCount: number
   /** Newest first, at most 10 – enough for menus to render without a round trip. */
   recentlyClosed: ClosedEntrySummary[]
