@@ -666,9 +666,11 @@ async function runVariants(session, fixed, label) {
 // --- main -------------------------------------------------------------------------------------
 
 function installZen(apk) {
+  // A clean install every time: the two builds may not share a signer, and no cookies from one
+  // session should shape what a site serves in the next.
   tryShell(`am force-stop ${APP}`)
-  tryShell(`pm clear ${APP}`)
-  adb('install', '-r', '-g', apk)
+  tryShell(`pm uninstall ${APP}`)
+  adb('install', '-g', apk)
   // Past the onboarding overlay: a minimal profile with one space, no update check, flag set.
   const state = {
     version: 2,
