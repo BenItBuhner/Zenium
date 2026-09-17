@@ -56,75 +56,82 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         f.moveBy(0f, -0.40f * overviewTravel, 900)
         f.hold(300)
         f.up()
-        SystemClock.sleep(1_800)
+        SystemClock.sleep(2_500)
 
-        // 2. The Spaces drawer, then a swipe pushes it back out.
+        // 2. The Spaces drawer, then a swipe pushes it back out. (Springs advance at most 64 ms
+        //    per frame, so on the emulator's handful of frames per second they take a while.)
         tap("Spaces")
-        SystemClock.sleep(1_500)
+        SystemClock.sleep(3_000)
         shot("02-spaces-drawer")
         f.down(width * 0.45f, height * 0.5f)
         f.moveBy(-n, 0f, 60)
         f.moveBy(-0.4f * width, 0f, 350)
         f.up()
-        SystemClock.sleep(1_300)
+        SystemClock.sleep(2_500)
 
         // 3. Collapse the Research group (it also keeps the loose cards in reach below).
         tap("Group Research")
-        SystemClock.sleep(1_200)
+        SystemClock.sleep(2_000)
 
-        // 4. Hold a card and let go: its actions. Make a group and name it.
+        // 4. Hold a card and let go: its actions. Make a group and name it. Tabs that were never
+        //    visited keep their seeded titles, which is what the labels below rely on.
         val hn = find("Hacker News", "news.ycombinator.com")
         f.press(hn.exactCenterX(), hn.exactCenterY())
+        f.hold(600)
         shot("03-card-held")
         f.up()
-        SystemClock.sleep(1_000)
-        tap("New group")
         SystemClock.sleep(1_500)
+        tap("New group")
+        SystemClock.sleep(2_000)
         instrumentation.sendStringSync("News")
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
-        SystemClock.sleep(1_500)
+        SystemClock.sleep(2_000)
 
-        // 5. Drag a card onto another: the merge preview, then a group of the two.
+        // 5. Drag a card onto another: the merge preview, then a group of the two. The loose
+        //    cards sit below the fold now: scroll to the bottom first.
+        scrollGrid(-0.6f * height)
         val example = find("Example Domain", "example.com")
-        val rfc = find("RFC 2324: Hyper Text Coffee Pot Control Protocol (HTCPCP/1.0)", "rfc-editor.org")
+        val tea = find("Tea - Wikipedia")
         f.press(example.exactCenterX(), example.exactCenterY())
         f.moveBy(0f, -n, 120)
-        f.moveBy(rfc.exactCenterX() - example.exactCenterX(), rfc.exactCenterY() - example.exactCenterY() + n, 900)
-        f.hold(900)
+        f.moveBy(tea.exactCenterX() - example.exactCenterX(), tea.exactCenterY() - example.exactCenterY() + n, 1_000)
+        f.hold(1_200)
         shot("04-merge-preview")
         f.up()
-        SystemClock.sleep(2_000)
+        SystemClock.sleep(3_000)
 
-        // 6. Move a tab between groups: the RFC out of the new group onto the News group.
-        val rfcAgain = find("RFC 2324: Hyper Text Coffee Pot Control Protocol (HTCPCP/1.0)", "rfc-editor.org")
+        // 6. Move a tab between groups: Tea out of the new group onto the News group, back at
+        //    the top of the grid.
+        scrollGrid(0.8f * height)
+        val teaAgain = find("Tea - Wikipedia")
         val news = find("Group News")
-        f.press(rfcAgain.exactCenterX(), rfcAgain.exactCenterY())
+        f.press(teaAgain.exactCenterX(), teaAgain.exactCenterY())
         f.moveBy(0f, -n, 120)
-        f.moveBy(news.exactCenterX() - rfcAgain.exactCenterX(), news.exactCenterY() - rfcAgain.exactCenterY() + n, 900)
-        f.hold(600)
+        f.moveBy(news.exactCenterX() - teaAgain.exactCenterX(), news.exactCenterY() - teaAgain.exactCenterY() + n, 1_000)
+        f.hold(800)
         f.up()
-        SystemClock.sleep(2_000)
+        SystemClock.sleep(3_000)
 
         // 7. Expand Research again: three groups on screen.
         tap("Group Research")
-        SystemClock.sleep(1_500)
+        SystemClock.sleep(2_500)
         shot("05-groups")
 
         // 8. Pick a grouped tab: the card grows back into the page.
         val pick = find("Hacker News", "news.ycombinator.com")
         f.tap(pick.exactCenterX(), pick.exactCenterY())
-        SystemClock.sleep(2_500)
+        SystemClock.sleep(3_500)
 
         // 9. Swipe slowly to the next tab of the same group: the ribbon rides along the top.
         f.down(pill.right - 10f, pillY)
         f.settleIn(-n, 0f)
         f.moveBy(-0.30f * width + n, 0f, 800)
-        f.hold(700)
+        f.hold(900)
         shot("06-swipe-ribbon")
         f.moveBy(-0.30f * width, 0f, 500)
         f.hold(250)
         f.up()
-        SystemClock.sleep(2_500)
+        SystemClock.sleep(3_000)
     }
 
     /** The bounds of the first of these labels on screen; the demo cannot go on without it. */
