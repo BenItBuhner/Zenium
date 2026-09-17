@@ -176,6 +176,26 @@ class BlockingTest {
         assertTrue("expected sub-millisecond matching, got $perRequestUs us", perRequestUs < 1000.0)
     }
 
+    @Test
+    fun `a bundled list is read by the name the asset merger leaves it under, or as the gzip it was`() {
+        val text = "! Title: EasyList\n||ads.example^\n"
+        val gzipped = java.io.ByteArrayOutputStream().also { out ->
+            java.util.zip.GZIPOutputStream(out).use { it.write(text.toByteArray()) }
+        }.toByteArray()
+
+        // The Android Gradle plugin inflated the asset and dropped `.gz`.
+        val inflated = mapOf("blocking/easylist.txt" to text.toByteArray())
+        assertEquals(text, Blocking.readBundledText("easylist.txt.gz") { name -> inflated[name]?.inputStream() })
+
+        // The resources packaged verbatim.
+        val verbatim = mapOf("blocking/easylist.txt.gz" to gzipped)
+        assertEquals(text, Blocking.readBundledText("easylist.txt.gz") { name -> verbatim[name]?.inputStream() })
+
+        // A list that was never gzipped, and one that is not there at all.
+        assertEquals(text, Blocking.readBundledText("peter-lowe.txt") { name -> if (name == "blocking/peter-lowe.txt") text.byteInputStream() else null })
+        assertNull(Blocking.readBundledText("missing.txt.gz") { null })
+    }
+
     private fun bundledSnapshotDir(): File? {
         var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
         while (dir != null) {

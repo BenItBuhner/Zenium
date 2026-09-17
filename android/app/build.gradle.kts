@@ -23,6 +23,8 @@ val buildWeb = tasks.register<Exec>("buildWeb") {
 
 // The bundled snapshot of the default filter lists (resources/blocking, refreshed with
 // `npm run blocking:snapshot`) ships as assets so the first run blocks ads before any download.
+// The asset merger inflates the `.txt.gz` files and drops the extension on the way into the APK;
+// `Blocking.readBundledText` opens them by either name.
 val copyBlockingSnapshot = tasks.register<Copy>("copyBlockingSnapshot") {
     group = "build"
     description = "Copies the bundled filter-list snapshot into app/src/main/assets/blocking"

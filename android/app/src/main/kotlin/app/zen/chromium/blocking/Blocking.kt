@@ -10,6 +10,7 @@ import app.zen.chromium.Storage
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.io.InputStream
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -219,9 +220,8 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
         storage.execute {
             val started = SystemClock.elapsedRealtime()
             val result = runCatching {
-                val text = assets.open("blocking/${entry.optString("file")}").use { input ->
-                    GZIPInputStream(input).bufferedReader().readText()
-                }
+                val text = readBundledText(entry.optString("file")) { name -> runCatching { assets.open(name) }.getOrNull() }
+                    ?: throw java.io.FileNotFoundException("assets/blocking/${entry.optString("file")}")
                 val document = JSONObject(set.toString()).put("filterText", text)
                 storage.writeSync(file, document.toString())
                 JSONObject()
@@ -248,6 +248,22 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
 
     companion object {
         private const val TAG = "zen-blocking"
+
+        /**
+         * The text of the bundled list the manifest names `file` (`easylist.txt.gz`), through
+         * `open` on an asset path. The Android Gradle plugin's asset merger inflates a `.gz`
+         * asset and drops the extension, so the APK holds `blocking/easylist.txt`; a build that
+         * packages the resources verbatim still holds the gzip. Null when neither is there.
+         */
+        fun readBundledText(file: String, open: (String) -> InputStream?): String? {
+            val inflated = file.removeSuffix(".gz")
+            if (inflated != file) {
+                open("blocking/$inflated")?.use { return it.bufferedReader().readText() }
+            }
+            return open("blocking/$file")?.use { input ->
+                (if (file.endsWith(".gz")) GZIPInputStream(input) else input).bufferedReader().readText()
+            }
+        }
 
         /** The core debounces its index writes; one more beat coalesces a burst of set changes. */
         private const val REBUILD_DELAY_MS = 300L
