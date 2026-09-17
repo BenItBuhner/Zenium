@@ -859,24 +859,6 @@
     font-family: var(--font-sans);
     font-variant-numeric: tabular-nums;
   }
-  /* Two-way choice as one pill: a quiet track, the picked half in the accent tint. */
-  .zen-segmented {
-    background: var(--zen-element-bg);
-  }
-  .zen-segment {
-    color: var(--zen-muted);
-    transition:
-      background 120ms var(--zen-ease),
-      color 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
-  }
-  .zen-segment:active {
-    transform: scale(0.98);
-  }
-  .zen-segment[data-active='true'] {
-    background: rgb(var(--zen-accent-rgb) / 0.16);
-    color: var(--zen-fg);
-  }
   /* A status tint: ink plus at most 16% of its colour, never a filled surface. */
   .zen-settings-warn {
     color: var(--zen-warn);
