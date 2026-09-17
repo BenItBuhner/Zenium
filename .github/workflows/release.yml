@@ -129,6 +129,13 @@ jobs:
           - name: windows-arm64
             os: windows-latest
             args: --win --arm64
+            # electron-builder's bundled 7-Zip (24.09) packs the ARM64 executables of the NSIS payload
+            # with its ARM64 branch filter (7-Zip 23+), which the installer's Nsis7z extractor cannot
+            # decode: the installer exited 0 without zenium.exe and the six Chromium DLLs. Pinning the
+            # older single-stream BCJ filter keeps every entry decodable. The x64 payload never used
+            # that filter and is left as it is. electron-builder >= 26.15.6 pins BCJ for every NSIS
+            # payload itself (electron-userland/electron-builder#9988); drop this with that bump.
+            sevenzip_filter: BCJ
           - name: macos
             os: macos-latest
             args: --mac # x64 and arm64 disk images + zips, see electron-builder.yml
@@ -177,6 +184,9 @@ jobs:
       - name: Bundle main, preload and renderer
         run: npx electron-vite build
       - name: Package
+        env:
+          # Only the 7z payload of an NSIS installer reads this (see the matrix); empty = 7-Zip default.
+          ELECTRON_BUILDER_7Z_FILTER: ${{ matrix.sevenzip_filter }}
         run: |
           case "${{ matrix.name }}" in
             macos)
