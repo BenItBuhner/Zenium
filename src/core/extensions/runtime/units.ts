@@ -201,10 +201,15 @@ export function planUnits(
       webAccessible: manifest.webAccessibleResources.flatMap((set) => set.resources),
       backgroundHtml:
         background && background.kind !== 'page' ? backgroundPageHtml(manifest) : null,
+      // An MV3 worker's `self.location` is its script's URL in Chrome: the page that stands in
+      // for it lives there too (relative `importScripts`, Web Locks named after the path). The
+      // host serves the generated HTML for the background view's document at that URL.
       backgroundUrl: background
         ? background.kind === 'page'
           ? extensionUrl(boot.id, background.page)
-          : extensionUrl(boot.id, '_generated_background_page.html')
+          : background.kind === 'service_worker'
+            ? extensionUrl(boot.id, background.script)
+            : extensionUrl(boot.id, '_generated_background_page.html')
         : null,
       page: JSON.stringify(page)
     }

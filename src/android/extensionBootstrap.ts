@@ -26,6 +26,12 @@ import {
   installTrustedTypesShield,
   type Any
 } from './extensionIsolation'
+import {
+  installServiceWorkerClient,
+  installServiceWorkerGlobals,
+  type ServiceWorkerEndpoint,
+  type ServiceWorkerMessage
+} from './extensionServiceWorker'
 import type { ClaimedTransport, TransportJanitor } from './extensionTransport'
 
 /**
@@ -150,6 +156,8 @@ declare const __zenExtBoot: Boot
     boot.css
   )
   const engines = new Map<string, EmulatedEngine>()
+  /** Extension pages: the emulated service-worker platform's messages (`t: 'sw'`) per endpoint. */
+  const serviceWorkerEndpoints = new Map<string, ServiceWorkerEndpoint>()
   transport.listen((event) => {
     let message: Record<string, unknown>
     try {
@@ -157,7 +165,12 @@ declare const __zenExtBoot: Boot
     } catch {
       return
     }
-    const engine = engines.get(String(message.ep))
+    const ep = String(message.ep)
+    if (message.t === 'sw') {
+      serviceWorkerEndpoints.get(ep)?.receive(message)
+      return
+    }
+    const engine = engines.get(ep)
     if (engine) engine.receive(message)
   })
 
@@ -289,12 +302,22 @@ declare const __zenExtBoot: Boot
     const frame = frameContext()
     const engine = makeEngine(ext, context, frame, realWindow, false)
     const pageWindow = realWindow
+    const origin = extensionOrigin(ext.id)
+    const endpointId = endpointIdFor(ext)
+    // The service-worker platform between an MV3 worker (a hidden page here) and its pages;
+    // MV2 backgrounds are pages in Chrome too and get none of it.
+    const background = ext.manifest.background as Record<string, unknown> | undefined
+    const workerScript =
+      background && typeof background.service_worker === 'string'
+        ? new URL('/' + background.service_worker.replace(/^\/+/, ''), origin + '/').href
+        : null
+    const swSend = (message: ServiceWorkerMessage): void => engine.post({ t: 'sw', ...message })
+    let lifecycle: (() => Promise<void>) | null = null
 
-    if (context === 'background') {
+    if (context === 'background' && workerScript) {
       // Service-worker globals the MV3 script expects; `importScripts` is synchronous by
       // contract, so it is a synchronous XHR to the extension origin plus an indirect eval (the
       // generated background page is served with 'unsafe-eval' in its CSP for exactly this).
-      const origin = extensionOrigin(ext.id)
       pageWindow.importScripts = (...urls: string[]): void => {
         for (const url of urls) {
           const absolute = new URL(url, location.href).href
@@ -308,19 +331,29 @@ declare const __zenExtBoot: Boot
           indirectEval(xhr.responseText + `\n//# sourceURL=${absolute}`)
         }
       }
-      pageWindow.skipWaiting = (): Promise<void> => Promise.resolve()
-      pageWindow.clients = {
-        claim: (): Promise<void> => Promise.resolve(),
-        matchAll: (): Promise<never[]> => Promise.resolve([])
-      }
-      pageWindow.registration = {
-        scope: origin + '/',
-        active: null,
-        installing: null,
-        waiting: null,
-        unregister: (): Promise<boolean> => Promise.resolve(true)
-      }
-      pageWindow.serviceWorker = { state: 'activated', scriptURL: location.href }
+      const worker = installServiceWorkerGlobals(pageWindow, {
+        origin,
+        scriptUrl: location.href,
+        version: ext.version,
+        send: swSend,
+        openTab: (url) => {
+          const tabs = (engine.chrome as { tabs?: { create?: (p: { url: string }) => void } }).tabs
+          tabs?.create?.({ url })
+        },
+        prefix: `${endpointId}:`
+      })
+      serviceWorkerEndpoints.set(endpointId, worker)
+      lifecycle = worker.lifecycle
+    } else if (workerScript) {
+      serviceWorkerEndpoints.set(
+        endpointId,
+        installServiceWorkerClient(pageWindow, {
+          origin,
+          scriptUrl: workerScript,
+          send: swSend,
+          prefix: `${endpointId}:`
+        })
+      )
     }
 
     if (context === 'popup') {
@@ -343,7 +376,17 @@ declare const __zenExtBoot: Boot
       })
     }
 
-    window.addEventListener('load', () => engine.ready(), { once: true })
+    // The worker's `install` and `activate` (first run of a version) come before `ready`, which
+    // is what releases `runtime.onInstalled` and the events held for the start.
+    window.addEventListener(
+      'load',
+      () => {
+        const ready = (): void => engine.ready()
+        if (lifecycle) lifecycle().then(ready, ready)
+        else ready()
+      },
+      { once: true }
+    )
     return
   }
 

@@ -61,7 +61,7 @@ class ExtensionWebView(
 
     private inner class Client : WebViewClient() {
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-            extensions.intercept(request, null, served)
+            extensions.intercept(request, null, served, backgroundDocument = context == "background")
 
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val url = request.url.toString()

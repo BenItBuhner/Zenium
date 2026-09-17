@@ -149,9 +149,8 @@ describe('planUnits', () => {
     const planned = planUnits(boot, manifest, env)
     expect(planned.units).toEqual([])
     expect(planned.served.webAccessible).toEqual(['img/*.png'])
-    expect(planned.served.backgroundUrl).toBe(
-      `https://${ID}.ext.zenium.invalid/_generated_background_page.html`
-    )
+    // The worker's page is served at the script's URL: `self.location` as in Chrome.
+    expect(planned.served.backgroundUrl).toBe(`https://${ID}.ext.zenium.invalid/sw.js`)
     expect(planned.served.backgroundHtml).toContain('<script type="module" src="/sw.js">')
     const page = JSON.parse(planned.served.page) as {
       kind: string
@@ -159,6 +158,26 @@ describe('planUnits', () => {
     }
     expect(page.kind).toBe('page')
     expect(page.extension.groups).toEqual([])
+  })
+
+  it('generates the MV2 background page at the path Chrome uses', () => {
+    const manifest = parseRuntimeManifest(
+      {
+        manifest_version: 2,
+        name: 'Old',
+        version: '1',
+        background: { scripts: ['a.js', 'b.js'], persistent: true }
+      },
+      null
+    )
+    const boot = buildExtensionBoot(ID, manifest, null, [], 'world')
+    const planned = planUnits(boot, manifest, env)
+    expect(planned.served.backgroundUrl).toBe(
+      `https://${ID}.ext.zenium.invalid/_generated_background_page.html`
+    )
+    expect(planned.served.backgroundHtml).toContain(
+      '<script src="/a.js"></script><script src="/b.js"></script>'
+    )
   })
 
   it('uses the MV2 background page URL as is', () => {

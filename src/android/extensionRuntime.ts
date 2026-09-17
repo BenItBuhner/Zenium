@@ -52,6 +52,7 @@ import {
 } from './extensionApi'
 import { AndroidExtensions, type AndroidExtensionsOptions } from './extensionHost'
 import type { ExtensionRuntimeHooks } from './extensionRuntimeHooks'
+import type { ClientInfo } from './extensionServiceWorker'
 import type { AndroidExtensionStoreIo } from './extensionStoreIo'
 import type { ViewEventPayloads } from './views'
 
@@ -188,6 +189,12 @@ const CONTEXTS: readonly EngineContextKind[] = [
   'page'
 ]
 
+/** The extension's own pages are the clients of its service worker; frames in tabs are not. */
+const isServiceWorkerClient = (endpoint: Endpoint): boolean =>
+  endpoint.context !== 'background' &&
+  endpoint.context !== 'content' &&
+  endpoint.context !== 'userScript'
+
 function emptyData(): RuntimeData {
   return {
     version: 1,
@@ -264,6 +271,11 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   /** The `ext.setRules` in flight, and whether another is owed after it (see `pushRules`). */
   private rulesPush: Promise<void> | null = null
   private rulesDirty = false
+  /**
+   * Relayed `MessagePort`s of the emulated service-worker platform (`extensionServiceWorker.ts`):
+   * port id → the client page it belongs to; the other end is always the extension's worker.
+   */
+  private readonly swPorts = new Map<string, { client: string; extensionId: string }>()
   private popupOpen: string | null = null
   private observing = false
   private subscribed = false
@@ -445,6 +457,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       this.router.unregister(endpoint.id)
       this.listening.delete(endpoint.id)
     }
+    for (const [port, owner] of [...this.swPorts])
+      if (owner.extensionId === id) this.swPorts.delete(port)
     if (this.popupOpen === id) this.closePopup()
     this.updateObserving()
     await this.bridge.call('ext.detach', { id })
@@ -863,8 +877,108 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
         this.router.handle(ep, message)
         return
       }
+      case 'sw':
+        this.onServiceWorkerMessage(endpoint, message)
+        return
       default:
         this.router.handle(ep, message)
+    }
+  }
+
+  /**
+   * The emulated service-worker platform (`extensionServiceWorker.ts`): a page's
+   * `navigator.serviceWorker.active.postMessage` (`post`) goes to the extension's worker and
+   * starts it when it is stopped, as in Chrome; the worker's `client.postMessage` (`post` with
+   * `to`) goes to that page; relayed port traffic (`port`, `close`) follows the port to the client
+   * it was created for, or to the worker. `clients` lists the extension's pages for
+   * `clients.matchAll`. A stopped worker is not started for a port: its end of the port died with
+   * it, as it does in Chrome.
+   */
+  private onServiceWorkerMessage(endpoint: Endpoint, message: Record<string, unknown>): void {
+    const id = endpoint.extensionId
+    const op = String(message.op)
+    const ports = Array.isArray(message.ports) ? message.ports.map(String) : []
+    const portId = String(message.port ?? '')
+    if (endpoint.context === 'background') {
+      if (op === 'clients') {
+        this.sendTo(endpoint.id, {
+          t: 'sw',
+          op: 'clients',
+          id: message.id,
+          clients: this.serviceWorkerClients(id)
+        })
+        return
+      }
+      const to = op === 'post' ? String(message.to ?? '') : this.swPorts.get(portId)?.client
+      const client = to ? this.router.endpoint(to) : undefined
+      if (!client || client.extensionId !== id || !isServiceWorkerClient(client)) return
+      for (const port of ports) this.swPorts.set(port, { client: client.id, extensionId: id })
+      if (op === 'close') this.swPorts.delete(portId)
+      this.sendTo(
+        client.id,
+        op === 'post'
+          ? { t: 'sw', op: 'message', data: message.data, ports }
+          : { t: 'sw', op, port: portId, data: message.data, ports }
+      )
+      return
+    }
+    if (op === 'clients' || !isServiceWorkerClient(endpoint) || !this.background.has(id)) return
+    for (const port of ports) this.swPorts.set(port, { client: endpoint.id, extensionId: id })
+    if (op === 'close') this.swPorts.delete(portId)
+    if (op !== 'post' && this.background.state(id) === 'stopped') return
+    const payload =
+      op === 'post'
+        ? {
+            t: 'sw',
+            op: 'message',
+            from: endpoint.id,
+            url: endpoint.url,
+            context: endpoint.context,
+            focused: endpoint.context === 'popup' || endpoint.tabId === this.activeTabId,
+            visible: endpoint.context === 'popup' || endpoint.tabId === this.activeTabId,
+            data: message.data,
+            ports
+          }
+        : { t: 'sw', op, port: portId, data: message.data, ports }
+    this.background.deliver(id, null, () => {
+      const worker = this.backgroundEps.get(id)
+      if (worker) this.sendTo(worker, payload)
+    })
+  }
+
+  /** The extension's pages as `WindowClient`s: popups, options and offscreen pages, its tabs. */
+  private serviceWorkerClients(id: string): ClientInfo[] {
+    return this.router
+      .of(id)
+      .filter(isServiceWorkerClient)
+      .map((endpoint) => {
+        const shown = endpoint.context === 'popup' || endpoint.tabId === this.activeTabId
+        return {
+          id: endpoint.id,
+          url: endpoint.url,
+          context: endpoint.context,
+          focused: shown,
+          visible: shown
+        }
+      })
+  }
+
+  /** An endpoint went away: the ports relayed to it are closed on the other side. */
+  private closeServiceWorkerPorts(endpoint: Endpoint): void {
+    const id = endpoint.extensionId
+    const isWorker = endpoint.context === 'background'
+    for (const [port, owner] of [...this.swPorts]) {
+      if (owner.extensionId !== id) continue
+      if (isWorker) {
+        this.swPorts.delete(port)
+        if (this.router.endpoint(owner.client))
+          this.sendTo(owner.client, { t: 'sw', op: 'close', port })
+      } else if (owner.client === endpoint.id) {
+        this.swPorts.delete(port)
+        const worker = this.backgroundEps.get(id)
+        if (worker && this.background.state(id) === 'running')
+          this.sendTo(worker, { t: 'sw', op: 'close', port })
+      }
     }
   }
 
@@ -914,6 +1028,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       const endpoint = this.router.endpoint(ep)
       this.router.unregister(ep)
       this.listening.delete(ep)
+      if (endpoint) this.closeServiceWorkerPorts(endpoint)
       if (
         endpoint?.context === 'background' &&
         this.backgroundEps.get(endpoint.extensionId) === ep

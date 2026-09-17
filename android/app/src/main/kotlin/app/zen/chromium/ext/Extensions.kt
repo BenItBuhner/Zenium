@@ -755,9 +755,16 @@ class Extensions(private val host: Host) {
      * Every WebView's `shouldInterceptRequest` (background thread). Tab pages: a top-level
      * navigation to an extension origin gets any file (Chrome lets any extension page open as a
      * tab), other frames only its web-accessible resources; then the DNR decision. Extension
-     * WebViews: any file.
+     * WebViews: any file, and the background view's document is the generated background page
+     * wherever the core put it (`backgroundDocument`: an MV3 worker's page lives at the worker
+     * script's URL, so `self.location` reads as in Chrome).
      */
-    fun intercept(request: WebResourceRequest, tab: TabWebView?, extensionPage: Served?): WebResourceResponse? {
+    fun intercept(
+        request: WebResourceRequest,
+        tab: TabWebView?,
+        extensionPage: Served?,
+        backgroundDocument: Boolean = false
+    ): WebResourceResponse? {
         val url = request.url
         val hostName = url.host ?: return null
         if (hostName.endsWith(ORIGIN_SUFFIX)) {
@@ -771,6 +778,9 @@ class Extensions(private val host: Host) {
                     tab.currentUrl?.startsWith(origin) == true
                 )
             if (extensionPage == null && !ownPage && !ext.webAccessible.any { it.matches(path) }) return notFound()
+            if (backgroundDocument && request.isForMainFrame && ext.backgroundHtml != null && "$origin$path" == ext.backgroundUrl) {
+                return response("text/html", 200, "OK", ext.backgroundHtml.toByteArray())
+            }
             return serve(ext, path)
         }
         if (extensionPage != null) return null

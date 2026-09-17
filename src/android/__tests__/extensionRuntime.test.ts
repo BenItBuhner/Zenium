@@ -359,9 +359,8 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     const config = JSON.parse(String(units[0].config)) as Record<string, unknown>
     expect((config.extension as Record<string, unknown>).isolation).toBe('world')
     const served = configure[0].served as Record<string, unknown>
-    expect(served.backgroundUrl).toBe(
-      `https://${ID}.ext.zenium.invalid/_generated_background_page.html`
-    )
+    // The worker's page stands at the script's URL, where Chrome's `self.location` points.
+    expect(served.backgroundUrl).toBe(`https://${ID}.ext.zenium.invalid/bg.js`)
     expect(String(served.backgroundHtml)).toContain('<script src="/bg.js"></script>')
     const late = JSON.parse(String(served.late)) as Record<string, unknown>
     expect(late.late).toBe(true)
@@ -596,6 +595,72 @@ describe('AndroidExtensionRuntime: the background lifecycle', () => {
     h.notifyState()
     expect(h.kt.calledWith('ext.background.start')).toHaveLength(1)
     expect(h.runtime.backgroundStats(ID)).toMatchObject({ dropped: 1 })
+  })
+
+  it('a page posting to navigator.serviceWorker wakes the stopped worker; its ports are relayed both ways and closed with it', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    h.tick(30_000)
+    h.runtime.onGone(['bg1'])
+    hello(h, 'pop1', 'popup', { url: `https://${ID}.ext.zenium.invalid/popup.html` })
+    // A port handed to the worker with the first postMessage (Stylus's shape).
+    message(h, 'pop1', { t: 'sw', op: 'post', data: { lock: '/bg.js' }, ports: ['pop1:1'] })
+    expect(h.runtime.background.state(ID)).toBe('starting')
+    backgroundUp(h, 'bg2')
+    const arrived = h.kt.to('bg2').filter((m) => m.t === 'sw')
+    expect(arrived).toEqual([
+      {
+        t: 'sw',
+        op: 'message',
+        from: 'pop1',
+        url: `https://${ID}.ext.zenium.invalid/popup.html`,
+        context: 'popup',
+        focused: true,
+        visible: true,
+        data: { lock: '/bg.js' },
+        ports: ['pop1:1'],
+        ep: 'bg2'
+      }
+    ])
+    // Traffic on the port follows it to the popup, and the popup's to the worker.
+    message(h, 'bg2', { t: 'sw', op: 'port', port: 'pop1:1', data: { id: 1, res: 42 }, ports: [] })
+    expect(h.kt.to('pop1').filter((m) => m.t === 'sw')).toEqual([
+      { t: 'sw', op: 'port', port: 'pop1:1', data: { id: 1, res: 42 }, ports: [], ep: 'pop1' }
+    ])
+    message(h, 'pop1', { t: 'sw', op: 'port', port: 'pop1:1', data: { id: 2, args: [1] } })
+    expect(h.kt.to('bg2').filter((m) => m.t === 'sw')).toHaveLength(2)
+    // The worker lists its pages and posts to one, handing it a port of its own.
+    message(h, 'bg2', { t: 'sw', op: 'clients', id: 9 })
+    const listed = h.kt.to('bg2').find((m) => m.t === 'sw' && m.op === 'clients')
+    expect(listed?.clients).toEqual([
+      {
+        id: 'pop1',
+        url: `https://${ID}.ext.zenium.invalid/popup.html`,
+        context: 'popup',
+        focused: true,
+        visible: true
+      }
+    ])
+    message(h, 'bg2', { t: 'sw', op: 'post', to: 'pop1', data: { hi: 1 }, ports: ['bg2:1'] })
+    expect(h.kt.to('pop1').filter((m) => m.t === 'sw' && m.op === 'message')).toEqual([
+      { t: 'sw', op: 'message', data: { hi: 1 }, ports: ['bg2:1'], ep: 'pop1' }
+    ])
+    // A content script is no client and cannot post to the worker's pages.
+    hello(h, 'doc1.n.abcdefgh', 'content')
+    message(h, 'bg2', { t: 'sw', op: 'post', to: 'doc1.n.abcdefgh', data: 1, ports: [] })
+    expect(h.kt.to('doc1.n.abcdefgh').filter((m) => m.t === 'sw')).toHaveLength(0)
+    // The worker idles out: the popup hears that both ports are gone, and a message on one of
+    // them does not start the worker again (its end died with it).
+    h.tick(30_000)
+    h.runtime.onGone(['bg2'])
+    const closed = h.kt
+      .to('pop1')
+      .filter((m) => m.t === 'sw' && m.op === 'close')
+      .map((m) => m.port)
+    expect(closed.sort()).toEqual(['bg2:1', 'pop1:1'])
+    message(h, 'pop1', { t: 'sw', op: 'port', port: 'pop1:1', data: 3 })
+    expect(h.runtime.background.state(ID)).toBe('stopped')
   })
 
   it('a runtime.sendMessage from a content script wakes the stopped worker and is answered once it runs', async () => {
