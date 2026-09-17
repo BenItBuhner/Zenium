@@ -8,6 +8,7 @@ import {
   isLocalEndpoint
 } from '@shared/livefolders'
 import { cmd } from '@renderer/lib/api'
+import { useViewport } from '@renderer/lib/formFactor'
 import { closeOverlay } from '@renderer/lib/ui'
 import { cn, relativeTime } from '@renderer/lib/utils'
 import { Button } from '../ui/button'
@@ -32,6 +33,8 @@ export function LiveFolderEditor({
     () => existing ?? defaultLiveFolderConfig(folderId ?? 'new', 'github-pulls')
   )
   const [saving, setSaving] = useState(false)
+  // On a phone the keyboard would cover the form and take the first back for itself.
+  const phone = useViewport().formFactor === 'phone'
   const provider = LIVE_FOLDER_PROVIDERS.find((p) => p.id === config.provider)!
   const isGithub = config.provider === 'github-pulls' || config.provider === 'github-issues'
   const isRest = config.provider === 'rest'
@@ -125,7 +128,7 @@ export function LiveFolderEditor({
           </Label>
           <Input
             id="lf-source"
-            autoFocus
+            autoFocus={!phone}
             value={config.source}
             placeholder={
               isGithub
