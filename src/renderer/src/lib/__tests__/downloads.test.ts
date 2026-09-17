@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DownloadItem, UIState } from '@shared/types'
-import { DEFAULT_DOWNLOAD_SETTINGS, type DownloadChange } from '@shared/downloadsShell'
+import type { DownloadItem, DownloadSettings, UIState } from '@shared/types'
+import { downloadItem } from '@shared/__tests__/downloadFixtures'
 
 vi.mock('../api', () => ({
   cmd: vi.fn(() => Promise.resolve(null)),
@@ -16,31 +16,23 @@ import {
   downloadButtonVisible,
   downloadsUi,
   handleDownloadChange,
+  handleDownloadDanger,
   openDownloadBubble
 } from '../downloads'
+import type { DownloadChange } from '../downloadsEngine'
 import { browserStore, uiStore } from '../ui'
 
-function item(over: Partial<DownloadItem> & { id: string }): DownloadItem {
-  return {
-    filename: `${over.id}.bin`,
-    url: `https://files.test/${over.id}.bin`,
-    savePath: `/tmp/${over.id}.bin`,
-    state: 'completed',
-    receivedBytes: 10,
-    totalBytes: 10,
-    startedAt: 1_000,
-    mimeType: '',
-    ...over
-  }
-}
+const item = downloadItem
 
+/** The snapshot as the engine sends it: the settings block is partial, `askWhereToSave` top-level. */
 function state(
   downloads: DownloadItem[],
-  over: { focused?: boolean; settings?: Partial<UIState['settings']['downloads']> } = {}
+  over: { focused?: boolean; settings?: Partial<DownloadSettings> } = {}
 ): UIState {
   return {
     downloads,
-    settings: { downloads: { ...DEFAULT_DOWNLOAD_SETTINGS, ...over.settings } },
+    downloadsProgress: { received: 0, total: 0, indeterminate: false, active: 0 },
+    settings: { askWhereToSave: false, downloads: over.settings ?? {} },
     window: { focused: over.focused ?? true },
     spaces: [{ id: 's', activeTabId: null }],
     activeSpaceId: 's',
@@ -179,9 +171,50 @@ describe('downloads chrome state', () => {
 
   it('a removed record leaves the badge', () => {
     downloadsUi.set({ unseen: ['a', 'b'] })
-    const gone = item({ id: 'a' })
+    const gone = item({ id: 'a', removed: true })
     handleDownloadChange(change('removed', gone), state([]))
     expect(downloadsUi.get().unseen).toEqual(['b'])
+  })
+
+  it('reads the snapshot the event runs ahead of: the finished item speaks for itself', async () => {
+    // `download.changed` arrives before the state that reflects it, so the list still says
+    // "progressing" for the item that just completed; nothing else runs, so the bubble opens.
+    const stale = item({ id: 'a', state: 'progressing', receivedBytes: 5 })
+    handleDownloadChange(change('done', item({ id: 'a' })), state([stale]))
+    await flush()
+    expect(downloadsUi.get().open).toBe(true)
+    expect(downloadsUi.get().partial).toEqual(['a'])
+  })
+
+  it('a flagged file opens the bubble on its warning whatever the auto-open setting says', async () => {
+    const flagged = item({
+      id: 'setup',
+      danger: { level: 'dangerous', reason: 'executable', message: 'Harmful.' }
+    })
+    const s = state([flagged], { settings: { openPanelOnComplete: false } })
+    handleDownloadChange(change('done', flagged), s)
+    await flush()
+    expect(downloadsUi.get().open).toBe(false)
+    handleDownloadDanger('setup', s)
+    await flush()
+    expect(downloadsUi.get()).toMatchObject({ open: true, autoClose: false, highlightId: 'setup' })
+    // Already up and about to auto-close: the warning holds it open instead.
+    dismissDownloadBubble()
+    downloadsUi.set({ unseen: [] })
+    handleDownloadChange(change('done', item({ id: 'b' })), state([flagged, item({ id: 'b' })]))
+    await flush()
+    expect(downloadsUi.get().autoClose).toBe(true)
+    handleDownloadDanger('setup', s)
+    expect(downloadsUi.get()).toMatchObject({ open: true, autoClose: false, highlightId: 'setup' })
+    // Not while the window is in the background, and never over another surface.
+    dismissDownloadBubble()
+    handleDownloadDanger('setup', state([flagged], { focused: false }))
+    await flush()
+    expect(downloadsUi.get().open).toBe(false)
+    uiStore.set({ overlay: 'settings' })
+    handleDownloadDanger('setup', s)
+    await flush()
+    expect(downloadsUi.get().open).toBe(false)
   })
 
   it('opening the bubble by hand marks everything seen and hides the page', async () => {

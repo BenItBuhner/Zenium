@@ -22,6 +22,7 @@ import type {
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS, spaceLabel } from '@shared/defaults'
+import { resolveDownloadSettings } from '@shared/downloads'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
@@ -377,8 +378,9 @@ function CompactSection({
 }
 
 /**
- * Settings > Downloads, bound to the engine contract's `Settings.downloads` keys. Rows whose
- * engine command does not exist yet (choosing the folder, the auto-open list) wait for it.
+ * Settings > Downloads, bound to the engine's `Settings.downloads` (PR #69): the folder through
+ * the engine's picker, the panel switches and the completion notification. `askWhereToSave`
+ * stays at the top level of Settings, where the engine reads it.
  */
 function DownloadsSection({
   state,
@@ -387,41 +389,44 @@ function DownloadsSection({
   state: UIState
   set: (p: Partial<Settings>) => void
 }): JSX.Element {
-  const d = state.settings.downloads
-  const patch = (p: Partial<DownloadSettings>): void => set({ downloads: { ...d, ...p } })
+  const d = resolveDownloadSettings(state.settings)
+  const patch = (p: Partial<DownloadSettings>): void => set({ downloads: p })
   const files = state.platform !== 'android'
   const engine = downloadsEngine
   return (
     <>
       <Group title="Saving">
-        {files && (
-          <Row label="Save files to" hint={d.directory ?? 'The system Downloads folder'}>
-            {engine.chooseDirectory && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  void engine.chooseDirectory?.().then((dir) => {
-                    if (dir !== null) patch({ directory: dir })
-                  })
-                }}
-              >
-                Change
-              </Button>
-            )}
-            {!engine.chooseDirectory && (
-              <Button variant="secondary" size="sm" onClick={() => engine.openFolder()}>
-                <FolderOpen className="h-3.5 w-3.5" />
-                Open folder
-              </Button>
-            )}
-          </Row>
-        )}
+        <Row label="Save files to" hint={d.directory ?? 'The system Downloads folder'}>
+          {d.directory !== null && (
+            <Button variant="ghost" size="sm" onClick={() => patch({ directory: null })}>
+              Use default
+            </Button>
+          )}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              void engine.chooseDirectory().then((dir) => {
+                if (dir !== null) patch({ directory: dir })
+              })
+            }}
+          >
+            Change
+          </Button>
+          {files && (
+            <Button
+              variant="secondary"
+              size="sm"
+              title="Open downloads folder"
+              aria-label="Open downloads folder"
+              onClick={() => engine.openFolder()}
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </Row>
         <Row label="Always ask where to save files">
-          <Switch
-            checked={d.askWhereToSave}
-            onCheckedChange={(v) => patch({ askWhereToSave: v })}
-          />
+          <Switch checked={d.askWhereToSave} onCheckedChange={(v) => set({ askWhereToSave: v })} />
         </Row>
         {d.autoOpenTypes.length > 0 && (
           <Row

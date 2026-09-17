@@ -1,8 +1,8 @@
 import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Download } from 'lucide-react'
-import type { UIState } from '@shared/types'
-import { displayName, isActiveDownload, type DownloadRecord } from '@shared/downloadsShell'
+import type { DownloadItem, UIState } from '@shared/types'
+import { displayName, isActiveDownload } from '@shared/downloadsShell'
 import {
   DOWNLOAD_LINGER_MS,
   bubbleItems,
@@ -133,7 +133,7 @@ function BubbleRow({
   item,
   highlighted
 }: {
-  item: DownloadRecord
+  item: DownloadItem
   highlighted: boolean
 }): JSX.Element {
   const ref = useRef<HTMLLIElement>(null)

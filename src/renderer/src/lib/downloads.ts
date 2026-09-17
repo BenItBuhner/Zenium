@@ -1,7 +1,13 @@
-import type { UIState } from '@shared/types'
-import { isActiveDownload, type DownloadChange, type DownloadRecord } from '@shared/downloadsShell'
+import type { DownloadItem, UIState } from '@shared/types'
+import { resolveDownloadSettings } from '@shared/downloads'
+import { isActiveDownload } from '@shared/downloadsShell'
 import { onEvent, run } from './api'
-import { downloadsEngine, onDownloadChanged } from './downloadsEngine'
+import {
+  downloadsEngine,
+  onDownloadChanged,
+  onDownloadDanger,
+  type DownloadChange
+} from './downloadsEngine'
 import { isPhone } from './formFactor'
 import { reducedMotion } from './motion/spring'
 import { activeTab } from './selectors'
@@ -163,11 +169,13 @@ export function revealDownload(id: string | null): void {
  * pulse (and opens the bubble when Settings ask for the Firefox behaviour). Finished items count
  * on the badge while the bubble is closed; when nothing is left in flight the button lingers
  * for five seconds and, if Settings say so and this window has focus, the partial bubble opens
- * with the items that finished since the user last looked (Chrome 112+).
+ * with the items that finished since the user last looked (Chrome 112+). A flagged file counts
+ * as finished here too: its Keep / Discard is what the bubble is for (`download.danger` follows
+ * and opens it regardless of the setting).
  */
 export function handleDownloadChange(change: DownloadChange, state: UIState): void {
   const { item, kind } = change
-  const settings = state.settings.downloads
+  const settings = resolveDownloadSettings(state.settings)
   const desktop = !isPhone()
   const focused = state.window.focused
   const clear = (): boolean => uiStore.get().overlay === 'none' && !bubbleIsOpen()
@@ -187,7 +195,8 @@ export function handleDownloadChange(change: DownloadChange, state: UIState): vo
           unseen: s.unseen.includes(item.id) ? s.unseen : [...s.unseen, item.id]
         }))
       }
-      if (state.downloads.some(isActiveDownload)) return
+      // The event arrives ahead of the snapshot that reflects it: the item speaks for itself.
+      if (state.downloads.some((i) => i.id !== item.id && isActiveDownload(i))) return
       holdButton(Date.now() + DOWNLOAD_LINGER_MS)
       const finished = downloadsUi.get().unseen
       if (
@@ -224,12 +233,27 @@ function holdButton(until: number): void {
 }
 
 /**
+ * A flagged file finished (`download.danger`): Chrome opens the bubble on its warning whatever
+ * the auto-open setting says, since the file waits on the user's answer. Held open (no
+ * auto-close) so the Keep / Discard pair stays until it is used or dismissed.
+ */
+export function handleDownloadDanger(id: string, state: UIState): void {
+  if (isPhone() || !state.window.focused) return
+  if (uiStore.get().overlay !== 'none') return
+  if (bubbleIsOpen()) {
+    downloadsUi.set({ highlightId: id, autoClose: false })
+    return
+  }
+  void openDownloadBubble({ highlightId: id })
+}
+
+/**
  * Whether the toolbar shows the downloads button right now: from the first download of the
  * session on (Chrome), while anything is in flight or unseen, or always when Settings keep it.
  */
 export function downloadButtonVisible(state: UIState, ui: DownloadsUi): boolean {
   return (
-    state.settings.downloads.alwaysShowButton ||
+    resolveDownloadSettings(state.settings).alwaysShowButton ||
     ui.sessionHadDownload ||
     state.downloads.some(isActiveDownload) ||
     ui.open ||
@@ -242,7 +266,7 @@ export function downloadButtonVisible(state: UIState, ui: DownloadsUi): boolean 
  * The records the bubble lists: the partial set while it exists, else everything, with the
  * transfers still running ahead of the finished ones (each group keeps the engine's order).
  */
-export function bubbleItems(items: DownloadRecord[], partial: string[] | null): DownloadRecord[] {
+export function bubbleItems(items: DownloadItem[], partial: string[] | null): DownloadItem[] {
   const shown = partial ? items.filter((i) => partial.includes(i.id)) : items
   const listed = shown.length > 0 ? shown : items
   return [...listed.filter(isActiveDownload), ...listed.filter((i) => !isActiveDownload(i))]
@@ -253,8 +277,15 @@ export function bubbleItems(items: DownloadRecord[], partial: string[] | null): 
  * panel, drawer, menu, site info) replaces the bubble outright.
  */
 export function startDownloadsUi(): () => void {
+  const withState = <T>(handler: (value: T, state: UIState) => void) => {
+    return (value: T): void => {
+      const state = browserStore.get().state
+      if (state) handler(value, state)
+    }
+  }
   const offs = [
-    onDownloadChanged(handleDownloadChange),
+    onDownloadChanged(withState(handleDownloadChange)),
+    onDownloadDanger(withState(handleDownloadDanger)),
     onEvent('downloads.reveal', ({ id }) => revealDownload(id)),
     uiStore.subscribe(() => {
       const ui = uiStore.get()

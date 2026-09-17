@@ -1,8 +1,8 @@
 import type { JSX } from 'react'
 import { useState } from 'react'
 import { Download, Search } from 'lucide-react'
-import type { UIState } from '@shared/types'
-import { displayName, isActiveDownload, type DownloadRecord } from '@shared/downloadsShell'
+import type { DownloadItem, UIState } from '@shared/types'
+import { displayName, isActiveDownload } from '@shared/downloadsShell'
 import { displayUrl } from '@shared/url'
 import { downloadsEngine, showsDangerDecision } from '@renderer/lib/downloadsEngine'
 import {
@@ -85,7 +85,7 @@ export function DownloadsPanel({ state }: { state: UIState }): JSX.Element {
   )
 }
 
-function PageRow({ item, files }: { item: DownloadRecord; files: boolean }): JSX.Element {
+function PageRow({ item, files }: { item: DownloadItem; files: boolean }): JSX.Element {
   const active = isActiveDownload(item)
   const openable = isOnDisk(item)
   const name = displayName(item)

@@ -1301,6 +1301,11 @@
   .zen-dl-surface .zen-toolbar-button:active:not(:disabled) {
     background: var(--v2-fill-hover);
   }
+  /* A row action that is a toggle ("Open when done") stays filled while on. */
+  .zen-dl-surface .zen-toolbar-button.zen-dl-action-on {
+    background: var(--v2-selection);
+    color: var(--v2-accent);
+  }
   .zen-dl-deemph {
     color: var(--v2-text-deemphasized);
   }

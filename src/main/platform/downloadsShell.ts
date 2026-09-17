@@ -2,14 +2,14 @@ import { BrowserWindow, Notification, app, nativeImage, shell } from 'electron'
 import { existsSync } from 'node:fs'
 import type { AppIconId } from '../../shared/appIcon'
 import type { DownloadItem } from '../../shared/types'
+import { resolveDownloadSettings } from '../../shared/downloads'
 import {
+  allPaused,
   completionNotice,
-  diffDownloads,
+  needsDangerDecision,
   progressBarFor,
   sameProgressBar,
   shouldNotifyCompletion,
-  snapshotDownloads,
-  type DownloadRecord,
   type ProgressBar
 } from '../../shared/downloadsShell'
 import type { Browser } from '../../core/browser'
@@ -19,50 +19,52 @@ import { downloadDir } from './downloads'
 import type { ElectronWindow } from './window'
 
 /**
- * The desktop's OS integration for downloads, built on the engine's list alone: every state
- * broadcast is diffed against the last one, the aggregate progress lands on each window's
- * taskbar entry (and the macOS dock), completions while no window is focused post a
- * notification whose click reveals the item, and the dock badge counts those until a window
- * takes focus again. Nothing here touches `downloads.json` or the transfers.
+ * The desktop's OS integration for downloads, driven by the engine's `download.changed`: the
+ * aggregate progress lands on each window's taskbar entry (and the macOS dock), completions
+ * while no window is focused post a notification whose click reveals the item, and the dock
+ * badge counts those until a window takes focus again. The engine calls neither
+ * `setProgressBar` nor `Notification` (contract); nothing here touches `downloads.json` or the
+ * transfers.
  */
 export class ElectronDownloadsShell {
-  private previous: DownloadRecord[] = []
-  private bar: ProgressBar = { value: -1, mode: 'none' }
+  private readonly bars = new WeakMap<BrowserWindow, ProgressBar>()
   private unseen = 0
   private readonly notifications = new Set<Notification>()
 
   constructor(private readonly browser: Browser) {
-    this.previous = snapshotDownloads(browser.downloads.items)
-    browser.state.subscribe(() => this.sync())
+    browser.onDownloadChange((item, kind) => {
+      this.updateProgressBars()
+      if (kind === 'done') this.onDone(item)
+    })
     app.on('browser-window-focus', () => this.onWindowFocused())
     // A window opened mid-download shows the same taskbar progress as the others.
-    app.on('browser-window-created', (_event, bw) => {
-      if (this.bar.mode !== 'none') bw.setProgressBar(this.bar.value, { mode: this.bar.mode })
-    })
+    app.on('browser-window-created', () => this.updateProgressBars())
   }
 
-  private sync(): void {
-    const items = this.browser.downloads.items
-    const changes = diffDownloads(this.previous, items)
-    this.previous = snapshotDownloads(items)
-    this.updateProgressBar(items)
-    for (const change of changes) {
-      if (change.kind === 'done' && change.item.state === 'completed') {
-        this.onCompleted(change.item)
-      }
+  /**
+   * Each window's taskbar entry shows the aggregate of the downloads that window lists: private
+   * windows count their private transfers too, the rest see the regular list only.
+   */
+  private updateProgressBars(): void {
+    for (const win of this.browser.allWindows()) {
+      const bw = browserWindowOf(win)
+      if (!bw) continue
+      const filter = win.isPrivate ? {} : { private: false }
+      const progress = this.browser.downloads.aggregateProgress(filter)
+      const next = progressBarFor(
+        progress,
+        allPaused(this.browser.downloads.visibleTo(win.isPrivate))
+      )
+      const previous = this.bars.get(bw)
+      if (previous && sameProgressBar(previous, next)) continue
+      this.bars.set(bw, next)
+      bw.setProgressBar(next.value, { mode: next.mode })
     }
   }
 
-  private updateProgressBar(items: readonly DownloadItem[]): void {
-    const next = progressBarFor(items)
-    if (sameProgressBar(this.bar, next)) return
-    this.bar = next
-    for (const bw of BrowserWindow.getAllWindows()) {
-      if (!bw.isDestroyed()) bw.setProgressBar(next.value, { mode: next.mode })
-    }
-  }
-
-  private onCompleted(item: DownloadRecord): void {
+  /** `done` covers completed, cancelled and interrupted; a flagged file waits for Keep instead. */
+  private onDone(item: DownloadItem): void {
+    if (item.state !== 'completed' || needsDangerDecision(item)) return
     const focused = this.browser.allWindows().some((w) => w.host.isFocused())
     if (focused) return
     this.unseen++
@@ -70,7 +72,8 @@ export class ElectronDownloadsShell {
       app.dock.setBadge(String(this.unseen))
       app.dock.bounce('informational')
     }
-    if (!shouldNotifyCompletion(item, this.browser.state.settings.downloads, focused)) return
+    const settings = resolveDownloadSettings(this.browser.state.settings)
+    if (!shouldNotifyCompletion(item, settings, focused)) return
     if (!Notification.isSupported()) return
     const notice = completionNotice(item)
     const notification = new Notification({

@@ -1,7 +1,7 @@
 import type { JSX } from 'react'
 import { Download } from 'lucide-react'
 import type { UIState } from '@shared/types'
-import { isActiveDownload, progressBarFor } from '@shared/downloadsShell'
+import { allPaused, progressBarFor } from '@shared/downloadsShell'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
 import { downloadButtonVisible, downloadsUi, toggleDownloadBubble } from '@renderer/lib/downloads'
 import { cn } from '@renderer/lib/utils'
@@ -28,14 +28,15 @@ export function DownloadButton({
   if (!downloadButtonVisible(state, ui)) return null
 
   const items = downloadsEngine.list(state)
-  const active = items.filter(isActiveDownload)
-  const bar = progressBarFor(active)
+  // The ring shows the engine's aggregate of this window's in-flight transfers.
+  const progress = state.downloadsProgress
+  const bar = progressBarFor(progress, allPaused(items))
   const unseen = ui.unseen.filter((id) => items.some((i) => i.id === id))
   const failed = unseen.some((id) => items.find((i) => i.id === id)?.state === 'interrupted')
   const open = ui.open && !ui.closing
   const label =
-    active.length > 0
-      ? `Downloads, ${active.length} in progress`
+    progress.active > 0
+      ? `Downloads, ${progress.active} in progress`
       : unseen.length > 0
         ? `Downloads, ${unseen.length} new`
         : 'Downloads'
