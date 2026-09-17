@@ -70,7 +70,7 @@ export function LanguagesSection({ state }: { state: UIState }): JSX.Element {
         addLabel="Add a language to always translate"
         onAdd={(code) => rule(code, 'always')}
         onRemove={(code) => rule(code, 'ask')}
-        empty="No languages yet."
+        empty="No languages yet"
       />
 
       <LanguageList
@@ -81,7 +81,7 @@ export function LanguagesSection({ state }: { state: UIState }): JSX.Element {
         addLabel="Add a language to never translate"
         onAdd={(code) => rule(code, 'never')}
         onRemove={(code) => rule(code, 'ask')}
-        empty="No languages yet."
+        empty="No languages yet"
       />
 
       <Group
@@ -90,7 +90,7 @@ export function LanguagesSection({ state }: { state: UIState }): JSX.Element {
         card
       >
         {prefs.neverTranslateSites.length === 0 ? (
-          <Empty>No sites yet.</Empty>
+          <Empty>No sites yet</Empty>
         ) : (
           prefs.neverTranslateSites.map((site) => (
             <Row key={site} label={site}>
@@ -157,8 +157,9 @@ function Row({
   )
 }
 
+/** An empty list (§9.17): one centred sentence, no full stop, top-anchored in the card. */
 function Empty({ children }: { children: ReactNode }): JSX.Element {
-  return <div className="zen-translate-row zen-translate-caption">{children}</div>
+  return <div className="zen-translate-empty">{children}</div>
 }
 
 /** A list of languages with a menulist to add one, in a card of its own. */
@@ -272,7 +273,7 @@ function ModelsGroup({ state }: { state: UIState }): JSX.Element {
       card
     >
       {installed.length === 0 && downloading.length === 0 && (
-        <Empty>No models on this device yet.</Empty>
+        <Empty>No models on this device yet</Empty>
       )}
       {installed.map((m) => (
         <Row key={pairKey(m)} label={pairLabel(m.from, m.to)} detail={formatBytes(m.bytes)}>
