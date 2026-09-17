@@ -19,10 +19,12 @@ import org.junit.runner.RunWith
  * server cuts halfway (resumed on our own with `Range`), a `data:` link and a `blob:` link named
  * from their anchors, the progress and completion notifications, and the files in the system
  * Downloads app. The page and the files come from a small Node server on the runner
- * (`10.0.2.2:18923` from inside the emulator; see the demo workflow), which generates every byte
- * from the same formula as [expectedByte], so a resumed file is checked byte for byte.
+ * (`.github/scripts/downloads-demo-server.mjs`, reached at `10.0.2.2:18923` from inside the
+ * emulator), which generates every byte from the same formula as [expectedByte], so a resumed
+ * file is checked byte for byte.
  *
- * Driven by the `android-services-downloads-demo` workflow through the shared driver script.
+ * Run through a caller of the shared `android-emulator-demo.yml` workflow with
+ * `DEMO_CLASS=app.zen.chromium.DownloadsDemo` and the server started from `setup-script`.
  * See [DemoHarness] for the recorder handshake.
  */
 @RequiresApi(Build.VERSION_CODES.Q)
