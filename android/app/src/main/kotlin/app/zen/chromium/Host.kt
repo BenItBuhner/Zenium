@@ -63,7 +63,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val launcherIcon = LauncherIcon(activity)
     override val pageToken: String = SecureRandom().let { r -> ByteArray(16).also(r::nextBytes).joinToString("") { "%02x".format(it) } }
     override val pageScript: String = activity.assets.open("page.js").bufferedReader().readText().replace("__ZEN_TOKEN__", pageToken)
-    /** Extension emulation layer (prototype): created before the tabs so their WebViews can attach. */
+    /** The extension runtime's Kotlin half: created before the tabs so their WebViews can attach. */
     override val extensions: Extensions = Extensions(this)
     private val io = Executors.newCachedThreadPool { r -> Thread(r, "zen-io") }
     private val main = Handler(Looper.getMainLooper())
@@ -123,6 +123,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "downloadsDir" to (Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)?.absolutePath ?: ""),
             // Where the extension store installs; its presence turns the extensions capability on.
             "extensionsRoot" to extStore.root.absolutePath,
+            // Whether content scripts get real isolated worlds (decided once, when the runtime was built).
+            "isolatedWorlds" to extensions.isolatedWorlds,
             "insets" to activity.currentInsets(),
             "fullscreen" to immersive
         )

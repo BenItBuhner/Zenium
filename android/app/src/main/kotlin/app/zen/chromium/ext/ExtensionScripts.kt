@@ -79,6 +79,23 @@ object ExtensionScripts {
             "function(window,self,globalThis,chrome,browser){\n$body\n})"
     }
 
+    /**
+     * `expression`, evaluated so that its outcome always comes back as JSON the host can read:
+     * `{"v": <value>}` when it returned, `{"e": "<message>"}` when it threw (`evaluateJavascript`
+     * alone answers an exception with a bare `null`, indistinguishable from a script returning null).
+     */
+    fun guarded(expression: String): String =
+        "(function(){try{return {v:$expression}}catch(e){return {e:String(e&&e.message||e)}}})()"
+
+    /**
+     * A late boot: the content bootstrap with the extension's late config and no sources,
+     * evaluated by the host into the main world of a document that predates the extension's
+     * world (or on a WebView without worlds) so that a following `exec` finds a scope. The
+     * bootstrap is idempotent in a document that booted already.
+     */
+    fun lateBoot(bootstrap: String, lateConfigJson: String, debug: Boolean): String =
+        documentStart(bootstrap, lateConfigJson, emptyList(), emptyMap(), debug)
+
     /** `Content-Type` for a file inside the extension directory, by extension. */
     fun mimeType(path: String): String {
         val ext = path.substringAfterLast('.', "").lowercase()

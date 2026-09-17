@@ -4,7 +4,6 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.util.Base64
 import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
@@ -32,48 +31,80 @@ import java.util.WeakHashMap
 import java.util.concurrent.Executors
 
 /**
- * The Kotlin half of the extension emulation layer. The browser core (TypeScript, in the chrome
- * WebView) owns the extension model: it parses manifests, plans content-script injection, routes
- * messages and implements the `chrome.*` calls. This class is the platform it needs:
+ * The Kotlin half of the extension runtime. The browser core (`src/android/extensionRuntime.ts`,
+ * in the chrome WebView) owns the extension model: it takes the records the store installed,
+ * parses their manifests, plans content-script units, routes messages and implements the
+ * `chrome.*` calls. This class is the platform it needs, one extension at a time:
  *
- *  - the install directory (`files/zen/extensions/<id>/`, unpacked extensions) and a scan of it;
- *  - the synthetic origin `https://<id>.ext.zenium.invalid/`, served from the unpacked directory
- *    through `shouldInterceptRequest` of every WebView (tab pages see only web-accessible
- *    resources; extension pages see everything, plus the generated background page);
- *  - the document-start script units for tab WebViews (bootstrap + sources + config, one unit per
- *    origin-rule set), re-installed on every tab whenever the core reconfigures;
- *  - the `__zenExtBridge` WebMessageListener: every frame that runs a content script or an
- *    extension page says hello with an endpoint id; its JavaScriptReplyProxy is kept so the core
- *    can answer it (`ext.send`);
- *  - hidden background WebViews and the popup bottom sheet;
- *  - declarativeNetRequest on the request path (static rulesets read from disk, dynamic rules
- *    from the core) and, on demand, observational `webRequest` events.
+ *  - `ext.open` reads a record's manifest and locale files from its directory;
+ *  - `ext.configure` compiles that extension's units (bootstrap + sources + config, one script
+ *    per world and origin-rule set, [UnitCompiler] caching per extension and version) and
+ *    installs them on every tab WebView, replacing only that extension's earlier handlers, so a
+ *    reconfigure of one extension leaves every other extension's injected scripts alone;
+ *  - the synthetic origin `https://<id>.ext.zenium.invalid/`, served from the record's
+ *    directory through `shouldInterceptRequest` of every WebView (tab pages see only
+ *    web-accessible resources; extension pages see everything, plus the generated background page);
+ *  - the `__zenExtBridge` WebMessageListener per frame and per isolated world: every frame that
+ *    runs a content script or an extension page says hello with an endpoint id; its
+ *    JavaScriptReplyProxy is kept so the core can answer it (`ext.send`);
+ *  - the transport janitor (`ext-janitor.js`) in the main world of every tab frame, ahead of
+ *    every page script, so a late boot for `scripting.executeScript` into a document that
+ *    predates the extension's world finds an unspoofable bridge;
+ *  - hidden background WebViews (started and stopped by the core's lifecycle policy) and the
+ *    popup / options bottom sheet;
+ *  - declarativeNetRequest on the request path (static rulesets read from the extension
+ *    directory, dynamic rules from the core) and, on demand, observational `webRequest` events.
+ *
+ * Protocol (the core → here), keyed by extension id where it applies: `ext.env`, `ext.open`,
+ * `ext.configure`, `ext.detach`, `ext.background.start` / `stop`, `ext.popup.open` / `close`,
+ * `ext.send`, `ext.exec`, `ext.readFile`, `ext.cookies.get` / `set`, `ext.setRules`,
+ * `ext.observeRequests`. Here → the core (host events): `ext.message`, `ext.gone`,
+ * `ext.popupClosed`, `ext.request`.
  */
 class Extensions(private val host: Host) {
-    val dir: File = File(host.activity.filesDir, "zen/extensions")
     /** Every bridge message carries this; pages never see it (it lives in closures only). */
     val token: String = SecureRandom().let { r -> ByteArray(16).also(r::nextBytes).joinToString("") { "%02x".format(it) } }
+
+    /**
+     * Real isolated worlds: `JS_INJECTION_IN_FRAME_AND_WORLD` (androidx.webkit 1.17, Chromium 146+
+     * WebView). Content-script units then run in a per-extension world and the emulation proxy is
+     * off. Decided once, here on the main thread while the host is built, so the boot payload can
+     * carry it to the core before any extension runs (`reducedExtensionIsolation`).
+     */
+    val isolatedWorlds: Boolean =
+        runCatching { WebViewFeature.isFeatureSupported(WebViewFeature.JS_INJECTION_IN_FRAME_AND_WORLD) }.getOrDefault(false)
+
     private val bootstrap: String by lazy { host.activity.assets.open("ext.js").bufferedReader().readText() }
+    private val janitor: String by lazy {
+        val script = host.activity.assets.open("ext-janitor.js").bufferedReader().readText()
+        "(function(){var __zenExtBoot={token:${JSONObject.quote(token)}};\n$script\n})();"
+    }
+    private val compiler = UnitCompiler { bootstrap }
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-ext") }
 
     /**
-     * One document-start script, injected into frames whose origin matches `origins`; into the
-     * named isolated world when `world` is set (only when the WebView has isolated worlds).
+     * One document-start script of one extension, injected into frames whose origin matches
+     * `origins`; into the named isolated world when `world` is set.
      */
-    class ScriptUnit(val origins: Set<String>, val script: String, val world: String?)
+    class ScriptUnit(val extensionId: String, val key: String, val origins: Set<String>, val script: String, val world: String?)
 
-    /** What the core configured for one enabled extension. */
+    /** What the core configured for one attached extension. */
     class Served(
         val id: String,
+        val version: String,
+        /** The record's directory (`<root>/<id>/<version>`), where every file is read from. */
         val dir: File,
+        val allowFileAccess: Boolean,
         /** `web_accessible_resources` globs (tab pages may only fetch these). */
         val webAccessible: List<Regex>,
         /** The generated background page, or null when the extension has none / an MV2 page. */
         val backgroundHtml: String?,
         val backgroundUrl: String?,
         /** Page-mode boot config (JSON) without `context`; set per WebView kind. */
-        val pageConfig: String
+        val pageConfig: String,
+        /** Content-mode boot config (JSON) of a late boot: no groups, `with` isolation. */
+        val lateConfig: String
     )
 
     /**
@@ -95,24 +126,22 @@ class Extensions(private val host: Host) {
         val world: Boolean
     )
 
-    /**
-     * Real isolated worlds: `JS_INJECTION_IN_FRAME_AND_WORLD` (androidx.webkit 1.17, Chromium 146+
-     * WebView). Content-script units then run in a per-extension world and the emulation proxy is
-     * off. Resolved once, on the main thread, when the core first scans.
-     */
-    val isolatedWorlds: Boolean by lazy {
-        runCatching { WebViewFeature.isFeatureSupported(WebViewFeature.JS_INJECTION_IN_FRAME_AND_WORLD) }.getOrDefault(false)
+    /** Per tab WebView: the janitor's handler and, per extension, the handlers of its units. */
+    private class ViewHandlers {
+        var janitor: ScriptHandler? = null
+        val byExtension = HashMap<String, MutableList<ScriptHandler>>()
     }
-    /** Worlds (by name) whose bridge listener is already registered on a WebView. */
-    private val worldListeners = WeakHashMap<WebView, MutableSet<String>>()
 
-    @Volatile private var units: List<ScriptUnit> = emptyList()
     @Volatile private var served: Map<String, Served> = emptyMap()
+    /** Per extension, the units currently installed on every tab (main thread). */
+    private val units = LinkedHashMap<String, List<ScriptUnit>>()
     @Volatile private var rules: NetRules? = null
     @Volatile private var observeRequests = false
     @Volatile var debug = true
         private set
-    private val handlers = WeakHashMap<WebView, MutableList<ScriptHandler>>()
+    private val handlers = WeakHashMap<WebView, ViewHandlers>()
+    /** Worlds (by name) whose bridge listener is already registered on a WebView. */
+    private val worldListeners = WeakHashMap<WebView, MutableSet<String>>()
     private val endpoints = HashMap<String, Endpoint>()
     private val backgrounds = HashMap<String, ExtensionWebView>()
     private var popup: ExtensionPopup? = null
@@ -133,6 +162,11 @@ class Extensions(private val host: Host) {
      */
     var lateOnPageStarted = 0
         private set
+    /** Late boots `ext.exec` had to run (a document without the extension's scope), for instrumentation. */
+    var lateBoots = 0
+        private set
+    /** `ext.configure` outcomes per extension (`{ units: [{ key, chars, cached }], ms }`), for instrumentation. */
+    val configureStats = HashMap<String, JSONObject>()
 
     val origin = ORIGIN_SUFFIX
 
@@ -142,16 +176,15 @@ class Extensions(private val host: Host) {
 
     fun handle(method: String, args: JSONObject, reply: (Any?) -> Unit) {
         when (method) {
-            "ext.scan" -> {
-                val worlds = isolatedWorlds
-                io.execute {
-                    val list = scan()
-                    main.post {
-                        reply(json("token" to token, "extensions" to list, "uiLanguage" to Locale.getDefault().toLanguageTag(), "isolatedWorlds" to worlds))
-                    }
-                }
+            "ext.env" -> {
+                // A runtime asking for its environment is a new one (the chrome booted): whatever
+                // an earlier runtime left running is history, and it re-attaches what it wants.
+                reset()
+                reply(json("token" to token, "uiLanguage" to Locale.getDefault().toLanguageTag(), "isolatedWorlds" to isolatedWorlds))
             }
+            "ext.open" -> open(args.str("id"), args.str("path"), reply)
             "ext.configure" -> configure(args, reply)
+            "ext.detach" -> { detachExtension(args.str("id")); reply(null) }
             "ext.setRules" -> setRules(args, reply)
             "ext.observeRequests" -> { observeRequests = args.bool("on"); reply(null) }
             "ext.send" -> { send(args.str("ep"), args.str("message")); reply(null) }
@@ -162,110 +195,135 @@ class Extensions(private val host: Host) {
             "ext.exec" -> exec(args, reply)
             "ext.cookies.get" -> reply(CookieManager.getInstance().getCookie(args.str("url")))
             "ext.cookies.set" -> { CookieManager.getInstance().setCookie(args.str("url"), args.str("cookie")); reply(null) }
-            "ext.readFile" -> io.execute {
-                val text = runCatching { fileFor(args.str("id"), args.str("path"))?.readText() }.getOrNull()
-                main.post { reply(text) }
-            }
-            "ext.remove" -> io.execute {
+            "ext.readFile" -> {
                 val id = args.str("id")
-                if (VALID_ID.matches(id)) File(dir, id).deleteRecursively()
-                main.post { reply(null) }
+                val path = args.str("path")
+                io.execute {
+                    val text = runCatching { fileFor(id, path)?.takeIf { it.isFile }?.readText() }.getOrNull()
+                    main.post { reply(text) }
+                }
             }
             else -> throw IllegalArgumentException("Unknown method: $method")
         }
     }
 
     /**
-     * Installed extensions: `[{ id, path, manifest, locales: { <locale>: <messages.json> }, icon }]`.
-     * Only the locales the core can use (the UI locale, its language, the manifest default) travel.
+     * `ext.open { id, path }` → `{ manifest, locales: { <locale>: <messages.json> } }`. The path is
+     * the record's directory; it has to lie under the store's install root. Only the locales the
+     * core can use (the UI locale, its language, the manifest default) travel.
      */
-    fun scan(): JSONArray {
-        val out = JSONArray()
-        val dirs = dir.listFiles()?.filter { it.isDirectory && VALID_ID.matches(it.name) }?.sortedBy { it.name } ?: emptyList()
-        for (extDir in dirs) {
-            val manifestFile = File(extDir, "manifest.json")
-            val manifestText = runCatching { manifestFile.readText() }.getOrNull() ?: continue
+    private fun open(id: String, path: String, reply: (Any?) -> Unit) {
+        io.execute {
+            val dir = recordDir(path)
+            if (dir == null) {
+                main.post { reply(Host.Rejection("The extension directory is not under the install root")) }
+                return@execute
+            }
+            val manifestText = runCatching { File(dir, "manifest.json").readText() }.getOrNull()
+            if (manifestText == null) {
+                main.post { reply(Host.Rejection("manifest.json is missing or unreadable")) }
+                return@execute
+            }
             val manifest = runCatching { JSONObject(manifestText) }.getOrNull()
             val locales = JSONObject()
             val defaultLocale = manifest?.strOrNull("default_locale")
             val ui = Locale.getDefault()
-            for (candidate in listOf(ui.toString(), ui.language, defaultLocale).filterNotNull().map { it.replace('-', '_') }) {
-                val file = File(extDir, "_locales/$candidate/messages.json")
-                if (file.isFile && !locales.has(candidate)) runCatching { locales.put(candidate, file.readText()) }
+            for (candidate in listOf(ui.toLanguageTag(), ui.language, defaultLocale).filterNotNull().map { it.replace('-', '_') }) {
+                if (candidate.isEmpty() || locales.has(candidate) || !LOCALE_DIR.matches(candidate)) continue
+                val file = File(dir, "_locales/$candidate/messages.json")
+                if (file.isFile) runCatching { locales.put(candidate, file.readText()) }
             }
-            val icon = manifest?.optJSONObject("icons")?.let { icons ->
-                val largest = icons.keys().asSequence().mapNotNull { k -> k.toIntOrNull()?.let { it to icons.str(k) } }.maxByOrNull { it.first }
-                largest?.second?.let { path -> dataUrl(File(extDir, path.trimStart('/'))) }
-            }
-            out.put(json("id" to extDir.name, "path" to extDir.absolutePath, "manifest" to manifestText, "locales" to locales, "icon" to icon))
+            Log.i(TAG, "opened ${id.take(8)} from ${dir.path} (${locales.length()} locale file(s))")
+            main.post { reply(json("manifest" to manifestText, "locales" to locales)) }
         }
-        return out
     }
 
     /**
-     * `{ units: [{ origins, config, groups: [{ ext, index, js, isolation }], css: [{ ext, path }] }],
-     *    extensions: { <id>: { webAccessible: [glob], backgroundHtml, backgroundUrl, page } }, debug }`.
-     * Reading the sources is file IO, so the units are assembled off the main thread and installed
-     * on it; background WebViews of extensions that disappeared are torn down.
+     * `ext.configure { id, version, path, allowFileAccess, units: [{ key, origins, world, config,
+     * groups: [{ ext, index, js, isolation }], css: [{ ext, path }] }], served: { webAccessible,
+     * backgroundHtml, backgroundUrl, page, late }, debug }` → `{ units: [{ key, chars, cached }],
+     * ms }`. Reading the sources is file IO, so the units are compiled off the main thread and
+     * installed on it, on every tab, in place of this extension's earlier units only.
      */
     private fun configure(args: JSONObject, reply: (Any?) -> Unit) {
+        val id = args.str("id")
+        if (!VALID_ID.matches(id)) {
+            reply(Host.Rejection("'$id' is not an extension id"))
+            return
+        }
         val debug = args.bool("debug", true)
         io.execute {
-            val extensions = args.obj("extensions")
-            val servedNow = HashMap<String, Served>()
-            for (id in extensions.keys()) {
-                if (!VALID_ID.matches(id)) continue
-                val e = extensions.obj(id)
-                servedNow[id] = Served(
-                    id = id,
-                    dir = File(dir, id),
-                    webAccessible = e.arr("webAccessible").let { a -> List(a.length()) { i -> globToRegex(a.optString(i, "")) } },
-                    backgroundHtml = e.strOrNull("backgroundHtml"),
-                    backgroundUrl = e.strOrNull("backgroundUrl"),
-                    pageConfig = e.str("page", "{}")
-                )
+            val started = System.nanoTime()
+            val dir = recordDir(args.str("path"))
+            if (dir == null) {
+                main.post { reply(Host.Rejection("The extension directory is not under the install root")) }
+                return@execute
             }
-            val unitsNow = ArrayList<ScriptUnit>()
-            val unitsJson = args.arr("units")
-            val bootstrapText = bootstrap
-            for (i in 0 until unitsJson.length()) {
-                val u = unitsJson.optJSONObject(i) ?: continue
-                val groups = ArrayList<ExtensionScripts.Group>()
-                val groupsJson = u.arr("groups")
-                for (j in 0 until groupsJson.length()) {
-                    val g = groupsJson.optJSONObject(j) ?: continue
-                    val ext = g.str("ext")
-                    val files = g.arr("js")
-                    val sources = List(files.length()) { k ->
-                        val path = files.optString(k, "")
-                        runCatching { fileFor(ext, path)?.readText() }.getOrNull()
-                            ?: "console.error(${JSONObject.quote("[Zenium] extension $ext: missing content script $path")});"
-                    }
-                    groups.add(ExtensionScripts.Group(ext, g.optInt("index"), sources, g.str("isolation", "shadow")))
-                }
-                val css = LinkedHashMap<String, String>()
-                val cssJson = u.arr("css")
-                for (j in 0 until cssJson.length()) {
-                    val c = cssJson.optJSONObject(j) ?: continue
-                    val text = runCatching { fileFor(c.str("ext"), c.str("path"))?.readText() }.getOrNull() ?: continue
-                    css["${c.str("ext")}/${c.str("path").trimStart('/')}"] = text
-                }
-                val origins = u.arr("origins").let { a -> List(a.length()) { k -> a.optString(k, "*") } }.toSet().ifEmpty { setOf("*") }
-                val world = u.strOrNull("world")?.takeIf { it.isNotEmpty() && isolatedWorlds }
-                unitsNow.add(ScriptUnit(origins, ExtensionScripts.documentStart(bootstrapText, u.str("config", "{}"), groups, css, debug), world))
+            val s = args.obj("served")
+            val servedNow = Served(
+                id = id,
+                version = args.str("version"),
+                dir = dir,
+                allowFileAccess = args.bool("allowFileAccess"),
+                webAccessible = s.arr("webAccessible").let { a -> List(a.length()) { i -> globToRegex(a.optString(i, "")) } },
+                backgroundHtml = s.strOrNull("backgroundHtml"),
+                backgroundUrl = s.strOrNull("backgroundUrl"),
+                pageConfig = s.str("page", "{}"),
+                lateConfig = s.str("late", "{}")
+            )
+            val compiled = compiler.compile(id, servedNow.version, args.arr("units"), debug) { path ->
+                fileIn(dir, path)?.takeIf { it.isFile }?.readText()
             }
+            val unitsNow = compiled.map { ScriptUnit(id, it.key, it.origins.toSet(), it.script, it.world?.takeIf { isolatedWorlds }) }
+            val ms = (System.nanoTime() - started) / 1_000_000
+            val stats = json(
+                "units" to JSONArray(compiled.map { json("key" to it.key, "chars" to it.script.length, "cached" to it.cached) }),
+                "ms" to ms
+            )
             main.post {
                 this.debug = debug
-                served = servedNow
-                units = unitsNow
-                for (view in host.tabs.all()) installUnits(view)
-                for (id in backgrounds.keys.toList()) if (id !in servedNow) stopBackground(id)
-                if (popup?.extensionId?.let { it !in servedNow } == true) closePopup()
-                Log.i(TAG, "configured ${servedNow.size} extension(s), ${unitsNow.size} script unit(s), " +
-                    "${unitsNow.sumOf { it.script.length }} chars of document-start script")
-                reply(json("units" to unitsNow.map { json("origins" to JSONArray(it.origins.toList()), "chars" to it.script.length) }.let { JSONArray(it) }))
+                served = served + (id to servedNow)
+                units[id] = unitsNow
+                for (view in host.tabs.all()) installExtension(view, servedNow, unitsNow)
+                configureStats[id] = stats
+                Log.i(
+                    TAG,
+                    "configured ${id.take(8)} ${servedNow.version}: ${unitsNow.size} unit(s), " +
+                        "${unitsNow.sumOf { it.script.length }} chars (${compiled.count { it.cached }} cached) in $ms ms"
+                )
+                reply(stats)
             }
         }
+    }
+
+    /** `ext.detach { id }`: the extension's units leave every tab; its pages and cache go. */
+    private fun detachExtension(id: String) {
+        units.remove(id)
+        served = served - id
+        for (view in handlers.keys.toList()) removeExtension(view, id)
+        stopBackground(id)
+        if (popup?.extensionId == id) closePopup()
+        // The core dropped these endpoints already; the frames keep running what was injected.
+        endpoints.entries.removeAll { it.value.extensionId == id }
+        io.execute { compiler.forget(id) }
+        configureStats.remove(id)
+        Log.i(TAG, "detached ${id.take(8)}")
+    }
+
+    /** A new core runtime starts from nothing: every extension of the previous one goes. */
+    private fun reset() {
+        closePopup()
+        for (id in backgrounds.keys.toList()) stopBackground(id)
+        for (id in units.keys.toList()) {
+            for (view in handlers.keys.toList()) removeExtension(view, id)
+            io.execute { compiler.forget(id) }
+        }
+        units.clear()
+        served = emptyMap()
+        endpoints.clear()
+        configureStats.clear()
+        rules = null
+        observeRequests = false
     }
 
     /**
@@ -437,39 +495,67 @@ class Extensions(private val host: Host) {
         if (!delivered) callback(null)
     }
 
+    /**
+     * `scripting.executeScript` / `insertCSS` / MV2 `tabs.executeScript` into a tab's main frame.
+     * The code runs through the bootstrap's `__zenExtExec` in the extension's scope: in its
+     * isolated world through the world endpoint's reply proxy when the frame has one; else in
+     * the main world with `evaluateJavascript`, after a late boot when the document has no scope
+     * for the extension yet (a tab that predates the extension, a page none of its declarations
+     * matched, or a WebView without worlds). `world: "MAIN"` injections take the main-world path.
+     */
     private fun exec(args: JSONObject, reply: (Any?) -> Unit) {
         val tab = host.tabs.get(args.str("tabId"))
         if (tab == null) {
             reply(Host.Rejection("No tab with that id"))
             return
         }
-        val ext = args.str("ext")
-        val script = ExtensionScripts.exec(
-            token, ext, args.str("kind", "js"), args.obj("payload"),
-            args.strOrNull("code"), args.strOrNull("funcSource"), args.optJSONArray("args")?.toString()
-        )
-        if (isolatedWorlds) {
-            // `__zenExtExec` lives in the extension's world, out of `evaluateJavascript`'s reach; the
-            // main frame's reply proxy executes in the frame and world it came from. A frame has the
-            // extension's world endpoint and, for `world: "MAIN"` scripts, a main-world one: pick
-            // the one the injection asks for, the other if only that one exists.
-            val wantMain = args.obj("payload").optString("world") == "MAIN"
-            val candidates = endpoints.values.filter { it.view === tab && it.extensionId == ext && it.context == "content" && it.isMainFrame }
-            val endpoint = candidates.firstOrNull { it.world != wantMain } ?: candidates.firstOrNull()
-            if (endpoint == null) {
-                reply(Host.Rejection("The extension has no content-script world in that tab yet"))
-                return
-            }
-            val delivered = runCatching {
-                endpoint.proxy.executeJavaScript(script, object : androidx.webkit.WebViewOutcomeReceiver<String, androidx.webkit.JavaScriptExecutionException> {
-                    override fun onResult(result: String?) { main.post { reply(Host.RawJson(result ?: "null")) } }
-                    override fun onError(error: androidx.webkit.JavaScriptExecutionException) { main.post { reply(Host.Rejection(error.message ?: "script failed")) } }
-                })
-            }.isSuccess
-            if (!delivered) reply(Host.Rejection("The frame's world is gone"))
+        val id = args.str("ext")
+        val ext = served[id]
+        if (ext == null) {
+            reply(Host.Rejection("The extension is not attached"))
             return
         }
-        tab.evaluateJavascript(script) { result -> reply(Host.RawJson(result ?: "null")) }
+        val payload = args.obj("payload")
+        val call = ExtensionScripts.guarded(
+            ExtensionScripts.exec(token, id, args.str("kind", "js"), payload, args.strOrNull("code"), args.strOrNull("funcSource"), args.optJSONArray("args")?.toString())
+        )
+        val mine = endpoints.values.filter { it.view === tab && it.extensionId == id && it.context == "content" && it.isMainFrame }
+        val wantMain = payload.optString("world") == "MAIN"
+        if (isolatedWorlds && !wantMain) {
+            val world = mine.firstOrNull { it.world }
+            if (world != null) {
+                val delivered = runCatching {
+                    world.proxy.executeJavaScript(call, object : androidx.webkit.WebViewOutcomeReceiver<String, androidx.webkit.JavaScriptExecutionException> {
+                        override fun onResult(result: String?) { main.post { reply(unwrap(result)) } }
+                        override fun onError(error: androidx.webkit.JavaScriptExecutionException) { main.post { reply(Host.Rejection(error.message ?: "script failed")) } }
+                    })
+                }.isSuccess
+                if (!delivered) reply(Host.Rejection("The frame's world is gone"))
+                return
+            }
+        }
+        val booted = mine.any { !it.world }
+        val script = if (booted) call else {
+            lateBoots++
+            ExtensionScripts.lateBoot(bootstrap, ext.lateConfig, debug) + "\n" + call
+        }
+        tab.evaluateJavascript(script) { result -> reply(unwrap(result)) }
+    }
+
+    /** The JSON of a [ExtensionScripts.guarded] evaluation → the value, or a rejection with its error. */
+    private fun unwrap(result: String?): Any {
+        val text = result ?: return Host.Rejection("The script did not run (no scope for the extension in that document)")
+        val outcome = runCatching { JSONObject(text) }.getOrNull() ?: return Host.RawJson(text)
+        if (outcome.has("e")) return Host.Rejection(outcome.optString("e", "script failed"))
+        val value = outcome.opt("v") ?: return Host.RawJson("null")
+        return Host.RawJson(
+            when (value) {
+                JSONObject.NULL -> "null"
+                is String -> JSONObject.quote(value)
+                is JSONObject, is JSONArray -> value.toString()
+                else -> value.toString()
+            }
+        )
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -478,8 +564,8 @@ class Extensions(private val host: Host) {
 
     /**
      * Called from every tab WebView's constructor, and again when a custom tab's page is adopted by
-     * the browser window: the bridge listener plus the current units, once per view (the WebView
-     * rejects a second listener under the same name).
+     * the browser window: the bridge listener, the janitor and the units of every attached
+     * extension, once per view (the WebView rejects a second listener under the same name).
      */
     fun attach(view: TabWebView) {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ||
@@ -489,30 +575,37 @@ class Extensions(private val host: Host) {
         WebViewCompat.addWebMessageListener(view, BRIDGE, setOf("*")) { v, message, origin, isMainFrame, proxy ->
             onBridgeMessage(v, message.data, origin, isMainFrame, proxy, "content")
         }
-        installUnits(view)
+        val mine = ViewHandlers()
+        // The janitor first: document-start scripts run in registration order, and it has to take
+        // the bridge object off the main world's global before any unit or page script looks.
+        mine.janitor = runCatching { WebViewCompat.addDocumentStartJavaScript(view, janitor, setOf("*")) }.getOrNull()
+        handlers[view] = mine
+        for ((id, list) in units) served[id]?.let { installExtension(view, it, list) }
     }
 
-    private fun installUnits(view: WebView) {
-        handlers.remove(view)?.forEach { runCatching { it.remove() } }
-        val list = ArrayList<ScriptHandler>()
+    /** One extension's handlers on one view: the previous ones go, the current units come. */
+    private fun installExtension(view: WebView, ext: Served, list: List<ScriptUnit>) {
+        val mine = handlers[view] ?: return
+        removeExtension(view, ext.id)
+        val added = ArrayList<ScriptHandler>()
         // Extension pages opened as tabs (options pages, a changelog the background opens with
-        // `tabs.create`): the page bootstrap on the extension's own origin, registered ahead of the
-        // content units so it is the one that claims the frame's bridge object.
-        for (ext in served.values) {
-            val handler = runCatching {
-                WebViewCompat.addDocumentStartJavaScript(view, pageScript(ext, "page"), setOf("https://${ext.id}$ORIGIN_SUFFIX"))
-            }.getOrNull() ?: continue
-            list.add(handler)
-        }
-        for (unit in units) {
+        // `tabs.create`): the page bootstrap on the extension's own origin.
+        runCatching {
+            WebViewCompat.addDocumentStartJavaScript(view, pageScript(ext, "page"), setOf("https://${ext.id}$ORIGIN_SUFFIX"))
+        }.getOrNull()?.let(added::add)
+        for (unit in list) {
             val handler = runCatching { addUnit(view, unit, unit.origins) }
                 .recoverCatching {
                     // An origin rule the WebView rejects: fall back to every origin (the bootstrap matches anyway).
                     addUnit(view, unit, setOf("*"))
                 }.getOrNull() ?: continue
-            list.add(handler)
+            added.add(handler)
         }
-        handlers[view] = list
+        mine.byExtension[ext.id] = added
+    }
+
+    private fun removeExtension(view: WebView, id: String) {
+        handlers[view]?.byExtension?.remove(id)?.forEach { runCatching { it.remove() } }
     }
 
     /**
@@ -715,7 +808,7 @@ class Extensions(private val host: Host) {
             val html = ext.backgroundHtml ?: return notFound()
             return response("text/html", 200, "OK", html.toByteArray())
         }
-        val file = fileFor(ext.id, path) ?: return notFound()
+        val file = fileIn(ext.dir, path) ?: return notFound()
         if (!file.isFile) return notFound()
         val bytes = runCatching { file.readBytes() }.getOrNull() ?: return notFound()
         return response(ExtensionScripts.mimeType(path), 200, "OK", bytes)
@@ -742,23 +835,41 @@ class Extensions(private val host: Host) {
         is NetRules.Decision.Redirect -> "redirect"
     }
 
-    /** A file inside an extension's directory, or null when the path escapes it. */
+    /**
+     * A record's directory, or null when the path is not a directory under the store's install
+     * root (`files/zen/extensions`): the runtime only serves what the store installed.
+     */
+    private fun recordDir(path: String): File? {
+        if (path.isEmpty()) return null
+        val dir = File(path)
+        val canonical = runCatching { dir.canonicalPath }.getOrNull() ?: return null
+        val root = runCatching { host.extStore.root.canonicalPath }.getOrNull() ?: return null
+        if (!canonical.startsWith(root + File.separator)) return null
+        return if (dir.isDirectory) dir else null
+    }
+
+    /** A file inside an attached extension's directory, or null when the path escapes it. */
     fun fileFor(id: String, path: String): File? {
-        if (!VALID_ID.matches(id)) return null
-        val root = File(dir, id)
-        val file = File(root, path.trimStart('/'))
+        val ext = served[id] ?: return null
+        return fileIn(ext.dir, path)
+    }
+
+    /** `path` resolved inside `dir`, or null when it escapes it (`..`, symlinks). */
+    private fun fileIn(dir: File, path: String): File? {
+        val file = File(dir, path.trimStart('/'))
         val canonical = runCatching { file.canonicalPath }.getOrNull() ?: return null
-        if (!canonical.startsWith(root.canonicalPath + File.separator)) return null
+        val root = runCatching { dir.canonicalPath }.getOrNull() ?: return null
+        if (!canonical.startsWith(root + File.separator)) return null
         return file
     }
 
     fun servedFor(id: String): Served? = served[id]
 
-    /** The hidden background WebView of an enabled extension (instrumentation reads its console). */
+    /** The hidden background WebView of an attached extension (instrumentation reads its console). */
     fun backgroundView(id: String): ExtensionWebView? = backgrounds[id]
 
-    /** The document-start script units currently installed in every tab (origins and size). */
-    fun scriptUnits(): List<ScriptUnit> = units
+    /** The document-start script units currently installed in every tab, across extensions. */
+    fun scriptUnits(): List<ScriptUnit> = units.values.flatten()
 
     /** The WebView of the open popup / options sheet, if any. */
     fun popupView(): ExtensionWebView? = popup?.webView
@@ -768,15 +879,13 @@ class Extensions(private val host: Host) {
     // ---------------------------------------------------------------------------------------------
 
     /**
-     * Idempotent: a reconfigure (every `updateDynamicRules`/`registerContentScripts` call triggers
-     * one) keeps a background that is already running at the same URL. Restarting it on every
-     * configure made the five demo backgrounds restart every ~5 s, because each start called one
-     * of those APIs. `ext.background.stop` first for a real reload.
+     * The core's lifecycle policy (`runtime/background.ts`) asks for a start only when it holds
+     * no page: whatever runs here under that id is a leftover it cannot see (a start whose stop
+     * has not reported gone yet, or an earlier runtime's page), so the page is always fresh.
      */
     private fun startBackground(id: String) {
         val ext = served[id] ?: return
         val url = ext.backgroundUrl ?: return
-        if (backgrounds[id]?.served?.backgroundUrl == url) return
         stopBackground(id)
         val view = ExtensionWebView(host, this, ext, "background")
         backgrounds[id] = view
@@ -812,8 +921,8 @@ class Extensions(private val host: Host) {
 
     /**
      * The renderer behind an extension view is gone (every WebView of the app shares it, so the
-     * chrome lost it too). A dead background view goes; the core that reboots with the chrome
-     * re-sends `ext.background.start`. A dead popup is closed.
+     * chrome lost it too). A dead background view goes; its endpoints report gone and the core's
+     * lifecycle restarts it when something needs it. A dead popup is closed.
      */
     fun onRendererGone(view: ExtensionWebView) {
         val id = backgrounds.entries.firstOrNull { it.value === view }?.key
@@ -842,6 +951,8 @@ class Extensions(private val host: Host) {
         const val ORIGIN_SUFFIX = ".ext.zenium.invalid"
         const val GENERATED_BACKGROUND = "_generated_background_page.html"
         val VALID_ID = Regex("^[a-p]{32}$")
+        /** `_locales/<dir>`: a language tag with underscores, nothing that could leave the directory. */
+        val LOCALE_DIR = Regex("^[A-Za-z0-9_]{1,16}$")
 
         /** `web_accessible_resources` glob → regex (`*` spans path separators, as in Chrome). */
         fun globToRegex(glob: String): Regex {
@@ -854,12 +965,6 @@ class Extensions(private val host: Host) {
                 }
             }
             return Regex(sb.append('$').toString())
-        }
-
-        private fun dataUrl(file: File): String? {
-            if (!file.isFile || file.length() > 512 * 1024) return null
-            val bytes = runCatching { file.readBytes() }.getOrNull() ?: return null
-            return "data:${ExtensionScripts.mimeType(file.name)};base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
         }
     }
 }
