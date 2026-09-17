@@ -22,6 +22,7 @@ export type AnyAction =
   | 'resources.trim'
   | 'resources.open'
   | 'passwords.open'
+  | 'translate.open'
 
 export interface ActionContext {
   /** Tab whose web contents produced the key event (null for the chrome). */
@@ -216,6 +217,9 @@ export class Actions {
         return this.browser.toggleFullscreen(win)
       case 'page.readerMode':
         if (target) this.browser.reader.toggle(target.id, win)
+        return
+      case 'translate.open':
+        if (target) void this.browser.translate.open(target.id, win)
         return
       case 'page.pip':
         if (target) void this.togglePictureInPicture(target.id, win)

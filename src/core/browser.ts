@@ -145,7 +145,8 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'menu.app',
   'bookmark.star',
   'bookmark.edit',
-  'webapp.install'
+  'webapp.install',
+  'translate.selection'
 ])
 
 /**
@@ -2308,6 +2309,17 @@ export class Browser {
         this.translate.translatePage(tabId, { target, source }),
       'translate.revert': ({ tabId }) => this.translate.revert(tabId),
       'translate.dismiss': ({ tabId }) => this.translate.dismiss(tabId),
+      'translate.offer': ({ tabId }) => this.translate.offer(tabId),
+      'translate.retarget': ({ tabId, source, target }) =>
+        this.translate.retarget(tabId, { source, target }),
+      'translate.menu': ({ tabId, x, y }, win) =>
+        this.menus.showTranslateMenu(
+          tabId,
+          x !== undefined && y !== undefined ? { x, y } : undefined,
+          win
+        ),
+      'translate.showSelection': ({ tabId, text }, win) =>
+        this.translate.showSelection(tabId, text, null, win),
       'translate.selection': ({ tabId, text, target }) =>
         this.translate.translateSelection(tabId, { text, target }),
       'translate.setPreferences': (patch) => this.translate.setPreferences(patch),
