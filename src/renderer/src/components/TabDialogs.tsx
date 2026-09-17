@@ -9,6 +9,7 @@ import { cn } from '@renderer/lib/utils'
 import { SecurityPrompts } from './security/SecurityPromptDialog'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
+import { StarDialog } from './bookmarks/StarDialog'
 
 const TAB_ICONS = [
   ...SPACE_ICONS,
@@ -27,18 +28,21 @@ const TAB_ICONS = [
 ]
 
 /**
- * Small dialogs that belong to a tab and are shown by every layout: the pinned-URL editor and icon
- * picker from tab context menus, and the security prompts (HTTP sign-in, certificate choice) the
- * page's requests wait on.
+ * Small dialogs that belong to a tab and are shown by every layout: the star dialog, the pinned-URL
+ * editor and icon picker from tab context menus, and the security prompts (HTTP sign-in,
+ * certificate choice) the page's requests wait on.
  */
 export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const pinnedTabId = uiStore.use((s) => s.editingPinnedUrlTabId)
   const iconTabId = uiStore.use((s) => s.iconPickerTabId)
+  const star = uiStore.use((s) => s.starDialog)
   const pinnedTab = pinnedTabId ? state.tabs[pinnedTabId] : undefined
   const iconTab = iconTabId ? state.tabs[iconTabId] : undefined
   return (
     <>
-      {pinnedTab ? (
+      {star ? (
+        <StarDialog key={star.nodeId} state={state} star={star} />
+      ) : pinnedTab ? (
         <PinnedUrlDialog tab={pinnedTab} />
       ) : iconTab ? (
         <IconPickerDialog tab={iconTab} />

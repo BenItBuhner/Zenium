@@ -1,4 +1,5 @@
 import type {
+  BookmarkNodeType,
   ExternalProtocolRequest,
   MenuDescriptor,
   OverlayKind,
@@ -88,6 +89,10 @@ export interface UiState {
   iconPickerTabId: string | null
   /** An HTTP sign-in or certificate dialog is up over the page (the page waits for it). */
   securityPromptOpen: boolean
+  /** The star dialog (Ctrl+D): the tab that was starred and its bookmark. */
+  starDialog: { tabId: string; nodeId: string; created: boolean } | null
+  /** A bookmark the manager should edit, or create (`id: null`) inside `parentId`. */
+  bookmarkEdit: { id: string | null; parentId: string; type: BookmarkNodeType } | null
   /** Zen's multi-select: tabs picked with Ctrl / Shift+click (acted on together). */
   selectedTabIds: string[]
   /** Last plainly clicked / toggled tab – the anchor for Shift+click ranges. */
@@ -144,6 +149,8 @@ export const uiStore = createStore<UiState>(
     editingPinnedUrlTabId: null,
     iconPickerTabId: null,
     securityPromptOpen: false,
+    starDialog: null,
+    bookmarkEdit: null,
     selectedTabIds: [],
     selectionAnchorId: null,
     glanceActive: false,

@@ -73,6 +73,11 @@ export function useMainEvents(): void {
       onEvent('folder.startRename', ({ folderId }) => uiStore.set({ renamingFolderId: folderId })),
       onEvent('tab.editPinnedUrl', ({ tabId }) => uiStore.set({ editingPinnedUrlTabId: tabId })),
       onEvent('tab.pickIcon', ({ tabId }) => uiStore.set({ iconPickerTabId: tabId })),
+      onEvent('bookmark.star', (star) => {
+        closeUrlbar()
+        uiStore.set({ starDialog: star })
+      }),
+      onEvent('bookmark.edit', (edit) => uiStore.set({ bookmarkEdit: edit })),
       onEvent('space.switched', ({ fromIndex, toIndex }) => {
         uiStore.set({ spaceSlideDirection: toIndex > fromIndex ? 1 : toIndex < fromIndex ? -1 : 0 })
       }),
