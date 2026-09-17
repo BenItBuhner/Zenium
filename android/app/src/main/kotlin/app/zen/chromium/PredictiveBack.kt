@@ -92,6 +92,7 @@ class PredictiveBack(private val activity: MainActivity, private val host: Host)
 
     /** The chrome's view of things: does it have a surface to dismiss, and which tab is active. */
     fun update(chrome: Boolean, tabId: String?) {
+        Log.v(TAG, "chrome: surface=$chrome tab=$tabId")
         chromeHandles = chrome
         pageTabId = tabId
         refresh()
@@ -100,9 +101,15 @@ class PredictiveBack(private val activity: MainActivity, private val host: Host)
     /** Re-decide whether the app handles the next back at all. Deferred while a gesture is in flight. */
     fun refresh() {
         if (inFlight) return
-        val handles = currentTarget() != Target.NONE
-        val enabled = handles || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) setRegistered(enabled) else plain.isEnabled = enabled
+        val next = currentTarget()
+        val enabled = next != Target.NONE || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+        if (enabled != registered) Log.d(TAG, "back would $next (chrome=$chromeHandles tab=$pageTabId): callback ${if (enabled) "on" else "off"}")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            setRegistered(enabled)
+        } else {
+            plain.isEnabled = enabled
+            registered = enabled
+        }
     }
 
     /** A page transition finished (or was torn down): the page's history may look different now. */
@@ -134,6 +141,7 @@ class PredictiveBack(private val activity: MainActivity, private val host: Host)
         if (inFlight) cancel()
         target = currentTarget()
         inFlight = true
+        Log.d(TAG, "gesture from the ${edgeName(edge)} edge: $target")
         when (target) {
             Target.CHROME -> host.chrome.backEvent("start", json("edge" to edgeName(edge)))
             Target.PAGE -> page = pageTab()?.let { tab -> PageBackTransition.begin(tab, host, edge) }
@@ -153,6 +161,7 @@ class PredictiveBack(private val activity: MainActivity, private val host: Host)
     private fun commit() {
         // A back button (or a host without progress) commits without ever having started.
         val decided = if (inFlight) target else currentTarget()
+        Log.d(TAG, "commit: $decided")
         inFlight = false
         target = Target.NONE
         when (decided) {
@@ -170,6 +179,7 @@ class PredictiveBack(private val activity: MainActivity, private val host: Host)
 
     private fun cancel() {
         if (!inFlight) return
+        Log.d(TAG, "cancel: $target")
         inFlight = false
         when (target) {
             Target.CHROME -> host.chrome.backEvent("cancel", null)
@@ -190,6 +200,7 @@ class PredictiveBack(private val activity: MainActivity, private val host: Host)
     }
 
     companion object {
+        private const val TAG = "ZenBack"
         const val EDGE_LEFT = 0
         const val EDGE_RIGHT = 1
 
