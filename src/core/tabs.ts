@@ -631,6 +631,10 @@ export class TabManager {
       upgradedFrom?: string
       /** Preset id (hosts that must know the id before the tab exists, e.g. adopted popups). */
       id?: string
+      /** The tab whose page opened this one (see `Tab.openerTabId`). */
+      openerTabId?: string
+      /** Opened by another app's intent (see `Tab.fromIntent`). */
+      fromIntent?: boolean
     },
     win: ZenWindow = this.browser.focusedWindow()
   ): Tab {
@@ -649,7 +653,9 @@ export class TabManager {
       url: opts.url ?? BLANK_URL,
       pinned: Boolean(opts.pinned) && !essential,
       essential,
-      folderId: opts.folderId ?? null
+      folderId: opts.folderId ?? null,
+      openerTabId: opts.openerTabId && m.tabs[opts.openerTabId] ? opts.openerTabId : null,
+      fromIntent: Boolean(opts.fromIntent)
     })
     tab.windowId = this.ownerWindowIdFor(tab, space, win)
     m.tabs[tab.id] = tab
@@ -708,7 +714,8 @@ export class TabManager {
         containerId: parent?.containerId,
         active: false,
         afterTabId: parent && !parent.essential ? parent.id : undefined,
-        load: false
+        load: false,
+        openerTabId: parent?.id
       },
       win
     )

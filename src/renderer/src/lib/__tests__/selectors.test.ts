@@ -33,6 +33,8 @@ function tab(id: string, patch: Partial<Tab> = {}): Tab {
     bookmarked: false,
     readerable: false,
     blockedCount: 0,
+    openerTabId: null,
+    fromIntent: false,
     ...patch
   }
 }

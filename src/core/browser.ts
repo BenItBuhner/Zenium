@@ -948,7 +948,10 @@ export class Browser {
   /** Open a URL from outside the browser (command line, Android intent, share sheet). */
   openExternalUrl(url: string, win: ZenWindow = this.ensureWindow()): void {
     const routed = win.localSpace ? null : this.routeSpaceFor(url)
-    const tab = this.tabs.createTab({ url, active: true, spaceId: routed ?? undefined }, win)
+    const tab = this.tabs.createTab(
+      { url, active: true, spaceId: routed ?? undefined, fromIntent: true },
+      win
+    )
     if (routed && routed !== win.activeSpaceId) this.tabs.switchSpace(routed, win, tab.id)
     win.host.show()
     win.host.focus()

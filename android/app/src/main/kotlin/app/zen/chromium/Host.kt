@@ -241,7 +241,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 for (view in tabs.all()) view.applyPullToRefreshMode()
                 reply(null)
             }
-            "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId")); reply(null) }
+            "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId"), args.optBoolean("root")); reply(null) }
             "window.setFullscreen" -> { setImmersive(args.bool("fullscreen")); reply(null) }
             "app.quit" -> { activity.finishAndRemoveTask(); reply(null) }
             "app.background" -> { activity.moveTaskToBack(true); reply(null) }

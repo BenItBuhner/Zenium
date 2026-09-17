@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react'
-import type { UIState } from '@shared/types'
+import type { Tab, UIState } from '@shared/types'
+import { BLANK_URL } from '@shared/url'
 import { run } from './api'
 import { SPRING_SNAPPY, SpringAnimation, type SpringConfig } from './motion/spring'
-import { activeTab } from './selectors'
+import { activeSpace, activeTab, tabOrderOf } from './selectors'
 import { createStore } from './store'
 import {
   browserStore,
@@ -182,11 +183,64 @@ export function handleSystemBack(): boolean {
     return true
   }
   const tab = state ? activeTab(state) : null
-  if (tab?.canGoBack) {
+  if (!tab || !state) return false
+  if (tab.canGoBack) {
     run('tab.back', { tabId: tab.id })
     return true
   }
-  return false
+  switch (rootBackAction(tab, state)) {
+    case 'opener':
+      if (tab.openerTabId) run('tab.activate', { tabId: tab.openerTabId })
+      run('tab.close', { tabId: tab.id })
+      return true
+    case 'caller':
+      // The tab goes; the host backgrounds the app, which returns to the app that sent the URL.
+      run('tab.close', { tabId: tab.id })
+      return false
+    case 'newTabPage':
+      // A fresh tab takes the page's place (same group, same container) and the page moves to
+      // the recently closed list – the tab is back where it started, with nothing behind it.
+      run('tab.create', {
+        url: BLANK_URL,
+        active: true,
+        afterTabId: tab.id,
+        containerId: tab.containerId
+      })
+      run('tab.close', { tabId: tab.id })
+      return true
+    case 'closeTab':
+      run('tab.close', { tabId: tab.id })
+      return true
+    case 'background':
+      return false
+  }
+}
+
+/** What a back at the first page of `tab`'s history does. */
+export type RootBackAction =
+  /** Close the tab and return to the tab whose link opened it. */
+  | 'opener'
+  /** Close the tab and leave the app: it was opened by another app, which gets the user back. */
+  | 'caller'
+  /** The page leaves and the tab starts over as a new tab (Chrome's new-tab page history entry). */
+  | 'newTabPage'
+  /** A blank tab has nothing to go back to: close it and show the previous tab. */
+  | 'closeTab'
+  /** The last tab of the space (or a pinned one) stays; the app goes to the background. */
+  | 'background'
+
+/**
+ * Chrome's back at a tab's root, in Zenium's model: a child tab closes back to its opener, a tab
+ * another app opened closes back to that app, any other page gives way to a new-tab page, and a
+ * new-tab page closes – unless it is the last tab the space has, or a pinned one, which stay.
+ */
+export function rootBackAction(tab: Tab, state: UIState): RootBackAction {
+  const others = tabOrderOf(state, activeSpace(state)).filter((t) => t.id !== tab.id)
+  if (tab.openerTabId && state.tabs[tab.openerTabId]) return 'opener'
+  if (tab.fromIntent) return 'caller'
+  if (tab.pinned || tab.essential) return 'background'
+  if (tab.url && tab.url !== BLANK_URL) return 'newTabPage'
+  return others.length > 0 ? 'closeTab' : 'background'
 }
 
 // ---------------------------------------------------------------------------
@@ -198,6 +252,11 @@ export interface BackHostState {
   chrome: boolean
   /** The tab whose page a back would navigate when the chrome has nothing. */
   tabId: string | null
+  /**
+   * At the first page of that tab's history the chrome still has a back to perform (close the
+   * tab to its opener, start over as a new tab, …) rather than leaving the app.
+   */
+  root: boolean
 }
 
 /**
@@ -205,7 +264,10 @@ export interface BackHostState {
  * back callback only while the chrome or the page can use the gesture, so that otherwise the
  * system's back-to-home animation runs untouched.
  */
-export const backStore = createStore<BackHostState>({ chrome: false, tabId: null }, 'back')
+export const backStore = createStore<BackHostState>(
+  { chrome: false, tabId: null, root: false },
+  'back'
+)
 
 function chromeHandlesBack(ui: UiState, state: UIState | null): boolean {
   return (
@@ -225,9 +287,12 @@ export function refreshBackState(): void {
   const ui = uiStore.get()
   const state = browserStore.get().state
   const chrome = chromeHandlesBack(ui, state)
-  const tabId = state ? (activeTab(state)?.id ?? null) : null
+  const tab = state ? activeTab(state) : null
+  const tabId = tab?.id ?? null
+  const root = tab !== null && state !== null && rootBackAction(tab, state) !== 'background'
   const prev = backStore.get()
-  if (prev.chrome !== chrome || prev.tabId !== tabId) backStore.set({ chrome, tabId })
+  if (prev.chrome !== chrome || prev.tabId !== tabId || prev.root !== root)
+    backStore.set({ chrome, tabId, root })
 }
 
 const flags = globalThis as unknown as { __zenBackWired?: boolean }
