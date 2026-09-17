@@ -30,7 +30,12 @@ import {
   backgroundKindOf,
   type BackgroundStats
 } from '@core/extensions/runtime/background'
-import { buildExtensionBoot, type ContentBootConfig } from '@core/extensions/runtime/boot'
+import {
+  buildExtensionBoot,
+  type ContentBootConfig,
+  type ExtensionBoot,
+  type IsolationMode
+} from '@core/extensions/runtime/boot'
 import type { NetRule } from '@core/extensions/runtime/dnr'
 import { parseRuntimeManifest } from '@core/extensions/runtime/manifest'
 import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
@@ -63,7 +68,7 @@ import type { ViewEventPayloads } from './views'
  * events extensions listen for.
  *
  * Kotlin protocol (runtime → Kotlin), every call keyed by extension id:
- *  ext.env                                  → { token, uiLanguage, isolatedWorlds }
+ *  ext.env                                  → { token, uiLanguage, isolatedWorlds, worldSlots }
  *  ext.open { id, path }                    → { manifest, locales: { <locale>: <messages.json> } }
  *  ext.configure { id, version, path, units, served, debug } → { units: [{ key, chars, cached }], ms }
  *  ext.detach { id }
@@ -84,6 +89,12 @@ interface RuntimeEnv {
   uiLanguage: string
   /** The WebView can inject into named isolated worlds (Chromium 146+, androidx.webkit 1.17). */
   isolatedWorlds: boolean
+  /**
+   * How many isolated worlds a tab can host at once: Kotlin registers their bridge listeners
+   * when a tab view is built (a listener added to a live view strands the bindings its documents
+   * hold), so an extension beyond the budget runs under the emulation proxy instead.
+   */
+  worldSlots: number
 }
 
 interface OpenedExtension {
@@ -250,6 +261,9 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   private nextFrameId = 1
   private readonly alarmTimers = new Map<string, unknown>()
   private readonly sessionRules = new Map<string, NetRule[]>()
+  /** The `ext.setRules` in flight, and whether another is owed after it (see `pushRules`). */
+  private rulesPush: Promise<void> | null = null
+  private rulesDirty = false
   private popupOpen: string | null = null
   private observing = false
   private subscribed = false
@@ -335,11 +349,17 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     if (this.env) return Promise.resolve(this.env)
     if (!this.envPromise) {
       this.envPromise = this.bridge.call<RuntimeEnv>('ext.env').then((env) => {
+        const isolatedWorlds = env.isolatedWorlds === true
         this.env = {
           token: env.token,
           uiLanguage:
             env.uiLanguage || (typeof navigator === 'undefined' ? 'en' : navigator.language),
-          isolatedWorlds: env.isolatedWorlds === true
+          isolatedWorlds,
+          worldSlots: isolatedWorlds
+            ? typeof env.worldSlots === 'number' && env.worldSlots >= 0
+              ? env.worldSlots
+              : Number.POSITIVE_INFINITY
+            : 0
         }
         return this.env
       })
@@ -468,19 +488,22 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   private async configure(ext: Attached): Promise<void> {
     const env = await this.ensureEnv()
     const id = ext.record.id
-    const boot = buildExtensionBoot(
-      id,
-      ext.manifest,
-      ext.messages,
-      this.data.registered[id] ?? [],
-      env.isolatedWorlds ? 'world' : 'with'
-    )
-    const units = planUnits(boot, ext.manifest, {
-      token: env.token,
-      uiLanguage: env.uiLanguage,
-      isolatedWorlds: env.isolatedWorlds,
-      userScriptMessaging: this.data.userScriptMessaging[id] === true
-    })
+    const bootFor = (isolation: IsolationMode): ExtensionBoot =>
+      buildExtensionBoot(id, ext.manifest, ext.messages, this.data.registered[id] ?? [], isolation)
+    const plan = (isolatedWorlds: boolean): ExtensionUnits =>
+      planUnits(bootFor(isolatedWorlds ? 'world' : 'with'), ext.manifest, {
+        token: env.token,
+        uiLanguage: env.uiLanguage,
+        isolatedWorlds,
+        userScriptMessaging: this.data.userScriptMessaging[id] === true
+      })
+    let units = plan(env.isolatedWorlds)
+    if (env.isolatedWorlds && !this.worldsFit(id, units, env.worldSlots)) {
+      console.warn(
+        `[Zenium] extension ${id}: the tab's ${env.worldSlots} isolated worlds are taken; its content scripts run under the emulation proxy`
+      )
+      units = plan(false)
+    }
     if (sameUnits(ext.units, units)) return
     // A late boot: the bootstrap evaluated into a document that predates the extension's world
     // (or on a WebView without worlds), so `scripting.executeScript` has a scope to run in.
@@ -490,7 +513,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       uiLanguage: env.uiLanguage,
       world: 'isolated',
       late: true,
-      extension: { ...boot, groups: [], isolation: 'with' }
+      extension: { ...bootFor('with'), groups: [] }
     }
     const stats = await this.bridge.call<ConfigureStats>('ext.configure', {
       id,
@@ -512,8 +535,45 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     ext.configureStats = stats
   }
 
-  /** Static rulesets (enabled ones, read by Kotlin) plus the normalised dynamic and session rules. */
-  private async pushRules(): Promise<void> {
+  /**
+   * Whether the worlds `units` needs fit next to the worlds every other attached extension
+   * holds (an extension's own earlier worlds are its to keep: Kotlin maps the same names to the
+   * same slots on a reconfigure).
+   */
+  private worldsFit(id: string, units: ExtensionUnits, budget: number): boolean {
+    const held = new Set<string>()
+    for (const other of this.extensions.values()) {
+      if (other.record.id === id || !other.units) continue
+      for (const unit of other.units.units) if (unit.worldName) held.add(unit.worldName)
+    }
+    const wanted = new Set(units.units.flatMap((unit) => (unit.worldName ? [unit.worldName] : [])))
+    return held.size + wanted.size <= budget
+  }
+
+  /**
+   * Static rulesets (enabled ones, read by Kotlin) plus the normalised dynamic and session
+   * rules. Every attach and detach of a declarativeNetRequest extension asks for a push, and
+   * Kotlin rebuilds the whole set each time: pushes arriving while one is in flight coalesce
+   * into a single one after it, and each caller's promise settles once its rules are in place.
+   */
+  private pushRules(): Promise<void> {
+    this.rulesDirty = true
+    if (!this.rulesPush) {
+      this.rulesPush = (async () => {
+        try {
+          while (this.rulesDirty) {
+            this.rulesDirty = false
+            await this.bridge.call('ext.setRules', this.rulesPayload())
+          }
+        } finally {
+          this.rulesPush = null
+        }
+      })()
+    }
+    return this.rulesPush
+  }
+
+  private rulesPayload(): { static: Array<{ ext: string; paths: string[] }>; dynamic: NetRule[] } {
     const statics: Array<{ ext: string; paths: string[] }> = []
     const dynamic: NetRule[] = []
     for (const ext of this.extensions.values()) {
@@ -527,7 +587,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       if (paths.length > 0) statics.push({ ext: ext.record.id, paths })
       dynamic.push(...rules.dynamic, ...rules.session)
     }
-    await this.bridge.call('ext.setRules', { static: statics, dynamic })
+    return { static: statics, dynamic }
   }
 
   private save(): void {

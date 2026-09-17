@@ -22,6 +22,10 @@ interface Sent {
 
 class FakeKotlin implements RuntimeBridge {
   isolatedWorlds = true
+  worldSlots = 16
+  /** Pending `ext.setRules` replies while `holdRules` is on (to observe coalescing). */
+  holdRules = false
+  readonly heldRules: Array<() => void> = []
   readonly calls: Array<{ method: string; args: Record<string, unknown> }> = []
   /** Every message the runtime sent to an endpoint, decoded. */
   readonly sent: Sent[] = []
@@ -31,7 +35,17 @@ class FakeKotlin implements RuntimeBridge {
   readonly backgrounds = new Set<string>()
 
   call<T = void>(method: string, args?: unknown): Promise<T> {
-    return Promise.resolve(this.dispatch(method, (args ?? {}) as Record<string, unknown>) as T)
+    const result = this.dispatch(method, (args ?? {}) as Record<string, unknown>) as T
+    if (method === 'ext.setRules' && this.holdRules) {
+      return new Promise<T>((resolve) => this.heldRules.push(() => resolve(result)))
+    }
+    return Promise.resolve(result)
+  }
+
+  /** Answer every held `ext.setRules`. */
+  releaseRules(): void {
+    const held = this.heldRules.splice(0)
+    for (const release of held) release()
   }
 
   send(method: string, args?: unknown): void {
@@ -51,7 +65,12 @@ class FakeKotlin implements RuntimeBridge {
     this.calls.push({ method, args })
     switch (method) {
       case 'ext.env':
-        return { token: 'tok', uiLanguage: 'en-US', isolatedWorlds: this.isolatedWorlds }
+        return {
+          token: 'tok',
+          uiLanguage: 'en-US',
+          isolatedWorlds: this.isolatedWorlds,
+          worldSlots: this.isolatedWorlds ? this.worldSlots : 0
+        }
       case 'ext.open': {
         const manifest = this.manifests.get(String(args.path))
         if (!manifest) throw new Error(`no manifest under ${args.path}`)
@@ -127,9 +146,12 @@ function makeTab(id: string, url: string): Tab {
   } as unknown as Tab
 }
 
-function harness(options: { isolatedWorlds?: boolean; files?: Map<string, string> } = {}): Harness {
+function harness(
+  options: { isolatedWorlds?: boolean; worldSlots?: number; files?: Map<string, string> } = {}
+): Harness {
   const kt = new FakeKotlin()
   kt.isolatedWorlds = options.isolatedWorlds ?? true
+  kt.worldSlots = options.worldSlots ?? 16
   const files = options.files ?? new Map<string, string>()
   const io: StoreIO = {
     readSync: (name) => files.get(name) ?? null,
@@ -223,6 +245,7 @@ function harness(options: { isolatedWorlds?: boolean; files?: Map<string, string
 }
 
 const ID = 'abcdefghijklmnopabcdefghijklmnop'
+const ID2 = 'ponmlkjihgfedcbaponmlkjihgfedcba'
 const PATH = `/data/user/0/app.zen.chromium/files/zen/extensions/${ID}/1.0.0`
 
 function manifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -274,6 +297,15 @@ function hello(
 
 function message(h: Harness, ep: string, message: Record<string, unknown>): void {
   h.runtime.onMessage({ ep, tabId: null, top: true, origin: '', message })
+}
+
+/** Let the runtime's pending promises run until `ready` holds (a bounded number of ticks). */
+async function until(ready: () => boolean): Promise<void> {
+  for (let i = 0; i < 50; i++) {
+    if (ready()) return
+    await Promise.resolve()
+  }
+  throw new Error('the runtime did not get there')
 }
 
 let callSeq = 0
@@ -346,6 +378,92 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     const config = JSON.parse(String(units[0].config)) as Record<string, unknown>
     expect((config.extension as Record<string, unknown>).isolation).toBe('with')
     expect(h.runtime.isolatedWorlds).toBe(false)
+  })
+
+  it('plans an extension beyond the tab world budget under the with-proxy, later ones too', async () => {
+    // Two slots: the first extension takes both (content + USER_SCRIPT world), the second
+    // would need one more and runs in the main world instead; a reconfigure of the first that
+    // gives a world back does not disturb the second's plan.
+    const h = harness({ worldSlots: 2 })
+    const first = record(h, {}, manifest({ permissions: ['storage', 'userScripts', 'scripting'] }))
+    await h.runtime.attach(first)
+    await h.runtime.setRegistered(ID, [
+      {
+        id: 'us1',
+        matches: ['https://example.com/*'],
+        excludeMatches: [],
+        includeGlobs: [],
+        excludeGlobs: [],
+        js: ['user.js'],
+        css: [],
+        runAt: 'document_idle',
+        allFrames: false,
+        matchAboutBlank: false,
+        world: 'USER_SCRIPT',
+        persistAcrossSessions: true,
+        matchOriginAsFallback: false
+      }
+    ])
+    const plansOfFirst = h.kt.calledWith('ext.configure')
+    expect(plansOfFirst).toHaveLength(2)
+    const worlds = (plansOfFirst[1].units as Array<Record<string, unknown>>).map((u) => u.world)
+    expect(new Set(worlds).size).toBe(2)
+    expect(worlds).toContain(`zenium-ext-${ID}-user`)
+    const path2 = `/data/user/0/app.zen.chromium/files/zen/extensions/${ID2}/2.0.0`
+    const second = record(h, { id: ID2, path: path2 }, manifest({ version: '2.0.0' }))
+    await h.runtime.attach(second)
+    const plan = h.kt.calledWith('ext.configure').find((c) => c.id === ID2)
+    expect(plan).toBeDefined()
+    const units = plan?.units as Array<Record<string, unknown>>
+    expect(units).toHaveLength(1)
+    expect(units[0].world).toBeNull()
+    const config = JSON.parse(String(units[0].config)) as Record<string, unknown>
+    expect((config.extension as Record<string, unknown>).isolation).toBe('with')
+    expect(h.runtime.isolatedWorlds).toBe(true)
+    // Detaching the first frees its worlds: the second is re-planned into a world when its
+    // plan is next computed.
+    await h.runtime.detach(ID)
+    await h.runtime.setRegistered(ID2, [])
+    await h.runtime.reconfigure({ ...second, pinned: true })
+    const replanned = h.kt.calledWith('ext.configure').filter((c) => c.id === ID2)
+    expect(replanned).toHaveLength(2)
+    expect((replanned[1].units as Array<Record<string, unknown>>)[0].world).toBe(
+      `zenium-ext-${ID2}`
+    )
+  })
+
+  it('coalesces rule pushes: one ext.setRules in flight, one more for everything that arrived meanwhile', async () => {
+    const h = harness()
+    const dnr = manifest({
+      permissions: ['declarativeNetRequest'],
+      declarative_net_request: {
+        rule_resources: [{ id: 'r1', enabled: true, path: 'rules.json' }]
+      }
+    })
+    h.kt.holdRules = true
+    const attaching = h.runtime.attach(record(h, {}, dnr))
+    await until(() => h.kt.heldRules.length === 1)
+    expect(h.kt.calledWith('ext.setRules')).toHaveLength(1)
+    // Three rule changes while the push is out: they wait for one push after it.
+    const changes = [
+      h.runtime.setRules(ID, { dynamic: [], session: [], enabledRulesets: ['r1'] }),
+      h.runtime.setRules(ID, { dynamic: [], session: [], enabledRulesets: [] }),
+      h.runtime.setRules(ID, { dynamic: [], session: [], enabledRulesets: ['r1'] })
+    ]
+    expect(h.kt.calledWith('ext.setRules')).toHaveLength(1)
+    h.kt.releaseRules()
+    await until(() => h.kt.heldRules.length === 1)
+    expect(h.kt.calledWith('ext.setRules')).toHaveLength(2)
+    // The second push carries the state as it is now, not as it was when a change asked.
+    expect(h.kt.calledWith('ext.setRules')[1].static).toEqual([{ ext: ID, paths: ['rules.json'] }])
+    h.kt.releaseRules()
+    await Promise.all([attaching, ...changes])
+    expect(h.kt.calledWith('ext.setRules')).toHaveLength(2)
+    // The line is clear: the next change pushes at once.
+    h.kt.holdRules = false
+    await h.runtime.setRules(ID, { dynamic: [], session: [], enabledRulesets: [] })
+    expect(h.kt.calledWith('ext.setRules')).toHaveLength(3)
+    expect(h.kt.calledWith('ext.setRules')[2].static).toEqual([])
   })
 
   it('does not send a plan that changed nothing, and re-plans when registered scripts change', async () => {

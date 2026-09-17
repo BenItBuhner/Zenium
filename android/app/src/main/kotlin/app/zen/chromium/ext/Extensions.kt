@@ -44,7 +44,8 @@ import java.util.concurrent.Executors
  *  - the synthetic origin `https://<id>.ext.zenium.invalid/`, served from the record's
  *    directory through `shouldInterceptRequest` of every WebView (tab pages see only
  *    web-accessible resources; extension pages see everything, plus the generated background page);
- *  - the `__zenExtBridge` WebMessageListener per frame and per isolated world: every frame that
+ *  - the `__zenExtBridge` WebMessageListener of the main world and of each of a fixed pool of
+ *    isolated worlds ([WorldSlots]), all registered when a tab view is built: every frame that
  *    runs a content script or an extension page says hello with an endpoint id; its
  *    JavaScriptReplyProxy is kept so the core can answer it (`ext.send`);
  *  - the transport janitor (`ext-janitor.js`) in the main world of every tab frame, ahead of
@@ -82,6 +83,9 @@ class Extensions(private val host: Host) {
     private val compiler = UnitCompiler { bootstrap }
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-ext") }
+    private val rulesIo = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-ext-rules") }
+    /** Static rulesets parsed in this process: file path → (size.mtime fingerprint, rules). Rules thread only. */
+    private val staticRules = HashMap<String, Pair<String, List<NetRules.Rule>>>()
 
     /**
      * One document-start script of one extension, injected into frames whose origin matches
@@ -123,8 +127,11 @@ class Extensions(private val host: Host) {
         val isMainFrame: Boolean,
         val url: String,
         val doc: String,
-        val world: Boolean
-    )
+        /** The world slot the endpoint's bridge listener belongs to; null in the main world. */
+        val slot: Int?
+    ) {
+        val world: Boolean get() = slot != null
+    }
 
     /** Per tab WebView: the janitor's handler and, per extension, the handlers of its units. */
     private class ViewHandlers {
@@ -140,8 +147,12 @@ class Extensions(private val host: Host) {
     @Volatile var debug = true
         private set
     private val handlers = WeakHashMap<WebView, ViewHandlers>()
-    /** Worlds (by name) whose bridge listener is already registered on a WebView. */
-    private val worldListeners = WeakHashMap<WebView, MutableSet<String>>()
+    /**
+     * The isolated worlds every tab view registers a bridge listener for when it is built, and
+     * which extension's world each one carries right now (see [WorldSlots] for why the pool is
+     * fixed at construction). Empty pool without world injection.
+     */
+    private val worldSlots = WorldSlots(if (isolatedWorlds) WORLD_SLOTS else 0)
     private val endpoints = HashMap<String, Endpoint>()
     private val backgrounds = HashMap<String, ExtensionWebView>()
     private var popup: ExtensionPopup? = null
@@ -180,7 +191,14 @@ class Extensions(private val host: Host) {
                 // A runtime asking for its environment is a new one (the chrome booted): whatever
                 // an earlier runtime left running is history, and it re-attaches what it wants.
                 reset()
-                reply(json("token" to token, "uiLanguage" to Locale.getDefault().toLanguageTag(), "isolatedWorlds" to isolatedWorlds))
+                reply(
+                    json(
+                        "token" to token,
+                        "uiLanguage" to Locale.getDefault().toLanguageTag(),
+                        "isolatedWorlds" to isolatedWorlds,
+                        "worldSlots" to worldSlots.size
+                    )
+                )
             }
             "ext.open" -> open(args.str("id"), args.str("path"), reply)
             "ext.configure" -> configure(args, reply)
@@ -281,6 +299,12 @@ class Extensions(private val host: Host) {
                 "ms" to ms
             )
             main.post {
+                // The extension's worlds take slots of the fixed pool first; the core keeps within
+                // the budget `ext.env` told it, so a refusal here is a bug on one side or the other.
+                if (!worldSlots.assign(id, unitsNow.mapNotNull { it.world }.toSet())) {
+                    reply(Host.Rejection("No isolated world slot is free for the extension (${worldSlots.size} in use)"))
+                    return@post
+                }
                 this.debug = debug
                 served = served + (id to servedNow)
                 units[id] = unitsNow
@@ -289,7 +313,8 @@ class Extensions(private val host: Host) {
                 Log.i(
                     TAG,
                     "configured ${id.take(8)} ${servedNow.version}: ${unitsNow.size} unit(s), " +
-                        "${unitsNow.sumOf { it.script.length }} chars (${compiled.count { it.cached }} cached) in $ms ms"
+                        "${unitsNow.sumOf { it.script.length }} chars (${compiled.count { it.cached }} cached) in $ms ms, " +
+                        "worlds ${unitsNow.mapNotNull { u -> u.world?.let(worldSlots::slot) }.toSet()}"
                 )
                 reply(stats)
             }
@@ -305,6 +330,9 @@ class Extensions(private val host: Host) {
         if (popup?.extensionId == id) closePopup()
         // The core dropped these endpoints already; the frames keep running what was injected.
         endpoints.entries.removeAll { it.value.extensionId == id }
+        // Its world slots are free for the next extension; a straggling hello from a document
+        // that still runs the old world's script claims this id and is refused by the slot check.
+        worldSlots.releaseAll(id)
         io.execute { compiler.forget(id) }
         configureStats.remove(id)
         Log.i(TAG, "detached ${id.take(8)}")
@@ -321,6 +349,7 @@ class Extensions(private val host: Host) {
         units.clear()
         served = emptyMap()
         endpoints.clear()
+        worldSlots.clear()
         configureStats.clear()
         rules = null
         observeRequests = false
@@ -332,12 +361,15 @@ class Extensions(private val host: Host) {
      * rules arrive normalised from the core's translator.
      */
     private fun setRules(args: JSONObject, reply: (Any?) -> Unit) {
-        io.execute {
+        // Its own thread: tens of thousands of rules parse in the hundreds of milliseconds, and
+        // the `ext.open` / `ext.configure` of the next extension must not wait behind them.
+        rulesIo.execute {
             val started = System.nanoTime()
             val all = ArrayList<NetRules.Rule>()
             val statics = args.arr("static")
             var files = 0
             var cached = 0
+            val wanted = HashSet<String>()
             for (i in 0 until statics.length()) {
                 val s = statics.optJSONObject(i) ?: continue
                 val ext = s.str("ext")
@@ -345,12 +377,15 @@ class Extensions(private val host: Host) {
                 for (j in 0 until paths.length()) {
                     val file = fileFor(ext, paths.optString(j, "")) ?: continue
                     if (!file.isFile) continue
+                    wanted.add(file.path)
                     val loaded = loadStaticRuleset(ext, file) ?: continue
                     files++
                     if (loaded.second) cached++
                     all.addAll(loaded.first)
                 }
             }
+            // Rulesets no longer wanted (a disabled ruleset, a detached extension) leave memory.
+            staticRules.keys.retainAll(wanted)
             val dynamic = args.arr("dynamic")
             for (i in 0 until dynamic.length()) {
                 val o = dynamic.optJSONObject(i) ?: continue
@@ -373,13 +408,18 @@ class Extensions(private val host: Host) {
      * Returns the rules and whether they came from the cache.
      */
     private fun loadStaticRuleset(ext: String, file: File): Pair<List<NetRules.Rule>, Boolean>? {
+        val fingerprint = "${file.length()}.${file.lastModified()}"
+        // Every `ext.setRules` re-sends every extension's rulesets: a file parsed once in this
+        // process is not parsed again while it is unchanged.
+        staticRules[file.path]?.let { (seen, rules) -> if (seen == fingerprint) return rules to true }
         val cacheDir = File(host.activity.cacheDir, "ext-rules/$ext").apply { mkdirs() }
-        val cacheFile = File(cacheDir, "${file.name}.${file.length()}.${file.lastModified()}.json")
+        val cacheFile = File(cacheDir, "${file.name}.$fingerprint.json")
         runCatching {
             if (cacheFile.isFile) {
                 val arr = JSONArray(cacheFile.readText())
                 val rules = ArrayList<NetRules.Rule>(arr.length())
                 for (k in 0 until arr.length()) arr.optJSONObject(k)?.let { rules.add(NetRules.parse(it)) }
+                staticRules[file.path] = fingerprint to rules
                 return rules to true
             }
         }
@@ -396,6 +436,7 @@ class Extensions(private val host: Host) {
             cacheDir.listFiles()?.filter { it.name.startsWith(file.name + ".") }?.forEach { it.delete() }
             cacheFile.writeText(normalised.toString())
         }
+        staticRules[file.path] = fingerprint to rules
         return rules to false
     }
 
@@ -564,8 +605,11 @@ class Extensions(private val host: Host) {
 
     /**
      * Called from every tab WebView's constructor, and again when a custom tab's page is adopted by
-     * the browser window: the bridge listener, the janitor and the units of every attached
-     * extension, once per view (the WebView rejects a second listener under the same name).
+     * the browser window (a page that never had an extension layer, so no document of it holds a
+     * bridge binding yet): the bridge listener of the main world and of every world slot, the
+     * janitor and the units of every attached extension, once per view. All of a view's bridge
+     * listeners are registered here and never later: `addWebMessageListener` on a view with live
+     * frames strands the bindings those frames already hold (see [WorldSlots]).
      */
     fun attach(view: TabWebView) {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ||
@@ -573,7 +617,13 @@ class Extensions(private val host: Host) {
         ) return
         if (handlers.containsKey(view)) return
         WebViewCompat.addWebMessageListener(view, BRIDGE, setOf("*")) { v, message, origin, isMainFrame, proxy ->
-            onBridgeMessage(v, message.data, origin, isMainFrame, proxy, "content")
+            onBridgeMessage(v, message.data, origin, isMainFrame, proxy, "content", slot = null)
+        }
+        for (slot in 0 until worldSlots.size) {
+            val world = WebViewCompat.getExecutionWorld(view, worldSlots.worldName(slot))
+            WebViewCompat.addWebMessageListener(view, BRIDGE, setOf("*"), world) { v, message, origin, isMainFrame, proxy ->
+                onBridgeMessage(v, message.data, origin, isMainFrame, proxy, "content", slot)
+            }
         }
         val mine = ViewHandlers()
         // The janitor first: document-start scripts run in registration order, and it has to take
@@ -609,19 +659,14 @@ class Extensions(private val host: Host) {
     }
 
     /**
-     * Main world: `addDocumentStartJavaScript`. Isolated world: the world's own bridge listener
-     * (once per WebView and world; the injected object is world-scoped and comes first) and
-     * `addJavaScriptOnEvent(DOCUMENT_START)` in that world.
+     * Main world: `addDocumentStartJavaScript`. Isolated world: `addJavaScriptOnEvent(DOCUMENT_START)`
+     * in the slot world the extension's world name is mapped to (its bridge listener has been on
+     * the view since construction; the injected object is world-scoped and comes first).
      */
     private fun addUnit(view: WebView, unit: ScriptUnit, origins: Set<String>): ScriptHandler {
         val worldName = unit.world ?: return WebViewCompat.addDocumentStartJavaScript(view, unit.script, origins)
-        val world = WebViewCompat.getExecutionWorld(view, worldName)
-        val registered = worldListeners.getOrPut(view) { HashSet() }
-        if (registered.add(worldName)) {
-            WebViewCompat.addWebMessageListener(view, BRIDGE, setOf("*"), world) { v, message, origin, isMainFrame, proxy ->
-                onBridgeMessage(v, message.data, origin, isMainFrame, proxy, "content")
-            }
-        }
+        val slot = worldSlots.slot(worldName) ?: throw IllegalStateException("$worldName has no world slot")
+        val world = WebViewCompat.getExecutionWorld(view, worldSlots.worldName(slot))
         return WebViewCompat.addJavaScriptOnEvent(view, unit.script, WebViewCompat.INJECTION_EVENT_DOCUMENT_START, origins, world)
     }
 
@@ -652,7 +697,6 @@ class Extensions(private val host: Host) {
     fun detach(view: WebView) {
         onDocumentGone(view)
         handlers.remove(view)
-        worldListeners.remove(view)
     }
 
     private fun gone(eps: List<String>) {
@@ -660,22 +704,32 @@ class Extensions(private val host: Host) {
         host.chrome.hostEvent("ext.gone", json("eps" to JSONArray(eps)))
     }
 
-    private fun onBridgeMessage(view: WebView, data: String?, origin: Uri, isMainFrame: Boolean, proxy: JavaScriptReplyProxy, kind: String) {
+    /**
+     * A message from a frame's bridge object: the main world's (`slot` null: content scripts under
+     * the emulation proxy, extension pages) or a world slot's. A hello from a slot has to claim
+     * the extension the slot carries: the token is the same for every extension, so this is what
+     * keeps one extension's world from speaking for another (and a document still running a
+     * detached extension's world from speaking at all).
+     */
+    private fun onBridgeMessage(view: WebView, data: String?, origin: Uri, isMainFrame: Boolean, proxy: JavaScriptReplyProxy, kind: String, slot: Int?) {
         val text = data ?: return
         val message = runCatching { JSONObject(text) }.getOrNull() ?: return
         if (message.str("token") != token) return
         message.remove("token")
         val ep = message.str("ep")
         if (ep.isEmpty()) return
+        if (slot != null) {
+            val known = endpoints[ep]
+            val claimed = if (known != null) known.extensionId else message.str("ext")
+            if (worldSlots.owner(slot) != claimed || (known != null && known.slot != slot)) return
+        }
         if (debug) recordCall(ep, message)
         when (message.str("t")) {
             "hello" -> {
                 val context = message.str("ctx", kind)
                 val doc = ep.substringBefore('.')
                 if (isMainFrame) onNewDocument(view, doc)
-                endpoints[ep] = Endpoint(
-                    view, proxy, context, message.str("ext"), isMainFrame, message.str("url"), doc, message.optBoolean("world")
-                )
+                endpoints[ep] = Endpoint(view, proxy, context, message.str("ext"), isMainFrame, message.str("url"), doc, slot)
             }
             "popupSize" -> {
                 popup?.resize(message.optInt("width"), message.optInt("height"))
@@ -937,17 +991,25 @@ class Extensions(private val host: Host) {
     }
 
     fun onBridgeMessageFromPage(view: WebView, data: String?, origin: Uri, isMainFrame: Boolean, proxy: JavaScriptReplyProxy) =
-        onBridgeMessage(view, data, origin, isMainFrame, proxy, "page")
+        onBridgeMessage(view, data, origin, isMainFrame, proxy, "page", slot = null)
 
     fun destroy() {
         closePopup()
         for (id in backgrounds.keys.toList()) stopBackground(id)
         io.shutdownNow()
+        rulesIo.shutdownNow()
     }
 
     companion object {
         const val TAG = "ZenExt"
         const val BRIDGE = "__zenExtBridge"
+        /**
+         * Isolated worlds a tab view can host at once (one per extension, two for an extension
+         * with a `USER_SCRIPT` world). Each costs one listener registration per tab view at
+         * construction and nothing at run time until a unit is injected into it; the core plans
+         * an extension beyond the budget under the emulation proxy instead.
+         */
+        const val WORLD_SLOTS = 16
         const val ORIGIN_SUFFIX = ".ext.zenium.invalid"
         const val GENERATED_BACKGROUND = "_generated_background_page.html"
         val VALID_ID = Regex("^[a-p]{32}$")
