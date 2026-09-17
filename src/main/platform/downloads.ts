@@ -1,7 +1,6 @@
 import {
   app,
   dialog,
-  Notification,
   shell,
   type BrowserWindow,
   type DownloadItem as ElectronDownloadItem,
@@ -11,8 +10,8 @@ import {
 import { basename, dirname, join } from 'node:path'
 import { existsSync, mkdirSync, statSync } from 'node:fs'
 import { copyFile, rename, rm } from 'node:fs/promises'
-import type { DownloadItem } from '../../shared/types'
-import { PARTIAL_SUFFIX, finalName } from '../../shared/downloads'
+import { PRIVATE_CONTAINER_ID, type DownloadItem } from '../../shared/types'
+import { PARTIAL_SUFFIX, finalName as stripPartial } from '../../shared/downloads'
 import type { DownloadHost } from '../../core/platform'
 import type { DownloadService } from '../../core/downloads'
 import type { ZenWindow } from '../../core/window'
@@ -20,11 +19,11 @@ import { uniquePath } from './uniquePath'
 
 export { uniquePath } from './uniquePath'
 
-let configuredLocation: (() => string) | null = null
+let configuredDirectory: (() => string | null) | null = null
 
 /** Settings › Downloads decides the folder; the rest of the host reads it through `downloadDir`. */
-export function setDownloadLocationProvider(provider: () => string): void {
-  configuredLocation = provider
+export function setDownloadDirectoryProvider(provider: () => string | null): void {
+  configuredDirectory = provider
 }
 
 /**
@@ -33,7 +32,7 @@ export function setDownloadLocationProvider(provider: () => string): void {
  * create it.
  */
 export function downloadDir(): string {
-  const configured = configuredLocation?.() ?? ''
+  const configured = configuredDirectory?.() ?? null
   if (configured) {
     try {
       mkdirSync(configured, { recursive: true })
@@ -50,7 +49,7 @@ export function downloadDir(): string {
 
 export interface ElectronDownloadSettings {
   askWhereToSave: boolean
-  location: string
+  directory: string | null
 }
 
 interface Live {
@@ -63,6 +62,10 @@ interface Live {
  * `<name>.zeniumdownload` next to their final place and renamed when the core releases them;
  * with "always ask where to save" on, the partial file waits in the Downloads folder while the
  * save dialog is open and moves to the chosen path at the end.
+ *
+ * Every session (one per container, plus the in-memory private one) is attached with its
+ * container id, which stamps `containerId` and `private` on each record; retries and resumes run
+ * in the record's own session so a private download never touches a persistent partition.
  */
 export class ElectronDownloads implements DownloadHost {
   private readonly live = new Map<string, Live>()
@@ -75,13 +78,13 @@ export class ElectronDownloads implements DownloadHost {
   private readonly pendingRetries: DownloadItem[] = []
   /** Save dialogs still open; a transfer that finishes meanwhile is placed once they close. */
   private readonly pendingDialogs = new Map<string, Promise<void>>()
-  private readonly sessions: Session[] = []
+  private readonly sessions = new Map<string, Session>()
   private service: DownloadService | null = null
   private tabIdFor: (source: WebContents) => string | null = () => null
   private parentWindow: (sourceTabId: string | null) => BrowserWindow | undefined = () => undefined
 
   constructor(private readonly settings: () => ElectronDownloadSettings) {
-    setDownloadLocationProvider(() => this.settings().location)
+    setDownloadDirectoryProvider(() => this.settings().directory)
   }
 
   bind(
@@ -96,11 +99,11 @@ export class ElectronDownloads implements DownloadHost {
     this.parentWindow = hooks.parentWindow
   }
 
-  attach(ses: Session, onStarted: (sourceTabId: string | null) => void): void {
-    this.sessions.push(ses)
+  attach(ses: Session, containerId: string, onStarted: (sourceTabId: string | null) => void): void {
+    this.sessions.set(containerId, ses)
     ses.on('will-download', (_event, item, source) => {
       const sourceTabId = source && !source.isDestroyed() ? this.tabIdFor(source) : null
-      const resumed = this.track(item, ses, source, sourceTabId)
+      const resumed = this.track(item, ses, containerId, source, sourceTabId)
       if (!resumed) onStarted(sourceTabId)
     })
   }
@@ -109,6 +112,7 @@ export class ElectronDownloads implements DownloadHost {
   private track(
     item: ElectronDownloadItem,
     ses: Session,
+    containerId: string,
     source: WebContents | undefined,
     sourceTabId: string | null
   ): boolean {
@@ -124,10 +128,11 @@ export class ElectronDownloads implements DownloadHost {
         totalBytes: item.getTotalBytes() || resuming.totalBytes,
         mimeType: item.getMimeType() || resuming.mimeType,
         savePath: resuming.savePath,
+        containerId,
         resumes: resuming.id
       })
       this.live.set(record.id, { item, session: ses })
-      this.finalPaths.set(record.id, join(dirname(resuming.savePath), resuming.filename))
+      this.finalPaths.set(record.id, join(dirname(resuming.savePath), resuming.finalName))
       this.wire(item, record)
       // Electron creates the item interrupted; it only starts once asked to resume.
       setTimeout(() => {
@@ -137,7 +142,7 @@ export class ElectronDownloads implements DownloadHost {
     }
 
     const retried = this.takePendingRetry(item)
-    const filename = finalName(item.getFilename() || retried?.filename || 'download')
+    const filename = stripPartial(item.getFilename() || retried?.filename || 'download')
     const referrer = retried?.referrer ?? referrerOf(source, item.getURL())
     const settings = this.settings()
 
@@ -152,7 +157,8 @@ export class ElectronDownloads implements DownloadHost {
     const record = service.begin({
       url: item.getURL(),
       referrer,
-      filename: basename(candidate),
+      filename,
+      finalName: basename(candidate),
       totalBytes: item.getTotalBytes(),
       mimeType: item.getMimeType(),
       savePath: partial,
@@ -160,19 +166,22 @@ export class ElectronDownloads implements DownloadHost {
       userGesture: item.hasUserGesture(),
       canResume: Boolean(item.getETag() || item.getLastModifiedTime()),
       etag: item.getETag(),
-      lastModified: item.getLastModifiedTime()
+      lastModified: item.getLastModifiedTime(),
+      containerId,
+      private: containerId === PRIVATE_CONTAINER_ID,
+      resumes: retried?.id
     })
     this.live.set(record.id, { item, session: ses })
     this.finalPaths.set(record.id, candidate)
     this.wire(item, record)
 
-    if (settings.askWhereToSave) {
+    if (settings.askWhereToSave && !retried) {
       const dialogDone = this.askDestination(item, record, sourceTabId, candidate).finally(() =>
         this.pendingDialogs.delete(record.id)
       )
       this.pendingDialogs.set(record.id, dialogDone)
     }
-    return false
+    return Boolean(retried)
   }
 
   private wire(item: ElectronDownloadItem, record: DownloadItem): void {
@@ -192,7 +201,7 @@ export class ElectronDownloads implements DownloadHost {
           state === 'interrupted'
             ? item.canResume()
             : Boolean(item.getETag() || item.getLastModifiedTime()),
-        state: state === 'interrupted' ? 'interrupted' : item.isPaused() ? 'paused' : 'in-progress'
+        state: state === 'interrupted' ? 'interrupted' : item.isPaused() ? 'paused' : 'progressing'
       })
     })
     item.once('done', (_e, state) => {
@@ -201,6 +210,9 @@ export class ElectronDownloads implements DownloadHost {
         service.finish(record.id, 'completed', fields())
       } else if (state === 'cancelled') {
         this.forget(record.id)
+        // The row may already be gone (removed while running); the partial file must go anyway.
+        const partial = item.getSavePath() || record.savePath
+        if (partial.endsWith(PARTIAL_SUFFIX)) void rm(partial, { force: true })
         service.finish(record.id, 'cancelled', fields())
       } else {
         service.finish(record.id, 'interrupted', {
@@ -237,7 +249,7 @@ export class ElectronDownloads implements DownloadHost {
         live.item.once('done', () => this.service?.remove(record.id))
         live.item.cancel()
       } else {
-        await this.discard(record)
+        await this.deletePartial(record)
         this.service?.remove(record.id)
       }
       return
@@ -245,8 +257,8 @@ export class ElectronDownloads implements DownloadHost {
     const chosen = result.filePath
     this.finalPaths.set(record.id, chosen)
     this.service?.progress(record.id, {
-      filename: basename(chosen),
-      state: item.isPaused() ? 'paused' : 'in-progress'
+      finalName: basename(chosen),
+      state: item.isPaused() ? 'paused' : 'progressing'
     })
   }
 
@@ -258,6 +270,10 @@ export class ElectronDownloads implements DownloadHost {
     const final = this.finalPaths.get(id)
     if (final) this.reserved.delete(final)
     this.finalPaths.delete(id)
+  }
+
+  private sessionFor(item: DownloadItem): Session | undefined {
+    return this.sessions.get(item.containerId) ?? this.sessions.values().next().value
   }
 
   private takePendingResume(item: ElectronDownloadItem): DownloadItem | null {
@@ -302,7 +318,7 @@ export class ElectronDownloads implements DownloadHost {
     // After a restart: continue the partial file where it stopped (Chromium sends Range and
     // If-Range from the validators we kept; a server that ignores them makes it start over).
     const partial = item.savePath
-    const ses = this.sessions[0]
+    const ses = this.sessionFor(item)
     if (!ses || !partial || !existsSync(partial)) {
       this.retry(item)
       return
@@ -326,19 +342,19 @@ export class ElectronDownloads implements DownloadHost {
   }
 
   retry(item: DownloadItem): void {
-    const ses = this.sessions[0]
+    const ses = this.sessionFor(item)
     if (!ses) return
     this.pendingRetries.push(item)
     ses.downloadURL(item.url, item.referrer ? { headers: { Referer: item.referrer } } : undefined)
   }
 
-  async release(item: DownloadItem): Promise<{ savePath: string; filename: string } | null> {
+  async release(item: DownloadItem): Promise<{ savePath: string; finalName: string } | null> {
     await this.pendingDialogs.get(item.id)
     const partial = item.savePath
-    const wanted = this.finalPaths.get(item.id) ?? join(dirname(partial), item.filename)
+    const wanted = this.finalPaths.get(item.id) ?? join(dirname(partial), item.finalName)
     this.forget(item.id)
     if (!existsSync(partial)) {
-      return existsSync(wanted) ? { savePath: wanted, filename: basename(wanted) } : null
+      return existsSync(wanted) ? { savePath: wanted, finalName: basename(wanted) } : null
     }
     const final =
       existsSync(wanted) && wanted !== partial
@@ -347,14 +363,14 @@ export class ElectronDownloads implements DownloadHost {
     try {
       mkdirSync(dirname(final), { recursive: true })
       await move(partial, final)
-      return { savePath: final, filename: basename(final) }
+      return { savePath: final, finalName: basename(final) }
     } catch (error) {
       console.warn('[zenium] could not place the download:', (error as Error).message)
       return null
     }
   }
 
-  async discard(item: DownloadItem): Promise<void> {
+  async deletePartial(item: DownloadItem): Promise<void> {
     this.forget(item.id)
     // Only ever delete what we wrote ourselves: partial and quarantined files carry the suffix.
     if (item.savePath.endsWith(PARTIAL_SUFFIX)) await rm(item.savePath, { force: true })
@@ -368,18 +384,7 @@ export class ElectronDownloads implements DownloadHost {
     if (item.savePath && existsSync(item.savePath)) await shell.openPath(item.savePath)
   }
 
-  notifyCompleted(item: DownloadItem): void {
-    if (!Notification.isSupported()) return
-    const note = new Notification({
-      title: 'Download complete',
-      body: item.filename,
-      silent: true
-    })
-    note.on('click', () => void this.open(item))
-    note.show()
-  }
-
-  async chooseLocation(win?: ZenWindow): Promise<string | null> {
+  async chooseDirectory(win?: ZenWindow): Promise<string | null> {
     const host = win?.host as { win?: BrowserWindow } | undefined
     const parent = host?.win && !host.win.isDestroyed() ? host.win : undefined
     const options = {

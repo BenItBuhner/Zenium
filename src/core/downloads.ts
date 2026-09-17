@@ -1,23 +1,30 @@
-import type {
-  DownloadDanger,
-  DownloadItem,
-  DownloadSettings,
-  DownloadState,
-  Platform as PlatformOs
+import {
+  DEFAULT_CONTAINER_ID,
+  PRIVATE_CONTAINER_ID,
+  type DownloadChangeKind,
+  type DownloadDanger,
+  type DownloadItem,
+  type DownloadSettings,
+  type DownloadState,
+  type DownloadsProgress,
+  type Platform as PlatformOs
 } from '../shared/types'
-import { fileExtension, finalName } from '../shared/downloads'
+import { fileExtension, finalName as stripPartial } from '../shared/downloads'
 import { newId } from '../shared/ids'
 import { JsonStore } from './store/JsonStore'
-import type { DownloadHost, StoreIO, WindowHost } from './platform'
+import type { DownloadHost, StoreIO } from './platform'
 import type { ZenWindow } from './window'
 import {
   SAFE,
   VERDICT_TIMEOUT_MS,
   classifyDownload,
+  dangerVerdicts,
+  makeDanger,
   mayAutoOpen,
   worstDanger,
-  type DangerVerdictProvider
-} from './downloadDanger'
+  type DangerVerdictProvider,
+  type DangerVerdictRegistry
+} from './downloads/danger'
 
 interface PersistedV1 {
   version: 1
@@ -33,45 +40,53 @@ type Persisted = PersistedV1 | PersistedV2
 
 const MAX_ITEMS = 100
 const SCHEMA_VERSION = 2
+/** Progress events per item are throttled to this (4 Hz); state changes go out at once. */
+const PROGRESS_INTERVAL_MS = 250
+const PERSIST_INTERVAL_MS = 2000
 
 /** Everything a host knows when a transfer starts. */
 export interface DownloadInit {
   url: string
+  /** Name the server suggested (`Content-Disposition`, the `download` attribute or the URL). */
   filename: string
+  /** Name the file will end up under when the host already made it unique; defaults to `filename`. */
+  finalName?: string
   totalBytes: number
   mimeType: string
   savePath?: string
   referrer?: string
-  /** Tab whose page started it (owning window, "familiar site" check); null for retries and resumes. */
+  /** Tab whose page started it ("familiar site" check); null for retries and resumes. */
   sourceTabId?: string | null
   /** Chromium's user-gesture flag when the host has it; null when unknown (Android's WebView). */
   userGesture?: boolean | null
   canResume?: boolean
   etag?: string
   lastModified?: string
-  /** Continuation of an existing record (resume after a restart) instead of a new download. */
+  /** Partition the transfer runs in; `PRIVATE_CONTAINER_ID` makes the item private. */
+  containerId?: string
+  private?: boolean
+  /** Continuation of an existing record (resume after a restart, retry) instead of a new download. */
   resumes?: string
 }
 
-/** The subset of a browser window the service needs for taskbar / dock progress. */
-export interface ProgressWindow {
-  readonly id: string
-  readonly alive: boolean
-  readonly host: Pick<WindowHost, 'setProgressBar'>
+/** A filter over the list: private items only, regular items only, or (undefined) everything. */
+export interface DownloadFilter {
+  private?: boolean
 }
 
 export interface DownloadServiceDeps {
   os: PlatformOs
   settings: () => DownloadSettings
-  /** Window that owns a tab, or the focused window when there is no tab. */
-  windowForTab: (tabId: string | null) => ProgressWindow | null
-  windows: () => Iterable<ProgressWindow>
   /** The referrer's site was visited before today (Chromium's file-type warning exemption). */
   referrerFamiliar: (referrer: string) => boolean
+  /** A dangerous or suspicious download finished and waits for Keep / Discard. */
+  onDanger?: (item: DownloadItem) => void
+  /** Providers asked for a verdict on every new download; the shared registry by default. */
+  verdicts?: DangerVerdictRegistry
   now?: () => number
 }
 
-export type DownloadChange = 'started' | 'progress' | 'done'
+export type DownloadChange = DownloadChangeKind
 
 /**
  * Chromium's rate estimate: bytes over a sliding window of one-second buckets, so the speed
@@ -137,47 +152,68 @@ export class RateEstimator {
 
 interface Transfer {
   rate: RateEstimator
-  windowId: string | null
   /** Provider verdicts still outstanding; the file stays quarantined until they settle. */
   verdicts: Promise<void> | null
+  /** The worst URL verdict a provider returned, kept apart from the file-type verdict. */
+  urlVerdict: DownloadDanger | null
   abort: AbortController
   /** Completion is waiting for the verdicts. */
   completing: boolean
+  lastBroadcast: number
 }
 
+type ProgressPatch = Partial<
+  Pick<
+    DownloadItem,
+    | 'receivedBytes'
+    | 'totalBytes'
+    | 'savePath'
+    | 'finalName'
+    | 'canResume'
+    | 'etag'
+    | 'lastModified'
+    | 'mimeType'
+    | 'error'
+  >
+>
+
 /**
- * The downloads list Zenium shows in its panel. Records and their persistence live here; the
- * host owns the actual transfers and reports through `begin` / `progress` / `finish`, then acts
- * on `pause` / `resume` / `cancel` / `retry` / `release` / `discard`.
+ * The downloads list: records, their persistence and the rules around them. The host owns the
+ * actual transfers and reports through `begin` / `progress` / `finish`, then acts on `pause` /
+ * `resume` / `cancel` / `retry` / `release` / `deletePartial`. Every change goes out through
+ * `onChange` (the `download.changed` event) and the list rides on the state snapshot.
  *
  * Files arrive under `PARTIAL_SUFFIX`. When a transfer completes the service waits for every
  * danger verdict, then either has the host release the file to its final name (safe) or keeps
  * it quarantined until the user chooses Keep or Discard (flagged).
+ *
+ * Private downloads (a private window, the Android private profile) stay in memory: they are
+ * never written to `downloads.json`, only private windows see them, and `endPrivateSession`
+ * cancels and forgets them when the last private window closes.
  */
 export class DownloadService {
   items: DownloadItem[] = []
   private readonly store: JsonStore<Persisted>
-  private lastBroadcast = 0
   private lastPersist = 0
   private readonly transfers = new Map<string, Transfer>()
-  private readonly providers: DangerVerdictProvider[] = []
-  private readonly progressShown = new Map<string, string>()
+  private readonly registry: DangerVerdictRegistry
   private readonly now: () => number
 
   constructor(
     io: StoreIO,
     private readonly host: DownloadHost,
-    private readonly onChange: (item: DownloadItem, kind: DownloadChange) => void,
+    private readonly onChange: (item: DownloadItem, kind: DownloadChangeKind) => void,
     private readonly deps: DownloadServiceDeps
   ) {
     this.now = deps.now ?? (() => Date.now())
+    this.registry = deps.verdicts ?? dangerVerdicts
     this.store = new JsonStore<Persisted>(io, 'downloads.json', 1000)
     this.items = migrate(this.store.readSync(), this.now())
   }
 
-  /** Safe Browsing and friends register here. */
-  addVerdictProvider(provider: DangerVerdictProvider): void {
-    this.providers.push(provider)
+  /** Safe Browsing and friends register here (or on the registry directly). */
+  addVerdictProvider(provider: DangerVerdictProvider): () => void {
+    return this.registry.register(provider)
   }
 
   item(id: string): DownloadItem | undefined {
@@ -188,6 +224,34 @@ export class DownloadService {
     return this.items.filter((i) => isInFlight(i.state))
   }
 
+  /** The list a window may show: private windows see everything, the rest no private item. */
+  visibleTo(privateWindow: boolean): DownloadItem[] {
+    return privateWindow ? this.items : this.items.filter((i) => !i.private)
+  }
+
+  /** In-flight downloads (paused ones included), optionally private or regular ones only. */
+  activeCount(filter: DownloadFilter = {}): number {
+    return this.inFlight.filter((i) => matches(i, filter)).length
+  }
+
+  /**
+   * Bytes received and expected over the in-flight downloads, for the toolbar indicator and the
+   * OS progress bar. `indeterminate` when a running transfer has no size; paused transfers of
+   * known size still count towards the ratio, like Chrome's.
+   */
+  aggregateProgress(filter: DownloadFilter = {}): DownloadsProgress {
+    const active = this.inFlight.filter((i) => matches(i, filter))
+    let received = 0
+    let total = 0
+    let indeterminate = false
+    for (const i of active) {
+      received += i.receivedBytes
+      if (i.totalBytes > 0) total += i.totalBytes
+      else if (i.state === 'progressing') indeterminate = true
+    }
+    return { received, total, indeterminate, active: active.length }
+  }
+
   // ---------------------------------------------------------------------------
   // Host reports
   // ---------------------------------------------------------------------------
@@ -195,109 +259,141 @@ export class DownloadService {
   /** A transfer started; returns the record the host should keep updating. */
   begin(init: DownloadInit): DownloadItem {
     const now = this.now()
-    const resumed = init.resumes ? this.item(init.resumes) : undefined
-    const referrer = init.referrer ?? resumed?.referrer ?? ''
-    const filename = init.filename || resumed?.filename || 'download'
-    const record: DownloadItem = resumed ?? {
+    const existing = init.resumes ? this.item(init.resumes) : undefined
+    const record = existing ? this.continueRecord(existing, init) : this.newRecord(init, now)
+    const transfer: Transfer = {
+      rate: new RateEstimator(now),
+      verdicts: null,
+      urlVerdict: null,
+      abort: new AbortController(),
+      completing: false,
+      lastBroadcast: now
+    }
+    transfer.rate.reset(record.receivedBytes, now)
+    this.transfers.set(record.id, transfer)
+    if (!existing && this.registry.size > 0) transfer.verdicts = this.askProviders(record, transfer)
+    this.persist()
+    this.onChange(record, 'started')
+    return record
+  }
+
+  private newRecord(init: DownloadInit, now: number): DownloadItem {
+    const referrer = init.referrer ?? ''
+    const filename = stripPartial(init.filename) || 'download'
+    const containerId =
+      init.containerId ?? (init.private ? PRIVATE_CONTAINER_ID : DEFAULT_CONTAINER_ID)
+    const record: DownloadItem = {
       id: newId('dl'),
       url: init.url,
       referrer,
       filename,
+      finalName: stripPartial(init.finalName ?? '') || filename,
       savePath: init.savePath ?? '',
       totalBytes: init.totalBytes,
       receivedBytes: 0,
-      state: 'in-progress',
+      state: 'progressing',
       startedAt: now,
-      endedAt: null,
       mimeType: init.mimeType,
       canResume: init.canResume ?? false,
-      error: null,
       danger: SAFE,
+      dangerAccepted: false,
       openWhenDone: false,
       bytesPerSecond: 0,
       etaMs: null,
+      private: Boolean(init.private) || containerId === PRIVATE_CONTAINER_ID,
+      containerId,
       etag: init.etag ?? '',
       lastModified: init.lastModified ?? ''
     }
-    if (resumed) {
-      resumed.state = 'in-progress'
-      resumed.error = null
-      resumed.endedAt = null
-      if (init.savePath) resumed.savePath = init.savePath
-      if (init.totalBytes > 0) resumed.totalBytes = init.totalBytes
-    } else {
-      record.danger = classifyDownload({
-        url: record.url,
-        referrer,
-        filename,
-        mimeType: record.mimeType,
-        os: this.deps.os,
-        referrerFamiliar:
-          init.userGesture !== false && Boolean(referrer) && this.deps.referrerFamiliar(referrer)
-      })
-      this.items.unshift(record)
-      if (this.items.length > MAX_ITEMS) this.items.length = MAX_ITEMS
-    }
-    const transfer: Transfer = {
-      rate: new RateEstimator(now),
-      windowId: this.deps.windowForTab(init.sourceTabId ?? null)?.id ?? null,
-      verdicts: null,
-      abort: new AbortController(),
-      completing: false
-    }
-    transfer.rate.reset(record.receivedBytes, now)
-    this.transfers.set(record.id, transfer)
-    if (!resumed && this.providers.length > 0)
-      transfer.verdicts = this.askProviders(record, transfer)
-    this.persist()
-    this.onChange(record, 'started')
-    this.applyProgressBars()
+    record.danger = this.classify(record, init.userGesture ?? null)
+    this.items.unshift(record)
+    if (this.items.length > MAX_ITEMS) this.trim()
     return record
   }
 
-  /** Progress update; broadcasts are throttled unless the state changed. */
+  /** A resume after a restart or a retry picks the old record up where it was. */
+  private continueRecord(record: DownloadItem, init: DownloadInit): DownloadItem {
+    record.state = 'progressing'
+    delete record.error
+    delete record.endedAt
+    delete record.completedAt
+    if (init.savePath) record.savePath = init.savePath
+    if (init.totalBytes > 0) record.totalBytes = init.totalBytes
+    if (init.mimeType) record.mimeType = init.mimeType
+    if (init.canResume !== undefined) record.canResume = init.canResume
+    if (init.etag !== undefined) record.etag = init.etag
+    if (init.lastModified !== undefined) record.lastModified = init.lastModified
+    if (init.finalName) record.finalName = stripPartial(init.finalName)
+    const filename = init.filename ? stripPartial(init.filename) : ''
+    if (filename && filename !== record.filename) {
+      // The server suggested another name this time: the type may have changed with it.
+      record.filename = filename
+      if (!init.finalName) record.finalName = filename
+      record.danger = this.classify(record, init.userGesture ?? null)
+      record.dangerAccepted = false
+    }
+    return record
+  }
+
+  /**
+   * The host settled on the on-disk name. When the response headers changed the type after
+   * `begin` (Android learns `Content-Disposition` only once the request is answered), the file
+   * is classified again under the name it will actually carry.
+   */
+  private rename(record: DownloadItem, finalName: string | undefined): void {
+    if (!finalName) return
+    const name = stripPartial(finalName)
+    if (!name || name === record.finalName) return
+    const typeChanged = fileExtension(name) !== fileExtension(record.finalName)
+    record.finalName = name
+    if (!typeChanged || record.dangerAccepted) return
+    const urlVerdict = this.transfers.get(record.id)?.urlVerdict ?? SAFE
+    record.danger = worstDanger(this.classify(record, null), urlVerdict)
+  }
+
+  private classify(record: DownloadItem, userGesture: boolean | null): DownloadDanger {
+    return classifyDownload({
+      url: record.url,
+      referrer: record.referrer,
+      filename: record.finalName || record.filename,
+      mimeType: record.mimeType,
+      os: this.deps.os,
+      referrerFamiliar:
+        userGesture !== false &&
+        Boolean(record.referrer) &&
+        this.deps.referrerFamiliar(record.referrer)
+    })
+  }
+
+  /** Progress update; broadcasts are throttled per item unless the state changed. */
   progress(
     id: string,
-    patch: Partial<
-      Pick<
-        DownloadItem,
-        | 'receivedBytes'
-        | 'totalBytes'
-        | 'savePath'
-        | 'filename'
-        | 'canResume'
-        | 'etag'
-        | 'lastModified'
-        | 'mimeType'
-        | 'error'
-      >
-    > & {
-      state: Extract<DownloadState, 'in-progress' | 'paused' | 'interrupted'>
+    patch: ProgressPatch & {
+      state: Extract<DownloadState, 'progressing' | 'paused' | 'interrupted'>
     }
   ): void {
     const record = this.item(id)
-    // Finished records never come back to life; a resumable interruption does (interrupted → in-progress).
+    // Finished records never come back to life; a resumable interruption does (interrupted → progressing).
     if (!record || record.state === 'completed' || record.state === 'cancelled') return
     const transfer = this.transfers.get(id)
     const now = this.now()
     const stateChanged = record.state !== patch.state
-    const { state, ...fields } = patch
+    const { state, finalName, ...fields } = patch
     assignFields(record, fields)
-    if (patch.filename) record.filename = finalName(patch.filename)
+    this.rename(record, finalName)
     record.state = state
-    if (state === 'in-progress') record.error = null
+    if (state === 'progressing') delete record.error
     else if (state === 'interrupted' && !record.error) record.error = 'interrupted'
     if (transfer) {
       if (stateChanged) transfer.rate.reset(record.receivedBytes, now)
       else transfer.rate.update(record.receivedBytes, now)
-      record.bytesPerSecond = state === 'in-progress' ? transfer.rate.bytesPerSecond(now) : 0
+      record.bytesPerSecond = state === 'progressing' ? transfer.rate.bytesPerSecond(now) : 0
     }
     record.etaMs = estimateEta(record)
-    if (stateChanged || now - this.lastPersist > 2000) this.persist()
-    if (stateChanged || now - this.lastBroadcast > 250) {
-      this.lastBroadcast = now
+    if (stateChanged || now - this.lastPersist > PERSIST_INTERVAL_MS) this.persist()
+    if (stateChanged || !transfer || now - transfer.lastBroadcast >= PROGRESS_INTERVAL_MS) {
+      if (transfer) transfer.lastBroadcast = now
       this.onChange(record, 'progress')
-      this.applyProgressBars()
     }
   }
 
@@ -305,24 +401,14 @@ export class DownloadService {
   finish(
     id: string,
     state: Extract<DownloadState, 'completed' | 'cancelled' | 'interrupted'>,
-    patch: Partial<
-      Pick<
-        DownloadItem,
-        | 'receivedBytes'
-        | 'totalBytes'
-        | 'savePath'
-        | 'filename'
-        | 'canResume'
-        | 'error'
-        | 'mimeType'
-      >
-    > = {}
+    patch: ProgressPatch = {}
   ): void {
     const record = this.item(id)
     if (!record || record.state === 'completed' || record.state === 'cancelled') return
     const transfer = this.transfers.get(id)
-    assignFields(record, patch)
-    if (patch.filename) record.filename = finalName(patch.filename)
+    const { finalName, ...fields } = patch
+    assignFields(record, fields)
+    this.rename(record, finalName)
     record.bytesPerSecond = 0
     record.etaMs = null
     if (state === 'completed') {
@@ -335,43 +421,54 @@ export class DownloadService {
     record.state = state
     record.endedAt = this.now()
     if (state === 'cancelled') {
-      record.error = null
+      delete record.error
       const partial = record.savePath
       record.savePath = ''
-      if (partial) void this.host.discard({ ...record, savePath: partial })
+      if (partial) void this.host.deletePartial({ ...record, savePath: partial })
     } else if (!record.error) {
       record.error = 'interrupted'
     }
     this.persist()
     this.onChange(record, 'done')
-    this.applyProgressBars()
   }
 
   /** Register a file we produced ourselves (e.g. a screenshot) so it shows in the panel. */
-  addCompleted(savePath: string, mimeType: string): DownloadItem {
+  addCompleted(
+    savePath: string,
+    mimeType: string,
+    options: { containerId?: string; private?: boolean } = {}
+  ): DownloadItem {
     const now = this.now()
+    const name = basename(savePath)
+    const containerId =
+      options.containerId ?? (options.private ? PRIVATE_CONTAINER_ID : DEFAULT_CONTAINER_ID)
     const record: DownloadItem = {
       id: newId('dl'),
       url: savePath.startsWith('content:') ? savePath : `file://${savePath}`,
       referrer: '',
-      filename: basename(savePath),
+      filename: name,
+      finalName: name,
       savePath,
       totalBytes: 0,
       receivedBytes: 0,
       state: 'completed',
       startedAt: now,
+      completedAt: now,
       endedAt: now,
       mimeType,
       canResume: false,
-      error: null,
       danger: SAFE,
+      dangerAccepted: false,
       openWhenDone: false,
       bytesPerSecond: 0,
       etaMs: null,
+      private: Boolean(options.private) || containerId === PRIVATE_CONTAINER_ID,
+      containerId,
       etag: '',
       lastModified: ''
     }
     this.items.unshift(record)
+    if (this.items.length > MAX_ITEMS) this.trim()
     this.persist()
     this.onChange(record, 'done')
     return record
@@ -383,7 +480,7 @@ export class DownloadService {
 
   pause(id: string): void {
     const item = this.item(id)
-    if (item?.state === 'in-progress') this.host.pause(id)
+    if (item?.state === 'progressing') this.host.pause(id)
   }
 
   resume(id: string): void {
@@ -399,33 +496,38 @@ export class DownloadService {
     if (item && isInFlight(item.state)) this.host.cancel(id)
   }
 
-  /** Start over (a new record replaces the failed one, like Chrome's Retry). */
+  /**
+   * Start over: a new request for the same URL and referrer that reports back into this record
+   * (the host passes `resumes: item.id` to `begin`), so the row keeps its place and identity.
+   */
   retry(id: string): void {
     const item = this.item(id)
     if (!item || !canRetry(item)) return
-    this.items = this.items.filter((i) => i.id !== id)
-    if (item.savePath) void this.host.discard(item)
-    this.persist()
+    if (item.savePath) void this.host.deletePartial(item)
+    item.savePath = ''
+    item.receivedBytes = 0
+    item.canResume = false
+    item.dangerAccepted = false
     this.host.retry(item)
-    this.onChange(item, 'done')
   }
 
   /** "Keep": release a flagged file from quarantine. */
-  async keep(id: string): Promise<void> {
+  async acceptDanger(id: string): Promise<void> {
     const item = this.item(id)
     if (!item || !isQuarantined(item)) return
-    const released = await this.host.release(item)
+    const released = await this.host.release(item, this.releaseOptions())
+    if (this.item(id) !== item) return
     if (released) {
       item.savePath = released.savePath
-      item.filename = released.filename || item.filename
+      item.finalName = released.finalName || item.finalName
     }
-    item.danger = { ...item.danger, kept: true }
+    item.dangerAccepted = true
     this.persist()
     this.onChange(item, 'done')
     await this.afterRelease(item)
   }
 
-  /** "Discard" a flagged file, or delete what is left of a failed download; the record goes too. */
+  /** "Discard" a flagged file, or delete what is left of a failed download; the row goes too. */
   async discard(id: string): Promise<void> {
     const item = this.item(id)
     if (!item) return
@@ -434,16 +536,14 @@ export class DownloadService {
       return
     }
     if (item.savePath && (isQuarantined(item) || item.state === 'interrupted'))
-      await this.host.discard(item)
-    this.items = this.items.filter((i) => i.id !== id)
-    this.persist()
-    this.onChange(item, 'done')
+      await this.host.deletePartial(item)
+    this.drop(item)
   }
 
-  setOpenWhenDone(id: string, open: boolean): void {
+  setOpenWhenDone(id: string, on: boolean): void {
     const item = this.item(id)
     if (!item) return
-    item.openWhenDone = open
+    item.openWhenDone = on
     this.persist()
     this.onChange(item, 'progress')
   }
@@ -459,56 +559,63 @@ export class DownloadService {
       await this.host.open(item)
   }
 
+  /** Take the row out of the list. A running transfer is cancelled; a finished file stays. */
   remove(id: string): void {
     const item = this.item(id)
     if (!item) return
     if (isInFlight(item.state)) this.host.cancel(id)
     else if (item.savePath && (isQuarantined(item) || item.state === 'interrupted'))
-      void this.host.discard(item)
-    this.items = this.items.filter((i) => i.id !== id)
-    this.persist()
+      void this.host.deletePartial(item)
+    this.drop(item)
   }
 
-  clearCompleted(): void {
-    for (const item of this.items) {
-      if (
-        !isInFlight(item.state) &&
-        item.savePath &&
-        (isQuarantined(item) || item.state === 'interrupted')
-      )
-        void this.host.discard(item)
+  /** "Clear all": every finished row leaves the list; quarantined and partial files are deleted. */
+  removeCompleted(): void {
+    const finished = this.items.filter((i) => !isInFlight(i.state))
+    for (const item of finished) {
+      if (item.savePath && (isQuarantined(item) || item.state === 'interrupted'))
+        void this.host.deletePartial(item)
     }
     this.items = this.items.filter((i) => isInFlight(i.state))
     this.persist()
+    for (const item of finished) this.onChange({ ...item, removed: true }, 'removed')
   }
 
-  async chooseLocation(win?: ZenWindow): Promise<string | null> {
-    return (await this.host.chooseLocation?.(win)) ?? null
+  /** @deprecated Older name of `removeCompleted`. */
+  clearCompleted(): void {
+    this.removeCompleted()
   }
 
-  /** Aggregate progress of the in-flight downloads a window owns, for its taskbar button. */
-  progressFor(
-    windowId: string
-  ): { value: number; mode: 'normal' | 'indeterminate' | 'paused' } | null {
-    const mine = this.inFlight.filter(
-      (i) => (this.transfers.get(i.id)?.windowId ?? null) === windowId
-    )
-    if (mine.length === 0) return null
-    if (mine.every((i) => i.state === 'paused')) {
-      const known = mine.filter((i) => i.totalBytes > 0)
-      const value = known.length
-        ? sum(known, (i) => i.receivedBytes) / sum(known, (i) => i.totalBytes)
-        : 0
-      return { value: Math.min(1, value), mode: 'paused' }
+  /**
+   * The last private window closed: private transfers stop, their partial files go, and every
+   * private row is forgotten (completed files stay on disk, like Firefox).
+   */
+  endPrivateSession(): void {
+    const mine = this.items.filter((i) => i.private)
+    if (mine.length === 0) return
+    for (const item of mine) {
+      if (isInFlight(item.state)) {
+        this.host.cancel(item.id)
+        this.transfers.get(item.id)?.abort.abort()
+        this.transfers.delete(item.id)
+      }
+      if (
+        item.savePath &&
+        (isInFlight(item.state) || isQuarantined(item) || item.state === 'interrupted')
+      )
+        void this.host.deletePartial(item)
     }
-    if (mine.some((i) => i.totalBytes <= 0)) return { value: 2, mode: 'indeterminate' }
-    const value = sum(mine, (i) => i.receivedBytes) / sum(mine, (i) => i.totalBytes)
-    return { value: Math.min(1, value), mode: 'normal' }
+    this.items = this.items.filter((i) => !i.private)
+    for (const item of mine) this.onChange({ ...item, removed: true }, 'removed')
+  }
+
+  async chooseDirectory(win?: ZenWindow): Promise<string | null> {
+    return (await this.host.chooseDirectory?.(win)) ?? null
   }
 
   private persist(): void {
     this.lastPersist = this.now()
-    this.store.write({ version: SCHEMA_VERSION, items: this.items })
+    this.store.write({ version: SCHEMA_VERSION, items: this.items.filter((i) => !i.private) })
   }
 
   flushSync(): void {
@@ -518,6 +625,34 @@ export class DownloadService {
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
+
+  private drop(item: DownloadItem): void {
+    this.items = this.items.filter((i) => i !== item)
+    this.transfers.get(item.id)?.abort.abort()
+    this.transfers.delete(item.id)
+    this.persist()
+    this.onChange({ ...item, removed: true }, 'removed')
+  }
+
+  /** The list is capped; finished rows make room before running ones. */
+  private trim(): void {
+    while (this.items.length > MAX_ITEMS) {
+      let victim = -1
+      for (let i = this.items.length - 1; i >= 0; i--) {
+        const item = this.items[i]
+        if (item && !isInFlight(item.state)) {
+          victim = i
+          break
+        }
+      }
+      if (victim === -1) victim = this.items.length - 1
+      this.items.splice(victim, 1)
+    }
+  }
+
+  private releaseOptions(): { notify: boolean } {
+    return { notify: this.deps.settings().notifyOnComplete }
+  }
 
   private async complete(record: DownloadItem, transfer: Transfer | undefined): Promise<void> {
     if (transfer) {
@@ -530,36 +665,37 @@ export class DownloadService {
     const gone = (): boolean =>
       this.item(record.id) !== record || (record.state as DownloadState) === 'cancelled'
     if (gone()) return
-    record.endedAt = this.now()
+    const now = this.now()
+    record.completedAt = now
+    record.endedAt = now
     if (record.danger.level === 'safe') {
-      const released = await this.host.release(record)
+      const released = await this.host.release(record, this.releaseOptions())
       if (gone()) return
       if (released) {
         record.savePath = released.savePath
-        record.filename = released.filename || record.filename
+        record.finalName = released.finalName || record.finalName
       } else {
         record.state = 'interrupted'
         record.error = 'file-error'
         record.canResume = false
+        delete record.completedAt
         this.persist()
         this.onChange(record, 'done')
-        this.applyProgressBars()
         return
       }
     }
     record.state = 'completed'
     this.persist()
     this.onChange(record, 'done')
-    this.applyProgressBars()
     if (record.danger.level === 'safe') await this.afterRelease(record)
+    else this.deps.onDanger?.(record)
   }
 
   private async afterRelease(record: DownloadItem): Promise<void> {
     const settings = this.deps.settings()
     const auto =
-      settings.autoOpen.includes(fileExtension(record.filename)) &&
-      mayAutoOpen(record.filename, this.deps.os)
-    if (settings.showNotifications) this.host.notifyCompleted?.(record)
+      settings.autoOpenTypes.includes(fileExtension(record.finalName)) &&
+      mayAutoOpen(record.finalName, this.deps.os)
     if ((record.openWhenDone || auto) && record.savePath) await this.host.open(record)
   }
 
@@ -579,13 +715,15 @@ export class DownloadService {
         resolve()
       }, VERDICT_TIMEOUT_MS)
     })
-    const all = this.providers.map((p) =>
+    const all = this.registry.all().map((p) =>
       p
         .verdict(request, transfer.abort.signal)
         .then((verdict) => {
           if (!verdict || verdict.level === 'safe') return
           if (this.item(record.id) !== record) return
-          record.danger = worstDanger(record.danger, verdict)
+          const danger = makeDanger(verdict.level, verdict.reason || 'url-verdict', verdict.message)
+          transfer.urlVerdict = worstDanger(transfer.urlVerdict ?? SAFE, danger)
+          record.danger = worstDanger(record.danger, danger)
           this.persist()
           this.onChange(record, 'progress')
         })
@@ -595,18 +733,6 @@ export class DownloadService {
       if (timer) clearTimeout(timer)
     })
   }
-
-  private applyProgressBars(): void {
-    for (const win of this.deps.windows()) {
-      if (!win.alive || !win.host.setProgressBar) continue
-      const progress = this.progressFor(win.id)
-      const key = progress ? `${progress.mode}:${progress.value.toFixed(2)}` : 'none'
-      if (this.progressShown.get(win.id) === key) continue
-      this.progressShown.set(win.id, key)
-      if (progress) win.host.setProgressBar(progress.value, progress.mode)
-      else win.host.setProgressBar(-1)
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -614,12 +740,12 @@ export class DownloadService {
 // ---------------------------------------------------------------------------
 
 export function isInFlight(state: DownloadState): boolean {
-  return state === 'in-progress' || state === 'paused'
+  return state === 'progressing' || state === 'paused'
 }
 
 /** A finished download whose file is held back behind a danger warning. */
 export function isQuarantined(item: DownloadItem): boolean {
-  return item.state === 'completed' && item.danger.level !== 'safe' && !item.danger.kept
+  return item.state === 'completed' && item.danger.level !== 'safe' && !item.dangerAccepted
 }
 
 /** Failed or cancelled downloads can be started over, except `blob:` ones (the page's object is gone). */
@@ -630,17 +756,17 @@ export function canRetry(item: DownloadItem): boolean {
 }
 
 export function estimateEta(item: DownloadItem): number | null {
-  if (item.state !== 'in-progress' || item.totalBytes <= 0 || item.bytesPerSecond <= 0) return null
+  if (item.state !== 'progressing' || item.totalBytes <= 0 || item.bytesPerSecond <= 0) return null
   const remaining = Math.max(0, item.totalBytes - item.receivedBytes)
   return Math.round((remaining / item.bytesPerSecond) * 1000)
 }
 
-function sum(items: DownloadItem[], pick: (i: DownloadItem) => number): number {
-  return items.reduce((a, i) => a + pick(i), 0)
+function matches(item: DownloadItem, filter: DownloadFilter): boolean {
+  return filter.private === undefined || item.private === filter.private
 }
 
 /** Copy the defined fields of a host patch onto the record. */
-function assignFields(record: DownloadItem, patch: Partial<DownloadItem>): void {
+function assignFields(record: DownloadItem, patch: ProgressPatch): void {
   const target = record as unknown as Record<string, unknown>
   for (const [key, value] of Object.entries(patch)) {
     if (value !== undefined) target[key] = value
@@ -657,6 +783,7 @@ export function basename(path: string): string {
  * Read `downloads.json` from any schema. Version 1 records lack the fields added in version 2;
  * whatever was in flight when the browser last quit comes back as interrupted, resumable when
  * the host had told us the server supports ranges (the partial file is checked on resume).
+ * Private items are never on disk, so nothing loaded is private.
  */
 export function migrate(data: Persisted | null, now: number): DownloadItem[] {
   if (!data || !Array.isArray(data.items)) return []
@@ -674,74 +801,104 @@ function fromV1(raw: Record<string, unknown>, now: number): DownloadItem | null 
   const inFlight = state === 'progressing' || state === 'paused'
   const finalState: DownloadState =
     state === 'completed' || state === 'cancelled' ? state : 'interrupted'
-  const savePath = str(raw['savePath'])
-  return {
+  const filename = str(raw['filename']) || 'download'
+  const startedAt = num(raw['startedAt']) || now
+  const item: DownloadItem = {
     id: str(raw['id']),
     url: str(raw['url']),
     referrer: '',
-    filename: str(raw['filename']) || 'download',
-    savePath,
+    filename,
+    finalName: filename,
+    savePath: str(raw['savePath']),
     totalBytes: num(raw['totalBytes']),
     receivedBytes: num(raw['receivedBytes']),
     state: finalState,
-    startedAt: num(raw['startedAt']) || now,
-    endedAt: num(raw['startedAt']) || now,
+    startedAt,
+    endedAt: startedAt,
     mimeType: str(raw['mimeType']),
     canResume: false,
-    error: finalState === 'interrupted' ? (inFlight ? 'shutdown' : 'interrupted') : null,
     danger: SAFE,
+    dangerAccepted: false,
     openWhenDone: false,
     bytesPerSecond: 0,
     etaMs: null,
+    private: false,
+    containerId: DEFAULT_CONTAINER_ID,
     etag: '',
     lastModified: ''
   }
+  if (finalState === 'completed') item.completedAt = startedAt
+  if (finalState === 'interrupted') item.error = inFlight ? 'shutdown' : 'interrupted'
+  return item
 }
 
 function fromV2(raw: Record<string, unknown>, now: number): DownloadItem | null {
   const state = raw['state']
-  const inFlight = state === 'in-progress' || state === 'paused'
+  const inFlight = state === 'progressing' || state === 'in-progress' || state === 'paused'
   const finalState: DownloadState =
     state === 'completed' || state === 'cancelled' || state === 'interrupted'
       ? state
       : 'interrupted'
-  const danger = raw['danger'] as Partial<DownloadDanger> | undefined
+  const danger = raw['danger'] as Partial<DownloadDanger & { kept?: boolean }> | undefined
   const savePath = str(raw['savePath'])
-  return {
+  const filename = str(raw['filename']) || 'download'
+  const startedAt = num(raw['startedAt']) || now
+  const endedAt = typeof raw['endedAt'] === 'number' ? raw['endedAt'] : inFlight ? now : startedAt
+  const item: DownloadItem = {
     id: str(raw['id']),
     url: str(raw['url']),
     referrer: str(raw['referrer']),
-    filename: str(raw['filename']) || 'download',
+    filename,
+    finalName: str(raw['finalName']) || filename,
     savePath,
     totalBytes: num(raw['totalBytes']),
     receivedBytes: num(raw['receivedBytes']),
     state: finalState,
-    startedAt: num(raw['startedAt']) || now,
-    endedAt: typeof raw['endedAt'] === 'number' ? raw['endedAt'] : inFlight ? now : null,
+    startedAt,
+    endedAt,
     mimeType: str(raw['mimeType']),
     canResume: Boolean(raw['canResume']) && finalState === 'interrupted' && savePath !== '',
-    error:
-      finalState === 'interrupted'
-        ? inFlight
-          ? 'shutdown'
-          : typeof raw['error'] === 'string'
-            ? raw['error']
-            : 'interrupted'
-        : null,
     danger:
       danger && (danger.level === 'suspicious' || danger.level === 'dangerous')
-        ? {
-            level: danger.level,
-            reason: danger.reason ?? 'file-type',
-            ...(danger.kept ? { kept: true } : {})
-          }
+        ? makeDanger(danger.level, reasonOf(danger.reason), str(danger.message))
         : SAFE,
+    dangerAccepted: Boolean(raw['dangerAccepted']) || Boolean(danger?.kept),
     openWhenDone: Boolean(raw['openWhenDone']),
     bytesPerSecond: 0,
     etaMs: null,
+    private: false,
+    containerId: str(raw['containerId']) || DEFAULT_CONTAINER_ID,
     etag: str(raw['etag']),
     lastModified: str(raw['lastModified'])
   }
+  if (finalState === 'completed')
+    item.completedAt = typeof raw['completedAt'] === 'number' ? raw['completedAt'] : endedAt
+  if (finalState === 'interrupted')
+    item.error = inFlight
+      ? 'shutdown'
+      : typeof raw['error'] === 'string' && raw['error']
+        ? raw['error']
+        : 'interrupted'
+  return item
+}
+
+const REASONS = new Set<DownloadDanger['reason']>([
+  'executable',
+  'script',
+  'archive',
+  'office-macro',
+  'file-type',
+  'insecure-download',
+  'url-verdict'
+])
+
+/** Older builds wrote `insecure` and `url`; anything unknown counts as a plain file-type flag. */
+function reasonOf(value: unknown): DownloadDanger['reason'] {
+  if (value === 'insecure') return 'insecure-download'
+  if (value === 'url') return 'url-verdict'
+  return typeof value === 'string' && REASONS.has(value as DownloadDanger['reason'])
+    ? (value as DownloadDanger['reason'])
+    : 'file-type'
 }
 
 function str(value: unknown): string {

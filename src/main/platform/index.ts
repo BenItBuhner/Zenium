@@ -90,10 +90,10 @@ export class ElectronPlatform implements Platform {
     this.views = new ElectronTabViewHost(this.sessions)
     this.siteData = new ElectronSiteData(this.sessions)
     this.menus = new ElectronMenus()
-    this.downloads = new ElectronDownloads(() => ({
-      askWhereToSave: this.browser.state.settings.askWhereToSave,
-      location: resolveDownloadSettings(this.browser.state.settings).location
-    }))
+    this.downloads = new ElectronDownloads(() => {
+      const downloads = resolveDownloadSettings(this.browser.state.settings)
+      return { askWhereToSave: downloads.askWhereToSave, directory: downloads.directory }
+    })
     this.dialogs = {
       confirm: async (options: ConfirmOptions, win?: ZenWindow) => {
         const bw = browserWindowOf(win)
@@ -263,7 +263,9 @@ export class ElectronPlatform implements Platform {
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
       this.attachPermissions(ses)
-      this.downloads.attach(ses, (sourceTabId) => browser.onDownloadStarted(sourceTabId))
+      this.downloads.attach(ses, containerId, (sourceTabId) =>
+        browser.onDownloadStarted(sourceTabId)
+      )
       ses.setSpellCheckerLanguages(['en-US'])
       if (this.sessions.isPersistent(containerId)) {
         webstore.attach(ses)

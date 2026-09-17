@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DangerVerdictRegistry,
   SAFE,
   classifyDownload,
+  dangerMessage,
+  dangerReasonFor,
   fileTypePolicy,
   isInsecureDownload,
+  makeDanger,
   mayAutoOpen,
   worstDanger,
   type DangerContext
-} from '../downloadDanger'
+} from '../danger'
 
 function context(overrides: Partial<DangerContext>): DangerContext {
   return {
@@ -73,19 +77,52 @@ describe('classifyDownload', () => {
     expect(classifyDownload(context({ filename: 'report.pdf' }))).toEqual(SAFE)
   })
 
-  it('marks runnable files dangerous and code-carrying documents suspicious', () => {
+  it('marks programs and scripts dangerous and the rest of the list suspicious, with a sentence', () => {
     expect(classifyDownload(context({ filename: 'setup.exe', os: 'win32' }))).toEqual({
       level: 'dangerous',
-      reason: 'file-type'
+      reason: 'executable',
+      message: 'This type of file can harm your device.'
+    })
+    expect(classifyDownload(context({ filename: 'run.sh', os: 'linux' }))).toEqual({
+      level: 'dangerous',
+      reason: 'script',
+      message: 'This type of file can run code on your device.'
     })
     expect(classifyDownload(context({ filename: 'macros.xml', os: 'win32' }))).toEqual({
       level: 'suspicious',
-      reason: 'file-type'
+      reason: 'file-type',
+      message: 'This type of file is uncommon and could be unsafe.'
     })
-    expect(classifyDownload(context({ filename: 'library.dll', os: 'win32' }))).toEqual({
+    expect(classifyDownload(context({ filename: 'Installer.dmg', os: 'darwin' }))).toEqual({
+      level: 'suspicious',
+      reason: 'archive',
+      message: 'This disk image can contain programs that harm your device.'
+    })
+    expect(classifyDownload(context({ filename: 'db.accdb', os: 'win32' }))).toEqual({
+      level: 'suspicious',
+      reason: 'office-macro',
+      message: 'This document type can contain macros that harm your device.'
+    })
+    expect(classifyDownload(context({ filename: 'library.dll', os: 'win32' }))).toMatchObject({
       level: 'dangerous',
-      reason: 'file-type'
+      reason: 'executable'
     })
+  })
+
+  it('names the category of an extension regardless of platform', () => {
+    expect(dangerReasonFor('tool.deb')).toBe('executable')
+    expect(dangerReasonFor('app.apk')).toBe('executable')
+    expect(dangerReasonFor('script.py')).toBe('script')
+    expect(dangerReasonFor('setup.exe.zeniumdownload')).toBe('executable')
+    expect(dangerReasonFor('weird.cfg')).toBe('file-type')
+    expect(dangerMessage('none', 'safe')).toBe('')
+    expect(makeDanger('safe', 'executable')).toEqual(SAFE)
+    expect(makeDanger('dangerous', 'url-verdict').message).toBe(
+      'Zenium found this file may be dangerous.'
+    )
+    expect(makeDanger('dangerous', 'url-verdict', 'Blocked by policy.').message).toBe(
+      'Blocked by policy.'
+    )
   })
 
   it('skips the warning for installers from a familiar site, like Chromium\u2019s user-gesture rule', () => {
@@ -95,7 +132,7 @@ describe('classifyDownload', () => {
     // The DANGEROUS handful warns regardless of familiarity.
     expect(
       classifyDownload(context({ filename: 'library.dll', os: 'win32', referrerFamiliar: true }))
-    ).toEqual({ level: 'dangerous', reason: 'file-type' })
+    ).toMatchObject({ level: 'dangerous', reason: 'executable' })
   })
 
   it('flags an http download from an https page (mixed content)', () => {
@@ -107,19 +144,35 @@ describe('classifyDownload', () => {
       classifyDownload(
         context({ url: 'http://cdn.example.com/report.pdf', referrer: 'https://example.com/x' })
       )
-    ).toEqual({ level: 'suspicious', reason: 'insecure' })
+    ).toEqual({
+      level: 'suspicious',
+      reason: 'insecure-download',
+      message: 'This file was downloaded over an insecure connection.'
+    })
   })
 
-  it('takes the worse of two verdicts and drops a stale Keep', () => {
+  it('takes the worse of two verdicts', () => {
     expect(
       worstDanger(
-        { level: 'suspicious', reason: 'file-type', kept: true },
-        { level: 'dangerous', reason: 'url' }
+        makeDanger('suspicious', 'file-type'),
+        makeDanger('dangerous', 'url-verdict', 'Nope.')
       )
-    ).toEqual({ level: 'dangerous', reason: 'url' })
-    expect(worstDanger({ level: 'dangerous', reason: 'file-type' }, SAFE)).toEqual({
-      level: 'dangerous',
-      reason: 'file-type'
-    })
+    ).toEqual({ level: 'dangerous', reason: 'url-verdict', message: 'Nope.' })
+    expect(worstDanger(makeDanger('dangerous', 'executable'), SAFE)).toEqual(
+      makeDanger('dangerous', 'executable')
+    )
+  })
+})
+
+describe('DangerVerdictRegistry', () => {
+  it('registers providers and hands back their unregister', () => {
+    const registry = new DangerVerdictRegistry()
+    const provider = { verdict: async (): Promise<null> => null }
+    const off = registry.register(provider)
+    registry.register(provider)
+    expect(registry.all()).toEqual([provider])
+    expect(registry.size).toBe(1)
+    off()
+    expect(registry.size).toBe(0)
   })
 })

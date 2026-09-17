@@ -300,11 +300,6 @@ export interface WindowHost {
   normalBounds(): Rect | null
   /** Brief vibration for a gesture landmark; hosts without haptics leave this out. */
   haptic?(kind: HapticKind): void
-  /**
-   * Download progress on the window's taskbar button or dock icon: 0–1, `-1` to clear it, any
-   * value above 1 for an indeterminate bar (Electron's `setProgressBar` contract).
-   */
-  setProgressBar?(value: number, mode?: 'normal' | 'indeterminate' | 'paused'): void
 }
 
 export interface WindowCreateInit {
@@ -441,18 +436,26 @@ export interface DownloadHost {
   /** Continue a paused or resumable interrupted transfer; after a restart only the record is known. */
   resume(item: DownloadItem): void
   cancel(id: string): void
-  /** A fresh request for the same URL and referrer; it reports through `begin` like any download. */
+  /**
+   * A fresh request for the same URL and referrer, reported through `begin` with
+   * `resumes: item.id` so the row keeps its identity.
+   */
   retry(item: DownloadItem): void
-  /** Rename the finished partial file to `item.filename`; resolves with where it ended up. */
-  release(item: DownloadItem): Promise<{ savePath: string; filename: string } | null>
+  /**
+   * Rename the finished partial file to `item.finalName`; resolves with where it ended up.
+   * `notify` is the "notify on complete" setting for hosts whose downloader owns the completion
+   * notification (Android); desktop notifications are the desktop program's, from `download.changed`.
+   */
+  release(
+    item: DownloadItem,
+    options: { notify: boolean }
+  ): Promise<{ savePath: string; finalName: string } | null>
   /** Delete the partial or quarantined file (nothing to do when it is already gone). */
-  discard(item: DownloadItem): Promise<void>
+  deletePartial(item: DownloadItem): Promise<void>
   open(item: DownloadItem): Promise<void>
   showInFolder(item: DownloadItem): void
-  /** System notification for a completed download; clicking it opens the file. */
-  notifyCompleted?(item: DownloadItem): void
-  /** Folder picker for Settings › Downloads; resolves with the chosen location or null. */
-  chooseLocation?(win?: ZenWindow): Promise<string | null>
+  /** Folder picker for Settings › Downloads; resolves with the chosen directory or null. */
+  chooseDirectory?(win?: ZenWindow): Promise<string | null>
 }
 
 export interface SessionHost {

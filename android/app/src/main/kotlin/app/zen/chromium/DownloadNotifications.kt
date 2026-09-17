@@ -39,7 +39,11 @@ class DownloadNotifications(private val context: Context, private val onAction: 
         ContextCompat.registerReceiver(context, receiver, IntentFilter(ACTION), ContextCompat.RECEIVER_NOT_EXPORTED)
     }
 
-    fun progress(id: String, filename: String, received: Long, total: Long, paused: Boolean) {
+    /**
+     * The ongoing card of a transfer. A private transfer (a private window's tab) shows neither
+     * the file name nor the site, only that Zenium is downloading and how far it got.
+     */
+    fun progress(id: String, filename: String, received: Long, total: Long, paused: Boolean, private: Boolean = false) {
         ensureChannels()
         val text = when {
             paused -> "Paused · ${formatBytes(received)}${if (total > 0) " of ${formatBytes(total)}" else ""}"
@@ -48,7 +52,7 @@ class DownloadNotifications(private val context: Context, private val onAction: 
         }
         val builder = NotificationCompat.Builder(context, CHANNEL_PROGRESS)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle(filename)
+            .setContentTitle(if (private) PRIVATE_TITLE else filename)
             .setContentText(text)
             .setOngoing(!paused)
             .setOnlyAlertOnce(true)
@@ -66,12 +70,12 @@ class DownloadNotifications(private val context: Context, private val onAction: 
         post(TAG_PROGRESS, id, builder)
     }
 
-    fun failed(id: String, filename: String, reason: String) {
+    fun failed(id: String, filename: String, reason: String, private: Boolean = false) {
         ensureChannels()
         val builder = NotificationCompat.Builder(context, CHANNEL_PROGRESS)
             .setSmallIcon(android.R.drawable.stat_notify_error)
-            .setContentTitle("Download failed")
-            .setContentText("$filename · ${describe(reason)}")
+            .setContentTitle(if (private) "$PRIVATE_TITLE failed" else "Download failed")
+            .setContentText(if (private) describe(reason) else "$filename · ${describe(reason)}")
             .setAutoCancel(true)
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_ERROR)
@@ -79,13 +83,13 @@ class DownloadNotifications(private val context: Context, private val onAction: 
         post(TAG_PROGRESS, id, builder)
     }
 
-    fun completed(id: String, filename: String, mimeType: String, uri: Uri?) {
+    fun completed(id: String, filename: String, mimeType: String, uri: Uri?, private: Boolean = false) {
         ensureChannels()
         manager.cancel(TAG_PROGRESS, id.hashCode())
         val builder = NotificationCompat.Builder(context, CHANNEL_DONE)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle("Download complete")
-            .setContentText(filename)
+            .setContentTitle(if (private) "$PRIVATE_TITLE complete" else "Download complete")
+            .setContentText(if (private) "Tap to open the file" else filename)
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
         val view = uri?.let {
@@ -155,6 +159,8 @@ class DownloadNotifications(private val context: Context, private val onAction: 
         const val CHANNEL_DONE = "zenium.downloads.complete"
         private const val TAG_PROGRESS = "zenium.download"
         private const val TAG_DONE = "zenium.download.done"
+        /** What a private transfer's card says instead of the file name. */
+        const val PRIVATE_TITLE = "Private download"
 
         fun formatBytes(bytes: Long): String {
             if (bytes < 1024) return "$bytes B"

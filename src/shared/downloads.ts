@@ -8,28 +8,45 @@ import type { DownloadSettings, Settings } from './types'
 /** In-progress and quarantined files end in this (Chrome: `.crdownload`, Firefox: `.part`). */
 export const PARTIAL_SUFFIX = '.zeniumdownload'
 
+/**
+ * `openPanelOnStart` keeps today's Firefox-style behaviour (the panel opens when a download
+ * begins) until the toolbar indicators land; the UI change that ships one flips it to false.
+ */
 export const DEFAULT_DOWNLOAD_SETTINGS: DownloadSettings = {
-  location: '',
-  autoOpen: [],
-  showNotifications: true,
-  openPanelOnStart: false
+  directory: null,
+  askWhereToSave: false,
+  notifyOnComplete: true,
+  openPanelOnStart: true,
+  openPanelOnComplete: true,
+  autoOpenTypes: []
 }
 
-/** The effective downloads settings, with defaults for anything the profile does not carry. */
+/**
+ * The effective downloads settings, with defaults for anything the profile does not carry.
+ * `askWhereToSave` predates the block and lives at `Settings.askWhereToSave`; it is mirrored here
+ * so readers see one shape.
+ */
 export function resolveDownloadSettings(
-  settings: Pick<Settings, 'downloads'> | undefined | null
+  settings: Partial<Pick<Settings, 'downloads' | 'askWhereToSave'>> | undefined | null
 ): DownloadSettings {
   const r = settings?.downloads ?? {}
   const d = DEFAULT_DOWNLOAD_SETTINGS
   return {
-    location: typeof r.location === 'string' ? r.location : d.location,
-    autoOpen: Array.isArray(r.autoOpen)
-      ? r.autoOpen.filter((e): e is string => typeof e === 'string').map(normalizeExtension)
-      : [...d.autoOpen],
-    showNotifications:
-      typeof r.showNotifications === 'boolean' ? r.showNotifications : d.showNotifications,
+    directory: typeof r.directory === 'string' && r.directory !== '' ? r.directory : d.directory,
+    askWhereToSave:
+      typeof settings?.askWhereToSave === 'boolean' ? settings.askWhereToSave : d.askWhereToSave,
+    notifyOnComplete:
+      typeof r.notifyOnComplete === 'boolean' ? r.notifyOnComplete : d.notifyOnComplete,
     openPanelOnStart:
-      typeof r.openPanelOnStart === 'boolean' ? r.openPanelOnStart : d.openPanelOnStart
+      typeof r.openPanelOnStart === 'boolean' ? r.openPanelOnStart : d.openPanelOnStart,
+    openPanelOnComplete:
+      typeof r.openPanelOnComplete === 'boolean' ? r.openPanelOnComplete : d.openPanelOnComplete,
+    autoOpenTypes: Array.isArray(r.autoOpenTypes)
+      ? r.autoOpenTypes
+          .filter((e): e is string => typeof e === 'string')
+          .map(normalizeExtension)
+          .filter((e) => e !== '')
+      : [...d.autoOpenTypes]
   }
 }
 

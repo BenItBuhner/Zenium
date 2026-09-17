@@ -587,22 +587,31 @@ export interface BookmarkImportResult {
   folderId: string
 }
 
-export type DownloadState = 'in-progress' | 'paused' | 'completed' | 'cancelled' | 'interrupted'
+export type DownloadState = 'progressing' | 'paused' | 'completed' | 'cancelled' | 'interrupted'
 
 export type DownloadDangerLevel = 'safe' | 'suspicious' | 'dangerous'
 
 /**
- * Why a download is flagged: `file-type` (the extension can run code or hide it, after Chromium's
- * download_file_types list), `insecure` (an http download from an https page), `url` (a verdict
- * from a `DangerVerdictProvider`, e.g. Safe Browsing).
+ * Machine reason behind a danger level. File-type reasons follow Chromium's download_file_types
+ * categories (`executable`, `script`, `archive`, `office-macro`, `file-type` for the rest of the
+ * list); `insecure-download` is an http transfer started from an https page; `url-verdict` came
+ * from a `DangerVerdictProvider` (Safe Browsing and friends). `none` while `level` is `safe`.
  */
-export type DownloadDangerReason = 'none' | 'file-type' | 'insecure' | 'url'
+export type DownloadDangerReason =
+  | 'none'
+  | 'executable'
+  | 'script'
+  | 'archive'
+  | 'office-macro'
+  | 'file-type'
+  | 'insecure-download'
+  | 'url-verdict'
 
 export interface DownloadDanger {
   level: DownloadDangerLevel
   reason: DownloadDangerReason
-  /** The user chose "Keep": the file left quarantine and may be opened. */
-  kept?: boolean
+  /** One sentence for the row ("This file type can harm your device."); empty when safe. */
+  message: string
 }
 
 export interface DownloadItem {
@@ -610,8 +619,10 @@ export interface DownloadItem {
   url: string
   /** Page the download came from (empty when unknown); a retry sends it as the Referer again. */
   referrer: string
-  /** Display name and the final file name (what the user asked for or the server suggested). */
+  /** Name the server suggested (or the `download` attribute / URL gave), before uniquifying. */
   filename: string
+  /** Name the file ends up under: `filename` made unique (`report(1).pdf`) or the one the user typed. */
+  finalName: string
   /**
    * Where the bytes are right now: the partial file while in progress, the final file once
    * completed. On Android this can be a `content:` URI.
@@ -621,37 +632,63 @@ export interface DownloadItem {
   receivedBytes: number
   state: DownloadState
   startedAt: number
-  /** When the transfer completed, was cancelled or broke; null while it runs. */
-  endedAt: number | null
+  /** When the file was complete on disk (still set while a flagged file waits for Keep / Discard). */
+  completedAt?: number
+  /** When the transfer stopped for any reason: completed, cancelled or interrupted. */
+  endedAt?: number
   mimeType: string
   /** The server honours Range requests, so paused and interrupted transfers can continue. */
   canResume: boolean
   /** Why an interrupted download stopped (Chromium's `net::` error name or a short reason). */
-  error: string | null
+  error?: string
   danger: DownloadDanger
+  /** The user chose "Keep" for a flagged file: it left quarantine and may be opened. */
+  dangerAccepted: boolean
   /** Open the file as soon as the download completes (Chrome's "Open when done"). */
   openWhenDone: boolean
   /** Recent transfer rate; 0 while paused or unknown. */
   bytesPerSecond: number
   /** Estimated time to completion; null without a size or a rate. */
   etaMs: number | null
+  /** Set on the copy that rides the `removed` event: the row left the list, the file stays. */
+  removed?: boolean
+  /** Started from a private window or the Android private profile; never written to disk. */
+  private: boolean
+  /** Container the download belongs to (`PRIVATE_CONTAINER_ID` when `private`). */
+  containerId: string
   /** HTTP validators the host uses for `If-Range` on resume (empty when the server sent none). */
   etag: string
   lastModified: string
 }
 
+export type DownloadChangeKind = 'started' | 'progress' | 'done' | 'removed'
+
+/** Aggregate of the in-flight downloads a window sees (its toolbar indicator, the OS progress bar). */
+export interface DownloadsProgress {
+  received: number
+  total: number
+  /** A transfer without a known size is running, so `received / total` says nothing. */
+  indeterminate: boolean
+  /** In-flight downloads, paused ones included; 0 clears the indicator. */
+  active: number
+}
+
 export interface DownloadSettings {
-  /** Folder new downloads go to; empty means the platform's Downloads folder. */
-  location: string
+  /** Folder new downloads go to; null means the platform's Downloads folder. */
+  directory: string | null
+  /** Firefox's "Always ask you where to save files" (mirrors `Settings.askWhereToSave`). */
+  askWhereToSave: boolean
+  /** Completion notifications (desktop: the system notification centre; Android: the downloader's). */
+  notifyOnComplete: boolean
+  /** Open the downloads panel whenever a download starts; off shows the toolbar indicator only. */
+  openPanelOnStart: boolean
+  /** Open the downloads panel when a download finishes (Chrome 112+). */
+  openPanelOnComplete: boolean
   /**
    * Lower-case extensions opened automatically once downloaded (Chrome's "Open certain file
    * types automatically"); dangerous types never auto-open.
    */
-  autoOpen: string[]
-  /** Completion notifications (desktop: the system notification centre). */
-  showNotifications: boolean
-  /** Open the downloads panel whenever a download starts; off shows the toolbar indicator only. */
-  openPanelOnStart: boolean
+  autoOpenTypes: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -883,7 +920,11 @@ export interface Settings {
   restoreSession: boolean
   /** Firefox's "Always ask you where to save files"; off saves straight into the Downloads folder. */
   askWhereToSave: boolean
-  /** Downloads location, auto-open types and notifications; absent in profiles from before it existed. */
+  /**
+   * Downloads folder, panel behaviour, auto-open types and notifications; absent in profiles from
+   * before it existed (`resolveDownloadSettings` fills the defaults). `askWhereToSave` above is
+   * the older sibling and stays the source of truth for that switch.
+   */
   downloads?: Partial<DownloadSettings>
   onboardingDone: boolean
   showTabSeparator: boolean
@@ -1217,7 +1258,9 @@ export interface UIState {
   glance: GlanceState | null
   compactSidebarRevealed: boolean
   window: WindowState
+  /** Newest first; private windows also see their private downloads, other windows never do. */
   downloads: DownloadItem[]
+  downloadsProgress: DownloadsProgress
   /** Every bookmark node (roots included), ordered parent-first, then by index. */
   bookmarks: BookmarkNode[]
   recentlyClosedCount: number
@@ -1581,17 +1624,22 @@ export interface Commands {
   'download.cancel': { args: { id: string }; result: void }
   'download.showInFolder': { args: { id: string }; result: void }
   'download.open': { args: { id: string }; result: void }
+  /** Take the row out of the list; the file stays where it is. */
   'download.remove': { args: { id: string }; result: void }
+  /** "Clear all": every finished row leaves the list (`download.clearCompleted` is the older name). */
+  'download.removeCompleted': { args: void; result: void }
   'download.clearCompleted': { args: void; result: void }
-  /** Start over: a new request for the same URL with the same referrer. */
+  /** Start over: a new request for the same URL with the same referrer, replacing the row. */
   'download.retry': { args: { id: string }; result: void }
-  /** Release a flagged file from quarantine ("Keep"). */
-  'download.keep': { args: { id: string }; result: void }
-  /** Delete a flagged file ("Discard"); also deletes the partial file of a failed download. */
+  /** "Keep": release a flagged file from quarantine. */
+  'download.acceptDanger': { args: { id: string }; result: void }
+  /** "Discard": delete a flagged file (or what is left of a failed one) and drop the row. */
   'download.discard': { args: { id: string }; result: void }
-  'download.setOpenWhenDone': { args: { id: string; open: boolean }; result: void }
+  'download.setOpenWhenDone': { args: { id: string; on: boolean }; result: void }
   /** Let the user pick the default downloads folder; resolves with it (or null when dismissed). */
-  'download.chooseLocation': { args: void; result: string | null }
+  'download.chooseDirectory': { args: void; result: string | null }
+  /** Show the downloads panel (Ctrl/Cmd+J, the app menu, a completion notification). */
+  'download.openPanel': { args: void; result: void }
 
   'find.start': {
     /** `newSession` starts a fresh search for `text`; otherwise steps to the next/previous match. */
@@ -1802,6 +1850,14 @@ export interface Events {
   'urlbar.close': void
   'overlay.open': { kind: OverlayKind; folderId?: string; section?: string }
   'find.open': { tabId: string; again?: 'next' | 'prev' }
+  /**
+   * A download row changed. `progress` is throttled to 4 Hz per item, state changes arrive at
+   * once; `done` covers completed, cancelled and interrupted (read `item.state`). Private items
+   * only reach private windows. The full list also rides in `state.downloads`.
+   */
+  'download.changed': { item: DownloadItem; kind: DownloadChangeKind }
+  /** A dangerous or suspicious download finished and waits for Keep / Discard. */
+  'download.danger': { id: string }
   toast: { message: string; kind?: 'info' | 'error' }
   /** Link hover status text (Firefox shows this in the bottom corner). */
   status: { text: string }

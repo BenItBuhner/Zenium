@@ -146,19 +146,21 @@ export class Browser {
     this.downloads = new DownloadService(
       platform.io,
       platform.downloads,
-      () => {
-        this.state.downloads = this.downloads.items
+      (item, kind) => {
         this.state.commitVolatile()
+        this.emitDownload('download.changed', { item, kind }, item.private)
       },
       {
         os: platform.info.os,
         settings: () => resolveDownloadSettings(this.state.settings),
-        windowForTab: (tabId) => (tabId ? this.tabs.windowFor(tabId) : this.focusedWindow()),
-        windows: () => this.allWindows(),
-        referrerFamiliar: (referrer) => this.history.visitedBeforeToday(referrer)
+        referrerFamiliar: (referrer) => this.history.visitedBeforeToday(referrer),
+        onDanger: (item) => this.emitDownload('download.danger', { id: item.id }, item.private)
       }
     )
-    this.state.downloads = this.downloads.items
+    this.state.downloadsFor = (win) => ({
+      downloads: this.downloads.visibleTo(win.isPrivate),
+      downloadsProgress: this.downloads.aggregateProgress(win.isPrivate ? {} : { private: false })
+    })
     this.permissions = new PermissionService(platform.io, platform.dialogs)
     this.tabs = new TabManager(this)
     this.governor = platform.createGovernor?.(this) ?? new NoopGovernor(this)
@@ -297,8 +299,10 @@ export class Browser {
   onWindowClosed(win: ZenWindow): void {
     this.windows.delete(win.id)
     for (const w of this.allWindows()) w.selection.delete(win.localSpace?.id ?? '')
-    if (win.isPrivate && !this.allWindows().some((w) => w.isPrivate))
+    if (win.isPrivate && !this.allWindows().some((w) => w.isPrivate)) {
+      this.downloads.endPrivateSession()
       void this.platform.sessions.clearPrivate()
+    }
     if (this.allWindows().length === 0) {
       this.governor.stop()
       this.tabs.destroyAll()
@@ -320,10 +324,12 @@ export class Browser {
    * opened only for the download; otherwise just make sure the keyboard keeps working.
    */
   onDownloadStarted(sourceTabId: string | null): void {
-    // Firefox shows the downloads panel whenever a download begins. Let any tab switch paint
-    // first so the panel can dim a snapshot of the page behind it.
+    // Firefox shows the downloads panel whenever a download begins; Chrome only animates its
+    // toolbar button. The setting decides. Let any tab switch paint first so the panel can dim a
+    // snapshot of the page behind it.
     const win = sourceTabId ? this.tabs.windowFor(sourceTabId) : this.focusedWindow()
-    setTimeout(() => this.emit('overlay.open', { kind: 'downloads' }, win), 200)
+    if (resolveDownloadSettings(this.state.settings).openPanelOnStart)
+      setTimeout(() => this.emit('overlay.open', { kind: 'downloads' }, win), 200)
     const tab = this.tabs.tab(sourceTabId)
     const view = sourceTabId ? this.tabs.view(sourceTabId) : undefined
     if (!tab || !view) return
@@ -384,6 +390,18 @@ export class Browser {
 
   toast(message: string, kind: 'info' | 'error' = 'info', win?: ZenWindow): void {
     this.emit('toast', { message, kind }, win)
+  }
+
+  /** Download events go to every window; private downloads only to private windows. */
+  private emitDownload<K extends 'download.changed' | 'download.danger'>(
+    name: K,
+    payload: Events[K],
+    isPrivate: boolean
+  ): void {
+    for (const win of this.allWindows()) {
+      if (isPrivate && !win.isPrivate) continue
+      win.send(name, payload)
+    }
   }
 
   /** A page's DOM is ready: inject its Boost and check whether Reader View applies. */
@@ -1218,21 +1236,15 @@ export class Browser {
       'download.cancel': ({ id }) => this.downloads.cancel(id),
       'download.showInFolder': ({ id }) => this.downloads.showInFolder(id),
       'download.open': ({ id }) => this.downloads.open(id),
-      'download.remove': ({ id }) => {
-        this.downloads.remove(id)
-        state.downloads = this.downloads.items
-        state.commitVolatile()
-      },
-      'download.clearCompleted': () => {
-        this.downloads.clearCompleted()
-        state.downloads = this.downloads.items
-        state.commitVolatile()
-      },
+      'download.remove': ({ id }) => this.downloads.remove(id),
+      'download.removeCompleted': () => this.downloads.removeCompleted(),
+      'download.clearCompleted': () => this.downloads.removeCompleted(),
       'download.retry': ({ id }) => this.downloads.retry(id),
-      'download.keep': ({ id }) => this.downloads.keep(id),
+      'download.acceptDanger': ({ id }) => this.downloads.acceptDanger(id),
       'download.discard': ({ id }) => this.downloads.discard(id),
-      'download.setOpenWhenDone': ({ id, open }) => this.downloads.setOpenWhenDone(id, open),
-      'download.chooseLocation': (_args, win) => this.downloads.chooseLocation(win),
+      'download.setOpenWhenDone': ({ id, on }) => this.downloads.setOpenWhenDone(id, on),
+      'download.chooseDirectory': (_args, win) => this.downloads.chooseDirectory(win),
+      'download.openPanel': (_args, win) => this.emit('overlay.open', { kind: 'downloads' }, win),
 
       'find.start': ({ tabId, text, forward, newSession }, win) => {
         const view = tabs.view(tabId)

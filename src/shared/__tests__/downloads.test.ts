@@ -12,23 +12,31 @@ describe('download settings', () => {
   it('fills in defaults for profiles from before the block existed', () => {
     expect(resolveDownloadSettings(undefined)).toEqual(DEFAULT_DOWNLOAD_SETTINGS)
     expect(resolveDownloadSettings({})).toEqual(DEFAULT_DOWNLOAD_SETTINGS)
-    expect(resolveDownloadSettings({ downloads: { location: '/x' } })).toEqual({
+    expect(resolveDownloadSettings({ downloads: { directory: '/x' } })).toEqual({
       ...DEFAULT_DOWNLOAD_SETTINGS,
-      location: '/x'
+      directory: '/x'
     })
+    expect(resolveDownloadSettings({ downloads: { directory: '' } }).directory).toBeNull()
+  })
+
+  it('mirrors the older top-level ask-where-to-save switch', () => {
+    expect(resolveDownloadSettings({ askWhereToSave: true }).askWhereToSave).toBe(true)
+    expect(resolveDownloadSettings({ askWhereToSave: false }).askWhereToSave).toBe(false)
   })
 
   it('normalises the auto-open list and ignores wrong types', () => {
     const settings = resolveDownloadSettings({
       downloads: {
-        autoOpen: ['.PDF', ' torrent ', 42 as unknown as string],
-        showNotifications: 'yes' as unknown as boolean,
-        openPanelOnStart: true
+        autoOpenTypes: ['.PDF', ' torrent ', 42 as unknown as string, ''],
+        notifyOnComplete: 'yes' as unknown as boolean,
+        openPanelOnStart: false,
+        openPanelOnComplete: false
       }
     })
-    expect(settings.autoOpen).toEqual(['pdf', 'torrent'])
-    expect(settings.showNotifications).toBe(true)
-    expect(settings.openPanelOnStart).toBe(true)
+    expect(settings.autoOpenTypes).toEqual(['pdf', 'torrent'])
+    expect(settings.notifyOnComplete).toBe(true)
+    expect(settings.openPanelOnStart).toBe(false)
+    expect(settings.openPanelOnComplete).toBe(false)
   })
 })
 

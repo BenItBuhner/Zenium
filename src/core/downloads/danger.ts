@@ -14,8 +14,13 @@
  * Verdicts from elsewhere (Safe Browsing, an enterprise policy) plug in through
  * `DangerVerdictProvider`; the highest level wins.
  */
-import type { DownloadDanger, DownloadDangerLevel, Platform as PlatformOs } from '../shared/types'
-import { fileExtension } from '../shared/downloads'
+import type {
+  DownloadDanger,
+  DownloadDangerLevel,
+  DownloadDangerReason,
+  Platform as PlatformOs
+} from '../../shared/types'
+import { fileExtension } from '../../shared/downloads'
 
 /** Platform letters used by the tables: w Windows, m macOS, l Linux, a Android. */
 type PlatformLetter = 'w' | 'm' | 'l' | 'a'
@@ -52,15 +57,73 @@ const ALWAYS_WARN: Array<[platforms: string, extensions: string]> = [
 ]
 
 /**
- * Executables and installers the user is most likely to run straight from the downloads panel.
- * When one of these is flagged it is `dangerous` (red) rather than `suspicious`; documents and
- * data files that merely can carry code stay amber.
+ * What kind of thing a flagged extension is, for the reason and the sentence on the row.
+ * Programs and scripts the user is likely to run straight from the panel are `dangerous` (red);
+ * disk images, macro-bearing documents and the rest of Chromium's list stay `suspicious` (amber).
  */
-const RUNNABLE = new Set(
-  'exe msi msix msixbundle appx appxbundle bat cmd com scr pif cpl hta msc jar jnlp js jse vbs vbe wsf wsh ws ps1 psm1 reg lnk url scf dll sys drv ocx dmg pkg mpkg app command applescript scpt scptd workflow deb rpm run out sh bash csh ksh tcsh shar apk dex efi py pyc pyw pyz pyzw pl rb crx desktop'.split(
-    ' '
-  )
-)
+const CATEGORIES: Array<[reason: DownloadDangerReason, extensions: string]> = [
+  [
+    'script',
+    'bat cmd js jse vb vbe vbs vbscript ws wsc wsf wsh sct ps1 ps1xml ps2 ps2xml psc1 psc2 psm1 msh msh1 msh2 mshxml msh1xml msh2xml hta sh bash csh ksh tcsh shar py pyc pyd pyo pyw pyz pyzw pl rb applescript scpt scptd as osas osax action workflow wflow command bas'
+  ],
+  [
+    'executable',
+    'exe msi msix msixbundle appx appxbundle application appref-ms com scr pif cpl msc msp mst jar jnlp class dex apk deb rpm run out pet pup slp pkg mpkg app dll sys drv ocx efi crx oxt swf spl xbap gadget paf u3p desktop lnk url scf reg inf ins isp job library-ms search-ms settingcontent-ms website shb shs grp'
+  ],
+  [
+    'archive',
+    'dmg dmgpart img imgpart cpgz xip pax toast udif ndif smi sparseimage sparsebundle dc42 diskcopy42 dvdr cdr'
+  ],
+  [
+    'office-macro',
+    'accda accdb accde accdr ad ade adp mad maf mag mam maq mar mas mat mau mav maw mda mdb mde mdt mdw mdz xll xnk slk iqy vsmacros'
+  ]
+]
+
+const RED = new Set<DownloadDangerReason>(['executable', 'script'])
+
+/** Chromium's category for a flagged extension; `file-type` for the rest of its list. */
+export function dangerReasonFor(filename: string): DownloadDangerReason {
+  const ext = fileExtension(filename)
+  const last = ext.includes('.') ? ext.slice(ext.lastIndexOf('.') + 1) : ext
+  for (const candidate of ext === last ? [ext] : [ext, last]) {
+    for (const [reason, extensions] of CATEGORIES) {
+      if (extensions.split(' ').includes(candidate)) return reason
+    }
+  }
+  return 'file-type'
+}
+
+/** The sentence the row shows under a flagged download (Chrome's wording, Zenium's name). */
+export function dangerMessage(reason: DownloadDangerReason, level: DownloadDangerLevel): string {
+  if (level === 'safe') return ''
+  switch (reason) {
+    case 'executable':
+      return 'This type of file can harm your device.'
+    case 'script':
+      return 'This type of file can run code on your device.'
+    case 'archive':
+      return 'This disk image can contain programs that harm your device.'
+    case 'office-macro':
+      return 'This document type can contain macros that harm your device.'
+    case 'insecure-download':
+      return 'This file was downloaded over an insecure connection.'
+    case 'url-verdict':
+      return 'Zenium found this file may be dangerous.'
+    default:
+      return 'This type of file is uncommon and could be unsafe.'
+  }
+}
+
+/** A complete verdict from its level and reason (providers may leave the sentence to us). */
+export function makeDanger(
+  level: DownloadDangerLevel,
+  reason: DownloadDangerReason,
+  message?: string
+): DownloadDanger {
+  if (level === 'safe') return SAFE
+  return { level, reason, message: message || dangerMessage(reason, level) }
+}
 
 function toLetter(os: PlatformOs): PlatformLetter {
   switch (os) {
@@ -131,28 +194,27 @@ export function isInsecureDownload(url: string, referrer: string): boolean {
   return /^http:\/\//i.test(url)
 }
 
-export const SAFE: DownloadDanger = { level: 'safe', reason: 'none' }
+export const SAFE: DownloadDanger = { level: 'safe', reason: 'none', message: '' }
 
 /** File-type and mixed-content classification, before any provider verdict. */
 export function classifyDownload(context: DangerContext): DownloadDanger {
   if (isInsecureDownload(context.url, context.referrer))
-    return { level: 'suspicious', reason: 'insecure' }
+    return makeDanger('suspicious', 'insecure-download')
   const policy = fileTypePolicy(context.filename, context.os)
   if (policy === 'not-dangerous') return SAFE
   if (policy === 'allow-on-user-gesture' && context.referrerFamiliar) return SAFE
-  const ext = fileExtension(context.filename)
-  const last = ext.includes('.') ? ext.slice(ext.lastIndexOf('.') + 1) : ext
+  const reason = dangerReasonFor(context.filename)
   const level: DownloadDangerLevel =
-    policy === 'dangerous' || RUNNABLE.has(ext) || RUNNABLE.has(last) ? 'dangerous' : 'suspicious'
-  return { level, reason: 'file-type' }
+    policy === 'dangerous' || RED.has(reason) ? 'dangerous' : 'suspicious'
+  return makeDanger(level, reason)
 }
 
 const RANK: Record<DownloadDangerLevel, number> = { safe: 0, suspicious: 1, dangerous: 2 }
 
-/** The more severe of two verdicts (`kept` is dropped: a new verdict needs a new decision). */
+/** The more severe of two verdicts. */
 export function worstDanger(a: DownloadDanger, b: DownloadDanger): DownloadDanger {
   const pick = RANK[b.level] > RANK[a.level] ? b : a
-  return { level: pick.level, reason: pick.reason }
+  return makeDanger(pick.level, pick.reason, pick.message)
 }
 
 export interface DangerVerdictRequest {
@@ -176,3 +238,28 @@ export interface DangerVerdictProvider {
 }
 
 export const VERDICT_TIMEOUT_MS = 15_000
+
+/**
+ * Where providers sign up. A package that ships a verdict source (Safe Browsing, an enterprise
+ * policy) calls `register` at start-up; the download service asks everyone registered when a
+ * transfer begins. The default instance is shared; tests build their own.
+ */
+export class DangerVerdictRegistry {
+  private readonly providers = new Set<DangerVerdictProvider>()
+
+  /** Returns the matching unregister. */
+  register(provider: DangerVerdictProvider): () => void {
+    this.providers.add(provider)
+    return () => void this.providers.delete(provider)
+  }
+
+  all(): DangerVerdictProvider[] {
+    return [...this.providers]
+  }
+
+  get size(): number {
+    return this.providers.size
+  }
+}
+
+export const dangerVerdicts = new DangerVerdictRegistry()

@@ -12,7 +12,7 @@ export function DownloadsPanel({ state }: { state: UIState }): JSX.Element {
     <OverlayShell
       title="Downloads"
       actions={
-        items.some((i) => i.state !== 'in-progress' && i.state !== 'paused') ? (
+        items.some((i) => i.state !== 'progressing' && i.state !== 'paused') ? (
           <Button
             variant="ghost"
             size="sm"
@@ -37,13 +37,19 @@ export function DownloadsPanel({ state }: { state: UIState }): JSX.Element {
 }
 
 function DownloadRow({ item }: { item: DownloadItem }): JSX.Element {
-  const inFlight = item.state === 'in-progress' || item.state === 'paused'
+  const inFlight = item.state === 'progressing' || item.state === 'paused'
+  // A flagged file waits behind its warning until the user keeps or discards it.
+  const quarantined =
+    item.state === 'completed' && item.danger.level !== 'safe' && !item.dangerAccepted
+  const canRetry =
+    (item.state === 'interrupted' || item.state === 'cancelled') && !item.url.startsWith('blob:')
   const pct =
     item.totalBytes > 0
       ? Math.min(100, Math.round((item.receivedBytes / item.totalBytes) * 100))
       : null
-  const status =
-    item.state === 'completed'
+  const status = quarantined
+    ? item.danger.message
+    : item.state === 'completed'
       ? `${item.totalBytes ? formatBytes(item.totalBytes) : 'Done'} · ${relativeTime(item.startedAt)}`
       : item.state === 'cancelled'
         ? 'Cancelled'
@@ -59,13 +65,40 @@ function DownloadRow({ item }: { item: DownloadItem }): JSX.Element {
         <button
           type="button"
           className="block max-w-full truncate text-left text-[13px] disabled:opacity-60"
-          disabled={item.state !== 'completed'}
+          disabled={item.state !== 'completed' || quarantined}
           onClick={() => run('download.open', { id: item.id })}
           title={item.savePath || item.url}
         >
-          {item.filename}
+          {item.finalName}
         </button>
         <div className="truncate text-[11.5px] text-[var(--zen-muted)]">{status}</div>
+        {quarantined && (
+          <div className="mt-1 flex gap-3 text-[12px]">
+            <button
+              type="button"
+              className="font-medium"
+              onClick={() => run('download.acceptDanger', { id: item.id })}
+            >
+              Keep
+            </button>
+            <button
+              type="button"
+              className="font-medium text-[var(--zen-muted)]"
+              onClick={() => run('download.discard', { id: item.id })}
+            >
+              Discard
+            </button>
+          </div>
+        )}
+        {canRetry && (
+          <button
+            type="button"
+            className="mt-1 text-[12px] font-medium"
+            onClick={() => run('download.retry', { id: item.id })}
+          >
+            Retry
+          </button>
+        )}
         {inFlight && (
           <div className="mt-1 h-1 overflow-hidden rounded-full bg-[var(--zen-element-bg-active)]">
             <div
@@ -75,7 +108,7 @@ function DownloadRow({ item }: { item: DownloadItem }): JSX.Element {
           </div>
         )}
       </div>
-      {item.state === 'in-progress' && (
+      {item.state === 'progressing' && (
         <button
           type="button"
           className="zen-toolbar-button h-7 w-7"

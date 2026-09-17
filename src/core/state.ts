@@ -8,6 +8,7 @@ import type {
   ClosedTab,
   Container,
   DownloadItem,
+  DownloadsProgress,
   ExtensionInfo,
   Folder,
   HostCapabilities,
@@ -126,7 +127,17 @@ export class BrowserState {
    * depth first). Always a valid tree: `ensureValid` runs it through `normalizeBookmarkNodes`.
    */
   bookmarks: BookmarkNode[] = createBookmarkRoots(0)
-  downloads: DownloadItem[] = []
+  /**
+   * The downloads a window may show and their aggregate progress; provided by the Browser once the
+   * download service exists (private windows see more than the rest).
+   */
+  downloadsFor: (win: ZenWindow) => {
+    downloads: DownloadItem[]
+    downloadsProgress: DownloadsProgress
+  } = () => ({
+    downloads: [],
+    downloadsProgress: { received: 0, total: 0, indeterminate: false, active: 0 }
+  })
   recentlyClosed: ClosedTab[] = []
   media: MediaState[] = []
   devtoolsOpenFor = new Set<string>()
@@ -480,7 +491,7 @@ export class BrowserState {
       glance: win.glance,
       compactSidebarRevealed: win.compactSidebarRevealed,
       window: win.windowState(),
-      downloads: this.downloads,
+      ...this.downloadsFor(win),
       bookmarks: this.bookmarks,
       recentlyClosedCount: this.recentlyClosed.length,
       media: this.media,
