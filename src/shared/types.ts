@@ -1074,6 +1074,10 @@ export interface CommandDescriptor {
     | 'tab.wakeAll'
     | 'resources.trim'
     | 'resources.open'
+  /** The host capability the command needs; not offered where it is false. */
+  requires?: keyof HostCapabilities
+  /** The layouts the command does something in; absent means all of them. */
+  layouts?: FormFactor[]
 }
 
 // ---------------------------------------------------------------------------
