@@ -100,6 +100,13 @@ class Extensions(private val host: Host) {
     private var popup: ExtensionPopup? = null
     /** Last request decisions ("allow|block|… type micros url"), kept while `debug` for instrumentation. */
     val decisions = ArrayDeque<String>()
+    /**
+     * While `debug`: `"<ext> <ns>.<method>"` → `[calls, failed replies]` over the bridge, so the
+     * demo can grade messaging and storage per real extension (`msg` counts as
+     * `runtime.sendMessage`, `connect` as `runtime.connect`, `portMsg` as `port.postMessage`).
+     */
+    val callStats = HashMap<String, IntArray>()
+    private val pendingCalls = HashMap<String, String>()
 
     val origin = ORIGIN_SUFFIX
 
@@ -311,9 +318,38 @@ class Extensions(private val host: Host) {
     /** Host → endpoint: the reply proxy of the frame that said hello. A dead frame reports `ext.gone`. */
     private fun send(ep: String, message: String) {
         val endpoint = endpoints[ep] ?: return
+        if (debug && message.contains("\"t\":\"reply\"")) recordReply(ep, message)
         val ok = runCatching { endpoint.proxy.postMessage(message) }.isSuccess
         if (!ok) gone(listOf(ep))
     }
+
+    private fun recordCall(ep: String, message: JSONObject) {
+        val ext = endpoints[ep]?.extensionId ?: message.str("ext")
+        val key = when (message.str("t")) {
+            "call" -> "$ext ${message.str("ns")}.${message.str("method")}"
+            "msg" -> "$ext runtime.sendMessage"
+            "connect" -> "$ext runtime.connect"
+            "portMsg" -> "$ext port.postMessage"
+            else -> return
+        }
+        synchronized(callStats) {
+            callStats.getOrPut(key) { IntArray(2) }[0]++
+            if (message.has("id")) pendingCalls["$ep:${message.opt("id")}"] = key
+            if (pendingCalls.size > 4000) pendingCalls.clear()
+        }
+    }
+
+    private fun recordReply(ep: String, message: String) {
+        val reply = runCatching { JSONObject(message) }.getOrNull() ?: return
+        if (reply.optString("t") != "reply") return
+        synchronized(callStats) {
+            val key = pendingCalls.remove("$ep:${reply.opt("id")}") ?: return
+            if (!reply.optBoolean("ok", true)) callStats.getOrPut(key) { IntArray(2) }[1]++
+        }
+    }
+
+    /** A snapshot of `callStats` for instrumentation. */
+    fun callStatsSnapshot(): Map<String, IntArray> = synchronized(callStats) { callStats.mapValues { it.value.copyOf() } }
 
     private fun exec(args: JSONObject, reply: (Any?) -> Unit) {
         val tab = host.tabs.get(args.str("tabId"))
@@ -416,6 +452,7 @@ class Extensions(private val host: Host) {
         message.remove("token")
         val ep = message.str("ep")
         if (ep.isEmpty()) return
+        if (debug) recordCall(ep, message)
         when (message.str("t")) {
             "hello" -> {
                 val context = message.str("ctx", kind)

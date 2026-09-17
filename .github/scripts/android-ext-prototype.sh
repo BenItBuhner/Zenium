@@ -27,6 +27,15 @@ nproc
 free -m
 df -h / /tmp
 
+# Optional: run everything on a Chromium snapshot WebView instead of the image's own (see
+# android-webview-swap.sh; needs an AOSP image booted with -writable-system). Best effort.
+if [ -n "${WEBVIEW_APK:-}" ]; then
+  if ! bash .github/scripts/android-webview-swap.sh "$WEBVIEW_APK" "$out"; then
+    echo "::warning::WebView swap failed; continuing with the image's WebView"
+  fi
+fi
+adb shell dumpsys webviewupdate > "$out/webviewupdate.txt" 2>&1 || true
+
 # Host watchdog: memory every few seconds, and the kernel log the moment the emulator process
 # disappears (a silent death is most likely the OOM killer or a renderer crash).
 (

@@ -81,3 +81,77 @@ jobs:
             artifacts/ext/fetch.json
           if-no-files-found: warn
           retention-days: 14
+
+  # The API 34 image bundles a WebView far behind current Chromium; isolated-world injection
+  # (androidx.webkit 1.17, JS_INJECTION_IN_FRAME_AND_WORLD) needs 146+. This job swaps in a Chromium
+  # snapshot SystemWebView.apk on an AOSP image (see android-webview-swap.sh) and runs the same
+  # probe and demo on it. Best effort: it reports what it can and never fails the workflow.
+  modern-webview:
+    name: Best effort - Chromium snapshot WebView on an AOSP API 34 emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools platforms;android-35 build-tools;35.0.0
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
+      - run: npm ci
+      - name: Build the chrome, the page script and the extension bootstrap
+        run: npm run build:android:web
+      - name: Assemble the debug APK and the instrumentation driver
+        working-directory: android
+        run: ./gradlew assembleDebug assembleDebugAndroidTest -PskipWeb --no-daemon --stacktrace
+      - name: Fetch the demo extensions from the Chrome Web Store
+        run: echo "$DEMO_EXTENSIONS" | xargs node .github/scripts/fetch-crx.mjs artifacts/ext
+      - name: Fetch a Chromium snapshot SystemWebView.apk
+        run: |
+          rev=$(curl -fsSL https://commondatastorage.googleapis.com/chromium-browser-snapshots/Android/LAST_CHANGE)
+          echo "chromium snapshot revision $rev"
+          curl -fsSL -o /tmp/chrome-android.zip "https://commondatastorage.googleapis.com/chromium-browser-snapshots/Android/$rev/chrome-android.zip"
+          mkdir -p artifacts/webview
+          unzip -j -o /tmp/chrome-android.zip chrome-android/apks/SystemWebView.apk -d artifacts/webview
+          curl -fsSL "https://commondatastorage.googleapis.com/chromium-browser-snapshots/Android/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+          ls -la artifacts/webview
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
+      - name: Swap the WebView, probe the engine and record the demo
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          WEBVIEW_APK: artifacts/webview/SystemWebView.apk
+        with:
+          api-level: 34
+          target: default
+          arch: x86_64
+          profile: pixel_6
+          cores: 3
+          ram-size: 4096M
+          heap-size: 512M
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+          script: bash .github/scripts/android-ext-prototype.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-ext-prototype-modern-webview
+          path: |
+            artifacts/android-ext-prototype/
+            artifacts/webview/REVISIONS.json
+          if-no-files-found: warn
+          retention-days: 14

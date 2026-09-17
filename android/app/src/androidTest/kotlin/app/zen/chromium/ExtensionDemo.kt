@@ -16,6 +16,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.webkit.WebView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.webkit.WebViewCompat
 import app.zen.chromium.ext.ExtensionWebView
 import org.json.JSONArray
 import org.json.JSONObject
@@ -61,6 +62,10 @@ class ExtensionDemo {
         val loaded = waitForExtensions()
         results.put("extensions", loaded)
         results.put("scriptUnits", scriptUnits())
+        var worlds = false
+        instrumentation.runOnMainSync { worlds = host.extensions.isolatedWorlds }
+        results.put("isolatedWorlds", worlds)
+        results.put("webView", WebViewCompat.getCurrentWebViewPackage(app)?.let { "${it.packageName} ${it.versionName}" })
         handshake()
         try {
             visibleDemo()
@@ -251,6 +256,41 @@ class ExtensionDemo {
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(ytTab)},"force":true}""")
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(adsTab)},"force":true}""")
         SystemClock.sleep(1_500)
+        results.put("probeConsole", JSONArray(consoleOf(probeView).takeLast(40)))
+        gradeCalls()
+    }
+
+    /**
+     * Messaging and storage per real extension, from what actually crossed the bridge: a stage
+     * passes when the extension made such calls and every reply was `ok`, is PARTIAL when some
+     * failed, FAIL when all failed, and N/A when the extension never made one during the demo.
+     */
+    private fun gradeCalls() {
+        var stats: Map<String, IntArray> = emptyMap()
+        instrumentation.runOnMainSync { stats = host.extensions.callStatsSnapshot() }
+        val table = JSONObject()
+        for ((key, counts) in stats.toSortedMap()) table.put(key, JSONArray().put(counts[0]).put(counts[1]))
+        results.put("callStats", table)
+        val messaging = listOf("runtime.sendMessage", "runtime.connect", "port.postMessage", "tabs.sendMessage", "tabs.connect")
+        val storage = listOf("storage.get", "storage.set", "storage.remove", "storage.clear", "storage.getBytesInUse")
+        for (id in listOf(DARK_READER, VIMIUM, RYD, STYLUS, UBOL)) {
+            for ((stage, members) in listOf("messaging" to messaging, "storage" to storage)) {
+                val rows = stats.filterKeys { k -> k.startsWith("$id ") && members.any { k.endsWith(" $it") } }
+                val calls = rows.values.sumOf { it[0] }
+                val failures = rows.values.sumOf { it[1] }
+                val detail = rows.entries.sortedBy { it.key }.joinToString(", ") { "${it.key.substringAfter(' ')}=${it.value[0]} calls/${it.value[1]} failed" }
+                stage(
+                    id, stage,
+                    when {
+                        calls == 0 -> "N/A"
+                        failures == 0 -> "PASS"
+                        failures < calls -> "PARTIAL"
+                        else -> "FAIL"
+                    },
+                    if (calls == 0) "no such calls crossed the bridge during the demo" else detail
+                )
+            }
+        }
     }
 
     /** Open an extension's popup through the core, wait for `ready`, screenshot, return the WebView. */
@@ -279,6 +319,9 @@ class ExtensionDemo {
         val cspView = waitForView(cspTab)
         waitFor(30_000) { if (tabEval(cspView, PROBE_DONE) == "true") true else null }
         results.put("cspPage", json(tabEval(cspView, PROBE_REPORT)))
+        // The price of `with (proxy)` isolation: the same loop in a plain function scope and under
+        // a `with` over a proxy with the bootstrap's `has`/`get` traps (median of 5).
+        results.put("withProxyBenchmark", json(tabEval(cspView, WITH_BENCH)))
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(cspTab)},"force":true}""")
 
         // Background pages: console output and errors of every extension.
@@ -478,7 +521,8 @@ class ExtensionDemo {
     private fun scriptUnits(): JSONArray {
         val list = JSONArray()
         instrumentation.runOnMainSync {
-            for (unit in host.extensions.scriptUnits()) list.put(JSONObject().put("origins", JSONArray(unit.origins.toList())).put("chars", unit.script.length))
+            for (unit in host.extensions.scriptUnits())
+                list.put(JSONObject().put("origins", JSONArray(unit.origins.toList())).put("chars", unit.script.length).put("world", unit.world))
         }
         return list
     }
@@ -587,5 +631,30 @@ class ExtensionDemo {
                 "groups: (window.__zenExtStats && window.__zenExtStats.groups ? window.__zenExtStats.groups.length : 0), stats: window.__zenExtStats || null, readyState: document.readyState, title: document.title, url: location.href})"
         private const val NAV_TIMING =
             "(function(){var n=performance.getEntriesByType('navigation')[0]||{};var s=window.__zenExtStats||{};return JSON.stringify({responseEnd:Math.round(n.responseEnd||0),domContentLoaded:Math.round(n.domContentLoadedEventEnd||0),load:Math.round(n.loadEventEnd||0),bootMs:s.bootMs||0,matchMs:s.matchMs||0,applied:s.applied||0})})()"
+        private val WITH_BENCH = """
+            (function () {
+              var N = 300000;
+              function plain() { var s = 0; for (var i = 0; i < N; i++) { s += Math.floor(i * 1.5) + (document.body ? 1 : 0); } return s; }
+              var builtins = new Set(); var o = window;
+              while (o) { Reflect.ownKeys(o).forEach(function (k) { builtins.add(k); }); o = Object.getPrototypeOf(o); }
+              var store = Object.create(null);
+              var proxy = new Proxy(Object.create(null), {
+                has: function (t, k) { return (k in store) || builtins.has(k); },
+                get: function (t, k) { if (k in store) return store[k]; if (!builtins.has(k)) return undefined; var v = window[k]; return typeof v === 'function' ? v.bind(window) : v; }
+              });
+              var withFn = new Function('window', 'N', 'with (window) { var s = 0; for (var i = 0; i < N; i++) { s += Math.floor(i * 1.5) + (document.body ? 1 : 0); } return s; }');
+              var domPlain = function () { var n = 0; for (var i = 0; i < 20000; i++) { n += document.querySelectorAll('p').length; } return n; };
+              var domWith = new Function('window', 'with (window) { var n = 0; for (var i = 0; i < 20000; i++) { n += document.querySelectorAll(\'p\').length; } return n; }');
+              function time(f) { var t = performance.now(); f(); return performance.now() - t; }
+              plain(); withFn(proxy, N); domPlain(); domWith(proxy);
+              var p = [], w = [], dp = [], dw = [];
+              for (var r = 0; r < 5; r++) { p.push(time(plain)); w.push(time(function () { withFn(proxy, N); })); dp.push(time(domPlain)); dw.push(time(function () { domWith(proxy); })); }
+              var med = function (a) { a.sort(function (x, y) { return x - y; }); return a[2]; };
+              return JSON.stringify({
+                iterations: N, plainMs: +med(p).toFixed(2), withProxyMs: +med(w).toFixed(2), slowdown: +(med(w) / med(p)).toFixed(1),
+                domIterations: 20000, domPlainMs: +med(dp).toFixed(2), domWithProxyMs: +med(dw).toFixed(2), domSlowdown: +(med(dw) / med(dp)).toFixed(2)
+              });
+            })()
+        """.trimIndent()
     }
 }
