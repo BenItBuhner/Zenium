@@ -1,0 +1,372 @@
+/*
+ * The translate surfaces (bar, selection popover and sheet, Settings > Languages) on the v2 draft
+ * (design-language-v2-draft.md §1–§3, §6, §9): neutral panel and card surfaces with hairline
+ * borders, Proton controls at the density tokens, buttons at 500, status inks only. Every value
+ * is a `--v2-*` token from main.css; motion is v1 §7 (120 ms state transitions on `--zen-ease`).
+ * Imported by the translate controls, so nothing here loads before a translate surface does.
+ */
+
+/* --- Text ----------------------------------------------------------------------------------- */
+
+.zen-translate-caption {
+  color: var(--v2-text-deemphasized);
+}
+.zen-translate-danger {
+  color: var(--v2-danger);
+}
+.zen-translate-title {
+  font-size: var(--v2-font-heading);
+  font-weight: var(--v2-weight-heading);
+  line-height: 24px;
+}
+.zen-translate-glyph {
+  flex-shrink: 0;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+  color: var(--v2-text-deemphasized);
+}
+
+/* --- Controls (§6): the secondary button is main.css's .zen-v2-button ------------------------ */
+
+.zen-translate-button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  line-height: 1;
+}
+.zen-translate-button:hover:not(:disabled) {
+  background: var(--v2-fill-hover);
+}
+.zen-translate-button[data-primary] {
+  background: var(--v2-accent);
+  color: var(--v2-on-accent);
+}
+.zen-translate-button[data-primary]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--v2-accent), var(--v2-text) 12%);
+}
+.zen-translate-button[data-danger] {
+  color: var(--v2-danger);
+}
+.zen-translate-button:disabled {
+  opacity: 0.4;
+}
+.zen-translate-button > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+}
+
+/* A menulist: the platform's own popup behind a bordered, filled box with a chevron. */
+.zen-translate-menulist {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  min-width: 0;
+}
+.zen-translate-menulist > select {
+  width: 100%;
+  height: var(--v2-control);
+  padding: 0 28px 0 10px;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-control);
+  background: var(--v2-fill);
+  color: var(--v2-text);
+  font: inherit;
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-button);
+  line-height: var(--v2-line-body);
+  text-overflow: ellipsis;
+  appearance: none;
+  transition: background 120ms var(--zen-ease);
+}
+.zen-translate-menulist > select:hover:not(:disabled) {
+  background: var(--v2-fill-hover);
+}
+.zen-translate-menulist > select:disabled {
+  opacity: 0.4;
+}
+/* The popup itself is the platform's, but its rows keep to the panel colours (Chromium honours these). */
+.zen-translate-menulist > select > option {
+  background: var(--v2-panel);
+  color: var(--v2-text);
+}
+.zen-translate-menulist > svg {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+  transform: translateY(-50%);
+  color: var(--v2-text);
+  pointer-events: none;
+}
+.zen-translate-menulist > select:disabled + svg {
+  opacity: 0.4;
+}
+
+/*
+ * A checkbox row (§6, §9.2): a 16 px box (20 on phones) at radius 2, accent-filled when checked,
+ * aligned with the first text line; the whole label is the hit area and the row grows with it.
+ */
+.zen-translate-check {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  min-height: var(--v2-row);
+  padding: 6px 0;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  color: var(--v2-text);
+}
+.zen-translate-check > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.zen-translate-checkbox {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: var(--v2-checkbox);
+  height: var(--v2-checkbox);
+  margin-top: 2px;
+  border: 1px solid rgb(var(--v2-text-rgb) / 0.41);
+  border-radius: var(--v2-radius-checkbox);
+  background: var(--v2-fill);
+  color: var(--v2-on-accent);
+  transition:
+    background 120ms var(--zen-ease),
+    border-color 120ms var(--zen-ease);
+}
+.zen-translate-checkbox > svg {
+  width: calc(var(--v2-checkbox) - 4px);
+  height: calc(var(--v2-checkbox) - 4px);
+  stroke-width: 3;
+  opacity: 0;
+  transition: opacity 120ms var(--zen-ease);
+}
+.zen-translate-check:hover > input:not(:disabled) + .zen-translate-checkbox {
+  background: var(--v2-fill-hover);
+}
+.zen-translate-check > input:checked + .zen-translate-checkbox {
+  border-color: var(--v2-accent);
+  background: var(--v2-accent);
+}
+.zen-translate-check > input:checked + .zen-translate-checkbox > svg {
+  opacity: 1;
+}
+.zen-translate-check > input:disabled ~ * {
+  opacity: 0.4;
+}
+.zen-translate-check > input:focus-visible + .zen-translate-checkbox {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: 0;
+}
+:root[data-theme='dark'] .zen-translate-check > input:focus-visible + .zen-translate-checkbox {
+  outline-offset: -2px;
+}
+.zen-translate-row-description {
+  display: block;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+
+/* An icon button in the toolbar box (§9.3): 28 × 28 and a 16 glyph, 44 × 44 and 20 on phones. */
+.zen-translate-icon-button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: var(--v2-icon-button);
+  height: var(--v2-icon-button);
+  border-radius: var(--v2-radius-inner);
+  color: var(--v2-text);
+  transition:
+    background 120ms var(--zen-ease),
+    transform 120ms var(--zen-ease);
+}
+.zen-translate-icon-button:hover:not(:disabled) {
+  background: var(--v2-fill);
+}
+.zen-translate-icon-button:active:not(:disabled) {
+  background: var(--v2-fill-hover);
+  transform: scale(0.98);
+}
+.zen-translate-icon-button:disabled {
+  opacity: 0.4;
+}
+.zen-translate-icon-button > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+}
+:root[data-form-factor='phone'] .zen-translate-icon-button {
+  border-radius: 8px;
+}
+
+/* --- The bar (a strip at the top of the content frame) --------------------------------------- */
+
+.zen-translate-bar {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 4px 8px 4px 12px;
+  border-bottom: 1px solid var(--v2-border);
+  background: var(--v2-panel);
+  color: var(--v2-text);
+  font-size: 14px;
+  line-height: var(--v2-line-body);
+}
+.zen-translate-bar > span {
+  min-width: 0;
+}
+/* Model download and translation progress: a 2 px accent line along the bottom edge. */
+.zen-translate-progress {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background: var(--v2-accent);
+  transform-origin: left center;
+  transition: transform 160ms var(--zen-ease);
+}
+:root[data-form-factor='phone'] .zen-translate-bar {
+  min-height: var(--v2-row-two-line);
+  padding: 8px 8px 8px 16px;
+  font-size: var(--v2-font-body);
+}
+/* The phone bar's two lines: what is happening, then the pair at the description size. */
+.zen-translate-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+.zen-translate-text > .zen-translate-caption {
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+
+/* --- Selection translation: a panel where the user asked, a sheet on phones ---------------- */
+
+.zen-translate-panel {
+  padding: var(--v2-card-padding);
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-card);
+  background: var(--v2-panel);
+  box-shadow: var(--v2-shadow-panel);
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+/* The words that were selected: secondary to their translation, at most three lines. */
+.zen-translate-original {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.zen-translate-rule {
+  flex-shrink: 0;
+  height: 1px;
+  background: var(--v2-border);
+}
+.zen-translate-result {
+  min-height: var(--v2-line-body);
+  max-height: 40vh;
+  overflow-y: auto;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* The phone sheet on the v2 dialog surface (§6 sheets): radius 12, a hairline, the black scrim. */
+.zen-sheet.zen-translate-sheet {
+  border: 1px solid var(--v2-border);
+  border-bottom: 0;
+  border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
+  background: var(--v2-panel);
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  box-shadow: var(--v2-shadow-sheet);
+  backdrop-filter: none;
+}
+div:has(> .zen-sheet.zen-translate-sheet) > .zen-sheet-scrim {
+  background: var(--v2-scrim);
+}
+
+/* --- Settings > Languages (§6 settings page, §5 density) ------------------------------------ */
+
+.zen-translate-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+:root[data-form-factor='phone'] .zen-translate-settings {
+  gap: 24px;
+}
+.zen-translate-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.zen-translate-group-title {
+  margin: 0;
+  font-size: var(--v2-font-heading);
+  font-weight: var(--v2-weight-heading);
+  line-height: 24px;
+}
+.zen-translate-description {
+  margin: 0;
+  color: var(--v2-text-deemphasized);
+}
+/* A card only where a group has its own actions: flat, hairline border, 16 px side padding. */
+.zen-translate-card {
+  display: flex;
+  flex-direction: column;
+  margin-top: 4px;
+  padding: 4px var(--v2-card-padding);
+  border: 1px solid var(--v2-card-border);
+  border-radius: var(--v2-radius-card);
+  background: var(--v2-card);
+}
+.zen-translate-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--v2-row);
+  padding: 4px 0;
+}
+.zen-translate-row + .zen-translate-row {
+  border-top: 1px solid var(--v2-card-border);
+}
+.zen-translate-row-add > .zen-translate-menulist {
+  min-width: 220px;
+}
+:root[data-form-factor='phone'] .zen-translate-row-add > .zen-translate-menulist {
+  flex: 1;
+}
