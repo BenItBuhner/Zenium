@@ -1,0 +1,150 @@
+name: Desktop OS smoke (default browser)
+
+on:
+  push:
+    branches: ['cursor/desktop-os-default-browser-da63']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-os-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  windows:
+    name: Windows NSIS install and registry
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Bundle
+        run: npx electron-vite build
+      - name: Package NSIS x64
+        run: npx electron-builder --win nsis --x64 --publish never
+      - name: Silent install
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist\*setup.exe | Select-Object -First 1
+          if (-not $setup) { throw 'no setup.exe in dist/' }
+          Write-Output "installer $($setup.FullName)"
+          Start-Process -Wait -FilePath $setup.FullName -ArgumentList '/S'
+          Start-Sleep -Seconds 3
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\zenium\zenium.exe'
+          if (-not (Test-Path $exe)) {
+            $exe = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'Programs') -Recurse -Filter zenium.exe -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $exe -or -not (Test-Path $exe)) { throw 'zenium.exe not found after install' }
+          Write-Output "exe $exe"
+          "EXE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Get-Process zenium -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+      - name: Dump registry after install
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts\windows -Force | Out-Null
+          powershell -NoProfile -ExecutionPolicy Bypass -File .github\smoke\dump-registry.ps1 -Out artifacts\windows -Label after-install
+      - name: Install Playwright
+        working-directory: .github/smoke
+        run: npm i --no-save playwright
+      - name: Drive installed app
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts\windows -Force | Out-Null
+          node .github\smoke\os-smoke.mjs --exe "$env:EXE" --out artifacts\windows --label nsis
+      - name: Silent uninstall and verify keys gone
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process zenium -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          $un = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs\zenium') -Filter 'Uninstall*.exe' -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($un) {
+            $dir = Split-Path $un.FullName
+            Start-Process -Wait -FilePath $un.FullName -ArgumentList @('/currentuser','/S',"_?=$dir")
+          } else {
+            Write-Output 'uninstaller not found'
+          }
+          Start-Sleep -Seconds 3
+          New-Item -ItemType Directory -Path artifacts\windows -Force | Out-Null
+          powershell -NoProfile -ExecutionPolicy Bypass -File .github\smoke\dump-registry.ps1 -Out artifacts\windows -Label after-uninstall
+          $gone = @()
+          if (Test-Path 'HKCU:\Software\Clients\StartMenuInternet\Zenium') { $gone += 'StartMenuInternet still present' }
+          if (Test-Path 'HKCU:\Software\Classes\ZeniumHTML') { $gone += 'ZeniumHTML still present' }
+          $reg = Get-ItemProperty 'HKCU:\Software\RegisteredApplications' -ErrorAction SilentlyContinue
+          if ($reg -and $reg.Zenium) { $gone += 'RegisteredApplications Zenium still present' }
+          $gone | ForEach-Object { Write-Output $_ }
+          if ($gone.Count -gt 0) { throw ($gone -join '; ') }
+          Write-Output 'browser registration keys removed'
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: desktop-os-smoke-windows
+          path: |
+            artifacts/windows/
+            dist/*.exe
+          if-no-files-found: warn
+
+  macos:
+    name: macOS Info.plist and open-file
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Bundle
+        run: npx electron-vite build
+      - name: Package unpacked arm64
+        run: |
+          export CSC_IDENTITY_AUTO_DISCOVERY=false
+          unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+          npx electron-builder --mac --dir --arm64 --publish never
+      - name: Dump Info.plist URL and document types
+        run: |
+          mkdir -p artifacts/macos
+          APP=dist/mac-arm64/Zenium.app
+          test -d "$APP"
+          plutil -p "$APP/Contents/Info.plist" | tee artifacts/macos/info.plist.txt
+          plutil -p "$APP/Contents/Info.plist" | grep -A40 -E 'CFBundleURLTypes|CFBundleDocumentTypes' |
+            tee artifacts/macos/plist-types.txt
+          grep -E 'CFBundleURLTypes|CFBundleDocumentTypes|http|https|html|pdf' artifacts/macos/info.plist.txt
+      - name: Install Playwright
+        working-directory: .github/smoke
+        run: npm i --no-save playwright
+      - name: Drive unpacked app
+        run: |
+          mkdir -p artifacts/macos
+          BIN=dist/mac-arm64/Zenium.app/Contents/MacOS/Zenium
+          test -x "$BIN"
+          node .github/smoke/os-smoke.mjs --exe "$BIN" --out artifacts/macos --label unpacked
+      - name: open -a with an HTML file
+        if: always()
+        run: |
+          mkdir -p artifacts/macos
+          printf '<!doctype html><title>mac open</title><p>from Finder</p>' > /tmp/test.html
+          # The Playwright session may already have quit; launch via Launch Services and capture.
+          open -a dist/mac-arm64/Zenium.app /tmp/test.html || true
+          sleep 4
+          screencapture -x artifacts/macos/open-a-html.png || true
+          pgrep -lf Zenium | tee artifacts/macos/open-a-processes.txt || true
+          killall Zenium 2>/dev/null || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: desktop-os-smoke-macos
+          path: artifacts/macos/
+          if-no-files-found: warn
