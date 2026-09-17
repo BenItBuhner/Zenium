@@ -725,7 +725,7 @@ function jumpListPreflight() {
   out.hashMatches = Boolean(
     good &&
     Array.isArray(good.newFiles) &&
-    good.newFiles.some((f) => f.toLowerCase() === out.expectedProbeFile)
+    good.newFiles.some((f) => f.toLowerCase() === out.expectedProbeFile.toLowerCase())
   )
   result.jumpListPreflight = out
   log(
@@ -966,7 +966,7 @@ async function sessionMain() {
       const expected = `${appIdHash(AUMID)}.customDestinations-ms`
       const lists = listJumpLists([...dirs, ...jumpListDirs(process.env)])
       const found = Object.entries(lists).filter(([, files]) =>
-        files.some((f) => f.toLowerCase() === expected)
+        files.some((f) => f.toLowerCase() === expected.toLowerCase())
       )
       const again = await app.evaluate(({ app }) => {
         const settings = app.getJumpListSettings()
@@ -999,7 +999,7 @@ async function sessionMain() {
       })
       const after = listJumpLists([...dirs, ...jumpListDirs(process.env)])
       const foundAfter = Object.entries(after).filter(([, files]) =>
-        files.some((f) => f.toLowerCase() === expected)
+        files.some((f) => f.toLowerCase() === expected.toLowerCase())
       )
       const fileFound = found.length > 0 || foundAfter.length > 0
       const pre = result.jumpListPreflight || {}
