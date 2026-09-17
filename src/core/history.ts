@@ -8,6 +8,7 @@ import type {
 } from '../shared/types'
 import { JsonStore } from './store/JsonStore'
 import { getDomain, getHost, isInternalUrl } from '../shared/url'
+import { dayKeyOf } from '../shared/dayKey'
 import { newId } from '../shared/ids'
 import type { StoreIO } from './platform'
 
@@ -37,6 +38,8 @@ export interface HistoryData {
   entries: HistoryEntry[]
   visits: HistoryVisit[]
 }
+
+export { dayKeyOf }
 
 export type HistoryChangeKind = 'visit' | 'delete' | 'clear'
 export type HistoryChangeListener = (kind: HistoryChangeKind) => void
@@ -174,25 +177,6 @@ function hostMatches(url: string, host: string): boolean {
     .toLowerCase()
     .replace(/^www\./, '')
   return h === host || h.endsWith(`.${host}`)
-}
-
-/** Local calendar day of a timestamp as `YYYY-MM-DD` (in `timeZone`, default the host's). */
-export function dayKeyOf(ms: number, timeZone?: string): string {
-  const date = new Date(ms)
-  if (!timeZone) {
-    const y = date.getFullYear()
-    const m = String(date.getMonth() + 1).padStart(2, '0')
-    const d = String(date.getDate()).padStart(2, '0')
-    return `${y}-${m}-${d}`
-  }
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).formatToParts(date)
-  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? '00'
-  return `${get('year')}-${get('month')}-${get('day')}`
 }
 
 /** Visits grouped by local day, newest day first, newest visit first inside a day. */

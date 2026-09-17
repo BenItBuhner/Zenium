@@ -5,7 +5,7 @@ import { AddonsPanel } from './AddonsPanel'
 import { BookmarksPanel } from './BookmarksPanel'
 import { BoostPanel } from './BoostPanel'
 import { DownloadsPanel } from './DownloadsPanel'
-import { HistoryPanel } from './HistoryPanel'
+import { HistoryPage } from './HistoryPage'
 import { LiveFolderEditor } from './LiveFolderEditor'
 import { SettingsPanel } from './SettingsPanel'
 import { SpaceEditor } from './SpaceEditor'
@@ -21,7 +21,7 @@ export function OverlayHost({ state, ui }: { state: UIState; ui: UiState }): JSX
     case 'sync':
       return <SettingsPanel state={state} initialSection="sync" />
     case 'history':
-      return <HistoryPanel state={state} />
+      return <HistoryPage state={state} />
     case 'bookmarks':
       return <BookmarksPanel state={state} />
     case 'downloads':
