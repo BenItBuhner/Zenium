@@ -41,7 +41,14 @@ export function MessageLayer(): JSX.Element | null {
       {banners.length > 0 && (
         <div className="zen-message-stack" style={{ height: stackHeight }}>
           {banners.map((b, i) => (
-            <BannerCard key={b.id} banner={b} slot={y[i] ?? 0} onMeasure={measure} />
+            <BannerCard
+              key={b.id}
+              banner={b}
+              slot={y[i] ?? 0}
+              stackTop={i === 0}
+              stackBottom={i === banners.length - 1}
+              onMeasure={measure}
+            />
           ))}
         </div>
       )}

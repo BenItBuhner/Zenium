@@ -20,7 +20,8 @@ const {
   showBanner,
   uiStore
 } = await import('../ui')
-const { bannerSlots, coverFor } = await import('../../components/messages/stack')
+const { MESSAGE_INSET, STACK_GAP, bannerSlots, coverFor } =
+  await import('../../components/messages/stack')
 const { viewCover } = await import('../layout')
 
 const toasts = (): Toast[] => uiStore.get().toasts
@@ -216,10 +217,20 @@ describe('stack geometry', () => {
     expect(bannerSlots([])).toEqual({ y: [], height: 0 })
   })
 
-  it('covers the frame edges by the stacks plus a gap on either side', () => {
+  it('stacks banners touching, sharing the hairline at each seam (v2 §9.21)', () => {
+    expect(STACK_GAP).toBe(-1)
+    const { y, height } = bannerSlots([48, 64, 64])
+    expect(y).toEqual([0, 47, 110])
+    expect(height).toBe(174)
+    expect(bannerSlots([48])).toEqual({ y: [0], height: 48 })
+  })
+
+  it('covers the frame edges by the stacks plus the inset on either side', () => {
+    expect(MESSAGE_INSET).toBe(8)
     expect(coverFor(0, 0)).toEqual({ top: 0, bottom: 0 })
     expect(coverFor(100, 52, 8)).toEqual({ top: 116, bottom: 68 })
     expect(coverFor(100, 0, 8)).toEqual({ top: 116, bottom: 0 })
+    expect(coverFor(174, 48)).toEqual({ top: 190, bottom: 64 })
   })
 
   it('gives each view only the part of the strips that falls on it', () => {

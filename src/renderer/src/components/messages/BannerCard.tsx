@@ -18,6 +18,9 @@ interface Props {
   banner: Banner
   /** Where the card rests, from the top of the stack (newer banners push older ones down). */
   slot: number
+  /** Whether the card heads or ends the stack: stacked banners touch, so only those corners round. */
+  stackTop: boolean
+  stackBottom: boolean
   onMeasure: (id: number, height: number) => void
 }
 
@@ -26,7 +29,7 @@ interface Props {
  * message motion. It drops from under the toolbar and goes back up (or sideways) when swiped,
  * closed, timed out or replaced.
  */
-export function BannerCard({ banner, slot, onMeasure }: Props): JSX.Element {
+export function BannerCard({ banner, slot, stackTop, stackBottom, onMeasure }: Props): JSX.Element {
   const { ref, handlers } = useMessageMotion({
     home: -1,
     slot,
@@ -68,6 +71,10 @@ export function BannerCard({ banner, slot, onMeasure }: Props): JSX.Element {
       }}
       className="zen-message zen-banner"
       data-glyph={Icon ? '' : undefined}
+      data-action={banner.action ? '' : undefined}
+      data-detail={banner.detail ? '' : undefined}
+      data-stack-top={stackTop || undefined}
+      data-stack-bottom={stackBottom || undefined}
       role="status"
       {...handlers}
     >

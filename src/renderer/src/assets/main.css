@@ -1061,15 +1061,22 @@
    * promotes a card only while a spring or a finger drives it. The phone and Android show these;
    * the desktop sidebar's `.zen-toast` above is untouched until the desktop program adopts them.
    */
+  /*
+   * A card is a row (v2 §9.2, §9.21): at least the row's height, grown around a control to the
+   * control plus 8 – the 4 above and below it is the row's own padding, its hairline counted –
+   * and its text sits at the row's padding, (row − line) / 2 from the edge (12 on a phone, 6
+   * on desktop), so a toast with nothing but its text is exactly a row tall.
+   */
   .zen-message {
+    --zen-message-text-inset: calc((var(--v2-row) - var(--v2-line-body)) / 2 - 4px);
     position: relative;
     display: flex;
     align-items: center;
     gap: 8px;
     box-sizing: border-box;
     width: 100%;
-    min-height: calc(var(--v2-control) + 12px);
-    padding: 6px 6px 6px 14px;
+    min-height: var(--v2-row);
+    padding: 3px 6px 3px 14px;
     border: 1px solid var(--v2-border);
     border-radius: var(--v2-radius-card);
     background: var(--v2-panel);
@@ -1083,13 +1090,16 @@
     user-select: none;
     cursor: default;
   }
+  .zen-message[data-action] {
+    min-height: calc(var(--v2-control) + 8px);
+  }
   .zen-message[data-moving] {
     will-change: transform, opacity;
   }
   .zen-message-text {
     flex: 1 1 auto;
     min-width: 0;
-    padding: 4px 0;
+    padding: var(--zen-message-text-inset) 0;
     overflow-wrap: anywhere;
   }
   .zen-message-toast:not([data-action]) {
@@ -1100,13 +1110,13 @@
   }
   /* The desktop sidebar's toast: the small type, a 28 button, in the sidebar's own column. */
   .zen-message-compact {
-    min-height: 36px;
-    padding: 4px 4px 4px 10px;
+    --zen-message-text-inset: calc((var(--v2-row) - var(--v2-line-small)) / 2 - 4px);
+    padding: 3px 4px 3px 10px;
     font-size: var(--v2-font-small);
     line-height: var(--v2-line-small);
   }
-  .zen-message-compact .zen-message-text {
-    padding: 3px 0;
+  .zen-message-compact[data-action] {
+    min-height: 36px;
   }
   .zen-message-compact.zen-message-toast:not([data-action]) {
     padding-right: 10px;
@@ -1152,6 +1162,25 @@
   .zen-banner {
     padding-left: 12px;
   }
+  /* A title with a detail line is a two-line row (§9.2). */
+  .zen-banner[data-detail] {
+    min-height: var(--v2-row-two-line);
+  }
+  /*
+   * Stacked banners touch (§9.21), so the stack reads as one card: only its top and bottom
+   * corners round, the seams between rows keep one shared hairline.
+   */
+  .zen-message-stack > .zen-banner {
+    transition: border-radius 120ms var(--zen-ease);
+  }
+  .zen-message-stack > .zen-banner:not([data-stack-top]) {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+  .zen-message-stack > .zen-banner:not([data-stack-bottom]) {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
   /* The text fills the card's height and centres its lines in it. */
   .zen-banner .zen-message-text {
     display: flex;
@@ -1196,7 +1225,7 @@
   .zen-banner[data-wrapped] .zen-message-trailing {
     align-self: flex-start;
     height: var(--zen-banner-title-height);
-    margin-top: 4px;
+    margin-top: var(--zen-message-text-inset);
   }
   .zen-message-close {
     flex: none;
@@ -2739,12 +2768,12 @@
 
 /*
  * The phone's message layer is the content frame's box and clips to it: cards arrive from and
- * leave by its edges. Banners hang from the top edge, each on its slot by transform; the toast
- * sits at the bottom edge, a leaving one and its successor in the same cell. The gap is between
- * stacked cards and from a card to the frame's edge; `messages/stack.ts` mirrors it.
+ * leave by its edges. Banners hang from the top edge, each on its slot by transform, touching
+ * (§9.21); the toast sits at the bottom edge, a leaving one and its successor in the same cell.
+ * The inset is from a card to the frame's edge; `messages/stack.ts` mirrors it.
  */
 :root {
-  --zen-message-gap: 8px;
+  --zen-message-inset: 8px;
 }
 .zen-message-layer {
   position: absolute;
@@ -2755,9 +2784,9 @@
 }
 .zen-message-stack {
   position: absolute;
-  top: var(--zen-message-gap);
-  left: var(--zen-message-gap);
-  right: var(--zen-message-gap);
+  top: var(--zen-message-inset);
+  left: var(--zen-message-inset);
+  right: var(--zen-message-inset);
 }
 .zen-message-stack > .zen-message {
   position: absolute;
@@ -2768,9 +2797,9 @@
 }
 .zen-message-toasts {
   position: absolute;
-  bottom: var(--zen-message-gap);
-  left: var(--zen-message-gap);
-  right: var(--zen-message-gap);
+  bottom: var(--zen-message-inset);
+  left: var(--zen-message-inset);
+  right: var(--zen-message-inset);
   display: grid;
 }
 .zen-message-toasts > * {

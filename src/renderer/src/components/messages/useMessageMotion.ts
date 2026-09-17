@@ -8,7 +8,7 @@ import {
   type DismissDirections
 } from '@renderer/lib/gestures/dismiss'
 import { SPRING_GENTLE, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
-import { MESSAGE_GAP } from './stack'
+import { MESSAGE_INSET } from './stack'
 import { useSwipeDismiss, type SwipeDismissHandlers } from './useSwipeDismiss'
 
 export interface MessageMotionOptions {
@@ -55,9 +55,11 @@ export function useMessageMotion(options: MessageMotionOptions): {
   const dragAxis = useRef<Axis | null>(null)
   const springs = useRef<{ x: SpringAnimation; y: SpringAnimation } | null>(null)
 
-  /** Distance along `axis` at which the card is out of sight: its own extent (plus the gap). */
+  /** Distance along `axis` at which the card is out of sight: its own extent (plus the inset). */
   const reach = (axis: Axis): number =>
-    axis === 'x' ? Math.max(1, size.current.width) : Math.max(1, size.current.height + MESSAGE_GAP)
+    axis === 'x'
+      ? Math.max(1, size.current.width)
+      : Math.max(1, size.current.height + MESSAGE_INSET)
 
   const paint = (): void => {
     const el = ref.current
