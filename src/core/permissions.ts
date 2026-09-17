@@ -97,6 +97,34 @@ export class PermissionService {
     this.decisions = {}
     this.store.write({ version: 1, decisions: this.decisions })
   }
+
+  /** Every remembered decision for an origin (the site-information sheet lists these). */
+  listForOrigin(requestingOrigin: string): Array<{ permission: string; decision: Decision }> {
+    const origin = safeOrigin(requestingOrigin)
+    if (!origin) return []
+    const out: Array<{ permission: string; decision: Decision }> = []
+    for (const [key, decision] of Object.entries(this.decisions)) {
+      const split = key.lastIndexOf('|')
+      if (split < 0 || key.slice(0, split) !== origin) continue
+      out.push({ permission: key.slice(split + 1), decision })
+    }
+    return out.sort((a, b) => a.permission.localeCompare(b.permission))
+  }
+
+  /** Forget the decisions of an origin (one permission, or all of them): the site asks again. */
+  resetOrigin(requestingOrigin: string, permission?: string): void {
+    const origin = safeOrigin(requestingOrigin)
+    if (!origin) return
+    let changed = false
+    for (const key of Object.keys(this.decisions)) {
+      const split = key.lastIndexOf('|')
+      if (split < 0 || key.slice(0, split) !== origin) continue
+      if (permission !== undefined && key.slice(split + 1) !== permission) continue
+      delete this.decisions[key]
+      changed = true
+    }
+    if (changed) this.store.write({ version: 1, decisions: this.decisions })
+  }
 }
 
 function safeOrigin(url: string): string {

@@ -1,6 +1,7 @@
 import React, { type JSX } from 'react'
 import { App } from './App'
 import { MenuSheet } from './components/menus/MenuSheet'
+import { SiteInfoLayer } from './components/siteinfo/SiteInfoSheet'
 import { browserStore, uiStore } from './lib/ui'
 
 /** Waits for the first state snapshot from the main process before rendering the browser UI. */
@@ -10,6 +11,7 @@ export function Root(): JSX.Element {
   return (
     <>
       <App />
+      <SiteInfoLayer />
       <MenuLayer />
     </>
   )

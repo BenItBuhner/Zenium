@@ -93,6 +93,8 @@ export interface UiState {
   drawerOpen: boolean
   /** A renderer-hosted context menu (hosts without native menus). */
   menu: MenuDescriptor | null
+  /** The site-information sheet (connection, cookies, storage, permissions) is up. */
+  siteInfoOpen: boolean
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
   /**
@@ -134,6 +136,7 @@ export const uiStore = createStore<UiState>(
     spaceSlideDirection: 0,
     drawerOpen: false,
     menu: null,
+    siteInfoOpen: false,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false
   },
@@ -200,6 +203,7 @@ export function returnFocusToPage(): void {
     !ui.findOpen &&
     !ui.drawerOpen &&
     !ui.menu &&
+    !ui.siteInfoOpen &&
     !ui.stageActive
   )
     run('focus.content', undefined)
@@ -215,6 +219,7 @@ export function invalidateSnapshot(): void {
     !ui.compactHover &&
     !ui.drawerOpen &&
     !ui.menu &&
+    !ui.siteInfoOpen &&
     !ui.stageActive
   ) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
@@ -301,6 +306,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.drag !== null ||
     ui.drawerOpen ||
     ui.menu !== null ||
+    ui.siteInfoOpen ||
     ui.stageActive
   )
 }

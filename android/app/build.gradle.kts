@@ -184,7 +184,8 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.activity:activity-ktx:1.9.3")
-    implementation("androidx.webkit:webkit:1.12.1")
+    // 1.13 adds WebStorageCompat.deleteBrowsingDataForSite (the site-information sheet's "clear all site data").
+    implementation("androidx.webkit:webkit:1.13.0")
     implementation("com.google.android.material:material:1.12.0")
 
     // JVM unit tests (src/test): pure logic such as the screenshot stitching geometry.

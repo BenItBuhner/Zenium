@@ -46,7 +46,8 @@ interface Touch {
 export interface PillGestureOptions {
   /** Window edge the bar sits on; decides which way "towards the middle of the screen" is. */
   edge: 'bottom' | 'top'
-  onTap: () => void
+  /** A plain tap (the click event tells which part of the pill was tapped). */
+  onTap: (e: ReactPointerEvent<HTMLElement> | React.MouseEvent<HTMLElement>) => void
 }
 
 export interface PillGestureHandlers {
@@ -149,7 +150,7 @@ export function usePillGestures({ edge, onTap }: PillGestureOptions): PillGestur
         e.preventDefault()
         return
       }
-      onTap()
+      onTap(e)
     },
     // Both axes are ours: the WebView must not turn a vertical pan into a scroll.
     style: { touchAction: 'none' }

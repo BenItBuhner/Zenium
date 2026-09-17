@@ -18,6 +18,7 @@ import type { Tab, UIState } from '@shared/types'
 import { displayUrl, getDomain } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { isPrivateWindow } from '@renderer/lib/selectors'
+import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { openOverlay, openUrlbar } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { WindowControls } from '../WindowControls'
@@ -114,12 +115,22 @@ export function NavRow({
         >
           {isPrivate ? (
             <VenetianMask className="h-3.5 w-3.5 shrink-0 opacity-70" />
-          ) : url ? (
-            secure ? (
-              <Lock className="h-3 w-3 shrink-0 opacity-60" />
-            ) : (
-              <Search className="h-3 w-3 shrink-0 opacity-60" />
-            )
+          ) : url && tab ? (
+            // The site icon: connection state at a glance, site information on click.
+            <span
+              role="button"
+              tabIndex={-1}
+              className="-ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] hover:opacity-100"
+              title={secure ? 'Connection is secure · Site information' : 'Site information'}
+              aria-label="Site information"
+              onClick={(e) => {
+                e.stopPropagation()
+                const r = e.currentTarget.getBoundingClientRect()
+                void openSiteInfo(tab, { x: r.left, y: r.top, width: r.width, height: r.height })
+              }}
+            >
+              {secure ? <Lock className="h-3 w-3" /> : <Search className="h-3 w-3" />}
+            </span>
           ) : (
             <Search className="h-3 w-3 shrink-0 opacity-60" />
           )}

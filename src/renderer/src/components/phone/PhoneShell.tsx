@@ -11,6 +11,7 @@ import {
   toggleOverview
 } from '@renderer/lib/gestures/stage'
 import { activeSpace, activeTab, essentialsFor, tabsOf } from '@renderer/lib/selectors'
+import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { closeDrawer, openUrlbar, type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ContentArea } from '../content/ContentArea'
@@ -113,9 +114,18 @@ function PhoneBar({ state }: { state: UIState }): JSX.Element {
   const overviewOpen = stageStore.use((s) => s.overview.phase !== 'closed')
   const pill = usePillGestures({
     edge: 'bottom',
-    onTap: () => {
+    onTap: (e) => {
       if (overviewIsOpen()) closeOverview()
-      else void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, { attached: true })
+      else if (tab && (e.target as HTMLElement).closest('[data-site-info]')) {
+        // The site icon at the start of the pill opens the site information instead.
+        const icon = (e.target as HTMLElement).closest('[data-site-info]')!.getBoundingClientRect()
+        void openSiteInfo(tab, {
+          x: icon.left,
+          y: icon.top,
+          width: icon.width,
+          height: icon.height
+        })
+      } else void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, { attached: true })
     }
   })
 
@@ -212,7 +222,16 @@ function PillContent({
       style={{ transform: shift ? `translateX(${shift}px)` : undefined }}
     >
       {shown ? (
-        <Favicon tab={shown} size={16} />
+        // Tapping the site icon opens the site information (see the pill's onTap).
+        <span
+          role="button"
+          tabIndex={-1}
+          aria-label="Site information"
+          data-site-info
+          className="-ml-1.5 -mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+        >
+          <Favicon tab={shown} size={16} />
+        </span>
       ) : (
         <Search className="h-4 w-4 shrink-0 opacity-60" />
       )}
@@ -221,7 +240,17 @@ function PillContent({
       >
         {url || 'Search or enter address'}
       </span>
-      {url && secure && <Lock className="h-3.5 w-3.5 shrink-0 opacity-50" />}
+      {url && secure && (
+        <span
+          role="button"
+          tabIndex={-1}
+          aria-label="Connection is secure"
+          data-site-info
+          className="-mx-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+        >
+          <Lock className="h-3.5 w-3.5 opacity-50" />
+        </span>
+      )}
       {state.spaces.length > 1 && (
         <span className="max-w-[64px] shrink-0 truncate text-[11px] text-[var(--zen-muted)]">
           {space.icon || space.name}

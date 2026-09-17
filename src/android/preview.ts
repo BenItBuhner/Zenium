@@ -127,6 +127,12 @@ export function createPreviewBridge(): NativeBridge {
     },
     'view.savePage': () => null,
     'view.screenshot': () => null,
+    'view.certificate': () => null,
+    // The preview has no cookie jar of its own to look into; the sheet shows the connection only.
+    'site.cookies': () => [],
+    'site.storage': () => ({ usageBytes: null, quotaBytes: null, origins: [] }),
+    'site.clearCookies': () => ({ removed: 0, remaining: 0 }),
+    'site.clearStorage': () => ({ ok: true, scope: 'origins' }),
     'dialog.confirm': ({ message, detail }) => window.confirm(`${message}\n\n${detail ?? ''}`),
     'clipboard.writeText': ({ text }) => void navigator.clipboard?.writeText(String(text)),
     'clipboard.writeImage': () => false,

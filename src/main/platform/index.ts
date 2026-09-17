@@ -28,6 +28,7 @@ import { ExtensionService } from './extensions'
 import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
 import { ElectronAgentTransport } from '../agent/server'
+import { ElectronSiteData } from './siteData'
 import { ElectronUpdateHost } from './updates'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
@@ -65,6 +66,7 @@ export class ElectronPlatform implements Platform {
   readonly shell: ShellHost
   readonly net: NetHost
   readonly app: AppHost
+  readonly siteData: ElectronSiteData
   browser!: Browser
 
   constructor(userDataDir: string) {
@@ -73,6 +75,7 @@ export class ElectronPlatform implements Platform {
     this.windows = new ElectronWindowFactory()
     this.sessions = new SessionManager(buildUserAgent())
     this.views = new ElectronTabViewHost(this.sessions)
+    this.siteData = new ElectronSiteData(this.sessions)
     this.menus = new ElectronMenus()
     this.downloads = new ElectronDownloads(() => this.browser.state.settings.askWhereToSave)
     this.dialogs = {
