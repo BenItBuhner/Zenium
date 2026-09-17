@@ -48,7 +48,7 @@ import readabilityReaderableJs from '@mozilla/readability/Readability-readerable
 import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
 import type { Bridge } from './bridge'
 import { AndroidExtensions } from './extensionHost'
-import { AndroidExtensionStoreIo, type PackageHandle } from './extensionStoreIo'
+import { AndroidExtensionStoreIo } from './extensionStoreIo'
 import { AndroidSiteData } from './siteData'
 import { AndroidTabViewHost, type ViewEventPayloads } from './views'
 
@@ -236,9 +236,11 @@ export interface HostEventPayloads {
   'update.progress': { token: string; transferred: number; total: number; bytesPerSecond: number }
   /**
    * A `.crx` or `.zip` another app opened with or shared to Zenium (`ACTION_VIEW` / `ACTION_SEND`):
-   * Kotlin copied it to a package file the extension store installs from.
+   * Kotlin copied it to a package file and queued it for `extStore.takeSideloads`; the payload
+   * says how many wait. A nudge rather than the handle itself so that one arriving while the
+   * chrome is still booting is not lost: the store collects the queue when it starts, too.
    */
-  'extension.sideload': PackageHandle
+  'extension.sideload': { count: number }
 }
 
 /**
@@ -867,12 +869,11 @@ export class AndroidPlatform implements Platform {
       case 'update.progress':
         this.updateHost.onProgress(payload as HostEventPayloads['update.progress'])
         return
-      case 'extension.sideload': {
-        const handle = payload as HostEventPayloads['extension.sideload']
-        if (this.extensions) void this.extensions.installHandle(handle, this.window)
-        else this.bridge.send('extStore.discard', { token: handle.token })
+      case 'extension.sideload':
+        // Without a store (the preview host) the packages stay queued in Kotlin's cache and are
+        // swept with the next start.
+        if (this.extensions) void this.extensions.installPending(this.window)
         return
-      }
       case 'view.adopt': {
         const p = payload as HostEventPayloads['view.adopt']
         // Kotlin created the WebView for a popup. Pick the tab id first and bind it before the

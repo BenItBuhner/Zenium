@@ -41,7 +41,12 @@ import {
   type ExtensionRecord,
   type ExtensionRegistry
 } from '@core/extensions/registry'
-import { STORE_UPDATE_URLS, isExtensionId, type StoreId } from '@core/extensions/store'
+import {
+  STORE_UPDATE_URLS,
+  isExtensionId,
+  type StoreFetch,
+  type StoreId
+} from '@core/extensions/store'
 import { noRuntimeHooks, type ExtensionRuntimeHooks } from './extensionRuntimeHooks'
 import type { AndroidExtensionStoreIo, PackageHandle } from './extensionStoreIo'
 
@@ -253,6 +258,20 @@ export class AndroidExtensions implements ExtensionHost {
     }
     this.browser.state.commitVolatile()
     this.scheduleUpdateChecks()
+    // A package another app handed over while the chrome was still booting.
+    void this.installPending()
+  }
+
+  /** Installs the packages other apps sent to Zenium that Kotlin holds (see `takeSideloads`). */
+  async installPending(win?: ZenWindow): Promise<void> {
+    let handles: PackageHandle[]
+    try {
+      handles = await this.io.takeSideloads()
+    } catch (error) {
+      console.warn('[zen] extensions: could not collect sideloads:', (error as Error).message)
+      return
+    }
+    for (const handle of handles) await this.installHandle(handle, win)
   }
 
   record(id: string): ExtensionRecord | undefined {
@@ -459,16 +478,36 @@ export class AndroidExtensions implements ExtensionHost {
     }
   }
 
+  /**
+   * Runs one of the core's downloads over `fetchPackage` and frees every temporary file it left
+   * behind except the bytes it returned: a store that answered with a body but no package, a
+   * package that failed its hash check, a chain the core gave up on.
+   */
+  private async download<T extends { bytes: Uint8Array }>(
+    run: (fetch: StoreFetch) => Promise<T>
+  ): Promise<T> {
+    const fetched: Uint8Array[] = []
+    const fetch: StoreFetch = async (url) => {
+      const response = await this.io.fetchPackage(url)
+      fetched.push(response.bytes)
+      return response
+    }
+    let result: T | null = null
+    try {
+      result = await run(fetch)
+      return result
+    } finally {
+      for (const bytes of fetched) if (bytes !== result?.bytes) this.io.release(bytes)
+    }
+  }
+
   private async downloadPackage(
     id: string,
     preferred: StoreId | null
   ): Promise<{ bytes: Uint8Array; pkg: ExtensionPackage; zipOffset: number; store: StoreId }> {
     const started = this.now()
-    const download = await downloadFromStores(
-      this.io.fetchPackage,
-      id,
-      preferred,
-      this.chromiumVersion
+    const download = await this.download((fetch) =>
+      downloadFromStores(fetch, id, preferred, this.chromiumVersion)
     )
     const downloaded = this.now()
     try {
@@ -847,7 +886,9 @@ export class AndroidExtensions implements ExtensionHost {
     update: Extract<UpdateCheckResult, { status: 'update-available' }>
   ): Promise<void> {
     const started = this.now()
-    const bytes = await downloadUpdate(this.io.fetchPackage, update)
+    const { bytes } = await this.download(async (fetch) => ({
+      bytes: await downloadUpdate(fetch, update)
+    }))
     try {
       const pkg = await installFromCrx(bytes, { expectedId: record.id, locale: this.locale })
       console.log(

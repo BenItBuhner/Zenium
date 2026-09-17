@@ -98,8 +98,8 @@ export class AndroidExtensionStoreIo {
 
   /** `StoreFetch` for update checks: the bytes come back and the temporary file goes at once. */
   readonly fetchText: StoreFetch = async (url) => {
-    const response = await this.fetch(url)
-    if (response.token) this.discard(response.token)
+    const { response, token } = await this.fetch(url)
+    if (token) this.discard(token)
     return response
   }
 
@@ -108,21 +108,24 @@ export class AndroidExtensionStoreIo {
    * until `release(bytes)`; `tokenOf(bytes)` finds it again.
    */
   readonly fetchPackage: StoreFetch = async (url) => {
-    const response = await this.fetch(url)
-    if (response.token) this.tokens.set(response.bytes, response.token)
+    const { response, token } = await this.fetch(url)
+    if (token) this.tokens.set(response.bytes, token)
     return response
   }
 
-  private async fetch(url: string): Promise<StoreResponse & { token: string | null }> {
+  private async fetch(url: string): Promise<{ response: StoreResponse; token: string | null }> {
     const reply = await this.bridge.call<FetchReply>('extStore.fetch', {
       url,
       maxBytes: this.maxPackageBytes
     })
     if (!reply.token)
-      return { status: reply.status, url: reply.url, bytes: new Uint8Array(0), token: null }
+      return {
+        response: { status: reply.status, url: reply.url, bytes: new Uint8Array(0) },
+        token: null
+      }
     try {
       const bytes = await this.readPackage(reply.token)
-      return { status: reply.status, url: reply.url, bytes, token: reply.token }
+      return { response: { status: reply.status, url: reply.url, bytes }, token: reply.token }
     } catch (error) {
       this.discard(reply.token)
       throw error
@@ -197,6 +200,15 @@ export class AndroidExtensionStoreIo {
   /** The system document picker for a `.crx` or `.zip`; null when dismissed. */
   pick(): Promise<PackageHandle | null> {
     return this.bridge.call<PackageHandle | null>('extStore.pick')
+  }
+
+  /**
+   * Packages other apps opened with or shared to Zenium (`VIEW` / `SEND` intents) that Kotlin
+   * holds for the host: the `extension.sideload` host event announces them, and a cold start
+   * collects what arrived before the chrome was up. Taking them empties the queue.
+   */
+  takeSideloads(): Promise<PackageHandle[]> {
+    return this.bridge.call<PackageHandle[]>('extStore.takeSideloads')
   }
 
   /** An installed file by its directory (a registry path) and relative name; null when unreadable. */
