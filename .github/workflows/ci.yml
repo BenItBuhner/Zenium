@@ -86,6 +86,19 @@ jobs:
       - name: Unit tests and debug APK
         working-directory: android
         run: ./gradlew testDebugUnitTest assembleDebug -PskipWeb --no-daemon --stacktrace
+      - name: Check the APK is signed with the committed CI debug key
+        # Debug builds share android/ci-debug.keystore so successive APKs install over each other.
+        run: |
+          apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          apk="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          signer="$("$apksigner" verify --print-certs "$apk" | sed -n 's/.*certificate SHA-256 digest: *\([0-9a-fA-F]\{64\}\).*/\1/p' | head -1 | tr 'A-F' 'a-f')"
+          expected="$(keytool -exportcert -rfc -keystore android/ci-debug.keystore -storepass zenium-ci-debug -alias zenium-ci-debug \
+            | openssl x509 -noout -fingerprint -sha256 | sed 's/.*=//; s/://g' | tr 'A-F' 'a-f')"
+          if [[ "$signer" != "$expected" ]]; then
+            echo "::error::debug APK signer $signer is not the committed CI debug key $expected"
+            exit 1
+          fi
+          echo "debug APK signed with the committed CI debug key $expected"
       - uses: actions/upload-artifact@v7
         with:
           name: zen-chromium-android-debug
