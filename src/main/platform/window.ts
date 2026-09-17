@@ -61,8 +61,9 @@ export class ElectronWindow implements WindowHost {
       show: false,
       frame: false,
       titleBarStyle: isMac ? 'hiddenInset' : CAPTION_OVERLAY ? 'hidden' : undefined,
-      // Centred on the 38px header row (12px lights: 16 + 6 = 22 = 6 + 32 / 2).
-      trafficLightPosition: isMac ? { x: 14, y: 16 } : undefined,
+      // Centred on the 38px header row (12px lights: 16 + 6 = 22 = 6 + 32 / 2); a toolbar-only
+      // window's 40px toolbar row is centred at 20.
+      trafficLightPosition: isMac ? { x: 14, y: init.chrome === 'popup' ? 14 : 16 } : undefined,
       titleBarOverlay: CAPTION_OVERLAY
         ? {
             color: init.captionColors.color,

@@ -37,9 +37,10 @@ import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import { describeNetError, HTTP_FALLBACK_CODES, overlayForUrl } from '../shared/zenPages'
 import { closedTabEntry, closedWindowEntry } from './session'
-import type { PageFlags, TabView, TabViewEvents } from './platform'
+import { newId } from '../shared/ids'
+import { defer, type PageFlags, type TabView, type TabViewEvents } from './platform'
 import { safeOrigin } from './permissions'
-import { planWindowOpen } from './windowOpen'
+import { openedWindowKind, planWindowOpen } from './windowOpen'
 
 export type { PageFlags } from './platform'
 
@@ -470,54 +471,39 @@ export class TabManager {
         this.sendPageFlags(tabId)
         this.browser.onPageReady(tabId)
       },
-      onDestroyed: () => undefined,
+      onDestroyed: () => this.onViewGone(tabId),
       onUserActivation: () => this.browser.popups.activate(tabId),
       onOpenWindow: (url, disposition, userGesture, features = '') => {
         const plan = planWindowOpen(url, disposition, features)
-        if (plan.action === 'deny') return 'deny'
+        if (plan.action === 'deny') return null
         const parent = this.tab(tabId)
         // No gesture, no window: the URL bar lists what was blocked.
         if (this.browser.popups.decide(tabId, parent?.url ?? '', url, userGesture) === 'blocked')
-          return 'deny'
+          return null
         const owner = ownerWindow()
-        if (plan.action === 'window' && this.browser.state.capabilities.windows) {
-          // Sized window.open → toolbar-only chrome at that size; Shift+click / unsized
-          // new-window → a full Zenium window. Private openers stay private.
-          const kind = owner.isPrivate
-            ? 'private'
-            : plan.chrome === 'popup' || owner.kind === 'unsynced'
-              ? 'unsynced'
-              : 'synced'
-          const win = this.browser.createWindow({
-            kind,
-            from: owner,
-            chrome: plan.chrome,
-            bounds: plan.bounds,
-            empty: true
-          })
-          this.createTab(
-            {
-              url,
-              spaceId: parent?.spaceId ?? undefined,
-              containerId: parent?.containerId,
-              active: true,
-              afterTabId: parent && !parent.essential ? parent.id : undefined
-            },
-            win
-          )
-          return 'window'
+        // Sized window.open → toolbar-only chrome at that size; Shift+click / unsized
+        // new-window → a full Zenium window; everything else a tab next to the opener.
+        const opensWindow = plan.action === 'window' && this.browser.state.capabilities.windows
+        return {
+          action: opensWindow ? 'window' : 'tab',
+          url,
+          adopt: (view) => {
+            const win = opensWindow
+              ? this.browser.createWindow({
+                  kind: openedWindowKind(owner.kind, plan.chrome),
+                  from: owner,
+                  chrome: plan.chrome,
+                  bounds: plan.bounds,
+                  empty: true
+                })
+              : owner
+            return this.adoptView(
+              view,
+              { tabId: newId('tab'), parentTabId: tabId, active: opensWindow || plan.active },
+              win
+            )
+          }
         }
-        this.createTab(
-          {
-            url,
-            spaceId: parent?.spaceId ?? undefined,
-            containerId: parent?.containerId,
-            active: plan.active,
-            afterTabId: parent && !parent.essential ? parent.id : undefined
-          },
-          owner
-        )
-        return 'tab'
       },
       onPageMessage: (message) => this.browser.handlePageMessage(tabId, message)
     }
@@ -703,9 +689,10 @@ export class TabManager {
   }
 
   /**
-   * Adopt a view the host created for a `window.open` popup that should become a tab (Android
-   * hands us the WebView; Electron denies and creates a tab through `onOpenWindow` instead).
-   * The caller picks the tab id up front so the view can already be addressed by it.
+   * Adopt a view the host created for a page's `window.open` as a new tab in `win` (Android
+   * hands us the WebView; Electron the opener-linked page Chromium made, or a fresh one for a
+   * link's new window). The caller picks the tab id up front so the view can already be
+   * addressed by it. The tab sits next to its opener in the opener's space and container.
    */
   adoptView(
     view: TabView,
@@ -726,15 +713,44 @@ export class TabManager {
       win
     )
     view.setBackgroundColor(this.backgroundFor(tab.url))
+    // Hidden until the window's layout positions it, so it never flashes at stale bounds.
     view.setVisible(false)
+    view.attachTo(win.host)
     this.views.set(tab.id, view)
     this.owners.set(tab.id, win)
     this.browser.governor.onViewCreated(tab.id, view)
+    this.browser.governor.trackLoad(tab.id)
     tab.discarded = false
     if (opts.active) this.activateTab(tab.id, win)
     this.browser.state.commit()
     win.relayout()
     return { tab, events: this.eventsFor(tab.id) }
+  }
+
+  /**
+   * The page went away underneath its tab – a popup called `window.close()`, or the host tore
+   * the view down on its own. The dead view is dropped without being touched again and the tab
+   * closes as if the user had closed it. Views the core destroys itself are already forgotten
+   * by the time the host reports them, so this only ever acts on page-initiated closes.
+   */
+  private onViewGone(tabId: string): void {
+    const view = this.views.get(tabId)
+    if (!view) return
+    const owner = this.owners.get(tabId)
+    this.views.delete(tabId)
+    this.owners.delete(tabId)
+    this.httpsUpgraded.delete(tabId)
+    this.browser.externalProtocols.cancelForTab(tabId)
+    this.browser.governor.onViewDestroyed(tabId, view)
+    this.browser.state.devtoolsOpenFor.delete(tabId)
+    const tab = this.tab(tabId)
+    if (!tab) return
+    if (tab.pinned || tab.essential) {
+      // Pinned tabs survive their page: they simply show as unloaded until clicked again.
+      this.discard(tabId)
+      return
+    }
+    this.closeTab(tabId, true, owner)
   }
 
   /** Which window a tab belongs to under the current window-sync mode (null = shared). */
@@ -909,6 +925,13 @@ export class TabManager {
     for (const { w, s, next } of reselect) {
       w.select(s, next)
       if (w.activeSpaceId === s.id && next) this.activateTab(next, w)
+      // A toolbar-only popup has no sidebar to open another tab from: like Chrome's, it closes
+      // with its last tab (deferred – the close may be arriving from the page going away).
+      else if (!next && w.chrome === 'popup') {
+        defer(() => {
+          if (w.alive) w.host.close()
+        })
+      }
     }
     this.browser.updateMedia()
     this.browser.state.commit()

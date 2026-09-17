@@ -6,11 +6,18 @@ export function windowsBuild(release: string): number | null {
   return m ? Number(m[1]) : null
 }
 
-/** Mica exists from Windows 11 (build 22000); older builds silently get an opaque window. */
+/**
+ * The first Windows 11 build whose DWM takes a system backdrop request (`DWMWA_SYSTEMBACKDROP_TYPE`,
+ * 22H2). Electron's `backgroundMaterial` is a no-op before it, so the Settings toggle is only
+ * offered where Mica can actually show.
+ */
+export const MICA_MIN_BUILD = 22621
+
+/** Whether the host can draw Mica behind windows: Windows 11 22H2 or later. */
 export function supportsWindowMaterial(platform: string, release: string): boolean {
   if (platform !== 'win32') return false
   const build = windowsBuild(release)
-  return build !== null && build >= 22000
+  return build !== null && build >= MICA_MIN_BUILD
 }
 
 /** Flags `zenium <flag>` understands for the shell's "new window" entries. */

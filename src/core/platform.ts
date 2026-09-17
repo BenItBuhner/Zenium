@@ -209,23 +209,41 @@ export interface TabViewEvents {
   onKey(input: KeyEventInput): boolean
   onTargetUrl(url: string): void
   onDomReady(): void
+  /** The page went away underneath the tab (it called `window.close()`, or the host tore it down). */
   onDestroyed(): void
   /**
-   * `window.open` / Shift+click / `target=_blank`. The host always denies Chromium's own window:
-   * `tab` and `window` mean the core already opened a Zenium tab or window. `userGesture` is the
-   * host's own knowledge of whether the user asked for it (null when it has none: the core then
-   * relies on the activation it tracked through `onUserActivation`). `features` is the
-   * `window.open` features string (empty for Shift+click).
+   * `window.open` / Shift+click / `target=_blank`: how the core wants the new page placed, or
+   * null to refuse it (the pop-up blocker said no, or the URL cannot be opened). The host never
+   * shows Chromium's own bare window. `userGesture` is the host's own knowledge of whether the
+   * user asked for it (null when it has none: the core then relies on the activation it tracked
+   * through `onUserActivation`). `features` is the `window.open` features string (empty for
+   * Shift+click).
    */
   onOpenWindow(
     url: string,
     disposition: WindowOpenDisposition,
     userGesture: boolean | null,
     features?: string
-  ): 'deny' | 'tab' | 'window'
+  ): WindowOpenTicket | null
   /** A trusted input event (click, key, tap) was delivered to the page. */
   onUserActivation(): void
   onPageMessage(message: PageMessage): void
+}
+
+/**
+ * The core's answer to a page opening a window: a tab in the opener's window or a Zenium window
+ * (toolbar-only for a sized popup, full for Shift+click). The host completes it once by handing
+ * over the page that goes into the new tab: the opener-linked one Chromium already created for a
+ * script `window.open` (so `window.opener` and the call's return value keep working, as in
+ * Chrome), or a fresh page the host then points at `url` for a window opened from a link. The
+ * window and tab only exist once `adopt` runs, so a request Chromium abandons leaves nothing
+ * behind.
+ */
+export interface WindowOpenTicket {
+  action: 'tab' | 'window'
+  url: string
+  /** Register `view` as the new tab's page; returns the tab and the events to wire to the view. */
+  adopt(view: TabView): { tab: Tab; events: TabViewEvents }
 }
 
 /**

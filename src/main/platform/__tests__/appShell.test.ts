@@ -21,9 +21,10 @@ describe('windows build detection', () => {
     expect(windowsBuild('6.1.7601')).toBeNull()
   })
 
-  it('offers Mica from Windows 11 only', () => {
-    expect(supportsWindowMaterial('win32', '10.0.22000')).toBe(true)
+  it('offers Mica from Windows 11 22H2 only, where the DWM honours a backdrop request', () => {
+    expect(supportsWindowMaterial('win32', '10.0.22621')).toBe(true)
     expect(supportsWindowMaterial('win32', '10.0.26100')).toBe(true)
+    expect(supportsWindowMaterial('win32', '10.0.22000')).toBe(false)
     expect(supportsWindowMaterial('win32', '10.0.19045')).toBe(false)
     expect(supportsWindowMaterial('linux', '10.0.22631')).toBe(false)
     expect(supportsWindowMaterial('darwin', '24.0.0')).toBe(false)
