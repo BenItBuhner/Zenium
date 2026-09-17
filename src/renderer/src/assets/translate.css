@@ -261,6 +261,14 @@
   font-size: var(--v2-font-small);
   line-height: var(--v2-line-small);
 }
+/* A failure's reason may take two lines; the row grows by one line for it. */
+.zen-translate-text > .zen-translate-wrap {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
 
 /* --- Selection translation: a panel where the user asked, a sheet on phones ---------------- */
 
