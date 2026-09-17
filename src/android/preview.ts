@@ -39,10 +39,13 @@ export function createPreviewBridge(): NativeBridge {
     canGoForward: false
   })
 
+  // `?sdk=32` stands in for an older release (below 33 the chrome confirms copies itself).
+  const sdkInt = Number(new URLSearchParams(location.search).get('sdk')) || 34
+
   const handlers: Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>> = {
     boot: (): BootInfo => ({
       version: 'preview',
-      sdkInt: 34,
+      sdkInt,
       signer: null,
       packageName: null,
       files,
