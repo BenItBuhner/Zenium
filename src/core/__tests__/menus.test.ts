@@ -38,7 +38,8 @@ const DESKTOP: HostCapabilities = {
   clipboardChip: false,
   appLinkSettings: false,
   pullToRefresh: false,
-  passwords: true
+  passwords: true,
+  defaultBrowser: false
 }
 
 /**
@@ -65,7 +66,8 @@ const ANDROID: HostCapabilities = {
   clipboardChip: true,
   appLinkSettings: true,
   pullToRefresh: true,
-  passwords: true
+  passwords: true,
+  defaultBrowser: true
 }
 
 function memoryIo(): StoreIO {
