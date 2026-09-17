@@ -33,8 +33,10 @@ import java.util.concurrent.TimeUnit
 @RunWith(AndroidJUnit4::class)
 class CustomTabsDemo {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
-    private val caller = instrumentation.context
     private val app = instrumentation.targetContext
+    // Instrumentation's package context has no Application on this runner; the target context
+    // still creates a real binder-backed CustomTabsSession against the debug provider.
+    private val caller = app.applicationContext
     private val ui: UiAutomation = instrumentation.uiAutomation
     private val out = File(app.filesDir, "custom-tabs-demo")
 
