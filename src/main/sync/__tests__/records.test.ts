@@ -8,8 +8,10 @@ import {
   hashData,
   metaFromRemote,
   newestByRecord,
+  readBookmarkData,
   stableStringify,
   winningRemote,
+  type BookmarkData,
   type MetaMap,
   type OrderData,
   type SyncRecord
@@ -21,8 +23,14 @@ import {
   emptyModel,
   insertTabIntoSpace
 } from '../../../core/model'
+import {
+  BOOKMARKS_BAR_ID,
+  BOOKMARK_ROOT_IDS,
+  OTHER_BOOKMARKS_ID,
+  createBookmarkRoots
+} from '../../../shared/bookmarks'
 import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS } from '../../../shared/defaults'
-import type { Space, Tab } from '../../../shared/types'
+import type { BookmarkNode, Space, Tab } from '../../../shared/types'
 
 type Fixture = Parameters<typeof collectLocal>[0] & {
   ids: { space: Space; pinned: Tab; regular: Tab; essential: Tab }
@@ -250,5 +258,145 @@ describe('merge', () => {
       modified: 2,
       deleted: true
     })
+  })
+})
+
+describe('bookmark records', () => {
+  function tree(): { nodes: BookmarkNode[]; folder: BookmarkNode; leaf: BookmarkNode } {
+    const folder: BookmarkNode = {
+      id: 'bm_folder',
+      parentId: BOOKMARKS_BAR_ID,
+      index: 0,
+      type: 'folder',
+      title: 'Work',
+      dateAdded: 10,
+      dateGroupModified: 20
+    }
+    const leaf: BookmarkNode = {
+      id: 'bm_leaf',
+      parentId: 'bm_folder',
+      index: 0,
+      type: 'url',
+      title: 'Docs',
+      url: 'https://docs.test/',
+      favicon: 'data:image/png;base64,AAAA',
+      dateAdded: 15,
+      dateLastUsed: 30
+    }
+    return { nodes: [...createBookmarkRoots(1), folder, leaf], folder, leaf }
+  }
+
+  it('collectLocal emits one record per node with its position and never the roots', () => {
+    const src = sources()
+    const t = tree()
+    src.bookmarks = t.nodes
+    const records = collectLocal(src, defaultScope())
+    for (const id of BOOKMARK_ROOT_IDS) expect(records.has(id)).toBe(false)
+    expect(records.get('bm_folder')).toEqual({
+      type: 'bookmark',
+      data: { parentId: BOOKMARKS_BAR_ID, index: 0, type: 'folder', title: 'Work', dateAdded: 10 }
+    })
+    expect(records.get('bm_leaf')).toEqual({
+      type: 'bookmark',
+      data: {
+        parentId: 'bm_folder',
+        index: 0,
+        type: 'url',
+        title: 'Docs',
+        url: 'https://docs.test/',
+        favicon: 'data:image/png;base64,AAAA',
+        dateAdded: 15
+      }
+    })
+    // Device-local usage is not part of the record, so opening a bookmark never re-stamps it.
+    expect(records.get('bm_leaf')?.data).not.toHaveProperty('dateLastUsed')
+    expect(records.get('bm_folder')?.data).not.toHaveProperty('dateGroupModified')
+  })
+
+  it('a move changes only the moved node, and the scope can turn bookmarks off', () => {
+    const src = sources()
+    const t = tree()
+    src.bookmarks = t.nodes
+    const first = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+    t.leaf.parentId = OTHER_BOOKMARKS_ID
+    t.leaf.index = 3
+    const second = diffLocal(first.meta, collectLocal(src, defaultScope()), 2000)
+    const changed = second.records.filter((r) => r.modified === 2000).map((r) => r.id)
+    expect(changed).toEqual(['bm_leaf'])
+    expect((second.records.find((r) => r.id === 'bm_leaf')?.data as BookmarkData).index).toBe(3)
+    expect(collectLocal(src, { ...defaultScope(), bookmarks: false }).has('bm_leaf')).toBe(false)
+  })
+
+  it('readBookmarkData accepts tree records and repairs missing fields', () => {
+    expect(
+      readBookmarkData({ parentId: 'p', index: 2, type: 'folder', title: 'F', dateAdded: 5 })
+    ).toEqual({ parentId: 'p', index: 2, type: 'folder', title: 'F', dateAdded: 5 })
+    const url = readBookmarkData({
+      parentId: 'p',
+      type: 'url',
+      url: 'https://a.test/',
+      favicon: '',
+      index: Number.NaN
+    })
+    expect(url?.title).toBe('https://a.test/')
+    expect(url?.index).toBe(Number.MAX_SAFE_INTEGER)
+    expect(url).not.toHaveProperty('favicon')
+    expect(typeof url?.dateAdded).toBe('number')
+    // A url node without a url is garbage.
+    expect(readBookmarkData({ parentId: 'p', index: 0, type: 'url', title: 'x' })).toBeNull()
+    expect(readBookmarkData({ parentId: 'p', index: 0, type: 'weird' })).toBeNull()
+    expect(readBookmarkData(null)).toBeNull()
+    expect(readBookmarkData('nope')).toBeNull()
+  })
+
+  it('readBookmarkData lands flat records from pre-tree devices in Other bookmarks', () => {
+    const legacy = readBookmarkData({
+      url: 'https://old.test/',
+      title: 'Old',
+      favicon: 'data:x',
+      createdAt: 42
+    })
+    expect(legacy).toEqual({
+      parentId: OTHER_BOOKMARKS_ID,
+      index: Number.MAX_SAFE_INTEGER,
+      type: 'url',
+      title: 'Old',
+      url: 'https://old.test/',
+      favicon: 'data:x',
+      dateAdded: 42
+    })
+    expect(readBookmarkData({ url: 'https://old.test/', title: '', favicon: null })?.title).toBe(
+      'https://old.test/'
+    )
+    expect(readBookmarkData({ url: '', title: 'Empty' })).toBeNull()
+  })
+
+  it('per-node last-writer-wins: a newer remote move beats the local copy of that node only', () => {
+    const src = sources()
+    const t = tree()
+    src.bookmarks = t.nodes
+    const local = diffLocal({}, collectLocal(src, defaultScope()), 5000)
+    const remoteLeaf: SyncRecord = {
+      id: 'bm_leaf',
+      type: 'bookmark',
+      modified: 6000,
+      deleted: false,
+      data: { ...(local.records.find((r) => r.id === 'bm_leaf')?.data as BookmarkData), index: 1 }
+    }
+    const remoteFolder: SyncRecord = {
+      id: 'bm_folder',
+      type: 'bookmark',
+      modified: 6000,
+      deleted: false,
+      data: local.records.find((r) => r.id === 'bm_folder')?.data
+    }
+    const winners = winningRemote(
+      local.meta,
+      new Map([
+        ['bm_leaf', remoteLeaf],
+        ['bm_folder', remoteFolder]
+      ])
+    )
+    expect(winners.map((r) => r.id)).toEqual(['bm_leaf'])
   })
 })

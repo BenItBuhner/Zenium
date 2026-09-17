@@ -394,12 +394,51 @@ export interface HistoryEntry {
   favicon: string | null
 }
 
+/** Legacy flat bookmark (state.json v1–v2); migrated into the tree on load. */
 export interface Bookmark {
   id: string
   url: string
   title: string
   favicon: string | null
   createdAt: number
+}
+
+export type BookmarkNodeType = 'url' | 'folder'
+
+/**
+ * One node of the bookmark tree, shaped like `chrome.bookmarks.BookmarkTreeNode`. The three
+ * roots (Bookmarks bar, Other bookmarks, Mobile bookmarks) have fixed ids and `parentId: null`;
+ * every other node sits at a contiguous `index` among its parent's children.
+ */
+export interface BookmarkNode {
+  id: string
+  parentId: string | null
+  index: number
+  type: BookmarkNodeType
+  title: string
+  /** Bookmarks only. */
+  url?: string
+  /** Bookmarks only: favicon URL or data URI, when known. */
+  favicon?: string
+  dateAdded: number
+  /** Folders: last time a direct child was added, removed or moved. */
+  dateGroupModified?: number
+  /** Bookmarks: last time the user opened it. */
+  dateLastUsed?: number
+}
+
+/** The persisted bookmark tree (`state.json` v3 and the export/import programs). */
+export interface BookmarkTreeData {
+  schemaVersion: 1
+  nodes: BookmarkNode[]
+}
+
+/** Result of a Netscape HTML import (shown in a toast and returned to the caller). */
+export interface BookmarkImportResult {
+  bookmarks: number
+  folders: number
+  /** Folder the import landed in. */
+  folderId: string
 }
 
 export type DownloadState = 'progressing' | 'paused' | 'completed' | 'cancelled' | 'interrupted'
@@ -534,6 +573,7 @@ export type ShortcutAction =
   | 'bookmark.add'
   | 'bookmark.sidebar'
   | 'bookmark.library'
+  | 'bookmark.allTabs'
   | 'history.sidebar'
   | 'downloads.open'
   | 'devtools.toggle'
@@ -948,7 +988,8 @@ export interface UIState {
   compactSidebarRevealed: boolean
   window: WindowState
   downloads: DownloadItem[]
-  bookmarks: Bookmark[]
+  /** Every bookmark node (roots included), ordered parent-first, then by index. */
+  bookmarks: BookmarkNode[]
   recentlyClosedCount: number
   media: MediaState[]
   findResult: FindResult | null
@@ -1037,7 +1078,7 @@ export interface MenuItemDescriptor {
 export interface MenuDescriptor {
   id: string
   items: MenuItemDescriptor[]
-  source: 'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app'
+  source: 'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app' | 'bookmark'
   /** Anchor in chrome CSS pixels, when known. */
   x: number | null
   y: number | null
@@ -1257,9 +1298,47 @@ export interface Commands {
   'history.delete': { args: { url: string }; result: void }
   'history.clear': { args: void; result: void }
 
+  /** Bookmark the tab's page in the default folder, or remove its bookmarks (toast feedback). */
   'bookmark.toggle': { args: { tabId: string }; result: void }
-  'bookmark.remove': { args: { id: string }; result: void }
-  'bookmark.add': { args: { url: string; title: string }; result: void }
+  /** Star the tab's page: bookmarks it when needed, then opens the star dialog. */
+  'bookmark.star': { args: { tabId: string }; result: void }
+  'bookmark.create': {
+    args: {
+      parentId?: string
+      index?: number
+      title: string
+      url?: string
+      type?: BookmarkNodeType
+    }
+    result: BookmarkNode | null
+  }
+  'bookmark.update': {
+    args: { id: string; title?: string; url?: string }
+    result: void
+  }
+  /** Move nodes (in the given order) so that the first lands at `index` of `parentId`. */
+  'bookmark.move': { args: { ids: string[]; parentId: string; index?: number }; result: void }
+  /** Remove bookmarks and folders (folders with all their contents). */
+  'bookmark.remove': { args: { ids: string[] }; result: void }
+  /** Open a bookmark (records `dateLastUsed`). */
+  'bookmark.open': { args: { id: string; newTab: boolean; tabId: string | null }; result: void }
+  /** Open every bookmark in the given folders / selection in new tabs. */
+  'bookmark.openAll': { args: { ids: string[] }; result: void }
+  /** Bookmark every open tab of the current space into a new folder. */
+  'bookmark.allTabs': { args: void; result: void }
+  'bookmark.contextMenu': {
+    args: { ids: string[]; folderId: string; x: number; y: number }
+    result: void
+  }
+  /** The bookmarks surface's overflow menu (bookmark all tabs, import, export) at `x`,`y`. */
+  'bookmark.menu': { args: { x: number; y: number }; result: void }
+  'bookmark.cut': { args: { ids: string[] }; result: void }
+  'bookmark.copy': { args: { ids: string[] }; result: void }
+  'bookmark.paste': { args: { folderId: string; index?: number }; result: void }
+  /** Netscape bookmark HTML import through the host's file picker. */
+  'bookmark.import': { args: void; result: BookmarkImportResult | null }
+  /** Netscape bookmark HTML export through the host's save dialog. */
+  'bookmark.export': { args: void; result: boolean }
 
   'download.pause': { args: { id: string }; result: void }
   'download.resume': { args: { id: string }; result: void }
@@ -1429,6 +1508,10 @@ export interface Events {
   'tab.editPinnedUrl': { tabId: string }
   /** Open the emoji/icon picker for a tab. */
   'tab.pickIcon': { tabId: string }
+  /** Show the star dialog for a bookmark that was just created (or already existed). */
+  'bookmark.star': { tabId: string; nodeId: string; created: boolean }
+  /** The bookmark manager should edit a node, or create one (`id: null`) inside `parentId`. */
+  'bookmark.edit': { id: string | null; parentId: string; type: BookmarkNodeType }
   'space.edit': { spaceId: string }
   'space.switched': { fromIndex: number; toIndex: number }
   /** Hosts without native menus ask the renderer to show one. */

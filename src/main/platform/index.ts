@@ -1,5 +1,5 @@
 import { app, clipboard, dialog, ipcMain, net, shell, type Session } from 'electron'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { Browser } from '../../core/browser'
@@ -117,6 +117,27 @@ export class ElectronPlatform implements Platform {
         for (const path of result.filePaths)
           files.push({ name: basename(path), text: readFileSync(path, 'utf8') })
         return files
+      },
+      saveTextFile: async (options, win?: ZenWindow) => {
+        const bw = browserWindowOf(win)
+        const dialogOptions = {
+          title: options.title,
+          defaultPath: join(app.getPath('downloads'), options.defaultName),
+          filters: [
+            { name: options.extensions.join(', ').toUpperCase(), extensions: options.extensions }
+          ]
+        }
+        const result = bw
+          ? await dialog.showSaveDialog(bw, dialogOptions)
+          : await dialog.showSaveDialog(dialogOptions)
+        if (result.canceled || !result.filePath) return false
+        try {
+          writeFileSync(result.filePath, options.text, 'utf8')
+          return true
+        } catch (error) {
+          console.warn('[zen] save file:', (error as Error).message)
+          return false
+        }
       }
     }
     this.clipboard = {

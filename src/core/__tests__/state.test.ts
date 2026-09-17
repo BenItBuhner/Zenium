@@ -56,4 +56,28 @@ describe('BrowserState commits', () => {
     await tick()
     expect(calls).toBe(1)
   })
+
+  it('runs afterBroadcast callbacks once the pending broadcast has gone out', async () => {
+    const io = fakeIo()
+    const s = state(io)
+    const order: string[] = []
+    s.subscribe(() => order.push('broadcast'))
+    s.commit()
+    s.afterBroadcast(() => order.push('after'))
+    expect(order).toEqual([])
+    await tick()
+    expect(order).toEqual(['broadcast', 'after'])
+  })
+
+  it('runs afterBroadcast callbacks right away when nothing is pending', async () => {
+    const io = fakeIo()
+    const s = state(io)
+    let calls = 0
+    s.subscribe(() => calls++)
+    let ran = false
+    s.afterBroadcast(() => (ran = true))
+    expect(ran).toBe(true)
+    await tick()
+    expect(calls).toBe(0)
+  })
 })
