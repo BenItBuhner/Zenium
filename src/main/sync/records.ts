@@ -4,6 +4,7 @@ import type {
   Boost,
   Container,
   Folder,
+  FolderColor,
   KeyBinding,
   Settings,
   Space,
@@ -75,6 +76,8 @@ export interface FolderData {
   name: string
   icon: string
   collapsed: boolean
+  /** Absent for folders without a group colour, so their records hash as they always did. */
+  color?: FolderColor
 }
 
 export interface TabData {
@@ -186,6 +189,7 @@ export function collectLocal(
         icon: f.icon,
         collapsed: f.collapsed
       }
+      if (f.color) data.color = f.color
       out.set(f.id, { type: 'folder', data })
     }
   }

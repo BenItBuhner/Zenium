@@ -5,6 +5,7 @@ import type {
   EventName,
   Events,
   Folder,
+  FolderColor,
   KeyBinding,
   MediaState,
   Settings,
@@ -421,10 +422,16 @@ export class Browser {
     this.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
   }
 
-  createFolder(spaceId: string, name: string, icon: string, win?: ZenWindow): Folder {
-    const folder = createFolder(this.state.model, spaceId, name, icon)
+  createFolder(
+    spaceId: string,
+    name: string,
+    icon: string,
+    win?: ZenWindow,
+    options: { color?: FolderColor; rename?: boolean } = {}
+  ): Folder {
+    const folder = createFolder(this.state.model, spaceId, name, icon, options.color)
     this.state.commit()
-    this.emit('folder.startRename', { folderId: folder.id }, win)
+    if (options.rename !== false) this.emit('folder.startRename', { folderId: folder.id }, win)
     return folder
   }
 
@@ -437,7 +444,7 @@ export class Browser {
 
   updateFolder(
     folderId: string,
-    patch: Partial<Pick<Folder, 'name' | 'icon' | 'collapsed'>>
+    patch: Partial<Pick<Folder, 'name' | 'icon' | 'collapsed' | 'color'>>
   ): void {
     const folder = this.state.model.folders[folderId]
     if (!folder) return
@@ -791,8 +798,8 @@ export class Browser {
       'space.closeUnpinned': ({ spaceId }, win) => tabs.closeUnpinned(spaceId, win),
       'space.contextMenu': ({ spaceId }, win) => this.menus.showSpaceContextMenu(spaceId, win),
 
-      'folder.create': ({ spaceId, name, icon }, win) =>
-        this.createFolder(spaceId, name, icon, win).id,
+      'folder.create': ({ spaceId, name, icon, color, rename }, win) =>
+        this.createFolder(spaceId, name, icon, win, { color, rename }).id,
       'folder.update': ({ folderId, patch }) => this.updateFolder(folderId, patch),
       'folder.delete': ({ folderId, unpack }) => this.deleteFolder(folderId, unpack),
       'folder.contextMenu': ({ folderId }, win) => this.menus.showFolderContextMenu(folderId, win),
