@@ -1665,8 +1665,10 @@ export interface Commands {
   'extension.closePopup': { args: void; result: void }
   // ---- PROVISIONAL: extensions UI (PR #68) ------------------------------------------------------
   // Added by the UI wave ahead of the engine; `src/main/platform/extensions.ts` implements them
-  // as they stand. The API-layer and store PRs may rename or fold them: reconcile here on rebase
-  // and keep the renderer's call sites (`lib/extensions/*`, `components/extensions/*`) in step.
+  // as they stand. The API layer (#91) landed without competing names (`ExtensionAction` above is
+  // its shape); its `permissions.request` still confirms natively rather than through
+  // `extensionPermissionRequest`. Later engine PRs may rename or fold these: reconcile here and
+  // keep the renderer's call sites (`lib/extensions/*`, `components/extensions/*`) in step.
   /** Move the open popup view to where the renderer's frame has settled, and show it. */
   'extension.resizePopup': { args: { bounds: Rect; visible: boolean }; result: void }
   /** Paths dropped on the management page: `.crx` / `.zip` packages or unpacked folders. */
