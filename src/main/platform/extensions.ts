@@ -179,7 +179,8 @@ export class ExtensionService implements ExtensionHost {
   private readonly unloadedListeners = new Set<(id: string) => void>()
   private readonly changeListeners = new Set<(event: RegistryEvent) => void>()
   private readonly iconCache = new Map<string, string | null>()
-  private popup: { id: string; view: WebContentsView; win: ZenWindow } | null = null
+  /** The open action popup; `shown` once its view is visible (at once without a renderer frame). */
+  private popup: { id: string; view: WebContentsView; win: ZenWindow; shown: boolean } | null = null
   private checking: Promise<void> | null = null
   private updateTimer: ReturnType<typeof setInterval> | null = null
   /** Install and permission prompts waiting for the renderer's answer, by request id. */
@@ -1120,7 +1121,7 @@ export class ExtensionService implements ExtensionHost {
       })
     }
     bw.contentView.addChildView(view)
-    this.popup = { id: record.id, view, win }
+    this.popup = { id: record.id, view, win, shown: !frame }
     const wc = view.webContents
     const report = (width: number, height: number): void => {
       if (this.popup?.view !== view) return
@@ -1164,7 +1165,19 @@ export class ExtensionService implements ExtensionHost {
           .catch(() => undefined)
       }, 400)
     })
-    wc.on('blur', () => setTimeout(() => this.popup?.view === view && this.closePopup(), 120))
+    // A blur closes a popup the user can see and has clicked away from. While the framed view is
+    // still hidden the chrome takes focus on purpose (the layout that hides the page behind the
+    // frame's capture focuses it), and the renderer handles clicks outside the frame itself;
+    // `resizePopup` hands focus back when it shows the view. A popup focused again by the time
+    // the timer fires stays as well.
+    wc.on('blur', () =>
+      setTimeout(() => {
+        const popup = this.popup
+        if (!popup || popup.view !== view || !popup.shown) return
+        if (wc.isDestroyed() || wc.isFocused()) return
+        this.closePopup()
+      }, 120)
+    )
     wc.on('before-input-event', (event, input) => {
       if (input.type === 'keyDown' && input.key === 'Escape') {
         event.preventDefault()
@@ -1188,6 +1201,7 @@ export class ExtensionService implements ExtensionHost {
     if (!popup || popup.view.webContents.isDestroyed()) return
     popup.view.setBounds(roundRect(bounds))
     popup.view.setVisible(visible)
+    popup.shown = visible
     if (visible) popup.view.webContents.focus()
   }
 
