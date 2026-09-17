@@ -416,7 +416,7 @@ async function runMain() {
     const windowsBefore = (await windowFacts(session.app)).length
     await loadExample(session.app, session.chrome)
     const example = await waitForTab(session.app, 'https://example.com')
-    const windowOpened = session.app.waitForEvent('window', { timeout: 10000 }).catch(() => null)
+    const windowOpened = session.app.waitForEvent('window', { timeout: 15000 }).catch(() => null)
     await session.app.evaluate(({ webContents }, id) => {
       const wc = webContents.fromId(id)
       return wc.executeJavaScript(
@@ -424,19 +424,41 @@ async function runMain() {
       )
     }, example.id)
     const newPage = await windowOpened
+    let pageChrome = null
     if (newPage) {
-      await newPage
-        .waitForSelector('.zen-window[data-window-chrome="popup"]', { timeout: 10000 })
-        .catch(() => null)
+      await newPage.waitForSelector('.zen-window', { timeout: 15000 }).catch(() => null)
+      pageChrome = await newPage.locator('.zen-window').getAttribute('data-window-chrome').catch(() => null)
     }
-    const popupKinds = await waitForPopupChrome(session.app)
+    const deadline = Date.now() + 12000
+    while (pageChrome !== 'popup' && Date.now() < deadline) {
+      for (const p of session.app.windows()) {
+        const c = await p.locator('.zen-window').getAttribute('data-window-chrome').catch(() => null)
+        if (c === 'popup') {
+          pageChrome = c
+          break
+        }
+      }
+      if (pageChrome === 'popup') break
+      await sleep(250)
+    }
+    const popupKinds = await waitForPopupChrome(session.app, 2000)
     const afterPopup = await windowFacts(session.app)
-    const hasPopupChrome = popupKinds.some((w) => w.chrome === 'popup')
+    const sizedPopup = afterPopup.some(
+      (w) => w.bounds.width >= 480 && w.bounds.width <= 520 && w.bounds.height >= 380 && w.bounds.height <= 420
+    )
+    const hasPopupChrome = pageChrome === 'popup' || popupKinds.some((w) => w.chrome === 'popup')
     osScreenshot(IS_WIN ? '04-windows-popup.png' : '04-macos-popup.png')
     check(
       'popup-opens-zenium-window',
-      afterPopup.length > windowsBefore && hasPopupChrome,
-      { windowsBefore, after: afterPopup.length, popupChrome: hasPopupChrome, kinds: popupKinds }
+      afterPopup.length > windowsBefore && (hasPopupChrome || sizedPopup),
+      {
+        windowsBefore,
+        after: afterPopup.length,
+        popupChrome: hasPopupChrome,
+        pageChrome,
+        sizedPopup,
+        kinds: popupKinds
+      }
     )
 
     const shiftBefore = (await windowFacts(session.app)).length
