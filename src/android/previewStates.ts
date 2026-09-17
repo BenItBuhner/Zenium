@@ -57,7 +57,7 @@ function apply(spec: string): void {
     closeMenu()
     uiStore.set({ findOpen: false, findTabId: null })
     abortPull()
-    clearMessages()
+    clearMessages(tab?.loading ? tab.id : null)
 
     if (target.kind === 'overlay') {
       void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
@@ -193,8 +193,11 @@ function showMessages(
   }
 }
 
-/** Every message off at once, so the next state starts clean. */
-function clearMessages(): void {
+/**
+ * Every message off at once, and the load a previous `progress` state left running on
+ * `loadingTabId` finished, so the next state starts clean.
+ */
+function clearMessages(loadingTabId: string | null): void {
   const ui = uiStore.get()
   for (const t of ui.toasts) {
     dismissToast(t.id)
@@ -204,6 +207,7 @@ function clearMessages(): void {
     dismissBanner(b.id)
     forgetBanner(b.id)
   }
+  if (loadingTabId) hostGlobal().viewEvent(loadingTabId, 'stopLoading', '{}')
 }
 
 function hostGlobal(): { viewEvent(tabId: string, name: string, json: string): void } {
