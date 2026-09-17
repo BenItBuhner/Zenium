@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { UIState } from '@shared/types'
 import { onEvent } from '@renderer/lib/api'
+import { startDownloadsUi } from '@renderer/lib/downloads'
 import { isPhone } from '@renderer/lib/formFactor'
 import {
   cancelExternalProtocol,
@@ -25,6 +26,8 @@ function currentActiveTabId(): string | null {
 export function useMainEvents(): void {
   useEffect(() => {
     const offs = [
+      // The downloads button and bubble follow the engine's list and the `downloads.reveal` event.
+      startDownloadsUi(),
       onEvent('urlbar.toggle', ({ mode, text }) => {
         const ui = uiStore.get()
         if (ui.urlbar.open && ui.urlbar.mode === mode && text === undefined) {

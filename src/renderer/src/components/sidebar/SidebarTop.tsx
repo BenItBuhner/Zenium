@@ -23,6 +23,7 @@ import { openOverlay, openUrlbar } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { useLongPress } from '../phone/useLongPress'
 import { WindowControls } from '../WindowControls'
+import { DownloadButton } from '../downloads/DownloadButton'
 
 interface Props {
   state: UIState
@@ -194,6 +195,7 @@ export function NavRow({
         </button>
       )}
       {!compact && extensions.slice(0, 4).map((ext) => <ExtensionButton key={ext.id} ext={ext} />)}
+      <DownloadButton state={state} activeTabId={tab?.id ?? null} />
       <button
         type="button"
         className="zen-toolbar-button"

@@ -1272,6 +1272,303 @@
   }
 }
 
+@layer components {
+  /*
+   * Downloads (design language v2 draft). The bubble and the `zen://downloads` page are neutral
+   * opaque surfaces: panel #f4f4f4 / #1f1f1f with a 1px border and a 2px shadow, page #fbfbfe /
+   * #1c1b22; text #15141a / #fbfbfe with the deemphasised tone at 69%; the controls' accent is
+   * Zen's 40% mix of the space colour towards black (light) or white (dark). Radius 8 for the
+   * panel, 4 for buttons and fields. Rows are 52 (a label line over a status line) and grow with
+   * a progress bar; icon buttons are the toolbar's 28 box with a 16 glyph.
+   */
+  .zen-dl-surface {
+    --zen-dl-text: #15141a;
+    --zen-dl-text-rgb: 21 20 26;
+    --zen-dl-deemph: rgb(var(--zen-dl-text-rgb) / 0.69);
+    --zen-dl-panel: #f4f4f4;
+    --zen-dl-panel-border: rgb(0 0 0 / 0.15);
+    --zen-dl-page: #fbfbfe;
+    --zen-dl-accent: color-mix(in srgb, var(--zen-accent) 40%, #000);
+    --zen-dl-on-accent: #fff;
+    --zen-dl-fill: rgb(var(--zen-dl-text-rgb) / 0.1);
+    --zen-dl-fill-hover: rgb(var(--zen-dl-text-rgb) / 0.16);
+    --zen-dl-row-hover: rgb(var(--zen-dl-text-rgb) / 0.06);
+    --zen-dl-track: rgb(var(--zen-dl-text-rgb) / 0.12);
+    --zen-dl-focus-offset: 0px;
+    color: var(--zen-dl-text);
+  }
+  :root[data-theme='dark'] .zen-dl-surface {
+    --zen-dl-text: #fbfbfe;
+    --zen-dl-text-rgb: 251 251 254;
+    --zen-dl-panel: #1f1f1f;
+    --zen-dl-panel-border: rgb(255 255 255 / 0.12);
+    --zen-dl-page: #1c1b22;
+    --zen-dl-accent: color-mix(in srgb, var(--zen-accent) 40%, #fff);
+    --zen-dl-on-accent: #15141a;
+    --zen-dl-focus-offset: -2px;
+  }
+  /* The surfaces' own text tones for the toolbar-button primitive used as a row action. */
+  .zen-dl-surface .zen-toolbar-button {
+    color: var(--zen-dl-text);
+  }
+  .zen-dl-surface .zen-toolbar-button:hover:not(:disabled) {
+    background: var(--zen-dl-fill);
+  }
+  .zen-dl-surface .zen-toolbar-button:active:not(:disabled) {
+    background: var(--zen-dl-fill-hover);
+  }
+  .zen-dl-deemph {
+    color: var(--zen-dl-deemph);
+  }
+  .zen-dl-bubble {
+    background: var(--zen-dl-panel);
+    border: 1px solid var(--zen-dl-panel-border);
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
+    corner-shape: var(--zen-corner);
+  }
+  /* The page fills the content frame; the shared shell's tint, blur and 16 radius do not apply. */
+  .zen-panel.zen-dl-page {
+    background: var(--zen-dl-page);
+    backdrop-filter: none;
+    border: 1px solid var(--zen-dl-panel-border);
+    border-radius: 8px;
+    box-shadow: 0 3px 8px rgb(0 0 0 / 0.24);
+  }
+  .zen-dl-pop {
+    animation: zen-pop 180ms var(--zen-ease);
+  }
+  .zen-dl-pop-out {
+    animation: zen-dl-pop-out 180ms var(--zen-ease) forwards;
+  }
+  .zen-dl-row {
+    border-radius: 6px;
+    outline: none;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-dl-row:hover,
+  .zen-dl-row:focus-within {
+    background: var(--zen-dl-row-hover);
+  }
+  .zen-dl-row:focus-visible {
+    outline: 2px solid var(--zen-dl-accent);
+    outline-offset: var(--zen-dl-focus-offset);
+  }
+  .zen-dl-row-marked {
+    background: color-mix(in srgb, var(--zen-dl-accent) 30%, transparent);
+  }
+  /* The glyph sits on the first text line, two pixels down, as Firefox aligns its checkboxes. */
+  .zen-dl-glyph {
+    margin-top: 2px;
+    color: var(--zen-dl-deemph);
+  }
+  .zen-dl-name {
+    color: var(--zen-dl-text);
+  }
+  .zen-dl-name:is(button):hover {
+    text-decoration: underline;
+  }
+  .zen-dl-status {
+    color: var(--zen-dl-deemph);
+  }
+  .zen-dl-status-warn {
+    color: var(--zen-warn);
+  }
+  .zen-dl-status-danger {
+    color: var(--zen-danger);
+  }
+  .zen-dl-actions {
+    opacity: 0;
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-dl-row:hover .zen-dl-actions,
+  .zen-dl-row:focus-within .zen-dl-actions,
+  :root[data-pointer='coarse'] .zen-dl-actions {
+    opacity: 1;
+  }
+  .zen-dl-bar {
+    position: relative;
+    height: 3px;
+    overflow: hidden;
+    border-radius: 2px;
+    background: var(--zen-dl-track);
+  }
+  .zen-dl-bar-fill {
+    position: absolute;
+    inset: 0;
+    border-radius: 2px;
+    background: var(--zen-dl-accent);
+    transform-origin: 0 50%;
+    transition: transform 260ms var(--zen-ease);
+  }
+  .zen-dl-bar[data-paused] .zen-dl-bar-fill {
+    background: var(--zen-dl-deemph);
+  }
+  .zen-dl-bar-sweep {
+    width: 40%;
+    animation: zen-progress 1.1s var(--zen-ease) infinite;
+  }
+  /* Buttons: 32 tall, radius 4, weight 500; secondary is the text at 10%, danger the same with danger ink. */
+  .zen-dl-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: 4px;
+    background: var(--zen-dl-fill);
+    color: var(--zen-dl-text);
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 20px;
+    white-space: nowrap;
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  .zen-dl-button:hover {
+    background: var(--zen-dl-fill-hover);
+  }
+  .zen-dl-button:active {
+    transform: scale(0.98);
+  }
+  .zen-dl-button:focus-visible {
+    outline: 2px solid var(--zen-dl-accent);
+    outline-offset: var(--zen-dl-focus-offset);
+  }
+  .zen-dl-button-primary {
+    background: var(--zen-dl-accent);
+    color: var(--zen-dl-on-accent);
+  }
+  .zen-dl-button-primary:hover {
+    background: color-mix(in srgb, var(--zen-dl-accent) 88%, var(--zen-dl-text));
+  }
+  .zen-dl-button-danger {
+    color: var(--zen-danger);
+  }
+  /* The search field: 32 tall, radius 4, 1px border, the accent ring on focus. */
+  .zen-dl-field {
+    height: 32px;
+    border-radius: 4px;
+    border: 1px solid var(--zen-dl-panel-border);
+    background: var(--zen-dl-page);
+    transition: outline-color 120ms var(--zen-ease);
+  }
+  .zen-dl-field:focus-within {
+    outline: 2px solid var(--zen-dl-accent);
+    outline-offset: var(--zen-dl-focus-offset);
+  }
+  .zen-dl-input {
+    background: transparent;
+    color: var(--zen-dl-text);
+    border-radius: 4px;
+  }
+  .zen-dl-input::placeholder {
+    color: var(--zen-dl-deemph);
+  }
+  .zen-dl-input::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  /*
+   * The toolbar button: a stroke-dashoffset ring for the aggregate progress around the glyph,
+   * a count badge, and a fill-and-scale pulse when a transfer starts (transform and opacity only).
+   */
+  .zen-dl-button-toolbar {
+    overflow: visible;
+    animation: zen-pop 180ms var(--zen-ease);
+  }
+  .zen-dl-glyph-body {
+    position: relative;
+  }
+  .zen-dl-glyph-body::before {
+    content: '';
+    position: absolute;
+    inset: -6px;
+    border-radius: 6px;
+    background: rgb(var(--zen-accent-rgb) / 0.2);
+    opacity: 0;
+  }
+  .zen-dl-glyph-pulse {
+    animation: zen-dl-pulse 260ms var(--zen-ease);
+  }
+  .zen-dl-glyph-pulse::before {
+    animation: zen-dl-pulse-fill 260ms var(--zen-ease);
+  }
+  .zen-dl-ring {
+    left: 2px;
+    top: 2px;
+    transform: rotate(-90deg);
+  }
+  .zen-dl-ring-track {
+    stroke: rgb(var(--zen-fg-rgb) / 0.14);
+  }
+  .zen-dl-ring-value {
+    stroke: var(--zen-accent-ink);
+    transition: stroke-dashoffset 260ms var(--zen-ease);
+  }
+  .zen-dl-ring-paused .zen-dl-ring-value {
+    stroke: var(--zen-faint);
+  }
+  .zen-dl-ring-spin {
+    transform-origin: 50% 50%;
+    animation: zen-spin 900ms linear infinite;
+  }
+  .zen-dl-badge {
+    position: absolute;
+    right: -3px;
+    top: -3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border-radius: 9999px;
+    background: var(--zen-accent-fill);
+    color: var(--zen-on-accent);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    animation: zen-pop 180ms var(--zen-ease);
+  }
+  .zen-dl-badge-failed {
+    background: var(--zen-danger);
+  }
+}
+
+@keyframes zen-dl-pop-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+@keyframes zen-dl-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.14);
+  }
+}
+@keyframes zen-dl-pulse-fill {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  45% {
+    opacity: 1;
+  }
+}
+
 /*
  * Fading scroll edges (`useFadeEdges`). The scroll container is masked, so content dissolves
  * into whatever is behind it – no gradient overlay, no assumption about the background. The
