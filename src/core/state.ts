@@ -2,6 +2,8 @@ import type {
   AgentInfo,
   AgentServerStatus,
   Bookmark,
+  BookmarkNode,
+  BookmarkTreeData,
   Boost,
   ClosedTab,
   Container,
@@ -35,6 +37,14 @@ import {
 } from '../shared/defaults'
 import { DEFAULT_SEARCH_ENGINES } from '../shared/search'
 import { applyShortcutOverrides, defaultShortcuts } from '../shared/shortcuts'
+import {
+  BOOKMARK_SCHEMA_VERSION,
+  BookmarkTree,
+  createBookmarkRoots,
+  defaultBookmarkFolderId,
+  migrateLegacyBookmarks,
+  normalizeBookmarkNodes
+} from '../shared/bookmarks'
 import { JsonStore } from './store/JsonStore'
 import { createSpace, createTabRecord, emptyModel, tabVisibleIn, type Model } from './model'
 import { sanitizeResourceSettings } from './resources/switches'
@@ -61,7 +71,7 @@ export interface PersistedWindow {
 }
 
 interface Persisted {
-  version: 1 | 2
+  version: 1 | 2 | 3
   spaces: Space[]
   tabs: Tab[]
   essentialTabIds: string[]
@@ -71,7 +81,10 @@ interface Persisted {
   splitGroups: SplitGroup[]
   settings: Settings
   shortcutOverrides: Record<string, KeyBinding | null>
-  bookmarks: Bookmark[]
+  /** v1–v2: a flat list (newest first); v3: the tree, see `bookmarkTree`. */
+  bookmarks?: Bookmark[]
+  /** v3: the bookmark tree as a flat node list with its own schema version. */
+  bookmarkTree?: BookmarkTreeData
   /** v1: the single window's bounds. */
   windowBounds?: Rect | null
   maximized?: boolean
@@ -103,7 +116,11 @@ export class BrowserState {
   model: Model
   settings: Settings = structuredClone(DEFAULT_SETTINGS)
   shortcutOverrides: Record<string, KeyBinding | null> = {}
-  bookmarks: Bookmark[] = []
+  /**
+   * The bookmark tree as a flat node list in display order (roots first, then each subtree
+   * depth first). Always a valid tree: `ensureValid` runs it through `normalizeBookmarkNodes`.
+   */
+  bookmarks: BookmarkNode[] = createBookmarkRoots(0)
   downloads: DownloadItem[] = []
   recentlyClosed: ClosedTab[] = []
   media: MediaState[] = []
@@ -180,10 +197,26 @@ export class BrowserState {
   /** Load the profile from disk (or create the first-run defaults). */
   load(): void {
     const data = this.store.readSync()
-    if (data && (data.version === 1 || data.version === 2)) {
+    if (data && (data.version === 1 || data.version === 2 || data.version === 3)) {
       this.applyPersisted(data)
     }
     this.ensureValid()
+  }
+
+  /**
+   * v3 stores the tree; v1/v2 stored a flat list that becomes the platform's default folder
+   * ("Other bookmarks", "Mobile bookmarks" on Android) in the same order with its dates kept.
+   * Both paths end in `normalizeBookmarkNodes`, so loading the result again changes nothing.
+   */
+  private loadBookmarks(data: Persisted): BookmarkNode[] {
+    const now = Date.now()
+    const fallback = defaultBookmarkFolderId(this.platform)
+    const tree = data.bookmarkTree
+    if (tree && typeof tree === 'object' && Array.isArray(tree.nodes)) {
+      return normalizeBookmarkNodes(tree.nodes, now, fallback)
+    }
+    if (Array.isArray(data.bookmarks)) return migrateLegacyBookmarks(data.bookmarks, fallback, now)
+    return createBookmarkRoots(now)
   }
 
   private applyPersisted(data: Persisted): void {
@@ -196,7 +229,7 @@ export class BrowserState {
     this.settings.agents = sanitizeAgentSettings(data.settings?.agents)
     this.settings.updates = sanitizeUpdateSettings(data.settings?.updates)
     this.shortcutOverrides = data.shortcutOverrides ?? {}
-    this.bookmarks = Array.isArray(data.bookmarks) ? data.bookmarks : []
+    this.bookmarks = this.loadBookmarks(data)
     if (Array.isArray(data.windows) && data.windows.length) {
       this.restoredWindows = data.windows.filter((w) => w && typeof w.id === 'string')
     } else {
@@ -322,8 +355,14 @@ export class BrowserState {
     for (const tab of Object.values(m.tabs)) {
       if (tab.splitGroupId && !m.splitGroups[tab.splitGroupId]) tab.splitGroupId = null
     }
-    const bookmarked = new Set(this.bookmarks.map((b) => b.url))
-    for (const tab of Object.values(m.tabs)) tab.bookmarked = bookmarked.has(tab.url)
+    // The tree is repaired as a whole (sync applies nodes one by one and repairs once here).
+    this.bookmarks = normalizeBookmarkNodes(
+      this.bookmarks,
+      Date.now(),
+      defaultBookmarkFolderId(this.platform)
+    )
+    const bookmarkTree = new BookmarkTree(this.bookmarks)
+    for (const tab of Object.values(m.tabs)) tab.bookmarked = bookmarkTree.hasUrl(tab.url)
     if (!this.searchEngines.some((e) => e.id === this.settings.searchEngineId)) {
       this.settings.searchEngineId = DEFAULT_SETTINGS.searchEngineId
     }
@@ -486,7 +525,7 @@ export class BrowserState {
     const transient = new Set<string>()
     for (const w of this.liveWindows()) if (w.glance) transient.add(w.glance.tabId)
     return {
-      version: 2,
+      version: 3,
       spaces: m.spaces,
       tabs: Object.values(m.tabs)
         .filter((t) => !transient.has(t.id) && !(t.spaceId && m.localSpaces[t.spaceId]))
@@ -504,7 +543,7 @@ export class BrowserState {
       splitGroups: Object.values(m.splitGroups).filter((g) => !m.localSpaces[g.spaceId]),
       settings: this.settings,
       shortcutOverrides: this.shortcutOverrides,
-      bookmarks: this.bookmarks,
+      bookmarkTree: { schemaVersion: BOOKMARK_SCHEMA_VERSION, nodes: this.bookmarks },
       windows: persistedWindows
     }
   }

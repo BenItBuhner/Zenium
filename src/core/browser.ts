@@ -1,4 +1,6 @@
 import type {
+  BookmarkImportResult,
+  BookmarkNode,
   CommandArgs,
   CommandName,
   CommandResult,
@@ -13,6 +15,7 @@ import type {
   ShareAction,
   SharePayload,
   Space,
+  Tab,
   WindowKind
 } from '../shared/types'
 import { BrowserState, type PersistedWindow } from './state'
@@ -45,6 +48,7 @@ import {
   cycleSpace,
   deleteFolder,
   getSpace,
+  orderedTabsForSpace,
   reorderContainer,
   reorderSpace
 } from './model'
@@ -54,7 +58,7 @@ import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
-import { ONBOARDING_ESSENTIALS } from '../shared/defaults'
+import { ONBOARDING_ESSENTIALS, spaceLabel } from '../shared/defaults'
 import { PRIVATE_THEME, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
@@ -415,11 +419,117 @@ export class Browser {
     win.host.setFullScreen(!win.host.isFullScreen())
   }
 
-  toggleBookmark(tabId: string): void {
+  /**
+   * The star (Ctrl+D): bookmark the page into the default folder when it is not bookmarked yet,
+   * then open the star dialog to rename, refile or remove it. A second press edits the existing
+   * bookmark instead of adding another one.
+   */
+  starTab(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
     const tab = this.tabs.tab(tabId)
     if (!tab || tab.url.startsWith('zen://')) return
-    const added = this.bookmarks.toggle(tab.url, tab.customTitle ?? tab.title, tab.favicon)
-    this.toast(added ? 'Bookmark added' : 'Bookmark removed', 'info', this.tabs.windowFor(tabId))
+    let node: BookmarkNode | null = this.bookmarks.findByUrl(tab.url)[0] ?? null
+    const created = !node
+    if (!node) {
+      node = this.bookmarks.create({
+        title: tab.customTitle ?? tab.title,
+        url: tab.url,
+        favicon: tab.favicon
+      })
+    }
+    if (!node) return
+    this.emit('bookmark.star', { tabId, nodeId: node.id, created }, win)
+  }
+
+  /** "Bookmark all tabs": the window's current space (or the given tabs) into one new folder. */
+  bookmarkTabs(win: ZenWindow, tabIds?: readonly string[]): void {
+    const space = win.activeSpace()
+    const list = tabIds
+      ? tabIds.map((id) => this.tabs.tab(id)).filter((t): t is Tab => Boolean(t))
+      : orderedTabsForSpace(
+          this.state.model,
+          space,
+          this.state.settings.containerSpecificEssentials,
+          win.id
+        )
+    const title = tabIds ? `${list.length} tabs` : spaceLabel(space)
+    const folder = this.bookmarks.bookmarkTabs(list, title)
+    if (!folder) {
+      this.toast('There are no pages to bookmark.', 'info', win)
+      return
+    }
+    const count = this.bookmarks.getChildren(folder.id).length
+    this.toast(
+      `Bookmarked ${count} ${count === 1 ? 'tab' : 'tabs'} in “${folder.title}”`,
+      'info',
+      win
+    )
+    this.emit('overlay.open', { kind: 'bookmarks', folderId: folder.id }, win)
+  }
+
+  /** Open a bookmark in the given tab (or a new one) and remember that it was used. */
+  openBookmark(id: string, newTab: boolean, tabId: string | null, win: ZenWindow): void {
+    const node = this.bookmarks.get(id)
+    if (!node || node.type !== 'url' || !node.url) return
+    this.bookmarks.touch(id)
+    // Same path as a typed URL so space routing applies.
+    this.submitUrlbar(node.url, newTab, tabId, false, win)
+  }
+
+  /** Open every bookmark below the given nodes in new tabs (the first one becomes active). */
+  openBookmarks(ids: readonly string[], win: ZenWindow): void {
+    const seen = new Set<string>()
+    const urls: string[] = []
+    for (const id of ids) {
+      for (const node of this.bookmarks.tree.urlsUnder(id)) {
+        if (!node.url || seen.has(node.id)) continue
+        seen.add(node.id)
+        urls.push(node.url)
+        this.bookmarks.touch(node.id)
+      }
+    }
+    urls.forEach((url, i) => this.tabs.createTab({ url, active: i === 0 }, win))
+  }
+
+  async importBookmarks(win: ZenWindow): Promise<BookmarkImportResult | null> {
+    const files = await this.platform.dialogs.pickTextFiles(
+      { title: 'Import bookmarks', extensions: ['html', 'htm'] },
+      win
+    )
+    let total: BookmarkImportResult | null = null
+    for (const file of files) {
+      const result = this.bookmarks.importHtml(file.text)
+      if (!result) continue
+      total = total
+        ? {
+            bookmarks: total.bookmarks + result.bookmarks,
+            folders: total.folders + result.folders,
+            folderId: result.folderId
+          }
+        : result
+    }
+    if (files.length && !total) {
+      this.toast('No bookmarks were found in that file.', 'error', win)
+    } else if (total) {
+      const n = total.bookmarks
+      this.toast(`Imported ${n} ${n === 1 ? 'bookmark' : 'bookmarks'}`, 'info', win)
+    }
+    return total
+  }
+
+  async exportBookmarks(win: ZenWindow): Promise<boolean> {
+    const stamp = new Date().toISOString().slice(0, 10)
+    const saved = await this.platform.dialogs.saveTextFile(
+      {
+        title: 'Export bookmarks',
+        defaultName: `zenium_bookmarks_${stamp}.html`,
+        extensions: ['html'],
+        mimeType: 'text/html',
+        text: this.bookmarks.exportHtml(`Zenium ${this.state.version}`)
+      },
+      win
+    )
+    if (saved) this.toast('Bookmarks exported', 'info', win)
+    return saved
   }
 
   newTabAfter(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
@@ -1031,9 +1141,22 @@ export class Browser {
       'history.delete': ({ url }) => this.history.delete(url),
       'history.clear': () => this.history.clear(),
 
-      'bookmark.toggle': ({ tabId }) => this.toggleBookmark(tabId),
-      'bookmark.remove': ({ id }) => this.bookmarks.remove(id),
-      'bookmark.add': ({ url, title }) => void this.bookmarks.add(url, title),
+      'bookmark.star': ({ tabId }, win) => this.starTab(tabId, win),
+      'bookmark.create': ({ parentId, index, title, url, type }) =>
+        this.bookmarks.create({ parentId, index, title, url, type }),
+      'bookmark.update': ({ id, title, url }) => void this.bookmarks.update(id, { title, url }),
+      'bookmark.move': ({ ids, parentId, index }) => void this.bookmarks.move(ids, parentId, index),
+      'bookmark.remove': ({ ids }) => void this.bookmarks.removeMany(ids),
+      'bookmark.open': ({ id, newTab, tabId }, win) => this.openBookmark(id, newTab, tabId, win),
+      'bookmark.openAll': ({ ids }, win) => this.openBookmarks(ids, win),
+      'bookmark.allTabs': (_a, win) => this.bookmarkTabs(win),
+      'bookmark.contextMenu': ({ ids, folderId, x, y }, win) =>
+        this.menus.showBookmarkContextMenu(ids, folderId, { x, y }, win),
+      'bookmark.cut': ({ ids }) => this.bookmarks.cut(ids),
+      'bookmark.copy': ({ ids }) => this.bookmarks.copy(ids),
+      'bookmark.paste': ({ folderId, index }) => void this.bookmarks.paste(folderId, index),
+      'bookmark.import': (_a, win) => this.importBookmarks(win),
+      'bookmark.export': (_a, win) => this.exportBookmarks(win),
 
       'download.pause': ({ id }) => this.downloads.pause(id),
       'download.resume': ({ id }) => this.downloads.resume(id),

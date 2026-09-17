@@ -298,7 +298,10 @@ export class TabManager {
           const icon = pickFavicon(favicons)
           if (icon) {
             t.favicon = icon
-            if (!this.isPrivate(t)) this.browser.history.updateFavicon(t.url, icon)
+            if (!this.isPrivate(t)) {
+              this.browser.history.updateFavicon(t.url, icon)
+              this.browser.bookmarks.updateFavicon(t.url, icon)
+            }
           }
         }),
       onFailLoad: (code, description, url) => {
