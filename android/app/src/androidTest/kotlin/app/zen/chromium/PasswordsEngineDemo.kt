@@ -282,7 +282,9 @@ class PasswordsEngineDemo : DemoHarness("passwords-demo-state.json", "services-p
     }
 
     private fun saveEnabled(): Boolean = nodes { node ->
-        node.className?.toString() == "android.widget.Button" && node.text?.toString()?.trim() == "Save" && node.isEnabled
+        node.className?.toString() == "android.widget.Button" &&
+            node.text?.toString()?.trim().equals("Save", ignoreCase = true) &&
+            node.isEnabled
     }.isNotEmpty()
 
     /** In the open-document picker, tap `name` (opening the Downloads root if Recents lacks it). */
@@ -333,11 +335,16 @@ class PasswordsEngineDemo : DemoHarness("passwords-demo-state.json", "services-p
         }
     }
 
-    /** Bounds of the innermost visible node whose text, description or hint is `label`. */
+    /**
+     * Bounds of the innermost visible node whose text, description or hint is `label`. Case is
+     * ignored: a Material button reports its displayed, all-caps text ("SAVE") to accessibility.
+     */
     private fun findLabelled(label: String, role: String? = null): Rect? = nodes { node ->
         if (role != null && node.className?.toString() != role) return@nodes false
         if (!node.isVisibleToUser) return@nodes false
-        listOf(node.text, node.contentDescription, node.hintText).any { it?.toString()?.trim() == label }
+        listOf(node.text, node.contentDescription, node.hintText).any {
+            it?.toString()?.trim().equals(label, ignoreCase = true)
+        }
     }
         .map { Rect().also(it::getBoundsInScreen) }
         .filter { it.width() > 0 && it.height() > 0 }
