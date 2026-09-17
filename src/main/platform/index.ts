@@ -29,7 +29,7 @@ import { ElectronWindowFactory, type ElectronWindow } from './window'
 import { ExtensionService } from './extensions'
 import { WebstoreBridge } from './webstoreBridge'
 import { ExtensionApiHost } from './extensionApi'
-import { webstoreClientHints } from './requestHeaders'
+import { edgeStoreUserAgent, webstoreClientHints } from './requestHeaders'
 import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
 import { ElectronAgentTransport } from '../agent/server'
@@ -279,9 +279,11 @@ export class ElectronPlatform implements Platform {
     extensionService.onChange((event) => extensionApi.registryChanged(event))
     this.requestBlocking = new ElectronBlocking(browser, this.views, this.profileDir)
     this.requestBlocking.start()
-    // The store's client hints run as a builtin handler of the multiplexer, which owns each
+    // The stores' header rewrites (Chrome's brand for the Chrome Web Store, Edge's user agent
+    // and brand for Edge Add-ons) run as builtin handlers of the multiplexer, which owns each
     // session's one onBeforeSendHeaders slot; persistent sessions only, like the store preload.
     this.requestBlocking.registerHeaderRewrite(webstoreClientHints, { persistentOnly: true })
+    this.requestBlocking.registerHeaderRewrite(edgeStoreUserAgent, { persistentOnly: true })
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
       // The one webRequest listener set of the session; every request hook goes through it.
