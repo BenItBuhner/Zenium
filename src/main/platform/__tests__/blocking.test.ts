@@ -51,7 +51,25 @@ const ctx = (url: string, extra: Partial<RequestContext> = {}): RequestContext =
 })
 
 function hostRequest(c: RequestContext, tabId: string | null = 'tab-1'): HostRequest {
-  return { ctx: c, containerId: 'default', tabId: tabId ?? undefined, state: new Map() }
+  return {
+    ctx: c,
+    containerId: 'default',
+    tabId: tabId ?? undefined,
+    base: {
+      requestId: '1',
+      url: c.url,
+      method: c.method,
+      resourceType: c.type,
+      frameId: 0,
+      parentFrameId: -1,
+      tabId,
+      partition: 'default',
+      initiator: null,
+      documentUrl: c.documentUrl ?? null,
+      timestamp: 0
+    },
+    state: new Map()
+  }
 }
 
 describe('BlockingHandler', () => {

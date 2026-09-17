@@ -40,9 +40,22 @@ import {
   applyResponseHeaderOps,
   type BeforeRequestResult,
   type HostRequest,
+  type ListenerOptions,
   type RequestHandler,
-  type TabResolver
+  type TabResolver,
+  type WebRequestEvent,
+  type WebRequestListener
 } from './webRequest'
+
+export type {
+  BlockingResponse,
+  ListenerFilter,
+  ListenerOptions,
+  WebRequestDetails,
+  WebRequestEvent,
+  WebRequestListener
+} from './webRequest'
+export { BLOCKING_EVENTS, WEB_REQUEST_EVENTS } from './webRequest'
 
 // ---------------------------------------------------------------------------
 // The blocking handler
@@ -433,6 +446,25 @@ export class ElectronBlocking {
   /** Every session – default, containers and the private one – gets the listeners. */
   attach(ses: Session, containerId: string): void {
     this.multiplexer.attach(ses, containerId)
+  }
+
+  /**
+   * The listener host for the `chrome.webRequest` emulation: register a listener for one event
+   * (blocking or not) and get back the function that removes it. The rule engine decides first;
+   * listeners then run in a stable per-registrant order and their results compose as Chromium
+   * composes extension results. See `webRequest.ts` for the details and result shapes.
+   */
+  addListener(
+    event: WebRequestEvent,
+    listener: WebRequestListener,
+    options: ListenerOptions
+  ): () => void {
+    return this.multiplexer.addListener(event, listener, options)
+  }
+
+  /** Remove every listener a registrant (an extension) added. */
+  removeListenersOf(registrant: string): void {
+    this.multiplexer.removeListenersOf(registrant)
   }
 
   stop(): void {
