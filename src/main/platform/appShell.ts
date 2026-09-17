@@ -1,3 +1,5 @@
+import type { JumpListCategory, MenuItemConstructorOptions } from 'electron'
+
 /** The Windows build number in an `os.release()` string such as `10.0.22631`; null elsewhere. */
 export function windowsBuild(release: string): number | null {
   const m = /^10\.0\.(\d+)/.exec(release)
@@ -9,4 +11,44 @@ export function supportsWindowMaterial(platform: string, release: string): boole
   if (platform !== 'win32') return false
   const build = windowsBuild(release)
   return build !== null && build >= 22000
+}
+
+/** Flags `zenium <flag>` understands for the shell's "new window" entries. */
+export const NEW_WINDOW_FLAG = '--new-window'
+export const PRIVATE_WINDOW_FLAG = '--private-window'
+
+/**
+ * The taskbar jump list: Zenium's two "new window" tasks plus the recent documents Windows keeps
+ * for the app. Icons come from the executable itself.
+ */
+export function jumpListCategories(exePath: string): JumpListCategory[] {
+  const task = (title: string, description: string, args: string): Electron.JumpListItem => ({
+    type: 'task',
+    title,
+    description,
+    program: exePath,
+    args,
+    iconPath: exePath,
+    iconIndex: 0
+  })
+  return [
+    {
+      type: 'tasks',
+      items: [
+        task('New window', 'Open a new Zenium window', NEW_WINDOW_FLAG),
+        task('New private window', 'Open a new private Zenium window', PRIVATE_WINDOW_FLAG)
+      ]
+    },
+    { type: 'recent' }
+  ]
+}
+
+/** The macOS Dock menu (right-click the icon): the same two entries in the platform's title case. */
+export function dockMenuTemplate(
+  open: (kind: 'synced' | 'private') => void
+): MenuItemConstructorOptions[] {
+  return [
+    { label: 'New Window', click: () => open('synced') },
+    { label: 'New Private Window', click: () => open('private') }
+  ]
 }

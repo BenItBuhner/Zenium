@@ -4,7 +4,9 @@ import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { registerZenScheme } from './platform/protocol'
 import { ElectronPlatform } from './platform'
 import { moveLegacyDirectory } from './platform/legacyPaths'
+import { NEW_WINDOW_FLAG, PRIVATE_WINDOW_FLAG } from './platform/appShell'
 import { applyResourceSwitches } from './platform/resources/startup'
+import { installShellTasks } from './platform/shellTasks'
 import { runStdioShim } from './agent/shim'
 import type { Browser } from '../core/browser'
 
@@ -56,15 +58,20 @@ function main(): void {
   }
   let browser: Browser | null = null
 
-  /** `zenium [--blank-window|--private-window] [url]` (Zen Browser ships the same `--blank-window` flag). */
+  /**
+   * `zenium [--new-window|--blank-window|--private-window] [url]` (Zen Browser ships the same
+   * `--blank-window` flag; the other two are the taskbar jump list's tasks).
+   */
   const openFromArgv = (argv: string[]): void => {
     if (!browser) return
     const url = argv.find((a) => /^https?:\/\//.test(a))
-    const kind = argv.includes('--private-window')
+    const kind = argv.includes(PRIVATE_WINDOW_FLAG)
       ? 'private'
       : argv.includes('--blank-window')
         ? 'unsynced'
-        : null
+        : argv.includes(NEW_WINDOW_FLAG)
+          ? 'synced'
+          : null
     const win = kind ? browser.createWindow({ kind }) : browser.ensureWindow()
     if (!kind) {
       win.host.show()
@@ -83,6 +90,7 @@ function main(): void {
 
     const platform = new ElectronPlatform(app.getPath('userData'))
     browser = platform.start()
+    installShellTasks((kind) => void browser?.createWindow({ kind }))
     if (process.argv.slice(1).some((a) => /^https?:\/\//.test(a) || a.startsWith('--')))
       openFromArgv(process.argv.slice(1))
 
