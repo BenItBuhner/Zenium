@@ -34,11 +34,14 @@ import {
 import type { BlockingHost, BundledFilterList } from '../../core/platform'
 import type { Decision, RequestContext, RuleSet } from '../../core/blocking/rules'
 import { BLOCKING_DIR, type RuleSetStore } from '../../core/blocking/store'
+import type { RequestHeaderHandler } from './requestHeaders'
 import {
+  HANDLER_ORDER,
   WebRequestMultiplexer,
   applyRequestHeaderOps,
   applyResponseHeaderOps,
   type BeforeRequestResult,
+  type HeaderRewriteOptions,
   type HostRequest,
   type ListenerOptions,
   type RequestHandler,
@@ -49,12 +52,14 @@ import {
 
 export type {
   BlockingResponse,
+  HeaderRewriteOptions,
   ListenerFilter,
   ListenerOptions,
   WebRequestDetails,
   WebRequestEvent,
   WebRequestListener
 } from './webRequest'
+export type { RequestHeaderHandler } from './requestHeaders'
 export { BLOCKING_EVENTS, WEB_REQUEST_EVENTS } from './webRequest'
 
 // ---------------------------------------------------------------------------
@@ -77,7 +82,7 @@ export interface CspSource {
 /** Applies the core engine's decisions: cancel, redirect, header edits and `$csp` directives. */
 export class BlockingHandler implements RequestHandler {
   readonly id = 'blocking'
-  readonly order = 100
+  readonly order = HANDLER_ORDER.ruleEngine
 
   constructor(
     private readonly decider: BlockingDecider,
@@ -465,6 +470,15 @@ export class ElectronBlocking {
   /** Remove every listener a registrant (an extension) added. */
   removeListenersOf(registrant: string): void {
     this.multiplexer.removeListenersOf(registrant)
+  }
+
+  /**
+   * Register one of the browser's own header rewrites (the store's client hints, …). It runs
+   * inside the session's one `onBeforeSendHeaders` hook, right after the rule engine; returns
+   * the function that removes it.
+   */
+  registerHeaderRewrite(handler: RequestHeaderHandler, options?: HeaderRewriteOptions): () => void {
+    return this.multiplexer.registerHeaderRewrite(handler, options)
   }
 
   stop(): void {

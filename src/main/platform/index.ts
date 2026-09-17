@@ -29,7 +29,7 @@ import { ElectronWindowFactory, type ElectronWindow } from './window'
 import { ExtensionService } from './extensions'
 import { WebstoreBridge } from './webstoreBridge'
 import { ExtensionApiHost } from './extensionApi'
-import { requestHeaderRules } from './requestHeaders'
+import { webstoreClientHints } from './requestHeaders'
 import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
 import { ElectronAgentTransport } from '../agent/server'
@@ -274,6 +274,9 @@ export class ElectronPlatform implements Platform {
     extensionService.onChange((event) => extensionApi.registryChanged(event))
     this.requestBlocking = new ElectronBlocking(browser, this.views, this.profileDir)
     this.requestBlocking.start()
+    // The store's client hints run as a builtin handler of the multiplexer, which owns each
+    // session's one onBeforeSendHeaders slot; persistent sessions only, like the store preload.
+    this.requestBlocking.registerHeaderRewrite(webstoreClientHints, { persistentOnly: true })
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
       // The one webRequest listener set of the session; every request hook goes through it.
@@ -286,9 +289,6 @@ export class ElectronPlatform implements Platform {
       if (this.sessions.isPersistent(containerId)) {
         webstore.attach(ses)
         extensionApi.attachSession(ses)
-        // Interim: the session's one onBeforeSendHeaders slot, running webstoreClientHints. The
-        // webRequest multiplexer registers that handler itself and deletes this call when it lands.
-        requestHeaderRules.attach(ses)
         void (browser.extensions as ExtensionService).attachSession()
       }
     })

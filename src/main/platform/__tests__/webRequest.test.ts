@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Session } from 'electron'
 import {
+  HANDLER_ORDER,
   WebRequestMultiplexer,
   applyRequestHeaderOps,
   applyResponseHeaderOps,
@@ -16,6 +17,9 @@ import {
   type RequestHandler,
   type WebRequestDetails
 } from '../webRequest'
+import { webstoreClientHints, type RequestHeaderHandler } from '../requestHeaders'
+import { withChromeClientHints } from '../../../core/extensions/webstorePrivate'
+import { PRIVATE_CONTAINER_ID } from '../../../shared/types'
 
 type BeforeRequestListener = (
   details: BeforeRequestDetails,
@@ -787,6 +791,121 @@ describe('WebRequestMultiplexer listeners', () => {
     expect(await ses.beforeRequestAsync({ url: 'https://site.example/a' })).toEqual({
       cancel: true
     })
+  })
+})
+
+describe('builtin header rewrites', () => {
+  const CHROMIUM = '136.0.7103.48'
+  /** The handler `index.ts` registers (`requestHeaders.ts`), with a fixed Chromium version. */
+  const storeHints: RequestHeaderHandler = {
+    ...webstoreClientHints,
+    rewrite: (headers) => withChromeClientHints(headers, CHROMIUM)
+  }
+  const brands = '"Chromium";v="136", "Not_A Brand";v="24"'
+
+  it('runs inside the one onBeforeSendHeaders hook of a persistent session, after the engine', () => {
+    const mux = new WebRequestMultiplexer(views)
+    const ses = new FakeSession()
+    mux.attach(ses.asSession(), 'default')
+    const seen: string[] = []
+    mux.register({
+      id: 'blocking',
+      order: HANDLER_ORDER.ruleEngine,
+      onBeforeSendHeaders: (_r, headers) => {
+        seen.push(headers['Sec-CH-UA'])
+        headers['X-Engine'] = 'first'
+        return undefined
+      }
+    })
+    const remove = mux.registerHeaderRewrite(storeHints, { persistentOnly: true })
+    // Still exactly one session listener per event: the rewrite is a handler, not a listener.
+    expect(ses.listeners.onBeforeSendHeaders.length).toBe(1)
+    expect(mux.handlerIds()).toEqual(['blocking', 'rewrite:webstore-client-hints'])
+
+    const out = ses.beforeSendHeaders({
+      url: 'https://chromewebstore.google.com/detail/abc',
+      resourceType: 'mainFrame',
+      requestHeaders: { 'Sec-CH-UA': brands, Accept: 'text/html' }
+    })
+    expect(out.requestHeaders).toEqual({
+      'Sec-CH-UA': `"Chromium";v="136", "Google Chrome";v="136", "Not_A Brand";v="24"`,
+      Accept: 'text/html',
+      'X-Engine': 'first'
+    })
+    // The engine saw the headers before the rewrite touched them.
+    expect(seen).toEqual([brands])
+
+    // A store page's own requests to other hosts are left alone.
+    expect(
+      ses.beforeSendHeaders({
+        url: 'https://fonts.gstatic.com/x.woff2',
+        requestHeaders: { 'Sec-CH-UA': brands }
+      }).requestHeaders
+    ).toEqual({ 'Sec-CH-UA': brands, 'X-Engine': 'first' })
+
+    remove()
+    expect(mux.handlerIds()).toEqual(['blocking'])
+    expect(
+      ses.beforeSendHeaders({
+        url: 'https://chromewebstore.google.com/',
+        requestHeaders: { 'Sec-CH-UA': brands }
+      }).requestHeaders
+    ).toEqual({ 'Sec-CH-UA': brands, 'X-Engine': 'first' })
+  })
+
+  it('skips the private partition when the rewrite is for persistent sessions only', () => {
+    const mux = new WebRequestMultiplexer(views)
+    const ses = new FakeSession()
+    mux.attach(ses.asSession(), PRIVATE_CONTAINER_ID)
+    mux.registerHeaderRewrite(storeHints, { persistentOnly: true })
+    expect(
+      ses.beforeSendHeaders({
+        url: 'https://chromewebstore.google.com/',
+        requestHeaders: { 'Sec-CH-UA': brands }
+      }).requestHeaders
+    ).toEqual({ 'Sec-CH-UA': brands })
+    mux.registerHeaderRewrite({
+      id: 'everywhere',
+      urls: ['<all_urls>'],
+      rewrite: (headers) => ({ ...headers, DNT: '1' })
+    })
+    expect(
+      ses.beforeSendHeaders({ url: 'https://site.example/', requestHeaders: { Accept: '*/*' } })
+        .requestHeaders
+    ).toEqual({ Accept: '*/*', DNT: '1' })
+  })
+
+  it("counts the rewrite's edits as the host's when listeners conflict, and lets them drop headers", () => {
+    const mux = new WebRequestMultiplexer(views)
+    const ses = new FakeSession()
+    mux.attach(ses.asSession(), 'default')
+    mux.registerHeaderRewrite({
+      id: 'strip',
+      urls: ['*://*.example/*'],
+      rewrite: (headers) => {
+        const rest = { ...headers }
+        delete rest.Cookie
+        return { ...rest, 'X-Host': 'rewrite' }
+      }
+    })
+    mux.addListener(
+      'onBeforeSendHeaders',
+      (d) => ({ requestHeaders: { ...d.requestHeaders, 'X-Host': 'extension', 'X-Ext': '1' } }),
+      { registrant: 'ext', blocking: true }
+    )
+    mux.addListener(
+      'onBeforeSendHeaders',
+      (d) => ({ requestHeaders: { ...d.requestHeaders, 'X-Other': '2' } }),
+      { registrant: 'other', blocking: true }
+    )
+    const out = ses.beforeSendHeaders({
+      url: 'https://www.site.example/',
+      requestHeaders: { Cookie: 'a=1', Accept: '*/*' }
+    })
+    // `ext` fought the host over X-Host, so its whole delta is dropped (as Chromium drops an
+    // extension's conflicting response); `other` did not and its edit stands.
+    expect(out.requestHeaders).toEqual({ Accept: '*/*', 'X-Host': 'rewrite', 'X-Other': '2' })
+    expect(mux.conflicts.map((c) => c.registrant)).toEqual(['ext'])
   })
 })
 

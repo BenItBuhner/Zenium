@@ -24,6 +24,7 @@ import type { Session } from 'electron'
 import { resourceTypeFromElectron } from '../../core/blocking/engine'
 import type { HeaderOp, RequestContext, ResourceType } from '../../core/blocking/rules'
 import { PRIVATE_CONTAINER_ID } from '../../shared/types'
+import { compileMatchPatterns, type RequestHeaderHandler } from './requestHeaders'
 
 export type BeforeRequestDetails = Electron.OnBeforeRequestListenerDetails
 export type BeforeSendHeadersDetails = Electron.OnBeforeSendHeadersListenerDetails
@@ -88,6 +89,22 @@ export interface RequestHandler {
     headers: Record<string, string[]>,
     details: HeadersReceivedDetails
   ): HeadersReceivedResult | undefined
+}
+
+/** Orders of the browser's own handlers: the rule engine decides first, then header rewrites. */
+export const HANDLER_ORDER = { ruleEngine: 100, headerRewrite: 200 } as const
+
+/**
+ * Options of a builtin header rewrite (a {@link RequestHeaderHandler} from `requestHeaders.ts`:
+ * the browser's own transform of what is already there, such as the Chrome brand in the store's
+ * client hints, which a static `modifyHeaders` `set` cannot express). Registered through
+ * {@link WebRequestMultiplexer.registerHeaderRewrite} it runs as a handler right after the rule
+ * engine, before any listener, so its edits count as the host's when listeners conflict with
+ * them – and no second `onBeforeSendHeaders` listener is needed on the session.
+ */
+export interface HeaderRewriteOptions {
+  /** Only requests of persistent partitions (not the private window's). Default false. */
+  persistentOnly?: boolean
 }
 
 /** Resolves the tab a request's `webContents` belongs to (the view host knows). */
@@ -237,6 +254,7 @@ export class WebRequestMultiplexer {
   private readonly listeners = new Map<WebRequestEvent, Registration[]>()
   private readonly observed = new Set<WebRequestEvent>()
   private seq = 0
+  private rewrites = 0
   /** Registrants whose answers were dropped in a conflict, for diagnostics and tests. */
   readonly conflicts: Array<{ event: WebRequestEvent; registrant: string; url: string }> = []
 
@@ -254,6 +272,29 @@ export class WebRequestMultiplexer {
 
   handlerIds(): string[] {
     return this.handlers.map((h) => h.id)
+  }
+
+  /**
+   * Register a builtin header rewrite (see {@link HeaderRewriteOptions}); returns the function
+   * that removes it. Rewrites run in registration order after the rule engine.
+   */
+  registerHeaderRewrite(
+    handler: RequestHeaderHandler,
+    options: HeaderRewriteOptions = {}
+  ): () => void {
+    const matches = compileMatchPatterns(handler.urls)
+    return this.register({
+      id: `rewrite:${handler.id}`,
+      order: HANDLER_ORDER.headerRewrite + this.rewrites++ / 1000,
+      onBeforeSendHeaders(request, headers, details) {
+        if (options.persistentOnly && request.ctx.isPrivate) return undefined
+        if (!matches(request.ctx.url)) return undefined
+        const next = handler.rewrite({ ...headers }, details)
+        for (const name of Object.keys(headers)) if (!(name in next)) delete headers[name]
+        Object.assign(headers, next)
+        return undefined
+      }
+    })
   }
 
   /**
