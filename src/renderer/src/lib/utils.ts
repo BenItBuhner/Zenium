@@ -13,6 +13,21 @@ export function formatBytes(bytes: number): string {
   return `${value >= 100 || i === 0 ? Math.round(value) : value.toFixed(1)} ${units[i]}`
 }
 
+/**
+ * The find bar's match counter: nothing while the field is empty; on a phone a compact `n/m`
+ * (`0/0` when nothing matches) that fits inside the field; on desktop `n of m` or the phrase.
+ */
+export function findCounter(
+  text: string,
+  result: { activeMatchOrdinal: number; matches: number } | null,
+  phone: boolean
+): string {
+  if (!text) return ''
+  const found = result !== null && result.matches > 0
+  if (phone) return `${found ? result.activeMatchOrdinal : 0}/${found ? result.matches : 0}`
+  return found ? `${result.activeMatchOrdinal} of ${result.matches}` : 'Phrase not found'
+}
+
 export function relativeTime(ts: number): string {
   const diff = Date.now() - ts
   const minutes = Math.round(diff / 60_000)

@@ -5,7 +5,7 @@ import type { UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { returnFocusToPage, uiStore } from '@renderer/lib/ui'
-import { cn } from '@renderer/lib/utils'
+import { cn, findCounter } from '@renderer/lib/utils'
 
 /**
  * Firefox-style find bar docked at the bottom of the content frame. On a phone it becomes one
@@ -43,14 +43,7 @@ export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JS
     run('find.start', { tabId, text: value, forward, newSession })
   }
 
-  const found = result !== null && result.matches > 0
-  const count = !text
-    ? ''
-    : phone
-      ? `${found ? result.activeMatchOrdinal : 0}/${found ? result.matches : 0}`
-      : found
-        ? `${result.activeMatchOrdinal} of ${result.matches}`
-        : 'Phrase not found'
+  const count = findCounter(text, result, phone)
   const buttonClass = phone
     ? 'zen-toolbar-button h-11 w-11 rounded-[12px]'
     : 'zen-toolbar-button h-7 w-7'
