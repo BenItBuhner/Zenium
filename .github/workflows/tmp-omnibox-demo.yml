@@ -1,0 +1,30 @@
+name: TEMP omnibox demo
+
+# TEMPORARY: exercises the omnibox path of android-gesture-demo.yml (setup-script building main's
+# APK, ffmpeg, BEFORE_APK_DIR) on this branch, since the "demo" choice can only be dispatched.
+on:
+  push:
+    branches: [cursor/services-emulator-workflow-24d1]
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    name: omnibox demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-omnibox-demo.sh
+      script-env: |
+        BEFORE_APK_DIR=before/android/app/build/outputs/apk/debug
+      setup-script: |
+        if [ -n "${BEFORE_APK_DIR:-}" ]; then
+          git fetch --depth 1 origin main
+          git worktree add --detach before FETCH_HEAD
+          (cd before && npm ci && npm run build:android:web)
+          (cd before/android && ./gradlew assembleDebug -PskipWeb --no-daemon --stacktrace)
+          sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+        fi
+      artifact-name: android-omnibox-demo
+      artifact-path: artifacts/android-omnibox-demo/
+      timeout-minutes: 50

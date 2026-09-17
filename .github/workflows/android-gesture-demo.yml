@@ -19,6 +19,9 @@ on:
         options:
           - gestures
           - omnibox
+  # TEMPORARY: runs the shared workflow on this branch while it is being verified.
+  push:
+    branches: [cursor/services-emulator-workflow-24d1]
 
 permissions:
   contents: read
