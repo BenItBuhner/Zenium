@@ -32,6 +32,7 @@ import { ElectronAgentTransport } from '../agent/server'
 import { ElectronSiteData } from './siteData'
 import { ElectronUpdateHost } from './updates'
 import { applyAppIcon } from './appIcon'
+import { ElectronDefaultBrowser } from './defaultBrowser'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
@@ -50,7 +51,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   updates: true,
   share: false,
   clipboardChip: false,
-  appLinkSettings: false
+  appLinkSettings: false,
+  defaultBrowser: true
 }
 
 /**
@@ -72,6 +74,7 @@ export class ElectronPlatform implements Platform {
   readonly net: NetHost
   readonly app: AppHost
   readonly siteData: ElectronSiteData
+  readonly defaultBrowser = new ElectronDefaultBrowser()
   browser!: Browser
 
   constructor(private readonly userDataDir: string) {
@@ -231,9 +234,18 @@ export class ElectronPlatform implements Platform {
   }
 
   private attachPermissions(ses: Session): void {
-    const { permissions } = this.browser
+    const { permissions, externalProtocols } = this.browser
     ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
       const url = details.requestingUrl || webContents?.getURL() || ''
+      // Chromium hands every navigation to a scheme it does not know (a redirect or subframe
+      // to mailto:, a custom app link) to Electron, which asks for `openExternal`; the answer
+      // is Zenium's "Open <scheme> link?" dialog. Electron launches the handler on `true`.
+      if (permission === 'openExternal') {
+        const target = 'externalURL' in details ? details.externalURL : undefined
+        const tabId = webContents ? (this.views.tabIdForWebContents(webContents) ?? null) : null
+        void externalProtocols.ask(target ?? '', url, tabId).then(callback)
+        return
+      }
       void permissions.decide(permission, url).then(callback)
     })
     ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) =>

@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import type { Rect, Tab } from '../../shared/types'
 import type { SiteCertificate } from '../../shared/siteInfo'
+import { isExternalUrl } from '../../shared/externalProtocols'
 import type {
   AgentCapture,
   AgentCaptureOptions,
@@ -95,6 +96,15 @@ export class ElectronTabView implements TabView {
     wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
       if (!isMainFrame || wc.isDestroyed()) return
       ev.onFailLoad(code, description, url)
+    })
+    // A link to another application (`mailto:`, `tel:`, `xyz://`) must not become the page's
+    // navigation: stop it here and let the core ask the user. Subframes, redirects and anything
+    // else that reaches Chromium's external-protocol path arrive through the session's
+    // `openExternal` permission request instead (platform/index.ts).
+    wc.on('will-navigate', (event, url) => {
+      if (!isExternalUrl(url)) return
+      event.preventDefault()
+      ev.onExternalProtocol(url)
     })
     wc.on('render-process-gone', (_e, details) => ev.onCrashed(details.reason))
     wc.on('audio-state-changed', (e) => ev.onAudioStateChanged(e.audible))
