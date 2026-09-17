@@ -97,14 +97,14 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
         val withText = sets.filter { it.enabled && it.hasFilterText && it.file != null }
         val fingerprint = withText.joinToString("|") { "${it.id}=${it.textFingerprint}" }
         val cached = cachedText
-        val text = if (cached != null && cached.first == fingerprint) {
-            cached.second
-        } else {
-            val parsed = TextEngine.parse(withText.mapNotNull { readFilterText(it) })
-            cachedText = fingerprint to parsed
-            parsed
+        val text = when {
+            // The master switch off disables every list: keep the parsed lists for when it comes
+            // back on, so that is a rebuild of a few milliseconds and not a re-parse of them all.
+            withText.isEmpty() -> null
+            cached != null && cached.first == fingerprint -> cached.second
+            else -> TextEngine.parse(withText.mapNotNull { readFilterText(it) }).also { cachedText = fingerprint to it }
         }
-        snapshot = EngineSnapshot(sets, if (text.filterCount > 0) text else null)
+        snapshot = EngineSnapshot(sets, if (text != null && text.filterCount > 0) text else null)
         lastBuildMs = SystemClock.elapsedRealtime() - started
         builds++
     }

@@ -140,7 +140,7 @@ class BlockingDemo : DemoHarness("blocking-demo-state.json", "services-blocking-
         // 5. Master switch off: the same page, nothing blocked.
         note("\n5. master switch off")
         invoke("blocking.setEnabled", """{"enabled":false}""")
-        SystemClock.sleep(500)
+        note("  engine followed in ${waitForEngine { it.filterCount == 0 }} ms")
         invoke("tab.reload", """{"tabId":"tab_demo","skipCache":true}""")
         tab = waitForTitle("0/9", 25_000)
         note("  enabled=${blockingStatus().getBoolean("enabled")} ${describeTab(tab)}")
@@ -150,7 +150,7 @@ class BlockingDemo : DemoHarness("blocking-demo-state.json", "services-blocking-
         // 6. Switch on again: blocked again, the session total climbs.
         note("\n6. master switch on again")
         invoke("blocking.setEnabled", """{"enabled":true}""")
-        SystemClock.sleep(500)
+        note("  engine followed in ${waitForEngine { it.filterCount > 0 }} ms (${describeKotlin(engine)})")
         invoke("tab.reload", """{"tabId":"tab_demo","skipCache":true}""")
         tab = waitForTitle("9/9", 25_000)
         note("  enabled=${blockingStatus().getBoolean("enabled")} ${describeTab(tab)}")
@@ -210,6 +210,22 @@ class BlockingDemo : DemoHarness("blocking-demo-state.json", "services-blocking-
     private fun state(): JSONObject = JSONObject(invoke("app.getState"))
 
     private fun blockingStatus(): JSONObject = state().getJSONObject("blocking")
+
+    private val engine: app.zen.chromium.blocking.Blocking get() = (activity as MainActivity).host.blocking
+
+    /**
+     * Milliseconds until the Kotlin engine's snapshot satisfies `ready`: the core rewrites the
+     * index, the engine rebuilds after its debounce. Gives up after 20 s and says so.
+     */
+    private fun waitForEngine(ready: (app.zen.chromium.blocking.EngineSnapshot) -> Boolean): Long {
+        val started = SystemClock.uptimeMillis()
+        while (SystemClock.uptimeMillis() - started < 20_000) {
+            if (ready(engine.snapshot)) return SystemClock.uptimeMillis() - started
+            SystemClock.sleep(50)
+        }
+        note("  (the engine's snapshot did not follow: ${describeKotlin(engine)})")
+        return SystemClock.uptimeMillis() - started
+    }
 
     /** Every list the level enables has its filter text (the bundled copy or a download). */
     private fun enabledListsHaveFilters(status: JSONObject): Boolean {

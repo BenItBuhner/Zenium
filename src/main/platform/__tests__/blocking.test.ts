@@ -366,6 +366,28 @@ describe('GhosteryTextMatcher', () => {
     expect(fourth.fromCache).toBe(false)
     expect(fourth.match(ctx('https://ad.doubleclick.net/x'))).toMatchObject({ action: 'block' })
   })
+
+  it('keeps the cached lists while the master switch has every list off', () => {
+    const cacheDir = join(tempDir(), 'cache')
+    const s = source()
+    s.engine.setRuleSet(textSet('excerpt', EXCERPT))
+    const matcher = new GhosteryTextMatcher(s, cacheDir, 'v1', 0)
+    matcher.rebuild()
+    const meta = readFileSync(join(cacheDir, 'engine.json'), 'utf8')
+
+    // Off: nothing matches, and the serialised lists stay on disk untouched.
+    s.engine.setEnabled('excerpt', false)
+    matcher.rebuild()
+    expect(matcher.match(ctx('https://ad.doubleclick.net/x'))).toBeNull()
+    expect(matcher.match(ctx('https://phish.example/', { type: 'main_frame' }))).toBeNull()
+    expect(readFileSync(join(cacheDir, 'engine.json'), 'utf8')).toBe(meta)
+
+    // On again: deserialised, not parsed.
+    s.engine.setEnabled('excerpt', true)
+    matcher.rebuild()
+    expect(matcher.fromCache).toBe(true)
+    expect(matcher.match(ctx('https://ad.doubleclick.net/x'))).toMatchObject({ action: 'block' })
+  })
 })
 
 describe('ElectronBundledLists', () => {

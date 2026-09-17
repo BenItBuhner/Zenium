@@ -269,6 +269,16 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
     const sets = this.source.engine.enabledTextSets()
     const fingerprint = sets.map((s) => `${s.id}:${s.updatedAt ?? 0}:${s.filterCount}`).join('|')
     try {
+      if (sets.length === 0) {
+        // The master switch off disables every list. An empty engine is not worth caching, and
+        // writing it would evict the lists' serialised form that the next switch on (and the
+        // next start) deserialise instead of parsing.
+        this.engine = FiltersEngine.parse('', { loadCosmeticFilters: false, debug: false })
+        this.documents = DocumentFilters.parse([])
+        this.fromCache = false
+        this.pendingText.clear()
+        return
+      }
       const cached = this.readCache(fingerprint)
       if (cached) {
         this.engine = cached.engine
