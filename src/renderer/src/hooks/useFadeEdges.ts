@@ -38,7 +38,10 @@ export function attachFadeEdges(el: HTMLElement, axis: FadeAxis, size: number): 
     frame = null
     const vertical = axis === 'y' || (axis === 'auto' && !onlyHorizontalOverflow(el))
     const extent = vertical ? el.scrollHeight - el.clientHeight : el.scrollWidth - el.clientWidth
-    const scroll = vertical ? el.scrollTop : el.scrollLeft
+    const raw = vertical ? el.scrollTop : el.scrollLeft
+    // A reversed scroller (`column-reverse`, an RTL row) counts from its far end: 0 is the end
+    // and positions run negative, so measure from the start like every other container.
+    const scroll = isReversed(el, vertical) ? extent + raw : raw
     const start = extent > 1 && scroll > 1 ? size : 0
     const end = extent > 1 && scroll < extent - 1 ? size : 0
     el.dataset.fadeAxis = vertical ? 'y' : 'x'
@@ -68,4 +71,9 @@ export function attachFadeEdges(el: HTMLElement, axis: FadeAxis, size: number): 
 
 function onlyHorizontalOverflow(el: HTMLElement): boolean {
   return el.scrollWidth - el.clientWidth > 1 && el.scrollHeight - el.clientHeight <= 1
+}
+
+function isReversed(el: HTMLElement, vertical: boolean): boolean {
+  const style = getComputedStyle(el)
+  return vertical ? style.flexDirection === 'column-reverse' : style.direction === 'rtl'
 }
