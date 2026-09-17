@@ -14,19 +14,39 @@ import {
 import type { Browser } from './browser'
 
 /**
+ * Whether the chrome has surfaces that render `prompt` – the promo sheet and the banner. It does
+ * not yet: until they land, the campaign stays inert. Sessions are still counted (so the first
+ * sheet comes up on schedule once there is one), but nothing is decided, marked as shown or
+ * dismissed, since a showing with nothing on screen would burn the user's turn. Flipped on in the
+ * same change that adds the surfaces.
+ */
+export const PROMPT_SURFACES = false
+
+export interface DefaultBrowserServiceOptions {
+  /** The chrome can show a sheet and a banner (`PROMPT_SURFACES` unless a test says otherwise). */
+  promptSurfaces?: boolean
+}
+
+/**
  * The default-browser role, host-neutral half. Counts sessions, asks the host whether Zenium
  * holds the role (at start and whenever the app returns to the foreground, since the user may
  * have changed it in the system settings), and turns the rules in `shared/defaultBrowser.ts`
- * into the one `DefaultBrowserStatus` the chrome renders: the settings row reads `isDefault`
- * today; the promo sheet and the banner (their own surfaces, not in this tree yet) will read
- * `prompt`. Hosts without the capability keep it inert.
+ * into the one `DefaultBrowserStatus` the chrome renders: the settings row reads `isDefault`;
+ * the promo sheet and the banner read `prompt`, once they exist (`PROMPT_SURFACES`). Hosts
+ * without the capability keep it inert.
  */
 export class DefaultBrowserService {
   private isDefault: boolean | null = null
   private prompt: DefaultBrowserPrompt = null
   private checking: Promise<boolean | null> | null = null
+  private readonly promptSurfaces: boolean
 
-  constructor(private readonly browser: Browser) {}
+  constructor(
+    private readonly browser: Browser,
+    options: DefaultBrowserServiceOptions = {}
+  ) {
+    this.promptSurfaces = options.promptSurfaces ?? PROMPT_SURFACES
+  }
 
   status(): DefaultBrowserStatus {
     return { isDefault: this.isDefault, prompt: this.prompt }
@@ -100,7 +120,8 @@ export class DefaultBrowserService {
   }
 
   dismiss(prompt: 'sheet' | 'banner'): void {
-    if (!this.supported) return
+    // Nothing was up to dismiss without a surface: the counter would give up a turn for nothing.
+    if (!this.supported || !this.promptSurfaces) return
     const { settings } = this.browser.state
     settings.defaultBrowserPromo = dismissPrompt(settings.defaultBrowserPromo, prompt)
     this.setPrompt(null)
@@ -110,13 +131,15 @@ export class DefaultBrowserService {
   private apply(isDefault: boolean | null): void {
     const { settings } = this.browser.state
     this.isDefault = isDefault
-    // A prompt already up stays up (unless the role is now held); otherwise see what is due.
+    // A prompt already up stays up (unless the role is now held); otherwise see what is due –
+    // only where the chrome can show it, or the showing would be spent on nothing.
     let prompt = this.prompt
     if (isDefault !== false) prompt = null
     else if (prompt === null) {
-      prompt = settings.onboardingDone
-        ? decidePrompt(settings.defaultBrowserPromo, isDefault)
-        : null
+      prompt =
+        this.promptSurfaces && settings.onboardingDone
+          ? decidePrompt(settings.defaultBrowserPromo, isDefault)
+          : null
       if (prompt === 'sheet')
         settings.defaultBrowserPromo = markSheetShown(settings.defaultBrowserPromo)
       if (prompt === 'banner')

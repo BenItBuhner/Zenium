@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Browser } from '../browser'
-import { DefaultBrowserService } from '../defaultBrowser'
+import { DefaultBrowserService, PROMPT_SURFACES } from '../defaultBrowser'
 import { DEFAULT_PROMO_STATE, PROMO_FIRST_SESSION } from '../../shared/defaultBrowser'
 import type { DefaultBrowserPromoState } from '../../shared/types'
 
@@ -50,6 +50,9 @@ function fake(options: {
 
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
 
+/** The chrome has the sheet and the banner: what the campaign tests below assume. */
+const SURFACES = { promptSurfaces: true }
+
 describe('DefaultBrowserService', () => {
   it('stays inert on hosts without the capability', async () => {
     const { browser, settings, commit } = fake({ supported: false })
@@ -86,7 +89,7 @@ describe('DefaultBrowserService', () => {
 
   it('puts the sheet up in the session the rules say, and remembers it', async () => {
     const { browser, settings } = fake({ promo: { sessions: PROMO_FIRST_SESSION - 1 } })
-    const service = new DefaultBrowserService(browser)
+    const service = new DefaultBrowserService(browser, SURFACES)
     service.start()
     await settle()
     expect(service.status().prompt).toBe('sheet')
@@ -99,7 +102,7 @@ describe('DefaultBrowserService', () => {
 
   it('"Not now" counts a dismissal and takes the sheet down', async () => {
     const { browser, settings, commit } = fake({ promo: { sessions: PROMO_FIRST_SESSION - 1 } })
-    const service = new DefaultBrowserService(browser)
+    const service = new DefaultBrowserService(browser, SURFACES)
     service.start()
     await settle()
     service.dismiss('sheet')
@@ -113,7 +116,7 @@ describe('DefaultBrowserService', () => {
       promo: { sessions: PROMO_FIRST_SESSION - 1 },
       requestAnswer: true
     })
-    const service = new DefaultBrowserService(browser)
+    const service = new DefaultBrowserService(browser, SURFACES)
     service.start()
     await settle()
     expect(service.status().prompt).toBe('sheet')
@@ -143,7 +146,7 @@ describe('DefaultBrowserService', () => {
 
   it('drops any prompt the moment the role turns out to be held', async () => {
     const { browser, host } = fake({ promo: { sessions: PROMO_FIRST_SESSION - 1 } })
-    const service = new DefaultBrowserService(browser)
+    const service = new DefaultBrowserService(browser, SURFACES)
     service.start()
     await settle()
     expect(service.status().prompt).toBe('sheet')
@@ -157,11 +160,55 @@ describe('DefaultBrowserService', () => {
     const { browser } = fake({
       promo: { sessions: PROMO_FIRST_SESSION, promptedAt: PROMO_FIRST_SESSION, dismissals: 1 }
     })
-    const service = new DefaultBrowserService(browser)
+    const service = new DefaultBrowserService(browser, SURFACES)
     service.start()
     await settle()
     expect(service.status().prompt).toBe('banner')
     service.dismiss('banner')
     expect(service.status().prompt).toBeNull()
+  })
+
+  describe('without prompt surfaces (no sheet or banner in the chrome yet)', () => {
+    it('is how the service is wired today', () => {
+      expect(PROMPT_SURFACES).toBe(false)
+    })
+
+    it('counts sessions but never decides, marks or shows a prompt', async () => {
+      const { browser, settings } = fake({ promo: { sessions: PROMO_FIRST_SESSION - 1 } })
+      const service = new DefaultBrowserService(browser)
+      // Well past the first sheet and into where the banner and the second sheet would be due.
+      for (let starts = 0; starts < PROMO_FIRST_SESSION + 10; starts++) {
+        service.start()
+        await settle()
+        expect(service.status()).toEqual({ isDefault: false, prompt: null })
+      }
+      expect(settings.defaultBrowserPromo.sessions).toBe(2 * PROMO_FIRST_SESSION + 9)
+      expect(settings.defaultBrowserPromo.promptedAt).toBeNull()
+      expect(settings.defaultBrowserPromo.bannerAt).toBeNull()
+      expect(settings.defaultBrowserPromo.dismissals).toBe(0)
+      expect(settings.defaultBrowserPromo.done).toBe(false)
+    })
+
+    it('ignores a dismissal: there was nothing up to give up a turn on', async () => {
+      const { browser, settings, commit } = fake({ promo: { sessions: PROMO_FIRST_SESSION } })
+      const service = new DefaultBrowserService(browser)
+      service.dismiss('sheet')
+      service.dismiss('banner')
+      expect(settings.defaultBrowserPromo.dismissals).toBe(0)
+      expect(settings.defaultBrowserPromo.bannerAt).toBeNull()
+      expect(commit).not.toHaveBeenCalled()
+    })
+
+    it('still reads the role for the settings row and ends the campaign on its "Set as default"', async () => {
+      const { browser, settings, host } = fake({ isDefault: false, requestAnswer: true })
+      const service = new DefaultBrowserService(browser)
+      service.start()
+      await settle()
+      expect(service.status().isDefault).toBe(false)
+      expect(await service.request('settings')).toBe(true)
+      expect(host.requests).toBe(1)
+      expect(settings.defaultBrowserPromo.done).toBe(true)
+      expect(service.status()).toEqual({ isDefault: true, prompt: null })
+    })
   })
 })
