@@ -1,6 +1,6 @@
 import type { CSSProperties, JSX, PointerEvent as ReactPointerEvent } from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { GripVertical, MoreHorizontal, Palette, Plus } from 'lucide-react'
+import { Palette, Plus } from 'lucide-react'
 import type { Space, Tab, UIState } from '@shared/types'
 import { resolveTheme, rgbToHex } from '@shared/theme'
 import { run } from '@renderer/lib/api'
@@ -33,10 +33,10 @@ interface Props {
 
 /**
  * The phone's Spaces drawer: slides in over the tab overview from the sidebar's side and lists
- * the spaces – tap to switch, hold to rename, drag the grip to reorder, the row menu for the
- * rest – with a shortcut to a new space and the theme picker, and the Essentials below. Its
- * position is `drawerStore.progress`: a spring, a finger pushing it back towards its edge, or
- * the system's predictive back gesture all drive the same number.
+ * the spaces – tap to switch, hold to pick a row up and drag it to reorder, or let go for the
+ * space's options – with a shortcut to a new space and the theme picker, and the Essentials
+ * below. Its position is `drawerStore.progress`: a spring, a finger pushing it back towards its
+ * edge, or the system's predictive back gesture all drive the same number.
  */
 export function SpacesDrawer({ state, isDark }: Props): JSX.Element {
   const drawer = drawerStore.use()
@@ -187,18 +187,29 @@ export function SpacesDrawer({ state, isDark }: Props): JSX.Element {
 }
 
 // ---------------------------------------------------------------------------
-// Spaces: switch, rename, reorder
+// Spaces: switch, reorder, options
 // ---------------------------------------------------------------------------
 
-interface Reorder {
+/** How long a finger rests on a row before the row comes off the list. */
+const HOLD_MS = 380
+/** Movement (px) that turns a held row into a reorder drag, or a touch into a scroll. */
+const ROW_SLOP = 8
+
+interface Held {
   spaceId: string
   from: number
-  /** Finger travel since the grip was taken, px. */
+  /** Finger travel since the hold began, px (0 until the row is actually dragged). */
   dy: number
   /** Slot the row would land in if released now. */
   to: number
+  dragging: boolean
 }
 
+/**
+ * The spaces as rows. Tap switches; hold picks the row up (the same hold as a tab card in the
+ * overview) – drag it to reorder, or let go in place for the space's options (edit, theme,
+ * delete). The other rows step aside as the held row passes them.
+ */
 function SpaceList({
   state,
   isDark,
@@ -208,8 +219,7 @@ function SpaceList({
   isDark: boolean
   onPick: (spaceId: string) => void
 }): JSX.Element {
-  const [reorder, setReorder] = useState<Reorder | null>(null)
-  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [held, setHeld] = useState<Held | null>(null)
   // After a drop the moved row springs the last stretch into its new slot.
   const [landing, setLanding] = useState<{ spaceId: string; offset: number } | null>(null)
   const landingSpring = useMemo(
@@ -229,56 +239,94 @@ function SpaceList({
   )
 
   const spaces = state.spaces
-  const grip = {
-    onPointerDown: (e: ReactPointerEvent<HTMLElement>, space: Space, index: number) => {
-      if (e.button !== 0 || reorder) return
-      e.stopPropagation()
-      e.currentTarget.setPointerCapture(e.pointerId)
+  const slotFor = (index: number, dy: number): number =>
+    Math.max(0, Math.min(spaces.length - 1, Math.round(index + dy / ROW_HEIGHT)))
+
+  const hold = (e: ReactPointerEvent<HTMLElement>, space: Space, index: number): boolean => {
+    if (e.button !== 0 || held) return false
+    const el = e.currentTarget
+    const pointerId = e.pointerId
+    const x0 = e.clientX
+    const y0 = e.clientY
+    let lifted = false
+    let dragging = false
+    let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+      timer = null
+      lifted = true
       landingSpring.stop()
       setLanding(null)
-      setReorder({ spaceId: space.id, from: index, dy: 0, to: index })
-      const y0 = e.clientY
-      const el = e.currentTarget
-      const onMove = (ev: PointerEvent): void => {
-        if (ev.pointerId !== e.pointerId) return
-        const dy = ev.clientY - y0
-        const to = Math.max(0, Math.min(spaces.length - 1, Math.round(index + dy / ROW_HEIGHT)))
-        setReorder((r) => (r ? { ...r, dy, to } : r))
+      setHeld({ spaceId: space.id, from: index, dy: 0, to: index, dragging: false })
+      try {
+        el.setPointerCapture(pointerId)
+      } catch {
+        /* the pointer is gone */
       }
-      const onUp = (ev: PointerEvent): void => {
-        if (ev.pointerId !== e.pointerId) return
-        el.removeEventListener('pointermove', onMove)
-        el.removeEventListener('pointerup', onUp)
-        el.removeEventListener('pointercancel', onUp)
-        const dy = ev.type === 'pointercancel' ? 0 : ev.clientY - y0
-        const to =
-          ev.type === 'pointercancel'
-            ? index
-            : Math.max(0, Math.min(spaces.length - 1, Math.round(index + dy / ROW_HEIGHT)))
-        setReorder(null)
-        if (to !== index) run('space.reorder', { spaceId: space.id, index: to })
-        // The row is drawn where the finger left it; its slot is `to` rows away from home.
-        const remaining = dy - (to - index) * ROW_HEIGHT
+      document.addEventListener('touchmove', blockTouchScroll, { passive: false })
+      navigator.vibrate?.(8)
+    }, HOLD_MS)
+    const cleanup = (): void => {
+      if (timer) clearTimeout(timer)
+      timer = null
+      el.removeEventListener('pointermove', onMove)
+      el.removeEventListener('pointerup', onUp)
+      el.removeEventListener('pointercancel', onCancel)
+      document.removeEventListener('touchmove', blockTouchScroll)
+    }
+    const onMove = (ev: PointerEvent): void => {
+      if (ev.pointerId !== pointerId) return
+      const dy = ev.clientY - y0
+      const moved = Math.hypot(ev.clientX - x0, dy) >= ROW_SLOP
+      if (!lifted) {
+        // A finger that moves before the hold is over is scrolling the drawer.
+        if (moved) cleanup()
+        return
+      }
+      if (moved) dragging = true
+      if (dragging) setHeld((h) => (h ? { ...h, dy, to: slotFor(index, dy), dragging: true } : h))
+    }
+    const settle = (dy: number): void => {
+      const to = slotFor(index, dy)
+      setHeld(null)
+      if (to !== index) run('space.reorder', { spaceId: space.id, index: to })
+      // The row is drawn where the finger left it; its slot is `to` rows away from home.
+      const remaining = dy - (to - index) * ROW_HEIGHT
+      if (remaining !== 0) {
         setLanding({ spaceId: space.id, offset: remaining })
         landingSpring.start(remaining, 0, 0)
       }
-      el.addEventListener('pointermove', onMove)
-      el.addEventListener('pointerup', onUp)
-      el.addEventListener('pointercancel', onUp)
     }
+    const onUp = (ev: PointerEvent): void => {
+      if (ev.pointerId !== pointerId) return
+      cleanup()
+      if (!lifted) return
+      if (dragging) settle(ev.clientY - y0)
+      else {
+        settle(0)
+        run('space.contextMenu', { spaceId: space.id })
+      }
+    }
+    const onCancel = (ev: PointerEvent): void => {
+      if (ev.pointerId !== pointerId) return
+      cleanup()
+      if (lifted) settle(0)
+    }
+    el.addEventListener('pointermove', onMove)
+    el.addEventListener('pointerup', onUp)
+    el.addEventListener('pointercancel', onCancel)
+    return true
   }
 
   return (
     <ul className="flex flex-col gap-1" aria-label="Spaces">
       {spaces.map((space, index) => {
         let offset = 0
-        let dragged = false
-        if (reorder) {
-          if (reorder.spaceId === space.id) {
-            offset = reorder.dy
-            dragged = true
-          } else if (reorder.from < index && index <= reorder.to) offset = -ROW_HEIGHT
-          else if (reorder.to <= index && index < reorder.from) offset = ROW_HEIGHT
+        let isHeld = false
+        if (held) {
+          if (held.spaceId === space.id) {
+            offset = held.dy
+            isHeld = true
+          } else if (held.from < index && index <= held.to) offset = -ROW_HEIGHT
+          else if (held.to <= index && index < held.from) offset = ROW_HEIGHT
         } else if (landing?.spaceId === space.id) offset = landing.offset
         return (
           <SpaceRow
@@ -287,13 +335,11 @@ function SpaceList({
             space={space}
             isDark={isDark}
             active={space.id === state.activeSpaceId}
-            dragged={dragged}
-            settling={Boolean(reorder) && !dragged}
+            held={isHeld}
+            stepping={Boolean(held) && !isHeld}
             offset={offset}
-            renaming={renamingId === space.id}
-            onRename={(on) => setRenamingId(on ? space.id : null)}
             onPick={() => onPick(space.id)}
-            onGrip={(e) => grip.onPointerDown(e, space, index)}
+            onHold={(e) => hold(e, space, index)}
           />
         )
       })}
@@ -301,122 +347,84 @@ function SpaceList({
   )
 }
 
+/** A touch that has picked a row up must not scroll the drawer; touch-action is too late for that. */
+function blockTouchScroll(e: TouchEvent): void {
+  if (e.cancelable) e.preventDefault()
+}
+
 function SpaceRow({
   state,
   space,
   isDark,
   active,
-  dragged,
-  settling,
+  held,
+  stepping,
   offset,
-  renaming,
-  onRename,
   onPick,
-  onGrip
+  onHold
 }: {
   state: UIState
   space: Space
   isDark: boolean
   active: boolean
-  dragged: boolean
-  /** Another row is being dragged: this one slides out of the way with a transition. */
-  settling: boolean
+  /** In the hand: lifted off the list, following the finger. */
+  held: boolean
+  /** Another row is in the hand: this one steps aside with a transition. */
+  stepping: boolean
   offset: number
-  renaming: boolean
-  onRename: (on: boolean) => void
   onPick: () => void
-  onGrip: (e: ReactPointerEvent<HTMLElement>) => void
+  /** Pointer down on the row; returns true when the touch is being watched for a hold. */
+  onHold: (e: ReactPointerEvent<HTMLElement>) => boolean
 }): JSX.Element {
   const count = tabsOf(state, space).length
   const swatch = space.theme ? rgbToHex(resolveTheme(space.theme, isDark).accent) : null
-  const press = useLongPress(() => onRename(true))
+  const wasHeld = useRef(false)
   const style: CSSProperties = {
-    transform: offset ? `translateY(${offset}px)${dragged ? ' scale(1.02)' : ''}` : undefined,
-    transition: settling ? 'transform 220ms var(--zen-ease)' : undefined,
-    zIndex: dragged ? 1 : undefined
+    transform: offset || held ? `translateY(${offset}px)${held ? ' scale(1.02)' : ''}` : undefined,
+    transition: stepping ? 'transform 220ms var(--zen-ease)' : undefined,
+    zIndex: held ? 1 : undefined
   }
   return (
     <li
-      className={cn('zen-space-row relative flex h-[52px] items-center gap-2 rounded-[14px] pr-1')}
+      className="zen-space-row relative flex h-[52px] items-center gap-2 rounded-[14px] pl-2 pr-3"
       data-active={active}
-      data-dragged={dragged || undefined}
+      data-held={held || undefined}
       style={style}
       role="button"
       tabIndex={0}
       aria-label={space.name}
       aria-current={active || undefined}
+      onPointerDown={(e) => {
+        wasHeld.current = false
+        onHold(e)
+      }}
+      onPointerUp={() => {
+        // A hold (with or without a drag) ends here; the click that follows is not a pick.
+        if (held) wasHeld.current = true
+      }}
       onClick={() => {
-        if (press.swallowsClick() || renaming) return
+        if (wasHeld.current) {
+          wasHeld.current = false
+          return
+        }
         onPick()
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        run('space.contextMenu', { spaceId: space.id })
       }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') onPick()
       }}
-      {...press.handlers}
     >
-      <span
-        className="flex h-full w-8 shrink-0 cursor-grab touch-none items-center justify-center text-[var(--zen-muted)]"
-        aria-label={`Reorder ${space.name}`}
-        role="button"
-        onPointerDown={onGrip}
-      >
-        <GripVertical className="h-4 w-4 opacity-60" />
-      </span>
       <span className="flex h-9 w-9 shrink-0 items-center justify-center">
         <SpaceGlyph icon={space.icon} size={18} dotColor={swatch ?? undefined} />
       </span>
-      {renaming ? (
-        <SpaceRename space={space} onDone={() => onRename(false)} />
-      ) : (
-        <span className="min-w-0 flex-1 truncate text-[14px] font-medium">{space.name}</span>
-      )}
+      <span className="min-w-0 flex-1 truncate text-[14px] font-medium">{space.name}</span>
       <span className="shrink-0 text-[12px] tabular-nums text-[var(--zen-muted)]">
         {count} tab{count === 1 ? '' : 's'}
       </span>
-      <button
-        type="button"
-        className="zen-toolbar-button h-9 w-9"
-        aria-label={`Options for ${space.name}`}
-        onClick={(e) => {
-          e.stopPropagation()
-          run('space.contextMenu', { spaceId: space.id })
-        }}
-      >
-        <MoreHorizontal className="h-4 w-4" />
-      </button>
     </li>
-  )
-}
-
-function SpaceRename({ space, onDone }: { space: Space; onDone: () => void }): JSX.Element {
-  const [value, setValue] = useState(space.name)
-  const ref = useRef<HTMLInputElement>(null)
-  useEffect(() => {
-    ref.current?.focus()
-    ref.current?.select()
-  }, [])
-  const commit = (save: boolean): void => {
-    onDone()
-    const name = value.trim()
-    if (save && name && name !== space.name)
-      run('space.update', { spaceId: space.id, patch: { name } })
-  }
-  return (
-    <input
-      ref={ref}
-      value={value}
-      aria-label="Space name"
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={() => commit(true)}
-      onClick={(e) => e.stopPropagation()}
-      onPointerDown={(e) => e.stopPropagation()}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') commit(true)
-        if (e.key === 'Escape') commit(false)
-        e.stopPropagation()
-      }}
-      className="min-w-0 flex-1 rounded-[9px] bg-[var(--zen-element-bg)] px-2 py-1 text-[14px] font-medium outline-none"
-    />
   )
 }
 

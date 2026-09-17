@@ -64,11 +64,12 @@ export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.E
       }}
     >
       <div
-        className="zen-sheet zen-sheet-in mx-auto w-full max-w-[520px] px-2 pt-2"
+        className="zen-sheet zen-sheet-in mx-auto w-full max-w-[520px] px-1.5 pt-2"
         style={{ paddingBottom: Math.max(10, insets.bottom + 4) }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex h-10 items-center px-3 text-[13px] font-semibold">
+        <div className="mx-auto mb-1 h-1 w-9 rounded-full bg-[var(--zen-fg)]/20" />
+        <div className="flex h-10 items-center px-3.5 text-[13px] font-semibold">
           <span className="min-w-0 flex-1 truncate">{title}</span>
         </div>
         {header}
@@ -79,7 +80,7 @@ export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.E
                 type="button"
                 disabled={action.disabled}
                 className={cn(
-                  'zen-sheet-row flex h-12 w-full items-center gap-3 px-3 text-left text-[14px]',
+                  'zen-sheet-row flex h-12 w-full items-center gap-3 px-3.5 text-left text-[14px]',
                   'active:bg-[var(--zen-element-bg-hover)] disabled:opacity-40',
                   action.destructive && 'text-red-500'
                 )}

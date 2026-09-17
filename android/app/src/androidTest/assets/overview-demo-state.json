@@ -10,8 +10,17 @@
       "theme": {
         "type": "gradient",
         "colors": [
-          { "c": [96, 110, 235], "x": 0.3, "y": 0.35, "isPrimary": true },
-          { "c": [214, 92, 160], "x": 0.7, "y": 0.65 }
+          {
+            "c": [96, 110, 235],
+            "x": 0.3,
+            "y": 0.35,
+            "isPrimary": true
+          },
+          {
+            "c": [214, 92, 160],
+            "x": 0.7,
+            "y": 0.65
+          }
         ],
         "opacity": 0.55,
         "texture": 0,
@@ -38,7 +47,14 @@
       "containerId": "default",
       "theme": {
         "type": "gradient",
-        "colors": [{ "c": [52, 168, 120], "x": 0.5, "y": 0.5, "isPrimary": true }],
+        "colors": [
+          {
+            "c": [52, 168, 120],
+            "x": 0.5,
+            "y": 0.5,
+            "isPrimary": true
+          }
+        ],
         "opacity": 0.5,
         "texture": 0,
         "algorithm": "floating",
@@ -150,15 +166,49 @@
       "title": "RFC 2549: IP over Avian Carriers with Quality of Service",
       "pinned": false,
       "essential": false
+    },
+    {
+      "id": "tab_mail",
+      "spaceId": null,
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://mail.proton.me/",
+      "title": "Proton Mail",
+      "pinned": false,
+      "essential": true
+    },
+    {
+      "id": "tab_cal",
+      "spaceId": null,
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://calendar.proton.me/",
+      "title": "Proton Calendar",
+      "pinned": false,
+      "essential": true
+    },
+    {
+      "id": "tab_gh",
+      "spaceId": null,
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://github.com/",
+      "title": "GitHub",
+      "pinned": false,
+      "essential": true
     }
   ],
-  "essentialTabIds": [],
+  "essentialTabIds": ["tab_mail", "tab_cal", "tab_gh"],
   "containers": [],
   "splitGroups": [],
   "settings": {
     "onboardingDone": true,
     "colorScheme": "light",
-    "updates": { "autoCheck": false, "autoDownload": false, "channel": "stable" }
+    "updates": {
+      "autoCheck": false,
+      "autoDownload": false,
+      "channel": "stable"
+    }
   },
   "shortcutOverrides": {},
   "bookmarks": [],
@@ -168,7 +218,10 @@
       "bounds": null,
       "maximized": false,
       "activeSpaceId": "space_work",
-      "selection": { "space_work": "tab_example", "space_personal": "tab_htcpcp" },
+      "selection": {
+        "space_work": "tab_example",
+        "space_personal": "tab_htcpcp"
+      },
       "compact": false
     }
   ]

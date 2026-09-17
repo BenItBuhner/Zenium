@@ -27,7 +27,7 @@ import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from '../sidebar/Favicon'
 import { SpaceGlyph } from '../SpaceGlyph'
-import { GroupCard } from './GroupCard'
+import { DEFAULT_FOLDER_ICON, GroupCard } from './GroupCard'
 import { CARD_HEADER, CARD_RADIUS, CardBody, OverviewCard } from './OverviewCard'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
 import { TabPreview } from './TabPreview'
@@ -191,7 +191,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       const folderId = await cmd('folder.create', {
         spaceId: space.id,
         name: NEW_GROUP_NAME,
-        icon: '📁',
+        icon: DEFAULT_FOLDER_ICON,
         color: nextGroupColor(state, space.id),
         rename
       })
@@ -597,27 +597,34 @@ function NewTabCard(): JSX.Element {
   )
 }
 
+/** The spaces as chips: pills, the current one in the accent tint, edges fading into the gutter. */
 function SpaceStrip({ spaces, activeId }: { spaces: Space[]; activeId: string }): JSX.Element {
   const fade = useFadeEdges<HTMLDivElement>({ axis: 'x', size: 24 })
   return (
     <div
       ref={fade}
-      className="zen-overview-strip flex shrink-0 gap-2 overflow-x-auto px-3 pb-2 pt-1"
+      className="zen-overview-strip flex shrink-0 gap-1.5 overflow-x-auto px-3 pb-2 pt-0.5"
     >
-      {spaces.map((s) => (
-        <button
-          key={s.id}
-          type="button"
-          className={cn(
-            'flex h-9 shrink-0 items-center gap-2 rounded-full px-3.5 text-[13px] font-medium',
-            s.id === activeId ? 'bg-[var(--zen-element-bg-active)]' : 'bg-[var(--zen-element-bg)]'
-          )}
-          onClick={() => run('space.activate', { spaceId: s.id })}
-        >
-          <SpaceGlyph icon={s.icon} size={14} />
-          <span className="max-w-[140px] truncate">{s.name}</span>
-        </button>
-      ))}
+      {spaces.map((s) => {
+        const active = s.id === activeId
+        return (
+          <button
+            key={s.id}
+            type="button"
+            className={cn(
+              'flex h-9 shrink-0 snap-start items-center gap-2 rounded-full px-3.5 text-[13px] font-medium transition-[background] duration-150 active:scale-[0.98]',
+              active
+                ? 'bg-[rgb(var(--zen-accent-rgb)/0.16)]'
+                : 'bg-[var(--zen-element-bg)] active:bg-[var(--zen-element-bg-hover)]'
+            )}
+            aria-current={active || undefined}
+            onClick={() => run('space.activate', { spaceId: s.id })}
+          >
+            <SpaceGlyph icon={s.icon} size={14} />
+            <span className="max-w-[140px] truncate">{s.name}</span>
+          </button>
+        )
+      })}
     </div>
   )
 }

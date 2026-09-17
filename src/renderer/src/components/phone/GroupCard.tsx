@@ -14,6 +14,8 @@ import { useLongPress } from './useLongPress'
 
 /** Height of a group card's header row – all a collapsed group shows. */
 export const GROUP_HEADER = 44
+/** The icon folders get by default; a group made on the phone shows its colour instead. */
+export const DEFAULT_FOLDER_ICON = '📁'
 /** Inset of the member cards inside the group card: its radius is the card radius plus this. */
 export const GROUP_PAD = 4
 
@@ -98,13 +100,18 @@ export function GroupCard({ folder, tabs, card, onMenu, ref }: Props): JSX.Eleme
   const style = {
     '--zen-group-rgb': groupColorChannels(folder.color)
   } as CSSProperties
+  // A group of one takes a single column, like the card it holds; two or more span the row.
+  const single = tabs.length === 1
   return (
     <div
       ref={(el) => {
         shellRef.current = el
         ref(el)
       }}
-      className="zen-group col-span-2 flex flex-col overflow-hidden"
+      className={cn(
+        'zen-group flex flex-col overflow-hidden',
+        single ? 'col-span-1' : 'col-span-2'
+      )}
       style={style}
       data-drop={`group:${folder.id}`}
       data-targeted={targeted || undefined}
@@ -123,7 +130,14 @@ export function GroupCard({ folder, tabs, card, onMenu, ref }: Props): JSX.Eleme
         }}
         {...press.handlers}
       >
-        <span className="zen-group-dot h-2.5 w-2.5 shrink-0 rounded-full" />
+        {folder.icon && folder.icon !== DEFAULT_FOLDER_ICON ? (
+          // A folder given its own icon on the desktop keeps it; the colour still tints the card.
+          <span className="w-4 shrink-0 text-center text-[14px] leading-none" aria-hidden>
+            {folder.icon}
+          </span>
+        ) : (
+          <span className="zen-group-dot h-2.5 w-2.5 shrink-0 rounded-full" aria-hidden />
+        )}
         {renaming ? (
           <GroupRename folder={folder} />
         ) : (
@@ -136,7 +150,7 @@ export function GroupCard({ folder, tabs, card, onMenu, ref }: Props): JSX.Eleme
           )}
           aria-hidden
         >
-          {tabs.slice(0, 4).map((tab) => (
+          {tabs.slice(0, single ? 1 : 4).map((tab) => (
             <Favicon key={tab.id} tab={tab} size={14} />
           ))}
         </span>
@@ -148,7 +162,7 @@ export function GroupCard({ folder, tabs, card, onMenu, ref }: Props): JSX.Eleme
       </div>
       <div
         ref={bodyRef}
-        className="grid grid-cols-2 gap-3"
+        className={cn('grid gap-3', single ? 'grid-cols-1' : 'grid-cols-2')}
         style={{ padding: GROUP_PAD, paddingTop: 0 }}
         aria-hidden={collapsed || undefined}
       >
