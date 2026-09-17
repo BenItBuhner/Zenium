@@ -388,14 +388,12 @@ export class Browser {
    */
   onDownloadStarted(sourceTabId: string | null): void {
     const win = sourceTabId ? this.tabs.windowFor(sourceTabId) : this.focusedWindow()
-    // Firefox shows the downloads panel whenever a download begins; Chrome only animates the
-    // toolbar button (the renderer does that from the list). The setting decides; single-window
-    // hosts (Android) keep the panel, their downloads UI is not the desktop's. Let any tab switch
-    // paint first so the panel can dim a snapshot of the page behind it.
-    if (
-      resolveDownloadSettings(this.state.settings).openPanelOnStart ||
-      !this.state.capabilities.windows
-    ) {
+    // Firefox shows the downloads panel whenever a download begins; the desktop chrome decides
+    // from `download.changed` instead (Chrome-style button, or the bubble when
+    // `Settings.downloads.openPanelOnStart` asks for it). Single-window hosts (Android) keep the
+    // panel; their downloads UI is not the desktop's. Let any tab switch paint first so the
+    // panel can dim a snapshot of the page behind it.
+    if (!this.state.capabilities.windows) {
       setTimeout(() => this.emit('overlay.open', { kind: 'downloads' }, win), 200)
     }
     const tab = this.tabs.tab(sourceTabId)
