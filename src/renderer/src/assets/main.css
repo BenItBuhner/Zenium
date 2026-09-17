@@ -1622,6 +1622,10 @@
 :root[data-form-factor='phone'] .zen-settings-heading {
   padding: 0 12px;
 }
+/* Inside a lead the block itself carries the gutter; its heading lines up with its description. */
+.zen-settings .zen-settings-lead .zen-settings-heading {
+  padding: 0;
+}
 :root[data-pointer='coarse'] .zen-settings .zen-segment {
   height: 40px;
   font-size: 14px;
