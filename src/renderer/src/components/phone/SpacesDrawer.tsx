@@ -24,7 +24,7 @@ import { useLongPress } from './useLongPress'
 /** Movement (px) before a touch on the drawer is a swipe rather than a tap. */
 const SLOP = 8
 /** Height of a space row, with its gap: what one step of a reorder drag is worth. */
-const ROW_HEIGHT = 56
+const ROW_HEIGHT = 48
 
 interface Props {
   state: UIState
@@ -50,6 +50,19 @@ export function SpacesDrawer({ state, isDark }: Props): JSX.Element {
   useLayoutEffect(() => {
     const width = panelRef.current?.offsetWidth
     if (width) setDrawerTravel(width)
+  }, [])
+
+  // The drawer is the top surface while it is up: Escape closes it (and only it).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        closeSpacesDrawer()
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [])
 
   // A sideways swipe on the drawer pushes it back out with the same physics that brought it in.
@@ -118,16 +131,17 @@ export function SpacesDrawer({ state, isDark }: Props): JSX.Element {
     closeSpacesDrawer()
   }
 
+  const shown = Math.min(1, Math.max(0, p))
   return (
-    <div
-      className="absolute inset-0 z-40"
-      style={{ background: `rgb(0 0 0 / ${0.32 * Math.min(1, Math.max(0, p))})` }}
-      onClick={() => closeSpacesDrawer()}
-    >
+    <div className="absolute inset-0 z-40" onClick={() => closeSpacesDrawer()}>
+      <div
+        className="zen-overview-scrim pointer-events-none absolute inset-0"
+        style={{ opacity: shown * (isDark ? 0.45 : 0.28) }}
+      />
       <div
         ref={panelRef}
         className={cn(
-          'zen-drawer-panel absolute inset-y-0 flex w-[min(320px,calc(100%-56px))] flex-col',
+          'zen-drawer-panel absolute inset-y-0 flex w-[min(84vw,360px)] flex-col',
           side === 'left' ? 'left-0' : 'right-0'
         )}
         data-side={side}
@@ -139,33 +153,34 @@ export function SpacesDrawer({ state, isDark }: Props): JSX.Element {
         onClick={(e) => e.stopPropagation()}
         {...swipe}
       >
-        <header className="flex h-12 shrink-0 items-center gap-1 pl-4 pr-2">
-          <span className="min-w-0 flex-1 truncate text-[15px] font-semibold">Spaces</span>
+        <header className="flex h-14 shrink-0 items-center gap-2.5 pl-4 pr-2">
+          <SpaceGlyph icon={space.icon} size={20} />
+          <span className="zen-title min-w-0 flex-1 truncate">{space.name}</span>
           <button
             type="button"
-            className="zen-toolbar-button h-9 w-9"
+            className="zen-toolbar-button h-11 w-11"
             aria-label="Change theme"
             onClick={() => void openOverlay('theme', active?.id ?? null, space.id)}
           >
-            <Palette className="h-[18px] w-[18px]" />
+            <Palette className="h-5 w-5" />
           </button>
           <button
             type="button"
-            className="zen-toolbar-button h-9 w-9"
+            className="zen-toolbar-button h-11 w-11"
             aria-label="New space"
             onClick={() => void openOverlay('space-editor', active?.id ?? null, null)}
           >
-            <Plus className="h-[18px] w-[18px]" />
+            <Plus className="h-5 w-5" />
           </button>
         </header>
         <div
-          className="min-h-0 flex-1 overflow-y-auto px-2"
+          className="min-h-0 flex-1 overflow-y-auto px-2 pt-1"
           style={{ touchAction: 'pan-y', overscrollBehavior: 'contain' }}
         >
           <SpaceList state={state} isDark={isDark} onPick={pickSpace} />
           {essentials.length > 0 && (
-            <section className="pt-5">
-              <h3 className="px-2 pb-2 text-[12px] font-medium text-[var(--zen-muted)]">
+            <section className="pt-4">
+              <h3 className="px-2 pb-2 text-[14px] font-semibold text-[var(--zen-fg)]">
                 Essentials
               </h3>
               <div className="grid grid-cols-[repeat(auto-fill,minmax(52px,1fr))] gap-1.5 px-1">
@@ -317,7 +332,7 @@ function SpaceList({
   }
 
   return (
-    <ul className="flex flex-col gap-1" aria-label="Spaces">
+    <ul className="flex flex-col" aria-label="Spaces">
       {spaces.map((space, index) => {
         let offset = 0
         let isHeld = false
@@ -386,7 +401,7 @@ function SpaceRow({
   }
   return (
     <li
-      className="zen-space-row relative flex h-[52px] items-center gap-2 rounded-[14px] pl-2 pr-3"
+      className="zen-space-row relative flex h-12 items-center gap-3 rounded-[10px] pl-2 pr-3"
       data-active={active}
       data-held={held || undefined}
       style={style}
@@ -417,11 +432,11 @@ function SpaceRow({
         if (e.key === 'Enter' || e.key === ' ') onPick()
       }}
     >
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center">
-        <SpaceGlyph icon={space.icon} size={18} dotColor={swatch ?? undefined} />
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center">
+        <SpaceGlyph icon={space.icon} size={20} dotColor={swatch ?? undefined} />
       </span>
-      <span className="min-w-0 flex-1 truncate text-[14px] font-medium">{space.name}</span>
-      <span className="shrink-0 text-[12px] tabular-nums text-[var(--zen-muted)]">
+      <span className="min-w-0 flex-1 truncate text-[14px]">{space.name}</span>
+      <span className="shrink-0 text-[13px] tabular-nums text-[var(--zen-muted)]">
         {count} tab{count === 1 ? '' : 's'}
       </span>
     </li>

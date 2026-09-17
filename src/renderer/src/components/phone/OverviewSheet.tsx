@@ -2,13 +2,12 @@ import type { JSX, ReactNode } from 'react'
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { registerBackHandler, uiStore } from '@renderer/lib/ui'
-import { cn } from '@renderer/lib/utils'
 
 export interface SheetAction {
   id: string
   label: string
   icon?: ReactNode
-  /** Rendered in red: closes tabs. */
+  /** Rendered in the danger ink: closes tabs. */
   destructive?: boolean
   disabled?: boolean
   onPick: () => void
@@ -16,16 +15,23 @@ export interface SheetAction {
 
 interface Props {
   title: string
-  /** Optional row above the actions (a colour palette, say). */
+  /** Optional row between the title and the actions (a colour palette, say). */
   header?: ReactNode
   actions: SheetAction[]
   onClose: () => void
 }
 
+/** How far the sheet hangs below the screen, so a spring overshoot never shows its bottom edge. */
+const UNDERHANG = 48
+
 /**
- * A short sheet of actions for something in the tab overview (a held card, a group's header).
- * Sits at the bottom of the screen where the thumb is; a tap outside, the system back or
- * Escape puts it away. Rows are spaced, not ruled.
+ * A short sheet of actions for something in the tab overview (a held card, a group's header),
+ * on the chrome's shared sheet surface (`.zen-sheet`): grabber, 56px title row, 48px rows that
+ * nest concentrically inside the sheet's corner, under the space-tinted scrim. A tap on the
+ * scrim, the system back or Escape puts it away.
+ *
+ * Structure mirrors the phone menu's `BottomSheet` (title row as `header`, rows as children) so
+ * it can move onto that primitive – drag, detents, predictive back – once it lands.
  */
 export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.Element {
   const insets = uiStore.use((s) => s.insets)
@@ -55,7 +61,7 @@ export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.E
   // Portalled out of the gesture stage's stacking context so it covers the bottom bar too.
   return createPortal(
     <div
-      className="zen-animate-fade fixed inset-0 z-[60] flex flex-col justify-end bg-black/30"
+      className="fixed inset-0 z-[60] flex flex-col justify-end"
       onPointerDown={(e) => {
         armed.current = e.target === e.currentTarget
       }}
@@ -63,27 +69,28 @@ export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.E
         if (e.target === e.currentTarget && armed.current) onClose()
       }}
     >
+      <div className="zen-overview-scrim zen-animate-fade pointer-events-none absolute inset-0 opacity-[0.28] dark:opacity-[0.45]" />
       <div
-        className="zen-sheet zen-sheet-in mx-auto w-full max-w-[520px] px-1.5 pt-2"
-        style={{ paddingBottom: Math.max(10, insets.bottom + 4) }}
+        className="zen-sheet zen-sheet-in relative mx-auto flex w-full max-w-[520px] flex-col pt-2"
+        style={{
+          marginBottom: -UNDERHANG,
+          paddingBottom: UNDERHANG + Math.max(12, insets.bottom + 4)
+        }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mx-auto mb-1 h-1 w-9 rounded-full bg-[var(--zen-fg)]/20" />
-        <div className="flex h-10 items-center px-3.5 text-[13px] font-semibold">
-          <span className="min-w-0 flex-1 truncate">{title}</span>
+        <div className="mx-auto h-1 w-8 rounded-full bg-[rgb(var(--zen-fg-rgb)/0.25)]" />
+        <div className="flex h-14 items-center px-3">
+          <span className="zen-title min-w-0 flex-1 truncate">{title}</span>
         </div>
         {header}
-        <ul className="flex flex-col gap-0.5">
+        <ul className="flex flex-col">
           {actions.map((action) => (
             <li key={action.id}>
               <button
                 type="button"
-                disabled={action.disabled}
-                className={cn(
-                  'zen-sheet-row flex h-12 w-full items-center gap-3 px-3.5 text-left text-[14px]',
-                  'active:bg-[var(--zen-element-bg-hover)] disabled:opacity-40',
-                  action.destructive && 'text-red-500'
-                )}
+                disabled={!!action.disabled}
+                data-danger={action.destructive || undefined}
+                className="zen-overview-sheet-row flex h-12 w-full items-center gap-3 px-3 text-left text-[14px] disabled:opacity-40"
                 onClick={() => {
                   onClose()
                   action.onPick()

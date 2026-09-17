@@ -12,12 +12,12 @@ import { Favicon } from '../sidebar/Favicon'
 import { liftStore } from './useCardLift'
 import { useLongPress } from './useLongPress'
 
-/** Height of a group card's header row – all a collapsed group shows. */
-export const GROUP_HEADER = 44
+/** Height of a group card's title row – all a collapsed group shows. */
+export const GROUP_HEADER = 32
 /** The icon folders get by default; a group made on the phone shows its colour instead. */
 export const DEFAULT_FOLDER_ICON = '📁'
 /** Inset of the member cards inside the group card: its radius is the card radius plus this. */
-export const GROUP_PAD = 4
+export const GROUP_PAD = 6
 
 interface Props {
   folder: Folder
@@ -122,7 +122,7 @@ export function GroupCard({ folder, tabs, card, onMenu, ref }: Props): JSX.Eleme
         tabIndex={0}
         aria-label={`Group ${folder.name}`}
         aria-expanded={!collapsed}
-        className="zen-group-header flex shrink-0 items-center gap-2.5 pl-3 pr-2"
+        className="zen-group-header flex shrink-0 items-center gap-2 pl-3 pr-2"
         style={{ height: GROUP_HEADER }}
         onClick={toggle}
         onKeyDown={(e) => {
@@ -141,7 +141,7 @@ export function GroupCard({ folder, tabs, card, onMenu, ref }: Props): JSX.Eleme
         {renaming ? (
           <GroupRename folder={folder} />
         ) : (
-          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold">{folder.name}</span>
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{folder.name}</span>
         )}
         <span
           className={cn(
@@ -198,7 +198,7 @@ function GroupRename({ folder }: { folder: Folder }): JSX.Element {
         if (e.key === 'Escape') commit(false)
         e.stopPropagation()
       }}
-      className="min-w-0 flex-1 rounded-[9px] bg-[var(--zen-element-bg)] px-2 py-1 text-[13px] font-semibold outline-none"
+      className="min-w-0 flex-1 rounded-[8px] bg-[var(--zen-element-bg)] px-2 py-0.5 text-[13px] font-medium outline-none"
     />
   )
 }

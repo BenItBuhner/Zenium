@@ -633,19 +633,21 @@
     background: var(--zen-panel-bg);
     backdrop-filter: blur(24px) saturate(1.2);
     box-shadow: var(--zen-shadow);
+    corner-shape: var(--zen-corner);
     will-change: transform;
   }
   .zen-drawer-panel[data-side='left'] {
-    border-radius: 0 20px 20px 0;
+    border-radius: 0 24px 24px 0;
   }
   .zen-drawer-panel[data-side='right'] {
-    border-radius: 20px 0 0 20px;
+    border-radius: 24px 0 0 24px;
   }
   /* Space rows share the sidebar tab's fill language; a row in the hand lifts off the list. */
   .zen-space-row {
+    corner-shape: var(--zen-corner);
     transition:
       background 120ms var(--zen-ease),
-      box-shadow 160ms var(--zen-ease);
+      box-shadow 200ms var(--zen-ease);
   }
   .zen-space-row:active {
     background: var(--zen-element-bg);
@@ -659,16 +661,31 @@
     box-shadow: var(--zen-lifted-shadow);
   }
 
-  /* Action sheets of the overview: a panel at the bottom, rows spaced rather than ruled. */
-  .zen-sheet {
-    background: var(--zen-panel-bg);
-    backdrop-filter: blur(24px) saturate(1.2);
-    border-radius: 20px 20px 0 0;
-    box-shadow: var(--zen-shadow);
+  /*
+   * Scrim behind the overview's drawer and action sheets: the space's own dark, never flat
+   * black (the same mix the menu sheet uses); how much of it shows is the surface's progress.
+   */
+  .zen-overview-scrim {
+    background: color-mix(in srgb, var(--zen-bg-solid) 30%, #000 70%);
   }
-  .zen-sheet-row {
-    /* 20px sheet corner, rows inset by 6px: concentric at 14px. */
-    border-radius: 14px;
+  /*
+   * Rows of the overview's action sheets on the shared `.zen-sheet` surface: the sheet's corner
+   * minus its side padding (`--zen-sheet-inner`), so they nest concentrically.
+   */
+  .zen-overview-sheet-row {
+    border-radius: var(--zen-sheet-inner, 16px);
+    corner-shape: var(--zen-corner);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-overview-sheet-row:active:not(:disabled) {
+    background: var(--zen-element-bg-hover);
+  }
+  /* Danger ink, as the site-information sheet paints it (the shared token once it exists). */
+  .zen-overview-sheet-row[data-danger] {
+    color: var(--zen-danger, rgb(196 52 52));
+  }
+  :root[data-theme='dark'] .zen-overview-sheet-row[data-danger] {
+    color: var(--zen-danger, rgb(255 128 128));
   }
   .zen-group-swatch {
     transition: transform 140ms var(--zen-ease);
@@ -758,18 +775,21 @@
 
   /*
    * Tab groups: a tinted card wrapping the members' cards. Its corners are the card radius plus
-   * the 4px inset, so the nested corners stay concentric. `--zen-group-rgb` is the group colour.
+   * the 6px inset, so the nested corners stay concentric; the container is a squircle, the
+   * cards inside stay round with the page they morph into. `--zen-group-rgb` is the group colour.
    */
   .zen-group {
-    border-radius: calc(var(--zen-card-radius) + 4px);
+    border-radius: calc(var(--zen-card-radius) + 6px);
     background: rgb(var(--zen-group-rgb) / 0.13);
-    transition: box-shadow 160ms var(--zen-ease);
+    corner-shape: var(--zen-corner);
+    transition: box-shadow 200ms var(--zen-ease);
   }
   .zen-group[data-targeted] {
     box-shadow: 0 0 0 2px rgb(var(--zen-group-rgb) / 0.6);
   }
   .zen-group-header {
-    border-radius: calc(var(--zen-card-radius) + 4px);
+    border-radius: calc(var(--zen-card-radius) + 6px);
+    corner-shape: var(--zen-corner);
     transition: background 120ms var(--zen-ease);
   }
   .zen-group-header:active {
@@ -782,6 +802,7 @@
   /* Landing strip below the grid while a grouped card is in the hand. */
   .zen-loose-strip {
     border-radius: var(--zen-card-radius);
+    corner-shape: var(--zen-corner);
     color: var(--zen-muted);
     background: rgb(var(--zen-fg-rgb) / 0.05);
     transition:
@@ -799,8 +820,23 @@
     backdrop-filter: blur(12px) saturate(1.2);
     will-change: opacity;
   }
+  /* Titles of the phone's overview, drawer and sheets. */
+  .zen-title {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+  }
   .zen-overview-strip {
     scrollbar-width: none;
+    scroll-snap-type: x proximity;
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 16px,
+      #000 calc(100% - 16px),
+      transparent
+    );
   }
   .zen-overview-strip::-webkit-scrollbar {
     display: none;

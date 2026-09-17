@@ -124,10 +124,12 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-measure when the layout inputs change
   }, [heroCellKey, cardsKey, area.width, area.height, phase])
 
-  // Escape closes the overview – unless a sheet is up, which takes the key itself.
+  // Escape closes the overview – unless a sheet or the Spaces drawer is up over it; the top
+  // surface takes the key, and the next Escape reaches the overview.
   const sheetOpen = sheet !== null
+  const drawerOpen = uiStore.use((s) => s.drawerOpen)
   useEffect(() => {
-    if (!interactive || sheetOpen) return
+    if (!interactive || sheetOpen || drawerOpen) return
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -136,7 +138,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [interactive, sheetOpen])
+  }, [interactive, sheetOpen, drawerOpen])
 
   // A card in the hand has nowhere to go once the overview leaves (the sheet stays in state but
   // off screen; the overview unmounts altogether when it is closed).
@@ -294,10 +296,10 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
             transform: `scale(${0.94 + 0.06 * p})`
           }}
         >
-          <header className="flex h-12 shrink-0 items-center gap-2 px-3" {...handle}>
-            <SpaceGlyph icon={space.icon} size={16} />
-            <span className="min-w-0 truncate text-[15px] font-semibold">{space.name}</span>
-            <span className="shrink-0 text-[12px] text-[var(--zen-muted)]">
+          <header className="flex h-14 shrink-0 items-center gap-2.5 px-3" {...handle}>
+            <SpaceGlyph icon={space.icon} size={20} />
+            <span className="zen-title min-w-0 truncate">{space.name}</span>
+            <span className="shrink-0 text-[13px] tabular-nums text-[var(--zen-muted)]">
               {count} tab{count === 1 ? '' : 's'}
             </span>
             <span className="flex-1" />
