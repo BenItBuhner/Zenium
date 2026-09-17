@@ -29,7 +29,7 @@ class ZeniumCustomTabsService : CustomTabsService() {
         otherLikelyBundles: List<Bundle>?
     ): Boolean {
         if (sessionToken !in sessions) return false
-        if (url?.scheme in setOf("http", "https")) likelyUrls[sessionToken] = url
+        url?.takeIf { it.scheme in setOf("http", "https") }?.let { likelyUrls[sessionToken] = it }
         return true
     }
 
