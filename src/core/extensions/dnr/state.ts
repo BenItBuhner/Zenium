@@ -675,8 +675,9 @@ export class DnrState {
     this.requireStaticId(options.rulesetId)
     const before = this.disabledRuleIds.get(options.rulesetId) ?? new Set<number>()
     const after = new Set(before)
-    for (const id of options.enableRuleIds ?? []) after.delete(id)
+    // `PrefsHelper::RuleIdsToUpdate`: an id in both lists is enabled.
     for (const id of options.disableRuleIds ?? []) after.add(id)
+    for (const id of options.enableRuleIds ?? []) after.delete(id)
     let changed = after.size !== before.size
     if (!changed) for (const id of after) if (!before.has(id)) changed = true
     if (!changed) return
