@@ -99,9 +99,11 @@ jobs:
       - run: npm ci
       - name: Build the chrome and page script
         run: npm run build:android:web
-      - name: Unit tests and debug APK
+      - name: Unit tests, debug APK and the instrumentation drivers
+        # compileDebugAndroidTestKotlin covers android/app/src/androidTest, which only the
+        # dispatch-only android-*-demo workflows build; #46 broke it and this job stayed green.
         working-directory: android
-        run: ./gradlew testDebugUnitTest assembleDebug -PskipWeb --no-daemon --stacktrace
+        run: ./gradlew testDebugUnitTest assembleDebug compileDebugAndroidTestKotlin -PskipWeb --no-daemon --stacktrace
       - name: Check the APK is signed with the committed CI debug key
         # Debug builds share android/ci-debug.keystore so successive APKs install over each other.
         run: |

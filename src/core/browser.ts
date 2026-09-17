@@ -26,6 +26,9 @@ import { BookmarkService } from './bookmarks'
 import { DownloadService } from './downloads'
 import { resolveDownloadSettings } from '../shared/downloads'
 import { PermissionService } from './permissions'
+import { PopupBlocker } from './popups'
+import { ExternalLaunches } from './external'
+import { SecurityPromptService } from './security'
 import { TabManager } from './tabs'
 import { ZenWindow } from './window'
 import { Actions, type AnyAction } from './actions'
@@ -111,6 +114,12 @@ export class Browser {
   readonly bookmarks: BookmarkService
   readonly downloads: DownloadService
   readonly permissions: PermissionService
+  /** Pop-up blocking: user activation per tab and what was blocked. */
+  readonly popups: PopupBlocker
+  /** Links that leave for another application (hosts whose engine does not gate them itself). */
+  readonly external: ExternalLaunches
+  /** HTTP authentication and client-certificate prompts. */
+  readonly security: SecurityPromptService
   readonly tabs: TabManager
   /** Recently closed tabs and windows (Ctrl+Shift+T, the app menu's submenu, the history page). */
   readonly session: SessionService
@@ -177,6 +186,10 @@ export class Browser {
       downloadsProgress: this.downloads.aggregateProgress(win.isPrivate ? {} : { private: false })
     })
     this.permissions = new PermissionService(platform.io, platform.dialogs)
+    this.permissions.subscribe(() => this.state.commitVolatile())
+    this.popups = new PopupBlocker(this)
+    this.external = new ExternalLaunches(this)
+    this.security = new SecurityPromptService(this)
     this.tabs = new TabManager(this)
     this.session = new SessionService(this)
     this.history.onChange((kind) => {
@@ -216,6 +229,9 @@ export class Browser {
       updates: this.updates.status(),
       passwords: this.passwords.status(),
       defaultBrowser: this.defaultBrowser.status(),
+      blockedPopups: this.popups.all(),
+      permissionRules: this.permissions.rules(),
+      securityPrompts: this.security.list(),
       blocking: this.blocking.status()
     })
     this.handlers = this.commandHandlers()
@@ -1036,6 +1052,14 @@ export class Browser {
       if (typeof message.selector === 'string') this.boosts.onZapped(tabId, message.selector)
       return
     }
+    if (message.type === 'activation') {
+      this.popups.activate(tabId)
+      return
+    }
+    if (message.type === 'popup-blocked') {
+      if (typeof message.url === 'string') this.popups.record(tabId, message.url)
+      return
+    }
     if (message.type === 'media') {
       if (!this.tabs.view(tabId)) return
       tab.audible = Boolean(message.playing)
@@ -1082,6 +1106,17 @@ export class Browser {
       'app.getState': (_a, win) => state.snapshot(win),
       'app.listSpaces': () =>
         state.model.spaces.map((s) => ({ id: s.id, name: s.name, icon: s.icon })),
+      'popups.open': ({ tabId, url }) => this.popups.open(tabId, url),
+      'popups.dismiss': ({ tabId }) => this.popups.dismiss(tabId),
+      'popups.setSiteAllowed': ({ tabId, allow }) => this.popups.setSiteAllowed(tabId, allow),
+      'permissions.forget': ({ origin, permission }) =>
+        this.permissions.forgetRule(origin, permission),
+      'permissions.reset': () => this.permissions.reset(),
+      'security.respond': ({ id, response }) => this.security.respond(id, response),
+      'security.forgetSession': () => {
+        this.security.forgetSession()
+        void platform.sessions.clearAuthCache?.()
+      },
       'app.openExternal': ({ url }) => {
         if (/^(https?|mailto):/.test(url)) platform.shell.openExternal(url)
       },

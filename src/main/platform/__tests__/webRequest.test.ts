@@ -17,8 +17,12 @@ import {
   type RequestHandler,
   type WebRequestDetails
 } from '../webRequest'
-import { webstoreClientHints, type RequestHeaderHandler } from '../requestHeaders'
-import { withChromeClientHints } from '../../../core/extensions/webstorePrivate'
+import {
+  edgeStoreUserAgent,
+  webstoreClientHints,
+  type RequestHeaderHandler
+} from '../requestHeaders'
+import { withChromeClientHints, withEdgeIdentity } from '../../../core/extensions/webstorePrivate'
 import { PRIVATE_CONTAINER_ID } from '../../../shared/types'
 
 type BeforeRequestListener = (
@@ -851,6 +855,54 @@ describe('builtin header rewrites', () => {
         requestHeaders: { 'Sec-CH-UA': brands }
       }).requestHeaders
     ).toEqual({ 'Sec-CH-UA': brands, 'X-Engine': 'first' })
+  })
+
+  it('runs the two store handlers side by side, each on its own origin only', () => {
+    /** The second handler `index.ts` registers, with the same fixed Chromium version. */
+    const edgeIdentity: RequestHeaderHandler = {
+      ...edgeStoreUserAgent,
+      rewrite: (headers) => withEdgeIdentity(headers, CHROMIUM)
+    }
+    const ua =
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.7103.48 Safari/537.36'
+    const mux = new WebRequestMultiplexer(views)
+    const ses = new FakeSession()
+    mux.attach(ses.asSession(), 'default')
+    mux.registerHeaderRewrite(storeHints, { persistentOnly: true })
+    mux.registerHeaderRewrite(edgeIdentity, { persistentOnly: true })
+    expect(ses.listeners.onBeforeSendHeaders.length).toBe(1)
+    expect(mux.handlerIds()).toEqual([
+      'rewrite:webstore-client-hints',
+      'rewrite:edge-store-user-agent'
+    ])
+
+    const edge = ses.beforeSendHeaders({
+      url: 'https://microsoftedge.microsoft.com/addons/detail/dark-reader/ifoakfbpdcdoeenechcleahebpibofpc',
+      resourceType: 'mainFrame',
+      requestHeaders: { 'User-Agent': ua, 'Sec-CH-UA': brands, Accept: 'text/html' }
+    })
+    expect(edge.requestHeaders).toEqual({
+      'User-Agent': `${ua} Edg/136.0.0.0`,
+      'Sec-CH-UA': `"Chromium";v="136", "Microsoft Edge";v="136", "Not_A Brand";v="24"`,
+      Accept: 'text/html'
+    })
+
+    const chrome = ses.beforeSendHeaders({
+      url: 'https://chromewebstore.google.com/detail/abc',
+      resourceType: 'mainFrame',
+      requestHeaders: { 'User-Agent': ua, 'Sec-CH-UA': brands, Accept: 'text/html' }
+    })
+    expect(chrome.requestHeaders).toEqual({
+      'User-Agent': ua,
+      'Sec-CH-UA': `"Chromium";v="136", "Google Chrome";v="136", "Not_A Brand";v="24"`,
+      Accept: 'text/html'
+    })
+
+    const other = ses.beforeSendHeaders({
+      url: 'https://edge.microsoft.com/extensionwebstorebase/v1/crx?response=updatecheck',
+      requestHeaders: { 'User-Agent': ua, 'Sec-CH-UA': brands }
+    })
+    expect(other.requestHeaders).toEqual({ 'User-Agent': ua, 'Sec-CH-UA': brands })
   })
 
   it('skips the private partition when the rewrite is for persistent sessions only', () => {

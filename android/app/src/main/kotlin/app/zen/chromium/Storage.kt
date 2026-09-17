@@ -7,17 +7,26 @@ import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executors
 
 /**
- * Zen's JSON documents (state, history, downloads, permissions) under `files/zen/`. Writes go to
- * a temp file that is renamed over the target, mirroring the Electron host.
+ * Zen's JSON documents (state, history, downloads, permissions, the extension registry) under
+ * `files/zen/`. Writes go to a temp file that is renamed over the target, mirroring the Electron
+ * host.
  *
  * Names may carry one directory level (`blocking/index.json`): the core's rule sets live in
  * `blocking/` and are read by the Kotlin request engine from the same files. Only the root
  * documents and the blocking index travel in the boot payload; the (megabytes of) filter text
  * stays on disk and is read on demand.
+ *
+ * The directory is a constructor argument so the JUnit tests can point an instance at a
+ * temporary folder; the app passes its `files/zen/`.
  */
-class Storage(context: Context) {
-    private val dir = File(context.filesDir, "zen").apply { mkdirs() }
+class Storage(private val dir: File) {
+    constructor(context: Context) : this(File(context.filesDir, "zen"))
+
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-storage") }
+
+    init {
+        dir.mkdirs()
+    }
 
     /** Every root document plus the blocking index, read synchronously for the boot payload. */
     fun readAll(): JSONObject {

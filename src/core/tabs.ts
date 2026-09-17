@@ -38,6 +38,7 @@ import type { ZenWindow } from './window'
 import { describeNetError, HTTP_FALLBACK_CODES, overlayForUrl } from '../shared/zenPages'
 import { closedTabEntry, closedWindowEntry } from './session'
 import type { PageFlags, TabView, TabViewEvents } from './platform'
+import { safeOrigin } from './permissions'
 
 export type { PageFlags } from './platform'
 
@@ -350,6 +351,9 @@ export class TabManager {
       onNavigated: (url, inPage) => {
         if (!inPage) this.browser.blocking.onNavigated(tabId)
         const v = view()
+        this.browser.popups.onNavigated(tabId, inPage)
+        // A new document supersedes whatever challenge the previous request was waiting on.
+        if (!inPage) this.browser.security.cancelForTab(tabId)
         if (v) this.onNavigated(tabId, v, url)
       },
       onTitleUpdated: (title) =>
@@ -465,11 +469,15 @@ export class TabManager {
         this.browser.onPageReady(tabId)
       },
       onDestroyed: () => undefined,
-      onOpenWindow: (url, disposition) => {
+      onUserActivation: () => this.browser.popups.activate(tabId),
+      onOpenWindow: (url, disposition, userGesture) => {
         if (!isNavigableUrl(url) && !url.startsWith('mailto:')) return 'deny'
+        const parent = this.tab(tabId)
+        // No gesture, no window: the URL bar lists what was blocked.
+        if (this.browser.popups.decide(tabId, parent?.url ?? '', url, userGesture) === 'blocked')
+          return 'deny'
         // window.open() with features → a real popup so `window.opener` keeps working (OAuth etc.).
         if (disposition === 'new-window') return 'popup'
-        const parent = this.tab(tabId)
         this.createTab(
           {
             url,
@@ -504,6 +512,7 @@ export class TabManager {
     tab.bookmarked = this.browser.bookmarks.has(url)
     tab.zoom = view.getZoom()
     view.setBackgroundColor(this.backgroundFor(url))
+    view.setPopupsAllowed?.(this.browser.popups.siteAllowed(url))
     const transition = this.pendingTransition.get(tabId) ?? 'link'
     this.pendingTransition.delete(tabId)
     if (!this.isPrivate(tab))
@@ -532,6 +541,15 @@ export class TabManager {
     for (const id of this.views.keys()) this.sendPageFlags(id)
   }
 
+  /** The pop-up rule of `origin` changed: tell every live page of that site. */
+  syncPopupPolicy(origin: string): void {
+    for (const [id, view] of this.views) {
+      const tab = this.tab(id)
+      if (tab && safeOrigin(tab.url) === origin)
+        view.setPopupsAllowed?.(this.browser.popups.siteAllowed(tab.url))
+    }
+  }
+
   destroyView(tabId: string): void {
     const view = this.views.get(tabId)
     if (!view) return
@@ -539,6 +557,8 @@ export class TabManager {
     this.httpsUpgraded.delete(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
     this.pendingTransition.delete(tabId)
+    this.browser.popups.onTabGone(tabId)
+    this.browser.security.cancelForTab(tabId)
     if (this.owners.has(tabId)) view.detach()
     this.owners.delete(tabId)
     if (!view.isDestroyed()) {

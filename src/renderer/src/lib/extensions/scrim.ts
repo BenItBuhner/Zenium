@@ -12,6 +12,7 @@ export type ScrimInput = Pick<
   | 'externalProtocol'
   | 'barEditorOpen'
   | 'tabsMenu'
+  | 'securityPromptOpen'
   | 'stageActive'
   | 'extensionPrompts'
   | 'extensionPopup'
@@ -35,6 +36,7 @@ export function extensionChromeScrim(ui: ScrimInput): 'none' | 'dialog' | null {
     ui.externalProtocol !== null ||
     ui.barEditorOpen ||
     ui.tabsMenu !== null ||
+    ui.securityPromptOpen ||
     ui.stageActive
   if (shipped) return null
   if (ui.extensionPrompts.length > 0) return 'dialog'

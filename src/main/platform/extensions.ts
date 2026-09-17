@@ -11,7 +11,6 @@ import { existsSync, promises as fs, readFileSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import type {
   ExtensionInfo,
-  ExtensionPromptRequest,
   ExtensionSource,
   ExtensionUpdateCheck,
   ExtensionUpdateState,
@@ -27,6 +26,11 @@ import {
   type ExtensionPackage,
   type UpdateCheckResult
 } from '../../core/extensions/install'
+import {
+  ChromePrompts,
+  type ConfirmInstall,
+  type InstallConfirmation
+} from '../../core/extensions/hostStore'
 import { isManagedPath } from '../../core/extensions/installLayout'
 import {
   buildMessageCatalog,
@@ -98,19 +102,8 @@ const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 60 * 1000
 const WEBSTORE_APPROVAL_TTL_MS = 10 * 60 * 1000
 const ICON_FETCH_TIMEOUT_MS = 5_000
 
-/** What the install prompt shows; the UI layer replaces `confirmInstall` to draw its own panel. */
-export interface InstallConfirmation {
-  /** A fresh install, a reinstall over an existing version, or approving an update's new permissions. */
-  kind: 'install' | 'update' | 'permissions'
-  name: string
-  /** Data URL of the extension's icon when one is available. */
-  icon: string | null
-  /** Chrome's warning lines for the manifest, in Chrome's order. */
-  warnings: string[]
-  source: ExtensionSource
-}
-
-export type ConfirmInstall = (request: InstallConfirmation, win?: ZenWindow) => Promise<boolean>
+/** The prompt's shape is shared with the Android host (`core/extensions/hostStore.ts`). */
+export type { ConfirmInstall, InstallConfirmation }
 
 export type InstallOutcome =
   | { status: 'installed'; record: ExtensionRecord }
@@ -176,8 +169,11 @@ export class ExtensionService implements ExtensionHost {
   private readonly busy = new Set<string>()
   /** Loads in flight, by path (see `load`). */
   private readonly loading = new Map<string, Promise<void>>()
-  /** Approvals the store page's prompt produced, consumed by `completeInstall`. */
-  private readonly approvals = new Map<string, { warnings: string[]; expires: number }>()
+  /** Approvals the store pages' prompt produced, consumed by `completeInstall`. */
+  private readonly approvals = new Map<
+    string,
+    { warnings: string[]; expires: number; store: StoreId }
+  >()
   private readonly loadedListeners = new Set<(ext: Extension, ses: Session) => void>()
   private readonly unloadedListeners = new Set<(id: string) => void>()
   private readonly changeListeners = new Set<(event: RegistryEvent) => void>()
@@ -186,8 +182,8 @@ export class ExtensionService implements ExtensionHost {
   private popup: { id: string; view: WebContentsView; win: ZenWindow; shown: boolean } | null = null
   private checking: Promise<void> | null = null
   private updateTimer: ReturnType<typeof setInterval> | null = null
-  /** Install and permission prompts waiting for the renderer's answer, by request id. */
-  private readonly prompts = new Map<string, (accept: boolean) => void>()
+  /** Install and permission prompts put to the renderer's dialog, waiting for its answer. */
+  private readonly prompts: ChromePrompts
   /** The chrome.* API layer (`platform/extensionApi`): toolbar state and click routing. */
   private api: ExtensionApiHooks | null = null
 
@@ -197,13 +193,14 @@ export class ExtensionService implements ExtensionHost {
    * without touching the install flow.
    */
   confirmInstall: ConfirmInstall = (request, win) =>
-    win?.alive ? this.ask(request, win) : this.nativeConfirm(request, win)
+    win?.alive ? this.prompts.ask(request, win) : this.nativeConfirm(request, win)
 
   constructor(
     private readonly browser: Browser,
     private readonly sessions: SessionManager,
     userDataDir: string
   ) {
+    this.prompts = new ChromePrompts(browser)
     this.root = join(userDataDir, 'extensions')
     this.store = new JsonStore<ExtensionRegistry>(browser.platform.io, 'extensions.json', 300)
     this.registry = migrateRegistry(
@@ -963,15 +960,17 @@ export class ExtensionService implements ExtensionHost {
   }
 
   // ---------------------------------------------------------------------------
-  // The store page (chrome.webstorePrivate)
+  // The store pages (chrome.webstorePrivate)
   // ---------------------------------------------------------------------------
 
   /**
    * `beginInstallWithManifest3`: prompt with the manifest the page attached and remember the
-   * approval; the page follows up with `completeInstall`, which does the download.
+   * approval, together with the store whose page asked; the page follows up with
+   * `completeInstall`, which downloads from that store first.
    */
   async webstoreBeginInstall(
     details: BeginInstallDetails,
+    store: StoreId,
     win?: ZenWindow
   ): Promise<WebstoreBeginInstallOutcome> {
     if (this.record(details.id))
@@ -990,16 +989,20 @@ export class ExtensionService implements ExtensionHost {
         name,
         icon: await fetchIconDataUrl(details.iconUrl),
         warnings,
-        source: 'chrome-web-store'
+        source: store
       },
       win
     )
     if (!ok) return { result: 'user_cancelled', message: USER_CANCELLED_ERROR }
-    this.approvals.set(details.id, { warnings, expires: Date.now() + WEBSTORE_APPROVAL_TTL_MS })
+    this.approvals.set(details.id, {
+      warnings,
+      expires: Date.now() + WEBSTORE_APPROVAL_TTL_MS,
+      store
+    })
     return { result: '' }
   }
 
-  /** `completeInstall`: download, verify and load what the user approved. */
+  /** `completeInstall`: download (from the approving page's store first), verify and load. */
   async webstoreCompleteInstall(id: string, win?: ZenWindow): Promise<{ error?: string }> {
     const approval = this.approvals.get(id)
     this.approvals.delete(id)
@@ -1007,7 +1010,7 @@ export class ExtensionService implements ExtensionHost {
       return { error: `${id}${NO_PREVIOUS_BEGIN_INSTALL_ERROR}` }
     if (this.record(id)) return { error: 'This item is already installed.' }
     try {
-      const { pkg, store } = await this.downloadPackage(id, 'chrome-web-store')
+      const { pkg, store } = await this.downloadPackage(id, approval.store)
       // The page's manifest is what the user approved; a package that asks for more is shown again.
       const actual = permissionWarningLines(pkg.manifest, warningPlatform())
       const increased = actual.some((w) => !approval.warnings.includes(w))
@@ -1038,28 +1041,8 @@ export class ExtensionService implements ExtensionHost {
   // Install prompt
   // ---------------------------------------------------------------------------
 
-  /**
-   * Put a question to the user through the renderer's dialog and wait for the answer: install
-   * and update prompts raise `extensionInstallRequest`, permission prompts raise
-   * `extensionPermissionRequest`.
-   */
-  ask(prompt: Omit<ExtensionPromptRequest, 'requestId'>, win: ZenWindow): Promise<boolean> {
-    const event =
-      prompt.kind === 'permissions' || prompt.kind === 'request'
-        ? 'extensionPermissionRequest'
-        : 'extensionInstallRequest'
-    const requestId = `${event}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`
-    return new Promise<boolean>((resolve) => {
-      this.prompts.set(requestId, resolve)
-      this.browser.emit(event, { requestId, ...prompt }, win)
-    })
-  }
-
   respondPrompt(requestId: string, accept: boolean): void {
-    const resolve = this.prompts.get(requestId)
-    if (!resolve) return
-    this.prompts.delete(requestId)
-    resolve(accept)
+    this.prompts.respond(requestId, accept)
   }
 
   private async nativeConfirm(request: InstallConfirmation, win?: ZenWindow): Promise<boolean> {

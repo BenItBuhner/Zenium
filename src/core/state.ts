@@ -1,6 +1,7 @@
 import type {
   AgentInfo,
   AgentServerStatus,
+  BlockedPopup,
   Bookmark,
   BookmarkNode,
   BookmarkTreeData,
@@ -19,10 +20,12 @@ import type {
   MediaState,
   Mod,
   PasswordsStatus,
+  PermissionRule,
   Platform,
   Rect,
   ResourceSnapshot,
   SearchEngine,
+  SecurityPrompt,
   Settings,
   Shortcut,
   Space,
@@ -125,6 +128,9 @@ export interface StateExtras {
   updates: UpdateStatus
   passwords: PasswordsStatus
   defaultBrowser: DefaultBrowserStatus
+  blockedPopups: Record<string, BlockedPopup[]>
+  permissionRules: PermissionRule[]
+  securityPrompts: SecurityPrompt[]
   blocking: BlockingStatus
 }
 
@@ -203,6 +209,9 @@ export class BrowserState {
     }),
     passwords: emptyPasswordsStatus(),
     defaultBrowser: { isDefault: null, prompt: null },
+    blockedPopups: {},
+    permissionRules: [],
+    securityPrompts: [],
     blocking: emptyBlockingStatus()
   })
   searchEngines: SearchEngine[] = DEFAULT_SEARCH_ENGINES

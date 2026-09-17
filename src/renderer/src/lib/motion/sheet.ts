@@ -1,4 +1,15 @@
-import { rubberBand, SWIPE_THRESHOLDS, type SwipeThresholds } from '../gestures/swipe'
+import { rubberBand, type SwipeThresholds } from '../gestures/swipe'
+
+/**
+ * Release thresholds of a sheet (design language v1 §7.6): a fling towards a detent at 600 px/s
+ * commits regardless of distance; a slower release commits once the projected position is past
+ * half way. Tab swipes keep their own, looser numbers in `gestures/swipe.ts`.
+ */
+export const SHEET_THRESHOLDS: SwipeThresholds = {
+  flingVelocity: 600,
+  commitFraction: 0.5,
+  projectionSeconds: 0.12
+}
 import { SPRING_GENTLE, SPRING_SNAPPY, SpringAnimation } from './spring'
 
 export type SheetPhase = 'closed' | 'settling' | 'open' | 'dragging'
@@ -121,7 +132,7 @@ export function settleDetent(
   velocity: number,
   detents: SheetDetents,
   origin: number = detents.collapsed,
-  thresholds: SwipeThresholds = SWIPE_THRESHOLDS
+  thresholds: SwipeThresholds = SHEET_THRESHOLDS
 ): number {
   const stops = [...new Set([0, detents.collapsed, detents.expanded])].sort((a, b) => a - b)
   if (Math.abs(velocity) >= thresholds.flingVelocity) {
