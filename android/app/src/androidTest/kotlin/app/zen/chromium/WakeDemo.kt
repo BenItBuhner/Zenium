@@ -1,6 +1,5 @@
 package app.zen.chromium
 
-import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.UiAutomation
 import android.content.Context
@@ -18,6 +17,8 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -179,7 +180,7 @@ class WakeDemo {
         SystemClock.sleep(1_500)
         dismissKeyguard(Dismiss.COMMAND)
         // The probe's delay, two deadlines and a chrome boot; the loop itself outlasts all of it.
-        SystemClock.sleep(18_000)
+        SystemClock.sleep(20_000)
     }
 
     // --- power, keyguard, processes --------------------------------------------------------------
@@ -222,6 +223,12 @@ class WakeDemo {
         return flagged || top == "com.android.systemui"
     }
 
+    /**
+     * Take the lock screen down and wait for the browser to be the window in front again. Nothing
+     * here presses back: with nothing to pop the app registers no back callback, so a system back
+     * that lands after the lock screen is gone finishes the activity – the launcher would then be
+     * the "blank browser" and every later scenario would run against a destroyed activity.
+     */
     private fun dismissKeyguard(how: Dismiss) {
         val showing = keyguardShowing()
         note("keyguard: showing=$showing dismiss=$how top=${ui.rootInActiveWindow?.packageName}")
@@ -241,18 +248,43 @@ class WakeDemo {
                 }
             }
         }
-        SystemClock.sleep(800)
+        if (!awaitInFront(6_000) && keyguardShowing()) {
+            note("keyguard: still up after ${how.name.lowercase()}; dismissing again by command")
+            shell("wm dismiss-keyguard")
+            awaitInFront(4_000)
+        }
         ensureForeground()
+    }
+
+    /** Follow the activity the system shows now: a recreated one must not be reported through the old instance. */
+    private fun refreshActivity() {
+        var resumed: MainActivity? = null
+        instrumentation.runOnMainSync {
+            resumed = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                .filterIsInstance<MainActivity>().firstOrNull()
+        }
+        val next = resumed ?: return
+        if (next !== activity) {
+            note("activity: recreated (${activity.lifecycle.currentState} -> new instance)")
+            activity = next
+        }
+    }
+
+    /** Poll until the browser's window is the active one (true) or `timeoutMs` passed (false). */
+    private fun awaitInFront(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (ui.rootInActiveWindow?.packageName?.toString() == app.packageName) return true
+            SystemClock.sleep(250)
+        }
+        return false
     }
 
     /** Through the shell: a backgrounded process (this one) may not start activities itself. */
     private fun relaunch() {
         val component = activity.componentName.flattenToString()
         note("relaunch: ${shell("am start -W -n $component").lineSequence().firstOrNull { it.contains("Status") || it.contains("Warning") }?.trim()}")
-        val deadline = SystemClock.uptimeMillis() + 8_000
-        while (ui.rootInActiveWindow?.packageName?.toString() != app.packageName && SystemClock.uptimeMillis() < deadline) {
-            SystemClock.sleep(250)
-        }
+        awaitInFront(8_000)
     }
 
     private var killSeq = 0
@@ -288,6 +320,7 @@ class WakeDemo {
         note("---- $name")
         body()
         ensureForeground()
+        refreshActivity()
         val shot = capture(name)
         check(name, shot)
         shot.recycle()
@@ -476,14 +509,21 @@ class WakeDemo {
         SystemClock.sleep(3_000)
     }
 
+    /**
+     * The browser must be the window in front for a check to mean anything. If it is not (the
+     * launcher, say – the app left the foreground or was finished), its task is brought forward
+     * through the shell and the report says so: a browser that has to be brought back is itself a
+     * finding. Never a back press: see [dismissKeyguard].
+     */
     private fun ensureForeground() {
-        repeat(5) {
-            val top = ui.rootInActiveWindow?.packageName?.toString()
-            if (top == null || top == app.packageName) return
-            Log.w(TAG, "window of $top is in front; sending back")
-            ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-            SystemClock.sleep(1_000)
-        }
+        if (awaitInFront(2_000)) return
+        val top = ui.rootInActiveWindow?.packageName?.toString()
+        var state = ""
+        instrumentation.runOnMainSync { state = activity.lifecycle.currentState.toString() }
+        note("foreground: window of $top is in front (activity $state); bringing the browser back")
+        Log.w(TAG, "window of $top is in front; bringing the browser back")
+        relaunch()
+        SystemClock.sleep(1_500)
     }
 
     private fun measure() {
