@@ -50,6 +50,7 @@ import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { ONBOARDING_ESSENTIALS } from '../shared/defaults'
 import { PRIVATE_THEME, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
+import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 
@@ -314,6 +315,9 @@ export class Browser {
         : this.state.restoredWindows.slice(0, 1)
     if (restore.length === 0) this.createWindow({ kind: 'synced' })
     for (const persisted of restore) this.createWindow({ kind: 'synced', persisted })
+    // The host may have come up under another icon (a fresh install with a restored profile,
+    // a launcher alias flipped back by an update); the persisted choice wins.
+    this.platform.app.setAppIcon?.(this.state.settings.appIcon)
     this.governor.start()
     this.liveFolders.start()
     void this.extensions.start()
@@ -1086,6 +1090,7 @@ export class Browser {
       glance: s.glanceEnabled,
       trigger: s.glanceTrigger,
       thirdParty: s.thirdPartyOnPinned,
+      appIcon: s.appIcon,
       windowSync: s.windowSync,
       resources: JSON.stringify(s.resources),
       unload: `${s.unloadEnabled}:${s.unloadTimeoutMinutes}:${s.unloadExcludedDomains.join(',')}`,
@@ -1113,6 +1118,8 @@ export class Browser {
           ...s.updates,
           ...(value as Partial<Settings['updates']>)
         })
+      } else if (key === 'appIcon') {
+        s.appIcon = sanitizeAppIcon(value)
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }
@@ -1142,6 +1149,7 @@ export class Browser {
     }
     if (before.agents !== JSON.stringify(s.agents)) this.agents.onSettingsChanged()
     if (before.updates !== JSON.stringify(s.updates)) this.updates.onSettingsChanged()
+    if (before.appIcon !== s.appIcon) this.platform.app.setAppIcon?.(s.appIcon)
     this.state.commit()
   }
 

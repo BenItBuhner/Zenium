@@ -10,6 +10,7 @@ import type {
   NewTabPosition,
   PhoneBarPosition,
   PinnedCloseBehavior,
+  Platform,
   Settings,
   SidebarSide,
   ThirdPartyPinnedBehavior,
@@ -30,6 +31,7 @@ import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
 import { AgentsSection } from './AgentsSection'
+import { AppIconGroup } from './AppIconPicker'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { OverlayShell } from './OverlayShell'
 import { ResourcesSection } from './ResourcesSection'
@@ -154,7 +156,7 @@ export function SettingsPanel({
         </nav>
         <div ref={fadeContent} className="min-w-0 flex-1 overflow-y-auto p-6">
           <div className="mx-auto flex max-w-2xl flex-col gap-6">
-            {section === 'look' && <LookSection s={s} set={set} />}
+            {section === 'look' && <LookSection s={s} set={set} platform={state.platform} />}
             {section === 'compact' && <CompactSection s={s} set={set} />}
             {section === 'tabs' && (
               <TabsSection s={s} set={set} windows={state.capabilities.windows} />
@@ -184,10 +186,12 @@ export function SettingsPanel({
 
 function LookSection({
   s,
-  set
+  set,
+  platform
 }: {
   s: Settings
   set: (p: Partial<Settings>) => void
+  platform: Platform
 }): JSX.Element {
   return (
     <>
@@ -236,6 +240,7 @@ function LookSection({
           <Switch checked={s.borderless} onCheckedChange={(v) => set({ borderless: v })} />
         </Row>
       </Group>
+      <AppIconGroup value={s.appIcon} platform={platform} onChange={(id) => set({ appIcon: id })} />
       <Group title="URL Bar">
         <Row label="Floating behaviour">
           <Choice<UrlbarBehavior>

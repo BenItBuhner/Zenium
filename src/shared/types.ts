@@ -2,6 +2,7 @@
  * Types shared between the main process, the preload script and the renderer.
  * Everything here must be JSON-serialisable (it crosses the IPC boundary).
  */
+import type { AppIconId } from './appIcon'
 import type { SiteInfo } from './siteInfo'
 import type { UpdateSettings, UpdateStatus } from './updates'
 
@@ -543,6 +544,8 @@ export interface CompactModeSettings {
 
 export interface Settings {
   colorScheme: ColorScheme
+  /** Colour of the app icon (launcher alias on Android, window / Dock icon on desktop). */
+  appIcon: AppIconId
   toolbarLayout: ToolbarLayout
   sidebarSide: SidebarSide
   sidebarWidth: number

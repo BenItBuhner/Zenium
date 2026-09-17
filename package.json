@@ -27,6 +27,7 @@
     "build:android:web": "vite build -c vite.android.config.ts && vite build -c vite.android.config.ts --mode page",
     "build:android": "npm run build:android:web && cd android && ./gradlew assembleDebug -PskipWeb",
     "build:android:release": "npm run build:android:web && cd android && ./gradlew assembleRelease -PskipWeb",
+    "icons": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/app-icons.ts",
     "release": "node .github/scripts/cut-release.mjs"
   },
   "dependencies": {
