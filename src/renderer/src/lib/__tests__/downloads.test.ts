@@ -179,4 +179,21 @@ describe('downloads chrome state', () => {
     expect(bubbleItems([a, b], ['b'])).toEqual([b])
     expect(bubbleItems([a, b], ['zzz'])).toEqual([a, b])
   })
+
+  it('lists the transfers still running ahead of the finished ones, each in the engine order', () => {
+    const done1 = item({ id: 'done1' })
+    const running = item({ id: 'running', state: 'progressing' })
+    const done2 = item({ id: 'done2' })
+    const paused = item({ id: 'paused', state: 'paused' })
+    expect(bubbleItems([done1, running, done2, paused], null)).toEqual([
+      running,
+      paused,
+      done1,
+      done2
+    ])
+    expect(bubbleItems([done1, running, done2, paused], ['done2', 'paused'])).toEqual([
+      paused,
+      done2
+    ])
+  })
 })
