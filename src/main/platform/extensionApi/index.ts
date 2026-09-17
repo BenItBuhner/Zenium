@@ -211,12 +211,11 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       })
     }
     ses.serviceWorkers.on('running-status-changed', ({ versionId, runningStatus }) => {
-      if (runningStatus === 'stopping' || runningStatus === 'stopped') {
-        this.registry.workerStopped(versionId, ses)
-        return
+      if (runningStatus === 'starting' || runningStatus === 'running') {
+        const worker = ses.serviceWorkers.getWorkerFromVersionID(versionId)
+        if (worker) this.wireWorker(worker, ses)
       }
-      const worker = ses.serviceWorkers.getWorkerFromVersionID(versionId)
-      if (worker) this.wireWorker(worker, ses)
+      this.registry.workerStatus(versionId, ses, runningStatus)
     })
     ses.extensions.on('extension-loaded', (_event, ext) => this.onLoaded(ext, ses))
     ses.extensions.on('extension-unloaded', (_event, ext) => this.onUnloaded(ext, ses))

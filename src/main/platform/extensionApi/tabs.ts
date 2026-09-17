@@ -77,12 +77,7 @@ export class TabsApi {
   }
 
   private currentWindowId(ctx: ApiContext): number {
-    if (ctx.sender.kind === 'frame') {
-      const popup = this.model.popupForTabId(ctx.sender.webContents.id)
-      if (popup) return popup.bw.id
-    }
-    const win = ctx.window
-    return win ? this.model.windowIdOf(win) : WINDOW_ID_NONE
+    return this.model.currentWindowId(ctx.sender, ctx.window)
   }
 
   private resolveWindow(ctx: ApiContext, windowId: unknown): ZenWindow {

@@ -27,7 +27,16 @@ export interface WorkerContext {
   session: Session
   listeners: Set<string>
   startedAt: number
+  /**
+   * `ServiceWorkerMain.send` is silently dropped while the worker's running status is still
+   * `starting`, which is when its hello (and so the flush of everything queued for it) arrives.
+   * Deliveries wait in `outbox` until the engine reports the worker running.
+   */
+  running: boolean
+  outbox: Array<{ namespace: string; event: string; args: unknown[] }>
 }
+
+export type WorkerRunningStatus = 'starting' | 'running' | 'stopping' | 'stopped'
 
 export interface DispatchOptions {
   /** Deliver even without a registration and wake a stopped worker (lifecycle events, alarms). */
@@ -86,6 +95,8 @@ export class ContextRegistry {
   /** Events each extension's worker listened to at some point (survives the worker stopping). */
   private readonly workerEvents = new Map<string, Set<string>>()
   private readonly pendingBackground = new Map<string, PendingEvent[]>()
+  /** Worker keys the engine reports running (`ServiceWorkerMain` has no status accessor). */
+  private readonly runningWorkers = new Set<string>()
   private readonly watchedContents = new WeakSet<WebContents>()
 
   constructor(
@@ -145,7 +156,9 @@ export class ContextRegistry {
       worker,
       session,
       listeners: new Set(),
-      startedAt: Date.now()
+      startedAt: Date.now(),
+      running: this.runningWorkers.has(key),
+      outbox: []
     }
     this.workers.set(key, context)
     // The script that follows the preload registers its listeners within this window; the
@@ -155,8 +168,44 @@ export class ContextRegistry {
     return context
   }
 
-  workerStopped(versionId: number, session: Session): void {
-    this.workers.delete(`${sessionKey(session)}#${versionId}`)
+  /** The engine's `running-status-changed` for a worker (any worker; non-extension ones are inert). */
+  workerStatus(versionId: number, session: Session, status: WorkerRunningStatus): void {
+    const key = `${sessionKey(session)}#${versionId}`
+    if (status === 'running') {
+      this.runningWorkers.add(key)
+      const context = this.workers.get(key)
+      if (context) this.workerRunning(context)
+      return
+    }
+    if (status === 'stopping' || status === 'stopped') {
+      this.runningWorkers.delete(key)
+      this.workers.delete(key)
+    }
+  }
+
+  private workerRunning(context: WorkerContext): void {
+    context.running = true
+    const queued = context.outbox.splice(0)
+    for (const item of queued) this.sendToWorker(context, item.namespace, item.event, item.args)
+  }
+
+  private sendToWorker(
+    context: WorkerContext,
+    namespace: string,
+    event: string,
+    args: unknown[]
+  ): void {
+    if (!context.running) {
+      if (context.outbox.length < 100) context.outbox.push({ namespace, event, args })
+      return
+    }
+    try {
+      context.worker.send('zen-ext:event', namespace, event, args)
+      // Chrome extends the worker's lifetime while the listeners the event triggered run.
+      keepAlive(context.worker, EVENT_KEEPALIVE_MS)
+    } catch {
+      /* worker went away */
+    }
   }
 
   frameFor(frame: WebFrameMain): FrameContext | undefined {
@@ -288,13 +337,7 @@ export class ContextRegistry {
       // it listened to this event in an earlier life the shim queues the delivery for it.
       const fresh = Date.now() - worker.startedAt < STARTUP_KEEPALIVE_MS && remembered
       if (!worker.listeners.has(name) && !options.wake && !fresh) continue
-      try {
-        worker.worker.send('zen-ext:event', namespace, event, args)
-        // Chrome extends the worker's lifetime while the listeners the event triggered run.
-        keepAlive(worker.worker, EVENT_KEEPALIVE_MS)
-      } catch {
-        /* worker went away */
-      }
+      this.sendToWorker(worker, namespace, event, args)
     }
     if (background) return
     // No background context is alive. A worker that registered the event before it stopped, or a

@@ -9,7 +9,6 @@ import type { ModelSnapshot } from './model'
 import {
   ApiError,
   WINDOW_ID_CURRENT,
-  WINDOW_ID_NONE,
   extensionUrl,
   isInteger,
   isRecord,
@@ -55,13 +54,7 @@ export class WindowsApi {
 
   /** The window the caller sits in: a popup window's page, an anchored view, or a tab's window. */
   currentWindowId(ctx: ApiContext): number {
-    if (ctx.sender.kind === 'frame') {
-      const popup = this.model.popupForTabId(ctx.sender.webContents.id)
-      if (popup) return popup.bw.id
-    }
-    if (ctx.window) return this.model.windowIdOf(ctx.window)
-    const last = this.model.lastFocusedWindow()
-    return last ? this.model.windowIdOf(last) : WINDOW_ID_NONE
+    return this.model.currentWindowId(ctx.sender, ctx.window)
   }
 
   private windowById(ctx: ApiContext, windowId: unknown, options: unknown): ChromeWindow {

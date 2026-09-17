@@ -13,6 +13,7 @@ import { type ChromeTab, TAB_GROUP_NONE } from '../../../core/extensions/api/tab
 import { type ChromeWindow, windowStateFrom } from '../../../core/extensions/api/windows'
 import type { ElectronTabView, ElectronTabViewHost } from '../views'
 import type { ElectronWindow } from '../window'
+import { WINDOW_ID_NONE, type Sender } from './types'
 
 /** Synthetic ids for tabs without a page start here, far above any WebContents id. */
 const SYNTHETIC_TAB_ID_BASE = 0x40000000
@@ -76,6 +77,20 @@ export class ApiModel {
     const focused = alive.find((w) => w.host.isFocused())
     if (focused) return focused
     return [...alive].sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0]
+  }
+
+  /**
+   * Chrome's "current window" for a caller (`WINDOW_ID_CURRENT`, `tabs.query({currentWindow})`):
+   * a popup window's own page, the window a document is anchored to or shown in, and for
+   * background contexts – a worker or background page has no window – the last focused one.
+   */
+  currentWindowId(sender: Sender, window: ZenWindow | undefined): number {
+    if (sender.kind === 'frame') {
+      const popup = this.popupForTabId(sender.webContents.id)
+      if (popup) return popup.bw.id
+    }
+    const win = window ?? this.lastFocusedWindow()
+    return win ? this.windowIdOf(win) : WINDOW_ID_NONE
   }
 
   /** Chrome window ids of everything `windows.getAll` lists, Zenium windows and popups alike. */
