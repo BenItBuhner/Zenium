@@ -1,0 +1,1275 @@
+import type { BookmarkTreeNode } from '@shared/bookmarks'
+import type { Tab } from '@shared/types'
+import type { Browser } from '@core/browser'
+import type { ZenWindow } from '@core/window'
+import type { EngineContextKind } from '@core/extensions/api/engine'
+import type { LocaleMessages } from '@core/extensions/api/i18n'
+import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
+import type { ExtensionRecord } from '@core/extensions/registry'
+import { normalizeRuleset, type NetRule } from '@core/extensions/runtime/dnr'
+import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
+import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
+import type { Endpoint, MessageRouter } from '@core/extensions/runtime/router'
+
+/**
+ * The `chrome.*` calls the Android runtime answers itself, over the browser core: everything the
+ * emulated engine forwards with `call` that is not storage, alarms or messaging (those live in
+ * `extensionRuntime.ts`, next to their persistence and their wake policy). One class, one method
+ * per namespace, reached through the `ApiHost` seam so it can be driven in tests without Kotlin.
+ *
+ * Wave 2-1 carries the prototype's coverage: tabs, windows, action, scripting, userScripts,
+ * runtime, declarativeNetRequest (the rule state; the matcher is Kotlin's until W2-3),
+ * notifications, contextMenus, webNavigation, cookies, history, bookmarks, permissions,
+ * management, commands, idle, offscreen, downloads. W2-2 maps tabs, windows, action, popups,
+ * webNavigation, contextMenus, cookies and notifications onto the shared core properly.
+ */
+
+/** An extension the runtime is running: its record, parsed manifest and the locale it uses. */
+export interface AttachedExtension {
+  record: ExtensionRecord
+  manifest: RuntimeManifest
+  messages: LocaleMessages | null
+}
+
+/** `declarativeNetRequest` state of one extension. */
+export interface ExtensionRules {
+  dynamic: NetRule[]
+  session: NetRule[]
+  /** Static ruleset ids after `updateEnabledRulesets`, or null for the manifest's defaults. */
+  enabledRulesets: string[] | null
+}
+
+/** `scripting.executeScript` / `insertCSS` / `tabs.executeScript`, as the host evaluates them. */
+export interface ExecRequest {
+  extensionId: string
+  tabId: string
+  kind: 'js' | 'css'
+  payload: Record<string, unknown>
+  code: string | null
+  funcSource: string | null
+  args: unknown[] | null
+}
+
+export interface ApiHost {
+  readonly browser: Browser
+  readonly router: MessageRouter
+  window(): ZenWindow
+  attached(id: string): AttachedExtension | undefined
+  allAttached(): AttachedExtension[]
+  /** `scripting.registerContentScripts` state; setting it re-plans the extension's units. */
+  registered(id: string): RegisteredContentScript[]
+  setRegistered(id: string, scripts: RegisteredContentScript[]): Promise<void>
+  /** `userScripts.configureWorld`: whether the user-script world gets `runtime.sendMessage`. */
+  userScriptMessaging(id: string): boolean
+  setUserScriptMessaging(id: string, messaging: boolean): Promise<void>
+  rules(id: string): ExtensionRules
+  setRules(id: string, rules: ExtensionRules): Promise<void>
+  /** Raise `chrome.<ns>.<name>` in every endpoint of one extension that listens for it. */
+  emit(extensionId: string, ns: string, name: string, args: unknown[]): void
+  readFile(id: string, path: string): Promise<string | null>
+  exec(request: ExecRequest): Promise<unknown>
+  cookieHeader(url: string): Promise<string | null>
+  setCookie(url: string, cookie: string): Promise<void>
+  openPopup(id: string): void
+  openOptions(id: string): void
+  /** `runtime.reload()` and `management.uninstallSelf()`: the store re-reads or removes the extension. */
+  reload(id: string): Promise<void>
+  uninstall(id: string): Promise<void>
+  isEnabled(id: string): boolean
+}
+
+export interface ActionState {
+  title: string | null
+  popup: string | null
+  badgeText: string
+  badgeBackgroundColor: string
+  badgeTextColor: string
+  enabled: boolean
+}
+
+const NOT_IMPLEMENTED = 'is not implemented on Zenium for Android'
+
+export function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
+}
+
+export function asNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+export function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
+}
+
+/**
+ * Chrome's integer tab ids over the core's string ids, stable for the session, plus the
+ * `tabs.Tab` and `windows.Window` objects extensions see (one window on a phone).
+ */
+export class TabIds {
+  private readonly chromeIds = new Map<string, number>()
+  private readonly coreIds = new Map<number, string>()
+  private next = 1
+
+  constructor(
+    private readonly browser: Browser,
+    private readonly windowOf: () => ZenWindow
+  ) {}
+
+  chromeIdFor(tabId: string): number {
+    let id = this.chromeIds.get(tabId)
+    if (id === undefined) {
+      id = this.next++
+      this.chromeIds.set(tabId, id)
+      this.coreIds.set(id, tabId)
+    }
+    return id
+  }
+
+  /** The numeric id a closed tab had, if it was ever handed out. */
+  knownChromeId(tabId: string): number | undefined {
+    return this.chromeIds.get(tabId)
+  }
+
+  coreIdFor(chromeTabId: number): string | null {
+    return this.coreIds.get(chromeTabId) ?? null
+  }
+
+  /** The id the next `tabs.create` will get (what `downloads.download` returns as a stand-in). */
+  peekNext(): number {
+    return this.next
+  }
+
+  chromeTab(tab: Tab): Record<string, unknown> {
+    const win = this.windowOf()
+    const active = this.browser.tabs.activeTabFor(win)?.id === tab.id
+    const space = tab.spaceId
+      ? this.browser.tabs.model.spaces.find((s) => s.id === tab.spaceId)
+      : undefined
+    const index = space ? space.tabIds.indexOf(tab.id) : 0
+    const size = win.host.contentSize()
+    return {
+      id: this.chromeIdFor(tab.id),
+      index: index < 0 ? 0 : index,
+      windowId: 1,
+      groupId: -1,
+      openerTabId: undefined,
+      active,
+      highlighted: active,
+      selected: active,
+      pinned: tab.pinned || tab.essential,
+      audible: tab.audible,
+      discarded: tab.discarded,
+      autoDiscardable: true,
+      frozen: tab.frozen,
+      mutedInfo: { muted: tab.muted },
+      url: tab.url,
+      pendingUrl: tab.loading ? tab.url : undefined,
+      title: tab.customTitle ?? tab.title,
+      favIconUrl: tab.favicon ?? undefined,
+      status: tab.loading ? 'loading' : tab.discarded ? 'unloaded' : 'complete',
+      incognito: this.browser.tabs.isPrivate(tab),
+      width: size.width,
+      height: size.height,
+      lastAccessed: tab.lastActiveAt
+    }
+  }
+
+  tabByChromeId(value: unknown): Tab {
+    const id = asNumber(value)
+    if (id === null) throw new Error('A tab id is required.')
+    const coreId = this.coreIds.get(id)
+    const tab = coreId ? this.browser.tabs.tab(coreId) : undefined
+    if (!tab) throw new Error(`No tab with id: ${id}.`)
+    return tab
+  }
+
+  chromeWindow(): Record<string, unknown> {
+    const win = this.windowOf()
+    const size = win.host.contentSize()
+    return {
+      id: 1,
+      focused: win.host.isFocused(),
+      top: 0,
+      left: 0,
+      width: size.width,
+      height: size.height,
+      incognito: win.isPrivate,
+      type: 'normal',
+      state: win.host.isFullScreen() ? 'fullscreen' : 'maximized',
+      alwaysOnTop: false,
+      tabs: Object.values(this.browser.tabs.model.tabs).map((t) => this.chromeTab(t))
+    }
+  }
+}
+
+export class ExtensionApi {
+  readonly tabs: TabIds
+  private readonly actions = new Map<string, ActionState>()
+  private readonly contextMenus = new Map<string, Map<string, Record<string, unknown>>>()
+
+  constructor(private readonly host: ApiHost) {
+    this.tabs = new TabIds(host.browser, () => host.window())
+  }
+
+  /** The extension is going away: drop what this layer remembers about it. */
+  forget(id: string): void {
+    this.actions.delete(id)
+    this.contextMenus.delete(id)
+  }
+
+  actionFor(id: string): ActionState {
+    let state = this.actions.get(id)
+    if (!state) {
+      const action = this.host.attached(id)?.manifest.action
+      state = {
+        title: action?.title ?? null,
+        popup: action?.popup ?? null,
+        badgeText: '',
+        badgeBackgroundColor: '#5f6368',
+        badgeTextColor: '#ffffff',
+        enabled: true
+      }
+      this.actions.set(id, state)
+    }
+    return state
+  }
+
+  async call(
+    ext: AttachedExtension,
+    endpoint: Endpoint,
+    ns: string,
+    method: string,
+    args: unknown[]
+  ): Promise<unknown> {
+    const id = ext.record.id
+    switch (ns) {
+      case 'tabs':
+        return this.tabsCall(ext, endpoint, method, args)
+      case 'windows':
+        return this.windowsCall(method, args)
+      case 'action':
+      case 'browserAction':
+      case 'pageAction':
+        return this.actionCall(ext, method, args)
+      case 'scripting':
+        return this.scriptingCall(ext, method, args)
+      case 'userScripts':
+        return this.userScriptsCall(ext, method, args)
+      case 'runtime':
+        return this.runtimeCall(ext, method)
+      case 'declarativeNetRequest':
+        return this.dnrCall(ext, method, args)
+      case 'notifications':
+        return this.notificationsCall(method, args)
+      case 'contextMenus':
+        return this.contextMenusCall(id, method, args)
+      case 'webNavigation':
+        return this.webNavigationCall(id, method, args)
+      case 'cookies':
+        return this.cookiesCall(method, args)
+      case 'history':
+        return this.historyCall(method, args)
+      case 'bookmarks':
+        return this.bookmarksCall(method, args)
+      case 'permissions':
+        return this.permissionsCall(ext.manifest, method, args)
+      case 'management':
+        return this.managementCall(ext, method, args)
+      case 'commands':
+        if (method === 'getAll')
+          return ext.manifest.commands.map((c) => ({
+            name: c.name,
+            description: c.description,
+            shortcut: ''
+          }))
+        break
+      case 'idle':
+        if (method === 'queryState') return 'active'
+        break
+      case 'offscreen':
+        if (method === 'hasDocument') return false
+        if (method === 'closeDocument') return undefined
+        break
+      case 'downloads':
+        if (method === 'download') {
+          const url = String(asRecord(args[0]).url ?? '')
+          if (!url) throw new Error('A url is required.')
+          this.host.browser.tabs.createTab({ url, active: false }, this.host.window())
+          return this.tabs.peekNext()
+        }
+        break
+    }
+    throw new Error(`chrome.${ns}.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  // --- tabs ------------------------------------------------------------------
+
+  private tabsCall(
+    ext: AttachedExtension,
+    endpoint: Endpoint,
+    method: string,
+    args: unknown[]
+  ): unknown {
+    const win = this.host.window()
+    const tabs = this.host.browser.tabs
+    const ids = this.tabs
+    const targetOrActive = (value: unknown): Tab | undefined =>
+      asNumber(value) !== null ? ids.tabByChromeId(value) : tabs.activeTabFor(win)
+    switch (method) {
+      case 'query': {
+        const q = asRecord(args[0])
+        const active = tabs.activeTabFor(win)?.id
+        return Object.values(tabs.model.tabs)
+          .filter((tab) => {
+            if (q.active !== undefined && (tab.id === active) !== Boolean(q.active)) return false
+            if (q.pinned !== undefined && (tab.pinned || tab.essential) !== Boolean(q.pinned))
+              return false
+            if (q.audible !== undefined && tab.audible !== Boolean(q.audible)) return false
+            if (q.discarded !== undefined && tab.discarded !== Boolean(q.discarded)) return false
+            if (q.status !== undefined && (tab.loading ? 'loading' : 'complete') !== q.status)
+              return false
+            if (
+              q.title !== undefined &&
+              !globToRegExp(String(q.title)).test(tab.customTitle ?? tab.title)
+            )
+              return false
+            if (q.url !== undefined) {
+              const patterns = Array.isArray(q.url) ? q.url.map(String) : [String(q.url)]
+              if (!matchesAnyPattern(tab.url, patterns)) return false
+            }
+            if (q.windowId !== undefined && q.windowId !== -2 && q.windowId !== 1) return false
+            if (q.currentWindow === false || q.lastFocusedWindow === false) return false
+            return true
+          })
+          .map((tab) => ids.chromeTab(tab))
+      }
+      case 'get':
+        return ids.chromeTab(ids.tabByChromeId(args[0]))
+      case 'getCurrent': {
+        // Extension pages have no tab of their own; content scripts get theirs.
+        if (endpoint.context === 'content' && endpoint.tabId) {
+          const tab = tabs.tab(endpoint.tabId)
+          return tab ? ids.chromeTab(tab) : undefined
+        }
+        return undefined
+      }
+      case 'create': {
+        const props = asRecord(args[0])
+        const tab = tabs.createTab(
+          {
+            url: typeof props.url === 'string' ? props.url : undefined,
+            active: props.active === undefined ? true : Boolean(props.active),
+            pinned: Boolean(props.pinned)
+          },
+          win
+        )
+        return ids.chromeTab(tab)
+      }
+      case 'update': {
+        const [first, second] = args
+        const props = asRecord(second ?? first)
+        const target = targetOrActive(first)
+        if (!target) throw new Error('No active tab.')
+        if (typeof props.url === 'string') tabs.navigate(target.id, props.url)
+        if (props.active === true) tabs.activateTab(target.id, win)
+        if (props.muted !== undefined && Boolean(props.muted) !== target.muted)
+          tabs.toggleMute(target.id)
+        if (props.pinned !== undefined && Boolean(props.pinned) !== target.pinned)
+          tabs.togglePin(target.id, win)
+        return ids.chromeTab(tabs.tab(target.id) ?? target)
+      }
+      case 'remove': {
+        const list = Array.isArray(args[0]) ? args[0] : [args[0]]
+        for (const id of list) tabs.closeTab(ids.tabByChromeId(id).id, true, win)
+        return undefined
+      }
+      case 'reload': {
+        const target = targetOrActive(args[0])
+        if (target) tabs.reload(target.id, Boolean(asRecord(args[1]).bypassCache))
+        return undefined
+      }
+      case 'duplicate': {
+        const copy = tabs.duplicate(ids.tabByChromeId(args[0]).id, win)
+        return copy ? ids.chromeTab(copy) : undefined
+      }
+      case 'getZoom':
+        return targetOrActive(args[0])?.zoom ?? 1
+      case 'setZoom': {
+        const [first, second] = args
+        const factor = asNumber(second ?? first) ?? 1
+        const target = asNumber(second) !== null ? ids.tabByChromeId(first) : tabs.activeTabFor(win)
+        if (target) tabs.setZoom(target.id, factor)
+        return undefined
+      }
+      case 'discard': {
+        const target = asNumber(args[0]) !== null ? ids.tabByChromeId(args[0]) : undefined
+        if (target) tabs.discard(target.id)
+        return target ? ids.chromeTab(tabs.tab(target.id) ?? target) : undefined
+      }
+      case 'goBack':
+        tabs.goBack(targetOrActive(args[0])?.id ?? '')
+        return undefined
+      case 'goForward':
+        tabs.goForward(targetOrActive(args[0])?.id ?? '')
+        return undefined
+      case 'executeScript':
+      case 'insertCSS': {
+        // MV2: [tabId | null, details]
+        const [tabIdArg, detailsArg] = args
+        const target = targetOrActive(tabIdArg)
+        if (!target) throw new Error('No active tab.')
+        return this.mv2Inject(
+          ext,
+          target,
+          method === 'executeScript' ? 'js' : 'css',
+          asRecord(detailsArg)
+        )
+      }
+    }
+    throw new Error(`chrome.tabs.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  /** `tabs.executeScript` / `tabs.insertCSS` (MV2): `{ code }` or `{ file }` into the tab's main frame. */
+  private async mv2Inject(
+    ext: AttachedExtension,
+    target: Tab,
+    kind: 'js' | 'css',
+    details: Record<string, unknown>
+  ): Promise<unknown> {
+    const id = ext.record.id
+    const code =
+      typeof details.code === 'string'
+        ? details.code
+        : await this.host.readFile(id, String(details.file ?? ''))
+    if (kind === 'js') {
+      const result = await this.host.exec({
+        extensionId: id,
+        tabId: target.id,
+        kind: 'js',
+        payload: { world: 'ISOLATED' },
+        code: code ?? '',
+        funcSource: null,
+        args: null
+      })
+      return [result]
+    }
+    const cssId = typeof details.file === 'string' ? details.file : (code ?? '')
+    return this.host.exec({
+      extensionId: id,
+      tabId: target.id,
+      kind: 'css',
+      payload: { id: cssId, code: code ?? '' },
+      code: null,
+      funcSource: null,
+      args: null
+    })
+  }
+
+  private windowsCall(method: string, args: unknown[]): unknown {
+    switch (method) {
+      case 'get':
+      case 'getCurrent':
+      case 'getLastFocused':
+        return this.tabs.chromeWindow()
+      case 'getAll':
+        return [this.tabs.chromeWindow()]
+      case 'create': {
+        const props = asRecord(args[0])
+        const url = Array.isArray(props.url) ? props.url[0] : props.url
+        if (typeof url === 'string')
+          this.host.browser.tabs.createTab({ url, active: true }, this.host.window())
+        return this.tabs.chromeWindow()
+      }
+      case 'update':
+        return this.tabs.chromeWindow()
+    }
+    throw new Error(`chrome.windows.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  // --- action / browserAction ------------------------------------------------
+
+  private actionCall(ext: AttachedExtension, method: string, args: unknown[]): unknown {
+    const id = ext.record.id
+    const state = this.actionFor(id)
+    const details = asRecord(args[0])
+    const refresh = (): void => this.host.browser.state.commitVolatile()
+    switch (method) {
+      case 'setTitle':
+        state.title = typeof details.title === 'string' ? details.title : null
+        return undefined
+      case 'getTitle':
+        return state.title ?? ext.manifest.name
+      case 'setIcon':
+        // Toolbar icons stay the manifest's; per-tab imageData / path variants are not drawn yet.
+        return undefined
+      case 'setPopup':
+        state.popup =
+          typeof details.popup === 'string' && details.popup !== '' ? details.popup : null
+        refresh()
+        return undefined
+      case 'getPopup':
+        return state.popup ? extensionUrl(id, state.popup) : ''
+      case 'setBadgeText':
+        state.badgeText = typeof details.text === 'string' ? details.text : ''
+        return undefined
+      case 'getBadgeText':
+        return state.badgeText
+      case 'setBadgeBackgroundColor':
+        state.badgeBackgroundColor = colorString(details.color) ?? state.badgeBackgroundColor
+        return undefined
+      case 'getBadgeBackgroundColor':
+        return colorArray(state.badgeBackgroundColor)
+      case 'setBadgeTextColor':
+        state.badgeTextColor = colorString(details.color) ?? state.badgeTextColor
+        return undefined
+      case 'getBadgeTextColor':
+        return colorArray(state.badgeTextColor)
+      case 'enable':
+      case 'show':
+        state.enabled = true
+        return undefined
+      case 'disable':
+      case 'hide':
+        state.enabled = false
+        return undefined
+      case 'isEnabled':
+        return state.enabled
+      case 'openPopup':
+        this.host.openPopup(id)
+        return undefined
+      case 'getUserSettings':
+        return { isOnToolbar: true }
+    }
+    throw new Error(`chrome.action.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  // --- scripting / userScripts -------------------------------------------------
+
+  private async scriptingCall(
+    ext: AttachedExtension,
+    method: string,
+    args: unknown[]
+  ): Promise<unknown> {
+    const id = ext.record.id
+    const injection = asRecord(args[0])
+    const target = asRecord(injection.target)
+    const resolveTab = (): Tab => {
+      if (target.tabId !== undefined) return this.tabs.tabByChromeId(target.tabId)
+      const tab = this.host.browser.tabs.activeTabFor(this.host.window())
+      if (!tab) throw new Error('No active tab.')
+      return tab
+    }
+    switch (method) {
+      case 'executeScript': {
+        const tab = resolveTab()
+        const world = injection.world === 'MAIN' ? 'MAIN' : 'ISOLATED'
+        if (typeof injection.funcSource === 'string') {
+          const result = await this.host.exec({
+            extensionId: id,
+            tabId: tab.id,
+            kind: 'js',
+            payload: { world },
+            code: null,
+            funcSource: injection.funcSource,
+            args: Array.isArray(injection.args) ? injection.args : []
+          })
+          return [{ frameId: 0, documentId: '', result }]
+        }
+        const sources: string[] = []
+        for (const file of asStringArray(injection.files)) {
+          const text = await this.host.readFile(id, file)
+          if (text === null) throw new Error(`Could not load file: '${file}'.`)
+          sources.push(text)
+        }
+        const result = await this.host.exec({
+          extensionId: id,
+          tabId: tab.id,
+          kind: 'js',
+          payload: { world },
+          code: sources.join('\n;\n'),
+          funcSource: null,
+          args: null
+        })
+        return [{ frameId: 0, documentId: '', result }]
+      }
+      case 'insertCSS':
+      case 'removeCSS': {
+        const tab = resolveTab()
+        const remove = method === 'removeCSS'
+        if (typeof injection.css === 'string') {
+          await this.host.exec({
+            extensionId: id,
+            tabId: tab.id,
+            kind: 'css',
+            payload: { id: injection.css, code: injection.css, remove },
+            code: null,
+            funcSource: null,
+            args: null
+          })
+          return undefined
+        }
+        for (const file of asStringArray(injection.files)) {
+          const text = remove ? '' : await this.host.readFile(id, file)
+          if (!remove && text === null) throw new Error(`Could not load file: '${file}'.`)
+          await this.host.exec({
+            extensionId: id,
+            tabId: tab.id,
+            kind: 'css',
+            payload: { id: file, code: text ?? '', remove },
+            code: null,
+            funcSource: null,
+            args: null
+          })
+        }
+        return undefined
+      }
+      case 'registerContentScripts':
+        return this.register(id, args[0], 'ISOLATED', (s) => s.world !== 'USER_SCRIPT')
+      case 'getRegisteredContentScripts': {
+        const filter = asStringArray(asRecord(args[0]).ids)
+        return this.host
+          .registered(id)
+          .filter((s) => s.world !== 'USER_SCRIPT')
+          .filter((s) => filter.length === 0 || filter.includes(s.id))
+          .map(registeredToChrome)
+      }
+      case 'unregisterContentScripts':
+        return this.unregister(id, args[0], (s) => s.world !== 'USER_SCRIPT')
+      case 'updateContentScripts':
+        return this.update(id, args[0], (s) => s.world !== 'USER_SCRIPT')
+    }
+    throw new Error(`chrome.scripting.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  /**
+   * `chrome.userScripts`: registrations live next to the content scripts, in the `USER_SCRIPT`
+   * world (their own unit and, with `configureWorld({ messaging: true })`, a messaging-only
+   * `chrome`); `js` entries are `{ file }` / `{ code }` objects, only files are injected here.
+   */
+  private async userScriptsCall(
+    ext: AttachedExtension,
+    method: string,
+    args: unknown[]
+  ): Promise<unknown> {
+    const id = ext.record.id
+    const isUser = (s: RegisteredContentScript): boolean => s.world === 'USER_SCRIPT'
+    const fromUserScript = (raw: unknown): Record<string, unknown> => {
+      const script = asRecord(raw)
+      const js = Array.isArray(script.js) ? script.js.map((j) => asRecord(j).file) : []
+      return { ...script, js: asStringArray(js), world: script.world === 'MAIN' ? 'MAIN' : 'USER_SCRIPT' }
+    }
+    switch (method) {
+      case 'register':
+        return this.register(
+          id,
+          (Array.isArray(args[0]) ? args[0] : []).map(fromUserScript),
+          'USER_SCRIPT',
+          isUser
+        )
+      case 'getScripts': {
+        const filter = asStringArray(asRecord(args[0]).ids)
+        return this.host
+          .registered(id)
+          .filter(isUser)
+          .filter((s) => filter.length === 0 || filter.includes(s.id))
+          .map((s) => ({ ...registeredToChrome(s), js: s.js.map((file) => ({ file })) }))
+      }
+      case 'unregister':
+        return this.unregister(id, args[0], isUser)
+      case 'update':
+        return this.update(id, (Array.isArray(args[0]) ? args[0] : []).map(fromUserScript), isUser)
+      case 'configureWorld': {
+        const properties = asRecord(args[0])
+        await this.host.setUserScriptMessaging(id, properties.messaging === true)
+        return undefined
+      }
+      case 'getWorldConfigurations':
+        return [{ messaging: this.host.userScriptMessaging(id) }]
+      case 'resetWorldConfiguration':
+        await this.host.setUserScriptMessaging(id, false)
+        return undefined
+    }
+    throw new Error(`chrome.userScripts.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  private async register(
+    id: string,
+    raw: unknown,
+    defaultWorld: ScriptWorld,
+    mine: (script: RegisteredContentScript) => boolean
+  ): Promise<undefined> {
+    const list = [...this.host.registered(id)]
+    for (const entry of Array.isArray(raw) ? raw : []) {
+      const script = registeredFrom(asRecord(entry), defaultWorld)
+      if (!script.id) throw new Error("Script's ID must not be empty")
+      if (list.some((s) => mine(s) && s.id === script.id))
+        throw new Error(`Duplicate script ID '${script.id}'`)
+      list.push(script)
+    }
+    await this.host.setRegistered(id, list)
+    return undefined
+  }
+
+  private async unregister(
+    id: string,
+    raw: unknown,
+    mine: (script: RegisteredContentScript) => boolean
+  ): Promise<undefined> {
+    const filter = asStringArray(asRecord(raw).ids)
+    // Chrome: no filter unregisters every script of the API's own kind.
+    const keep = this.host
+      .registered(id)
+      .filter((s) => !mine(s) || (filter.length > 0 && !filter.includes(s.id)))
+    await this.host.setRegistered(id, keep)
+    return undefined
+  }
+
+  private async update(
+    id: string,
+    raw: unknown,
+    mine: (script: RegisteredContentScript) => boolean
+  ): Promise<undefined> {
+    const list = [...this.host.registered(id)]
+    for (const entry of Array.isArray(raw) ? raw : []) {
+      const patch = asRecord(entry)
+      const index = list.findIndex((s) => mine(s) && s.id === patch.id)
+      if (index === -1) throw new Error(`Script with ID '${String(patch.id)}' does not exist`)
+      const current = list[index]
+      list[index] = registeredFrom({ ...registeredToChrome(current), ...patch }, current.world)
+    }
+    await this.host.setRegistered(id, list)
+    return undefined
+  }
+
+  // --- runtime ---------------------------------------------------------------
+
+  private async runtimeCall(ext: AttachedExtension, method: string): Promise<unknown> {
+    const id = ext.record.id
+    switch (method) {
+      case 'openOptionsPage':
+        if (!ext.manifest.options) throw new Error('Could not create an options page.')
+        this.host.openOptions(id)
+        return undefined
+      case 'reload':
+        await this.host.reload(id)
+        return undefined
+      case 'getContexts':
+        return this.host.router.of(id).map((e) => ({
+          contextId: e.id,
+          contextType: contextTypeOf(e.context),
+          documentId: e.id,
+          documentOrigin: e.url ? safeOrigin(e.url) : '',
+          documentUrl: e.url,
+          frameId: e.frameId,
+          incognito: false,
+          tabId: e.tabId ? this.tabs.chromeIdFor(e.tabId) : -1,
+          windowId: 1
+        }))
+    }
+    throw new Error(`chrome.runtime.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  // --- declarativeNetRequest ---------------------------------------------------
+
+  private async dnrCall(ext: AttachedExtension, method: string, args: unknown[]): Promise<unknown> {
+    const id = ext.record.id
+    const manifest = ext.manifest
+    const origin = extensionUrl(id, '').replace(/\/$/, '')
+    const options = asRecord(args[0])
+    const rules = this.host.rules(id)
+    const defaults = (): string[] => manifest.rulesets.filter((r) => r.enabled).map((r) => r.id)
+    switch (method) {
+      case 'updateDynamicRules':
+      case 'updateSessionRules': {
+        const dynamic = method === 'updateDynamicRules'
+        const current = dynamic ? rules.dynamic : rules.session
+        const removeIds = new Set(
+          (Array.isArray(options.removeRuleIds) ? options.removeRuleIds : []).map(Number)
+        )
+        const added = normalizeRuleset(options.addRules ?? [], origin)
+        const next = [...current.filter((r) => !removeIds.has(r.id)), ...added]
+        await this.host.setRules(id, dynamic ? { ...rules, dynamic: next } : { ...rules, session: next })
+        return undefined
+      }
+      case 'getDynamicRules':
+        return rules.dynamic.map(ruleToChrome)
+      case 'getSessionRules':
+        return rules.session.map(ruleToChrome)
+      case 'updateEnabledRulesets': {
+        const enabled = new Set(rules.enabledRulesets ?? defaults())
+        for (const rid of asStringArray(options.disableRulesetIds)) enabled.delete(rid)
+        for (const rid of asStringArray(options.enableRulesetIds)) enabled.add(rid)
+        await this.host.setRules(id, { ...rules, enabledRulesets: [...enabled] })
+        return undefined
+      }
+      case 'getEnabledRulesets':
+        return rules.enabledRulesets ?? defaults()
+      case 'updateStaticRules':
+        // Per-rule disabling inside a static ruleset: accepted, not applied until W2-3's engine.
+        return undefined
+      case 'getDisabledRuleIds':
+        return []
+      case 'getMatchedRules':
+        return { rulesMatchedInfo: [] }
+      case 'getAvailableStaticRuleCount':
+        return 30000
+      case 'isRegexSupported':
+        return { isSupported: true }
+      case 'setExtensionActionOptions':
+        return undefined
+    }
+    throw new Error(`chrome.declarativeNetRequest.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  // --- notifications / contextMenus / webNavigation ----------------------------
+
+  private notificationsCall(method: string, args: unknown[]): unknown {
+    switch (method) {
+      case 'create': {
+        const [first, second] = args
+        const id = typeof first === 'string' ? first : `n${Date.now()}`
+        const options = asRecord(typeof first === 'string' ? second : first)
+        const text = [options.title, options.message]
+          .filter((v) => typeof v === 'string' && v)
+          .join(': ')
+        if (text) this.host.browser.toast(text, 'info', this.host.window())
+        return id
+      }
+      case 'update':
+        return false
+      case 'clear':
+        return true
+      case 'getAll':
+        return {}
+    }
+    throw new Error(`chrome.notifications.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  private contextMenusCall(id: string, method: string, args: unknown[]): unknown {
+    let menus = this.contextMenus.get(id)
+    if (!menus) {
+      menus = new Map()
+      this.contextMenus.set(id, menus)
+    }
+    switch (method) {
+      case 'create': {
+        const props = asRecord(args[0])
+        const menuId = String(props.id ?? menus.size + 1)
+        menus.set(menuId, props)
+        return menuId
+      }
+      case 'update': {
+        const menuId = String(args[0])
+        const existing = menus.get(menuId)
+        if (!existing) throw new Error(`Cannot find menu item with id ${menuId}`)
+        menus.set(menuId, { ...existing, ...asRecord(args[1]) })
+        return undefined
+      }
+      case 'remove':
+        menus.delete(String(args[0]))
+        return undefined
+      case 'removeAll':
+        menus.clear()
+        return undefined
+    }
+    throw new Error(`chrome.contextMenus.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  private webNavigationCall(id: string, method: string, args: unknown[]): unknown {
+    const details = asRecord(args[0])
+    const frames = (tabId: number): Array<Record<string, unknown>> => {
+      const coreId = this.tabs.coreIdFor(tabId)
+      return this.host.router
+        .of(id, 'content')
+        .filter((e) => e.tabId === coreId)
+        .map((e) => ({
+          frameId: e.frameId,
+          parentFrameId: e.frameId === 0 ? -1 : 0,
+          url: e.url,
+          documentId: e.id,
+          errorOccurred: false,
+          processId: 0
+        }))
+    }
+    switch (method) {
+      case 'getFrame':
+        return (
+          frames(Number(details.tabId)).find((f) => f.frameId === Number(details.frameId ?? 0)) ??
+          null
+        )
+      case 'getAllFrames':
+        return frames(Number(details.tabId))
+    }
+    throw new Error(`chrome.webNavigation.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  // --- cookies / history / bookmarks / permissions / management ---------------
+
+  private async cookiesCall(method: string, args: unknown[]): Promise<unknown> {
+    const details = asRecord(args[0])
+    const url = typeof details.url === 'string' ? details.url : ''
+    switch (method) {
+      case 'get':
+      case 'getAll': {
+        if (!url)
+          throw new Error('A url is required (Zenium for Android reads cookies by URL only).')
+        const header = await this.host.cookieHeader(url)
+        const domain = safeHost(url)
+        const cookies = (header ?? '')
+          .split(';')
+          .map((part) => part.trim())
+          .filter(Boolean)
+          .map((part) => {
+            const eq = part.indexOf('=')
+            return {
+              name: eq === -1 ? part : part.slice(0, eq),
+              value: eq === -1 ? '' : part.slice(eq + 1),
+              domain,
+              hostOnly: true,
+              path: '/',
+              secure: url.startsWith('https:'),
+              httpOnly: false,
+              sameSite: 'unspecified',
+              session: true,
+              storeId: '0'
+            }
+          })
+        if (method === 'getAll')
+          return cookies.filter((c) => details.name === undefined || c.name === details.name)
+        return cookies.find((c) => c.name === details.name) ?? null
+      }
+      case 'set': {
+        if (!url) throw new Error('A url is required.')
+        const parts = [`${String(details.name ?? '')}=${String(details.value ?? '')}`]
+        if (typeof details.path === 'string') parts.push(`Path=${details.path}`)
+        if (typeof details.domain === 'string') parts.push(`Domain=${details.domain}`)
+        if (details.secure) parts.push('Secure')
+        if (typeof details.expirationDate === 'number')
+          parts.push(`Expires=${new Date(details.expirationDate * 1000).toUTCString()}`)
+        await this.host.setCookie(url, parts.join('; '))
+        return {
+          name: details.name,
+          value: details.value,
+          domain: safeHost(url),
+          path: details.path ?? '/'
+        }
+      }
+      case 'remove':
+        await this.host.setCookie(url, `${String(details.name ?? '')}=; Max-Age=0`)
+        return { url, name: details.name, storeId: '0' }
+    }
+    throw new Error(`chrome.cookies.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  private historyCall(method: string, args: unknown[]): unknown {
+    const history = this.host.browser.history
+    const details = asRecord(args[0])
+    switch (method) {
+      case 'search': {
+        const text = String(details.text ?? '')
+        const max = asNumber(details.maxResults) ?? 100
+        const entries = text ? history.search(text, max) : history.recent(max)
+        return entries.map((e, i) => ({
+          id: String(i),
+          url: e.url,
+          title: e.title,
+          lastVisitTime: e.lastVisit,
+          visitCount: e.visitCount,
+          typedCount: 0
+        }))
+      }
+      case 'addUrl':
+        history.visit(String(details.url ?? ''), String(details.title ?? ''), null)
+        return undefined
+      case 'deleteUrl':
+        history.delete(String(details.url ?? ''))
+        return undefined
+      case 'deleteAll':
+        history.clear()
+        return undefined
+    }
+    throw new Error(`chrome.history.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  /** Over the core's Chrome-shaped bookmark tree (three roots with fixed ids, `dateAdded`, folders). */
+  private bookmarksCall(method: string, args: unknown[]): unknown {
+    const bookmarks = this.host.browser.bookmarks
+    const node = (b: BookmarkTreeNode): Record<string, unknown> => {
+      const out: Record<string, unknown> = {
+        id: b.id,
+        parentId: b.parentId ?? '0',
+        index: b.index,
+        title: b.title,
+        dateAdded: b.dateAdded
+      }
+      if (b.type === 'url') out.url = b.url
+      else {
+        if (b.dateGroupModified !== undefined) out.dateGroupModified = b.dateGroupModified
+        if (b.children) out.children = b.children.map(node)
+      }
+      return out
+    }
+    const root = (): Record<string, unknown> => ({
+      id: '0',
+      title: '',
+      children: bookmarks.getTree().map(node)
+    })
+    const ids = (raw: unknown): string[] => (Array.isArray(raw) ? raw : [raw]).map(String)
+    switch (method) {
+      case 'getTree':
+        return [root()]
+      case 'getSubTree': {
+        const id = String(args[0])
+        if (id === '0') return [root()]
+        const sub = bookmarks.getSubTree(id)
+        if (!sub) throw new Error("Can't find bookmark for id.")
+        return [node(sub)]
+      }
+      case 'getChildren':
+        return String(args[0]) === '0'
+          ? bookmarks.roots().map(node)
+          : bookmarks.getChildren(String(args[0])).map(node)
+      case 'getRecent':
+        return bookmarks.recent(asNumber(args[0]) ?? 20).map(node)
+      case 'get':
+        return ids(args[0]).map((id) => {
+          const found = bookmarks.get(id)
+          if (!found) throw new Error("Can't find bookmark for id.")
+          return node(found)
+        })
+      case 'search': {
+        const query = typeof args[0] === 'string' ? args[0] : String(asRecord(args[0]).query ?? '')
+        return bookmarks.search(query, 100).map(node)
+      }
+      case 'create': {
+        const props = asRecord(args[0])
+        const created = bookmarks.create({
+          parentId: typeof props.parentId === 'string' ? props.parentId : undefined,
+          index: asNumber(props.index) ?? undefined,
+          title: String(props.title ?? props.url ?? ''),
+          url: typeof props.url === 'string' ? props.url : undefined,
+          type: typeof props.url === 'string' ? 'url' : 'folder'
+        })
+        if (!created) throw new Error('Could not create bookmark.')
+        return node(created)
+      }
+      case 'update': {
+        const changes = asRecord(args[1])
+        const updated = bookmarks.update(String(args[0]), {
+          title: typeof changes.title === 'string' ? changes.title : undefined,
+          url: typeof changes.url === 'string' ? changes.url : undefined
+        })
+        if (!updated) throw new Error("Can't find bookmark for id.")
+        return node(updated)
+      }
+      case 'move': {
+        const destination = asRecord(args[1])
+        const current = bookmarks.get(String(args[0]))
+        if (!current) throw new Error("Can't find bookmark for id.")
+        const parentId =
+          typeof destination.parentId === 'string' ? destination.parentId : (current.parentId ?? '')
+        if (!bookmarks.move([current.id], parentId, asNumber(destination.index) ?? undefined))
+          throw new Error('Could not move bookmark.')
+        return node(bookmarks.get(current.id) ?? current)
+      }
+      case 'remove':
+        if (!bookmarks.remove(String(args[0]))) throw new Error("Can't find bookmark for id.")
+        return undefined
+      case 'removeTree':
+        if (!bookmarks.removeTree(String(args[0]))) throw new Error("Can't find bookmark for id.")
+        return undefined
+    }
+    throw new Error(`chrome.bookmarks.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  private permissionsCall(manifest: RuntimeManifest, method: string, args: unknown[]): unknown {
+    const wanted = asRecord(args[0])
+    const permissions = asStringArray(wanted.permissions)
+    const origins = asStringArray(wanted.origins)
+    const has = (): boolean =>
+      permissions.every((p) => manifest.permissions.includes(p)) &&
+      origins.every(
+        (o) =>
+          manifest.hostPermissions.includes(o) || manifest.hostPermissions.includes('<all_urls>')
+      )
+    switch (method) {
+      case 'contains':
+        return has()
+      case 'getAll':
+        return { permissions: manifest.permissions, origins: manifest.hostPermissions }
+      case 'request':
+        // Optional permissions declared in the manifest are granted without a prompt (W2-2 asks).
+        return (
+          permissions.every(
+            (p) => manifest.permissions.includes(p) || manifest.optionalPermissions.includes(p)
+          ) &&
+          origins.every(
+            (o) =>
+              manifest.hostPermissions.includes(o) || manifest.optionalHostPermissions.includes(o)
+          )
+        )
+      case 'remove':
+        return false
+    }
+    throw new Error(`chrome.permissions.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  private managementCall(ext: AttachedExtension, method: string, args: unknown[]): unknown {
+    const info = (e: AttachedExtension): Record<string, unknown> => ({
+      id: e.record.id,
+      name: e.manifest.name,
+      shortName: e.manifest.name,
+      description: e.manifest.description,
+      version: e.manifest.version,
+      mayDisable: true,
+      enabled: this.host.isEnabled(e.record.id),
+      isApp: false,
+      type: 'extension',
+      installType: e.record.source === 'unpacked' ? 'development' : 'normal',
+      permissions: e.manifest.permissions,
+      hostPermissions: e.manifest.hostPermissions,
+      icons: Object.entries(e.manifest.icons).map(([size, path]) => ({
+        size: Number(size),
+        url: extensionUrl(e.record.id, path)
+      }))
+    })
+    switch (method) {
+      case 'getSelf':
+        return info(ext)
+      case 'getAll':
+        return this.host.allAttached().map(info)
+      case 'get': {
+        const target = this.host.attached(String(args[0]))
+        if (!target) throw new Error(`Failed to find extension with id ${String(args[0])}.`)
+        return info(target)
+      }
+      case 'uninstallSelf':
+        void this.host.uninstall(ext.record.id)
+        return undefined
+    }
+    throw new Error(`chrome.management.${method} ${NOT_IMPLEMENTED}`)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function colorString(value: unknown): string | null {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value) && value.length >= 3) {
+    const [r, g, b, a] = value.map(Number)
+    return `rgba(${r}, ${g}, ${b}, ${a === undefined ? 1 : a / 255})`
+  }
+  return null
+}
+
+function colorArray(value: string): [number, number, number, number] {
+  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(value)
+  if (hex) return [parseInt(hex[1], 16), parseInt(hex[2], 16), parseInt(hex[3], 16), 255]
+  const rgba = /^rgba?\(([^)]+)\)$/.exec(value)
+  if (rgba) {
+    const [r, g, b, a] = rgba[1].split(',').map((s) => Number(s.trim()))
+    return [r || 0, g || 0, b || 0, a === undefined ? 255 : Math.round(a * 255)]
+  }
+  return [0, 0, 0, 255]
+}
+
+function safeOrigin(url: string): string {
+  try {
+    return new URL(url).origin
+  } catch {
+    return ''
+  }
+}
+
+function safeHost(url: string): string {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return ''
+  }
+}
+
+export function contextTypeOf(context: EngineContextKind): string {
+  switch (context) {
+    case 'background':
+      return 'BACKGROUND'
+    case 'popup':
+      return 'POPUP'
+    case 'offscreen':
+      return 'OFFSCREEN_DOCUMENT'
+    default:
+      return 'TAB'
+  }
+}
+
+/** A `scripting.registerContentScripts` / `userScripts.register` entry, normalised. */
+export function registeredFrom(
+  raw: Record<string, unknown>,
+  defaultWorld: ScriptWorld
+): RegisteredContentScript {
+  const runAt = raw.runAt
+  const world: ScriptWorld =
+    raw.world === 'MAIN'
+      ? 'MAIN'
+      : raw.world === 'USER_SCRIPT' || defaultWorld === 'USER_SCRIPT'
+        ? 'USER_SCRIPT'
+        : 'ISOLATED'
+  return {
+    id: String(raw.id ?? ''),
+    persistAcrossSessions: raw.persistAcrossSessions !== false,
+    matches: asStringArray(raw.matches),
+    excludeMatches: asStringArray(raw.excludeMatches),
+    includeGlobs: asStringArray(raw.includeGlobs),
+    excludeGlobs: asStringArray(raw.excludeGlobs),
+    js: asStringArray(raw.js),
+    css: asStringArray(raw.css),
+    runAt: (runAt === 'document_start' || runAt === 'document_end'
+      ? runAt
+      : 'document_idle') as RunAt,
+    allFrames: Boolean(raw.allFrames),
+    matchAboutBlank: Boolean(raw.matchAboutBlank),
+    matchOriginAsFallback: Boolean(raw.matchOriginAsFallback),
+    world
+  }
+}
+
+export function registeredToChrome(script: RegisteredContentScript): Record<string, unknown> {
+  return {
+    id: script.id,
+    matches: script.matches,
+    excludeMatches: script.excludeMatches,
+    js: script.js,
+    css: script.css,
+    runAt: script.runAt,
+    allFrames: script.allFrames,
+    matchOriginAsFallback: script.matchOriginAsFallback,
+    world: script.world,
+    persistAcrossSessions: script.persistAcrossSessions
+  }
+}
+
+/** The normalised rule back in Chrome's shape (what `getDynamicRules` returns). */
+export function ruleToChrome(rule: NetRule): Record<string, unknown> {
+  const condition: Record<string, unknown> = {}
+  if (rule.urlFilter !== null) condition.urlFilter = rule.urlFilter
+  if (rule.regexFilter !== null) condition.regexFilter = rule.regexFilter
+  if (rule.caseSensitive) condition.isUrlFilterCaseSensitive = true
+  if (rule.requestDomains.length) condition.requestDomains = rule.requestDomains
+  if (rule.excludedRequestDomains.length)
+    condition.excludedRequestDomains = rule.excludedRequestDomains
+  if (rule.initiatorDomains.length) condition.initiatorDomains = rule.initiatorDomains
+  if (rule.excludedInitiatorDomains.length)
+    condition.excludedInitiatorDomains = rule.excludedInitiatorDomains
+  if (rule.resourceTypes.length) condition.resourceTypes = rule.resourceTypes
+  if (rule.excludedResourceTypes.length)
+    condition.excludedResourceTypes = rule.excludedResourceTypes
+  if (rule.requestMethods.length) condition.requestMethods = rule.requestMethods
+  if (rule.excludedRequestMethods.length)
+    condition.excludedRequestMethods = rule.excludedRequestMethods
+  if (rule.domainType) condition.domainType = rule.domainType
+  const action: Record<string, unknown> = { type: rule.action }
+  if (rule.action === 'redirect' && rule.redirectUrl) action.redirect = { url: rule.redirectUrl }
+  return { id: rule.id, priority: rule.priority, action, condition }
+}
