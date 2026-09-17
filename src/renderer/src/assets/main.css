@@ -702,6 +702,149 @@
   }
 }
 
+@layer components {
+  /*
+   * The draggable bottom sheet (`BottomSheet`). Height and transform are written per frame by
+   * the sheet's spring; the top edge carries a hairline of light instead of a border and the
+   * depth comes from the shadow. Radii nest concentrically: sheet 28, groups 16, rows 12.
+   */
+  .zen-sheet-scrim {
+    background: #000;
+    touch-action: none;
+    will-change: opacity;
+  }
+  .zen-sheet {
+    height: 0;
+    background: var(--zen-panel-bg);
+    backdrop-filter: blur(24px) saturate(1.2);
+    border-radius: 28px 28px 0 0;
+    corner-shape: var(--zen-corner);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.4),
+      var(--zen-shadow);
+    touch-action: none;
+    will-change: transform;
+    transform: translate3d(0, 0, 0);
+  }
+  :root[data-theme='dark'] .zen-sheet {
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.08),
+      var(--zen-shadow);
+  }
+  .zen-sheet-handle-hit {
+    display: flex;
+    width: 100%;
+    height: 22px;
+    align-items: center;
+    justify-content: center;
+  }
+  .zen-sheet-handle {
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgb(var(--zen-fg-rgb) / 0.22);
+    transition: background 160ms var(--zen-ease);
+  }
+  .zen-sheet[data-dragging='true'] .zen-sheet-handle {
+    background: rgb(var(--zen-fg-rgb) / 0.4);
+  }
+  /* The body scrolls on its own only while the sheet rests expanded; otherwise a pan is a drag. */
+  .zen-sheet-scroll {
+    touch-action: pan-y;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+  }
+  .zen-sheet-scroll::-webkit-scrollbar {
+    display: none;
+  }
+  .zen-sheet[data-locked='true'] .zen-sheet-scroll {
+    touch-action: none;
+  }
+  .zen-sheet-group {
+    padding: 4px;
+    border-radius: 16px;
+    corner-shape: var(--zen-corner);
+    background: rgb(var(--zen-fg-rgb) / 0.045);
+  }
+  .zen-sheet-item {
+    display: flex;
+    width: 100%;
+    height: 48px;
+    align-items: center;
+    gap: 12px;
+    padding: 0 14px;
+    border-radius: 12px;
+    corner-shape: var(--zen-corner);
+    text-align: left;
+    font-size: 15px;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-sheet-item:active:not(:disabled) {
+    background: var(--zen-element-bg-hover);
+  }
+  .zen-sheet-item:disabled {
+    opacity: 0.4;
+  }
+  /* A row under a finger that is dragging the sheet is not being pressed. */
+  .zen-sheet[data-dragging='true'] .zen-sheet-item:active {
+    background: transparent;
+  }
+}
+
+/*
+ * Fading scroll edges (`useFadeEdges`). The scroll container is masked, so content dissolves
+ * into whatever is behind it – no gradient overlay, no assumption about the background. The
+ * depth of each edge is a registered length: 0 at an edge with nothing past it, the fade size
+ * once there is, eased between the two.
+ */
+@property --zen-fade-start {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@property --zen-fade-end {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+[data-fade-axis] {
+  transition:
+    --zen-fade-start 180ms var(--zen-ease),
+    --zen-fade-end 180ms var(--zen-ease);
+}
+[data-fade-axis='y'] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+}
+[data-fade-axis='x'] {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+}
+
 /* Mobile hosts: keep the chrome out of the status bar, cutouts, gesture bar and keyboard. */
 .zen-window {
   padding: var(--zen-inset-top) var(--zen-inset-right) var(--zen-inset-bottom) var(--zen-inset-left);

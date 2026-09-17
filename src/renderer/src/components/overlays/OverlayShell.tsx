@@ -2,6 +2,7 @@ import { X } from 'lucide-react'
 import type { ReactNode, JSX } from 'react'
 import { useRef } from 'react'
 import { useBackDismissal } from '@renderer/lib/back'
+import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { useViewport } from '@renderer/lib/formFactor'
 import { closeOverlay } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -37,6 +38,7 @@ export function OverlayShell({
     },
     dismissed: () => closeOverlay()
   })
+  const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
   return (
     <div className="absolute inset-0 z-30 flex" onMouseDown={() => closeOverlay()}>
       <div
@@ -67,7 +69,9 @@ export function OverlayShell({
             <X className="h-4 w-4" />
           </button>
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+        <div ref={fade} className="min-h-0 flex-1 overflow-y-auto">
+          {children}
+        </div>
       </div>
     </div>
   )

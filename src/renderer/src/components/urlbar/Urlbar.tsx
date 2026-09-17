@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight, Bookmark, Clock, Globe, Layers, Search, Terminal } from 'lucide-react'
 import type { Rect, Suggestion, UIState } from '@shared/types'
 import { ERROR_URL_PREFIX, BLANK_URL } from '@shared/url'
+import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
 import { closeUrlbar, type UrlbarState } from '@renderer/lib/ui'
@@ -40,6 +41,7 @@ export function Urlbar({ state, urlbar, area }: Props): JSX.Element {
   const [results, setResults] = useState<Suggestion[]>([])
   const [selected, setSelected] = useState(-1)
   const inputRef = useRef<HTMLInputElement>(null)
+  const fadeResults = useFadeEdges<HTMLUListElement>({ axis: 'y' })
   const requestSeq = useRef(0)
   const lastTyped = useRef(text)
   const engine =
@@ -255,7 +257,10 @@ export function Urlbar({ state, urlbar, area }: Props): JSX.Element {
           )}
         </div>
         {results.length > 0 && (
-          <ul className="min-h-0 max-h-[420px] flex-1 overflow-y-auto border-t border-[var(--zen-border)] p-1.5">
+          <ul
+            ref={fadeResults}
+            className="min-h-0 max-h-[420px] flex-1 overflow-y-auto border-t border-[var(--zen-border)] p-1.5"
+          >
             {results.map((item, i) => (
               <SuggestionRow
                 key={item.id}
