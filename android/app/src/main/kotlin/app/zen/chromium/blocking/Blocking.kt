@@ -76,7 +76,17 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     @Synchronized
     private fun scheduleRebuild(delayMs: Long) {
         scheduled?.cancel(false)
-        scheduled = runCatching { builder.schedule({ rebuild() }, delayMs, TimeUnit.MILLISECONDS) }.getOrNull()
+        scheduled = runCatching { builder.schedule({ rebuildLogged() }, delayMs, TimeUnit.MILLISECONDS) }.getOrNull()
+    }
+
+    /** The executor would swallow a failed build; log it and keep the previous snapshot. */
+    private fun rebuildLogged() {
+        try {
+            rebuild()
+            Log.i(TAG, "snapshot: ${snapshot.filterCount} network filters from ${snapshot.setCount} sets in $lastBuildMs ms")
+        } catch (e: Throwable) {
+            Log.e(TAG, "rule-set snapshot not rebuilt", e)
+        }
     }
 
     /** Read the index and every enabled set's text; called on the builder thread. */
@@ -205,7 +215,9 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             done(null)
             return
         }
+        val id = entry.optString("id")
         storage.execute {
+            val started = SystemClock.elapsedRealtime()
             val result = runCatching {
                 val text = assets.open("blocking/${entry.optString("file")}").use { input ->
                     GZIPInputStream(input).bufferedReader().readText()
@@ -213,11 +225,12 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                 val document = JSONObject(set.toString()).put("filterText", text)
                 storage.writeSync(file, document.toString())
                 JSONObject()
-                    .put("id", entry.optString("id"))
+                    .put("id", id)
                     .put("version", entry.opt("version") ?: JSONObject.NULL)
                     .put("builtAt", manifest.optLong("builtAt", 0L))
                     .put("filterCount", entry.optInt("filterCount"))
-            }.getOrNull()
+            }.onFailure { e -> Log.w(TAG, "bundled list $id not installed", e) }.getOrNull()
+            if (result != null) Log.i(TAG, "bundled list $id installed in ${SystemClock.elapsedRealtime() - started} ms")
             done(result)
         }
     }
