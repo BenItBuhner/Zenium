@@ -1,6 +1,6 @@
 import type { CSSProperties, JSX } from 'react'
 import { useEffect, useRef } from 'react'
-import { Globe, Lock, Search } from 'lucide-react'
+import { Globe, Languages, Lock, Search } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
@@ -17,6 +17,7 @@ import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { barFade } from '@renderer/lib/motion/recede'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
+import { barStateOf, isTranslating, translateStateOf } from '@renderer/lib/translate'
 import {
   closeBarEditor,
   closeTabsMenu,
@@ -131,8 +132,13 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     edge,
     onTap: (e) => {
       const icon = (e.target as HTMLElement).closest('[data-site-info]')
+      const translate = (e.target as HTMLElement).closest('[data-translate]')
       if (overviewIsOpen()) closeOverview()
-      else if (tab && icon) {
+      else if (tab && translate) {
+        // The translation glyph at the end of the pill raises the bar, or puts it away.
+        if (barStateOf(state, tab.id)) run('translate.dismiss', { tabId: tab.id })
+        else run('translate.offer', { tabId: tab.id })
+      } else if (tab && icon) {
         // The site icon at the start of the pill opens the site information instead.
         const r = icon.getBoundingClientRect()
         void openSiteInfo(tab, { x: r.left, y: r.top, width: r.width, height: r.height })
@@ -397,6 +403,10 @@ export function PillContent({
   // An internal page (Settings): its glyph in the favicon slot and the page's name, no lock and
   // no site-information chip – there is no site (v2 §10.1); the registry says which glyph.
   const page = shown ? internalPageOf(shown.url) !== null : false
+  // Translation: the glyph is there once the page has been offered or translated (in the accent
+  // while the translation shows), as on the desktop pill at rest; other pages keep the pill clear.
+  const translation = shown && /^https?:/.test(shown.url) ? translateStateOf(state, shown.id) : null
+  const translateBarUp = shown ? barStateOf(state, shown.id) !== null : false
   const Control = interactive ? 'button' : 'span'
   const controlProps = interactive ? { type: 'button' as const } : {}
   return (
@@ -448,6 +458,25 @@ export function PillContent({
         >
           <Lock className="h-3.5 w-3.5 opacity-50" />
         </PillChip>
+      )}
+      {translation && (
+        <Control
+          {...controlProps}
+          aria-label={
+            interactive
+              ? translateBarUp
+                ? 'Hide the translation bar'
+                : 'Translate this page'
+              : undefined
+          }
+          data-translate
+          className={cn(
+            '-mx-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
+            isTranslating(translation) ? 'text-[var(--zen-accent)]' : 'opacity-50'
+          )}
+        >
+          <Languages className="h-3.5 w-3.5" />
+        </Control>
       )}
       {state.spaces.length > 1 && (
         <span className="max-w-[64px] shrink-0 truncate text-[11px] text-[var(--zen-muted)]">
