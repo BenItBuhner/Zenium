@@ -270,6 +270,7 @@ const DESKTOP_APP_MENU = [
   'History',
   'Recently Closed',
   'Downloads',
+  'Passwords',
   'Add-ons and Themes',
   '-',
   'Compact Mode',
@@ -366,6 +367,7 @@ describe('the app menu', () => {
       'Bookmarks > Export Bookmarks…',
       'History',
       'Downloads',
+      'Passwords',
       '-',
       'Change Theme…',
       'Zoom…',
@@ -459,6 +461,10 @@ describe('URL bar command suggestions', () => {
     expect(ids('memory', phone)).toEqual([])
     expect(ids('print', phone)).toEqual(['print'])
     expect(ids('print', { ...phone, capabilities: { ...ANDROID, print: false } })).toEqual([])
+    expect(ids('passwords', phone)).toEqual(['passwords'])
+    expect(ids('passwords', { ...phone, capabilities: { ...ANDROID, passwords: false } })).toEqual(
+      []
+    )
   })
 
   it('keep the phone-relevant commands', () => {
