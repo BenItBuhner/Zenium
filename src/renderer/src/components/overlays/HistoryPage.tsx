@@ -394,7 +394,7 @@ function VisitRow({
         </button>
       </span>
       <time
-        className="zen-history-soft zen-history-time w-12 shrink-0 text-right"
+        className="zen-history-soft zen-history-time w-[72px] shrink-0 text-right whitespace-nowrap"
         dateTime={new Date(visit.visitTime).toISOString()}
       >
         {timeFormat.format(visit.visitTime)}
@@ -462,6 +462,8 @@ function RecentlyClosed({ entries }: { entries: ClosedEntrySummary[] }): JSX.Ele
           }
           return (
             <li key={entry.id} className="zen-history-row group">
+              {/* Keeps the icons in line with the visit rows, which lead with a checkbox. */}
+              <span className="w-4 shrink-0" aria-hidden />
               {entry.kind === 'window' ? (
                 <AppWindow className="zen-history-soft h-4 w-4 shrink-0" aria-hidden />
               ) : (
@@ -492,7 +494,7 @@ function RecentlyClosed({ entries }: { entries: ClosedEntrySummary[] }): JSX.Ele
                 <RotateCcw className="h-4 w-4" aria-hidden />
               </button>
               <time
-                className="zen-history-soft zen-history-time w-12 shrink-0 text-right"
+                className="zen-history-soft zen-history-time w-[72px] shrink-0 text-right whitespace-nowrap"
                 dateTime={new Date(entry.closedAt).toISOString()}
               >
                 {timeFormat.format(entry.closedAt)}
