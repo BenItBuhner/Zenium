@@ -10,6 +10,8 @@ interface HostGlobal {
 }
 
 const STORAGE_PREFIX = 'zen-preview:'
+/** How long a reload takes to begin in this stand-in host (see `view.reload`). */
+const RELOAD_DELAY_MS = 3000
 
 /**
  * A stand-in for the Kotlin host so the Android chrome can run in an ordinary desktop browser
@@ -91,6 +93,15 @@ export function createPreviewBridge(): NativeBridge {
       frame.src = String(url)
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
     },
+    'view.reload': ({ tabId }) => {
+      const frame = views.get(String(tabId))
+      if (!frame) return
+      viewEvent(String(tabId), 'startLoading', null)
+      // Deliberately unhurried, like a reload over a slow connection: what the chrome shows while
+      // a page is loading (the pull-to-refresh disc spinning) stays up long enough to be looked at.
+      const url = frame.dataset.url
+      if (url) window.setTimeout(() => (frame.src = url), RELOAD_DELAY_MS)
+    },
     'view.loadHtml': ({ tabId, url, html }) => {
       const frame = views.get(String(tabId))
       if (!frame) return
@@ -111,6 +122,17 @@ export function createPreviewBridge(): NativeBridge {
       const frame = views.get(String(tabId))
       if (frame) frame.style.borderRadius = `${Number(radius)}px`
     },
+    // The page comes down off the frame's top edge by the pull's offset; like Kotlin, the bottom
+    // is clipped so the page never overlaps the chrome below the frame.
+    'view.setPullOffset': ({ tabId, offset }) => {
+      const frame = views.get(String(tabId))
+      if (!frame) return
+      const y = Math.max(0, Number(offset))
+      frame.style.transform = y > 0 ? `translate3d(0, ${y}px, 0)` : ''
+      frame.style.clipPath =
+        y > 0 ? `inset(0 0 ${y}px 0 round ${frame.style.borderRadius || '0px'})` : ''
+    },
+    'chrome.setPullToRefresh': () => undefined,
     'view.setVisible': ({ tabId, visible }) => {
       const frame = views.get(String(tabId))
       if (frame) frame.style.display = visible ? 'block' : 'none'

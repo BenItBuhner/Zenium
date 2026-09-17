@@ -4,10 +4,20 @@ import { describe, expect, it } from 'vitest'
 
 /**
  * The design-language v2 tokens live in one block of main.css (docs/design-language-v2-draft.md).
- * These tests pin the set so surfaces cannot fork their own copies, and check that the block is
- * definitions only until a surface is deliberately moved to v2.
+ * These tests pin the set so surfaces cannot fork their own copies, and check that nothing reads
+ * the tokens except the surfaces deliberately moved to v2, listed below.
  */
 const css = readFileSync(fileURLToPath(new URL('../../assets/main.css', import.meta.url)), 'utf8')
+
+/**
+ * Surfaces built on v2, each as the pair of markers that brackets its rules in main.css (the
+ * first is the start of its block, the second the first text after it). Add a surface here when
+ * it is moved to v2 on purpose; anything else reading a v2 token fails the last test.
+ */
+const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
+  // The pull-to-refresh disc (components/content/PullIndicator.tsx).
+  ['.zen-ptr-disc {', '.zen-space-strip {']
+]
 
 /** Custom-property names declared inside the first `selector {` block found after `from`. */
 function declared(selector: string, from = 0): Set<string> {
@@ -119,10 +129,18 @@ describe('design language v2 tokens', () => {
       expect(SURFACE, `${name} must not change per form factor`).not.toContain(name)
   })
 
-  it('is defined, not consumed: no rule outside the token block reads a v2 token yet', () => {
+  it('is read only by the surfaces deliberately moved to v2', () => {
     const blockEnd = css.indexOf("/* Zen clamps its primary colour's lightness")
     expect(blockEnd).toBeGreaterThan(lightStart)
-    const outside = css.slice(0, lightBlockStart) + css.slice(blockEnd)
+    let outside = css.slice(0, lightBlockStart) + css.slice(blockEnd)
+    for (const [start, end] of V2_SURFACES) {
+      const from = outside.indexOf(start)
+      const to = outside.indexOf(end, from)
+      expect(from, `v2 surface "${start}"`).toBeGreaterThanOrEqual(0)
+      expect(to, `end of v2 surface "${start}"`).toBeGreaterThan(from)
+      expect(outside.slice(from, to), `"${start}" reads v2 tokens`).toMatch(/var\(--v2-/)
+      outside = outside.slice(0, from) + outside.slice(to)
+    }
     expect(outside.match(/var\(--v2-/g) ?? []).toHaveLength(0)
     const inside = css.slice(lightBlockStart, blockEnd)
     // Inside: the ring and selection derive from the accent, and the shared focus-ring rule reads the ring.
