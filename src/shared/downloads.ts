@@ -9,16 +9,18 @@ import type { DownloadSettings, Settings } from './types'
 export const PARTIAL_SUFFIX = '.zeniumdownload'
 
 /**
- * `openPanelOnStart` keeps today's Firefox-style behaviour (the panel opens when a download
- * begins) until the toolbar indicators land; the UI change that ships one flips it to false.
+ * Chrome's defaults: a download animates the toolbar button (`openPanelOnStart` off; the
+ * Firefox-style panel-on-start is the switch's other position) and the bubble opens once the
+ * last transfer finishes. `alwaysShowButton` is the desktop toolbar's own key.
  */
 export const DEFAULT_DOWNLOAD_SETTINGS: DownloadSettings = {
   directory: null,
   askWhereToSave: false,
   notifyOnComplete: true,
-  openPanelOnStart: true,
+  openPanelOnStart: false,
   openPanelOnComplete: true,
-  autoOpenTypes: []
+  autoOpenTypes: [],
+  alwaysShowButton: false
 }
 
 /**
@@ -46,7 +48,9 @@ export function resolveDownloadSettings(
           .filter((e): e is string => typeof e === 'string')
           .map(normalizeExtension)
           .filter((e) => e !== '')
-      : [...d.autoOpenTypes]
+      : [...d.autoOpenTypes],
+    alwaysShowButton:
+      typeof r.alwaysShowButton === 'boolean' ? r.alwaysShowButton : d.alwaysShowButton
   }
 }
 

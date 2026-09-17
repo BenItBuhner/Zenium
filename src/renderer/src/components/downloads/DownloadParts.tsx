@@ -1,5 +1,6 @@
 import type { JSX, ReactNode } from 'react'
 import {
+  ExternalLink,
   File,
   FileArchive,
   FileAudio,
@@ -16,7 +17,8 @@ import {
   X,
   type LucideIcon
 } from 'lucide-react'
-import type { DownloadRecord } from '@shared/downloadsShell'
+import type { DownloadItem } from '@shared/types'
+import { canResumeDownload, canRetryDownload } from '@shared/downloadsShell'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
 import { downloadStatus, fileGlyphFor, isOnDisk, type FileGlyph } from '@renderer/lib/downloadsView'
 import { cn } from '@renderer/lib/utils'
@@ -24,8 +26,7 @@ import { cn } from '@renderer/lib/utils'
 /*
  * Pieces a download row is made of, shared by the bubble and the `zen://downloads` page: the
  * file-type glyph, the status line, the thin progress bar, the hover actions and the Keep /
- * Discard pair for flagged files. Controls whose engine command does not exist yet are not
- * rendered (`downloadsEngine` marks them `null`).
+ * Discard pair for flagged files, all on the engine's commands (PR #69).
  */
 
 const GLYPHS: Record<FileGlyph, LucideIcon> = {
@@ -40,8 +41,8 @@ const GLYPHS: Record<FileGlyph, LucideIcon> = {
 }
 
 /** The 16px file-type glyph, dimmed for records whose file is gone. */
-export function FileTypeGlyph({ item }: { item: DownloadRecord }): JSX.Element {
-  const Icon = GLYPHS[fileGlyphFor(item.filename, item.mimeType)]
+export function FileTypeGlyph({ item }: { item: DownloadItem }): JSX.Element {
+  const Icon = GLYPHS[fileGlyphFor(item.finalName || item.filename, item.mimeType)]
   const gone = item.state === 'cancelled' || item.state === 'interrupted'
   return (
     <span
@@ -58,7 +59,7 @@ export function StatusLine({
   item,
   suffix
 }: {
-  item: DownloadRecord
+  item: DownloadItem
   /** Trails the status after a separator (the page adds the source host). */
   suffix?: string
 }): JSX.Element {
@@ -81,7 +82,7 @@ export function StatusLine({
 }
 
 /** The 3px bar: the fill scales from the left; unknown totals sweep. */
-export function DownloadProgressBar({ item }: { item: DownloadRecord }): JSX.Element {
+export function DownloadProgressBar({ item }: { item: DownloadItem }): JSX.Element {
   const known = item.totalBytes > 0
   const value = known ? Math.min(1, item.receivedBytes / item.totalBytes) : 0
   return (
@@ -138,18 +139,22 @@ export function DlButton({
 function IconAction({
   title,
   icon: Icon,
-  onClick
+  onClick,
+  pressed
 }: {
   title: string
   icon: LucideIcon
   onClick: () => void
+  /** A toggle: rendered pressed while on. */
+  pressed?: boolean
 }): JSX.Element {
   return (
     <button
       type="button"
-      className="zen-toolbar-button"
+      className={cn('zen-toolbar-button', pressed && 'zen-dl-action-on')}
       title={title}
       aria-label={title}
+      aria-pressed={pressed}
       onClick={(e) => {
         e.stopPropagation()
         onClick()
@@ -161,26 +166,34 @@ function IconAction({
 }
 
 /**
- * The row's controls for its state: Pause / Resume and Cancel while in flight, Retry after a
- * failure (once the engine can restart transfers), Show in folder when the file exists, and
- * Remove from list for anything settled.
+ * The row's controls for its state: Pause / Resume, Cancel and "Open when done" while in
+ * flight, Resume for an interrupted transfer the server lets continue and Retry for the rest
+ * of the failed and cancelled ones, Show in folder when the file exists, and Remove from list
+ * for anything settled.
  */
-export function DownloadActions({ item }: { item: DownloadRecord }): JSX.Element {
+export function DownloadActions({ item }: { item: DownloadItem }): JSX.Element {
   const id = item.id
   const e = downloadsEngine
   const inFlight = item.state === 'progressing' || item.state === 'paused'
+  const resumable = canResumeDownload(item)
   return (
     <>
       {item.state === 'progressing' && (
         <IconAction title="Pause" icon={Pause} onClick={() => e.pause(id)} />
       )}
-      {item.state === 'paused' && (
-        <IconAction title="Resume" icon={Play} onClick={() => e.resume(id)} />
+      {resumable && <IconAction title="Resume" icon={Play} onClick={() => e.resume(id)} />}
+      {!resumable && canRetryDownload(item) && (
+        <IconAction title="Retry" icon={RotateCw} onClick={() => e.retry(id)} />
+      )}
+      {inFlight && (
+        <IconAction
+          title={item.openWhenDone ? 'Do not open when done' : 'Open when done'}
+          icon={ExternalLink}
+          pressed={item.openWhenDone}
+          onClick={() => e.setOpenWhenDone(id, !item.openWhenDone)}
+        />
       )}
       {inFlight && <IconAction title="Cancel" icon={X} onClick={() => e.cancel(id)} />}
-      {e.retry && (item.state === 'interrupted' || item.state === 'cancelled') && (
-        <IconAction title="Retry" icon={RotateCw} onClick={() => e.retry?.(id)} />
-      )}
       {isOnDisk(item) && (
         <IconAction title="Show in folder" icon={FolderOpen} onClick={() => e.showInFolder(id)} />
       )}
@@ -192,11 +205,11 @@ export function DownloadActions({ item }: { item: DownloadRecord }): JSX.Element
 }
 
 /** Keep / Discard for a file the engine flagged; Discard deletes it. */
-export function DangerActions({ item }: { item: DownloadRecord }): JSX.Element {
+export function DangerActions({ item }: { item: DownloadItem }): JSX.Element {
   return (
     <div className="flex shrink-0 items-center gap-2">
-      <DlButton onClick={() => downloadsEngine.acceptDanger?.(item.id)}>Keep</DlButton>
-      <DlButton tone="danger" onClick={() => downloadsEngine.discard?.(item.id)}>
+      <DlButton onClick={() => downloadsEngine.acceptDanger(item.id)}>Keep</DlButton>
+      <DlButton tone="danger" onClick={() => downloadsEngine.discard(item.id)}>
         Discard
       </DlButton>
     </div>

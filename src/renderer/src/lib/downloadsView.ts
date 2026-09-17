@@ -1,5 +1,5 @@
+import type { DownloadItem } from '@shared/types'
 import { displayName, isActiveDownload, needsDangerDecision } from '@shared/downloadsShell'
-import type { DownloadRecord } from '@shared/downloadsShell'
 import { formatBytes } from './utils'
 
 /*
@@ -30,17 +30,40 @@ export function formatRemaining(ms: number | null | undefined): string {
   return `${days} ${days === 1 ? 'day' : 'days'} left`
 }
 
-/** "1.2 MB/s"; '' when the rate is unknown or idle. */
-export function formatSpeed(bytesPerSecond: number | undefined): string {
+/** "1.2 MB/s"; '' while the rate is unknown or the transfer idle (the engine reports 0). */
+export function formatSpeed(bytesPerSecond: number): string {
   if (!bytesPerSecond || bytesPerSecond <= 0) return ''
   return `${formatBytes(bytesPerSecond)}/s`
 }
 
 /**
- * The one-line status under the file name. Speed and time left appear only when the engine
- * reports them; the failure reason likewise.
+ * Why a transfer stopped, from the engine's `error`: its short reasons (`shutdown` for rows in
+ * flight when the app quit, `file-error` when the final rename failed, `interrupted` from the
+ * Electron host) get Chrome's wording; a Chromium `net::` name is shown readably.
  */
-export function downloadStatus(item: DownloadRecord): DownloadStatus {
+export function describeDownloadError(error: string | undefined): string {
+  switch (error) {
+    case undefined:
+    case '':
+    case 'interrupted':
+      return 'Failed'
+    case 'shutdown':
+      return 'Interrupted when Zenium closed'
+    case 'file-error':
+      return 'Failed - File error'
+    default:
+      return `Failed - ${error
+        .replace(/^net::(ERR_)?/, '')
+        .replace(/_/g, ' ')
+        .toLowerCase()}`
+  }
+}
+
+/**
+ * The one-line status under the file name: the engine's speed and time left while running,
+ * the failure reason when interrupted, the warning while a flagged file waits.
+ */
+export function downloadStatus(item: DownloadItem): DownloadStatus {
   const received = formatBytes(item.receivedBytes)
   const total = item.totalBytes > 0 ? formatBytes(item.totalBytes) : ''
   switch (item.state) {
@@ -54,9 +77,9 @@ export function downloadStatus(item: DownloadRecord): DownloadStatus {
     case 'cancelled':
       return { text: 'Cancelled', tone: 'muted' }
     case 'interrupted':
-      return { text: item.error ? `Failed - ${item.error}` : 'Failed', tone: 'danger' }
+      return { text: describeDownloadError(item.error), tone: 'danger' }
     case 'completed':
-      if (needsDangerDecision(item) && item.danger) {
+      if (needsDangerDecision(item)) {
         return {
           text: item.danger.message,
           tone: item.danger.level === 'dangerous' ? 'danger' : 'warn'
@@ -66,9 +89,9 @@ export function downloadStatus(item: DownloadRecord): DownloadStatus {
   }
 }
 
-/** A finished file that can be opened, shown or dragged. */
-export function isOnDisk(item: DownloadRecord): boolean {
-  return item.state === 'completed' && !needsDangerDecision(item) && !item.removed
+/** A finished file that can be opened, shown or dragged (a flagged one waits for Keep). */
+export function isOnDisk(item: DownloadItem): boolean {
+  return item.state === 'completed' && !needsDangerDecision(item)
 }
 
 // ---------------------------------------------------------------------------
@@ -80,7 +103,7 @@ export interface DownloadDayGroup {
   label: string
   /** Local midnight the group starts at. */
   day: number
-  items: DownloadRecord[]
+  items: DownloadItem[]
 }
 
 function startOfDay(ts: number): number {
@@ -103,7 +126,7 @@ export function dayLabel(day: number, now: number): string {
 
 /** Bucket items by the local day they started, newest first, with Chrome's day labels. */
 export function groupDownloadsByDay(
-  items: readonly DownloadRecord[],
+  items: readonly DownloadItem[],
   now = Date.now()
 ): DownloadDayGroup[] {
   const groups = new Map<number, DownloadDayGroup>()
@@ -121,7 +144,7 @@ export function groupDownloadsByDay(
 }
 
 /** Case-insensitive match on the file name and the source URL for the page's search box. */
-export function filterDownloads(items: readonly DownloadRecord[], query: string): DownloadRecord[] {
+export function filterDownloads(items: readonly DownloadItem[], query: string): DownloadItem[] {
   const q = query.trim().toLowerCase()
   if (!q) return [...items]
   return items.filter(
@@ -133,7 +156,7 @@ export function filterDownloads(items: readonly DownloadRecord[], query: string)
 }
 
 /** Something to clear: any record that is not still transferring. */
-export function hasClearable(items: readonly DownloadRecord[]): boolean {
+export function hasClearable(items: readonly DownloadItem[]): boolean {
   return items.some((i) => !isActiveDownload(i))
 }
 

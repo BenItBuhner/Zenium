@@ -4,6 +4,8 @@ import type {
   CommandArgs,
   CommandName,
   CommandResult,
+  DownloadChangeKind,
+  DownloadItem,
   DownloadSettings,
   EventName,
   Events,
@@ -113,6 +115,8 @@ import { JsonStore } from './store/JsonStore'
  */
 const QUIT_SETTLE_TIMEOUT_MS = 3_000
 
+export type DownloadChangeListener = (item: DownloadItem, kind: DownloadChangeKind) => void
+
 type CommandHandlers = {
   [K in CommandName]: (
     args: CommandArgs<K>,
@@ -153,6 +157,7 @@ export class Browser {
   readonly newTab: NewTabService
   readonly bookmarks: BookmarkService
   readonly downloads: DownloadService
+  private readonly downloadListeners = new Set<DownloadChangeListener>()
   readonly permissions: PermissionService
   /** The permission prompts the chrome shows, queued per tab. */
   readonly permissionPrompts: PermissionPromptService
@@ -252,6 +257,7 @@ export class Browser {
       (item, kind) => {
         this.state.commitVolatile()
         this.emitDownload('download.changed', { item, kind }, item.private)
+        for (const listener of this.downloadListeners) listener(item, kind)
       },
       {
         os: platform.info.os,
@@ -798,6 +804,15 @@ export class Browser {
       return
     }
     this.newTab.open(win)
+  }
+
+  /**
+   * Host-side listeners for the engine's `download.changed` (the desktop shell's taskbar
+   * progress and completion notifications); windows get the same event over IPC.
+   */
+  onDownloadChange(listener: DownloadChangeListener): () => void {
+    this.downloadListeners.add(listener)
+    return () => this.downloadListeners.delete(listener)
   }
 
   /** Download events go to every window; private downloads only to private windows. */

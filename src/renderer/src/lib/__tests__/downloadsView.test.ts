@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import type { DownloadRecord } from '@shared/downloadsShell'
+import type { DownloadItem } from '@shared/types'
+import { downloadItem } from '@shared/__tests__/downloadFixtures'
 import {
   dayLabel,
+  describeDownloadError,
   downloadStatus,
   extensionOf,
   fileGlyphFor,
@@ -15,8 +17,8 @@ import {
 
 const MB = 1024 * 1024
 
-function item(patch: Partial<DownloadRecord> & { id: string }): DownloadRecord {
-  return {
+function item(patch: Partial<DownloadItem> & { id: string }): DownloadItem {
+  return downloadItem({
     url: `https://files.example/${patch.id}`,
     filename: `${patch.id}.zip`,
     savePath: `/home/u/Downloads/${patch.id}.zip`,
@@ -26,7 +28,7 @@ function item(patch: Partial<DownloadRecord> & { id: string }): DownloadRecord {
     startedAt: Date.UTC(2026, 8, 17, 9, 0, 0),
     mimeType: 'application/zip',
     ...patch
-  }
+  })
 }
 
 describe('formatRemaining', () => {
@@ -46,14 +48,13 @@ describe('formatRemaining', () => {
 
 describe('formatSpeed', () => {
   it('formats a rate and hides idle ones', () => {
-    expect(formatSpeed(undefined)).toBe('')
     expect(formatSpeed(0)).toBe('')
     expect(formatSpeed(1.5 * MB)).toBe('1.5 MB/s')
   })
 })
 
 describe('downloadStatus', () => {
-  it('shows bytes only with the fields the engine on main has', () => {
+  it('shows bytes alone while the engine has no rate yet', () => {
     expect(downloadStatus(item({ id: 'a', receivedBytes: 30 * MB }))).toEqual({
       text: '30.0 MB of 100 MB',
       tone: 'muted'
@@ -64,11 +65,24 @@ describe('downloadStatus', () => {
     })
   })
 
-  it('adds speed and time left when the engine reports them', () => {
+  it('adds the engine speed and time left', () => {
     const status = downloadStatus(
       item({ id: 'a', receivedBytes: 30 * MB, bytesPerSecond: 5 * MB, etaMs: 14_000 })
     )
     expect(status.text).toBe('5.0 MB/s · 30.0 MB of 100 MB · 14 secs left')
+    // Paused: the engine reports a zero rate and no ETA.
+    expect(
+      downloadStatus(item({ id: 'a', state: 'paused', receivedBytes: 30 * MB, bytesPerSecond: 0 }))
+        .text
+    ).toBe('Paused · 30.0 MB of 100 MB')
+  })
+
+  it('words the engine failure reasons', () => {
+    expect(describeDownloadError(undefined)).toBe('Failed')
+    expect(describeDownloadError('interrupted')).toBe('Failed')
+    expect(describeDownloadError('shutdown')).toBe('Interrupted when Zenium closed')
+    expect(describeDownloadError('file-error')).toBe('Failed - File error')
+    expect(describeDownloadError('net::ERR_CONNECTION_RESET')).toBe('Failed - connection reset')
   })
 
   it('words paused, cancelled, failed and done like Chrome', () => {
@@ -84,9 +98,9 @@ describe('downloadStatus', () => {
       text: 'Failed',
       tone: 'danger'
     })
-    expect(
-      downloadStatus(item({ id: 'a', state: 'interrupted', error: 'Network error' })).text
-    ).toBe('Failed - Network error')
+    expect(downloadStatus(item({ id: 'a', state: 'interrupted', error: 'shutdown' })).text).toBe(
+      'Interrupted when Zenium closed'
+    )
     expect(downloadStatus(item({ id: 'a', state: 'completed', receivedBytes: 100 * MB }))).toEqual({
       text: 'Done · 100 MB',
       tone: 'muted'
@@ -97,7 +111,7 @@ describe('downloadStatus', () => {
   it('shows the engine danger message until the user decides', () => {
     const danger = {
       level: 'dangerous' as const,
-      reason: 'executable',
+      reason: 'executable' as const,
       message: 'setup.exe may harm'
     }
     expect(downloadStatus(item({ id: 'a', state: 'completed', danger }))).toEqual({
@@ -119,7 +133,6 @@ describe('isOnDisk', () => {
   it('is true for finished files without an open verdict', () => {
     expect(isOnDisk(item({ id: 'a', state: 'completed' }))).toBe(true)
     expect(isOnDisk(item({ id: 'a', state: 'progressing' }))).toBe(false)
-    expect(isOnDisk(item({ id: 'a', state: 'completed', removed: true }))).toBe(false)
     expect(
       isOnDisk(
         item({
