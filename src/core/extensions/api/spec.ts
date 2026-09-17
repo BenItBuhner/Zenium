@@ -37,6 +37,11 @@ export interface EventSpec {
   /** Documents keep receiving this event from the engine; the shim only adds the host's deliveries. */
   nativeInFrames?: boolean
   keepNative?: boolean
+  /**
+   * `webRequest` events: the `extraInfoSpec` values the event accepts (`blocking` among them
+   * for the events with a blocking variant). The shim validates registrations against the list.
+   */
+  extraInfoSpec?: readonly string[]
 }
 
 export interface NamespaceSpec {
@@ -51,6 +56,19 @@ export interface NamespaceSpec {
    * by many extensions, which would otherwise never get past their first statement.
    */
   shape?: true
+  /**
+   * Chrome hides permission-gated namespaces: this one exists only for extensions whose
+   * manifest lists one of these permissions (the engine's own namespace, when it made one, is
+   * patched regardless).
+   */
+  permissions?: readonly string[]
+  /**
+   * `webRequest`: the events take `(callback, RequestFilter filter, extraInfoSpec)` instead of
+   * Chrome's generic `(callback, filters)`, and a delivery to a `blocking` listener carries a
+   * token the shim answers with the listener's return value. The shim builds these events
+   * itself from `EventSpec.extraInfoSpec`.
+   */
+  eventStyle?: 'webRequest'
 }
 
 export type ApiSpec = Record<string, NamespaceSpec>
@@ -453,8 +471,97 @@ export const API_SPEC: ApiSpec = {
         MEMORY_LIMIT_EXCEEDED: 'memoryLimitExceeded'
       }
     }
+  },
+  // Electron has the binding, but the session's own `webRequest` hook (the blocking engine's)
+  // switches the engine's extension path off, so the events never fire. The emulation runs the
+  // listeners over the same hook (`main/platform/webRequest.ts`): registrations go to the host
+  // through the internal `addListener` / `removeListener` calls, deliveries come back addressed
+  // to the listener, and a blocking listener's return value travels back as the answer.
+  // `onAuthRequired` exists for extensions that probe it; nothing fires it (no session hook).
+  webRequest: {
+    methods: {
+      handlerBehaviorChanged: { params: [], inert: {} }
+    },
+    events: {
+      onBeforeRequest: { extraInfoSpec: ['blocking', 'requestBody', 'extraHeaders'] },
+      onBeforeSendHeaders: { extraInfoSpec: ['requestHeaders', 'blocking', 'extraHeaders'] },
+      onSendHeaders: { extraInfoSpec: ['requestHeaders', 'extraHeaders'] },
+      onHeadersReceived: { extraInfoSpec: ['blocking', 'responseHeaders', 'extraHeaders'] },
+      onAuthRequired: {
+        extraInfoSpec: ['responseHeaders', 'blocking', 'asyncBlocking', 'extraHeaders']
+      },
+      onResponseStarted: { extraInfoSpec: ['responseHeaders', 'extraHeaders'] },
+      onBeforeRedirect: { extraInfoSpec: ['responseHeaders', 'extraHeaders'] },
+      onCompleted: { extraInfoSpec: ['responseHeaders', 'extraHeaders'] },
+      onErrorOccurred: { extraInfoSpec: ['extraHeaders'] }
+    },
+    constants: {
+      MAX_HANDLER_BEHAVIOR_CHANGED_CALLS_PER_10_MINUTES: 20,
+      ResourceType: {
+        MAIN_FRAME: 'main_frame',
+        SUB_FRAME: 'sub_frame',
+        STYLESHEET: 'stylesheet',
+        SCRIPT: 'script',
+        IMAGE: 'image',
+        FONT: 'font',
+        OBJECT: 'object',
+        XMLHTTPREQUEST: 'xmlhttprequest',
+        PING: 'ping',
+        CSP_REPORT: 'csp_report',
+        MEDIA: 'media',
+        WEBSOCKET: 'websocket',
+        WEBBUNDLE: 'webbundle',
+        OTHER: 'other'
+      },
+      OnBeforeRequestOptions: {
+        BLOCKING: 'blocking',
+        REQUEST_BODY: 'requestBody',
+        EXTRA_HEADERS: 'extraHeaders'
+      },
+      OnBeforeSendHeadersOptions: {
+        REQUEST_HEADERS: 'requestHeaders',
+        BLOCKING: 'blocking',
+        EXTRA_HEADERS: 'extraHeaders'
+      },
+      OnSendHeadersOptions: { REQUEST_HEADERS: 'requestHeaders', EXTRA_HEADERS: 'extraHeaders' },
+      OnHeadersReceivedOptions: {
+        BLOCKING: 'blocking',
+        RESPONSE_HEADERS: 'responseHeaders',
+        EXTRA_HEADERS: 'extraHeaders'
+      },
+      OnAuthRequiredOptions: {
+        RESPONSE_HEADERS: 'responseHeaders',
+        BLOCKING: 'blocking',
+        ASYNC_BLOCKING: 'asyncBlocking',
+        EXTRA_HEADERS: 'extraHeaders'
+      },
+      OnResponseStartedOptions: {
+        RESPONSE_HEADERS: 'responseHeaders',
+        EXTRA_HEADERS: 'extraHeaders'
+      },
+      OnBeforeRedirectOptions: {
+        RESPONSE_HEADERS: 'responseHeaders',
+        EXTRA_HEADERS: 'extraHeaders'
+      },
+      OnCompletedOptions: { RESPONSE_HEADERS: 'responseHeaders', EXTRA_HEADERS: 'extraHeaders' },
+      OnErrorOccurredOptions: { EXTRA_HEADERS: 'extraHeaders' },
+      IgnoredActionType: {
+        REDIRECT: 'redirect',
+        REQUEST_HEADERS: 'request_headers',
+        RESPONSE_HEADERS: 'response_headers',
+        AUTH_CREDENTIALS: 'auth_credentials'
+      }
+    },
+    permissions: ['webRequest', 'webRequestBlocking'],
+    eventStyle: 'webRequest'
   }
 }
+
+/**
+ * The `webRequest` registration calls the shim makes on behalf of an event's `addListener` /
+ * `removeListener`: not members of `chrome.webRequest`, but routed like one.
+ */
+export const WEB_REQUEST_INTERNAL_METHODS = ['addListener', 'removeListener'] as const
 
 /** Storage areas the host implements; the engine's `local` and `session` stay native for data. */
 export const STORAGE_AREAS = ['local', 'sync', 'session', 'managed'] as const
