@@ -27,9 +27,13 @@ const DAY = 24 * 60 * 60 * 1000
  * Firefox's frecency in miniature: the visit count weighted by how recently the site was last
  * seen. Only the per-URL aggregate exists today, so one weight stands for all of a URL's visits.
  */
-export function scoreFrecency(entry: Pick<HistoryEntry, 'visitCount' | 'lastVisit'>, now: number): number {
+export function scoreFrecency(
+  entry: Pick<HistoryEntry, 'visitCount' | 'lastVisit'>,
+  now: number
+): number {
   const age = Math.max(0, now - entry.lastVisit)
-  const weight = age <= 4 * DAY ? 100 : age <= 14 * DAY ? 70 : age <= 31 * DAY ? 50 : age <= 90 * DAY ? 30 : 10
+  const weight =
+    age <= 4 * DAY ? 100 : age <= 14 * DAY ? 70 : age <= 31 * DAY ? 50 : age <= 90 * DAY ? 30 : 10
   return Math.max(1, entry.visitCount) * weight
 }
 
@@ -40,7 +44,9 @@ export function isTopSiteCandidate(url: string): boolean {
 
 /** Host without `www.`, lower-cased: the identity a tile stands for. */
 export function topSiteHost(url: string): string {
-  return getHost(url).toLowerCase().replace(/^www\./, '')
+  return getHost(url)
+    .toLowerCase()
+    .replace(/^www\./, '')
 }
 
 /**
@@ -85,7 +91,10 @@ export function rankTopSites(
 }
 
 /** The most visited sites, `n` at most, without the hosts the user removed. */
-export async function topSites(n: number, excludedHosts: readonly string[] = []): Promise<TopSite[]> {
+export async function topSites(
+  n: number,
+  excludedHosts: readonly string[] = []
+): Promise<TopSite[]> {
   const entries = await cmd('history.recent', { limit: RECENT_LIMIT }).catch(() => [])
   return rankTopSites(entries, { now: Date.now(), n, excludedHosts })
 }

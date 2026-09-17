@@ -3,7 +3,7 @@ import { BLANK_URL, getHost } from '@shared/url'
 import { cmd } from './api'
 import { closeOverview, overviewIsOpen, setStageLayerShown } from './gestures/stage'
 import type { TopSite } from './historyAdapter'
-import { reducedMotion } from './motion/spring'
+import { reducedMotion, type SpringConfig } from './motion/spring'
 import { activeTab } from './selectors'
 import { createStore } from './store'
 import { captureThumbnail } from './thumbnails'
@@ -23,17 +23,43 @@ export interface NewTabGrowState {
   fromTabId: string | null
   /** The blank tab the page belongs to, once the browser has created it. */
   tabId: string | null
+  /** The surface has reached the frame. */
+  arrived: boolean
+  /** The blank tab is the active tab: the page is mounted under the surface. */
+  ready: boolean
 }
 
-const GROW_IDLE: NewTabGrowState = { phase: 'idle', origin: null, fromTabId: null, tabId: null }
+const GROW_IDLE: NewTabGrowState = {
+  phase: 'idle',
+  origin: null,
+  fromTabId: null,
+  tabId: null,
+  arrived: false,
+  ready: false
+}
 
 /** Name of the stage layer the grow registers, so the live page is hidden under it. */
 const GROW_LAYER = 'newtab-grow'
+
+/** The browser has this long to make the new tab active before the surface reveals regardless. */
+const READY_TIMEOUT_MS = 800
 
 export const newTabGrowStore = createStore<NewTabGrowState>(GROW_IDLE, 'newtab-grow')
 
 /** The corner radius the surface starts with: the plus button is a 44 pill. */
 export const GROW_ORIGIN_RADIUS = 22
+
+/**
+ * The surface's spring: SNAPPY's family, a touch stiffer, so a full-height run from the bar to
+ * the frame settles in about 300 ms without visible overshoot.
+ */
+export const SPRING_GROW: SpringConfig = {
+  stiffness: 520,
+  damping: 45,
+  mass: 1,
+  restDelta: 0.5,
+  restSpeed: 10
+}
 
 export interface GrowFrame {
   x: number
@@ -82,18 +108,30 @@ export function growTravel(origin: Rect, frame: Rect): number {
   return Math.max(120, Math.hypot(dx, dy) + (frame.height - origin.height) / 2)
 }
 
+let pendingCapture: Promise<unknown> | null = null
+
+/**
+ * A finger touched the new tab control: capture the page now, while it is still on screen, so
+ * the surface can start growing the moment the touch turns into a tap. Harmless otherwise.
+ */
+export function prepareNewTabGrow(): void {
+  const state = browserStore.get().state
+  const from = state ? activeTab(state) : null
+  if (from && from.url !== BLANK_URL) pendingCapture = captureThumbnail(from.id)
+}
+
 /**
  * Open a new tab page on the phone: a blank tab becomes active and, when the request came from
  * a control on screen, a surface grows out of that control over the page before the new tab
  * page fades in. Without an origin (a shortcut, the empty state), or when the overview is up,
- * motion is reduced or the current tab is itself a new tab page, the page simply appears.
+ * motion is reduced or the current tab is itself a new tab page, the page simply appears – out
+ * of its card when the overview was open.
  */
 export async function openNewTabPage(origin: Rect | null): Promise<void> {
   closeUrlbar()
   const state = browserStore.get().state
   const from = state ? activeTab(state) : null
   const overview = overviewIsOpen()
-  if (overview) closeOverview()
   const ui = uiStore.get()
   const animate =
     origin !== null &&
@@ -107,28 +145,88 @@ export async function openNewTabPage(origin: Rect | null): Promise<void> {
     !ui.siteInfoOpen &&
     !ui.stageActive &&
     newTabGrowStore.get().phase === 'idle'
+  const capture = pendingCapture
+  pendingCapture = null
   if (animate) {
     // The page is about to lose its live view; its last look is what the surface grows over.
-    await captureThumbnail(from.id)
-    newTabGrowStore.set({ phase: 'growing', origin, fromTabId: from.id, tabId: null })
+    await (capture ?? captureThumbnail(from.id))
+    newTabGrowStore.set({ ...GROW_IDLE, phase: 'growing', origin, fromTabId: from.id })
     setStageLayerShown(GROW_LAYER, true)
   }
   const tabId = await cmd('tab.create', { url: BLANK_URL, active: true }).catch(() => null)
+  // From the overview the page morphs out of the new tab's card, as any picked tab does.
+  if (overview) closeOverview(tabId ?? undefined)
   if (!animate) return
-  if (tabId && newTabGrowStore.get().phase === 'growing') newTabGrowStore.set({ tabId })
-  else finishNewTabGrow()
+  if (!tabId || newTabGrowStore.get().phase !== 'growing') {
+    finishNewTabGrow()
+    return
+  }
+  newTabGrowStore.set({ tabId })
+  // The page is under the surface once the browser reports the blank tab active.
+  stopWaiting?.()
+  stopWaiting = whenTabActive(tabId, () => {
+    stopWaiting = null
+    if (newTabGrowStore.get().tabId === tabId) {
+      newTabGrowStore.set({ ready: true })
+      maybeReveal()
+    }
+  })
 }
 
-/** The surface has reached the frame: the page beneath fades in while the surface goes. */
+let stopWaiting: (() => void) | null = null
+
+/** Runs `then` once `tabId` is the active tab, or after a while regardless; returns a canceller. */
+function whenTabActive(tabId: string, then: () => void): () => void {
+  const isActive = (): boolean => {
+    const state = browserStore.get().state
+    return state !== null && activeTab(state)?.id === tabId
+  }
+  let done = false
+  let unsubscribe: (() => void) | null = null
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const cancel = (): void => {
+    done = true
+    unsubscribe?.()
+    if (timer) clearTimeout(timer)
+  }
+  const fire = (): void => {
+    if (done) return
+    cancel()
+    then()
+  }
+  if (isActive()) {
+    fire()
+    return cancel
+  }
+  unsubscribe = browserStore.subscribe(() => {
+    if (isActive()) fire()
+  })
+  timer = setTimeout(fire, READY_TIMEOUT_MS)
+  return cancel
+}
+
+/** The surface has reached the frame; the page fades in beneath it as soon as it is there. */
 export function revealNewTabPage(): void {
   if (newTabGrowStore.get().phase !== 'growing') return
+  newTabGrowStore.set({ arrived: true })
+  maybeReveal()
+}
+
+/**
+ * Both halves are in – the surface covers the frame and the page is mounted under it – so the
+ * surface fades. The frame draws again beneath it; the blank page's own view stays away, since
+ * the layout reporter never places a new tab page's view on the phone.
+ */
+function maybeReveal(): void {
+  const grow = newTabGrowStore.get()
+  if (grow.phase !== 'growing' || !grow.arrived || !grow.ready) return
   newTabGrowStore.set({ phase: 'revealing' })
-  // The frame draws again under the fading surface; the new tab page's view stays hidden by
-  // the layout reporter, which never places a new tab page's view on the phone.
   setStageLayerShown(GROW_LAYER, false)
 }
 
 export function finishNewTabGrow(): void {
+  stopWaiting?.()
+  stopWaiting = null
   setStageLayerShown(GROW_LAYER, false)
   if (newTabGrowStore.get().phase !== 'idle') newTabGrowStore.set(GROW_IDLE)
 }
@@ -194,7 +292,10 @@ export async function readWallpaperFile(file: File): Promise<string> {
       img.onerror = () => reject(new Error('The image could not be read'))
       img.src = url
     })
-    const scale = Math.min(1, WALLPAPER_MAX_EDGE / Math.max(image.naturalWidth, image.naturalHeight))
+    const scale = Math.min(
+      1,
+      WALLPAPER_MAX_EDGE / Math.max(image.naturalWidth, image.naturalHeight)
+    )
     const canvas = document.createElement('canvas')
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
     canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
@@ -220,7 +321,9 @@ export interface TopSiteTile {
 
 /** Host without `www.`, lower-cased: the identity a tile stands for. */
 function tileHost(url: string): string {
-  return getHost(url).toLowerCase().replace(/^www\./, '')
+  return getHost(url)
+    .toLowerCase()
+    .replace(/^www\./, '')
 }
 
 /**

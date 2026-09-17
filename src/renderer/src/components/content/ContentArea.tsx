@@ -2,6 +2,7 @@ import type { JSX, RefObject } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { MonitorSmartphone, Plus, X } from 'lucide-react'
 import type { Rect, SidePanelInfo, UIState } from '@shared/types'
+import { BLANK_URL } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
 import { chromeUnderPages } from '@renderer/lib/cover'
 import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
@@ -12,6 +13,7 @@ import { captureActiveTab, panelAloneOverContent, uiStore, type UiState } from '
 import { cn } from '@renderer/lib/utils'
 import { dropStore } from '@renderer/lib/drag'
 import { Urlbar } from '../urlbar/Urlbar'
+import { NewTabPage } from '../newtab/NewTabPage'
 import { OverlayHost } from '../overlays/OverlayHost'
 import { CoverImage } from './CoverImage'
 import { CrashRestoreBanner } from './CrashRestoreBanner'
@@ -72,15 +74,22 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   // The phone's gesture stage draws its own cards where the page was; nothing to dim behind it.
   // Its URL bar covers the frame completely, so there is nothing to dim behind that either.
   const staged = ui.stageActive && !overlayCoversContentBesidesStage(ui)
-  const showSnapshot =
-    (contentHidden || glanceActive) && Boolean(tab) && !staged && !(phone && ui.urlbar.open)
-  const dropKey = dropStore.use((s) => s.key)
   const foreign = isForeignTab(state, tab?.id)
   // The "Make Zenium your default browser" and "Restore pages?" strips sit above the page,
   // inside the frame, so the layout reporter's viewport (and the tab view under it) shrink by
   // their height. A fullscreen window shows the page alone (Chrome hides its infobars there too).
   const banner = !phone && !state.window.fullscreen && wantsDefaultBrowserBanner(state)
   const crashRestore = !phone ? state.crashRestore : null
+  // The phone draws a new tab page in the frame where the blank page would be (the desktop
+  // keeps Zen's bare frame). Its view is never placed there – see `useLayoutReporter`.
+  const newTabPage = phone && tab !== null && tab.url === BLANK_URL && !foreign
+  const showSnapshot =
+    (contentHidden || glanceActive) &&
+    Boolean(tab) &&
+    !staged &&
+    !(phone && ui.urlbar.open) &&
+    !newTabPage
+  const dropKey = dropStore.use((s) => s.key)
 
   // Overlays are hosted beside the frame, not inside it: on phones the frame recedes (scales to
   // .97) under a sheet, and a sheet mounted within it would shrink with the page – its 44 px
@@ -98,6 +107,11 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
           <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden" data-tear-zone>
             {state.capabilities.pullToRefresh && <PullIndicator />}
             {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
+            {newTabPage && (
+              // Kept mounted under the omnibox and the gesture stage (which draws its own cards),
+              // just not painted, so the page is there the moment they leave.
+              <NewTabPage state={state} tab={tab} hidden={ui.urlbar.open || staged} />
+            )}
             {tab && foreign && !contentHidden && !glanceActive && (
               <ForeignTabPreview tabId={tab.id} />
             )}

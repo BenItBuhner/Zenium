@@ -25,7 +25,9 @@ export class NewTabService {
     this.store = new JsonStore<Persisted>(browser.platform.io, 'newtab-wallpaper.json', 300)
     const data = this.store.readSync()
     this.wallpaper =
-      data?.version === 1 && typeof data.dataUrl === 'string' && data.dataUrl.startsWith('data:image/')
+      data?.version === 1 &&
+      typeof data.dataUrl === 'string' &&
+      data.dataUrl.startsWith('data:image/')
         ? data.dataUrl
         : null
   }

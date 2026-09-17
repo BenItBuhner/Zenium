@@ -2463,6 +2463,106 @@
   letter-spacing: -0.014em;
 }
 
+@layer components {
+  /*
+   * The phone's new tab page (`NewTabPage`). Quiet by default: the page is the window's own
+   * gradient – drawn at the window's size and offset by the frame's position from JS, so the
+   * frame reads as a window onto the space – and the search field and the tiles wear the pill's
+   * fill language on it. The wallpaper presets put the space's colours at full strength, or a
+   * picked picture under a tinted scrim, behind it all instead.
+   */
+  .zen-ntp {
+    background: var(--zen-bg);
+    background-repeat: no-repeat;
+  }
+  .zen-ntp[data-wallpaper='space'] {
+    background: var(--zen-wallpaper);
+  }
+  .zen-ntp[data-wallpaper='image'] {
+    background-size: cover;
+    background-position: center;
+    /* Ink over a picture is white; the fills and tones are alphas of it, a little stronger. */
+    --zen-fg: #fff;
+    --zen-fg-rgb: 255 255 255;
+    --zen-element-bg: rgb(255 255 255 / 0.16);
+    --zen-element-bg-hover: rgb(255 255 255 / 0.26);
+    --zen-muted: rgb(255 255 255 / 0.8);
+    --zen-faint: rgb(255 255 255 / 0.62);
+    color: #fff;
+  }
+  .zen-ntp[data-hidden] {
+    visibility: hidden;
+  }
+  /* The legibility scrim: the space's own dark, deeper towards the bottom where the captions sit. */
+  .zen-ntp-scrim {
+    background: linear-gradient(
+      180deg,
+      rgb(var(--zen-scrim-rgb) / 0.14),
+      rgb(var(--zen-scrim-rgb) / 0.46)
+    );
+  }
+  /* The search field: the address pill's shape and fill, pressed as the pill is. */
+  .zen-ntp-field {
+    height: 44px;
+    border-radius: 9999px;
+    background: var(--zen-element-bg);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-ntp-field:has(.zen-ntp-field-main:active) {
+    background: var(--zen-element-bg-hover);
+  }
+  .zen-ntp-slot {
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-ntp-slot:active {
+    background: var(--zen-element-bg-hover);
+  }
+  /* The tiles come up one after another; the run waits while the page is not being painted. */
+  .zen-ntp-site {
+    animation: zen-fade 120ms var(--zen-ease) both;
+    animation-delay: calc(var(--zen-ntp-i, 0) * 30ms);
+  }
+  .zen-ntp[data-hidden] .zen-ntp-site {
+    animation-play-state: paused;
+  }
+  .zen-ntp-tile {
+    border-radius: 14px;
+    corner-shape: var(--zen-corner);
+    background: var(--zen-element-bg);
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  .zen-ntp-site-button:active .zen-ntp-tile {
+    background: var(--zen-element-bg-hover);
+    transform: scale(0.96);
+  }
+  /* A site's icon fades in once it has loaded; until then the tile is the fill alone. */
+  .zen-ntp-icon {
+    opacity: 0;
+    transition: opacity 160ms var(--zen-ease);
+  }
+  .zen-ntp-icon-loaded {
+    opacity: 1;
+  }
+  .zen-ntp-letter {
+    color: var(--zen-muted);
+  }
+  /*
+   * The surface a new tab grows in (MOT-03): the window's colour, clipped per frame to the
+   * rectangle on its way from the button to the frame, and faded once it has arrived so the
+   * page beneath comes through.
+   */
+  .zen-ntp-grow-surface {
+    background: var(--zen-bg);
+    will-change: clip-path, opacity;
+  }
+  .zen-ntp-grow-surface[data-phase='revealing'] {
+    opacity: 0;
+    transition: opacity 200ms var(--zen-ease);
+  }
+}
+
 /*
  * Fading scroll edges (`useFadeEdges`). The scroll container is masked, so content dissolves
  * into whatever is behind it – no gradient overlay, no assumption about the background. The

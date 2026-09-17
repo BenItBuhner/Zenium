@@ -4,8 +4,10 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.net.Uri
 import android.util.Log
 import android.webkit.ConsoleMessage
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -116,6 +118,13 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
                 Log.println(level, "ZenChrome", "${message.message()} (${message.sourceId()}:${message.lineNumber()})")
                 return true
             }
+
+            /** The chrome's own file inputs (the new tab page's wallpaper) use the system picker too. */
+            override fun onShowFileChooser(
+                webView: WebView,
+                filePathCallback: ValueCallback<Array<Uri>>,
+                fileChooserParams: FileChooserParams
+            ): Boolean = host.activity.showFileChooser(filePathCallback, fileChooserParams)
         }
     }
 
