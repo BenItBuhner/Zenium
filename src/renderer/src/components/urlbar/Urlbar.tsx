@@ -163,6 +163,20 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
         case 'command':
           if (item.targetId) run('urlbar.runCommand', { action: item.targetId })
           break
+        case 'bookmark':
+          // Through the bookmark so its "last used" date is recorded.
+          if (item.targetId && !opts.background) {
+            run('bookmark.open', { id: item.targetId, newTab, tabId: tab?.id ?? null })
+            break
+          }
+          if (item.url)
+            run('urlbar.submit', {
+              input: item.url,
+              newTab,
+              tabId: tab?.id ?? null,
+              background: opts.background
+            })
+          break
         default:
           if (item.url)
             run('urlbar.submit', {

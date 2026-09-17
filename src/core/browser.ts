@@ -424,6 +424,24 @@ export class Browser {
    * then open the star dialog to rename, refile or remove it. A second press edits the existing
    * bookmark instead of adding another one.
    */
+  /** Ctrl+D without a star dialog: add to the default folder, or remove every copy again. */
+  toggleBookmark(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
+    const tab = this.tabs.tab(tabId)
+    if (!tab || tab.url.startsWith('zen://')) return
+    if (this.bookmarks.has(tab.url)) {
+      this.bookmarks.removeByUrl(tab.url)
+      this.toast('Bookmark removed', 'info', win)
+      return
+    }
+    const node = this.bookmarks.create({
+      title: tab.customTitle ?? tab.title,
+      url: tab.url,
+      favicon: tab.favicon
+    })
+    if (node)
+      this.toast(`Bookmark added to ${this.bookmarks.pathLabel(node.parentId ?? '')}`, 'info', win)
+  }
+
   starTab(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
     const tab = this.tabs.tab(tabId)
     if (!tab || tab.url.startsWith('zen://')) return
@@ -1141,6 +1159,7 @@ export class Browser {
       'history.delete': ({ url }) => this.history.delete(url),
       'history.clear': () => this.history.clear(),
 
+      'bookmark.toggle': ({ tabId }, win) => this.toggleBookmark(tabId, win),
       'bookmark.star': ({ tabId }, win) => this.starTab(tabId, win),
       'bookmark.create': ({ parentId, index, title, url, type }) =>
         this.bookmarks.create({ parentId, index, title, url, type }),

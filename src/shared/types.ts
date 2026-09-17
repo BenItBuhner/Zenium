@@ -1298,6 +1298,8 @@ export interface Commands {
   'history.delete': { args: { url: string }; result: void }
   'history.clear': { args: void; result: void }
 
+  /** Bookmark the tab's page in the default folder, or remove its bookmarks (toast feedback). */
+  'bookmark.toggle': { args: { tabId: string }; result: void }
   /** Star the tab's page: bookmarks it when needed, then opens the star dialog. */
   'bookmark.star': { args: { tabId: string }; result: void }
   'bookmark.create': {
