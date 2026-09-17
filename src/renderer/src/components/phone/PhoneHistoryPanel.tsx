@@ -1,18 +1,17 @@
 import type { JSX } from 'react'
 import { useEffect, useMemo, useState } from 'react'
-import { Ellipsis, Globe, Trash2, X } from 'lucide-react'
+import { Ellipsis, Globe, History, Trash2, X } from 'lucide-react'
 import type { UIState } from '@shared/types'
 import { displayUrl, getHost } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import {
   clearBrowsingDataSheet,
-  clearHistory,
-  deleteHistoryRows,
-  loadHistoryRows,
+  historyAdapter,
+  type ClosedEntrySummary,
   type HistoryRow
 } from '@renderer/lib/historyAdapter'
-import { groupByDay, visitTime } from '@renderer/lib/historyGroups'
+import { visitTime, type DayGroup } from '@renderer/lib/historyGroups'
 import {
   NO_SELECTION,
   orderedSelection,
@@ -37,18 +36,26 @@ import { removeWithUndo, usePanelStep, usePendingDeletes } from './phonePanel'
 
 const LIMIT = 300
 
+interface Loaded {
+  groups: DayGroup<HistoryRow>[]
+  /** When the groups were fetched: "Today" is judged then, the list never being more than a search away from a reload. */
+  at: number
+}
+
 /**
  * History on a phone (design-language 8.1, 8.2, 8.7): visits grouped by day under a 56 header
  * and a search field, one 48 row per visit with its favicon, title, site and time. A row opens
  * the page; its trailing control or a sideways swipe removes it (undoable from the toast); a
  * long press starts selection mode, whose header replaces the panel's and acts on every picked
  * row. The top row clears the whole history, undoable like the rest, until shared services'
- * clear-browsing-data sheet takes its place (`clearBrowsingDataSheet`).
+ * clear-browsing-data sheet takes its place (`clearBrowsingDataSheet`). Recently closed tabs
+ * sit above the days once the session model reports them (`historyAdapter.recentlyClosed`).
  */
 export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
   const tab = activeTab(state)
   const [query, setQuery] = useState('')
-  const [loaded, setLoaded] = useState<{ rows: HistoryRow[]; at: number }>({ rows: [], at: 0 })
+  const [loaded, setLoaded] = useState<Loaded>({ groups: [], at: 0 })
+  const [closed, setClosed] = useState<ClosedEntrySummary[]>([])
   const [rawSelection, setSelection] = useState<Selection>(NO_SELECTION)
   const pending = usePendingDeletes()
   const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
@@ -56,8 +63,9 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
   useEffect(() => {
     let cancelled = false
     const timer = setTimeout(() => {
-      void loadHistoryRows(query, LIMIT).then((rows) => {
-        if (!cancelled) setLoaded({ rows, at: Date.now() })
+      const at = Date.now()
+      void historyAdapter.loadGroups(query, LIMIT, at).then((groups) => {
+        if (!cancelled) setLoaded({ groups, at })
       })
     }, 80)
     return () => {
@@ -66,13 +74,25 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
     }
   }, [query])
 
+  useEffect(() => {
+    let cancelled = false
+    void historyAdapter.recentlyClosed().then((list) => {
+      if (!cancelled) setClosed(list)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   // Rows waiting for their delete to go through are gone from the list already.
-  const rows = useMemo(
-    () => loaded.rows.filter((row) => !pending.has(row.id)),
-    [loaded.rows, pending]
+  const groups = useMemo(
+    () =>
+      loaded.groups
+        .map((group) => ({ ...group, items: group.items.filter((row) => !pending.has(row.id)) }))
+        .filter((group) => group.items.length > 0),
+    [loaded.groups, pending]
   )
-  // "Today" is judged at load time: the list is never more than a search away from a reload.
-  const groups = useMemo(() => groupByDay(rows, loaded.at), [rows, loaded.at])
+  const rows = useMemo(() => groups.flatMap((group) => group.items), [groups])
   const order = useMemo(() => rows.map((row) => row.id), [rows])
   const selection = useMemo(() => pruneSelection(rawSelection, order), [rawSelection, order])
   const selectedRows = useMemo(() => {
@@ -112,8 +132,14 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
       [...keys],
       doomed.length === 1 ? 'Removed from history' : `${doomed.length} pages removed`,
       () => {
-        deleteHistoryRows(doomed)
-        setLoaded((l) => ({ ...l, rows: l.rows.filter((row) => !keys.has(row.id)) }))
+        void historyAdapter.deleteRows(doomed)
+        setLoaded((l) => ({
+          ...l,
+          groups: l.groups.map((group) => ({
+            ...group,
+            items: group.items.filter((row) => !keys.has(row.id))
+          }))
+        }))
       }
     )
     exitSelection()
@@ -126,9 +152,15 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
       return
     }
     removeWithUndo(order, 'History cleared', () => {
-      clearHistory()
-      setLoaded((l) => ({ ...l, rows: [] }))
+      void historyAdapter.clear()
+      setLoaded((l) => ({ ...l, groups: [] }))
     })
+  }
+
+  const restore = (entry: ClosedEntrySummary): void => {
+    void historyAdapter.restoreClosed(entry.id)
+    setClosed((list) => list.filter((e) => e.id !== entry.id))
+    closeOverlay()
   }
 
   const selectionMenu = (): void => {
@@ -183,6 +215,14 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
             title="Clear history"
             onTap={clearAll}
           />
+        )}
+        {!searching && closed.length > 0 && (
+          <section aria-label="Recently closed">
+            <PhoneGroupHeading>Recently closed</PhoneGroupHeading>
+            {closed.map((entry) => (
+              <RecentlyClosedRow key={entry.id} entry={entry} onTap={() => restore(entry)} />
+            ))}
+          </section>
         )}
         {rows.length === 0 ? (
           <EmptyNote>
@@ -257,6 +297,39 @@ function HistoryVisitRow({
       onTap={onTap}
       onLongPress={onLongPress}
       onSwipeDelete={onDelete}
+    />
+  )
+}
+
+function RecentlyClosedRow({
+  entry,
+  onTap
+}: {
+  entry: ClosedEntrySummary
+  onTap: () => void
+}): JSX.Element {
+  const window = entry.kind === 'window'
+  const title = entry.title || (entry.url ? displayUrl(entry.url) : 'Window')
+  const subtitle = window
+    ? `${entry.tabCount} ${entry.tabCount === 1 ? 'tab' : 'tabs'}`
+    : entry.url
+      ? getHost(entry.url).replace(/^www\./, '') || displayUrl(entry.url)
+      : undefined
+  return (
+    <PhoneListRow
+      icon={
+        window ? (
+          <History className="h-5 w-5 opacity-60" strokeWidth={1.75} />
+        ) : (
+          <RowFavicon
+            src={entry.favicon}
+            fallback={<Globe className="h-5 w-5 opacity-60" strokeWidth={1.75} />}
+          />
+        )
+      }
+      title={title}
+      subtitle={subtitle}
+      onTap={onTap}
     />
   )
 }
