@@ -78,6 +78,8 @@ export interface ApiHost {
   ): void
   /** Whether the extension may see a tab's URL, title and favicon (`tabs` or a host permission). */
   canSeeTab(extension: LoadedExtension, url: string): boolean
+  /** Whether the extension has host access to `url`: a granted host permission or `activeTab`. */
+  hostAccess(extensionId: string, url: string): boolean
   /** The extension's currently granted permissions. */
   grants(extensionId: string): PermissionSet
   /** Ask the renderer to re-render (extension state shown in the UI changed). */

@@ -26,6 +26,9 @@ export class KeyboardHandler {
       return true
     }
 
+    // Extension commands come after Zenium's own shortcuts: an extension never overrides one.
+    if (!input.isAutoRepeat && this.browser.extensions.handleKey(input, win)) return true
+
     if (
       input.key === 'Escape' &&
       sourceTabId !== null &&

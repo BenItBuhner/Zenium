@@ -29,6 +29,8 @@ import { ElectronWindowFactory, type ElectronWindow } from './window'
 import { ExtensionService } from './extensions'
 import { WebstoreBridge } from './webstoreBridge'
 import { ExtensionApiHost } from './extensionApi'
+import { createDnrSink } from './extensionApi/dnrSink'
+import { ExtensionResourceOrigin } from './extensionApi/resourceOrigin'
 import { edgeStoreUserAgent, webstoreClientHints } from './requestHeaders'
 import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
@@ -271,12 +273,17 @@ export class ElectronPlatform implements Platform {
       return tabId ? browser.tabs.ownerOf(tabId) : undefined
     })
     webstore.install()
+    // Extensions' `use_dynamic_url` resources are served from a per-run origin of Zenium's (the
+    // lookup runs once the API host below exists).
+    const extensionResources = new ExtensionResourceOrigin((id) => extensionApi.loaded(id))
     const extensionApi = new ExtensionApiHost(
       browser,
       this.sessions,
       this.views,
       this.io,
-      this.userDataDir
+      this.userDataDir,
+      // Extensions' declarativeNetRequest rule sets go straight into the request-blocking engine.
+      createDnrSink(browser.blocking.engine, extensionResources)
     )
     extensionApi.install()
     const extensionService = browser.extensions as ExtensionService
@@ -284,6 +291,11 @@ export class ElectronPlatform implements Platform {
     extensionService.onChange((event) => extensionApi.registryChanged(event))
     this.requestBlocking = new ElectronBlocking(browser, this.views, this.profileDir)
     this.requestBlocking.start()
+    // Decisions the engine took by an extension's rule feed getMatchedRules, the action badge
+    // count and onRuleMatchedDebug.
+    this.requestBlocking.onDecision((request, decision) =>
+      extensionApi.declarativeNetRequest.decided(request, decision)
+    )
     // The stores' header rewrites (Chrome's brand for the Chrome Web Store, Edge's user agent
     // and brand for Edge Add-ons) run as builtin handlers of the multiplexer, which owns each
     // session's one onBeforeSendHeaders slot; persistent sessions only, like the store preload.
@@ -291,6 +303,7 @@ export class ElectronPlatform implements Platform {
     this.requestBlocking.registerHeaderRewrite(edgeStoreUserAgent, { persistentOnly: true })
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
+      extensionResources.install(ses)
       // The one webRequest listener set of the session; every request hook goes through it.
       this.requestBlocking.attach(ses, containerId)
       this.attachPermissions(ses)
@@ -300,7 +313,7 @@ export class ElectronPlatform implements Platform {
       ses.setSpellCheckerLanguages(['en-US'])
       if (this.sessions.isPersistent(containerId)) {
         webstore.attach(ses)
-        extensionApi.attachSession(ses)
+        extensionApi.attachSession(ses, containerId)
         void (browser.extensions as ExtensionService).attachSession()
       }
     })

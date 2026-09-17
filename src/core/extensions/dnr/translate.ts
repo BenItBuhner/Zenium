@@ -158,6 +158,9 @@ function translateCondition(rule: CompiledRule): EngineRuleCondition {
   const excludedResourceTypes = list(source.excludedResourceTypes)
   if (resourceTypes) condition.resourceTypes = resourceTypes
   if (excludedResourceTypes) condition.excludedResourceTypes = excludedResourceTypes
+  // Chrome matches every type but `main_frame` when a rule names none; the engine's empty
+  // condition matches every request, so the default has to be spelled out.
+  if (!resourceTypes && !excludedResourceTypes) condition.excludedResourceTypes = ['main_frame']
   const requestMethods = list(source.requestMethods)
   const excludedRequestMethods = list(source.excludedRequestMethods)
   if (requestMethods) condition.requestMethods = requestMethods

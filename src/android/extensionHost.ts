@@ -1,6 +1,6 @@
 import type { ExtensionInfo, ExtensionSource, ExtensionUpdateState, Rect } from '@shared/types'
 import type { Browser } from '@core/browser'
-import type { ExtensionHost } from '@core/platform'
+import type { ExtensionHost, MenuItemTemplate } from '@core/platform'
 import type { ZenWindow } from '@core/window'
 import { JsonStore } from '@core/store/JsonStore'
 import { base64Encode } from '@core/extensions/bytes'
@@ -726,6 +726,19 @@ export class AndroidExtensions implements ExtensionHost {
 
   closePopup(): void {
     // Nothing of the store's is open; the runtime closes its own popup.
+  }
+
+  /** The runtime's `chrome.*` layer (contextMenus, commands) is not the store half's; the desktop router owns these. */
+  pageContextMenuItems(): MenuItemTemplate[] {
+    return []
+  }
+
+  actionContextMenuItems(): MenuItemTemplate[] {
+    return []
+  }
+
+  handleKey(): boolean {
+    return false
   }
 
   // ---------------------------------------------------------------------------

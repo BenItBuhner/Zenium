@@ -46,6 +46,7 @@ import {
   type ListenerOptions,
   type RequestHandler,
   type TabResolver,
+  type WebRequestBase,
   type WebRequestEvent,
   type WebRequestListener
 } from './webRequest'
@@ -55,6 +56,7 @@ export type {
   HeaderRewriteOptions,
   ListenerFilter,
   ListenerOptions,
+  WebRequestBase,
   WebRequestDetails,
   WebRequestEvent,
   WebRequestListener
@@ -86,13 +88,16 @@ export class BlockingHandler implements RequestHandler {
 
   constructor(
     private readonly decider: BlockingDecider,
-    private readonly csp: CspSource | null
+    private readonly csp: CspSource | null,
+    /** Told about every decision a named rule took, with the request it was about. */
+    private readonly observer: ((request: HostRequest, decision: Decision) => void) | null = null
   ) {}
 
   onBeforeRequest(request: HostRequest): BeforeRequestResult {
     const { ctx } = request
     if (!/^(https?|wss?):/i.test(ctx.url)) return undefined
     const decision = this.decider.decide(ctx)
+    if (decision.matched && this.observer) this.observer(request, decision)
     switch (decision.action) {
       case 'block':
         this.decider.recordBlocked(request.tabId)
@@ -427,11 +432,15 @@ export function bundledListsDirectory(): string {
 // Wiring
 // ---------------------------------------------------------------------------
 
+/** A decision that named a rule, with the request (in `chrome.webRequest` shape) it was about. */
+export type DecisionListener = (request: WebRequestBase, decision: Decision) => void
+
 /** Everything desktop blocking needs, created once per app and attached to every session. */
 export class ElectronBlocking {
   readonly multiplexer: WebRequestMultiplexer
   readonly matcher: GhosteryTextMatcher
   private stopMatcher: (() => void) | null = null
+  private readonly decisionListeners = new Set<DecisionListener>()
 
   constructor(
     private readonly browser: Browser,
@@ -451,11 +460,24 @@ export class ElectronBlocking {
           decide: (ctx) => blocking.engine.decide(ctx),
           recordBlocked: (tabId, count) => blocking.recordBlocked(tabId, count)
         },
-        this.matcher
+        this.matcher,
+        (request, decision) => {
+          for (const listener of this.decisionListeners) listener(request.base, decision)
+        }
       )
     )
     blocking.engine.setTextMatcher(this.matcher)
     this.stopMatcher = this.matcher.start()
+  }
+
+  /**
+   * Follow the decisions the engine took by a named rule (the default allow is not reported);
+   * the extensions' declarativeNetRequest layer keeps its matched-rule log from them. Returns
+   * the function that stops following.
+   */
+  onDecision(listener: DecisionListener): () => void {
+    this.decisionListeners.add(listener)
+    return () => this.decisionListeners.delete(listener)
   }
 
   /** Every session – default, containers and the private one – gets the listeners. */
