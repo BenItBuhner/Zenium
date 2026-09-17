@@ -65,7 +65,7 @@ import {
 } from './model'
 import { getDomain, inputToUrl } from '../shared/url'
 import { overlayForUrl } from '../shared/zenPages'
-import { toggledBookmarksBarMode } from '../shared/bookmarks'
+import { sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
 import { buildSearchUrl, matchEngineKeyword } from '../shared/search'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
@@ -646,9 +646,10 @@ export class Browser {
     this.updateSettings({ bookmarksBar: mode }, win)
   }
 
-  /** The bar folder menu's "Sort by name": folders first, then bookmarks, A to Z. */
-  sortBookmarkFolder(folderId: string): void {
-    this.bookmarks.sortByName(folderId)
+  /** The bar folder menu's "Sort by name": folders first, then bookmarks, A to Z, in one move. */
+  sortBookmarkFolder(folderId: string): boolean {
+    const order = sortedByNameOrder(this.bookmarks.tree, folderId)
+    return order ? this.bookmarks.move(order, folderId, 0) : false
   }
 
   /** Open the bookmarks below the given nodes in a new window (private when asked). */

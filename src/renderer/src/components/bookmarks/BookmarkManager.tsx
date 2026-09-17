@@ -20,14 +20,13 @@ import {
 } from 'lucide-react'
 import type { BookmarkNode, Platform, UIState } from '@shared/types'
 import {
-  type BookmarkSort,
   type BookmarkTree,
   defaultBookmarkFolderId,
   isBookmarkRoot,
   searchBookmarks,
-  sortBookmarkNodes,
   topLevelSelection
 } from '@shared/bookmarks'
+import { type ManagerSort, sortManagerRows } from '@shared/bookmarkViews'
 import { cmd, run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab } from '@renderer/lib/selectors'
@@ -75,7 +74,7 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
       : initialFolder(tree, state.platform)
   })
   const [query, setQuery] = useState('')
-  const [sort, setSort] = useState<BookmarkSort>('manual')
+  const [sort, setSort] = useState<ManagerSort>('manual')
   const [rawSelection, setSelection] = useState<ReadonlySet<string>>(() => new Set())
   const [rawAnchorId, setAnchorId] = useState<string | null>(null)
   const [rawFocusId, setFocusId] = useState<string | null>(null)
@@ -105,7 +104,7 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
     () =>
       searching
         ? searchBookmarks(tree, query, SEARCH_LIMIT)
-        : sortBookmarkNodes(tree.children(folderId), sort, sort === 'dateAdded'),
+        : sortManagerRows(tree.children(folderId), sort),
     [tree, folderId, query, sort, searching]
   )
   const rowIds = useMemo(() => rows.map((r) => r.id), [rows])
@@ -880,8 +879,8 @@ function SelectionBar({
 }
 
 interface OverflowProps {
-  sort: BookmarkSort
-  onSort: (sort: BookmarkSort) => void
+  sort: ManagerSort
+  onSort: (sort: ManagerSort) => void
   onAddBookmark: () => void
   onAddFolder: () => void
   onImport: () => void

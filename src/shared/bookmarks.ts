@@ -1,5 +1,4 @@
-import type { Bookmark, BookmarkNode, BookmarkNodeType, BookmarksBarMode, Platform } from './types'
-import { isNewTabUrl } from './url'
+import type { Bookmark, BookmarkNode, BookmarkNodeType, Platform } from './types'
 
 /**
  * The bookmark tree, shaped like `chrome.bookmarks`: three permanent roots with the ids Chrome
@@ -54,25 +53,7 @@ export interface BookmarkTreeNode extends BookmarkNode {
   children?: BookmarkTreeNode[]
 }
 
-export type BookmarkSort = 'manual' | 'name' | 'dateAdded' | 'url'
-
-/**
- * Whether the bookmarks bar shows for the page on screen: `always`, `never`, or (Edge's default)
- * only on the new tab page. Compact mode hides it with the rest of the chrome regardless.
- */
-export function bookmarksBarVisible(mode: BookmarksBarMode, url: string | null): boolean {
-  if (mode === 'always') return true
-  if (mode === 'never') return false
-  return isNewTabUrl(url)
-}
-
-/** Ctrl+Shift+B: a visible bar hides for good, a hidden (or new-tab-only) bar shows for good. */
-export function toggledBookmarksBarMode(
-  mode: BookmarksBarMode,
-  url: string | null
-): BookmarksBarMode {
-  return bookmarksBarVisible(mode, url) ? 'never' : 'always'
-}
+export type BookmarkSort = 'manual' | 'name' | 'dateAdded'
 
 // ---------------------------------------------------------------------------
 // Indexed view
@@ -388,14 +369,10 @@ export function sortBookmarkNodes(
   const list = [...nodes]
   if (sort === 'manual') return list.sort((a, b) => a.index - b.index)
   const dir = descending ? -1 : 1
-  const text = (x: string, y: string): number =>
-    x.localeCompare(y, undefined, { sensitivity: 'base', numeric: true })
   return list.sort((a, b) => {
     if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
-    if (sort === 'name') return dir * text(a.title, b.title)
-    // Folders have no URL: they keep their manual order ahead of the bookmarks.
-    if (sort === 'url')
-      return a.type === 'folder' ? a.index - b.index : dir * text(a.url ?? '', b.url ?? '')
+    if (sort === 'name')
+      return dir * a.title.localeCompare(b.title, undefined, { sensitivity: 'base', numeric: true })
     return dir * (a.dateAdded - b.dateAdded)
   })
 }

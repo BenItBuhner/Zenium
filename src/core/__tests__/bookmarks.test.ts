@@ -9,6 +9,7 @@ import {
   OTHER_BOOKMARKS_ID,
   isBookmarkRoot
 } from '../../shared/bookmarks'
+import { sortedByNameOrder } from '../../shared/bookmarkViews'
 import type { StoreIO } from '../platform'
 import { BookmarkService } from '../bookmarks'
 import { BrowserState } from '../state'
@@ -314,19 +315,19 @@ describe('BookmarkService: bulk operations', () => {
     expectValid(service)
   })
 
-  it('sorts a folder by name: folders first, then bookmarks A to Z; a sorted folder is a no-op', () => {
+  it('"Sort by name" is one move of every child into its sorted slot; a sorted folder is a no-op', () => {
     const { service } = setup()
     service.create({ parentId: BOOKMARKS_BAR_ID, title: 'zeta', url: 'https://z/' })
     service.create({ parentId: BOOKMARKS_BAR_ID, title: 'Folder', type: 'folder' })
     service.create({ parentId: BOOKMARKS_BAR_ID, title: 'alpha', url: 'https://a/' })
-    expect(service.sortByName(BOOKMARKS_BAR_ID)).toBe(true)
+    const order = sortedByNameOrder(service.tree, BOOKMARKS_BAR_ID)!
+    expect(service.move(order, BOOKMARKS_BAR_ID, 0)).toBe(true)
     expect(service.getChildren(BOOKMARKS_BAR_ID).map((n) => n.title)).toEqual([
       'Folder',
       'alpha',
       'zeta'
     ])
-    expect(service.sortByName(BOOKMARKS_BAR_ID)).toBe(false)
-    expect(service.sortByName('missing')).toBe(false)
+    expect(sortedByNameOrder(service.tree, BOOKMARKS_BAR_ID)).toBeNull()
     expectValid(service)
   })
 

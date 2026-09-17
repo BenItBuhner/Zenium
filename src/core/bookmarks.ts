@@ -9,7 +9,6 @@ import {
   recentBookmarks,
   recentFolders,
   searchBookmarks,
-  sortBookmarkNodes,
   topLevelSelection,
   type BookmarkTreeNode
 } from '../shared/bookmarks'
@@ -283,24 +282,6 @@ export class BookmarkService {
 
   removeByUrl(url: string): void {
     for (const node of this.tree.byUrl(url)) this.removeTree(node.id)
-  }
-
-  /** Chrome's "Sort by name" on a folder: its direct children, folders first, then A to Z. */
-  sortByName(folderId: string): boolean {
-    const folder = this.tree.get(folderId)
-    if (!folder || folder.type !== 'folder') return false
-    const sorted = sortBookmarkNodes(this.tree.children(folderId), 'name')
-    const placement = new Map(sorted.map((n, i) => [n.id, i]))
-    if (sorted.every((n) => n.index === placement.get(n.id))) return false
-    const now = this.now()
-    this.write(
-      this.state.bookmarks.map((n) => {
-        const slot = placement.get(n.id)
-        if (slot !== undefined) return { ...n, index: slot }
-        return n.id === folderId ? { ...n, dateGroupModified: now } : n
-      })
-    )
-    return true
   }
 
   /** Record that the user opened a bookmark. */
