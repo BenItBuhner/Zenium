@@ -258,39 +258,31 @@
 
 /*
  * The v2 draft of the design language, for the surfaces built against it while the direction
- * is being confirmed (the navigation bar's editor is one): Zen's measured in-content palette –
- * neutral near-white and near-black surfaces, a hairline where v1 had a tone change, ink at
- * 69 percent for what is secondary, the accent as Zen mixes it for controls – and the shadows
- * of a panel and a dialog. One block, so every value can be re-tuned once.
+ * is being confirmed (the navigation bar's editor is one): the tokens those surfaces read, with
+ * the values and names of the full `--v2-*` block in PR #64 (definitions only), which replaces
+ * this stopgap when it lands. Zen's measured in-content palette: neutral near-white and
+ * near-black panels, a hairline where v1 had a tone change, ink at 69 percent for what is
+ * secondary, the accent as Zen mixes it for controls, and the shadows of a panel and a sheet.
  */
 :root {
-  --v2-page: #fbfbfe;
-  --v2-card: #f4f4f7;
-  --v2-card-border: #e7e7e8;
   --v2-panel: #f4f4f4;
   --v2-border: rgb(0 0 0 / 0.15);
   --v2-text: #15141a;
   --v2-text-rgb: 21 20 26;
-  --v2-text-deemphasized: rgb(var(--v2-text-rgb) / 0.69);
-  /* A secondary control's fill and a row's press: the text at 10 percent. */
-  --v2-fill: rgb(var(--v2-text-rgb) / 0.1);
+  --v2-text-deemphasized: rgb(21 20 26 / 0.69);
+  --v2-fill: rgb(21 20 26 / 0.1);
   --v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #000);
-  --v2-on-accent: #fff;
-  --v2-scrim: rgb(0 0 0 / 0.4);
   --v2-shadow-panel: 0 2px 6px rgb(0 0 0 / 0.2);
-  --v2-shadow-dialog: 0 10px 8px rgb(0 0 0 / 0.15);
+  --v2-shadow-sheet: 0 10px 8px rgb(0 0 0 / 0.15);
 }
 :root[data-theme='dark'] {
-  --v2-page: #1c1b22;
-  --v2-card: #19181f;
-  --v2-card-border: #302f38;
   --v2-panel: #1f1f1f;
   --v2-border: rgb(255 255 255 / 0.12);
   --v2-text: #fbfbfe;
   --v2-text-rgb: 251 251 254;
+  --v2-text-deemphasized: rgb(251 251 254 / 0.69);
+  --v2-fill: rgb(251 251 254 / 0.1);
   --v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #fff);
-  --v2-on-accent: #15141a;
-  --v2-scrim: rgb(0 0 0 / 0.55);
 }
 /* A v2 secondary button at the phone's size: 40 tall, radius 6, 15/500, the text at 10 percent. */
 .zen-v2-button {
@@ -1503,7 +1495,7 @@
     background: var(--v2-panel);
     color: var(--v2-text);
     backdrop-filter: none;
-    box-shadow: var(--v2-shadow-dialog);
+    box-shadow: var(--v2-shadow-sheet);
   }
   .zen-bar-editor .zen-sheet-handle {
     background: rgb(var(--v2-text-rgb) / 0.25);
