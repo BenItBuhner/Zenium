@@ -17,18 +17,11 @@ name: Android emulator demo
 # script-env (NAME=value lines) is exported before setup-script and the driver run; setup-script is
 # for what a demo needs beyond the build (another APK, a tool), and runs from the repository root.
 #
-# Two caches. gradle/actions/setup-gradle restores the Gradle user home, and only runs on main write
+# One cache. gradle/actions/setup-gradle restores the Gradle user home, and only runs on main write
 # it back (cache-read-only everywhere else, which is also the action's default): a branch reads what
-# main's CI and demos saved and never publishes entries of its own. The AVD, boot snapshot included,
-# is cached with actions/cache: on a miss the emulator boots from cold once and saves its state when
-# it shuts down, and every later run loads that snapshot (about 12 s) instead of booting (about
-# 40 s), with -no-snapshot-save so the cached state is never overwritten. The entry is large, 2.8 GB
-# for a 4 GB device, so restoring it takes about as long as the boot it replaces. GitHub scopes
-# caches to the branch that wrote them plus the default branch, and evicts the least recently used
-# entries once a repository holds more than 10 GB, so populate the shared entry by dispatching a
-# demo on main once after changing this file rather than letting every branch write its own. Bump
-# the -v1 suffix of the cache key when the emulator settings below (cores, RAM, heap) change; a
-# stale snapshot is not an error, the emulator falls back to a cold boot.
+# main's CI and demos saved and never publishes entries of its own. The AVD is not cached: in PR #34
+# restoring the 2.8 GB snapshot took 28 to 33 s against the 28 s it saved on boot, a miss cost about
+# 2 min more, and one entry is 28 percent of the 10 GB cache quota.
 on:
   workflow_call:
     inputs:
@@ -151,34 +144,6 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
           ls -la /dev/kvm
-      - name: Restore the AVD and its boot snapshot
-        id: avd-cache
-        uses: actions/cache@v6
-        with:
-          # The emulator runner keeps AVDs under ~/.android/avd; the adb keys must travel with the
-          # snapshot or the restored device would refuse the runner's adb as unauthorized.
-          path: |
-            ~/.android/avd/*
-            ~/.android/adb*
-          key: avd-${{ inputs.api-level }}-${{ inputs.target }}-${{ inputs.arch }}-${{ inputs.profile }}-v1
-      - name: Create the AVD and save a boot snapshot for the cache
-        if: steps.avd-cache.outputs.cache-hit != 'true'
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: ${{ inputs.api-level }}
-          target: ${{ inputs.target }}
-          arch: ${{ inputs.arch }}
-          profile: ${{ inputs.profile }}
-          cores: 3
-          ram-size: 4096M
-          heap-size: 512M
-          force-avd-creation: false
-          # No -no-snapshot: the emulator saves its state when it is shut down, and that snapshot
-          # is what the cache stores. Animator scales persist in the snapshot as well, so they are
-          # left at 1 here and set per run below.
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
-          disable-animations: false
-          script: echo "Generated AVD snapshot for caching."
       - name: Boot the emulator and run the driver
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -189,9 +154,7 @@ jobs:
           cores: 3
           ram-size: 4096M
           heap-size: 512M
-          force-avd-creation: false
-          # Boots from the cached snapshot; -no-snapshot-save keeps this run's state out of it.
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot-save -noaudio -no-boot-anim -camera-back none -camera-front none
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
           disable-animations: ${{ inputs.disable-animations }}
           script: bash ${{ inputs.script }}
       - uses: actions/upload-artifact@v7

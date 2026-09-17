@@ -4,8 +4,8 @@ name: Android site info demo
 # pill: connection, cookies, storage, permissions, and clearing them) on a hardware-accelerated
 # Android emulator and uploads the video and screenshots. Dispatch-only, like the gesture demo:
 # it takes about ten minutes and says nothing about a change being correct. Same caveats as the
-# gesture demo about frame rate and the software GPU. The build, the emulator and its caches live
-# in android-emulator-demo.yml; this file only picks the driver and the demo it runs.
+# gesture demo about frame rate and the software GPU. The build, the emulator and the Gradle cache
+# live in android-emulator-demo.yml; this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
 
