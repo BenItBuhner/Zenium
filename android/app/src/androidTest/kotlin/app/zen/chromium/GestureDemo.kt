@@ -85,6 +85,7 @@ class GestureDemo {
         seedProfile()
         launch()
         measure()
+        warmUpKeyboard()
         if (scenario == "before") {
             handshake()
             omniboxBefore()
@@ -96,6 +97,17 @@ class GestureDemo {
             omniboxAfter()
         }
         Log.i(TAG, "done")
+    }
+
+    /**
+     * The keyboard's first appearance on a fresh emulator takes seconds and paints late (the
+     * insets arrive, the keys do not): bring it up once off camera so the takes show it whole.
+     */
+    private fun warmUpKeyboard() {
+        Finger().tap(pillCenterX, pillY)
+        SystemClock.sleep(7_000)
+        dismissOmnibox()
+        SystemClock.sleep(1_000)
     }
 
     // --- setup -----------------------------------------------------------------------------------
@@ -306,9 +318,9 @@ class GestureDemo {
     private fun omniboxBefore() {
         val f = Finger()
         f.tap(pillCenterX, pillY)
-        SystemClock.sleep(2_500)
+        SystemClock.sleep(3_000)
         typeText("wiki")
-        SystemClock.sleep(2_500)
+        SystemClock.sleep(3_000)
         shotNamed("omnibox-before-keyboard-strip")
         SystemClock.sleep(1_500)
         finishRecording()
@@ -342,7 +354,7 @@ class GestureDemo {
         f.up()
         SystemClock.sleep(2_200)
         shotNamed("omnibox-docked-top")
-        remeasurePill()
+        remeasurePill("top")
 
         // 3. The omnibox at the top with the keyboard.
         f.tap(pillCenterX, pillY)
@@ -364,7 +376,7 @@ class GestureDemo {
         SystemClock.sleep(2_000)
 
         // 5. The swipes at the top: next tab and back, then the overview pulled down.
-        remeasurePill()
+        remeasurePill("top")
         flingLeft()
         SystemClock.sleep(3_000)
         flingRight()
@@ -381,7 +393,7 @@ class GestureDemo {
         f.moveBy(0f, 0.45f * travel, 200)
         f.up()
         SystemClock.sleep(2_200)
-        remeasurePill()
+        remeasurePill("bottom")
 
         // 7. And the swipes at the bottom again.
         flingLeft()
@@ -393,13 +405,16 @@ class GestureDemo {
         finishRecording()
     }
 
-    /** The pill moved with the bar: find it again (falling back to the bottom slot). */
-    private fun remeasurePill() {
+    /** The pill moved with the bar to `edge`: find it again (falling back to that edge's slot). */
+    private fun remeasurePill(edge: String) {
+        val insets = windowInsets()
         val found = findByLabel(PILL_LABEL)?.takeIf { it.width() > 100 * density }
-        if (found != null) pill = found
+        pill = found ?: computedPill(insets.bottom).also { slot ->
+            if (edge == "top") slot.offsetTo(slot.left, (insets.top + 6 * density).roundToInt())
+        }
         pillY = pill.exactCenterY()
         pillCenterX = pill.exactCenterX()
-        Log.i(TAG, "pill now $pill")
+        Log.i(TAG, "pill now $pill (${if (found != null) "from accessibility" else "computed for $edge"})")
     }
 
     /** Pull the overview in from the pill: `inward` is +1 with the bar at the top, −1 at the bottom. */

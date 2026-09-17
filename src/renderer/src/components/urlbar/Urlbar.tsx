@@ -271,8 +271,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
         field={
           <div className="zen-omnibox-field flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full pl-2 pr-1.5">
             <span
+              role="img"
+              aria-label={`Search engine: ${engine.name}`}
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--zen-element-bg)] text-[11px] font-semibold"
-              title={`Search engine: ${engine.name}`}
             >
               {engine.glyph}
             </span>

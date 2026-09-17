@@ -369,7 +369,7 @@ function PillContent({
       <Control
         {...controlProps}
         className="flex h-full min-w-0 flex-1 items-center text-left"
-        aria-label={interactive && !url ? 'Search or enter address' : undefined}
+        aria-label={interactive ? (url ? `Address, ${url}` : 'Search or enter address') : undefined}
       >
         <span
           className={cn('min-w-0 flex-1 truncate text-[14px]', !url && 'text-[var(--zen-muted)]')}
