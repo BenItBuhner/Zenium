@@ -257,42 +257,17 @@
 }
 
 /*
- * The v2 draft of the design language, for the surfaces built against it while the direction
- * is being confirmed (the navigation bar's editor is one): the tokens those surfaces read, with
- * the values and names of the full `--v2-*` block in PR #64 (definitions only), which replaces
- * this stopgap when it lands. Zen's measured in-content palette: neutral near-white and
- * near-black panels, a hairline where v1 had a tone change, ink at 69 percent for what is
- * secondary, the accent as Zen mixes it for controls, and the shadows of a panel and a sheet.
+ * A v2 secondary button (design-language-v2-draft §6): the control's height and radius from the
+ * density tokens (40 tall and radius 6 under a finger), the button weight, the text at 10 percent.
  */
-:root {
-  --v2-panel: #f4f4f4;
-  --v2-border: rgb(0 0 0 / 0.15);
-  --v2-text: #15141a;
-  --v2-text-rgb: 21 20 26;
-  --v2-text-deemphasized: rgb(21 20 26 / 0.69);
-  --v2-fill: rgb(21 20 26 / 0.1);
-  --v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #000);
-  --v2-shadow-panel: 0 2px 6px rgb(0 0 0 / 0.2);
-  --v2-shadow-sheet: 0 10px 8px rgb(0 0 0 / 0.15);
-}
-:root[data-theme='dark'] {
-  --v2-panel: #1f1f1f;
-  --v2-border: rgb(255 255 255 / 0.12);
-  --v2-text: #fbfbfe;
-  --v2-text-rgb: 251 251 254;
-  --v2-text-deemphasized: rgb(251 251 254 / 0.69);
-  --v2-fill: rgb(251 251 254 / 0.1);
-  --v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #fff);
-}
-/* A v2 secondary button at the phone's size: 40 tall, radius 6, 15/500, the text at 10 percent. */
 .zen-v2-button {
-  height: 40px;
+  height: var(--v2-control);
   padding: 0 12px;
-  border-radius: 6px;
+  border-radius: var(--v2-radius-control);
   background: var(--v2-fill);
   color: var(--v2-text);
-  font-size: 15px;
-  font-weight: 500;
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-button);
   transition:
     background 120ms var(--zen-ease),
     transform 120ms var(--zen-ease);
@@ -1455,23 +1430,25 @@
   .zen-quick-menu {
     padding: 4px;
     border: 1px solid var(--v2-border);
-    border-radius: 8px;
+    border-radius: var(--v2-radius-card);
     background: var(--v2-panel);
     box-shadow: var(--v2-shadow-panel);
     color: var(--v2-text);
     corner-shape: var(--zen-corner);
   }
+  /* Rows at the phone's menu height, in Android's menu size (v2 §4: 14 at 400). */
   .zen-quick-menu-item {
     display: flex;
     width: 100%;
-    height: 44px;
+    height: var(--v2-menu-row);
     align-items: center;
     gap: 12px;
     padding: 0 12px;
-    border-radius: 4px;
+    border-radius: calc(var(--v2-radius-card) - 4px);
     color: var(--v2-text);
     text-align: left;
     font-size: 14px;
+    font-weight: var(--v2-weight-body);
     transition: background 120ms var(--zen-ease);
   }
   .zen-quick-menu-item:active:not(:disabled) {
@@ -1491,7 +1468,7 @@
   .zen-sheet.zen-bar-editor {
     border: 1px solid var(--v2-border);
     border-bottom: 0;
-    border-radius: 12px 12px 0 0;
+    border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
     background: var(--v2-panel);
     color: var(--v2-text);
     backdrop-filter: none;
@@ -1507,23 +1484,24 @@
     box-shadow: 0 1px 0 var(--v2-border);
   }
   .zen-bar-title {
-    font-size: 17px;
-    font-weight: 600;
+    font-size: var(--v2-font-heading);
+    font-weight: var(--v2-weight-heading);
     line-height: 24px;
     letter-spacing: -0.01em;
   }
   .zen-bar-row {
     position: relative;
     display: flex;
-    min-height: 44px;
+    min-height: var(--v2-row);
     align-items: center;
     gap: 12px;
     padding: 0 0 0 8px;
-    border-radius: 8px;
+    border-radius: var(--v2-radius-card);
     corner-shape: var(--zen-corner);
     color: var(--v2-text);
-    font-size: 15px;
-    line-height: 20px;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
     user-select: none;
     -webkit-user-select: none;
     transition:
@@ -1534,7 +1512,7 @@
   }
   /* Row glyphs at the phone's stroke; the bar's own glyphs keep theirs. */
   .zen-bar-row svg {
-    stroke-width: 1.75;
+    stroke-width: var(--v2-icon-stroke);
   }
   .zen-bar-row-pressable:active {
     background: var(--v2-fill);
@@ -1565,19 +1543,19 @@
   }
   .zen-bar-heading {
     padding: 8px 12px 2px;
-    font-size: 15px;
-    font-weight: 600;
-    line-height: 20px;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
   }
   .zen-bar-caption {
     padding: 0 12px 6px;
-    font-size: 13px;
-    line-height: 18px;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
     color: var(--v2-text-deemphasized);
   }
   .zen-bar-note {
-    font-size: 13px;
-    line-height: 18px;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
     color: var(--v2-text-deemphasized);
   }
 }
