@@ -78,6 +78,8 @@ export class ElectronWindow implements WindowHost {
     })
     const wc = win.webContents
     wc.on('did-finish-load', () => zen.onChromeReady())
+    // The chrome document's <title> would otherwise overwrite the OS title (Alt+Tab / taskbar).
+    wc.on('page-title-updated', (event) => event.preventDefault())
     // Navigate before attaching the rest of the listeners so the chrome renderer is never left
     // sitting at an empty URL (that sandboxed guest logs WIN-009).
     this.loadChrome()
@@ -194,6 +196,10 @@ export class ElectronWindow implements WindowHost {
 
   close(): void {
     if (this.alive) this.win.close()
+  }
+
+  setTitle(title: string): void {
+    if (this.alive) this.win.setTitle(title)
   }
 
   normalBounds(): Rect | null {

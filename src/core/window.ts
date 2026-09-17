@@ -14,6 +14,8 @@ import type { Browser } from './browser'
 import type { PersistedWindow } from './state'
 import { getSpace, tabVisibleIn } from './model'
 import type { WindowHost } from './platform'
+import { ThrottledValue } from './throttle'
+import { formatWindowTitle } from '../shared/windowTitle'
 
 export interface WindowInit {
   id: string
@@ -61,6 +63,7 @@ export class ZenWindow {
   private pendingContentFocus = false
   private closing = false
   private chromeReadyOnce = false
+  private titlePush: ThrottledValue<string> | null = null
 
   constructor(
     private readonly browser: Browser,
@@ -195,15 +198,31 @@ export class ZenWindow {
   }
 
   onClosed(): void {
+    this.titlePush?.dispose()
+    this.titlePush = null
     this.browser.onWindowClosed(this)
   }
 
   /** The chrome document finished loading (also after a reload). */
   onChromeReady(): void {
     this.send('state', this.browser.state.snapshot(this))
+    this.syncNativeTitle()
     if (this.chromeReadyOnce) return
     this.chromeReadyOnce = true
     this.browser.onChromeReady(this)
+  }
+
+  /** Alt+Tab / taskbar / Dock title from the active tab, at most 10 updates per second. */
+  syncNativeTitle(): void {
+    if (!this.host?.setTitle || !this.alive) return
+    if (!this.titlePush) {
+      this.titlePush = new ThrottledValue(100, (title) => {
+        if (this.alive) this.host.setTitle?.(title)
+      })
+    }
+    const tab = this.browser.tabs.activeTabFor(this)
+    const tabTitle = tab ? (tab.customTitle ?? tab.title) : null
+    this.titlePush.push(formatWindowTitle(tabTitle, this.isPrivate))
   }
 
   // ---------------------------------------------------------------------------

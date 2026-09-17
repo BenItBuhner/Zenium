@@ -59,6 +59,7 @@ import { PRIVATE_THEME, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
+import { formatWindowTitle } from '../shared/windowTitle'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 
 type CommandHandlers = {
@@ -243,7 +244,7 @@ export class Browser {
       bounds: win.initialBounds,
       maximized: win.initialMaximized,
       cascadeFrom: win.cascadeFrom,
-      title: win.isPrivate ? 'Zenium (Private Browsing)' : 'Zenium',
+      title: formatWindowTitle(null, win.isPrivate),
       backgroundColor: rgbToHex(theme.averageColor)
     })
     this.governor.watchWindow(win)
@@ -318,7 +319,10 @@ export class Browser {
       }
     }
     this.state.subscribe(() => {
-      for (const win of this.allWindows()) win.send('state', this.state.snapshot(win))
+      for (const win of this.allWindows()) {
+        win.send('state', this.state.snapshot(win))
+        win.syncNativeTitle()
+      }
     })
     // Zen restores every synced window (and the space each one was in).
     const restore =
