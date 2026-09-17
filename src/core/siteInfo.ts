@@ -79,6 +79,8 @@ const PAGE_CLEAR = `(() => {
 
 /** Up to this many embedded sites are checked for cookies of their own. */
 const THIRD_PARTY_LIMIT = 8
+/** A page that never answers the probe (frozen, mid-navigation) must not hold the sheet up. */
+const PAGE_SCRIPT_TIMEOUT_MS = 4000
 
 export interface ComposeInput {
   tabId: string
@@ -211,7 +213,8 @@ export class SiteInfoService {
     if (!site.web) return
     const host = this.browser.platform.siteData
     const view = this.browser.tabs.view(tabId)
-    if (view && sameDocument(view, tab.url)) await quiet(view.executeJavaScript(PAGE_CLEAR))
+    if (view && sameDocument(view, tab.url))
+      await quiet(withTimeout(view.executeJavaScript(PAGE_CLEAR), PAGE_SCRIPT_TIMEOUT_MS))
     if (host) {
       const pageUrl = `${site.scheme}://${site.host}${site.path}`
       const reading = await quiet(host.storage(tab.containerId, site.site))
@@ -239,7 +242,7 @@ export class SiteInfoService {
   }
 
   private async probe(view: TabView): Promise<PageProbe> {
-    const raw = await quiet(view.executeJavaScript(PAGE_PROBE))
+    const raw = await quiet(withTimeout(view.executeJavaScript(PAGE_PROBE), PAGE_SCRIPT_TIMEOUT_MS))
     return parseProbe(raw)
   }
 
@@ -303,4 +306,20 @@ async function quiet<T>(promise: Promise<T>): Promise<T | null> {
   } catch {
     return null
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timed out')), ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    )
+  })
 }
