@@ -274,8 +274,39 @@ export function scrimBase(resolved: ResolvedTheme): RGB {
   return mix(resolved.averageColor, [0, 0, 0], 0.7)
 }
 
+/** The chrome's ink (`--zen-fg`) on a resolved theme. */
+export function themeInk(resolved: ResolvedTheme): RGB {
+  return resolved.isDark ? [240, 240, 245] : [30, 30, 36]
+}
+
+/**
+ * Height (px) of the chrome's header row: the sidebar's title row (6px inset + 32px row) that
+ * holds the window buttons on Linux, and the native caption buttons on Windows.
+ */
+export const CAPTION_HEIGHT = 38
+
+/** Colours of the native caption buttons Windows draws over the chrome (Window Controls Overlay). */
+export interface CaptionColors {
+  /** Background behind the buttons as `#rrggbbaa`. */
+  color: string
+  /** Glyph colour as `#rrggbb`. */
+  symbolColor: string
+}
+
+/**
+ * The caption buttons sit on the space gradient itself: their rest background is the theme's
+ * solid colour at alpha 0 (Windows derives the hover fill's polarity from the opaque channels,
+ * so a dark space still gets a light hover), and the glyphs use the chrome's ink.
+ */
+export function captionColors(resolved: ResolvedTheme): CaptionColors {
+  return {
+    color: `${rgbToHex(resolved.averageColor)}00`,
+    symbolColor: rgbToHex(themeInk(resolved))
+  }
+}
+
 export function themeCssVariables(resolved: ResolvedTheme): Record<string, string> {
-  const fg: RGB = resolved.isDark ? [240, 240, 245] : [30, 30, 36]
+  const fg = themeInk(resolved)
   // Space separated so `rgb(var(--zen-fg-rgb) / 0.1)` is valid modern colour syntax.
   const fgRgb = fg.join(' ')
   return {

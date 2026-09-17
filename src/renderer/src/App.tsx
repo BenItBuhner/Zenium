@@ -19,15 +19,17 @@ import {
   useBrowser
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { useCaptionOverlay } from '@renderer/hooks/useCaptionOverlay'
 import { useMainEvents } from '@renderer/hooks/useMainEvents'
 import { useTheme } from '@renderer/hooks/useTheme'
 import { BookmarksBar } from './components/bookmarks/BookmarksBar'
+import { captionBandInMain } from '@renderer/lib/layout'
 import { ContentArea } from './components/content/ContentArea'
 import { DragGhost } from './components/DragGhost'
 import { ModStyles } from './components/ModStyles'
 import { Onboarding } from './components/overlays/Onboarding'
 import { PhoneShell } from './components/phone/PhoneShell'
-import { Sidebar } from './components/sidebar/Sidebar'
+import { COLLAPSED_WIDTH, Sidebar } from './components/sidebar/Sidebar'
 import { TabDialogs } from './components/TabDialogs'
 import { Toolbar } from './components/Toolbar'
 
@@ -70,6 +72,19 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   // The bookmarks bar sits under the toolbar and hides with it in compact mode.
   const barWanted = bookmarksBarVisible(settings.bookmarksBar, tab?.url ?? null)
   const showBar = barWanted && !(compact.enabled && compact.hideToolbar)
+  // Windows draws the caption buttons over the top trailing corner: whatever sits there keeps
+  // clear of them, and the content column starts below them when they land on it.
+  const overlay = useCaptionOverlay()
+  const captionBand = captionBandInMain({
+    overlayWidth: overlay.width,
+    sidebarSide,
+    sidebarWidth: sidebarHidden
+      ? null
+      : settings.sidebarExpanded
+        ? settings.sidebarWidth
+        : COLLAPSED_WIDTH
+  })
+  const captionInset = captionBand ? overlay.width : 0
 
   // Compact mode: hovering the window edge reveals the sidebar on top of a frozen page snapshot.
   const revealTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -136,7 +151,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
         style={{
           // Longhands only: mixing the `padding` shorthand with `paddingLeft` breaks React's
           // style diffing when the sidebar toggles.
-          paddingTop: 'var(--zen-padding)',
+          paddingTop: captionBand ? 0 : 'var(--zen-padding)',
           paddingBottom: 'var(--zen-padding)',
           // The hidden-sidebar side keeps a wider gutter: it is the compact-mode reveal zone and
           // must stay hoverable beyond a frameless window's resize border.
@@ -146,7 +161,10 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
             sidebarSide === 'right' ? (sidebarHidden ? REVEAL_ZONE : 0) : 'var(--zen-padding)'
         }}
       >
-        {showToolbar && <Toolbar state={state} tab={tab} />}
+        {captionBand && !showToolbar && (
+          <div className="zen-drag shrink-0" style={{ height: overlay.height }} />
+        )}
+        {showToolbar && <Toolbar state={state} tab={tab} trailingInset={captionInset} />}
         {showBar && <BookmarksBar state={state} tab={tab} />}
         <div className="relative min-h-0 flex-1">
           <ContentArea state={state} ui={ui} />
@@ -182,7 +200,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
         </>
       )}
       {toolbarHidden && !showToolbar && settings.toolbarLayout === 'multiple' && (
-        <CompactToolbar state={state} showBar={barWanted} />
+        <CompactToolbar state={state} showBar={barWanted} trailingInset={captionInset} />
       )}
 
       {ui.drag && <DragGhost state={state} drag={ui.drag} />}
@@ -192,7 +210,15 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
 }
 
 /** Compact mode with the top toolbar hidden: hover the top edge to reveal it (and the bar). */
-function CompactToolbar({ state, showBar }: { state: UIState; showBar: boolean }): JSX.Element {
+function CompactToolbar({
+  state,
+  showBar,
+  trailingInset
+}: {
+  state: UIState
+  showBar: boolean
+  trailingInset: number
+}): JSX.Element {
   const tab = activeTab(state)
   const ref = useRef<HTMLDivElement>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -211,7 +237,10 @@ function CompactToolbar({ state, showBar }: { state: UIState; showBar: boolean }
       onPointerLeave={hide}
     >
       <div className="h-1.5" />
-      <div className="px-2 opacity-0 transition-opacity group-data-[open=true]/ct:opacity-100 pointer-events-none group-data-[open=true]/ct:pointer-events-auto">
+      <div
+        className="px-2 opacity-0 transition-opacity group-data-[open=true]/ct:opacity-100 pointer-events-none group-data-[open=true]/ct:pointer-events-auto"
+        style={trailingInset > 0 ? { paddingRight: trailingInset + 8 } : undefined}
+      >
         <Toolbar state={state} tab={tab} floating>
           {showBar && <BookmarksBar state={state} tab={tab} className="px-1" />}
         </Toolbar>

@@ -1,5 +1,6 @@
 import { app, clipboard, dialog, ipcMain, nativeTheme, net, shell, type Session } from 'electron'
 import { readFileSync, writeFileSync } from 'node:fs'
+import { release } from 'node:os'
 import { basename, join } from 'node:path'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { Browser } from '../../core/browser'
@@ -47,9 +48,12 @@ import {
   permissionRequestDetails
 } from './security'
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
+import { supportsWindowMaterial } from './appShell'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
+  windowControlsOverlay: process.platform === 'win32',
+  windowMaterial: supportsWindowMaterial(process.platform, release()),
   nativeMenus: true,
   windowDrag: true,
   devtools: true,

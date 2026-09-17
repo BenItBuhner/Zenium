@@ -10,6 +10,7 @@ import type {
   FolderColor,
   KeyBinding,
   MediaState,
+  Rect,
   SearchEngine,
   Rect,
   Settings,
@@ -17,6 +18,7 @@ import type {
   SharePayload,
   Space,
   Tab,
+  WindowChrome,
   WindowKind
 } from '../shared/types'
 import { BrowserState, type PersistedWindow } from './state'
@@ -73,7 +75,7 @@ import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { ONBOARDING_ESSENTIALS, sanitizePasswordSettings, spaceLabel } from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
-import { PRIVATE_THEME, resolveTheme, rgbToHex } from '../shared/theme'
+import { PRIVATE_THEME, captionColors, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
@@ -298,9 +300,17 @@ export class Browser {
     kind: WindowKind
     from?: ZenWindow
     persisted?: PersistedWindow
-    /** Where to place the window (a reopened window comes back where it was). */
+    /** Toolbar-only chrome for a page's sized popup (default: the full sidebar chrome). */
+    chrome?: WindowChrome
+    /**
+     * Where to place the window: where a popup asked to be, or where a reopened window was; full
+     * windows without bounds cascade from `from`.
+     */
     bounds?: Rect | null
-    /** Start without the starter tab of blank / private windows (the caller adds the tabs). */
+    /**
+     * Start without the starter tab of blank / private windows (the caller adds the tabs, or
+     * adopts a page right away).
+     */
     empty?: boolean
   }): ZenWindow {
     const m = this.state.model
@@ -326,17 +336,26 @@ export class Browser {
       m.localSpaces[localSpace.id] = localSpace
       activeSpaceId = localSpace.id
     }
+    const chrome = opts.chrome ?? 'full'
     const win = new ZenWindow(this, {
       id,
       kind: opts.kind,
+      chrome,
+      material: this.state.capabilities.windowMaterial
+        ? this.state.settings.windowMaterial
+        : 'none',
       bounds: opts.persisted?.bounds ?? opts.bounds ?? null,
       maximized: opts.persisted?.maximized ?? false,
       activeSpaceId,
       selection: opts.persisted?.selection ?? {},
       compact:
-        opts.persisted?.compact ?? from?.compactEnabled ?? this.state.settings.compactMode.enabled,
+        chrome === 'popup'
+          ? false
+          : (opts.persisted?.compact ??
+            from?.compactEnabled ??
+            this.state.settings.compactMode.enabled),
       localSpace,
-      cascadeFrom: from
+      cascadeFrom: opts.bounds ? undefined : from
     })
     this.windows.set(id, win)
     const theme = resolveTheme(win.activeSpace().theme, this.darkScheme())
@@ -345,7 +364,10 @@ export class Browser {
       maximized: win.initialMaximized,
       cascadeFrom: win.cascadeFrom,
       title: win.isPrivate ? 'Zenium (Private Browsing)' : 'Zenium',
-      backgroundColor: rgbToHex(theme.averageColor)
+      chrome,
+      material: win.material,
+      backgroundColor: rgbToHex(theme.averageColor),
+      captionColors: captionColors(theme)
     })
     this.governor.watchWindow(win)
     if (localSpace && !opts.empty) {
@@ -356,6 +378,15 @@ export class Browser {
     }
     this.state.commit()
     return win
+  }
+
+  /** Native caption buttons follow the theme of the space each window shows. */
+  private syncCaptionColors(): void {
+    const dark = this.darkScheme()
+    for (const win of this.allWindows()) {
+      if (!win.host.setCaptionColors) continue
+      win.host.setCaptionColors(captionColors(resolveTheme(win.activeSpace().theme, dark)))
+    }
   }
 
   /** Whether the chrome renders dark: the Appearance setting, or the OS scheme when it follows it. */
@@ -437,6 +468,7 @@ export class Browser {
         win.send('state', this.state.snapshot(win))
         win.updateTitle()
       }
+      this.syncCaptionColors()
     })
     // Rule sets load synchronously so the first page is protected.
     this.blocking.start()

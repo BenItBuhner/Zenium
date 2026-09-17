@@ -260,6 +260,17 @@ function LookSection({
         <Row label="Remove browser padding" hint="Hide the rounded frame around web content.">
           <Switch checked={s.borderless} onCheckedChange={(v) => set({ borderless: v })} />
         </Row>
+        {caps.windowMaterial && (
+          <Row
+            label="Use Windows transparency effects"
+            hint="Let the desktop show through the window frame (Mica). Applies to new windows."
+          >
+            <Switch
+              checked={s.windowMaterial === 'mica'}
+              onCheckedChange={(v) => set({ windowMaterial: v ? 'mica' : 'none' })}
+            />
+          </Row>
+        )}
       </Group>
       {caps.pageControls && <SitesGroups s={s} set={set} />}
       <AppIconGroup value={s.appIcon} platform={platform} onChange={(id) => set({ appIcon: id })} />
