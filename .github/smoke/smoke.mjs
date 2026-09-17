@@ -134,6 +134,94 @@ function sh(cmd, args, timeout = 60000) {
   return { status: res.status, stdout: (res.stdout || '').trim(), stderr: (res.stderr || '').trim() }
 }
 
+// macOS: click a button by name anywhere in the app's windows or their sheets (Electron message
+// boxes with a parent window are sheets; its stock error box is a plain window). One script,
+// walked through UI scripting, instead of guessing "sheet 1 of window 1".
+const MAC_CLICK_BUTTON_SCRIPT = `
+on run argv
+  set wanted to item 1 of argv
+  set procName to item 2 of argv
+  with timeout of 25 seconds
+    tell application "System Events"
+      tell process procName
+        try
+          set frontmost to true
+        end try
+        repeat with w in windows
+          try
+            repeat with sh in sheets of w
+              repeat with b in buttons of sh
+                if (name of b as text) is wanted then
+                  click b
+                  return "clicked " & wanted & " in a sheet of window '" & (name of w as text) & "'"
+                end if
+              end repeat
+            end repeat
+          end try
+          repeat with e in entire contents of w
+            try
+              if class of e is button and (name of e as text) is wanted then
+                click e
+                return "clicked " & wanted & " in window '" & (name of w as text) & "'"
+              end if
+            end try
+          end repeat
+        end repeat
+      end tell
+    end tell
+  end timeout
+  return "no button named " & wanted
+end run
+`
+function macClickButton(label, procName = 'Zen') {
+  const file = path.join(outDir, 'mac-click-button.applescript')
+  if (!fs.existsSync(file)) fs.writeFileSync(file, MAC_CLICK_BUTTON_SCRIPT)
+  const r = sh('osascript', [file, label, procName], 40000)
+  return r.status === 0 ? r.stdout : `osascript failed: ${r.stderr || r.stdout}`
+}
+
+// macOS: describe the app's windows and sheets (titles, static texts, buttons) for the record.
+const MAC_DIALOG_FACTS_SCRIPT = `
+on run argv
+  set procName to item 1 of argv
+  with timeout of 25 seconds
+    set out to {}
+    tell application "System Events"
+      tell process procName
+        repeat with w in windows
+          set end of out to ("window: '" & (name of w as text) & "' role " & (role description of w as text))
+          try
+            repeat with sh in sheets of w
+              set end of out to ("  sheet with " & (count of buttons of sh) & " buttons")
+              repeat with t in static texts of sh
+                set end of out to ("    text: " & (value of t as text))
+              end repeat
+              repeat with b in buttons of sh
+                set end of out to ("    button: " & (name of b as text))
+              end repeat
+            end repeat
+          end try
+          repeat with e in entire contents of w
+            try
+              if class of e is static text then set end of out to ("  text: " & (value of e as text))
+              if class of e is button then set end of out to ("  button: " & (name of e as text))
+            end try
+          end repeat
+        end repeat
+      end tell
+    end tell
+    set AppleScript's text item delimiters to linefeed
+    return out as text
+  end timeout
+end run
+`
+function macDialogFacts(procName = 'Zen') {
+  const file = path.join(outDir, 'mac-dialog-facts.applescript')
+  if (!fs.existsSync(file)) fs.writeFileSync(file, MAC_DIALOG_FACTS_SCRIPT)
+  const r = sh('osascript', [file, procName], 40000)
+  return r.status === 0 ? r.stdout : `osascript failed: ${r.stderr || r.stdout}`
+}
+
 // OS-level screenshot: the tab pages are WebContentsViews, so Playwright's page.screenshot() only
 // shows the chrome layer. Windows copies the primary screen through GDI; macOS uses screencapture.
 async function shot(name, page = null) {

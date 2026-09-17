@@ -33,8 +33,74 @@ if [ -n "$APP_IN_DMG" ]; then
   cp -R "$APP_IN_DMG" "$DEST/"
   APP="$DEST/$(basename "$APP_IN_DMG")"
   log "copied to: $APP"
+  # Written before the launch experiments so the downstream smoke still finds the copy if one of
+  # them hangs (Gatekeeper's modal keeps `open` from returning).
+  printf '%s\n' "$APP" > "$OUT/dmg-app-path.txt"
 fi
 hdiutil detach "$MOUNT" -force 2>&1 | tee -a "$TXT"
+
+# Read every window of the given processes through UI scripting: title, static texts, buttons.
+dialog_facts() {
+  osascript - "$@" <<'EOS' 2>&1
+on run argv
+  with timeout of 20 seconds
+    set out to {}
+    tell application "System Events"
+      repeat with pname in argv
+        try
+          repeat with w in (windows of process pname)
+            set end of out to ("[" & pname & "] window: " & (name of w as text))
+            repeat with e in (entire contents of w)
+              try
+                if class of e is static text then set end of out to ("  text: " & (value of e as text))
+                if class of e is button then set end of out to ("  button: " & (name of e as text))
+              end try
+            end repeat
+          end repeat
+        end try
+      end repeat
+    end tell
+    set AppleScript's text item delimiters to linefeed
+    return out as text
+  end timeout
+end run
+EOS
+}
+
+# Click the first matching button in any window of the given process, Escape as the fallback.
+dismiss_dialog() {
+  local proc="$1"; shift
+  osascript - "$proc" "$@" <<'EOS' 2>&1
+on run argv
+  with timeout of 20 seconds
+    set pname to item 1 of argv
+    tell application "System Events"
+      repeat with i from 2 to count of argv
+        set wanted to item i of argv
+        try
+          repeat with w in (windows of process pname)
+            repeat with e in (entire contents of w)
+              try
+                if class of e is button and (name of e as text) is wanted then
+                  click e
+                  return "clicked " & wanted
+                end if
+              end try
+            end repeat
+          end repeat
+        end try
+      end repeat
+      try
+        set frontmost of process pname to true
+        key code 53
+        return "sent Escape"
+      end try
+    end tell
+    return "nothing to dismiss"
+  end timeout
+end run
+EOS
+}
 
 if [ -n "${APP:-}" ]; then
   log ""
@@ -58,12 +124,21 @@ if [ -n "${APP:-}" ]; then
   xattr -w com.apple.quarantine "0083;$(printf '%x' "$(date +%s)");Safari;$(uuidgen)" "$QAPP"
   log "xattr: $(xattr -l "$QAPP" 2>&1 | tr '\n' ' ')"
   spctl --assess --type execute --verbose=4 "$QAPP" 2>&1 | tee -a "$TXT"
-  open -a "$QAPP" 2>&1 | tee -a "$TXT"
-  log "open exit: ${PIPESTATUS[0]}"
-  sleep 8
+  # Gatekeeper answers with a modal that keeps `open` from returning: run it in the background,
+  # photograph the dialog, read its text and buttons, then dismiss it.
+  ( open -a "$QAPP" >>"$TXT" 2>&1; log "open exit (quarantined copy): $?" ) &
+  OPEN_PID=$!
+  sleep 10
   ps -axo pid,comm | grep -i '[Z]en' | tee -a "$TXT"
   screencapture -x "$OUT/dmg-open-a-quarantined.png" 2>&1 | tee -a "$TXT"
+  log "--- Gatekeeper dialog (UI scripting)"
+  dialog_facts CoreServicesUIAgent Finder Zen | tee -a "$TXT"
+  log "--- dismiss: $(dismiss_dialog CoreServicesUIAgent Done OK Cancel)"
+  sleep 2
+  screencapture -x "$OUT/dmg-open-a-quarantined-after-dismiss.png" 2>&1 | tee -a "$TXT"
+  kill "$OPEN_PID" 2>/dev/null || true
+  pkill -f "open -a $QAPP" 2>/dev/null || true
   pkill -9 -f "$QAPP/Contents/MacOS/Zen" 2>/dev/null || true
-  printf '%s\n' "$APP" > "$OUT/dmg-app-path.txt"
+  log "quarantined copy processes after dismiss: $(ps -axo pid,comm | grep -i '[Z]en' | tr '\n' ' ')"
 fi
 exit 0

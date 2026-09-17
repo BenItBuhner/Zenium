@@ -64,16 +64,30 @@ switch ($Action) {
       $p = Start-Process -FilePath $Installer -PassThru
     }
     $i = 0
+    # Timeline of the install directory while the installer runs: when zen.exe / the DLLs appear
+    # (and whether they disappear again), so an incomplete install can be told apart from a
+    # post-install deletion.
+    $watchDir = Join-Path $env:LOCALAPPDATA 'Programs\zen-chromium'
+    $timeline = @()
+    $lastSig = ''
     while (-not $p.HasExited -and ((Get-Date) - $start).TotalSeconds -lt $TimeoutSeconds) {
+      $bins = @(Get-ChildItem -Path $watchDir -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.exe', '.dll' } | ForEach-Object { "$($_.Name):$([math]::Round($_.Length / 1MB, 1))" })
+      $sig = ($bins -join ',')
+      if ($sig -ne $lastSig) {
+        $timeline += [ordered]@{ t = [math]::Round(((Get-Date) - $start).TotalSeconds, 1); binaries = $bins }
+        $lastSig = $sig
+      }
       if (-not $Silent) {
         $i++
         $file = Join-Path $Out ("{0}-installer-{1:D2}.png" -f $Label, $i)
         try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'win-screenshot.ps1') -Path $file | Out-Null; $shots += $file } catch {}
         Start-Sleep -Milliseconds 700
       } else {
-        Start-Sleep -Milliseconds 500
+        Start-Sleep -Milliseconds 300
       }
     }
+    $timeline += [ordered]@{ t = [math]::Round(((Get-Date) - $start).TotalSeconds, 1); binaries = @(Get-ChildItem -Path $watchDir -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.exe', '.dll' } | ForEach-Object { "$($_.Name):$([math]::Round($_.Length / 1MB, 1))" }); note = 'installer exited' }
+    $info.binaryTimeline = $timeline
     if (-not $p.HasExited) { $info.timedOut = $true; Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
     $p.WaitForExit()
     $info.exitCode = $p.ExitCode
@@ -117,6 +131,53 @@ switch ($Action) {
       $info.exeVersionInfo = [ordered]@{ productName = $v.ProductName; fileVersion = $v.FileVersion; productVersion = $v.ProductVersion; company = $v.CompanyName; description = $v.FileDescription }
       $esig = Get-AuthenticodeSignature -FilePath $exe
       $info.exeAuthenticode = "$($esig.Status)"
+    }
+    # What the installer carries versus what landed on disk, plus the policies that can silently
+    # remove or refuse unsigned binaries (Smart App Control, CodeIntegrity, AppLocker, Defender).
+    $sevenZip = @('C:\Program Files\7-Zip\7z.exe', 'C:\Program Files (x86)\7-Zip\7z.exe', 'C:\ProgramData\chocolatey\bin\7z.exe') | Where-Object { Test-Path $_ } | Select-Object -First 1
+    $payload = [ordered]@{ sevenZip = $sevenZip }
+    if ($sevenZip) {
+      $tmpRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
+      $scratch = Join-Path $tmpRoot "installer-payload-$Label"
+      New-Item -ItemType Directory -Path $scratch -Force | Out-Null
+      $listing = & $sevenZip l -ba $Installer 2>&1
+      $payload.installerEntries = @($listing | ForEach-Object { ($_ -replace '^\s*\S+\s+\S+\s+\S+\s+\d+\s+(\d+\s+)?', '').Trim() } | Where-Object { $_ })
+      $inner = $payload.installerEntries | Where-Object { $_ -match '\.7z$' } | Select-Object -First 1
+      if ($inner) {
+        & $sevenZip e -y -o"$scratch" $Installer $inner 2>&1 | Out-Null
+        $innerPath = Get-ChildItem -Path $scratch -Recurse -Filter '*.7z' -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+        if ($innerPath) {
+          $payload.innerArchive = [ordered]@{ name = $inner; sizeMB = [math]::Round((Get-Item $innerPath).Length / 1MB, 1) }
+          $innerList = & $sevenZip l -ba $innerPath 2>&1
+          $files = @($innerList | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+          $payload.innerFileCount = $files.Count
+          $payload.innerBinaries = @($files | Where-Object { $_ -match '\.(exe|dll)\s*$' } | ForEach-Object { ($_ -replace '^\S+\s+\S+\s+\S+\s+', '').Trim() })
+          # Extract the payload with 7-Zip itself: if zen.exe lands here but not in the install
+          # directory, the archive is fine and the NSIS-side extraction is what drops the binaries.
+          $unpack = Join-Path $scratch 'app'
+          $t0 = Get-Date
+          $x = & $sevenZip x -y -o"$unpack" $innerPath 2>&1
+          $payload.sevenZipExtract = [ordered]@{
+            exitCode = $LASTEXITCODE
+            seconds = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1)
+            lastLines = @($x | Select-Object -Last 3 | ForEach-Object { "$_" })
+            binaries = @(Get-ChildItem -Path $unpack -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.exe', '.dll' } | ForEach-Object { "$($_.Name):$([math]::Round($_.Length / 1MB, 1))" })
+            sizeMB = [math]::Round((Get-ChildItem -Path $unpack -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
+          }
+        }
+      }
+      Remove-Item -Path $scratch -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    $info.payload = $payload
+    $ci = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' -ErrorAction SilentlyContinue
+    $info.policies = [ordered]@{
+      smartAppControlState = $ci.VerifiedAndReputablePolicyState   # 0 off, 1 enforced, 2 evaluation
+      codeIntegrityEvents = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-CodeIntegrity/Operational'; StartTime = $start } -MaxEvents 20 -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id): $(($_.Message -split "`n")[0])" })
+      appLockerEvents = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-AppLocker/EXE and DLL'; StartTime = $start } -MaxEvents 20 -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id): $(($_.Message -split "`n")[0])" })
+      defenderEvents = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; StartTime = $start } -MaxEvents 30 -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id): $(($_.Message -split "`n")[0])" })
+      smartScreenEvents = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-SmartScreen/Debug'; StartTime = $start } -MaxEvents 20 -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id): $(($_.Message -split "`n")[0])" })
+      systemErrorsSinceInstall = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; Level = 1, 2; StartTime = $start } -MaxEvents 20 -ErrorAction SilentlyContinue | ForEach-Object { "$($_.ProviderName) $($_.Id): $(($_.Message -split "`n")[0])" })
+      applicationErrorsSinceInstall = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Level = 1, 2; StartTime = $start } -MaxEvents 20 -ErrorAction SilentlyContinue | ForEach-Object { "$($_.ProviderName) $($_.Id): $(($_.Message -split "`n")[0])" })
     }
     $info | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $Out "$Label-install.json") -Encoding UTF8
     Write-Output ($info | ConvertTo-Json -Depth 6)

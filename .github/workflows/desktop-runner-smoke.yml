@@ -238,19 +238,23 @@ jobs:
         run: |
           dmg="$(ls release-assets/*.dmg | head -1)"
           bash "$SMOKE/mac-dmg.sh" "$dmg" "$RUNNER_TEMP/zenium-release" "$SMOKE_OUT/release-0.2.0-dmg"
-          app="$(cat "$SMOKE_OUT/release-0.2.0-dmg/dmg-app-path.txt")"
-          echo "app=$app" >> "$GITHUB_OUTPUT"
+      - name: Locate the copy of the release app (survives a hung mount step)
+        id: dmgapp
+        if: always()
+        run: |
+          p="$SMOKE_OUT/release-0.2.0-dmg/dmg-app-path.txt"
+          if [ -f "$p" ] && [ -d "$(cat "$p")" ]; then echo "app=$(cat "$p")" >> "$GITHUB_OUTPUT"; else echo "no release app copy found"; fi
       - name: Bundle facts for the release app
-        if: always() && steps.dmg.outputs.app != ''
-        run: bash "$SMOKE/mac-facts.sh" "${{ steps.dmg.outputs.app }}" "$SMOKE_OUT" release-0.2.0-bundle
+        if: always() && steps.dmgapp.outputs.app != ''
+        run: bash "$SMOKE/mac-facts.sh" "${{ steps.dmgapp.outputs.app }}" "$SMOKE_OUT" release-0.2.0-bundle
       - name: Smoke the release app
-        if: always() && steps.dmg.outputs.app != ''
+        if: always() && steps.dmgapp.outputs.app != ''
         continue-on-error: true
         timeout-minutes: 22
-        run: node "$SMOKE/smoke.mjs" --exe "${{ steps.dmg.outputs.app }}/Contents/MacOS/Zen" --label release-0.2.0 --out "$SMOKE_OUT"
+        run: node "$SMOKE/smoke.mjs" --exe "${{ steps.dmgapp.outputs.app }}/Contents/MacOS/Zen" --label release-0.2.0 --out "$SMOKE_OUT"
       - name: Facts after running the release app
-        if: always() && steps.dmg.outputs.app != ''
-        run: bash "$SMOKE/mac-facts.sh" "${{ steps.dmg.outputs.app }}" "$SMOKE_OUT" release-0.2.0-after-run
+        if: always() && steps.dmgapp.outputs.app != ''
+        run: bash "$SMOKE/mac-facts.sh" "${{ steps.dmgapp.outputs.app }}" "$SMOKE_OUT" release-0.2.0-after-run
       - name: Summary
         if: always()
         run: |
