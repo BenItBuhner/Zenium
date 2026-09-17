@@ -12,7 +12,6 @@ import type {
   MediaState,
   Rect,
   SearchEngine,
-  Rect,
   Settings,
   ShareAction,
   SharePayload,

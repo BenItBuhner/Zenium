@@ -189,7 +189,12 @@ describe('a page opening a window', () => {
 
   it('creates nothing until the host hands over the page', () => {
     const { browser, events } = openerWithPage()
-    const ticket = events.onOpenWindow('https://example.com/', 'new-window', true, 'width=500,height=400')
+    const ticket = events.onOpenWindow(
+      'https://example.com/',
+      'new-window',
+      true,
+      'width=500,height=400'
+    )
     expect(ticket?.action).toBe('window')
     expect(browser.allWindows()).toHaveLength(1)
     expect(Object.keys(browser.state.model.tabs)).toHaveLength(1)
@@ -198,7 +203,12 @@ describe('a page opening a window', () => {
   it('puts a sized window.open into a toolbar-only Zenium window at that size', async () => {
     const { browser, parent, events } = openerWithPage()
     const opener = browser.allWindows()[0]
-    const ticket = events.onOpenWindow('https://example.com/', 'new-window', true, 'width=500,height=400')
+    const ticket = events.onOpenWindow(
+      'https://example.com/',
+      'new-window',
+      true,
+      'width=500,height=400'
+    )
     const view = fakeView()
     const { tab, events: popupEvents } = ticket!.adopt(view)
 
