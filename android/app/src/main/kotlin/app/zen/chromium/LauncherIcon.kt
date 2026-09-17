@@ -49,7 +49,7 @@ class LauncherIcon(private val context: Context) {
     private fun component(id: String) = ComponentName(context, LauncherIconVariants.ALIASES.getValue(id))
 
     /** Whether an alias is on, reading the manifest default when the state was never set. */
-    private fun isEnabled(id: String): Boolean = when (pm.getComponentEnabledSetting(component(id))) {
+    fun isEnabled(id: String): Boolean = when (pm.getComponentEnabledSetting(component(id))) {
         PackageManager.COMPONENT_ENABLED_STATE_ENABLED -> true
         PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
         PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER,
