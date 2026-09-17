@@ -25,6 +25,7 @@ import android.widget.Toast
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import app.zen.chromium.ext.Extensions
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.json.JSONObject
 import java.io.File
@@ -52,6 +53,8 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     val launcherIcon = LauncherIcon(activity)
     val pageToken: String = SecureRandom().let { r -> ByteArray(16).also(r::nextBytes).joinToString("") { "%02x".format(it) } }
     val pageScript: String = activity.assets.open("page.js").bufferedReader().readText().replace("__ZEN_TOKEN__", pageToken)
+    /** Extension emulation layer (prototype): created before the tabs so their WebViews can attach. */
+    val extensions = Extensions(this)
     private val io = Executors.newCachedThreadPool { r -> Thread(r, "zen-io") }
     private val main = Handler(Looper.getMainLooper())
     var fullscreenTab: TabWebView? = null
@@ -213,8 +216,21 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
             "update.cancel" -> { updates.cancel(args.str("token")); reply(null) }
             "update.install" -> reply(updates.install(args.str("path")))
 
-            else -> throw IllegalArgumentException("Unknown method: $method")
+            else -> if (method.startsWith("ext.")) extensions.handle(method, args, reply) else throw IllegalArgumentException("Unknown method: $method")
         }
+    }
+
+    /**
+     * Keep a WebView alive without showing it (extension background pages). It sits behind the
+     * chrome at one pixel: a view that is not attached, or invisible, counts as hidden to the
+     * renderer and gets background timer throttling, which a background page must not.
+     */
+    fun attachHidden(view: View) {
+        root.addView(view, 0, FrameLayout.LayoutParams(1, 1))
+    }
+
+    fun detachHidden(view: View) {
+        root.removeView(view)
     }
 
     /** Marker so `encodeResult` passes pre-encoded JSON through untouched. */
@@ -446,6 +462,7 @@ class Host(val activity: MainActivity, private val root: FrameLayout, private va
     }
 
     fun destroy() {
+        extensions.destroy()
         agentServer.stop()
         updates.shutdown()
         tabs.destroyAll()

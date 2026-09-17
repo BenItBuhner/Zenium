@@ -30,6 +30,7 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -74,6 +75,12 @@ class TabWebView(
         private set
     /** True while `onPageStarted` has fired and `onPageFinished` has not. */
     private var pageStarted = false
+    /**
+     * The main-frame URL as last reported by the WebViewClient; readable from any thread
+     * (`shouldInterceptRequest` runs on a network thread where `getUrl()` must not be called).
+     */
+    @Volatile var currentUrl: String? = null
+        private set
 
     init {
         Profiles.apply(this, containerId)
@@ -130,6 +137,12 @@ class TabWebView(
         // Mouse right-click / stylus button (DeX, tablets) opens the same menu as a long-press.
         setOnContextClickListener { onLongPress() }
         installPageScript()
+        host.extensions.attach(this)
+    }
+
+    override fun destroy() {
+        host.extensions.detach(this)
+        super.destroy()
     }
 
     // --- placement ------------------------------------------------------------------------------
@@ -639,13 +652,19 @@ class TabWebView(
             }
         }
 
+        /** Extension origins and declarativeNetRequest (network thread; see Extensions.intercept). */
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+            host.extensions.intercept(request, this@TabWebView, null)
+
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             // Navigations with no link click ahead of them (forms, history.back(), redirects).
             rememberCurrentPage()
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.STARTED)
             pageStarted = true
             loading = true
+            currentUrl = url
             failPendingEvals("the page navigated away before the script finished")
+            host.extensions.onDocumentGone(this@TabWebView)
             host.chrome.viewEvent(tabId, "startLoading", null)
             host.chrome.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", false))
             if (muted) setMuted(true)
@@ -654,6 +673,7 @@ class TabWebView(
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
             onHistoryCommitted()
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.HISTORY_UPDATED)
+            currentUrl = url
             if (!loading) {
                 // pushState / hash navigation after the page finished loading.
                 host.chrome.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", true))

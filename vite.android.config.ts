@@ -9,6 +9,7 @@ import tailwindcss from '@tailwindcss/vite'
  *
  *   vite build  -c vite.android.config.ts                 → android/app/src/main/assets/www
  *   vite build  -c vite.android.config.ts --mode page     → android/app/src/main/assets/page.js
+ *   vite build  -c vite.android.config.ts --mode ext      → android/app/src/main/assets/ext.js
  *   vite        -c vite.android.config.ts                 → dev server with the iframe preview host
  */
 const aliases = {
@@ -19,6 +20,25 @@ const aliases = {
 }
 
 export default defineConfig(({ mode }) => {
+  if (mode === 'ext') {
+    // The extension bootstrap (content scripts and extension pages); Kotlin wraps it with the
+    // per-install config and sources, so it must stay a plain IIFE over the `__zenExtBoot` global.
+    return {
+      resolve: { alias: aliases },
+      define: { 'process.env.NODE_ENV': JSON.stringify('production') },
+      build: {
+        outDir: resolve('android/app/src/main/assets'),
+        emptyOutDir: false,
+        minify: true,
+        lib: {
+          entry: resolve('src/android/extensionPageScript.ts'),
+          name: 'zenExt',
+          formats: ['iife'],
+          fileName: () => 'ext.js'
+        }
+      }
+    }
+  }
   if (mode === 'page') {
     return {
       resolve: { alias: aliases },
