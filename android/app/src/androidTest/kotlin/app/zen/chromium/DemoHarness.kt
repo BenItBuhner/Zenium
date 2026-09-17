@@ -89,11 +89,17 @@ abstract class DemoHarness(
     private fun seedProfile() {
         val zen = File(app.filesDir, "zen").apply { mkdirs() }
         zen.listFiles()?.forEach { it.delete() }
-        val json = instrumentation.context.assets.open(stateAsset).bufferedReader().use { it.readText() }
-        File(zen, "state.json").writeText(patchState(json))
+        File(zen, "state.json").writeText(patchState(readAsset(stateAsset)))
+        seedMore(zen)
         out.deleteRecursively()
         out.mkdirs()
     }
+
+    /** Write what the profile needs besides `state.json` (history.json, downloads.json, …) into `zen`. */
+    protected open fun seedMore(zen: File) {}
+
+    protected fun readAsset(name: String): String =
+        instrumentation.context.assets.open(name).use { it.bufferedReader().readText() }
 
     private fun launch() {
         // The launcher entry is an icon alias that hands over to MainActivity and finishes at
