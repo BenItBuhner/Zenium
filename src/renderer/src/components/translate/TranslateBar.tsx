@@ -222,11 +222,15 @@ function PhoneBody({
         </TranslateButton>
       )
   }
+  // The reason a translation failed is worth a second line; the other captions stay on one.
+  const wrap = tab.status === 'error'
   return (
     <>
       <span className="zen-translate-text">
         <span className="block truncate">{title}</span>
-        <span className="zen-translate-caption block truncate">{caption}</span>
+        <span className={`zen-translate-caption block ${wrap ? 'zen-translate-wrap' : 'truncate'}`}>
+          {caption}
+        </span>
       </span>
       {action}
     </>
