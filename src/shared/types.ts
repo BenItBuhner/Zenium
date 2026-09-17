@@ -3508,8 +3508,14 @@ export interface Commands {
    * where the host draws its own menus.
    */
   'translate.menu': { args: { tabId: string; x?: number; y?: number }; result: void }
-  /** Put the selection-translation popover up for `text` (the tab's selection when omitted). */
-  'translate.showSelection': { args: { tabId: string; text?: string }; result: void }
+  /**
+   * Put the selection-translation popover up for `text` (the tab's selection when omitted),
+   * anchored at `x`,`y` in CSS pixels of the page view when the caller knows where the user asked.
+   */
+  'translate.showSelection': {
+    args: { tabId: string; text?: string; x?: number; y?: number }
+    result: void
+  }
   /** Translate the tab's selection (or `text`); null when nothing is selected. */
   'translate.selection': {
     args: { tabId: string; text?: string; target?: string }
