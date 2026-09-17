@@ -303,6 +303,30 @@ describe('installExtensionApi', () => {
     g.chrome.action.setIcon({ imageData: { width: 1, height: 1, data, extra: true } })
     expect(host.calls[0].args[0]).toEqual({ imageData: { width: 1, height: 1, data } })
   })
+
+  it('resolves action.setIcon paths against the calling context, as Chrome does', () => {
+    Object.defineProperty(g, 'location', {
+      value: { href: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/background/index.js' },
+      configurable: true,
+      writable: true
+    })
+    try {
+      installExtensionApi(host, API_SPEC)
+      g.chrome.action.setIcon({ path: { 19: '../icons/a19.png', 38: '/icons/a38.png' } })
+      g.chrome.action.setIcon({ path: 'x.png' })
+      expect(host.calls[0].args[0]).toEqual({
+        path: {
+          19: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/icons/a19.png',
+          38: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/icons/a38.png'
+        }
+      })
+      expect(host.calls[1].args[0]).toEqual({
+        path: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/background/x.png'
+      })
+    } finally {
+      delete g.location
+    }
+  })
 })
 
 describe('installExtensionApi in frames', () => {

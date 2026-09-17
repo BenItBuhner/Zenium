@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { extname, join } from 'node:path'
+import { extname, resolve, sep } from 'node:path'
 import { deflateSync } from 'node:zlib'
 import type { ExtensionActionState } from '../../../shared/types'
 import type { ZenWindow } from '../../../core/window'
@@ -164,7 +164,7 @@ export class ActionApi {
       icon = iconFromImageData(details.imageData)
       if (!icon) throw new ApiError('Invalid imageData.')
     } else if (details.path !== undefined && details.path !== null) {
-      icon = iconFromPaths(ctx.extension.path, details.path)
+      icon = iconFromPaths(ctx.extension, details.path)
       if (!icon) throw new ApiError('Could not load action icon.')
     } else {
       throw new ApiError('Either the path or imageData property must be specified.')
@@ -327,11 +327,27 @@ export function pickIconSize<T>(candidates: Record<string, T>): T | null {
   return candidates[String(pick)]
 }
 
-function iconFromPaths(root: string, raw: unknown): string | null {
+/**
+ * Read an icon the shim resolved to a full `chrome-extension://<id>/…` URL (or, for callers that
+ * bypass the shim, an extension-relative path). Only files inside this extension's root qualify.
+ */
+function iconFromPaths(extension: LoadedExtension, raw: unknown): string | null {
   const path = typeof raw === 'string' ? raw : isRecord(raw) ? pickIconSize(raw) : null
   if (typeof path !== 'string') return null
+  let relative = path
+  if (/^[a-z][a-z0-9+.-]*:/i.test(path)) {
+    try {
+      const url = new URL(path)
+      if (url.protocol !== 'chrome-extension:' || url.hostname !== extension.id) return null
+      relative = decodeURIComponent(url.pathname)
+    } catch {
+      return null
+    }
+  }
   try {
-    const file = join(root, path.replace(/^\/+/, ''))
+    const root = resolve(extension.path)
+    const file = resolve(root, relative.replace(/^\/+/, ''))
+    if (file !== root && !file.startsWith(root + sep)) return null
     const mime = IMAGE_MIME[extname(file).toLowerCase()] ?? 'image/png'
     return `data:${mime};base64,${readFileSync(file).toString('base64')}`
   } catch {

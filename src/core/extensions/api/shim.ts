@@ -331,6 +331,23 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
         out.imageData = sizes
       }
     }
+    // Chrome resolves icon paths against the calling context's URL (`../icons/x.png` from a
+    // worker at `background/index.js`), not the extension root; only this side knows that URL.
+    const resolve = (path: Any): Any => {
+      if (typeof path !== 'string') return path
+      try {
+        return new URL(path, globalThis.location.href).href
+      } catch {
+        return path
+      }
+    }
+    if (typeof out.path === 'string') {
+      out.path = resolve(out.path)
+    } else if (out.path && typeof out.path === 'object') {
+      const sizes: Any = {}
+      for (const key of Object.keys(out.path)) sizes[key] = resolve(out.path[key])
+      out.path = sizes
+    }
     return out
   }
 
