@@ -78,23 +78,24 @@ function skip(name, why, detail) {
   log(`SKIP ${name}: ${why}`)
 }
 
-function sh(cmd, args, timeout = 20000) {
-  const r = spawnSync(cmd, args, { encoding: 'utf8', timeout })
+function sh(cmd, args, timeout = 20000, env = undefined) {
+  const r = spawnSync(cmd, args, { encoding: 'utf8', timeout, env })
   return { status: r.status, stdout: (r.stdout || '').trim(), stderr: (r.stderr || '').trim() }
 }
 
-function ps(file, args, timeout = 30000) {
+function ps(file, args, timeout = 30000, env = undefined) {
   const r = sh(
     'powershell.exe',
     ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(here, file), ...args],
-    timeout
+    timeout,
+    env
   )
   if (r.status !== 0) throw new Error(`${file} ${args.join(' ')} failed: ${r.stderr || r.stdout}`)
   return r.stdout
 }
 
-function psJson(file, args) {
-  const out = ps(file, args)
+function psJson(file, args, env = undefined) {
+  const out = ps(file, args, 30000, env)
   const line = out
     .split(/\r?\n/)
     .reverse()
@@ -124,15 +125,20 @@ function freshProfile(name, settings = {}) {
   return dir
 }
 
+// A fresh profile per launch: Electron's userData lives under %APPDATA% (Windows) or $HOME
+// (macOS, Linux). USERPROFILE stays untouched on Windows so the shell's per-user known folders
+// (Recent, where jump lists are written) resolve as they do for a normally launched app.
 function isolateEnv() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zenium-home-'))
   const env = { ...process.env, ELECTRON_ENABLE_LOGGING: '1' }
   if (IS_WIN) {
     env.APPDATA = path.join(home, 'Roaming')
     env.LOCALAPPDATA = path.join(home, 'Local')
-    env.USERPROFILE = home
     fs.mkdirSync(env.APPDATA, { recursive: true })
     fs.mkdirSync(env.LOCALAPPDATA, { recursive: true })
+    fs.mkdirSync(path.join(env.APPDATA, 'Microsoft', 'Windows', 'Recent', 'CustomDestinations'), {
+      recursive: true
+    })
   } else {
     env.HOME = home
   }
@@ -644,6 +650,95 @@ function listJumpLists(dirs) {
   return out
 }
 
+const JUMP_PROBE_ID = 'Zenium.ShellSmoke.Probe'
+const RECENT_ITEMS_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced'
+const recentItems = { changed: false, original: null }
+
+function jumpListProbe(env) {
+  try {
+    return psJson('shell-win.ps1', ['-Action', 'jumplist', '-AppId', JUMP_PROBE_ID, '-Commit'], env)
+  } catch (e) {
+    return { error: String(e && e.message ? e.message : e) }
+  }
+}
+
+function setRecentItemsTracking(on) {
+  return sh('reg', [
+    'add',
+    RECENT_ITEMS_KEY,
+    '/v',
+    'Start_TrackDocs',
+    '/t',
+    'REG_DWORD',
+    '/d',
+    on ? '1' : '0',
+    '/f'
+  ]).status
+}
+
+function taskbarButtons() {
+  try {
+    const t = psJson('shell-win.ps1', ['-Action', 'taskbar'])
+    return { count: t.count, buttons: (t.buttons || []).slice(0, 40) }
+  } catch (e) {
+    return { error: String(e && e.message ? e.message : e), buttons: [] }
+  }
+}
+
+// Windows, before the app runs: can this desktop write a taskbar jump list at all, in the plain
+// environment and in the isolated one the app gets, and does the file the shell writes carry the
+// name we predict from the AppUserModelID? A runner with recent-item tracking switched off (the
+// Windows Server default) gets it switched on first, as the OS dark-mode run does for the theme.
+function jumpListPreflight() {
+  const out = {
+    probeId: JUMP_PROBE_ID,
+    expectedProbeFile: `${appIdHash(JUMP_PROBE_ID)}.customDestinations-ms`
+  }
+  out.baseline = jumpListProbe(undefined)
+  const { env: isolated } = isolateEnv()
+  out.isolatedEnv = jumpListProbe(isolated)
+  out.legacyIsolatedEnv = jumpListProbe({
+    ...isolated,
+    USERPROFILE: path.dirname(isolated.APPDATA)
+  })
+  if (out.baseline.beginListOk === false) {
+    const tracking = out.baseline.startTrackDocs
+    if (tracking === 0 || out.baseline.noRecentDocsHistoryUser === 1) {
+      recentItems.original = tracking
+      recentItems.changed = true
+      out.enabledTracking = { startTrackDocs: setRecentItemsTracking(true) }
+      if (out.baseline.noRecentDocsHistoryUser === 1) {
+        out.enabledTracking.policy = sh('reg', [
+          'delete',
+          'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer',
+          '/v',
+          'NoRecentDocsHistory',
+          '/f'
+        ]).status
+      }
+      out.afterEnable = jumpListProbe(undefined)
+    }
+  }
+  const good = out.afterEnable || out.baseline
+  out.runnerCanWriteJumpLists = Boolean(good && good.beginListOk)
+  out.hashMatches = Boolean(
+    good &&
+    Array.isArray(good.newFiles) &&
+    good.newFiles.some((f) => f.toLowerCase() === out.expectedProbeFile)
+  )
+  result.jumpListPreflight = out
+  log(
+    `jump list preflight: baseline beginList=${out.baseline.hr ? out.baseline.hr.beginList : out.baseline.error} ` +
+      `Start_TrackDocs=${out.baseline.startTrackDocs} canWrite=${out.runnerCanWriteJumpLists} hashMatches=${out.hashMatches}`
+  )
+  return out
+}
+
+function restoreRecentItemsTracking() {
+  if (!IS_WIN || !recentItems.changed) return
+  setRecentItemsTracking(recentItems.original === 1)
+}
+
 function setOsDark(on) {
   if (IS_WIN) {
     const key = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize'
@@ -855,22 +950,52 @@ async function sessionMain() {
       const foundAfter = Object.entries(after).filter(([, files]) =>
         files.some((f) => f.toLowerCase() === expected)
       )
-      check(
-        'jump-list-set',
-        again.outcome === 'ok' && (found.length > 0 || foundAfter.length > 0),
-        {
-          expectedFile: expected,
-          foundInBeforeRecall: found.map(([d]) => d),
-          foundAfterRecall: foundAfter.map(([d]) => d),
-          lists: after,
-          recall: again
-        }
-      )
-      check('aumid', found.length > 0 || foundAfter.length > 0, {
+      const fileFound = found.length > 0 || foundAfter.length > 0
+      const pre = result.jumpListPreflight || {}
+      const taskbar = taskbarButtons()
+      result.sessions.main.taskbar = taskbar
+      const zeniumButtons = taskbar.buttons.filter((b) => /zenium/i.test(String(b.name)))
+      const taskbarAumids = zeniumButtons.map((b) => String(b.automationId))
+      const detail = {
+        expectedFile: expected,
+        foundInBeforeRecall: found.map(([d]) => d),
+        foundAfterRecall: foundAfter.map(([d]) => d),
+        lists: after,
+        recall: again,
+        preflight: {
+          runnerCanWriteJumpLists: pre.runnerCanWriteJumpLists,
+          hashMatches: pre.hashMatches,
+          baselineBeginList: pre.baseline && pre.baseline.hr ? pre.baseline.hr.beginList : null,
+          startTrackDocs: pre.baseline ? pre.baseline.startTrackDocs : null,
+          enabledTracking: pre.enabledTracking ?? null
+        },
+        taskbarZenium: zeniumButtons
+      }
+      if (again.outcome !== 'ok' && pre.runnerCanWriteJumpLists === false) {
+        skip(
+          'jump-list-set',
+          `this desktop refuses ICustomDestinationList::BeginList (${detail.preflight.baselineBeginList}); app outcome ${again.outcome}`,
+          detail
+        )
+      } else {
+        check('jump-list-set', again.outcome === 'ok' && fileFound, detail)
+      }
+      const aumidDetail = {
         aumid: AUMID,
         jumpListFile: expected,
-        note: 'the jump list file name is the CRC-64 of the AppUserModelID the app registered'
-      })
+        fileFound,
+        taskbarAumids,
+        note: 'the jump list file name is the CRC-64 of the AppUserModelID the app registered; the taskbar button AutomationId is the AppUserModelID'
+      }
+      if (!fileFound && pre.runnerCanWriteJumpLists === false && zeniumButtons.length === 0) {
+        skip(
+          'aumid',
+          'no jump list file (this desktop refuses jump lists) and no Zenium taskbar button via UI Automation',
+          aumidDetail
+        )
+      } else {
+        check('aumid', fileFound || taskbarAumids.includes(AUMID), aumidDetail)
+      }
     } else if (IS_MAC) {
       const dock = await app.evaluate(({ app }) => {
         const menu = app.dock ? app.dock.getMenu() : null
@@ -1244,6 +1369,14 @@ async function main() {
     ['dark', sessionOsDark],
     ['scale', sessionScale]
   ]
+  if (IS_WIN) {
+    try {
+      log('--- jump list preflight ---')
+      jumpListPreflight()
+    } catch (e) {
+      result.jumpListPreflight = { error: String(e && e.stack ? e.stack : e) }
+    }
+  }
   for (const [name, fn] of steps) {
     try {
       log(`--- ${name} ---`)
@@ -1252,6 +1385,7 @@ async function main() {
       check(`session-${name}`, false, String(e && e.stack ? e.stack : e))
     }
   }
+  restoreRecentItemsTracking()
   result.finishedAt = new Date().toISOString()
   const failed = Object.entries(result.checks).filter(([, v]) => !v.ok)
   result.failed = failed.map(([k]) => k)
