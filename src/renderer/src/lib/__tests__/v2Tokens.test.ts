@@ -44,7 +44,9 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // DefaultBrowserSection.tsx, content/DefaultBrowserBanner.tsx): the flat card and its inks.
   ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {'],
   // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
-  ['.zen-message {', '.zen-suggestion {']
+  ['.zen-message {', '.zen-suggestion {'],
+  // The downloads bubble, toolbar button and zen://downloads page (components/downloads, overlays/DownloadsPanel.tsx).
+  ['.zen-dl-surface {', '@keyframes zen-dl-pop-out {']
 ]
 
 /** The text of the first `selector {` block found after `from`. */
@@ -195,6 +197,15 @@ describe('design language v2 tokens', () => {
     )
     expect(inside).toMatch(/--zen-scrim: var\(--v2-scrim\)/)
     expect(inside).toMatch(/\[class\^='zen-v2-'\]:focus-visible/)
+  })
+
+  it('gives the downloads surfaces no colour of their own', () => {
+    const from = css.indexOf('.zen-dl-surface {')
+    const to = css.indexOf('@keyframes zen-dl-pop-out {', from)
+    expect(from).toBeGreaterThanOrEqual(0)
+    expect(to).toBeGreaterThan(from)
+    // Every tone comes from the block (or Zen's accent and status inks); no literal colours.
+    expect(css.slice(from, to)).not.toMatch(/#[0-9a-f]{3,8}\b/i)
   })
 })
 
