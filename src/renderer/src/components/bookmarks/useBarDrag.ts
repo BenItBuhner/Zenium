@@ -197,8 +197,11 @@ export function useBarDrag({
   /** Neighbours make room: chips between the slot and the gap shift by the chip's width. */
   const slideFor = useCallback(
     (current: BarDrag, next: BarDropTarget | null): void => {
+      // Resting on a folder chip (or inside its panel) keeps the strip as it is: a chip the
+      // pointer has just reached must not slide back out from under it.
+      if (next && next.kind !== 'slot') return
       const offsets = new Map<string, number>()
-      if (next?.kind === 'slot') {
+      if (next) {
         const strip = stripRef.current
         const gap = strip ? parseFloat(getComputedStyle(strip).columnGap) || 0 : 0
         const shift = current.width + gap
