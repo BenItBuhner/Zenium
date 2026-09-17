@@ -1,12 +1,13 @@
 import type { JSX } from 'react'
 import { useState } from 'react'
-import { ArrowDown, ArrowUp, Check, Sparkles, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, FolderOpen, Sparkles, Trash2 } from 'lucide-react'
 import type {
   BookmarksBarMode,
   ColorScheme,
   ContainerColor,
   ContainerIcon as ContainerIconName,
   CrashRestoreMode,
+  DownloadSettings,
   GlanceTrigger,
   HostCapabilities,
   NewTabPosition,
@@ -26,6 +27,7 @@ import { CONTAINER_COLORS, spaceLabel } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
+import { downloadsEngine } from '@renderer/lib/downloadsEngine'
 import { activeTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
 import { openBarEditor, openOverlay, uiStore } from '@renderer/lib/ui'
@@ -58,6 +60,7 @@ export type SettingsSection =
   | 'compact'
   | 'newtab'
   | 'tabs'
+  | 'downloads'
   | 'resources'
   | 'search'
   | 'spaces'
@@ -78,6 +81,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'compact', label: 'Compact Mode' },
   { id: 'newtab', label: 'New Tab' },
   { id: 'tabs', label: 'Tab Management' },
+  { id: 'downloads', label: 'Downloads' },
   { id: 'resources', label: 'Resources' },
   { id: 'search', label: 'Search' },
   { id: 'spaces', label: 'Space Routing' },
@@ -201,6 +205,7 @@ export function SettingsPanel({
             {section === 'tabs' && (
               <TabsSection s={s} set={set} windows={state.capabilities.windows} />
             )}
+            {section === 'downloads' && <DownloadsSection state={state} set={set} />}
             {section === 'resources' && <ResourcesSection state={state} set={set} />}
             {section === 'search' && <SearchSection state={state} set={set} />}
             {section === 'spaces' && <SpaceRoutingSection state={state} set={set} />}
@@ -449,6 +454,108 @@ function CompactSection({
   )
 }
 
+/**
+ * Settings > Downloads, bound to the engine contract's `Settings.downloads` keys. Rows whose
+ * engine command does not exist yet (choosing the folder, the auto-open list) wait for it.
+ */
+function DownloadsSection({
+  state,
+  set
+}: {
+  state: UIState
+  set: (p: Partial<Settings>) => void
+}): JSX.Element {
+  const d = state.settings.downloads
+  const patch = (p: Partial<DownloadSettings>): void => set({ downloads: { ...d, ...p } })
+  const files = state.platform !== 'android'
+  const engine = downloadsEngine
+  return (
+    <>
+      <Group title="Saving">
+        {files && (
+          <Row label="Save files to" hint={d.directory ?? 'The system Downloads folder'}>
+            {engine.chooseDirectory && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  void engine.chooseDirectory?.().then((dir) => {
+                    if (dir !== null) patch({ directory: dir })
+                  })
+                }}
+              >
+                Change
+              </Button>
+            )}
+            {!engine.chooseDirectory && (
+              <Button variant="secondary" size="sm" onClick={() => engine.openFolder()}>
+                <FolderOpen className="h-3.5 w-3.5" />
+                Open folder
+              </Button>
+            )}
+          </Row>
+        )}
+        <Row label="Always ask where to save files">
+          <Switch
+            checked={d.askWhereToSave}
+            onCheckedChange={(v) => patch({ askWhereToSave: v })}
+          />
+        </Row>
+        {d.autoOpenTypes.length > 0 && (
+          <Row
+            label="Open certain file types automatically"
+            hint={d.autoOpenTypes.map((t) => `.${t}`).join(', ')}
+          >
+            <Button variant="secondary" size="sm" onClick={() => patch({ autoOpenTypes: [] })}>
+              Clear
+            </Button>
+          </Row>
+        )}
+      </Group>
+      <Group title="Downloads panel">
+        <Row
+          label="Show the downloads when a download finishes"
+          hint="The bubble opens by itself once the last download in progress is done and leaves again after five seconds."
+        >
+          <Switch
+            checked={d.openPanelOnComplete}
+            onCheckedChange={(v) => patch({ openPanelOnComplete: v })}
+          />
+        </Row>
+        <Row
+          label="Show the downloads when a download starts"
+          hint="Off, the toolbar button animates instead."
+        >
+          <Switch
+            checked={d.openPanelOnStart}
+            onCheckedChange={(v) => patch({ openPanelOnStart: v })}
+          />
+        </Row>
+        <Row
+          label="Always show the downloads button"
+          hint="Keep the button in the toolbar when nothing is downloading."
+        >
+          <Switch
+            checked={d.alwaysShowButton}
+            onCheckedChange={(v) => patch({ alwaysShowButton: v })}
+          />
+        </Row>
+      </Group>
+      <Group title="Notifications">
+        <Row
+          label="Notify when a download finishes"
+          hint="A system notification while no Zenium window has focus; clicking it shows the file."
+        >
+          <Switch
+            checked={d.notifyOnComplete}
+            onCheckedChange={(v) => patch({ notifyOnComplete: v })}
+          />
+        </Row>
+      </Group>
+    </>
+  )
+}
+
 function TabsSection({
   s,
   set,
@@ -516,9 +623,6 @@ function TabsSection({
             />
           </Row>
         )}
-        <Row label="Always ask where to save downloads">
-          <Switch checked={s.askWhereToSave} onCheckedChange={(v) => set({ askWhereToSave: v })} />
-        </Row>
       </Group>
       {windows && (
         <Group title="Window Sync">
