@@ -140,14 +140,14 @@ class HistoryBookmarksDemo :
 
     /** The first panel pays for layout and compilation: open both once off camera. */
     override fun warmUp() {
-        openMenuItem("History")
+        openMenuItem(MENU_HISTORY)
         if (waitFor(HISTORY_SEARCH, 10_000) != null) {
             SystemClock.sleep(1_500)
             back()
             waitGone(HISTORY_SEARCH)
         }
         SystemClock.sleep(1_500)
-        openMenuItem("Bookmarks", "Bookmark Manager")
+        openMenuItem(MENU_BOOKMARKS, MENU_BOOKMARKS_PANEL)
         if (waitFor(BOOKMARKS_SEARCH, 10_000) != null) {
             SystemClock.sleep(1_500)
             back()
@@ -161,7 +161,7 @@ class HistoryBookmarksDemo :
         val f = Finger()
 
         // 1. History, grouped by day: Today, Yesterday, a weekday, a date.
-        openMenuItem("History")
+        openMenuItem(MENU_HISTORY)
         await(HISTORY_SEARCH)
         SystemClock.sleep(2_500)
         shot("01-history-grouped")
@@ -216,7 +216,7 @@ class HistoryBookmarksDemo :
         SystemClock.sleep(1_500)
 
         // 5. Bookmarks: the mobile folder with its subfolders, a row's menu, the edit sheet.
-        openMenuItem("Bookmarks", "Bookmark Manager")
+        openMenuItem(MENU_BOOKMARKS, MENU_BOOKMARKS_PANEL)
         await(BOOKMARKS_SEARCH)
         SystemClock.sleep(2_500)
         shot("08-bookmarks-list")
@@ -267,7 +267,7 @@ class HistoryBookmarksDemo :
         SystemClock.sleep(1_500)
 
         // 8. The star saves the page; the toast offers Edit, which opens the editor on it.
-        openMenuItem("Bookmarks", "Bookmark This Page…")
+        openMenuItem(MENU_BOOKMARKS, MENU_STAR)
         await("Edit")
         SystemClock.sleep(1_200)
         shot("15-saved-toast")
@@ -281,22 +281,36 @@ class HistoryBookmarksDemo :
 
     // --- helpers ---------------------------------------------------------------------------------
 
-    /** Tap the bar's menu button, then click each label in turn (a submenu, then its row). */
-    private fun openMenuItem(vararg labels: String) {
+    /**
+     * Tap the bar's menu button, then click each step in turn (a submenu, then its row). A step
+     * lists the labels it accepts, the current one first: the engine's menu entries have been
+     * renamed under this driver before ("Bookmark Manager" became "Show Bookmarks").
+     */
+    private fun openMenuItem(vararg steps: List<String>) {
         ensureForeground()
         val menu = findByLabel("Menu") ?: error("no Menu button on the bar")
         Finger().tap(menu.exactCenterX(), menu.exactCenterY())
-        if (waitFor(labels.first(), 6_000) == null) {
+        if (waitForAny(steps.first(), 6_000) == null) {
             // The tap can land while the bar is still settling; once more.
             Log.w(tag, "the menu did not open; tapping again")
             Finger().tap(menu.exactCenterX(), menu.exactCenterY())
         }
-        for (label in labels) {
-            waitFor(label, 8_000) ?: error("no $label in the menu")
+        for (step in steps) {
+            val label = waitForAny(step, 8_000) ?: error("no ${step.joinToString(" or ")} in the menu")
             SystemClock.sleep(700)
             clickByLabel(label, enabledOnly = true)
             SystemClock.sleep(1_200)
         }
+    }
+
+    /** Poll for the first of several labels to appear; the one found, or null after `timeoutMs`. */
+    private fun waitForAny(labels: List<String>, timeoutMs: Long): String? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            labels.firstOrNull { findByLabel(it) != null }?.let { return it }
+            SystemClock.sleep(200)
+        }
+        return null
     }
 
     /** A list row by the start of its label (a visit's label ends in its time). */
@@ -333,5 +347,11 @@ class HistoryBookmarksDemo :
     companion object {
         private const val HISTORY_SEARCH = "Search history"
         private const val BOOKMARKS_SEARCH = "Search bookmarks"
+
+        // App-menu steps, each the labels it accepts with the current one first.
+        private val MENU_HISTORY = listOf("History")
+        private val MENU_BOOKMARKS = listOf("Bookmarks")
+        private val MENU_BOOKMARKS_PANEL = listOf("Show Bookmarks", "Bookmark Manager")
+        private val MENU_STAR = listOf("Bookmark This Page", "Bookmark This Page…")
     }
 }
