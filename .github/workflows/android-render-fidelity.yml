@@ -8,8 +8,6 @@ name: Android render fidelity
 # it takes about twenty minutes and produces evidence to read, not a verdict.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/android-render-fidelity-7c1b]
 
 permissions:
   contents: read
@@ -58,7 +56,7 @@ jobs:
           apk=$(find android/app/build/outputs/apk/debug -name '*.apk' -print -quit)
           echo "path=$apk" >> "$GITHUB_OUTPUT"
           run_id=$(gh run list --workflow ci.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-          if [ -n "$run_id" ] && gh run download "$run_id" --name zen-chromium-android-debug --dir artifacts/main-apk; then
+          if [ -n "$run_id" ] && gh run download "$run_id" --name zenium-android-debug --dir artifacts/main-apk; then
             before=$(find artifacts/main-apk -name '*.apk' -print -quit)
             echo "main's debug APK from run $run_id: $before"
             echo "before=$before" >> "$GITHUB_OUTPUT"

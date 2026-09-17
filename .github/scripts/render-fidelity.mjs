@@ -23,7 +23,7 @@ import http from 'node:http'
 import path from 'node:path'
 
 const OUT = process.env.RENDER_OUT || 'artifacts/render-fidelity'
-const APP = 'app.zen.chromium.debug'
+const APP = 'io.github.benitbuhner.zenium.debug'
 const CHROME = 'com.android.chrome'
 const ECHO_PORT = 8787
 const LOAD_TIMEOUT_MS = 60_000
@@ -909,7 +909,7 @@ async function main() {
     writeFileSync(path.join(OUT, 'logcat.txt'), tryShell('logcat -d -v time'))
     echo.close()
   }
-  const runZen = async (apk, label) => {
+  const runZenium = async (apk, label) => {
     log(`[${label}] installing ${apk}`)
     installZen(apk)
     tryShell(`pm grant ${APP} android.permission.POST_NOTIFICATIONS`)
@@ -954,7 +954,7 @@ async function main() {
     tryShell(`am force-stop ${CHROME}`)
     await sleep(3_000)
 
-    const after = await runZen(afterApk, 'zen-after')
+    const after = await runZenium(afterApk, 'zen-after')
     summary['zen-after'] = after.results
     if (after.session && after.results['google-home'] && !after.results['google-home'].error) {
       summary['zen-after-identities'] = await runVariants(
@@ -968,7 +968,7 @@ async function main() {
     await sleep(3_000)
 
     if (beforeApk) {
-      const before = await runZen(beforeApk, 'zen-before')
+      const before = await runZenium(beforeApk, 'zen-before')
       summary['zen-before'] = before.results
       before.session?.close()
       tryShell(`am force-stop ${APP}`)

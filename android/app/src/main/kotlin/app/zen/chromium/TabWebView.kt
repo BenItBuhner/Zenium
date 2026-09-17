@@ -409,16 +409,16 @@ class TabWebView(
         )
     }
 
-    /** Zen's per-tab zoom; WebView has no page zoom, so it scales the text. */
+    /** Zenium's per-tab zoom; WebView has no page zoom, so it scales the text. */
     fun setZoom(factor: Double) {
         zoomFactor = factor
         applyTextZoom()
     }
 
     /**
-     * Text at the size the page asked for, times Zen's zoom. WebView would start every tab at the
+     * Text at the size the page asked for, times Zenium's zoom. WebView would start every tab at the
      * system font scale (a phone set to large text got every page 130% larger), which Chrome does
-     * not do: its pages ignore the system font size and offer page zoom instead, as Zen does.
+     * not do: its pages ignore the system font size and offer page zoom instead, as Zenium does.
      */
     private fun applyTextZoom() {
         settings.textZoom = (zoomFactor * 100).roundToInt().coerceIn(25, 500)
