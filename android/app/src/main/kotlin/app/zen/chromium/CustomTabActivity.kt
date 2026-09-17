@@ -53,9 +53,9 @@ class CustomTabActivity : MainActivity() {
         }
         host = Host(this, pageRoot, fullscreenLayer)
         tab = host.tabs.create(CUSTOM_TAB_ID, Profiles.CUSTOM_TAB_CONTAINER)
-        pageRoot.addView(tab, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+        tab.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
             topMargin = dp(TOOLBAR_HEIGHT_DP)
-        })
+        }
 
         toolbar = buildToolbar()
         pageRoot.addView(toolbar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(TOOLBAR_HEIGHT_DP), Gravity.TOP))
