@@ -128,6 +128,12 @@ export interface UiState {
   extensionPopup: ExtensionPopupState | null
   /** Install and permission prompts waiting for an answer, oldest first; the first is shown. */
   extensionPrompts: ExtensionPromptRequest[]
+  /**
+   * Renderer-hosted popovers that can overhang the content frame (the extensions panel, local
+   * menus), counted while up. The page's view composites above the chrome, so while one is up
+   * the view is hidden and the frame shows its capture, as for the main-process menus.
+   */
+  floatingChrome: number
 }
 
 /** Where the content area is, in window coordinates (measured by the layout reporter). */
@@ -167,7 +173,8 @@ export const uiStore = createStore<UiState>(
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false,
     extensionPopup: null,
-    extensionPrompts: []
+    extensionPrompts: [],
+    floatingChrome: 0
   },
   'ui'
 )
@@ -260,6 +267,8 @@ export function returnFocusToPage(): void {
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
     ui.extensionPrompts.length === 0 &&
+    !ui.extensionPopup &&
+    ui.floatingChrome === 0 &&
     !ui.stageActive
   )
     run('focus.content', undefined)
@@ -278,6 +287,8 @@ export function invalidateSnapshot(): void {
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
     ui.extensionPrompts.length === 0 &&
+    !ui.extensionPopup &&
+    ui.floatingChrome === 0 &&
     !ui.stageActive
   ) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
@@ -401,8 +412,41 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.siteInfoOpen ||
     ui.externalProtocol !== null ||
     ui.extensionPrompts.length > 0 ||
+    ui.extensionPopup !== null ||
+    ui.floatingChrome > 0 ||
     ui.stageActive
   )
+}
+
+/**
+ * Hold the content frame for a renderer-hosted popover: the page is captured, then the view is
+ * hidden behind the capture until `release`. `ready` resolves once the capture is in place (false
+ * when released first), so the popover can hold its first paint until the view no longer covers
+ * it.
+ */
+export function holdFloatingChrome(activeTabId: string | null): {
+  ready: Promise<boolean>
+  release: () => void
+} {
+  let held = false
+  let released = false
+  const ready = captureActiveTab(activeTabId).then(() => {
+    if (released) return false
+    held = true
+    uiStore.set((s) => ({ floatingChrome: s.floatingChrome + 1 }))
+    return true
+  })
+  return {
+    ready,
+    release: () => {
+      released = true
+      if (!held) return
+      held = false
+      uiStore.set((s) => ({ floatingChrome: Math.max(0, s.floatingChrome - 1) }))
+      invalidateSnapshot()
+      returnFocusToPage()
+    }
+  }
 }
 
 // The system back gesture (registry of dismissable surfaces, legacy chain) lives in `back.ts`.

@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { LucideIcon } from 'lucide-react'
 import type { Rect } from '@shared/types'
+import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
 import { anchorBelow } from '@renderer/lib/extensions/popupPlacement'
 import { useViewport } from '@renderer/lib/formFactor'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
@@ -44,9 +45,14 @@ function isSeparator(entry: LocalMenuEntry): entry is LocalMenuSeparator {
  * its control with 31 rows, a 16 icon each when any has one, hairline separators and danger
  * rows in the danger ink; on a finger the same rows at 44 in a bottom sheet. Escape and an
  * outside click (or a tap on the scrim) close it; there is no scrim on the desktop (§9.5).
+ *
+ * The page's view composites above the chrome, so while the menu is up the content frame shows
+ * the page's capture instead (`useFloatingChrome`), as it does for the main-process menus.
  */
-export function LocalMenu(props: Props): JSX.Element {
+export function LocalMenu(props: Props): JSX.Element | null {
   const viewport = useViewport()
+  const ready = useFloatingChrome()
+  if (!ready) return null
   return createPortal(
     viewport.coarse ? <SheetMenu {...props} /> : <PopoverMenu {...props} />,
     document.body

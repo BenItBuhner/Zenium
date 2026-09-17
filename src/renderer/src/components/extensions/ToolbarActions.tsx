@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Pin, PinOff, Puzzle, SlidersHorizontal, Trash2 } from 'lucide-react'
 import type { ExtensionInfo, Rect, UIState } from '@shared/types'
+import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
 import { anchorOf } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { badgeLabel, badgeStyle } from '@renderer/lib/extensions/badge'
@@ -204,8 +205,10 @@ function ExtensionsPanel({
   anchor: Rect
   extensions: ExtensionInfo[]
   onClose: () => void
-}): JSX.Element {
+}): JSX.Element | null {
   const ref = useRef<HTMLDivElement>(null)
+  // The panel overhangs the content frame: it paints once the page's capture is in place.
+  const ready = useFloatingChrome()
   const [pos, setPos] = useState<{ left: number; top: number; side: 'left' | 'right' } | null>(null)
   useLayoutEffect(() => {
     const el = ref.current
@@ -217,7 +220,7 @@ function ExtensionsPanel({
       { width: window.innerWidth, height: window.innerHeight }
     )
     setPos({ left: placed.x, top: placed.y, side: placed.side })
-  }, [anchor, extensions.length])
+  }, [anchor, extensions.length, ready])
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
@@ -232,6 +235,7 @@ function ExtensionsPanel({
     onClose()
     openExtensionPopup(ext.id, anchor, Boolean(ext.action?.popup ?? ext.popup))
   }
+  if (!ready) return null
   return createPortal(
     <div
       className="fixed inset-0 z-[90]"
