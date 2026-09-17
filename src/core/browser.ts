@@ -1348,6 +1348,12 @@ export class Browser {
       'extension.openOptions': ({ id }, win) => this.extensions.openOptions(id, win),
       'extension.openPopup': ({ id, anchor }, win) => this.extensions.openPopup(id, anchor, win),
       'extension.closePopup': () => this.extensions.closePopup(),
+      'extension.actionContextMenu': ({ id, x, y }, win) =>
+        this.menus.showExtensionActionMenu(
+          id,
+          win,
+          x !== undefined && y !== undefined ? { x, y } : undefined
+        ),
 
       'mod.add': ({ name, css, source }) => this.mods.add(name, css, source ?? null).id,
       'mod.update': ({ id, patch }) => this.mods.update(id, patch),

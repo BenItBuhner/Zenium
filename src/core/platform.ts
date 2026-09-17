@@ -86,6 +86,12 @@ export interface PageContextParams {
   isEditable: boolean
   misspelledWord: string
   dictionarySuggestions: string[]
+  /** URL of the top-level document (extension context menus report it as `pageUrl`). */
+  pageURL?: string
+  /** URL of the sub-frame the click landed in; empty for the top-level document. */
+  frameURL?: string
+  /** Chrome's frame id of the clicked frame: 0 for the top-level document. */
+  frameId?: number
   editFlags: {
     canUndo: boolean
     canRedo: boolean
@@ -331,6 +337,8 @@ export interface MenuItemTemplate {
   role?: MenuRole
   submenu?: MenuItemTemplate[]
   click?: () => void
+  /** A small icon next to the label as a data URL (extension items); hosts may ignore it. */
+  icon?: string
 }
 
 export type MenuSource =
@@ -542,6 +550,18 @@ export interface ExtensionHost {
   openOptions(id: string, win: ZenWindow): void
   openPopup(id: string, anchor: Rect, win: ZenWindow): void
   closePopup(): void
+  /**
+   * The `chrome.contextMenus` items extensions add to a page's context menu, already grouped
+   * per extension the way Chrome does; empty when nothing matches the click.
+   */
+  pageContextMenuItems(tabId: string, params: PageContextParams, win: ZenWindow): MenuItemTemplate[]
+  /** The items an extension adds to its own toolbar button's context menu. */
+  actionContextMenuItems(id: string, win: ZenWindow): MenuItemTemplate[]
+  /**
+   * A key press no Zenium shortcut claimed: true when an extension command is bound to it and
+   * the host dispatched it (`commands.onCommand`, or the toolbar action for `_execute_action`).
+   */
+  handleKey(input: KeyEventInput, win: ZenWindow): boolean
   flushSync(): void
 }
 
