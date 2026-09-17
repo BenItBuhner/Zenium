@@ -1,0 +1,195 @@
+name: Desktop ARM64 NSIS installer check (temporary)
+
+# Temporary verification workflow for the ARM64 NSIS installer fix: builds the Windows installer on
+# a real ARM64 runner (and x64 as the control), records the 7z coder of every payload entry before
+# and after the fix, installs silently, asserts that zenium.exe and the Chromium DLLs are on disk,
+# boots the installed app with Playwright for Electron, takes an OS-level screenshot, uninstalls.
+# Push-triggered on its own branch only; removed before the PR is marked ready.
+
+on:
+  push:
+    branches: ['cursor/desktop-arm64-installer-916d']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-arm64-nsis-check-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  installer:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-11-arm
+            os: windows-11-arm
+            arch: arm64
+            # The same value release.yml passes for its windows-arm64 build.
+            sevenzip_filter: BCJ
+          - name: windows-latest
+            os: windows-latest
+            arch: x64
+            # x64 keeps 7-Zip's default coders: the listings before and after must be identical.
+            sevenzip_filter: ''
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      OUT: ${{ github.workspace }}\check-out
+      SMOKE: ${{ github.workspace }}\.github\smoke
+      REQUIRED_FILES: zenium.exe,ffmpeg.dll,d3dcompiler_47.dll,dxcompiler.dll,dxil.dll,vk_swiftshader.dll,vulkan-1.dll
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Bundle main, preload and renderer
+        run: npx electron-vite build
+      - name: Runner facts
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:OUT" | Out-Null
+          $sevenZip = @('C:\Program Files\7-Zip\7z.exe', 'C:\Program Files (x86)\7-Zip\7z.exe') | Where-Object { Test-Path $_ } | Select-Object -First 1
+          "os: $((Get-CimInstance Win32_OperatingSystem).Caption) $((Get-CimInstance Win32_OperatingSystem).Version) arch=$env:PROCESSOR_ARCHITECTURE"
+          "runner 7-Zip: $sevenZip"; if ($sevenZip) { & $sevenZip | Select-Object -First 2 }
+          "electron-builder: $(node -p "require('./node_modules/app-builder-lib/package.json').version")"
+
+      - name: Package the NSIS installer as main does (before the fix)
+        run: npx electron-builder --win nsis --${{ matrix.arch }} --publish never
+      - name: Payload coders before the fix
+        run: |
+          $setup = (Get-ChildItem dist -Filter '*-setup.exe' | Select-Object -First 1).FullName
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\payload-listing.ps1" -Installer "$setup" -Out "$env:OUT\payload-before"
+      - name: Install the unfixed build silently and record what is missing (control, never fails the job)
+        continue-on-error: true
+        run: |
+          $setup = (Get-ChildItem dist -Filter '*-setup.exe' | Select-Object -First 1).FullName
+          $p = Start-Process -Wait -PassThru -FilePath $setup -ArgumentList '/S'
+          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\zenium'
+          $missing = @($env:REQUIRED_FILES -split ',' | Where-Object { -not (Test-Path (Join-Path $installDir $_)) })
+          $report = [ordered]@{
+            installerExitCode = $p.ExitCode
+            installDir = $installDir
+            installDirEntries = @(Get-ChildItem -Path $installDir -ErrorAction SilentlyContinue | ForEach-Object { if ($_.PSIsContainer) { "$($_.Name)/" } else { "$($_.Name) ($([math]::Round($_.Length / 1MB, 1)) MB)" } })
+            missingRequiredFiles = $missing
+          }
+          $report | ConvertTo-Json -Depth 4 | Tee-Object -FilePath "$env:OUT\install-before.json"
+          $uninstaller = Get-ChildItem -Path $installDir -Filter 'Uninstall*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if ($uninstaller) { Start-Process -Wait -FilePath $uninstaller -ArgumentList @('/currentuser', '/S', "_?=$installDir") }
+          Start-Sleep -Seconds 3
+          if (Test-Path $installDir) { Remove-Item -Path $installDir -Recurse -Force -ErrorAction SilentlyContinue }
+          "before the fix, missing after install: $($missing -join ', ')"
+
+      - name: Package the NSIS installer with the fix
+        env:
+          ELECTRON_BUILDER_7Z_FILTER: ${{ matrix.sevenzip_filter }}
+        run: |
+          Remove-Item -Path dist -Recurse -Force
+          npx electron-builder --win nsis --${{ matrix.arch }} --publish never
+          Get-ChildItem dist | Select-Object Name, Length | Format-Table -AutoSize | Out-String | Tee-Object -FilePath "$env:OUT\dist-listing.txt"
+      - name: Payload coders after the fix
+        run: |
+          $setup = (Get-ChildItem dist -Filter '*-setup.exe' | Select-Object -First 1).FullName
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\payload-listing.ps1" -Installer "$setup" -Out "$env:OUT\payload-after"
+          $before = (Get-Content "$env:OUT\payload-before.json" -Raw | ConvertFrom-Json).entries | Where-Object { -not $_.isDir } | ForEach-Object { "$($_.method) | $($_.path)" } | Sort-Object
+          $after = (Get-Content "$env:OUT\payload-after.json" -Raw | ConvertFrom-Json).entries | Where-Object { -not $_.isDir } | ForEach-Object { "$($_.method) | $($_.path)" } | Sort-Object
+          $diff = Compare-Object -ReferenceObject $before -DifferenceObject $after
+          $changed = @($diff | Where-Object { $_.SideIndicator -eq '=>' }).Count
+          "entries whose coder changed: $changed"
+          $diff | Format-Table -AutoSize | Out-String -Width 300 | Tee-Object -FilePath "$env:OUT\payload-diff.txt"
+          $undecodable = @($after | Where-Object { $_ -match '^(ARM64|RISCV)\b' })
+          if ($undecodable.Count) { Write-Host "::error::$($undecodable.Count) payload entries still use a coder Nsis7z cannot decode"; $undecodable; exit 1 }
+          if ('${{ matrix.arch }}' -eq 'x64' -and $changed -ne 0) { Write-Host '::error::the x64 payload changed although no filter was requested'; exit 1 }
+
+      - name: Install the fixed build silently and assert every payload file is on disk
+        id: install
+        run: |
+          $setup = (Get-ChildItem dist -Filter '*-setup.exe' | Select-Object -First 1).FullName
+          "installer: $setup ($([math]::Round((Get-Item $setup).Length / 1MB, 1)) MB)"
+          $t0 = Get-Date
+          $p = Start-Process -Wait -PassThru -FilePath $setup -ArgumentList '/S'
+          "installer exit code $($p.ExitCode) after $([math]::Round(((Get-Date) - $t0).TotalSeconds, 1)) s"
+          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\zenium'
+          if (-not (Test-Path $installDir)) {
+            $entry = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' | ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -eq 'Zenium' } | Select-Object -First 1
+            if ($entry) { $installDir = Split-Path -Parent ($entry.UninstallString -replace '^"(.*?)".*$', '$1') }
+          }
+          "install dir: $installDir"
+          $payload = @((Get-Content "$env:OUT\payload-after.json" -Raw | ConvertFrom-Json).entries | Where-Object { -not $_.isDir })
+          $missingPayload = @($payload | Where-Object { -not (Test-Path (Join-Path $installDir $_.path)) } | ForEach-Object { $_.path })
+          $missingRequired = @($env:REQUIRED_FILES -split ',' | Where-Object { -not (Test-Path (Join-Path $installDir $_)) })
+          $binaries = @(Get-ChildItem -Path $installDir -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.exe', '.dll' } | ForEach-Object { "$($_.Name) ($([math]::Round($_.Length / 1MB, 1)) MB)" })
+          $report = [ordered]@{
+            installerExitCode = $p.ExitCode
+            installDir = $installDir
+            installSizeMB = [math]::Round((Get-ChildItem -Path $installDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
+            binariesInInstallDir = $binaries
+            payloadFiles = $payload.Count
+            payloadFilesMissingOnDisk = $missingPayload
+            requiredFilesMissing = $missingRequired
+            shortcuts = @(Get-ChildItem -Path ([Environment]::GetFolderPath('Programs')), ([Environment]::GetFolderPath('Desktop')) -Filter 'Zenium*.lnk' -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+          }
+          $report | ConvertTo-Json -Depth 4 | Tee-Object -FilePath "$env:OUT\install-after.json"
+          if ($p.ExitCode -ne 0) { Write-Host "::error::installer exited with $($p.ExitCode)"; exit 1 }
+          if ($missingRequired.Count -or $missingPayload.Count) { Write-Host "::error::files missing after install: $(($missingRequired + $missingPayload | Select-Object -Unique) -join ', ')"; exit 1 }
+          "exe=$(Join-Path $installDir 'zenium.exe')" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Harness dependencies (Playwright for Electron)
+        working-directory: .github/smoke
+        run: npm i --no-save --no-audit --no-fund playwright
+      - name: Make sure the session shows a desktop (windows-11-arm boots into OOBE)
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-mouse.ps1" -Action dismiss-oobe | Tee-Object -FilePath "$env:OUT\oobe-dismiss.json"
+      - name: Boot the installed app with Playwright for Electron
+        timeout-minutes: 12
+        run: |
+          node "$env:SMOKE\smoke.mjs" --exe "${{ steps.install.outputs.exe }}" --label installed --out "$env:OUT" --scenarios boot --watchdog-min 9
+          $verdict = (Get-Content "$env:OUT\installed\result.json" -Raw | ConvertFrom-Json).verdict.boot
+          $verdict | ConvertTo-Json -Depth 4
+          if (-not $verdict.booted) { Write-Host '::error::the installed app did not render its chrome'; exit 1 }
+      - name: Launch the installed executable directly and take an OS-level screenshot
+        run: |
+          $exe = '${{ steps.install.outputs.exe }}'
+          $profile = Join-Path $env:RUNNER_TEMP 'zenium-screenshot-profile'
+          Start-Process -FilePath $exe -ArgumentList "--user-data-dir=$profile" | Out-Null
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Get-Date) -lt $deadline -and -not (Get-Process -Name zenium -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 })) { Start-Sleep -Milliseconds 500 }
+          Start-Sleep -Seconds 8
+          $titles = @(Get-Process -Name zenium -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { $_.MainWindowTitle })
+          "windows: $($titles -join ' | ')"
+          "processes: $((Get-Process -Name zenium -ErrorAction SilentlyContinue).Count)"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-screenshot.ps1" -Path "$env:OUT\installed-launched-${{ matrix.arch }}.png"
+          Get-Process -Name zenium -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          if (-not $titles.Count) { Write-Host '::error::zenium.exe launched from the install directory showed no window'; exit 1 }
+      - name: Uninstall silently
+        if: always() && steps.install.outputs.exe != ''
+        run: |
+          $installDir = Split-Path -Parent '${{ steps.install.outputs.exe }}'
+          Get-Process -Name zenium -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          $uninstaller = Get-ChildItem -Path $installDir -Filter 'Uninstall*.exe' | Select-Object -First 1 -ExpandProperty FullName
+          $p = Start-Process -Wait -PassThru -FilePath $uninstaller -ArgumentList @('/currentuser', '/S', "_?=$installDir")
+          Start-Sleep -Seconds 3
+          $entry = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' | ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -eq 'Zenium' }
+          [ordered]@{
+            exitCode = $p.ExitCode
+            uninstallKeyLeft = [bool]$entry
+            leftovers = @(Get-ChildItem -Path $installDir -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+          } | ConvertTo-Json -Depth 3 | Tee-Object -FilePath "$env:OUT\uninstall.json"
+      - name: Keep the fixed installer with the evidence
+        if: always()
+        run: Get-ChildItem dist -Filter '*-setup.exe' -ErrorAction SilentlyContinue | Copy-Item -Destination "$env:OUT"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: arm64-nsis-check-${{ matrix.name }}
+          path: check-out
+          if-no-files-found: warn
+          retention-days: 14
