@@ -227,8 +227,14 @@ async function generatedNotes(previous) {
       return fallback
     }
     const notes = await response.json()
-    // The API prefixes its own "## What's Changed" heading; the section below adds one.
-    return notes.body.replace(/^## What's Changed\s*/i, '').trim() || fallback
+    // The API starts its body with an HTML comment naming the config file, then its own
+    // "## What's Changed" heading; the section below adds one.
+    return (
+      notes.body
+        .replace(/^\s*(<!--[\s\S]*?-->\s*)*/, '')
+        .replace(/^## What's Changed\s*/i, '')
+        .trim() || fallback
+    )
   } catch (error) {
     console.warn(`::warning::generate-notes failed: ${error.message}`)
     return fallback
