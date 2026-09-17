@@ -327,6 +327,9 @@
 .zen-v2-button[data-primary]:active:not(:disabled) {
   background: color-mix(in srgb, var(--v2-on-accent) 30%, var(--v2-accent));
 }
+.zen-v2-button[data-danger] {
+  color: var(--v2-danger);
+}
 
 /* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME); zero on desktop. */
 :root {
@@ -2496,12 +2499,24 @@
   .zen-v2-sheet[data-dragging='true'] .zen-sheet-handle {
     background: rgb(var(--v2-text-rgb) / 0.4);
   }
+  /*
+   * The header (section 9.16): after the chassis's 20 px grip strip, 48 tall with the title
+   * centred, so the first row starts at 68; a trailing control would be 44 at 2 px margins.
+   */
+  .zen-v2-sheet-header {
+    display: flex;
+    height: 48px;
+    align-items: center;
+    justify-content: center;
+    padding: 0 16px;
+  }
   /* Type: hierarchy by size, weights 400 and 600 only. */
   .zen-v2-title {
     font-size: 17px;
     font-weight: 600;
-    line-height: 24px;
+    line-height: 22px;
     letter-spacing: -0.012em;
+    text-align: center;
   }
   .zen-v2-heading {
     font-size: 15px;
@@ -2514,8 +2529,10 @@
     color: var(--v2-text-deemphasized);
   }
   /*
-   * A row: at least 44 tall, growing with its text and never clamping; the leading control sits
-   * on the first text line, not the row's centre. The press fill keeps 8 px from the sheet's edge.
+   * A row: at least 44 tall, growing with its text and never clamping. What trails the text is
+   * centred on the row (section 9.18); the leading control alone sits on the first text line
+   * (section 9.2: 20 on a 20 line, so no offset on phones). The press fill keeps 8 px from the
+   * sheet's edge.
    */
   .zen-v2-row {
     display: flex;
@@ -2524,7 +2541,7 @@
     margin: 0 8px;
     padding: 12px 8px;
     gap: 12px;
-    align-items: flex-start;
+    align-items: center;
     border-radius: var(--v2-radius-control);
     color: var(--v2-text);
     text-align: left;
@@ -2546,6 +2563,7 @@
   .zen-v2-radio {
     display: inline-flex;
     flex-shrink: 0;
+    align-self: flex-start;
     width: 20px;
     height: 20px;
     align-items: center;
@@ -2620,33 +2638,6 @@
   }
   .zen-v2-image-radio:active:not(:disabled) .zen-v2-image-radio-picture {
     transform: scale(0.98);
-  }
-  /* Buttons: 40 tall under a finger (32 on desktop), rectangular, 15/500; secondary is text at 10%. */
-  .zen-v2-button {
-    display: inline-flex;
-    height: 40px;
-    align-items: center;
-    justify-content: center;
-    padding: 0 12px;
-    border-radius: var(--v2-radius-control);
-    background: var(--v2-fill);
-    color: var(--v2-text);
-    font-size: 15px;
-    font-weight: 500;
-    line-height: 20px;
-    transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
-  }
-  .zen-v2-button:active:not(:disabled) {
-    background: var(--v2-fill-hover);
-    transform: scale(0.98);
-  }
-  .zen-v2-button:disabled {
-    opacity: 0.4;
-  }
-  .zen-v2-button[data-danger] {
-    color: var(--zen-danger);
   }
   /* Focus rings: every `zen-v2-*` control (the shortcut tiles included) takes the shared v2 ring. */
   /* Section 9.7: content scrolled under the header shows as a 1 px line at the grip's bottom edge. */
@@ -2741,6 +2732,12 @@
   .zen-ntp-caption {
     font-size: 13px;
     line-height: 18px;
+    color: rgb(var(--zen-fg-rgb) / 0.69);
+  }
+  /* The empty state (section 9.17): one sentence at 15/400, deemphasised, in the window's ink. */
+  .zen-ntp-empty {
+    font-size: 15px;
+    line-height: 20px;
     color: rgb(var(--zen-fg-rgb) / 0.69);
   }
   /* A site's icon fades in once it has loaded; until then the tile is the fill alone. */

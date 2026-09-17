@@ -111,8 +111,8 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
       onDismissed={closeCustomize}
       handleLabel="Resize sheet"
       header={
-        <div className="flex items-start px-4 pb-4 pt-1">
-          <h2 className="zen-v2-title min-w-0 flex-1 truncate">New Tab Page</h2>
+        <div className="zen-v2-sheet-header">
+          <h2 className="zen-v2-title min-w-0 truncate">New Tab Page</h2>
         </div>
       }
     >
@@ -254,7 +254,7 @@ function CheckRow({
         <Check className="h-3.5 w-3.5" strokeWidth={3} />
       </span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      {trailing && <span className="zen-v2-description shrink-0 pt-px">{trailing}</span>}
+      {trailing && <span className="zen-v2-description shrink-0">{trailing}</span>}
     </button>
   )
 }

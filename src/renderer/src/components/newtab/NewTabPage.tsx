@@ -196,7 +196,18 @@ function TopSites({ state, tab }: { state: UIState; tab: Tab }): JSX.Element | n
     [ranked, pinned, shortcutStyle, favicons]
   )
 
-  if (tiles.length === 0) return null
+  // Nothing until the history has answered; once it has and there is nothing to show, the empty
+  // state (v2 section 9.17): one sentence, top-anchored where the tiles would be, no next step.
+  if (ranked === null) return null
+  if (tiles.length === 0) {
+    return (
+      <p className="zen-ntp-empty mt-12 w-full px-8 text-center" role="status">
+        {shortcutStyle === 'my-shortcuts'
+          ? 'Shortcuts you pin will appear here'
+          : 'Sites you visit often will appear here'}
+      </p>
+    )
+  }
   return (
     <ul className="mt-6 grid w-full max-w-[420px] grid-cols-4 gap-3" aria-label="Most visited">
       {tiles.map((site, index) => (
