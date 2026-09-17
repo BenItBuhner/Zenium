@@ -8,6 +8,7 @@ import { dropStore } from '@renderer/lib/drag'
 import { activeTab, isLocalWindow, tabTitle } from '@renderer/lib/selectors'
 import { openOverlay, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { ToastCard } from '../messages/ToastCard'
 import { SpaceGlyph } from '../SpaceGlyph'
 import { Favicon } from './Favicon'
 
@@ -38,17 +39,10 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
         <MediaPlayer key={m.tabId} state={state} media={m} compact={compact} />
       ))}
       {toasts.length > 0 && (
-        <div className="flex flex-col gap-1">
+        // The well clips the card's slide in from below (and out again) to its own row.
+        <div className="zen-message-well">
           {toasts.map((t) => (
-            <div
-              key={t.id}
-              className={cn(
-                'zen-toast zen-panel px-2.5 py-1.5 text-[12px]',
-                t.kind === 'error' && 'text-red-500'
-              )}
-            >
-              {t.message}
-            </div>
+            <ToastCard key={t.id} toast={t} compact />
           ))}
         </div>
       )}

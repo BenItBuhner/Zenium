@@ -1,5 +1,7 @@
+import type { LucideIcon } from 'lucide-react'
 import type {
   BookmarkNodeType,
+  ContentCover,
   ExternalProtocolRequest,
   MenuDescriptor,
   OverlayKind,
@@ -46,10 +48,54 @@ export interface UrlbarState {
   attached: boolean
 }
 
+export type ToastKind = 'info' | 'error'
+
+/** The one thing a message offers to do ("Undo", "Open", "Install"). */
+export interface MessageAction {
+  label: string
+  onPick: () => void
+}
+
 export interface Toast {
   id: number
   message: string
-  kind: 'info' | 'error'
+  kind: ToastKind
+  action?: MessageAction
+  /** How long the toast stays before it goes on its own (ms). */
+  duration: number
+  /** Set once the toast is on its way out: the card animates off and then forgets itself. */
+  leaving?: boolean
+}
+
+export type BannerDismissReason = 'swipe' | 'close' | 'timeout' | 'action' | 'replaced' | 'program'
+
+/**
+ * A message that drops in under the toolbar and stays until dealt with: install prompts, the
+ * default-browser offer, a blocked popup. Newer banners push the older ones down.
+ */
+export interface Banner {
+  id: number
+  title: string
+  detail?: string
+  /** A Lucide glyph leading the title. */
+  icon?: LucideIcon
+  action?: MessageAction
+  /** Banners of one `key` do not pile up: showing another replaces the one on screen. */
+  key?: string
+  /** Auto-dismiss after this long (ms); null stays until dismissed. */
+  duration: number | null
+  onDismiss?: (reason: BannerDismissReason) => void
+  leaving?: boolean
+}
+
+export interface BannerOptions {
+  title: string
+  detail?: string
+  icon?: LucideIcon
+  action?: MessageAction
+  key?: string
+  duration?: number | null
+  onDismiss?: (reason: BannerDismissReason) => void
 }
 
 /** A sidebar tab in the hand (see lib/drag.ts); the ghost and caret are placed imperatively. */
@@ -120,7 +166,10 @@ export interface UiState {
   /** Data URL of the active tab, shown dimmed behind overlays. */
   snapshot: string | null
   snapshotTabId: string | null
+  /** At most one toast is live; a toast on its way out may still be alongside it. */
   toasts: Toast[]
+  /** Top message banners, newest first (it sits on top; the older ones are pushed down). */
+  banners: Banner[]
   statusText: string
   drag: DragState | null
   /** The hidden sidebar (compact mode, fullscreen) is out over a picture of the page. */
@@ -218,6 +267,7 @@ export const uiStore = createStore<UiState>(
     snapshot: null,
     snapshotTabId: null,
     toasts: [],
+    banners: [],
     statusText: '',
     drag: null,
     compactHover: false,
@@ -253,12 +303,167 @@ export const uiStore = createStore<UiState>(
   'ui'
 )
 
-let toastSeq = 0
-export function pushToast(message: string, kind: 'info' | 'error' = 'info'): void {
-  const id = ++toastSeq
-  uiStore.set((s) => ({ toasts: [...s.toasts, { id, message, kind }] }))
-  setTimeout(() => uiStore.set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 2800)
+// ---------------------------------------------------------------------------
+// Messages: toasts at the bottom, banners at the top
+// ---------------------------------------------------------------------------
+
+/** A plain toast is read in a glance; one with an action needs time to be acted on. */
+export const TOAST_DURATION = 2800
+export const TOAST_ACTION_DURATION = 5000
+/** Banners beyond this many push the oldest out. */
+export const MAX_BANNERS = 3
+/**
+ * A card animates itself off and then forgets itself; with no card mounted (a desktop window
+ * with the sidebar collapsed) the message is swept out after the exit would have ended anyway.
+ */
+const EXIT_SWEEP_MS = 800
+
+export interface ToastOptions {
+  action?: MessageAction
+  duration?: number
 }
+
+let messageSeq = 0
+/** Per-message auto-dismiss clocks: the timer, and the time left when a finger held it. */
+const clocks = new Map<number, { timer: ReturnType<typeof setTimeout>; due: number }>()
+
+function armClock(id: number, ms: number, fire: () => void): void {
+  disarmClock(id)
+  clocks.set(id, { timer: setTimeout(fire, ms), due: Date.now() + ms })
+}
+
+function disarmClock(id: number): number | null {
+  const clock = clocks.get(id)
+  if (!clock) return null
+  clearTimeout(clock.timer)
+  clocks.delete(id)
+  return Math.max(0, clock.due - Date.now())
+}
+
+/**
+ * Show a toast. One toast is live at a time: a new one sends the current one off (the two pass
+ * each other), except that the same message again just restarts its clock, so a key held down
+ * does not stack a column of identical toasts.
+ */
+export function pushToast(
+  message: string,
+  kind: ToastKind = 'info',
+  opts: ToastOptions = {}
+): void {
+  const duration = opts.duration ?? (opts.action ? TOAST_ACTION_DURATION : TOAST_DURATION)
+  const live = uiStore.get().toasts.find((t) => !t.leaving)
+  if (live && live.message === message && live.kind === kind && !opts.action && !live.action) {
+    armClock(live.id, duration, () => dismissToast(live.id))
+    return
+  }
+  if (live) dismissToast(live.id)
+  const id = ++messageSeq
+  const toast: Toast = { id, message, kind, duration, action: opts.action }
+  uiStore.set((s) => ({ toasts: [...s.toasts, toast] }))
+  armClock(id, duration, () => dismissToast(id))
+}
+
+/** Send a toast on its way; the card slides off and calls `forgetToast` when it is gone. */
+export function dismissToast(id: number): void {
+  disarmClock(id)
+  const toast = uiStore.get().toasts.find((t) => t.id === id)
+  if (!toast || toast.leaving) return
+  uiStore.set((s) => ({ toasts: s.toasts.map((t) => (t.id === id ? { ...t, leaving: true } : t)) }))
+  setTimeout(() => forgetToast(id), EXIT_SWEEP_MS)
+}
+
+/** The toast's card is off screen: drop it. */
+export function forgetToast(id: number): void {
+  disarmClock(id)
+  if (!uiStore.get().toasts.some((t) => t.id === id)) return
+  uiStore.set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
+}
+
+/** A finger on the toast (or a pointer over it) stops its clock; letting go restarts what was left. */
+export function holdToast(id: number, held: boolean): void {
+  holdMessage(id, held, () => dismissToast(id))
+}
+
+/** Run the toast's action and send it off. */
+export function pickToastAction(id: number): void {
+  const toast = uiStore.get().toasts.find((t) => t.id === id)
+  if (!toast || toast.leaving) return
+  dismissToast(id)
+  toast.action?.onPick()
+}
+
+/** Show a banner under the toolbar; returns its id for `dismissBanner`. */
+export function showBanner(opts: BannerOptions): number {
+  const id = ++messageSeq
+  const banner: Banner = {
+    id,
+    title: opts.title,
+    detail: opts.detail,
+    icon: opts.icon,
+    action: opts.action,
+    key: opts.key,
+    duration: opts.duration ?? null,
+    onDismiss: opts.onDismiss
+  }
+  const live = uiStore.get().banners.filter((b) => !b.leaving)
+  if (opts.key) for (const b of live) if (b.key === opts.key) dismissBanner(b.id, 'replaced')
+  const staying = live.filter((b) => !(opts.key && b.key === opts.key))
+  for (const b of staying.slice(MAX_BANNERS - 1)) dismissBanner(b.id, 'replaced')
+  uiStore.set((s) => ({ banners: [banner, ...s.banners] }))
+  if (banner.duration !== null) armClock(id, banner.duration, () => dismissBanner(id, 'timeout'))
+  return id
+}
+
+/** Send a banner off; its `onDismiss` hears why, once. */
+export function dismissBanner(id: number, reason: BannerDismissReason = 'program'): void {
+  disarmClock(id)
+  const banner = uiStore.get().banners.find((b) => b.id === id)
+  if (!banner || banner.leaving) return
+  uiStore.set((s) => ({
+    banners: s.banners.map((b) => (b.id === id ? { ...b, leaving: true } : b))
+  }))
+  setTimeout(() => forgetBanner(id), EXIT_SWEEP_MS)
+  banner.onDismiss?.(reason)
+}
+
+export function forgetBanner(id: number): void {
+  disarmClock(id)
+  if (!uiStore.get().banners.some((b) => b.id === id)) return
+  uiStore.set((s) => ({ banners: s.banners.filter((b) => b.id !== id) }))
+}
+
+export function holdBanner(id: number, held: boolean): void {
+  holdMessage(id, held, () => dismissBanner(id, 'timeout'))
+}
+
+export function pickBannerAction(id: number): void {
+  const banner = uiStore.get().banners.find((b) => b.id === id)
+  if (!banner || banner.leaving) return
+  dismissBanner(id, 'action')
+  banner.action?.onPick()
+}
+
+const heldRemaining = new Map<number, number>()
+
+function holdMessage(id: number, held: boolean, fire: () => void): void {
+  if (held) {
+    const left = disarmClock(id)
+    if (left !== null) heldRemaining.set(id, left)
+    return
+  }
+  const left = heldRemaining.get(id)
+  heldRemaining.delete(id)
+  // A message that was let go gets at least a moment before it leaves.
+  if (left !== undefined) armClock(id, Math.max(left, 1000), fire)
+}
+
+/**
+ * The cover band: the strips of the content area that the message cards cover, in CSS px from
+ * its top and bottom edges. The layout reporter folds them into every view's placement so the
+ * host clips the page out of them and hands their touches to the chrome (`ViewPlacement.cover`).
+ * Not the page cover of `lib/cover.ts`, which is the picture that stands in for a hidden page.
+ */
+export const coverBandStore = createStore<ContentCover>({ top: 0, bottom: 0 }, 'cover-band')
 
 /** Capture the active tab before a chrome overlay hides it. */
 export async function captureActiveTab(tabId: string | null): Promise<void> {

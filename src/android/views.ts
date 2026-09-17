@@ -1,4 +1,11 @@
-import type { KeyBinding, NavigationSnapshot, PageRules, Rect, Tab } from '@shared/types'
+import type {
+  ContentCover,
+  KeyBinding,
+  NavigationSnapshot,
+  PageRules,
+  Rect,
+  Tab
+} from '@shared/types'
 import type { SafeBrowsingHit } from '@shared/privacy'
 import type { FormsCommand } from '@shared/forms'
 import { isCertificateError, type SiteCertificate } from '@shared/siteInfo'
@@ -75,6 +82,7 @@ export class AndroidTabView implements TabView {
   private audible = false
   private pendingHtml = false
   private cssSeq = 0
+  private cover: ContentCover = { top: 0, bottom: 0 }
   events!: TabViewEvents
 
   constructor(
@@ -423,6 +431,13 @@ export class AndroidTabView implements TabView {
 
   bringToFront(): void {
     this.bridge.send('view.bringToFront', { tabId: this.tabId })
+  }
+
+  setCover(cover: ContentCover): void {
+    // Every layout report carries the cover; only a change is worth a spring on the host.
+    if (this.cover.top === cover.top && this.cover.bottom === cover.bottom) return
+    this.cover = cover
+    this.bridge.send('view.setCover', { tabId: this.tabId, cover })
   }
 
   // --- page operations -----------------------------------------------------------

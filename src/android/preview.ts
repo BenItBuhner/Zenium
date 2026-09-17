@@ -1,4 +1,4 @@
-import type { Rect } from '@shared/types'
+import type { ContentCover, Rect } from '@shared/types'
 import type { NativeBridge, NativeCall } from './bridge'
 import type { BootInfo } from './platform'
 
@@ -27,6 +27,23 @@ export function createPreviewBridge(): NativeBridge {
   const host = (): HostGlobal => (window as unknown as { __zenHost: HostGlobal }).__zenHost
   const views = new Map<string, HTMLIFrameElement>()
   const density = 1
+  /** What clips each page's frame: how far a pull has moved it down, and the covered strips. */
+  const clips = new Map<string, { pull: number; cover: ContentCover }>()
+  const clipOf = (tabId: string): { pull: number; cover: ContentCover } => {
+    let clip = clips.get(tabId)
+    if (!clip) clips.set(tabId, (clip = { pull: 0, cover: { top: 0, bottom: 0 } }))
+    return clip
+  }
+  // Like Kotlin's outline: the page shows between the strips, and no lower than the frame's
+  // bottom edge while a pull holds it down.
+  const applyClip = (frame: HTMLIFrameElement, clip: { pull: number; cover: ContentCover }): void => {
+    const radius = frame.style.borderRadius || '0px'
+    const bottom = Math.max(clip.cover.bottom, clip.pull)
+    frame.style.clipPath =
+      clip.cover.top > 0 || bottom > 0
+        ? `inset(${clip.cover.top}px 0 ${bottom}px 0 round ${radius})`
+        : `inset(0 round ${radius})`
+  }
 
   const files: Record<string, string> = {}
   for (let i = 0; i < localStorage.length; i++) {
@@ -162,11 +179,25 @@ export function createPreviewBridge(): NativeBridge {
       const frame = views.get(String(tabId))
       if (!frame) return
       const y = Math.max(0, Number(offset))
+      const clip = clipOf(String(tabId))
+      clip.pull = y
       frame.style.transform = y > 0 ? `translate3d(0, ${y}px, 0)` : ''
-      frame.style.clipPath =
-        y > 0 ? `inset(0 0 ${y}px 0 round ${frame.style.borderRadius || '0px'})` : ''
+      // The pull follows the finger per frame; nothing eases it.
+      frame.style.transition = ''
+      applyClip(frame, clip)
     },
     'chrome.setPullToRefresh': () => undefined,
+    // Chrome messages along the frame's edges: the page is clipped out of their strips, eased
+    // the way Kotlin springs its clip; a clip-path keeps pointer events out of them too, so the
+    // cards underneath can be tapped.
+    'view.setCover': ({ tabId, cover }) => {
+      const frame = views.get(String(tabId))
+      if (!frame) return
+      const clip = clipOf(String(tabId))
+      clip.cover = cover as ContentCover
+      frame.style.transition = clip.pull > 0 ? '' : 'clip-path 320ms cubic-bezier(0.2, 0, 0, 1)'
+      applyClip(frame, clip)
+    },
     'view.setVisible': ({ tabId, visible }) => {
       const frame = views.get(String(tabId))
       if (frame) frame.style.display = visible ? 'block' : 'none'

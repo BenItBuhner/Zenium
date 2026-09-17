@@ -85,6 +85,8 @@ class TabWebView(
     /** How far the page sits below the top of its frame during a pull-to-refresh (device px). */
     private var pullOffsetPx = 0f
     private val pull = PullToRefreshGesture(this, { super.onTouchEvent(it) }) { event -> onPull(event) }
+    /** Strips at the top and bottom edges that chrome messages cover (see `ContentCover`). */
+    val cover = ContentCover({ resources.displayMetrics.density }) { invalidateOutline() }
     /** The in-page predictive back in flight on this view, if any (see `PredictiveBack.kt`). */
     var backTransition: PageBackTransition? = null
     /** The history entry the page on screen belongs to (updated as navigations commit). */
@@ -200,10 +202,10 @@ class TabWebView(
         clipToOutline = true
         outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(view: View, outline: Outline) {
-                // Pulled down, the page is clipped at the frame's bottom edge, not its own: the
-                // chrome below the frame stays uncovered.
-                val bottom = (view.height - pullOffsetPx).roundToInt().coerceIn(0, view.height)
-                outline.setRoundRect(0, 0, view.width, bottom, radiusPx)
+                // Chrome messages along the edges show through the strips they cover, and pulled
+                // down, the page is clipped at the frame's bottom edge, not its own: the chrome
+                // below the frame stays uncovered.
+                outline.setRoundRect(0, visibleTop(), view.width, visibleBottom(), radiusPx)
             }
         }
         applyPullToRefreshMode()
@@ -318,6 +320,40 @@ class TabWebView(
         super.onOverScrolled(scrollX, scrollY, clampedX, clampedY)
         pull.onOverScrolled(scrollY, clampedY)
     }
+
+    // --- the covered strips (chrome messages) ---------------------------------------------------
+
+    /**
+     * Where the page's visible part starts and ends (device px): inside the covered strips, and
+     * above the frame's bottom edge while the page sits lower during a pull.
+     */
+    private fun visibleTop(): Int = cover.topPx.coerceAtMost(height)
+    private fun visibleBottom(): Int =
+        (height - maxOf(cover.bottomPx.toFloat(), pullOffsetPx)).roundToInt().coerceIn(visibleTop(), height)
+
+    /**
+     * A touch landing on a covered strip is the chrome's: the message card drawn there wants it.
+     * The card's whole gesture (down, moves, up) is handed to the chrome WebView, the view's
+     * sibling underneath, in its own coordinates; the page never sees it.
+     */
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            coverTouch = cover.active && (event.y < visibleTop() || event.y >= visibleBottom())
+        }
+        if (!coverTouch) return super.dispatchTouchEvent(event)
+        val chrome = host.chrome
+        val copy = MotionEvent.obtain(event)
+        copy.offsetLocation((left - chrome.left).toFloat(), (top - chrome.top).toFloat())
+        val handled = chrome.dispatchTouchEvent(copy)
+        copy.recycle()
+        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            coverTouch = false
+        }
+        return handled
+    }
+
+    /** The gesture in progress began on a covered strip and belongs to the chrome. */
+    private var coverTouch = false
 
     // --- page script (Glance, third-party links, media tracking) -------------------------------
 
