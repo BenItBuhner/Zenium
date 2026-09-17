@@ -47,6 +47,7 @@ import {
 import { CookiesApi } from './cookies'
 import { DeclarativeNetRequestHostApi } from './declarativeNetRequest'
 import { ExtensionApi } from './extension'
+import { HistoryApi } from './history'
 import { ManagementApi } from './management'
 import { ApiModel, type ModelSnapshot } from './model'
 import { NotificationsApi } from './notifications'
@@ -136,6 +137,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly cookies: CookiesApi
   readonly declarativeNetRequest: DeclarativeNetRequestHostApi
   readonly bookmarks: BookmarksApi
+  readonly history: HistoryApi
 
   private readonly namespaces: Record<string, NamespaceHandlers>
   private readonly extensions = new Map<string, LoadedExtension>()
@@ -188,6 +190,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       join(userDataDir, 'zen', 'extension-dnr')
     )
     this.bookmarks = new BookmarksApi(this)
+    this.history = new HistoryApi(this)
     this.namespaces = {
       tabs: this.tabs.handlers,
       windows: this.windows.handlers,
@@ -204,7 +207,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       notifications: this.notifications.handlers,
       cookies: this.cookies.handlers,
       declarativeNetRequest: this.declarativeNetRequest.handlers,
-      bookmarks: this.bookmarks.handlers
+      bookmarks: this.bookmarks.handlers,
+      history: this.history.handlers
     }
     // A tab's outermost document changed: `activeTab` grants for another origin end and the
     // declarativeNetRequest action counts start over.
@@ -229,6 +233,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.browser.state.subscribe(() => this.scheduleTick())
     // Every tab view, the ones alive already included: `webNavigation.*` comes from their events.
     this.views.onViewCreated((view) => this.webNavigation.attach(view))
+    this.history.attach()
     app.on('before-quit', () => this.flushSync())
   }
 

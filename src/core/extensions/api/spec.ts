@@ -492,6 +492,32 @@ export const API_SPEC: ApiSpec = {
         MANAGED: 'managed'
       }
     }
+  },
+  history: {
+    methods: {
+      search: { params: [object('query')] },
+      getVisits: { params: [object('details')] },
+      addUrl: { params: [object('details')] },
+      deleteUrl: { params: [object('details')] },
+      deleteRange: { params: [object('range')] },
+      deleteAll: { params: [] }
+    },
+    events: { onVisited: {}, onVisitRemoved: {} },
+    constants: {
+      TransitionType: {
+        LINK: 'link',
+        TYPED: 'typed',
+        AUTO_BOOKMARK: 'auto_bookmark',
+        AUTO_SUBFRAME: 'auto_subframe',
+        MANUAL_SUBFRAME: 'manual_subframe',
+        GENERATED: 'generated',
+        AUTO_TOPLEVEL: 'auto_toplevel',
+        FORM_SUBMIT: 'form_submit',
+        RELOAD: 'reload',
+        KEYWORD: 'keyword',
+        KEYWORD_GENERATED: 'keyword_generated'
+      }
+    }
   }
 }
 
