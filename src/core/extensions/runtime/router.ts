@@ -1,4 +1,4 @@
-import type { MessageSender, ShimContextKind } from './shim'
+import type { EngineContextKind, MessageSender } from '../api/engine'
 import { extensionOrigin } from './plan'
 
 /**
@@ -13,7 +13,7 @@ import { extensionOrigin } from './plan'
 export interface Endpoint {
   id: string
   extensionId: string
-  context: ShimContextKind
+  context: EngineContextKind
   /** Core tab id when the endpoint is a content script frame. */
   tabId: string | null
   frameId: number
@@ -77,7 +77,7 @@ export class MessageRouter {
   }
 
   /** Endpoints of an extension, optionally limited to one context kind. */
-  of(extensionId: string, context?: ShimContextKind): Endpoint[] {
+  of(extensionId: string, context?: EngineContextKind): Endpoint[] {
     return this.all().filter(
       (e) => e.extensionId === extensionId && (context === undefined || e.context === context)
     )
@@ -193,14 +193,19 @@ export class MessageRouter {
       )
     }
     if (target.extensionId && target.extensionId !== sender.extensionId) return NO_RECEIVER
+    // Extension pages only: content scripts and user scripts never receive runtime.sendMessage.
     return this.all().filter(
-      (e) => e.extensionId === sender.extensionId && e.context !== 'content' && e.id !== sender.id
+      (e) =>
+        e.extensionId === sender.extensionId &&
+        e.context !== 'content' &&
+        e.context !== 'userScript' &&
+        e.id !== sender.id
     )
   }
 
   senderInfo(endpoint: Endpoint): MessageSender {
     const info: MessageSender = { id: endpoint.extensionId, url: endpoint.url }
-    if (endpoint.context === 'content') {
+    if (endpoint.context === 'content' || endpoint.context === 'userScript') {
       const tab = endpoint.tabId ? this.outbox.tabFor(endpoint.tabId) : null
       if (tab) info.tab = tab
       info.frameId = endpoint.frameId
@@ -247,8 +252,10 @@ export class MessageRouter {
     }
     this.pending.set(rid, pending)
     const info = this.senderInfo(sender)
+    // A user script's message lands on runtime.onUserScriptMessage, never on onMessage.
+    const flag = sender.context === 'userScript' ? { userScript: true } : {}
     for (const endpoint of targets)
-      this.outbox.send(endpoint.id, { t: 'deliver', id: rid, data, sender: info })
+      this.outbox.send(endpoint.id, { t: 'deliver', id: rid, data, sender: info, ...flag })
   }
 
   private onMessageReply(from: string, message: Record<string, unknown>): void {
@@ -319,8 +326,9 @@ export class MessageRouter {
     }
     this.ports.set(portId, port)
     const info = this.senderInfo(sender)
+    const flag = sender.context === 'userScript' ? { userScript: true } : {}
     for (const endpoint of targets)
-      this.outbox.send(endpoint.id, { t: 'portConnect', portId, name, sender: info })
+      this.outbox.send(endpoint.id, { t: 'portConnect', portId, name, sender: info, ...flag })
   }
 
   /** Once every offered endpoint answered: accept for the initiator, or refuse when nobody took it. */

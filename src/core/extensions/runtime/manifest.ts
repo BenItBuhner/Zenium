@@ -3,11 +3,22 @@
  * MV3. Kept deliberately small: the store-install core owns the complete manifest type; this
  * runtime model is what the injection planner, the chrome.* shim and the hosts consume.
  */
+import {
+  getMessage,
+  localeCandidates,
+  substituteMessages,
+  type LocaleMessages
+} from '../api/i18n'
+
 export type ManifestVersion = 2 | 3
 
 export type RunAt = 'document_start' | 'document_end' | 'document_idle'
 
-export type ScriptWorld = 'ISOLATED' | 'MAIN'
+/**
+ * Where a script runs: the extension's isolated world, the page's main world, or (for
+ * `chrome.userScripts` registrations) the extension's user-script world, which gets messaging only.
+ */
+export type ScriptWorld = 'ISOLATED' | 'MAIN' | 'USER_SCRIPT'
 
 export interface ContentScriptDeclaration {
   matches: string[]
@@ -88,11 +99,9 @@ export interface RuntimeManifest {
   raw: Record<string, unknown>
 }
 
-/** `_locales/<locale>/messages.json`, already parsed. */
-export type LocaleMessages = Record<
-  string,
-  { message: string; placeholders?: Record<string, { content: string }> }
->
+/** The message helpers moved to the shared api layer; re-exported for the runtime's callers. */
+export type { LocaleMessages }
+export { getMessage, localeCandidates, substituteMessages }
 
 export class ManifestError extends Error {
   constructor(message: string) {
@@ -102,7 +111,6 @@ export class ManifestError extends Error {
 }
 
 const RUN_AT: readonly RunAt[] = ['document_start', 'document_end', 'document_idle']
-const MSG_PLACEHOLDER = /__MSG_([A-Za-z0-9_@]+)__/g
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -121,49 +129,6 @@ function stringMap(value: unknown): Record<string, string> {
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(value)) if (typeof v === 'string') out[k] = v
   return out
-}
-
-/**
- * Chrome's locale fallback: the exact UI locale, its language, then `default_locale`. Locale
- * directory names use underscores (`en_US`).
- */
-export function localeCandidates(uiLocale: string, defaultLocale: string | null): string[] {
-  const normalised = uiLocale.replace('-', '_')
-  const out: string[] = [normalised]
-  const language = normalised.split('_')[0]
-  if (language && language !== normalised) out.push(language)
-  if (defaultLocale && !out.includes(defaultLocale)) out.push(defaultLocale)
-  return out
-}
-
-/** Resolve one `chrome.i18n.getMessage` lookup (case-insensitive keys, `$1` and named placeholders). */
-export function getMessage(
-  messages: LocaleMessages | null,
-  name: string,
-  substitutions: string[] = []
-): string {
-  if (!messages) return ''
-  const key = Object.keys(messages).find((k) => k.toLowerCase() === name.toLowerCase())
-  if (!key) return ''
-  const entry = messages[key]
-  let text = entry.message
-  if (entry.placeholders) {
-    for (const [placeholder, { content }] of Object.entries(entry.placeholders)) {
-      const value = content.replace(/\$(\d)/g, (_, n: string) => substitutions[Number(n) - 1] ?? '')
-      text = text.replace(new RegExp(`\\$${placeholder}\\$`, 'gi'), value)
-    }
-  }
-  text = text.replace(/\$(\d)/g, (_, n: string) => substitutions[Number(n) - 1] ?? '')
-  return text.replace(/\$\$/g, '$')
-}
-
-/** Replace every `__MSG_name__` in `text` from the extension's messages (unknown names stay). */
-export function substituteMessages(text: string, messages: LocaleMessages | null): string {
-  if (!messages) return text
-  return text.replace(MSG_PLACEHOLDER, (whole, name: string) => {
-    const resolved = getMessage(messages, name)
-    return resolved || whole
-  })
 }
 
 function parseContentScript(entry: unknown, index: number): ContentScriptDeclaration {

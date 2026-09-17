@@ -1,23 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import type { ContentScriptDeclaration } from '../manifest'
 import {
-  anyPatternMatches,
   contentScriptAppliesTo,
-  globMatches,
-  hasHostPermission,
-  matchPatternTest,
+  effectiveMatchUrl,
+  globToRegExp,
+  matchesAnyPattern,
   parseMatchPattern,
-  splitUrl
-} from '../matchPatterns'
+  type ContentScriptMatch
+} from '../api/matchPattern'
 
-const matches = (pattern: string, url: string): boolean => {
-  const parsed = parseMatchPattern(pattern)
-  const parts = splitUrl(url)
-  if (!parsed || !parts) return false
-  return matchPatternTest(parsed, parts)
-}
+const matches = (pattern: string, url: string): boolean => matchesAnyPattern(url, pattern)
 
-describe('match patterns', () => {
+describe('match patterns as content scripts use them', () => {
   it('handles the documented Chrome examples', () => {
     expect(matches('https://*/*', 'https://www.google.com/')).toBe(true)
     expect(matches('https://*/foo*', 'https://example.com/foo/bar.html')).toBe(true)
@@ -45,7 +38,20 @@ describe('match patterns', () => {
     expect(matches('https://*google.com/*', 'https://www.google.com/')).toBe(false)
   })
 
-  it('rejects invalid patterns', () => {
+  it('takes patterns apart for origin planning and rejects invalid ones', () => {
+    expect(parseMatchPattern('*://*.youtube.com/watch*')).toEqual({
+      schemes: ['http', 'https'],
+      host: '*.youtube.com',
+      port: null,
+      path: '/watch*',
+      matchesAllUrls: false
+    })
+    expect(parseMatchPattern('https://example.org:8443/*')).toMatchObject({
+      host: 'example.org',
+      port: '8443'
+    })
+    expect(parseMatchPattern('<all_urls>')).toMatchObject({ matchesAllUrls: true, host: '*' })
+    expect(parseMatchPattern('file:///*')).toMatchObject({ schemes: ['file'], host: '' })
     expect(parseMatchPattern('https://www.google.com')).toBeNull()
     expect(parseMatchPattern('https://*foo/bar')).toBeNull()
     expect(parseMatchPattern('https://foo.*.bar/baz')).toBeNull()
@@ -53,19 +59,24 @@ describe('match patterns', () => {
     expect(parseMatchPattern('foo://*')).toBeNull()
   })
 
-  it('ignores ports and the fragment the way Chrome does', () => {
+  it('ignores ports without one in the pattern and the fragment, but not the query', () => {
     expect(matches('https://example.org/*', 'https://example.org:8443/x')).toBe(true)
     expect(matches('https://example.org/a', 'https://example.org/a#frag')).toBe(true)
     expect(matches('https://example.org/a', 'https://example.org/a?q')).toBe(false)
+    // `?` in the path part of a match pattern is literal (the query separator), not a wildcard.
+    expect(matches('https://example.org/a?q=1', 'https://example.org/a?q=1')).toBe(true)
+    expect(matches('https://example.org/a?q=1', 'https://example.org/aXq=1')).toBe(false)
   })
 
-  it('anyPatternMatches skips unparsable entries', () => {
-    const parts = splitUrl('https://example.org/')
-    expect(parts && anyPatternMatches(['garbage', 'https://example.org/*'], parts)).toBe(true)
+  it('skips unparsable entries in a list', () => {
+    expect(matchesAnyPattern('https://example.org/', ['garbage', 'https://example.org/*'])).toBe(
+      true
+    )
   })
 })
 
 describe('globs', () => {
+  const globMatches = (glob: string, url: string): boolean => globToRegExp(glob).test(url)
   it('supports * and ? and is case sensitive', () => {
     expect(globMatches('https://???.example.com/foo*bar', 'https://www.example.com/foo/bar')).toBe(
       true
@@ -77,18 +88,14 @@ describe('globs', () => {
   })
 })
 
-const declaration = (overrides: Partial<ContentScriptDeclaration>): ContentScriptDeclaration => ({
+const declaration = (overrides: Partial<ContentScriptMatch>): ContentScriptMatch => ({
   matches: ['<all_urls>'],
   excludeMatches: [],
   includeGlobs: [],
   excludeGlobs: [],
-  js: ['a.js'],
-  css: [],
-  runAt: 'document_idle',
   allFrames: false,
   matchAboutBlank: false,
   matchOriginAsFallback: false,
-  world: 'ISOLATED',
   ...overrides
 })
 
@@ -121,6 +128,10 @@ describe('contentScriptAppliesTo', () => {
       isTopFrame: false,
       precursorUrl: 'https://www.youtube.com/'
     }
+    expect(effectiveMatchUrl(declaration({}), blank)).toBeNull()
+    expect(effectiveMatchUrl(declaration({ matchAboutBlank: true }), blank)).toBe(
+      'https://www.youtube.com/'
+    )
     expect(
       contentScriptAppliesTo(
         declaration({ allFrames: true, matches: ['*://*.youtube.com/*'] }),
@@ -146,7 +157,7 @@ describe('contentScriptAppliesTo', () => {
     ).toBe(true)
   })
 
-  it('never matches the extension origin or chrome pages through <all_urls>', () => {
+  it('never matches chrome pages through <all_urls>', () => {
     expect(
       contentScriptAppliesTo(declaration({}), {
         url: 'chrome://newtab/',
@@ -157,11 +168,11 @@ describe('contentScriptAppliesTo', () => {
   })
 })
 
-describe('hasHostPermission', () => {
+describe('host permissions', () => {
   it('checks MV3 host_permissions against a URL', () => {
-    expect(hasHostPermission(['<all_urls>'], 'https://a.example/')).toBe(true)
-    expect(hasHostPermission(['https://*.youtube.com/*'], 'https://m.youtube.com/x')).toBe(true)
-    expect(hasHostPermission(['https://*.youtube.com/*'], 'https://vimeo.com/x')).toBe(false)
-    expect(hasHostPermission([], 'https://vimeo.com/x')).toBe(false)
+    expect(matchesAnyPattern('https://a.example/', ['<all_urls>'])).toBe(true)
+    expect(matchesAnyPattern('https://m.youtube.com/x', ['https://*.youtube.com/*'])).toBe(true)
+    expect(matchesAnyPattern('https://vimeo.com/x', ['https://*.youtube.com/*'])).toBe(false)
+    expect(matchesAnyPattern('https://vimeo.com/x', [])).toBe(false)
   })
 })
