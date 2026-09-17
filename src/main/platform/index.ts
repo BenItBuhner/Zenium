@@ -26,6 +26,7 @@ import { ElectronTabViewHost, copyImageFromUrl } from './views'
 import { ElectronWindowFactory, type ElectronWindow } from './window'
 import { ExtensionService } from './extensions'
 import { WebstoreBridge } from './webstoreBridge'
+import { requestHeaderRules } from './requestHeaders'
 import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
 import { ElectronAgentTransport } from '../agent/server'
@@ -221,6 +222,8 @@ export class ElectronPlatform implements Platform {
       ses.setSpellCheckerLanguages(['en-US'])
       if (this.sessions.isPersistent(containerId)) {
         webstore.attach(ses)
+        // The session's one onBeforeSendHeaders slot, until the webRequest multiplexer owns it.
+        requestHeaderRules.attach(ses)
         void (browser.extensions as ExtensionService).attachSession()
       }
     })
