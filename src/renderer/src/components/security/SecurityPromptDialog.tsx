@@ -124,9 +124,10 @@ function HttpAuthForm({
   prompt: HttpAuthPrompt
   respond: (response: SecurityPromptResponse | null) => void
 }): JSX.Element {
-  const [username, setUsername] = useState('')
+  const [username, setUsername] = useState(prompt.username)
   const [password, setPassword] = useState('')
   const [remember, setRemember] = useState(false)
+  // A refused answer comes back with its username filled in: only the password needs retyping.
   const first = useRef<HTMLInputElement>(null)
   useEffect(() => {
     first.current?.focus()
@@ -189,7 +190,7 @@ function HttpAuthForm({
         <label className="flex flex-col gap-1 text-[12px] text-[var(--zen-muted)]">
           Username
           <Input
-            ref={first}
+            ref={prompt.username ? undefined : first}
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             autoComplete="username"
@@ -200,6 +201,7 @@ function HttpAuthForm({
         <label className="flex flex-col gap-1 text-[12px] text-[var(--zen-muted)]">
           Password
           <Input
+            ref={prompt.username ? first : undefined}
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}

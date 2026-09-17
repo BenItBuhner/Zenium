@@ -120,7 +120,8 @@ describe('SecurityPromptService: HTTP authentication', () => {
     const retry = s.httpAuth(BASIC, 't1')
     await settle()
     const [prompt] = s.list()
-    expect(prompt.kind === 'http-auth' && prompt.failedBefore).toBe(true)
+    // The refused username comes back filled in; only the password needs retyping.
+    expect(prompt).toMatchObject({ kind: 'http-auth', failedBefore: true, username: 'a' })
     s.respond(prompt.id, null)
     expect(await retry).toBe(null)
     // Long after the last answer the realm is simply asking anew.
@@ -128,7 +129,7 @@ describe('SecurityPromptService: HTTP authentication', () => {
     const later = s.httpAuth(BASIC, 't1')
     await settle()
     const [fresh] = s.list()
-    expect(fresh.kind === 'http-auth' && fresh.failedBefore).toBe(false)
+    expect(fresh).toMatchObject({ kind: 'http-auth', failedBefore: false, username: '' })
     s.respond(fresh.id, null)
     await later
   })

@@ -1376,6 +1376,8 @@ export interface HttpAuthPrompt {
   secure: boolean
   /** The previous answer for this realm was refused. */
   failedBefore: boolean
+  /** The username of that refused answer, so only the password needs retyping; '' otherwise. */
+  username: string
 }
 
 export interface ClientCertificatePrompt {

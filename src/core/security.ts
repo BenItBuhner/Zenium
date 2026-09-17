@@ -84,6 +84,8 @@ export class SecurityPromptService {
   private readonly certificateChoices = new Map<string, string | null>()
   /** When each protection space was last answered (to recognise refused credentials). */
   private readonly answeredAt = new Map<string, number>()
+  /** The username last sent per protection space, offered again when it was refused. */
+  private readonly lastUsername = new Map<string, string>()
   /**
    * One dialog per protection space: the engine challenges every request behind the same realm
    * (a page and its images), and they all wait for the one answer.
@@ -117,7 +119,7 @@ export class SecurityPromptService {
     const failedBefore = now - (this.answeredAt.get(key) ?? -Infinity) < AUTH_RETRY_WINDOW_MS
     const remembered = this.credentials.get(key)
     if (remembered && !failedBefore) {
-      this.answeredAt.set(key, now)
+      this.sent(key, remembered)
       return remembered
     }
     if (remembered) this.credentials.delete(key)
@@ -146,7 +148,8 @@ export class SecurityPromptService {
       scheme: challenge.scheme.toLowerCase(),
       isProxy: challenge.isProxy,
       secure: challenge.secure,
-      failedBefore
+      failedBefore,
+      username: failedBefore ? (this.lastUsername.get(key) ?? '') : ''
     }
     const answer = await this.show(prompt)
     if (!answer || answer.kind !== 'http-auth') {
@@ -155,8 +158,13 @@ export class SecurityPromptService {
     }
     const credentials = { username: answer.username, password: answer.password }
     if (answer.remember) this.credentials.set(key, credentials)
-    this.answeredAt.set(key, this.now())
+    this.sent(key, credentials)
     return credentials
+  }
+
+  private sent(key: string, credentials: HttpCredentials): void {
+    this.answeredAt.set(key, this.now())
+    this.lastUsername.set(key, credentials.username)
   }
 
   /**
@@ -229,6 +237,7 @@ export class SecurityPromptService {
     this.credentials.clear()
     this.certificateChoices.clear()
     this.answeredAt.clear()
+    this.lastUsername.clear()
   }
 
   /** Queue the prompt; the chrome shows it once its tab is the active one (tab-modal, like Chrome). */
