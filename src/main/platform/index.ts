@@ -50,7 +50,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   updates: true,
   share: false,
   clipboardChip: false,
-  appLinkSettings: false
+  appLinkSettings: false,
+  pullToRefresh: false
 }
 
 /**

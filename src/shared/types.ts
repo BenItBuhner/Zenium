@@ -50,6 +50,8 @@ export interface HostCapabilities {
   clipboardChip: boolean
   /** The host has a system screen for which links open in this app (Android's Open by default). */
   appLinkSettings: boolean
+  /** Touch hosts: dragging down from the top of a page can reload it (Settings → Look and Feel). */
+  pullToRefresh: boolean
 }
 
 export interface Rect {
@@ -640,6 +642,8 @@ export interface Settings {
   urlbarBehavior: UrlbarBehavior
   /** Phone layout: where the address bar (and its gestures) live. Long-press the pill to move it. */
   phoneBarPosition: PhoneBarPosition
+  /** Touch hosts: drag down from the top of a page to reload it. */
+  pullToRefresh: boolean
   glanceEnabled: boolean
   glanceTrigger: GlanceTrigger
   pinnedCloseBehavior: PinnedCloseBehavior
