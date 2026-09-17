@@ -41,6 +41,8 @@ interface Touch {
   x0: number
   y0: number
   mode: 'pending' | 'swipe' | 'scroll'
+  /** The hold was recognised (by the timer); the `contextmenu` the browser fires after it is not a second one. */
+  held: boolean
   tracker: VelocityTracker
 }
 
@@ -50,6 +52,10 @@ interface Touch {
  * as the row leaves vertical panning to it (`touch-action: pan-y`) and only claims a touch once
  * it has moved sideways. A hold or a swipe swallows the click that follows the release, so the
  * row does not also open. Controls inside the row (a trailing button) keep their own taps.
+ *
+ * A touch hold is recognised once, by the timer: the `contextmenu` event Chromium raises for the
+ * same hold a little later is swallowed rather than counted again (it would undo the selection
+ * it just started). Right-click, which has no touch, reaches `onLongPress` through that event.
  */
 export function useRowGestures(options: RowGestureOptions): RowGestureHandlers {
   const latest = useRef(options)
@@ -86,13 +92,21 @@ export function useRowGestures(options: RowGestureOptions): RowGestureHandlers {
       swallowClick.current = false
       const tracker = new VelocityTracker()
       tracker.add(e.timeStamp, e.clientX, e.clientY)
-      touch.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, mode: 'pending', tracker }
+      touch.current = {
+        id: e.pointerId,
+        x0: e.clientX,
+        y0: e.clientY,
+        mode: 'pending',
+        held: false,
+        tracker
+      }
       if (!latest.current.onLongPress) return
       timer.current = setTimeout(() => {
         timer.current = null
         const held = touch.current
         if (!held || held.mode !== 'pending') return
         // Recognised while the finger is still down: the release must not also open the row.
+        held.held = true
         swallowClick.current = true
         try {
           navigator.vibrate?.(8)
@@ -137,8 +151,13 @@ export function useRowGestures(options: RowGestureOptions): RowGestureHandlers {
     onContextMenu: (e) => {
       if (!latest.current.onLongPress) return
       e.preventDefault()
+      const t = touch.current
+      // The browser's own long-press: the hold was already counted, or is still on its way.
+      if (t?.held) return
+      if (t && t.mode !== 'pending') return
       clearTimer()
-      touch.current = null
+      if (t) t.held = true
+      else touch.current = null
       swallowClick.current = true
       latest.current.onLongPress()
     },
