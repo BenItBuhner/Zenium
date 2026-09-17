@@ -49,17 +49,20 @@ export function pairKey(pair: LanguagePair): string {
   return `${pair.from}\u0000${pair.to}`
 }
 
-/** `2.1a1` → [2, 1, -2]: alphas sort below the release with the same number. */
-function versionKey(version: string): [number, number, number] {
+/**
+ * `2.1a1` → [2, 1, 0, 1] and `2.1` → [2, 1, 1, 0]: alphas sort below the release with the same
+ * number and among themselves by their alpha number.
+ */
+function versionKey(version: string): [number, number, number, number] {
   const match = /^(\d+)\.(\d+)(a(\d*))?$/.exec(version)
-  if (!match) return [0, 0, -99]
-  return [Number(match[1]), Number(match[2]), match[3] ? -1 - Number(match[4] || 0) : 0]
+  if (!match) return [0, 0, -1, 0]
+  return [Number(match[1]), Number(match[2]), match[3] ? 0 : 1, Number(match[4] || 0)]
 }
 
 export function compareVersions(a: string, b: string): number {
   const ka = versionKey(a)
   const kb = versionKey(b)
-  for (let i = 0; i < 3; i++) if (ka[i] !== kb[i]) return ka[i] - kb[i]
+  for (let i = 0; i < 4; i++) if (ka[i] !== kb[i]) return ka[i] - kb[i]
   return 0
 }
 
@@ -213,8 +216,11 @@ export class ModelRegistry {
     return this.find(first) && this.find(second) ? [first, second] : null
   }
 
-  /** Whether the cached copy (or the snapshot) is old enough to ask Remote Settings again. */
+  /**
+   * Whether to ask Remote Settings again: the bundled snapshot (never refreshed, `fetchedAt` 0)
+   * always is, a cached copy once it is older than `REGISTRY_MAX_AGE_MS`.
+   */
   stale(now: number): boolean {
-    return now - this.fetchedAt > REGISTRY_MAX_AGE_MS
+    return this.fetchedAt === 0 || now - this.fetchedAt > REGISTRY_MAX_AGE_MS
   }
 }

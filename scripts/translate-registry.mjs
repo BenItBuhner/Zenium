@@ -28,17 +28,20 @@ async function loadRecords(argument) {
   return response.json()
 }
 
-/** `2.1a1` → [2, 1, -2]: alphas sort below the release with the same number. */
+/**
+ * `2.1a1` → [2, 1, 0, 1] and `2.1` → [2, 1, 1, 0]: alphas sort below the release with the same
+ * number and among themselves by their alpha number. Mirrors src/core/translate/registry.ts.
+ */
 function versionKey(version) {
   const match = /^(\d+)\.(\d+)(a(\d*))?$/.exec(version)
-  if (!match) return [0, 0, -99]
-  return [Number(match[1]), Number(match[2]), match[3] ? -1 - Number(match[4] || 0) : 0]
+  if (!match) return [0, 0, -1, 0]
+  return [Number(match[1]), Number(match[2]), match[3] ? 0 : 1, Number(match[4] || 0)]
 }
 
 function compareVersions(a, b) {
   const ka = versionKey(a)
   const kb = versionKey(b)
-  for (let i = 0; i < 3; i++) if (ka[i] !== kb[i]) return ka[i] - kb[i]
+  for (let i = 0; i < 4; i++) if (ka[i] !== kb[i]) return ka[i] - kb[i]
   return 0
 }
 
