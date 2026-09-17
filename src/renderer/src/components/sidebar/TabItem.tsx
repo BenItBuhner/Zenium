@@ -142,6 +142,7 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
       data-agent={agent ? true : undefined}
       data-lifted={isDragSource || undefined}
       data-tab-id={tab.id}
+      data-testid="tab"
       style={agent ? { boxShadow: `inset 0 0 0 1.5px ${agent.color}80` } : undefined}
       title={renaming ? undefined : tabTooltip(tab, agent?.name ?? null)}
       onPointerDown={onPointerDown}
@@ -186,7 +187,9 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
           {renaming ? (
             <RenameInput tab={tab} />
           ) : (
-            <span className="zen-tab-title min-w-0 flex-1 truncate">{title}</span>
+            <span className="zen-tab-title min-w-0 flex-1 truncate" data-testid="tab-title">
+              {title}
+            </span>
           )}
           {agent && !renaming && <AgentBadge agent={agent} tabId={tab.id} />}
           {foreign && active && (

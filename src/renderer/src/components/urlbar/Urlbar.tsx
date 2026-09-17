@@ -482,6 +482,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
               onCompositionStart={() => (composing.current = true)}
               onCompositionEnd={() => (composing.current = false)}
               placeholder={placeholder}
+              data-testid="urlbar-input"
               spellCheck={false}
               autoComplete="off"
               autoCapitalize="off"
@@ -543,6 +544,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
             onCompositionStart={() => (composing.current = true)}
             onCompositionEnd={() => (composing.current = false)}
             placeholder={placeholder}
+            data-testid="urlbar-input"
             spellCheck={false}
             autoComplete="off"
             role="combobox"
