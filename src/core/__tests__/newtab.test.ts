@@ -1,0 +1,541 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type {
+  HostCapabilities,
+  NewTabPageState,
+  Platform as PlatformOs,
+  Tab
+} from '../../shared/types'
+import { PRIVATE_CONTAINER_ID } from '../../shared/types'
+import { NEW_TAB_URL, SETTINGS_URL } from '../../shared/url'
+import { Browser } from '../browser'
+import { MAX_NEW_TAB_SHORTCUTS, normalizeShortcutInput } from '../newtab'
+import type {
+  Platform,
+  StoreIO,
+  TabView,
+  TabViewEvents,
+  TabViewHost,
+  WindowHost
+} from '../platform'
+
+function memoryIo(): StoreIO {
+  const files: Record<string, string> = {}
+  return {
+    readSync: (name) => files[name] ?? null,
+    write: async (name, text) => {
+      files[name] = text
+    },
+    writeSync: (name, text) => {
+      files[name] = text
+    }
+  }
+}
+
+function stub<T extends object>(overrides: Partial<T> = {}): T {
+  return new Proxy(overrides as T, {
+    get: (target, key) =>
+      key in target ? Reflect.get(target, key) : key === 'then' ? undefined : () => undefined
+  })
+}
+
+interface Recorded {
+  tabId: string
+  readonly events: TabViewEvents
+  readonly loads: string[]
+  readonly pushes: NewTabPageState[]
+  destroyed: boolean
+}
+
+interface Fixture {
+  browser: Browser
+  views: Recorded[]
+  sent: Array<{ name: string; payload: unknown }>
+  background: { current: string | null; picks: number }
+}
+
+function fixture(opts: { newTabPage?: boolean; withBackground?: boolean } = {}): Fixture {
+  const views: Recorded[] = []
+  const sent: Array<{ name: string; payload: unknown }> = []
+  const background = { current: null as string | null, picks: 0 }
+  const capabilities = stub<HostCapabilities>({
+    windows: true,
+    updates: false,
+    agents: false,
+    newTabPage: opts.newTabPage ?? true
+  })
+  const platform: Platform = {
+    info: { os: 'linux' as PlatformOs, version: '0.0.0' },
+    capabilities,
+    io: memoryIo(),
+    windows: {
+      create: () =>
+        stub<WindowHost>({
+          alive: true,
+          send: (name: string, payload: unknown) => {
+            sent.push({ name, payload })
+          },
+          contentSize: () => ({ width: 1280, height: 800 }),
+          normalBounds: () => null,
+          isFullScreen: () => false,
+          isMaximized: () => false,
+          isFocused: () => true,
+          isVisible: () => true
+        })
+    },
+    views: stub<TabViewHost>({
+      createView: (tab: Tab, events: TabViewEvents) => {
+        const record: Recorded = {
+          tabId: tab.id,
+          events,
+          loads: [],
+          pushes: [],
+          destroyed: false
+        }
+        views.push(record)
+        let url = ''
+        return stub<TabView>({
+          isDestroyed: () => record.destroyed,
+          isVisible: () => false,
+          hasDocument: () => url !== '',
+          getURL: () => url,
+          getTitle: () => '',
+          canGoBack: () => false,
+          canGoForward: () => false,
+          getZoom: () => 1,
+          loadURL: (u: string) => {
+            url = u
+            record.loads.push(u)
+          },
+          destroy: () => {
+            record.destroyed = true
+          },
+          sendNewTabState: (state: NewTabPageState) => {
+            record.pushes.push(state)
+          }
+        })
+      },
+      retargetView: (view: TabView, tabId: string) => {
+        const record = views.find((v) => v.tabId === (view as unknown as { tabId?: string }).tabId)
+        if (record) record.tabId = tabId
+        // The stub view has no id of its own: the most recent placeholder is the one adopted.
+        const placeholder = views.find((v) => v.tabId.startsWith('newtab_preload'))
+        if (placeholder) placeholder.tabId = tabId
+      }
+    }),
+    menus: stub(),
+    dialogs: stub(),
+    clipboard: stub(),
+    shell: stub(),
+    net: stub(),
+    downloads: stub(),
+    sessions: stub(),
+    app: stub(),
+    readabilitySource: () => null,
+    newTabBackground: opts.withBackground
+      ? {
+          current: () => background.current,
+          pick: async () => {
+            background.picks += 1
+            background.current = 'zen://newtab-background?v=1'
+            return background.current
+          },
+          clear: async () => {
+            background.current = null
+          }
+        }
+      : undefined
+  }
+  const browser = new Browser(platform)
+  browser.state.settings.onboardingDone = true
+  browser.start()
+  return { browser, views, sent, background }
+}
+
+/** Let deferred state broadcasts (and `afterBroadcast` queues) run. */
+async function settle(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(0)
+  await vi.advanceTimersByTimeAsync(0)
+}
+
+function eventsNamed(f: Fixture, name: string): unknown[] {
+  return f.sent.filter((e) => e.name === name).map((e) => e.payload)
+}
+
+function activeTab(f: Fixture): Tab | undefined {
+  const win = f.browser.focusedWindow()
+  return f.browser.tabs.activeTabFor(win)
+}
+
+describe('NewTabService: opening', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('Ctrl+T creates an active tab at zen://newtab and tells the chrome once it holds the tab', async () => {
+    const f = fixture()
+    const before = Object.keys(f.browser.state.model.tabs).length
+    f.browser.handleCommand(f.browser.focusedWindow(), 'newtab.open', undefined)
+    const tab = activeTab(f)
+    expect(tab?.url).toBe(NEW_TAB_URL)
+    expect(tab?.title).toBe('New Tab')
+    expect(Object.keys(f.browser.state.model.tabs)).toHaveLength(before + 1)
+    // Not yet: the state broadcast that carries the tab goes out first.
+    expect(eventsNamed(f, 'newtab.opened')).toEqual([])
+    await settle()
+    expect(eventsNamed(f, 'newtab.opened')).toEqual([{ tabId: tab?.id }])
+    // The page loads through the view like any tab (no preload was ready yet).
+    expect(f.views.some((v) => v.tabId === tab?.id && v.loads.includes(NEW_TAB_URL))).toBe(true)
+  })
+
+  it('with the page turned off only the URL bar opens, as before', async () => {
+    const f = fixture()
+    f.browser.state.settings.newTab.enabled = false
+    const before = Object.keys(f.browser.state.model.tabs).length
+    f.browser.handleCommand(f.browser.focusedWindow(), 'newtab.open', undefined)
+    await settle()
+    expect(Object.keys(f.browser.state.model.tabs)).toHaveLength(before)
+    expect(eventsNamed(f, 'urlbar.toggle')).toEqual([{ mode: 'new-tab' }])
+    expect(eventsNamed(f, 'newtab.opened')).toEqual([])
+  })
+
+  it('without the host capability the setting cannot turn the page on', async () => {
+    const f = fixture({ newTabPage: false })
+    expect(f.browser.newTab.enabled).toBe(false)
+    expect(f.browser.newTab.homeUrl()).toBeNull()
+    f.browser.handleCommand(f.browser.focusedWindow(), 'newtab.open', undefined)
+    await settle()
+    expect(eventsNamed(f, 'urlbar.toggle')).toEqual([{ mode: 'new-tab' }])
+  })
+
+  it('never records the page in history', async () => {
+    const f = fixture()
+    f.browser.handleCommand(f.browser.focusedWindow(), 'newtab.open', undefined)
+    const tab = activeTab(f)
+    const view = f.views.find((v) => v.tabId === tab?.id)
+    view?.events.onNavigated(NEW_TAB_URL, false)
+    view?.events.onTitleUpdated('New Tab')
+    await settle()
+    expect(f.browser.history.recent(10)).toEqual([])
+    expect(f.browser.history.topSites(10)).toEqual([])
+  })
+
+  it('zen://settings typed into the URL bar opens the Settings overlay instead of a page', async () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const before = Object.keys(f.browser.state.model.tabs).length
+    f.browser.handleCommand(win, 'urlbar.submit', {
+      input: 'about:preferences',
+      newTab: true,
+      tabId: null,
+      background: false
+    })
+    await settle()
+    expect(Object.keys(f.browser.state.model.tabs)).toHaveLength(before)
+    expect(eventsNamed(f, 'overlay.open')).toEqual([{ kind: 'settings' }])
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)
+    f.browser.tabs.navigate(tab!.id, SETTINGS_URL)
+    expect(tab?.url).toBe(NEW_TAB_URL)
+    expect(eventsNamed(f, 'overlay.open')).toHaveLength(2)
+  })
+
+  it('typing into the page navigates the same tab (plain submit over the new tab page)', async () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)
+    const count = Object.keys(f.browser.state.model.tabs).length
+    f.browser.handleCommand(win, 'urlbar.submit', {
+      input: 'https://example.com',
+      newTab: false,
+      tabId: tab!.id,
+      background: false
+    })
+    expect(Object.keys(f.browser.state.model.tabs)).toHaveLength(count)
+    const view = f.views.find((v) => v.tabId === tab?.id)
+    expect(view?.loads.at(-1)).toBe('https://example.com')
+  })
+})
+
+describe('NewTabService: preloading', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('preloads one hidden page per window after the chrome is ready and adopts it on Ctrl+T', async () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    win.onChromeReady()
+    await settle()
+    expect(f.views.filter((v) => v.tabId.startsWith('newtab_preload'))).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(800)
+    const preloads = f.views.filter((v) => v.tabId.startsWith('newtab_preload'))
+    expect(preloads).toHaveLength(1)
+    expect(preloads[0].loads).toEqual([NEW_TAB_URL])
+    // It is not a tab.
+    expect(Object.values(f.browser.state.model.tabs).some((t) => t.url === NEW_TAB_URL)).toBe(false)
+    // The page gets its state pushed like a live one.
+    await settle()
+    expect(preloads[0].pushes.length).toBeGreaterThan(0)
+
+    const created = f.views.length
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)
+    expect(tab?.url).toBe(NEW_TAB_URL)
+    // Adopted: the preloaded view now answers for the tab; no view was created for it.
+    expect(preloads[0].tabId).toBe(tab?.id)
+    expect(f.browser.tabs.view(tab!.id)).toBeDefined()
+    expect(f.views.filter((v) => v.tabId === tab?.id && v !== preloads[0])).toHaveLength(0)
+    // Its host events now reach the tab.
+    preloads[0].events.onTitleUpdated('New Tab')
+    expect(f.browser.tabs.tab(tab!.id)?.title).toBe('New Tab')
+    // And the next page is preloaded straight away.
+    await settle()
+    expect(f.views.length).toBe(created + 1)
+    expect(f.views.at(-1)?.tabId.startsWith('newtab_preload')).toBe(true)
+  })
+
+  it('drops the preload when the page is turned off and when the window closes', async () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    win.onChromeReady()
+    await vi.advanceTimersByTimeAsync(800)
+    const preload = f.views.find((v) => v.tabId.startsWith('newtab_preload'))
+    expect(preload).toBeDefined()
+    f.browser.handleCommand(win, 'settings.update', { newTab: { enabled: false } })
+    await settle()
+    expect(preload?.destroyed).toBe(true)
+    f.browser.handleCommand(win, 'settings.update', { newTab: { enabled: true } })
+    await settle()
+    const again = f.views.filter((v) => v.tabId.startsWith('newtab_preload') && !v.destroyed)
+    expect(again).toHaveLength(1)
+    f.browser.onWindowClosed(win)
+    expect(again[0].destroyed).toBe(true)
+  })
+
+  it('a preload that crashes before adoption is replaced, never adopted', async () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    win.onChromeReady()
+    await vi.advanceTimersByTimeAsync(800)
+    const first = f.views.find((v) => v.tabId.startsWith('newtab_preload'))!
+    first.events.onCrashed('crashed')
+    expect(first.destroyed).toBe(true)
+    await settle()
+    const live = f.views.filter((v) => v.tabId.startsWith('newtab_preload') && !v.destroyed)
+    expect(live).toHaveLength(1)
+    expect(live[0]).not.toBe(first)
+  })
+})
+
+describe('NewTabService: state for the page', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('carries both colour schemes of the space theme and the settings', async () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    const state = f.browser.newTab.stateFor(tab.id)!
+    expect(state.light.vars['--zen-bg']).toBeTruthy()
+    expect(state.dark.vars['--zen-bg']).toBeTruthy()
+    expect(state.light.isDark).toBe(false)
+    expect(state.dark.isDark).toBe(true)
+    expect(state.isPrivate).toBe(false)
+    expect(state.shortcutsMode).toBe('most-visited')
+    expect(state.background).toBe('space')
+    expect(state.greeting).toBe(false)
+    expect(state.canPickImage).toBe(false)
+    expect(f.browser.newTab.stateFor('tab_nope')).toBeNull()
+  })
+
+  it('a tab that left the page gets no state and its actions are ignored', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    tab.url = 'https://example.com/'
+    expect(f.browser.newTab.stateFor(tab.id)).toBeNull()
+    f.browser.newTab.handleAction(tab.id, { type: 'add-shortcut', title: 'X', url: 'x.example' })
+    expect(f.browser.state.newTabShortcuts).toEqual([])
+  })
+
+  it('pushes fresh state to every live page after a commit that changed it, and only then', async () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    const view = f.views.find((v) => v.tabId === tab.id)!
+    await settle()
+    const n = view.pushes.length
+    expect(n).toBeGreaterThan(0)
+    f.browser.state.commit()
+    await settle()
+    expect(view.pushes.length).toBe(n)
+    f.browser.handleCommand(win, 'settings.update', { newTab: { greeting: true } })
+    await settle()
+    expect(view.pushes.length).toBe(n + 1)
+    expect(view.pushes.at(-1)?.greeting).toBe(true)
+    // `ready` from the page always answers with the current state.
+    f.browser.newTab.handleAction(tab.id, { type: 'ready' })
+    expect(view.pushes.length).toBe(n + 2)
+  })
+
+  it('private windows: private flag, no most visited', async () => {
+    const f = fixture()
+    f.browser.history.visit('https://news.example/a', 'News', null)
+    const priv = f.browser.openWindow('private')!
+    const tab = f.browser.tabs.activeTabFor(priv)!
+    expect(tab.url).toBe(NEW_TAB_URL)
+    expect(tab.containerId).toBe(PRIVATE_CONTAINER_ID)
+    const state = f.browser.newTab.stateFor(tab.id)!
+    expect(state.isPrivate).toBe(true)
+    expect(state.topSites).toEqual([])
+    const main = f.browser.focusedWindow()
+    f.browser.handleCommand(main, 'newtab.open', undefined)
+    const normal = f.browser.newTab.stateFor(activeTab(f)!.id)!
+    expect(normal.topSites.map((s) => s.url)).toEqual(['https://news.example/a'])
+  })
+
+  it('a search typed into the page opens the URL bar over that tab with the text', async () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    await settle()
+    f.browser.newTab.handleAction(tab.id, { type: 'search', text: 'z' })
+    expect(eventsNamed(f, 'newtab.opened').at(-1)).toEqual({ tabId: tab.id, text: 'z' })
+  })
+})
+
+describe('NewTabService: my shortcuts and most visited', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('normalises addresses and falls back to the host as title', () => {
+    expect(normalizeShortcutInput('  ', 'example.com')).toEqual({
+      title: 'example.com',
+      url: 'https://example.com/'
+    })
+    expect(normalizeShortcutInput('Docs', 'https://www.docs.example/x?y=1')).toEqual({
+      title: 'Docs',
+      url: 'https://www.docs.example/x?y=1'
+    })
+    expect(normalizeShortcutInput('nope', 'not a url at all')).toBeNull()
+    expect(normalizeShortcutInput('nope', 'javascript:alert(1)')).toBeNull()
+    expect(normalizeShortcutInput('nope', 'zen://newtab')).toBeNull()
+  })
+
+  it('adds, edits, removes with undo, reorders and caps the grid at ten', () => {
+    const f = fixture()
+    const svc = f.browser.newTab
+    const a = svc.addShortcut('A', 'a.example')!
+    const b = svc.addShortcut('', 'https://b.example/path')!
+    expect(f.browser.state.newTabShortcuts).toEqual([
+      { id: a, title: 'A', url: 'https://a.example/' },
+      { id: b, title: 'b.example', url: 'https://b.example/path' }
+    ])
+    expect(svc.addShortcut('bad', '???')).toBeNull()
+    expect(svc.updateShortcut(a, 'AA', 'aa.example')).toBe(true)
+    expect(svc.updateShortcut('missing', 'x', 'x.example')).toBe(false)
+    expect(f.browser.state.newTabShortcuts[0]).toEqual({
+      id: a,
+      title: 'AA',
+      url: 'https://aa.example/'
+    })
+    const removed = svc.removeShortcut(a)!
+    expect(removed.index).toBe(0)
+    expect(f.browser.state.newTabShortcuts.map((s) => s.id)).toEqual([b])
+    expect(svc.restoreShortcut(removed.shortcut, removed.index)).toBe(true)
+    expect(f.browser.state.newTabShortcuts.map((s) => s.id)).toEqual([a, b])
+    // Restoring the same id twice is a no-op.
+    expect(svc.restoreShortcut(removed.shortcut, 0)).toBe(false)
+    svc.reorderShortcuts([b, 'bogus', a])
+    expect(f.browser.state.newTabShortcuts.map((s) => s.id)).toEqual([b, a])
+    for (let i = 0; i < MAX_NEW_TAB_SHORTCUTS; i++) svc.addShortcut(`S${i}`, `s${i}.example`)
+    expect(f.browser.state.newTabShortcuts).toHaveLength(MAX_NEW_TAB_SHORTCUTS)
+    expect(svc.addShortcut('one more', 'more.example')).toBeNull()
+  })
+
+  it('actions from the page drive the same operations', async () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    const svc = f.browser.newTab
+    svc.handleAction(tab.id, { type: 'add-shortcut', title: 'Zen', url: 'zen-browser.app' })
+    const [sc] = f.browser.state.newTabShortcuts
+    expect(sc).toMatchObject({ title: 'Zen', url: 'https://zen-browser.app/' })
+    svc.handleAction(tab.id, { type: 'update-shortcut', id: sc.id, title: 'Z', url: sc.url })
+    expect(f.browser.state.newTabShortcuts[0].title).toBe('Z')
+    svc.handleAction(tab.id, { type: 'remove-shortcut', id: sc.id })
+    expect(f.browser.state.newTabShortcuts).toEqual([])
+    svc.handleAction(tab.id, {
+      type: 'restore-shortcut',
+      id: sc.id,
+      title: 'Z',
+      url: sc.url,
+      index: 0
+    })
+    expect(f.browser.state.newTabShortcuts.map((s) => s.id)).toEqual([sc.id])
+    svc.handleAction(tab.id, { type: 'set-shortcuts-mode', mode: 'custom' })
+    svc.handleAction(tab.id, { type: 'set-greeting', greeting: true })
+    svc.handleAction(tab.id, { type: 'set-background', background: 'solid' })
+    expect(f.browser.state.settings.newTab).toEqual({
+      enabled: true,
+      shortcuts: 'custom',
+      background: 'solid',
+      greeting: true
+    })
+    svc.handleAction(tab.id, { type: 'add-shortcut', title: 'bad', url: '!!' })
+    await settle()
+    expect(eventsNamed(f, 'toast')).toEqual([
+      { message: 'That is not a web address.', kind: 'error' }
+    ])
+  })
+
+  it('removing a most-visited tile hides its host until undone', () => {
+    const f = fixture()
+    f.browser.history.visit('https://www.news.example/a', 'News', null)
+    f.browser.history.visit('https://docs.example/', 'Docs', null)
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    const svc = f.browser.newTab
+    svc.handleAction(tab.id, { type: 'hide-site', url: 'https://www.news.example/a' })
+    expect(f.browser.state.newTabHiddenHosts).toEqual(['news.example'])
+    expect(svc.stateFor(tab.id)?.topSites.map((s) => s.url)).toEqual(['https://docs.example/'])
+    svc.handleAction(tab.id, { type: 'unhide-site', url: 'https://news.example/other' })
+    expect(f.browser.state.newTabHiddenHosts).toEqual([])
+    expect(svc.stateFor(tab.id)?.topSites).toHaveLength(2)
+  })
+
+  it('the topSites command hands the chrome the same list', () => {
+    const f = fixture()
+    f.browser.history.visit('https://a.example/', 'A', null)
+    f.browser.history.visit('https://b.example/', 'B', null)
+    const win = f.browser.focusedWindow()
+    const sites = f.browser.handleCommand(win, 'history.topSites', {
+      n: 5,
+      excludedHosts: ['a.example']
+    }) as Array<{ url: string }>
+    expect(sites.map((s) => s.url)).toEqual(['https://b.example/'])
+  })
+
+  it('background image: picking switches to it, clearing falls back to the space gradient', async () => {
+    const f = fixture({ withBackground: true })
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    const svc = f.browser.newTab
+    expect(svc.stateFor(tab.id)?.canPickImage).toBe(true)
+    // "Image" without an image yet opens the picker.
+    svc.handleAction(tab.id, { type: 'set-background', background: 'image' })
+    await settle()
+    expect(f.background.picks).toBe(1)
+    expect(f.browser.state.settings.newTab.background).toBe('image')
+    expect(svc.stateFor(tab.id)?.backgroundImage).toBe('zen://newtab-background?v=1')
+    await svc.clearBackgroundImage()
+    expect(f.browser.state.settings.newTab.background).toBe('space')
+    expect(svc.stateFor(tab.id)?.backgroundImage).toBeNull()
+  })
+})

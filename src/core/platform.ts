@@ -17,6 +17,7 @@ import type {
   HostCapabilities,
   KeyBinding,
   NavigationSnapshot,
+  NewTabPageAction,
   NewTabPageState,
   Platform as PlatformOs,
   Rect,
@@ -219,6 +220,8 @@ export interface TabViewEvents {
   /** A trusted input event (click, key, tap) was delivered to the page. */
   onUserActivation(): void
   onPageMessage(message: PageMessage): void
+  /** `zen://newtab` asked for something (hosts route the page's dedicated channel here). */
+  onNewTabAction(action: NewTabPageAction): void
 }
 
 /**

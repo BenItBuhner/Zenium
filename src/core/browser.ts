@@ -22,6 +22,7 @@ import type {
 import { BrowserState, type PersistedWindow } from './state'
 import { HistoryService } from './history'
 import { SessionService } from './session'
+import { NewTabService } from './newtab'
 import { BookmarkService } from './bookmarks'
 import { DownloadService } from './downloads'
 import { resolveDownloadSettings } from '../shared/downloads'
@@ -62,14 +63,19 @@ import {
   reorderContainer,
   reorderSpace
 } from './model'
-import { getDomain, inputToUrl } from '../shared/url'
+import { BLANK_URL, getDomain, inputToUrl, isEmptyTabUrl } from '../shared/url'
 import { overlayForUrl } from '../shared/zenPages'
 import { buildSearchUrl, matchEngineKeyword } from '../shared/search'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
-import { ONBOARDING_ESSENTIALS, sanitizePasswordSettings, spaceLabel } from '../shared/defaults'
+import {
+  ONBOARDING_ESSENTIALS,
+  sanitizeNewTabSettings,
+  sanitizePasswordSettings,
+  spaceLabel
+} from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { PRIVATE_THEME, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
@@ -88,6 +94,7 @@ type CommandHandlers = {
 
 const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'urlbar.toggle',
+  'newtab.opened',
   'overlay.open',
   'find.open',
   'theme.open',
@@ -112,6 +119,8 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
 export class Browser {
   readonly state: BrowserState
   readonly history: HistoryService
+  /** `zen://newtab`: its state, its shortcuts, the pages preloaded for Ctrl+T. */
+  readonly newTab: NewTabService
   readonly bookmarks: BookmarkService
   readonly downloads: DownloadService
   readonly permissions: PermissionService
@@ -198,6 +207,7 @@ export class Browser {
     this.history.onChange((kind) => {
       for (const w of this.allWindows()) w.send('history.changed', { kind })
     })
+    this.newTab = new NewTabService(this)
     this.governor = platform.createGovernor?.(this) ?? new NoopGovernor(this)
     this.actions = new Actions(this)
     this.keys = new KeyboardHandler(this)
@@ -333,8 +343,10 @@ export class Browser {
     })
     this.governor.watchWindow(win)
     if (localSpace && !opts.empty) {
-      // Blank / private windows start with an empty tab and the URL bar open.
-      const tab = this.tabs.createTab({ active: true, load: false }, win)
+      // Blank / private windows start with an empty tab (the new tab page when it is on) and
+      // the URL bar open over it once the chrome is up.
+      const url = this.newTab.homeUrl() ?? BLANK_URL
+      const tab = this.tabs.createTab({ url, active: true, load: false }, win)
       win.select(localSpace, tab.id)
       this.urlbarOnReady.add(win.id)
     }
@@ -345,8 +357,16 @@ export class Browser {
   /** The chrome of `win` finished loading for the first time. */
   onChromeReady(win: ZenWindow): void {
     if (this.state.settings.onboardingDone) this.tabs.claimVisible(win)
-    if (this.urlbarOnReady.delete(win.id))
-      setTimeout(() => this.emit('urlbar.toggle', { mode: 'new-tab' }, win), 150)
+    if (this.urlbarOnReady.delete(win.id)) {
+      const active = this.tabs.activeTabFor(win)
+      setTimeout(() => {
+        if (!win.alive) return
+        if (active && isEmptyTabUrl(active.url) && this.newTab.enabled)
+          this.emit('newtab.opened', { tabId: active.id }, win)
+        else this.emit('urlbar.toggle', { mode: 'new-tab' }, win)
+      }, 150)
+    }
+    this.newTab.onChromeReady(win)
   }
 
   onWindowFocused(win: ZenWindow): void {
@@ -360,6 +380,7 @@ export class Browser {
 
   onWindowClosed(win: ZenWindow): void {
     this.windows.delete(win.id)
+    this.newTab.onWindowClosed(win)
     for (const w of this.allWindows()) w.selection.delete(win.localSpace?.id ?? '')
     if (win.isPrivate && !this.allWindows().some((w) => w.isPrivate)) {
       this.downloads.endPrivateSession()
@@ -367,6 +388,7 @@ export class Browser {
     }
     if (this.allWindows().length === 0) {
       this.governor.stop()
+      this.newTab.destroyAll()
       this.tabs.destroyAll()
       this.platform.app.lastWindowClosed()
       return
@@ -414,6 +436,7 @@ export class Browser {
         win.send('state', this.state.snapshot(win))
         win.updateTitle()
       }
+      this.newTab.push()
     })
     // Rule sets load synchronously so the first page is protected.
     this.blocking.start()
@@ -430,7 +453,8 @@ export class Browser {
     if (!restoreSession) {
       const win = this.allWindows()[0]
       if (win) {
-        this.tabs.createTab({ active: true, load: false }, win)
+        const url = this.newTab.homeUrl() ?? BLANK_URL
+        this.tabs.createTab({ url, active: true, load: false }, win)
         this.urlbarOnReady.add(win.id)
       }
     }
@@ -679,8 +703,9 @@ export class Browser {
   newTabAfter(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
     const tab = this.tabs.tab(tabId)
     if (!tab) return
-    this.tabs.createTab(
+    const created = this.tabs.createTab(
       {
+        url: this.newTab.homeUrl() ?? BLANK_URL,
         active: true,
         afterTabId: tabId,
         containerId: tab.containerId,
@@ -689,7 +714,11 @@ export class Browser {
       },
       win
     )
-    this.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
+    if (this.newTab.enabled) {
+      this.state.afterBroadcast(() => this.emit('newtab.opened', { tabId: created.id }, win))
+    } else {
+      this.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
+    }
   }
 
   createFolder(
@@ -1019,6 +1048,26 @@ export class Browser {
     }
     const routed = win.localSpace ? null : this.routeSpaceFor(url)
     const target = tabId ? this.tabs.tab(tabId) : undefined
+    if (
+      target &&
+      !newTab &&
+      !background &&
+      routed &&
+      routed !== win.activeSpaceId &&
+      isEmptyTabUrl(target.url) &&
+      !target.pinned &&
+      !target.essential
+    ) {
+      // Typed into an empty tab, but the address belongs to another space: it opens there and
+      // the empty tab, which only existed to be typed into, goes.
+      const tab = this.tabs.createTab(
+        { url, active: true, spaceId: routed, load: false, upgradedFrom },
+        win
+      )
+      this.tabs.switchSpace(routed, win, tab.id)
+      this.tabs.closeTab(target.id, true, win)
+      return
+    }
     if (newTab || !target) {
       // An active tab is loaded once by `activateTab`; a background tab is loaded by `navigate`
       // below. Loading here *and* navigating (the old flow) started the page twice, which raced
@@ -1342,6 +1391,15 @@ export class Browser {
 
       'clipboard.writeText': ({ text }) => platform.clipboard.writeText(text),
 
+      'newtab.open': (_a, win) => this.newTab.open(win),
+      'newtab.addShortcut': ({ title, url }) => this.newTab.addShortcut(title, url) ?? '',
+      'newtab.updateShortcut': ({ id, title, url }) =>
+        void this.newTab.updateShortcut(id, title, url),
+      'newtab.removeShortcut': ({ id }) => void this.newTab.removeShortcut(id),
+      'newtab.reorderShortcuts': ({ ids }) => this.newTab.reorderShortcuts(ids),
+      'newtab.pickBackgroundImage': (_a, win) => this.newTab.pickBackgroundImage(win),
+      'newtab.clearBackgroundImage': () => this.newTab.clearBackgroundImage(),
+
       'bookmark.toggle': ({ tabId }, win) => this.toggleBookmark(tabId, win),
       'bookmark.star': ({ tabId }, win) => this.starTab(tabId, win),
       'bookmark.create': ({ parentId, index, title, url, type }) =>
@@ -1601,7 +1659,7 @@ export class Browser {
         }
         this.defaultBrowser.onOnboardingDone()
         state.commit()
-        this.emit('urlbar.toggle', { mode: 'new-tab' }, win)
+        this.newTab.open(win)
       },
 
       'defaultBrowser.request': ({ source }) => this.defaultBrowser.request(source),
@@ -1610,7 +1668,7 @@ export class Browser {
     }
   }
 
-  private updateSettings(patch: Partial<Settings>, win: ZenWindow): void {
+  updateSettings(patch: Partial<Settings>, win: ZenWindow): void {
     const s = this.state.settings
     const before = {
       glance: s.glanceEnabled,
@@ -1663,6 +1721,11 @@ export class Browser {
         s.blocking = sanitizeBlockingSettings({
           ...s.blocking,
           ...(value as Partial<Settings['blocking']>)
+        })
+      } else if (key === 'newTab' && value && typeof value === 'object') {
+        s.newTab = sanitizeNewTabSettings({
+          ...s.newTab,
+          ...(value as Partial<Settings['newTab']>)
         })
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value

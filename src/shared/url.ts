@@ -51,7 +51,9 @@ export function isEmptyTabUrl(url: string): boolean {
 
 /** `zen://newtab` with or without a trailing slash or query (Chromium normalises the former). */
 export function isNewTabUrl(url: string): boolean {
-  return url === NEW_TAB_URL || url.startsWith(`${NEW_TAB_URL}/`) || url.startsWith(`${NEW_TAB_URL}?`)
+  return (
+    url === NEW_TAB_URL || url.startsWith(`${NEW_TAB_URL}/`) || url.startsWith(`${NEW_TAB_URL}?`)
+  )
 }
 
 /** Heuristic used by the URL bar: does the user most likely mean a URL rather than a search? */

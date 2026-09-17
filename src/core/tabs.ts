@@ -490,7 +490,8 @@ export class TabManager {
         )
         return 'tab'
       },
-      onPageMessage: (message) => this.browser.handlePageMessage(tabId, message)
+      onPageMessage: (message) => this.browser.handlePageMessage(tabId, message),
+      onNewTabAction: (action) => this.browser.newTab.handleAction(tabId, action)
     }
   }
 

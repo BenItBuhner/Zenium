@@ -683,7 +683,7 @@ export class Menus {
       [
         {
           label: 'New Tab',
-          click: () => this.browser.emit('urlbar.toggle', { mode: 'new-tab' }, win)
+          click: () => this.browser.newTab.open(win)
         },
         {
           label: 'New Tab in Container',
@@ -1109,7 +1109,7 @@ export class Menus {
       [
         {
           label: 'New Tab',
-          click: () => this.browser.emit('urlbar.toggle', { mode: 'new-tab' }, win)
+          click: () => this.browser.newTab.open(win)
         },
         // Phone slot: "New Private Tab" goes here once Android has private tabs (Chrome: New
         // Incognito tab, second item).

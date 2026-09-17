@@ -129,7 +129,10 @@ export function sanitizeHiddenHosts(raw: unknown): string[] {
   const out: string[] = []
   for (const item of raw) {
     if (typeof item !== 'string') continue
-    const host = item.trim().toLowerCase().replace(/^www\./, '')
+    const host = item
+      .trim()
+      .toLowerCase()
+      .replace(/^www\./, '')
     if (host && !out.includes(host)) out.push(host)
   }
   return out

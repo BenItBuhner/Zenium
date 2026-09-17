@@ -72,7 +72,7 @@ export class Actions {
 
       // --- tabs ---
       case 'tab.new':
-        return this.browser.emit('urlbar.toggle', { mode: 'new-tab' }, win)
+        return this.browser.newTab.open(win)
       case 'tab.close':
         if (glance && ctx.sourceTabId === glance.tabId) return tabs.closeGlance(win)
         if (active) tabs.closeTab(active.id, false, win)
@@ -140,10 +140,18 @@ export class Actions {
       case 'nav.stop':
         if (target) tabs.stop(target.id)
         return
-      case 'nav.home':
-        if (active) tabs.navigate(active.id, BLANK_URL)
-        this.browser.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
+      case 'nav.home': {
+        const home = this.browser.newTab.homeUrl()
+        if (active) tabs.navigate(active.id, home ?? BLANK_URL)
+        if (home && active) {
+          this.browser.state.afterBroadcast(() =>
+            this.browser.emit('newtab.opened', { tabId: active.id }, win)
+          )
+        } else {
+          this.browser.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
+        }
         return
+      }
 
       // --- url bar / find ---
       case 'urlbar.focus':

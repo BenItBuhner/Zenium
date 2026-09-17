@@ -11,7 +11,7 @@ import {
 } from '../../shared/bookmarks'
 import type { StoreIO } from '../platform'
 import { BookmarkService } from '../bookmarks'
-import { BrowserState } from '../state'
+import { BrowserState, PERSISTED_VERSION } from '../state'
 
 function fakeIo(initial: string | null = null): StoreIO & { writes: string[] } {
   const io = {
@@ -443,7 +443,7 @@ describe('BrowserState: bookmark persistence', () => {
       bookmarks?: unknown
       bookmarkTree: { schemaVersion: number; nodes: unknown[] }
     }
-    expect(written.version).toBe(3)
+    expect(written.version).toBe(PERSISTED_VERSION)
     expect(written.bookmarks).toBeUndefined()
     expect(written.bookmarkTree.schemaVersion).toBe(BOOKMARK_SCHEMA_VERSION)
     expect(written.bookmarkTree.nodes).toEqual(state.bookmarks)

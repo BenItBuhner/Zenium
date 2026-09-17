@@ -145,9 +145,10 @@ export function sanitizeNewTabSettings(raw: unknown): NewTabSettings {
   const shortcuts = input.shortcuts as NewTabSettings['shortcuts']
   const background = input.background as NewTabSettings['background']
   return {
-    enabled:
-      typeof input.enabled === 'boolean' ? input.enabled : DEFAULT_NEW_TAB_SETTINGS.enabled,
-    shortcuts: NEW_TAB_SHORTCUT_MODES.has(shortcuts) ? shortcuts : DEFAULT_NEW_TAB_SETTINGS.shortcuts,
+    enabled: typeof input.enabled === 'boolean' ? input.enabled : DEFAULT_NEW_TAB_SETTINGS.enabled,
+    shortcuts: NEW_TAB_SHORTCUT_MODES.has(shortcuts)
+      ? shortcuts
+      : DEFAULT_NEW_TAB_SETTINGS.shortcuts,
     background: NEW_TAB_BACKGROUNDS.has(background)
       ? background
       : DEFAULT_NEW_TAB_SETTINGS.background,
