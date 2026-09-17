@@ -13,6 +13,7 @@ import { DEFAULT_CONTAINER_ID } from '../shared/types'
 import type {
   Container,
   Folder,
+  FolderColor,
   Space,
   SplitGroup,
   SplitLayout,
@@ -373,8 +374,15 @@ export function addTabToSplit(model: Model, groupId: string, tabId: string): boo
 // Folders
 // ---------------------------------------------------------------------------
 
-export function createFolder(model: Model, spaceId: string, name: string, icon: string): Folder {
+export function createFolder(
+  model: Model,
+  spaceId: string,
+  name: string,
+  icon: string,
+  color?: FolderColor
+): Folder {
   const folder: Folder = { id: newId('folder'), spaceId, name, icon, collapsed: false }
+  if (color) folder.color = color
   model.folders[folder.id] = folder
   return folder
 }

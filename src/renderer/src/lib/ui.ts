@@ -255,13 +255,6 @@ export function closeUrlbar(): void {
 // Phone drawer & renderer-hosted menus
 // ---------------------------------------------------------------------------
 
-export async function openDrawer(activeTabId: string | null): Promise<void> {
-  if (uiStore.get().drawerOpen) return
-  await captureActiveTab(activeTabId)
-  run('focus.chrome', undefined)
-  uiStore.set({ drawerOpen: true })
-}
-
 export function closeDrawer(): void {
   if (!uiStore.get().drawerOpen) return
   uiStore.set({ drawerOpen: false })

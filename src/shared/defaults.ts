@@ -2,6 +2,7 @@ import type {
   AgentServerStatus,
   AgentSettings,
   Container,
+  FolderColor,
   ResourceSettings,
   ResourceSnapshot,
   Settings
@@ -139,6 +140,19 @@ export const CONTAINER_COLORS: Record<Container['color'], string> = {
   pink: '#ff4bda',
   purple: '#af51f5',
   toolbar: '#8f8f9d'
+}
+
+/** Tab group colours, in the order a new group picks the first one its space is not using yet. */
+export const FOLDER_COLORS: Record<FolderColor, string> = {
+  blue: '#4c8dff',
+  green: '#34b56f',
+  orange: '#f0913c',
+  purple: '#9b6bff',
+  pink: '#f26fa8',
+  cyan: '#2fb7c9',
+  yellow: '#e2b53a',
+  red: '#ee5f5b',
+  grey: '#8a8f9c'
 }
 
 /** Privacy- and productivity-focused sites, mirroring Zen's onboarding essentials picks. */

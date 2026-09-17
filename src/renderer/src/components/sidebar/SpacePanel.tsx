@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { Brush, ChevronDown, ChevronRight, Plus } from 'lucide-react'
 import type { Folder, Space, Tab, UIState } from '@shared/types'
+import { FOLDER_COLORS } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { dropStore } from '@renderer/lib/drag'
@@ -234,6 +235,12 @@ function FolderRow({
       >
         {dragging && <div data-drop={`folder:${folder.id}`} className="absolute inset-0 z-10" />}
         <span className="text-sm leading-none">{folder.icon}</span>
+        {folder.color && !compact && (
+          <span
+            className="h-2 w-2 shrink-0 rounded-full"
+            style={{ background: FOLDER_COLORS[folder.color] }}
+          />
+        )}
         {!compact &&
           (renaming ? (
             <FolderRename folder={folder} />

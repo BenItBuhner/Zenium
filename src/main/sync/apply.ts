@@ -121,7 +121,8 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
             spaceId: data.spaceId,
             name: data.name,
             icon: data.icon,
-            collapsed: data.collapsed
+            collapsed: data.collapsed,
+            color: data.color ?? null
           })
         else
           m.folders[r.id] = {
@@ -129,7 +130,8 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
             spaceId: data.spaceId,
             name: data.name,
             icon: data.icon,
-            collapsed: data.collapsed
+            collapsed: data.collapsed,
+            ...(data.color ? { color: data.color } : {})
           }
         break
       }

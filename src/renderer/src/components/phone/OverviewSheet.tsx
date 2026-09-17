@@ -1,0 +1,87 @@
+import type { JSX, ReactNode } from 'react'
+import { useEffect, useRef } from 'react'
+import { useBackSurface } from '@renderer/lib/back'
+import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
+
+export interface SheetAction {
+  id: string
+  label: string
+  icon?: ReactNode
+  /** Rendered in the danger ink: closes tabs. */
+  destructive?: boolean
+  disabled?: boolean
+  onPick: () => void
+}
+
+interface Props {
+  title: string
+  /** Optional row between the title and the actions (a colour palette, say). */
+  header?: ReactNode
+  actions: SheetAction[]
+  onClose: () => void
+}
+
+/**
+ * A short sheet of actions for something in the tab overview (a held card, a group's header):
+ * the phone menu's `BottomSheet` – draggable, on the shared sheet surface under the tinted
+ * scrim – with a title row and 48px rows. A picked row slides the sheet away first and acts
+ * once it is gone; the system back gesture pulls it down with the finger; Escape dismisses it.
+ */
+export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.Element {
+  const sheet = useRef<BottomSheetHandle>(null)
+
+  useBackSurface({
+    name: 'overview-sheet',
+    onProgress: (progress) => sheet.current?.backProgress(progress),
+    onCommit: () => sheet.current?.commitBack(),
+    onCancel: () => sheet.current?.cancelBack()
+  })
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        sheet.current?.dismiss()
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
+
+  return (
+    <BottomSheet
+      ref={sheet}
+      onDismissed={onClose}
+      contentKey={`${title}:${actions.map((a) => a.id).join('/')}`}
+      handleLabel="Resize sheet"
+      header={
+        <div className="flex h-9 items-center px-3">
+          <span className="min-w-0 flex-1 truncate text-[17px] font-semibold leading-tight tracking-[-0.012em]">
+            {title}
+          </span>
+        </div>
+      }
+    >
+      {header}
+      <ul className="flex flex-col pb-1">
+        {actions.map((action) => (
+          <li key={action.id}>
+            <button
+              type="button"
+              disabled={!!action.disabled}
+              className="zen-sheet-item"
+              style={action.destructive ? { color: 'var(--zen-danger)' } : undefined}
+              onClick={() => sheet.current?.dismiss(() => action.onPick())}
+            >
+              {action.icon && (
+                <span className="flex w-5 shrink-0 items-center justify-center">{action.icon}</span>
+              )}
+              <span className="min-w-0 flex-1 truncate">{action.label}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </BottomSheet>
+  )
+}

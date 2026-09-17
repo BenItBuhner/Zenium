@@ -14,7 +14,13 @@ import {
   type OrderData,
   type SyncRecord
 } from '../records'
-import { createSpace, createTabRecord, emptyModel, insertTabIntoSpace } from '../../../core/model'
+import {
+  createFolder,
+  createSpace,
+  createTabRecord,
+  emptyModel,
+  insertTabIntoSpace
+} from '../../../core/model'
 import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS } from '../../../shared/defaults'
 import type { Space, Tab } from '../../../shared/types'
 
@@ -90,6 +96,20 @@ describe('collectLocal', () => {
     expect(collectLocal(src, { ...defaultScope(), openTabs: true }).has(src.ids.regular.id)).toBe(
       true
     )
+  })
+
+  it('carries a folder colour only when the folder has one, so old records keep their hashes', () => {
+    const src = sources()
+    const plain = createFolder(src.model, src.ids.space.id, 'Docs', '📁')
+    const coloured = createFolder(src.model, src.ids.space.id, 'News', '📁', 'pink')
+    const records = collectLocal(src, defaultScope())
+    expect(records.get(plain.id)?.data).toEqual({
+      spaceId: src.ids.space.id,
+      name: 'Docs',
+      icon: '📁',
+      collapsed: false
+    })
+    expect(records.get(coloured.id)?.data).toMatchObject({ name: 'News', color: 'pink' })
   })
 
   it('does not leak onboardingDone through the settings record', () => {

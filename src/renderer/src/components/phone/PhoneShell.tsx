@@ -4,7 +4,6 @@ import { ArrowLeft, Lock, MoreHorizontal, Plus, Search } from 'lucide-react'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
-import { useBackDismissal } from '@renderer/lib/back'
 import {
   contentShift,
   cssPx,
@@ -18,17 +17,18 @@ import {
   stageStore,
   toggleOverview
 } from '@renderer/lib/gestures/stage'
+import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { activeSpace, activeTab, essentialsFor, tabsOf } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
-import { closeDrawer, contentAreaStore, openUrlbar, type UiState } from '@renderer/lib/ui'
+import { contentAreaStore, openUrlbar, type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ContentArea } from '../content/ContentArea'
 import { Onboarding } from '../overlays/Onboarding'
 import { Favicon } from '../sidebar/Favicon'
 import { TabDialogs } from '../TabDialogs'
 import { Urlbar } from '../urlbar/Urlbar'
-import { DrawerSidebar } from './DrawerSidebar'
 import { PhoneStage } from './PhoneStage'
+import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
 import { usePillGestures, type PillGestureHandlers } from './usePillGestures'
 
@@ -40,9 +40,9 @@ interface Props {
 
 /**
  * Phone layout: the content card fills the screen next to a bar docked at the top or bottom edge
- * (Settings, or long-press the address pill and carry it over); the sidebar (spaces, essentials,
- * pinned tabs, folders) lives in a drawer that slides in from the tabs side. Every component
- * inside is the same one the desktop layout uses.
+ * (Settings, or long-press the address pill and carry it over); tabs live in the overview pulled
+ * in from the address pill, and the spaces (with the Essentials) in a drawer that slides over it
+ * from the sidebar's side. Every component inside is the same one the desktop layout uses.
  *
  * The shell hands the safe-area insets to whatever touches each edge – the bar on its side, the
  * content gutter on the other – rather than padding the window as a whole, so the keyboard inset
@@ -50,7 +50,6 @@ interface Props {
  */
 export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   const tab = activeTab(state)
-  const side = state.settings.sidebarSide
   const edge = state.settings.phoneBarPosition
   const onboarding = !state.settings.onboardingDone
   const htmlFullscreen = state.window.htmlFullscreenTabId !== null
@@ -61,7 +60,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   // Picking a tab (or opening chrome UI) in the drawer closes it.
   const lastActive = useRef(activeTabId)
   useEffect(() => {
-    if (lastActive.current !== activeTabId && ui.drawerOpen) closeDrawer()
+    if (lastActive.current !== activeTabId && ui.drawerOpen) closeSpacesDrawer()
     lastActive.current = activeTabId
   }, [activeTabId, ui.drawerOpen])
 
@@ -141,50 +140,10 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       )}
       {barHidden && <Urlbar state={state} urlbar={ui.urlbar} area={null} phoneEdge={edge} />}
       {dock.phase !== 'idle' && <BarDockLayer state={state} pill={pill} />}
-      {ui.drawerOpen && <PhoneDrawer state={state} side={side} isDark={isDark} />}
+      {ui.drawerOpen && <SpacesDrawer state={state} isDark={isDark} />}
       <PhoneToasts ui={ui} barEdge={barHidden ? null : edge} />
       <TabDialogs state={state} />
       {onboarding && <Onboarding state={state} />}
-    </div>
-  )
-}
-
-/** The sidebar drawer over the content; the system back gesture slides it back out of its side. */
-function PhoneDrawer({
-  state,
-  side,
-  isDark
-}: {
-  state: UIState
-  side: 'left' | 'right'
-  isDark: boolean
-}): JSX.Element {
-  const drawerRef = useRef<HTMLDivElement>(null)
-  useBackDismissal('drawer', {
-    travel: 320,
-    render: (v) => {
-      const el = drawerRef.current
-      if (el) el.style.transform = `translateX(${(side === 'left' ? -1 : 1) * v * 100}%)`
-    },
-    dismissed: () => closeDrawer()
-  })
-  return (
-    // Closing on click (not pointerdown) keeps the tap from falling through to the bar below.
-    <div className="absolute inset-0 z-40" onClick={() => closeDrawer()}>
-      <div
-        ref={drawerRef}
-        className={cn(
-          'zen-drawer absolute inset-y-0 flex w-[min(320px,calc(100%-56px))] p-2',
-          side === 'left' ? 'left-0 zen-drawer-left' : 'right-0 zen-drawer-right'
-        )}
-        style={{
-          paddingTop: 'calc(var(--zen-inset-top) + 8px)',
-          paddingBottom: 'calc(var(--zen-inset-bottom) + 8px)'
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <DrawerSidebar state={state} isDark={isDark} />
-      </div>
     </div>
   )
 }

@@ -173,12 +173,18 @@ export interface Tab {
   readerable: boolean
 }
 
+/** Colours a tab group (folder) can wear; the phone chrome paints group cards with them. */
+export type FolderColor =
+  'grey' | 'blue' | 'red' | 'yellow' | 'green' | 'pink' | 'purple' | 'cyan' | 'orange'
+
 export interface Folder {
   id: string
   spaceId: string
   name: string
   icon: string
   collapsed: boolean
+  /** Group colour; folders made before groups had colours (or on desktop) carry none. */
+  color?: FolderColor | null
 }
 
 export interface Space {
@@ -1041,9 +1047,22 @@ export interface Commands {
   'space.closeUnpinned': { args: { spaceId?: string }; result: void }
   'space.contextMenu': { args: { spaceId: string }; result: void }
 
-  'folder.create': { args: { spaceId: string; name: string; icon: string }; result: string }
+  'folder.create': {
+    args: {
+      spaceId: string
+      name: string
+      icon: string
+      color?: FolderColor
+      /** Start an inline rename of the new folder (default); off for folders made by a gesture. */
+      rename?: boolean
+    }
+    result: string
+  }
   'folder.update': {
-    args: { folderId: string; patch: Partial<Pick<Folder, 'name' | 'icon' | 'collapsed'>> }
+    args: {
+      folderId: string
+      patch: Partial<Pick<Folder, 'name' | 'icon' | 'collapsed' | 'color'>>
+    }
     result: void
   }
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
