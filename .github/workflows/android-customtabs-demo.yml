@@ -12,9 +12,6 @@ name: Android custom tabs demo
 # picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-custom-tabs-provider-dd02
 
 permissions:
   contents: read
