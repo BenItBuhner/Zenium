@@ -590,12 +590,7 @@ export class TranslateService {
       await this.run(tabId, entry, gen, engine, route)
     } catch (error) {
       if (entry.gen !== gen) return
-      entry.session = 0
-      this.update(entry, {
-        status: 'error',
-        error: messageOf(error),
-        download: null
-      })
+      this.fail(entry, gen, error)
       throw error
     } finally {
       this.busy--
@@ -604,7 +599,11 @@ export class TranslateService {
     }
   }
 
-  /** Feed the page's units through the engine until the document goes away or the user reverts. */
+  /**
+   * Start a page session and translate everything the page has; then keep following the page
+   * (content it adds later) in the background until the document goes away or the user reverts.
+   * Resolves once the initial pass is done so `translate.page` answers promptly.
+   */
   private async run(
     tabId: string,
     entry: TabEntry,
@@ -612,9 +611,7 @@ export class TranslateService {
     engine: TranslationEngine,
     route: LanguagePair[]
   ): Promise<void> {
-    const view = (): TabView | undefined =>
-      entry.gen === gen ? this.browser.tabs.view(tabId) : undefined
-    const first = view()
+    const first = this.liveView(tabId, entry, gen)
     if (!first) return
     const session = ++this.sessions
     entry.session = session
@@ -622,10 +619,33 @@ export class TranslateService {
     if (entry.gen !== gen) return
     entry.doc = started.doc
     this.update(entry, { progress: { done: started.done, total: started.total } })
-    let batchSize = FIRST_BATCH
+    if (!(await this.drain(tabId, entry, gen, engine, route, session, FIRST_BATCH))) return
+    void this.follow(tabId, entry, gen, route, session).catch((error) =>
+      this.fail(entry, gen, error)
+    )
+  }
+
+  private liveView(tabId: string, entry: TabEntry, gen: number): TabView | undefined {
+    return entry.gen === gen ? this.browser.tabs.view(tabId) : undefined
+  }
+
+  /**
+   * Translate the page's pending units batch by batch until none is left. Returns false when the
+   * tab or the session went away meanwhile.
+   */
+  private async drain(
+    tabId: string,
+    entry: TabEntry,
+    gen: number,
+    engine: TranslationEngine,
+    route: LanguagePair[],
+    session: number,
+    firstBatch: { items: number; chars: number }
+  ): Promise<boolean> {
+    let batchSize = firstBatch
     for (;;) {
-      const current = view()
-      if (!current) return
+      const current = this.liveView(tabId, entry, gen)
+      if (!current) return false
       const batch = await callPage<TranslateBatch>(
         current,
         'next',
@@ -633,21 +653,14 @@ export class TranslateService {
         batchSize.items,
         batchSize.chars
       )
-      if (entry.gen !== gen) return
+      if (entry.gen !== gen) return false
       if (batch.items.length === 0) {
         if (entry.state.status !== 'translated')
           this.update(entry, {
             status: 'translated',
             progress: { done: batch.done, total: batch.total }
           })
-        const waiting = view()
-        if (!waiting) return
-        const wait = await callPage<TranslateWaitResult>(waiting, 'wait', session, WAIT_MS)
-        if (entry.gen !== gen) return
-        if (wait.ended) return
-        if (wait.pending > 0 && entry.state.status !== 'translating')
-          this.update(entry, { status: 'translating' })
-        continue
+        return true
       }
       batchSize = BATCH
       this.touch()
@@ -655,20 +668,61 @@ export class TranslateService {
         batch.items.map((item) => item.html),
         { route, html: true }
       )
-      const applying = view()
-      if (!applying) return
+      const applying = this.liveView(tabId, entry, gen)
+      if (!applying) return false
       const status = await callPage<TranslateRuntimeStatus>(
         applying,
         'apply',
         session,
         batch.items.map((item, index) => ({ id: item.id, html: translations[index] ?? null }))
       )
-      if (entry.gen !== gen) return
+      if (entry.gen !== gen) return false
       this.update(entry, {
         status: status.pending > 0 || status.done < status.total ? 'translating' : 'translated',
         progress: { done: status.done, total: status.total }
       })
     }
+  }
+
+  /**
+   * Long-poll the page for content it adds after the initial pass and translate it. The engine is
+   * taken fresh each time: it may have been dropped while the page sat idle.
+   */
+  private async follow(
+    tabId: string,
+    entry: TabEntry,
+    gen: number,
+    route: LanguagePair[],
+    session: number
+  ): Promise<void> {
+    for (;;) {
+      const waiting = this.liveView(tabId, entry, gen)
+      if (!waiting) return
+      const wait = await callPage<TranslateWaitResult>(waiting, 'wait', session, WAIT_MS)
+      if (entry.gen !== gen || wait.ended) return
+      if (wait.pending === 0) continue
+      this.busy++
+      try {
+        this.update(entry, { status: 'translating' })
+        const engine = await this.engineReady()
+        if (entry.gen !== gen) return
+        await this.prepare(route, engine, (received, total) => {
+          if (entry.gen === gen) this.update(entry, { download: { received, total } })
+        })
+        if (entry.gen !== gen) return
+        if (entry.state.download) this.update(entry, { download: null })
+        if (!(await this.drain(tabId, entry, gen, engine, route, session, BATCH))) return
+      } finally {
+        this.busy--
+        this.touch()
+      }
+    }
+  }
+
+  private fail(entry: TabEntry, gen: number, error: unknown): void {
+    if (entry.gen !== gen) return
+    entry.session = 0
+    this.update(entry, { status: 'error', error: messageOf(error), download: null })
   }
 
   /** `translate.revert`: show the original page again. */

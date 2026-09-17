@@ -233,13 +233,47 @@ export function zenTranslatePageRuntime(): TranslatePageRuntime {
     return display === '' || display.startsWith('inline') || display === 'contents'
   }
 
-  /** `translate="no"` (inherited through the IDL attribute) or Google's `notranslate` class. */
+  /** The nearest `attr` on `el` or an ancestor, lowercased ('' when set without a value). */
+  function inherited(el: Element, attr: string): string | null {
+    let current: Element | null = el
+    while (current) {
+      const value = current.getAttribute(attr)
+      if (value !== null) return value.trim().toLowerCase()
+      current = current.parentElement
+    }
+    return null
+  }
+
+  /** `translate="no"` (inherited) or Google's `notranslate` class. */
+  function noTranslate(el: Element): boolean {
+    const html = el as HTMLElement
+    // The IDL attribute resolves inheritance; engines without it get the attribute walk.
+    if (typeof html.translate === 'boolean') {
+      if (!html.translate) return true
+    } else if (inherited(el, 'translate') === 'no') return true
+    return el.classList.contains('notranslate')
+  }
+
+  function editable(el: Element): boolean {
+    // A positive IDL answer is trusted; a negative one is re-checked against the attribute since
+    // not every engine resolves the empty value (`contenteditable=""`, meaning true) or inheritance.
+    if ((el as HTMLElement).isContentEditable === true) return true
+    let current: Element | null = el
+    while (current) {
+      const value = current.getAttribute('contenteditable')
+      if (value !== null) {
+        const normalized = value.trim().toLowerCase()
+        if (normalized === 'false') return false
+        if (normalized !== 'inherit') return true
+      }
+      current = current.parentElement
+    }
+    return false
+  }
+
+  /** Content that must not be touched: no-translate regions and editable ones. */
   function excluded(el: Element): boolean {
-    const translate = (el as HTMLElement).translate
-    if (translate === false) return true
-    if (el.classList.contains('notranslate')) return true
-    const editable = (el as HTMLElement).isContentEditable
-    return editable === true
+    return noTranslate(el) || editable(el)
   }
 
   function skipSubtree(el: Element): boolean {
@@ -589,17 +623,22 @@ export function zenTranslatePageRuntime(): TranslatePageRuntime {
       const root = document.documentElement
       const body = document.body
       const langAttr = root?.getAttribute('lang') || body?.getAttribute('lang') || ''
-      const meta = document.querySelector('meta[http-equiv="content-language" i]')
-      const googleMeta = document.querySelector('meta[name="google" i]')
+      // Attribute values are matched by hand: not every engine honours the `i` selector flag.
+      const metaNamed = (attr: string, name: string): Element | null => {
+        for (const el of document.querySelectorAll(`meta[${attr}]`)) {
+          if ((el.getAttribute(attr) ?? '').trim().toLowerCase() === name) return el
+        }
+        return null
+      }
+      const meta = metaNamed('http-equiv', 'content-language')
+      const googleMeta = metaNamed('name', 'google')
       const googleValue = (
         googleMeta?.getAttribute('content') ||
         googleMeta?.getAttribute('value') ||
         ''
       ).toLowerCase()
       const notranslate =
-        (root as HTMLElement | null)?.translate === false ||
-        Boolean(root?.classList.contains('notranslate')) ||
-        googleValue.split(/[\s,]+/).includes('notranslate')
+        (root !== null && noTranslate(root)) || googleValue.split(/[\s,]+/).includes('notranslate')
       const sample: TranslatePageSample = {
         doc,
         text: '',
