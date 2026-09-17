@@ -927,28 +927,9 @@ async function main() {
     }
   }
 
+  // Chrome first (the reference and the tells experiment), then this build, then main's: the
+  // emulator has frozen on heavy pages before, and a partial run should still hold the reference.
   try {
-    if (beforeApk) {
-      const before = await runZen(beforeApk, 'zen-before')
-      summary['zen-before'] = before.results
-      before.session?.close()
-      tryShell(`am force-stop ${APP}`)
-      await sleep(3_000)
-    }
-
-    const after = await runZen(afterApk, 'zen-after')
-    summary['zen-after'] = after.results
-    if (after.session && after.results['google-home'] && !after.results['google-home'].error) {
-      summary['zen-after-identities'] = await runVariants(
-        after.session,
-        after.results['google-home'],
-        'zen-after'
-      )
-    }
-    after.session?.close()
-    tryShell(`am force-stop ${APP}`)
-    await sleep(3_000)
-
     try {
       const chrome = await runBrowser(CHROME_BROWSER, 'chrome')
       summary.chrome = chrome.results
@@ -971,6 +952,27 @@ async function main() {
       }
     }
     tryShell(`am force-stop ${CHROME}`)
+    await sleep(3_000)
+
+    const after = await runZen(afterApk, 'zen-after')
+    summary['zen-after'] = after.results
+    if (after.session && after.results['google-home'] && !after.results['google-home'].error) {
+      summary['zen-after-identities'] = await runVariants(
+        after.session,
+        after.results['google-home'],
+        'zen-after'
+      )
+    }
+    after.session?.close()
+    tryShell(`am force-stop ${APP}`)
+    await sleep(3_000)
+
+    if (beforeApk) {
+      const before = await runZen(beforeApk, 'zen-before')
+      summary['zen-before'] = before.results
+      before.session?.close()
+      tryShell(`am force-stop ${APP}`)
+    }
   } catch (e) {
     // The emulator process died under us (see host-monitor.txt); keep what was recorded.
     summary.aborted = e.message
@@ -978,7 +980,7 @@ async function main() {
     throw e
   }
   finish()
-  if (summary['zen-after'].error && summary.chrome.error) {
+  if (summary['zen-after']?.error && summary.chrome?.error) {
     throw new Error('neither browser could be driven')
   }
 }

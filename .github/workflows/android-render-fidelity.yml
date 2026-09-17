@@ -84,7 +84,8 @@ jobs:
           arch: x86_64
           profile: pixel_6
           cores: 3
-          ram-size: 4096M
+          # Heavy pages have frozen the guest at 4 GB; the runner has 16 GB.
+          ram-size: 6144M
           heap-size: 512M
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
           script: node .github/scripts/render-fidelity.mjs
