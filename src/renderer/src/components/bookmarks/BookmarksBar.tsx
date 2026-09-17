@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from 'react-dom'
 import { ChevronRight } from 'lucide-react'
 import type { BookmarkNode, Tab, UIState } from '@shared/types'
-import { BOOKMARKS_BAR_ID } from '@shared/bookmarks'
+import { BOOKMARKS_BAR_ID, MOBILE_BOOKMARKS_ID, OTHER_BOOKMARKS_ID } from '@shared/bookmarks'
 import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { dropStore } from '@renderer/lib/drag'
@@ -37,6 +37,16 @@ export function BookmarksBar({
 }): JSX.Element {
   const tree = useBookmarkTree(state)
   const items = useMemo(() => tree.children(BOOKMARKS_BAR_ID), [tree])
+  const other = useMemo(() => tree.children(OTHER_BOOKMARKS_ID), [tree])
+  const mobile = useMemo(() => tree.children(MOBILE_BOOKMARKS_ID), [tree])
+  const pinned = useMemo((): BookmarkNode[] => {
+    const roots: BookmarkNode[] = []
+    const otherRoot = tree.get(OTHER_BOOKMARKS_ID)
+    const mobileRoot = tree.get(MOBILE_BOOKMARKS_ID)
+    if (otherRoot && other.length) roots.push(otherRoot)
+    if (mobileRoot && mobile.length) roots.push(mobileRoot)
+    return roots
+  }, [mobile, other, tree])
   const tabId = tab?.id ?? null
   const stripRef = useRef<HTMLDivElement>(null)
   const [motion] = useState(() => new ChipMotion())
@@ -442,6 +452,40 @@ export function BookmarksBar({
           <ChevronRight className="h-4 w-4" />
         </button>
       )}
+      {pinned.map((node) => (
+        <button
+          key={node.id}
+          ref={attach}
+          type="button"
+          data-bm-id={node.id}
+          data-bm-anchor
+          data-open={menu?.anchorId === node.id}
+          data-target={dropFolderId === node.id}
+          tabIndex={-1}
+          aria-haspopup="menu"
+          aria-expanded={menu?.anchorId === node.id}
+          className="zen-bm-chip"
+          onPointerEnter={() => {
+            if (menu && menu.anchorId !== node.id && !drag) openMenu(node.id)
+          }}
+          onClick={() => toggleMenu(node.id)}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            run('bookmark.contextMenu', {
+              ids: [node.id],
+              folderId: node.id,
+              x: e.clientX,
+              y: e.clientY,
+              surface: 'bar'
+            })
+          }}
+        >
+          <BookmarkIcon node={node} className="h-4 w-4 shrink-0" />
+          <span className="zen-bm-chip-label">{nodeLabel(node)}</span>
+          {tabDrag && <span data-drop={`bookmark:${node.id}:`} className="absolute inset-0 z-10" />}
+        </button>
+      ))}
 
       {menu && menuRoot && (
         <BarMenu

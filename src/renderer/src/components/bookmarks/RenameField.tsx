@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@renderer/lib/utils'
+import { useEscapeTrap } from './escape'
 
 /** In-place title editor: Enter or blur commits, Escape restores the old title. */
 export function RenameField({
@@ -24,6 +25,7 @@ export function RenameField({
     ref.current?.focus()
     ref.current?.select()
   }, [])
+  useEscapeTrap(true, () => finish(title))
   return (
     <input
       ref={ref}

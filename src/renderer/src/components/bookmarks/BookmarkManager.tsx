@@ -10,6 +10,7 @@ import {
   ExternalLink,
   FolderPlus,
   FolderTree as FolderTreeIcon,
+  Link,
   ListChecks,
   Plus,
   Star,
@@ -42,6 +43,7 @@ import { FolderTree } from './FolderTree'
 import { nodeLabel, useBookmarkTree } from './tree'
 import { type BookmarkDrag, useBookmarkDrag } from './useBookmarkDrag'
 import { useFlip } from './useFlip'
+import { useEscapeTrap } from './escape'
 
 const SEARCH_LIMIT = 200
 const DRAG_THRESHOLD = 5
@@ -607,7 +609,6 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
         variant="full"
         actions={
           <div className="flex items-center gap-1.5">
-            {!phone && search}
             {tab && !tab.url.startsWith('zen://') && (
               <button
                 type="button"
@@ -652,6 +653,7 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
 
           <section className="flex min-h-0 min-w-0 flex-1 flex-col">
             {phone && <div className="px-3 pt-3 pb-1">{search}</div>}
+            {!phone && <div className="px-3 pt-2">{search}</div>}
             <div className={cn('flex shrink-0 items-center gap-1.5 px-3', phone ? 'h-11' : 'h-10')}>
               {phone && (
                 <button
@@ -897,9 +899,15 @@ function OverflowMenu({
 }: OverflowProps): JSX.Element {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const close = (): void => setOpen(false)
+  useEscapeTrap(open, close)
 
   useEffect(() => {
     if (!open) return
+    const menu = ref.current?.querySelector<HTMLElement>(
+      '[role="menuitem"], [role="menuitemradio"]'
+    )
+    menu?.focus()
     const onDown = (e: MouseEvent): void => {
       if (!ref.current?.contains(e.target as Node)) setOpen(false)
     }
@@ -963,6 +971,7 @@ function OverflowMenu({
             sort === 'manual'
           )}
           {item('Name', <ArrowDownAZ className="h-4 w-4" />, () => onSort('name'), sort === 'name')}
+          {item('URL', <Link className="h-4 w-4" />, () => onSort('url'), sort === 'url')}
           {item(
             'Date added',
             <Clock className="h-4 w-4" />,

@@ -9,6 +9,7 @@ import { closeBookmarkChrome } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { FolderField } from './FolderField'
 import { useBookmarkTree } from './tree'
+import { useEscapeTrap } from './escape'
 
 const close = (): void => closeBookmarkChrome({ bookmarkAllTabs: null })
 
@@ -34,6 +35,7 @@ export function BookmarkAllTabsDialog({
     nameRef.current?.focus()
     nameRef.current?.select()
   }, [])
+  useEscapeTrap(!nested, close)
 
   // The chosen folder went away (another window, sync): fall back to the bar.
   const parentId = tree.get(chosenId) ? chosenId : BOOKMARKS_BAR_ID
@@ -51,7 +53,7 @@ export function BookmarkAllTabsDialog({
   return (
     <div
       className={cn(
-        'zen-animate-in absolute inset-0 z-50 flex bg-[var(--zen-scrim)]',
+        'zen-animate-in absolute inset-0 z-50 flex zen-bm-scrim',
         phone ? 'items-end' : 'items-center justify-center'
       )}
       onMouseDown={close}

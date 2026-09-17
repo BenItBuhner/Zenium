@@ -2,11 +2,14 @@ import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import type { BookmarkNodeType, UIState } from '@shared/types'
 import { inputToUrl } from '@shared/url'
+import { isBookmarkRoot } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { closeBookmarkChrome } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { FolderField } from './FolderField'
 import { useBookmarkTree } from './tree'
+import { useEscapeTrap } from './escape'
 
 const close = (): void => closeBookmarkChrome({ bookmarkEdit: null })
 
@@ -37,6 +40,8 @@ export function EditBookmarkDialog({
   const phone = useViewport().formFactor === 'phone'
   const [name, setName] = useState(node?.title ?? (folder ? 'New folder' : (prefill?.title ?? '')))
   const [url, setUrl] = useState(node?.url ?? prefill?.url ?? '')
+  const [folderId, setFolderId] = useState(node?.parentId ?? edit.parentId)
+  const [nested, setNested] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -47,6 +52,7 @@ export function EditBookmarkDialog({
   useEffect(() => {
     if (edit.id && !node) close()
   }, [edit.id, node])
+  useEscapeTrap(!nested, close)
   if (edit.id && !node) return null
 
   const title = node
@@ -62,12 +68,16 @@ export function EditBookmarkDialog({
     if (!valid) return
     if (folder) {
       const t = name.trim()
-      if (node) run('bookmark.update', { id: node.id, title: t })
-      else run('bookmark.create', { parentId: edit.parentId, title: t, type: 'folder' })
+      if (node) {
+        run('bookmark.update', { id: node.id, title: t })
+        if (folderId !== node.parentId) run('bookmark.move', { ids: [node.id], parentId: folderId })
+      } else run('bookmark.create', { parentId: folderId, title: t, type: 'folder' })
     } else if (target) {
       const t = name.trim() || target
-      if (node) run('bookmark.update', { id: node.id, title: t, url: target })
-      else run('bookmark.create', { parentId: edit.parentId, title: t, url: target, type: 'url' })
+      if (node) {
+        run('bookmark.update', { id: node.id, title: t, url: target })
+        if (folderId !== node.parentId) run('bookmark.move', { ids: [node.id], parentId: folderId })
+      } else run('bookmark.create', { parentId: folderId, title: t, url: target, type: 'url' })
     }
     close()
   }
@@ -75,7 +85,7 @@ export function EditBookmarkDialog({
   return (
     <div
       className={cn(
-        'zen-animate-in absolute inset-0 z-50 flex bg-[var(--zen-scrim)]',
+        'zen-animate-in absolute inset-0 z-50 flex zen-bm-scrim',
         phone ? 'items-end' : 'items-center justify-center'
       )}
       onMouseDown={close}
@@ -125,6 +135,17 @@ export function EditBookmarkDialog({
               placeholder="https://"
             />
           </label>
+        )}
+        {!(node && isBookmarkRoot(node.id)) && (
+          <div className="zen-bm-label min-h-0">
+            Folder
+            <FolderField
+              tree={tree}
+              value={tree.get(folderId) ? folderId : edit.parentId}
+              onChange={setFolderId}
+              onNestedChange={setNested}
+            />
+          </div>
         )}
         <div className="mt-1 flex justify-end gap-2">
           <button type="button" className="zen-button" onClick={close}>
