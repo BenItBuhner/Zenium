@@ -23,8 +23,6 @@
   --v2-on-accent: #fff;
   --v2-shadow-panel: 0 2px 6px rgb(0 0 0 / 0.2);
   --v2-shadow-dialog: 0 10px 8px rgb(0 0 0 / 0.15);
-  /* Dialogs dim the content frame only (§9.5). */
-  --v2-scrim: rgb(21 20 26 / 0.45);
   --v2-focus-offset: 0px;
 }
 :root[data-theme='dark'] {
@@ -43,7 +41,6 @@
   --v2-field-border: rgb(251 251 254 / 0.3);
   --v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #fff);
   --v2-on-accent: #15141a;
-  --v2-scrim: rgb(0 0 0 / 0.55);
   --v2-focus-offset: -2px;
 }
 
@@ -577,11 +574,6 @@
     corner-shape: var(--zen-corner);
     box-shadow: var(--v2-shadow-dialog);
     color: var(--v2-text);
-  }
-  /* The dialog's scrim: the content frame only, the sidebar and toolbar stay undimmed. */
-  .zen-v2-scrim {
-    position: absolute;
-    background: var(--v2-scrim);
   }
 
   /* Menus: rows 31 with a 16 icon, label and a hint at 69%, hairline separators. */

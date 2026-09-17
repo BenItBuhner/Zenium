@@ -16,7 +16,11 @@ import { WarningRow } from './WarningRow'
  * radius 12, the dialog shadow; §9.5: only the content frame dims, the sidebar and toolbar stay
  * undimmed and inert). Main asks, the renderer shows the extension's icon, what it will be able
  * to do as rows with a glyph per kind, and two buttons. One prompt at a time, oldest first;
- * Escape, the scrim and Cancel all answer no. On a finger it is a bottom sheet.
+ * Escape, a click outside and Cancel all answer no. On a finger it is a bottom sheet.
+ *
+ * While a prompt is queued the content frame counts as covered (`overlayCoversContent`): the
+ * page's view is hidden and the frame shows its dimmed capture, the way every chrome overlay
+ * does, so the dialog itself draws no tint.
  */
 export function ExtensionPromptDialog(): JSX.Element | null {
   const prompt = uiStore.use((s) => s.extensionPrompts[0] ?? null)
@@ -121,21 +125,18 @@ function PanelPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [prompt])
-  // The scrim dims the content frame only; the transparent rest of the layer keeps the chrome
-  // inert until the prompt is answered, and any click outside the dialog answers no.
+  // The dialog is centred on the content frame; the transparent layer over the whole window
+  // keeps the sidebar and toolbar inert until the prompt is answered, and any click outside the
+  // dialog answers no.
   const frame = area ?? { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }
   return (
     <div
-      className="zen-v2 zen-v2-fade fixed inset-0 z-[95]"
+      className="zen-v2 fixed inset-0 z-[95]"
       onMouseDown={(e) => {
         e.stopPropagation()
         answer(false)
       }}
     >
-      <div
-        className="zen-v2-scrim"
-        style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }}
-      />
       <div
         className="absolute flex items-center justify-center"
         style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }}

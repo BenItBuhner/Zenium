@@ -259,6 +259,7 @@ export function returnFocusToPage(): void {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    ui.extensionPrompts.length === 0 &&
     !ui.stageActive
   )
     run('focus.content', undefined)
@@ -276,6 +277,7 @@ export function invalidateSnapshot(): void {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    ui.extensionPrompts.length === 0 &&
     !ui.stageActive
   ) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
@@ -398,6 +400,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.menu !== null ||
     ui.siteInfoOpen ||
     ui.externalProtocol !== null ||
+    ui.extensionPrompts.length > 0 ||
     ui.stageActive
   )
 }

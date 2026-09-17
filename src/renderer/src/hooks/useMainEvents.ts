@@ -89,8 +89,14 @@ export function useMainEvents(): void {
         popupSizeReported(id, width, height)
       ),
       onEvent('extension.popupClosed', () => closeExtensionPopup(false)),
-      onEvent('extensionInstallRequest', (prompt) => enqueueExtensionPrompt(prompt)),
-      onEvent('extensionPermissionRequest', (prompt) => enqueueExtensionPrompt(prompt)),
+      onEvent(
+        'extensionInstallRequest',
+        (prompt) => void enqueueExtensionPrompt(prompt, currentActiveTabId())
+      ),
+      onEvent(
+        'extensionPermissionRequest',
+        (prompt) => void enqueueExtensionPrompt(prompt, currentActiveTabId())
+      ),
       onEvent('extension.installed', ({ id, name, pinned }) =>
         pushToast(
           `${name} was added to Zenium`,

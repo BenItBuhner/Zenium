@@ -1,6 +1,6 @@
 import type { ExtensionPromptRequest, Rect } from '@shared/types'
 import { run } from '../api'
-import { uiStore } from '../ui'
+import { captureActiveTab, invalidateSnapshot, returnFocusToPage, uiStore } from '../ui'
 import { placePopup, type PopupPlacement } from './popupPlacement'
 
 /** How long the frame waits for the document's size before opening at the default one. */
@@ -67,7 +67,16 @@ export function placementFor(
 // Install and permission prompts
 // ---------------------------------------------------------------------------
 
-export function enqueueExtensionPrompt(prompt: ExtensionPromptRequest): void {
+/**
+ * Main asked: queue the prompt behind any that are still open. The dialog covers the content
+ * frame, so the page is captured first and the frame shows the dimmed capture while the
+ * prompt is up (the same chassis as the external-protocol confirm).
+ */
+export async function enqueueExtensionPrompt(
+  prompt: ExtensionPromptRequest,
+  activeTabId: string | null
+): Promise<void> {
+  if (uiStore.get().extensionPrompts.length === 0) await captureActiveTab(activeTabId)
   uiStore.set((s) =>
     s.extensionPrompts.some((p) => p.requestId === prompt.requestId)
       ? {}
@@ -86,4 +95,8 @@ export function answerExtensionPrompt(prompt: ExtensionPromptRequest, accept: bo
       : 'extension.confirmInstall',
     { requestId: prompt.requestId, accept }
   )
+  if (uiStore.get().extensionPrompts.length === 0) {
+    invalidateSnapshot()
+    returnFocusToPage()
+  }
 }
