@@ -149,6 +149,8 @@ export class ExtensionService implements ExtensionHost {
   private readonly updates = new Map<string, UpdateInfo>()
   /** Ids with an install or update in flight. */
   private readonly busy = new Set<string>()
+  /** Loads in flight, by path (see `load`). */
+  private readonly loading = new Map<string, Promise<void>>()
   /** Approvals the store page's prompt produced, consumed by `completeInstall`. */
   private readonly approvals = new Map<string, { warnings: string[]; expires: number }>()
   private readonly loadedListeners = new Set<(ext: Extension, ses: Session) => void>()
@@ -231,8 +233,21 @@ export class ExtensionService implements ExtensionHost {
   // Loading into sessions
   // ---------------------------------------------------------------------------
 
-  /** Load into every persistent session so content scripts run in all containers. */
-  private async load(record: ExtensionRecord): Promise<void> {
+  /**
+   * Load into every persistent session so content scripts run in all containers. `start()` and
+   * the session hook's `attachSession()` overlap at boot; a second `loadExtension` for a path
+   * whose first one is still in flight makes Chromium activate the extension twice (two worker
+   * registrations), so one load per record runs at a time.
+   */
+  private load(record: ExtensionRecord): Promise<void> {
+    const inFlight = this.loading.get(record.path)
+    if (inFlight) return inFlight
+    const task = this.loadIntoSessions(record).finally(() => this.loading.delete(record.path))
+    this.loading.set(record.path, task)
+    return task
+  }
+
+  private async loadIntoSessions(record: ExtensionRecord): Promise<void> {
     this.errors.delete(record.id)
     if (!existsSync(join(record.path, 'manifest.json'))) {
       this.errors.set(record.id, 'manifest.json not found')
