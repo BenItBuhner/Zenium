@@ -1,12 +1,24 @@
 /**
- * What the translator hands to Zenium's request-blocking engine.
+ * What the translator hands to Zenium's request-blocking engine, and what comes back.
  *
  * The types below are a structural mirror of the engine's rule contract in
  * `src/core/blocking/rules.ts` on the services branch (`cursor/services-blocking-24d1`, commit
- * 9cbba7f): `EngineRuleSet` is assignable to the engine's `RuleSet`, `EngineRule` to its `Rule`,
- * and the engine's `RuleEngine` satisfies `RuleSink`, so once that branch lands on `main` this
- * file shrinks to re-exports and nothing else in `dnr/` changes. Fields the engine does not know
- * yet (`redirect.transform`) are optional extras the translator records for it.
+ * 720272b), which is not on `main` yet. Each `Engine*` type is assignable to (and from) its
+ * upstream namesake, so once that branch lands this file becomes re-exports and nothing else
+ * in `dnr/` changes:
+ *
+ * | here                        | `src/core/blocking/rules.ts`                          |
+ * | --------------------------- | ----------------------------------------------------- |
+ * | `EngineRuleSet`             | `RuleSet`                                             |
+ * | `EngineRule` / `*Action` / `*Condition` | `Rule` / `RuleAction` / `RuleCondition`   |
+ * | `EngineRuleSetAttribution`  | `RuleSetAttribution`                                  |
+ * | `EngineRequestContext`      | `RequestContext`                                      |
+ * | `EngineDecision` / `EngineDecisionMatch` | `Decision` / `DecisionMatch`             |
+ * | `RuleSink`                  | `Pick<BlockingEngine, 'setRuleSet' \| 'removeRuleSet'>` |
+ * | `ENGINE_DNR_PRIORITY`       | `RULE_SET_PRIORITY.dnr`                               |
+ *
+ * `redirect.transform` is the one field the engine does not know: an optional extra the
+ * translator records for it (`matcher.ts` has the reference `applyUrlTransform`).
  *
  * Engine semantics the translator relies on (from the engine's module doc):
  *
@@ -15,6 +27,8 @@
  *   `priority` (default 1) second. Among equal priorities `allow` > `allowAllRequests` > `block`
  *   > `upgradeScheme` > `redirect`; `modifyHeaders` rules apply when nothing blocked or
  *   redirected and no allow rule of equal or higher priority matched.
+ * - `allowAllRequests` rules are also matched against the request's document (`documentUrl`,
+ *   falling back to `initiator`), so a matched document allows everything under it.
  * - `RULE_SET_PRIORITY.dnr` (5) is the band reserved for extension rule sets; the next band
  *   (`user`, 10) starts five above it.
  */
@@ -101,6 +115,14 @@ export interface EngineRule {
   condition: EngineRuleCondition
 }
 
+/** Who a set comes from, as the blocking settings show it. */
+export interface EngineRuleSetAttribution {
+  name: string
+  url: string
+  /** Empty when unknown, as the engine's own custom lists do. */
+  licence: string
+}
+
 export interface EngineRuleSet {
   /** Stable id; see `engineSetId`. */
   id: string
@@ -113,6 +135,8 @@ export interface EngineRuleSet {
   version?: string
   /** When the set was (re)built, ms since the epoch. */
   updatedAt?: number
+  /** The extension and ruleset the set came from; see `dnrAttribution`. */
+  attribution?: EngineRuleSetAttribution
 }
 
 /** The engine's `RULE_SET_PRIORITY.dnr`: the base of the band extension rule sets live in. */
@@ -128,6 +152,44 @@ export const ENGINE_DNR_BAND_SIZE = 5
 export interface RuleSink {
   setRuleSet(set: EngineRuleSet): void | Promise<void>
   removeRuleSet(id: string): void | Promise<void>
+}
+
+/** One request as the engine sees it (`RequestContext`). */
+export interface EngineRequestContext {
+  url: string
+  type: EngineResourceType
+  /** Origin (or URL) of the frame that initiated the request, when known. */
+  initiator?: string
+  /** URL of the top-level document of the tab; absent for main-frame navigations. */
+  documentUrl?: string
+  /** Uppercase HTTP method (`GET`). */
+  method: string
+  /** Precomputed by the host when it knows; otherwise derived from `url` and `initiator`. */
+  isThirdParty?: boolean
+  /** The host's tab id; its decimal part is what `tabIds` conditions compare against. */
+  tabId?: string
+  frameId?: number
+  partition?: string
+  isPrivate?: boolean
+}
+
+export type EngineDecisionAction = 'allow' | 'block' | 'redirect' | 'upgrade' | 'modifyHeaders'
+
+export interface EngineDecisionMatch {
+  setId: string
+  ruleId?: number
+  /** The raw filter line for text matches. */
+  filter?: string
+}
+
+/** What the engine decided for a request (`Decision`). */
+export interface EngineDecision {
+  action: EngineDecisionAction
+  redirectUrl?: string
+  requestHeaders?: EngineHeaderOp[]
+  responseHeaders?: EngineHeaderOp[]
+  /** What decided; absent for the default allow. */
+  matched?: EngineDecisionMatch
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -178,4 +240,60 @@ export function parseEngineSetId(id: string): ParsedEngineSetId | undefined {
     return { extensionId, set: { kind: 'static', rulesetId }, rulesetId }
   }
   return undefined
+}
+
+/** The extension rule an engine decision came from; undefined for decisions by other sets. */
+export interface RoutedDecision {
+  extensionId: string
+  ruleId: number
+  /** Public ruleset id, as `getMatchedRules` reports it. */
+  rulesetId: string
+}
+
+/**
+ * Which extension rule decided a request, for hosts that feed engine decisions into
+ * `DnrState.recordMatch` (matched-rule log, action counts, `onRuleMatchedDebug`).
+ */
+export function routeDecision(decision: EngineDecision): RoutedDecision | undefined {
+  const matched = decision.matched
+  if (!matched || matched.ruleId === undefined) return undefined
+  const parsed = parseEngineSetId(matched.setId)
+  if (!parsed) return undefined
+  return { extensionId: parsed.extensionId, ruleId: matched.ruleId, rulesetId: parsed.rulesetId }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Attribution
+
+export interface DnrAttributionSource {
+  extensionId: string
+  /** The extension's display name; the id stands in when unknown. */
+  name?: string
+  /** Static rulesets: the ruleset file's path inside the extension. */
+  path?: string
+}
+
+/**
+ * Attribution for one of an extension's sets: the name says which extension and which kind of
+ * ruleset, the URL is the ruleset file inside the extension (`chrome-extension://<id>/<path>`)
+ * or the extension root for the dynamic and session sets.
+ */
+export function dnrAttribution(
+  source: DnrAttributionSource,
+  set: EngineSetKind
+): EngineRuleSetAttribution {
+  const name = source.name ?? source.extensionId
+  const root = `chrome-extension://${source.extensionId}/`
+  switch (set.kind) {
+    case 'static':
+      return {
+        name: `${name}: ruleset ${set.rulesetId}`,
+        url: source.path === undefined ? root : new URL(source.path, root).href,
+        licence: ''
+      }
+    case 'dynamic':
+      return { name: `${name}: dynamic rules`, url: root, licence: '' }
+    case 'session':
+      return { name: `${name}: session rules`, url: root, licence: '' }
+  }
 }

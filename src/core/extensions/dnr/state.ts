@@ -98,6 +98,8 @@ export const UNKNOWN_TAB_ID = -1
 
 export interface DnrExtensionInfo {
   id: string
+  /** Display name, for the attribution of the extension's rule sets in the blocking settings. */
+  name?: string
   version?: string
   /** `declarative_net_request.rule_resources` from the (validated) manifest. */
   ruleResources?: readonly ManifestRuleResource[]
@@ -557,6 +559,7 @@ export class DnrState {
       ({ id, ruleset, parsed }) => ({
         source: 'static',
         rulesetId: id,
+        path: ruleset.resource.path,
         manifestIndex: ruleset.manifestIndex,
         rules: parsed.compiled,
         disabledRuleIds: this.disabledRuleIds.get(id)
@@ -569,6 +572,7 @@ export class DnrState {
       rulesets.push({ source: 'session', rules: this.session.compiled })
     }
     const input: TranslateExtension = { extensionId: this.extensionId, rulesets }
+    if (this.extension.name !== undefined) input.name = this.extension.name
     if (this.extension.version !== undefined) input.version = this.extension.version
     if (installRank !== undefined) input.installRank = installRank
     return input

@@ -15,8 +15,14 @@
  *   modifyHeaders actions are selected across an extension's rulesets
  *
  * Approximations, by design (the engine does the real matching): first versus third party uses a
- * registrable-domain heuristic instead of the Public Suffix List, and `allowAllRequests` is only
- * matched against the frame request itself because a stateless matcher has no frame tree.
+ * registrable-domain heuristic instead of the Public Suffix List, `allowAllRequests` is only
+ * matched against the frame request itself because a stateless matcher has no frame tree, and a
+ * redirect rule whose target cannot be computed (or equals the request URL) is treated as not
+ * matching instead of silencing the rest of its index the way Chrome's per-index lookup does.
+ *
+ * `toEngineRequest` / `fromEngineRequest` convert between `testMatchOutcome`'s request and the
+ * engine's `RequestContext`, and `decisionOf` expresses an outcome as the engine's `Decision`,
+ * so the same request can be put to both and the answers compared.
  */
 import {
   REQUEST_METHOD_NON_HTTP,
@@ -26,12 +32,21 @@ import {
   type AnchorType,
   type CompiledRule,
   type HeaderInfo,
+  type QueryTransform,
   type RequestMethod,
   type ResourceType,
-  type RulesetSource
+  type RulesetSource,
+  type URLTransform
 } from './rules'
 import { toJavaScriptRegExp } from './regex'
 import { DYNAMIC_RULESET_ID, SESSION_RULESET_ID } from './limits'
+import {
+  engineSetId,
+  type EngineDecision,
+  type EngineHeaderOp,
+  type EngineRequestContext,
+  type EngineSetKind
+} from './sink'
 
 export interface MatchRequest {
   url: string
@@ -46,6 +61,32 @@ export interface MatchRequest {
   topUrl?: string
   /** Response headers, which enable the headers-received stage (`responseHeaders` conditions). */
   responseHeaders?: Record<string, string[]>
+}
+
+/** The engine's view of a `testMatchOutcome` request. */
+export function toEngineRequest(request: MatchRequest): EngineRequestContext {
+  const out: EngineRequestContext = {
+    url: request.url,
+    type: request.type,
+    method: (request.method ?? 'get').toUpperCase()
+  }
+  if (request.initiator !== undefined) out.initiator = request.initiator
+  if (request.topUrl !== undefined) out.documentUrl = request.topUrl
+  if (request.tabId !== undefined && request.tabId >= 0) out.tabId = String(request.tabId)
+  return out
+}
+
+/** A request the engine saw, as the reference matcher evaluates it. */
+export function fromEngineRequest(ctx: EngineRequestContext): MatchRequest {
+  const out: MatchRequest = { url: ctx.url, type: ctx.type, method: ctx.method.toLowerCase() }
+  if (ctx.initiator !== undefined) out.initiator = ctx.initiator
+  if (ctx.documentUrl !== undefined) out.topUrl = ctx.documentUrl
+  if (ctx.tabId !== undefined) {
+    // Like the engine, compare the decimal part of the host's tab id.
+    const digits = ctx.tabId.replace(/^\D+/, '')
+    out.tabId = /^\d+$/.test(digits) ? Number(digits) : -1
+  }
+  return out
 }
 
 export interface MatchedRule {
@@ -608,6 +649,134 @@ export function matchesRule(rule: CompiledRule, evaluated: EvaluatedRequest): bo
 }
 
 // ---------------------------------------------------------------------------------------------
+// Redirect targets (ruleset_matcher_base.cc)
+
+/**
+ * RE2's rewrite syntax after `regex` matched `url`: `\0` is the whole match, `\1` to `\9` the
+ * capture groups (empty when the group did not take part), `\\` a backslash. Undefined when the
+ * expression does not match.
+ */
+export function applyRegexSubstitution(
+  regex: RegExp,
+  url: string,
+  substitution: string
+): string | undefined {
+  const match = regex.exec(url)
+  if (!match) return undefined
+  let out = ''
+  for (let i = 0; i < substitution.length; i++) {
+    const c = substitution[i]!
+    if (c !== '\\' || i + 1 >= substitution.length) {
+      out += c
+      continue
+    }
+    const next = substitution[++i]!
+    if (next >= '0' && next <= '9') out += match[Number(next)] ?? ''
+    else out += next
+  }
+  return out
+}
+
+/** `base::EscapeQueryParamValue(value, use_plus = true)`, as applied to transform params. */
+function escapeQueryParam(value: string): string {
+  return encodeURIComponent(value).replace(/%20/g, '+').replace(/[!'()*]/g, (c) => {
+    return `%${c.charCodeAt(0).toString(16).toUpperCase()}`
+  })
+}
+
+/**
+ * `queryTransform`: drop `removeParams`, replace the first occurrence of each
+ * `addOrReplaceParams` key, then append the keys that were missing unless `replaceOnly`.
+ * Keys and values are compared and written in escaped form, as Chrome does.
+ */
+function applyQueryTransform(search: string, transform: QueryTransform): string {
+  const remove = new Set((transform.removeParams ?? []).map(escapeQueryParam))
+  const pending = new Map<string, { value: string; replaceOnly: boolean }>()
+  for (const param of transform.addOrReplaceParams ?? []) {
+    pending.set(escapeQueryParam(param.key), {
+      value: escapeQueryParam(param.value),
+      replaceOnly: param.replaceOnly === true
+    })
+  }
+  const pieces: string[] = []
+  const query = search.startsWith('?') ? search.slice(1) : search
+  for (const piece of query.split('&')) {
+    if (piece === '') continue
+    const equals = piece.indexOf('=')
+    const key = equals < 0 ? piece : piece.slice(0, equals)
+    if (remove.has(key)) continue
+    const replacement = pending.get(key)
+    if (replacement) {
+      pieces.push(`${key}=${replacement.value}`)
+      pending.delete(key)
+      continue
+    }
+    pieces.push(piece)
+  }
+  for (const [key, param] of pending) {
+    if (!param.replaceOnly) pieces.push(`${key}=${param.value}`)
+  }
+  return pieces.length === 0 ? '' : `?${pieces.join('&')}`
+}
+
+/**
+ * `GetRedirectURLFromTransform`: replace the components a `redirect.transform` names. An empty
+ * `port`, `path`, `query` or `fragment` clears that component. Undefined when the result is not
+ * a valid URL.
+ */
+export function applyUrlTransform(url: string, transform: URLTransform): string | undefined {
+  const parsed = parseUrl(url)
+  if (!parsed) return undefined
+  const source = parsed.url
+  const scheme = transform.scheme ?? source.protocol.slice(0, -1)
+  const host = transform.host ?? source.hostname
+  const port = transform.port ?? source.port
+  const path = transform.path ?? source.pathname
+  let query = source.search
+  if (transform.query !== undefined) query = transform.query
+  else if (transform.queryTransform) query = applyQueryTransform(source.search, transform.queryTransform)
+  const fragment = transform.fragment ?? source.hash
+  const username = transform.username ?? source.username
+  const password = transform.password ?? source.password
+  let authority = ''
+  if (username !== '' || password !== '') {
+    authority = `${username}${password === '' ? '' : `:${password}`}@`
+  }
+  if (host === '') return undefined
+  const spec = `${scheme}://${authority}${host}${port === '' ? '' : `:${port}`}${path}${query}${fragment}`
+  try {
+    return new URL(spec).href
+  } catch {
+    return undefined
+  }
+}
+
+/** `upgradeScheme`: http and ftp requests move to https, everything else stays. */
+function upgradedUrl(url: URL): string | undefined {
+  if (!isUpgradeable(url)) return undefined
+  return `https:${url.href.slice(url.protocol.length)}`
+}
+
+/**
+ * The URL a redirect rule sends the request to, or undefined when the rule cannot redirect it:
+ * the substitution or transform produced an invalid URL, or the target is the request itself.
+ */
+export function redirectTargetFor(rule: CompiledRule, url: string): string | undefined {
+  const parsed = parseUrl(url)
+  if (!parsed) return undefined
+  let target: string | undefined
+  if (rule.redirectUrl !== undefined) target = rule.redirectUrl
+  else if (rule.regexSubstitution !== undefined) {
+    const substituted = applyRegexSubstitution(regexFor(rule), parsed.spec, rule.regexSubstitution)
+    target = substituted === undefined ? undefined : parseUrl(substituted)?.spec
+  } else if (rule.urlTransform !== undefined) {
+    target = applyUrlTransform(parsed.spec, rule.urlTransform)
+  }
+  if (target === undefined || target === parsed.spec) return undefined
+  return target
+}
+
+// ---------------------------------------------------------------------------------------------
 // Precedence across an extension's rulesets
 
 /**
@@ -632,6 +801,8 @@ export function rulesetRank(source: RulesetSource, manifestIndex = 0): number {
 export interface RuleMatch {
   rule: CompiledRule
   ruleset: MatcherRuleset
+  /** `redirect` and `upgradeScheme` rules: where the request goes. */
+  redirectUrl?: string
 }
 
 /** Chrome's `RequestAction` ordering: index priority, then ruleset, then rule id; higher wins. */
@@ -681,10 +852,17 @@ function evaluateStage(
       if (hasResponseHeaderConditions(rule) !== headersStage) continue
       if (ruleset.disabledRuleIds?.has(rule.id)) continue
       if (!matchesRule(rule, evaluated)) continue
-      const match = { rule, ruleset }
+      const match: RuleMatch = { rule, ruleset }
       if (rule.actionType === 'modifyHeaders') {
         modifyHeaders.push(match)
         continue
+      }
+      if (rule.actionType === 'redirect') {
+        const target = redirectTargetFor(rule, evaluated.url.spec)
+        if (target === undefined) continue
+        match.redirectUrl = target
+      } else if (rule.actionType === 'upgradeScheme') {
+        match.redirectUrl = upgradedUrl(evaluated.url.url)
       }
       if (!best || compareMatches(match, best) > 0) best = match
     }
@@ -755,4 +933,61 @@ export function publicRulesetId(source: RulesetSource, staticId?: string): strin
   if (source === 'dynamic') return DYNAMIC_RULESET_ID
   if (source === 'session') return SESSION_RULESET_ID
   return staticId ?? ''
+}
+
+function engineSetKindOf(ruleset: MatcherRuleset): EngineSetKind {
+  switch (ruleset.source) {
+    case 'static':
+      return { kind: 'static', rulesetId: ruleset.id }
+    case 'dynamic':
+      return { kind: 'dynamic' }
+    case 'session':
+      return { kind: 'session' }
+  }
+}
+
+function headerOps(ops: CompiledRule['requestHeadersToModify']): EngineHeaderOp[] {
+  return ops.map((op) =>
+    op.value === undefined
+      ? { header: op.header, operation: op.operation }
+      : { header: op.header, operation: op.operation, value: op.value }
+  )
+}
+
+/**
+ * An outcome as the engine would report it for the same extension: `matched.setId` is the
+ * engine set id when `extensionId` is given (`engineSetId`), the public ruleset id otherwise.
+ * No matching rule is the engine's default allow without `matched`.
+ */
+export function decisionOf(outcome: MatchOutcome, extensionId?: string): EngineDecision {
+  const first = outcome.matches[0]
+  if (!first) return { action: 'allow' }
+  const setIdOf = (ruleset: MatcherRuleset): string =>
+    extensionId === undefined ? ruleset.id : engineSetId(extensionId, engineSetKindOf(ruleset))
+  const matched = { setId: setIdOf(first.ruleset), ruleId: first.rule.id }
+  switch (first.rule.actionType) {
+    case 'allow':
+    case 'allowAllRequests':
+      return { action: 'allow', matched }
+    case 'block':
+      return { action: 'block', matched }
+    case 'upgradeScheme':
+      return first.redirectUrl === undefined
+        ? { action: 'allow', matched }
+        : { action: 'upgrade', redirectUrl: first.redirectUrl, matched }
+    case 'redirect':
+      return first.redirectUrl === undefined
+        ? { action: 'allow', matched }
+        : { action: 'redirect', redirectUrl: first.redirectUrl, matched }
+    case 'modifyHeaders': {
+      const requestHeaders: EngineHeaderOp[] = []
+      const responseHeaders: EngineHeaderOp[] = []
+      for (const match of outcome.matches) {
+        if (match.rule.actionType !== 'modifyHeaders') continue
+        requestHeaders.push(...headerOps(match.rule.requestHeadersToModify))
+        responseHeaders.push(...headerOps(match.rule.responseHeadersToModify))
+      }
+      return { action: 'modifyHeaders', requestHeaders, responseHeaders, matched }
+    }
+  }
 }

@@ -35,11 +35,13 @@
 import {
   ENGINE_DNR_BAND_SIZE,
   ENGINE_DNR_PRIORITY,
+  dnrAttribution,
   engineSetId,
   type EngineRule,
   type EngineRuleAction,
   type EngineRuleCondition,
   type EngineRuleSet,
+  type EngineSetKind,
   type RuleSink
 } from './sink'
 import { actionTypePriority, type CompiledRule, type ModifyHeaderInfo, type RulesetSource } from './rules'
@@ -49,6 +51,8 @@ export interface TranslateRuleset {
   source: RulesetSource
   /** Static rulesets: the manifest ruleset id. */
   rulesetId?: string
+  /** Static rulesets: the ruleset file's path inside the extension, for the attribution. */
+  path?: string
   /** Static rulesets: position in `rule_resources`, for Chrome's tie-break. */
   manifestIndex?: number
   rules: readonly CompiledRule[]
@@ -58,6 +62,8 @@ export interface TranslateRuleset {
 
 export interface TranslateExtension {
   extensionId: string
+  /** Display name, for the attribution the blocking settings show. */
+  name?: string
   version?: string
   /** Enabled static rulesets, the dynamic ruleset and the session ruleset, in any order. */
   rulesets: readonly TranslateRuleset[]
@@ -189,7 +195,7 @@ export function compareForEmission(a: CompiledRule, b: CompiledRule): number {
   return b.id - a.id
 }
 
-function setKindOf(ruleset: TranslateRuleset): Parameters<typeof engineSetId>[1] {
+function setKindOf(ruleset: TranslateRuleset): EngineSetKind {
   switch (ruleset.source) {
     case 'static':
       return { kind: 'static', rulesetId: ruleset.rulesetId ?? '' }
@@ -220,12 +226,17 @@ export function translateRuleset(
     if (translated.action.redirect?.transform) transforms.push(compiled.id)
     rules.push(translated)
   }
+  const kind = setKindOf(ruleset)
+  const attribution: Parameters<typeof dnrAttribution>[0] = { extensionId: extension.extensionId }
+  if (extension.name !== undefined) attribution.name = extension.name
+  if (ruleset.path !== undefined) attribution.path = ruleset.path
   const set: EngineRuleSet = {
-    id: engineSetId(extension.extensionId, setKindOf(ruleset)),
+    id: engineSetId(extension.extensionId, kind),
     source: 'dnr',
     priority: enginePriorityForRank(extension.installRank),
     enabled: true,
-    rules
+    rules,
+    attribution: dnrAttribution(attribution, kind)
   }
   if (extension.version !== undefined) set.version = extension.version
   if (options.now) set.updatedAt = options.now()
@@ -260,6 +271,7 @@ interface EmittedSet {
   disabledRuleIds: ReadonlySet<number> | undefined
   priority: number
   version: string | undefined
+  name: string | undefined
 }
 
 /**
@@ -343,7 +355,8 @@ export class DnrTranslator {
         rules: ruleset.rules,
         disabledRuleIds: ruleset.disabledRuleIds,
         priority: translation.set.priority,
-        version: input.version
+        version: input.version,
+        name: input.name
       }
       if (before && sameEmission(before, next)) continue
       await this.sink.setRuleSet(translation.set)
@@ -361,7 +374,8 @@ export class DnrTranslator {
 }
 
 function sameEmission(a: EmittedSet, b: EmittedSet): boolean {
-  if (a.rules !== b.rules || a.priority !== b.priority || a.version !== b.version) return false
+  if (a.rules !== b.rules || a.priority !== b.priority) return false
+  if (a.version !== b.version || a.name !== b.name) return false
   if (a.disabledRuleIds === b.disabledRuleIds) return true
   if (!a.disabledRuleIds || !b.disabledRuleIds) {
     return (a.disabledRuleIds?.size ?? 0) === 0 && (b.disabledRuleIds?.size ?? 0) === 0
