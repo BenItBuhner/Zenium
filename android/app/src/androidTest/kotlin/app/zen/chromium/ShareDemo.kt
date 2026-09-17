@@ -9,7 +9,6 @@ import android.util.Base64
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
-import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONArray
 import org.json.JSONTokener
@@ -198,32 +197,6 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
     private fun webSearch(query: String) {
         val out = shell("am start -a android.intent.action.WEB_SEARCH --es query ${quote(query)} -p ${app.packageName}")
         Log.i(tag, "am start WEB_SEARCH: ${out.trim()}")
-    }
-
-    // --- accessibility ---------------------------------------------------------------------------
-
-    /** Click the nearest clickable ancestor of the node labelled `label`; false when there is none. */
-    private fun clickByLabel(label: String): Boolean {
-        var node = nodeByLabel(label) ?: run {
-            Log.w(tag, "no node labelled '$label'")
-            return false
-        }
-        while (!node.isClickable) node = node.parent ?: return false
-        return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-    }
-
-    private fun nodeByLabel(label: String): AccessibilityNodeInfo? {
-        val root = ui.rootInActiveWindow ?: return null
-        val queue = ArrayDeque<AccessibilityNodeInfo>()
-        queue.add(root)
-        var visited = 0
-        while (queue.isNotEmpty() && visited < 6_000) {
-            val node = queue.removeFirst()
-            visited++
-            if (node.contentDescription?.toString() == label || node.text?.toString() == label) return node
-            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
-        }
-        return null
     }
 
     // --- the page --------------------------------------------------------------------------------
