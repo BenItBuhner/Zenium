@@ -141,19 +141,9 @@ export class ElectronTabView implements TabView {
       ev.onDestroyed()
       this.onDestroyed(this)
     })
-    wc.setWindowOpenHandler(({ url, disposition }) => {
-      const verdict = ev.onOpenWindow(url, disposition as WindowOpenDisposition)
-      if (verdict === 'popup') {
-        return {
-          action: 'allow',
-          overrideBrowserWindowOptions: {
-            width: 720,
-            height: 640,
-            autoHideMenuBar: true,
-            webPreferences: { preload: undefined, sandbox: true, contextIsolation: true }
-          }
-        }
-      }
+    wc.setWindowOpenHandler(({ url, disposition, features }) => {
+      ev.onOpenWindow(url, disposition as WindowOpenDisposition, features ?? '')
+      // Always deny Chromium's chrome-less BrowserWindow: the core opened a Zenium tab or window.
       return { action: 'deny' }
     })
   }

@@ -189,8 +189,16 @@ export interface TabViewEvents {
   onTargetUrl(url: string): void
   onDomReady(): void
   onDestroyed(): void
-  /** `window.open` / `target=_blank`. Return how the host should proceed. */
-  onOpenWindow(url: string, disposition: WindowOpenDisposition): 'deny' | 'tab' | 'popup'
+  /**
+   * `window.open` / Shift+click / `target=_blank`. The host always denies Chromium's own window:
+   * `tab` and `window` mean the core already opened a Zenium tab or window. `features` is the
+   * `window.open` features string (empty for Shift+click).
+   */
+  onOpenWindow(
+    url: string,
+    disposition: WindowOpenDisposition,
+    features?: string
+  ): 'deny' | 'tab' | 'window'
   onPageMessage(message: PageMessage): void
 }
 

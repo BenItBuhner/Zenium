@@ -35,8 +35,8 @@ export function jumpListCategories(exePath: string): JumpListCategory[] {
     {
       type: 'tasks',
       items: [
-        task('New window', 'Open a new Zenium window', NEW_WINDOW_FLAG),
-        task('New private window', 'Open a new private Zenium window', PRIVATE_WINDOW_FLAG)
+        task('New Window', 'Open a new Zenium window', NEW_WINDOW_FLAG),
+        task('New Private Window', 'Open a new private Zenium window', PRIVATE_WINDOW_FLAG)
       ]
     },
     { type: 'recent' }

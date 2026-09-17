@@ -29,6 +29,7 @@ import type { ZenWindow } from './window'
 import { describeNetError, HTTP_FALLBACK_CODES } from '../shared/zenPages'
 import { newId } from '../shared/ids'
 import type { PageFlags, TabView, TabViewEvents } from './platform'
+import { planWindowOpen } from './windowOpen'
 
 export type { PageFlags } from './platform'
 
@@ -397,20 +398,47 @@ export class TabManager {
         this.browser.onPageReady(tabId)
       },
       onDestroyed: () => undefined,
-      onOpenWindow: (url, disposition) => {
-        if (!isNavigableUrl(url) && !url.startsWith('mailto:')) return 'deny'
-        // window.open() with features → a real popup so `window.opener` keeps working (OAuth etc.).
-        if (disposition === 'new-window') return 'popup'
+      onOpenWindow: (url, disposition, features = '') => {
+        const plan = planWindowOpen(url, disposition, features)
+        if (plan.action === 'deny') return 'deny'
+        const owner = ownerWindow()
         const parent = this.tab(tabId)
+        if (plan.action === 'window' && this.browser.state.capabilities.windows) {
+          // Sized window.open → toolbar-only chrome at that size; Shift+click / unsized
+          // new-window → a full Zenium window. Private openers stay private.
+          const kind = owner.isPrivate
+            ? 'private'
+            : plan.chrome === 'popup' || owner.kind === 'unsynced'
+              ? 'unsynced'
+              : 'synced'
+          const win = this.browser.createWindow({
+            kind,
+            from: owner,
+            chrome: plan.chrome,
+            bounds: plan.bounds,
+            initialTab: null
+          })
+          this.createTab(
+            {
+              url,
+              spaceId: parent?.spaceId ?? undefined,
+              containerId: parent?.containerId,
+              active: true,
+              afterTabId: parent && !parent.essential ? parent.id : undefined
+            },
+            win
+          )
+          return 'window'
+        }
         this.createTab(
           {
             url,
             spaceId: parent?.spaceId ?? undefined,
             containerId: parent?.containerId,
-            active: disposition !== 'background-tab',
+            active: plan.active,
             afterTabId: parent && !parent.essential ? parent.id : undefined
           },
-          ownerWindow()
+          owner
         )
         return 'tab'
       },
