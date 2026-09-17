@@ -1,163 +1,154 @@
 import type { JSX } from 'react'
-import { FileDown, FolderOpen, Pause, Play, Trash2, X } from 'lucide-react'
-import type { DownloadItem, UIState } from '@shared/types'
-import { run } from '@renderer/lib/api'
-import { formatBytes, relativeTime } from '@renderer/lib/utils'
-import { Button } from '../ui/button'
-import { EmptyNote, OverlayShell } from './OverlayShell'
+import { useState } from 'react'
+import { Download, Search } from 'lucide-react'
+import type { UIState } from '@shared/types'
+import { displayName, isActiveDownload, type DownloadRecord } from '@shared/downloadsShell'
+import { displayUrl } from '@shared/url'
+import { downloadsEngine, showsDangerDecision } from '@renderer/lib/downloadsEngine'
+import {
+  filterDownloads,
+  groupDownloadsByDay,
+  hasClearable,
+  isOnDisk
+} from '@renderer/lib/downloadsView'
+import { cn } from '@renderer/lib/utils'
+import {
+  DangerActions,
+  DlButton,
+  DownloadActions,
+  DownloadProgressBar,
+  FileTypeGlyph,
+  StatusLine
+} from '../downloads/DownloadParts'
+import { OverlayShell } from './OverlayShell'
 
+/**
+ * `zen://downloads`: every download the browser remembers, grouped by day, with search and the
+ * same per-row actions as the bubble. Finished files can be dragged out to the OS; the folder
+ * they land in opens from here. Desktop hosts manage the files; single-window hosts show the
+ * list only.
+ */
 export function DownloadsPanel({ state }: { state: UIState }): JSX.Element {
-  const items = state.downloads
+  const [query, setQuery] = useState('')
+  const items = downloadsEngine.list(state)
+  const groups = groupDownloadsByDay(filterDownloads(items, query))
+  const files = state.platform !== 'android'
   return (
-    <OverlayShell
-      title="Downloads"
-      actions={
-        items.some((i) => i.state !== 'progressing' && i.state !== 'paused') ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => run('download.clearCompleted', undefined)}
-          >
-            Clear list
-          </Button>
-        ) : null
-      }
-    >
-      {items.length === 0 ? (
-        <EmptyNote>Files you download will appear here.</EmptyNote>
-      ) : (
-        <ul className="p-2">
-          {items.map((item) => (
-            <DownloadRow key={item.id} item={item} />
-          ))}
-        </ul>
-      )}
+    <OverlayShell title="Downloads" variant="full" className="zen-dl-surface zen-dl-page">
+      <div className="mx-auto flex w-full max-w-[664px] flex-col gap-6 px-8 pb-8 pt-6">
+        <div className="flex items-center gap-3">
+          <label className="zen-dl-field relative flex min-w-0 flex-1 items-center">
+            <Search
+              className="zen-dl-deemph pointer-events-none absolute left-2.5 h-4 w-4"
+              strokeWidth={1.5}
+              aria-hidden
+            />
+            <input
+              autoFocus
+              type="search"
+              aria-label="Search downloads"
+              placeholder="Search downloads"
+              data-zen-downloads-search
+              className="zen-dl-input h-8 w-full pl-9 pr-3 text-[15px] outline-none"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </label>
+          {files && (
+            <DlButton onClick={() => downloadsEngine.openFolder()}>Open downloads folder</DlButton>
+          )}
+          {hasClearable(items) && (
+            <DlButton onClick={() => downloadsEngine.removeCompleted()}>Clear all</DlButton>
+          )}
+        </div>
+        {groups.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 px-4 py-16 text-center">
+            <Download className="zen-dl-deemph h-4 w-4" strokeWidth={1.5} aria-hidden />
+            <p className="zen-dl-deemph text-[15px] leading-5">
+              {query ? 'No downloads match' : 'Files you download appear here'}
+            </p>
+          </div>
+        ) : (
+          groups.map((group) => (
+            <section key={group.day} className="flex flex-col gap-2">
+              <h3 className="px-2 text-[15px] font-semibold leading-5">{group.label}</h3>
+              <ul className="-mx-2">
+                {group.items.map((item) => (
+                  <PageRow key={item.id} item={item} files={files} />
+                ))}
+              </ul>
+            </section>
+          ))
+        )}
+      </div>
     </OverlayShell>
   )
 }
 
-function DownloadRow({ item }: { item: DownloadItem }): JSX.Element {
-  const inFlight = item.state === 'progressing' || item.state === 'paused'
-  // A flagged file waits behind its warning until the user keeps or discards it.
-  const quarantined =
-    item.state === 'completed' && item.danger.level !== 'safe' && !item.dangerAccepted
-  const canRetry =
-    (item.state === 'interrupted' || item.state === 'cancelled') && !item.url.startsWith('blob:')
-  const pct =
-    item.totalBytes > 0
-      ? Math.min(100, Math.round((item.receivedBytes / item.totalBytes) * 100))
-      : null
-  const status = quarantined
-    ? item.danger.message
-    : item.state === 'completed'
-      ? `${item.totalBytes ? formatBytes(item.totalBytes) : 'Done'} · ${relativeTime(item.startedAt)}`
-      : item.state === 'cancelled'
-        ? 'Cancelled'
-        : item.state === 'interrupted'
-          ? 'Failed'
-          : item.state === 'paused'
-            ? `Paused · ${formatBytes(item.receivedBytes)}${item.totalBytes ? ` of ${formatBytes(item.totalBytes)}` : ''}`
-            : `${formatBytes(item.receivedBytes)}${item.totalBytes ? ` of ${formatBytes(item.totalBytes)}` : ''}`
+function PageRow({ item, files }: { item: DownloadRecord; files: boolean }): JSX.Element {
+  const active = isActiveDownload(item)
+  const openable = isOnDisk(item)
+  const name = displayName(item)
+  const source = displayUrl(item.referrer || item.url)
+  const open = (): void => {
+    if (openable) downloadsEngine.open(item.id)
+  }
   return (
-    <li className="group flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-[var(--zen-element-bg)]">
-      <FileDown className="h-5 w-5 shrink-0 opacity-60" />
+    <li
+      className="zen-dl-row group/row flex min-h-[52px] items-start gap-3 px-2 py-[6px]"
+      data-state={item.state}
+      data-download-id={item.id}
+      draggable={openable && files}
+      onDragStart={(e) => {
+        // The OS drag is the host's: hand the file over and drop the HTML5 one.
+        e.preventDefault()
+        downloadsEngine.dragOut(item.id)
+      }}
+      onDoubleClick={open}
+      onKeyDown={(e) => {
+        if (openable && e.key === 'Enter' && e.target === e.currentTarget) {
+          e.preventDefault()
+          open()
+        }
+      }}
+      tabIndex={0}
+      aria-label={`${name}. ${item.state}`}
+    >
+      <FileTypeGlyph item={item} />
       <div className="min-w-0 flex-1">
-        <button
-          type="button"
-          className="block max-w-full truncate text-left text-[13px] disabled:opacity-60"
-          disabled={item.state !== 'completed' || quarantined}
-          onClick={() => run('download.open', { id: item.id })}
-          title={item.savePath || item.url}
-        >
-          {item.finalName}
-        </button>
-        <div className="truncate text-[11.5px] text-[var(--zen-muted)]">{status}</div>
-        {quarantined && (
-          <div className="mt-1 flex gap-3 text-[12px]">
-            <button
-              type="button"
-              className="font-medium"
-              onClick={() => run('download.acceptDanger', { id: item.id })}
-            >
-              Keep
-            </button>
-            <button
-              type="button"
-              className="font-medium text-[var(--zen-muted)]"
-              onClick={() => run('download.discard', { id: item.id })}
-            >
-              Discard
-            </button>
-          </div>
-        )}
-        {canRetry && (
+        {openable ? (
           <button
             type="button"
-            className="mt-1 text-[12px] font-medium"
-            onClick={() => run('download.retry', { id: item.id })}
+            className="zen-dl-name block max-w-full truncate text-left text-[15px] leading-5"
+            title={item.savePath || item.url}
+            onClick={open}
           >
-            Retry
+            {name}
           </button>
+        ) : (
+          <div
+            className={cn(
+              'zen-dl-name truncate text-[15px] leading-5',
+              item.state === 'cancelled' && 'zen-dl-deemph'
+            )}
+            title={item.savePath || item.url}
+          >
+            {name}
+          </div>
         )}
-        {inFlight && (
-          <div className="mt-1 h-1 overflow-hidden rounded-full bg-[var(--zen-element-bg-active)]">
-            <div
-              className="h-full bg-[var(--zen-accent)] transition-[width]"
-              style={{ width: pct === null ? '40%' : `${pct}%` }}
-            />
+        <StatusLine item={item} suffix={source || undefined} />
+        {active && (
+          <div className="mt-1.5 pb-0.5">
+            <DownloadProgressBar item={item} />
           </div>
         )}
       </div>
-      {item.state === 'progressing' && (
-        <button
-          type="button"
-          className="zen-toolbar-button h-7 w-7"
-          title="Pause"
-          onClick={() => run('download.pause', { id: item.id })}
-        >
-          <Pause className="h-3.5 w-3.5" />
-        </button>
-      )}
-      {item.state === 'paused' && (
-        <button
-          type="button"
-          className="zen-toolbar-button h-7 w-7"
-          title="Resume"
-          onClick={() => run('download.resume', { id: item.id })}
-        >
-          <Play className="h-3.5 w-3.5" />
-        </button>
-      )}
-      {inFlight ? (
-        <button
-          type="button"
-          className="zen-toolbar-button h-7 w-7"
-          title="Cancel"
-          onClick={() => run('download.cancel', { id: item.id })}
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
+      {showsDangerDecision(item) ? (
+        <DangerActions item={item} />
       ) : (
-        <>
-          {item.state === 'completed' && (
-            <button
-              type="button"
-              className="zen-toolbar-button h-7 w-7"
-              title="Show in folder"
-              onClick={() => run('download.showInFolder', { id: item.id })}
-            >
-              <FolderOpen className="h-3.5 w-3.5" />
-            </button>
-          )}
-          <button
-            type="button"
-            className="zen-toolbar-button zen-row-action h-7 w-7 opacity-0 group-hover:opacity-100"
-            title="Remove from list"
-            onClick={() => run('download.remove', { id: item.id })}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        </>
+        <div className="zen-dl-actions -mr-1 flex shrink-0 items-center">
+          <DownloadActions item={item} />
+        </div>
       )}
     </li>
   )
