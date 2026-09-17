@@ -257,15 +257,15 @@ function CompactToolbar({
   return (
     <div
       ref={ref}
-      className="group/ct absolute inset-x-0 top-0 z-40"
+      className="group/ct absolute left-0 top-0 z-40"
+      // The reveal zone stops short of the native caption buttons: the band under them stays a
+      // drag region, and moving towards them does not pop the toolbar.
+      style={{ right: trailingInset }}
       onPointerEnter={show}
       onPointerLeave={hide}
     >
       <div className="h-1.5" />
-      <div
-        className="px-2 opacity-0 transition-opacity group-data-[open=true]/ct:opacity-100 pointer-events-none group-data-[open=true]/ct:pointer-events-auto"
-        style={trailingInset > 0 ? { paddingRight: trailingInset + 8 } : undefined}
-      >
+      <div className="px-2 opacity-0 transition-opacity group-data-[open=true]/ct:opacity-100 pointer-events-none group-data-[open=true]/ct:pointer-events-auto">
         <Toolbar state={state} tab={tab} floating>
           {showBar && <BookmarksBar state={state} tab={tab} className="px-1" />}
         </Toolbar>
