@@ -472,6 +472,18 @@ export function closeTabsMenu(): void {
   returnFocusToPage()
 }
 
+/**
+ * Only anchored bookmark panels are up: a bar panel, the star bubble. The page behind them is
+ * captured all the same (they overlap the live view), but panels draw no scrim, so the capture
+ * shows undimmed; dialogs dim it.
+ */
+export function panelAloneOverContent(ui: UiState): boolean {
+  return (
+    (ui.barMenuOpen || ui.starDialog !== null) &&
+    !overlayCoversContent({ ...ui, barMenuOpen: false, starDialog: null })
+  )
+}
+
 // The system back gesture (registry of dismissable surfaces, legacy chain) lives in `back.ts`.
 
 // ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ import { cmd, run } from '@renderer/lib/api'
 import { chromeUnderPages } from '@renderer/lib/cover'
 import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
-import { captureActiveTab, uiStore, type UiState } from '@renderer/lib/ui'
+import { captureActiveTab, panelAloneOverContent, uiStore, type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { dropStore } from '@renderer/lib/drag'
 import { Urlbar } from '../urlbar/Urlbar'
@@ -95,12 +95,15 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                   className="h-full w-full object-cover object-top"
                 />
               ) : null}
-              <div
-                className={cn(
-                  'absolute inset-0 bg-black/35 transition-opacity',
-                  ui.drag && 'bg-black/20'
-                )}
-              />
+              {/* Panels draw no scrim: a bar panel or the star bubble leaves the capture undimmed. */}
+              {!panelAloneOverContent(ui) && (
+                <div
+                  className={cn(
+                    'absolute inset-0 bg-black/35 transition-opacity',
+                    ui.drag && 'bg-black/20'
+                  )}
+                />
+              )}
             </div>
           )}
           {group && local && !contentHidden && !glanceActive && (
