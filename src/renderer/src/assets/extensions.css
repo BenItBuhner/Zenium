@@ -631,6 +631,10 @@
   .zen-v2-icon-button[aria-expanded='true'] {
     background: var(--v2-fill);
   }
+  /* On a phone the anchor opens a sheet, not a popover: it keeps aria-expanded, not the lit fill (§9.20 is the desktop's). */
+  [data-form-factor='phone'] .zen-v2-icon-button[aria-expanded='true']:not(:hover) {
+    background: transparent;
+  }
   .zen-v2-icon-button:active:not(:disabled) {
     background: var(--v2-fill-hover);
   }
