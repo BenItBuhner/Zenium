@@ -13,7 +13,7 @@ import {
  * and freed of `user-scalable=no` and a maximum scale when pinch zoom is forced. This runs at
  * document start with the host's copy of the rules, rewrites the page's own viewport meta as
  * the parser adds it (and any it adds later), supplies one when the page has none, and re-applies
- * when the rules change, so a zoom change is seen on the page at once.
+ * when the rules change – the slider in the zoom sheet is live.
  *
  * Pages that zoom themselves (CSS `zoom`) are untouched: nothing here scales any element.
  */

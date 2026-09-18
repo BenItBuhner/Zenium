@@ -2606,7 +2606,10 @@ export interface Commands {
   'tab.navigationMenu': { args: { tabId: string }; result: void }
   /** Zoom in (`delta` 1) or out (-1) one step, or back to the default zoom (`delta` null). */
   'tab.setZoom': { args: { tabId: string; delta: number | null }; result: void }
-  /** Set the tab's site to an exact zoom factor (remembered per site; other pages zoom per tab). */
+  /**
+   * Set the tab's site to an exact zoom factor (remembered per site; other pages zoom per tab).
+   * The desktop zoom bubble and the phone zoom sheet both drive this.
+   */
   'tab.setZoomFactor': { args: { tabId: string; factor: number }; result: void }
   /** "Desktop site" for the tab's site (remembered per site; null clears the exception). */
   'tab.setDesktopSite': { args: { tabId: string; on: boolean | null }; result: void }
@@ -3377,6 +3380,8 @@ export interface Events {
   'download.danger': { id: string }
   /** Desktop shell: show the downloads bubble with this item marked (a notification was clicked). */
   'downloads.reveal': { id: string | null }
+  /** Open the page zoom sheet for a tab (hosts with page controls). */
+  'zoom.open': { tabId: string }
   toast: { message: string; kind?: 'info' | 'error' }
   /** Link hover status text (Firefox shows this in the bottom corner). */
   status: { text: string }

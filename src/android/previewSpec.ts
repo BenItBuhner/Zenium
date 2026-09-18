@@ -43,6 +43,11 @@ export type PreviewState =
       released: boolean
     }
   | {
+      /** The page zoom sheet, the active tab's site at `factor` (null: as it is). */
+      kind: 'zoom'
+      factor: number | null
+    }
+  | {
       kind: 'error'
       /** The Chromium `net::` code the load failed with (-105 for ERR_NAME_NOT_RESOLVED, …). */
       code: number
@@ -68,13 +73,14 @@ const MAX_PREVIEW_BANNERS = 3
  * scroll a row of the overlay into view), `menu=app` for the app menu sheet (with `show=<text>` to
  * scroll an item into view), `find=<text>` for the find bar with that text typed (`find=` opens it
  * empty), `pull=<n>` for the active page held pulled down at n percent of the refresh threshold
- * (`pull=refresh` pulls past it and lets go), `error=<code>` for the active tab's load failing
- * with that Chromium `net::` code (with `url=<target>` for the URL that failed, else the tab's
- * own), which puts up the zen://error page, or any of `toast=<text>` (with `action=<label>`,
- * `kind=error`), `banners=<n>` and `progress=<0…1>` together for the message surfaces and the
- * load bar. When several are given, `overlay` wins over `menu`, `menu` over `find`, `find` over
- * `pull`, `pull` over `error`, and `error` over the messages. A leading `#` (the URL hash as
- * read) is ignored.
+ * (`pull=refresh` pulls past it and lets go), `zoom=<factor>` for the page zoom sheet with the
+ * active tab's site at that factor (`zoom=` opens it as it is), `error=<code>` for the active
+ * tab's load failing with that Chromium `net::` code (with `url=<target>` for the URL that
+ * failed, else the tab's own), which puts up the zen://error page, or any of `toast=<text>` (with
+ * `action=<label>`, `kind=error`), `banners=<n>` and `progress=<0…1>` together for the message
+ * surfaces and the load bar. When several are given, `overlay` wins over `menu`, `menu` over
+ * `find`, `find` over `pull`, `pull` over `zoom`, `zoom` over `error`, and `error` over the
+ * messages. A leading `#` (the URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -101,6 +107,11 @@ export function parsePreviewSpec(spec: string): PreviewState {
   if (pull !== null && pull !== '' && Number.isFinite(Number(pull))) {
     const progress = Math.min(PREVIEW_PULL_MAX, Math.max(0, Number(pull) / 100))
     return { kind: 'pull', progress, released: false }
+  }
+  const zoom = params.get('zoom')
+  if (zoom !== null) {
+    const factor = parseFloat(zoom)
+    return { kind: 'zoom', factor: Number.isFinite(factor) && factor > 0 ? factor : null }
   }
   const error = params.get('error')
   if (error !== null && error !== '' && Number.isInteger(Number(error))) {

@@ -347,10 +347,7 @@ describe('the app menu', () => {
       'Downloads',
       '-',
       'Change Theme…',
-      'Zoom',
-      'Zoom > Zoom In',
-      'Zoom > Zoom Out',
-      'Zoom > Reset Zoom',
+      'Zoom…',
       '-',
       'Find in Page…',
       'Reader View',
@@ -381,11 +378,13 @@ describe('the app menu', () => {
 
   it('closes the page group with the page controls where the host has them', () => {
     // Desktop Site is Chrome's per-site checkbox; the dark-theme exception only joins it while
-    // sites are being darkened. A host without page controls shows neither.
+    // sites are being darkened. A host without page controls shows neither, and keeps the
+    // stepping Zoom submenu where a host with them opens the zoom sheet.
     expect(appMenu(harness(DESKTOP, 'phone'))).not.toContain('Desktop Site')
-    expect(appMenu(harness({ ...ANDROID, pageControls: false }, 'phone'))).not.toContain(
-      'Desktop Site'
-    )
+    const plain = appMenu(harness({ ...ANDROID, pageControls: false }, 'phone'))
+    expect(plain).not.toContain('Desktop Site')
+    expect(plain).not.toContain('Zoom…')
+    expect(plain).toContain('Zoom > Zoom In')
     const h = harness(ANDROID, 'phone')
     expect(appMenu(h)).not.toContain('Dark Theme for This Site')
     h.browser.pageControls.update({ darkenSites: true })
