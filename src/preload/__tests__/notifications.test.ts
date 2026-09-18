@@ -37,16 +37,18 @@ function setUserActivation(isActive: boolean): void {
   })
 }
 
-/** The browser side of the bridge, scripted: what it answers and what it was told. */
-function bridge(answers: Status[]): {
+interface ScriptedBridge {
   transport: NotificationBridgeTransport
   push: (status: unknown) => void
   focused: number
   asked: number
   install: () => void
-} {
+}
+
+/** The browser side of the bridge, scripted: what it answers and what it was told. */
+function bridge(answers: Status[]): ScriptedBridge {
   let push: (status: unknown) => void = () => undefined
-  const state = {
+  const state: ScriptedBridge = {
     focused: 0,
     asked: 0,
     push: (status: unknown) => push(status),
