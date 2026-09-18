@@ -1,18 +1,17 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { ChevronRight } from 'lucide-react'
 import type { BookmarkNode, Rect, Tab, UIState } from '@shared/types'
 import { BOOKMARKS_BAR_ID, MOBILE_BOOKMARKS_ID, OTHER_BOOKMARKS_ID } from '@shared/bookmarks'
 import { inputToUrl } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
 import { dropStore } from '@renderer/lib/drag'
+import { ChromePortal, toRect } from '@renderer/lib/portals'
 import { closeBookmarkChrome, openBookmarkChrome, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { BarMenu, type BarMenuRoot } from './BarMenu'
 import { BookmarkIcon } from './BookmarkRow'
 import { ChipMotion } from './chipMotion'
-import { toRect } from './popover'
 import { nodeLabel, useBookmarkTree } from './tree'
 import { useBarDrag } from './useBarDrag'
 
@@ -421,11 +420,13 @@ export function BookmarksBar({
   )
 
   return (
+    // A window surface (design language v2 §9.29): its chips draw in the window token family.
     <div
       ref={barRef}
       role="toolbar"
       aria-label="Bookmarks bar"
       className={cn('zen-bm-bar zen-no-drag', className)}
+      data-surface="window"
       onContextMenu={(e) => contextMenu(e, null)}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
@@ -580,8 +581,8 @@ export function BookmarksBar({
         />
       )}
 
-      {drag &&
-        createPortal(
+      {drag && (
+        <ChromePortal>
           <div
             ref={ghostRef}
             aria-hidden
@@ -591,9 +592,9 @@ export function BookmarksBar({
           >
             <BookmarkIcon node={drag.node} className="h-4 w-4 shrink-0" />
             <span className="zen-bm-chip-label">{nodeLabel(drag.node)}</span>
-          </div>,
-          document.body
-        )}
+          </div>
+        </ChromePortal>
+      )}
     </div>
   )
 }

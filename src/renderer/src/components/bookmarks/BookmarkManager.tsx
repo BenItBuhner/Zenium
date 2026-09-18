@@ -1,6 +1,5 @@
 import type { JSX, ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import {
   ArrowDownAZ,
   Check,
@@ -30,6 +29,7 @@ import {
 import { type ManagerSort, sortManagerRows } from '@shared/bookmarkViews'
 import { cmd, run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
+import { ChromePortal, FrameDialogHost } from '@renderer/lib/portals'
 import { activeTab } from '@renderer/lib/selectors'
 import { browserStore, closeOverlay, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -793,11 +793,17 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
         </div>
       </OverlayShell>
 
-      {drag &&
-        createPortal(<DragGhost drag={drag} tree={tree} ghostRef={ghostRef} />, document.body)}
-      {edit?.type === 'url' && (
-        <EditBookmarkDialog key={edit.id ?? 'new'} state={state} edit={edit} />
+      {drag && (
+        <ChromePortal>
+          <DragGhost drag={drag} tree={tree} ghostRef={ghostRef} />
+        </ChromePortal>
       )}
+      {/* The manager's own edit dialog: over the page it is, in the frame's box, on its own host. */}
+      <FrameDialogHost>
+        {edit?.type === 'url' && (
+          <EditBookmarkDialog key={edit.id ?? 'new'} state={state} edit={edit} />
+        )}
+      </FrameDialogHost>
     </>
   )
 }

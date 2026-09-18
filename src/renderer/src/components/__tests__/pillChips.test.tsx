@@ -16,7 +16,8 @@ const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () =
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const { NavRow } = await import('../sidebar/SidebarTop')
+const { NavRow, SidebarTop } = await import('../sidebar/SidebarTop')
+const { Toolbar } = await import('../Toolbar')
 const { PillContent } = await import('../phone/PhoneShell')
 const { PillChip } = await import('../urlbar/PillChip')
 const { openUrlbar, uiStore } = await import('@renderer/lib/ui')
@@ -357,6 +358,22 @@ describe('desktop pill (NavRow)', () => {
     const order = focusable(pill)
     expect(order.length).toBe(1)
     expect(order[0].textContent).toBe('Search or enter address')
+  })
+
+  // Design language v2 §9.29: a chip takes the token family of the surface it sits on, read from
+  // the `data-surface` of its nearest surface root; the pill's root is window chrome either way.
+  it('sits on a window surface at the top of the sidebar', () => {
+    const el = render(<SidebarTop state={state(page)} tab={page} compact={false} showToolbar />)
+    const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
+    expect(pill.closest('[data-surface]')).toBe(el.firstElementChild)
+    expect(el.firstElementChild!.getAttribute('data-surface')).toBe('window')
+  })
+
+  it('sits on a window surface in the top toolbar', () => {
+    const el = render(<Toolbar state={state(page)} tab={page} />)
+    const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
+    expect(pill.closest('[data-surface]')).toBe(el.firstElementChild)
+    expect(el.firstElementChild!.getAttribute('data-surface')).toBe('window')
   })
 })
 
