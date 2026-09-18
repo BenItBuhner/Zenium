@@ -1215,10 +1215,10 @@ export class Menus {
             { label: 'Bookmark All Tabs…', click: () => this.browser.bookmarkTabs(win) },
             { type: 'separator' },
             {
-              label: 'Bookmark Manager',
+              label: 'Show Bookmarks',
               click: () => this.browser.emit('overlay.open', { kind: 'bookmarks' }, win)
             },
-            { label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) },
+            ...desktop({ label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) }),
             { type: 'separator' },
             {
               label: 'Import Bookmarks…',

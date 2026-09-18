@@ -178,6 +178,7 @@ const DESKTOP_APP_MENU = [
   'Bookmarks > Bookmark All Tabs…',
   'Bookmarks > -',
   'Bookmarks > Show Bookmarks',
+  'Bookmarks > Show Bookmarks Bar',
   'Bookmarks > -',
   'Bookmarks > Import Bookmarks…',
   'Bookmarks > Export Bookmarks…',

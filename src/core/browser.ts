@@ -590,11 +590,12 @@ export class Browser {
    * back through `createBookmarksFromTabs`. The window's current space, or the given tabs.
    */
   bookmarkTabs(win: ZenWindow, tabIds?: readonly string[]): void {
+    const space = win.activeSpace()
     const list = tabIds
       ? tabIds.map((id) => this.tabs.tab(id)).filter((t): t is Tab => Boolean(t))
       : orderedTabsForSpace(
           this.state.model,
-          win.activeSpace(),
+          space,
           this.state.settings.containerSpecificEssentials,
           win.id
         )
@@ -603,11 +604,9 @@ export class Browser {
       this.toast('There are no pages to bookmark.', 'info', win)
       return
     }
-    this.emit(
-      'bookmark.allTabs',
-      { tabIds: pages.map((t) => t.id), defaultTitle: `${pages.length} tabs` },
-      win
-    )
+    // A whole space is offered under the space's name (the engine's default); picked tabs count.
+    const defaultTitle = tabIds ? `${pages.length} tabs` : spaceLabel(space)
+    this.emit('bookmark.allTabs', { tabIds: pages.map((t) => t.id), defaultTitle }, win)
   }
 
   createBookmarksFromTabs(
