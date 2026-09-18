@@ -315,13 +315,14 @@ class SiteInfoDemo {
     /**
      * Breadth-first search of the active window for nodes labelled `label` (aria-label or text).
      * A row's name is its label and value together ("Connection Secure"), so a node that merely
-     * starts with the label counts when nothing matches it exactly.
+     * starts with the label counts when nothing matches it exactly – the smallest such node, so a
+     * container whose text happens to begin with a row's label never stands in for the row.
      */
     private fun findAllByLabel(label: String): List<Rect> {
         val root = ui.rootInActiveWindow ?: return emptyList()
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         val exact = ArrayList<Rect>()
-        val prefixed = ArrayList<Rect>()
+        val prefixed = ArrayList<Pair<Rect, Boolean>>()
         queue.add(root)
         var visited = 0
         while (queue.isNotEmpty() && visited < 8_000) {
@@ -329,14 +330,19 @@ class SiteInfoDemo {
             visited++
             val names = listOfNotNull(node.contentDescription?.toString(), node.text?.toString())
                 .map { it.replace(Regex("\\s+"), " ").trim() }
+            val bounds = Rect().also { node.getBoundsInScreen(it) }
             if (names.any { it == label }) {
-                exact += Rect().also { node.getBoundsInScreen(it) }
-            } else if (node.isClickable && names.any { it.startsWith(label) }) {
-                prefixed += Rect().also { node.getBoundsInScreen(it) }
+                exact += bounds
+            } else if (names.any { it.startsWith(label) }) {
+                val button = node.className?.toString()?.endsWith("Button") == true
+                prefixed += bounds to button
             }
             for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
         }
-        return if (exact.isNotEmpty()) exact else prefixed
+        if (exact.isNotEmpty()) return exact.sortedBy { it.width() * it.height() }
+        return prefixed
+            .sortedWith(compareByDescending<Pair<Rect, Boolean>> { it.second }.thenBy { it.first.width() * it.first.height() })
+            .map { it.first }
     }
 
     /** One finger; moves are interpolated and injected in real time (see GestureDemo). */
