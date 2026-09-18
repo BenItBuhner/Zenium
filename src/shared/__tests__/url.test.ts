@@ -182,7 +182,7 @@ describe('displayHost', () => {
 
   it('names an internal page as Chrome names its own pages', () => {
     expect(displayHost('zen://settings')).toBe('Settings')
-    expect(displayHost('zen://settings/privacy')).toBe('Privacy and Security')
+    expect(displayHost('zen://settings/privacy')).toBe('Settings')
   })
 
   it('falls back to the display form where there is no site', () => {
@@ -209,7 +209,7 @@ describe('internal pages', () => {
     expect(displayUrl('zen://settings/look')).toBe('zenium://settings/look')
     expect(displayUrl('zen://history')).toBe('zen://history')
     expect(titleForUrl('zen://settings')).toBe('Settings')
-    expect(titleForUrl('zen://settings/privacy')).toBe('Privacy and Security')
+    expect(titleForUrl('zen://settings/privacy')).toBe('Settings')
     expect(titleForUrl('zen://settings/unknown')).toBe('Settings')
   })
 })

@@ -8,8 +8,9 @@
  * (`displayUrl`). Every navigation guard, error page and host therefore keeps a single scheme.
  *
  * The section is the URL: `zen://settings` is the landing page, `zen://settings/look` the Look
- * and Feel section. The tab's title, the pill and the overview card all read off the URL through
- * {@link internalPageTitle}, so a restored session lands on the section it left.
+ * and Feel section, so a restored session lands on the section it left. The tab's title, the
+ * pill and the overview card all say "Settings" whatever the section ({@link internalPageTitle},
+ * design language v2 §10.1); the section's own label is the drill-in header's.
  *
  * Pure data and parsing shared by the core (tab metadata, reuse, back) and the renderer (what to
  * draw). Nothing here knows how a page is rendered.
@@ -44,10 +45,11 @@ export interface InternalPageDefinition {
 }
 
 /**
- * Settings sections in nav order. Ids are stable: they are deep-link targets
- * (`zenium://settings/privacy`) and what `overlay.open { section }` callers already pass.
- * Sections other PRs add (Downloads, Languages, Passwords, Accessibility, Security) register
- * here and drop into the landing list, the header menulist and the search in one line each.
+ * Settings sections in nav order (Zen's `about:preferences` order, the desktop panel's). Ids are
+ * stable: they are deep-link targets (`zenium://settings/privacy`) and what
+ * `overlay.open { section }` callers already pass. Sections other PRs add (Downloads, Languages,
+ * Passwords, Security) register here and drop into the landing list and the search in one line
+ * each; the renderer maps ids to glyphs and content.
  */
 export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
   {
@@ -63,8 +65,16 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
       'url bar',
       'navigation bar',
       'glance',
-      'app icon'
+      'app icon',
+      'sites',
+      'desktop site'
     ]
+  },
+  {
+    id: 'accessibility',
+    label: 'Accessibility',
+    keywords: ['zoom', 'font size', 'text size', 'pinch'],
+    requires: 'pageControls'
   },
   {
     id: 'compact',
@@ -80,7 +90,8 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
   {
     id: 'privacy',
     label: 'Privacy and Security',
-    keywords: ['ads', 'trackers', 'blocking', 'filter', 'permissions', 'site', 'exceptions']
+    keywords: ['ads', 'trackers', 'blocking', 'filter', 'permissions', 'site', 'exceptions'],
+    requires: 'requestBlocking'
   },
   {
     id: 'resources',
@@ -207,15 +218,13 @@ export function internalPageSection(url: string): InternalPageSection | null {
 }
 
 /**
- * What the tab, the pill and the overview card are called: the page title on the landing page
- * ("Settings"), the section label inside a section ("Privacy and Security"). `null` for URLs that
- * are not internal pages.
+ * What the tab, the pill and the overview card are called: the page's title ("Settings") on the
+ * landing page and inside every section alike (v2 §10.1: the tab is "Settings"; the section's
+ * label is the drill-in header's). `null` for URLs that are not internal pages.
  */
 export function internalPageTitle(url: string): string | null {
   const ref = parseInternalPageUrl(url)
-  if (!ref) return null
-  const page = INTERNAL_PAGES[ref.id]
-  return internalPageSection(url)?.label ?? page.title
+  return ref ? INTERNAL_PAGES[ref.id].title : null
 }
 
 /** Two addresses are the same page when they name the same page id, whatever the section. */

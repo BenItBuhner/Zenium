@@ -46,7 +46,7 @@ import type {
 import type { TranslateUIState } from '../shared/translate'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { sanitizeAppIcon } from '../shared/appIcon'
-import { isInternalPageUrl } from '../shared/internalPages'
+import { isInternalPageUrl, parseInternalPageUrl } from '../shared/internalPages'
 import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
@@ -486,6 +486,8 @@ export class BrowserState {
       tab.progress = 0
       tab.audible = false
       tab.errorCode = null
+      // A page tab restored inside a section has the landing page beneath it (PageService).
+      tab.canGoBack = parseInternalPageUrl(tab.url)?.section != null
       tabs[tab.id] = tab
     }
     this.model = {

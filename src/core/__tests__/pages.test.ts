@@ -150,14 +150,18 @@ describe('opening Settings as a tab', () => {
     expect(spaceUrls(f).indexOf('zen://settings')).toBe(spaceUrls(f).indexOf('https://a.test/') + 1)
   })
 
-  it('opens straight into a section and names the tab after it', () => {
+  it('opens straight into a section, still called Settings, with the landing page beneath it', () => {
     const f = fixture()
     openSite(f, 'https://a.test/')
-    const id = openPage(f, 'privacy')
-    const tab = f.browser.tabs.tab(id ?? undefined)
+    const id = openPage(f, 'privacy') ?? ''
+    const tab = f.browser.tabs.tab(id)
     expect(tab?.url).toBe('zen://settings/privacy')
-    expect(tab?.title).toBe('Privacy and Security')
-    expect(tab?.canGoBack).toBe(false)
+    expect(tab?.title).toBe('Settings')
+    // v2 §10.2: a link into a section has the landing beneath it in history.
+    expect(tab?.canGoBack).toBe(true)
+    expect(back(f, id)).toBe('popped')
+    expect(f.browser.tabs.tab(id)?.url).toBe('zen://settings')
+    expect(f.browser.tabs.tab(id)?.canGoBack).toBe(false)
   })
 
   it('reuses the Settings tab already open in the space and moves it to the section', () => {
@@ -287,8 +291,11 @@ describe('moving between sections', () => {
   it('does not record a move to the section already shown', () => {
     const f = fixture()
     openSite(f, 'https://a.test/')
-    const id = openPage(f, 'look') ?? ''
+    const id = openPage(f) ?? ''
     f.browser.handleCommand(f.win, 'page.navigate', { tabId: id, section: 'look' })
+    f.browser.handleCommand(f.win, 'page.navigate', { tabId: id, section: 'look' })
+    f.browser.tabs.goBack(id)
+    expect(f.browser.tabs.tab(id)?.url).toBe('zen://settings')
     expect(f.browser.tabs.tab(id)?.canGoBack).toBe(false)
   })
 })
@@ -315,10 +322,12 @@ describe('system back inside Settings', () => {
     f.browser.tabs.tab(a.id)!.lastActiveAt = 2
     f.browser.openExternalUrl('zenium://settings/privacy', f.win)
     const id = activeTab(f)?.id ?? ''
+    // The deep link's landing page first, then out to the most recently used tab.
+    expect(back(f, id)).toBe('popped')
     expect(back(f, id)).toBe('switched')
     expect(activeTab(f)?.id).toBe(a.id)
     // The Settings tab stays open in the space: nothing of it was the user's to lose.
-    expect(f.browser.tabs.tab(id)?.url).toBe('zen://settings/privacy')
+    expect(f.browser.tabs.tab(id)?.url).toBe('zen://settings')
   })
 
   it('switches to another tab when the opener is gone', () => {
@@ -388,11 +397,15 @@ describe('a restored session', () => {
     })
     const restored = f.browser.tabs.tab(settings.id)
     expect(restored?.url).toBe('zen://settings/privacy')
-    expect(restored?.title).toBe('Privacy and Security')
+    expect(restored?.title).toBe('Settings')
     expect(restored?.discarded).toBe(false)
     expect(restored?.openerTabId).toBeNull()
     expect(f.viewsFor).not.toContain(settings.id)
-    // Its own history starts afresh: back leaves for the other tab of the space.
+    // Its history starts afresh from the URL: the landing beneath the section, then the tab
+    // leaves for the other tab of the space.
+    expect(restored?.canGoBack).toBe(true)
+    expect(back(f, settings.id)).toBe('popped')
+    expect(f.browser.tabs.tab(settings.id)?.url).toBe('zen://settings')
     expect(back(f, settings.id)).toBe('switched')
     expect(activeTab(f)?.id).toBe(site.id)
   })

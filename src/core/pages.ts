@@ -37,6 +37,17 @@ const PAGE_OVERLAYS: Record<InternalPageId, OverlayKind> = {
   settings: 'settings'
 }
 
+/**
+ * The history a page tab starts with: a section (a deep link, a restored tab) has the landing
+ * page beneath it, so the header's chevron and the system back land there first (v2 §10.2); the
+ * landing page itself is the whole history.
+ */
+function initialHistory(url: string): PageHistory {
+  const ref = parseInternalPageUrl(url)
+  if (!ref || ref.section === null) return { entries: [url], index: 0 }
+  return { entries: [internalPageUrl({ id: ref.id, section: null }), url], index: 1 }
+}
+
 export class PageService {
   private readonly histories = new Map<string, PageHistory>()
 
@@ -92,7 +103,9 @@ export class PageService {
       win
     )
     tab.openerTabId = opener && opener.id !== tab.id ? opener.id : null
-    this.histories.set(tab.id, { entries: [url], index: 0 })
+    const history = initialHistory(url)
+    this.histories.set(tab.id, history)
+    this.apply(tab, history)
     this.browser.state.commit()
     return tab.id
   }
@@ -221,10 +234,11 @@ export class PageService {
       .sort((a, b) => b.lastActiveAt - a.lastActiveAt)[0]
   }
 
+  /** The tab's section history; a restored tab gets a fresh one from its URL. */
   private historyOf(tab: Tab): PageHistory {
     let history = this.histories.get(tab.id)
     if (!history) {
-      history = { entries: [tab.url], index: 0 }
+      history = initialHistory(tab.url)
       this.histories.set(tab.id, history)
     }
     return history

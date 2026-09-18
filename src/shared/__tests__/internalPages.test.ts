@@ -25,6 +25,7 @@ describe('the page registry', () => {
     expect(INTERNAL_PAGES.settings.title).toBe('Settings')
     expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual([
       'look',
+      'accessibility',
       'compact',
       'tabs',
       'privacy',
@@ -101,11 +102,12 @@ describe('parsing page addresses', () => {
     expect(isInternalPageUrl('zen://history')).toBe(false)
   })
 
-  it('names the tab after the page or the section it shows', () => {
+  it('calls the tab Settings on every section and keeps the section label for the header', () => {
     expect(internalPageTitle('zen://settings')).toBe('Settings')
-    expect(internalPageTitle('zen://settings/privacy')).toBe('Privacy and Security')
-    expect(internalPageTitle('zen://settings/look')).toBe('Look and Feel')
+    expect(internalPageTitle('zen://settings/privacy')).toBe('Settings')
+    expect(internalPageTitle('zenium://settings/look')).toBe('Settings')
     expect(internalPageTitle('https://example.com/')).toBeNull()
+    expect(internalPageSection('zen://settings/privacy')?.label).toBe('Privacy and Security')
     expect(internalPageSection('zen://settings/about')?.label).toBe('About')
     expect(internalPageSection('zen://settings')).toBeNull()
   })
@@ -124,7 +126,6 @@ describe('the section model', () => {
     expect(phone).toEqual([
       'look',
       'tabs',
-      'privacy',
       'search',
       'spaces',
       'containers',
@@ -149,6 +150,8 @@ describe('the section model', () => {
     expect(ids).not.toContain('extensions')
     expect(ids).not.toContain('sync')
     expect(ids).not.toContain('resources')
+    expect(ids).not.toContain('accessibility')
+    expect(ids).not.toContain('privacy')
   })
 })
 
