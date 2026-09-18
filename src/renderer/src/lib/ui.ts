@@ -74,6 +74,17 @@ export interface Insets {
   left: number
 }
 
+/**
+ * What the last opening of the find bar asked of it: `text` for the field (the tab's last
+ * query, the page's selection; '' keeps what is typed) and, for F3 / Ctrl+G, the match to step
+ * to. `seq` tells one request from the next, so Ctrl+F on an open bar re-selects the query.
+ */
+export interface FindRequest {
+  seq: number
+  text: string
+  again: 'next' | 'prev' | null
+}
+
 export interface UiState {
   overlay: OverlayKind
   overlaySpaceId: string | null
@@ -84,8 +95,9 @@ export interface UiState {
   urlbar: UrlbarState
   findOpen: boolean
   findTabId: string | null
-  /** Text the find bar starts with when it opens next (the page selection); consumed on mount. */
-  findSeed: string | null
+  /** The query in the find bar's field (kept here so the bar survives a remount, e.g. into HTML fullscreen). */
+  findText: string
+  findRequest: FindRequest | null
   /** Data URL of the active tab, shown dimmed behind overlays. */
   snapshot: string | null
   snapshotTabId: string | null
@@ -170,7 +182,8 @@ export const uiStore = createStore<UiState>(
     urlbar: { open: false, mode: 'new-tab', tabId: null, initialText: undefined, attached: false },
     findOpen: false,
     findTabId: null,
-    findSeed: null,
+    findText: '',
+    findRequest: null,
     snapshot: null,
     snapshotTabId: null,
     toasts: [],
@@ -381,6 +394,38 @@ export function closeUrlbar(): void {
   if (!uiStore.get().urlbar.open) return
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   invalidateSnapshot()
+  returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
+// Find in page
+// ---------------------------------------------------------------------------
+
+let findSeq = 0
+
+/**
+ * Show the find bar for `tabId` (or hand a request to the open one): `text` goes into the field
+ * when there is any, `again` steps to the next or previous match at once. A bar open for another
+ * tab moves over, its query left behind.
+ */
+export function openFindBar(tabId: string, text = '', again: 'next' | 'prev' | null = null): void {
+  const ui = uiStore.get()
+  const moving = ui.findOpen && ui.findTabId !== tabId
+  if (moving && ui.findTabId) run('find.stop', { tabId: ui.findTabId, keepSelection: true })
+  uiStore.set({
+    findOpen: true,
+    findTabId: tabId,
+    findText: text || (moving ? '' : ui.findText),
+    findRequest: { seq: ++findSeq, text, again }
+  })
+}
+
+/** Esc, the X, Back: the bar goes, the active match stays selected and the page has the keyboard. */
+export function closeFindBar(): void {
+  const ui = uiStore.get()
+  if (!ui.findOpen) return
+  if (ui.findTabId) run('find.stop', { tabId: ui.findTabId, keepSelection: true })
+  uiStore.set({ findOpen: false, findTabId: null, findRequest: null })
   returnFocusToPage()
 }
 

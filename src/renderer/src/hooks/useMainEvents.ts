@@ -9,6 +9,7 @@ import {
   closeMenu,
   closeUrlbar,
   openBookmarkChrome,
+  openFindBar,
   openOverlay,
   openUrlbar,
   pushToast,
@@ -67,11 +68,11 @@ export function useMainEvents(): void {
         closeUrlbar()
         void openOverlay('space-editor', currentActiveTabId(), spaceId)
       }),
-      onEvent('find.open', ({ tabId, again, text }) => {
-        uiStore.set({ findOpen: true, findTabId: tabId, findSeed: text ?? null })
-        if (again) window.dispatchEvent(new CustomEvent('zen-find-again', { detail: again }))
-        if (text !== undefined)
-          window.dispatchEvent(new CustomEvent('zen-find-seed', { detail: text }))
+      onEvent('find.open', ({ tabId, text, again }) => openFindBar(tabId, text, again ?? null)),
+      onEvent('find.selection', ({ tabId, text }) => {
+        // Cmd+E does not open the bar; one open for the tab searches the selection.
+        const ui = uiStore.get()
+        if (ui.findOpen && ui.findTabId === tabId) openFindBar(tabId, text)
       }),
       onEvent('menu.app', () => {
         // The menu button claims the request when it is on screen (it takes the focus and opens

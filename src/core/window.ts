@@ -69,6 +69,8 @@ export class ZenWindow {
   compactEnabled: boolean
   compactSidebarPersistent = false
   htmlFullscreenTabId: string | null = null
+  /** Window pixels under the HTML fullscreen view kept for chrome docked there (the find bar). */
+  private fullscreenBottomInset = 0
   /**
    * The layout the chrome is showing, as it reports it (`window.formFactor`); the desktop layout
    * until the chrome says otherwise. The app menu and the command list are built for it.
@@ -299,6 +301,17 @@ export class ZenWindow {
     return layout.placements.find((p) => p.tabId === tabId)?.rect ?? null
   }
 
+  /**
+   * The find bar opened (or closed) under a page in HTML fullscreen: the view gives up (or takes
+   * back) that strip at the bottom, the only chrome a fullscreen page shares the window with.
+   */
+  setFullscreenInset(bottom: number): void {
+    const next = Math.max(0, Math.round(bottom))
+    if (next === this.fullscreenBottomInset) return
+    this.fullscreenBottomInset = next
+    if (this.htmlFullscreenTabId) this.relayout()
+  }
+
   /** Position tab views exactly where the renderer laid the content area out. */
   applyLayout(report: LayoutReport): void {
     this.lastLayout = report
@@ -307,9 +320,11 @@ export class ZenWindow {
     const owned = tabs.viewsOwnedBy(this)
     const fullscreenTabId = this.htmlFullscreenTabId
     if (fullscreenTabId && owned.has(fullscreenTabId)) {
-      // An element in HTML fullscreen covers the whole window, chrome included.
+      // An element in HTML fullscreen covers the whole window, chrome included, save for the
+      // strip a docked find bar asked for.
       this.browser.extensions.placeSidePanel(this, null)
-      const { width, height } = this.host.contentSize()
+      const { width, height: full } = this.host.contentSize()
+      const height = Math.max(0, full - this.fullscreenBottomInset)
       for (const [tabId, view] of owned) {
         if (view.isDestroyed()) continue
         if (tabId === fullscreenTabId) {

@@ -37,6 +37,8 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['[data-drop-into] {', '.zen-panel {'],
   // The bookmark chrome: bar, panels, star bubble, dialogs, manager (components/bookmarks/*).
   ['.zen-bm-bar {', '/*\n * Fading scroll edges'],
+  // Find in page, zoom and fullscreen: the docked find bar (components/content/FindBar.tsx).
+  ['.zen-find-bar {', '/*\n * Settings → Default Browser and the'],
   // Settings → Default Browser and the default-browser strip (components/overlays/
   // DefaultBrowserSection.tsx, content/DefaultBrowserBanner.tsx): the flat card and its inks.
   ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {']

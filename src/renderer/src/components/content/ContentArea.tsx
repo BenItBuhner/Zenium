@@ -152,7 +152,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
           )}
         </div>
         {ui.findOpen && ui.findTabId && state.tabs[ui.findTabId] && (
-          <FindBar state={state} tabId={ui.findTabId} />
+          <FindBar state={state} tabId={ui.findTabId} ui={ui} docked="content" />
         )}
       </div>
       {ui.overlay !== 'none' && <OverlayHost state={state} ui={ui} />}

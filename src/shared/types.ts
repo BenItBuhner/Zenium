@@ -1216,7 +1216,7 @@ export type ShortcutAction =
   | 'find.open'
   | 'find.next'
   | 'find.prev'
-  /** Chrome's "Use Selection for Find" (Cmd+E on macOS). */
+  /** macOS "Use Selection for Find" (Cmd+E): the page's selection becomes the find query. */
   | 'find.useSelection'
   | 'page.savePage'
   | 'page.openFile'
@@ -2709,6 +2709,11 @@ export interface Commands {
   'window.toggleMaximize': { args: void; result: void }
   'window.close': { args: void; result: void }
   'window.toggleFullscreen': { args: void; result: void }
+  /**
+   * Chrome docked under a page in HTML fullscreen (the find bar): the fullscreen view keeps
+   * `bottom` pixels of the window free for it; 0 gives the page the whole window back.
+   */
+  'window.fullscreenInset': { args: { bottom: number }; result: void }
   /** Renderer → main: the layout the chrome settled on (sent on start and whenever it changes). */
   'window.formFactor': { args: { formFactor: FormFactor }; result: void }
   /** Zen: a new synced window starts at the current space showing the same tabs. */
@@ -3041,8 +3046,15 @@ export interface Events {
   'urlbar.toggle': { mode: UrlbarOpenMode; text?: string }
   'urlbar.close': void
   'overlay.open': { kind: OverlayKind; folderId?: string; section?: string }
-  /** Open the find bar; `text` replaces what it holds and is searched for at once ("use selection for find"). */
-  'find.open': { tabId: string; again?: 'next' | 'prev'; text?: string }
+  /**
+   * Show the find bar for a tab with `text` in its field (the tab's last query, else the
+   * profile's, else the page's selection when it is short; empty for a first search), the text
+   * selected so typing replaces it. `again` runs the search at once and steps to the next or
+   * previous match (F3 / Ctrl+G with the bar closed reopen it with the last query, as Chrome).
+   */
+  'find.open': { tabId: string; text: string; again?: 'next' | 'prev' }
+  /** "Use Selection for Find" took `text` as the query; a bar open for the tab shows and searches it. */
+  'find.selection': { tabId: string; text: string }
   /**
    * A shortcut asked for the application menu: the renderer focuses the menu button and opens
    * the menu from it (`app.menu` with `keyboard`), so Escape leaves the keyboard on the button.
