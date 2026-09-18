@@ -1,6 +1,7 @@
 import type { JSX, ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import {
+  AppWindow,
   ArrowLeft,
   ArrowRight,
   BookOpenText,
@@ -22,6 +23,7 @@ import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
 import { addressParts, displayUrl, fullUrl, getDomain } from '@shared/url'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { run } from '@renderer/lib/api'
+import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { isPrivateWindow } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { APP_MENU_EVENT, hint, openAppMenu } from '@renderer/lib/shortcuts'
@@ -109,6 +111,9 @@ export function NavRow({
   // What the chips have open, for their `aria-expanded`.
   const siteInfoOpen = uiStore.use((s) => s.siteInfoOpen)
   const boostsOpen = uiStore.use((s) => s.overlay === 'boosts')
+  const blockedOpen = uiStore.use(
+    (s) => s.blockedPopupsPanel !== null && s.blockedPopupsPanel.tabId === tab?.id
+  )
   // A popup (`window.open` with features) has Chrome's read-only location bar: the address and
   // its chips show where the page is, but nothing can be typed into it.
   const readOnly = state.window.chrome === 'popup'
@@ -137,6 +142,7 @@ export function NavRow({
     window.addEventListener(APP_MENU_EVENT, fromKeyboard)
     return () => window.removeEventListener(APP_MENU_EVENT, fromKeyboard)
   }, [])
+  const blocked = blockedPopupsOf(state, tab?.id)
   return (
     <div
       ref={row}
@@ -257,7 +263,9 @@ export function NavRow({
             focused, when they would squeeze the address out of a narrow pill. A `:focus-within`
             scope rather than `:has(:focus-visible)`: Chromium blocks a Tab whose target is
             unfocusable in the instant between blurring the old chip and focusing the next, and
-            only `:focus-within` on their common ancestor holds through that instant.
+            only `:focus-within` on their common ancestor holds through that instant. They stay
+            as well while a chip has its popover up (`aria-expanded`), so the chips do not shift
+            under a popover that was placed on one of them (§9.20).
           */}
           <span className="contents group/chips">
             {isPrivate ? (
@@ -307,6 +315,43 @@ export function NavRow({
                 <BookOpenText className="h-3.5 w-3.5" />
               </PillChip>
             )}
+            {tab && blocked.length > 0 && (
+              // A 28 px chip (§9.3) whose popup is the blocked pop-ups list; `aria-expanded`
+              // follows the popover and `data-blocked-popups-chip` is what it hangs from and
+              // what its Escape hands the keyboard back to. A control on the window surface
+              // (§9.29): its fills and the count's pill draw in the window family, which the
+              // pill's `data-surface="window"` resolves.
+              <PillChip
+                label={
+                  blocked.length === 1 ? 'Pop-up blocked' : `${blocked.length} pop-ups blocked`
+                }
+                title={
+                  blocked.length === 1 ? 'Pop-up blocked' : `${blocked.length} pop-ups blocked`
+                }
+                popup="dialog"
+                expanded={blockedOpen}
+                data-blocked-popups-chip=""
+                className={cn(
+                  'zen-animate-pop flex h-7 min-w-7 shrink-0 items-center justify-center gap-1 rounded-md px-1.5 hover:bg-[var(--v2-control-fill)]',
+                  // The anchor keeps its pressed fill while its popover is up (§9.20).
+                  blockedOpen && 'bg-[var(--v2-control-fill-hover)]'
+                )}
+                onActivate={(e) => {
+                  // The chip that put the popover away keeps the keyboard, as the anchor does
+                  // after Escape (§9.22); a pointer press while it is up never gets here (the
+                  // chrome layer consumes it), so this is the keyboard's toggle.
+                  if (blockedOpen) closeBlockedPopups(false)
+                  else void openBlockedPopups(tab.id, e.currentTarget.getBoundingClientRect())
+                }}
+              >
+                <AppWindow className="h-4 w-4" strokeWidth={1.5} />
+                {blocked.length > 1 && (
+                  <span className="rounded-full bg-[var(--v2-control-fill)] px-2 text-[13px] leading-5 font-semibold text-[var(--v2-control-text-deemphasized)] tabular-nums">
+                    {blocked.length}
+                  </span>
+                )}
+              </PillChip>
+            )}
             {tab && isWebPage && !isPrivate && (
               <PillChip
                 label={boosted ? 'Edit Boost for this site' : 'Boost this site'}
@@ -317,7 +362,7 @@ export function NavRow({
                   'h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
                   boosted
                     ? 'flex text-[var(--zen-accent)] opacity-100'
-                    : 'zen-pill-extra hidden group-hover/pill:flex group-focus-within/chips:flex'
+                    : 'zen-pill-extra hidden group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex'
                 )}
                 onActivate={() => void openOverlay('boosts', tab.id)}
               >
@@ -328,7 +373,7 @@ export function NavRow({
               <PillChip
                 label="Copy URL"
                 title={hint('Copy URL', state, 'tab.copyUrl')}
-                className="zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex group-focus-within/chips:flex"
+                className="zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex"
                 onActivate={() => tab && run('tab.copyUrl', { tabId: tab.id })}
               >
                 <Copy className="h-3 w-3" />

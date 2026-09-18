@@ -50,6 +50,7 @@ import {
 } from './PageControlsSettings'
 import { PasswordsSection } from './PasswordsSection'
 import { ResourcesSection } from './ResourcesSection'
+import { SecuritySection } from './SecuritySection'
 import { Choice, Group, MENULIST_HEIGHT, Row, SWITCH_HEIGHT, Segmented } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
 import { SyncSection } from './SyncSection'
@@ -71,6 +72,7 @@ export type SettingsSection =
   | 'extensions'
   | 'agents'
   | 'passwords'
+  | 'security'
   | 'sync'
   | 'shortcuts'
   | 'default-browser'
@@ -93,6 +95,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'extensions', label: 'Extensions' },
   { id: 'agents', label: 'AI Agents' },
   { id: 'passwords', label: 'Passwords' },
+  { id: 'security', label: 'Security' },
   { id: 'sync', label: 'Sync' },
   { id: 'shortcuts', label: 'Keyboard Shortcuts' },
   { id: 'default-browser', label: 'Default Browser' },
@@ -222,6 +225,7 @@ export function SettingsBody({
           {section === 'extensions' && <ExtensionsSection state={state} />}
           {section === 'agents' && <AgentsSection state={state} set={set} />}
           {section === 'passwords' && <PasswordsSection state={state} set={set} />}
+          {section === 'security' && <SecuritySection state={state} />}
           {section === 'sync' && <SyncSection state={state} />}
           {section === 'shortcuts' && <ShortcutsSection state={state} />}
           {section === 'default-browser' && <DefaultBrowserSection state={state} />}
