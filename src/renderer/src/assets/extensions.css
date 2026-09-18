@@ -65,6 +65,29 @@
   .zen-v2-header + .zen-v2-column {
     padding-top: 2px;
   }
+  /*
+   * On a phone the page never carries a 22 below the overlay's title (§9.26, §10.3): the header
+   * is a bar header instead (§9.16) – 56 tall, its 44 controls at 6 px margins, the title 17/600
+   * at line-height 22 – with 16 to the content below it. Inside the Settings page, whose bar
+   * names the page, the row is a group's 15/600 sub-heading above its cards (§9.27).
+   */
+  [data-form-factor='phone'] .zen-v2-header {
+    padding: 6px 0;
+  }
+  [data-form-factor='phone'] .zen-v2-header-row {
+    min-height: var(--v2-icon-button);
+  }
+  [data-form-factor='phone'] .zen-v2-header + .zen-v2-column {
+    padding-top: 16px;
+  }
+  [data-form-factor='phone'] .zen-v2-title {
+    font-size: var(--v2-font-heading);
+    line-height: 22px;
+  }
+  [data-form-factor='phone'] .zen-v2[data-embedded] .zen-v2-title {
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
   /* The hairline is its own element fading in (v1 §7.4: opacity per frame, not a box-shadow). */
   .zen-v2-header::after {
     content: '';
@@ -856,23 +879,27 @@
     padding: 0;
     list-style: none;
   }
-  /* Empty state: a 24 glyph at stroke 1.5 in the deemphasised ink, one sentence, the action. */
+  /*
+   * The list's empty state (§9.17): one sentence 15/400 at 69%, centred inside a 32 gutter (the
+   * column's own 32 on a desktop; the phone's 16 plus 16 here), its first line 32 below the
+   * header's edge on a desktop (the column's 2 under the header plus 30) and 48 on a phone (the
+   * column's 16 plus 32), top-anchored, then the one follow-up 16 beneath as a secondary button.
+   * No glyph.
+   */
   .zen-ext-empty {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 16px;
-    padding: 48px 16px 24px;
+    padding: 30px 0 0;
     text-align: center;
     color: var(--v2-text-deemphasized);
   }
-  .zen-ext-empty .lucide {
-    width: 24px;
-    height: 24px;
+  [data-form-factor='phone'] .zen-ext-empty {
+    padding: 32px 16px 0;
   }
   .zen-ext-empty p {
     margin: 0;
-    max-width: 360px;
     font-size: var(--v2-font-body);
     line-height: var(--v2-line-body);
   }

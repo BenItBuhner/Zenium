@@ -7,7 +7,6 @@ import {
   Package,
   Pin,
   PinOff,
-  Puzzle,
   RefreshCw,
   RotateCw,
   SlidersHorizontal,
@@ -303,13 +302,17 @@ function AddFromStore({ onDone }: { onDone: () => void }): JSX.Element {
   )
 }
 
+/**
+ * The list's empty state (§9.17): one sentence, no glyph, top-anchored 32 below the header (48
+ * on a phone) and centred in a 32 gutter, with the one obvious next step 16 beneath it as a
+ * secondary button – never primary, so the header's primary keeps its place once there is a list.
+ */
 function EmptyState({ onAdd, adding }: { onAdd: () => void; adding: boolean }): JSX.Element {
   return (
     <div className="zen-ext-empty">
-      <Puzzle />
-      <p>Extensions you add show up here, in every Space.</p>
+      <p>Extensions you add show up here, in every Space</p>
       {!adding && (
-        <V2Button variant="primary" onClick={onAdd}>
+        <V2Button onClick={onAdd}>
           <Store /> Add from store
         </V2Button>
       )}
