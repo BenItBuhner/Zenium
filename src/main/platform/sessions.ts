@@ -1,6 +1,16 @@
-import type { SessionHost } from '../../core/platform'
+import type { EngineDataCounts, EngineDataKind, SessionHost } from '../../core/platform'
 import { app, session, type Session } from 'electron'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../../shared/types'
+
+/** Every storage kind of `clearStorageData` but cookies. */
+const SITE_STORAGES: Array<
+  'filesystem' | 'indexdb' | 'localstorage' | 'shadercache' | 'serviceworkers' | 'cachestorage'
+> = ['filesystem', 'indexdb', 'localstorage', 'shadercache', 'serviceworkers', 'cachestorage']
+
+/** `.example.com` and `example.com` are one site for the cookie count. */
+export function cookieSite(domain: string | undefined): string {
+  return (domain ?? '').replace(/^\./, '').toLowerCase()
+}
 
 /**
  * Each Zen container maps to a persistent Chromium session partition, which gives it its own
@@ -66,6 +76,36 @@ export class SessionManager implements SessionHost {
   /** Forget everything the private session accumulated (last private window closed). */
   async clearPrivate(): Promise<void> {
     await this.clearContainerData(PRIVATE_CONTAINER_ID)
+  }
+
+  /**
+   * Clear browsing data: containers that were never opened this run are opened for it, so what
+   * they hold on disk goes too. Chromium's session API has no time range: everything of a kind.
+   */
+  async clearBrowsingData(containerIds: string[], kinds: EngineDataKind[]): Promise<void> {
+    const wanted = new Set(kinds)
+    for (const id of containerIds) {
+      const ses = this.get(id)
+      if (wanted.has('cookies') && wanted.has('storage')) await ses.clearStorageData()
+      else if (wanted.has('cookies')) await ses.clearStorageData({ storages: ['cookies'] })
+      else if (wanted.has('storage')) await ses.clearStorageData({ storages: SITE_STORAGES })
+      if (wanted.has('cache')) {
+        await ses.clearCache()
+        await ses.clearCodeCaches({})
+      }
+    }
+  }
+
+  /** Distinct cookie domains and the cache's size across the containers, for the preview. */
+  async browsingDataCounts(containerIds: string[]): Promise<EngineDataCounts> {
+    const domains = new Set<string>()
+    let cacheBytes = 0
+    for (const id of containerIds) {
+      const ses = this.get(id)
+      for (const cookie of await ses.cookies.get({})) domains.add(cookieSite(cookie.domain))
+      cacheBytes += await ses.getCacheSize()
+    }
+    return { cookieSites: domains.size, cacheBytes }
   }
 
   /** Chromium keeps accepted HTTP credentials per session; without this a site never asks again. */

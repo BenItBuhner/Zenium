@@ -1,4 +1,5 @@
 import type {
+  BookmarkNodeType,
   ExternalProtocolRequest,
   MenuDescriptor,
   OverlayKind,
@@ -50,10 +51,20 @@ export interface Toast {
   kind: 'info' | 'error'
 }
 
+/** A sidebar tab in the hand (see lib/drag.ts); the ghost and caret are placed imperatively. */
 export interface DragState {
   tabId: string
-  x: number
-  y: number
+  /** The drag began in another window (the core relays it); the tab may not be in this list. */
+  remote: boolean
+  title: string
+  favicon: string | null
+  /** The lifted row's size; the ghost is drawn at it. */
+  width: number
+  height: number
+  /** An Essentials tile was lifted (the ghost is a tile, not a row). */
+  tile: boolean
+  /** The pointer let go: the ghost is settling into its slot or dissolving. */
+  settling: boolean
 }
 
 export interface Insets {
@@ -73,6 +84,8 @@ export interface UiState {
   urlbar: UrlbarState
   findOpen: boolean
   findTabId: string | null
+  /** Text the find bar starts with when it opens next (the page selection); consumed on mount. */
+  findSeed: string | null
   /** Data URL of the active tab, shown dimmed behind overlays. */
   snapshot: string | null
   snapshotTabId: string | null
@@ -88,6 +101,30 @@ export interface UiState {
   iconPickerTabId: string | null
   /** An HTTP sign-in or certificate dialog is up over the page (the page waits for it). */
   securityPromptOpen: boolean
+  /** A page's `alert` / `confirm` / `prompt` or "Leave site?" dialog is up (the page waits for it). */
+  pageDialogOpen: boolean
+  /** A window-modal question ("Close N tabs?", "Quit Zenium?") is up over the whole window. */
+  windowPromptOpen: boolean
+  /**
+   * The star bubble (Ctrl+D): the tab that was starred, its bookmark, and where the star it
+   * hangs from and the address pill around it were when it opened (null when the pill is not
+   * on screen).
+   */
+  starDialog: {
+    tabId: string
+    nodeId: string
+    created: boolean
+    anchor: Rect | null
+    pill: Rect | null
+  } | null
+  /** A bookmark the manager should edit, or create (`id: null`) inside `parentId`. */
+  bookmarkEdit: { id: string | null; parentId: string; type: BookmarkNodeType } | null
+  /** "Bookmark all tabs": the pages to file and the folder name Chrome would suggest. */
+  bookmarkAllTabs: { tabIds: string[]; defaultTitle: string } | null
+  /** A folder panel of the bookmarks bar hangs over the page. */
+  barMenuOpen: boolean
+  /** A permission prompt ("Allow example.com to use your camera?") is up over the page. */
+  permissionPromptOpen: boolean
   /** Zen's multi-select: tabs picked with Ctrl / Shift+click (acted on together). */
   selectedTabIds: string[]
   /** Last plainly clicked / toggled tab – the anchor for Shift+click ranges. */
@@ -133,6 +170,7 @@ export const uiStore = createStore<UiState>(
     urlbar: { open: false, mode: 'new-tab', tabId: null, initialText: undefined, attached: false },
     findOpen: false,
     findTabId: null,
+    findSeed: null,
     snapshot: null,
     snapshotTabId: null,
     toasts: [],
@@ -144,6 +182,13 @@ export const uiStore = createStore<UiState>(
     editingPinnedUrlTabId: null,
     iconPickerTabId: null,
     securityPromptOpen: false,
+    pageDialogOpen: false,
+    windowPromptOpen: false,
+    starDialog: null,
+    bookmarkEdit: null,
+    bookmarkAllTabs: null,
+    barMenuOpen: false,
+    permissionPromptOpen: false,
     selectedTabIds: [],
     selectionAnchorId: null,
     glanceActive: false,
@@ -226,7 +271,11 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.barEditorOpen &&
     !ui.tabsMenu &&
     !ui.securityPromptOpen &&
-    !ui.stageActive
+    !ui.permissionPromptOpen &&
+    !ui.pageDialogOpen &&
+    !ui.windowPromptOpen &&
+    !ui.stageActive &&
+    !bookmarkChromeOpen(ui)
   )
 }
 
@@ -250,10 +299,63 @@ export function invalidateSnapshot(): void {
     !ui.barEditorOpen &&
     !ui.tabsMenu &&
     !ui.securityPromptOpen &&
-    !ui.stageActive
+    !ui.permissionPromptOpen &&
+    !ui.pageDialogOpen &&
+    !ui.windowPromptOpen &&
+    !ui.stageActive &&
+    !bookmarkChromeOpen(ui)
   ) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
   }
+}
+
+// ---------------------------------------------------------------------------
+// Bookmark chrome over the page: the star bubble, the bar's panels, the dialogs
+// ---------------------------------------------------------------------------
+
+type BookmarkChrome = Pick<
+  UiState,
+  'starDialog' | 'bookmarkEdit' | 'bookmarkAllTabs' | 'barMenuOpen'
+>
+
+/** Whether any of it is up. The manager owns its own edit dialog while it is open. */
+export function bookmarkChromeOpen(ui: UiState): boolean {
+  return (
+    ui.starDialog !== null ||
+    ui.bookmarkAllTabs !== null ||
+    ui.barMenuOpen ||
+    (ui.bookmarkEdit !== null && ui.overlay === 'none')
+  )
+}
+
+/**
+ * Like a menu: the page behind is captured first, then the chrome takes the keyboard. One
+ * popover at a time (design-language-v2-draft §9.20): the star bubble and a bar panel replace
+ * each other rather than stacking.
+ */
+export async function openBookmarkChrome(
+  patch: Partial<BookmarkChrome>,
+  activeTabId: string | null
+): Promise<void> {
+  await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  const exclusive: Partial<BookmarkChrome> = {}
+  if (patch.starDialog) exclusive.barMenuOpen = false
+  if (patch.barMenuOpen) exclusive.starDialog = null
+  uiStore.set({ ...exclusive, ...patch })
+}
+
+/**
+ * Put bookmark chrome away. Focus goes back to the page unless the caller keeps it in the
+ * chrome (`keepFocus`: Escape hands it to the anchor the popover hung from, §9.22).
+ */
+export function closeBookmarkChrome(
+  patch: Partial<BookmarkChrome>,
+  opts: { keepFocus?: boolean } = {}
+): void {
+  uiStore.set(patch)
+  invalidateSnapshot()
+  if (!opts.keepFocus) returnFocusToPage()
 }
 
 export async function openUrlbar(
@@ -375,7 +477,11 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.barEditorOpen ||
     ui.tabsMenu !== null ||
     ui.securityPromptOpen ||
-    ui.stageActive
+    ui.permissionPromptOpen ||
+    ui.pageDialogOpen ||
+    ui.windowPromptOpen ||
+    ui.stageActive ||
+    bookmarkChromeOpen(ui)
   )
 }
 
@@ -416,6 +522,18 @@ export function closeTabsMenu(): void {
   uiStore.set({ tabsMenu: null })
   invalidateSnapshot()
   returnFocusToPage()
+}
+
+/**
+ * Only anchored bookmark panels are up: a bar panel, the star bubble. The page behind them is
+ * captured all the same (they overlap the live view), but panels draw no scrim, so the capture
+ * shows undimmed; dialogs dim it.
+ */
+export function panelAloneOverContent(ui: UiState): boolean {
+  return (
+    (ui.barMenuOpen || ui.starDialog !== null) &&
+    !overlayCoversContent({ ...ui, barMenuOpen: false, starDialog: null })
+  )
 }
 
 // The system back gesture (registry of dismissable surfaces, legacy chain) lives in `back.ts`.

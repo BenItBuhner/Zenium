@@ -1,15 +1,21 @@
-import type { JSX } from 'react'
+import type { JSX, RefObject } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { MonitorSmartphone, Plus } from 'lucide-react'
-import type { Rect, UIState } from '@shared/types'
+import { MonitorSmartphone, Plus, X } from 'lucide-react'
+import type { Rect, SidePanelInfo, UIState } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
+import { chromeUnderPages } from '@renderer/lib/cover'
+import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
-import { captureActiveTab, uiStore, type UiState } from '@renderer/lib/ui'
+import { useChord } from '@renderer/lib/shortcuts'
+import { captureActiveTab, panelAloneOverContent, uiStore, type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { dropStore } from '@renderer/lib/drag'
 import { Urlbar } from '../urlbar/Urlbar'
 import { OverlayHost } from '../overlays/OverlayHost'
+import { CoverImage } from './CoverImage'
+import { CrashRestoreBanner } from './CrashRestoreBanner'
+import { DefaultBrowserBanner } from './DefaultBrowserBanner'
 import { FindBar } from './FindBar'
 import { GlanceFrame } from './GlanceFrame'
 import { PullIndicator } from './PullIndicator'
@@ -27,6 +33,7 @@ interface Props {
  */
 export function ContentArea({ state, ui }: Props): JSX.Element {
   const viewportRef = useRef<HTMLDivElement>(null)
+  const sidePanelRef = useRef<HTMLDivElement>(null)
   const tab = activeTab(state)
   const group = tab?.splitGroupId ? (state.splitGroups[tab.splitGroupId] ?? null) : null
   const glanceActive = ui.glanceActive
@@ -52,7 +59,13 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
     }
   }, [glanceTabId, glanceParentId])
 
-  const { area, contentHidden } = useLayoutReporter(viewportRef, state, ui, glanceActive)
+  const { area, contentHidden } = useLayoutReporter(
+    viewportRef,
+    sidePanelRef,
+    state,
+    ui,
+    glanceActive
+  )
   const local: Rect | null = area ? { x: 0, y: 0, width: area.width, height: area.height } : null
   // The phone shell draws the URL bar itself: its field sits in the bar band outside this frame.
   const phone = useViewport().formFactor === 'phone'
@@ -63,6 +76,11 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
     (contentHidden || glanceActive) && Boolean(tab) && !staged && !(phone && ui.urlbar.open)
   const dropKey = dropStore.use((s) => s.key)
   const foreign = isForeignTab(state, tab?.id)
+  // The "Make Zenium your default browser" and "Restore pages?" strips sit above the page,
+  // inside the frame, so the layout reporter's viewport (and the tab view under it) shrink by
+  // their height.
+  const banner = !phone && wantsDefaultBrowserBanner(state)
+  const crashRestore = !phone ? state.crashRestore : null
 
   // Overlays are hosted beside the frame, not inside it: on phones the frame recedes (scales to
   // .97) under a sheet, and a sheet mounted within it would shrink with the page – its 44 px
@@ -73,44 +91,64 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
         className="zen-content-frame relative flex h-full min-h-0 flex-col overflow-hidden"
         data-staged={staged || undefined}
       >
-        <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden">
-          {state.capabilities.pullToRefresh && <PullIndicator />}
-          {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
-          {tab && foreign && !contentHidden && !glanceActive && (
-            <ForeignTabPreview tabId={tab.id} />
-          )}
-          {showSnapshot && (
-            <div className="absolute inset-0">
-              {ui.snapshot && ui.snapshotTabId === (glanceActive ? glanceParentId : tab?.id) ? (
-                <img
-                  src={ui.snapshot}
-                  alt=""
-                  className="h-full w-full object-cover object-top"
-                  draggable={false}
-                />
-              ) : null}
-              <div
-                className={cn(
-                  'absolute inset-0 bg-black/35 transition-opacity',
-                  ui.drag && 'bg-black/20'
+        {crashRestore && <CrashRestoreBanner offer={crashRestore} />}
+        {banner && <DefaultBrowserBanner state={state} />}
+        <div className="flex min-h-0 flex-1 flex-row">
+          {/* A tab dragged onto the page (past the split zones at its edges) tears off into a new window. */}
+          <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden" data-tear-zone>
+            {state.capabilities.pullToRefresh && <PullIndicator />}
+            {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
+            {tab && foreign && !contentHidden && !glanceActive && (
+              <ForeignTabPreview tabId={tab.id} />
+            )}
+            {showSnapshot && (
+              <div className="absolute inset-0">
+                {ui.snapshot &&
+                ui.snapshotTabId &&
+                ui.snapshotTabId === (glanceActive ? glanceParentId : tab?.id) ? (
+                  <CoverImage
+                    tabId={ui.snapshotTabId}
+                    src={ui.snapshot}
+                    // The Android chassis swaps the page for this picture at every form factor
+                    // (see lib/cover.ts); the desktop hosts show it as they always have.
+                    cover={chromeUnderPages(state.platform)}
+                    className="h-full w-full object-cover object-top"
+                  />
+                ) : null}
+                {/* Panels draw no scrim: a bar panel or the star bubble leaves the capture undimmed. */}
+                {!panelAloneOverContent(ui) && (
+                  <div
+                    className={cn(
+                      'absolute inset-0 bg-black/35 transition-opacity',
+                      ui.drag && 'bg-black/20'
+                    )}
+                  />
                 )}
+              </div>
+            )}
+            {group && local && !contentHidden && !glanceActive && (
+              <SplitChrome state={state} group={group} area={local} activeTabId={tab?.id ?? null} />
+            )}
+            {ui.drag && local && tab && <SplitDropZones dropKey={dropKey} />}
+            {glanceActive && state.glance && local && (
+              <GlanceFrame
+                state={state}
+                glance={state.glance}
+                area={local}
+                ready={ui.glanceReady}
               />
-            </div>
-          )}
-          {group && local && !contentHidden && !glanceActive && (
-            <SplitChrome state={state} group={group} area={local} activeTabId={tab?.id ?? null} />
-          )}
-          {ui.drag && local && tab && <SplitDropZones dropKey={dropKey} />}
-          {glanceActive && state.glance && local && (
-            <GlanceFrame state={state} glance={state.glance} area={local} ready={ui.glanceReady} />
-          )}
-          {ui.urlbar.open && local && !phone && (
-            <Urlbar
-              key={`${ui.urlbar.mode}-${ui.urlbar.tabId ?? 'new'}`}
-              state={state}
-              urlbar={ui.urlbar}
-              area={local}
-            />
+            )}
+            {ui.urlbar.open && local && !phone && (
+              <Urlbar
+                key={`${ui.urlbar.mode}-${ui.urlbar.tabId ?? 'new'}`}
+                state={state}
+                urlbar={ui.urlbar}
+                area={local}
+              />
+            )}
+          </div>
+          {state.sidePanel && !phone && (
+            <SidePanelStrip panel={state.sidePanel} bodyRef={sidePanelRef} />
           )}
         </div>
         {ui.findOpen && ui.findTabId && state.tabs[ui.findTabId] && (
@@ -119,6 +157,41 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
       </div>
       {ui.overlay !== 'none' && <OverlayHost state={state} ui={ui} />}
     </div>
+  )
+}
+
+/**
+ * The extension side panel's strip (`chrome.sidePanel`): the panel's own page is a host view
+ * placed over the body by the layout reporter; the strip reserves the room beside the page and
+ * carries the extension's name and a close button. Plain and functional; its design pass is
+ * deferred with the styling hold.
+ */
+function SidePanelStrip({
+  panel,
+  bodyRef
+}: {
+  panel: SidePanelInfo
+  bodyRef: RefObject<HTMLDivElement | null>
+}): JSX.Element {
+  return (
+    <aside
+      className="flex w-[360px] shrink-0 flex-col border-l border-[var(--zen-border)] bg-[var(--zen-bg)]"
+      aria-label={`${panel.name} side panel`}
+    >
+      <div className="flex h-9 shrink-0 items-center gap-2 px-3 text-[13px]">
+        {panel.icon && <img src={panel.icon} alt="" className="h-4 w-4" draggable={false} />}
+        <span className="min-w-0 flex-1 truncate font-medium">{panel.name}</span>
+        <button
+          type="button"
+          className="flex h-6 w-6 items-center justify-center rounded text-[var(--zen-muted)] hover:bg-[var(--zen-element-bg-hover)] hover:text-[var(--zen-fg)]"
+          title="Close side panel"
+          onClick={() => run('extension.closeSidePanel', undefined)}
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div ref={bodyRef} className="min-h-0 flex-1" />
+    </aside>
   )
 }
 
@@ -133,7 +206,10 @@ function overlayCoversContentBesidesStage(ui: UiState): boolean {
     ui.urlbar.open ||
     ui.drag !== null ||
     ui.siteInfoOpen ||
-    ui.securityPromptOpen
+    ui.securityPromptOpen ||
+    ui.permissionPromptOpen ||
+    ui.pageDialogOpen ||
+    ui.windowPromptOpen
   )
 }
 
@@ -184,6 +260,8 @@ function ForeignTabPreview({ tabId }: { tabId: string }): JSX.Element {
 }
 
 function EmptyState(): JSX.Element {
+  // The chord from the active key table (`Ctrl T`, `⌘T`); nothing while New Tab is unbound.
+  const chord = useChord('tab.new')?.replace(/\+(?=.)/g, ' ')
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-[var(--zen-muted)]">
       <div className="text-lg font-medium text-[var(--zen-fg)]">This space is empty</div>
@@ -194,7 +272,7 @@ function EmptyState(): JSX.Element {
         onClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
       >
         <Plus className="h-4 w-4" /> New Tab
-        <kbd className="zen-kbd zen-kbd-hint ml-1">Ctrl T</kbd>
+        {chord && <kbd className="zen-kbd zen-kbd-hint ml-1">{chord}</kbd>}
       </button>
     </div>
   )

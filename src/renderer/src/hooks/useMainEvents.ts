@@ -1,11 +1,14 @@
 import { useEffect } from 'react'
-import type { UIState } from '@shared/types'
-import { onEvent } from '@renderer/lib/api'
+import type { Rect, UIState } from '@shared/types'
+import { onEvent, run } from '@renderer/lib/api'
+import { remoteDragOver } from '@renderer/lib/drag'
 import { isPhone } from '@renderer/lib/formFactor'
+import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import {
   cancelExternalProtocol,
   closeMenu,
   closeUrlbar,
+  openBookmarkChrome,
   openOverlay,
   openUrlbar,
   pushToast,
@@ -34,6 +37,8 @@ export function useMainEvents(): void {
         }
         if (ui.overlay === 'onboarding') return
         const state = browserStore.get().state
+        // A popup's location bar is read-only (Chrome): Ctrl+L and Ctrl+K have nothing to open.
+        if (state?.window.chrome === 'popup' && mode !== 'new-tab') return
         // Phones always anchor the bar to the top: the keyboard owns the bottom half.
         const attached = isPhone() || state?.settings.urlbarBehavior === 'normal'
         void openUrlbar(mode, currentActiveTabId(), { text, attached })
@@ -62,17 +67,50 @@ export function useMainEvents(): void {
         closeUrlbar()
         void openOverlay('space-editor', currentActiveTabId(), spaceId)
       }),
-      onEvent('find.open', ({ tabId, again }) => {
-        uiStore.set({ findOpen: true, findTabId: tabId })
+      onEvent('find.open', ({ tabId, again, text }) => {
+        uiStore.set({ findOpen: true, findTabId: tabId, findSeed: text ?? null })
         if (again) window.dispatchEvent(new CustomEvent('zen-find-again', { detail: again }))
+        if (text !== undefined)
+          window.dispatchEvent(new CustomEvent('zen-find-seed', { detail: text }))
+      }),
+      onEvent('menu.app', () => {
+        // The menu button claims the request when it is on screen (it takes the focus and opens
+        // the menu from itself, so Escape leaves the keyboard on it); otherwise the menu opens
+        // at the pointer, keyboard mode all the same.
+        const claimed = !window.dispatchEvent(new CustomEvent(APP_MENU_EVENT, { cancelable: true }))
+        if (!claimed) run('app.menu', { keyboard: true })
       }),
       onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
       onEvent('status', ({ text }) => uiStore.set({ statusText: text })),
       onEvent('sidebar.toggle', () => window.dispatchEvent(new CustomEvent('zen-sidebar-toggle'))),
+      onEvent('tab.dragOver', (over) => remoteDragOver(over)),
       onEvent('tab.startRename', ({ tabId }) => uiStore.set({ renamingTabId: tabId })),
       onEvent('folder.startRename', ({ folderId }) => uiStore.set({ renamingFolderId: folderId })),
       onEvent('tab.editPinnedUrl', ({ tabId }) => uiStore.set({ editingPinnedUrlTabId: tabId })),
       onEvent('tab.pickIcon', ({ tabId }) => uiStore.set({ iconPickerTabId: tabId })),
+      onEvent('bookmark.star', (star) => {
+        closeUrlbar()
+        // The bubble hangs from the pill's bottom edge, end-aligned with the star in it (v2
+        // draft §9.20); both are measured as the request arrives.
+        const chip = document.querySelector('[data-bm-star]')
+        const rect = (el: Element | null | undefined): Rect | null => {
+          const r = el?.getBoundingClientRect()
+          return r ? { x: r.left, y: r.top, width: r.width, height: r.height } : null
+        }
+        void openBookmarkChrome(
+          { starDialog: { ...star, anchor: rect(chip), pill: rect(chip?.closest('.zen-pill')) } },
+          currentActiveTabId()
+        )
+      }),
+      onEvent('bookmark.edit', (edit) => {
+        // Inside the manager the request is handled in place; anywhere else it is a dialog.
+        if (uiStore.get().overlay === 'bookmarks') uiStore.set({ bookmarkEdit: edit })
+        else void openBookmarkChrome({ bookmarkEdit: edit }, currentActiveTabId())
+      }),
+      onEvent('bookmark.allTabs', (request) => {
+        closeUrlbar()
+        void openBookmarkChrome({ bookmarkAllTabs: request }, currentActiveTabId())
+      }),
       onEvent('space.switched', ({ fromIndex, toIndex }) => {
         uiStore.set({ spaceSlideDirection: toIndex > fromIndex ? 1 : toIndex < fromIndex ? -1 : 0 })
       }),

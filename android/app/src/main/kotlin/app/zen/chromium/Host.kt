@@ -22,6 +22,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebChromeClient
+import android.webkit.WebView
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatDelegate
@@ -31,8 +32,10 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import app.zen.chromium.ext.Extensions
 import app.zen.chromium.blocking.Blocking
 import app.zen.chromium.ext.ExtensionStore
+import app.zen.chromium.privacy.Privacy
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.json.JSONObject
 import java.io.File
@@ -49,6 +52,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val storage = Storage(activity)
     /** The process's request engine, built from the rule sets the core persists, before any tab exists. */
     override val blocking = Blocking.shared(activity)
+    /** The process's privacy host: the policy the core pushes, the Safe Browsing tables it writes. */
+    override val privacy = Privacy.shared(activity)
     override val keys = Keys()
     override val permissions = Permissions(this)
     override val security = Security(this)
@@ -60,10 +65,19 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val updates = Updates(activity, this)
     val translate = Translate(activity, this)
     val siteData = SiteData()
+
+    init {
+        // A private session the last run did not get to end (a crash, the system killing the app)
+        // ends now, before any tab exists and while its profile is free to be deleted.
+        Profiles.wipePrivate(activity)
+    }
+
     /** The launcher icon colour (one enabled `activity-alias`), driven by Settings → Look and Feel. */
     val launcherIcon = LauncherIcon(activity)
     override val pageToken: String = SecureRandom().let { r -> ByteArray(16).also(r::nextBytes).joinToString("") { "%02x".format(it) } }
     override val pageScript: String = activity.assets.open("page.js").bufferedReader().readText().replace("__ZEN_TOKEN__", pageToken)
+    /** The extension runtime's Kotlin half: created before the tabs so their WebViews can attach. */
+    override val extensions: Extensions = Extensions(this)
     /** The core's page-controls policy (desktop site, dark theme for sites, zoom), mirrored per navigation. */
     override var pageRules: PageRules = PageRules.NONE
         private set
@@ -84,7 +98,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override var fullscreenTab: TabWebView? = null
         private set
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
-    var immersive = false
+    override var immersive = false
         private set
     /** The chrome's colour scheme, so native pieces (the back preview) match it. */
     override var themeDark = false
@@ -97,6 +111,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         private set
     /** Previews of the pages a back gesture would return to. */
     override val snapshots = HistorySnapshots(activity)
+    /** Page views go behind the chrome no earlier than with the chrome's next drawn frame. */
+    private val pageVisibility = PageVisibility { tabId, visible -> tabs.setVisible(tabId, visible) }
     /** Last: it reads the tabs and fullscreen state above when it decides what back would do. */
     val back = PredictiveBack(activity, this, chrome = { chrome }, onLeave = { activity.moveTaskToBack(true) })
     val lifecycle = HostLifecycle()
@@ -123,11 +139,15 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "signer" to Updates.signerSha256(activity),
             // The applicationId; a release whose APK carries another one installs as a new app.
             "packageName" to activity.packageName,
+            // Multi-profile WebView: what makes a private tab private (and containers separate).
+            "profiles" to Profiles.supported,
             "appIcon" to launcherIcon.current(),
             "files" to storage.readAll(),
             "downloadsDir" to (Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)?.absolutePath ?: ""),
             // Where the extension store installs; its presence turns the extensions capability on.
             "extensionsRoot" to extStore.root.absolutePath,
+            // Whether content scripts get real isolated worlds (decided once, when the runtime was built).
+            "isolatedWorlds" to extensions.isolatedWorlds,
             "insets" to activity.currentInsets(),
             "fullscreen" to immersive,
             "environment" to activity.environment()
@@ -154,6 +174,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "blocking.bundled" -> reply(blocking.bundledLists())
             "blocking.install" -> blocking.installBundled(args.obj("set"), args.str("file")) { main.post { reply(it) } }
             "blocking.stats" -> reply(blocking.stats())
+
+            // --- privacy (the PrivacyHost contract) ----------------------------------------------
+            "privacy.apply" -> {
+                privacy.apply(args.obj("flags"))
+                for (view in tabs.all()) view.applyPrivacy()
+                reply(null)
+            }
+            "privacy.bundledFeed" -> reply(privacy.bundledFeed(args.str("id")))
 
             // --- views -----------------------------------------------------------------------
             "view.create" -> { tabs.create(args.str("tabId"), args.str("containerId", Profiles.DEFAULT_CONTAINER)); reply(null) }
@@ -197,7 +225,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.setBounds" -> { tabs.setBounds(args.str("tabId"), args.obj("rect")); reply(null) }
             "view.setRadius" -> { tabs.setRadius(args.str("tabId"), args.num("radius")); reply(null) }
             "view.setPullOffset" -> { tab?.setPullOffset(args.num("offset")); reply(null) }
-            "view.setVisible" -> { tabs.setVisible(args.str("tabId"), args.bool("visible")); reply(null) }
+            "view.setVisible" -> { setTabVisible(args.str("tabId"), args.bool("visible")); reply(null) }
             "view.bringToFront" -> { tabs.bringToFront(args.str("tabId")); reply(null) }
             "view.download" -> {
                 if (tab != null) downloads.start(args.str("url"), tab.settings.userAgentString, null, null, -1, tab.tabId)
@@ -238,7 +266,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 for (view in tabs.all()) view.applyPullToRefreshMode()
                 reply(null)
             }
-            "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId")); reply(null) }
+            "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId"), args.optBoolean("root")); reply(null) }
             "window.setFullscreen" -> { setImmersive(args.bool("fullscreen")); reply(null) }
             "app.quit" -> { activity.finishAndRemoveTask(); reply(null) }
             "app.background" -> { activity.moveTaskToBack(true); reply(null) }
@@ -280,7 +308,16 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "download.chooseDirectory" -> downloads.chooseDirectory(reply)
             "download.open" -> { downloads.open(args.str("savePath"), args.str("mimeType")); reply(null) }
             "download.showAll" -> { downloads.showAll(); reply(null) }
-            "profile.clear" -> { Profiles.clear(args.str("containerId")); reply(null) }
+            "profile.clear" -> Profiles.clear(activity, args.str("containerId")) { reply(null) }
+            // Clear browsing data: the engine's kinds (cookies, storage, cache) per container, and the
+            // preview's counts. A live tab of a container clears its cache; otherwise a throwaway view.
+            "profile.clearBrowsingData" -> BrowsingData.clear(
+                activity,
+                BrowsingData.strings(args.arr("containerIds")),
+                BrowsingData.strings(args.arr("kinds")).toSet(),
+                { containerId -> tabs.all().firstOrNull { it.containerId == containerId } }
+            ) { reply(null) }
+            "profile.browsingDataCounts" -> BrowsingData.counts(BrowsingData.strings(args.arr("containerIds"))) { reply(it) }
             "permission.respond" -> { permissions.respond(args.str("requestId"), args.bool("allow")); reply(null) }
             "auth.respond" -> {
                 security.respondAuth(args.str("requestId"), args.strOrNull("username"), args.strOrNull("password"))
@@ -320,8 +357,22 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "translate.cancel" -> { translate.cancel(args.str("token")); reply(null) }
             "translate.delete" -> translate.delete(args.arr("names"), reply)
 
-            else -> throw IllegalArgumentException("Unknown method: $method")
+            // The extension runtime's methods (ext/Extensions.kt; the contract is src/android/extensionRuntime.ts).
+            else -> if (method.startsWith("ext.")) extensions.handle(method, args, reply) else throw IllegalArgumentException("Unknown method: $method")
         }
+    }
+
+    /**
+     * Keep a WebView alive without showing it (extension background pages). It sits behind the
+     * chrome at one pixel: a view that is not attached, or invisible, counts as hidden to the
+     * renderer and gets background timer throttling, which a background page must not.
+     */
+    fun attachHidden(view: View) {
+        root.addView(view, 0, FrameLayout.LayoutParams(1, 1))
+    }
+
+    fun detachHidden(view: View) {
+        root.removeView(view)
     }
 
     /** Marker so `encodeResult` passes pre-encoded JSON through untouched. */
@@ -359,10 +410,25 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         back.refresh()
     }
 
+    /**
+     * The window left the screen (launcher, another app, the lock screen). Fullscreen is a way of
+     * looking at a page, not a setting: the app comes back with its bars, like Chrome does, rather
+     * than in the fullscreen it was left in – a relaunch from the launcher is a new start to the
+     * user, whether or not the process survived.
+     */
+    fun onStop() {
+        if (immersive) setImmersive(false)
+    }
+
+    /** Back while in Zenium's own fullscreen (and nothing is fullscreen on the page) leaves it. */
+    override fun leaveImmersive() = setImmersive(false)
+
     private fun setImmersive(on: Boolean) {
+        if (immersive == on) return
         immersive = on
         setSystemBarsHidden(on || fullscreenTab != null)
         chrome.hostEvent("fullscreen", json("fullscreen" to on))
+        back.refresh()
     }
 
     private fun setSystemBarsHidden(hidden: Boolean) {
@@ -474,7 +540,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     private fun print(tab: TabWebView) {
         val manager = activity.getSystemService(Context.PRINT_SERVICE) as PrintManager
         val name = tab.title?.ifEmpty { null } ?: "Zenium page"
-        manager.print(name, tab.createPrintDocumentAdapter(name), PrintAttributes.Builder().build())
+        // Through PrintRelay: the WebView's PDF write must never wait on the spooler (BH-01).
+        val adapter = PrintRelay(tab.createPrintDocumentAdapter(name), File(activity.cacheDir, "print"), io)
+        manager.print(name, adapter, PrintAttributes.Builder().build())
     }
 
     private fun savePage(tab: TabWebView, name: String, reply: (Any?) -> Unit) {
@@ -486,7 +554,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         tab.saveWebArchive(file.absolutePath, false) { path -> reply(path) }
     }
 
-    /** Store bytes as a file in the public Downloads collection; resolves with a path or URI. */
+    /**
+     * Store bytes as a file in the public Downloads collection; resolves with the file's path. The
+     * core names the download after the last segment of what it gets back, so the path it is –
+     * the MediaStore row's URI ends in the row's id, and a screenshot listed as "1000000025" was
+     * that id. `Downloads.open` finds the row again from the path.
+     */
     fun saveToDownloads(name: String, mimeType: String, bytes: ByteArray?, reply: (Any?) -> Unit) {
         if (bytes == null) {
             reply(null)
@@ -506,7 +579,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                     values.clear()
                     values.put(MediaStore.Downloads.IS_PENDING, 0)
                     resolver.update(uri, values, null, null)
-                    uri.toString()
+                    pathOf(uri) ?: uri.toString()
                 } else {
                     val dir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: activity.filesDir
                     val file = File(dir, name)
@@ -517,6 +590,23 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             main.post { reply(result) }
         }
     }
+
+    /**
+     * Where MediaStore put the file behind one of its Downloads rows: its `DATA` column (still
+     * filled in on Q+, where the row may have renamed the file to keep names unique), or the
+     * display name under the public Downloads folder; null when the row says neither.
+     */
+    @Suppress("DEPRECATION") // DATA, see above
+    private fun pathOf(uri: Uri): String? = runCatching {
+        val columns = arrayOf(MediaStore.MediaColumns.DATA, MediaStore.MediaColumns.DISPLAY_NAME)
+        activity.contentResolver.query(uri, columns, null, null, null)?.use { c ->
+            if (!c.moveToFirst()) return@use null
+            c.getString(0)?.takeIf { it.isNotEmpty() }
+                ?: c.getString(1)?.takeIf { it.isNotEmpty() }?.let { name ->
+                    File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), name).absolutePath
+                }
+        }
+    }.getOrNull()
 
     private fun copyImage(url: String, reply: (Any?) -> Unit) {
         io.execute {
@@ -553,7 +643,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 val status = conn.responseCode
                 val ok = status in 200..299
                 val text = if (ok) conn.inputStream.bufferedReader().use { it.readText() } else ""
-                json("ok" to ok, "status" to status, "text" to text)
+                // The validators a later conditional fetch sends back (`If-None-Match`, `If-Modified-Since`).
+                val responseHeaders = JSONObject()
+                conn.getHeaderField("ETag")?.let { responseHeaders.put("etag", it) }
+                conn.getHeaderField("Last-Modified")?.let { responseHeaders.put("last-modified", it) }
+                json("ok" to ok, "status" to status, "text" to text, "headers" to responseHeaders)
             }.getOrElse { json("ok" to false, "status" to 0, "text" to "") }
             main.post { reply(result) }
         }
@@ -592,6 +686,24 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         root.requestLayout()
         chrome.invalidate()
         for (tab in tabs.all()) if (tab.visibility == View.VISIBLE) tab.invalidate()
+    }
+
+    /**
+     * `view.setVisible`: a show happens now; a hide waits for the chrome to draw the frame that
+     * carries the layout it was reported from – the chrome lies under the pages, and that frame
+     * holds the page's stand-in picture – or for [PageVisibility.DEADLINE_MS] (see [PageVisibility]).
+     */
+    private fun setTabVisible(tabId: String, visible: Boolean) {
+        val ticket = pageVisibility.request(tabId, visible) ?: return
+        val deadline = Runnable {
+            if (pageVisibility.complete(ticket)) Log.d(TAG, "hide of $tabId: chrome drew no frame within the deadline")
+        }
+        main.postDelayed(deadline, PageVisibility.DEADLINE_MS)
+        chrome.postVisualStateCallback(ticket.id, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) {
+                if (pageVisibility.complete(ticket)) main.removeCallbacks(deadline)
+            }
+        })
     }
 
     private var probeRun: Runnable? = null
@@ -770,6 +882,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     }
 
     fun destroy() {
+        extensions.destroy()
         cancelProbe()
         agentServer.stop()
         downloads.destroy()

@@ -8,6 +8,10 @@ export const READER_URL_PREFIX = 'zen://reader'
 /** The history page: a chrome surface, not a document (see `overlayForUrl` in zenPages). */
 export const HISTORY_URL = 'zen://history'
 export const SETTINGS_URL = 'zen://settings'
+/** The bookmark manager: typed or linked, it opens the manager instead of navigating (zenPages). */
+export const BOOKMARKS_URL = 'zen://bookmarks'
+/** The new tab page (Zen's empty tab); a dedicated `zen://newtab` counts once it exists. */
+const NEW_TAB_URLS = new Set([BLANK_URL, 'zen://newtab', 'about:newtab', 'about:blank', ''])
 
 const SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}(:\d+)?(\/.*)?$/
@@ -40,6 +44,14 @@ export function hasScheme(input: string): boolean {
 
 export function isInternalUrl(url: string): boolean {
   return url.startsWith('zen://') || url.startsWith('about:') || url.startsWith('chrome://')
+}
+
+/**
+ * The new tab page, where Edge shows the favorites bar even when it is hidden elsewhere. Once
+ * the blank page has loaded, Chromium reports it as `zen://blank/`: the slash does not count.
+ */
+export function isNewTabUrl(url: string | null | undefined): boolean {
+  return url === null || url === undefined || NEW_TAB_URLS.has(url.replace(/\/$/, ''))
 }
 
 /** Heuristic used by the URL bar: does the user most likely mean a URL rather than a search? */
@@ -80,6 +92,7 @@ export function inputToUrl(raw: string): string | null {
       if (rest === 'blank' || rest === 'newtab' || rest === 'home') return BLANK_URL
       if (rest === 'preferences' || rest === 'settings') return SETTINGS_URL
       if (rest === 'history') return HISTORY_URL
+      if (rest === 'bookmarks') return BOOKMARKS_URL
       return BLANK_URL
     }
     return input
@@ -113,6 +126,35 @@ export function displayUrl(url: string): string {
   } catch {
     return out
   }
+}
+
+/**
+ * The address in full, as Chrome's "Always show full URLs" shows it and as a copy yields it:
+ * scheme and `www.` kept, error and Reader View pages replaced by the address they stand in for.
+ */
+export function fullUrl(url: string): string {
+  if (!url || url === BLANK_URL) return ''
+  if (url.startsWith(ERROR_URL_PREFIX) || url.startsWith(READER_URL_PREFIX)) {
+    try {
+      return new URL(url).searchParams.get('url') ?? ''
+    } catch {
+      return ''
+    }
+  }
+  return url
+}
+
+/**
+ * Split a displayed address into the site, drawn in full ink, and everything after it (path,
+ * query, fragment), which the address pill deemphasises as Chrome dims all but the host. A scheme
+ * left in the text (`zen://settings`, `file:///tmp/a`, a full URL) is part of the site.
+ */
+export function addressParts(shown: string): { site: string; rest: string } {
+  const schemeEnd = shown.indexOf('://')
+  const start = schemeEnd === -1 ? 0 : schemeEnd + 3
+  const cut = shown.slice(start).search(/[/?#]/)
+  if (cut === -1) return { site: shown, rest: '' }
+  return { site: shown.slice(0, start + cut), rest: shown.slice(start + cut) }
 }
 
 export function getHost(url: string): string {
@@ -185,6 +227,45 @@ export function titleForUrl(url: string): string {
 export function errorPageUrl(code: number, description: string, url: string): string {
   const params = new URLSearchParams({ code: String(code), description, url })
   return `${ERROR_URL_PREFIX}?${params.toString()}`
+}
+
+/**
+ * The interstitials Zenium puts in front of a page: Safe Browsing's warning and HTTPS-only
+ * mode's plaintext question. Both are error pages (`zen://error` with a `kind`), so the URL bar,
+ * reload and copy treat them like any other page that stands in for `url`.
+ */
+export type InterstitialKind = 'safebrowsing' | 'https-only'
+
+export function safeBrowsingPageUrl(url: string, threat: string): string {
+  const params = new URLSearchParams({
+    code: String(-20),
+    description: 'ERR_BLOCKED_BY_CLIENT',
+    url,
+    kind: 'safebrowsing',
+    threat
+  })
+  return `${ERROR_URL_PREFIX}?${params.toString()}`
+}
+
+export function httpsOnlyPageUrl(httpUrl: string, code: number): string {
+  const params = new URLSearchParams({
+    code: String(code),
+    description: 'HTTPS_ONLY_FALLBACK',
+    url: httpUrl,
+    kind: 'https-only'
+  })
+  return `${ERROR_URL_PREFIX}?${params.toString()}`
+}
+
+/** Which interstitial an error-page URL is, or null for a plain error page (or any other URL). */
+export function interstitialKindOf(url: string): InterstitialKind | null {
+  if (!url.startsWith(ERROR_URL_PREFIX)) return null
+  try {
+    const kind = new URL(url).searchParams.get('kind')
+    return kind === 'safebrowsing' || kind === 'https-only' ? kind : null
+  } catch {
+    return null
+  }
 }
 
 /** Prevent navigation to schemes that would be dangerous or meaningless in a tab. */

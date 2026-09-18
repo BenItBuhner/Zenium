@@ -9,6 +9,7 @@
  * import from `electron`, `node:*` or the DOM.
  */
 import type {
+  ColorScheme,
   DownloadItem,
   EventName,
   Events,
@@ -17,16 +18,25 @@ import type {
   HostCapabilities,
   KeyBinding,
   NavigationSnapshot,
+  PageDialogResponse,
   PageRules,
+  PermissionPrompt,
+  PermissionPromptAnswer,
   Platform as PlatformOs,
   Rect,
   ResourceSnapshot,
   SharePayload,
+  ShortcutAction,
+  SidePanelInfo,
+  Suggestion,
   SyncScope,
   SyncStatus,
-  Tab
+  Tab,
+  WindowChrome,
+  WindowMaterial
 } from '../shared/types'
 import type { AppIconId } from '../shared/appIcon'
+import type { CaptionColors } from '../shared/theme'
 import type { KeyInput } from '../shared/shortcuts'
 import type { SiteCertificate, SiteCookie } from '../shared/siteInfo'
 import type {
@@ -36,6 +46,8 @@ import type {
   EngineTransport
 } from '../shared/translateEngine'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '../shared/updates'
+import type { InterstitialAction } from '../shared/interstitial'
+import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
@@ -51,13 +63,24 @@ export interface PlatformInfo {
 // ---------------------------------------------------------------------------
 
 /** Raw text storage for the JSON stores (one document per name). */
+/** How a document is written. */
+export interface StoreWriteOptions {
+  /**
+   * Keep the previous version as `<name>.bak` (rolling: every write moves the document that was
+   * there aside). For the profile's core documents, whose loss would be the loss of the session.
+   * Hosts that cannot leave this out; the core reads the backup when the document is gone or
+   * unreadable.
+   */
+  backup?: boolean
+}
+
 export interface StoreIO {
   /** Synchronous read at startup; `null` when the document does not exist. */
   readSync(name: string): string | null
   /** Atomic write; the promise settles once the document is durable. */
-  write(name: string, text: string): Promise<void>
+  write(name: string, text: string, options?: StoreWriteOptions): Promise<void>
   /** Synchronous write used when the process is about to go away. */
-  writeSync(name: string, text: string): void
+  writeSync(name: string, text: string, options?: StoreWriteOptions): void
   /** Delete a document (missing documents are not an error). Hosts without it get a `{}` tombstone. */
   remove?(name: string): Promise<void>
   /** Whether a document exists without reading it (large documents such as filter lists). */
@@ -76,9 +99,34 @@ export interface PageFlags {
   thirdParty: 'new-tab' | 'glance' | 'same-tab' | null
 }
 
+/**
+ * How a page is about to navigate itself (its Navigation API `navigate` event), reported just
+ * before its `beforeunload` handlers run. A host whose engine answers `beforeunload` at once
+ * (Electron) keeps the page and asks the user asynchronously; the record tells it what the
+ * page was doing (a reload is asked about differently) and that the page can redo it.
+ */
+export interface NavigationIntent {
+  /** Where the page is going. */
+  url: string
+  navigationType: 'push' | 'replace' | 'reload' | 'traverse'
+  /** A form submission with a body. */
+  post: boolean
+}
+
 /** Messages the page script sends back to the browser. */
 export interface PageMessage {
-  type: 'glance' | 'open-tab' | 'navigate' | 'media' | 'zap' | 'activation' | 'popup-blocked'
+  type:
+    | 'glance'
+    | 'open-tab'
+    | 'navigate'
+    | 'media'
+    | 'zap'
+    | 'activation'
+    | 'popup-blocked'
+    /** The page called `window.focus()` with a gesture (a notification was clicked): show its tab. */
+    | 'focus'
+    | 'interstitial'
+    | 'navigate-intent'
   url?: string
   x?: number
   y?: number
@@ -87,14 +135,35 @@ export interface PageMessage {
   playing?: boolean
   /** `zap`: CSS selector of the element the user picked in Boost zap mode. */
   selector?: string
+  /** `interstitial`: the button pressed on a Zenium warning page (see `shared/zenPages`). */
+  action?: InterstitialAction
+  /** `navigate-intent`: the navigation the page is starting (consumed by the host, not the core). */
+  intent?: NavigationIntent
+}
+
+/** What a host reports when a page calls `alert`, `confirm` or `prompt`. */
+export interface PageDialogRequest {
+  kind: 'alert' | 'confirm' | 'prompt'
+  message: string
+  /** `prompt`: the second argument, already a string ('' when absent). */
+  defaultValue: string
+  /** URL of the frame that called; the dialog is titled after its site. */
+  frameUrl: string
+  /** URL of the top document, to tell an embedded page's dialog from the page's own. */
+  pageUrl: string
 }
 
 export interface PageContextParams {
+  /** Click position in the view's coordinates (DIP), as the host's `context-menu` event gives it. */
   x: number
   y: number
   linkURL: string
+  /** Text of the clicked link (Edge's "Copy link text"); empty for image links. */
+  linkText?: string
   srcURL: string
   mediaType: 'none' | 'image' | 'audio' | 'video' | 'canvas' | 'file' | 'plugin'
+  /** State of the clicked `<video>` / `<audio>`; hosts that cannot tell leave it out. */
+  mediaFlags?: MediaContextFlags
   selectionText: string
   isEditable: boolean
   misspelledWord: string
@@ -114,6 +183,47 @@ export interface PageContextParams {
     canDelete: boolean
     canSelectAll: boolean
   }
+}
+
+/** Chromium's media flags of a clicked media element (the subset the menus read). */
+export interface MediaContextFlags {
+  inError: boolean
+  isPaused: boolean
+  isMuted: boolean
+  hasAudio: boolean
+  isLooping: boolean
+  isControlsVisible: boolean
+  canToggleControls: boolean
+  canSave: boolean
+  canShowPictureInPicture: boolean
+  isShowingPictureInPicture: boolean
+  canLoop: boolean
+}
+
+/**
+ * Chrome elements with a context menu of their own, marked `data-zen-menu` in the renderer: the
+ * URL bar's field and pill, the reload button.
+ */
+export type ChromeMenuTarget = 'urlbar' | 'urlpill' | 'reload'
+
+export const CHROME_MENU_TARGETS: readonly ChromeMenuTarget[] = ['urlbar', 'urlpill', 'reload']
+
+/**
+ * A right-click inside the chrome document (URL bar, toolbar, overlays): what the host's own
+ * `context-menu` event says about the spot, plus which marked chrome element it landed on
+ * (`data-zen-menu` in the renderer; null when none).
+ */
+export interface ChromeContextParams {
+  /** Click position in chrome CSS pixels. */
+  x: number
+  y: number
+  /** `data-zen-menu` of the innermost marked element under the pointer, or null. */
+  target: ChromeMenuTarget | null
+  /** Tab the marked element acts on (`data-zen-menu-tab`); null for a new-tab URL bar. */
+  tabId: string | null
+  isEditable: boolean
+  selectionText: string
+  editFlags: PageContextParams['editFlags']
 }
 
 export interface FindResultInfo {
@@ -189,6 +299,16 @@ export interface TabViewEvents {
   onFaviconUpdated(favicons: string[]): void
   /** Main-frame load failure (Chromium `net::` error code; hosts map their own codes). */
   onFailLoad(code: number, description: string, url: string): void
+  /**
+   * The host's request engine upgraded a main-frame navigation from `from` (http) to `to`
+   * (HTTPS-only mode's rule); if `to` then fails, the tab offers `from`.
+   */
+  onUpgraded(from: string, to: string): void
+  /**
+   * The host's request engine refused a main-frame navigation to `url` on Safe Browsing's word
+   * (Android, whose guard reads the tables itself); `onFailLoad` follows with the same URL.
+   */
+  onUnsafeNavigation(url: string, hit: SafeBrowsingHit): void
   onCrashed(reason: CrashReason): void
   onAudioStateChanged(audible: boolean): void
   onMediaStateChanged(playing: boolean): void
@@ -205,20 +325,51 @@ export interface TabViewEvents {
   onKey(input: KeyEventInput): boolean
   onTargetUrl(url: string): void
   onDomReady(): void
+  /** The page went away underneath the tab (it called `window.close()`, or the host tore it down). */
   onDestroyed(): void
   /**
-   * `window.open` / `target=_blank`. Return how the host should proceed. `userGesture` is the
-   * host's own knowledge of whether the user asked for it (null when it has none: the core then
-   * relies on the activation it tracked through `onUserActivation`).
+   * `window.open` / Shift+click / `target=_blank`: how the core wants the new page placed, or
+   * null to refuse it (the pop-up blocker said no, or the URL cannot be opened). The host never
+   * shows Chromium's own bare window. `userGesture` is the host's own knowledge of whether the
+   * user asked for it (null when it has none: the core then relies on the activation it tracked
+   * through `onUserActivation`). `features` is the `window.open` features string (empty for
+   * Shift+click).
    */
   onOpenWindow(
     url: string,
     disposition: WindowOpenDisposition,
-    userGesture: boolean | null
-  ): 'deny' | 'tab' | 'popup'
+    userGesture: boolean | null,
+    features?: string
+  ): WindowOpenTicket | null
   /** A trusted input event (click, key, tap) was delivered to the page. */
   onUserActivation(): void
   onPageMessage(message: PageMessage): void
+  /**
+   * The page called `alert`, `confirm` or `prompt`; resolves with the chrome's answer. The
+   * page's renderer waits for it, as in Chrome.
+   */
+  onDialog(request: PageDialogRequest): Promise<PageDialogResponse>
+  /**
+   * The page's `beforeunload` handler objects to it going away – under a navigation, a reload,
+   * or the close the host is carrying out. Resolves true when the user leaves anyway.
+   */
+  onLeaveSite(reload: boolean): Promise<boolean>
+}
+
+/**
+ * The core's answer to a page opening a window: a tab in the opener's window or a Zenium window
+ * (toolbar-only for a sized popup, full for Shift+click). The host completes it once by handing
+ * over the page that goes into the new tab: the opener-linked one Chromium already created for a
+ * script `window.open` (so `window.opener` and the call's return value keep working, as in
+ * Chrome), or a fresh page the host then points at `url` for a window opened from a link. The
+ * window and tab only exist once `adopt` runs, so a request Chromium abandons leaves nothing
+ * behind.
+ */
+export interface WindowOpenTicket {
+  action: 'tab' | 'window'
+  url: string
+  /** Register `view` as the new tab's page; returns the tab and the events to wire to the view. */
+  adopt(view: TabView): { tab: Tab; events: TabViewEvents }
 }
 
 /**
@@ -252,7 +403,12 @@ export interface TabView {
   getZoom(): number
   findInPage(text: string, forward: boolean, newSession: boolean): void
   stopFind(action: 'clearSelection' | 'keepSelection'): void
-  executeJavaScript(code: string): Promise<unknown>
+  /**
+   * Run `code` in the page's main frame, or in the sub-frame `frameId`
+   * (`PageContextParams.frameId`) on hosts that can address frames; others run it in the main
+   * frame.
+   */
+  executeJavaScript(code: string, frameId?: number): Promise<unknown>
   /** Inject a stylesheet; resolves with a key for `removeInsertedCSS`. */
   insertCSS(css: string): Promise<string>
   removeInsertedCSS(key: string): Promise<void>
@@ -266,8 +422,18 @@ export interface TabView {
   setZapMode(on: boolean): void
   setBackgroundColor(color: string): void
   focus(): void
+  /** Whether this page holds the keyboard right now. Hosts that cannot tell leave it out. */
+  isFocused?(): boolean
   isDestroyed(): boolean
   destroy(): void
+  /**
+   * Whether the page may be unloaded: runs its `beforeunload` handlers and, when one objects,
+   * has the chrome ask ("Leave site?"). Resolves true when the page can go – no objection, the
+   * user chose to leave, or the page is gone already – and false when it stays. A page with no
+   * objection may be destroyed by the check itself (its close simply goes ahead). Hosts whose
+   * engine cannot run the handlers without unloading leave this out.
+   */
+  confirmUnload?(): Promise<boolean>
 
   // Placement (driven by the renderer's layout reports). A view belongs to one window at a time.
   attachTo(host: WindowHost): void
@@ -280,7 +446,21 @@ export interface TabView {
 
   // Page operations.
   openDevTools(mode: 'toggle' | 'inspect' | 'console'): void
-  downloadURL(url: string): void
+  /**
+   * Open the developer tools on the element at (`x`, `y`) in the view's coordinates (the
+   * "Inspect Element" of the context menu). Hosts without an inspector leave it out.
+   */
+  inspectElementAt?(x: number, y: number): void
+  /**
+   * Start a download of `url`. `saveAs` asks where to save first, whatever the download setting
+   * says (Chrome's "Save link / image / video as…" always ask); hosts without a picker save to
+   * the downloads folder.
+   */
+  downloadURL(url: string, options?: { saveAs?: boolean }): void
+  /** Reload one sub-frame of the page (`PageContextParams.frameId`); hosts without frames leave it out. */
+  reloadFrame?(frameId: number): void
+  /** Drop the HTTP cache of the page's session ("Empty Cache and Hard Reload"); optional. */
+  clearCache?(): Promise<void>
   print(): void
   /** Save the page (host decides where / whether to ask); resolves with the saved path or null. */
   savePage(suggestedName: string): Promise<string | null>
@@ -342,6 +522,12 @@ export interface WindowHost {
   readonly alive: boolean
   send<K extends EventName>(name: K, payload: Events[K]): void
   focusChrome(): void
+  /**
+   * Which document holds the keyboard: the chrome's own, some other web view (a tab view, which
+   * the core recognises through `TabView.isFocused`, or a view another surface owns, such as an
+   * extension's popup), or none. Hosts that cannot tell leave it out.
+   */
+  focusedDocument?(): 'chrome' | 'other' | 'none'
   openChromeDevTools(): void
   contentSize(): { width: number; height: number }
   isFullScreen(): boolean
@@ -359,18 +545,38 @@ export interface WindowHost {
   setTitle(title: string): void
   /** Bounds to remember for session restore (null when the host has no movable windows). */
   normalBounds(): Rect | null
+  /**
+   * Where the chrome's document sits on the screen right now (DIP), for turning a screen point
+   * into chrome coordinates; hosts without movable windows leave this out.
+   */
+  contentBounds?(): Rect | null
+  /** The display the window is on (the host's id), remembered with its bounds; hosts with one display leave this out. */
+  displayId?(): number | null
   /** Brief vibration for a gesture landmark; hosts without haptics leave this out. */
   haptic?(kind: HapticKind): void
+  /** Recolour the native caption buttons drawn over the chrome (hosts with an overlay). */
+  setCaptionColors?(colors: CaptionColors): void
+  /**
+   * The marked chrome element (`data-zen-menu`) under a point of the chrome document, for the
+   * chrome's own context menus; hosts whose chrome draws its menus itself leave it out.
+   */
+  menuTargetAt?(x: number, y: number): Promise<{ target: string; tabId: string | null } | null>
 }
 
 export interface WindowCreateInit {
   bounds: Rect | null
+  /** The display `bounds` were saved on; the window goes back to it when it is still there. */
+  displayId: number | null
   maximized: boolean
   /** Offset the new window from this one (new windows cascade like Firefox). */
   cascadeFrom: ZenWindow | null
   title: string
+  chrome: WindowChrome
+  material: WindowMaterial
   /** Solid colour approximating the space gradient, painted before the chrome loads. */
   backgroundColor: string
+  /** Colours for native caption buttons drawn over the chrome. */
+  captionColors: CaptionColors
 }
 
 export interface WindowHostFactory {
@@ -381,8 +587,33 @@ export interface WindowHostFactory {
 // Menus, dialogs, misc
 // ---------------------------------------------------------------------------
 
+/**
+ * Items the host implements itself. The editing roles work in every menu; the rest are the
+ * standard entries of a macOS menu bar (`window`, `help` and `services` mark a whole submenu as
+ * the system's Window, Help or Services menu).
+ */
 export type MenuRole =
-  'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'pasteAndMatchStyle' | 'delete' | 'selectAll'
+  | 'undo'
+  | 'redo'
+  | 'cut'
+  | 'copy'
+  | 'paste'
+  | 'pasteAndMatchStyle'
+  | 'delete'
+  | 'selectAll'
+  | 'startSpeaking'
+  | 'stopSpeaking'
+  | 'about'
+  | 'services'
+  | 'hide'
+  | 'hideOthers'
+  | 'unhide'
+  | 'quit'
+  | 'minimize'
+  | 'zoom'
+  | 'front'
+  | 'window'
+  | 'help'
 
 export interface MenuItemTemplate {
   type?: 'normal' | 'separator' | 'checkbox' | 'radio'
@@ -397,17 +628,42 @@ export interface MenuItemTemplate {
   icon?: string | null
   submenu?: MenuItemTemplate[]
   click?: () => void
+  /**
+   * The shortcut action the item stands for. The core fills `accelerator` from the active key
+   * table, and runs the action when the item has no `click` of its own.
+   */
+  action?: ShortcutAction
+  /**
+   * The chord shown after the label, in Electron's accelerator syntax (`Ctrl+Shift+N`; macOS
+   * draws it as glyphs). Display only: the key table handles the keys, so hosts must not
+   * register it.
+   */
+  accelerator?: string
 }
 
 export type MenuSource =
-  'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app' | 'bookmark' | 'history'
+  | 'page'
+  | 'tab'
+  | 'selection'
+  | 'space'
+  | 'folder'
+  | 'newtab'
+  | 'app'
+  | 'bookmark'
+  | 'history'
+  | 'urlbar'
 
 export interface MenuPopupOptions {
   source: MenuSource
   win: ZenWindow
-  /** Anchor in chrome CSS pixels (renderer-hosted menus); omitted for native menus. */
+  /**
+   * Where to open, in chrome CSS pixels: the anchor of renderer-hosted menus, and of native menus
+   * opened from a control rather than the pointer. Omitted: native menus open at the pointer.
+   */
   x?: number
   y?: number
+  /** Opened by the keyboard: the first item starts selected so the arrow keys take over at once. */
+  keyboard?: boolean
 }
 
 export interface MenuHost {
@@ -415,6 +671,12 @@ export interface MenuHost {
   /** Renderer-hosted menus report clicks/dismissals back through these. */
   activate?(menuId: string, itemId: string): void
   dismiss?(menuId: string): void
+  /**
+   * Hosts with a menu bar (macOS) show `menus` as the application menu: one entry per top-level
+   * menu, roles where the system provides the menu. Called at start and whenever what the menus
+   * show changed; hosts without a menu bar leave it out.
+   */
+  setApplicationMenu?(menus: MenuItemTemplate[]): void
 }
 
 export interface ConfirmOptions {
@@ -450,12 +712,34 @@ export interface DialogHost {
   ): Promise<PickedTextFile[]>
   /** Save text where the user chooses (bookmark export); false when cancelled or failed. */
   saveTextFile(options: SaveTextFileOptions, win?: ZenWindow): Promise<boolean>
+  /**
+   * Let the user pick files to open as pages ("Open File…"); resolves with their paths, empty
+   * when cancelled. Hosts whose pages cannot show local files leave it out.
+   */
+  pickFiles?(options: { title: string }, win?: ZenWindow): Promise<string[]>
+}
+
+/**
+ * Where permission prompts are shown. The core's own implementation queues them per tab for the
+ * chrome to render as non-modal bubbles (answered by `permissions.respond`); a host may supply
+ * its own through `Platform.permissionPrompts` instead.
+ */
+export interface PermissionPromptHost {
+  /** Show the prompt; resolves with the user's answer, or null when it was withdrawn unanswered. */
+  show(request: PermissionPrompt): Promise<PermissionPromptAnswer | null>
+  /** Withdraw a pending prompt (its page navigated away, its tab closed). */
+  cancel(id: string): void
 }
 
 export interface ClipboardHost {
   writeText(text: string): void
   /** Fetch an image and put it on the clipboard; resolves false when unsupported / failed. */
   writeImageFromUrl(url: string): Promise<boolean>
+  /**
+   * The clipboard's plain text ('' when it holds none). Hosts that cannot read the clipboard
+   * leave it out; the URL bar's paste-and-go actions then do nothing.
+   */
+  readText?(): Promise<string>
 }
 
 export interface ShellHost {
@@ -480,6 +764,22 @@ export interface ExternalProtocolHost {
   respond(requestId: string, allow: boolean): void
 }
 
+/**
+ * What the host does with the privacy settings the core cannot enforce from inside the request
+ * engine's rule sets: the third-party cookie policy, the `Sec-GPC` / `DNT` headers and their
+ * `navigator` flags, the plaintext exemptions of HTTPS-only mode (applied at once, before the
+ * rule set catches up on hosts that compile it asynchronously) and, on desktop, secure DNS.
+ * `apply` runs once the browser is up and again after every change; the host keeps the copy.
+ */
+export interface PrivacyHost {
+  apply(flags: PrivacyFlags): void
+  /**
+   * The Safe Browsing feed table this build ships for `id` (the JSON document
+   * `SafeBrowsingService` persists, as text), or null when the build has no snapshot of it.
+   */
+  bundledSafeBrowsingFeed?(id: string): Promise<string | null>
+}
+
 export interface NetHost {
   fetchText(
     url: string,
@@ -489,7 +789,19 @@ export interface NetHost {
       /** Overall time limit; hosts default to a few seconds (suggestions, Live Folders). */
       timeoutMs?: number
     }
-  ): Promise<{ ok: boolean; status: number; text: string }>
+  ): Promise<{
+    ok: boolean
+    status: number
+    text: string
+    /** Response headers the caller may condition a later fetch on (`etag`, `last-modified`), lowercase names. */
+    headers?: Record<string, string>
+  }>
+  /**
+   * Whether `host` resolves in DNS (Chrome's intranet probe behind "Did you mean to go to
+   * http://host/?"). Resolves false on any failure; hosts without a resolver leave it out and
+   * the URL bar offers no such row.
+   */
+  resolveHost?(host: string, options: { signal?: AbortSignal }): Promise<boolean>
 }
 
 /**
@@ -530,6 +842,16 @@ export interface DownloadHost {
   park?(item: DownloadItem): string | null
 }
 
+/** What "Clear browsing data" asks the engine to drop, across containers. */
+export type EngineDataKind = 'cookies' | 'storage' | 'cache'
+
+/** Engine-side readings for the clear-browsing-data preview; null when the engine cannot count. */
+export interface EngineDataCounts {
+  /** Distinct cookie domains across the given containers. */
+  cookieSites: number | null
+  cacheBytes: number | null
+}
+
 export interface SessionHost {
   clearContainerData(containerId: string): Promise<void>
   /** Wipe the private-browsing session once its last window closed. */
@@ -539,6 +861,13 @@ export interface SessionHost {
    * session, so a site asks again (the core forgets its own copies alongside).
    */
   clearAuthCache?(): Promise<void>
+  /**
+   * Clear browsing data: `kinds` of every listed container. Engines cannot limit these to a
+   * time range (Chromium's session API has none), so the core tells the user everything goes.
+   */
+  clearBrowsingData?(containerIds: string[], kinds: EngineDataKind[]): Promise<void>
+  /** Readings for the clear-browsing-data preview across the listed containers. */
+  browsingDataCounts?(containerIds: string[]): Promise<EngineDataCounts>
 }
 
 /** Stored data of a site as the host's storage layer reports it. */
@@ -588,6 +917,25 @@ export interface AppHost {
    * Unsupported hosts resolve null without doing anything.
    */
   requestDefaultBrowser(): Promise<boolean | null>
+  /**
+   * The OS emoji picker for the focused text field (Chrome's "Emoji" in editable menus); present
+   * only where the system has one (Windows, macOS).
+   */
+  showEmojiPanel?(): void
+}
+
+/**
+ * The OS colour scheme as the engine sees it. Desktop hosts read it from the native theme so the
+ * chrome follows a system-wide flip without waiting for the renderer's media query, which on
+ * Windows can lag behind or disagree with it; hosts without this leave the renderer to
+ * `prefers-color-scheme`.
+ */
+export interface ThemeHost {
+  /** Whether the engine resolves the scheme to dark right now. */
+  systemDark(): boolean
+  onChanged(listener: () => void): void
+  /** Which scheme pages and native UI use; `system` follows the OS. */
+  setSource(scheme: ColorScheme): void
 }
 
 // ---------------------------------------------------------------------------
@@ -630,6 +978,12 @@ export interface Governor {
   sample(): Promise<ResourceSnapshot>
   trim(): Promise<void>
   relaunch(): void
+  /**
+   * Memory (MB) attributed to a tab's page at the last sample, for the "memory saved" line of a
+   * tab put to sleep; null when the governor has no figure for it. Hosts that do not measure
+   * leave this out.
+   */
+  memoryOf?(tabId: string): number | null
 }
 
 /** Browser extensions (Chromium extension API); Electron only. */
@@ -649,6 +1003,10 @@ export interface ExtensionHost {
   remove(id: string): Promise<void>
   setEnabled(id: string, enabled: boolean, win?: ZenWindow): Promise<void>
   setPinned(id: string, pinned: boolean): void
+  /** Lets this extension's `chrome_url_overrides.newtab` page open new tabs (one at most), or stops it. */
+  setNewTabOverride(id: string, enabled: boolean): void
+  /** The page new tabs open with while an enabled extension holds the override, else null. */
+  newTabUrl(): string | null
   /** Chrome's "Allow in Incognito": whether the extension's request rules reach private windows. */
   setAllowPrivate(id: string, allowed: boolean): void
   reload(id: string): Promise<void>
@@ -657,6 +1015,24 @@ export interface ExtensionHost {
   openOptions(id: string, win: ZenWindow): void
   openPopup(id: string, anchor: Rect, win: ZenWindow): void
   closePopup(): void
+  /** The `chrome.sidePanel` a window shows beside its page right now (for `UIState.sidePanel`). */
+  sidePanel(win: ZenWindow): SidePanelInfo | null
+  /** Open an extension's side panel in `win`, or close it when that extension's panel is showing. */
+  toggleSidePanel(id: string, win: ZenWindow): void
+  closeSidePanel(win: ZenWindow): void
+  /** The chrome laid the side panel out here (null: it is not showing); place the panel's view. */
+  placeSidePanel(win: ZenWindow, rect: Rect | null): void
+  /**
+   * `chrome.omnibox`: input starting with an extension's manifest keyword and a space belongs
+   * to that extension. `omniboxSuggest` answers the rows for such input (null: no keyword
+   * matched, the URL bar suggests as usual), `omniboxSubmit` hands an entered input over (true
+   * when an extension took it), `omniboxCancel` ends a session without an entry, and
+   * `omniboxDeleteSuggestion` reports a deleted row.
+   */
+  omniboxSuggest(input: string, win: ZenWindow): Promise<Suggestion[] | null>
+  omniboxSubmit(input: string, newTab: boolean, background: boolean, win: ZenWindow): boolean
+  omniboxCancel(win: ZenWindow): void
+  omniboxDeleteSuggestion(input: string, win: ZenWindow): void
   /**
    * The `chrome.contextMenus` items extensions add to a page's context menu, already grouped
    * per extension the way Chrome does; empty when nothing matches the click.
@@ -889,14 +1265,23 @@ export interface Platform {
   readonly downloads: DownloadHost
   readonly sessions: SessionHost
   readonly app: AppHost
+  /** The OS colour scheme; hosts without it leave the renderer to `prefers-color-scheme`. */
+  readonly theme?: ThemeHost
   /** Cookies and storage per site; hosts without it show a sheet with the connection only. */
   readonly siteData?: SiteDataHost
+  /** Native permission prompts; omit to have the chrome render the core's per-tab queue. */
+  readonly permissionPrompts?: PermissionPromptHost
   /** Hosts that ask before a page may open another app (Android). */
   readonly externalProtocols?: ExternalProtocolHost
   /** Key protection and re-authentication for the password vault; omit when `capabilities.passwords` is off. */
   readonly passwords?: PasswordsHost
   /** Bundled filter-list snapshots; hosts without it start unprotected until the lists download. */
   readonly blocking?: BlockingHost
+  /**
+   * The privacy policy the host enforces itself (cookies, GPC / DNT, HTTPS-only exemptions, secure
+   * DNS) and the Safe Browsing snapshot it ships; hosts without it get none of those.
+   */
+  readonly privacy?: PrivacyHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Offline page translation; hosts without it report the feature as unavailable. */

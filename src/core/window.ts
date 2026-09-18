@@ -8,19 +8,32 @@ import type {
   LayoutReport,
   Rect,
   Space,
+  WindowChrome,
   WindowKind,
+  WindowMaterial,
+  WindowPrompt,
   WindowState
 } from '../shared/types'
 import type { Browser } from './browser'
 import type { PersistedWindow } from './state'
 import { getSpace, tabVisibleIn } from './model'
 import { formatWindowTitle } from '../shared/windowTitle'
-import type { WindowHost } from './platform'
+import {
+  CHROME_MENU_TARGETS,
+  type ChromeContextParams,
+  type ChromeMenuTarget,
+  type TabView,
+  type WindowHost
+} from './platform'
 
 export interface WindowInit {
   id: string
   kind: WindowKind
+  chrome: WindowChrome
+  material: WindowMaterial
   bounds: Rect | null
+  /** The display `bounds` were saved on (null: unknown, or the host has one display). */
+  displayId: number | null
   maximized: boolean
   activeSpaceId: string
   selection: Record<string, string>
@@ -43,6 +56,8 @@ export interface WindowInit {
 export class ZenWindow {
   readonly id: string
   readonly kind: WindowKind
+  readonly chrome: WindowChrome
+  readonly material: WindowMaterial
   host!: WindowHost
   activeSpaceId: string
   /** Per-space selected tab of this window (falls back to the space's last selection). */
@@ -59,11 +74,26 @@ export class ZenWindow {
    * until the chrome says otherwise. The app menu and the command list are built for it.
    */
   formFactor: FormFactor = 'desktop'
+  /**
+   * The Settings recorder in this window's chrome is listening for a chord: key presses from the
+   * chrome are its to capture, and no shortcut runs off them until it stops.
+   */
+  recordingShortcut = false
   lastFocusedAt = 0
+  /** The window-modal question the chrome is showing ("Close N tabs?"), owned by `WindowPrompts`. */
+  prompt: WindowPrompt | null = null
+  /**
+   * The user's request to close this window went through its checks (the tab-count warning,
+   * every page's `beforeunload`): the host may close it for real. Hosts whose native close
+   * request arrives first (the caption button, Alt+F4) hold it until this is set.
+   */
+  closeApproved = false
   readonly initialBounds: Rect | null
+  readonly initialDisplayId: number | null
   readonly initialMaximized: boolean
   readonly cascadeFrom: ZenWindow | null
   private savedBounds: Rect | null
+  private savedDisplayId: number | null
   private lastLayout: LayoutReport | null = null
   private pendingContentFocus = false
   private closing = false
@@ -75,6 +105,8 @@ export class ZenWindow {
   ) {
     this.id = init.id
     this.kind = init.kind
+    this.chrome = init.chrome
+    this.material = init.material
     this.activeSpaceId = init.activeSpaceId
     this.localSpace = init.localSpace
     this.compactEnabled = init.compact
@@ -82,6 +114,8 @@ export class ZenWindow {
       this.selection.set(spaceId, tabId)
     this.initialBounds = init.bounds
     this.savedBounds = init.bounds
+    this.initialDisplayId = init.displayId
+    this.savedDisplayId = init.displayId
     this.initialMaximized = init.maximized
     this.cascadeFrom = init.cascadeFrom ?? null
   }
@@ -96,6 +130,11 @@ export class ZenWindow {
 
   get isClosing(): boolean {
     return this.closing
+  }
+
+  /** Whether the chrome document has loaded (events reach it, the URL bar can be opened). */
+  get chromeReady(): boolean {
+    return this.chromeReadyOnce
   }
 
   /** Last known normal (non-maximised) bounds; what a reopened window comes back at. */
@@ -140,10 +179,13 @@ export class ZenWindow {
     return {
       id: this.id,
       kind: this.kind,
+      chrome: this.chrome,
+      material: this.material,
       maximized: alive ? this.host.isMaximized() : this.initialMaximized,
       fullscreen: alive ? this.host.isFullScreen() : false,
       focused: alive ? this.host.isFocused() : false,
-      htmlFullscreenTabId: this.htmlFullscreenTabId
+      htmlFullscreenTabId: this.htmlFullscreenTabId,
+      prompt: this.prompt
     }
   }
 
@@ -162,6 +204,7 @@ export class ZenWindow {
     return {
       id: this.id,
       bounds: this.savedBounds,
+      displayId: this.savedDisplayId,
       maximized: this.alive ? this.host.isMaximized() : this.initialMaximized,
       activeSpaceId: this.activeSpaceId,
       selection,
@@ -179,6 +222,8 @@ export class ZenWindow {
     if (!this.host.isMaximized() && !this.host.isFullScreen()) {
       this.savedBounds = this.host.normalBounds() ?? this.savedBounds
     }
+    // A maximised window keeps its normal bounds but may have moved to another display.
+    this.savedDisplayId = this.host.displayId?.() ?? this.savedDisplayId
     if (this.kind === 'synced') this.browser.state.commit()
   }
 
@@ -194,7 +239,10 @@ export class ZenWindow {
     this.onWindowStateChanged()
   }
 
-  /** The host window is about to close. */
+  /**
+   * The host window is about to close – for real: a host whose native close request comes first
+   * asks the browser (`requestWindowClose`) and closes once `closeApproved` is set.
+   */
   onClosing(): void {
     this.closing = true
     this.onBoundsChanged()
@@ -212,6 +260,26 @@ export class ZenWindow {
     if (this.chromeReadyOnce) return
     this.chromeReadyOnce = true
     this.browser.onChromeReady(this)
+  }
+
+  /**
+   * A right-click in the chrome document that the chrome itself did not handle (its sidebar,
+   * tab and bookmark rows show their menus through commands): the URL bar's field and pill and
+   * plain text fields get Chrome's menus for them.
+   */
+  onContextMenu(params: Omit<ChromeContextParams, 'target' | 'tabId'>): void {
+    if (!this.alive) return
+    const lookup = this.host.menuTargetAt?.(params.x, params.y) ?? Promise.resolve(null)
+    void lookup
+      .catch(() => null)
+      .then((hit) => {
+        if (!this.alive) return
+        const target = CHROME_MENU_TARGETS.find((t): t is ChromeMenuTarget => t === hit?.target)
+        return this.browser.menus.showChromeContextMenu(
+          { ...params, target: target ?? null, tabId: hit?.tabId ?? null },
+          this
+        )
+      })
   }
 
   // ---------------------------------------------------------------------------
@@ -232,6 +300,7 @@ export class ZenWindow {
     const fullscreenTabId = this.htmlFullscreenTabId
     if (fullscreenTabId && owned.has(fullscreenTabId)) {
       // An element in HTML fullscreen covers the whole window, chrome included.
+      this.browser.extensions.placeSidePanel(this, null)
       const { width, height } = this.host.contentSize()
       for (const [tabId, view] of owned) {
         if (view.isDestroyed()) continue
@@ -246,11 +315,18 @@ export class ZenWindow {
       }
       return
     }
+    // The extension side panel sits beside the page and hides with it.
+    this.browser.extensions.placeSidePanel(
+      this,
+      report.contentHidden ? null : (report.sidePanel ?? null)
+    )
     const wanted = new Map<string, { rect: Rect; radius: number }>()
     if (!report.contentHidden) {
       for (const p of report.placements) wanted.set(p.tabId, { rect: p.rect, radius: p.radius })
     }
     const glance = report.glance
+    // Whether a page that was showing goes away under this report (chrome UI covers it).
+    let covered = false
     for (const [tabId, view] of owned) {
       if (view.isDestroyed()) continue
       const placement = wanted.get(tabId)
@@ -262,6 +338,7 @@ export class ZenWindow {
         if (!view.isVisible()) view.setVisible(true)
       } else if (view.isVisible()) {
         view.setVisible(false)
+        covered = true
       }
     }
     if (glance) {
@@ -277,7 +354,29 @@ export class ZenWindow {
     // With no page visible (empty space / chrome overlay / preview of a page shown in another
     // window) keyboard input must go to the chrome, otherwise shortcuts stop working.
     const showsOwnPage = [...wanted.keys()].some((id) => owned.has(id))
-    if (report.contentHidden || (!showsOwnPage && !glance)) this.focusChrome()
+    if (report.contentHidden) {
+      // Chrome UI covers the page: the keyboard goes with it, but only when a page that was
+      // showing loses its place under this report (one that hides nothing new leaves the
+      // keyboard where it is) and never while a document of another surface holds it – an
+      // extension popup's view, focused while still hidden, would blur and close.
+      if (covered && !this.keyboardHeldElsewhere(owned)) this.focusChrome()
+    } else if (!showsOwnPage && !glance) {
+      this.focusChrome()
+    }
+  }
+
+  /**
+   * Whether the keyboard is held by a document that is neither this window's chrome nor one of
+   * the tab views it shows. Hosts that cannot tell get the old answer: the keyboard moves.
+   */
+  private keyboardHeldElsewhere(owned: Map<string, TabView>): boolean {
+    if (this.host.focusedDocument?.() !== 'other') return false
+    for (const view of owned.values()) {
+      if (view.isDestroyed()) continue
+      // A view that cannot say may well be the one holding it.
+      if (!view.isFocused || view.isFocused()) return false
+    }
+    return true
   }
 
   /**

@@ -218,7 +218,7 @@ adb pull "/sdcard/$video" "$out/$video"
 # Screenshots, and whatever else a driver writes down next to them (an accessibility tree dump).
 for name in $(adb shell run-as "$app_id" ls "files/$demo_dir" | tr -d '\r'); do
   case "$name" in
-    *.png | *.txt) adb exec-out run-as "$app_id" cat "files/$demo_dir/$name" > "$out/$name" ;;
+    *.png | *.jpg | *.txt) adb exec-out run-as "$app_id" cat "files/$demo_dir/$name" > "$out/$name" ;;
   esac
 done
 

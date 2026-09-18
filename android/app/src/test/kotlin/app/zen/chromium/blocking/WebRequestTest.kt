@@ -29,8 +29,16 @@ class WebRequestTest {
             documentsBlocked.add(url)
         }
 
+        override fun onDocumentUnsafe(url: String, hit: SafeBrowsingHit) {
+            documentsBlocked.add(url)
+        }
+
         override fun onDocumentRedirected(url: String) {
             redirects.add(url)
+        }
+
+        override fun onDocumentUpgraded(from: String, to: String) {
+            redirects.add(to)
         }
     }
 

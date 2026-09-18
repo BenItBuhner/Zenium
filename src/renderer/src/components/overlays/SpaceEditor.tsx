@@ -4,6 +4,7 @@ import type { UIState } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS, SPACE_ICONS } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
+import { useViewport } from '@renderer/lib/formFactor'
 import { closeOverlay } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Button } from '../ui/button'
@@ -26,6 +27,8 @@ export function SpaceEditor({
   const [name, setName] = useState(existing?.name ?? '')
   const [icon, setIcon] = useState(existing?.icon ?? '')
   const [containerId, setContainerId] = useState(existing?.containerId ?? DEFAULT_CONTAINER_ID)
+  // On a phone the keyboard would cover the icon grid and take the first back for itself.
+  const phone = useViewport().formFactor === 'phone'
 
   const save = (): void => {
     const trimmed = name.trim() || (existing ? existing.name : 'New Space')
@@ -56,7 +59,7 @@ export function SpaceEditor({
             <Label htmlFor="space-name">Name</Label>
             <Input
               id="space-name"
-              autoFocus
+              autoFocus={!phone}
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Work"

@@ -7,7 +7,9 @@ import type {
   BookmarkTreeData,
   Boost,
   ClosedEntry,
+  NavigationSnapshot,
   Container,
+  CrashRestoreOffer,
   DefaultBrowserStatus,
   DownloadItem,
   DownloadsProgress,
@@ -18,8 +20,10 @@ import type {
   LiveFolderConfig,
   MediaState,
   Mod,
+  PageDialog,
   PasswordsStatus,
   PageEnvironment,
+  PermissionPrompt,
   PermissionRule,
   Platform,
   Rect,
@@ -28,6 +32,8 @@ import type {
   SecurityPrompt,
   Settings,
   Shortcut,
+  ShortcutPreset,
+  SidePanelInfo,
   Space,
   SplitGroup,
   SyncStatus,
@@ -35,7 +41,7 @@ import type {
   UIState
 } from '../shared/types'
 import type { TranslateUIState } from '../shared/translate'
-import { DEFAULT_CONTAINER_ID } from '../shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import {
   DEFAULT_CONTAINERS,
@@ -47,7 +53,12 @@ import {
 } from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { DEFAULT_SEARCH_ENGINES } from '../shared/search'
-import { applyShortcutOverrides, defaultShortcuts } from '../shared/shortcuts'
+import {
+  applyShortcutOverrides,
+  defaultShortcuts,
+  isShortcutPreset,
+  migrateShortcutPreset
+} from '../shared/shortcuts'
 import {
   BOOKMARK_SCHEMA_VERSION,
   BookmarkTree,
@@ -74,14 +85,19 @@ import {
   type BlockingStatus
 } from '../shared/blocking'
 import { DEFAULT_PAGE_ENVIRONMENT, sanitizePageControls } from '../shared/pageControls'
+import { emptyPrivacyStatus, sanitizePrivacySettings, type PrivacyStatus } from '../shared/privacy'
 import { defer, type StoreIO } from './platform'
-import { sanitizeClosedEntries, summarizeClosed } from './session'
+import { sanitizeClosedEntries, sanitizeSnapshot, summarizeClosed } from './session'
 import type { ZenWindow } from './window'
+
+const BOOKMARKS_BAR_MODES: ReadonlyArray<Settings['bookmarksBar']> = ['always', 'newtab', 'never']
 
 /** A synced window as remembered between sessions (blank / private windows are never restored). */
 export interface PersistedWindow {
   id: string
   bounds: Rect | null
+  /** The display `bounds` were on (the host's id), so the window goes back to it when it is still there. */
+  displayId?: number | null
   maximized: boolean
   activeSpaceId: string
   /** Per-space selected tab. */
@@ -111,6 +127,18 @@ interface Persisted {
   windows?: PersistedWindow[]
   /** v3: recently closed tabs and windows (newest first, 25 deep). */
   recentlyClosed?: ClosedEntry[]
+  /**
+   * v3: the back/forward stack of every open tab, by tab id, so a restored tab has its history
+   * and (through each entry's page state) its scroll position back. Refreshed on every commit
+   * of a navigation and once more, for the page on screen, at a graceful shutdown.
+   */
+  navigation?: Record<string, NavigationSnapshot>
+  /**
+   * The clean-exit marker: false from the first write of a run, true only in the write a
+   * graceful shutdown makes. A profile that starts with it false was left by a crash, a kill or
+   * a power cut; the chrome then offers the pages instead of loading them (`crashRestore`).
+   */
+  cleanExit?: boolean
 }
 
 export type StateListener = () => void
@@ -121,6 +149,7 @@ export interface StateExtras {
   zappingTabId: string | null
   liveFolders: Record<string, LiveFolderConfig>
   extensions: ExtensionInfo[]
+  sidePanel: SidePanelInfo | null
   mods: Mod[]
   sync: SyncStatus
   agents: AgentInfo[]
@@ -130,8 +159,12 @@ export interface StateExtras {
   defaultBrowser: DefaultBrowserStatus
   blockedPopups: Record<string, BlockedPopup[]>
   permissionRules: PermissionRule[]
+  permissionPrompts: PermissionPrompt[]
   securityPrompts: SecurityPrompt[]
+  pageDialogs: PageDialog[]
+  crashRestore: CrashRestoreOffer | null
   blocking: BlockingStatus
+  privacy: PrivacyStatus
   translate: TranslateUIState
 }
 
@@ -181,22 +214,32 @@ export class BrowserState {
   })
   /** Newest first; the `SessionService` owns the list, this is where it persists. */
   recentlyClosed: ClosedEntry[] = []
+  /**
+   * What loading the profile changed under the user (a migration that moved settings): shown as
+   * toasts once a window is ready, then forgotten. Never persisted.
+   */
+  readonly migrationNotices: string[] = []
+  /** Back/forward stacks of the open tabs, by tab id (`TabManager` keeps them current). */
+  readonly tabNavigation = new Map<string, NavigationSnapshot>()
   media: MediaState[] = []
   devtoolsOpenFor = new Set<string>()
   resources: ResourceSnapshot = emptyResourceSnapshot()
   /** Device facts from the host (Android reports them at boot and on configuration changes). */
   pageEnvironment: PageEnvironment = { ...DEFAULT_PAGE_ENVIRONMENT }
+  /** The host's reading of the OS colour scheme (null: the renderer reads its media query). */
+  systemDark: boolean | null = null
   windowBounds: Rect | null = null
   /** Windows to restore on startup (from the previous session). */
   restoredWindows: PersistedWindow[] = []
   /** Live windows, registered by the Browser so persistence can capture them. */
   liveWindows: () => ZenWindow[] = () => []
   /** Provided by the Browser once its feature services exist. */
-  extras: () => StateExtras = () => ({
+  extras: (win: ZenWindow) => StateExtras = () => ({
     boosts: [],
     zappingTabId: null,
     liveFolders: {},
     extensions: [],
+    sidePanel: null,
     mods: [],
     sync: {
       enabled: false,
@@ -232,8 +275,12 @@ export class BrowserState {
     defaultBrowser: { isDefault: null, prompt: null },
     blockedPopups: {},
     permissionRules: [],
+    permissionPrompts: [],
     securityPrompts: [],
+    pageDialogs: [],
+    crashRestore: null,
     blocking: emptyBlockingStatus(),
+    privacy: emptyPrivacyStatus(),
     translate: emptyTranslateState()
   })
   searchEngines: SearchEngine[] = DEFAULT_SEARCH_ENGINES
@@ -246,11 +293,15 @@ export class BrowserState {
   private dirty = false
   /** Callbacks waiting for the scheduled broadcast to have gone out. */
   private afterBroadcastQueue: Array<() => void> = []
-  private shortcutsCache: Shortcut[] | null = null
+  private shortcutsCache: { preset: ShortcutPreset; table: Shortcut[] } | null = null
   /** The last set of synced windows written to disk (used once they are all closed). */
   private lastWindows: PersistedWindow[] = []
   /** After shutdown nothing may be written any more (windows closing would shrink the list). */
   private frozen = false
+  /** The run is ending gracefully: what is written from now on carries the clean-exit marker. */
+  private exiting = false
+  /** The previous run did not end with a graceful shutdown (its profile lacks the marker). */
+  uncleanExit = false
 
   constructor(
     io: StoreIO,
@@ -259,7 +310,7 @@ export class BrowserState {
     version: string
   ) {
     this.version = version
-    this.store = new JsonStore<Persisted>(io, 'state.json')
+    this.store = new JsonStore<Persisted>(io, 'state.json', { backup: true })
     this.model = emptyModel(structuredClone(DEFAULT_CONTAINERS))
   }
 
@@ -268,8 +319,15 @@ export class BrowserState {
     const data = this.store.readSync()
     if (data && (data.version === 1 || data.version === 2 || data.version === 3)) {
       this.applyPersisted(data)
+      // Profiles from before the marker count as clean; only an explicit false is a crash.
+      this.uncleanExit = data.cleanExit === false
     }
     this.ensureValid()
+  }
+
+  /** The app is shutting down gracefully: the next write marks the profile as cleanly exited. */
+  markExiting(): void {
+    this.exiting = true
   }
 
   /**
@@ -291,6 +349,13 @@ export class BrowserState {
   private applyPersisted(data: Persisted): void {
     // Before v3 the recently closed list was in memory only: it starts empty.
     this.recentlyClosed = data.version === 3 ? sanitizeClosedEntries(data.recentlyClosed) : []
+    this.tabNavigation.clear()
+    if (data.navigation && typeof data.navigation === 'object') {
+      for (const [tabId, raw] of Object.entries(data.navigation)) {
+        const snapshot = sanitizeSnapshot(raw)
+        if (snapshot) this.tabNavigation.set(tabId, snapshot)
+      }
+    }
     this.settings = { ...structuredClone(DEFAULT_SETTINGS), ...data.settings }
     this.settings.compactMode = { ...DEFAULT_SETTINGS.compactMode, ...data.settings?.compactMode }
     // Compact mode's "persistent sidebar" toggle is transient by design.
@@ -304,7 +369,18 @@ export class BrowserState {
     this.settings.defaultBrowserPromo = sanitizePromoState(data.settings?.defaultBrowserPromo)
     this.settings.blocking = sanitizeBlockingSettings(data.settings?.blocking)
     this.settings.pageControls = sanitizePageControls(data.settings?.pageControls)
+    if (!BOOKMARKS_BAR_MODES.includes(this.settings.bookmarksBar)) {
+      this.settings.bookmarksBar = DEFAULT_SETTINGS.bookmarksBar
+    }
+    this.settings.mutedHosts = Array.isArray(this.settings.mutedHosts)
+      ? this.settings.mutedHosts.filter((h): h is string => typeof h === 'string' && h !== '')
+      : []
+    this.settings.privacy = sanitizePrivacySettings(data.settings?.privacy)
     this.shortcutOverrides = data.shortcutOverrides ?? {}
+    const preset = migrateShortcutPreset(data.settings?.shortcutPreset, this.shortcutOverrides)
+    this.settings.shortcutPreset = preset.preset
+    // Shortcuts matter where there is a keyboard; a phone is not told about them.
+    if (preset.notice && this.platform !== 'android') this.migrationNotices.push(preset.notice)
     this.bookmarks = this.loadBookmarks(data)
     if (Array.isArray(data.windows) && data.windows.length) {
       this.restoredWindows = data.windows.filter((w) => w && typeof w.id === 'string')
@@ -472,14 +548,25 @@ export class BrowserState {
     }
   }
 
+  /** The active preset (a value another device synced that this build does not know falls back to Chrome). */
+  get shortcutPreset(): ShortcutPreset {
+    const preset = this.settings.shortcutPreset
+    return isShortcutPreset(preset) ? preset : 'chrome'
+  }
+
+  /** The active table: the preset's defaults under the user's overrides; rebuilt when either changes. */
   get shortcuts(): Shortcut[] {
-    if (!this.shortcutsCache) {
-      this.shortcutsCache = applyShortcutOverrides(
-        defaultShortcuts(this.platform),
-        this.shortcutOverrides
-      )
+    const preset = this.shortcutPreset
+    if (!this.shortcutsCache || this.shortcutsCache.preset !== preset) {
+      this.shortcutsCache = {
+        preset,
+        table: applyShortcutOverrides(
+          defaultShortcuts(this.platform, preset),
+          this.shortcutOverrides
+        )
+      }
     }
-    return this.shortcutsCache
+    return this.shortcutsCache.table
   }
 
   setShortcutOverride(id: string, binding: KeyBinding | null): void {
@@ -552,6 +639,7 @@ export class BrowserState {
       platform: this.platform,
       capabilities: this.capabilities,
       version: this.version,
+      systemDark: this.systemDark,
       tabs,
       essentialTabIds,
       spaces,
@@ -574,7 +662,7 @@ export class BrowserState {
       devtoolsOpenFor: [...this.devtoolsOpenFor],
       foreignTabIds: win.foreignTabIds(),
       windowCount: this.liveWindows().length,
-      ...this.extras(),
+      ...this.extras(win),
       resources: this.resources,
       pageEnvironment: this.pageEnvironment
     }
@@ -631,20 +719,28 @@ export class BrowserState {
     if (windows.length > 0) this.lastWindows = windows.map((w) => w.toPersisted())
     const persistedWindows: PersistedWindow[] =
       this.lastWindows.length > 0 ? this.lastWindows : this.restoredWindows
-    // Glance tabs and tabs of blank / private windows are transient – never persist them.
+    // Glance tabs, tabs of blank / private windows and private tabs are transient – never
+    // persist them.
     const transient = new Set<string>()
     for (const w of this.liveWindows()) if (w.glance) transient.add(w.glance.tabId)
     return {
       version: 3,
       spaces: m.spaces,
       tabs: Object.values(m.tabs)
-        .filter((t) => !transient.has(t.id) && !(t.spaceId && m.localSpaces[t.spaceId]))
+        .filter(
+          (t) =>
+            !transient.has(t.id) &&
+            !(t.spaceId && m.localSpaces[t.spaceId]) &&
+            t.containerId !== PRIVATE_CONTAINER_ID
+        )
         .map((t) => ({
           ...t,
           loading: false,
           audible: false,
           errorCode: null,
           blockedCount: 0,
+          // Restored by us, not sent by an app that is long gone (Chrome: FROM_RESTORE).
+          fromIntent: false,
           url: t.url.startsWith('zen://error') ? (safeOriginalUrl(t.url) ?? BLANK_URL) : t.url
         })),
       essentialTabIds: m.essentialTabIds,
@@ -656,8 +752,24 @@ export class BrowserState {
       shortcutOverrides: this.shortcutOverrides,
       bookmarkTree: { schemaVersion: BOOKMARK_SCHEMA_VERSION, nodes: this.bookmarks },
       windows: persistedWindows,
-      recentlyClosed: this.recentlyClosed
+      recentlyClosed: this.recentlyClosed,
+      navigation: this.persistedNavigation(m.tabs),
+      cleanExit: this.exiting
     }
+  }
+
+  /** The stacks of the tabs being written (a stack whose tab is gone goes with it). */
+  private persistedNavigation(tabs: Record<string, Tab>): Record<string, NavigationSnapshot> {
+    const out: Record<string, NavigationSnapshot> = {}
+    for (const [tabId, snapshot] of this.tabNavigation) {
+      const tab = tabs[tabId]
+      if (!tab || tab.containerId === PRIVATE_CONTAINER_ID) {
+        this.tabNavigation.delete(tabId)
+        continue
+      }
+      out[tabId] = snapshot
+    }
+    return out
   }
 
   async flush(): Promise<void> {

@@ -6,17 +6,20 @@ import { activeSpace, isDarkScheme } from '@renderer/lib/selectors'
 
 /** Applies the active space's gradient theme to the document root. */
 export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): ResolvedTheme {
-  const [systemDark, setSystemDark] = useState(
+  // The host's reading of the OS scheme wins (it flips the moment the OS does); the media query
+  // serves hosts that have none.
+  const [mediaDark, setMediaDark] = useState(
     () => window.matchMedia('(prefers-color-scheme: dark)').matches
   )
   useEffect(() => {
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    const listener = (e: MediaQueryListEvent): void => setSystemDark(e.matches)
+    const listener = (e: MediaQueryListEvent): void => setMediaDark(e.matches)
     mq.addEventListener('change', listener)
     return () => mq.removeEventListener('change', listener)
   }, [])
 
   const space = activeSpace(state)
+  const systemDark = state.systemDark ?? mediaDark
   const dark = state.settings.colorScheme === 'system' ? systemDark : isDarkScheme(state)
   const resolved = useMemo(() => resolveTheme(space.theme, dark), [space.theme, dark])
 
@@ -25,6 +28,7 @@ export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): Re
     for (const [key, value] of Object.entries(themeCssVariables(resolved)))
       root.style.setProperty(key, value)
     root.dataset.theme = resolved.isDark ? 'dark' : 'light'
+    root.dataset.material = state.window.material
     root.style.colorScheme = resolved.isDark ? 'dark' : 'light'
     root.style.setProperty('--zen-sidebar-width', `${state.settings.sidebarWidth}px`)
     const borderless = state.settings.borderless || state.window.fullscreen
@@ -37,7 +41,8 @@ export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): Re
     formFactor,
     state.settings.sidebarWidth,
     state.settings.borderless,
-    state.window.fullscreen
+    state.window.fullscreen,
+    state.window.material
   ])
 
   return resolved

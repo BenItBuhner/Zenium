@@ -2,7 +2,9 @@ package app.zen.chromium
 
 import android.view.View
 import android.webkit.WebChromeClient
+import app.zen.chromium.ext.Extensions
 import app.zen.chromium.blocking.Blocking
+import app.zen.chromium.privacy.Privacy
 import org.json.JSONObject
 
 /**
@@ -23,6 +25,8 @@ interface PageHost {
     val pageRules: PageRules get() = PageRules.NONE
     /** The same rules as the core sent them, handed to every page's document-start script. */
     val pageRulesJson: JSONObject get() = JSONObject()
+    /** The privacy policy the pages apply (cookies, signals, Safe Browsing's word ahead of the engine). */
+    val privacy: Privacy
     val keys: Keys
     val downloads: Downloads
     val permissions: Permissions
@@ -33,6 +37,8 @@ interface PageHost {
     val snapshots: HistorySnapshots
     val tabs: TabHost
     val fullscreenTab: TabWebView?
+    /** Whether the host is in its own fullscreen (Menu > Fullscreen: the bars hidden, no element fullscreen). */
+    val immersive: Boolean get() = false
     /** The colour scheme and scrim of the surrounding chrome, for what is drawn natively. */
     val themeDark: Boolean
     val themeScrim: Int
@@ -43,6 +49,11 @@ interface PageHost {
      * Look and Feel setting; the chrome draws the disc, so a host without one leaves it off).
      */
     val pullToRefresh: Boolean get() = false
+    /**
+     * The extension runtime's Kotlin half, when the host runs one: the browser window does; a
+     * custom tab has no core to run the backgrounds against, so its pages get no content scripts.
+     */
+    val extensions: Extensions? get() = null
 
     /** Something happened to one page: `navigated`, `title`, `startLoading`, … (see [TabWebView]). */
     fun viewEvent(tabId: String, name: String, payload: Any?)
@@ -61,6 +72,8 @@ interface PageHost {
 
     fun enterFullscreen(tab: TabWebView, view: View, callback: WebChromeClient.CustomViewCallback)
     fun exitFullscreen(tab: TabWebView)
+    /** Leave the host's own fullscreen (a back while [immersive]); a host without one has nothing to do. */
+    fun leaveImmersive() {}
     fun openExternal(url: String)
 
     /** A page's history or fullscreen state changed: whoever handles back re-decides its target. */

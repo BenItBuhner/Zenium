@@ -10,6 +10,7 @@ import type {
 } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
+import { useFrameDialog } from '@renderer/lib/portals'
 import {
   closeSecurityPrompt,
   currentSecurityPrompt,
@@ -30,6 +31,8 @@ const SCHEME_NAMES: Record<string, string> = {
 /**
  * HTTP authentication and client-certificate prompts, one at a time, tab-modal: a prompt waits
  * until its tab is the active one. Answers go back to the core, which resumes the request.
+ * Rendered inside TabDialogs' `FrameDialogHost`, which centres the prompt in the content frame
+ * over its scrim; the scrim does not answer it (only the buttons and Escape do).
  */
 export function SecurityPrompts({ state }: { state: UIState }): JSX.Element | null {
   const prompt = currentSecurityPrompt(state)
@@ -69,23 +72,19 @@ function SecurityPromptDialog({ prompt }: { prompt: SecurityPrompt }): JSX.Eleme
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   })
+  useFrameDialog()
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center" role="presentation">
-      <div
-        className={cn(
-          'zen-panel zen-animate-pop w-[440px] max-w-[calc(100%-32px)] overflow-hidden'
-        )}
-        role="dialog"
-        aria-modal="true"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        {prompt.kind === 'http-auth' ? (
-          <HttpAuthForm prompt={prompt} respond={respond} />
-        ) : (
-          <CertificateChooser prompt={prompt} respond={respond} />
-        )}
-      </div>
+    <div
+      className={cn('zen-panel zen-animate-pop w-[440px] max-w-[calc(100%-32px)] overflow-hidden')}
+      role="dialog"
+      aria-modal="true"
+    >
+      {prompt.kind === 'http-auth' ? (
+        <HttpAuthForm prompt={prompt} respond={respond} />
+      ) : (
+        <CertificateChooser prompt={prompt} respond={respond} />
+      )}
     </div>
   )
 }

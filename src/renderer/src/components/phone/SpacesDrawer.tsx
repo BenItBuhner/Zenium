@@ -12,6 +12,7 @@ import {
   releaseDrawer,
   setDrawerTravel
 } from '@renderer/lib/gestures/drawer'
+import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
 import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import { activeSpace, activeTab, essentialsFor, tabTitle, tabsOf } from '@renderer/lib/selectors'
@@ -98,7 +99,7 @@ export function SpacesDrawer({ state, isDark }: Props): JSX.Element {
         mode: caught ? 'drag' : 'pending',
         tracker
       }
-      if (caught) e.currentTarget.setPointerCapture(e.pointerId)
+      if (caught) capturePointer(e.currentTarget, e.pointerId)
     },
     onPointerMove: (e: ReactPointerEvent<HTMLElement>) => {
       const t = touch.current
@@ -114,7 +115,7 @@ export function SpacesDrawer({ state, isDark }: Props): JSX.Element {
         }
         t.mode = 'drag'
         t.x0 = e.clientX
-        e.currentTarget.setPointerCapture(e.pointerId)
+        capturePointer(e.currentTarget, e.pointerId)
       }
       if (t.mode === 'drag') dragDrawer((e.clientX - t.x0) * outward)
     },
@@ -289,7 +290,7 @@ function SpaceList({
       setLanding(null)
       setHeld({ spaceId: space.id, from: index, dy: 0, to: index, dragging: false })
       try {
-        el.setPointerCapture(pointerId)
+        capturePointer(el, pointerId)
       } catch {
         /* the pointer is gone */
       }

@@ -1,0 +1,192 @@
+import type { LocaleMessages, RunAt, RuntimeManifest, ScriptWorld } from './manifest'
+import { planInjection, type RegisteredContentScript } from './plan'
+
+/**
+ * What the host hands the content bootstrap (the script injected at document start into tab
+ * frames) and the extension-page bootstrap (background page, popup, options page). It is JSON:
+ * the host embeds it verbatim into the injected script, next to the content-script sources.
+ *
+ * How content scripts are kept apart from the page:
+ *  - `world`: the unit runs in a real Chromium isolated world of its own (androidx.webkit
+ *    `JS_INJECTION_IN_FRAME_AND_WORLD`, Chromium 146+ WebView). The world's global is the
+ *    content scripts' `window`, `chrome` simply lives on it, and the page's script cannot reach
+ *    either. The default wherever the WebView has worlds.
+ *  - `with`: the fallback for older WebViews. Every file of a declaration runs inside one
+ *    function whose body sits in `with (window)`, where `window` is a Proxy over the real window:
+ *    expandos land in a per-extension store, reads of browser globals fall through to the real
+ *    window, page globals read as undefined, and bare identifiers resolve through the store and
+ *    the browser's globals first. Faithful for the expando pattern, but the page shares the
+ *    prototypes and can observe the scripts' DOM work: the host reports `reducedIsolation`.
+ *  - `none`: run against the real window (what `world: "MAIN"` declarations get).
+ */
+export type IsolationMode = 'with' | 'none' | 'world'
+
+/**
+ * Which of an extension's worlds a content unit belongs to: its isolated world (content scripts),
+ * the page's main world (`world: "MAIN"` declarations) or its user-script world
+ * (`chrome.userScripts`, messaging only).
+ */
+export type UnitWorld = 'isolated' | 'main' | 'user'
+
+/** The isolated world an extension's scripts run in on hosts that have real worlds. */
+export function worldNameFor(extensionId: string, world: 'isolated' | 'user' = 'isolated'): string {
+  return world === 'user' ? `zenium-ext-${extensionId}-user` : `zenium-ext-${extensionId}`
+}
+
+export interface BootGroup {
+  index: number
+  runAt: RunAt
+  world: ScriptWorld
+  matches: string[]
+  excludeMatches: string[]
+  includeGlobs: string[]
+  excludeGlobs: string[]
+  allFrames: boolean
+  matchAboutBlank: boolean
+  matchOriginAsFallback: boolean
+  /** Extension-relative paths; the host embeds their sources as one function per group. */
+  js: string[]
+  /** Extension-relative paths; the host embeds their texts in the config. */
+  css: string[]
+}
+
+export interface ExtensionBoot {
+  id: string
+  name: string
+  version: string
+  manifestVersion: 2 | 3
+  permissions: string[]
+  hostPermissions: string[]
+  /** The raw manifest, for `chrome.runtime.getManifest()`. */
+  manifest: Record<string, unknown>
+  messages: LocaleMessages | null
+  groups: BootGroup[]
+  isolation: IsolationMode
+}
+
+export interface ContentBootConfig {
+  kind: 'content'
+  token: string
+  uiLanguage: string
+  /** The world this unit runs in; `user` units build a user-script engine (messaging only). */
+  world: UnitWorld
+  /** `user` units: `userScripts.configureWorld({ messaging })`, off by default like Chrome. */
+  userScriptMessaging?: boolean
+  /**
+   * A late boot: the host evaluates the bootstrap in the main world of a document that predates
+   * the extension's world (or on a WebView without worlds) so that `scripting.executeScript` /
+   * `insertCSS` have a scope to run in. No groups, `with` isolation, reduced isolation.
+   */
+  late?: boolean
+  extension: ExtensionBoot
+}
+
+/** One content-script group's run, as the debug bootstrap records it (`__zenExtStats`). */
+export interface BootGroupStat {
+  ext: string
+  group: number
+  runAt: RunAt
+  /** ms since the bootstrap started when the group ran. */
+  at: number
+  /** ms the group's own code took. */
+  ms: number
+  /** `document.readyState` and the number of nodes under `<html>` when the group ran. */
+  readyState: string
+  nodes: number
+  error: string | null
+}
+
+/** What a debug bootstrap exposes per world as `__zenExtStats` (the doc-start budget). */
+export interface BootStats {
+  frame: string
+  world: UnitWorld | 'page'
+  isolation: IsolationMode
+  /** ms after the navigation started when the bootstrap began running. */
+  startedAt: number
+  /** ms spent matching declarations against the frame. */
+  matchMs: number
+  /** ms the bootstrap itself took (transport, matching, scheduling; not the scripts). */
+  bootMs: number
+  applied: number
+  groups: BootGroupStat[]
+  /** The Trusted Types shield of an isolated world: policy created, sinks patched. */
+  trustedTypes: { policy: boolean; patched: number } | null
+}
+
+export type PageContext = 'background' | 'popup' | 'options' | 'offscreen' | 'page'
+
+export interface PageBootConfig {
+  kind: 'page'
+  token: string
+  uiLanguage: string
+  context: PageContext
+  extension: ExtensionBoot
+}
+
+export type BootConfig = ContentBootConfig | PageBootConfig
+
+/** Build the per-extension boot record from a parsed manifest (static plus registered scripts). */
+export function buildExtensionBoot(
+  id: string,
+  manifest: RuntimeManifest,
+  messages: LocaleMessages | null,
+  registered: RegisteredContentScript[],
+  isolation: IsolationMode
+): ExtensionBoot {
+  const plan = planInjection(id, manifest, registered)
+  return {
+    id,
+    name: manifest.name,
+    version: manifest.version,
+    manifestVersion: manifest.manifestVersion,
+    permissions: manifest.permissions,
+    hostPermissions: manifest.hostPermissions,
+    manifest: manifest.raw,
+    messages,
+    groups: plan.groups.map((group) => ({
+      index: group.index,
+      runAt: group.runAt,
+      world: group.world,
+      matches: group.declaration.matches,
+      excludeMatches: group.declaration.excludeMatches,
+      includeGlobs: group.declaration.includeGlobs,
+      excludeGlobs: group.declaration.excludeGlobs,
+      allFrames: group.declaration.allFrames,
+      matchAboutBlank: group.declaration.matchAboutBlank,
+      matchOriginAsFallback: group.declaration.matchOriginAsFallback,
+      js: group.js,
+      css: group.css
+    })),
+    isolation
+  }
+}
+
+/**
+ * The HTML of the generated background page (Chrome's `_generated_background_page.html`). The
+ * bootstrap arrives through the host's document-start injection, so the page only needs the
+ * scripts; a module service worker keeps `type="module"` so its imports resolve.
+ */
+export function backgroundPageHtml(manifest: RuntimeManifest): string {
+  const background = manifest.background
+  const tags: string[] = []
+  if (background?.kind === 'service_worker') {
+    const type = background.module ? ' type="module"' : ''
+    tags.push(`<script${type} src="${escapeAttribute(absolutePath(background.script))}"></script>`)
+  } else if (background?.kind === 'scripts') {
+    for (const script of background.scripts)
+      tags.push(`<script src="${escapeAttribute(absolutePath(script))}"></script>`)
+  }
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeText(manifest.name)}</title></head><body>${tags.join('')}</body></html>`
+}
+
+export function absolutePath(path: string): string {
+  return '/' + path.replace(/^\/+/, '')
+}
+
+function escapeAttribute(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+}
+
+function escapeText(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+}

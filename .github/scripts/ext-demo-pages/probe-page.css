@@ -1,0 +1,42 @@
+body {
+  margin: 0;
+  background: #ffffff;
+  color: #111827;
+  font:
+    17px/1.5 system-ui,
+    -apple-system,
+    sans-serif;
+}
+main {
+  padding: 24px 20px 48px;
+  max-width: 640px;
+}
+h1 {
+  font-size: 26px;
+  margin: 0 0 12px;
+}
+a {
+  color: #2563eb;
+}
+.cards {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+}
+.card {
+  background: #f3f4f6;
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+.card h2 {
+  font-size: 16px;
+  margin: 0 0 4px;
+}
+.card p {
+  margin: 0;
+  color: #4b5563;
+}
+img {
+  outline: 1px solid #d1d5db;
+  margin-right: 8px;
+}

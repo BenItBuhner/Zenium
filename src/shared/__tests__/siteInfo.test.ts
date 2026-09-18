@@ -5,10 +5,13 @@ import {
   describeSite,
   formatBytes,
   inferHttpOnly,
+  isCertificateError,
   otherSites,
   permissionLabel,
+  securityIndicator,
   type SiteCookie
 } from '../siteInfo'
+import { errorPageUrl, httpsOnlyPageUrl, safeBrowsingPageUrl } from '../url'
 
 const cookie = (name: string, extra: Partial<SiteCookie> = {}): SiteCookie => ({
   name,
@@ -72,6 +75,72 @@ describe('describeSite', () => {
   it('keeps second-level country suffixes whole', () => {
     expect(describeSite('https://news.bbc.co.uk/').site).toBe('bbc.co.uk')
     expect(describeSite('https://shop.amazon.com.au/x').site).toBe('amazon.com.au')
+  })
+})
+
+describe('securityIndicator', () => {
+  it('labels http "Not secure" and keeps https, loopback, file and Zenium pages label-free', () => {
+    expect(securityIndicator('http://example.com/', null)).toMatchObject({
+      state: 'insecure',
+      label: 'Not secure'
+    })
+    expect(securityIndicator('http://10.0.0.7:8787/plain.html', null).label).toBe('Not secure')
+    expect(securityIndicator('https://example.com/', null)).toMatchObject({
+      state: 'secure',
+      label: null
+    })
+    expect(securityIndicator('http://127.0.0.1:8787/', null)).toMatchObject({
+      state: 'local',
+      label: null
+    })
+    expect(securityIndicator('http://localhost:3000/', null).state).toBe('local')
+    expect(securityIndicator('file:///tmp/a.html', null)).toMatchObject({
+      state: 'local',
+      title: 'Local file'
+    })
+    expect(securityIndicator('zen://settings', null).state).toBe('internal')
+    expect(securityIndicator('zen://blank', null).state).toBe('empty')
+    expect(securityIndicator('', null).state).toBe('empty')
+    expect(securityIndicator('data:text/html,hi', null).state).toBe('unknown')
+  })
+
+  it('reports a refused certificate as "Not secure" and other failures as a Zenium page', () => {
+    const bad = errorPageUrl(-202, 'ERR_CERT_AUTHORITY_INVALID', 'https://bad.example/')
+    expect(securityIndicator(bad, -202)).toMatchObject({
+      state: 'certificate-error',
+      label: 'Not secure'
+    })
+    const dns = errorPageUrl(-105, 'ERR_NAME_NOT_RESOLVED', 'https://nowhere.example/')
+    expect(securityIndicator(dns, -105)).toMatchObject({ state: 'internal', label: null })
+    // An http page that failed for a certificate-range code cannot be a certificate error.
+    const http = errorPageUrl(-202, 'x', 'http://plain.example/')
+    expect(securityIndicator(http, -202).state).toBe('internal')
+    expect(isCertificateError(-200)).toBe(true)
+    expect(isCertificateError(-299)).toBe(true)
+    expect(isCertificateError(-105)).toBe(false)
+    expect(isCertificateError(null)).toBe(false)
+  })
+
+  it('reads the interstitials the way Chrome does: "Dangerous" and "Not secure"', () => {
+    const blocked = safeBrowsingPageUrl('https://evil.example/login', 'phishing')
+    expect(securityIndicator(blocked, -20)).toMatchObject({
+      state: 'dangerous',
+      label: 'Dangerous'
+    })
+    const question = httpsOnlyPageUrl('http://old.example/', -107)
+    expect(securityIndicator(question, -107)).toMatchObject({
+      state: 'insecure',
+      label: 'Not secure'
+    })
+  })
+
+  it('describes a Reader View page by the page it stands in for', () => {
+    expect(securityIndicator('zen://reader?url=http%3A%2F%2Fexample.com%2F', null).label).toBe(
+      'Not secure'
+    )
+    expect(securityIndicator('zen://reader?url=https%3A%2F%2Fexample.com%2F', null).state).toBe(
+      'secure'
+    )
   })
 })
 

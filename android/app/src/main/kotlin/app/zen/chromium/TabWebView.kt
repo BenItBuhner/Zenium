@@ -23,13 +23,14 @@ import android.view.PixelCopy
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.webkit.ClientCertRequest
-import android.webkit.CookieManager
+import android.webkit.ConsoleMessage
 import android.webkit.GeolocationPermissions
 import android.webkit.HttpAuthHandler
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.SslErrorHandler
 import android.webkit.ValueCallback
+import android.webkit.WebBackForwardList
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -45,6 +46,8 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import app.zen.chromium.blocking.BlockingTab
 import app.zen.chromium.blocking.Decision
+import app.zen.chromium.blocking.SafeBrowsingHit
+import app.zen.chromium.privacy.PrivacyFlags
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -96,6 +99,9 @@ class TabWebView(
      * it (null without the feature).
      */
     private var documentScript: ScriptHandler? = null
+    /** The privacy signals' document-start script (`navigator.globalPrivacyControl`, `doNotTrack`) and its registration. */
+    private var signalScript: String? = null
+    private var signalScriptHandler: ScriptHandler? = null
     private var currentFlags: JSONObject = json("glanceEnabled" to true, "glanceTrigger" to "alt", "thirdParty" to null)
     private var pendingFlags = false
     private var zoomFactor = 1.0
@@ -110,13 +116,46 @@ class TabWebView(
     private var lastDeviceWidth = 0
     var muted = false
         private set
-    /** True while `onPageStarted` has fired and `onPageFinished` has not. */
-    private var pageStarted = false
+    /**
+     * The main-frame URL as last reported by the WebViewClient; readable from any thread
+     * (`shouldInterceptRequest` runs on a network thread where `getUrl()` must not be called).
+     */
+    val currentUrl: String? get() = currentDocument
+
+    /** The last console warnings and errors of the page (extension diagnostics). */
+    val console = ArrayDeque<String>()
     /** The `domReady` view event, once per document (see `DomReadyGate`). */
     private val domReady = DomReadyGate()
+    /** `onPageStarted` fired for a document whose commit `doUpdateVisitedHistory` has not reported yet. */
+    private var awaitingCommit = false
+    /**
+     * The main-frame URL whose load failed last. WebView has already committed its own error page
+     * under that URL (or is about to, and reports the commit through `doUpdateVisitedHistory` and
+     * the page's title, "Webpage not available", through `onReceivedTitle`) by the time the core
+     * hears of the failure and replaces it with `zen://error`. Neither is the page the user asked
+     * for: the commit is not reported as a navigation and the title is dropped, so nothing of the
+     * interstitial reaches history. The core is quick to answer, and its `zen://error` page can
+     * start before WebView's own has committed (it still commits first: Chromium does not cancel
+     * a commit already under way for a later load), so the start of the core's error page keeps
+     * this; the next commit of any page, or the start of any other load, clears it.
+     */
+    private var failedUrl: String? = null
+    /** WebView's built-in error page is the committed document, until another commit replaces it. */
+    private var interstitial = false
+    /**
+     * The URL WebView's built-in error page last committed under. The entry stays in the
+     * back-forward list behind the core's `zen://error` page, and going back onto it would run
+     * the failed load again: [goBack] steps over it.
+     */
+    private var interstitialUrl: String? = null
+    /** A certificate `onReceivedSslError` refused; the request's own failure follows and is the same news. */
+    private var refusedCertificateUrl: String? = null
 
     init {
         Profiles.apply(this, containerId)
+        // The container's profile carries the GPC / DNT request headers (a new container's profile
+        // was just created; the default one has them from the last policy push).
+        Profiles.profile(containerId)?.let(host.privacy::applySignalHeaders)
         settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -132,8 +171,6 @@ class TabWebView(
             // (setPopupsAllowed); a blocked call is reported by the page script and listed.
             javaScriptCanOpenWindowsAutomatically = false
             mediaPlaybackRequiresUserGesture = true
-            mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-            if (WebViewFeature.isFeatureSupported(WebViewFeature.SAFE_BROWSING_ENABLE)) safeBrowsingEnabled = true
             // Chrome's typographic defaults rather than WebView's: text a page leaves unstyled is
             // serif (Android maps Chrome's "Times New Roman" to it), and small text is not pushed
             // up to 8 px – Chrome has no floor for absolute sizes and 6 px for relative ones.
@@ -147,7 +184,6 @@ class TabWebView(
         // Dark theme for sites: only ever while the app itself is dark (WebView ties algorithmic
         // darkening to the theme), and never for pages that bring a dark scheme of their own.
         setDarkening(host.pageRules.darkenDefault)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
         setBackgroundColor(Color.WHITE)
         clipToOutline = true
         outlineProvider = object : ViewOutlineProvider() {
@@ -179,6 +215,45 @@ class TabWebView(
         // Mouse right-click / stylus button (DeX, tablets) opens the same menu as a long-press.
         setOnContextClickListener { onLongPress() }
         installPageScript()
+        host.extensions?.attach(this)
+        applyPrivacy()
+    }
+
+    override fun destroy() {
+        host.extensions?.detach(this)
+        super.destroy()
+    }
+
+    // --- privacy (the policy the core pushes; see privacy/Privacy.kt) -----------------------------
+
+    /**
+     * Bring this page in line with the privacy policy: at creation, whenever the core pushes a
+     * new policy (`privacy.apply`), and – for the cookie switch, which depends on the top site –
+     * as the document changes. WebView's own Safe Browsing (Google's lists, its interstitial)
+     * follows the same switch as Zenium's feeds; `always` mode, whose subresource upgrades
+     * WebView cannot perform, blocks plaintext subresources of secure pages instead.
+     */
+    fun applyPrivacy() {
+        val flags = host.privacy.flags
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.SAFE_BROWSING_ENABLE)) settings.safeBrowsingEnabled = flags.safeBrowsing
+        settings.mixedContentMode =
+            if (flags.httpsOnly == "always") WebSettings.MIXED_CONTENT_NEVER_ALLOW else WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        applyCookiePolicy(flags, currentDocument)
+        val script = flags.navigatorScript()
+        if (script != signalScript) {
+            signalScriptHandler?.remove()
+            signalScriptHandler = null
+            signalScript = script
+            if (script != null && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                signalScriptHandler = WebViewCompat.addDocumentStartJavaScript(this, script, setOf("*"))
+            }
+        }
+    }
+
+    /** Third-party cookies for the document at `documentUrl` (the exception list names top sites). */
+    private fun applyCookiePolicy(flags: PrivacyFlags, documentUrl: String?) {
+        // The jar of this tab's container: a WebView on another profile is not the default jar's.
+        Profiles.cookieManager(containerId).setAcceptThirdPartyCookies(this, flags.acceptsThirdPartyCookies(containerId, documentUrl))
     }
 
     // --- placement ------------------------------------------------------------------------------
@@ -643,7 +718,6 @@ class TabWebView(
 
     fun loadHtml(url: String, html: String) {
         rememberCurrentPage()
-        pageStarted = false
         loadDataWithBaseURL(url, html, "text/html", "utf-8", url)
     }
 
@@ -652,6 +726,19 @@ class TabWebView(
         rememberCurrentPage()
         if (url.startsWith("http", ignoreCase = true)) currentDocument = url
         switchDesktopModeFor(url)
+        if (url.startsWith("http", ignoreCase = true)) {
+            val flags = host.privacy.flags
+            applyCookiePolicy(flags, url)
+            // A WebView that cannot attach the GPC / DNT headers to every request gets them on
+            // the navigations the browser starts, at least.
+            if (!host.privacy.headersSupported) {
+                val headers = flags.signalHeaders()
+                if (headers.isNotEmpty()) {
+                    super.loadUrl(url, HashMap(headers))
+                    return
+                }
+            }
+        }
         super.loadUrl(url)
     }
 
@@ -677,9 +764,25 @@ class TabWebView(
         super.reload()
     }
 
+    /**
+     * The entry [goBack] lands on, or -1 when there is none: the one behind, except from the
+     * core's error page when that is WebView's own error page for the load the core's page stands
+     * in for (see [interstitialUrl]) – then the one before it, as on the desktop, where the failed
+     * load never made an entry. The core's page is told by the view's URL: the entry's own is the
+     * `data:` URL `loadHtml` gave it, the history URL is what [getUrl] shows.
+     */
+    fun backIndex(history: WebBackForwardList = copyBackForwardList()): Int = backIndexOf(
+        history.currentIndex,
+        { history.getItemAtIndex(it)?.url },
+        onErrorPage = url?.startsWith(ERROR_PAGE_PREFIX) == true,
+        skipped = interstitialUrl
+    )
+
     override fun goBack() {
         rememberCurrentPage()
-        super.goBack()
+        val history = copyBackForwardList()
+        val steps = backIndex(history) - history.currentIndex
+        if (steps == -1) super.goBack() else if (steps < 0) super.goBackOrForward(steps)
     }
 
     override fun goForward() {
@@ -823,10 +926,13 @@ class TabWebView(
 
     fun navState(): JSONObject = json(
         "url" to (url ?: ""),
-        "title" to (title ?: ""),
+        "title" to reportableTitle(),
         "canGoBack" to canGoBack(),
         "canGoForward" to canGoForward()
     )
+
+    /** The page's title – but not the built-in error page's, which stands in for a failed load (see [failedUrl]). */
+    private fun reportableTitle(): String = if (failedUrl != null || interstitial) "" else title ?: ""
 
     /** The main frame's certificate for the site-information sheet, or null on an insecure page. */
     fun certificateInfo(): JSONObject? {
@@ -874,6 +980,29 @@ class TabWebView(
         Handler(Looper.getMainLooper()).post { loadUrl(url) }
     }
 
+    /**
+     * Safe Browsing stopped a navigation: the core hears why first (`unsafe`), then the failed
+     * load it keys its warning page on, in that order on the one bridge.
+     */
+    override fun onDocumentUnsafe(url: String, hit: SafeBrowsingHit) {
+        Handler(Looper.getMainLooper()).post {
+            loading = false
+            host.viewEvent(tabId, "unsafe", json("url" to url, "hit" to hit.toJson()))
+            host.viewEvent(
+                tabId, "failLoad",
+                json("code" to BLOCKED_BY_CLIENT, "description" to "ERR_BLOCKED_BY_CLIENT", "url" to url)
+            )
+        }
+    }
+
+    /** HTTPS-only mode upgraded a navigation: the core remembers `from` for the fallback, then `to` loads. */
+    override fun onDocumentUpgraded(from: String, to: String) {
+        Handler(Looper.getMainLooper()).post {
+            host.viewEvent(tabId, "upgraded", json("from" to from, "to" to to))
+            loadUrl(to)
+        }
+    }
+
     // --- WebViewClient ------------------------------------------------------------------------
 
     private inner class Client : WebViewClient() {
@@ -915,39 +1044,60 @@ class TabWebView(
 
         /**
          * The engine's word on a main-frame navigation: true when it took the navigation over
-         * (onto the Zenium blocked page, or to the redirect target), false when the page may go.
+         * (onto the Zenium blocked or warning page, or to the redirect target), false when the
+         * page may go. An extension's web-auth flow running in this tab ends on its way back
+         * first: that navigation is the flow's result and is never loaded. Then Safe Browsing
+         * speaks, then the rule sets.
          */
         private fun interceptNavigation(request: WebResourceRequest): Boolean {
             if (!request.isForMainFrame) return false
             val target = request.url.toString()
+            if (host.extensions?.interceptNavigation(this@TabWebView, target) == true) return true
+            host.blocking.guardNavigation(target)?.let { hit ->
+                onDocumentUnsafe(target, hit)
+                return true
+            }
             val decision = host.blocking.decideNavigation(this@TabWebView, target)
             when (decision.action) {
                 Decision.Action.BLOCK -> {
                     onDocumentBlocked(target)
                     return true
                 }
-                Decision.Action.REDIRECT, Decision.Action.UPGRADE -> {
+                Decision.Action.REDIRECT -> {
                     decision.redirectUrl?.let { loadUrl(it) }
                     return true
                 }
+                Decision.Action.UPGRADE -> if (host.blocking.applyUpgrade(this@TabWebView, target, decision)) return true
                 Decision.Action.ALLOW -> {}
             }
             // A link (or script) is about to take the page elsewhere: the last moment it is whole
             // on screen, and the best one for its back preview.
             if (!request.isRedirect) rememberCurrentPage()
+            applyCookiePolicy(host.privacy.flags, target)
             currentDocument = target
             return false
         }
 
+        /**
+         * Network thread. The extension layer answers first: it serves the extension origins and,
+         * until W2-3 moves declarativeNetRequest onto the request engine, decides its rules; anything
+         * it leaves alone goes to the request engine.
+         */
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-            host.blocking.intercept(this@TabWebView, request)
+            host.extensions?.intercept(request, this@TabWebView, null) ?: host.blocking.intercept(this@TabWebView, request)
 
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             // Navigations with no link click ahead of them (forms, history.back(), redirects).
             rememberCurrentPage()
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.STARTED)
+            awaitingCommit = true
+            // The core's error page is the answer to the failure, and WebView's own error page
+            // for the failed load may commit only after this (see failedUrl).
+            if (!url.startsWith(ERROR_PAGE_PREFIX)) failedUrl = null
             currentDocument = url
-            pageStarted = true
+            applyCookiePolicy(host.privacy.flags, url)
+            // Without document-start scripts the signals arrive late, but they arrive.
+            if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) signalScript?.let { evaluateJavascript(it, null) }
             loading = true
             domReady.documentStarted()
             // Whatever the user agent is now, this page was requested with it.
@@ -955,19 +1105,39 @@ class TabWebView(
             // Darkening for the page that is coming, before its first paint; the core confirms.
             if (PageRules.isWebPage(url)) setDarkening(host.pageRules.darken(url))
             failPendingEvals("the page navigated away before the script finished")
+            host.extensions?.onDocumentGone(this@TabWebView, url)
             host.viewEvent(tabId, "startLoading", null)
-            host.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", false))
             if (muted) setMuted(true)
         }
 
+        /**
+         * A navigation committed – the moment Electron's `did-navigate` reports to the core, and
+         * the first at which the load's outcome is known: WebView fires `onPageStarted` for a
+         * failed load too (right before `onReceivedError`), so reporting from there would record
+         * a visit to a page that never loaded.
+         */
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
-            currentDocument = url
             onHistoryCommitted()
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.HISTORY_UPDATED)
-            if (!loading) {
-                // pushState / hash navigation after the page finished loading.
-                host.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", true))
+            if (failedUrl != null && url == failedUrl) {
+                // WebView's own error page, committing under the failed URL while the core's
+                // `zen://error` page is on its way or already loading (see failedUrl). The
+                // `onPageStarted` it may follow belongs to the core's page, whose commit is next.
+                failedUrl = null
+                interstitial = true
+                interstitialUrl = url
+                host.backChanged()
+                return
             }
+            currentDocument = url
+            // pushState / hash navigations have no onPageStarted of their own.
+            val inPage = !awaitingCommit
+            awaitingCommit = false
+            // Another page committed: the failed load's own error page is not coming any more.
+            failedUrl = null
+            interstitial = false
+            refusedCertificateUrl = null
+            host.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", inPage))
             host.backChanged()
         }
 
@@ -977,7 +1147,6 @@ class TabWebView(
 
         override fun onPageFinished(view: WebView, url: String) {
             loading = false
-            pageStarted = false
             if (pendingFlags && host.pageScript.isNotEmpty()) {
                 evaluateJavascript(startScriptSource(), null)
             }
@@ -993,27 +1162,29 @@ class TabWebView(
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
             host.blocking.onRequestError(this@TabWebView, request, error.errorCode)
             if (!request.isForMainFrame) return
+            val url = request.url.toString()
+            failedUrl = url
             loading = false
-            host.viewEvent(
-                tabId, "failLoad",
-                json(
-                    "code" to netErrorCode(error.errorCode),
-                    "description" to error.description.toString(),
-                    "url" to request.url.toString()
-                )
-            )
+            // The request behind a refused certificate fails in turn; onReceivedSslError said it all.
+            if (url == refusedCertificateUrl) return
+            val failure = NetErrors.failure(error.errorCode, error.description, NetErrors.offline(context))
+            failLoad(failure.code, failure.name ?: error.description.toString(), url)
         }
 
         override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
             // Like Chrome, never proceed with a broken certificate; the error page explains why.
             handler.cancel()
-            val code = when (error.primaryError) {
-                SslError.SSL_EXPIRED, SslError.SSL_NOTYETVALID -> -201
-                SslError.SSL_UNTRUSTED, SslError.SSL_IDMISMATCH -> -200
-                else -> -202
-            }
+            val url = error.url
+            failedUrl = url
+            refusedCertificateUrl = url
             loading = false
-            host.viewEvent(tabId, "failLoad", json("code" to code, "description" to "ERR_CERT_INVALID", "url" to error.url))
+            val code = NetErrors.sslCode(error.primaryError)
+            failLoad(code, NetErrors.name(code) ?: "ERR_CERT_INVALID", url)
+        }
+
+        /** Tell the core, in Chromium's terms: the `net::` code and the `ERR_…` name (or reason) the page prints. */
+        private fun failLoad(code: Int, description: String, url: String) {
+            host.viewEvent(tabId, "failLoad", json("code" to code, "description" to description, "url" to url))
         }
 
         override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
@@ -1033,11 +1204,24 @@ class TabWebView(
 
     private inner class Chrome : WebChromeClient() {
         override fun onReceivedTitle(view: WebView, title: String?) {
+            // "Webpage not available" is the built-in error page's, not the tab's (see failedUrl).
+            if (failedUrl != null || interstitial) return
             host.viewEvent(tabId, "title", json("title" to (title ?: "")))
         }
 
         override fun onProgressChanged(view: WebView, newProgress: Int) {
             host.progress(tabId, newProgress)
+        }
+
+        /** Warnings and errors only, for the extension layer's diagnostics (pages log a lot). */
+        override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+            if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR || message.messageLevel() == ConsoleMessage.MessageLevel.WARNING) {
+                synchronized(console) {
+                    console.addLast("${message.messageLevel()} ${message.sourceId()}:${message.lineNumber()} ${message.message()}")
+                    while (console.size > 100) console.removeFirst()
+                }
+            }
+            return false
         }
 
         override fun onReceivedIcon(view: WebView, icon: Bitmap) {
@@ -1107,9 +1291,23 @@ class TabWebView(
 
     companion object {
         private const val PULL_TAG = "ZenPull"
+        /** The core's error pages and interstitials (`ERROR_URL_PREFIX` in `src/shared/url.ts`). */
+        private const val ERROR_PAGE_PREFIX = "zen://error"
         /** The object the page script posts to (and the wrappers in [evaluate] and [postToPage] name). */
         private const val PAGE_BRIDGE = "__zenPageBridge"
         private val encoder = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-encode") }
+
+        /**
+         * The pure half of [backIndex]: the entry behind `currentIndex` (`entryUrlAt` reads the
+         * list's actual URLs), or the one before it when the view is on the core's error page and
+         * that entry is WebView's own error page for the failed load (`skipped`). -1 with nothing behind.
+         */
+        fun backIndexOf(currentIndex: Int, entryUrlAt: (Int) -> String?, onErrorPage: Boolean, skipped: String?): Int {
+            val behind = currentIndex - 1
+            if (behind < 0) return -1
+            if (onErrorPage && behind >= 1 && skipped != null && entryUrlAt(behind) == skipped) return behind - 1
+            return behind
+        }
 
         /** Longer than any tool budget (browser_wait_for allows 30 s) but shorter than the socket's. */
         private const val EVAL_TIMEOUT_MS = 45_000L
@@ -1129,22 +1327,5 @@ class TabWebView(
         /** Where the visual viewport sits in the layout viewport (non-zero only while pinch-zoomed). */
         private const val VISUAL_OFFSET_SCRIPT =
             "(function(){var v=window.visualViewport;return v?[v.offsetLeft,v.offsetTop]:[0,0]})()"
-
-        /** WebViewClient error codes → Chromium `net::` codes the core (and error page) understand. */
-        fun netErrorCode(code: Int): Int = when (code) {
-            WebViewClient.ERROR_HOST_LOOKUP -> -105
-            WebViewClient.ERROR_CONNECT -> -102
-            WebViewClient.ERROR_TIMEOUT -> -118
-            WebViewClient.ERROR_IO -> -100
-            WebViewClient.ERROR_REDIRECT_LOOP -> -310
-            WebViewClient.ERROR_UNSUPPORTED_SCHEME, WebViewClient.ERROR_BAD_URL -> -300
-            WebViewClient.ERROR_FAILED_SSL_HANDSHAKE -> -200
-            WebViewClient.ERROR_FILE, WebViewClient.ERROR_FILE_NOT_FOUND -> -6
-            WebViewClient.ERROR_UNSAFE_RESOURCE -> -20
-            WebViewClient.ERROR_TOO_MANY_REQUESTS -> -100
-            WebViewClient.ERROR_AUTHENTICATION, WebViewClient.ERROR_PROXY_AUTHENTICATION,
-            WebViewClient.ERROR_UNSUPPORTED_AUTH_SCHEME -> -100
-            else -> -2
-        }
     }
 }

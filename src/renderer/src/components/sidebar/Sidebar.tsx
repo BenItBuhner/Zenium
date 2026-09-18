@@ -27,7 +27,7 @@ interface Props {
   onPointerLeave?: () => void
 }
 
-const COLLAPSED_WIDTH = 56
+export const COLLAPSED_WIDTH = 56
 
 export function Sidebar({ state, isDark, floating, onPointerLeave }: Props): JSX.Element {
   const space = activeSpace(state)
@@ -46,6 +46,7 @@ export function Sidebar({ state, isDark, floating, onPointerLeave }: Props): JSX
   const { coarse } = useViewport()
 
   return (
+    // A window surface (design language v2 §9.29): the tab strip's chips draw in the window family.
     <aside
       className={cn(
         'relative flex h-full shrink-0 flex-col',
@@ -54,6 +55,7 @@ export function Sidebar({ state, isDark, floating, onPointerLeave }: Props): JSX
       style={{ width }}
       onPointerLeave={onPointerLeave}
       data-side={side}
+      data-surface="window"
     >
       <SidebarTop state={state} tab={tab} compact={compact} showToolbar={showToolbar} />
       {local ? (

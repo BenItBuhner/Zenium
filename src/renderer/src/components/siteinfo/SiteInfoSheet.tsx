@@ -13,6 +13,7 @@ import {
 } from '@shared/siteInfo'
 import { cmd, run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
+import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import {
   closeSiteInfo,
@@ -189,7 +190,7 @@ function useSheetGrip(): GripHandlers {
       const tracker = new VelocityTracker()
       tracker.add(e.timeStamp, e.clientX, e.clientY)
       touch.current = { id: e.pointerId, y0: e.clientY, tracker }
-      e.currentTarget.setPointerCapture(e.pointerId)
+      capturePointer(e.currentTarget, e.pointerId)
     },
     onPointerMove: (e) => {
       const t = touch.current

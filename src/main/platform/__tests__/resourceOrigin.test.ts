@@ -33,7 +33,9 @@ const served: ServedExtension = {
     ]
   }
 }
-const origin = new ExtensionResourceOrigin((id) => (id === ID ? served : undefined), TOKEN)
+const origin = new ExtensionResourceOrigin((id) => (id === ID ? served : undefined), {
+  token: TOKEN
+})
 const base = `${EXTENSION_RESOURCE_SCHEME}://${ID}.${TOKEN}/`
 
 function setWith(redirectUrl: string, extensionId = ID): EngineRuleSet {

@@ -7,10 +7,10 @@ import {
   type Session,
   type WebContents
 } from 'electron'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs'
 import { copyFile, rename, rm } from 'node:fs/promises'
-import { PRIVATE_CONTAINER_ID, type DownloadItem } from '../../shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID, type DownloadItem } from '../../shared/types'
 import { PARTIAL_SUFFIX, finalName as stripPartial } from '../../shared/downloads'
 import type { DownloadHost } from '../../core/platform'
 import type { DownloadService } from '../../core/downloads'
@@ -57,6 +57,43 @@ interface Live {
   session: Session
 }
 
+/** A name proposed for a new download's file (an extension's `download()` or `onDeterminingFilename`). */
+export interface FilenameSuggestion {
+  /** Relative to the downloads folder, forward slashes; the caller checked it is safe. */
+  filename: string
+  /** What to do when a file of that name exists: number it, replace it, or ask the user. */
+  conflictAction: 'uniquify' | 'overwrite' | 'prompt'
+}
+
+/**
+ * Asked once per new transfer, before its file is placed, with the record and the name it would
+ * get by default; null keeps that name. The transfer runs into its partial file meanwhile.
+ */
+export type FilenameDeterminer = (
+  record: DownloadItem,
+  suggested: string
+) => Promise<FilenameSuggestion | null>
+
+/** A transfer started on someone's behalf rather than by a page (`chrome.downloads.download`). */
+export interface ProgrammaticDownload {
+  url: string
+  headers?: Record<string, string>
+  /** Session the request runs in; the default container when omitted. */
+  containerId?: string
+  /** The caller's own name for the file, applied before the determiner is asked. */
+  suggestion?: FilenameSuggestion
+  /** Show the save dialog whatever the setting says. */
+  saveAs?: boolean
+}
+
+interface PendingStart {
+  request: ProgrammaticDownload
+  resolve: (record: DownloadItem) => void
+}
+
+/** How long a programmatic start waits for the engine to announce the transfer. */
+const START_TIMEOUT_MS = 60_000
+
 /**
  * Tracks Electron's download items and feeds the core's `DownloadService`. Files are written as
  * `<name>.zeniumdownload` next to their final place and renamed when the core releases them;
@@ -78,10 +115,19 @@ export class ElectronDownloads implements DownloadHost {
   private readonly pendingRetries: DownloadItem[] = []
   /** Save dialogs still open; a transfer that finishes meanwhile is placed once they close. */
   private readonly pendingDialogs = new Map<string, Promise<void>>()
+  /**
+   * URLs whose next transfer asks where to save whatever the setting says: the context menu's
+   * "Save Link / Image / Video As…", which always ask in Chrome. Each entry serves one download.
+   */
+  private readonly saveAsUrls: string[] = []
   private readonly sessions = new Map<string, Session>()
   private service: DownloadService | null = null
   /** Set by `park`: Chromium's teardown of the live items is not to be reported as cancels. */
   private quitting = false
+  private determiner: FilenameDeterminer | null = null
+  private readonly pendingStarts: PendingStart[] = []
+  /** Records whose determined name replaces an existing file at release instead of numbering. */
+  private readonly overwriting = new Set<string>()
   private tabIdFor: (source: WebContents) => string | null = () => null
   private parentWindow: (sourceTabId: string | null) => BrowserWindow | undefined = () => undefined
 
@@ -99,6 +145,28 @@ export class ElectronDownloads implements DownloadHost {
     this.service = service
     this.tabIdFor = hooks.tabIdFor
     this.parentWindow = hooks.parentWindow
+  }
+
+  /** The next download of `url` (started right after this call) goes through the save dialog. */
+  expectSaveAs(url: string): void {
+    this.saveAsUrls.push(url)
+    // A download the engine never started (blocked, offline) must not make a later plain
+    // download of the same URL ask.
+    setTimeout(() => this.takeSaveAs(url), 30_000)
+  }
+
+  private takeSaveAs(url: string): boolean {
+    const index = this.saveAsUrls.indexOf(url)
+    if (index === -1) return false
+    this.saveAsUrls.splice(index, 1)
+    return true
+  }
+
+  /** Whether `item` is a "Save As…" transfer (matched on any URL of its redirect chain). */
+  private isSaveAs(item: ElectronDownloadItem): boolean {
+    if (this.saveAsUrls.length === 0) return false
+    const urls = [item.getURL(), ...item.getURLChain()]
+    return urls.some((url) => this.takeSaveAs(url))
   }
 
   attach(ses: Session, containerId: string, onStarted: (sourceTabId: string | null) => void): void {
@@ -144,9 +212,11 @@ export class ElectronDownloads implements DownloadHost {
     }
 
     const retried = this.takePendingRetry(item)
+    const started = retried ? null : this.takePendingStart(item)
     const filename = stripPartial(item.getFilename() || retried?.filename || 'download')
     const referrer = retried?.referrer ?? referrerOf(source, item.getURL())
-    const settings = this.settings()
+    // Taken here, once per transfer: a "Save As…" expectation is consumed by the item it was for.
+    const saveAs = this.isSaveAs(item)
 
     // The partial file is reserved up front so simultaneous downloads never share a name; with
     // "ask where to save" it waits in the Downloads folder until the dialog decides.
@@ -176,14 +246,83 @@ export class ElectronDownloads implements DownloadHost {
     this.live.set(record.id, { item, session: ses })
     this.finalPaths.set(record.id, candidate)
     this.wire(item, record)
+    started?.resolve(record)
 
-    if (settings.askWhereToSave && !retried) {
-      const dialogDone = this.askDestination(item, record, sourceTabId, candidate).finally(() =>
-        this.pendingDialogs.delete(record.id)
-      )
-      this.pendingDialogs.set(record.id, dialogDone)
+    if (!retried) {
+      const placed = this.place(
+        item,
+        record,
+        sourceTabId,
+        candidate,
+        started?.request,
+        saveAs
+      ).finally(() => this.pendingDialogs.delete(record.id))
+      this.pendingDialogs.set(record.id, placed)
     }
     return Boolean(retried)
+  }
+
+  /**
+   * Settle where a new transfer's file goes: the caller's own name (`download({filename})`),
+   * then the determiner's (extensions' `onDeterminingFilename`), then the save dialog when the
+   * setting, the caller, a "Save As…" menu item (`saveAs`) or a `prompt` conflict action asks
+   * for it. The transfer runs into its partial file meanwhile; `release` waits for this before
+   * placing it.
+   */
+  private async place(
+    item: ElectronDownloadItem,
+    record: DownloadItem,
+    sourceTabId: string | null,
+    candidate: string,
+    request: ProgrammaticDownload | undefined,
+    saveAs: boolean
+  ): Promise<void> {
+    let suggestion = request?.suggestion ?? null
+    let prompt = this.settings().askWhereToSave || Boolean(request?.saveAs) || saveAs
+    if (this.determiner) {
+      const determined = await this.determiner(record, suggestion?.filename ?? basename(candidate))
+      // Removed or cancelled while the determiner was asked: nothing left to place. A transfer
+      // that completed meanwhile is still waiting on this before its file is released.
+      if (this.service?.item(record.id) !== record || record.state === 'cancelled') return
+      if (determined) suggestion = determined
+    }
+    let target = candidate
+    if (suggestion) {
+      const wanted = this.underDownloadDir(suggestion.filename)
+      if (wanted) {
+        if (suggestion.conflictAction === 'prompt') {
+          prompt = true
+          target = wanted
+        } else if (suggestion.conflictAction === 'overwrite') {
+          target = wanted
+          this.overwriting.add(record.id)
+        } else {
+          target = uniquePath(
+            dirname(wanted),
+            basename(wanted),
+            (p) => p !== candidate && this.taken(p)
+          )
+        }
+      }
+    }
+    if (target !== candidate) this.retarget(record, candidate, target)
+    if (prompt) await this.askDestination(item, record, sourceTabId, target)
+  }
+
+  /** A relative name resolved under the downloads folder; null when it would escape it. */
+  private underDownloadDir(relative: string): string | null {
+    const root = downloadDir()
+    const full = resolve(root, ...relative.split('/'))
+    return full.startsWith(root + sep) ? full : null
+  }
+
+  private retarget(record: DownloadItem, from: string, to: string): void {
+    this.reserved.delete(from)
+    this.reserved.add(to)
+    this.finalPaths.set(record.id, to)
+    const state =
+      record.state === 'paused' || record.state === 'interrupted' ? record.state : 'progressing'
+    this.service?.progress(record.id, { finalName: basename(to), state })
   }
 
   private wire(item: ElectronDownloadItem, record: DownloadItem): void {
@@ -229,7 +368,10 @@ export class ElectronDownloads implements DownloadHost {
     })
   }
 
-  /** "Always ask where to save": our own dialog, so the partial file stays under our control. */
+  /**
+   * "Always ask where to save" and the menu's "Save … As…": our own dialog, so the partial file
+   * stays under our control.
+   */
   private async askDestination(
     item: ElectronDownloadItem,
     record: DownloadItem,
@@ -238,7 +380,7 @@ export class ElectronDownloads implements DownloadHost {
   ): Promise<void> {
     const parent = this.parentWindow(sourceTabId)
     const options = {
-      title: 'Save as',
+      title: 'Save As',
       defaultPath: candidate,
       properties: ['createDirectory', 'showOverwriteConfirmation'] as Array<
         'createDirectory' | 'showOverwriteConfirmation'
@@ -275,6 +417,59 @@ export class ElectronDownloads implements DownloadHost {
     const final = this.finalPaths.get(id)
     if (final) this.reserved.delete(final)
     this.finalPaths.delete(id)
+    this.overwriting.delete(id)
+  }
+
+  private takePendingStart(item: ElectronDownloadItem): PendingStart | null {
+    if (this.pendingStarts.length === 0) return null
+    const urls = new Set([item.getURL(), ...item.getURLChain()].map(canonical))
+    const index = this.pendingStarts.findIndex((p) => urls.has(canonical(p.request.url)))
+    if (index === -1) return null
+    return this.pendingStarts.splice(index, 1)[0] ?? null
+  }
+
+  // ---------------------------------------------------------------------------
+  // Programmatic downloads (the extension API)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * One determiner at a time (the extension API multiplexes its listeners); null restores the
+   * default names. Retries and resumes keep their names and never ask.
+   */
+  setFilenameDeterminer(determiner: FilenameDeterminer | null): void {
+    this.determiner = determiner
+  }
+
+  /** Where an in-flight download's file is meant to end up; null once released or unknown. */
+  targetPath(id: string): string | null {
+    return this.finalPaths.get(id) ?? null
+  }
+
+  /**
+   * Start a transfer by URL; resolves with its record once the engine announces it (after the
+   * response headers), rejects when nothing arrives within a minute.
+   */
+  startDownload(request: ProgrammaticDownload): Promise<DownloadItem> {
+    const ses =
+      this.sessions.get(request.containerId ?? DEFAULT_CONTAINER_ID) ??
+      this.sessions.values().next().value
+    if (!ses) return Promise.reject(new Error('NETWORK_FAILED'))
+    return new Promise<DownloadItem>((resolve, reject) => {
+      const pending: PendingStart = {
+        request,
+        resolve: (record) => {
+          clearTimeout(timer)
+          resolve(record)
+        }
+      }
+      const timer = setTimeout(() => {
+        const index = this.pendingStarts.indexOf(pending)
+        if (index !== -1) this.pendingStarts.splice(index, 1)
+        reject(new Error('NETWORK_TIMEOUT'))
+      }, START_TIMEOUT_MS)
+      this.pendingStarts.push(pending)
+      ses.downloadURL(request.url, request.headers ? { headers: request.headers } : undefined)
+    })
   }
 
   private sessionFor(item: DownloadItem): Session | undefined {
@@ -357,12 +552,13 @@ export class ElectronDownloads implements DownloadHost {
     await this.pendingDialogs.get(item.id)
     const partial = item.savePath
     const wanted = this.finalPaths.get(item.id) ?? join(dirname(partial), item.finalName)
+    const overwrite = this.overwriting.has(item.id)
     this.forget(item.id)
     if (!existsSync(partial)) {
       return existsSync(wanted) ? { savePath: wanted, finalName: basename(wanted) } : null
     }
     const final =
-      existsSync(wanted) && wanted !== partial
+      existsSync(wanted) && wanted !== partial && !overwrite
         ? uniquePath(dirname(wanted), basename(wanted), (p) => this.taken(p))
         : wanted
     try {
@@ -437,6 +633,15 @@ function referrerOf(source: WebContents | undefined, downloadUrl: string): strin
   const url = source.getURL()
   if (!url || url === downloadUrl || !/^https?:/.test(url)) return ''
   return url
+}
+
+/** URLs as the engine reports them (`HTTP://Example.com/a` and `http://example.com/a` are one). */
+function canonical(url: string): string {
+  try {
+    return new URL(url).href
+  } catch {
+    return url
+  }
 }
 
 /** Rename, or copy and delete when the destination is on another volume. */

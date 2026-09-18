@@ -12,7 +12,7 @@ import {
   returnFocusToPage,
   uiStore
 } from '../ui'
-import { dragPosition, settleTarget } from './swipe'
+import { dragPosition, settleTarget, tabSwipeThresholds } from './swipe'
 
 /**
  * The phone "stage": chrome that stands in for the live page while a gesture anchored on the
@@ -249,14 +249,17 @@ export function dragTabSwitch(delta: number): void {
 export function releaseTabSwitch(velocity: number): void {
   const tabs = stageStore.get().tabs
   if (tabs.phase !== 'dragging') return
-  const target = settleTarget({
-    position: tabs.position,
-    origin: Math.round(tabDragStart),
-    velocity,
-    extent: tabs.advance,
-    min: 0,
-    max: tabs.order.length - 1
-  })
+  const target = settleTarget(
+    {
+      position: tabs.position,
+      origin: Math.round(tabDragStart),
+      velocity,
+      extent: tabs.advance,
+      min: 0,
+      max: tabs.order.length - 1
+    },
+    tabSwipeThresholds(tabs.advance - CARD_GAP, tabs.advance)
+  )
   stageStore.set({ tabs: { ...tabs, phase: 'settling' } })
   tabSpring.start(tabs.position * tabs.advance, velocity, target * tabs.advance)
 }

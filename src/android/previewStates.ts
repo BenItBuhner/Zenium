@@ -2,6 +2,7 @@ import { run } from '@renderer/lib/api'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
 import { activeTab } from '@renderer/lib/selectors'
 import { browserStore, closeMenu, closeOverlay, openOverlay, uiStore } from '@renderer/lib/ui'
+import type { HostGlobal } from './boot'
 import { parsePreviewSpec } from './previewSpec'
 
 /**
@@ -10,9 +11,10 @@ import { parsePreviewSpec } from './previewSpec'
  * `parsePreviewSpec`): `idle`, `overlay=<kind>` (history, bookmarks, downloads, settings, addons, …;
  * `section=<id>` picks a Settings section, `show=<text>` scrolls the row with that text into
  * view), `menu=app` (the app menu sheet; `show=<text>` scrolls an item into view), `find=<text>`
- * (the find bar with that text typed) or
- * `pull=<n>` (the page held pulled down at n percent of the refresh threshold; `pull=refresh` lets
- * go past it). It comes in as the URL hash,
+ * (the find bar with that text typed), `pull=<n>` (the page held pulled down at n percent of the
+ * refresh threshold; `pull=refresh` lets go past it) or `error=<code>` (the active tab's load
+ * failed with that Chromium `net::` code, `url=<target>` naming the URL that failed: the
+ * zen://error page is up). It comes in as the URL hash,
  * `http://localhost:41734/#overlay=history`, or as `window.postMessage({ zenPreview: 'find=coffee' }, '*')`,
  * which also re-applies an unchanged state. Once applied it is echoed in `<html data-preview-state>`
  * so a driver can wait for it; `.github/scripts/android-preview-shots.mjs` is one.
@@ -62,7 +64,7 @@ function apply(spec: string): void {
           })
         )
       })
-      run('app.menu', undefined)
+      run('app.menu', {})
     } else if (target.kind === 'find' && tab) {
       uiStore.set({ findOpen: true, findTabId: tab.id })
       // The bar mounts on the next render; type into it the way a keyboard would.
@@ -78,10 +80,22 @@ function apply(spec: string): void {
     } else if (target.kind === 'pull' && tab) {
       pull(tab.id, target.progress, target.released)
       requestAnimationFrame(() => done(spec))
+    } else if (target.kind === 'error' && tab) {
+      failLoad(tab.id, target.code, target.url ?? tab.url)
+      requestAnimationFrame(() => done(spec))
     } else {
       done(spec)
     }
   })
+}
+
+/**
+ * The load of `url` in the tab failed with `code`, as the host would report it (`failLoad` in
+ * `views.ts`): the core answers with the zen://error page for that code, in the tab's frame.
+ */
+function failLoad(tabId: string, code: number, url: string): void {
+  const host = (window as unknown as { __zenHost: HostGlobal }).__zenHost
+  host.viewEvent(tabId, 'failLoad', JSON.stringify({ code, description: '', url }))
 }
 
 /**

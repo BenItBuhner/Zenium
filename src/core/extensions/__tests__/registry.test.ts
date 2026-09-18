@@ -4,6 +4,8 @@ import {
   manifestFields,
   migrateRegistry,
   newRecord,
+  newTabOverrideUrl,
+  setNewTabOverride,
   withManifest,
   type ExtensionRecord,
   type MigrationHelpers
@@ -61,6 +63,7 @@ describe('manifestFields', () => {
       hostPermissions: ['*://*/*'],
       optionsPage: 'ui/options/index.html',
       popup: 'ui/popup/index.html',
+      newTabPage: null,
       updateUrl: 'https://clients2.google.com/service/update2/crx'
     })
   })
@@ -87,9 +90,67 @@ describe('manifestFields', () => {
       hostPermissions: [],
       optionsPage: null,
       popup: null,
+      newTabPage: null,
       updateUrl: null
     })
     expect(manifestFields({ permissions: ['tabs', 7, null] }).permissions).toEqual(['tabs'])
+  })
+
+  it('reads the new-tab override page without a leading slash', () => {
+    expect(manifestFields({ chrome_url_overrides: { newtab: '/newtab.html' } }).newTabPage).toBe(
+      'newtab.html'
+    )
+    expect(manifestFields({ chrome_url_overrides: { history: 'h.html' } }).newTabPage).toBeNull()
+  })
+})
+
+describe('new-tab override', () => {
+  const momentum = (overrides: Partial<ExtensionRecord> = {}): ExtensionRecord =>
+    record({
+      id: 'm'.repeat(32),
+      newTabPage: 'dashboard.html',
+      ...overrides
+    })
+
+  it('is off for a fresh record and only yields a URL when on, enabled and declared', () => {
+    const r = momentum()
+    expect(r.newTabOverride).toBe(false)
+    expect(newTabOverrideUrl(r)).toBeNull()
+    r.newTabOverride = true
+    expect(newTabOverrideUrl(r)).toBe(`chrome-extension://${'m'.repeat(32)}/dashboard.html`)
+    expect(newTabOverrideUrl({ ...r, enabled: false })).toBeNull()
+    expect(newTabOverrideUrl({ ...r, newTabPage: null })).toBeNull()
+  })
+
+  it('lets one extension hold the override at a time and reports what changed', () => {
+    const a = momentum({ id: 'a'.repeat(32), newTabOverride: true })
+    const b = momentum({ id: 'b'.repeat(32) })
+    const plain = record({ id: 'c'.repeat(32) })
+    const records = [a, b, plain]
+    expect(setNewTabOverride(records, b.id, true)).toEqual([a, b])
+    expect(records.map((r) => r.newTabOverride)).toEqual([false, true, false])
+    // Nothing to do: already on.
+    expect(setNewTabOverride(records, b.id, true)).toEqual([])
+    // An extension without a new-tab page cannot take the override.
+    expect(setNewTabOverride(records, plain.id, true)).toEqual([])
+    expect(setNewTabOverride(records, 'missing', true)).toEqual([])
+    expect(records.map((r) => r.newTabOverride)).toEqual([false, true, false])
+    expect(setNewTabOverride(records, b.id, false)).toEqual([b])
+    expect(records.map((r) => r.newTabOverride)).toEqual([false, false, false])
+  })
+
+  it('survives the registry round trip and defaults for records written before the field', () => {
+    const on = momentum({ newTabOverride: true })
+    const migrated = migrateRegistry(
+      { version: 2, extensions: [on, { ...record(), newTabPage: undefined }] },
+      helpers,
+      NOW
+    )
+    expect(migrated.extensions[0]).toMatchObject({
+      newTabPage: 'dashboard.html',
+      newTabOverride: true
+    })
+    expect(migrated.extensions[1]).toMatchObject({ newTabPage: null, newTabOverride: false })
   })
 })
 

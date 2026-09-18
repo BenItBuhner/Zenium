@@ -15,6 +15,8 @@ const css = readFileSync(fileURLToPath(new URL('../../assets/main.css', import.m
  * it is moved to v2 on purpose; anything else reading a v2 token fails the last test.
  */
 const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
+  // The frame dialog host's scrim (lib/portals.tsx), which dims only the content frame (§9.5).
+  ['.zen-frame-dialogs {', '.zen-chrome-layer {'],
   // The pull-to-refresh disc (components/content/PullIndicator.tsx).
   ['.zen-ptr-disc {', '.zen-space-strip {'],
   // The v2 button, shared by every v2 surface (today the Settings > Look and Feel > Navigation bar
@@ -26,17 +28,43 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   [
     '.zen-sheet.zen-bar-editor {',
     '/* The editor draws a hairline when its rows scroll under the header'
-  ]
+  ],
+  // The zen://error page (shared/zenPages.ts cuts this block, the token block and the v2 button
+  // out of the stylesheet's text and writes them into the page, which cannot link main.css).
+  ['.zen-error-document {', '@layer base {'],
+  // The sidebar tab drag – drop-into targets, the audio indicator, ghost, caret and tear-off card
+  // (lib/drag.ts, components/DragLayer.tsx, components/sidebar/TabItem.tsx).
+  ['[data-drop-into] {', '.zen-panel {'],
+  // The bookmark chrome: bar, panels, star bubble, dialogs, manager (components/bookmarks/*).
+  ['.zen-bm-bar {', '/*\n * Fading scroll edges'],
+  // Settings → Default Browser and the default-browser strip (components/overlays/
+  // DefaultBrowserSection.tsx, content/DefaultBrowserBanner.tsx): the flat card and its inks.
+  ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {']
 ]
+
+/** The text of the first `selector {` block found after `from`. */
+function block(selector: string, from = 0): string {
+  const start = css.indexOf(`${selector} {`, from)
+  expect(start, `block "${selector}"`).toBeGreaterThanOrEqual(0)
+  return css.slice(start, css.indexOf('\n}', start))
+}
 
 /** Custom-property names declared inside the first `selector {` block found after `from`. */
 function declared(selector: string, from = 0): Set<string> {
-  const start = css.indexOf(`${selector} {`, from)
-  expect(start, `block "${selector}"`).toBeGreaterThanOrEqual(0)
-  const end = css.indexOf('\n}', start)
-  const names = css.slice(start, end).match(/--v2-[a-z0-9-]+(?=:)/g) ?? []
-  return new Set(names)
+  return new Set(block(selector, from).match(/--v2-[a-z0-9-]+(?=:)/g) ?? [])
 }
+
+/**
+ * The two §9.29 token families, as the blocks that resolve the shared control roles for a
+ * surface root carrying `data-surface="page"` or `"window"` (lib/portals.tsx puts "page" on the
+ * frame dialog host and the chrome layer; the window chrome roots carry "window").
+ */
+const FAMILIES = ["[data-surface='page']", "[data-surface='window']"] as const
+
+/** The control roles a chip, badge or icon button reads to draw in its surface's family. */
+const CONTROL_ROLES = ['text', 'text-deemphasized', 'fill', 'fill-hover', 'accent'].map(
+  (n) => `--v2-control-${n}`
+)
 
 // The light block is the first `:root {` that declares a v2 token.
 const lightStart = css.indexOf('--v2-page:')
@@ -153,9 +181,50 @@ describe('design language v2 tokens', () => {
     }
     expect(outside.match(/var\(--v2-/g) ?? []).toHaveLength(0)
     const inside = css.slice(lightBlockStart, blockEnd)
-    // Inside: the ring and selection derive from the accent, and the shared focus-ring rule reads the ring.
-    expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(3)
+    // Inside: the ring and selection derive from the accent, the shared focus-ring rule reads the
+    // ring, and the two §9.29 family blocks map the tokens onto the control roles.
+    const familyReads = FAMILIES.map((f) => block(f).match(/var\(--v2-/g)?.length ?? 0)
+    expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(
+      3 + familyReads.reduce((a, b) => a + b, 0)
+    )
     expect(inside).toMatch(/\[class\^='zen-v2-'\]:focus-visible/)
+  })
+})
+
+describe('token families (§9.29)', () => {
+  const pageFamily = block(FAMILIES[0])
+  const windowFamily = block(FAMILIES[1])
+  const reads = (body: string): string[] => body.match(/var\(--[a-z0-9-]+\)/g) ?? []
+
+  it('resolve the same control roles for a page surface and a window surface, inside the token block', () => {
+    for (const family of FAMILIES) {
+      expect(declared(family)).toEqual(new Set(CONTROL_ROLES))
+      const at = css.indexOf(`${family} {`)
+      expect(at).toBeGreaterThan(lightBlockStart)
+      expect(at).toBeLessThan(css.indexOf("/* Zen clamps its primary colour's lightness"))
+    }
+  })
+
+  it('never mixes them: page roles read the page tokens only, window roles the theme foreground and window fills only', () => {
+    expect(reads(pageFamily)).toEqual([
+      'var(--v2-text)',
+      'var(--v2-text-deemphasized)',
+      'var(--v2-fill)',
+      'var(--v2-fill-hover)',
+      'var(--v2-accent)'
+    ])
+    expect(pageFamily).not.toMatch(/--zen-|--v2-window-/)
+    // Window ink is the theme's foreground, deemphasised at 69% of it.
+    expect(reads(windowFamily)).toEqual([
+      'var(--zen-fg)',
+      'var(--zen-fg-rgb)',
+      'var(--v2-window-fill)',
+      'var(--v2-window-fill-hover)',
+      'var(--zen-accent)'
+    ])
+    expect(windowFamily).toMatch(
+      /--v2-control-text-deemphasized: rgb\(var\(--zen-fg-rgb\) \/ 0\.69\)/
+    )
   })
 })
 

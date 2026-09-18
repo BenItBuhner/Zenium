@@ -1,14 +1,22 @@
 import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import type { UIState } from '@shared/types'
+import type { Tab, UIState } from '@shared/types'
 import { SPACE_ICONS } from '@shared/defaults'
 import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
-import { uiStore } from '@renderer/lib/ui'
+import { FrameDialogHost, useFrameDialog } from '@renderer/lib/portals'
+import { activeTab, tabTitle } from '@renderer/lib/selectors'
+import { uiStore, type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { PermissionPrompts } from './security/PermissionPromptDialog'
+import { PageDialogs } from './dialogs/PageDialog'
+import { WindowPromptDialog } from './dialogs/WindowPromptDialog'
 import { SecurityPrompts } from './security/SecurityPromptDialog'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
+import { BookmarkAllTabsDialog } from './bookmarks/BookmarkAllTabsDialog'
+import { EditBookmarkDialog } from './bookmarks/EditBookmarkDialog'
+import { StarDialog } from './bookmarks/StarDialog'
 
 const TAB_ICONS = [
   ...SPACE_ICONS,
@@ -27,27 +35,86 @@ const TAB_ICONS = [
 ]
 
 /**
- * Small dialogs that belong to a tab and are shown by every layout: the pinned-URL editor and icon
- * picker from tab context menus, and the security prompts (HTTP sign-in, certificate choice) the
- * page's requests wait on.
+ * Small dialogs shown by every layout: the star bubble, "Bookmark all tabs", a bookmark or
+ * folder edit requested outside the manager (the manager hosts its own), the pinned-URL editor
+ * and the icon picker, the security prompts (HTTP sign-in, certificate choice) the page's
+ * requests wait on, the permission prompts a page's requests wait on, the page's own dialogs
+ * (`alert`, `confirm`, `prompt`, "Leave site?") and the questions asked before a window closes
+ * or Zenium quits. The modal ones render through the `FrameDialogHost` this mounts, so they
+ * centre in the box it is placed in – the content frame on desktop, the shell on phones – over
+ * a scrim that dims only that box
+ * (lib/portals.tsx). The star bubble is a popover: on desktop it portals to the chrome layer,
+ * anchored under the star; on phones it is a sheet in the host.
  */
 export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const pinnedTabId = uiStore.use((s) => s.editingPinnedUrlTabId)
   const iconTabId = uiStore.use((s) => s.iconPickerTabId)
+  const star = uiStore.use((s) => s.starDialog)
+  const allTabs = uiStore.use((s) => s.bookmarkAllTabs)
+  const edit = uiStore.use((s) => s.bookmarkEdit)
+  const managerOpen = uiStore.use((s) => s.overlay === 'bookmarks')
   const pinnedTab = pinnedTabId ? state.tabs[pinnedTabId] : undefined
   const iconTab = iconTabId ? state.tabs[iconTabId] : undefined
   return (
-    <>
-      {pinnedTab ? (
-        <PinnedUrlDialog tab={pinnedTab} />
-      ) : iconTab ? (
-        <IconPickerDialog tab={iconTab} />
-      ) : null}
+    <FrameDialogHost>
+      <BookmarkDialog
+        state={state}
+        star={star}
+        allTabs={allTabs}
+        edit={edit}
+        managerOpen={managerOpen}
+        pinnedTab={pinnedTab}
+        iconTab={iconTab}
+      />
       <SecurityPrompts state={state} />
-    </>
+      <PermissionPrompts state={state} />
+      <PageDialogs state={state} />
+      <WindowPromptDialog state={state} />
+    </FrameDialogHost>
   )
 }
 
+function BookmarkDialog({
+  state,
+  star,
+  allTabs,
+  edit,
+  managerOpen,
+  pinnedTab,
+  iconTab
+}: {
+  state: UIState
+  star: UiState['starDialog']
+  allTabs: UiState['bookmarkAllTabs']
+  edit: UiState['bookmarkEdit']
+  managerOpen: boolean
+  pinnedTab: Tab | undefined
+  iconTab: Tab | undefined
+}): JSX.Element | null {
+  if (star) return <StarDialog key={star.nodeId} state={state} star={star} />
+  if (allTabs) return <BookmarkAllTabsDialog state={state} request={allTabs} />
+  if (edit && !managerOpen) {
+    // "Add page…" on the bar starts from the page on screen, like Chrome.
+    const tab = edit.id === null && edit.type === 'url' ? activeTab(state) : null
+    const prefill =
+      tab && tab.url && !tab.url.startsWith('zen://')
+        ? { title: tabTitle(tab), url: tab.url }
+        : null
+    return (
+      <EditBookmarkDialog
+        key={edit.id ?? `new-${edit.type}`}
+        state={state}
+        edit={edit}
+        prefill={prefill}
+      />
+    )
+  }
+  if (pinnedTab) return <PinnedUrlDialog tab={pinnedTab} />
+  if (iconTab) return <IconPickerDialog tab={iconTab} />
+  return null
+}
+
+/** The panel of a small frame dialog: the host's scrim and Escape both close it. */
 function Backdrop({
   onClose,
   children
@@ -55,6 +122,7 @@ function Backdrop({
   onClose: () => void
   children: React.ReactNode
 }): JSX.Element {
+  useFrameDialog({ onScrimPress: onClose })
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
@@ -66,16 +134,8 @@ function Backdrop({
     return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose])
   return (
-    <div
-      className="absolute inset-0 z-50 flex items-center justify-center bg-black/25"
-      onMouseDown={onClose}
-    >
-      <div
-        className="zen-panel zen-animate-pop w-[420px] max-w-[calc(100%-32px)] p-4"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        {children}
-      </div>
+    <div className="zen-panel zen-animate-pop w-[420px] max-w-[calc(100%-32px)] p-4">
+      {children}
     </div>
   )
 }

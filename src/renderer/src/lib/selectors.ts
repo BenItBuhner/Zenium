@@ -57,10 +57,25 @@ export function tabTitle(tab: Tab): string {
   return tab.customTitle ?? tab.title
 }
 
+/**
+ * What a tab row's native tooltip says: the full title, which the row clips (BUG-004), then the
+ * state the row is in – asleep (with what the page held, when the governor could tell), frozen,
+ * driven by an agent.
+ */
+export function tabTooltip(tab: Tab, agentName: string | null = null): string {
+  const lines = [tabTitle(tab)]
+  if (agentName) lines.push(`Driven by ${agentName}`)
+  if (tab.discarded) {
+    lines.push('Sleeping - click to wake')
+    if (tab.sleepSavedMb) lines.push(`Memory saved: ${tab.sleepSavedMb} MB`)
+  } else if (tab.frozen) lines.push('Frozen by the resource governor')
+  return lines.join('\n')
+}
+
 export function isDarkScheme(state: UIState): boolean {
   if (state.settings.colorScheme === 'dark') return true
   if (state.settings.colorScheme === 'light') return false
-  return window.matchMedia('(prefers-color-scheme: dark)').matches
+  return state.systemDark ?? window.matchMedia('(prefers-color-scheme: dark)').matches
 }
 
 export function containerOf(state: UIState, id: string): Container | undefined {

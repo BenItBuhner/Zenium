@@ -3,11 +3,12 @@
  * Everything here must be JSON-serialisable (it crosses the IPC boundary).
  */
 import type { AppIconId } from './appIcon'
-import type { SiteInfo } from './siteInfo'
+import type { SiteInfo, SiteInfoSnapshot } from './siteInfo'
 import type { TranslatePreferences, TranslateSelectionResult, TranslateUIState } from './translate'
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
 import type { BlockingSettings, BlockingStatus } from './blocking'
+import type { PrivacySettings, PrivacyStatus } from './privacy'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -28,6 +29,14 @@ export type FormFactor = 'phone' | 'tablet' | 'desktop'
 export interface HostCapabilities {
   /** Host draws its own window frame – no minimise / maximise / close buttons in the chrome. */
   windowControls: boolean
+  /**
+   * The OS draws native minimise / maximise / close buttons over the chrome's top corner
+   * (Windows 11's Window Controls Overlay, which is what gives the maximise button Snap
+   * Layouts). The chrome keeps that region clear and draws no buttons of its own.
+   */
+  windowControlsOverlay: boolean
+  /** Windows can be backed by a system material (Windows 11 Mica) behind a translucent chrome. */
+  windowMaterial: boolean
   /** Context menus are native popups; when false the renderer renders `menu.show` events. */
   nativeMenus: boolean
   /** The chrome can be dragged by `-webkit-app-region: drag` regions. */
@@ -79,6 +88,19 @@ export interface HostCapabilities {
    * sheet); hosts without them keep the plain zoom menu.
    */
   pageControls: boolean
+  /**
+   * Extensions run, but their content scripts share the page's world (an Android WebView below
+   * Chromium 146 has no isolated worlds; the emulation layer falls back to a scope proxy). Pages
+   * can then observe the scripts' DOM work; the extensions UI says so.
+   */
+  reducedExtensionIsolation: boolean
+  /**
+   * Private browsing as tabs inside the one window (`tab.newPrivate`): hosts without separate
+   * windows. Desktop hosts offer private windows instead (`windows`).
+   */
+  privateTabs: boolean
+  /** The host can point the resolver at DNS-over-HTTPS servers (desktop); Android uses the system's Private DNS. */
+  secureDns: boolean
 }
 
 export interface Rect {
@@ -86,6 +108,11 @@ export interface Rect {
   y: number
   width: number
   height: number
+}
+
+export interface Point {
+  x: number
+  y: number
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +160,13 @@ export const PRIVATE_CONTAINER_ID = 'private'
 export type WindowKind = 'synced' | 'unsynced' | 'private'
 /** Which tabs new synced windows share: everything, pinned/essential only, or nothing. */
 export type WindowSyncMode = 'all' | 'pinned' | 'off'
+/**
+ * What a window's chrome shows: the sidebar with spaces and tabs, or – for the sized windows
+ * pages open with `window.open(url, name, 'width=…')` – a single toolbar row above the page.
+ */
+export type WindowChrome = 'full' | 'popup'
+/** System-drawn material behind a translucent chrome (Windows 11). */
+export type WindowMaterial = 'none' | 'mica'
 
 // ---------------------------------------------------------------------------
 // Themes (Zen's gradient theme picker)
@@ -196,6 +230,11 @@ export interface Tab {
   muted: boolean
   /** True when the tab has no live WebContents (Zen calls these "pending"/unloaded tabs). */
   discarded: boolean
+  /**
+   * Memory (MB) the page held when it was put to sleep, for the sleeping tab's tooltip; absent
+   * when the host could not tell (or the tab was never loaded this session).
+   */
+  sleepSavedMb?: number
   /** Page lifecycle frozen by the resource governor (no timers, no script) – Chromium tab freezing. */
   frozen: boolean
   /** CPU throttling factor the governor applied to the renderer (1 = none, 4 = four times slower). */
@@ -212,6 +251,13 @@ export interface Tab {
   readerable: boolean
   /** Requests the blocking engine stopped for the current document (resets on navigation). */
   blockedCount: number
+  /**
+   * Tab whose page opened this one (a link into a new tab, `window.open`). Mobile system back at
+   * the tab's first page closes it and returns there, as Chrome does for a child tab.
+   */
+  openerTabId: string | null
+  /** Opened by another app's intent or share; system back at its first page returns to that app. */
+  fromIntent: boolean
 }
 
 /** Colours a tab group (folder) can wear; the phone chrome paints group cards with them. */
@@ -359,6 +405,10 @@ export interface ExtensionInfo {
   hostPermissions: string[]
   /** `options_ui.page` or `options_page`, relative to the extension root. */
   optionsPage: string | null
+  /** `chrome_url_overrides.newtab`, relative to the extension root; null when not declared. */
+  newTabPage: string | null
+  /** New tabs open `newTabPage` (`extension.setNewTabOverride`); off by default, one at most. */
+  newTabOverride: boolean
   /** The install prompt's warning lines Chrome would show for this manifest. */
   warnings: string[]
   /** Warning lines an update added; the extension stays disabled until they are approved. */
@@ -376,6 +426,14 @@ export interface ExtensionInfo {
   commands?: ExtensionCommandInfo[]
   /** Why some commands stayed unbound (a Zenium shortcut or another extension holds the key). */
   commandConflicts?: string[]
+}
+
+/** The extension side panel a window is showing (`chrome.sidePanel`), beside the page. */
+export interface SidePanelInfo {
+  extensionId: string
+  name: string
+  /** Data URL of the extension's icon, when it has one. */
+  icon: string | null
 }
 
 /** One `chrome.commands` entry as the extensions page shows it. */
@@ -632,6 +690,12 @@ export interface Bookmark {
 
 export type BookmarkNodeType = 'url' | 'folder'
 
+/** When the bookmarks bar shows above the content frame (Edge's "Show favorites bar"). */
+export type BookmarksBarMode = 'always' | 'newtab' | 'never'
+
+/** Where a bookmark opens: the current tab, a new tab (foreground), a new window or a private window. */
+export type BookmarkOpenTarget = 'current' | 'tab' | 'window' | 'private'
+
 /**
  * One node of the bookmark tree, shaped like `chrome.bookmarks.BookmarkTreeNode`. The three
  * roots (Bookmarks bar, Other bookmarks, Mobile bookmarks) have fixed ids and `parentId: null`;
@@ -813,6 +877,13 @@ export interface KeyBinding {
   key: string
 }
 
+/**
+ * Which default binding table the shortcuts start from: Chrome's and Edge's chords (`chrome`,
+ * the default) or the Zen Browser set Zenium grew up with (`zen`). User overrides sit on top
+ * of either.
+ */
+export type ShortcutPreset = 'chrome' | 'zen'
+
 export type ShortcutAction =
   | 'compact.toggle'
   | 'compact.toggleSidebar'
@@ -839,6 +910,8 @@ export type ShortcutAction =
   | 'tab.togglePin'
   | 'tab.resetPinned'
   | 'tab.duplicate'
+  /** Chrome's tab search (Ctrl+Shift+A); reserved, does nothing until the tab search ships. */
+  | 'tab.search'
   | 'sidebar.toggle'
   | 'glance.expand'
   | 'space.new'
@@ -849,7 +922,10 @@ export type ShortcutAction =
   | 'window.newUnsynced'
   | 'window.newPrivate'
   | 'window.close'
+  | 'window.minimize'
   | 'app.quit'
+  /** Open the application menu from the keyboard (Alt+F / F10 on Windows and Linux). */
+  | 'menu.app'
   | 'tab.next'
   | 'tab.prev'
   | 'tab.select1'
@@ -873,10 +949,16 @@ export type ShortcutAction =
   | 'nav.stop'
   | 'urlbar.focus'
   | 'urlbar.search'
+  | 'urlbar.pasteAndGo'
+  | 'urlbar.pasteAndSearch'
   | 'find.open'
   | 'find.next'
   | 'find.prev'
+  /** Chrome's "Use Selection for Find" (Cmd+E on macOS). */
+  | 'find.useSelection'
   | 'page.savePage'
+  | 'page.openFile'
+  | 'page.emailLink'
   | 'page.print'
   | 'page.viewSource'
   | 'page.fullscreen'
@@ -891,6 +973,7 @@ export type ShortcutAction =
   | 'bookmark.sidebar'
   | 'bookmark.library'
   | 'bookmark.allTabs'
+  | 'bookmark.toggleBar'
   | 'history.sidebar'
   | 'downloads.open'
   | 'devtools.toggle'
@@ -913,6 +996,8 @@ export interface Shortcut {
   extraBindings: KeyBinding[]
   /** Actions this build cannot perform yet (kept so the list matches Zen 1:1). */
   unsupported?: boolean
+  /** Reserved for a feature that has not shipped: bound (a no-op) but left out of the list. */
+  hidden?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -977,6 +1062,8 @@ export interface Settings {
   sidebarExpandOnHover: boolean
   /** Remove the browser padding / rounded content area. */
   borderless: boolean
+  /** Windows 11: draw new windows on the system's Mica material behind a translucent chrome. */
+  windowMaterial: WindowMaterial
   compactMode: CompactModeSettings
   urlbarBehavior: UrlbarBehavior
   /** Phone layout: where the address bar (and its gestures) live. Long-press the pill to move it. */
@@ -993,12 +1080,26 @@ export interface Settings {
   unloadEnabled: boolean
   unloadTimeoutMinutes: number
   unloadExcludedDomains: string[]
+  /**
+   * Hosts the user chose "Mute Site" for (lower-case hostnames without `www.`): every tab on
+   * such a host is muted, new pages of the host start muted, and leaving the host lifts the mute.
+   */
+  mutedHosts: string[]
   searchEngineId: string
   searchSuggestions: boolean
+  /**
+   * Chrome's "Always show full URLs": the address pill keeps the scheme and `www.` instead of
+   * eliding them at rest. Absent in profiles from before it existed (read as false).
+   */
+  showFullUrls?: boolean
   containerSpecificEssentials: boolean
   essentialsMax: number
   newTabPosition: NewTabPosition
   restoreSession: boolean
+  /** Ask before a window with more than one tab closes (Firefox's warning; Edge has the setting). */
+  warnOnCloseWindow: boolean
+  /** After an unclean exit: offer the last session's pages, bring them back, or start fresh. */
+  crashRestore: CrashRestoreMode
   /** Firefox's "Always ask you where to save files"; off saves straight into the Downloads folder. */
   askWhereToSave: boolean
   /**
@@ -1024,10 +1125,24 @@ export interface Settings {
   passwords: PasswordSettings
   /** Session counter and cooldowns of the "make Zenium your default browser" prompts. */
   defaultBrowserPromo: DefaultBrowserPromoState
+  /**
+   * Desktop: the app version in which the user answered "Not now" to the "Make Zenium your
+   * default browser" strip; it stays away until the next feature release (`major.minor`).
+   */
+  defaultBrowserPromptDismissed: string | null
   /** Ad and tracker blocking (Settings → Privacy and security). */
   blocking: BlockingSettings
   /** How pages are presented: desktop site, dark theme for sites, page zoom (Chrome's page controls). */
   pageControls: PageControlsSettings
+  /** The bookmarks bar above the content frame: always, only on the new tab page, or never. */
+  bookmarksBar: BookmarksBarMode
+  /**
+   * Which built-in key table the user's overrides sit on. New profiles follow Chrome; a profile
+   * from before the setting existed keeps the Zen set when it had customised bindings.
+   */
+  shortcutPreset: ShortcutPreset
+  /** Safe Browsing, HTTPS-only, secure DNS, cookies, GPC / DNT (Settings → Privacy and security). */
+  privacy: PrivacySettings
 }
 
 // ---------------------------------------------------------------------------
@@ -1404,16 +1519,31 @@ export type OverlayKind =
 export interface WindowState {
   id: string
   kind: WindowKind
+  chrome: WindowChrome
+  /** The material this window was created with (windows keep it for their lifetime). */
+  material: WindowMaterial
   maximized: boolean
   fullscreen: boolean
   focused: boolean
   /** Tab id currently in HTML (element) fullscreen – its view covers the whole window. */
   htmlFullscreenTabId: string | null
+  /** A window-modal question waiting for an answer ("Close N tabs?"), if any. */
+  prompt: WindowPrompt | null
 }
 
 export interface MediaState {
   tabId: string
   playing: boolean
+}
+
+/** A tab from another window being dragged over this one (`tab.dragOver`). */
+export interface TabDragOver {
+  tabId: string
+  title: string
+  favicon: string | null
+  /** Pointer position in this window's chrome (CSS px). */
+  x: number
+  y: number
 }
 
 // ---------------------------------------------------------------------------
@@ -1435,6 +1565,111 @@ export interface PermissionRule {
   origin: string
   permission: string
   decision: 'allow' | 'deny'
+}
+
+/** The user's answer to a permission prompt; `dismiss` refuses this request without remembering. */
+export type PermissionPromptAnswer = 'allow' | 'block' | 'allow-once' | 'dismiss'
+
+/**
+ * A pending permission question the chrome shows over a tab, non-modal, one at a time per tab:
+ * "Allow example.com to use your camera?" with Allow / Block / Allow once, answered by
+ * `permissions.respond`. Withdrawn when the page navigates or the tab closes.
+ */
+export interface PermissionPrompt {
+  id: string
+  /** Tab whose page asked; null when the host could not say (the focused window shows it). */
+  tabId: string | null
+  origin: string
+  /** Base permission name (`camera`, `media`, `geolocation`), for the prompt's glyph. */
+  permission: string
+  message: string
+  detail: string
+  allowLabel: string
+  blockLabel: string
+  /** Whether "Allow once" (until the tab leaves the site) is offered. */
+  allowOnce: boolean
+  requestedAt: number
+}
+
+// ---------------------------------------------------------------------------
+// Clear browsing data and Safety check
+// ---------------------------------------------------------------------------
+
+/** Chrome's time ranges: the last hour, 24 hours, 7 days, 4 weeks, or everything. */
+export type BrowsingDataRange = 'hour' | 'day' | 'week' | 'month' | 'all'
+
+/**
+ * What "Clear browsing data" can remove. `history`, `cookies` and `cache` are Chrome's Basic
+ * set; the rest is Advanced. `cookies` covers cookies and every other kind of site data.
+ */
+export type BrowsingDataType =
+  | 'history'
+  | 'cookies'
+  | 'cache'
+  | 'downloads'
+  | 'passwords'
+  | 'autofill'
+  | 'sitePermissions'
+  | 'recentlyClosed'
+
+export const BROWSING_DATA_BASIC: readonly BrowsingDataType[] = ['history', 'cookies', 'cache']
+export const BROWSING_DATA_ADVANCED: readonly BrowsingDataType[] = [
+  'history',
+  'cookies',
+  'cache',
+  'downloads',
+  'passwords',
+  'autofill',
+  'sitePermissions',
+  'recentlyClosed'
+]
+
+/** The preview line of one type in the dialog: how much would go. */
+export interface BrowsingDataCount {
+  type: BrowsingDataType
+  /** Items of `unit` in the range; null when the engine cannot count this type. */
+  count: number | null
+  unit: 'visits' | 'sites' | 'bytes' | 'downloads' | 'logins' | 'entries' | 'permissions'
+  /** False when the engine cannot limit this type to the range: clearing removes all of it. */
+  rangeApplies: boolean
+  /** Why the type cannot be cleared right now (the vault is locked), or null. */
+  unavailable: string | null
+}
+
+export interface ClearBrowsingDataResult {
+  /** Types that were cleared. */
+  cleared: BrowsingDataType[]
+}
+
+export type SafetyState = 'safe' | 'info' | 'warning' | 'unavailable'
+
+/** One row of Safety check: a state for the glyph and a sentence for the row. */
+export interface SafetyCheckRow {
+  state: SafetyState
+  summary: string
+}
+
+export interface SafetyCheckResult {
+  checkedAt: number
+  updates: SafetyCheckRow & { currentVersion: string; latestVersion: string | null }
+  safeBrowsing: SafetyCheckRow & { configured: boolean; enabled: boolean | null }
+  passwords: SafetyCheckRow & {
+    compromised: number
+    weak: number
+    reused: number
+    /** The vault is locked or the checkup never ran: counts are unknown. */
+    known: boolean
+  }
+  /** Sites holding several granted permissions, or granted ones not visited for weeks. */
+  permissions: SafetyCheckRow & {
+    grantedSites: number
+    review: Array<{ origin: string; permissions: string[]; reason: 'many' | 'unused' }>
+  }
+  /** Sites allowed to send notifications, busiest first (`shown` counts this session). */
+  notifications: SafetyCheckRow & { sites: Array<{ origin: string; shown: number }> }
+  extensions: SafetyCheckRow & {
+    flagged: Array<{ id: string; name: string; reasons: string[] }>
+  }
 }
 
 export interface ClientCertificateInfo {
@@ -1483,6 +1718,56 @@ export type SecurityPromptResponse =
   | { kind: 'client-certificate'; index: number }
 
 // ---------------------------------------------------------------------------
+// Page dialogs: alert / confirm / prompt and "Leave site?"
+// ---------------------------------------------------------------------------
+
+export type PageDialogKind = 'alert' | 'confirm' | 'prompt' | 'beforeunload'
+
+/**
+ * A dialog a page opened (`alert`, `confirm`, `prompt`) or the "Leave site?" question its
+ * `beforeunload` handler raised. The chrome shows it tab-modal, as Chrome does; the page waits
+ * for the answer.
+ */
+export interface PageDialog {
+  id: string
+  kind: PageDialogKind
+  tabId: string
+  /** The site that opened it, the way Chrome titles the dialog ("example.com says"); '' when unknown. */
+  site: string
+  /** A frame of another site opened it ("An embedded page at example.com says"). */
+  embedded: boolean
+  message: string
+  /** `prompt`: the field's initial text. */
+  defaultValue: string
+}
+
+/** The user's answer; `value` carries the prompt's text when accepted. */
+export interface PageDialogResponse {
+  accepted: boolean
+  value: string | null
+}
+
+/**
+ * A question the chrome asks about a window as a whole (window-modal): whether to close the
+ * window with its tabs, or to quit Zenium with every open tab.
+ */
+export interface WindowPrompt {
+  id: string
+  kind: 'close-tabs' | 'quit'
+  /** How many tabs close. */
+  count: number
+}
+
+/** The last run ended without a clean shutdown; the chrome offers to bring its pages back. */
+export interface CrashRestoreOffer {
+  tabCount: number
+  windowCount: number
+}
+
+/** What Zenium does with the previous session's pages after an unclean exit. */
+export type CrashRestoreMode = 'ask' | 'always' | 'never'
+
+// ---------------------------------------------------------------------------
 // The full UI state snapshot broadcast to the renderer
 // ---------------------------------------------------------------------------
 
@@ -1490,6 +1775,11 @@ export interface UIState {
   platform: Platform
   capabilities: HostCapabilities
   version: string
+  /**
+   * Whether the host resolves the OS colour scheme to dark (the `system` choice); null when the
+   * host has no say and the chrome reads `prefers-color-scheme` itself.
+   */
+  systemDark: boolean | null
   tabs: Record<string, Tab>
   /** Ordered essential tab ids (all containers – the UI filters by container). */
   essentialTabIds: string[]
@@ -1529,6 +1819,8 @@ export interface UIState {
   zappingTabId: string | null
   liveFolders: Record<string, LiveFolderConfig>
   extensions: ExtensionInfo[]
+  /** The extension side panel this window shows beside the page, if one is open for its tab. */
+  sidePanel: SidePanelInfo | null
   mods: Mod[]
   sync: SyncStatus
   /** Connected AI agents (MCP sessions) and the tabs they drive. */
@@ -1544,10 +1836,18 @@ export interface UIState {
   blockedPopups: Record<string, BlockedPopup[]>
   /** Every remembered per-site permission answer (Settings lists and revokes them). */
   permissionRules: PermissionRule[]
+  /** Pending permission prompts, oldest first; the chrome shows its active tab's first one. */
+  permissionPrompts: PermissionPrompt[]
   /** Pending HTTP authentication and client-certificate prompts, oldest first. */
   securityPrompts: SecurityPrompt[]
+  /** Pending `alert` / `confirm` / `prompt` and "Leave site?" dialogs of pages, oldest first. */
+  pageDialogs: PageDialog[]
+  /** The pages of an unclean exit the chrome should offer to restore; null when there are none. */
+  crashRestore: CrashRestoreOffer | null
   /** Ad and tracker blocking: lists, their freshness and the session counter. */
   blocking: BlockingStatus
+  /** Safe Browsing feeds, HTTPS-only exceptions and the resolver's secure DNS state. */
+  privacy: PrivacyStatus
   /** Page translation: preferences, models on the device and the per-tab translation state. */
   translate: TranslateUIState
   /** The device facts the page controls resolve against (screen class, peripherals, font scale). */
@@ -1564,8 +1864,24 @@ export interface FindResult {
 // URL bar suggestions
 // ---------------------------------------------------------------------------
 
+/**
+ * `answer`: a calculator, unit, currency, weather, time or dictionary row (the answer is the
+ * title, the question the subtitle). `entity`: a Wikipedia summary row (name, description,
+ * thumbnail). Both open their `url` on Enter, never inline-complete.
+ */
 export type SuggestionKind =
-  'url' | 'search' | 'history' | 'bookmark' | 'tab' | 'space' | 'command' | 'engine'
+  | 'url'
+  | 'search'
+  | 'history'
+  | 'bookmark'
+  | 'tab'
+  | 'space'
+  | 'command'
+  | 'engine'
+  | 'answer'
+  | 'entity'
+  /** A `chrome.omnibox` row: the input belongs to an extension whose keyword starts it. */
+  | 'omnibox'
 
 export interface Suggestion {
   id: string
@@ -1579,6 +1895,16 @@ export interface Suggestion {
   targetId: string | null
   /** Text to place in the input when the suggestion is highlighted (for inline completion). */
   fill: string
+  /**
+   * Set on the first row when it is the default match to complete inline: `fill` starts with
+   * what was typed and the row outranks the verbatim query (Chrome's rule), so the field shows
+   * the remainder selected and Enter accepts it.
+   */
+  inline?: boolean
+  /** Chromium-style relevance the rows were ordered by (1300 is the verbatim query). */
+  relevance?: number
+  /** The row's owner lets the user remove it (Delete; `omnibox.onDeleteSuggestion`). */
+  deletable?: boolean
 }
 
 export interface CommandDescriptor {
@@ -1595,6 +1921,8 @@ export interface CommandDescriptor {
     | 'downloads.open'
     | 'tab.freezeOthers'
     | 'tab.wakeAll'
+    | 'tab.moveToNewWindow'
+    | 'page.toggleMuteSite'
     | 'resources.trim'
     | 'resources.open'
   /** The host capability the command needs; not offered where it is false. */
@@ -1622,7 +1950,16 @@ export interface MenuDescriptor {
   id: string
   items: MenuItemDescriptor[]
   source:
-    'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app' | 'bookmark' | 'history'
+    | 'page'
+    | 'tab'
+    | 'selection'
+    | 'space'
+    | 'folder'
+    | 'newtab'
+    | 'app'
+    | 'bookmark'
+    | 'history'
+    | 'urlbar'
   /** Anchor in chrome CSS pixels, when known. */
   x: number | null
   y: number | null
@@ -1643,6 +1980,8 @@ export interface LayoutReport {
   glance: { tabId: string; rect: Rect; radius: number } | null
   /** When true no tab views should be visible (a chrome overlay covers the content area). */
   contentHidden: boolean
+  /** Where the extension side panel's view goes (`UIState.sidePanel`), or null when none shows. */
+  sidePanel?: Rect | null
 }
 
 // ---------------------------------------------------------------------------
@@ -1669,6 +2008,11 @@ export interface Commands {
 
   'layout.report': { args: LayoutReport; result: void }
 
+  /**
+   * The user asked for a new tab: the URL bar in new-tab mode, or the page an extension
+   * overrides new tabs with (`chrome_url_overrides.newtab`, opted in per extension).
+   */
+  'tab.new': { args: void; result: void }
   'tab.create': {
     args: {
       url?: string
@@ -1683,6 +2027,14 @@ export interface Commands {
   }
   'tab.activate': { args: { tabId: string }; result: void }
   'tab.close': { args: { tabId: string; force?: boolean }; result: void }
+  /**
+   * A private tab in this window (`capabilities.privateTabs`): the in-memory private container,
+   * no history, no persisted downloads; its session is wiped when the last private tab closes.
+   * Resolves with the tab id, or null on hosts that offer private windows instead.
+   */
+  'tab.newPrivate': { args: { url?: string }; result: string | null }
+  /** Close every private tab (and so end the private session). */
+  'tab.closePrivate': { args: void; result: void }
   'tab.closeOthers': { args: { tabId: string }; result: void }
   'tab.closeBelow': { args: { tabId: string }; result: void }
   'tab.closeAbove': { args: { tabId: string }; result: void }
@@ -1692,6 +2044,8 @@ export interface Commands {
   'tab.reload': { args: { tabId: string; skipCache?: boolean }; result: void }
   'tab.stop': { args: { tabId: string }; result: void }
   'tab.toggleMute': { args: { tabId: string }; result: void }
+  /** "Mute Site" / "Unmute Site": every tab of the host, remembered in `settings.mutedHosts`. */
+  'tab.toggleMuteSite': { args: { tabId: string }; result: void }
   'tab.togglePin': { args: { tabId: string }; result: void }
   'tab.toggleEssential': { args: { tabId: string }; result: void }
   'tab.resetPinned': { args: { tabId: string }; result: void }
@@ -1707,6 +2061,36 @@ export interface Commands {
   }
   'tab.moveToSpace': { args: { tabId: string; spaceId: string }; result: void }
   'tab.moveToFolder': { args: { tabId: string; folderId: string | null }; result: void }
+  /**
+   * A sidebar drag let go over a drop target of this window. `key` is the target's `data-drop`
+   * (`tab:<id>:before|after`, `section:<section>:<spaceId>`, `folder:<id>`, `space:<id>`,
+   * `split:<side>`, `bookmark:<folderId>:<index>`); the core resolves it against the model.
+   */
+  'tab.drop': { args: { tabId: string; key: string }; result: void }
+  /** A sidebar tab drag began in this window (the core tracks it across windows from here on). */
+  'tab.dragStart': { args: { tabId: string }; result: void }
+  /**
+   * The pointer moved during a tab drag. `x`/`y` are chrome coordinates of this window (they run
+   * past its edges while the pointer is outside it); `inSidebar` is true while the pointer is
+   * over this window's own sidebar, where no other window can be the target.
+   */
+  'tab.dragMove': {
+    args: { tabId: string; x: number; y: number; inSidebar: boolean }
+    result: void
+  }
+  /** The window a drag from another window hovers reports the drop target under the pointer. */
+  'tab.dragTarget': { args: { tabId: string; key: string | null }; result: void }
+  /**
+   * The drag ended outside this window's drop targets (chrome coordinates as for `tab.dragMove`):
+   * `release` moves the tab into the other Zenium window under the pointer or tears it off into
+   * a new window there; `cancel` (Escape) just ends the drag.
+   */
+  'tab.dragEnd': {
+    args: { tabId: string; x: number; y: number; outcome: 'release' | 'cancel' }
+    result: void
+  }
+  /** "Move Tab to New Window" from the tab menu: the new window opens beside this one. */
+  'tab.moveToNewWindow': { args: { tabId: string }; result: void }
   /** Restore the newest recently closed entry (a window entry as a whole window). */
   'tab.reopenClosed': { args: void; result: void }
   /** The tab's back/forward stack for the long-press list on the back / forward buttons. */
@@ -1780,7 +2164,12 @@ export interface Commands {
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
   'folder.contextMenu': { args: { folderId: string }; result: void }
   'newtab.contextMenu': { args: void; result: void }
-  'app.menu': { args: void; result: void }
+  /**
+   * The "⋯" application menu. `anchor` is the menu button in chrome CSS pixels: the menu opens
+   * along its bottom edge; without it the menu opens at the pointer. `keyboard` marks a menu
+   * opened by a shortcut, whose first item starts selected.
+   */
+  'app.menu': { args: { anchor?: Rect; keyboard?: boolean }; result: void }
   /** Renderer-hosted menus: an item was picked / the menu was dismissed. */
   'menu.click': { args: { menuId: string; itemId: string }; result: void }
   'menu.close': { args: { menuId: string }; result: void }
@@ -1829,6 +2218,17 @@ export interface Commands {
     result: void
   }
   'urlbar.runCommand': { args: { action: string }; result: void }
+  /**
+   * Chrome's URL-bar menu items: the clipboard's text goes where typed text would (a URL
+   * navigates, anything else searches), or is always searched with the default engine. Nothing
+   * happens when the clipboard holds no text or the host cannot read it.
+   */
+  'urlbar.pasteAndGo': { args: { tabId: string | null }; result: void }
+  'urlbar.pasteAndSearch': { args: { tabId: string | null }; result: void }
+  /** The URL bar closed without an entry (Escape, a click away): an omnibox session ends. */
+  'urlbar.cancel': { args: void; result: void }
+  /** Delete on a row its owner marked `deletable` (`omnibox.onDeleteSuggestion`). */
+  'urlbar.deleteSuggestion': { args: { input: string }; result: void }
 
   'overlay.snapshot': { args: { tabId: string }; result: string | null }
 
@@ -1840,6 +2240,28 @@ export interface Commands {
   'site.clearData': { args: { tabId: string }; result: void }
   /** Forget one permission decision of the site (or all of them) and reload the page. */
   'site.resetPermissions': { args: { tabId: string; permission?: string }; result: void }
+  /**
+   * Everything the desktop site-information popover shows for a tab: `site.info` plus the
+   * requests the blocker refused on the page and whether the site is excepted from blocking.
+   */
+  'siteInfo.snapshot': { args: { tabId: string }; result: SiteInfoSnapshot | null }
+
+  /**
+   * Clear browsing data of the chosen types in the range. Passwords need re-authentication
+   * (`passphrase` carries the vault passphrase when the chrome was asked for it); when it fails
+   * nothing is cleared and the outcome says which step is needed.
+   */
+  'privacy.clearBrowsingData': {
+    args: { range: BrowsingDataRange; types: BrowsingDataType[]; passphrase?: string }
+    result: ReauthOutcome<ClearBrowsingDataResult>
+  }
+  /** How much of each type the range holds, for the dialog's preview lines. */
+  'privacy.clearBrowsingDataCounts': {
+    args: { range: BrowsingDataRange }
+    result: BrowsingDataCount[]
+  }
+  /** Run Safety check now: updates, Safe Browsing, passwords, permissions, notifications, extensions. */
+  'privacy.safetyCheck': { args: void; result: SafetyCheckResult }
 
   /** Take a fresh resource sample right now and return it. */
   'resources.snapshot': { args: void; result: ResourceSnapshot }
@@ -1850,7 +2272,13 @@ export interface Commands {
 
   'settings.update': { args: Partial<Settings>; result: void }
   'shortcuts.update': { args: { id: string; binding: KeyBinding | null }; result: void }
+  /** Drop every override: the table goes back to the active preset. */
   'shortcuts.reset': { args: void; result: void }
+  /**
+   * The Settings recorder is (or stopped) listening for a chord: while it is, key presses in the
+   * chrome are captured by the renderer and no shortcut runs.
+   */
+  'shortcuts.recording': { args: { recording: boolean }; result: void }
   'sidebar.setWidth': { args: { width: number }; result: void }
   'sidebar.toggleExpanded': { args: void; result: void }
 
@@ -1893,6 +2321,8 @@ export interface Commands {
       title: string
       url?: string
       type?: BookmarkNodeType
+      /** Known icon of the page (a tab dropped on the bar brings its own). */
+      favicon?: string | null
     }
     result: BookmarkNode | null
   }
@@ -1908,17 +2338,34 @@ export interface Commands {
   'bookmark.open': { args: { id: string; newTab: boolean; tabId: string | null }; result: void }
   /** Open every bookmark in the given folders / selection in new tabs. */
   'bookmark.openAll': { args: { ids: string[] }; result: void }
-  /** Bookmark every open tab of the current space into a new folder. */
+  /** Open the bookmarks below the given nodes in a new (or private) window. */
+  'bookmark.openInWindow': { args: { ids: string[]; private: boolean }; result: void }
+  /** "Bookmark all tabs": asks for the folder's name and place (`bookmark.allTabs` event). */
   'bookmark.allTabs': { args: void; result: void }
+  /** The dialog's answer: one new folder with a bookmark per tab, in tab order. */
+  'bookmark.createFromTabs': {
+    args: { tabIds: string[]; title: string; parentId: string }
+    result: BookmarkNode | null
+  }
   'bookmark.contextMenu': {
-    args: { ids: string[]; folderId: string; x: number; y: number }
+    args: {
+      ids: string[]
+      folderId: string
+      x: number
+      y: number
+      /** The bar and its folder panels get Chrome's bar menu (open targets, "Show bookmarks bar"). */
+      surface?: 'manager' | 'bar'
+    }
     result: void
   }
   /** The bookmarks surface's overflow menu (bookmark all tabs, import, export) at `x`,`y`. */
   'bookmark.menu': { args: { x: number; y: number }; result: void }
+  /** Ctrl+Shift+B: flips the bar between always shown and never shown. */
+  'bookmark.toggleBar': { args: void; result: void }
   'bookmark.cut': { args: { ids: string[] }; result: void }
   'bookmark.copy': { args: { ids: string[] }; result: void }
-  'bookmark.paste': { args: { folderId: string; index?: number }; result: void }
+  /** Paste the app's bookmark clipboard; false when it is empty (a URL on the host clipboard is the caller's). */
+  'bookmark.paste': { args: { folderId: string; index?: number }; result: boolean }
   /** Netscape bookmark HTML import through the host's file picker. */
   'bookmark.import': { args: void; result: BookmarkImportResult | null }
   /** Netscape bookmark HTML export through the host's save dialog. */
@@ -2050,6 +2497,11 @@ export interface Commands {
   'extension.remove': { args: { id: string }; result: void }
   'extension.setEnabled': { args: { id: string; enabled: boolean }; result: void }
   'extension.setPinned': { args: { id: string; pinned: boolean }; result: void }
+  /** Lets (or stops letting) this extension's `chrome_url_overrides.newtab` page open new tabs. */
+  'extension.setNewTabOverride': { args: { id: string; enabled: boolean }; result: void }
+  /** Opens this extension's `chrome.sidePanel` beside the page, or closes it when it is showing. */
+  'extension.toggleSidePanel': { args: { id: string }; result: void }
+  'extension.closeSidePanel': { args: void; result: void }
   /** Chrome's "Allow in Incognito": let the extension's request rules reach private windows. */
   'extension.setAllowPrivate': { args: { id: string; allowed: boolean }; result: void }
   'extension.reload': { args: { id: string }; result: void }
@@ -2168,11 +2620,39 @@ export interface Commands {
   /** Forget one remembered per-site answer; the site asks (or is blocked) again. */
   'permissions.forget': { args: { origin: string; permission: string }; result: void }
   'permissions.reset': { args: void; result: void }
+  /** Answer (or dismiss) a pending permission prompt. */
+  'permissions.respond': { args: { id: string; answer: PermissionPromptAnswer }; result: void }
+  /**
+   * Settings › Site settings: the default for a content type (`ask` and the built-in default
+   * both clear the stored default), and the sites with a decision of their own.
+   */
+  'permissions.setDefault': {
+    args: { permission: string; decision: 'allow' | 'deny' | 'ask' }
+    result: void
+  }
+  'permissions.defaults': { args: void; result: Record<string, 'allow' | 'deny' | 'ask'> }
+  'permissions.listForPermission': {
+    args: { permission: string }
+    result: Array<{ origin: string; decision: 'allow' | 'deny' }>
+  }
+  /** Decide for a site without a prompt (an exception row), or forget with null. */
+  'permissions.set': {
+    args: { origin: string; permission: string; decision: 'allow' | 'deny' | null }
+    result: void
+  }
+  /** Forget every decision of a site (Settings' per-site list). */
+  'permissions.resetOrigin': { args: { origin: string }; result: void }
   /** Answer a pending HTTP authentication or client-certificate prompt (null cancels). */
   'security.respond': {
     args: { id: string; response: SecurityPromptResponse | null }
     result: void
   }
+  /** Answer a page's `alert` / `confirm` / `prompt` or "Leave site?" dialog. */
+  'pageDialog.respond': { args: { id: string; response: PageDialogResponse }; result: void }
+  /** Answer the window-modal question the window is showing ("Close N tabs?"). */
+  'window.respondPrompt': { args: { id: string; accepted: boolean }; result: void }
+  /** After an unclean exit: bring the last session's pages back, or start without them. */
+  'session.crashRestore': { args: { restore: boolean }; result: void }
   /** Drop the credentials and certificate choices remembered for this session. */
   'security.forgetSession': { args: void; result: void }
   /** Refresh one filter list (or every enabled one) from its canonical URL now. */
@@ -2220,7 +2700,13 @@ export interface Events {
   'urlbar.toggle': { mode: UrlbarOpenMode; text?: string }
   'urlbar.close': void
   'overlay.open': { kind: OverlayKind; folderId?: string; section?: string }
-  'find.open': { tabId: string; again?: 'next' | 'prev' }
+  /** Open the find bar; `text` replaces what it holds and is searched for at once ("use selection for find"). */
+  'find.open': { tabId: string; again?: 'next' | 'prev'; text?: string }
+  /**
+   * A shortcut asked for the application menu: the renderer focuses the menu button and opens
+   * the menu from it (`app.menu` with `keyboard`), so Escape leaves the keyboard on the button.
+   */
+  'menu.app': void
   /**
    * A download row changed. `progress` is throttled to 4 Hz per item, state changes arrive at
    * once; `done` covers completed, cancelled and interrupted (read `item.state`). Private items
@@ -2237,6 +2723,11 @@ export interface Events {
   'theme.open': { spaceId: string }
   'space.new': void
   'tab.startRename': { tabId: string }
+  /**
+   * A tab dragged from another window hovers this one: show its ghost at the given chrome
+   * coordinates and light up the drop target under it (null once it leaves or the drag ends).
+   */
+  'tab.dragOver': TabDragOver | null
   'folder.startRename': { folderId: string }
   /** Open the pinned-URL editor for a pinned/essential tab. */
   'tab.editPinnedUrl': { tabId: string }
@@ -2246,6 +2737,8 @@ export interface Events {
   'bookmark.star': { tabId: string; nodeId: string; created: boolean }
   /** The bookmark manager should edit a node, or create one (`id: null`) inside `parentId`. */
   'bookmark.edit': { id: string | null; parentId: string; type: BookmarkNodeType }
+  /** Open the "Bookmark all tabs" dialog for these tabs. */
+  'bookmark.allTabs': { tabIds: string[]; defaultTitle: string }
   'space.edit': { spaceId: string }
   'space.switched': { fromIndex: number; toIndex: number }
   /** Hosts without native menus ask the renderer to show one. */
@@ -2275,10 +2768,21 @@ export type EventName = keyof Events
 // Recently closed tabs and windows (persisted in state.json, summaries in the snapshot)
 // ---------------------------------------------------------------------------
 
-/** A page's back/forward stack (URLs and titles only) and which entry is current. */
+/**
+ * A page's back/forward stack and which entry is current. `pageState` is Chromium's serialised
+ * state of an entry – scroll offset and form control values – handed back on restore so a page
+ * comes back where it was; absent when the engine has none for the entry (or it was too large
+ * to keep).
+ */
 export interface NavigationSnapshot {
-  entries: Array<{ url: string; title: string }>
+  entries: NavigationSnapshotEntry[]
   index: number
+}
+
+export interface NavigationSnapshotEntry {
+  url: string
+  title: string
+  pageState?: string
 }
 
 export interface ClosedTabEntry {

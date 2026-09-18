@@ -2,8 +2,9 @@ import type { JSX } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 import type { UIState } from '@shared/types'
 import type { ResolvedTheme } from '@shared/theme'
+import { bookmarksBarVisible } from '@shared/bookmarkViews'
 import { run } from '@renderer/lib/api'
-import { isPhone, useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
+import { useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   captureActiveTab,
@@ -12,20 +13,22 @@ import {
   closeUrlbar,
   invalidateSnapshot,
   lastPointer,
-  openUrlbar,
   returnFocusToPage,
   uiStore,
   useBrowser
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { useCaptionOverlay } from '@renderer/hooks/useCaptionOverlay'
 import { useMainEvents } from '@renderer/hooks/useMainEvents'
 import { useTheme } from '@renderer/hooks/useTheme'
+import { BookmarksBar } from './components/bookmarks/BookmarksBar'
+import { captionBandInMain } from '@renderer/lib/layout'
 import { ContentArea } from './components/content/ContentArea'
-import { DragGhost } from './components/DragGhost'
+import { DragLayer } from './components/DragLayer'
 import { ModStyles } from './components/ModStyles'
 import { Onboarding } from './components/overlays/Onboarding'
 import { PhoneShell } from './components/phone/PhoneShell'
-import { Sidebar } from './components/sidebar/Sidebar'
+import { COLLAPSED_WIDTH, Sidebar } from './components/sidebar/Sidebar'
 import { TabDialogs } from './components/TabDialogs'
 import { Toolbar } from './components/Toolbar'
 
@@ -39,7 +42,7 @@ export function App(): JSX.Element {
   useFormFactorReport(viewport.formFactor)
   useMainEvents()
   useGlobalKeys(state)
-  useNewTabEvent(state)
+  useNewTabEvent()
   usePointerTracking()
   const ui = uiStore.use()
 
@@ -56,15 +59,34 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   const settings = state.settings
   const compact = settings.compactMode
   const sidebarSide = settings.sidebarSide
+  const popupChrome = state.window.chrome === 'popup'
   // Blank / private windows never show onboarding (it belongs to the main profile window).
-  const onboarding = !settings.onboardingDone && state.window.kind === 'synced'
+  const onboarding = !settings.onboardingDone && state.window.kind === 'synced' && !popupChrome
   const htmlFullscreen = state.window.htmlFullscreenTabId !== null
 
-  const sidebarHidden = compact.enabled && compact.hideSidebar && !compact.sidebarPersistent
+  const sidebarHidden =
+    popupChrome || (compact.enabled && compact.hideSidebar && !compact.sidebarPersistent)
   const toolbarHidden =
-    compact.enabled && compact.hideToolbar && settings.toolbarLayout !== 'single'
-  const showToolbar = settings.toolbarLayout === 'multiple' && !toolbarHidden
-  const sidebarRevealed = sidebarHidden && ui.compactHover
+    !popupChrome && compact.enabled && compact.hideToolbar && settings.toolbarLayout !== 'single'
+  const showToolbar = popupChrome || (settings.toolbarLayout === 'multiple' && !toolbarHidden)
+  const sidebarRevealed = !popupChrome && sidebarHidden && ui.compactHover
+  // The bookmarks bar sits under the toolbar and hides with it in compact mode; popups never show it.
+  const barWanted = !popupChrome && bookmarksBarVisible(settings.bookmarksBar, tab?.url ?? null)
+  const showBar = barWanted && !(compact.enabled && compact.hideToolbar)
+  // Windows draws the caption buttons over the top trailing corner: whatever sits there keeps
+  // clear of them, and the content column starts below them when they land on it.
+  const overlay = useCaptionOverlay()
+  const captionBand = captionBandInMain({
+    overlayWidth: overlay.width,
+    sidebarSide,
+    sidebarWidth: sidebarHidden
+      ? null
+      : settings.sidebarExpanded
+        ? settings.sidebarWidth
+        : COLLAPSED_WIDTH
+  })
+  const captionInset = captionBand ? overlay.width : 0
+  const macPopupInset = popupChrome && state.platform === 'darwin' ? 72 : 0
 
   // Compact mode: hovering the window edge reveals the sidebar on top of a frozen page snapshot.
   const revealTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -101,13 +123,13 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   // Main tracks the real cursor (works over the page view and the frameless resize border).
   useEffect(() => {
     const onReveal = (e: Event): void => {
-      if (!sidebarHidden) return
+      if (popupChrome || !sidebarHidden) return
       if ((e as CustomEvent<boolean>).detail) reveal()
       else unreveal()
     }
     window.addEventListener('zen-compact-reveal', onReveal)
     return () => window.removeEventListener('zen-compact-reveal', onReveal)
-  }, [sidebarHidden, reveal, unreveal])
+  }, [popupChrome, sidebarHidden, reveal, unreveal])
 
   if (htmlFullscreen) {
     // The fullscreen view covers everything; keep the tree alive but paint nothing.
@@ -122,6 +144,8 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
       )}
       data-dark={theme.isDark}
       data-window-kind={state.window.kind}
+      data-window-chrome={state.window.chrome}
+      data-caption-overlay={overlay.width > 0 ? 'true' : 'false'}
     >
       <ModStyles mods={state.mods} />
       <div className="zen-texture" />
@@ -131,23 +155,53 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
         style={{
           // Longhands only: mixing the `padding` shorthand with `paddingLeft` breaks React's
           // style diffing when the sidebar toggles.
-          paddingTop: 'var(--zen-padding)',
+          paddingTop: popupChrome || captionBand ? 0 : 'var(--zen-padding)',
           paddingBottom: 'var(--zen-padding)',
           // The hidden-sidebar side keeps a wider gutter: it is the compact-mode reveal zone and
-          // must stay hoverable beyond a frameless window's resize border.
+          // must stay hoverable beyond a frameless window's resize border. Toolbar-only windows
+          // have no sidebar to reveal.
           paddingLeft:
-            sidebarSide === 'left' ? (sidebarHidden ? REVEAL_ZONE : 0) : 'var(--zen-padding)',
+            popupChrome || sidebarSide === 'right'
+              ? 'var(--zen-padding)'
+              : sidebarHidden
+                ? REVEAL_ZONE
+                : 0,
           paddingRight:
-            sidebarSide === 'right' ? (sidebarHidden ? REVEAL_ZONE : 0) : 'var(--zen-padding)'
+            popupChrome || sidebarSide === 'left'
+              ? 'var(--zen-padding)'
+              : sidebarHidden
+                ? REVEAL_ZONE
+                : 0
         }}
       >
-        {showToolbar && <Toolbar state={state} tab={tab} />}
+        {captionBand && !showToolbar && (
+          <div
+            className="zen-drag shrink-0"
+            style={{ height: overlay.height, minHeight: 'env(titlebar-area-height, 0px)' }}
+          />
+        )}
+        {showToolbar && (
+          <Toolbar
+            state={state}
+            tab={tab}
+            trailingInset={captionInset}
+            leadingInset={macPopupInset}
+            showWindowControls={popupChrome}
+          />
+        )}
+        {showBar && <BookmarksBar state={state} tab={tab} />}
         <div className="relative min-h-0 flex-1">
           <ContentArea state={state} ui={ui} />
+          {/*
+           * Modal dialogs render in the content frame through FrameDialogHost (its scrim dims
+           * this box only); popovers such as the star bubble render through ChromePortal, over
+           * the window (lib/portals.tsx).
+           */}
+          <TabDialogs state={state} />
         </div>
       </main>
 
-      {sidebarHidden && (
+      {sidebarHidden && !popupChrome && (
         <>
           <div
             className={cn(
@@ -174,18 +228,25 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
         </>
       )}
       {toolbarHidden && !showToolbar && settings.toolbarLayout === 'multiple' && (
-        <CompactToolbar state={state} />
+        <CompactToolbar state={state} showBar={barWanted} trailingInset={captionInset} />
       )}
 
-      {ui.drag && <DragGhost state={state} drag={ui.drag} />}
-      <TabDialogs state={state} />
+      {ui.drag && <DragLayer state={state} drag={ui.drag} />}
       {onboarding && <Onboarding state={state} />}
     </div>
   )
 }
 
-/** Compact mode with the top toolbar hidden: hover the top edge to reveal it. */
-function CompactToolbar({ state }: { state: UIState }): JSX.Element {
+/** Compact mode with the top toolbar hidden: hover the top edge to reveal it (and the bar). */
+function CompactToolbar({
+  state,
+  showBar,
+  trailingInset
+}: {
+  state: UIState
+  showBar: boolean
+  trailingInset: number
+}): JSX.Element {
   const tab = activeTab(state)
   const ref = useRef<HTMLDivElement>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -199,13 +260,18 @@ function CompactToolbar({ state }: { state: UIState }): JSX.Element {
   return (
     <div
       ref={ref}
-      className="group/ct absolute inset-x-0 top-0 z-40"
+      className="group/ct absolute left-0 top-0 z-40"
+      // The reveal zone stops short of the native caption buttons: the band under them stays a
+      // drag region, and moving towards them does not pop the toolbar.
+      style={{ right: trailingInset }}
       onPointerEnter={show}
       onPointerLeave={hide}
     >
       <div className="h-1.5" />
       <div className="px-2 opacity-0 transition-opacity group-data-[open=true]/ct:opacity-100 pointer-events-none group-data-[open=true]/ct:pointer-events-auto">
-        <Toolbar state={state} tab={tab} floating />
+        <Toolbar state={state} tab={tab} floating>
+          {showBar && <BookmarksBar state={state} tab={tab} className="px-1" />}
+        </Toolbar>
       </div>
     </div>
   )
@@ -216,9 +282,14 @@ function useGlobalKeys(state: UIState): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
+      // A popover that closed itself on this Escape (a Settings menulist, a Radix layer) has
+      // claimed the key: it returns focus to its anchor and the overlay under it stays open.
+      if (e.defaultPrevented) return
       const ui = uiStore.get()
       if (ui.urlbar.open) return // handled by the URL bar input
       if (ui.menu) return // handled by the menu layer
+      // Dialogs, choosers and overflow menus take Escape first (capture traps).
+      if (ui.bookmarkEdit || ui.starDialog || ui.bookmarkAllTabs || ui.barMenuOpen) return
       if (ui.overlay !== 'none') {
         e.preventDefault()
         closeOverlay()
@@ -257,18 +328,20 @@ function useGlobalKeys(state: UIState): void {
   }, [])
 }
 
-/** The "New Tab" button and empty state open Zen's floating URL bar instead of a new-tab page. */
-function useNewTabEvent(state: UIState): void {
+/**
+ * The "New Tab" button and empty state ask the core for a new tab: Zen's floating URL bar in
+ * new-tab mode (it comes back as `urlbar.toggle`), or the page an extension overrides new tabs
+ * with. Closing the bar first keeps the toggle from swallowing the request while it is open.
+ */
+function useNewTabEvent(): void {
   useEffect(() => {
     const onNewTab = (): void => {
       closeUrlbar()
-      void openUrlbar('new-tab', activeTab(state)?.id ?? null, {
-        attached: isPhone() || state.settings.urlbarBehavior === 'normal'
-      })
+      run('tab.new', undefined)
     }
     window.addEventListener('zen-new-tab', onNewTab)
     return () => window.removeEventListener('zen-new-tab', onNewTab)
-  }, [state])
+  }, [])
 }
 
 /** Remember where the pointer went down so renderer-hosted menus can anchor there. */

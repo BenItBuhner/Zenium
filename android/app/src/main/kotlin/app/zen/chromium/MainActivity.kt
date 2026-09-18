@@ -227,6 +227,7 @@ class MainActivity : BrowserActivity() {
 
     override fun onStop() {
         hidden = true
+        host.onStop()
         super.onStop()
     }
 

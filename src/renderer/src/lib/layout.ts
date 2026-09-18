@@ -148,3 +148,20 @@ export function overviewColumns(width: number): number {
 export function layoutLabel(layout: SplitLayout): string {
   return layout === 'grid' ? 'Grid' : layout === 'vertical' ? 'Side by side' : 'Stacked'
 }
+
+/**
+ * Whether the native caption buttons (drawn over the window's top trailing corner, `overlay`
+ * wide) land on the content column, which then keeps a header band clear above the page. The
+ * sidebar's own title row already gives them room when it sits on the right and is wider than
+ * they are.
+ */
+export function captionBandInMain(opts: {
+  overlayWidth: number
+  sidebarSide: 'left' | 'right'
+  /** Width of the visible sidebar; null when compact mode hides it. */
+  sidebarWidth: number | null
+}): boolean {
+  if (opts.overlayWidth <= 0) return false
+  if (opts.sidebarWidth === null || opts.sidebarSide === 'left') return true
+  return opts.sidebarWidth < opts.overlayWidth
+}

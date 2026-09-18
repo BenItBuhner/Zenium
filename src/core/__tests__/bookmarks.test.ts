@@ -9,6 +9,7 @@ import {
   OTHER_BOOKMARKS_ID,
   isBookmarkRoot
 } from '../../shared/bookmarks'
+import { sortedByNameOrder } from '../../shared/bookmarkViews'
 import type { StoreIO } from '../platform'
 import { BookmarkService } from '../bookmarks'
 import { BrowserState } from '../state'
@@ -306,6 +307,30 @@ describe('BookmarkService: bulk operations', () => {
     expectValid(service)
   })
 
+  it('files the "all tabs" folder into the chosen parent', () => {
+    const { service } = setup()
+    const folder = service.bookmarkTabs([tab('https://one/', 'One')], '1 tabs', BOOKMARKS_BAR_ID)!
+    expect(folder.parentId).toBe(BOOKMARKS_BAR_ID)
+    expect(service.getChildren(BOOKMARKS_BAR_ID).map((n) => n.id)).toEqual([folder.id])
+    expectValid(service)
+  })
+
+  it('"Sort by name" is one move of every child into its sorted slot; a sorted folder is a no-op', () => {
+    const { service } = setup()
+    service.create({ parentId: BOOKMARKS_BAR_ID, title: 'zeta', url: 'https://z/' })
+    service.create({ parentId: BOOKMARKS_BAR_ID, title: 'Folder', type: 'folder' })
+    service.create({ parentId: BOOKMARKS_BAR_ID, title: 'alpha', url: 'https://a/' })
+    const order = sortedByNameOrder(service.tree, BOOKMARKS_BAR_ID)!
+    expect(service.move(order, BOOKMARKS_BAR_ID, 0)).toBe(true)
+    expect(service.getChildren(BOOKMARKS_BAR_ID).map((n) => n.title)).toEqual([
+      'Folder',
+      'alpha',
+      'zeta'
+    ])
+    expect(sortedByNameOrder(service.tree, BOOKMARKS_BAR_ID)).toBeNull()
+    expectValid(service)
+  })
+
   it('imports Netscape HTML into the roots, then into an Imported folder, and exports it back', () => {
     const { service, state } = setup()
     const html = `<!DOCTYPE NETSCAPE-Bookmark-file-1>
@@ -497,5 +522,27 @@ describe('BrowserState: bookmark persistence', () => {
 
     const fresh = setup()
     expect(fresh.state.bookmarks.map((n) => n.id)).toEqual([...BOOKMARK_ROOT_IDS])
+  })
+
+  it('keeps a valid bookmarks-bar mode and falls back to the default for anything else', () => {
+    const profile = (bookmarksBar: unknown): string =>
+      JSON.stringify({
+        version: 3,
+        spaces: [],
+        tabs: [],
+        essentialTabIds: [],
+        activeSpaceId: 'space_1',
+        containers: [],
+        folders: [],
+        splitGroups: [],
+        settings: { bookmarksBar },
+        shortcutOverrides: {},
+        bookmarkTree: { schemaVersion: 1, nodes: [] },
+        windows: []
+      })
+    expect(setup('linux', profile('always')).state.settings.bookmarksBar).toBe('always')
+    expect(setup('linux', profile('never')).state.settings.bookmarksBar).toBe('never')
+    expect(setup('linux', profile('sometimes')).state.settings.bookmarksBar).toBe('newtab')
+    expect(setup().state.settings.bookmarksBar).toBe('newtab')
   })
 })

@@ -224,7 +224,7 @@ export class ResourceGovernor implements Governor {
   }
 
   onViewDestroyed(tabId: string, view: TabView): void {
-    if (view instanceof ElectronTabView) this.lifecycle.forget(view.webContents)
+    if (view instanceof ElectronTabView) this.lifecycle.forget(view.webContentsId)
     this.scheduler.finished(tabId)
     this.mediaPlaying.delete(tabId)
     this.lastPurgedAt.delete(tabId)
@@ -298,6 +298,12 @@ export class ResourceGovernor implements Governor {
       reason
     })
     if (this.actions.length > MAX_RECENT_ACTIONS) this.actions.length = MAX_RECENT_ACTIONS
+  }
+
+  /** The page's share of process memory at the last sample (null before the first one). */
+  memoryOf(tabId: string): number | null {
+    const usage = this.usage.get(tabId)
+    return usage && usage.processes > 0 ? usage.memoryMb : null
   }
 
   // ---------------------------------------------------------------------------

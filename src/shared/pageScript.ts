@@ -1,4 +1,10 @@
 import { getDomain } from './url'
+import {
+  INTERSTITIAL_ACTIONS,
+  INTERSTITIAL_MESSAGE_KEY,
+  type InterstitialAction,
+  type InterstitialMessage
+} from './interstitial'
 
 /**
  * Runs inside every web page. It implements the click behaviours Zen adds on top of the engine:
@@ -17,7 +23,16 @@ export interface PageScriptFlags {
 }
 
 export interface PageScriptMessage {
-  type: 'glance' | 'open-tab' | 'navigate' | 'media' | 'zap' | 'activation' | 'popup-blocked'
+  type:
+    | 'glance'
+    | 'open-tab'
+    | 'navigate'
+    | 'media'
+    | 'zap'
+    | 'activation'
+    | 'popup-blocked'
+    | 'interstitial'
+    | 'focus'
   url?: string
   x?: number
   y?: number
@@ -25,6 +40,8 @@ export interface PageScriptMessage {
   playing?: boolean
   /** `zap`: CSS selector of the element the user picked. */
   selector?: string
+  /** `interstitial`: the button pressed on a Zenium warning page (`zen://error`). */
+  action?: InterstitialAction
 }
 
 export interface PageScriptTransport {
@@ -99,6 +116,7 @@ export function installPageScript(transport: PageScriptTransport): void {
   const zap = installZap(transport)
   installActivationReporter(transport)
   if (transport.reportBlockedPopups) installPopupObserver(transport)
+  installInterstitialRelay(transport)
 
   window.addEventListener(
     'click',
@@ -245,6 +263,26 @@ function cssEscape(s: string): string {
   return typeof CSS !== 'undefined' && CSS.escape
     ? CSS.escape(s)
     : s.replace(/[^a-zA-Z0-9_-]/g, '\\$&')
+}
+
+/**
+ * The interstitials (`zen://error?kind=…`) post their button presses on the window; only a
+ * document of Zenium's own scheme may relay them, so a web page cannot except itself from Safe
+ * Browsing or HTTPS-only mode by posting the same message. The core still checks the URL against
+ * the block it is holding for the tab.
+ */
+function installInterstitialRelay(transport: PageScriptTransport): void {
+  if (location.protocol !== 'zen:') return
+  const actions = new Set<string>(INTERSTITIAL_ACTIONS)
+  window.addEventListener('message', (e: MessageEvent) => {
+    if (e.source !== window) return
+    const data = e.data as { [INTERSTITIAL_MESSAGE_KEY]?: Partial<InterstitialMessage> } | null
+    const message = data && typeof data === 'object' ? data[INTERSTITIAL_MESSAGE_KEY] : undefined
+    if (!message || typeof message !== 'object') return
+    const { action, url } = message
+    if (typeof action !== 'string' || !actions.has(action) || typeof url !== 'string') return
+    transport.send({ type: 'interstitial', action: action as InterstitialAction, url })
+  })
 }
 
 /** A selector that matches exactly this element and is likely to survive re-renders. */

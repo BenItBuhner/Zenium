@@ -35,6 +35,10 @@ class Updates(private val context: Context, private val host: Host) {
     @Volatile private var cancelledToken: String? = null
 
     fun download(token: String, url: String, name: String, size: Long, sha256: String, reply: (Any?) -> Unit) {
+        if (isDebugApplicationId(context.packageName)) {
+            reply(json("ok" to false, "cancelled" to false, "error" to DEBUG_BUILD_REASON))
+            return
+        }
         io.execute {
             val result = runCatching { fetch(token, url, name, size, sha256) }
             main.post {
@@ -55,6 +59,7 @@ class Updates(private val context: Context, private val host: Host) {
 
     /** Start the system installer for a verified APK. The user confirms (or first allows Zen to install apps). */
     fun install(path: String): JSONObject {
+        if (isDebugApplicationId(context.packageName)) return json("ok" to false, "reason" to DEBUG_BUILD_REASON)
         val file = File(path)
         if (!file.exists()) return json("ok" to false, "reason" to "the downloaded file is gone; download it again")
         if (!context.packageManager.canRequestPackageInstalls()) {
@@ -165,6 +170,18 @@ class Updates(private val context: Context, private val host: Host) {
 
     companion object {
         const val UPDATES_DIR = "updates"
+
+        /** The `applicationIdSuffix` of the debug build type (`android/app/build.gradle.kts`). */
+        const val DEBUG_ID_SUFFIX = ".debug"
+        private const val DEBUG_BUILD_REASON = "debug builds of Zenium do not install releases"
+
+        /**
+         * Whether `applicationId` is a debug build's. A debug build is not a release and no release
+         * is an upgrade for it (it carries the debug key, and its own id): it neither looks for
+         * releases – the core gives it the `dev` update target from the same id, see
+         * `AndroidUpdateHost.target()` – nor downloads or installs one.
+         */
+        fun isDebugApplicationId(applicationId: String): Boolean = applicationId.endsWith(DEBUG_ID_SUFFIX)
 
         /** Hex SHA-256 of the certificate the running app is signed with; an APK must match it to upgrade in place. */
         fun signerSha256(context: Context): String? = runCatching {

@@ -1,0 +1,655 @@
+import type {
+  BootConfig,
+  BootGroup,
+  BootStats,
+  ContentBootConfig,
+  ExtensionBoot,
+  IsolationMode
+} from '@core/extensions/runtime/boot'
+import { contentScriptAppliesTo, type FrameContext } from '@core/extensions/api/matchPattern'
+import {
+  capturePrimordials,
+  createEmulatedEngine,
+  type EmulatedEngine,
+  type EngineContextKind,
+  type Primordials
+} from '@core/extensions/api/engine'
+import { EXTENSION_ORIGIN_SUFFIX, extensionOrigin } from '@core/extensions/runtime/plan'
+import {
+  scheduleRunAt,
+  type LifecycleHooks,
+  type ReadyState
+} from '@core/extensions/runtime/scheduling'
+import {
+  collectBuiltins,
+  createScopeProxy,
+  installTrustedTypesShield,
+  type Any
+} from './extensionIsolation'
+import { createScriptRecovery, type ScriptRecovery } from './extensionScriptRecovery'
+import {
+  installServiceWorkerClient,
+  installServiceWorkerGlobals,
+  type ServiceWorkerEndpoint,
+  type ServiceWorkerMessage
+} from './extensionServiceWorker'
+import type { ClaimedTransport, TransportJanitor } from './extensionTransport'
+
+/**
+ * The extension bootstrap Kotlin injects at document start into tab WebViews (content mode) and
+ * into background pages, popups and options pages on the fake extension origin (page mode). It
+ * runs on the shared engine (`api/engine.ts` + the shared shim): this file only decides where
+ * the engine's `chrome` lives and when each content-script group runs. Kotlin assembles the
+ * injected script as
+ *
+ *   (function () {
+ *     var __zenExtBoot = { config: {...}, sources: { "<ext>/<group>": function (window, self,
+ *       globalThis, chrome, browser) { <js files of the group> }, ... }, css: { "<ext>/<path>":
+ *       "<css text>" } };
+ *     <this file, bundled as an IIFE>
+ *   })();
+ *
+ * so the extension sources are real function literals compiled with the injected script itself
+ * (no eval: a page's Content-Security-Policy cannot block them) and every file of a declaration
+ * shares one function scope, as the files of one isolated world share their global scope.
+ *
+ * One unit is one extension in one world: with real isolated worlds (Chromium 146+) each
+ * extension's units run in its own world (`isolation: "world"`), whose global is the content
+ * scripts' `window`; without worlds every unit runs in the page's main world behind the `with`
+ * scope proxy (`isolation: "with"`). Units of one world share one transport: the first installs
+ * it and exposes `__zenExtRuntime.attach`, which later units call with their boot (token-checked,
+ * so the page cannot attach anything).
+ *
+ * Transport is the WebMessageListener object `__zenExtBridge` of the world: messages go up with
+ * `postMessage`, replies come back through its `onmessage` (the frame's JavaScriptReplyProxy for
+ * that world). The object is captured and deleted from the global before any page script can
+ * see it; in the main world the transport janitor (`extensionTransport.ts`) has done that
+ * already and hands it over through `__zenExtTransport.claim(token)`, and the runtime and exec
+ * objects go into the slots it reserved. A late boot (`config.late`) is this same script
+ * evaluated by the host into a document that predates the extension's world (or on a WebView
+ * without worlds): no groups run, but `scripting.executeScript` / `insertCSS` get a scope and a
+ * bridge to work with.
+ */
+type GroupFunction = (
+  this: unknown,
+  window: unknown,
+  self: unknown,
+  globalThis: unknown,
+  chrome: unknown,
+  browser: unknown
+) => unknown
+
+interface Boot {
+  config: BootConfig
+  sources: Record<string, GroupFunction>
+  css: Record<string, string>
+  /** Debug builds expose `__zenExtStats` so the probe can read timings. */
+  debug?: boolean
+}
+
+interface Bridge {
+  postMessage(message: string): void
+  onmessage: ((event: { data: string }) => void) | null
+  addEventListener?(type: 'message', listener: (event: { data: string }) => void): void
+}
+
+interface Runtime {
+  attach(boot: Boot): void
+}
+
+declare const __zenExtBoot: Boot
+
+;(() => {
+  const t0 = performance.now()
+  const boot = __zenExtBoot
+  const g = globalThis as typeof globalThis & {
+    __zenExtBridge?: Bridge
+    __zenExtRuntime?: Runtime
+    __zenExtTransport?: TransportJanitor
+  }
+  const installed = g.__zenExtRuntime
+  if (installed) {
+    installed.attach(boot)
+    return
+  }
+
+  // --- transport ---------------------------------------------------------------------------------
+  // The main world of a tab frame: the janitor took the bridge off the global before any page
+  // script ran and lends it to the holder of the token, so nothing the page did can have replaced
+  // it. Isolated worlds and extension pages meet the bridge directly: nothing runs there first.
+  let janitor: TransportJanitor | undefined
+  let transport: ClaimedTransport | undefined
+  const rawBridge = g.__zenExtBridge
+  if (rawBridge) {
+    try {
+      delete g.__zenExtBridge
+    } catch {
+      /* leave it; the object only carries JSON */
+    }
+    const rawPost = rawBridge.postMessage
+    transport = {
+      post: (message) => rawPost.call(rawBridge, message),
+      listen: (sink) => {
+        if (rawBridge.addEventListener) rawBridge.addEventListener('message', sink)
+        else rawBridge.onmessage = sink
+      },
+      primordials: capturePrimordials()
+    }
+  } else {
+    janitor = g.__zenExtTransport
+    if (janitor && typeof janitor.claim === 'function') {
+      try {
+        transport = janitor.claim(boot.config.token)
+      } catch {
+        transport = undefined
+      }
+    }
+  }
+  if (!transport) return
+  const post = transport.post
+  const primordials: Primordials = transport.primordials
+  const sources: Record<string, GroupFunction> = Object.assign(
+    Object.create(null) as Record<string, GroupFunction>,
+    boot.sources
+  )
+  const cssTexts: Record<string, string> = Object.assign(
+    Object.create(null) as Record<string, string>,
+    boot.css
+  )
+  const engines = new Map<string, EmulatedEngine>()
+  /** Extension pages: the emulated service-worker platform's messages (`t: 'sw'`) per endpoint. */
+  const serviceWorkerEndpoints = new Map<string, ServiceWorkerEndpoint>()
+  /** Content mode: extension-origin `<script>` elements the page's CSP refused (see below). */
+  let scriptRecovery: ScriptRecovery | null = null
+  transport.listen((event) => {
+    let message: Record<string, unknown>
+    try {
+      message = primordials.parse(event.data) as Record<string, unknown>
+    } catch {
+      return
+    }
+    const ep = String(message.ep)
+    if (message.t === 'sw') {
+      serviceWorkerEndpoints.get(ep)?.receive(message)
+      return
+    }
+    if (message.t === 'mainScriptDone') {
+      scriptRecovery?.done(
+        String(message.id),
+        message.ok === true ? null : String(message.error ?? 'the host refused')
+      )
+      return
+    }
+    const engine = engines.get(ep)
+    if (engine) engine.receive(message)
+  })
+
+  /**
+   * Expose a runtime object in the main world: through the janitor's reserved slots when it is
+   * there (they are getters no page script can redefine), else as a frozen own property.
+   */
+  const expose = (name: '__zenExtRuntime' | '__zenExtExec', value: object): void => {
+    try {
+      Object.defineProperty(g, name, {
+        value,
+        writable: false,
+        configurable: false,
+        enumerable: false
+      })
+    } catch {
+      /* the name exists already (a second bootstrap of the same world): keep the first */
+    }
+  }
+
+  const nonce = Math.random().toString(36).slice(2, 10) + (Date.now() % 1e6).toString(36)
+  /**
+   * Kotlin drops a frame's endpoints when its main frame says hello for a different document.
+   * One document runs several units, each with its own copy of this script (one per world, and
+   * one per origin-rule set within a world), so the id has to come from the document:
+   * `performance.timeOrigin` is the navigation start, identical in every world of the frame and
+   * different for every navigation.
+   */
+  const docId =
+    typeof performance === 'object' && performance && performance.timeOrigin > 0
+      ? Math.round(performance.timeOrigin).toString(36)
+      : nonce
+  const endpointIdFor = (extId: string): string => `${docId}.${nonce}.${extId.slice(0, 8)}`
+  const realWindow = window as unknown as Any
+  const engineTransport = { post }
+
+  // --- frame context ---------------------------------------------------------------------------
+
+  function frameContext(): FrameContext {
+    let isTopFrame = true
+    try {
+      isTopFrame = window.top === window
+    } catch {
+      isTopFrame = false
+    }
+    const url = location.href
+    let precursorUrl: string | null = null
+    if (
+      !isTopFrame &&
+      (url === 'about:blank' || url === 'about:srcdoc' || /^(data|blob):/.test(url))
+    ) {
+      try {
+        precursorUrl = window.parent.location.href
+      } catch {
+        precursorUrl = document.referrer || null
+      }
+    }
+    return { url, isTopFrame, precursorUrl }
+  }
+
+  function makeEngine(
+    ext: ExtensionBoot,
+    context: EngineContextKind,
+    frame: FrameContext,
+    root: object,
+    world: boolean
+  ): EmulatedEngine {
+    const endpointId = endpointIdFor(ext.id)
+    const engine = createEmulatedEngine(
+      {
+        id: ext.id,
+        origin: extensionOrigin(ext.id),
+        manifest: ext.manifest,
+        manifestVersion: ext.manifestVersion,
+        permissions: ext.permissions,
+        messages: ext.messages,
+        uiLanguage: boot.config.uiLanguage,
+        context,
+        token: boot.config.token,
+        endpointId,
+        url: frame.url,
+        isTopFrame: frame.isTopFrame,
+        world
+      },
+      engineTransport,
+      primordials,
+      { root }
+    )
+    engines.set(endpointId, engine)
+    return engine
+  }
+
+  // --- CSS ---------------------------------------------------------------------------------------
+
+  const adopted = new Map<string, CSSStyleSheet | HTMLStyleElement>()
+
+  /** Constructed stylesheets are CSSOM, not markup: a page's style-src CSP does not apply. */
+  function injectCss(key: string, text: string): void {
+    if (adopted.has(key)) return
+    try {
+      const sheet = new CSSStyleSheet()
+      sheet.replaceSync(text)
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet]
+      adopted.set(key, sheet)
+      return
+    } catch {
+      /* fall through to a <style> element */
+    }
+    const style = document.createElement('style')
+    style.textContent = text
+    ;(document.head ?? document.documentElement).appendChild(style)
+    adopted.set(key, style)
+  }
+
+  function removeCss(key: string): void {
+    const entry = adopted.get(key)
+    if (!entry) return
+    adopted.delete(key)
+    if (entry instanceof CSSStyleSheet)
+      document.adoptedStyleSheets = document.adoptedStyleSheets.filter((s) => s !== entry)
+    else entry.remove()
+  }
+
+  // --- page mode (background page, popup, options, offscreen, extension tab) -------------------
+
+  if (boot.config.kind === 'page') {
+    const ext = boot.config.extension
+    const context = boot.config.context
+    const frame = frameContext()
+    const engine = makeEngine(ext, context, frame, realWindow, false)
+    const pageWindow = realWindow
+    const origin = extensionOrigin(ext.id)
+    const endpointId = endpointIdFor(ext.id)
+    // The service-worker platform between an MV3 worker (a hidden page here) and its pages;
+    // MV2 backgrounds are pages in Chrome too and get none of it.
+    const background = ext.manifest.background as Record<string, unknown> | undefined
+    const workerScript =
+      background && typeof background.service_worker === 'string'
+        ? new URL('/' + background.service_worker.replace(/^\/+/, ''), origin + '/').href
+        : null
+    const swSend = (message: ServiceWorkerMessage): void => engine.post({ t: 'sw', ...message })
+    let lifecycle: (() => Promise<void>) | null = null
+
+    if (context === 'background' && workerScript) {
+      // Service-worker globals the MV3 script expects; `importScripts` is synchronous by
+      // contract, so it is a synchronous XHR to the extension origin plus an indirect eval (the
+      // generated background page is served with 'unsafe-eval' in its CSP for exactly this).
+      pageWindow.importScripts = (...urls: string[]): void => {
+        for (const url of urls) {
+          const absolute = new URL(url, location.href).href
+          if (!absolute.startsWith(origin + '/'))
+            throw new Error(`importScripts: ${url} is not on the extension origin`)
+          const xhr = new XMLHttpRequest()
+          xhr.open('GET', absolute, false)
+          xhr.send()
+          if (xhr.status !== 200) throw new Error(`importScripts: ${url} failed (${xhr.status})`)
+          const indirectEval = eval
+          indirectEval(xhr.responseText + `\n//# sourceURL=${absolute}`)
+        }
+      }
+      const worker = installServiceWorkerGlobals(pageWindow, {
+        origin,
+        scriptUrl: location.href,
+        version: ext.version,
+        send: swSend,
+        openTab: (url) => {
+          const tabs = (engine.chrome as { tabs?: { create?: (p: { url: string }) => void } }).tabs
+          tabs?.create?.({ url })
+        },
+        prefix: `${endpointId}:`
+      })
+      serviceWorkerEndpoints.set(endpointId, worker)
+      lifecycle = worker.lifecycle
+    } else if (workerScript) {
+      serviceWorkerEndpoints.set(
+        endpointId,
+        installServiceWorkerClient(pageWindow, {
+          origin,
+          scriptUrl: workerScript,
+          send: swSend,
+          prefix: `${endpointId}:`
+        })
+      )
+    }
+
+    if (context === 'popup') {
+      // Chrome closes the popup on window.close(); the host owns the sheet.
+      pageWindow.close = (): void => engine.post({ t: 'closePopup' })
+      const report = (): void => {
+        const root = document.documentElement
+        const body = document.body
+        const width = Math.max(root.scrollWidth, body ? body.scrollWidth : 0)
+        const height = Math.max(root.scrollHeight, body ? body.scrollHeight : 0)
+        engine.post({ t: 'popupSize', width, height })
+      }
+      window.addEventListener('load', () => {
+        report()
+        if (typeof ResizeObserver === 'function') {
+          const observer = new ResizeObserver(report)
+          observer.observe(document.documentElement)
+          if (document.body) observer.observe(document.body)
+        }
+      })
+    }
+
+    // The worker's `install` and `activate` (first run of a version) come before `ready`, which
+    // is what releases `runtime.onInstalled` and the events held for the start.
+    window.addEventListener(
+      'load',
+      () => {
+        const ready = (): void => engine.ready()
+        if (lifecycle) lifecycle().then(ready, ready)
+        else ready()
+      },
+      { once: true }
+    )
+    return
+  }
+
+  // --- content mode ------------------------------------------------------------------------------
+
+  // Extension pages open as tabs too (options pages, a changelog opened with `tabs.create`);
+  // Chrome injects no content scripts into chrome-extension:// documents and neither do we.
+  if (location.hostname.endsWith(EXTENSION_ORIGIN_SUFFIX)) return
+
+  const content: ContentBootConfig = boot.config
+  const unitWorld = content.world
+  const frame = frameContext()
+  const attached: ExtensionBoot[] = []
+
+  // A page's CSP has no say over an extension's resources in Chrome; over the emulated origin it
+  // has. A `<script src=<extension origin>/…>` the page's `script-src` refused runs in the main
+  // world through the host instead (`extensionScriptRecovery.ts`).
+  scriptRecovery = createScriptRecovery({
+    attachedIds: () => attached.map((e) => e.id),
+    request: (id, extId, url) =>
+      post(
+        primordials.stringify({
+          t: 'mainScript',
+          token: content.token,
+          ep: endpointIdFor(extId),
+          ext: extId,
+          id,
+          url
+        })
+      ),
+    error: primordials.error
+  })
+  const recovery = scriptRecovery
+  window.addEventListener('error', (event) => recovery.onError(event), true)
+  const builtins = collectBuiltins(realWindow)
+  const stats: BootStats | null = boot.debug
+    ? {
+        frame: frame.url,
+        world: unitWorld,
+        isolation: content.extension.isolation,
+        startedAt: t0,
+        matchMs: 0,
+        bootMs: 0,
+        applied: 0,
+        groups: [],
+        trustedTypes: null
+      }
+    : null
+  if (stats)
+    Object.defineProperty(g, '__zenExtStats', {
+      value: stats,
+      enumerable: false,
+      configurable: true
+    })
+
+  /**
+   * A real isolated world enforces the page's Trusted Types CSP on the world's own DOM sinks
+   * (m.youtube.com's `require-trusted-types-for 'script'` would refuse a content script's
+   * `innerHTML = …`); in Chrome the extension's CSP applies there instead. A pass-through policy
+   * over the world's sinks gives the scripts the same freedom, and the page's prototypes stay as
+   * they were. Once per world.
+   */
+  let shielded = false
+  function shieldWorld(ext: ExtensionBoot): void {
+    if (shielded) return
+    shielded = true
+    const result = installTrustedTypesShield(realWindow, `zenium-ext-${ext.id.slice(0, 8)}`)
+    if (stats) stats.trustedTypes = result
+  }
+
+  // --- per-extension scopes --------------------------------------------------------------------
+
+  interface Scope {
+    ext: ExtensionBoot
+    engine: EmulatedEngine | null
+    /** The content scripts' `window` (the world's global, the scope proxy or the real window). */
+    window: Any
+    chrome: unknown
+    browser: unknown
+    isolation: IsolationMode
+  }
+  const scopes = new Map<string, Scope>()
+
+  /**
+   * How a content script sees the world: `world` – this very global, `chrome` lives on it;
+   * `with` – the scope proxy, `chrome` lives in its store; `none` – the real window and the
+   * page's own `chrome`, as `world: "MAIN"` scripts get in Chrome (no extension APIs, no
+   * endpoint: the injection's result travels back through the host's own evaluation).
+   */
+  function scopeFor(ext: ExtensionBoot, isolation: IsolationMode): Scope {
+    const key = `${ext.id}/${isolation}`
+    let scope = scopes.get(key)
+    if (scope) return scope
+    if (isolation === 'none') {
+      scope = {
+        ext,
+        engine: null,
+        window: realWindow,
+        chrome: realWindow.chrome,
+        browser: realWindow.browser,
+        isolation
+      }
+      scopes.set(key, scope)
+      return scope
+    }
+    const context: EngineContextKind = unitWorld === 'user' ? 'userScript' : 'content'
+    const messaging = unitWorld !== 'user' || content.userScriptMessaging === true
+    let root: Any
+    if (isolation === 'world') {
+      shieldWorld(ext)
+      root = realWindow
+    } else {
+      root = createScopeProxy(realWindow, builtins)
+    }
+    // A user-script world without `configureWorld({ messaging: true })` has no `chrome` at all.
+    const engine = messaging ? makeEngine(ext, context, frame, root, isolation === 'world') : null
+    scope = {
+      ext,
+      engine,
+      window: root,
+      chrome: engine ? engine.chrome : undefined,
+      browser: engine ? (root.browser ?? engine.chrome) : undefined,
+      isolation
+    }
+    scopes.set(key, scope)
+    return scope
+  }
+
+  const isolationOf = (ext: ExtensionBoot, group: BootGroup | null): IsolationMode =>
+    group && group.world === 'MAIN' ? 'none' : ext.isolation
+
+  function runGroup(scope: Scope, group: BootGroup): void {
+    const started = performance.now()
+    const readyState = document.readyState
+    const nodes = document.documentElement
+      ? document.documentElement.getElementsByTagName('*').length
+      : 0
+    let error: string | null = null
+    for (const path of group.css) {
+      const key = `${scope.ext.id}/${path}`
+      const text = cssTexts[key]
+      if (text !== undefined) injectCss(key, text)
+    }
+    const fn = sources[`${scope.ext.id}/${group.index}`]
+    if (fn) {
+      const w = scope.window
+      try {
+        fn.call(w, w, w, w, scope.chrome, scope.browser)
+      } catch (e) {
+        error = e instanceof Error ? `${e.name}: ${e.message}` : String(e)
+        primordials.error(
+          `[Zenium] content script of ${scope.ext.name} (group ${group.index}) threw`,
+          e
+        )
+      }
+    }
+    if (stats)
+      stats.groups.push({
+        ext: scope.ext.id,
+        group: group.index,
+        runAt: group.runAt,
+        at: started - t0,
+        ms: performance.now() - started,
+        readyState,
+        nodes,
+        error
+      })
+  }
+
+  // --- executeScript / insertCSS from the host ------------------------------------------------
+
+  /**
+   * `__zenExtExec(token, extId, kind, payload, fn)`: Kotlin evaluates this from
+   * `scripting.executeScript` / `insertCSS` – through the world endpoint's reply proxy into the
+   * extension's world, or with `evaluateJavascript` into the main world (a `world: "MAIN"`
+   * injection, or a document that predates the world after a late boot). The JS arrives as a
+   * function literal compiled by the WebView's own script execution, so it is never eval'd
+   * against the page's CSP; it runs in the extension's scope with its `chrome`. The token is
+   * compared, not embedded, so `toString()` reveals nothing.
+   */
+  function exec(
+    token: unknown,
+    extId: unknown,
+    kind: unknown,
+    payload: unknown,
+    fn: unknown
+  ): unknown {
+    if (token !== boot.config.token) throw new Error('bad token')
+    const ext = attached.find((e) => e.id === extId)
+    if (!ext) throw new Error('unknown extension')
+    const options = (payload ?? {}) as {
+      id?: unknown
+      code?: unknown
+      remove?: unknown
+      world?: unknown
+    }
+    const scope = scopeFor(ext, options.world === 'MAIN' ? 'none' : ext.isolation)
+    if (kind === 'css') {
+      const key = `${ext.id}/#${String(options.id ?? options.code ?? '')}`
+      if (options.remove) removeCss(key)
+      else injectCss(key, String(options.code ?? ''))
+      return null
+    }
+    if (typeof fn !== 'function') throw new Error('no script')
+    const w = scope.window
+    return (fn as GroupFunction).call(w, w, w, w, scope.chrome, scope.browser)
+  }
+
+  // --- matching and scheduling -----------------------------------------------------------------
+
+  const hooks: LifecycleHooks = {
+    readyState: () => document.readyState as ReadyState,
+    onDomContentLoaded: (cb) => document.addEventListener('DOMContentLoaded', cb, { once: true }),
+    onLoad: (cb) => window.addEventListener('load', cb, { once: true }),
+    setTimeout: (cb, ms) => void primordials.setTimeout(cb, ms)
+  }
+
+  /**
+   * Match one unit's extension against this frame and schedule what applies. A late boot (the
+   * host evaluated the bootstrap in a document that predates the extension's world) carries no
+   * groups: it only gives `exec` a scope and a bridge, and says hello like any other endpoint.
+   */
+  const apply = (ext: ExtensionBoot, late: boolean, started: number): void => {
+    if (!attached.some((e) => e.id === ext.id)) attached.push(ext)
+    const due: BootGroup[] = []
+    if (!late)
+      for (const group of ext.groups) if (contentScriptAppliesTo(group, frame)) due.push(group)
+    if (stats) stats.matchMs += performance.now() - started
+    if (late) scopeFor(ext, ext.isolation === 'none' ? 'with' : ext.isolation)
+    for (const group of due) {
+      const scope = scopeFor(ext, isolationOf(ext, group))
+      scheduleRunAt(group.runAt, hooks, () => runGroup(scope, group))
+    }
+    if (stats) {
+      stats.applied += due.length
+      stats.bootMs += performance.now() - started
+    }
+  }
+  apply(content.extension, content.late === true, t0)
+
+  const runtime: Runtime = {
+    attach(other) {
+      const t = performance.now()
+      if (other.config.token !== content.token || other.config.kind !== 'content') return
+      Object.assign(sources, other.sources)
+      Object.assign(cssTexts, other.css)
+      apply(other.config.extension, other.config.late === true, t)
+    }
+  }
+  Object.freeze(runtime)
+  if (janitor) janitor.install(content.token, runtime, exec as (...args: unknown[]) => unknown)
+  else {
+    expose('__zenExtRuntime', runtime)
+    expose('__zenExtExec', exec)
+  }
+})()

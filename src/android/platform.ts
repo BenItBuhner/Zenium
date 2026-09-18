@@ -11,7 +11,13 @@ import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { resolveDownloadSettings } from '@shared/downloads'
 import { newId } from '@shared/ids'
 import type { SharedIntent } from '@shared/shareTarget'
-import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '@shared/updates'
+import {
+  isDebugApplicationId,
+  type UpdateAsset,
+  type UpdateProgress,
+  type UpdateRelease,
+  type UpdateTarget
+} from '@shared/updates'
 import { Browser } from '@core/browser'
 import type { HostExternalRequest } from '@core/externalProtocols'
 import { NoExtensions } from '@core/hostDefaults'
@@ -25,6 +31,7 @@ import type {
   ClipboardHost,
   DialogHost,
   DownloadHost,
+  EngineDataCounts,
   ExtensionHost,
   ExternalProtocolHost,
   KdfParams,
@@ -35,6 +42,7 @@ import type {
   PickedTextFile,
   Platform,
   PlatformInfo,
+  PrivacyHost,
   ReauthHost,
   SessionHost,
   ShellHost,
@@ -48,11 +56,18 @@ import { PBKDF2_PARAMS, deriveWithWebCrypto } from '@core/credentials/kdf'
 import { fromBase64, toBase64 } from '@core/credentials/crypto'
 import type { RuleSet } from '@core/blocking/rules'
 import { INDEX_FILE } from '@core/blocking/store'
+import type { PrivacyFlags } from '@shared/privacy'
 import readabilityJs from '@mozilla/readability/Readability.js?raw'
 import readabilityReaderableJs from '@mozilla/readability/Readability-readerable.js?raw'
 import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
 import type { Bridge } from './bridge'
-import { AndroidExtensions } from './extensionHost'
+import type { AndroidExtensions } from './extensionHost'
+import {
+  AndroidExtensionsWithRuntime,
+  AndroidExtensionRuntime,
+  type ExtMessageEvent,
+  type ExtRequestEvent
+} from './extensionRuntime'
 import { AndroidExtensionStoreIo } from './extensionStoreIo'
 import { AndroidSiteData } from './siteData'
 import { AndroidTranslateHost, type TranslateProgressEvent } from './translate'
@@ -66,15 +81,30 @@ export interface AndroidCapabilityInputs {
   sdkInt: number
   /** Kotlin named the extension install root: the store and the registry are there to use. */
   extensions: boolean
+  /**
+   * The WebView injects into named isolated worlds (Chromium 146+, androidx.webkit 1.17). Without
+   * them content scripts run in the page's world behind a scope proxy: reduced isolation.
+   */
+  isolatedWorlds: boolean
+  /**
+   * The WebView keeps separate profiles (Chrome 111+): containers and the private session have
+   * cookies, storage and cache of their own. Without it a "private" tab would browse on the
+   * default profile, so none is offered. Absent from an older boot payload: taken as supported.
+   */
+  profiles?: boolean
 }
 
 /** What the Android host can do for the chrome; a few points depend on the OS release. */
 export function androidCapabilities({
   sdkInt,
-  extensions
+  extensions,
+  isolatedWorlds,
+  profiles = true
 }: AndroidCapabilityInputs): HostCapabilities {
   return {
     windowControls: false,
+    windowControlsOverlay: false,
+    windowMaterial: false,
     nativeMenus: false,
     windowDrag: false,
     devtools: false,
@@ -95,7 +125,11 @@ export function androidCapabilities({
     passwords: true,
     defaultBrowser: true,
     requestBlocking: true,
-    pageControls: true
+    pageControls: true,
+    reducedExtensionIsolation: extensions && !isolatedWorlds,
+    // One window: private browsing is a tab in it, on a throwaway WebView profile.
+    privateTabs: profiles,
+    secureDns: false
   }
 }
 
@@ -165,6 +199,8 @@ export interface BootInfo {
   signer: string | null
   /** The applicationId this APK was installed under (null in the preview host). */
   packageName: string | null
+  /** Whether the WebView supports multiple profiles (see `AndroidCapabilityInputs.profiles`). */
+  profiles?: boolean
   /** The launcher icon colour whose alias is enabled right now (the core re-applies its own). */
   appIcon?: string
   /** Persisted JSON documents by name (state.json, history.json, …). */
@@ -175,6 +211,11 @@ export interface BootInfo {
    * preview host, which has no files and therefore no extensions).
    */
   extensionsRoot?: string
+  /**
+   * The WebView can inject scripts into named isolated worlds (`Extensions.isolatedWorlds`, read
+   * once at start): decides the `reducedExtensionIsolation` capability before any extension runs.
+   */
+  isolatedWorlds?: boolean
   insets: { top: number; right: number; bottom: number; left: number }
   fullscreen: boolean
   /** Screen class, peripherals and font scale for the page controls (absent in old hosts). */
@@ -240,7 +281,15 @@ export interface HostEventPayloads {
   }
   /** Pause / Resume / Cancel pressed on the download's system notification. */
   'download.action': { id: string; op: 'pause' | 'resume' | 'cancel' }
-  'permission.request': { requestId: string; permission: string; url: string }
+  'permission.request': {
+    requestId: string
+    permission: string
+    url: string
+    /** The page's tab: the prompt queues under it and goes away when it navigates. */
+    tabId?: string
+    /** `media`: which capture devices the page asked for. */
+    mediaTypes?: Array<'video' | 'audio'>
+  }
   /** A server asked for HTTP credentials; answered with `auth.respond`. */
   'auth.request': { requestId: string; tabId: string; host: string; realm: string; url: string }
   'view.adopt': { viewId: string; parentTabId: string | null; active: boolean }
@@ -255,6 +304,19 @@ export interface HostEventPayloads {
    * chrome is still booting is not lost: the store collects the queue when it starts, too.
    */
   'extension.sideload': { count: number }
+  /** A bridge message from a content-script frame or an extension page (`ext/Extensions.kt`). */
+  'ext.message': ExtMessageEvent
+  /** Endpoints whose frame or page went away. */
+  'ext.gone': { eps: string[] }
+  /** The popup / options sheet was dismissed (back gesture, a tap outside, `window.close()`). */
+  'ext.popupClosed': { id: string }
+  /** One intercepted request, while an extension listens for `webRequest` events. */
+  'ext.request': ExtRequestEvent
+  /**
+   * A tab running an extension's `identity.launchWebAuthFlow` was about to navigate back to
+   * `https://<id>.chromiumapp.org/…`: Kotlin cancelled the load and the URL is the flow's result.
+   */
+  'ext.identityRedirect': { tabId: string; url: string }
   /** Bytes of a translation model file arriving (`translate.download` in flight). */
   'translate.progress': TranslateProgressEvent
 }
@@ -274,8 +336,13 @@ class AndroidUpdateHost implements UpdateHost {
     private readonly installedPackage: string | null
   ) {}
 
+  /** A debug build is a development build: it never looks for releases by itself (see `isDebugApplicationId`). */
   target(): UpdateTarget {
-    return { os: 'android', arch: 'universal', kind: 'apk' }
+    return {
+      os: 'android',
+      arch: 'universal',
+      kind: isDebugApplicationId(this.installedPackage) ? 'dev' : 'apk'
+    }
   }
 
   publicKeys(): string[] {
@@ -580,6 +647,26 @@ class AndroidBlockingHost implements BlockingHost {
   }
 }
 
+/**
+ * The privacy policy goes to Kotlin as one document (`privacy/Privacy.kt` keeps the latest):
+ * the Safe Browsing guard's switch and bypasses, the cookie mode for `CookieManager`, the GPC
+ * and DNT headers and their `navigator` script, HTTPS-only mode's allowed sites. Secure DNS is
+ * the system's business on Android (`secureDns: false`). The bundled Safe Browsing snapshot is
+ * in the APK's assets (`assets/safebrowsing/<id>.json`), read through Kotlin.
+ */
+class AndroidPrivacyHost implements PrivacyHost {
+  constructor(private readonly bridge: Bridge) {}
+
+  apply(flags: PrivacyFlags): void {
+    this.bridge.send('privacy.apply', { flags })
+  }
+
+  async bundledSafeBrowsingFeed(id: string): Promise<string | null> {
+    const raw = await this.bridge.call<unknown>('privacy.bundledFeed', { id })
+    return typeof raw === 'string' && raw ? raw : null
+  }
+}
+
 /** Kotlin's description of a bundled list, checked field by field. */
 export function bundledListFrom(raw: unknown): BundledFilterList | null {
   if (!raw || typeof raw !== 'object') return null
@@ -622,6 +709,7 @@ export class AndroidPlatform implements Platform {
   readonly externalProtocols: ExternalProtocolHost
   readonly passwords: PasswordsHost
   readonly blocking: BlockingHost
+  readonly privacy: PrivacyHost
   readonly translate: AndroidTranslateHost
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
@@ -632,6 +720,8 @@ export class AndroidPlatform implements Platform {
   /** `files/zen/extensions` when Kotlin has one; the preview host installs nothing. */
   private readonly extensionsRoot: string | null
   private extensions: AndroidExtensions | null = null
+  /** The runtime behind the store, once `createExtensions` built it (null in the preview host). */
+  private extensionRuntime: AndroidExtensionRuntime | null = null
   private readonly bootEnvironment: PageEnvironment | null
 
   constructor(
@@ -642,7 +732,9 @@ export class AndroidPlatform implements Platform {
     this.extensionsRoot = boot.extensionsRoot || null
     this.capabilities = androidCapabilities({
       sdkInt: boot.sdkInt,
-      extensions: this.extensionsRoot !== null
+      extensions: this.extensionsRoot !== null,
+      isolatedWorlds: boot.isolatedWorlds === true,
+      profiles: boot.profiles
     })
     this.bootEnvironment = boot.environment ?? null
     this.io = new AndroidStoreIO(bridge, boot.files)
@@ -651,6 +743,7 @@ export class AndroidPlatform implements Platform {
     this.views = new AndroidTabViewHost(bridge)
     this.siteData = new AndroidSiteData(bridge)
     this.blocking = new AndroidBlockingHost(bridge)
+    this.privacy = new AndroidPrivacyHost(bridge)
     this.translate = new AndroidTranslateHost(bridge)
     this.menus = new RendererMenuHost()
     this.windows = {
@@ -687,12 +780,19 @@ export class AndroidPlatform implements Platform {
     }
     this.net = {
       fetchText: async (url, options) => {
-        const result = await bridge.call<{ ok: boolean; status?: number; text: string }>(
-          'net.fetch',
-          { url, headers: options.headers ?? {}, timeoutMs: options.timeoutMs ?? 0 }
-        )
+        const result = await bridge.call<{
+          ok: boolean
+          status?: number
+          text: string
+          headers?: Record<string, string>
+        }>('net.fetch', { url, headers: options.headers ?? {}, timeoutMs: options.timeoutMs ?? 0 })
         if (options.signal?.aborted) throw new Error('aborted')
-        return { ok: result.ok, status: result.status ?? (result.ok ? 200 : 0), text: result.text }
+        return {
+          ok: result.ok,
+          status: result.status ?? (result.ok ? 200 : 0),
+          text: result.text,
+          headers: result.headers ?? {}
+        }
       }
     }
     // Kotlin owns the transfers (`Downloads.kt`); records and decisions stay in the core.
@@ -734,7 +834,11 @@ export class AndroidPlatform implements Platform {
     this.sessions = {
       clearContainerData: (containerId) => bridge.call('profile.clear', { containerId }),
       clearPrivate: () => bridge.call('profile.clear', { containerId: PRIVATE_CONTAINER_ID }),
-      clearAuthCache: () => bridge.call('security.forgetSession', {})
+      clearAuthCache: () => bridge.call('security.forgetSession', {}),
+      clearBrowsingData: (containerIds, kinds) =>
+        bridge.call('profile.clearBrowsingData', { containerIds, kinds }),
+      browsingDataCounts: (containerIds) =>
+        bridge.call<EngineDataCounts>('profile.browsingDataCounts', { containerIds })
     }
     this.app = {
       quit: () => bridge.send('app.quit'),
@@ -766,14 +870,17 @@ export class AndroidPlatform implements Platform {
   }
 
   /**
-   * The extension store (`extensionHost.ts`): installs from the stores and from files into
-   * `files/zen/extensions`, the registry, updates. Without an install root (the preview host)
-   * the built-in stand-in answers, and the capability above keeps the UI away.
+   * The extension store (`extensionHost.ts`) with the runtime (`extensionRuntime.ts`) behind it:
+   * the store installs from the stores and from files into `files/zen/extensions`, keeps the
+   * registry and updates; the runtime runs what the store hands over. Without an install root
+   * (the preview host) the built-in stand-in answers, and the capability above keeps the UI away.
    */
   createExtensions(browser: Browser): ExtensionHost {
     if (this.extensionsRoot === null) return new NoExtensions(browser)
     const io = new AndroidExtensionStoreIo(this.bridge, this.extensionsRoot)
-    this.extensions = new AndroidExtensions(browser, io)
+    const runtime = new AndroidExtensionRuntime(this.bridge, browser, () => this.window)
+    this.extensionRuntime = runtime
+    this.extensions = new AndroidExtensionsWithRuntime(browser, io, runtime)
     return this.extensions
   }
 
@@ -800,6 +907,8 @@ export class AndroidPlatform implements Platform {
     const view = this.views.get(tabId)
     if (!view) return
     view.dispatch(name, payload)
+    // After the core, so `tabs.onUpdated` carries the tab as the core now sees it.
+    this.extensionRuntime?.onViewEvent(tabId, name, payload)
     if (name === 'destroyed') this.views.forget(tabId)
   }
 
@@ -823,6 +932,9 @@ export class AndroidPlatform implements Platform {
         const { focused } = payload as HostEventPayloads['focus']
         // The Activity resumed or paused: the extension update schedule runs only while it is up.
         this.extensions?.setForeground(focused)
+        // The activity resumed: a gesture cut short by whatever was in front (a pointer that
+        // never lifted for the chrome) is ended by whoever holds it (`zen-resume`).
+        if (focused) window.dispatchEvent(new Event('zen-resume'))
         if (!this.windowHost) return
         this.windowHost.focused = focused
         if (focused) this.window.onFocused()
@@ -837,7 +949,9 @@ export class AndroidPlatform implements Platform {
         return
       }
       case 'openUrl':
-        browser.openExternalUrl((payload as HostEventPayloads['openUrl']).url, this.window)
+        browser.openExternalUrl((payload as HostEventPayloads['openUrl']).url, this.window, {
+          fromIntent: true
+        })
         return
       case 'intent':
         browser.openSharedIntent(payload as HostEventPayloads['intent'], this.window)
@@ -942,7 +1056,7 @@ export class AndroidPlatform implements Platform {
       case 'permission.request': {
         const p = payload as HostEventPayloads['permission.request']
         void browser.permissions
-          .decide(p.permission, p.url)
+          .decide(p.permission, p.url, { tabId: p.tabId, mediaTypes: p.mediaTypes })
           .then((allow) =>
             this.bridge.send('permission.respond', { requestId: p.requestId, allow })
           )
@@ -983,6 +1097,23 @@ export class AndroidPlatform implements Platform {
         // Without a store (the preview host) the packages stay queued in Kotlin's cache and are
         // swept with the next start.
         if (this.extensions) void this.extensions.installPending(this.window)
+        return
+      case 'ext.message':
+        this.extensionRuntime?.onMessage(payload as HostEventPayloads['ext.message'])
+        return
+      case 'ext.gone':
+        this.extensionRuntime?.onGone((payload as HostEventPayloads['ext.gone']).eps)
+        return
+      case 'ext.popupClosed':
+        this.extensionRuntime?.onPopupClosed()
+        return
+      case 'ext.request':
+        this.extensionRuntime?.onRequest(payload as HostEventPayloads['ext.request'])
+        return
+      case 'ext.identityRedirect':
+        this.extensionRuntime?.onIdentityRedirect(
+          payload as HostEventPayloads['ext.identityRedirect']
+        )
         return
       case 'translate.progress':
         this.translate.onProgress(payload as HostEventPayloads['translate.progress'])

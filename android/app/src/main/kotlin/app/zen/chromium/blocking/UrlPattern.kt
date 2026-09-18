@@ -31,6 +31,9 @@ class UrlPattern private constructor(
     /** True for `||host^` / `||host` patterns: matched when the request host is `hostname` or a subdomain of it. */
     val isHostnameOnly: Boolean get() = kind == Kind.HOSTNAME
 
+    /** True for `*` and the empty pattern: every URL matches, the filter's options alone select requests. */
+    val matchesEveryUrl: Boolean get() = kind == Kind.ANY
+
     /** The hostname of a hostname-only pattern (lowercase). */
     val hostname: String get() = hostPart
 

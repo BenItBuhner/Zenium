@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { Tab } from '../../shared/types'
+import type { PermissionPrompt, Tab } from '../../shared/types'
 import type { Browser } from '../browser'
-import type { ConfirmOptions, DialogHost, StoreIO } from '../platform'
+import type { PermissionPromptHost, StoreIO } from '../platform'
 import { ExternalLaunches } from '../external'
 import { PermissionService } from '../permissions'
 import { PopupBlocker } from '../popups'
@@ -12,26 +12,25 @@ function fakeIo(): StoreIO {
 
 function harness(answer: boolean): {
   browser: Browser
-  asked: ConfirmOptions[]
+  asked: PermissionPrompt[]
   opened: string[]
   clock: { now: number }
 } {
-  const asked: ConfirmOptions[] = []
+  const asked: PermissionPrompt[] = []
   const opened: string[] = []
   const clock = { now: 50_000 }
-  const dialogs: DialogHost = {
-    confirm: async (o) => {
-      asked.push(o)
-      return answer
+  const prompts: PermissionPromptHost = {
+    show: async (request) => {
+      asked.push(request)
+      return answer ? 'allow' : 'block'
     },
-    pickTextFiles: async () => [],
-    saveTextFile: async () => false
+    cancel: () => undefined
   }
   const tabs: Record<string, Tab> = {
     t1: { id: 't1', url: 'https://shop.example/checkout' } as Tab
   }
   const browser = {
-    permissions: new PermissionService(fakeIo(), dialogs),
+    permissions: new PermissionService(fakeIo(), prompts),
     state: { commitVolatile: () => undefined },
     tabs: { tab: (id: string) => tabs[id], createTab: () => undefined, windowFor: () => ({}) },
     platform: {
@@ -66,7 +65,7 @@ describe('ExternalLaunches', () => {
     expect(await h.browser.external.request('t1', 'zoommtg://join')).toBe(true)
     expect(h.asked.length).toBe(1)
     expect(h.asked[0].message).toBe('Allow shop.example to open zoommtg: links in another app?')
-    expect(h.asked[0].okLabel).toBe('Open')
+    expect(h.asked[0].allowLabel).toBe('Open')
     // The host launches it (the answer only says whether it may): nothing opened from here.
     expect(h.opened).toEqual([])
     // Same scheme on the same site: no second prompt. Another scheme: asked again.

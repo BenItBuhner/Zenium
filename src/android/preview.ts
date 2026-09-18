@@ -12,6 +12,8 @@ interface HostGlobal {
 const STORAGE_PREFIX = 'zen-preview:'
 /** How long a reload takes to begin in this stand-in host (see `view.reload`). */
 const RELOAD_DELAY_MS = 3000
+/** Where the dev server keeps the documents `view.loadHtml` shows (see `vite.android.config.ts`). */
+const PAGE_ROUTE = '/__zen/page/'
 /** Whether the preview "holds the browser role" (outside the file store: it is not profile data). */
 const DEFAULT_BROWSER_KEY = 'zen-preview-default-browser'
 
@@ -43,6 +45,22 @@ export function createPreviewBridge(): NativeBridge {
     canGoForward: false
   })
 
+  let pageSerial = 0
+  /**
+   * Shows `html` in the frame as a document of its own, served by the dev server, the way the
+   * WebView's `loadDataWithBaseURL` shows it. As `srcdoc` the document would inherit the chrome's
+   * Content Security Policy (`script-src 'self'`), which blocks the inline script and handlers a
+   * zen:// page runs (the error page's theme and Reload among them). A load that began after this
+   * one owns the frame.
+   */
+  const showDocument = async (frame: HTMLIFrameElement, html: string): Promise<void> => {
+    const id = String(++pageSerial)
+    frame.dataset.load = id
+    const stored = await fetch(PAGE_ROUTE + id, { method: 'PUT', body: html })
+    if (!stored.ok || frame.dataset.load !== id) return
+    frame.src = PAGE_ROUTE + id
+  }
+
   // `?sdk=32` stands in for an older release (below 33 the chrome confirms copies itself).
   const sdkInt = Number(new URLSearchParams(location.search).get('sdk')) || 34
 
@@ -52,6 +70,7 @@ export function createPreviewBridge(): NativeBridge {
       sdkInt,
       signer: null,
       packageName: null,
+      profiles: true,
       files,
       downloadsDir: '/Downloads',
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
@@ -68,6 +87,9 @@ export function createPreviewBridge(): NativeBridge {
     // The preview has no request engine and ships no filter-list snapshot.
     'blocking.bundled': () => [],
     'blocking.install': () => null,
+    // Nor a privacy host: the policy has nowhere to go and there is no Safe Browsing snapshot.
+    'privacy.apply': () => null,
+    'privacy.bundledFeed': () => null,
     'view.create': ({ tabId }) => {
       const frame = document.createElement('iframe')
       frame.className = 'zen-preview-view'
@@ -100,6 +122,7 @@ export function createPreviewBridge(): NativeBridge {
       if (!frame) return
       frame.dataset.url = String(url)
       frame.dataset.title = ''
+      frame.dataset.load = ''
       viewEvent(String(tabId), 'startLoading', null)
       frame.src = String(url)
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
@@ -117,7 +140,7 @@ export function createPreviewBridge(): NativeBridge {
       const frame = views.get(String(tabId))
       if (!frame) return
       frame.dataset.url = String(url)
-      frame.srcdoc = String(html)
+      void showDocument(frame, String(html))
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
     },
     'view.setBounds': ({ tabId, rect }) => {
@@ -248,6 +271,9 @@ export function createPreviewBridge(): NativeBridge {
     },
     'download.open': () => undefined,
     'profile.clear': () => undefined,
+    'profile.clearBrowsingData': () => undefined,
+    // No jar or cache to measure in the preview, as on a device (the WebView cannot list cookies).
+    'profile.browsingDataCounts': () => ({ cookieSites: null, cacheBytes: null }),
     'keys.setShortcuts': () => undefined,
     'window.setFullscreen': ({ fullscreen }) => {
       if (fullscreen) void document.documentElement.requestFullscreen?.()

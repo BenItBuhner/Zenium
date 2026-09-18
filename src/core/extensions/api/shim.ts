@@ -53,6 +53,15 @@ export interface ShimDiagnostics {
   manifestVersion: 2 | 3
 }
 
+export interface ShimOptions {
+  /**
+   * The object whose `chrome` and `browser` properties are patched; `globalThis` by default. An
+   * emulated engine that runs content scripts in the page's own world (no isolated world to
+   * install into) hands over a private scope object here, so the page never sees `chrome.*`.
+   */
+  root?: object
+}
+
 /**
  * The engine's objects the shim patches in place (`globalThis`, `chrome`, its namespaces and
  * their native members). Nothing else is typed this way: values the shim builds or receives
@@ -66,6 +75,7 @@ interface ManifestShape {
   manifest_version?: unknown
   background?: unknown
   permissions?: unknown
+  optional_permissions?: unknown
 }
 
 /** A native `chrome.Event` the shim keeps registering listeners on (documents' storage events). */
@@ -85,8 +95,15 @@ interface ViewStub {
   postMessage(): void
 }
 
-export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnostics {
-  const g = globalThis as Any
+export function installExtensionApi(
+  host: ShimHost,
+  spec: ApiSpec,
+  options?: ShimOptions
+): ShimDiagnostics {
+  /** Where `chrome` and `browser` are installed (a private scope object under emulation). */
+  const g: Any = options?.root ?? globalThis
+  /** The real global: the document's `location`, and the `window` other views get. */
+  const real: Any = globalThis
   /** How long an event pushed before any listener exists waits for one (worker start-up). */
   const PENDING_TTL = 10_000
   const MARK = '__zeniumExtensionApi'
@@ -136,12 +153,19 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   const permissions: string[] = Array.isArray(manifest.permissions)
     ? manifest.permissions.filter((p): p is string => typeof p === 'string')
     : []
+  /** Required and optional permissions alike: an optional one may be granted at run time. */
+  const declaredPermissions: string[] = permissions.concat(
+    Array.isArray(manifest.optional_permissions)
+      ? manifest.optional_permissions.filter((p): p is string => typeof p === 'string')
+      : []
+  )
   const extensionUrl: string =
     safely(() => String(chrome.runtime.getURL(''))) ??
-    (typeof g.location === 'object' && g.location
-      ? `${g.location.protocol}//${g.location.host}/`
+    (typeof real.location === 'object' && real.location
+      ? `${real.location.protocol}//${real.location.host}/`
       : '')
-  const ownUrl: string = typeof g.location === 'object' && g.location ? String(g.location.href) : ''
+  const ownUrl: string =
+    typeof real.location === 'object' && real.location ? String(real.location.href) : ''
   const isBackgroundPage =
     host.kind === 'frame' &&
     manifestVersion === 2 &&
@@ -176,7 +200,11 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     return typeof value === 'string' || (typeof value === 'number' && Number.isInteger(value))
   }
 
-  function define(target: Any, key: string, value: unknown): void {
+  function isNativeEvent(value: unknown): value is NativeEvent {
+    return isObject(value) && isFunction(value.addListener) && isFunction(value.removeListener)
+  }
+
+  function define(target: object, key: string, value: unknown): void {
     try {
       Object.defineProperty(target, key, {
         value,
@@ -186,14 +214,14 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       })
     } catch {
       try {
-        target[key] = value
+        ;(target as Record<string, unknown>)[key] = value
       } catch {
         /* frozen */
       }
     }
   }
 
-  function defineGetter(target: Any, key: string, get: () => unknown): void {
+  function defineGetter(target: object, key: string, get: () => unknown): void {
     try {
       Object.defineProperty(target, key, { get, configurable: true, enumerable: true })
     } catch {
@@ -273,9 +301,9 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   // that never reads it gets Chrome's "Unchecked runtime.lastError" console line.
   let lastErrorDepth = 0
   function withLastError(qualified: string, message: string, fn: () => void): void {
-    const targets: Any[] = []
+    const targets: object[] = []
     for (const root of roots) {
-      const runtime = safely(() => root.runtime)
+      const runtime: unknown = safely(() => root.runtime)
       if (runtime && typeof runtime === 'object') targets.push(runtime)
     }
     const error = { message }
@@ -302,7 +330,7 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       if (lastErrorDepth === 0) {
         for (const runtime of targets) {
           try {
-            delete runtime.lastError
+            Reflect.deleteProperty(runtime, 'lastError')
           } catch {
             /* not configurable */
           }
@@ -472,11 +500,14 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     dispatch(...args: unknown[]): unknown[]
   }
 
+  /** Sees what the listeners of one delivery returned (events whose answer the host waits for). */
+  type After = (results: unknown[]) => void
+
   interface EventRecord {
     object: EventObject
     /** Listener → the id of its URL filter set, null for an unfiltered listener. */
     listeners: Map<Listener, number | null>
-    pending: Array<{ args: unknown[]; at: number; delivery?: EventDelivery }>
+    pending: Array<{ args: unknown[]; at: number; delivery?: EventDelivery; after?: After }>
     nativeDelivers: boolean
     /** With `nativeDelivers`: which host deliveries the engine already made (dropped here). */
     nativeHandles: (args: unknown[]) => boolean
@@ -564,7 +595,10 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
             if (now - item.at > PENDING_TTL) continue
             // A filtered listener registered after the host matched cannot be matched now; it
             // only receives deliveries the host addressed to everyone.
-            if (wants(filterId, item.delivery)) callListener(fn, item.args)
+            if (!wants(filterId, item.delivery)) continue
+            const results: unknown[] = []
+            callListener(fn, item.args, results)
+            item.after?.(results)
           }
         }
       },
@@ -608,15 +642,22 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     })
   }
 
-  function deliver(fullName: string, args: unknown[], delivery?: EventDelivery): void {
+  function deliver(
+    fullName: string,
+    args: unknown[],
+    delivery?: EventDelivery,
+    after?: After
+  ): void {
     const record = events.get(fullName)
     if (!record) return
     // The engine already fired this one at our listeners; a second delivery would duplicate it.
     if (record.nativeDelivers && record.nativeHandles(args)) return
     if (record.listeners.size > 0) {
+      const results: unknown[] = []
       for (const [fn, filterId] of [...record.listeners]) {
-        if (wants(filterId, delivery)) callListener(fn, args)
+        if (wants(filterId, delivery)) callListener(fn, args, results)
       }
+      after?.(results)
       return
     }
     const now = Date.now()
@@ -624,8 +665,39 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     if (record.pending.length < 50) {
       const item: EventRecord['pending'][number] = { args, at: now }
       if (delivery) item.delivery = delivery
+      if (after) item.after = after
       record.pending.push(item)
     }
+  }
+
+  /**
+   * `downloads.onDeterminingFilename(item, suggest)`: the host holds the file's placement until
+   * this context answers once. A listener that returns true answers later through `suggest`;
+   * otherwise the answer is whatever it passed synchronously, or nothing.
+   */
+  function determineFilename(args: unknown[]): void {
+    const token = args[1]
+    let answered = false
+    const suggest = (suggestion?: unknown): void => {
+      if (answered) return
+      answered = true
+      host.notify('downloads-determined', { token, suggestion: suggestion ?? null })
+    }
+    deliver('downloads.onDeterminingFilename', [args[0], suggest], undefined, (results) => {
+      if (!results.includes(true)) suggest()
+    })
+  }
+
+  /**
+   * `omnibox.onInputChanged(text, suggest)`: the URL bar is waiting for `suggest(results)`; each
+   * call answers the host for this change (the latest one wins), and functions cannot cross.
+   */
+  function omniboxInputChanged(args: unknown[]): void {
+    const token = args[1]
+    const suggest = (results?: unknown): void => {
+      host.notify('omnibox-suggest', { token, results: Array.isArray(results) ? results : [] })
+    }
+    deliver('omnibox.onInputChanged', [args[0], suggest])
   }
 
   // ---------------------------------------------------------------------------
@@ -873,10 +945,10 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   // Generic namespaces from the table
   // ---------------------------------------------------------------------------
 
-  /** Permission-gated namespaces exist for extensions holding one (or when the engine made one). */
+  /** Permission-gated namespaces exist for extensions declaring one (or when the engine made one). */
   function namespaceAllowed(namespace: string, nsSpec: NamespaceSpec): boolean {
     if (!nsSpec.permissions) return true
-    if (nsSpec.permissions.some((p) => permissions.includes(p))) return true
+    if (nsSpec.permissions.some((p) => declaredPermissions.includes(p))) return true
     return isObject(safely(() => roots[0][namespace]))
   }
 
@@ -1008,6 +1080,84 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // tts: `speak`'s `onEvent` stays on this side, keyed by a token the host echoes back
+  // ---------------------------------------------------------------------------
+
+  if (spec.tts && namespaceAllowed('tts', spec.tts)) {
+    const ttsHandlers = new Map<string, Listener>()
+    const ttsPrefix = Math.random().toString(36).slice(2)
+    let ttsTokens = 0
+    let ttsRelay: EventObject | null = null
+    const ttsQualified =
+      'tts.speak(string utterance, optional object options, optional function callback)'
+    /** The hidden `tts.onEvent` listener: registered with the host on the first `onEvent`. */
+    const relayEvents = (): void => {
+      if (ttsRelay) return
+      ttsRelay = createEvent('tts.onEvent', undefined, { nativeDelivers: false })
+      ttsRelay.addListener((token: unknown, event: unknown) => {
+        if (typeof token !== 'string') return
+        const handler = ttsHandlers.get(token)
+        if (!handler) return
+        if (isObject(event) && event.isFinalEvent === true) ttsHandlers.delete(token)
+        callListener(handler, [event])
+      })
+    }
+    for (const root of roots) {
+      const tts = namespaceOn(root, 'tts')
+      define(tts, 'speak', function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const [utterance, options] = normalizeArgs(ttsQualified, raw, [
+          { name: 'utterance', type: 'string' },
+          { name: 'options', type: 'object', optional: true }
+        ])
+        let token: string | null = null
+        let sent: unknown = options
+        if (isObject(options)) {
+          const { onEvent, ...rest } = options
+          sent = rest
+          if (isFunction(onEvent)) {
+            ttsTokens += 1
+            token = `${ttsPrefix}:${ttsTokens}`
+            ttsHandlers.set(token, onEvent)
+            relayEvents()
+          }
+        }
+        const work = invoke('tts', 'speak', [utterance, sent, token]).then(
+          () => undefined,
+          (error: unknown) => {
+            if (token) ttsHandlers.delete(token)
+            throw error
+          }
+        )
+        return settle(ttsQualified, work, callback)
+      })
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // identity: `getRedirectURL` returns synchronously in Chrome (extensions splice it straight
+  // into an authorization URL), so it is computed here from the extension's own id
+  // ---------------------------------------------------------------------------
+
+  if (spec.identity && namespaceAllowed('identity', spec.identity)) {
+    const ownId: string =
+      safely(() => String(chrome.runtime.id)) ??
+      /^chrome-extension:\/\/([^/]+)\//.exec(extensionUrl)?.[1] ??
+      ''
+    for (const root of roots) {
+      define(namespaceOn(root, 'identity'), 'getRedirectURL', function (path?: unknown): string {
+        if (path !== undefined && path !== null && typeof path !== 'string') {
+          throw new TypeError(
+            "Error in invocation of identity.getRedirectURL(optional string path): Error at parameter 'path': Invalid type: expected string."
+          )
+        }
+        const suffix = typeof path === 'string' ? path.replace(/^\/+/, '') : ''
+        return `https://${ownId}.chromiumapp.org/${suffix}`
+      })
+    }
+  }
+
   /** A click on an item created with `onclick`: Chrome calls that handler besides `onClicked`. */
   function menuClicked(args: unknown[]): void {
     const info = args[0]
@@ -1057,7 +1207,7 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     }
   }
 
-  function hostArea(storage: Any, areaName: string): Record<string, unknown> {
+  function hostArea(storage: object, areaName: string): Record<string, unknown> {
     const area: Record<string, unknown> = {}
     const qualifiedFor = (name: string): string => `storage.${areaName}.${name}`
     const routed = (name: string, params: ParamSpec[]): void => {
@@ -1086,11 +1236,11 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     return area
   }
 
-  function wrapNativeArea(area: Any, areaName: string): void {
-    const nativeSet: unknown = safely(() => area.set)
-    const nativeGet: unknown = safely(() => area.get)
-    const nativeRemove: unknown = safely(() => area.remove)
-    const nativeClear: unknown = safely(() => area.clear)
+  function wrapNativeArea(area: Record<string, unknown>, areaName: string): void {
+    const nativeSet = safely(() => area.set)
+    const nativeGet = safely(() => area.get)
+    const nativeRemove = safely(() => area.remove)
+    const nativeClear = safely(() => area.clear)
     if (!isFunction(nativeSet) || !isFunction(nativeGet)) return
     const read = async (keys: unknown): Promise<StorageItems> => {
       const items = await callNativeArea(area, nativeGet, [keys])
@@ -1157,13 +1307,17 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
         return settle(`storage.${areaName}.clear`, work, callback)
       })
     }
-    const nativeEvent: NativeEvent | undefined = safely(() => area.onChanged)
+    const onChanged = safely(() => area.onChanged)
     define(
       area,
       'onChanged',
-      createEvent(`storage.${areaName}.onChanged`, nativeEvent, {
-        nativeDelivers: host.kind === 'frame'
-      })
+      createEvent(
+        `storage.${areaName}.onChanged`,
+        isNativeEvent(onChanged) ? onChanged : undefined,
+        {
+          nativeDelivers: host.kind === 'frame'
+        }
+      )
     )
   }
 
@@ -1250,7 +1404,7 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
             )
               continue
           }
-          out.push(view.self || view.url === ownUrl ? g : viewStub(view))
+          out.push(view.self || view.url === ownUrl ? real : viewStub(view))
         }
         return out
       })
@@ -1258,14 +1412,14 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       // popup or options page has no JavaScript path to another document's global (Chrome's
       // binding gets it from the renderer's frame list), so it gets null and the extension falls
       // back to messaging, as it must under MV3 anyway.
-      define(extension, 'getBackgroundPage', (): unknown => (isBackgroundPage ? g : null))
+      define(extension, 'getBackgroundPage', (): unknown => (isBackgroundPage ? real : null))
       if (!isFunction(safely(() => runtime.getBackgroundPage))) {
         define(runtime, 'getBackgroundPage', function (...raw: unknown[]): unknown {
           const callback = takeCallback(raw)
           const qualified = 'runtime.getBackgroundPage(optional function callback)'
           const work =
             manifestVersion === 2 && background !== null
-              ? Promise.resolve(isBackgroundPage ? g : null)
+              ? Promise.resolve(isBackgroundPage ? real : null)
               : Promise.reject(new Error('You do not have a background page.'))
           return settle(qualified, work, callback)
         })
@@ -1287,6 +1441,14 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       return
     }
     if (namespace === 'contextMenus' && event === 'onClicked') menuClicked(args)
+    if (namespace === 'downloads' && event === 'onDeterminingFilename') {
+      determineFilename(args)
+      return
+    }
+    if (namespace === 'omnibox' && event === 'onInputChanged') {
+      omniboxInputChanged(args)
+      return
+    }
     const names =
       namespace === 'action'
         ? [`action.${event}`, `browserAction.${event}`]

@@ -91,8 +91,17 @@ export interface RequestHandler {
   ): HeadersReceivedResult | undefined
 }
 
-/** Orders of the browser's own handlers: the rule engine decides first, then header rewrites. */
-export const HANDLER_ORDER = { ruleEngine: 100, headerRewrite: 200 } as const
+/**
+ * Orders of the browser's own handlers: Safe Browsing refuses what it knows before any rule is
+ * consulted, the rule engine decides, the privacy handler (third-party cookies, GPC / DNT) and
+ * the header rewrites then edit what goes out.
+ */
+export const HANDLER_ORDER = {
+  safeBrowsing: 50,
+  ruleEngine: 100,
+  privacy: 150,
+  headerRewrite: 200
+} as const
 
 /**
  * Options of a builtin header rewrite (a {@link RequestHeaderHandler} from `requestHeaders.ts`:
@@ -1008,6 +1017,7 @@ export function contextFor(
   if (initiator) ctx.initiator = initiator
   if (type !== 'main_frame' && (topUrl || initiator)) ctx.documentUrl = topUrl ?? initiator
   if (tabId) ctx.tabId = tabId
+  if (wc && !wc.isDestroyed()) ctx.chromeTabId = wc.id
   return ctx
 }
 

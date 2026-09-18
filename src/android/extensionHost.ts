@@ -1,4 +1,11 @@
-import type { ExtensionInfo, ExtensionSource, ExtensionUpdateState, Rect } from '@shared/types'
+import type {
+  ExtensionInfo,
+  ExtensionSource,
+  ExtensionUpdateState,
+  Rect,
+  SidePanelInfo,
+  Suggestion
+} from '@shared/types'
 import type { Browser } from '@core/browser'
 import type { ExtensionHost, MenuItemTemplate } from '@core/platform'
 import type { ZenWindow } from '@core/window'
@@ -37,6 +44,7 @@ import {
 import {
   migrateRegistry,
   newRecord,
+  setNewTabOverride,
   withManifest,
   type ExtensionRecord,
   type ExtensionRegistry
@@ -195,6 +203,11 @@ export class AndroidExtensions implements ExtensionHost {
   /** Ids with an install or update in flight. */
   private readonly busy = new Set<string>()
   private checking: Promise<void> | null = null
+  /**
+   * The sideload installs in flight: the batch `start()` collected and every `installPending`
+   * since, one after another.
+   */
+  private pendingInstalls: Promise<void> = Promise.resolve()
   private updateTimer: unknown = null
   private foreground = true
   /** A check the interval skipped while the app was in the background. */
@@ -207,7 +220,7 @@ export class AndroidExtensions implements ExtensionHost {
   confirmInstall: ConfirmInstall = (request, win) => this.nativeConfirm(request, win)
 
   constructor(
-    private readonly browser: Browser,
+    protected readonly browser: Browser,
     private readonly io: AndroidExtensionStoreIo,
     options: AndroidExtensionsOptions = {}
   ) {
@@ -258,12 +271,29 @@ export class AndroidExtensions implements ExtensionHost {
     }
     this.browser.state.commitVolatile()
     this.scheduleUpdateChecks()
-    // A package another app handed over while the chrome was still booting.
+    // A package another app handed over while the chrome was still booting. Not awaited: the
+    // install waits for the user's answer to the prompt, which must not hold up the boot;
+    // `whenPendingInstalled` waits for it.
     void this.installPending()
   }
 
-  /** Installs the packages other apps sent to Zenium that Kotlin holds (see `takeSideloads`). */
-  async installPending(win?: ZenWindow): Promise<void> {
+  /**
+   * Installs the packages other apps sent to Zenium that Kotlin holds (see `takeSideloads`), after
+   * the batch already being installed: one prompt at a time, in the order the packages arrived.
+   */
+  installPending(win?: ZenWindow): Promise<void> {
+    const run = this.pendingInstalls.then(() => this.installSideloads(win))
+    // The chain has to outlive a rejection, or no later batch would run.
+    this.pendingInstalls = run.catch(() => undefined)
+    return run
+  }
+
+  /** Resolves once every sideload install in flight is done (`start()` does not wait for them). */
+  whenPendingInstalled(): Promise<void> {
+    return this.pendingInstalls
+  }
+
+  private async installSideloads(win?: ZenWindow): Promise<void> {
     let handles: PackageHandle[]
     try {
       handles = await this.io.takeSideloads()
@@ -351,6 +381,8 @@ export class AndroidExtensions implements ExtensionHost {
         permissions: record.permissions,
         hostPermissions: record.hostPermissions,
         optionsPage: record.optionsPage,
+        newTabPage: record.newTabPage,
+        newTabOverride: record.newTabOverride,
         warnings: permissionWarningLines(manifest, 'other'),
         pendingWarnings: record.pendingWarnings,
         updateState: update.state,
@@ -692,6 +724,51 @@ export class AndroidExtensions implements ExtensionHost {
     this.persist()
     void this.reconfigure(record)
     this.browser.state.commitVolatile()
+  }
+
+  /** The flag is the desktop's registry schema; the Android host does not route new tabs yet. */
+  setNewTabOverride(id: string, enabled: boolean): void {
+    if (setNewTabOverride(this.registry.extensions, id, enabled).length === 0) return
+    this.persist()
+    this.browser.state.commitVolatile()
+  }
+
+  newTabUrl(): string | null {
+    return null
+  }
+
+  /** No side panels on the phone: the chrome.sidePanel calls answer, nothing docks a view. */
+  sidePanel(): SidePanelInfo | null {
+    return null
+  }
+
+  toggleSidePanel(): void {
+    // The phone has no room beside the page for a panel.
+  }
+
+  closeSidePanel(): void {
+    // Nothing is ever open.
+  }
+
+  placeSidePanel(): void {
+    // Nothing to place.
+  }
+
+  /** No omnibox keywords on the phone: the URL bar suggests as usual. */
+  async omniboxSuggest(): Promise<Suggestion[] | null> {
+    return null
+  }
+
+  omniboxSubmit(): boolean {
+    return false
+  }
+
+  omniboxCancel(): void {
+    // No session to end.
+  }
+
+  omniboxDeleteSuggestion(): void {
+    // No rows of an extension's to delete.
   }
 
   setAllowPrivate(id: string, allowed: boolean): void {

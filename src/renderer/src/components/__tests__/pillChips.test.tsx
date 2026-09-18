@@ -2,24 +2,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { Space, Tab, UIState } from '@shared/types'
+import type { BookmarkNode, Space, Tab, UIState } from '@shared/types'
 
 /*
  * The chips inside the URL pill (design language v2 §9.22): the address first, then every chip
  * as a real button in the tab order with its own label, `aria-haspopup` and `aria-expanded`
  * where it opens something, `aria-pressed` where it toggles. Rendered for real, on both the
- * desktop pill (`NavRow`) and the phone pill (`PillContent`), collapsed and expanded.
+ * desktop pill (`NavRow`) and the phone pill (`PillContent`), collapsed and expanded. The
+ * desktop pill ends in the bookmark star, whose popup is the star bubble.
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const { NavRow } = await import('../sidebar/SidebarTop')
+const { NavRow, SidebarTop } = await import('../sidebar/SidebarTop')
+const { Toolbar } = await import('../Toolbar')
 const { PillContent } = await import('../phone/PhoneShell')
 const { PillChip } = await import('../urlbar/PillChip')
 const { openUrlbar, uiStore } = await import('@renderer/lib/ui')
 const { closeSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
+const { defaultShortcuts } = await import('@shared/shortcuts')
 
 function tab(url: string, patch: Partial<Tab> = {}): Tab {
   return {
@@ -67,7 +70,7 @@ const space: Space = {
   pinnedCollapsed: false
 }
 
-function state(t: Tab | null): UIState {
+function state(t: Tab | null, bookmarks: BookmarkNode[] = []): UIState {
   return {
     platform: 'linux',
     capabilities: { windowControls: false },
@@ -77,8 +80,16 @@ function state(t: Tab | null): UIState {
     settings: { urlbarBehavior: 'normal' },
     window: { kind: 'normal', fullscreen: false, htmlFullscreenTabId: null },
     boosts: [],
-    extensions: []
+    extensions: [],
+    bookmarks,
+    // Tooltips quote the chord from the active key table (the default Chrome set here).
+    shortcuts: defaultShortcuts('linux', 'chrome')
   } as unknown as UIState
+}
+
+/** A bookmark of `url` on the bookmarks bar. */
+function bookmarkOf(url: string): BookmarkNode {
+  return { id: 'b1', parentId: '1', index: 0, type: 'url', title: 'Example', url, dateAdded: 0 }
 }
 
 let root: Root | null = null
@@ -132,7 +143,7 @@ function expectChip(el: HTMLElement, label: string): void {
 }
 
 beforeEach(() => {
-  uiStore.set({ siteInfoOpen: false, overlay: 'none' })
+  uiStore.set({ siteInfoOpen: false, overlay: 'none', starDialog: null })
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   siteInfoStore.set({ tabId: null, anchor: null })
   invoke.mockClear()
@@ -163,7 +174,8 @@ describe('desktop pill (NavRow)', () => {
       'Site information',
       'Reader View',
       'Boost this site',
-      'Copy URL'
+      'Copy URL',
+      'Bookmark this tab'
     ])
     for (const [i, chip] of order.slice(1).entries()) expectChip(chip, labels(order.slice(1))[i]!)
     // The site icon is drawn ahead of the field, after it in the DOM.
@@ -179,6 +191,9 @@ describe('desktop pill (NavRow)', () => {
     expect(chip('Site information').getAttribute('aria-expanded')).toBe('false')
     expect(chip('Boost this site').getAttribute('aria-haspopup')).toBe('dialog')
     expect(chip('Boost this site').getAttribute('aria-expanded')).toBe('false')
+    expect(chip('Bookmark this tab').getAttribute('aria-haspopup')).toBe('dialog')
+    expect(chip('Bookmark this tab').getAttribute('aria-expanded')).toBe('false')
+    expect(chip('Bookmark this tab').hasAttribute('aria-pressed')).toBe(false)
     // Actions and toggles open nothing.
     expect(chip('Copy URL').hasAttribute('aria-haspopup')).toBe(false)
     expect(chip('Copy URL').hasAttribute('aria-expanded')).toBe(false)
@@ -192,6 +207,56 @@ describe('desktop pill (NavRow)', () => {
     act(() => uiStore.set({ siteInfoOpen: false, overlay: 'boosts' }))
     expect(chip('Site information').getAttribute('aria-expanded')).toBe('false')
     expect(chip('Boost this site').getAttribute('aria-expanded')).toBe('true')
+
+    // The star bubble is the star's popup, and only for the tab it was opened for.
+    const bubble = { tabId: 't1', nodeId: 'b1', created: true, anchor: null, pill: null }
+    act(() => uiStore.set({ overlay: 'none', starDialog: bubble }))
+    expect(chip('Bookmark this tab').getAttribute('aria-expanded')).toBe('true')
+    expect(chip('Bookmark this tab').getAttribute('data-open')).toBe('true')
+    act(() => uiStore.set({ starDialog: { ...bubble, tabId: 't2' } }))
+    expect(chip('Bookmark this tab').getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('names the star by whether the page is bookmarked and fills it once it is', () => {
+    const el = render(<NavRow state={state(page)} tab={page} compact={false} />)
+    const star = el.querySelector<HTMLElement>('[data-bm-star]')!
+    expectChip(star, 'Bookmark this tab')
+    expect(star.getAttribute('data-filled')).toBe('false')
+    expect(star.title).toBe('Bookmark this tab (Ctrl+D)')
+
+    act(() =>
+      root!.render(
+        <NavRow state={state(page, [bookmarkOf(page.url)])} tab={page} compact={false} />
+      )
+    )
+    expectChip(star, 'Edit bookmark')
+    expect(star.getAttribute('data-filled')).toBe('true')
+    expect(star.title).toBe('Edit bookmark (Ctrl+D)')
+  })
+
+  it('stars the page from the chip, and puts its bubble away from the chip again', async () => {
+    const el = render(<NavRow state={state(page)} tab={page} compact={false} />)
+    const star = el.querySelector<HTMLElement>('[data-bm-star]')!
+    star.focus()
+    await act(async () => {
+      star.click()
+      await Promise.resolve()
+    })
+    expect(invoke.mock.calls.at(-1)).toEqual(['bookmark.star', { tabId: 't1' }])
+    expect(uiStore.get().urlbar.open).toBe(false)
+
+    // The bubble up (the host's `bookmark.star` event opens it): the chip closes it and keeps
+    // the keyboard, as the anchor does after Escape (§9.22).
+    const bubble = { tabId: 't1', nodeId: 'b1', created: true, anchor: null, pill: null }
+    act(() => uiStore.set({ starDialog: bubble }))
+    invoke.mockClear()
+    await act(async () => {
+      star.click()
+      await Promise.resolve()
+    })
+    expect(uiStore.get().starDialog).toBeNull()
+    expect(document.activeElement).toBe(star)
+    expect(commands()).not.toContain('focus.content')
   })
 
   it('marks Reader View pressed while the tab is in it', () => {
@@ -276,12 +341,12 @@ describe('desktop pill (NavRow)', () => {
     const pill = el.querySelector<HTMLElement>('[role="group"]')!
     // Every chip carries the marker and sits in the chips' focus scope; the address does neither.
     const field = focusable(pill)[0]
-    expect(el.querySelectorAll('[data-pill-chip]').length).toBe(4)
+    expect(el.querySelectorAll('[data-pill-chip]').length).toBe(5)
     expect(field.hasAttribute('data-pill-chip')).toBe(false)
     const scope = pill.querySelector<HTMLElement>('.group\\/chips')!
     expect(scope.className).toContain('contents')
     expect(scope.contains(field)).toBe(false)
-    expect(scope.querySelectorAll('[data-pill-chip]').length).toBe(4)
+    expect(scope.querySelectorAll('[data-pill-chip]').length).toBe(5)
     for (const label of ['Boost this site', 'Copy URL']) {
       const chip = el.querySelector<HTMLElement>(`[aria-label="${label}"]`)!
       expect(chip.className).toContain('hidden')
@@ -296,6 +361,22 @@ describe('desktop pill (NavRow)', () => {
     const order = focusable(pill)
     expect(order.length).toBe(1)
     expect(order[0].textContent).toBe('Search or enter address')
+  })
+
+  // Design language v2 §9.29: a chip takes the token family of the surface it sits on, read from
+  // the `data-surface` of its nearest surface root; the pill's root is window chrome either way.
+  it('sits on a window surface at the top of the sidebar', () => {
+    const el = render(<SidebarTop state={state(page)} tab={page} compact={false} showToolbar />)
+    const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
+    expect(pill.closest('[data-surface]')).toBe(el.firstElementChild)
+    expect(el.firstElementChild!.getAttribute('data-surface')).toBe('window')
+  })
+
+  it('sits on a window surface in the top toolbar', () => {
+    const el = render(<Toolbar state={state(page)} tab={page} />)
+    const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
+    expect(pill.closest('[data-surface]')).toBe(el.firstElementChild)
+    expect(el.firstElementChild!.getAttribute('data-surface')).toBe('window')
   })
 })
 

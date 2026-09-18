@@ -7,29 +7,48 @@ import {
   nativeImage,
   net,
   type BrowserWindow,
-  type WebContents
+  type BrowserWindowConstructorOptions,
+  type LoadURLOptions,
+  type Session,
+  type WebContents,
+  type WebPreferences
 } from 'electron'
 import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
-import type { NavigationSnapshot, Rect, Tab } from '../../shared/types'
+import type {
+  NavigationSnapshot,
+  NavigationSnapshotEntry,
+  PageDialogResponse,
+  Rect,
+  Tab
+} from '../../shared/types'
+import type { SafeBrowsingHit } from '../../shared/privacy'
 import type { SiteCertificate } from '../../shared/siteInfo'
+import {
+  DISMISSED_ANSWER,
+  LEAVE_SITE_CHANNEL,
+  type PageDialogAnswer,
+  type PageDialogCall
+} from '../../shared/pageDialogIpc'
 import type {
   AgentCapture,
   AgentCaptureOptions,
   AgentInputEvent,
   InputModifier,
   KeyEventInput,
+  NavigationIntent,
   PageFlags,
   PageMessage,
   TabView,
   TabViewEvents,
   TabViewHost,
   WindowHost,
-  WindowOpenDisposition
+  WindowOpenDisposition,
+  WindowOpenTicket
 } from '../../core/platform'
 import type { SessionManager } from './sessions'
 import { downloadDir } from './downloads'
-import { frameIdOf } from './extensionApi/frames'
+import { frameById, frameIdOf } from './extensionApi/frames'
 import type { ElectronWindow } from './window'
 
 const pagePreload = join(__dirname, '../preload/page.js')
@@ -74,12 +93,74 @@ export interface ViewNavigationHint {
   typed?: boolean
 }
 
+/** What Electron hands `createWindow`: the window options plus the page Chromium made, if any. */
+type ChildWindowOptions = BrowserWindowConstructorOptions & { webContents?: WebContents }
+
+/**
+ * A navigation the host started (address bar, back, reload) that the page's `beforeunload` may
+ * object to; replayed when the user chooses to leave. Stale after this long.
+ */
+const HOST_NAVIGATION_TTL_MS = 30_000
+/** A `confirmUnload` whose page neither goes nor objects by then is treated as not objecting. */
+const UNLOAD_CHECK_TIMEOUT_MS = 5_000
+/**
+ * An entry's page state (scroll offset, form values) is kept up to this size; a larger one –
+ * a page with a huge form – is left out rather than written into the profile on every commit.
+ */
+const PAGE_STATE_MAX_CHARS = 64 * 1024
+
+/** A stored entry: URL and title, plus the engine's page state when it has one worth keeping. */
+function snapshotEntry(entry: Electron.NavigationEntry): NavigationSnapshotEntry {
+  const out: NavigationSnapshotEntry = { url: entry.url, title: entry.title }
+  const state = entry.pageState
+  if (typeof state === 'string' && state !== '' && state.length <= PAGE_STATE_MAX_CHARS) {
+    out.pageState = state
+  }
+  return out
+}
+
+interface HostNavigation {
+  at: number
+  reload: boolean
+  replay: () => void
+}
+
+/** A `confirmUnload` in flight: settled by the page going away or by the user's answer. */
+interface UnloadCheck {
+  promise: Promise<boolean>
+  settle: (leave: boolean) => void
+}
+
+/** What every tab page runs with; `session` picks the container (omitted for pages that exist). */
+function pageWebPreferences(session?: Session): WebPreferences {
+  return {
+    ...(session ? { session } : {}),
+    preload: pagePreload,
+    sandbox: true,
+    contextIsolation: true,
+    nodeIntegration: false,
+    // Preloads reach sub-frames too: the extension API layer's preload installs `chrome.*`
+    // in extension iframes (content-script UIs, extension pages embedding their own
+    // frames); `page.ts` keeps to the top document.
+    nodeIntegrationInSubFrames: true,
+    webSecurity: true,
+    allowRunningInsecureContent: false,
+    spellcheck: true,
+    safeDialogs: true,
+    autoplayPolicy: 'document-user-activation-required',
+    backgroundThrottling: true,
+    scrollBounce: true,
+    enableWebSQL: false
+  }
+}
+
 /**
  * A tab page hosted in a `WebContentsView`. The view is a child of whichever window currently
- * owns the tab's live page (Zen's window sync moves it between windows).
+ * owns the tab's live page (Zen's window sync moves it between windows). Built by
+ * `ElectronTabViewHost`, which wires the core's events once the tab exists – a page Chromium
+ * created for `window.open` is adopted after the fact.
  */
 export class ElectronTabView implements TabView {
-  readonly view: WebContentsView
   /** Captured up front: on Electron 44 `view.webContents` is already undefined when `destroyed` fires. */
   readonly webContentsId: number
   /**
@@ -97,40 +178,22 @@ export class ElectronTabView implements TabView {
    * returns the function that withdraws the announcement when it does not.
    */
   onNavigationTarget: ((source: WebContents, url: string) => () => void) | null = null
+  private events!: TabViewEvents
+  /** The user chose to leave: the next `beforeunload` objection is overruled. */
+  private leaveApproved = false
+  /** The last navigation this host started, for the "Leave site?" replay. */
+  private hostNavigation: HostNavigation | null = null
+  /** What the page itself was about to do, as its preload reported it (`navigate-intent`). */
+  private pageIntent: { at: number; intent: NavigationIntent } | null = null
+  private unloadCheck: UnloadCheck | null = null
 
   constructor(
-    host: ElectronWindow,
-    tab: Tab,
-    sessions: SessionManager,
-    private readonly events: TabViewEvents,
-    private readonly onDestroyed: (view: ElectronTabView) => void
+    readonly view: WebContentsView,
+    private readonly owner: ElectronTabViewHost
   ) {
-    this.view = new WebContentsView({
-      webPreferences: {
-        session: sessions.get(tab.containerId),
-        preload: pagePreload,
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-        // Preloads reach sub-frames too: the extension API layer's preload installs `chrome.*`
-        // in extension iframes (content-script UIs, extension pages embedding their own
-        // frames); `page.ts` keeps to the top document.
-        nodeIntegrationInSubFrames: true,
-        webSecurity: true,
-        allowRunningInsecureContent: false,
-        spellcheck: true,
-        safeDialogs: true,
-        autoplayPolicy: 'document-user-activation-required',
-        backgroundThrottling: true,
-        scrollBounce: true,
-        enableWebSQL: false
-      }
-    })
     this.wc = this.view.webContents
     this.webContentsId = this.wc.id
     this.view.setVisible(false)
-    this.wire(tab)
-    this.attachTo(host)
   }
 
   get webContents(): WebContents {
@@ -143,9 +206,12 @@ export class ElectronTabView implements TabView {
     return bw && !bw.isDestroyed() ? bw : null
   }
 
-  private wire(tab: Tab): void {
+  /** Connect the page's events to its tab; called exactly once, right after the tab exists. */
+  wire(events: TabViewEvents): void {
+    this.events = events
     const wc = this.wc
-    const ev = this.events
+    const ev = events
+    const id = wc.id
     wc.on('did-start-loading', () => ev.onStartLoading())
     wc.on('did-stop-loading', () => ev.onStopLoading())
     wc.on('did-navigate', (_e, url) => ev.onNavigated(url, false))
@@ -173,6 +239,7 @@ export class ElectronTabView implements TabView {
       // the clicked sub-frame's URL (empty for the top document) and its frame id.
       const frame = params.frame ?? null
       const frameId = frame ? frameIdOf(frame) : 0
+      // `linkText` and `mediaFlags` ride along in the spread for the link and media menus.
       ev.onContextMenu({
         ...params,
         pageURL: params.pageURL || wc.getURL(),
@@ -193,57 +260,174 @@ export class ElectronTabView implements TabView {
       if (ev.onKey(key)) event.preventDefault()
     })
     wc.on('update-target-url', (_e, url) => ev.onTargetUrl(url))
-    wc.on('will-prevent-unload', (event) => {
-      const options = {
-        type: 'question' as const,
-        buttons: ['Leave Page', 'Stay on Page'],
-        defaultId: 0,
-        cancelId: 1,
-        message: `This page is asking you to confirm that you want to leave — ${wc.getTitle() || tab.title}`,
-        detail: 'Information you’ve entered may not be saved.',
-        noLink: true
-      }
-      const win = this.win
-      const choice = win
-        ? dialog.showMessageBoxSync(win, options)
-        : dialog.showMessageBoxSync(options)
-      if (choice === 0) event.preventDefault()
+    wc.on('will-prevent-unload', (event) => this.onWillPreventUnload(event))
+    wc.on('did-start-navigation', (details) => {
+      // The page is unloading (its `beforeunload` let it): nothing is left to replay.
+      if (!details.isMainFrame || details.isSameDocument) return
+      this.leaveApproved = false
+      this.hostNavigation = null
+      this.pageIntent = null
     })
     wc.on('dom-ready', () => ev.onDomReady())
     // By the time this fires `this.view.webContents` no longer returns the object (Electron drops
     // the view's reference before emitting), which is why the captured `wc` is used throughout.
     wc.on('destroyed', () => {
       ev.onDestroyed()
-      this.onDestroyed(this)
+      this.owner.forget(id)
     })
     // Trusted input on its way to the page: the core's user-activation clock for pop-ups.
     wc.on('input-event', (_e, input) => {
       if (isActivatingInput(input)) ev.onUserActivation()
     })
-    wc.setWindowOpenHandler(({ url, disposition }) => {
+    wc.setWindowOpenHandler(({ url, disposition, features, referrer, postBody }) => {
       // Announced before the core creates the tab, so the new view finds the pending target.
       const cancelTarget = this.onNavigationTarget?.(wc, url)
-      // Electron does not say whether the user asked; the core knows from the activation clock.
-      const verdict = ev.onOpenWindow(url, disposition as WindowOpenDisposition, null)
-      if (verdict !== 'tab') cancelTarget?.()
-      if (verdict === 'popup') {
-        return {
-          action: 'allow',
-          overrideBrowserWindowOptions: {
-            width: 720,
-            height: 640,
-            autoHideMenuBar: true,
-            webPreferences: { preload: undefined, sandbox: true, contextIsolation: true }
-          }
-        }
+      // Electron does not say whether the user asked; the core knows from the activation clock
+      // and its pop-up blocker answers null for a window the page may not open.
+      const ticket = ev.onOpenWindow(
+        url,
+        disposition as WindowOpenDisposition,
+        null,
+        features ?? ''
+      )
+      if (!ticket) {
+        cancelTarget?.()
+        return { action: 'deny' }
       }
-      return { action: 'deny' }
+      // Chromium's own bare window never shows. The page it creates for a script `window.open`
+      // keeps its opener link and is adopted into the Zenium tab or window the core asked for; a
+      // link's new window (Shift+click) gets a fresh page there. Only security preferences are
+      // inherited, so the page preload is handed down explicitly. Like Chrome, the new page is
+      // not torn down when its opener navigates away or closes.
+      return {
+        action: 'allow',
+        outlivesOpener: true,
+        overrideBrowserWindowOptions: { webPreferences: pageWebPreferences() },
+        // Electron passes the page it created (if any) alongside the window options.
+        createWindow: (options) =>
+          this.owner.openTicket(ticket, this, (options as ChildWindowOptions).webContents, {
+            httpReferrer: referrer,
+            ...(postBody
+              ? {
+                  postData: postBody.data,
+                  extraHeaders: `content-type: ${postBody.contentType}${
+                    postBody.boundary ? `; boundary=${postBody.boundary}` : ''
+                  }`
+                }
+              : {})
+          })
+      }
     })
   }
 
   /** A message from the page script (routed here by the platform's IPC handler). */
   dispatchPageMessage(message: PageMessage): void {
+    if (message.type === 'navigate-intent') {
+      // The page is about to navigate itself; kept for the "Leave site?" flow, not the core's.
+      if (message.intent) this.pageIntent = { at: Date.now(), intent: message.intent }
+      return
+    }
     this.events.onPageMessage(message)
+  }
+
+  /** The request engine upgraded this page's navigation from `from` to `to` (HTTPS-only mode). */
+  noteUpgraded(from: string, to: string): void {
+    this.events.onUpgraded(from, to)
+  }
+
+  /** The request engine refused this page's navigation to `url` on Safe Browsing's word. */
+  noteUnsafeNavigation(url: string, hit: SafeBrowsingHit): void {
+    this.events.onUnsafeNavigation(url, hit)
+  }
+
+  // --- dialogs and beforeunload ----------------------------------------------
+
+  /**
+   * The page called `alert`, `confirm` or `prompt` (its preload asks over synchronous IPC, so
+   * the page waits). `frameUrl` is the calling frame's; the dialog is titled after its site.
+   */
+  async askDialog(call: PageDialogCall, frameUrl: string): Promise<PageDialogAnswer> {
+    if (this.wc.isDestroyed()) return DISMISSED_ANSWER
+    const response: PageDialogResponse = await this.events.onDialog({
+      kind: call.kind,
+      message: call.message,
+      defaultValue: call.defaultValue,
+      frameUrl,
+      pageUrl: this.wc.getURL()
+    })
+    return { accepted: response.accepted, value: response.value }
+  }
+
+  /**
+   * The page's `beforeunload` handler objects to it going away. Electron decides synchronously,
+   * so the page is kept (the event is not prevented) and the chrome asks; when the user chooses
+   * to leave, the action is redone with the objection overruled: the host's own navigation from
+   * its record, the page's own by the page (its preload replays what it was about to do), and a
+   * close by the core, which carries on with the destroy once its check resolves.
+   */
+  private onWillPreventUnload(event: Electron.Event): void {
+    if (this.leaveApproved) {
+      this.leaveApproved = false
+      event.preventDefault()
+      return
+    }
+    const wc = this.wc
+    const check = this.unloadCheck
+    const now = Date.now()
+    const host =
+      this.hostNavigation && now - this.hostNavigation.at < HOST_NAVIGATION_TTL_MS
+        ? this.hostNavigation
+        : null
+    const page =
+      this.pageIntent && now - this.pageIntent.at < HOST_NAVIGATION_TTL_MS
+        ? this.pageIntent.intent
+        : null
+    this.hostNavigation = null
+    this.pageIntent = null
+    const reload = !check && (host ? host.reload : page?.navigationType === 'reload')
+    void this.events.onLeaveSite(reload).then((leave) => {
+      if (check) {
+        check.settle(leave)
+        return
+      }
+      if (!leave || wc.isDestroyed()) return
+      this.leaveApproved = true
+      if (host) host.replay()
+      else wc.send(LEAVE_SITE_CHANNEL)
+    })
+  }
+
+  /**
+   * Run the page's `beforeunload` handlers by closing with `waitForBeforeUnload`: a page that does
+   * not object is gone at once (the core hears `destroyed` and closes the tab); one that objects
+   * stays, and the answer to the chrome's question settles the promise.
+   */
+  confirmUnload(): Promise<boolean> {
+    const wc = this.wc
+    if (wc.isDestroyed()) return Promise.resolve(true)
+    if (this.unloadCheck) return this.unloadCheck.promise
+    let settle: (leave: boolean) => void = () => undefined
+    const promise = new Promise<boolean>((resolve) => {
+      const onGone = (): void => settle(true)
+      // A renderer that never answers (hung) does not hold the close up, as in Chrome.
+      const timer = setTimeout(() => settle(true), UNLOAD_CHECK_TIMEOUT_MS)
+      settle = (leave) => {
+        if (this.unloadCheck?.promise !== promise) return
+        this.unloadCheck = null
+        clearTimeout(timer)
+        wc.off('destroyed', onGone)
+        resolve(leave)
+      }
+      wc.once('destroyed', onGone)
+      wc.once('will-prevent-unload', () => clearTimeout(timer))
+    })
+    this.unloadCheck = { promise, settle }
+    wc.close({ waitForBeforeUnload: true })
+    return promise
+  }
+
+  private recordHostNavigation(reload: boolean, replay: () => void): void {
+    this.hostNavigation = { at: Date.now(), reload, replay }
   }
 
   // --- navigation -----------------------------------------------------------
@@ -252,6 +436,7 @@ export class ElectronTabView implements TabView {
     // Address-bar entries and programmatic loads both arrive here; Chrome reports the latter as
     // `link` too, so no `typed` claim is made without knowing the source.
     this.navigationHint = {}
+    this.recordHostNavigation(false, () => this.loadURL(url))
     void this.wc.loadURL(url).catch(() => undefined)
   }
 
@@ -279,17 +464,21 @@ export class ElectronTabView implements TabView {
   }
 
   goBack(): void {
+    this.recordHostNavigation(false, () => this.goBack())
     this.wc.navigationHistory.goBack()
   }
 
   goForward(): void {
+    this.recordHostNavigation(false, () => this.goForward())
     this.wc.navigationHistory.goForward()
   }
 
   goToIndex(index: number): void {
     if (this.wc.isDestroyed()) return
     const history = this.wc.navigationHistory
-    if (index >= 0 && index < history.length()) history.goToIndex(index)
+    if (index < 0 || index >= history.length()) return
+    this.recordHostNavigation(false, () => this.goToIndex(index))
+    history.goToIndex(index)
   }
 
   navigationEntries(): NavigationSnapshot {
@@ -297,7 +486,7 @@ export class ElectronTabView implements TabView {
     if (wc.isDestroyed()) return { entries: [], index: -1 }
     const history = wc.navigationHistory
     return {
-      entries: history.getAllEntries().map((e) => ({ url: e.url, title: e.title })),
+      entries: history.getAllEntries().map((e) => snapshotEntry(e)),
       index: history.getActiveIndex()
     }
   }
@@ -324,6 +513,7 @@ export class ElectronTabView implements TabView {
   }
 
   reload(ignoreCache: boolean): void {
+    this.recordHostNavigation(true, () => this.reload(ignoreCache))
     if (ignoreCache) this.wc.reloadIgnoringCache()
     else this.wc.reload()
   }
@@ -364,7 +554,11 @@ export class ElectronTabView implements TabView {
     this.wc.stopFindInPage(action)
   }
 
-  executeJavaScript(code: string): Promise<unknown> {
+  executeJavaScript(code: string, frameId?: number): Promise<unknown> {
+    if (frameId) {
+      const frame = frameById(this.wc, frameId)
+      if (frame && !frame.detached) return frame.executeJavaScript(code, true)
+    }
     return this.wc.executeJavaScript(code, true)
   }
 
@@ -390,6 +584,10 @@ export class ElectronTabView implements TabView {
 
   focus(): void {
     this.wc.focus()
+  }
+
+  isFocused(): boolean {
+    return !this.wc.isDestroyed() && this.wc.isFocused()
   }
 
   isDestroyed(): boolean {
@@ -455,8 +653,28 @@ export class ElectronTabView implements TabView {
     if (mode === 'inspect') wc.inspectElement(0, 0)
   }
 
-  downloadURL(url: string): void {
+  /**
+   * Chrome's "Inspect": the inspector opens (detached, like every tab view's) on the node under
+   * the click. `inspectElement` takes the `context-menu` event's own coordinates.
+   */
+  inspectElementAt(x: number, y: number): void {
+    const wc = this.wc
+    if (!wc.isDevToolsOpened()) wc.openDevTools({ mode: 'detach', activate: true })
+    wc.inspectElement(x, y)
+  }
+
+  downloadURL(url: string, options?: { saveAs?: boolean }): void {
+    if (options?.saveAs) this.owner.downloads?.expectSaveAs(url)
     this.wc.downloadURL(url)
+  }
+
+  reloadFrame(frameId: number): void {
+    const frame = frameById(this.wc, frameId)
+    if (frame && !frame.detached) frame.reload()
+  }
+
+  clearCache(): Promise<void> {
+    return this.wc.session.clearCache()
   }
 
   print(): void {
@@ -786,25 +1004,33 @@ function electronKeyCode(key: string): string {
   }
 }
 
+/** The downloads host's side of "Save … As…": the next transfer of the URL asks where to save. */
+export interface SaveAsDownloads {
+  expectSaveAs(url: string): void
+}
+
 /** Creates `WebContentsView`s and maps their web contents back to tabs. */
 export class ElectronTabViewHost implements TabViewHost {
   private readonly byWebContentsId = new Map<number, ElectronTabView>()
+  private readonly byTabId = new Map<string, ElectronTabView>()
   private readonly tabIds = new Map<number, string>()
   private readonly viewListeners = new Set<(view: ElectronTabView) => void>()
 
-  constructor(private readonly sessions: SessionManager) {}
+  constructor(
+    private readonly sessions: SessionManager,
+    readonly downloads: SaveAsDownloads | null = null
+  ) {}
 
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView {
-    // The view no longer has web contents by the time `destroyed` fires: the id is kept here.
-    let id = -1
-    const view = new ElectronTabView(host as ElectronWindow, tab, this.sessions, events, () => {
-      this.byWebContentsId.delete(id)
-      this.tabIds.delete(id)
-    })
-    id = view.webContentsId
-    this.byWebContentsId.set(id, view)
-    this.tabIds.set(id, tab.id)
-    for (const listener of this.viewListeners) listener(view)
+    const view = new ElectronTabView(
+      new WebContentsView({
+        webPreferences: pageWebPreferences(this.sessions.get(tab.containerId))
+      }),
+      this
+    )
+    view.wire(events)
+    view.attachTo(host)
+    this.track(view, tab.id)
     return view
   }
 
@@ -815,12 +1041,68 @@ export class ElectronTabViewHost implements TabViewHost {
     return () => this.viewListeners.delete(listener)
   }
 
+  /**
+   * Complete the core's answer to a page opening a window (Electron's `createWindow` callback).
+   * The new tab adopts `guest`, the opener-linked page Chromium made for a script `window.open`;
+   * a window opened from a link has no page yet and gets a fresh one in the opener's session,
+   * pointed at the URL. Returns the page Electron should consider the child window's.
+   */
+  openTicket(
+    ticket: WindowOpenTicket,
+    opener: ElectronTabView,
+    guest: WebContents | undefined,
+    load: LoadURLOptions
+  ): WebContents {
+    const view = new ElectronTabView(
+      guest
+        ? new WebContentsView({ webContents: guest })
+        : new WebContentsView({
+            webPreferences: pageWebPreferences(opener.webContents.session)
+          }),
+      this
+    )
+    const { tab, events } = ticket.adopt(view)
+    view.wire(events)
+    this.track(view, tab.id)
+    // A link's new window navigates from here (Electron only does so for windows it creates);
+    // the referrer and any form body come along as they would in Chrome.
+    if (!guest) void view.webContents.loadURL(ticket.url, load).catch(() => undefined)
+    return guest ?? view.webContents
+  }
+
+  /** A page went away; its web contents id no longer maps to a tab. */
+  forget(webContentsId: number): void {
+    const view = this.byWebContentsId.get(webContentsId)
+    const tabId = this.tabIds.get(webContentsId)
+    this.byWebContentsId.delete(webContentsId)
+    this.tabIds.delete(webContentsId)
+    if (tabId !== undefined && this.byTabId.get(tabId) === view) this.byTabId.delete(tabId)
+  }
+
+  /** Map the page to its tab, then let the followers (the extension API layer) see the view. */
+  private track(view: ElectronTabView, tabId: string): void {
+    this.byWebContentsId.set(view.webContentsId, view)
+    this.byTabId.set(tabId, view)
+    this.tabIds.set(view.webContentsId, tabId)
+    for (const listener of this.viewListeners) listener(view)
+  }
+
   tabIdForWebContents(wc: WebContents): string | undefined {
     return this.tabIds.get(wc.id)
   }
 
   viewForWebContents(wc: WebContents): ElectronTabView | undefined {
     return this.byWebContentsId.get(wc.id)
+  }
+
+  /** Every live tab view. */
+  all(): Iterable<ElectronTabView> {
+    return this.byWebContentsId.values()
+  }
+
+  /** The live view of the tab `tabId` (what a request's `tabId` names). */
+  viewForTab(tabId: string): ElectronTabView | undefined {
+    return this.byTabId.get(tabId)
   }
 }
 

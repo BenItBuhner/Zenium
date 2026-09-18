@@ -2,6 +2,7 @@ import type { CSSProperties, JSX } from 'react'
 import type { Rect, UIState } from '@shared/types'
 import type { TabSwitchState } from '@renderer/lib/gestures/stage'
 import { groupColorChannels, groupOf } from '@renderer/lib/groups'
+import { activeTab } from '@renderer/lib/selectors'
 import { TabPreview } from './TabPreview'
 
 interface Props {
@@ -23,6 +24,8 @@ export function TabSwitchStage({ state, tabs, area }: Props): JSX.Element {
   const last = Math.min(order.length - 1, Math.ceil(position) + 1)
   // The ribbon has nothing to add to a page that is at rest: it fades in with the movement.
   const moving = Math.min(1, Math.abs(position - origin) * 2.5)
+  // The current tab's card is what the live page is swapped for when the track appears.
+  const current = activeTab(state)?.id ?? null
   const cards: JSX.Element[] = []
   for (let index = first; index <= last; index++) {
     const tab = state.tabs[order[index]]
@@ -42,7 +45,7 @@ export function TabSwitchStage({ state, tabs, area }: Props): JSX.Element {
           transform: `translate3d(${offset * advance}px, 0, 0) scale(${1 - 0.06 * distance})`
         }}
       >
-        <TabPreview tab={tab} />
+        <TabPreview tab={tab} cover={tab.id === current} />
         {group && (
           <div
             className="zen-group-ribbon absolute inset-x-0 top-0 flex h-7 items-center gap-2 px-3 text-[12px] font-semibold"

@@ -1,8 +1,9 @@
 {
   "name": "zenium",
-  "version": "0.3.24",
+  "version": "0.3.30",
   "description": "Zenium: Zen Browser's Spaces, Essentials, Glance, Split View and Compact Mode on the Blink engine (Electron on desktop, the system WebView on Android).",
   "main": "./out/main/index.js",
+  "desktopName": "zenium.desktop",
   "author": "Zenium contributors",
   "license": "Apache-2.0",
   "private": true,
@@ -24,11 +25,12 @@
     "build:mac": "electron-vite build && electron-builder --mac",
     "build:linux": "electron-vite build && electron-builder --linux",
     "dev:android": "vite -c vite.android.config.ts",
-    "build:android:web": "vite build -c vite.android.config.ts && vite build -c vite.android.config.ts --mode page",
+    "build:android:web": "vite build -c vite.android.config.ts && vite build -c vite.android.config.ts --mode page && vite build -c vite.android.config.ts --mode ext && vite build -c vite.android.config.ts --mode ext-janitor",
     "build:android": "npm run build:android:web && cd android && ./gradlew assembleDebug -PskipWeb",
     "build:android:release": "npm run build:android:web && cd android && ./gradlew assembleRelease -PskipWeb",
     "icons": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/app-icons.ts",
     "blocking:snapshot": "node --experimental-strip-types --no-warnings .github/scripts/build-blocking-snapshot.mts",
+    "safebrowsing:snapshot": "node --experimental-strip-types --no-warnings --import ./scripts/ts-imports.mjs scripts/safebrowsing-snapshot.mts",
     "release": "node .github/scripts/cut-release.mjs"
   },
   "dependencies": {

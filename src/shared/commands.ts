@@ -141,6 +141,12 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     action: 'page.toggleMute'
   },
   {
+    id: 'mute-site',
+    label: 'Mute / Unmute Site',
+    keywords: ['mute', 'site', 'audio', 'sound', 'host'],
+    action: 'page.toggleMuteSite'
+  },
+  {
     id: 'screenshot',
     label: 'Take Screenshot',
     keywords: ['screenshot', 'capture'],
@@ -171,9 +177,15 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
   },
   {
     id: 'bookmarks',
-    label: 'Show Bookmarks',
+    label: 'Bookmark Manager',
     keywords: ['bookmarks', 'library', 'manager'],
     action: 'bookmarks.open'
+  },
+  {
+    id: 'bookmarks-bar',
+    label: 'Show / Hide Bookmarks Bar',
+    keywords: ['bookmarks', 'bar', 'toolbar', 'favorites'],
+    action: 'bookmark.toggleBar'
   },
   { id: 'history', label: 'Show History', keywords: ['history', 'recent'], action: 'history.open' },
   {
@@ -227,6 +239,13 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     label: 'New Blank Window',
     keywords: ['window', 'blank', 'unsynced'],
     action: 'window.newUnsynced',
+    requires: 'windows'
+  },
+  {
+    id: 'move-tab-to-new-window',
+    label: 'Move Tab to New Window',
+    keywords: ['window', 'move', 'tab', 'tear', 'detach'],
+    action: 'tab.moveToNewWindow',
     requires: 'windows'
   },
   {

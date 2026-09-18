@@ -1,7 +1,8 @@
-import { BrowserWindow, screen, shell } from 'electron'
+import { BrowserWindow, screen, shell, webContents } from 'electron'
 import { join } from 'node:path'
 import { is } from '@electron-toolkit/utils'
-import type { EventName, Events, Rect } from '../../shared/types'
+import type { EventName, Events, Rect, WindowChrome } from '../../shared/types'
+import { CAPTION_HEIGHT, type CaptionColors } from '../../shared/theme'
 import type { Browser } from '../../core/browser'
 import type { ZenWindow } from '../../core/window'
 import type {
@@ -12,11 +13,23 @@ import type {
 } from '../../core/platform'
 import { TitleThrottle } from '../../shared/windowTitle'
 import { windowIcon } from './appIcon'
+import { placeWindow, type DisplayArea } from './windowPlacement'
 
 const MIN_WIDTH = 640
 const MIN_HEIGHT = 420
+/** A first window's size (within the display). */
+const DEFAULT_WIDTH = 1280
+const DEFAULT_HEIGHT = 820
+/** Popups are as small as the page asked for, within reason. */
+const POPUP_MIN_WIDTH = 320
+const POPUP_MIN_HEIGHT = 200
 /** Width (px) of the edge zone that reveals the sidebar in compact mode. */
 const COMPACT_REVEAL_ZONE = 14
+/**
+ * Windows 11 draws the caption buttons itself (Window Controls Overlay), which is what gives the
+ * maximise button its Snap Layouts flyout. macOS keeps its traffic lights; Linux draws Zenium's.
+ */
+const CAPTION_OVERLAY = process.platform === 'win32'
 
 /**
  * The Electron side of one `ZenWindow`: a frameless `BrowserWindow` whose web contents render
@@ -29,28 +42,48 @@ export class ElectronWindow implements WindowHost {
   private compactTimer: ReturnType<typeof setInterval> | null = null
   private compactLastSent: boolean | null = null
   private readonly titles: TitleThrottle
+  private captionColors: CaptionColors
 
   constructor(
     private readonly browser: Browser,
-    private readonly zen: ZenWindow,
+    readonly zen: ZenWindow,
     init: WindowCreateInit
   ) {
     let initial = init.bounds
+    let displayId = init.displayId
     if (!initial && init.cascadeFrom?.alive) {
-      const b = (init.cascadeFrom.host as ElectronWindow).win.getNormalBounds()
+      const from = (init.cascadeFrom.host as ElectronWindow).win
+      const b = from.getNormalBounds()
       initial = { x: b.x + 28, y: b.y + 28, width: b.width, height: b.height }
+      displayId = screen.getDisplayMatching(b).id
     }
-    const bounds = sanitizeBounds(initial)
+    const bounds = sanitizeBounds(initial, displayId, init.chrome)
     const isMac = process.platform === 'darwin'
+    const mica = init.material === 'mica' && process.platform === 'win32'
+    this.captionColors = init.captionColors
     this.win = new BrowserWindow({
       ...bounds,
-      minWidth: MIN_WIDTH,
-      minHeight: MIN_HEIGHT,
+      minWidth: init.chrome === 'popup' ? POPUP_MIN_WIDTH : MIN_WIDTH,
+      minHeight: init.chrome === 'popup' ? POPUP_MIN_HEIGHT : MIN_HEIGHT,
       show: false,
       frame: false,
-      titleBarStyle: isMac ? 'hiddenInset' : undefined,
-      trafficLightPosition: isMac ? { x: 14, y: 14 } : undefined,
-      backgroundColor: init.backgroundColor,
+      titleBarStyle: isMac ? 'hiddenInset' : CAPTION_OVERLAY ? 'hidden' : undefined,
+      // Centred on the 38px header row (12px lights: 16 + 6 = 22 = 6 + 32 / 2); a toolbar-only
+      // window's 40px toolbar row is centred at 20.
+      trafficLightPosition: isMac ? { x: 14, y: init.chrome === 'popup' ? 14 : 16 } : undefined,
+      titleBarOverlay: CAPTION_OVERLAY
+        ? {
+            color: init.captionColors.color,
+            symbolColor: init.captionColors.symbolColor,
+            height: CAPTION_HEIGHT
+          }
+        : undefined,
+      // A material window paints its web contents on a see-through background (no
+      // `transparent`, which would cost the resize border); the chrome leaves the material
+      // visible through its gradient.
+      ...(mica
+        ? { backgroundMaterial: 'mica' as const }
+        : { backgroundColor: init.backgroundColor }),
       autoHideMenuBar: true,
       title: init.title,
       // Windows and Linux take the icon per window (macOS shows the bundle's, or the Dock's).
@@ -87,10 +120,31 @@ export class ElectronWindow implements WindowHost {
       if (direction === 'left') browser.actions.run('space.next', { sourceTabId: null, win: zen })
       if (direction === 'right') browser.actions.run('space.prev', { sourceTabId: null, win: zen })
     })
-    win.on('close', () => {
+    // The mouse's back and forward buttons (Windows: WM_APPCOMMAND; Linux: buttons 8 and 9),
+    // wherever in the window they are pressed, navigate the active tab like Chrome's do.
+    win.on('app-command', (_e, command) => {
+      if (command === 'browser-backward')
+        browser.actions.run('nav.back', { sourceTabId: null, win: zen })
+      else if (command === 'browser-forward')
+        browser.actions.run('nav.forward', { sourceTabId: null, win: zen })
+    })
+    win.on('close', (event) => {
+      // The caption button, Alt+F4 and the window manager arrive here first: the browser runs
+      // its checks (the tab-count warning, every page's "Leave site?") and closes again once
+      // they pass. Windows the browser closes itself, and every window while quitting, go.
+      if (!zen.closeApproved && !browser.quitting) {
+        event.preventDefault()
+        // Off the event: the checks may pass at once and close again, which must not re-enter
+        // the close that is being cancelled here.
+        setImmediate(() => void browser.requestWindowClose(zen))
+        return
+      }
       if (this.boundsTimer) clearTimeout(this.boundsTimer)
       zen.onClosing()
     })
+    // Windows: the user logs off or the system shuts down and the process is about to be ended.
+    // Persist (with the clean-exit marker) and go without questions.
+    win.on('session-end', () => browser.shutdown())
     win.on('closed', () => {
       this.stopCompactTracking()
       this.titles.cancel()
@@ -116,7 +170,17 @@ export class ElectronWindow implements WindowHost {
       return { action: 'deny' }
     })
     wc.on('will-navigate', (event) => event.preventDefault())
-    wc.on('context-menu', (event) => event.preventDefault())
+    // The chrome's rows show their menus themselves (and cancel the DOM event, which keeps this
+    // one from firing); what reaches here is a text field, the URL bar or plain chrome.
+    wc.on('context-menu', (_event, params) =>
+      zen.onContextMenu({
+        x: params.x,
+        y: params.y,
+        isEditable: params.isEditable,
+        selectionText: params.selectionText,
+        editFlags: params.editFlags
+      })
+    )
     // The chrome document's <title> is a constant "Zenium"; keep Electron from copying it over the
     // per-window title the core sets (active tab name) via setTitle. This has to be the window's
     // event: BrowserWindow applies the title right after emitting it unless it was prevented.
@@ -146,8 +210,37 @@ export class ElectronWindow implements WindowHost {
     if (this.alive) this.win.webContents.focus()
   }
 
+  focusedDocument(): 'chrome' | 'other' | 'none' {
+    const focused = webContents.getFocusedWebContents()
+    if (!focused || focused.isDestroyed()) return 'none'
+    return this.alive && focused.id === this.win.webContents.id ? 'chrome' : 'other'
+  }
+
   openChromeDevTools(): void {
     if (this.alive) this.win.webContents.openDevTools({ mode: 'detach' })
+  }
+
+  /** The `data-zen-menu` element under a chrome point, read from the chrome document itself. */
+  async menuTargetAt(
+    x: number,
+    y: number
+  ): Promise<{ target: string; tabId: string | null } | null> {
+    if (!this.alive) return null
+    const result: unknown = await this.win.webContents
+      .executeJavaScript(
+        `(() => {
+          const hit = document.elementFromPoint(${Math.round(x)}, ${Math.round(y)});
+          const el = hit && hit.closest('[data-zen-menu]');
+          if (!el) return null;
+          return { target: el.getAttribute('data-zen-menu'), tabId: el.getAttribute('data-zen-menu-tab') || null };
+        })()`,
+        true
+      )
+      .catch(() => null)
+    if (!result || typeof result !== 'object') return null
+    const hit = result as { target?: unknown; tabId?: unknown }
+    if (typeof hit.target !== 'string') return null
+    return { target: hit.target, tabId: typeof hit.tabId === 'string' ? hit.tabId : null }
   }
 
   contentSize(): { width: number; height: number } {
@@ -206,6 +299,25 @@ export class ElectronWindow implements WindowHost {
 
   normalBounds(): Rect | null {
     return this.alive ? this.win.getNormalBounds() : null
+  }
+
+  /** The chrome document's place on the screen (DIP); the frameless window has no frame to add. */
+  contentBounds(): Rect | null {
+    return this.alive && this.win.isVisible() && !this.win.isMinimized()
+      ? this.win.getContentBounds()
+      : null
+  }
+
+  displayId(): number | null {
+    return this.alive ? screen.getDisplayMatching(this.win.getBounds()).id : null
+  }
+
+  setCaptionColors(colors: CaptionColors): void {
+    if (!CAPTION_OVERLAY || !this.alive) return
+    const current = this.captionColors
+    if (colors.color === current.color && colors.symbolColor === current.symbolColor) return
+    this.captionColors = colors
+    this.win.setTitleBarOverlay({ color: colors.color, symbolColor: colors.symbolColor })
   }
 
   // ---------------------------------------------------------------------------
@@ -290,30 +402,24 @@ export class ElectronWindowFactory implements WindowHostFactory {
   }
 }
 
-function sanitizeBounds(saved: Rect | null): Rect {
-  const primary = screen.getPrimaryDisplay().workArea
-  const fallback: Rect = {
-    width: Math.min(1280, primary.width - 40),
-    height: Math.min(820, primary.height - 40),
-    x:
-      primary.x + Math.max(0, Math.round((primary.width - Math.min(1280, primary.width - 40)) / 2)),
-    y:
-      primary.y + Math.max(0, Math.round((primary.height - Math.min(820, primary.height - 40)) / 2))
-  }
-  if (!saved) return fallback
-  const width = Math.max(MIN_WIDTH, Math.min(saved.width, primary.width))
-  const height = Math.max(MIN_HEIGHT, Math.min(saved.height, primary.height))
-  // Make sure the window is visible on some display.
-  const visibleOnSomeDisplay = screen.getAllDisplays().some((d) => {
-    const a = d.workArea
-    return (
-      saved.x + 100 < a.x + a.width &&
-      saved.x + width - 100 > a.x &&
-      saved.y + 50 < a.y + a.height &&
-      saved.y >= a.y - 20
-    )
-  })
-  return visibleOnSomeDisplay
-    ? { x: saved.x, y: saved.y, width, height }
-    : { ...fallback, width, height }
+/**
+ * Saved bounds go back onto the display they were saved on (or the one they lie on, or the
+ * primary), fitted into its work area; see `placeWindow`.
+ */
+function sanitizeBounds(saved: Rect | null, displayId: number | null, chrome: WindowChrome): Rect {
+  const primary = screen.getPrimaryDisplay()
+  const displays: DisplayArea[] = [
+    primary,
+    ...screen.getAllDisplays().filter((d) => d.id !== primary.id)
+  ].map((d) => ({ id: d.id, workArea: d.workArea }))
+  return placeWindow(
+    {
+      saved,
+      displayId,
+      minWidth: chrome === 'popup' ? POPUP_MIN_WIDTH : MIN_WIDTH,
+      minHeight: chrome === 'popup' ? POPUP_MIN_HEIGHT : MIN_HEIGHT,
+      defaultSize: { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }
+    },
+    displays
+  )
 }
