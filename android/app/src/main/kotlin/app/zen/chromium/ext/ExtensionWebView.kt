@@ -7,11 +7,14 @@ import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import app.zen.chromium.BuildConfig
 import app.zen.chromium.Host
+import app.zen.chromium.UserAgent
 
 /**
  * A WebView on an extension's origin: the hidden background page (`context = "background"`) or a
@@ -27,7 +30,7 @@ class ExtensionWebView(
     private val extensions: Extensions,
     val served: Extensions.Served,
     val context: String
-) : WebView(host.activity) {
+) : NestedScrollWebView(host.activity) {
     private val origin = "https://${served.id}${Extensions.ORIGIN_SUFFIX}"
     /** Console lines of the page, for the probe and the demo (background pages have no visible UI). */
     val console = ArrayDeque<String>()
@@ -39,7 +42,16 @@ class ExtensionWebView(
             allowFileAccess = false
             allowContentAccess = false
             mediaPlaybackRequiresUserGesture = false
+            // Chrome's extension pages are not subject to mixed-content blocking (their scheme
+            // is `chrome-extension:`, not `https:`), so an extension with `host_permissions` for
+            // an `http://` host may fetch it. Ours live on the emulated https origin, where the
+            // renderer would refuse the fetch before it reached the CORS proxy; what the page may
+            // reach is gated by the extension's host permissions in the proxy either way.
+            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         }
+        // Extension pages present as Zenium, as tab pages do; the CORS proxy sends the same string.
+        UserAgent.apply(settings, BuildConfig.VERSION_NAME)
+        extensions.userAgent = settings.userAgentString
         // Chrome paints popups white until the document says otherwise; the hidden background view has nothing to paint.
         setBackgroundColor(if (context == "background") Color.TRANSPARENT else Color.WHITE)
         webViewClient = Client()

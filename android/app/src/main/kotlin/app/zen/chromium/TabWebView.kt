@@ -47,6 +47,7 @@ import androidx.webkit.WebViewFeature
 import app.zen.chromium.blocking.BlockingTab
 import app.zen.chromium.blocking.Decision
 import app.zen.chromium.blocking.SafeBrowsingHit
+import app.zen.chromium.ext.NavigationReports
 import app.zen.chromium.privacy.PrivacyFlags
 import org.json.JSONArray
 import org.json.JSONObject
@@ -161,6 +162,8 @@ class TabWebView(
     private val refusedCertificates = HashMap<String, RefusedCertificate>()
 
     private class RefusedCertificate(val code: Int, val certificate: JSONObject?)
+    /** What [NavigationReports.attach] registered, to unregister at [destroy]. */
+    private var navigationListener: androidx.webkit.NavigationListener? = null
     private var lastProgressAt = 0L
 
     init {
@@ -230,10 +233,15 @@ class TabWebView(
         setOnContextClickListener { onLongPress() }
         installPageScript()
         host.extensions?.attach(this)
+        // The navigation listener's reports carry `chrome.webNavigation` on a WebView that has
+        // it; the extension runtime infers the family from the client callbacks otherwise.
+        if (host.extensions != null) navigationListener = NavigationReports.attach(this) { host.viewEvent(tabId, "navigation", it) }
         applyPrivacy()
     }
 
     override fun destroy() {
+        NavigationReports.detach(this, navigationListener)
+        navigationListener = null
         host.extensions?.detach(this)
         super.destroy()
     }
@@ -1019,16 +1027,17 @@ class TabWebView(
     }
 
     /**
-     * Agent screenshot: `mode` is `viewport`, `fullPage` or `region` (with `region` in CSS page
-     * px), `format` `jpeg` or `png`. Answers `{ data, mimeType, width, height }` or null.
+     * Agent screenshot (and `chrome.tabs.captureVisibleTab`): `mode` is `viewport`, `fullPage` or
+     * `region` (with `region` in CSS page px), `format` `jpeg` or `png`, `quality` the JPEG quality
+     * 0..100 (anything else: the default). Answers `{ data, mimeType, width, height }` or null.
      */
-    fun capture(mode: String, region: JSONObject?, format: String, callback: (JSONObject?) -> Unit) {
+    fun capture(mode: String, region: JSONObject?, format: String, quality: Int, callback: (JSONObject?) -> Unit) {
         val radius = radiusPx
         val square = { on: Boolean ->
             radiusPx = if (on) 0f else radius
             invalidateOutline()
         }
-        PageCapture(this, host.activity.window, encoder, square, ::evaluate).run(mode, PageCapture.parseRegion(region), format, callback)
+        PageCapture(this, host.activity.window, encoder, square, ::evaluate).run(mode, PageCapture.parseRegion(region), format, quality, callback)
     }
 
     fun navState(): JSONObject = json(
@@ -1152,14 +1161,11 @@ class TabWebView(
         /**
          * The engine's word on a main-frame navigation: true when it took the navigation over
          * (onto the Zenium blocked or warning page, or to the redirect target), false when the
-         * page may go. An extension's web-auth flow running in this tab ends on its way back
-         * first: that navigation is the flow's result and is never loaded. Then Safe Browsing
-         * speaks, then the rule sets.
+         * page may go. Safe Browsing speaks first, then the rule sets.
          */
         private fun interceptNavigation(request: WebResourceRequest): Boolean {
             if (!request.isForMainFrame) return false
             val target = request.url.toString()
-            if (host.extensions?.interceptNavigation(this@TabWebView, target) == true) return true
             host.blocking.guardNavigation(target)?.let { hit ->
                 onDocumentUnsafe(target, hit)
                 return true

@@ -40,3 +40,11 @@ img {
   outline: 1px solid #d1d5db;
   margin-right: 8px;
 }
+/* A cross-origin CSS background image: Dark Reader's content script asks its background to fetch
+   it for analysis, which needs the CORS proxy on the extension origin (the W2-2 acceptance case). */
+.logo {
+  height: 46px;
+  margin: 0 0 12px;
+  background: url(https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png)
+    no-repeat left center / 136px 46px;
+}

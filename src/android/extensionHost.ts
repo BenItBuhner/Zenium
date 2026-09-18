@@ -7,7 +7,7 @@ import type {
   Suggestion
 } from '@shared/types'
 import type { Browser } from '@core/browser'
-import type { ExtensionHost, MenuItemTemplate } from '@core/platform'
+import type { ExtensionHost, MenuItemTemplate, PageContextParams } from '@core/platform'
 import type { ZenWindow } from '@core/window'
 import { JsonStore } from '@core/store/JsonStore'
 import { base64Encode } from '@core/extensions/bytes'
@@ -829,12 +829,18 @@ export class AndroidExtensions implements ExtensionHost {
     // Nothing of the store's is open; the runtime closes its own popup.
   }
 
-  /** The runtime's `chrome.*` layer (contextMenus, commands) is not the store half's; the desktop router owns these. */
-  pageContextMenuItems(): MenuItemTemplate[] {
+  /**
+   * The runtime's `chrome.*` layer (contextMenus, commands) is not the store half's; the runtime
+   * subclass answers these, and an override may not take more parameters than its base, so the
+   * store half spells the full signature out.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  pageContextMenuItems(_tabId: string, _params: PageContextParams): MenuItemTemplate[] {
     return []
   }
 
-  actionContextMenuItems(): MenuItemTemplate[] {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  actionContextMenuItems(_id: string): MenuItemTemplate[] {
     return []
   }
 
