@@ -8,7 +8,17 @@ import { useFrameDialog } from '@renderer/lib/portals'
 import { answerPassphrase, cancelPassphrase } from '@renderer/lib/autofill'
 import { uiStore, type UiState } from '@renderer/lib/ui'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
-import { Btn, Field, Footer, InSheet, Labelled, TitleBlock, useEscape, wrapTab } from './controls'
+import {
+  Btn,
+  Field,
+  Footer,
+  InSheet,
+  Labelled,
+  SheetTitleBlock,
+  TitleBlock,
+  useEscape,
+  wrapTab
+} from './controls'
 
 type Ask = NonNullable<UiState['autofillPassphrase']>
 
@@ -121,13 +131,16 @@ function PassphraseSheet({ ask }: { ask: Ask }): JSX.Element {
       }}
       handleLabel="Dismiss"
       className="zen-v2-af zen-v2-af-sheet"
-      header={
-        <TitleBlock id={titleId} icon={Lock} title={ask.title} description={ask.description} />
-      }
       fitContent
     >
       <InSheet.Provider value>
         <div className="zen-v2-af" data-surface="page" aria-labelledby={titleId}>
+          <SheetTitleBlock
+            id={titleId}
+            icon={Lock}
+            title={ask.title}
+            description={ask.description}
+          />
           <PassphraseForm ask={ask} onCancel={leave} />
         </div>
       </InSheet.Provider>

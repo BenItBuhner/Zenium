@@ -1430,10 +1430,10 @@ export function closeTabsMenu(): void {
 
 /**
  * Only anchored panels are up: a bar panel, the star bubble, the zoom bubble, the tab hover
- * card, the downloads bubble, site information. The page behind them is captured all the same
- * (they overlap the live view), but panels draw no scrim, so the capture shows undimmed; dialogs
- * dim it. A chassis sheet's scrim is its own one dim (§11.5), so the same holds under the
- * site-information sheet.
+ * card, the downloads bubble, site information, an autofill prompt as a popover. The page behind
+ * them is captured all the same (they overlap the live view), but panels draw no scrim, so the
+ * capture shows undimmed; dialogs dim it. A chassis sheet's scrim is its own one dim (§11.5), so
+ * the same holds under the site-information sheet.
  */
 export function panelAloneOverContent(ui: UiState): boolean {
   const popover = ui.autofillPrompt === 'popover'
