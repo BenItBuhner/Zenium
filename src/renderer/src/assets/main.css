@@ -1865,6 +1865,42 @@
     flex: 1;
     overflow-y: auto;
   }
+  /*
+   * The tab hover card (components/TabHoverCard.tsx; v2 draft §9.20): a popover in the page
+   * family flush against the sidebar, padding 16, the full title at 15/400 on two lines at most,
+   * the host and the row's state lines at 13 in the deemphasised ink. It takes no pointer.
+   */
+  .zen-tab-hover-card {
+    position: fixed;
+    z-index: 80;
+    padding: 16px;
+    border-radius: 8px;
+    corner-shape: var(--zen-corner);
+    background: var(--v2-panel);
+    border: 1px solid var(--v2-border);
+    box-shadow: var(--v2-shadow-panel);
+    color: var(--v2-text);
+    pointer-events: none;
+  }
+  .zen-tab-hover-card-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    font-weight: var(--v2-weight-body);
+  }
+  .zen-tab-hover-card-host {
+    margin-top: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+  }
   /* A list popover's body: 16 around 32px rows (§9.20); the empty line 32 below the top (§9.17). */
   .zen-bm-popover-list {
     padding: 16px;

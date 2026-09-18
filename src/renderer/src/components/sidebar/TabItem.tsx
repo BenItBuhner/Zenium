@@ -16,6 +16,7 @@ import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
 import { startTabDrag } from '@renderer/lib/drag'
+import { hoverCard, measureRow } from '@renderer/lib/hoverCard'
 import { activeTab, containerOf, tabTitle, tabTooltip } from '@renderer/lib/selectors'
 import {
   browserStore,
@@ -131,6 +132,52 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
     }
   }
 
+  // The hover card (lib/hoverCard.ts) replaces the row's native tooltip: it shows after the
+  // pointer rests on the row, or at once when keyboard focus lands on it (§9.22), never for the
+  // focus a click leaves behind, and not while the URL bar, a menu or an overlay has the chrome.
+  // The row's buttons keep their own tooltips.
+  const cardUp = uiStore.use((s) => s.hoverCard.tabId === tab.id)
+  const onPointerEnter = (e: React.PointerEvent): void => {
+    if (e.pointerType !== 'mouse' || renaming || dragging) return
+    const ui = uiStore.get()
+    if (ui.urlbar.open || ui.menu || ui.overlay !== 'none') return
+    const el = e.currentTarget as HTMLElement
+    hoverCard.pointerEnter(tab.id, () => measureRow(el))
+  }
+  const onPointerLeave = (): void => hoverCard.pointerLeave(tab.id)
+  const onFocus = (e: React.FocusEvent): void => {
+    const el = e.currentTarget as HTMLElement
+    if (e.target !== el || !el.matches(':focus-visible')) return
+    hoverCard.focus(tab.id, () => measureRow(el))
+  }
+  const onBlur = (e: React.FocusEvent): void => {
+    if (e.target === e.currentTarget) hoverCard.blur(tab.id)
+  }
+
+  // Keyboard reach (§9.22): one tab stop per list (the active row), arrows walk the rows.
+  const onKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.target !== e.currentTarget) return
+    const row = e.currentTarget as HTMLElement
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      run('tab.activate', { tabId: tab.id })
+      return
+    }
+    const walk: Record<string, (rows: HTMLElement[], at: number) => HTMLElement | undefined> = {
+      ArrowDown: (rows, at) => rows[at + 1],
+      ArrowUp: (rows, at) => rows[at - 1],
+      Home: (rows) => rows[0],
+      End: (rows) => rows[rows.length - 1]
+    }
+    const to = walk[e.key]
+    if (!to) return
+    e.preventDefault()
+    const scroller = row.closest<HTMLElement>('[data-tab-scroller]')
+    if (!scroller) return
+    const rows = [...scroller.querySelectorAll<HTMLElement>('.zen-tab[data-tab-id]')]
+    to(rows, rows.indexOf(row))?.focus()
+  }
+
   return (
     <div
       ref={attach}
@@ -142,9 +189,15 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
       data-agent={agent ? true : undefined}
       data-lifted={isDragSource || undefined}
       data-tab-id={tab.id}
+      tabIndex={active ? 0 : -1}
+      aria-describedby={cardUp ? 'zen-tab-hover-card' : undefined}
       style={agent ? { boxShadow: `inset 0 0 0 1.5px ${agent.color}80` } : undefined}
-      title={renaming ? undefined : tabTooltip(tab, agent?.name ?? null)}
       onPointerDown={onPointerDown}
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
+      onFocus={onFocus}
+      onBlur={onBlur}
+      onKeyDown={onKeyDown}
       onClick={onClick}
       onAuxClick={onAuxClick}
       onContextMenu={onContextMenu}

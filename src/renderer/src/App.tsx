@@ -33,6 +33,7 @@ import { Onboarding } from './components/overlays/Onboarding'
 import { PhoneShell } from './components/phone/PhoneShell'
 import { COLLAPSED_WIDTH, Sidebar } from './components/sidebar/Sidebar'
 import { TabDialogs } from './components/TabDialogs'
+import { TabHoverCard } from './components/TabHoverCard'
 import { Toolbar } from './components/Toolbar'
 
 /** Width of the compact-mode hover zone along the window edge (px). */
@@ -257,6 +258,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
       )}
 
       {ui.drag && <DragLayer state={state} drag={ui.drag} />}
+      <TabHoverCard state={state} />
       {onboarding && <Onboarding state={state} />}
     </div>
   )
