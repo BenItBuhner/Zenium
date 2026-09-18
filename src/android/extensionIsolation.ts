@@ -270,10 +270,15 @@ export function installTrustedTypesShield(world: ShieldedWorld, policyName: stri
     const sink = attributeSink(self, args[1])
     return sink ? [args[0], args[1], trust(sink, args[2])] : args
   })
-  // `textContent` and `innerText` are sinks on <script> only; the setters live up the chain.
+  // `textContent` and `innerText` are sinks on <script> only. Their setters live up the chain
+  // (Node, HTMLElement); Chromium 156 also gives HTMLScriptElement its own pair, per the HTML
+  // spec's Trusted Types overrides, and those shadow the inherited ones, so they are patched too
+  // where they exist (a `getOwnPropertyDescriptor` miss on an older engine skips them).
   for (const [proto, name] of [
     [world.Node?.prototype, 'textContent'],
-    [world.HTMLElement?.prototype, 'innerText']
+    [world.HTMLElement?.prototype, 'innerText'],
+    [world.HTMLScriptElement?.prototype, 'textContent'],
+    [world.HTMLScriptElement?.prototype, 'innerText']
   ] as const) {
     if (!proto) continue
     const desc = Object.getOwnPropertyDescriptor(proto, name)
