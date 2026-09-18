@@ -1234,11 +1234,14 @@ async function scenarioBoot() {
  */
 async function scenarioRestore() {
   const userData = path.join(profileRoot, 'profile')
+  // Read before the launch: the app's first (debounced) write of the new run flips the marker
+  // back to false, and how soon it lands after the chrome renders differs per platform.
+  const stateBefore = readState(userData)
   return runScenario('restore', userData, {}, async (s, out) => {
-    out.stateBefore = readState(userData)
+    out.stateBefore = stateBefore
     await s.step('restored-tab', async () => {
-      if (out.stateBefore.cleanExit !== true) {
-        throw new Error(`profile not marked cleanly exited: ${JSON.stringify(out.stateBefore)}`)
+      if (stateBefore.cleanExit !== true) {
+        throw new Error(`profile not marked cleanly exited: ${JSON.stringify(stateBefore)}`)
       }
       await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
       const onboarding = await s.chrome.locator('[data-testid="onboarding"]').count()
@@ -1596,8 +1599,9 @@ async function scenarioWalkthrough() {
  */
 async function scenarioCrash() {
   const userData = path.join(profileRoot, 'profile')
+  const stateBeforeCrash = readState(userData)
   const killed = await runScenario('crash', userData, {}, async (s, out) => {
-    out.stateBefore = readState(userData)
+    out.stateBefore = stateBeforeCrash
     await s.step('running-marker', async () => {
       await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
       await s.waitForTab(EXAMPLE_URL, 30000)
@@ -1624,9 +1628,13 @@ async function scenarioCrash() {
   })
   if (killed.fatal) return killed
 
+  const stateAfterCrash = readState(userData)
   return runScenario('crash-restore', userData, {}, async (s, out) => {
-    out.stateBefore = readState(userData)
+    out.stateBefore = stateAfterCrash
     await s.step('restore-offer', async () => {
+      if (stateAfterCrash.cleanExit !== false) {
+        throw new Error(`profile not marked as crashed: ${JSON.stringify(stateAfterCrash)}`)
+      }
       const bar = s.chrome.locator('[data-crash-restore]').first()
       await bar.waitFor({ state: 'visible', timeout: 15000 })
       await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
