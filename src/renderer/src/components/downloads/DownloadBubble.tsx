@@ -152,7 +152,12 @@ function Bubble({ state }: { state: UIState }): JSX.Element {
           ) : (
             <ul className="zen-dl-list">
               {items.map((item) => (
-                <DownloadRow key={item.id} item={item} highlighted={item.id === ui.highlightId} />
+                <DownloadRow
+                  key={item.id}
+                  item={item}
+                  highlighted={item.id === ui.highlightId}
+                  draggable
+                />
               ))}
             </ul>
           )}

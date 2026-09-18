@@ -94,6 +94,9 @@ export class ElectronDownloadsShell {
   /** `done` covers completed, cancelled and interrupted; a flagged file waits for Keep instead. */
   private onDone(item: DownloadItem): void {
     if (item.state !== 'completed' || needsDangerDecision(item)) return
+    // Finder's Downloads stack bounces for a file saved into ~/Downloads, focused or not (Chrome
+    // posts the same notice); the dock icon is only bounced when the app is in the background.
+    if (process.platform === 'darwin' && item.savePath) app.dock?.downloadFinished(item.savePath)
     const focused = this.browser.allWindows().some((w) => w.host.isFocused())
     if (focused) return
     this.unseen++

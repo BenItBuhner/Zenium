@@ -260,4 +260,35 @@ describe('the desktop downloads shell', () => {
     publish([flagged], flagged, 'done')
     expect(FakeNotification.shown).toHaveLength(0)
   })
+
+  it('on macOS a finished file bounces the Downloads stack; the dock icon only in the background', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    const dock = { downloadFinished: vi.fn(), setBadge: vi.fn(), bounce: vi.fn() }
+    const electronApp = appEvents as unknown as { dock: typeof dock | undefined }
+    electronApp.dock = dock
+    try {
+      const front = fakeWindow({ focused: true })
+      const focused = fakeBrowser([front])
+      new ElectronDownloadsShell(focused.browser as never)
+      const done = item({ id: 'a', savePath: '/Users/me/Downloads/report.pdf' })
+      focused.publish([done], done, 'done')
+      expect(dock.downloadFinished).toHaveBeenCalledWith('/Users/me/Downloads/report.pdf')
+      expect(dock.bounce).not.toHaveBeenCalled()
+
+      const away = fakeWindow({ focused: false })
+      const background = fakeBrowser([away])
+      new ElectronDownloadsShell(background.browser as never)
+      background.publish([done], done, 'done')
+      expect(dock.downloadFinished).toHaveBeenCalledTimes(2)
+      expect(dock.bounce).toHaveBeenCalledWith('informational')
+      expect(dock.setBadge).toHaveBeenCalledWith('1')
+      // A window coming to the front clears the badge.
+      appEvents.emit('browser-window-focus')
+      expect(dock.setBadge).toHaveBeenLastCalledWith('')
+    } finally {
+      electronApp.dock = undefined
+      if (platform) Object.defineProperty(process, 'platform', platform)
+    }
+  })
 })

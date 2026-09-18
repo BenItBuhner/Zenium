@@ -6,6 +6,7 @@ import type {
   Settings
 } from '../../shared/types'
 import { searchCommands, type CommandContext } from '../../shared/commands'
+import { resolveDownloadSettings } from '../../shared/downloads'
 import { buildSearchUrl } from '../../shared/search'
 import { Browser } from '../browser'
 import type {
@@ -1219,11 +1220,15 @@ describe('the download row menu', () => {
   const enabled = (h: Harness, label: string): boolean | undefined =>
     h.shown().find((item) => item.label === label)?.enabled
 
-  it('offers Pause and Cancel while the transfer runs, with Open greyed', () => {
+  const checked = (h: Harness, label: string): boolean | undefined =>
+    h.shown().find((item) => item.label === label)?.checked
+
+  it('offers Open when done, Pause and Cancel while the transfer runs', () => {
     const h = harness(DESKTOP)
     const id = start(h)
     expect(menu(h, id)).toEqual([
-      'Open',
+      'Open When Done',
+      'Always Open Files of This Type',
       'Show in Folder',
       '-',
       'Copy Download Link',
@@ -1233,9 +1238,62 @@ describe('the download row menu', () => {
       '-',
       'Remove from List'
     ])
-    expect(enabled(h, 'Open')).toBe(false)
+    expect(checked(h, 'Open When Done')).toBe(false)
     expect(enabled(h, 'Show in Folder')).toBe(false)
     expect(enabled(h, 'Remove from List')).toBe(false)
+  })
+
+  it('Open when done is a toggle on the row (Chrome applies it when the transfer finishes)', () => {
+    const h = harness(DESKTOP)
+    const id = start(h)
+    menu(h, id)
+    h.shown()
+      .find((item) => item.label === 'Open When Done')
+      ?.click?.()
+    expect(h.browser.downloads.item(id)?.openWhenDone).toBe(true)
+    expect(checked(h, 'Open When Done')).toBe(false)
+    menu(h, id)
+    expect(checked(h, 'Open When Done')).toBe(true)
+    h.shown()
+      .find((item) => item.label === 'Open When Done')
+      ?.click?.()
+    expect(h.browser.downloads.item(id)?.openWhenDone).toBe(false)
+  })
+
+  it('Always open files of this type toggles the extension in the engine setting', () => {
+    const h = harness(DESKTOP)
+    const id = start(h)
+    menu(h, id)
+    expect(checked(h, 'Always Open Files of This Type')).toBe(false)
+    h.shown()
+      .find((item) => item.label === 'Always Open Files of This Type')
+      ?.click?.()
+    expect(resolveDownloadSettings(h.browser.state.settings).autoOpenTypes).toEqual(['pdf'])
+    menu(h, id)
+    expect(checked(h, 'Always Open Files of This Type')).toBe(true)
+    h.shown()
+      .find((item) => item.label === 'Always Open Files of This Type')
+      ?.click?.()
+    expect(resolveDownloadSettings(h.browser.state.settings).autoOpenTypes).toEqual([])
+  })
+
+  it('never offers Always open for a type Chromium keeps from opening by itself, or for no type', () => {
+    const h = harness(DESKTOP)
+    // `.crx` is ALLOW_ON_USER_GESTURE on every platform (`.exe` only on Windows).
+    const flagged = h.browser.downloads.begin({
+      url: 'https://example.com/extension.crx',
+      filename: 'extension.crx',
+      totalBytes: 100,
+      mimeType: 'application/x-chrome-extension'
+    }).id
+    expect(menu(h, flagged)).not.toContain('Always Open Files of This Type')
+    const bare = h.browser.downloads.begin({
+      url: 'https://example.com/README',
+      filename: 'README',
+      totalBytes: 100,
+      mimeType: 'text/plain'
+    }).id
+    expect(menu(h, bare)).not.toContain('Always Open Files of This Type')
   })
 
   it('swaps Pause for Resume once paused', () => {
@@ -1253,6 +1311,7 @@ describe('the download row menu', () => {
     h.browser.downloads.finish(failed, 'interrupted')
     expect(menu(h, failed)).toEqual([
       'Open',
+      'Always Open Files of This Type',
       'Show in Folder',
       '-',
       'Copy Download Link',
@@ -1261,6 +1320,7 @@ describe('the download row menu', () => {
       '-',
       'Remove from List'
     ])
+    expect(enabled(h, 'Open')).toBe(false)
     expect(enabled(h, 'Remove from List')).toBe(true)
     const cancelled = start(h)
     h.browser.downloads.finish(cancelled, 'cancelled')
@@ -1282,6 +1342,7 @@ describe('the download row menu', () => {
     h.browser.downloads.finish(id, 'cancelled')
     expect(menu(h, id)).toEqual([
       'Open',
+      'Always Open Files of This Type',
       'Show in Folder',
       '-',
       'Copy Download Link',
@@ -1295,6 +1356,7 @@ describe('the download row menu', () => {
     const id = h.browser.downloads.addCompleted('/tmp/shot.png', 'image/png').id
     expect(menu(h, id)).toEqual([
       'Open',
+      'Always Open Files of This Type',
       'Show in Folder',
       '-',
       'Copy Download Link',
