@@ -30,6 +30,7 @@ import {
   phoneBarOffered
 } from '@shared/phoneBar'
 import { SEARCH_SCOPES, completeWwwCom, matchKeyword } from '@shared/search'
+import { internalPageAliasUrl } from '@shared/internalPages'
 import { ERROR_URL_PREFIX, isEmptyTabUrl, isNewTabUrl } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
@@ -55,8 +56,9 @@ const drafts = new Map<string, string>()
 let keywordSeq = 0
 
 /**
- * The text the field holds for a page: its address, or the address an error page stands in for.
- * Empty tabs – blank and the new tab page alike – hold nothing, as Chrome's omnibox does there.
+ * The text the field holds for a page: its address, the address an error page stands in for, or
+ * an internal page's user-facing `zenium://` alias (`zen://` never shows; v2 §10.1). Empty tabs –
+ * blank and the new tab page alike – hold nothing, as Chrome's omnibox does there.
  */
 function pageTextFor(tab: Tab): string {
   if (isEmptyTabUrl(tab.url)) return ''
@@ -67,7 +69,7 @@ function pageTextFor(tab: Tab): string {
       return ''
     }
   }
-  return tab.url
+  return internalPageAliasUrl(tab.url)
 }
 
 function initialTextFor(state: UIState, urlbar: UrlbarState): string {
@@ -251,8 +253,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   const draftKey = tab && urlbar.mode !== 'new-tab' ? `${tab.id}|${tab.url}` : 'new'
   const close = useCallback(
     (keepDraft: boolean) => {
-      if (keepDraft && text.trim() && text !== tab?.url) drafts.set(draftKey, text)
-      else drafts.delete(draftKey)
+      if (keepDraft && text.trim() && (!tab || text !== pageTextFor(tab))) {
+        drafts.set(draftKey, text)
+      } else drafts.delete(draftKey)
       // An extension's omnibox session, if one was on, ends without an entry.
       run('urlbar.cancel', undefined)
       closeUrlbar()

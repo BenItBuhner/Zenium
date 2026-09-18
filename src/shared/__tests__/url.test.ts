@@ -132,7 +132,9 @@ describe('fullUrl / addressParts', () => {
     expect(
       fullUrl('zen://reader/?id=article_1&url=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FZen')
     ).toBe('https://en.wikipedia.org/wiki/Zen')
-    expect(fullUrl('zen://settings')).toBe('zen://settings')
+    // An internal page is shown and copied under its user-facing alias (v2 §10.1).
+    expect(fullUrl('zen://settings')).toBe('zenium://settings')
+    expect(fullUrl('zen://history')).toBe('zen://history')
   })
 
   it('splits the site from the dimmed path, query and fragment', () => {
@@ -204,6 +206,18 @@ describe('internal pages', () => {
     expect(isProbablyUrl('zenium://settings')).toBe(true)
   })
 
+  it('takes Chrome’s and Firefox’s addresses for the page, typed from habit', () => {
+    expect(inputToUrl('chrome://settings')).toBe('zen://settings')
+    expect(inputToUrl('chrome://settings/privacy')).toBe('zen://settings/privacy')
+    expect(inputToUrl('chrome://settings/')).toBe('zen://settings')
+    expect(inputToUrl('CHROME://Settings/Look')).toBe('zen://settings/look')
+    expect(inputToUrl('about:preferences')).toBe('zen://settings')
+    expect(inputToUrl('about:settings')).toBe('zen://settings')
+    // Chrome addresses Zenium has no page for stay what they are.
+    expect(inputToUrl('chrome://flags')).toBe('chrome://flags')
+    expect(inputToUrl('chrome://version')).toBe('chrome://version')
+  })
+
   it('shows the alias in the address bar and the title on the tab', () => {
     expect(displayUrl('zen://settings')).toBe('zenium://settings')
     expect(displayUrl('zen://settings/look')).toBe('zenium://settings/look')
@@ -211,6 +225,13 @@ describe('internal pages', () => {
     expect(titleForUrl('zen://settings')).toBe('Settings')
     expect(titleForUrl('zen://settings/privacy')).toBe('Settings')
     expect(titleForUrl('zen://settings/unknown')).toBe('Settings')
+  })
+
+  it('copies and shares the alias, never the stored zen:// form', () => {
+    expect(fullUrl('zen://settings')).toBe('zenium://settings')
+    expect(fullUrl('zen://settings/privacy')).toBe('zenium://settings/privacy')
+    expect(fullUrl('https://www.example.com/a?b=c')).toBe('https://www.example.com/a?b=c')
+    expect(fullUrl('zen://history')).toBe('zen://history')
   })
 })
 

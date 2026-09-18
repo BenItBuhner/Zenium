@@ -44,6 +44,7 @@ import {
   safeBrowsingPageUrl,
   titleForUrl
 } from '../shared/url'
+import { internalPageAliasUrl } from '../shared/internalPages'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import { describeNetError, HTTP_FALLBACK_CODES, overlayForUrl } from '../shared/zenPages'
@@ -2504,9 +2505,11 @@ export class TabManager {
   copyUrl(tabId: string, markdown = false): void {
     const tab = this.tab(tabId)
     if (!tab) return
+    // An error page copies the address it stands in for; an internal page its user-facing
+    // `zenium://` alias (`zen://` never leaves `tab.url`).
     const url = tab.url.startsWith(ERROR_URL_PREFIX)
       ? (safeParam(tab.url, 'url') ?? tab.url)
-      : tab.url
+      : internalPageAliasUrl(tab.url)
     // The one copy desktop has always confirmed, in its own words.
     this.browser.copyText(
       markdown ? `[${tab.customTitle ?? tab.title}](${url})` : url,

@@ -3,7 +3,15 @@ import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared
 import { INTERNAL_PAGES, type InternalPageRegistry } from '../../shared/internalPages'
 import { Browser } from '../browser'
 import type { ZenWindow } from '../window'
-import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
+import type {
+  ClipboardHost,
+  Platform,
+  ShellHost,
+  StoreIO,
+  TabView,
+  TabViewHost,
+  WindowHost
+} from '../platform'
 import { createSpace, createTabRecord } from '../model'
 import { PageService } from '../pages'
 
@@ -45,6 +53,10 @@ interface Fixture {
   sent: Sent[]
   /** `host.focus()` calls per window id (a window brought to the front). */
   raised: Map<string, number>
+  /** Text put on the clipboard, in order. */
+  copied: string[]
+  /** URLs handed to the system share sheet, in order. */
+  shared: string[]
 }
 
 function fixture(
@@ -60,6 +72,8 @@ function fixture(
   const loaded: string[] = []
   const sent: Sent[] = []
   const raised = new Map<string, number>()
+  const copied: string[] = []
+  const shared: string[] = []
   const capabilities = stub<HostCapabilities>({
     windows: opts.windows ?? false,
     updates: false,
@@ -117,8 +131,16 @@ function fixture(
     }),
     menus: stub(),
     dialogs: stub(),
-    clipboard: stub(),
-    shell: stub(),
+    clipboard: stub<ClipboardHost>({
+      writeText: (text: string) => {
+        copied.push(text)
+      }
+    }),
+    shell: stub<ShellHost>({
+      share: async (payload: { url?: string }) => {
+        shared.push(payload.url ?? '')
+      }
+    }),
     net: stub(),
     downloads: stub(),
     sessions: stub(),
@@ -133,7 +155,7 @@ function fixture(
   browser.state.settings.onboardingDone = true
   browser.start()
   const win = browser.focusedWindow()
-  return { browser, win, viewsFor, loaded, sent, raised }
+  return { browser, win, viewsFor, loaded, sent, raised, copied, shared }
 }
 
 function activeTab(f: Fixture): Tab | undefined {
@@ -470,6 +492,30 @@ describe('registry attributes the core reads', () => {
     expect(f.browser.bookmarkable('zen://welcome')).toBe(false)
     f.browser.toggleBookmark(id, f.win)
     expect(f.browser.bookmarks.has('zen://welcome')).toBe(false)
+  })
+})
+
+describe('the address the user gets (zen:// never leaves tab.url)', () => {
+  it('copies the zenium:// alias, plain and as Markdown', () => {
+    const f = fixture()
+    openSite(f, 'https://a.test/')
+    const id = openPage(f, 'privacy') ?? ''
+    f.browser.handleCommand(f.win, 'tab.copyUrl', { tabId: id, markdown: false })
+    f.browser.handleCommand(f.win, 'tab.copyUrl', { tabId: id, markdown: true })
+    expect(f.copied).toEqual(['zenium://settings/privacy', '[Settings](zenium://settings/privacy)'])
+    expect(f.browser.tabs.tab(id)?.url).toBe('zen://settings/privacy')
+  })
+
+  it('shares the alias – the deep link another app opens the page by', () => {
+    const f = fixture()
+    openSite(f, 'https://a.test/')
+    const id = openPage(f, 'look') ?? ''
+    f.browser.shareTab(id, f.win)
+    expect(f.shared).toEqual(['zenium://settings/look'])
+    // Other zen:// documents still have nothing to share.
+    const blank = f.browser.tabs.createTab({ url: 'zen://blank', active: true }, f.win)
+    f.browser.shareTab(blank.id, f.win)
+    expect(f.shared).toEqual(['zenium://settings/look'])
   })
 })
 

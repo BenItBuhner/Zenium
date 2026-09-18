@@ -82,6 +82,7 @@ import {
   tabVisibleIn
 } from './model'
 import { BLANK_URL, getDomain, inputToUrl, isEmptyTabUrl } from '../shared/url'
+import { internalPageAliasUrl } from '../shared/internalPages'
 import { overlayForUrl } from '../shared/zenPages'
 import { openAllPrompt, sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
 import { PageService } from './pages'
@@ -1376,17 +1377,21 @@ export class Browser {
     if (text) this.copyText(text, 'Link copied', win)
   }
 
-  /** Share a tab's page: its title and address, with its favicon as the preview. */
+  /**
+   * Share a tab's page: its title and address, with its favicon as the preview. An internal
+   * page shares its user-facing `zenium://` address – the deep link another app or device opens
+   * it by; `zen://` never leaves `tab.url`.
+   */
   shareTab(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
     const tab = this.tabs.tab(tabId)
-    if (!tab || !/^https?:/i.test(tab.url)) {
+    if (!tab || !(/^https?:/i.test(tab.url) || this.pages.isPageTab(tab))) {
       this.toast('This page cannot be shared', 'info', win)
       return
     }
     void this.share(
       {
         title: tab.customTitle ?? tab.title,
-        url: tab.url,
+        url: internalPageAliasUrl(tab.url),
         tabId,
         favicon: tab.favicon ?? undefined
       },

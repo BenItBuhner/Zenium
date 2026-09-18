@@ -143,6 +143,12 @@ export function inputToUrl(raw: string): string | null {
     const page = parseInternalPageUrl(input)
     if (page) return internalPageUrl(page)
     if (scheme === INTERNAL_ALIAS_SCHEME) return BLANK_URL
+    if (scheme === 'chrome') {
+      // Chrome's address for a page Zenium has too (`chrome://settings/privacy`, typed from
+      // habit) opens Zenium's; other chrome:// addresses stay what they are.
+      const chromePage = parseInternalPageUrl(`zen://${input.slice('chrome://'.length)}`)
+      if (chromePage) return internalPageUrl(chromePage)
+    }
     return input
   }
   // Local dev servers and IPs are almost always plain http.
@@ -180,7 +186,8 @@ export function displayUrl(url: string): string {
 
 /**
  * The address in full, as Chrome's "Always show full URLs" shows it and as a copy yields it:
- * scheme and `www.` kept, error and Reader View pages replaced by the address they stand in for.
+ * scheme and `www.` kept, error and Reader View pages replaced by the address they stand in for,
+ * an internal page as its user-facing `zenium://` alias (`zen://` never leaves `tab.url`).
  */
 export function fullUrl(url: string): string {
   // An empty tab (the blank page, the new tab page) has no address to show: `zen://newtab` is
@@ -193,7 +200,7 @@ export function fullUrl(url: string): string {
       return ''
     }
   }
-  return url
+  return internalPageAliasUrl(url)
 }
 
 /**
