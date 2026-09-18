@@ -566,6 +566,20 @@ class ExtensionDemo {
         val csp = json(tabEval(cspView, PROBE_REPORT))
         if (worlds) mergeWorldReports(cspView, csp)
         results.put("cspPage", csp)
+        // The probe inserts <script src=chrome.runtime.getURL('page-script.js')> into the page; the
+        // page's script-src ('self' 'unsafe-inline') refuses the extension origin, Chrome would
+        // not, and the layer runs the file in the main world through the host instead.
+        val pageScriptRan = csp.optJSONObject("pageScript")?.optBoolean("ran") == true
+        val pageScriptEvent = csp.optJSONObject("idle")?.optJSONObject("steps")?.opt("pageScript")?.toString() ?: "unreported"
+        stage(
+            PROBE_ID, "pageScriptUnderCsp",
+            when {
+                pageScriptRan && pageScriptEvent == "load" -> "PASS"
+                pageScriptRan || pageScriptEvent == "load" -> "PARTIAL"
+                else -> "FAIL"
+            },
+            "main world saw the script run=$pageScriptRan, element event=$pageScriptEvent, page CSP script-src 'self' 'unsafe-inline'"
+        )
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(cspTab)},"force":true}""")
         trustedTypesPage()
         instrumentation.runOnMainSync { results.put("lateOnPageStarted", host.extensions.lateOnPageStarted) }
@@ -1063,7 +1077,7 @@ class ExtensionDemo {
 
         private const val PROBE_DONE = "String(document.documentElement.getAttribute('data-zen-probe-done') === '1')"
         private const val PROBE_REPORT =
-            "JSON.stringify({start: document.__zenProbeStart || null, idle: document.__zenProbeIdle || null, page: window.__page || null, stats: window.__zenExtStats || null, readyState: document.readyState, url: location.href})"
+            "JSON.stringify({start: document.__zenProbeStart || null, idle: document.__zenProbeIdle || null, page: window.__page || null, pageScript: window.__pageScript || null, stats: window.__zenExtStats || null, readyState: document.readyState, url: location.href})"
         /** What one extension's world sees: the probe's document expandos, the bootstrap's stats, and the world/page boundary. */
         private const val WORLD_REPORT =
             "JSON.stringify({start: document.__zenProbeStart || null, idle: document.__zenProbeIdle || null, stats: window.__zenExtStats || null, " +

@@ -756,12 +756,56 @@ class Extensions(private val host: Host) {
                 closePopup()
                 return
             }
+            "mainScript" -> {
+                mainWorldScript(view, proxy, isMainFrame, ep, message)
+                return
+            }
         }
         val tabId = (view as? TabWebView)?.tabId
         host.chrome.hostEvent(
             "ext.message",
             json("ep" to ep, "tabId" to tabId, "top" to isMainFrame, "origin" to origin.toString(), "message" to message)
         )
+    }
+
+    /**
+     * A content script inserted `<script src="https://<id>.ext.zenium.invalid/…">` into the page
+     * and the page's Content-Security-Policy refused it. In Chrome an extension's resources are
+     * beyond a page's policy (`chrome-extension:` bypasses CSP); the emulated origin is an https
+     * origin any `script-src` can refuse. The world reports the refused element; the file, when
+     * it is web-accessible, runs in the main world through `evaluateJavascript`, which no page
+     * policy governs, and the world hears back so it can fire the element's `load`. Main frame
+     * only: `evaluateJavascript` takes no frame.
+     */
+    private fun mainWorldScript(view: WebView, proxy: JavaScriptReplyProxy, isMainFrame: Boolean, ep: String, message: JSONObject) {
+        val id = message.opt("id")
+        val url = message.str("url")
+        val extId = endpoints[ep]?.extensionId ?: message.str("ext")
+        fun done(error: String?) {
+            val reply = json("t" to "mainScriptDone", "ep" to ep, "id" to id, "ok" to (error == null), "error" to error).toString()
+            main.post {
+                if (debug) recordReply(ep, reply)
+                runCatching { proxy.postMessage(reply) }
+            }
+        }
+        val uri = Uri.parse(url)
+        val ext = served[extId]
+        val path = (uri.path ?: "/").trimStart('/')
+        when {
+            ext == null -> done("the extension is not attached")
+            uri.scheme != "https" || uri.host != "$extId$ORIGIN_SUFFIX" -> done("$url is not on the extension's origin")
+            !isMainFrame -> done("only the main frame's scripts can run in the main world")
+            !ext.webAccessible.any { it.matches(path) } -> done("$path is not a web-accessible resource")
+            else -> io.execute {
+                val text = fileIn(ext.dir, path)?.takeIf { it.isFile }?.let { f -> runCatching { f.readText() }.getOrNull() }
+                if (text == null) {
+                    done("$path was not found")
+                    return@execute
+                }
+                // `;void 0` keeps the script's last expression out of the result string.
+                main.post { view.evaluateJavascript("$text\n;void 0;\n//# sourceURL=$url") { done(null) } }
+            }
+        }
     }
 
     // ---------------------------------------------------------------------------------------------

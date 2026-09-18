@@ -26,6 +26,7 @@ import {
   installTrustedTypesShield,
   type Any
 } from './extensionIsolation'
+import { createScriptRecovery, type ScriptRecovery } from './extensionScriptRecovery'
 import {
   installServiceWorkerClient,
   installServiceWorkerGlobals,
@@ -158,6 +159,8 @@ declare const __zenExtBoot: Boot
   const engines = new Map<string, EmulatedEngine>()
   /** Extension pages: the emulated service-worker platform's messages (`t: 'sw'`) per endpoint. */
   const serviceWorkerEndpoints = new Map<string, ServiceWorkerEndpoint>()
+  /** Content mode: extension-origin `<script>` elements the page's CSP refused (see below). */
+  let scriptRecovery: ScriptRecovery | null = null
   transport.listen((event) => {
     let message: Record<string, unknown>
     try {
@@ -168,6 +171,13 @@ declare const __zenExtBoot: Boot
     const ep = String(message.ep)
     if (message.t === 'sw') {
       serviceWorkerEndpoints.get(ep)?.receive(message)
+      return
+    }
+    if (message.t === 'mainScriptDone') {
+      scriptRecovery?.done(
+        String(message.id),
+        message.ok === true ? null : String(message.error ?? 'the host refused')
+      )
       return
     }
     const engine = engines.get(ep)
@@ -203,7 +213,7 @@ declare const __zenExtBoot: Boot
     typeof performance === 'object' && performance && performance.timeOrigin > 0
       ? Math.round(performance.timeOrigin).toString(36)
       : nonce
-  const endpointIdFor = (ext: ExtensionBoot): string => `${docId}.${nonce}.${ext.id.slice(0, 8)}`
+  const endpointIdFor = (extId: string): string => `${docId}.${nonce}.${extId.slice(0, 8)}`
   const realWindow = window as unknown as Any
   const engineTransport = { post }
 
@@ -238,7 +248,7 @@ declare const __zenExtBoot: Boot
     root: object,
     world: boolean
   ): EmulatedEngine {
-    const endpointId = endpointIdFor(ext)
+    const endpointId = endpointIdFor(ext.id)
     const engine = createEmulatedEngine(
       {
         id: ext.id,
@@ -303,7 +313,7 @@ declare const __zenExtBoot: Boot
     const engine = makeEngine(ext, context, frame, realWindow, false)
     const pageWindow = realWindow
     const origin = extensionOrigin(ext.id)
-    const endpointId = endpointIdFor(ext)
+    const endpointId = endpointIdFor(ext.id)
     // The service-worker platform between an MV3 worker (a hidden page here) and its pages;
     // MV2 backgrounds are pages in Chrome too and get none of it.
     const background = ext.manifest.background as Record<string, unknown> | undefined
@@ -400,6 +410,27 @@ declare const __zenExtBoot: Boot
   const unitWorld = content.world
   const frame = frameContext()
   const attached: ExtensionBoot[] = []
+
+  // A page's CSP has no say over an extension's resources in Chrome; over the emulated origin it
+  // has. A `<script src=<extension origin>/…>` the page's `script-src` refused runs in the main
+  // world through the host instead (`extensionScriptRecovery.ts`).
+  scriptRecovery = createScriptRecovery({
+    attachedIds: () => attached.map((e) => e.id),
+    request: (id, extId, url) =>
+      post(
+        primordials.stringify({
+          t: 'mainScript',
+          token: content.token,
+          ep: endpointIdFor(extId),
+          ext: extId,
+          id,
+          url
+        })
+      ),
+    error: primordials.error
+  })
+  const recovery = scriptRecovery
+  window.addEventListener('error', (event) => recovery.onError(event), true)
   const builtins = collectBuiltins(realWindow)
   const stats: BootStats | null = boot.debug
     ? {

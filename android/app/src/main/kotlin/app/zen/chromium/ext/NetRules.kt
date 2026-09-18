@@ -126,9 +126,11 @@ class NetRules(val rules: List<Rule>) {
         val initiatorHost = initiator?.let(::hostOf) ?: ""
         val lowerUrl = url.lowercase(Locale.ROOT)
         val lowerMethod = method.lowercase(Locale.ROOT)
+        // Once per request, not per domainType rule (hundreds of them test it for every request).
+        val firstParty = initiatorHost.isNotEmpty() && registrableDomain(initiatorHost) == registrableDomain(host)
         var best: Rule? = null
         val consider = { rule: Rule ->
-            if (rule.action != "modifyHeaders" && matches(rule, url, lowerUrl, host, initiatorHost, type, lowerMethod) &&
+            if (rule.action != "modifyHeaders" && matches(rule, url, lowerUrl, host, initiatorHost, type, lowerMethod, firstParty) &&
                 (best == null || rule.priority > best!!.priority ||
                     (rule.priority == best!!.priority && rank(rule.action) > rank(best!!.action)))
             ) best = rule
@@ -150,7 +152,7 @@ class NetRules(val rules: List<Rule>) {
         }
     }
 
-    private fun matches(rule: Rule, url: String, lowerUrl: String, host: String, initiatorHost: String, type: String, method: String): Boolean {
+    private fun matches(rule: Rule, url: String, lowerUrl: String, host: String, initiatorHost: String, type: String, method: String, firstParty: Boolean): Boolean {
         if (rule.resourceTypes.isNotEmpty()) {
             if (type !in rule.resourceTypes) return false
         } else if (rule.excludedResourceTypes.isNotEmpty()) {
@@ -165,7 +167,6 @@ class NetRules(val rules: List<Rule>) {
         if (rule.initiatorDomainSet.isNotEmpty() && !hostIn(initiatorHost, rule.initiatorDomainSet)) return false
         if (rule.excludedInitiatorDomainSet.isNotEmpty() && hostIn(initiatorHost, rule.excludedInitiatorDomainSet)) return false
         if (rule.domainType != null) {
-            val firstParty = initiatorHost.isNotEmpty() && registrableDomain(initiatorHost) == registrableDomain(host)
             if (rule.domainType == "firstParty" && !firstParty) return false
             if (rule.domainType == "thirdParty" && firstParty) return false
         }

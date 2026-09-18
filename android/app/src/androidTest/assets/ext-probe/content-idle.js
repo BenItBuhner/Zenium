@@ -146,6 +146,32 @@
       end()
     })
 
+  // 8. A web-accessible script of the extension inserted into the page (main world). Chrome
+  // lets it load whatever the page's CSP says; the emulation layer recovers a refusal.
+  begin()
+  try {
+    var pageScript = document.createElement('script')
+    var pageScriptTimer = setTimeout(function () {
+      fail('pageScript', 'neither load nor error within 8 s')
+      end()
+    }, 8000)
+    pageScript.onload = function () {
+      clearTimeout(pageScriptTimer)
+      done('pageScript', 'load')
+      end()
+    }
+    pageScript.onerror = function () {
+      clearTimeout(pageScriptTimer)
+      fail('pageScript', 'error event')
+      end()
+    }
+    pageScript.src = chrome.runtime.getURL('page-script.js')
+    ;(document.head || document.documentElement).appendChild(pageScript)
+  } catch (e) {
+    fail('pageScript', e)
+    end()
+  }
+
   // 7. The background's own report (installed reason, alarms, tabs, navigation events).
   begin()
   setTimeout(function () {

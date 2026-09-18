@@ -24,7 +24,7 @@
     },
     { "matches": ["<all_urls>"], "js": ["content-idle.js"], "run_at": "document_idle" }
   ],
-  "web_accessible_resources": [{ "resources": ["data.json"], "matches": ["<all_urls>"] }],
+  "web_accessible_resources": [{ "resources": ["data.json", "page-script.js"], "matches": ["<all_urls>"] }],
   "declarative_net_request": {
     "rule_resources": [{ "id": "probe", "enabled": true, "path": "rules.json" }]
   }
