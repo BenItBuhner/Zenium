@@ -28,15 +28,17 @@
  * expressed in the engine's model; see the dnr-translator report for the engine changes that
  * would close both gaps.
  *
- * Rules the engine cannot evaluate yet are left out of the set and reported: response header
- * conditions (they need a headers-received stage). `redirect.transform` rules are emitted with
- * the transform carried along; until the engine applies transforms they decide nothing.
+ * Response header conditions travel with the rule: the engine decides such rules at its
+ * headers-received stage and merges them with the request stage as Chrome does.
+ * `redirect.transform` rules are emitted with the transform carried along; until the engine
+ * applies transforms they decide nothing.
  */
 import {
   ENGINE_DNR_BAND_SIZE,
   ENGINE_DNR_PRIORITY,
   dnrAttribution,
   engineSetId,
+  type EngineHeaderCondition,
   type EngineRule,
   type EngineRuleAction,
   type EngineRuleCondition,
@@ -47,6 +49,7 @@ import {
 import {
   actionTypePriority,
   type CompiledRule,
+  type HeaderInfo,
   type ModifyHeaderInfo,
   type RulesetSource
 } from './rules'
@@ -79,17 +82,8 @@ export interface TranslateExtension {
   installRank?: number
 }
 
-export type SkipReason = 'responseHeaderCondition'
-
-export interface SkippedRule {
-  ruleId: number
-  reason: SkipReason
-}
-
 export interface RulesetTranslation {
   set: EngineRuleSet
-  /** Rules left out because the engine has no way to evaluate them. */
-  skipped: SkippedRule[]
   /** Rules emitted with a `redirect.transform` the engine does not apply yet. */
   transforms: number[]
 }
@@ -137,6 +131,16 @@ function list<T>(values: readonly T[] | undefined): T[] | undefined {
   return values && values.length > 0 ? [...values] : undefined
 }
 
+function headerConditions(infos: readonly HeaderInfo[]): EngineHeaderCondition[] | undefined {
+  if (infos.length === 0) return undefined
+  return infos.map((info) => {
+    const out: EngineHeaderCondition = { header: info.header }
+    if (info.values !== undefined) out.values = [...info.values]
+    if (info.excludedValues !== undefined) out.excludedValues = [...info.excludedValues]
+    return out
+  })
+}
+
 function translateCondition(rule: CompiledRule): EngineRuleCondition {
   const source = rule.rule.condition
   const condition: EngineRuleCondition = {}
@@ -171,14 +175,15 @@ function translateCondition(rule: CompiledRule): EngineRuleCondition {
   if (rule.domainType !== undefined) condition.domainType = rule.domainType
   if (rule.tabIds.size > 0) condition.tabIds = [...rule.tabIds]
   if (rule.excludedTabIds.size > 0) condition.excludedTabIds = [...rule.excludedTabIds]
+  const responseHeaders = headerConditions(rule.responseHeaders)
+  const excludedResponseHeaders = headerConditions(rule.excludedResponseHeaders)
+  if (responseHeaders) condition.responseHeaders = responseHeaders
+  if (excludedResponseHeaders) condition.excludedResponseHeaders = excludedResponseHeaders
   return condition
 }
 
-/** Translate one compiled rule; undefined when the engine cannot evaluate it. */
-export function translateRule(rule: CompiledRule): EngineRule | SkippedRule {
-  if (rule.responseHeaders.length > 0 || rule.excludedResponseHeaders.length > 0) {
-    return { ruleId: rule.id, reason: 'responseHeaderCondition' }
-  }
+/** Translate one compiled rule. */
+export function translateRule(rule: CompiledRule): EngineRule {
   const out: EngineRule = {
     id: rule.id,
     action: translateAction(rule),
@@ -186,10 +191,6 @@ export function translateRule(rule: CompiledRule): EngineRule | SkippedRule {
   }
   if (rule.priority !== 1) out.priority = rule.priority
   return out
-}
-
-function isSkipped(value: EngineRule | SkippedRule): value is SkippedRule {
-  return 'reason' in value
 }
 
 /**
@@ -221,17 +222,12 @@ export function translateRuleset(
   ruleset: TranslateRuleset,
   options: TranslateOptions = {}
 ): RulesetTranslation {
-  const skipped: SkippedRule[] = []
   const transforms: number[] = []
   const rules: EngineRule[] = []
   const ordered = [...ruleset.rules].sort(compareForEmission)
   for (const compiled of ordered) {
     if (ruleset.disabledRuleIds?.has(compiled.id)) continue
     const translated = translateRule(compiled)
-    if (isSkipped(translated)) {
-      skipped.push(translated)
-      continue
-    }
     if (translated.action.redirect?.transform) transforms.push(compiled.id)
     rules.push(translated)
   }
@@ -249,7 +245,7 @@ export function translateRuleset(
   }
   if (extension.version !== undefined) set.version = extension.version
   if (options.now) set.updatedAt = options.now()
-  return { set, skipped, transforms }
+  return { set, transforms }
 }
 
 /** Every set an extension should have in the engine right now (empty rulesets produce none). */
@@ -271,7 +267,6 @@ export interface ExtensionTranslationReport {
   updated: string[]
   /** Set ids removed from the sink by this sync. */
   removed: string[]
-  skipped: SkippedRule[]
   transforms: number[]
 }
 
@@ -348,7 +343,6 @@ export class DnrTranslator {
       extensionId: input.extensionId,
       updated: [],
       removed: [],
-      skipped: [],
       transforms: []
     }
     const wanted = new Set<string>()
@@ -357,7 +351,6 @@ export class DnrTranslator {
       const translation = translations.find((t) => t.set.id === setId)
       if (!translation) continue
       wanted.add(setId)
-      report.skipped.push(...translation.skipped)
       report.transforms.push(...translation.transforms)
       const before = emitted.get(setId)
       const next: EmittedSet = {

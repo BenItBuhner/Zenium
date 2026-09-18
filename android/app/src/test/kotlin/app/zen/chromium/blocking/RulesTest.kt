@@ -36,6 +36,11 @@ class RulesTest {
         assertNull(DnrRule.parse(JSONObject("""{"id":1,"condition":{}}"""), 1))
         assertNull(DnrRule.parse(JSONObject("""{"id":1,"action":{"type":"modifyHeaders"},"condition":{}}"""), 1))
         assertNull(DnrRule.parse(JSONObject("""{"id":1,"action":{"type":"block"},"condition":{"regexFilter":"("}}"""), 1))
+        // Header-conditioned rules belong to the desktop engine's headers-received stage; without
+        // that stage the rule is left out rather than matched on its URL alone.
+        assertNull(DnrRule.parse(JSONObject("""{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"x","responseHeaders":[{"header":"content-type","values":["text/*"]}]}}"""), 1))
+        assertNull(DnrRule.parse(JSONObject("""{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"x","excludedResponseHeaders":[{"header":"x-ads"}]}}"""), 1))
+        assertTrue(rule("""{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"x","responseHeaders":[]}}""").matches(req("https://a.example/x")))
         val any = rule("""{"id":7,"action":{"type":"block"}}""")
         assertEquals(7, any.id)
         assertEquals(RuleAction.BLOCK, any.action)

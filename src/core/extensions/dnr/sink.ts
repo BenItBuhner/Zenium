@@ -86,6 +86,13 @@ export interface EngineRuleAction {
   responseHeaders?: EngineHeaderOp[]
 }
 
+/** `chrome.declarativeNetRequest.HeaderInfo`: a response header condition. */
+export interface EngineHeaderCondition {
+  header: string
+  values?: string[]
+  excludedValues?: string[]
+}
+
 export interface EngineRuleCondition {
   urlFilter?: string
   regexFilter?: string
@@ -104,6 +111,9 @@ export interface EngineRuleCondition {
   domainType?: 'firstParty' | 'thirdParty'
   tabIds?: number[]
   excludedTabIds?: number[]
+  /** Decided at the engine's headers-received stage (`RuleCondition.responseHeaders`). */
+  responseHeaders?: EngineHeaderCondition[]
+  excludedResponseHeaders?: EngineHeaderCondition[]
 }
 
 /** A rule shaped after `chrome.declarativeNetRequest.Rule`. */

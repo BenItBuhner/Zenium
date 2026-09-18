@@ -476,6 +476,215 @@ describe('RuleEngine priority resolution', () => {
   })
 })
 
+describe('RuleEngine headers-received stage', () => {
+  // Stylus's usercss installer: redirect a `.user.css` document served as text (not HTML).
+  const usercss: Rule = {
+    id: 1,
+    action: {
+      type: 'redirect',
+      redirect: { regexSubstitution: 'chrome-extension://stylus/install-usercss.html#\\0' }
+    },
+    condition: {
+      regexFilter: '^.*\\.user\\.css$',
+      resourceTypes: ['main_frame'],
+      responseHeaders: [
+        { header: 'content-type', values: ['text/*'], excludedValues: ['text/html*'] }
+      ]
+    }
+  }
+  const page = (url: string, headers?: Record<string, string[]>): RequestContext =>
+    req(url, { type: 'main_frame', responseHeaders: headers })
+
+  it('leaves header-conditioned rules to the headers-received stage and says so', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(set('stylus', [usercss]))
+    // Request stage: the rule's other conditions pass, so the host must ask again.
+    const early = e.decide(page('https://a.example/theme.user.css'))
+    expect(early).toEqual({ action: 'allow', needsHeaders: true })
+    // A request the rule would never match needs no second round.
+    expect(e.decide(page('https://a.example/index.html'))).toEqual({ action: 'allow' })
+    expect(e.decide(req('https://a.example/theme.user.css')).needsHeaders).toBeUndefined()
+    // Headers-received stage: the content type decides.
+    const css = e.decide(page('https://a.example/theme.user.css', { 'Content-Type': ['text/css'] }))
+    expect(css.action).toBe('redirect')
+    expect(css.redirectUrl).toBe(
+      'chrome-extension://stylus/install-usercss.html#https://a.example/theme.user.css'
+    )
+    expect(css.matched).toEqual({ setId: 'stylus', ruleId: 1 })
+    expect(css.needsHeaders).toBeUndefined()
+    expect(
+      e.decide(
+        page('https://a.example/theme.user.css', { 'content-type': ['text/html; charset=utf-8'] })
+      ).action
+    ).toBe('allow')
+    expect(e.decide(page('https://a.example/theme.user.css', {})).action).toBe('allow')
+  })
+
+  it('lets a request-stage allow of equal or higher priority cap the header stage', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('a', [
+        {
+          id: 1,
+          priority: 2,
+          action: { type: 'block' },
+          condition: { urlFilter: '||ads.example^', responseHeaders: [{ header: 'x-ads' }] }
+        },
+        allow(2, { urlFilter: '||ads.example/allowed' }, 2),
+        allow(3, { urlFilter: '||ads.example/weakly-allowed' }, 1)
+      ])
+    )
+    const headers = { 'x-ads': ['1'] }
+    expect(e.decide(req('https://ads.example/x.js', { responseHeaders: headers })).action).toBe(
+      'block'
+    )
+    const allowed = e.decide(req('https://ads.example/allowed', { responseHeaders: headers }))
+    expect(allowed.action).toBe('allow')
+    expect(allowed.matched).toEqual({ setId: 'a', ruleId: 2 })
+    // The allow already decided at the request stage, so no second round is needed either.
+    expect(e.decide(req('https://ads.example/allowed')).needsHeaders).toBeUndefined()
+    expect(
+      e.decide(req('https://ads.example/weakly-allowed', { responseHeaders: headers })).action
+    ).toBe('block')
+  })
+
+  it('merges the header edits of both stages and lets a header-stage block or allow cap them', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('h', [
+        {
+          id: 1,
+          priority: 3,
+          action: {
+            type: 'modifyHeaders',
+            responseHeaders: [{ header: 'Set-Cookie', operation: 'remove' }]
+          },
+          condition: { urlFilter: '||h.example^' }
+        },
+        {
+          id: 2,
+          priority: 2,
+          action: {
+            type: 'modifyHeaders',
+            responseHeaders: [{ header: 'X-Frame-Options', operation: 'remove' }]
+          },
+          condition: { urlFilter: '||h.example^', responseHeaders: [{ header: 'x-frame-options' }] }
+        },
+        {
+          id: 3,
+          priority: 1,
+          action: {
+            type: 'modifyHeaders',
+            responseHeaders: [{ header: 'X-Low', operation: 'set', value: '1' }]
+          },
+          condition: { urlFilter: '||h.example^' }
+        },
+        {
+          id: 4,
+          priority: 5,
+          action: { type: 'block' },
+          condition: {
+            urlFilter: '||h.example/blocked',
+            responseHeaders: [{ header: 'content-type', values: ['application/x-bad'] }]
+          }
+        },
+        {
+          id: 5,
+          priority: 2,
+          action: { type: 'allow' },
+          condition: { urlFilter: '||h.example/late-allow', responseHeaders: [{ header: 'x-ok' }] }
+        }
+      ])
+    )
+    const early = e.decide(req('https://h.example/page'))
+    expect(early.action).toBe('modifyHeaders')
+    expect(early.needsHeaders).toBe(true)
+    expect(early.responseHeaders).toEqual([
+      { header: 'Set-Cookie', operation: 'remove' },
+      { header: 'X-Low', operation: 'set', value: '1' }
+    ])
+    // With the headers in, the header-stage edit slots in by priority.
+    const late = e.decide(
+      req('https://h.example/page', { responseHeaders: { 'X-Frame-Options': ['DENY'] } })
+    )
+    expect(late.action).toBe('modifyHeaders')
+    expect(late.responseHeaders).toEqual([
+      { header: 'Set-Cookie', operation: 'remove' },
+      { header: 'X-Frame-Options', operation: 'remove' },
+      { header: 'X-Low', operation: 'set', value: '1' }
+    ])
+    expect(late.matched).toEqual({ setId: 'h', ruleId: 1 })
+    expect(late.needsHeaders).toBeUndefined()
+    // Without the header the header-stage rule drops out again.
+    expect(
+      e.decide(req('https://h.example/page', { responseHeaders: {} })).responseHeaders
+    ).toEqual(early.responseHeaders)
+    // A header-stage block wins over every header edit.
+    expect(
+      e.decide(
+        req('https://h.example/blocked', {
+          responseHeaders: { 'content-type': ['application/x-bad'] }
+        })
+      ).action
+    ).toBe('block')
+    // A header-stage allow (priority 2) keeps the request stage's edits of equal or higher
+    // priority and drops the lower ones, as Chrome's RulesetManager does.
+    const capped = e.decide(
+      req('https://h.example/late-allow', {
+        responseHeaders: { 'x-ok': ['1'], 'x-frame-options': ['DENY'] }
+      })
+    )
+    expect(capped.action).toBe('modifyHeaders')
+    expect(capped.responseHeaders).toEqual([{ header: 'Set-Cookie', operation: 'remove' }])
+  })
+
+  it('keeps allowAllRequests document exceptions out of the header stage', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('x', [
+        block(1, { urlFilter: '||ads.example^', responseHeaders: [{ header: 'x-ads' }] }, 1),
+        {
+          id: 2,
+          priority: 2,
+          action: { type: 'allowAllRequests' },
+          condition: { urlFilter: '||trusted.example^', resourceTypes: ['main_frame'] }
+        }
+      ])
+    )
+    const under = req('https://ads.example/x.js', {
+      documentUrl: 'https://trusted.example/',
+      responseHeaders: { 'x-ads': ['1'] }
+    })
+    // The document exception (request stage) still shields sub-resources...
+    expect(e.decide(under).action).toBe('allow')
+    // ...and a header-conditioned allowAllRequests only ever matches the frame request itself.
+    e.setRuleSet(
+      set('y', [
+        {
+          id: 1,
+          priority: 3,
+          action: { type: 'allowAllRequests' },
+          condition: {
+            urlFilter: '||other.example^',
+            resourceTypes: ['main_frame'],
+            responseHeaders: [{ header: 'x-trust' }]
+          }
+        },
+        block(2, { urlFilter: '||other.example/blocked.js' }, 1)
+      ])
+    )
+    expect(
+      e.decide(req('https://other.example/blocked.js', { documentUrl: 'https://other.example/' }))
+        .action
+    ).toBe('block')
+    expect(
+      e.decide(
+        req('https://other.example/', { type: 'main_frame', responseHeaders: { 'x-trust': ['1'] } })
+      ).action
+    ).toBe('allow')
+  })
+})
+
 describe('RuleEngine text matcher', () => {
   function matcher(answer: (ctx: RequestContext) => TextMatch | null): { match: typeof answer } {
     return { match: answer }

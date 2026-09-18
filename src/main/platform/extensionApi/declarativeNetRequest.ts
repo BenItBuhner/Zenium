@@ -247,14 +247,7 @@ export class DeclarativeNetRequestHostApi {
       .then(async () => {
         if (this.entries.get(extensionId) !== entry) return
         const rank = this.installOrder().indexOf(extensionId)
-        const report = await this.translator.sync(
-          entry.state.translateInput(rank < 0 ? undefined : rank)
-        )
-        if (report.skipped.length > 0) {
-          console.info(
-            `[zen] declarativeNetRequest ${extensionId}: ${report.skipped.length} rule(s) the engine cannot evaluate were left out`
-          )
-        }
+        await this.translator.sync(entry.state.translateInput(rank < 0 ? undefined : rank))
       })
       .catch((error: unknown) => {
         console.warn(`[zen] declarativeNetRequest ${extensionId}: sync failed`, error)

@@ -13,6 +13,12 @@ import {
   type RuleSetSummary
 } from './rules'
 import { domainOf, hostMatchesDomain, hostnameOf, isThirdParty } from './domain'
+import {
+  compileHeaderConditions,
+  indexReceivedHeaders,
+  matchesHeaderStage,
+  type ReceivedHeaders
+} from './headerCondition'
 import { isNonUniqueHost } from '../../shared/nonUniqueHost'
 import {
   applyRegexSubstitution,
@@ -65,6 +71,10 @@ interface CompiledRule {
   domainType: 'firstParty' | 'thirdParty' | null
   tabIds: Set<string> | null
   excludedTabIds: Set<string> | null
+  responseHeaders: ReturnType<typeof compileHeaderConditions>
+  excludedResponseHeaders: ReturnType<typeof compileHeaderConditions>
+  /** The rule is decided at the headers-received stage (it has a header condition). */
+  headerStage: boolean
 }
 
 interface StoredSet {
@@ -140,7 +150,11 @@ function compileRule(setId: string, setPriority: number, rule: Rule): CompiledRu
       : null,
     domainType: c.domainType ?? null,
     tabIds: c.tabIds ? new Set(c.tabIds.map(String)) : null,
-    excludedTabIds: c.excludedTabIds ? new Set(c.excludedTabIds.map(String)) : null
+    excludedTabIds: c.excludedTabIds ? new Set(c.excludedTabIds.map(String)) : null,
+    responseHeaders: compileHeaderConditions(c.responseHeaders),
+    excludedResponseHeaders: compileHeaderConditions(c.excludedResponseHeaders),
+    headerStage:
+      (c.responseHeaders?.length ?? 0) > 0 || (c.excludedResponseHeaders?.length ?? 0) > 0
   }
 }
 
@@ -154,6 +168,8 @@ interface Facts {
   method: string
   thirdParty: boolean
   tabId: string | undefined
+  /** The received headers, indexed; null at the request stage. */
+  headers: ReceivedHeaders | null
 }
 
 function matchesDomains(host: string, include: string[] | null, exclude: string[] | null): boolean {
@@ -197,7 +213,8 @@ function factsFor(ctx: RequestContext): Facts {
     topHost: top ? (hostnameOf(top) ?? '') : '',
     method: (ctx.method || 'GET').toLowerCase(),
     thirdParty: ctx.isThirdParty ?? isThirdParty(ctx.url, initiator),
-    tabId: tabIdFact(ctx)
+    tabId: tabIdFact(ctx),
+    headers: ctx.responseHeaders ? indexReceivedHeaders(ctx.responseHeaders) : null
   }
 }
 
@@ -274,6 +291,42 @@ function decisionFor(r: CompiledRule, f: Facts): Decision | null {
     }
     default:
       return null
+  }
+}
+
+/** Higher effective priority wins; inside one, the action rank (allow beats block, …). */
+function beats(candidate: Candidate, best: Candidate | null): boolean {
+  return (
+    !best ||
+    candidate.effective > best.effective ||
+    (candidate.effective === best.effective && candidate.rank > best.rank)
+  )
+}
+
+/**
+ * The `modifyHeaders` decision of the header rules above `allowEffective`, highest priority
+ * first; `otherwise` (the allow that capped them, or the default) when none is left.
+ */
+function composeHeaderEdits(
+  headerRules: readonly CompiledRule[],
+  allowEffective: number,
+  otherwise: Decision
+): Decision {
+  const applicable = headerRules.filter((r) => r.effective > allowEffective)
+  if (applicable.length === 0) return otherwise
+  applicable.sort((a, b) => b.effective - a.effective)
+  const requestHeaders: HeaderOp[] = []
+  const responseHeaders: HeaderOp[] = []
+  for (const r of applicable) {
+    if (r.rule.action.requestHeaders) requestHeaders.push(...r.rule.action.requestHeaders)
+    if (r.rule.action.responseHeaders) responseHeaders.push(...r.rule.action.responseHeaders)
+  }
+  const first = applicable[0]
+  return {
+    action: 'modifyHeaders',
+    requestHeaders,
+    responseHeaders,
+    matched: { setId: first.setId, ruleId: first.rule.id }
   }
 }
 
@@ -428,12 +481,27 @@ export class RuleEngine implements BlockingEngine {
     }
   }
 
+  /**
+   * Decide a request. Without `ctx.responseHeaders` this is the request stage: rules with
+   * response header conditions are left aside (a decision whose other conditions such a rule
+   * passed carries `needsHeaders`). With them it is the headers-received stage: those rules are
+   * evaluated too and the two stages merge as Chrome's `RulesetManager` merges them – a request
+   * -stage allow caps the header stage, a header-stage allow caps the request stage's header
+   * edits, a header-stage block or redirect wins over header edits of either stage, and the
+   * `modifyHeaders` rules of both stages apply together, highest priority first.
+   */
   decide(ctx: RequestContext): Decision {
     const f = factsFor(ctx)
+    const headersStage = f.headers !== null
     let frameCtx: RequestContext | null | undefined
     let frameFacts: Facts | null = null
+    // Request-stage winner (intercepting or allow) and header edits; then the header stage's.
     let best: Candidate | null = null
     const headerRules: CompiledRule[] = []
+    let bestLate: Candidate | null = null
+    const lateHeaderRules: CompiledRule[] = []
+    // Request stage: the strongest header-conditioned rule whose other conditions passed.
+    let lateEffective = -1
 
     for (const stored of this.orderedSets()) {
       if (!stored.summary.enabled || stored.compiled.length === 0) continue
@@ -444,9 +512,10 @@ export class RuleEngine implements BlockingEngine {
       for (const r of stored.compiled) {
         const type = r.rule.action.type
         // `allowAllRequests` matches the frame request itself or the document the request
-        // belongs to (everything under an excepted document is allowed).
+        // belongs to (everything under an excepted document is allowed). The document's headers
+        // are not at hand, so a header-conditioned one only matches the frame request itself.
         let hit = ruleMatches(r, ctx, f)
-        if (!hit && type === 'allowAllRequests') {
+        if (!hit && type === 'allowAllRequests' && !r.headerStage) {
           if (frameCtx === undefined) {
             frameCtx = frameContext(ctx)
             frameFacts = frameCtx ? factsFor(frameCtx) : null
@@ -454,20 +523,24 @@ export class RuleEngine implements BlockingEngine {
           hit = frameCtx !== null && frameFacts !== null && ruleMatches(r, frameCtx, frameFacts)
         }
         if (!hit) continue
+        if (r.headerStage) {
+          if (!f.headers) {
+            lateEffective = Math.max(lateEffective, r.effective)
+            continue
+          }
+          if (!matchesHeaderStage(f.headers, r.responseHeaders, r.excludedResponseHeaders)) continue
+        }
         if (type === 'modifyHeaders') {
-          headerRules.push(r)
+          if (r.headerStage) lateHeaderRules.push(r)
+          else headerRules.push(r)
           continue
         }
         const decision = decisionFor(r, f)
         if (!decision) continue
         const candidate = { effective: r.effective, rank: r.rank, decision }
-        if (
-          !best ||
-          candidate.effective > best.effective ||
-          (candidate.effective === best.effective && candidate.rank > best.rank)
-        ) {
-          best = candidate
-        }
+        if (r.headerStage) {
+          if (beats(candidate, bestLate)) bestLate = candidate
+        } else if (beats(candidate, best)) best = candidate
       }
     }
 
@@ -485,36 +558,32 @@ export class RuleEngine implements BlockingEngine {
           decision.matched = { setId: TEXT_MATCH_SET_ID, filter: text.filter }
           const rank = RANK[text.action] ?? 0
           const candidate = { effective: TEXT_EFFECTIVE, rank, decision }
-          if (
-            !best ||
-            candidate.effective > best.effective ||
-            (candidate.effective === best.effective && candidate.rank > best.rank)
-          ) {
-            best = candidate
-          }
+          if (beats(candidate, best)) best = candidate
         }
       }
     }
 
     if (best && best.decision.action !== 'allow') return best.decision
 
+    // The request stage's allow caps everything the header stage found.
     const allowEffective = best ? best.effective : -1
-    const applicable = headerRules.filter((r) => r.effective > allowEffective)
-    if (applicable.length === 0) return best ? best.decision : ALLOW
-    applicable.sort((a, b) => b.effective - a.effective)
-    const requestHeaders: HeaderOp[] = []
-    const responseHeaders: HeaderOp[] = []
-    for (const r of applicable) {
-      if (r.rule.action.requestHeaders) requestHeaders.push(...r.rule.action.requestHeaders)
-      if (r.rule.action.responseHeaders) responseHeaders.push(...r.rule.action.responseHeaders)
+    if (!headersStage) {
+      const decision = composeHeaderEdits(headerRules, allowEffective, best?.decision ?? ALLOW)
+      // A second round is only worth it when a header rule could beat the request stage's allow.
+      return lateEffective > allowEffective ? { ...decision, needsHeaders: true } : decision
     }
-    const first = applicable[0]
-    return {
-      action: 'modifyHeaders',
-      requestHeaders,
-      responseHeaders,
-      matched: { setId: first.setId, ruleId: first.rule.id }
-    }
+    if (bestLate && bestLate.effective <= allowEffective) bestLate = null
+    if (bestLate && bestLate.decision.action !== 'allow') return bestLate.decision
+    // A header-stage allow caps the request stage's header edits (Chrome keeps the ones of equal
+    // or higher priority) and its own stage's (strictly higher).
+    const lateAllowEffective = bestLate ? bestLate.effective : -1
+    const applicable = [
+      ...headerRules.filter(
+        (r) => r.effective > allowEffective && r.effective >= lateAllowEffective
+      ),
+      ...lateHeaderRules.filter((r) => r.effective > Math.max(allowEffective, lateAllowEffective))
+    ]
+    return composeHeaderEdits(applicable, -1, bestLate?.decision ?? best?.decision ?? ALLOW)
   }
 
   private orderedSets(): StoredSet[] {

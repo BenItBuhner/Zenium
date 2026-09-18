@@ -35,9 +35,7 @@ function compiled(id: number): CompiledRule {
 }
 
 function engineRule(id: number): EngineRule {
-  const out = translateRule(compiled(id))
-  if ('reason' in out) throw new Error(`rule ${id} skipped: ${out.reason}`)
-  return out
+  return translateRule(compiled(id))
 }
 
 class RecordingSink implements RuleSink {
@@ -167,11 +165,43 @@ describe('translateRule', () => {
     expect((translateRule(both!) as EngineRule).condition.excludedTabIds).toBeUndefined()
   })
 
-  test('rules the engine cannot evaluate are reported, not emitted', () => {
-    const [headers] = compileAll([
-      rule(1, { type: 'block' }, { urlFilter: 'x', responseHeaders: [{ header: 'x-ads' }] })
+  test('response header conditions are carried to the engine for its headers-received stage', () => {
+    // Stylus's usercss installer: a `.user.css` document served as text (but not HTML) is
+    // redirected to the extension's install page.
+    const [redirect, excluded] = compileAll([
+      rule(
+        1,
+        {
+          type: 'redirect',
+          redirect: { regexSubstitution: 'chrome-extension://abc/install-usercss.html#\\0' }
+        },
+        {
+          regexFilter: '^.*\\.user\\.css$',
+          resourceTypes: ['main_frame'],
+          responseHeaders: [
+            { header: 'content-type', values: ['text/*'], excludedValues: ['text/html*'] }
+          ]
+        }
+      ),
+      rule(2, { type: 'block' }, { urlFilter: 'x', excludedResponseHeaders: [{ header: 'x-ads' }] })
     ])
-    expect(translateRule(headers!)).toEqual({ ruleId: 1, reason: 'responseHeaderCondition' })
+    expect(translateRule(redirect!)).toMatchObject({
+      action: {
+        type: 'redirect',
+        redirect: { regexSubstitution: 'chrome-extension://abc/install-usercss.html#\\0' }
+      },
+      condition: {
+        resourceTypes: ['main_frame'],
+        responseHeaders: [
+          { header: 'content-type', values: ['text/*'], excludedValues: ['text/html*'] }
+        ]
+      }
+    })
+    expect(translateRule(redirect!).condition.excludedResponseHeaders).toBeUndefined()
+    expect(translateRule(excluded!)).toMatchObject({
+      condition: { excludedResponseHeaders: [{ header: 'x-ads' }] }
+    })
+    expect(translateRule(excluded!).condition.responseHeaders).toBeUndefined()
   })
 
   test('topDomains and excludedTopDomains are carried to the engine', () => {
@@ -232,7 +262,7 @@ describe('translateRuleset', () => {
 
   test('a static ruleset becomes one engine set with attribution', () => {
     const rules = compileAll(CHROME_EXAMPLE_RULES)
-    const { set, skipped, transforms } = translateRuleset(
+    const { set, transforms } = translateRuleset(
       extension,
       { source: 'static', rulesetId: 'ads', path: 'rules/ads.json', manifestIndex: 0, rules },
       { now: () => 1000 }
@@ -248,7 +278,6 @@ describe('translateRuleset', () => {
       url: `${EXTENSION_BASE_URL}rules/ads.json`,
       licence: ''
     })
-    expect(skipped).toEqual([])
     expect(transforms.sort()).toEqual([12, 4])
     // Priority 2 first; then at priority 1: allow, allowAllRequests, blocks (11, 1),
     // upgradeScheme, redirects (12 .. 2), modifyHeaders; greater id first within a type.
@@ -291,14 +320,17 @@ describe('translateRuleset', () => {
   })
 
   test('translateExtension drops rulesets that produce no rules', () => {
-    const [headers] = compileAll([
-      rule(1, { type: 'block' }, { urlFilter: 'x', responseHeaders: [{ header: 'x-ads' }] })
-    ])
+    const disabled = compileAll([rule(1, { type: 'block' }, { urlFilter: 'x' })])
     const sets = translateExtension({
       extensionId: EXTENSION_ID,
       rulesets: [
         { source: 'static', rulesetId: 'empty', rules: [] },
-        { source: 'static', rulesetId: 'headers', rules: [headers!] },
+        {
+          source: 'static',
+          rulesetId: 'disabled',
+          rules: disabled,
+          disabledRuleIds: new Set([1])
+        },
         {
           source: 'dynamic',
           rules: compileAll([rule(1, { type: 'block' }, { urlFilter: 'x' })], 'dynamic')
@@ -425,7 +457,7 @@ describe('DnrTranslator', () => {
     expect(report.updated).toEqual([])
   })
 
-  test('skipped rules and transforms are reported per sync', async () => {
+  test('header-conditioned rules are emitted and transforms are reported per sync', async () => {
     const sink = new RecordingSink()
     const translator = new DnrTranslator(sink)
     const rules = compileAll([
@@ -439,8 +471,12 @@ describe('DnrTranslator', () => {
     const report = await translator.sync(
       input({ rulesets: [{ source: 'static', rulesetId: 'r1', rules }] })
     )
-    expect(report.skipped).toEqual([{ ruleId: 1, reason: 'responseHeaderCondition' }])
     expect(report.transforms).toEqual([2])
+    const emitted = sink.sets.get(`ext:${EXTENSION_ID}:static:r1`)
+    expect(emitted?.rules?.map((r) => r.id).sort()).toEqual([1, 2])
+    expect(emitted?.rules?.find((r) => r.id === 1)?.condition.responseHeaders).toEqual([
+      { header: 'x-ads' }
+    ])
   })
 })
 

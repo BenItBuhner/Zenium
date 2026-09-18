@@ -183,6 +183,84 @@ describe('BlockingHandler', () => {
     h.onHeadersReceived(plain, untouched)
     expect(untouched).toEqual({ 'x-a': ['1'] })
   })
+
+  it('asks the engine again at headers-received when a header-conditioned rule may apply', () => {
+    // A decider shaped like the engine: at the request stage it only notes the header rule; with
+    // the headers in it redirects `.user.css` served as CSS, blocks `x-ads`, edits `x-frame`.
+    const asked: RequestContext[] = []
+    const { handler: h, blocked } = handler((c) => {
+      asked.push(c)
+      const wants = /user\.css|ads|frame/.test(c.url)
+      if (!c.responseHeaders) {
+        const edits: Decision = c.url.includes('frame')
+          ? {
+              action: 'modifyHeaders',
+              responseHeaders: [{ header: 'X-Early', operation: 'set', value: '1' }],
+              matched: { setId: 'ext', ruleId: 1 }
+            }
+          : { action: 'allow' }
+        return wants ? { ...edits, needsHeaders: true } : edits
+      }
+      const type = c.responseHeaders['content-type']?.[0] ?? ''
+      if (c.url.includes('user.css') && type.startsWith('text/css'))
+        return {
+          action: 'redirect',
+          redirectUrl: `chrome-extension://stylus/install-usercss.html#${c.url}`,
+          matched: { setId: 'ext', ruleId: 2 }
+        }
+      if (c.url.includes('ads') && c.responseHeaders['x-ads'])
+        return { action: 'block', matched: { setId: 'ext', ruleId: 3 } }
+      if (c.url.includes('frame'))
+        return {
+          action: 'modifyHeaders',
+          responseHeaders: [
+            { header: 'X-Early', operation: 'set', value: '1' },
+            ...(c.responseHeaders['x-frame-options']
+              ? [{ header: 'X-Frame-Options', operation: 'remove' as const }]
+              : [])
+          ],
+          matched: { setId: 'ext', ruleId: 1 }
+        }
+      return { action: 'allow' }
+    })
+
+    // Redirect once the content type says CSS; a plain HTML answer passes untouched.
+    const css = hostRequest(ctx('https://a.example/theme.user.css', { type: 'main_frame' }))
+    expect(h.onBeforeRequest(css)).toBeUndefined()
+    const cssHeaders = { 'content-type': ['text/css'] }
+    expect(h.onHeadersReceived(css, cssHeaders)).toEqual({
+      redirectURL: 'chrome-extension://stylus/install-usercss.html#https://a.example/theme.user.css'
+    })
+    expect(asked.at(-1)?.responseHeaders).toBe(cssHeaders)
+    const html = hostRequest(ctx('https://a.example/page.user.css', { type: 'main_frame' }))
+    h.onBeforeRequest(html)
+    expect(h.onHeadersReceived(html, { 'content-type': ['text/html'] })).toBeUndefined()
+
+    // Block once the marker header shows up, counted against the tab.
+    const ads = hostRequest(ctx('https://a.example/ads.js'))
+    expect(h.onBeforeRequest(ads)).toBeUndefined()
+    expect(h.onHeadersReceived(ads, { 'x-ads': ['1'] })).toEqual({ cancel: true })
+    expect(blocked).toEqual(['tab-1'])
+
+    // Header edits: the second decision's edits replace the first's (they contain them).
+    const frame = hostRequest(ctx('https://a.example/frame', { type: 'main_frame' }))
+    h.onBeforeRequest(frame)
+    const frameHeaders: Record<string, string[]> = { 'x-frame-options': ['DENY'] }
+    expect(h.onHeadersReceived(frame, frameHeaders)).toBeUndefined()
+    expect(frameHeaders).toEqual({ 'X-Early': ['1'] })
+    const noFrame = hostRequest(ctx('https://a.example/frame', { type: 'main_frame' }))
+    h.onBeforeRequest(noFrame)
+    const plainHeaders: Record<string, string[]> = { 'x-a': ['1'] }
+    h.onHeadersReceived(noFrame, plainHeaders)
+    expect(plainHeaders).toEqual({ 'x-a': ['1'], 'X-Early': ['1'] })
+
+    // A request no header rule could match is decided once.
+    const before = asked.length
+    const plain = hostRequest(ctx('https://a.example/plain.js'))
+    h.onBeforeRequest(plain)
+    h.onHeadersReceived(plain, { 'x-ads': ['1'] })
+    expect(asked.length).toBe(before + 1)
+  })
 })
 
 describe('GhosteryTextMatcher', () => {

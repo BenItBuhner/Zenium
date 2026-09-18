@@ -42,6 +42,7 @@ import {
   applyResponseHeaderOps,
   type BeforeRequestResult,
   type HeaderRewriteOptions,
+  type HeadersReceivedResult,
   type HostRequest,
   type ListenerOptions,
   type RequestHandler,
@@ -116,6 +117,9 @@ export class BlockingHandler implements RequestHandler {
         request.state.set(DECISION_KEY, decision)
         return undefined
       default:
+        // An allow that a header-conditioned rule may still overturn once the response headers
+        // are in: keep it so onHeadersReceived knows to ask the engine again.
+        if (decision.needsHeaders) request.state.set(DECISION_KEY, decision)
         return undefined
     }
   }
@@ -126,10 +130,36 @@ export class BlockingHandler implements RequestHandler {
     return undefined
   }
 
-  onHeadersReceived(request: HostRequest, headers: Record<string, string[]>): undefined {
-    const decision = request.state.get(DECISION_KEY) as Decision | undefined
-    if (decision?.responseHeaders?.length) applyResponseHeaderOps(headers, decision.responseHeaders)
+  onHeadersReceived(
+    request: HostRequest,
+    headers: Record<string, string[]>
+  ): HeadersReceivedResult | undefined {
     const { ctx } = request
+    let decision = request.state.get(DECISION_KEY) as Decision | undefined
+    if (decision?.needsHeaders) {
+      // The headers-received stage: the engine decides again with the response headers, merging
+      // the header-conditioned rules with what it found at the request stage; that decision's
+      // header edits replace the request stage's (they contain them).
+      const late = this.decider.decide({ ...ctx, responseHeaders: headers })
+      if (late.matched && this.observer && !sameMatch(late.matched, decision.matched))
+        this.observer(request, late)
+      switch (late.action) {
+        case 'block':
+          this.decider.recordBlocked(request.tabId)
+          return { cancel: true }
+        case 'redirect':
+        case 'upgrade':
+          if (late.redirectUrl && late.redirectUrl !== ctx.url) {
+            if (late.matched?.setId === TEXT_MATCH_SET_ID) this.decider.recordBlocked(request.tabId)
+            return { redirectURL: late.redirectUrl }
+          }
+          break
+        default:
+          break
+      }
+      decision = late
+    }
+    if (decision?.responseHeaders?.length) applyResponseHeaderOps(headers, decision.responseHeaders)
     if (this.csp && (ctx.type === 'main_frame' || ctx.type === 'sub_frame')) {
       const csp = this.csp.cspDirectives(ctx)
       if (csp)
@@ -139,6 +169,10 @@ export class BlockingHandler implements RequestHandler {
     }
     return undefined
   }
+}
+
+function sameMatch(a: Decision['matched'], b: Decision['matched']): boolean {
+  return a?.setId === b?.setId && a?.ruleId === b?.ruleId && a?.filter === b?.filter
 }
 
 // ---------------------------------------------------------------------------

@@ -95,6 +95,8 @@ class DnrRule(
             return true
         }
 
+        private fun hasEntries(o: JSONObject, key: String): Boolean = (o.optJSONArray(key)?.length() ?: 0) > 0
+
         private fun strings(o: JSONObject, key: String): List<String>? {
             val arr = o.optJSONArray(key) ?: return null
             val out = ArrayList<String>(arr.length())
@@ -114,6 +116,10 @@ class DnrRule(
             val actionObj = o.optJSONObject("action") ?: return null
             val action = RuleAction.fromDnrName(actionObj.optString("type")) ?: return null
             val c = o.optJSONObject("condition") ?: JSONObject()
+            // Response header conditions need the headers-received stage the desktop engine has;
+            // `shouldInterceptRequest` decides before any response exists, so such a rule cannot be
+            // evaluated here (and evaluating it without its header condition would over-match).
+            if (hasEntries(c, "responseHeaders") || hasEntries(c, "excludedResponseHeaders")) return null
             val caseSensitive = c.optBoolean("isUrlFilterCaseSensitive", false)
             val pattern: UrlPattern? = when {
                 c.has("regexFilter") && !c.isNull("regexFilter") -> UrlPattern.regex(c.optString("regexFilter"), caseSensitive) ?: return null

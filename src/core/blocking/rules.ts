@@ -95,6 +95,18 @@ export interface RuleAction {
 export type DomainType = 'firstParty' | 'thirdParty'
 
 /**
+ * One response header condition (`chrome.declarativeNetRequest.HeaderInfo`): the header must
+ * be present; with `values` at least one value must match one of the patterns, with
+ * `excludedValues` none may. Patterns are globs (`*` any run, `?` zero or one character, `\`
+ * escapes) compared without regard to case, as `base::MatchPattern` does.
+ */
+export interface HeaderCondition {
+  header: string
+  values?: string[]
+  excludedValues?: string[]
+}
+
+/**
  * `chrome.declarativeNetRequest.RuleCondition`. Domain lists match the domain and its
  * subdomains; an empty condition matches every request.
  */
@@ -141,6 +153,15 @@ export interface RuleCondition {
    */
   tabIds?: number[]
   excludedTabIds?: number[]
+  /**
+   * Response header conditions, decided at the headers-received stage: a rule with either list
+   * is not evaluated by `decide` until the host asks again with `RequestContext.responseHeaders`
+   * (a first decision whose non-header conditions such a rule passed says so with
+   * `Decision.needsHeaders`). `responseHeaders`: at least one condition must match;
+   * `excludedResponseHeaders`: none may.
+   */
+  responseHeaders?: HeaderCondition[]
+  excludedResponseHeaders?: HeaderCondition[]
 }
 
 /** A rule shaped after `chrome.declarativeNetRequest.Rule`. */
@@ -232,6 +253,13 @@ export interface RequestContext {
   /** Session partition / container id the request runs in. */
   partition?: string
   isPrivate?: boolean
+  /**
+   * The response headers, once received (names in any case, one entry per line). Present, the
+   * engine is in its headers-received stage: rules with header conditions are evaluated against
+   * them and merged with the request-stage rules the way Chrome merges the two stages; absent,
+   * the request stage, where header-conditioned rules are only noted (`Decision.needsHeaders`).
+   */
+  responseHeaders?: Record<string, string[]>
 }
 
 export type DecisionAction = 'allow' | 'block' | 'redirect' | 'upgrade' | 'modifyHeaders'
@@ -250,6 +278,12 @@ export interface Decision {
   responseHeaders?: HeaderOp[]
   /** What decided; absent for the default `allow`. */
   matched?: DecisionMatch
+  /**
+   * Request stage only: a rule with response header conditions passed every other condition, so
+   * the host should decide again with `RequestContext.responseHeaders` at headers-received and
+   * apply that decision (its `block` and `redirect` included) instead of this one's header edits.
+   */
+  needsHeaders?: boolean
 }
 
 export const ALLOW: Decision = Object.freeze({ action: 'allow' }) as Decision

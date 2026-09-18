@@ -886,7 +886,10 @@ export class AndroidExtensions implements ExtensionHost {
     return this.browser.platform.dialogs.confirm(
       {
         message: `"${name}" wants additional permissions`,
-        detail: warnings.length > 0 ? `It can:\n${warnings.map((w) => `\u2022 ${w}`).join('\n')}` : undefined,
+        detail:
+          warnings.length > 0
+            ? `It can:\n${warnings.map((w) => `\u2022 ${w}`).join('\n')}`
+            : undefined,
         okLabel: 'Allow',
         cancelLabel: 'Cancel'
       },
