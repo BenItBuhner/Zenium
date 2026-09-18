@@ -101,6 +101,11 @@ export interface HostCapabilities {
   privateTabs: boolean
   /** The host can point the resolver at DNS-over-HTTPS servers (desktop); Android uses the system's Private DNS. */
   secureDns: boolean
+  /**
+   * The host renders `zen://newtab` as a live page (theme bridge, shortcuts, customize panel).
+   * Without it new tabs stay blank and the URL bar alone stands in for a new tab page.
+   */
+  newTabPage: boolean
 }
 
 export interface Rect {
@@ -1359,6 +1364,110 @@ export interface CompactModeSettings {
   sidebarPersistent: boolean
 }
 
+// ---------------------------------------------------------------------------
+// New tab page (`zen://newtab`)
+// ---------------------------------------------------------------------------
+
+/** What the shortcuts grid on the new tab page shows. */
+export type NewTabShortcutsMode = 'most-visited' | 'custom' | 'hidden'
+/** What the new tab page paints behind its content. */
+export type NewTabBackgroundKind = 'space' | 'solid' | 'image'
+
+/** New tab page preferences (synced with the other settings). */
+export interface NewTabSettings {
+  /** Open `zen://newtab` for new tabs; off keeps the URL-bar-only behaviour. */
+  enabled: boolean
+  shortcuts: NewTabShortcutsMode
+  background: NewTabBackgroundKind
+  /** A "Good morning" line above the search box. */
+  greeting: boolean
+}
+
+/** A tile of the "My shortcuts" grid. Kept per device (never synced). */
+export interface NewTabShortcut {
+  id: string
+  title: string
+  url: string
+}
+
+/** A custom shortcut as the page shows it: with the favicon history knows for its site, if any. */
+export interface NewTabPageShortcut extends NewTabShortcut {
+  favicon: string | null
+}
+
+/** The chrome's theme variables (`themeCssVariables`) for one colour scheme. */
+export interface NewTabThemeVariant {
+  /** `--zen-bg`, `--zen-fg`, `--zen-accent` … exactly as the chrome sets them on its root. */
+  vars: Record<string, string>
+  /** Whether the resolved gradient reads as dark (the chrome's `data-theme`). */
+  isDark: boolean
+}
+
+/**
+ * Everything `zen://newtab` renders. The host hands the initial state to the page before its
+ * first paint and pushes a fresh one whenever a space theme, a setting or the grid changes.
+ * The page does no colour maths: both schemes arrive resolved and the page picks one, following
+ * the system when the setting says so.
+ */
+export interface NewTabPageState {
+  light: NewTabThemeVariant
+  dark: NewTabThemeVariant
+  colorScheme: ColorScheme
+  /** Private window: the private accent and a "Private" label. */
+  isPrivate: boolean
+  shortcutsMode: NewTabShortcutsMode
+  background: NewTabBackgroundKind
+  greeting: boolean
+  shortcuts: NewTabPageShortcut[]
+  topSites: TopSite[]
+  /** Address of the custom background image (`zen://newtab-background?v=…`), when one is set. */
+  backgroundImage: string | null
+  /** The host can open an image file picker. */
+  canPickImage: boolean
+}
+
+/**
+ * Actions the new tab page asks the browser for (one-way; the browser answers with state).
+ * Tiles are plain links, so opening one needs no action: the page navigates like any page.
+ * The page draws no popover or dialog of its own: a tile's menu, the add / edit dialog and the
+ * Customize surface are the chrome's (design language v2 §9.20–9.23), asked for here.
+ */
+export type NewTabPageAction =
+  | { type: 'ready' }
+  /** Text typed into the page's search box: open the omnibox over this tab with it. */
+  | { type: 'search'; text: string }
+  | { type: 'add-shortcut'; title: string; url: string }
+  | { type: 'update-shortcut'; id: string; title: string; url: string }
+  | { type: 'remove-shortcut'; id: string }
+  | { type: 'restore-shortcut'; id: string; title: string; url: string; index: number }
+  | { type: 'reorder-shortcuts'; ids: string[] }
+  /** "Most visited": remove a site's tile (its host goes on a local block list) and undo that. */
+  | { type: 'hide-site'; url: string }
+  | { type: 'unhide-site'; url: string }
+  /** Open the chrome's add (`id` null) or edit shortcut dialog over the page. */
+  | { type: 'edit-shortcut'; id: string | null }
+  /**
+   * A tile's menu (right-click, its ⋮ button, Shift+F10): the host's context menu at `x`, `y`
+   * in the page's CSS pixels; `keyboard` starts it with the first item selected.
+   */
+  | {
+      type: 'tile-menu'
+      id: string
+      url: string
+      title: string
+      x: number
+      y: number
+      keyboard: boolean
+    }
+  /** The Customize button: Settings opens on its New Tab section. */
+  | { type: 'customize' }
+
+/**
+ * What the browser tells a new tab page besides its state: a menu item picked in the chrome
+ * that the page carries out itself, so its Undo toast works the same as for the Delete key.
+ */
+export type NewTabPageCommand = { type: 'remove-tile'; id: string }
+
 export interface Settings {
   colorScheme: ColorScheme
   /** Colour of the app icon (launcher alias on Android, window / Dock icon on desktop). */
@@ -1454,6 +1563,8 @@ export interface Settings {
   shortcutPreset: ShortcutPreset
   /** Safe Browsing, HTTPS-only, secure DNS, cookies, GPC / DNT (Settings → Privacy and security). */
   privacy: PrivacySettings
+  /** The new tab page: whether it opens, what its grid shows, what it paints behind. */
+  newTab: NewTabSettings
 }
 
 // ---------------------------------------------------------------------------
@@ -2135,6 +2246,10 @@ export interface UIState {
   downloadsProgress: DownloadsProgress
   /** Every bookmark node (roots included), ordered parent-first, then by index. */
   bookmarks: BookmarkNode[]
+  /** "My shortcuts" of the new tab page, in grid order (Settings edits them). */
+  newTabShortcuts: NewTabShortcut[]
+  /** The new tab page's custom background: whether one is set, whether the host can pick one. */
+  newTabBackground: { image: boolean; canPick: boolean }
   recentlyClosedCount: number
   /** Newest first, at most 10 – enough for menus to render without a round trip. */
   recentlyClosed: ClosedEntrySummary[]
@@ -2671,6 +2786,20 @@ export interface Commands {
    */
   'clipboard.writeText': { args: { text: string; sensitive?: boolean }; result: void }
 
+  /**
+   * Ctrl+T, the sidebar's New Tab button, double-click on the sidebar: a tab at `zen://newtab`
+   * (or, with the page turned off, the URL bar in new-tab mode).
+   */
+  'newtab.open': { args: void; result: void }
+  /** Custom shortcuts of the new tab page (Settings and the page's own dialogs). */
+  'newtab.addShortcut': { args: { title: string; url: string }; result: string }
+  'newtab.updateShortcut': { args: { id: string; title: string; url: string }; result: void }
+  'newtab.removeShortcut': { args: { id: string }; result: void }
+  'newtab.reorderShortcuts': { args: { ids: string[] }; result: void }
+  /** Pick a background image from disk (`capabilities` gate it; resolves false when cancelled). */
+  'newtab.pickBackgroundImage': { args: void; result: boolean }
+  'newtab.clearBackgroundImage': { args: void; result: void }
+
   /** Bookmark the tab's page in the default folder, or remove its bookmarks (toast feedback). */
   'bookmark.toggle': { args: { tabId: string }; result: void }
   /** Star the tab's page: bookmarks it when needed, then opens the star dialog. */
@@ -3114,6 +3243,16 @@ export interface Events {
   state: UIState
   'urlbar.toggle': { mode: UrlbarOpenMode; text?: string }
   'urlbar.close': void
+  /**
+   * A new tab page was opened (and activated) for the user: the chrome waits for the tab to
+   * appear in its state, lets it paint, then opens the URL bar in new-tab mode over it.
+   */
+  'newtab.opened': { tabId: string; text?: string }
+  /**
+   * The new tab page in `tabId` asked for its add (`id` null) or edit shortcut dialog: the
+   * chrome shows it over the page, prefilled with `title` and `url`.
+   */
+  'newtab.shortcutDialog': { tabId: string; id: string | null; title: string; url: string }
   'overlay.open': { kind: OverlayKind; folderId?: string; section?: string }
   /**
    * Show the find bar for a tab with `text` in its field (the tab's last query, else the

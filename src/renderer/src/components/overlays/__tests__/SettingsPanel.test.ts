@@ -35,7 +35,8 @@ const DESKTOP: HostCapabilities = {
   privateTabs: false,
   windowControlsOverlay: false,
   windowMaterial: false,
-  secureDns: true
+  secureDns: true,
+  newTabPage: true
 }
 
 const ANDROID: HostCapabilities = {
@@ -58,7 +59,8 @@ const ANDROID: HostCapabilities = {
   defaultBrowser: true,
   pageControls: true,
   privateTabs: true,
-  secureDns: false
+  secureDns: false,
+  newTabPage: false
 }
 
 function state(capabilities: HostCapabilities, platform: UIState['platform']): UIState {

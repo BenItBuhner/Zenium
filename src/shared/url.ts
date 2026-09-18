@@ -4,6 +4,8 @@
 import type { CertificateDetails } from './types'
 
 export const BLANK_URL = 'zen://blank'
+/** The new tab page (`zen://newtab`), a document served like `zen://blank`. */
+export const NEW_TAB_URL = 'zen://newtab'
 export const ERROR_URL_PREFIX = 'zen://error'
 export const READER_URL_PREFIX = 'zen://reader'
 /** The history page: a chrome surface, not a document (see `overlayForUrl` in zenPages). */
@@ -11,8 +13,8 @@ export const HISTORY_URL = 'zen://history'
 export const SETTINGS_URL = 'zen://settings'
 /** The bookmark manager: typed or linked, it opens the manager instead of navigating (zenPages). */
 export const BOOKMARKS_URL = 'zen://bookmarks'
-/** The new tab page (Zen's empty tab); a dedicated `zen://newtab` counts once it exists. */
-const NEW_TAB_URLS = new Set([BLANK_URL, 'zen://newtab', 'about:newtab', 'about:blank', ''])
+/** The addresses of an empty tab (Zen's blank page and the aliases that resolve to it). */
+const NEW_TAB_URLS = new Set([BLANK_URL, NEW_TAB_URL, 'about:newtab', 'about:blank', ''])
 
 const SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}(:\d+)?(\/.*)?$/
@@ -25,6 +27,7 @@ const KNOWN_SCHEMES = [
   'https',
   'file',
   'zen',
+  'zenium',
   'about',
   'ftp',
   'data',
@@ -32,6 +35,20 @@ const KNOWN_SCHEMES = [
   'chrome',
   'chrome-extension'
 ]
+
+/**
+ * The internal pages a user may type by another browser's name: `chrome://settings`,
+ * `about:preferences`, `zenium://newtab`. Each resolves to the canonical `zen://` address.
+ */
+const INTERNAL_PAGE_ALIASES: Record<string, string> = {
+  blank: BLANK_URL,
+  newtab: NEW_TAB_URL,
+  home: NEW_TAB_URL,
+  preferences: SETTINGS_URL,
+  settings: SETTINGS_URL,
+  history: HISTORY_URL,
+  bookmarks: BOOKMARKS_URL
+}
 /** `host:port[/path]` – looks like a scheme but is a bare host with a port (dev servers). */
 const HOST_PORT_RE =
   /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*:\d{1,5}([/?#].*)?$/i
@@ -48,11 +65,24 @@ export function isInternalUrl(url: string): boolean {
 }
 
 /**
- * The new tab page, where Edge shows the favorites bar even when it is hidden elsewhere. Once
- * the blank page has loaded, Chromium reports it as `zen://blank/`: the slash does not count.
+ * The blank page or the new tab page: a tab that shows nothing of its own yet (where Edge shows
+ * the favorites bar even when it is hidden elsewhere). Once the blank page has loaded, Chromium
+ * reports it as `zen://blank/`: the slash does not count.
  */
-export function isNewTabUrl(url: string | null | undefined): boolean {
-  return url === null || url === undefined || NEW_TAB_URLS.has(url.replace(/\/$/, ''))
+export function isEmptyTabUrl(url: string | null | undefined): boolean {
+  return (
+    url === null ||
+    url === undefined ||
+    NEW_TAB_URLS.has(url.replace(/\/$/, '')) ||
+    isNewTabUrl(url)
+  )
+}
+
+/** `zen://newtab` with or without a trailing slash or query (Chromium normalises the former). */
+export function isNewTabUrl(url: string): boolean {
+  return (
+    url === NEW_TAB_URL || url.startsWith(`${NEW_TAB_URL}/`) || url.startsWith(`${NEW_TAB_URL}?`)
+  )
 }
 
 /** Heuristic used by the URL bar: does the user most likely mean a URL rather than a search? */
@@ -89,12 +119,17 @@ export function inputToUrl(raw: string): string | null {
   if (hasScheme(input)) {
     const scheme = input.slice(0, input.indexOf(':')).toLowerCase()
     if (scheme === 'about') {
-      const rest = input.slice('about:'.length)
-      if (rest === 'blank' || rest === 'newtab' || rest === 'home') return BLANK_URL
-      if (rest === 'preferences' || rest === 'settings') return SETTINGS_URL
-      if (rest === 'history') return HISTORY_URL
-      if (rest === 'bookmarks') return BOOKMARKS_URL
-      return BLANK_URL
+      const rest = input.slice('about:'.length).toLowerCase()
+      return INTERNAL_PAGE_ALIASES[rest] ?? BLANK_URL
+    }
+    // `zenium://` is the name users see for `zen://`; `chrome://settings` and its siblings are
+    // the pages a Chrome user types – both resolve to the canonical `zen://` address.
+    if (scheme === 'zenium' || scheme === 'chrome') {
+      const rest = input.slice(`${scheme}://`.length)
+      const page = rest.split(/[/?#]/, 1)[0].toLowerCase()
+      const alias = INTERNAL_PAGE_ALIASES[page]
+      if (alias) return alias
+      if (scheme === 'zenium') return `zen://${rest}`
     }
     return input
   }
@@ -107,7 +142,7 @@ export function inputToUrl(raw: string): string | null {
 
 /** Strip the scheme and `www.` for display, like Firefox's `browser.urlbar.trimHttps`. */
 export function displayUrl(url: string): string {
-  if (!url || url === BLANK_URL) return ''
+  if (isEmptyTabUrl(url)) return ''
   // Error and Reader View pages show the address of the page they stand in for (like Firefox).
   if (url.startsWith(ERROR_URL_PREFIX) || url.startsWith(READER_URL_PREFIX)) {
     try {
@@ -134,7 +169,9 @@ export function displayUrl(url: string): string {
  * scheme and `www.` kept, error and Reader View pages replaced by the address they stand in for.
  */
 export function fullUrl(url: string): string {
-  if (!url || url === BLANK_URL) return ''
+  // An empty tab (the blank page, the new tab page) has no address to show: `zen://newtab` is
+  // canonical inside and never appears in the UI, as Chrome's omnibox is empty on its NTP.
+  if (isEmptyTabUrl(url)) return ''
   if (url.startsWith(ERROR_URL_PREFIX) || url.startsWith(READER_URL_PREFIX)) {
     try {
       return new URL(url).searchParams.get('url') ?? ''
@@ -219,7 +256,7 @@ export function isSameSite(a: string, b: string): boolean {
 
 /** A friendly title for pages without one. */
 export function titleForUrl(url: string): string {
-  if (!url || url === BLANK_URL) return 'New Tab'
+  if (isEmptyTabUrl(url)) return 'New Tab'
   if (url.startsWith(ERROR_URL_PREFIX)) return 'Problem loading page'
   const host = getHost(url)
   return host ? host.replace(/^www\./, '') : url

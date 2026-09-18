@@ -540,6 +540,29 @@ export class HistoryService {
     return this.removeVisits((v) => v.visitTime >= fromMs && v.visitTime < toMs)
   }
 
+  /**
+   * A favicon seen on `url`'s site: the page's own if it was visited, else the most visited
+   * page's of the same host (`www.` and case aside). For new tab page tiles of pages history may
+   * not hold itself.
+   */
+  siteFaviconFor(url: string): string | null {
+    const exact = this.entries.get(url)
+    if (exact?.favicon) return exact.favicon
+    const host = getHost(url)
+      .toLowerCase()
+      .replace(/^www\./, '')
+    if (!host) return null
+    let best: HistoryEntry | null = null
+    for (const e of this.entries.values()) {
+      if (!e.favicon) continue
+      const candidate = getHost(e.url)
+        .toLowerCase()
+        .replace(/^www\./, '')
+      if (candidate === host && (!best || e.visitCount > best.visitCount)) best = e
+    }
+    return best?.favicon ?? null
+  }
+
   delete(url: string): void {
     this.deleteUrls([url])
   }

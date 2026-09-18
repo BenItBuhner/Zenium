@@ -1,6 +1,6 @@
 import type { BookmarkNode, BookmarksBarMode } from './types'
 import { type BookmarkSort, type BookmarkTree, sortBookmarkNodes } from './bookmarks'
-import { isNewTabUrl } from './url'
+import { isEmptyTabUrl } from './url'
 
 /**
  * View-side helpers on the bookmark model for the desktop chrome: when the bar shows, how the
@@ -15,7 +15,7 @@ import { isNewTabUrl } from './url'
 export function bookmarksBarVisible(mode: BookmarksBarMode, url: string | null): boolean {
   if (mode === 'always') return true
   if (mode === 'never') return false
-  return isNewTabUrl(url)
+  return isEmptyTabUrl(url)
 }
 
 /** Ctrl+Shift+B: a visible bar hides for good, a hidden (or new-tab-only) bar shows for good. */

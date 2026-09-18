@@ -7,13 +7,20 @@ import {
   net,
   session,
   shell,
+  type IpcMainEvent,
   type Session,
   type WebContents
 } from 'electron'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { release } from 'node:os'
 import { basename, join } from 'node:path'
-import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
+import type {
+  HostCapabilities,
+  NewTabPageAction,
+  NewTabPageState,
+  Platform as PlatformOs
+} from '../../shared/types'
+import { isNewTabUrl } from '../../shared/url'
 import { contentSettingId } from '../../shared/contentSettings'
 import {
   NOTIFICATION_PERMISSION_CHANNEL,
@@ -51,6 +58,7 @@ import { ElectronDownloads } from './downloads'
 import { ElectronMenus } from './menus'
 import { ElectronTabViewHost, copyImageFromUrl } from './views'
 import { ElectronWindowFactory, type ElectronWindow } from './window'
+import { ElectronNewTabBackground } from './newTabBackground'
 import { ExtensionService } from './extensions'
 import { WebstoreBridge } from './webstoreBridge'
 import { ExtensionApiHost } from './extensionApi'
@@ -109,7 +117,9 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   pageControls: false,
   // Private browsing is a window of its own on desktop (`windows`).
   privateTabs: false,
-  secureDns: true
+  secureDns: true,
+  // `zen://newtab` is served by the zen protocol and bridged by the page preload.
+  newTabPage: true
 }
 
 /**
@@ -140,6 +150,7 @@ export class ElectronPlatform implements Platform {
   readonly translate: ElectronTranslateHost
   /** Default-browser status and registration on Windows, macOS and Linux. */
   readonly defaultBrowser = new ElectronDefaultBrowser()
+  readonly newTabBackground: ElectronNewTabBackground
   browser!: Browser
   private readonly profileDir: string
 
@@ -148,6 +159,7 @@ export class ElectronPlatform implements Platform {
     this.profileDir = join(userDataDir, 'zen')
     this.io = new FileStoreIO(this.profileDir)
     this.blocking = new ElectronBundledLists(bundledListsDirectory(), this.profileDir)
+    this.newTabBackground = new ElectronNewTabBackground(join(this.profileDir, 'newtab'))
     this.windows = new ElectronWindowFactory()
     this.translate = new ElectronTranslateHost(userDataDir, () =>
       focusedChromeWebContents((id) => this.windows.windowForWebContents(id) !== undefined)
@@ -433,7 +445,11 @@ export class ElectronPlatform implements Platform {
     // observer and the page preload's signals IPC.
     this.privacy.attach(this.requestBlocking)
     this.sessions.configure((ses: Session, containerId: string) => {
-      installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
+      installZenProtocol(
+        ses,
+        (id) => browser.reader.pageHtml(id),
+        () => this.newTabBackground.response()
+      )
       extensionResources.install(ses)
       // The one webRequest listener set of the session; every request hook goes through it.
       this.requestBlocking.attach(ses, containerId)
@@ -518,7 +534,27 @@ export class ElectronPlatform implements Platform {
         .askDialog(call, event.senderFrame?.url ?? '')
         .then(answer, () => answer(DISMISSED_ANSWER))
     })
+    // The new tab page: its preload fetches the first state synchronously (before the first
+    // paint) and sends actions. Only the main frame of a tab view showing `zen://newtab` is heard.
+    ipcMain.on('zen:newtab-state', (event) => {
+      const tabId = this.newTabSender(event)
+      const state: NewTabPageState | null = tabId ? browser.newTab.stateFor(tabId) : null
+      event.returnValue = state
+    })
+    ipcMain.on('zen:newtab', (event, action: NewTabPageAction) => {
+      const tabId = this.newTabSender(event)
+      if (!tabId || !action || typeof action.type !== 'string') return
+      if (!isNewTabUrl(event.senderFrame?.url ?? event.sender.getURL())) return
+      browser.newTab.handleAction(tabId, action)
+    })
     this.attachNotificationStatus(browser)
+  }
+
+  /** The tab (or preloaded placeholder) whose main frame sent a new tab page message. */
+  private newTabSender(event: IpcMainEvent): string | undefined {
+    if (!this.views.viewForWebContents(event.sender)) return undefined
+    if (event.senderFrame && event.senderFrame !== event.sender.mainFrame) return undefined
+    return this.views.tabIdForWebContents(event.sender)
   }
 
   /**
