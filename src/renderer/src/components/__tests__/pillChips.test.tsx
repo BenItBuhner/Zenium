@@ -82,6 +82,9 @@ function state(t: Tab | null, bookmarks: BookmarkNode[] = []): UIState {
     boosts: [],
     extensions: [],
     bookmarks,
+    // Nothing downloading: the bar's downloads button stays away.
+    downloads: [],
+    downloadsProgress: { received: 0, total: 0, indeterminate: false, active: 0 },
     // Tooltips quote the chord from the active key table (the default Chrome set here).
     shortcuts: defaultShortcuts('linux', 'chrome')
   } as unknown as UIState
