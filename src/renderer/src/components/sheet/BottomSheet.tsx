@@ -345,9 +345,11 @@ export function BottomSheet({
   }
 
   return (
+    // A page surface (design language v2 §9.29): the sheet's controls draw in the page family.
     <div
       ref={layerRef}
       className="fixed inset-0 z-[90]"
+      data-surface="page"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={(e) => finish(e, false)}
