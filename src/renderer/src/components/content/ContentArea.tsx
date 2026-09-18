@@ -10,6 +10,7 @@ import { cn } from '@renderer/lib/utils'
 import { dropStore } from '@renderer/lib/drag'
 import { Urlbar } from '../urlbar/Urlbar'
 import { OverlayHost } from '../overlays/OverlayHost'
+import { CoverImage } from './CoverImage'
 import { FindBar } from './FindBar'
 import { GlanceFrame } from './GlanceFrame'
 import { PullIndicator } from './PullIndicator'
@@ -81,12 +82,16 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
           )}
           {showSnapshot && (
             <div className="absolute inset-0">
-              {ui.snapshot && ui.snapshotTabId === (glanceActive ? glanceParentId : tab?.id) ? (
-                <img
+              {ui.snapshot &&
+              ui.snapshotTabId &&
+              ui.snapshotTabId === (glanceActive ? glanceParentId : tab?.id) ? (
+                <CoverImage
+                  tabId={ui.snapshotTabId}
                   src={ui.snapshot}
-                  alt=""
+                  // The phone swaps the page for this picture (see lib/cover.ts); the desktop
+                  // layout shows it as it always has.
+                  cover={phone}
                   className="h-full w-full object-cover object-top"
-                  draggable={false}
                 />
               ) : null}
               <div
