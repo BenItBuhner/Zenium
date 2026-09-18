@@ -240,6 +240,7 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
           <PhoneListRow
             icon={<Trash2 className="h-5 w-5" strokeWidth={1.75} />}
             title="Clear history"
+            danger
             onTap={clearAll}
           />
         )}

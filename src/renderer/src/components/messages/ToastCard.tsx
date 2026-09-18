@@ -51,9 +51,12 @@ export function ToastCard({ toast, compact, onMeasure }: Props): JSX.Element {
       )}
       <span className="zen-message-text">{toast.message}</span>
       {toast.action && (
+        // The `zen-v2-` alias is how main.css's shared focus ring reaches the action on a coarse
+        // pointer, where the chrome's generic suppressor drops a button's ring (the card's own
+        // layered rule loses to it).
         <button
           type="button"
-          className="zen-message-button"
+          className="zen-message-button zen-v2-message-action"
           onClick={() => pickToastAction(toast.id)}
         >
           {toast.action.label}

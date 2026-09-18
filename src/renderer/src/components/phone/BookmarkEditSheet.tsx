@@ -45,14 +45,15 @@ export function BookmarkEditSheet({
 
   if (gone) return null
 
-  // A dialog title is Title Case (v2 draft 9.1); the labels and buttons below stay sentence case.
+  // Sheet titles are sentence case like the labels and buttons (v2 draft 9.1, corrected: only
+  // menu items, nav categories and window titles keep Title Case).
   const title = edit.id
     ? folder
-      ? 'Rename Folder'
-      : 'Edit Bookmark'
+      ? 'Rename folder'
+      : 'Edit bookmark'
     : folder
-      ? 'New Folder'
-      : 'Add Bookmark'
+      ? 'New folder'
+      : 'Add bookmark'
 
   return (
     <PhoneSheet

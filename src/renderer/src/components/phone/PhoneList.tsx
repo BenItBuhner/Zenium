@@ -219,6 +219,8 @@ export interface PhoneListRowProps {
   onLongPress?: () => void
   /** Sideways swipes delete the row (the callback runs once it has left the screen). */
   onSwipeDelete?: () => void
+  /** A destructive action row (v2 draft §10.4): label and glyph in the danger ink. */
+  danger?: boolean
   ariaLabel?: string
 }
 
@@ -242,6 +244,7 @@ export function PhoneListRow({
   onTap,
   onLongPress,
   onSwipeDelete,
+  danger = false,
   ariaLabel
 }: PhoneListRowProps): JSX.Element {
   const frameRef = useRef<HTMLDivElement>(null)
@@ -258,6 +261,7 @@ export function PhoneListRow({
     <div
       data-selected={selected}
       data-two-line={Boolean(subtitle)}
+      data-danger={danger || undefined}
       className="zen-list-row select-none"
       style={{ touchAction: onSwipeDelete && !selecting ? 'pan-y' : undefined }}
       {...pointer}

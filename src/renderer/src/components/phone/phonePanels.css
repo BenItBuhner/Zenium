@@ -1,15 +1,16 @@
 /*
- * The phone history and bookmarks panels, their sheets (the bookmark editor, the clear-history
- * prompt) and the phone toast, built against the design-language v2 draft (sections 1 to 6 and
- * 9) on the shared `--v2-*` tokens: neutral panel surfaces with a hairline border, rows of 44
+ * The phone history and bookmarks panels and their sheets (the bookmark editor, the
+ * clear-history prompt), built against the design-language v2 draft (sections 1 to 6 and 9)
+ * on the shared `--v2-*` tokens: neutral panel surfaces with a hairline border, rows of 44
  * that grow with their content and run edge to edge with their text at the 16 gutter,
  * rectangular 40 px fields, 44 icon buttons with 20 px glyphs, colour only as ink. Motion stays
  * v1 section 7 / v2 section 11. The sheets themselves are the chassis's (`.zen-sheet*`,
- * `.zen-v2-button` in main.css) and this file adds nothing to them but the form's layout.
- * Every value is a token so the surfaces re-tune with the block in main.css. The focusable
- * pieces (the toast action, the field's clear) also carry a `zen-v2-*` alias class, which is
- * how main.css's one shared focus ring reaches them on coarse pointers; the field draws its own
- * ring on :focus-within and a row draws it around itself from its accessible row's focus.
+ * `.zen-v2-button` in main.css) and this file adds nothing to them but the form's layout; the
+ * toasts are the frame's message cards (components/messages). Every value is a token so the
+ * surfaces re-tune with the block in main.css. The focusable pieces that are not `zen-v2-`
+ * controls already (the field's clear) carry a `zen-v2-*` alias class, which is how main.css's
+ * one shared focus ring reaches them on coarse pointers; the field draws its own ring on
+ * :focus-within and a row draws it around itself from its accessible row's focus.
  */
 @layer components {
   /* A panel that takes the content card's place: the neutral panel with a hairline edge, no blur. */
@@ -99,15 +100,30 @@
   .zen-list-row:active {
     background: var(--v2-fill);
   }
+  /*
+   * A picked row (9.6): the accent at 12% in light and 16% in dark, with the accent-filled
+   * checkbox – never `--v2-selection` (text selection, too strong for a row) and never
+   * `--v2-fill`, which is the press. The expression stands in for a `--v2-selected` token.
+   */
   .zen-list-row[data-selected='true'],
   .zen-list-row[data-selected='true']:active {
-    background: var(--v2-nav-active);
+    background: color-mix(in srgb, var(--v2-accent) 12%, transparent);
+  }
+  :root[data-theme='dark'] .zen-list-row[data-selected='true'],
+  :root[data-theme='dark'] .zen-list-row[data-selected='true']:active {
+    background: color-mix(in srgb, var(--v2-accent) 16%, transparent);
+  }
+  /* A destructive action row (10.4): label and glyph in the danger ink, the fill as any row's. */
+  .zen-list-row[data-danger] {
+    color: var(--v2-danger);
   }
   /*
    * The accessible row (a button, or a checkbox while picking): the leading box and the text,
    * laid out as the row's own flex line so nothing moves; a trailing control is its sibling.
-   * It takes the focus, and the ring – main.css's shared one, offset 0 in light and -2 in dark
-   * – is drawn around the whole row from it, not around the text alone.
+   * It takes the focus, and the ring – the shared 2 px accent (main.css, section 1) – is drawn
+   * around the whole row from it, not around the text alone. The ring sits inside the row in
+   * both schemes: rows run edge to edge and a swiped row lives in a clipping frame, so an
+   * outside ring would be cut, which is section 1's own reason for the inset ring on fields.
    */
   .zen-list-main {
     display: flex;
@@ -119,9 +135,6 @@
   }
   .zen-list-row:has(> .zen-list-main:focus-visible) {
     outline: 2px solid var(--v2-ring);
-    outline-offset: 0;
-  }
-  :root[data-theme='dark'] .zen-list-row:has(> .zen-list-main:focus-visible) {
     outline-offset: -2px;
   }
   /*
