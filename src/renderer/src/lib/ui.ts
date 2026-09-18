@@ -953,21 +953,23 @@ export function closeTabsMenu(): void {
 
 /**
  * Only anchored panels are up: a bar panel, the star bubble, the zoom bubble, the tab hover
- * card. The page behind them is captured all the same (they overlap the live view), but panels
- * draw no scrim, so the capture shows undimmed; dialogs dim it.
+ * card, the downloads bubble. The page behind them is captured all the same (they overlap the
+ * live view), but panels draw no scrim, so the capture shows undimmed; dialogs dim it.
  */
 export function panelAloneOverContent(ui: UiState): boolean {
   return (
     (ui.barMenuOpen ||
       ui.starDialog !== null ||
       ui.zoomBubble !== null ||
-      ui.hoverCard.tabId !== null) &&
+      ui.hoverCard.tabId !== null ||
+      ui.downloadsOpen) &&
     !overlayCoversContent({
       ...ui,
       barMenuOpen: false,
       starDialog: null,
       zoomBubble: null,
-      hoverCard: HOVER_CARD_HIDDEN
+      hoverCard: HOVER_CARD_HIDDEN,
+      downloadsOpen: false
     })
   )
 }
