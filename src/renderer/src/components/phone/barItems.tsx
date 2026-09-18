@@ -154,7 +154,7 @@ export const BAR_ITEMS: Record<PhoneBarItemId, BarItem> = {
     id: 'menu',
     label: 'Menu',
     glyph: () => <MoreHorizontal className={glyph} />,
-    run: () => run('app.menu', undefined)
+    run: () => run('app.menu', {})
   },
   spaces: {
     id: 'spaces',

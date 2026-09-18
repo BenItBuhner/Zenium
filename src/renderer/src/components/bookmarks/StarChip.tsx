@@ -11,9 +11,18 @@ import { PillChip } from '../urlbar/PillChip'
  * The star at the trailing end of the address pill: an outline until the page is bookmarked,
  * filled (in accent ink) once it is. Pressing it stars the page and opens the bubble; pressing
  * it again puts the bubble away. When a page becomes bookmarked while it is on screen the fill
- * comes in over 120ms and the glyph pops once it is full.
+ * comes in over 120ms and the glyph pops once it is full. `title` is the tooltip: the label
+ * with the bookmark chord from the active key table, which the pill knows.
  */
-export function StarChip({ tab, filled }: { tab: Tab; filled: boolean }): JSX.Element {
+export function StarChip({
+  tab,
+  filled,
+  title
+}: {
+  tab: Tab
+  filled: boolean
+  title: string
+}): JSX.Element {
   const glyph = useRef<HTMLSpanElement>(null)
   const shown = useRef({ tabId: tab.id, filled })
   useEffect(() => {
@@ -39,7 +48,7 @@ export function StarChip({ tab, filled }: { tab: Tab; filled: boolean }): JSX.El
   return (
     <PillChip
       label={filled ? 'Edit bookmark' : 'Bookmark this tab'}
-      title={filled ? 'Edit bookmark (Ctrl+D)' : 'Bookmark this tab (Ctrl+D)'}
+      title={title}
       popup="dialog"
       expanded={open}
       data-bm-star=""

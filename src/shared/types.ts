@@ -858,6 +858,13 @@ export interface KeyBinding {
   key: string
 }
 
+/**
+ * Which default binding table the shortcuts start from: Chrome's and Edge's chords (`chrome`,
+ * the default) or the Zen Browser set Zenium grew up with (`zen`). User overrides sit on top
+ * of either.
+ */
+export type ShortcutPreset = 'chrome' | 'zen'
+
 export type ShortcutAction =
   | 'compact.toggle'
   | 'compact.toggleSidebar'
@@ -884,6 +891,8 @@ export type ShortcutAction =
   | 'tab.togglePin'
   | 'tab.resetPinned'
   | 'tab.duplicate'
+  /** Chrome's tab search (Ctrl+Shift+A); reserved, does nothing until the tab search ships. */
+  | 'tab.search'
   | 'sidebar.toggle'
   | 'glance.expand'
   | 'space.new'
@@ -894,7 +903,10 @@ export type ShortcutAction =
   | 'window.newUnsynced'
   | 'window.newPrivate'
   | 'window.close'
+  | 'window.minimize'
   | 'app.quit'
+  /** Open the application menu from the keyboard (Alt+F / F10 on Windows and Linux). */
+  | 'menu.app'
   | 'tab.next'
   | 'tab.prev'
   | 'tab.select1'
@@ -923,7 +935,11 @@ export type ShortcutAction =
   | 'find.open'
   | 'find.next'
   | 'find.prev'
+  /** Chrome's "Use Selection for Find" (Cmd+E on macOS). */
+  | 'find.useSelection'
   | 'page.savePage'
+  | 'page.openFile'
+  | 'page.emailLink'
   | 'page.print'
   | 'page.viewSource'
   | 'page.fullscreen'
@@ -961,6 +977,8 @@ export interface Shortcut {
   extraBindings: KeyBinding[]
   /** Actions this build cannot perform yet (kept so the list matches Zen 1:1). */
   unsupported?: boolean
+  /** Reserved for a feature that has not shipped: bound (a no-op) but left out of the list. */
+  hidden?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -1090,6 +1108,11 @@ export interface Settings {
   pageControls: PageControlsSettings
   /** The bookmarks bar above the content frame: always, only on the new tab page, or never. */
   bookmarksBar: BookmarksBarMode
+  /**
+   * Which built-in key table the user's overrides sit on. New profiles follow Chrome; a profile
+   * from before the setting existed keeps the Zen set when it had customised bindings.
+   */
+  shortcutPreset: ShortcutPreset
 }
 
 // ---------------------------------------------------------------------------
@@ -2000,7 +2023,12 @@ export interface Commands {
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
   'folder.contextMenu': { args: { folderId: string }; result: void }
   'newtab.contextMenu': { args: void; result: void }
-  'app.menu': { args: void; result: void }
+  /**
+   * The "⋯" application menu. `anchor` is the menu button in chrome CSS pixels: the menu opens
+   * along its bottom edge; without it the menu opens at the pointer. `keyboard` marks a menu
+   * opened by a shortcut, whose first item starts selected.
+   */
+  'app.menu': { args: { anchor?: Rect; keyboard?: boolean }; result: void }
   /** Renderer-hosted menus: an item was picked / the menu was dismissed. */
   'menu.click': { args: { menuId: string; itemId: string }; result: void }
   'menu.close': { args: { menuId: string }; result: void }
@@ -2103,7 +2131,13 @@ export interface Commands {
 
   'settings.update': { args: Partial<Settings>; result: void }
   'shortcuts.update': { args: { id: string; binding: KeyBinding | null }; result: void }
+  /** Drop every override: the table goes back to the active preset. */
   'shortcuts.reset': { args: void; result: void }
+  /**
+   * The Settings recorder is (or stopped) listening for a chord: while it is, key presses in the
+   * chrome are captured by the renderer and no shortcut runs.
+   */
+  'shortcuts.recording': { args: { recording: boolean }; result: void }
   'sidebar.setWidth': { args: { width: number }; result: void }
   'sidebar.toggleExpanded': { args: void; result: void }
 
@@ -2519,7 +2553,13 @@ export interface Events {
   'urlbar.toggle': { mode: UrlbarOpenMode; text?: string }
   'urlbar.close': void
   'overlay.open': { kind: OverlayKind; folderId?: string; section?: string }
-  'find.open': { tabId: string; again?: 'next' | 'prev' }
+  /** Open the find bar; `text` replaces what it holds and is searched for at once ("use selection for find"). */
+  'find.open': { tabId: string; again?: 'next' | 'prev'; text?: string }
+  /**
+   * A shortcut asked for the application menu: the renderer focuses the menu button and opens
+   * the menu from it (`app.menu` with `keyboard`), so Escape leaves the keyboard on the button.
+   */
+  'menu.app': void
   /**
    * A download row changed. `progress` is throttled to 4 Hz per item, state changes arrive at
    * once; `done` covers completed, cancelled and interrupted (read `item.state`). Private items

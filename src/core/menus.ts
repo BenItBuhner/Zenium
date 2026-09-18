@@ -3,18 +3,60 @@ import type { ZenWindow } from './window'
 import type { MenuItemTemplate, MenuSource, PageContextParams } from './platform'
 import { buildSearchUrl } from '../shared/search'
 import { copyConfirmation } from '../shared/clipboard'
+import { bindingFor, toAccelerator } from '../shared/shortcuts'
 import { displayUrl, getDomain, isNavigableUrl } from '../shared/url'
 import {
   DEFAULT_CONTAINER_ID,
   type BookmarkNode,
   type BookmarksBarMode,
+  type Rect,
+  type Shortcut,
+  type ShortcutAction,
   type Tab
 } from '../shared/types'
 import { siteKey } from '../shared/pageControls'
 import { spaceLabel } from '../shared/defaults'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
+import { applicationMenu, menuSignature, runFromMenuBar } from './menuBar'
 
 type Template = MenuItemTemplate[]
+
+/** How long state changes are batched before the menu bar is rebuilt from them. */
+const APPLICATION_MENU_DEBOUNCE_MS = 80
+
+/**
+ * What the key table says about each item, filled in: the chord shown after the label of every
+ * item that names an `action` (its primary binding, else its first alternative; nothing when the
+ * action is unbound), and the click of items that name one but bring none. Pure: returns copies.
+ */
+export function withAccelerators(
+  items: Template,
+  shortcuts: Shortcut[],
+  run: (action: ShortcutAction) => void
+): Template {
+  return items.map((item) => {
+    const out: MenuItemTemplate = { ...item }
+    const action = item.action
+    if (action) {
+      if (out.accelerator === undefined) {
+        const accelerator = toAccelerator(bindingFor(shortcuts, action))
+        if (accelerator) out.accelerator = accelerator
+      }
+      if (!out.click) out.click = () => run(action)
+    }
+    if (item.submenu) out.submenu = withAccelerators(item.submenu, shortcuts, run)
+    return out
+  })
+}
+
+/** Collapse duplicate, leading and trailing separators (items left out by capability leave gaps). */
+export function tidySeparators(template: Template): Template {
+  return template.filter((item, i, arr) => {
+    if (item.type !== 'separator') return true
+    const prev = arr[i - 1]
+    return i > 0 && i < arr.length - 1 && prev?.type !== 'separator'
+  })
+}
 
 /**
  * Context menus. Zen (Firefox) uses native-styled menus everywhere; the core builds the templates
@@ -24,18 +66,50 @@ type Template = MenuItemTemplate[]
 export class Menus {
   constructor(private readonly browser: Browser) {}
 
+  /** What the host's menu bar shows right now, so it is only rebuilt when that changes. */
+  private applicationMenuSignature: string | null = null
+  private applicationMenuTimer: ReturnType<typeof setTimeout> | null = null
+
+  /**
+   * Give hosts with a menu bar (macOS) the application menu: every item's chord from the active
+   * key table, rebuilt only when what it shows changed. Hosts without one are never called.
+   */
+  syncApplicationMenu(): void {
+    const host = this.browser.platform.menus
+    if (!host.setApplicationMenu) return
+    if (this.applicationMenuTimer) {
+      clearTimeout(this.applicationMenuTimer)
+      this.applicationMenuTimer = null
+    }
+    const template = withAccelerators(
+      applicationMenu(this.browser),
+      this.browser.state.shortcuts,
+      (action) => runFromMenuBar(this.browser, action)
+    )
+    const signature = menuSignature(template)
+    if (signature === this.applicationMenuSignature) return
+    this.applicationMenuSignature = signature
+    host.setApplicationMenu(template)
+  }
+
+  /** Rebuild the menu bar once the current burst of state changes is over. */
+  scheduleApplicationMenu(): void {
+    if (!this.browser.platform.menus.setApplicationMenu || this.applicationMenuTimer) return
+    this.applicationMenuTimer = setTimeout(() => {
+      this.applicationMenuTimer = null
+      this.syncApplicationMenu()
+    }, APPLICATION_MENU_DEBOUNCE_MS)
+  }
+
   private popup(
     template: Template,
     win: ZenWindow,
     source: MenuSource,
-    anchor?: { x: number; y: number }
+    anchor?: { x?: number; y?: number; keyboard?: boolean }
   ): void {
-    const items = template.filter((item, i, arr) => {
-      // Collapse duplicate / leading / trailing separators.
-      if (item.type !== 'separator') return true
-      const prev = arr[i - 1]
-      return i > 0 && i < arr.length - 1 && prev?.type !== 'separator'
-    })
+    const items = withAccelerators(tidySeparators(template), this.browser.state.shortcuts, (a) =>
+      this.browser.actions.run(a, { sourceTabId: null, win })
+    )
     this.browser.platform.menus.popup(items, { source, win, ...anchor })
   }
 
@@ -240,29 +314,44 @@ export class Menus {
     }
     if (!hasLink && !isImage && !isMedia && !params.isEditable && !selection) {
       template.push(
-        { label: 'Back', enabled: tab.canGoBack, click: () => tabs.goBack(tabId) },
-        { label: 'Forward', enabled: tab.canGoForward, click: () => tabs.goForward(tabId) },
+        {
+          label: 'Back',
+          action: 'nav.back',
+          enabled: tab.canGoBack,
+          click: () => tabs.goBack(tabId)
+        },
+        {
+          label: 'Forward',
+          action: 'nav.forward',
+          enabled: tab.canGoForward,
+          click: () => tabs.goForward(tabId)
+        },
         {
           label: tab.loading ? 'Stop' : 'Reload',
+          action: tab.loading ? 'nav.stop' : 'nav.reload',
           click: () => (tab.loading ? tabs.stop(tabId) : tabs.reload(tabId))
         },
         { type: 'separator' },
         {
           label: tab.bookmarked ? 'Remove Bookmark' : 'Bookmark Page',
+          action: 'bookmark.add',
           click: () => this.browser.toggleBookmark(tabId, win)
         },
         {
           label: 'Save Page As…',
+          action: 'page.savePage',
           click: () => this.browser.actions.run('page.savePage', { sourceTabId: tabId, win })
         },
         {
           label: 'Take Screenshot',
+          action: 'page.screenshot',
           click: () => this.browser.actions.run('page.screenshot', { sourceTabId: tabId, win })
         },
         {
           label: this.browser.reader.isReaderUrl(tab.url)
             ? 'Exit Reader View'
             : 'Enter Reader View',
+          action: 'page.readerMode',
           enabled: this.browser.reader.isReaderUrl(tab.url) || this.browser.reader.canRead(tab),
           click: () => this.browser.reader.toggle(tabId, win)
         },
@@ -271,6 +360,7 @@ export class Menus {
         { type: 'separator' },
         {
           label: 'View Page Source',
+          action: 'page.viewSource',
           enabled: !tab.url.startsWith('zen://'),
           click: () => this.browser.actions.run('page.viewSource', { sourceTabId: tabId, win })
         }
@@ -282,7 +372,11 @@ export class Menus {
     const extensionItems = this.browser.extensions.pageContextMenuItems(tabId, params, win)
     if (extensionItems.length > 0) template.push(...extensionItems, { type: 'separator' })
     if (caps.devtools)
-      template.push({ label: 'Inspect Element', click: () => view.openDevTools('inspect') })
+      template.push({
+        label: 'Inspect Element',
+        action: 'devtools.inspector',
+        click: () => view.openDevTools('inspect')
+      })
     this.popup(template, win, 'page')
   }
 
@@ -412,6 +506,9 @@ export class Menus {
     const pinnedChanged =
       (tab.pinned || tab.essential) && tab.pinnedUrl !== null && tab.url !== tab.pinnedUrl
     const domain = getDomain(tab.url)
+    // The shortcuts act on the active tab: only its menu shows them.
+    const key = (action: ShortcutAction): { action?: ShortcutAction } =>
+      active?.id === tab.id ? { action } : {}
 
     const template: Template = [
       {
@@ -420,9 +517,17 @@ export class Menus {
         click: () => this.browser.newTabAfter(tabId, win)
       },
       { type: 'separator' },
-      { label: tab.discarded ? 'Load Tab' : 'Reload Tab', click: () => tabs.reload(tabId) },
-      { label: tab.muted ? 'Unmute Tab' : 'Mute Tab', click: () => tabs.toggleMute(tabId) },
-      { label: 'Duplicate Tab', click: () => tabs.duplicate(tabId, win) },
+      {
+        label: tab.discarded ? 'Load Tab' : 'Reload Tab',
+        ...key('nav.reload'),
+        click: () => tabs.reload(tabId)
+      },
+      {
+        label: tab.muted ? 'Unmute Tab' : 'Mute Tab',
+        ...key('page.toggleMute'),
+        click: () => tabs.toggleMute(tabId)
+      },
+      { label: 'Duplicate Tab', ...key('tab.duplicate'), click: () => tabs.duplicate(tabId, win) },
       { label: 'Rename Tab…', click: () => this.browser.emit('tab.startRename', { tabId }, win) },
       { label: 'Change Icon…', click: () => this.browser.emit('tab.pickIcon', { tabId }, win) },
       { type: 'separator' },
@@ -438,12 +543,17 @@ export class Menus {
                 }
           ]),
       tab.essential
-        ? { label: 'Unpin Tab', click: () => tabs.togglePin(tabId, win) }
-        : { label: tab.pinned ? 'Unpin Tab' : 'Pin Tab', click: () => tabs.togglePin(tabId, win) },
+        ? { label: 'Unpin Tab', ...key('tab.togglePin'), click: () => tabs.togglePin(tabId, win) }
+        : {
+            label: tab.pinned ? 'Unpin Tab' : 'Pin Tab',
+            ...key('tab.togglePin'),
+            click: () => tabs.togglePin(tabId, win)
+          },
       ...(tab.pinned || tab.essential
         ? [
             {
               label: 'Reset Pinned Tab',
+              ...key('tab.resetPinned'),
               enabled: pinnedChanged,
               click: () => tabs.resetPinned(tabId, true, win)
             },
@@ -518,11 +628,13 @@ export class Menus {
       { type: 'separator' },
       {
         label: tab.bookmarked ? 'Remove Bookmark' : 'Bookmark Tab',
+        ...key('bookmark.add'),
         enabled: !tab.url.startsWith('zen://'),
         click: () => this.browser.toggleBookmark(tabId, win)
       },
       {
         label: 'Bookmark All Tabs…',
+        action: 'bookmark.allTabs',
         click: () => this.browser.bookmarkTabs(win)
       },
       {
@@ -534,10 +646,15 @@ export class Menus {
                 { type: 'separator' as const }
               ]
             : []),
-          { label: 'Copy Link', click: () => tabs.copyUrl(tabId) },
-          { label: 'Copy Link as Markdown', click: () => tabs.copyUrl(tabId, true) },
+          { label: 'Copy Link', ...key('tab.copyUrl'), click: () => tabs.copyUrl(tabId) },
+          {
+            label: 'Copy Link as Markdown',
+            ...key('tab.copyUrlMarkdown'),
+            click: () => tabs.copyUrl(tabId, true)
+          },
           {
             label: 'Email Link…',
+            ...key('page.emailLink'),
             click: () =>
               this.browser.platform.shell.openExternal(
                 `mailto:?subject=${encodeURIComponent(tab.customTitle ?? tab.title)}&body=${encodeURIComponent(tab.url)}`
@@ -572,6 +689,7 @@ export class Menus {
         : []),
       {
         label: tab.pinned || tab.essential ? 'Close Tab (keep pinned)' : 'Close Tab',
+        ...key('tab.close'),
         click: () => tabs.closeTab(tabId, false, win)
       },
       ...(tab.pinned || tab.essential
@@ -689,7 +807,7 @@ export class Menus {
     const local = Boolean(win.localSpace)
     this.popup(
       [
-        { label: 'New Tab', click: () => this.browser.openNewTab(win) },
+        { label: 'New Tab', action: 'tab.new', click: () => this.browser.openNewTab(win) },
         {
           label: 'New Tab in Container',
           enabled: !win.isPrivate,
@@ -715,11 +833,16 @@ export class Menus {
                 label: 'New Live Folder…',
                 click: () => this.browser.emit('overlay.open', { kind: 'live-folder' }, win)
               },
-              { label: 'New Space…', click: () => this.browser.emit('space.new', undefined, win) },
+              {
+                label: 'New Space…',
+                action: 'space.new' as const,
+                click: () => this.browser.emit('space.new', undefined, win)
+              },
               { type: 'separator' as const }
             ]),
         {
           label: 'Clear Unpinned Tabs',
+          ...(space.id === win.activeSpaceId ? { action: 'space.closeUnpinned' as const } : {}),
           enabled: space.tabIds.some((id) => !state.model.tabs[id]?.pinned),
           click: () => tabs.closeUnpinned(space.id, win)
         }
@@ -1042,12 +1165,14 @@ export class Menus {
     const { session } = this.browser
     const entries = session.summaries().slice(0, 10)
     if (entries.length === 0) return { label: 'Recently Closed', enabled: false, submenu: [] }
-    const items: Template = entries.map((e) => ({
+    const items: Template = entries.map((e, i) => ({
       label:
         e.kind === 'window'
-          ? `Reopen Window – ${clip(e.title, 40)} (${e.tabCount} ${e.tabCount === 1 ? 'tab' : 'tabs'})`
-          : clip(e.title || (e.url ? displayUrl(e.url) : 'Untitled'), 60),
+          ? `Reopen Window – ${clipLabel(e.title, 40)} (${e.tabCount} ${e.tabCount === 1 ? 'tab' : 'tabs'})`
+          : clipLabel(e.title || (e.url ? displayUrl(e.url) : 'Untitled'), 60),
       icon: e.favicon,
+      // The newest entry is what the reopen shortcut brings back (Chrome shows it there too).
+      ...(i === 0 ? { action: 'tab.reopenClosed' as const } : {}),
       click: () => session.restoreClosed(e.id, win)
     }))
     return {
@@ -1124,7 +1249,7 @@ export class Menus {
       const entry = entries[i]
       const current = i === index
       items.push({
-        label: clip(entry.title || displayUrl(entry.url), 60),
+        label: clipLabel(entry.title || displayUrl(entry.url), 60),
         type: current ? 'checkbox' : 'normal',
         checked: current || undefined,
         icon: current ? null : history.faviconFor(entry.url),
@@ -1167,7 +1292,7 @@ export class Menus {
    * (Chrome's phone menu has none of them either). The desktop menu is unchanged by this: its
    * host has every capability the items ask for.
    */
-  showAppMenu(win: ZenWindow): void {
+  showAppMenu(win: ZenWindow, options: { anchor?: Rect; keyboard: boolean }): void {
     const { state, tabs } = this.browser
     const caps = state.capabilities
     const active = tabs.activeTabFor(win)
@@ -1177,25 +1302,37 @@ export class Menus {
     const when = (able: boolean, ...items: Template): Template => (able ? items : [])
     /** Items of the sidebar layouts (desktop and tablet) only. */
     const desktop = (...items: Template): Template => (phone ? [] : items)
+    // From its button the menu hangs off the button's bottom edge (Chrome, Firefox); from a
+    // shortcut it also starts with its first item selected (design language v2 §9.22).
+    const anchor = options.anchor
+      ? { x: options.anchor.x, y: options.anchor.y + options.anchor.height }
+      : undefined
     this.popup(
       [
-        { label: 'New Tab', click: () => this.browser.openNewTab(win) },
+        { label: 'New Tab', action: 'tab.new', click: () => this.browser.openNewTab(win) },
         // Phone slot: "New Private Tab" goes here once Android has private tabs (Chrome: New
         // Incognito tab, second item).
         ...when(!local, {
           label: 'New Space…',
+          action: 'space.new',
           click: () => this.browser.emit('space.new', undefined, win)
         }),
         { type: 'separator' },
         ...when(
           caps.windows,
-          { label: 'New Window', click: () => this.browser.openWindow('synced', win) },
+          {
+            label: 'New Window',
+            action: 'window.new',
+            click: () => this.browser.openWindow('synced', win)
+          },
           {
             label: 'New Blank Window',
+            action: 'window.newUnsynced',
             click: () => this.browser.openWindow('unsynced', win)
           },
           {
             label: 'New Private Window',
+            action: 'window.newPrivate',
             click: () => this.browser.openWindow('private', win)
           }
         ),
@@ -1205,13 +1342,19 @@ export class Menus {
           submenu: [
             {
               label: active?.bookmarked ? 'Remove Bookmark' : 'Bookmark This Page',
+              action: 'bookmark.add',
               enabled: Boolean(active && !active.url.startsWith('zen://')),
               click: () => active && this.browser.toggleBookmark(active.id, win)
             },
-            { label: 'Bookmark All Tabs…', click: () => this.browser.bookmarkTabs(win) },
+            {
+              label: 'Bookmark All Tabs…',
+              action: 'bookmark.allTabs',
+              click: () => this.browser.bookmarkTabs(win)
+            },
             { type: 'separator' },
             {
               label: 'Show Bookmarks',
+              action: 'bookmark.sidebar',
               click: () => this.browser.emit('overlay.open', { kind: 'bookmarks' }, win)
             },
             ...desktop({ label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) }),
@@ -1228,22 +1371,26 @@ export class Menus {
         },
         {
           label: 'History',
+          action: 'history.sidebar',
           click: () => this.browser.emit('overlay.open', { kind: 'history' }, win)
         },
         // Phone slot: "Recent Tabs" (tabs open on other devices, from sync) goes here.
         ...desktop(this.recentlyClosedSubmenu(win)),
         {
           label: 'Downloads',
+          action: 'downloads.open',
           click: () => this.browser.emit('overlay.open', { kind: 'downloads' }, win)
         },
         ...when(caps.extensions, {
           label: 'Add-ons and Themes',
+          action: 'addons.open',
           click: () => this.browser.emit('overlay.open', { kind: 'addons' }, win)
         }),
         { type: 'separator' },
         ...desktop({
           label: 'Compact Mode',
           type: 'checkbox',
+          action: 'compact.toggle',
           checked: win.compactEnabled,
           click: () => this.browser.toggleCompactMode(win)
         }),
@@ -1256,16 +1403,19 @@ export class Menus {
           submenu: [
             {
               label: 'Zoom In',
+              action: 'zoom.in',
               enabled: Boolean(active),
               click: () => active && tabs.adjustZoom(active.id, 1)
             },
             {
               label: 'Zoom Out',
+              action: 'zoom.out',
               enabled: Boolean(active),
               click: () => active && tabs.adjustZoom(active.id, -1)
             },
             {
               label: 'Reset Zoom',
+              action: 'zoom.reset',
               enabled: Boolean(active),
               click: () => active && tabs.setZoom(active.id, 1)
             }
@@ -1274,17 +1424,20 @@ export class Menus {
         ...desktop({
           label: 'Fullscreen',
           type: 'checkbox',
+          action: 'page.fullscreen',
           checked: win.host.isFullScreen(),
           click: () => this.browser.toggleFullscreen(win)
         }),
         { type: 'separator' },
         {
           label: 'Find in Page…',
+          action: 'find.open',
           enabled: Boolean(active),
           click: () => active && this.browser.emit('find.open', { tabId: active.id }, win)
         },
         {
           label: 'Reader View',
+          action: 'page.readerMode',
           enabled: Boolean(active) && this.browser.reader.canRead(active),
           click: () => active && this.browser.reader.toggle(active.id, win)
         },
@@ -1295,18 +1448,21 @@ export class Menus {
         }),
         ...when(caps.print, {
           label: 'Print…',
+          action: 'page.print',
           enabled: Boolean(active),
           click: () =>
             active && this.browser.actions.run('page.print', { sourceTabId: active.id, win })
         }),
         {
           label: 'Save Page As…',
+          action: 'page.savePage',
           enabled: Boolean(active),
           click: () =>
             active && this.browser.actions.run('page.savePage', { sourceTabId: active.id, win })
         },
         {
           label: 'Take Screenshot',
+          action: 'page.screenshot',
           enabled: Boolean(active),
           click: () =>
             active && this.browser.actions.run('page.screenshot', { sourceTabId: active.id, win })
@@ -1342,10 +1498,12 @@ export class Menus {
         }),
         {
           label: 'Settings',
+          action: 'settings.open',
           click: () => this.browser.emit('overlay.open', { kind: 'settings' }, win)
         },
         ...when(caps.devtools, {
           label: 'Developer Tools',
+          action: 'devtools.toggle',
           enabled: Boolean(active),
           click: () => active && tabs.toggleDevtools(active.id)
         }),
@@ -1354,11 +1512,13 @@ export class Menus {
         // An Android app is left, not quit: the system owns its lifetime.
         ...desktop({
           label: 'Quit',
+          action: 'app.quit',
           click: () => this.browser.actions.run('app.quit', { sourceTabId: null, win })
         })
       ],
       win,
-      'app'
+      'app',
+      { ...anchor, keyboard: options.keyboard }
     )
   }
 
@@ -1399,7 +1559,7 @@ export class Menus {
 }
 
 /** Menu labels have no room for long page titles. */
-function clip(text: string, max: number): string {
+export function clipLabel(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text
 }
 

@@ -74,6 +74,8 @@ export interface UiState {
   urlbar: UrlbarState
   findOpen: boolean
   findTabId: string | null
+  /** Text the find bar starts with when it opens next (the page selection); consumed on mount. */
+  findSeed: string | null
   /** Data URL of the active tab, shown dimmed behind overlays. */
   snapshot: string | null
   snapshotTabId: string | null
@@ -154,6 +156,7 @@ export const uiStore = createStore<UiState>(
     urlbar: { open: false, mode: 'new-tab', tabId: null, initialText: undefined, attached: false },
     findOpen: false,
     findTabId: null,
+    findSeed: null,
     snapshot: null,
     snapshotTabId: null,
     toasts: [],

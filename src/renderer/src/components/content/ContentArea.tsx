@@ -7,6 +7,7 @@ import { chromeUnderPages } from '@renderer/lib/cover'
 import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
+import { useChord } from '@renderer/lib/shortcuts'
 import { captureActiveTab, panelAloneOverContent, uiStore, type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { dropStore } from '@renderer/lib/drag'
@@ -252,6 +253,8 @@ function ForeignTabPreview({ tabId }: { tabId: string }): JSX.Element {
 }
 
 function EmptyState(): JSX.Element {
+  // The chord from the active key table (`Ctrl T`, `⌘T`); nothing while New Tab is unbound.
+  const chord = useChord('tab.new')?.replace(/\+(?=.)/g, ' ')
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-[var(--zen-muted)]">
       <div className="text-lg font-medium text-[var(--zen-fg)]">This space is empty</div>
@@ -262,7 +265,7 @@ function EmptyState(): JSX.Element {
         onClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
       >
         <Plus className="h-4 w-4" /> New Tab
-        <kbd className="zen-kbd zen-kbd-hint ml-1">Ctrl T</kbd>
+        {chord && <kbd className="zen-kbd zen-kbd-hint ml-1">{chord}</kbd>}
       </button>
     </div>
   )

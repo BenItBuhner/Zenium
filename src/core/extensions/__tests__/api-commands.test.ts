@@ -209,13 +209,27 @@ describe('resolveCommands', () => {
 
   it('keeps the global flag but binds the key per window like any other', () => {
     const [command] = resolveCommands(
-      { wake: { suggested_key: 'Ctrl+Shift+8', global: true } },
+      { wake: { suggested_key: 'Ctrl+Shift+6', global: true } },
       'linux',
       LINUX,
       []
     )
     expect(command.global).toBe(true)
-    expect(command.binding).toEqual(binding('8', { ctrl: true, shift: true }))
+    expect(command.binding).toEqual(binding('6', { ctrl: true, shift: true }))
+  })
+
+  it('treats a shifted digit as the punctuation it types, like the shortcut table does', () => {
+    // Ctrl+Shift+8 types `*` on a US layout, which "New Empty Split View" owns.
+    const [command] = resolveCommands(
+      { star: { suggested_key: 'Ctrl+Shift+8' } },
+      'linux',
+      LINUX,
+      []
+    )
+    expect(command).toMatchObject({
+      unbound: 'zenium-shortcut',
+      conflictsWith: 'New Empty Split View'
+    })
   })
 
   it('returns nothing for a manifest without commands', () => {

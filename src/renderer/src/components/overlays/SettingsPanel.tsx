@@ -26,6 +26,7 @@ import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab } from '@renderer/lib/selectors'
+import { useChord } from '@renderer/lib/shortcuts'
 import { openBarEditor, openOverlay, uiStore } from '@renderer/lib/ui'
 import { cn, relativeTime } from '@renderer/lib/utils'
 import { ContainerIcon } from '../ContainerIcon'
@@ -398,11 +399,12 @@ function CompactSection({
   set: (p: Partial<Settings>) => void
 }): JSX.Element {
   const cm = s.compactMode
+  const chord = useChord('compact.toggle')
   return (
     <Group title="Compact Mode">
       <Row
         label="Enable compact mode"
-        hint="Ctrl+S. Hidden bars reappear when you hover the window edge."
+        hint={`${chord ? `${chord}. ` : ''}Hidden bars reappear when you hover the window edge.`}
       >
         <Switch
           checked={cm.enabled}
@@ -444,6 +446,7 @@ function TabsSection({
   windows: boolean
 }): JSX.Element {
   const [domains, setDomains] = useState(s.unloadExcludedDomains.join(', '))
+  const blankChord = useChord('window.newUnsynced')
   return (
     <>
       <Group title="Tabs">
@@ -494,7 +497,7 @@ function TabsSection({
           </Row>
           <Row
             label="Blank windows"
-            hint="Ctrl+Shift+N opens a window without spaces, pinned tabs or Essentials. Its tabs are temporary."
+            hint={`${blankChord ? `${blankChord} opens` : 'Opens'} a window without spaces, pinned tabs or Essentials. Its tabs are temporary.`}
           >
             <Button
               variant="secondary"

@@ -27,6 +27,7 @@ import {
   topLevelSelection
 } from '@shared/bookmarks'
 import { type ManagerSort, sortManagerRows } from '@shared/bookmarkViews'
+import { shortcutHint } from '@shared/shortcuts'
 import { cmd, run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { ChromePortal, FrameDialogHost } from '@renderer/lib/portals'
@@ -72,6 +73,7 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
   const coarse = viewport.coarse
   const tab = activeTab(state)
   const edit = uiStore.use((s) => s.bookmarkEdit)
+  const starChord = shortcutHint(state.shortcuts, 'bookmark.add', state.platform)
 
   const [shownFolderId, setFolderId] = useState(() => {
     const requested = uiStore.get().overlayFolderId
@@ -740,7 +742,9 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
                   {searching
                     ? 'No matching bookmarks'
                     : current && isBookmarkRoot(current.id) && tree.size <= 3
-                      ? 'Press Ctrl+D on any page to bookmark it'
+                      ? starChord
+                        ? `Press ${starChord} on any page to bookmark it`
+                        : 'Bookmark any page from the star in the address bar'
                       : 'This folder is empty'}
                 </EmptyNote>
               ) : (
