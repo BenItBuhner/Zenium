@@ -31,6 +31,7 @@ import type {
   ClipboardHost,
   DialogHost,
   DownloadHost,
+  EngineDataCounts,
   ExtensionHost,
   ExternalProtocolHost,
   KdfParams,
@@ -103,7 +104,9 @@ export function androidCapabilities({
     passwords: true,
     defaultBrowser: true,
     requestBlocking: true,
-    pageControls: true
+    pageControls: true,
+    // One window: private browsing is a tab in it, on a throwaway WebView profile.
+    privateTabs: true
   }
 }
 
@@ -747,7 +750,11 @@ export class AndroidPlatform implements Platform {
     this.sessions = {
       clearContainerData: (containerId) => bridge.call('profile.clear', { containerId }),
       clearPrivate: () => bridge.call('profile.clear', { containerId: PRIVATE_CONTAINER_ID }),
-      clearAuthCache: () => bridge.call('security.forgetSession', {})
+      clearAuthCache: () => bridge.call('security.forgetSession', {}),
+      clearBrowsingData: (containerIds, kinds) =>
+        bridge.call('profile.clearBrowsingData', { containerIds, kinds }),
+      browsingDataCounts: (containerIds) =>
+        bridge.call<EngineDataCounts>('profile.browsingDataCounts', { containerIds })
     }
     this.app = {
       quit: () => bridge.send('app.quit'),

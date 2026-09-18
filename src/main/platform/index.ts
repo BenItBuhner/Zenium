@@ -87,7 +87,9 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   // Windows Settings, the macOS prompt or runs xdg-settings (platform/defaultBrowser.ts).
   defaultBrowser: true,
   requestBlocking: true,
-  pageControls: false
+  pageControls: false,
+  // Private browsing is a window of its own on desktop (`windows`).
+  privateTabs: false
 }
 
 /**

@@ -8,7 +8,7 @@ import {
 import type { Tab } from '../../../shared/types'
 import type { Browser } from '../../browser'
 import { PermissionService } from '../../permissions'
-import type { BlockingHost, BundledFilterList, DialogHost, StoreIO } from '../../platform'
+import type { BlockingHost, BundledFilterList, StoreIO } from '../../platform'
 import { BlockingService, siteExceptionRule } from '../service'
 import { BUILTIN_RULE_SETS, USER_RULE_SET_ID, type RequestContext, type RuleSet } from '../rules'
 import { memoryIo } from './store.test'
@@ -37,8 +37,9 @@ function harness(
   const fetched: string[] = []
   const commits = { durable: 0, volatile: 0 }
   const permissions = new PermissionService(io, {
-    confirm: async () => false
-  } as unknown as DialogHost)
+    show: async () => 'block',
+    cancel: () => undefined
+  })
   const h: Harness = {
     io,
     permissions,

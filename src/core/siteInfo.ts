@@ -7,6 +7,7 @@ import {
   type SiteCertificate,
   type SiteCookie,
   type SiteInfo,
+  type SiteInfoSnapshot,
   type SitePermission,
   type ThirdPartyCookies
 } from '../shared/siteInfo'
@@ -186,6 +187,27 @@ export class SiteInfoService {
       probe,
       permissions
     })
+  }
+
+  /**
+   * `info` plus what the desktop popover shows on top: the requests the blocker refused on the
+   * page, whether the site is excepted from blocking, and whether the tab is private.
+   */
+  async snapshot(tabId: string): Promise<SiteInfoSnapshot | null> {
+    const info = await this.info(tabId)
+    const tab = this.browser.tabs.tab(tabId)
+    if (!info || !tab) return null
+    const blocking = this.browser.blocking
+    return {
+      ...info,
+      blocking: {
+        blockedCount: tab.blockedCount,
+        enabled: blocking.enabled,
+        excepted: blocking.isExcepted(tab.url),
+        available: this.browser.state.capabilities.requestBlocking
+      },
+      isPrivate: this.browser.tabs.isPrivate(tab)
+    }
   }
 
   /** Remove the cookies of the tab's site; resolves with how many were removed. */
