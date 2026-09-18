@@ -55,7 +55,13 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
  */
 const V2_FILES: ReadonlyArray<string> = [
   // The phone history and bookmarks panels, the bookmark editor and the phone toast.
-  'components/phone/phonePanels.css'
+  'components/phone/phonePanels.css',
+  // The desktop bookmark manager's selection count pill (components/bookmarks/*, #90).
+  'components/bookmarks/BookmarkManager.tsx',
+  // The window prompts' checkbox accent (§9.5 modals, #129).
+  'components/dialogs/WindowPromptDialog.tsx',
+  // The sidebar's tab count badge, drawn in its surface's family through the §9.29 control roles.
+  'components/sidebar/SpacePanel.tsx'
 ]
 
 /** The text of the first `selector {` block found after `from`. */
