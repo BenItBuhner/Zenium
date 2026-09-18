@@ -158,11 +158,13 @@ export function BookmarksBar({
   useEffect(() => {
     if (menu?.anchorId === OVERFLOW_ANCHOR && hidden.length === 0) closeMenu()
   }, [closeMenu, hidden.length, menu?.anchorId])
-  // The chip the panel hangs from vanished (a removal, another window, sync).
+  // The chip the panel hangs from vanished (a removal, another window, sync). The pinned roots
+  // at the trailing end are chips too: their panel stays while they have contents.
   useEffect(() => {
-    if (menu && menu.anchorId !== OVERFLOW_ANCHOR && !items.some((n) => n.id === menu.anchorId))
-      closeMenu()
-  }, [closeMenu, items, menu])
+    if (!menu || menu.anchorId === OVERFLOW_ANCHOR) return
+    const isChip = (n: BookmarkNode): boolean => n.id === menu.anchorId
+    if (!items.some(isChip) && !pinned.some(isChip)) closeMenu()
+  }, [closeMenu, items, menu, pinned])
   // The bar going away (compact mode, the setting) releases the chrome it holds.
   const closeMenuRef = useRef(closeMenu)
   useEffect(() => {
