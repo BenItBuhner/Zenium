@@ -255,7 +255,7 @@ class SiteInfoDemo {
             Log.w(TAG, "no node labelled '$label'")
             return false
         }
-        Log.i(TAG, "tap '$label' at $target of ${candidates.size} candidates $candidates")
+        Log.i(TAG, "tap '$label' at $target of ${candidates.size} candidates $candidates; names ${namesFor(label)}")
         f.tap(target.exactCenterX(), target.exactCenterY())
         return true
     }
@@ -314,6 +314,24 @@ class SiteInfoDemo {
 
     private fun findByLabel(label: String): Rect? = findAllByLabel(label).firstOrNull()
 
+    /** The names of every node that begins with `label`, for the log. */
+    private fun namesFor(label: String): List<String> {
+        val root = ui.rootInActiveWindow ?: return emptyList()
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        val found = ArrayList<String>()
+        queue.add(root)
+        var visited = 0
+        while (queue.isNotEmpty() && visited < 8_000) {
+            val node = queue.removeFirst()
+            visited++
+            for (name in listOfNotNull(node.contentDescription?.toString(), node.text?.toString())) {
+                if (name.trim().startsWith(label)) found += "${node.className}:'${name.trim()}'"
+            }
+            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+        }
+        return found
+    }
+
     /**
      * Breadth-first search of the active window for nodes labelled `label` (aria-label or text).
      * A row's name is its label and value together ("Connection Secure"), so a node that merely
@@ -330,13 +348,12 @@ class SiteInfoDemo {
         while (queue.isNotEmpty() && visited < 8_000) {
             val node = queue.removeFirst()
             visited++
-            val described = node.contentDescription?.toString()?.replace(Regex("\\s+"), " ")?.trim()
-            val names = listOfNotNull(described, node.text?.toString()?.replace(Regex("\\s+"), " ")?.trim())
+            val names = listOfNotNull(node.contentDescription?.toString(), node.text?.toString())
+                .map { it.replace(Regex("\\s+"), " ").trim() }
             val bounds = Rect().also { node.getBoundsInScreen(it) }
-            if (names.any { it == label }) {
-                exact += bounds
-            } else if (described != null && described.startsWith("$label,")) {
-                // A row's own name: its label, a comma, its value ("Connection, Secure").
+            // A row's own name is its label, a comma, its value ("Connection, Secure"); the WebView
+            // hands a button's name over as its text, so both fields are read.
+            if (names.any { it == label || it.startsWith("$label,") }) {
                 exact += bounds
             } else if (names.any { it.startsWith(label) }) {
                 // Only when nothing is named exactly: the pill's "Connection is secure" chip also
