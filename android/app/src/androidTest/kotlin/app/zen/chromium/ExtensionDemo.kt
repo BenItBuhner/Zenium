@@ -318,12 +318,18 @@ class ExtensionDemo {
         gradeProbe(probe)
         val dark = json(tabEval(probeView, DARK_READER_REPORT))
         results.put("darkReader", dark)
+        val darkApplied = dark.optInt("styles") > 0 && dark.optString("bodyBackground") != "rgb(255, 255, 255)"
+        // One realm (no isolated worlds): Dark Reader's own `world: "MAIN"` proxy.js hides its
+        // sheets from `document.styleSheets`, its detector in the same realm cannot disable them
+        // before sampling, reads its own dark colour scheme as the page's and removes the theme.
+        val oneRealm = !worlds && !darkApplied && dark.optString("wasEnabledForHost") == "false"
         stage(
             DARK_READER, "coreFunction",
-            if (dark.optInt("styles") > 0 && dark.optString("bodyBackground") != "rgb(255, 255, 255)") "PASS" else "FAIL",
+            if (darkApplied) "PASS" else "FAIL",
             "styles=${dark.optInt("styles")} mode=${dark.optString("mode")} body=${dark.optString("bodyBackground")} " +
                 "styleSheetsGetter=${if (dark.optBoolean("styleSheetsGetterNative")) "native" else "patched by its proxy.js"} " +
-                "drSheetsVisible=${dark.optInt("drSheetsVisible")} wasEnabledForHost=${dark.optString("wasEnabledForHost")}"
+                "drSheetsVisible=${dark.optInt("drSheetsVisible")} wasEnabledForHost=${dark.optString("wasEnabledForHost")}" +
+                if (oneRealm) " (one realm below Chromium 146: its proxy.js hides its sheets from its own detector, which takes the theme for the page's and removes it)" else ""
         )
 
         // 2. Vimium: focus the page, press f, expect link hints. The page records the key events
