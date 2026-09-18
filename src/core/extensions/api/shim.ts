@@ -668,15 +668,52 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   // Generic namespaces from the table
   // ---------------------------------------------------------------------------
 
+  /**
+   * A `types.ChromeSetting` (`privacy.network.webRTCIPHandlingPolicy`): `get` / `set` / `clear`
+   * route to the namespace's methods with the setting's name first; `onChange` never fires here
+   * (nothing changes these behind an extension's back that it could act on).
+   */
+  function chromeSetting(namespace: string, dotted: string): Record<string, unknown> {
+    const setting: Record<string, unknown> = {}
+    const routed = (name: string, params: ParamSpec[]): void => {
+      const qualified = `${namespace}.${dotted}.${name}(${params
+        .map((p) => `${p.optional ? 'optional ' : ''}${p.type} ${p.name}`)
+        .join(', ')})`
+      define(setting, name, function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const args = normalizeArgs(qualified, raw, params)
+        return settle(qualified, invoke(namespace, name, [dotted, ...args]), callback)
+      })
+    }
+    routed('get', [{ name: 'details', type: 'object', optional: true }])
+    routed('set', [{ name: 'details', type: 'object' }])
+    routed('clear', [{ name: 'details', type: 'object', optional: true }])
+    define(
+      setting,
+      'onChange',
+      createEvent(`${namespace}.${dotted}.onChange`, undefined, { nativeDelivers: false })
+    )
+    return setting
+  }
+
   for (const [namespace, nsSpec] of Object.entries(spec)) {
     if (nsSpec.manifestVersion && nsSpec.manifestVersion !== manifestVersion) continue
     const targets = roots.map((root) => namespaceOn(root, namespace))
-    for (const [name, method] of Object.entries(nsSpec.methods)) {
-      const fn = makeMethod(namespace, name, method)
-      const keepNative = method.keepNative || Boolean(method.inert)
-      for (const target of targets) {
-        if (keepNative && typeof safely(() => target[name]) === 'function') continue
-        define(target, name, fn)
+    if (nsSpec.settings) {
+      for (const [group, names] of Object.entries(nsSpec.settings)) {
+        for (const name of names) {
+          const setting = chromeSetting(namespace, `${group}.${name}`)
+          for (const target of targets) define(namespaceOn(target, group), name, setting)
+        }
+      }
+    } else {
+      for (const [name, method] of Object.entries(nsSpec.methods)) {
+        const fn = makeMethod(namespace, name, method)
+        const keepNative = method.keepNative || Boolean(method.inert)
+        for (const target of targets) {
+          if (keepNative && typeof safely(() => target[name]) === 'function') continue
+          define(target, name, fn)
+        }
       }
     }
     for (const [name, eventSpec] of Object.entries(nsSpec.events)) {

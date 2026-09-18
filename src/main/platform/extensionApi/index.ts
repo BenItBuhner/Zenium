@@ -37,6 +37,7 @@ import { ActionApi } from './action'
 import { ActiveTabGrants } from './activeTab'
 import { AlarmsApi } from './alarms'
 import { BookmarksApi } from './bookmarks'
+import { BrowsingDataApi, electronDataClearer } from './browsingData'
 import { CommandsApi } from './commands'
 import { ContextMenusApi } from './contextMenus'
 import {
@@ -59,6 +60,7 @@ import { ApiModel, type ModelSnapshot } from './model'
 import { NotificationsApi } from './notifications'
 import { OmniboxApi } from './omnibox'
 import { PermissionsApi } from './permissions'
+import { PrivacyApi } from './privacy'
 import { RuntimeApi } from './runtime'
 import { SessionsApi } from './sessions'
 import { SidePanelApi } from './sidePanel'
@@ -168,6 +170,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly sidePanel: SidePanelApi
   readonly identity: IdentityApi
   readonly omnibox: OmniboxApi
+  readonly privacy: PrivacyApi
+  readonly browsingData: BrowsingDataApi
 
   private readonly namespaces: Record<string, NamespaceHandlers>
   private readonly extensions = new Map<string, LoadedExtension>()
@@ -230,6 +234,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.tabGroups = new TabGroupsApi(this)
     this.identity = new IdentityApi(electronAuthWindowHost(this.model))
     this.omnibox = new OmniboxApi(this)
+    this.privacy = new PrivacyApi(this)
+    this.browsingData = new BrowsingDataApi(this, electronDataClearer)
     this.namespaces = {
       tabs: { ...this.tabs.handlers, ...this.tabGroups.tabHandlers },
       windows: this.windows.handlers,
@@ -254,7 +260,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       tabGroups: this.tabGroups.handlers,
       sidePanel: this.sidePanel.handlers,
       identity: this.identity.handlers,
-      omnibox: this.omnibox.handlers
+      omnibox: this.omnibox.handlers,
+      privacy: this.privacy.handlers,
+      browsingData: this.browsingData.handlers
     }
     // A tab's outermost document changed: `activeTab` grants for another origin end and the
     // declarativeNetRequest action counts start over.

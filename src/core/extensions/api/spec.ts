@@ -8,6 +8,7 @@
  * defined when the engine does not already provide them (Electron's implementation of those
  * works), everything else replaces the engine's inert binding in place.
  */
+import { PRIVACY_SETTINGS } from './privacy'
 
 export type ParamType = 'integer' | 'number' | 'string' | 'boolean' | 'object' | 'array' | 'any'
 
@@ -51,6 +52,13 @@ export interface NamespaceSpec {
    * by many extensions, which would otherwise never get past their first statement.
    */
   shape?: true
+  /**
+   * `types.ChromeSetting` objects grouped under sub-objects (`privacy.network.webRTCIPHandlingPolicy`).
+   * Each gets `get` / `set` / `clear` that route to the namespace's methods of those names with
+   * the setting's `group.name` as the first argument, and an `onChange` event; the methods are
+   * not defined on the namespace object itself (Chrome has none there).
+   */
+  settings?: Record<string, readonly string[]>
 }
 
 export type ApiSpec = Record<string, NamespaceSpec>
@@ -657,6 +665,46 @@ export const API_SPEC: ApiSpec = {
       setPanelBehavior: { params: [object('behavior')] },
       getPanelBehavior: { params: [] },
       open: { params: [object('options')] }
+    },
+    events: {}
+  },
+  // Every setting answers `get` with what Zenium has and `not_controllable`; `set` / `clear` refuse.
+  privacy: {
+    methods: {
+      get: { params: [string('setting'), object('details', true)] },
+      set: { params: [string('setting'), object('details')] },
+      clear: { params: [string('setting'), object('details', true)] }
+    },
+    events: {},
+    settings: PRIVACY_SETTINGS,
+    constants: {
+      IPHandlingPolicy: {
+        DEFAULT: 'default',
+        DEFAULT_PUBLIC_AND_PRIVATE_INTERFACES: 'default_public_and_private_interfaces',
+        DEFAULT_PUBLIC_INTERFACE_ONLY: 'default_public_interface_only',
+        DISABLE_NON_PROXIED_UDP: 'disable_non_proxied_udp'
+      }
+    }
+  },
+  // Site storage and the cache through the engine's sessions, history and downloads through the models.
+  browsingData: {
+    methods: {
+      settings: { params: [] },
+      remove: { params: [object('options'), object('dataToRemove')] },
+      removeAppcache: { params: [object('options')] },
+      removeCache: { params: [object('options')] },
+      removeCacheStorage: { params: [object('options')] },
+      removeCookies: { params: [object('options')] },
+      removeDownloads: { params: [object('options')] },
+      removeFileSystems: { params: [object('options')] },
+      removeFormData: { params: [object('options')] },
+      removeHistory: { params: [object('options')] },
+      removeIndexedDB: { params: [object('options')] },
+      removeLocalStorage: { params: [object('options')] },
+      removePasswords: { params: [object('options')] },
+      removePluginData: { params: [object('options')] },
+      removeServiceWorkers: { params: [object('options')] },
+      removeWebSQL: { params: [object('options')] }
     },
     events: {}
   },
