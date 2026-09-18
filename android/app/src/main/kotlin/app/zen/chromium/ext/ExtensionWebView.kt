@@ -7,6 +7,7 @@ import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewCompat
@@ -41,6 +42,12 @@ class ExtensionWebView(
             allowFileAccess = false
             allowContentAccess = false
             mediaPlaybackRequiresUserGesture = false
+            // Chrome's extension pages are not subject to mixed-content blocking (their scheme
+            // is `chrome-extension:`, not `https:`), so an extension with `host_permissions` for
+            // an `http://` host may fetch it. Ours live on the emulated https origin, where the
+            // renderer would refuse the fetch before it reached the CORS proxy; what the page may
+            // reach is gated by the extension's host permissions in the proxy either way.
+            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         }
         // Extension pages present as Zenium, as tab pages do; the CORS proxy sends the same string.
         UserAgent.apply(settings, BuildConfig.VERSION_NAME)
