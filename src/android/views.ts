@@ -28,6 +28,12 @@ export interface ViewNavState {
 /** Events Kotlin raises for one view (`__zenHost.viewEvent(tabId, name, payload)`). */
 export interface ViewEventPayloads {
   startLoading: void
+  /**
+   * The document's DOM is ready (Electron's `dom-ready`): Kotlin raises it once per document at
+   * the page script's DOMContentLoaded, before `stopLoading`. The core injects the page's Boost,
+   * runs Reader View and language detection on it (`browser.onPageReady`).
+   */
+  domReady: void
   stopLoading: ViewNavState
   navigated: ViewNavState & { inPage: boolean }
   title: { title: string }
@@ -74,6 +80,9 @@ export class AndroidTabView implements TabView {
     switch (name) {
       case 'startLoading':
         ev.onStartLoading()
+        return
+      case 'domReady':
+        ev.onDomReady()
         return
       case 'stopLoading':
         this.nav = { ...this.nav, ...(payload as ViewNavState) }

@@ -21,6 +21,7 @@ import {
   openBarEditor,
   openTabsMenu,
   openUrlbar,
+  uiStore,
   type UiState
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -28,6 +29,7 @@ import { ContentArea } from '../content/ContentArea'
 import { Onboarding } from '../overlays/Onboarding'
 import { Favicon } from '../sidebar/Favicon'
 import { TabDialogs } from '../TabDialogs'
+import { PillChip } from '../urlbar/PillChip'
 import { Urlbar } from '../urlbar/Urlbar'
 import { BarButton } from './BarButton'
 import { barContext, barLayout } from './barItems'
@@ -271,11 +273,13 @@ function PhoneBar({
 /**
  * What the pill says. While a swipe moves the tab track the pill follows the tab under the
  * finger – its label slides a little with the cards and swaps as the nearest card changes.
- * `interactive` renders the site icon, the address and the lock as buttons of their own
- * (tapping the icon or the lock opens the site information, see the pill's onTap); the ghost
- * carried across the screen draws the same content inert.
+ * `interactive` renders the address as a button and the site icon and the lock as chips of
+ * their own (tapping either opens the site information, see the pill's onTap); the ghost
+ * carried across the screen draws the same content inert. The address comes first in the DOM
+ * so the tab order and TalkBack reach the field before its chips (design language v2 §9.22);
+ * the site icon is drawn ahead of it with `order-first`.
  */
-function PillContent({
+export function PillContent({
   state,
   tab,
   space,
@@ -294,6 +298,7 @@ function PillContent({
     if (s.tabs.phase === 'idle') return 0
     return Math.round((Math.round(s.tabs.position) - s.tabs.position) * 16)
   })
+  const siteInfoOpen = uiStore.use((s) => s.siteInfoOpen)
   const shown = (underFinger && state.tabs[underFinger]) || tab
   // The site alone, as Chrome's omnibox shows it at rest: the path would only push it off the pill.
   const url = shown ? displayHost(shown.url) : ''
@@ -306,18 +311,6 @@ function PillContent({
       className="zen-animate-fade flex min-w-0 flex-1 items-center gap-2"
       style={{ transform: shift ? `translateX(${shift}px)` : undefined }}
     >
-      {shown ? (
-        <Control
-          {...controlProps}
-          aria-label={interactive ? 'Site information' : undefined}
-          data-site-info
-          className="-ml-1.5 -mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
-        >
-          <Favicon tab={shown} size={16} />
-        </Control>
-      ) : (
-        <Search className="h-4 w-4 shrink-0 opacity-60" />
-      )}
       <Control
         {...controlProps}
         className="flex h-full min-w-0 flex-1 items-center text-left"
@@ -329,15 +322,31 @@ function PillContent({
           {url || 'Search or enter address'}
         </span>
       </Control>
+      {shown ? (
+        <PillChip
+          inert={!interactive}
+          label="Site information"
+          popup="dialog"
+          expanded={siteInfoOpen}
+          data-site-info
+          className="order-first -ml-1.5 -mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+        >
+          <Favicon tab={shown} size={16} />
+        </PillChip>
+      ) : (
+        <Search className="order-first h-4 w-4 shrink-0 opacity-60" />
+      )}
       {url && secure && (
-        <Control
-          {...controlProps}
-          aria-label={interactive ? 'Connection is secure' : undefined}
+        <PillChip
+          inert={!interactive}
+          label="Connection is secure"
+          popup="dialog"
+          expanded={siteInfoOpen}
           data-site-info
           className="-mx-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
         >
           <Lock className="h-3.5 w-3.5 opacity-50" />
-        </Control>
+        </PillChip>
       )}
       {state.spaces.length > 1 && (
         <span className="max-w-[64px] shrink-0 truncate text-[11px] text-[var(--zen-muted)]">

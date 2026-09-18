@@ -85,6 +85,20 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
   if (bridge.addEventListener) bridge.addEventListener('message', onMessage)
   else bridge.onmessage = onMessage
 
+  // The document's DOMContentLoaded, for the core's `dom-ready` (Kotlin raises the view event
+  // once per document): from the top frame only – the legacy bridge cannot tell frames apart –
+  // and at once from a script that runs after the fact (no document-start support, so it arrived
+  // at page finished).
+  if (w.self === w.top) {
+    const domReady = (): void =>
+      bridge.postMessage(JSON.stringify({ token: TOKEN, type: 'domReady' }))
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', domReady, { once: true })
+    } else {
+      domReady()
+    }
+  }
+
   installPageScript({
     trackMedia: true,
     // The WebView blocks pop-ups itself; this script runs in the page's world and can see which.

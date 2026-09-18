@@ -265,10 +265,10 @@ export function closeOverlay(): void {
   returnFocusToPage()
 }
 
-/** Once no chrome UI needs the keyboard, hand focus back to the active page. */
-export function returnFocusToPage(): void {
+/** Some chrome surface (an overlay, the URL bar, a menu, a sheet, the stage) has the keyboard. */
+export function chromeNeedsKeyboard(): boolean {
   const ui = uiStore.get()
-  if (
+  return !(
     ui.overlay === 'none' &&
     !ui.urlbar.open &&
     !ui.findOpen &&
@@ -284,7 +284,11 @@ export function returnFocusToPage(): void {
     !ui.securityPromptOpen &&
     !ui.stageActive
   )
-    run('focus.content', undefined)
+}
+
+/** Once no chrome UI needs the keyboard, hand focus back to the active page. */
+export function returnFocusToPage(): void {
+  if (!chromeNeedsKeyboard()) run('focus.content', undefined)
 }
 
 /** Drop the cached snapshot once nothing needs it, so the next overlay gets a fresh capture. */
