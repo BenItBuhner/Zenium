@@ -1,8 +1,9 @@
 import type { CSSProperties, JSX } from 'react'
 import { useEffect, useRef } from 'react'
-import { Lock, Search } from 'lucide-react'
+import { Globe, Lock, Search } from 'lucide-react'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
+import { run } from '@renderer/lib/api'
 import {
   contentShift,
   cssPx,
@@ -18,16 +19,17 @@ import {
   closeBarEditor,
   closeTabsMenu,
   contentAreaStore,
+  dismissBanner,
   openBarEditor,
   openTabsMenu,
   openUrlbar,
   overlayCoversContent,
+  showBanner,
   uiStore,
   type UiState
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ContentArea } from '../content/ContentArea'
-import { DefaultBrowserBanner } from '../defaultbrowser/DefaultBrowserBanner'
 import { MessageLayer } from '../messages/MessageLayer'
 import { Onboarding } from '../overlays/Onboarding'
 import { Favicon } from '../sidebar/Favicon'
@@ -86,6 +88,33 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     },
     []
   )
+
+  // The lighter default-browser reminder (DEF-02) is one of the top banners (v2 §9.33), up for
+  // as long as the core says a banner is due. Swiping or closing it is the campaign's one
+  // dismissal; the action hands over to the system, which ends the campaign either way; and
+  // when the core takes the prompt down itself – after the request, or once Zenium holds the
+  // role – the card leaves as `'program'`, which counts for nothing. A third banner pushing it
+  // off (`'replaced'`) is not the user's answer either.
+  const bannerDue = state.defaultBrowser.prompt === 'banner' && !onboarding
+  useEffect(() => {
+    if (!bannerDue) return
+    const id = showBanner({
+      title: 'Open links in Zenium',
+      detail: 'Make it your default browser',
+      icon: Globe,
+      action: {
+        label: 'Set as default',
+        onPick: () => run('defaultBrowser.request', { source: 'banner' })
+      },
+      key: 'default-browser',
+      duration: null,
+      onDismiss: (reason) => {
+        if (reason === 'swipe' || reason === 'close')
+          run('defaultBrowser.dismiss', { prompt: 'banner' })
+      }
+    })
+    return () => dismissBanner(id)
+  }, [bannerDue])
 
   // A hold on the Tabs button: its quick menu, anchored to the button; any other hold, the editor.
   const hold = useBarHold({
@@ -157,7 +186,6 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           paddingRight: 'var(--zen-padding)'
         }}
       >
-        {state.defaultBrowser.prompt === 'banner' && !onboarding && <DefaultBrowserBanner />}
         {edge === 'top' && hint}
         <div className="relative min-h-0 flex-1">
           <ContentArea state={state} ui={ui} />

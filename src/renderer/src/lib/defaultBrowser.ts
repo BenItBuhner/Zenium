@@ -24,11 +24,14 @@ export function shouldShowDefaultBrowserPrompt(
 /**
  * Whether the strip belongs on this window: the OS said another browser has the role (the core's
  * `DefaultBrowserService` asked the host), the user has not answered for this release, and the
- * window is a regular one (private windows never ask).
+ * window is a regular one (private windows never ask). Not on Android, whatever the form factor:
+ * there the core's campaign asks – the promo sheet and the top banner
+ * (`components/defaultbrowser`, `PhoneShell`) – and two campaigns on one window would nag twice.
  */
 export function wantsDefaultBrowserBanner(state: UIState): boolean {
   const dismissed = state.settings.defaultBrowserPromptDismissed
   return (
+    state.platform !== 'android' &&
     state.capabilities.defaultBrowser &&
     state.defaultBrowser.isDefault === false &&
     state.window.kind !== 'private' &&

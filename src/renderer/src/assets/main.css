@@ -3564,28 +3564,6 @@
   }
 
   /*
-   * The "set as default" banner above the page: a panel that sits on the window like the
-   * content frame does, with the stage gutter between them. Text left, the primary button and
-   * the close right.
-   */
-  .zen-banner {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 56px;
-    margin-bottom: var(--zen-padding);
-    padding: 8px 4px 8px 12px;
-    border: 1px solid var(--v2-border);
-    border-radius: var(--v2-radius-card);
-    background: var(--v2-panel);
-    box-shadow: var(--v2-shadow-panel);
-    color: var(--v2-text);
-  }
-  .zen-banner .zen-toolbar-button {
-    color: var(--v2-text);
-  }
-
-  /*
    * The one-time gesture hint beside the address pill: a small panel, no tail, in a slot on the
    * bar's side of the content frame. The slot opens to the panel's height in one step (the
    * component sets it), the panel hangs from the slot's edge nearest the pill and the spring

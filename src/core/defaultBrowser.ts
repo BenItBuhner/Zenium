@@ -14,15 +14,21 @@ import {
 import type { Browser } from './browser'
 
 /**
- * Whether the chrome has surfaces that render `prompt` – the promo sheet and the banner
- * (`components/defaultbrowser`). Off, the campaign stays inert: sessions are still counted, but
- * nothing is decided, marked as shown or dismissed, since a showing with nothing on screen would
- * burn the user's turn. On since the surfaces landed.
+ * Whether the chrome has surfaces that render `prompt` – the promo sheet
+ * (`components/defaultbrowser`) and the top banner `PhoneShell` raises. Off, the campaign stays
+ * inert: sessions are still counted, but nothing is decided, marked as shown or dismissed, since
+ * a showing with nothing on screen would burn the user's turn. On since the surfaces landed –
+ * and they are the Android chrome's, so the campaign runs on Android only: the desktop program
+ * asks with its own strip (`components/content/DefaultBrowserBanner.tsx`, remembered per feature
+ * release in `defaultBrowserPromptDismissed`), and two campaigns on one window would nag twice.
  */
 export const PROMPT_SURFACES = true
 
 export interface DefaultBrowserServiceOptions {
-  /** The chrome can show a sheet and a banner (`PROMPT_SURFACES` unless a test says otherwise). */
+  /**
+   * The chrome can show a sheet and a banner: `PROMPT_SURFACES` on Android, off elsewhere,
+   * unless a test says otherwise.
+   */
   promptSurfaces?: boolean
 }
 
@@ -38,13 +44,13 @@ export class DefaultBrowserService {
   private isDefault: boolean | null = null
   private prompt: DefaultBrowserPrompt = null
   private checking: Promise<boolean | null> | null = null
-  private readonly promptSurfaces: boolean
+  private readonly surfaces: boolean | undefined
 
   constructor(
     private readonly browser: Browser,
     options: DefaultBrowserServiceOptions = {}
   ) {
-    this.promptSurfaces = options.promptSurfaces ?? PROMPT_SURFACES
+    this.surfaces = options.promptSurfaces
   }
 
   status(): DefaultBrowserStatus {
@@ -53,6 +59,11 @@ export class DefaultBrowserService {
 
   private get supported(): boolean {
     return this.browser.state.capabilities.defaultBrowser === true
+  }
+
+  /** The chrome on this platform renders the prompts (see `PROMPT_SURFACES`). */
+  private get promptSurfaces(): boolean {
+    return this.surfaces ?? (PROMPT_SURFACES && this.browser.state.platform === 'android')
   }
 
   /** The app started: one more session (once onboarding is behind the user), then decide. */

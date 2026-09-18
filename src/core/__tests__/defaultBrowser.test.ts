@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Browser } from '../browser'
 import { DefaultBrowserService, PROMPT_SURFACES } from '../defaultBrowser'
 import { DEFAULT_PROMO_STATE, PROMO_FIRST_SESSION } from '../../shared/defaultBrowser'
-import type { DefaultBrowserPromoState } from '../../shared/types'
+import type { DefaultBrowserPromoState, Platform } from '../../shared/types'
 
 interface Fake {
   browser: Browser
@@ -13,6 +13,8 @@ interface Fake {
 
 function fake(options: {
   supported?: boolean
+  /** The host's platform; the Android chrome is where the prompts live. */
+  platform?: Platform
   onboardingDone?: boolean
   isDefault?: boolean | null
   requestAnswer?: boolean | null
@@ -40,6 +42,7 @@ function fake(options: {
       }
     },
     state: {
+      platform: options.platform ?? 'android',
       capabilities: { defaultBrowser: options.supported ?? true },
       settings,
       commit
@@ -171,8 +174,31 @@ describe('DefaultBrowserService', () => {
   })
 
   describe('without prompt surfaces (a chrome with no sheet or banner)', () => {
-    it('is not how the service is wired: the surfaces exist and the campaign runs', () => {
+    it('is not how the service is wired on Android: the surfaces exist and the campaign runs', async () => {
       expect(PROMPT_SURFACES).toBe(true)
+      const { browser, settings } = fake({ promo: { sessions: PROMO_FIRST_SESSION - 1 } })
+      const service = new DefaultBrowserService(browser)
+      service.start()
+      await settle()
+      expect(service.status().prompt).toBe('sheet')
+      expect(settings.defaultBrowserPromo.promptedAt).toBe(PROMO_FIRST_SESSION)
+    })
+
+    it('is how it is wired off Android, where the desktop program asks with its own strip', async () => {
+      for (const platform of ['linux', 'win32', 'darwin'] as const) {
+        const { browser, settings } = fake({
+          platform,
+          promo: { sessions: PROMO_FIRST_SESSION - 1 }
+        })
+        const service = new DefaultBrowserService(browser)
+        service.start()
+        await settle()
+        expect(service.status(), platform).toEqual({ isDefault: false, prompt: null })
+        expect(settings.defaultBrowserPromo.sessions, platform).toBe(PROMO_FIRST_SESSION)
+        expect(settings.defaultBrowserPromo.promptedAt, platform).toBeNull()
+        service.dismiss('sheet')
+        expect(settings.defaultBrowserPromo.dismissals, platform).toBe(0)
+      }
     })
 
     it('counts sessions but never decides, marks or shows a prompt', async () => {
