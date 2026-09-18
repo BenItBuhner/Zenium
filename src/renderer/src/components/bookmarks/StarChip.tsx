@@ -5,6 +5,7 @@ import type { Tab } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { reducedMotion } from '@renderer/lib/motion/spring'
 import { closeBookmarkChrome, uiStore } from '@renderer/lib/ui'
+import { PillChip } from '../urlbar/PillChip'
 
 /**
  * The star at the trailing end of the address pill: an outline until the page is bookmarked,
@@ -30,32 +31,31 @@ export function StarChip({ tab, filled }: { tab: Tab; filled: boolean }): JSX.El
   }, [filled, tab.id])
 
   const open = uiStore.use((s) => s.starDialog?.tabId === tab.id)
-  // A 28px icon button (v2 draft §9.3) that keeps its pressed fill while its bubble is open
-  // (§9.20). Its tab stop is the pill's business: every chip in the pill is `tabIndex -1` today
-  // and §9.22 makes them real buttons in one pass over the pill.
+  // One of the pill's chips (`PillChip`, v2 draft §9.22): a real button in the tab order after
+  // the address, whose popup is the bubble. A 28px icon button (§9.3) that keeps its pressed
+  // fill and `aria-expanded` while the bubble is open (§9.20). Whether the page is bookmarked is
+  // in its name and `data-filled`, not `aria-pressed`: a chip opens something or toggles, never
+  // both.
   return (
-    <span
-      role="button"
-      tabIndex={-1}
-      data-bm-star
+    <PillChip
+      label={filled ? 'Edit bookmark' : 'Bookmark this tab'}
+      title={filled ? 'Edit bookmark (Ctrl+D)' : 'Bookmark this tab (Ctrl+D)'}
+      popup="dialog"
+      expanded={open}
+      data-bm-star=""
       data-filled={filled}
       data-open={open}
-      aria-label={filled ? 'Edit bookmark' : 'Bookmark this tab'}
-      aria-pressed={filled}
-      aria-haspopup="dialog"
-      aria-expanded={open}
       className="zen-bm-star -mr-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]"
-      title={filled ? 'Edit bookmark (Ctrl+D)' : 'Bookmark this tab (Ctrl+D)'}
-      onClick={(e) => {
-        e.stopPropagation()
-        // The bubble commits its pending name as it goes.
-        if (open) closeBookmarkChrome({ starDialog: null })
+      onActivate={() => {
+        // The bubble commits its pending name as it goes; the chip that put it away keeps the
+        // keyboard, as the anchor does after Escape (§9.22).
+        if (open) closeBookmarkChrome({ starDialog: null }, { keepFocus: true })
         else run('bookmark.star', { tabId: tab.id })
       }}
     >
       <span ref={glyph} className="flex">
         <Star className="h-4 w-4" />
       </span>
-    </span>
+    </PillChip>
   )
 }
