@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import type { Rect, UIState } from '@shared/types'
 import { onEvent, run } from '@renderer/lib/api'
 import { starredOnPhone } from '@renderer/lib/bookmarkEdit'
+import { offerChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { remoteDragOver } from '@renderer/lib/drag'
 import { startDownloadsUi } from '@renderer/lib/downloads'
 import { isPhone } from '@renderer/lib/formFactor'
@@ -100,7 +101,12 @@ export function useMainEvents(): void {
         closeUrlbar()
         void openOverlay('space-editor', currentActiveTabId(), spaceId)
       }),
-      onEvent('find.open', ({ tabId, text, again }) => openFindBar(tabId, text, again ?? null)),
+      onEvent('find.open', (find) => {
+        // A chrome page tab may take Ctrl+F for its own search (Settings' "Find in Settings")
+        // – there is no page text for the find bar to search.
+        if (offerChromeShortcut('find.open', find)) return
+        openFindBar(find.tabId, find.text, find.again ?? null)
+      }),
       onEvent('find.selection', ({ tabId, text }) => {
         // Cmd+E does not open the bar; one open for the tab searches the selection.
         const ui = uiStore.get()

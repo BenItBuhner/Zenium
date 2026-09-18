@@ -12,6 +12,7 @@ import {
 import type { Tab, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { BackDismissal, useBackSurface } from '@renderer/lib/back'
+import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { useViewport } from '@renderer/lib/formFactor'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
 import { SettingsBody } from '../../overlays/SettingsPanel'
@@ -29,7 +30,9 @@ import { useSheetStack } from './useSheetStack'
  * hairlines – and, when the tab's URL names a section, a drill-in pane over it: 56 px bar header
  * with the back chevron, then the section's groups of rows. The landing stays mounted (inert)
  * beneath the drill-in, so the predictive back gesture slides the pane off it; the chevron, the
- * bottom bar's back and the system back are all `page.back`. Search is the landing's alone.
+ * bottom bar's back and the system back are all `tab.back`. Search is the landing's alone, and
+ * it never focuses on its own: on tap, or when the tab claims Ctrl+F / "Find in Page"
+ * (`useChromeShortcut('find.open')`) as "Find in Settings".
  *
  * Wider than {@link TWO_PANE_MIN_WIDTH} (tablets, a phone in landscape): the desktop panel's nav
  * and content inside the tab (§10.5); the nav switches sections without a history entry.
@@ -72,6 +75,16 @@ function PhoneSettings({
 }): JSX.Element {
   const sheets = useSheetStack()
   const [query, setQuery] = useState('')
+  // Ctrl+F / "Find in Page" on the Settings tab is "Find in Settings" (Firefox, Chrome): the
+  // landing's field takes the focus – from inside a section the landing comes up first, as a
+  // history entry, so back returns to the section. Counted so each request focuses once.
+  const [findRequest, setFindRequest] = useState(0)
+  useChromeShortcut('find.open', (find) => {
+    if (find.tabId !== tab.id) return false
+    if (current) run('page.navigate', { tabId: tab.id, section: null })
+    setFindRequest((n) => n + 1)
+    return true
+  })
   const ctx: SectionContext = {
     state,
     tab,
@@ -108,6 +121,7 @@ function PhoneSettings({
         onOpen={(id) => run('page.navigate', { tabId: tab.id, section: id })}
         ctx={sheets.ctx}
         inert={current !== null}
+        findRequest={findRequest}
       />
       {current && models[0] && (
         <DrillIn key={current.id} model={models[0]} tab={tab} ctx={sheets.ctx} />
@@ -135,7 +149,8 @@ function Landing({
   onQuery,
   onOpen,
   ctx,
-  inert
+  inert,
+  findRequest
 }: {
   page: InternalPageDefinition
   sections: readonly InternalPageSection[]
@@ -145,10 +160,21 @@ function Landing({
   onOpen(sectionId: string): void
   ctx: RowContext
   inert: boolean
+  /** Incremented for each "Find in Settings" request the field is to take the focus for. */
+  findRequest: number
 }): JSX.Element {
   const input = useRef<HTMLInputElement>(null)
   const term = query.trim()
   const hits = term ? searchRows(models, query) : []
+  // The field never focuses on its own (no autofocus on phone); a find request focuses it once
+  // the landing is reachable – at once on the landing, after the drill-in is gone otherwise.
+  const served = useRef(0)
+  useEffect(() => {
+    if (findRequest === served.current || inert) return
+    served.current = findRequest
+    input.current?.focus()
+    input.current?.select()
+  }, [findRequest, inert])
   return (
     <div className="zen-settings-landing" inert={inert || undefined}>
       <div className="zen-settings-scroll">
@@ -335,6 +361,10 @@ function TwoPane({
   tab,
   current
 }: Props & { current: InternalPageSection | null }): JSX.Element {
+  // Ctrl+F is the page's here too: the find bar has no page text to search. The pane carries no
+  // "Find in Settings" field yet (the landing's is phone-only; the two-pane gets it in the
+  // Android follow-up), so the key is taken and idle rather than opening a bar that finds nothing.
+  useChromeShortcut('find.open', (find) => find.tabId === tab.id)
   return (
     <div className="zen-settings-page zen-settings-two-pane">
       <SettingsBody
