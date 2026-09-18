@@ -41,6 +41,7 @@ import { ElectronSiteData } from './siteData'
 import { ElectronTranslateHost, focusedChromeWebContents } from './translate'
 import { ElectronUpdateHost } from './updates'
 import { applyAppIcon } from './appIcon'
+import { ElectronDefaultBrowser } from './defaultBrowser'
 import { createPasswordsHost } from './passwords'
 import {
   attachSecurityHandlers,
@@ -72,8 +73,9 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   appLinkSettings: false,
   pullToRefresh: false,
   passwords: true,
-  // The OS owns default-app choices on desktop; the desktop program decides if Zenium ever asks.
-  defaultBrowser: false,
+  // Status from the OS (shell association, LaunchServices, xdg-settings); the request opens
+  // Windows Settings, the macOS prompt or runs xdg-settings (platform/defaultBrowser.ts).
+  defaultBrowser: true,
   requestBlocking: true,
   pageControls: false
 }
@@ -103,6 +105,8 @@ export class ElectronPlatform implements Platform {
   /** The webRequest multiplexer and text matcher; created with the browser in `start`. */
   requestBlocking!: ElectronBlocking
   readonly translate: ElectronTranslateHost
+  /** Default-browser status and registration on Windows, macOS and Linux. */
+  readonly defaultBrowser = new ElectronDefaultBrowser()
   browser!: Browser
   private readonly profileDir: string
 
@@ -228,8 +232,8 @@ export class ElectronPlatform implements Platform {
             .map((win) => browserWindowOf(win))
             .filter((bw): bw is Electron.BrowserWindow => bw !== undefined)
         ),
-      isDefaultBrowser: async () => null,
-      requestDefaultBrowser: async () => null
+      isDefaultBrowser: () => this.defaultBrowser.isDefault(),
+      requestDefaultBrowser: () => this.defaultBrowser.request()
     }
     this.theme = {
       systemDark: () => nativeTheme.shouldUseDarkColors,

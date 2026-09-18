@@ -1,3 +1,6 @@
+; electron-builder's NSIS include for Zenium: (1) removes the installation of the app's former
+; name, (2) registers Zenium as a web browser with Windows (further down).
+;
 ; Zenium shipped as "Zen" up to v0.2.0 (appId app.zen-browser.chromium). electron-builder derives
 ; the NSIS GUID – the uninstall registry key, the install-info key and the "Apps" entry – from the
 ; appId, so Windows treats Zenium as a program unrelated to Zen and a plain install would leave
@@ -22,6 +25,116 @@
 ; re-points the shortcuts it just created at the matching multi-size ICO shipped with the app.
 !define ZEN_APP_ICON_KEY "Software\Zenium"
 !define ZEN_APP_ICON_VALUE "AppIcon"
+
+; ---------------------------------------------------------------------------------------------
+; Default-browser registration, the way Chrome registers a per-user install (no admin rights):
+;
+;   Software\RegisteredApplications            Zenium = <path of the Capabilities key>
+;   Software\Clients\StartMenuInternet\Zenium  the browser client: icon, open command,
+;     \Capabilities                            ApplicationName / Description / Icon,
+;       \URLAssociations                       http, https  -> ZeniumHTML
+;       \FileAssociations                      .htm, .html, … -> ZeniumHTML
+;       \StartMenu                             StartMenuInternet = Zenium
+;   Software\Classes\ZeniumHTML                the ProgID Windows launches: "zenium.exe" "%1"
+;   Software\Classes\.html\OpenWithProgids     ZeniumHTML (lists Zenium under "Open with")
+;
+; Settings > Apps > Default apps lists every application found through RegisteredApplications,
+; and only the user can pick one there (Windows 10 and later ignore programmatic changes to the
+; user's choice). Nothing here changes a default: no `.html` or `http` class default is written.
+; SHELL_CONTEXT is HKCU for the per-user installer electron-builder builds here and HKLM for an
+; /allusers install; both are places Windows reads registrations from.
+; ---------------------------------------------------------------------------------------------
+!define ZENIUM_PROGID "ZeniumHTML"
+!define ZENIUM_PROGID_KEY "Software\Classes\${ZENIUM_PROGID}"
+!define ZENIUM_CLIENT_KEY "Software\Clients\StartMenuInternet\${PRODUCT_NAME}"
+!define ZENIUM_CAPABILITIES_KEY "${ZENIUM_CLIENT_KEY}\Capabilities"
+!ifdef APP_DESCRIPTION
+  !define ZENIUM_DESCRIPTION "${APP_DESCRIPTION}"
+!else
+  !define ZENIUM_DESCRIPTION "${PRODUCT_NAME} web browser"
+!endif
+
+; Every document type Zenium opens; keep in step with mac.fileAssociations and linux.mimeTypes
+; in electron-builder.yml and DOCUMENT_EXTENSIONS in src/shared/launchArgs.ts.
+!macro forEachExtension MACRO
+  !insertmacro ${MACRO} ".htm"
+  !insertmacro ${MACRO} ".html"
+  !insertmacro ${MACRO} ".shtml"
+  !insertmacro ${MACRO} ".xht"
+  !insertmacro ${MACRO} ".xhtml"
+  !insertmacro ${MACRO} ".mhtml"
+  !insertmacro ${MACRO} ".mht"
+  !insertmacro ${MACRO} ".svg"
+  !insertmacro ${MACRO} ".webp"
+  !insertmacro ${MACRO} ".avif"
+  !insertmacro ${MACRO} ".pdf"
+!macroend
+
+!macro registerExtension EXT
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_CAPABILITIES_KEY}\FileAssociations" "${EXT}" "${ZENIUM_PROGID}"
+  WriteRegNone SHELL_CONTEXT "Software\Classes\${EXT}\OpenWithProgids" "${ZENIUM_PROGID}"
+!macroend
+
+; The extension's default ProgID is left alone unless it is ours (a user who picked Zenium for
+; the type through Windows); keys left empty by the removal are dropped too.
+!macro unregisterExtension EXT
+  DeleteRegValue SHELL_CONTEXT "Software\Classes\${EXT}\OpenWithProgids" "${ZENIUM_PROGID}"
+  DeleteRegKey /ifempty SHELL_CONTEXT "Software\Classes\${EXT}\OpenWithProgids"
+  ReadRegStr $R7 SHELL_CONTEXT "Software\Classes\${EXT}" ""
+  ${if} $R7 == "${ZENIUM_PROGID}"
+    DeleteRegValue SHELL_CONTEXT "Software\Classes\${EXT}" ""
+  ${endIf}
+  DeleteRegKey /ifempty SHELL_CONTEXT "Software\Classes\${EXT}"
+!macroend
+
+!macro registerDefaultBrowser
+  DetailPrint "Registering ${PRODUCT_NAME} as a web browser with Windows"
+  ; The browser client Settings > Default apps lists.
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_CLIENT_KEY}" "" "${PRODUCT_NAME}"
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_CLIENT_KEY}\DefaultIcon" "" "$INSTDIR\${APP_EXECUTABLE_FILENAME},0"
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_CLIENT_KEY}\shell\open\command" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}"'
+  WriteRegDWORD SHELL_CONTEXT "${ZENIUM_CLIENT_KEY}\InstallInfo" "IconsVisible" 1
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_CLIENT_KEY}\InstallInfo" "ReinstallCommand" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --make-default-browser'
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_CLIENT_KEY}\InstallInfo" "HideIconsCommand" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --hide-icons'
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_CLIENT_KEY}\InstallInfo" "ShowIconsCommand" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --show-icons'
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_CAPABILITIES_KEY}" "ApplicationName" "${PRODUCT_NAME}"
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_CAPABILITIES_KEY}" "ApplicationDescription" "${ZENIUM_DESCRIPTION}"
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_CAPABILITIES_KEY}" "ApplicationIcon" "$INSTDIR\${APP_EXECUTABLE_FILENAME},0"
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_CAPABILITIES_KEY}\StartMenu" "StartMenuInternet" "${PRODUCT_NAME}"
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_CAPABILITIES_KEY}\URLAssociations" "http" "${ZENIUM_PROGID}"
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_CAPABILITIES_KEY}\URLAssociations" "https" "${ZENIUM_PROGID}"
+  ; The ProgID both associations point at. "URL Protocol" marks it as a URL handler too.
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_PROGID_KEY}" "" "${PRODUCT_NAME} HTML Document"
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_PROGID_KEY}" "FriendlyTypeName" "${PRODUCT_NAME} HTML Document"
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_PROGID_KEY}" "AppUserModelID" "${APP_ID}"
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_PROGID_KEY}" "URL Protocol" ""
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_PROGID_KEY}\Application" "ApplicationName" "${PRODUCT_NAME}"
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_PROGID_KEY}\Application" "ApplicationDescription" "${ZENIUM_DESCRIPTION}"
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_PROGID_KEY}\Application" "ApplicationIcon" "$INSTDIR\${APP_EXECUTABLE_FILENAME},0"
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_PROGID_KEY}\Application" "AppUserModelID" "${APP_ID}"
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_PROGID_KEY}\DefaultIcon" "" "$INSTDIR\${APP_EXECUTABLE_FILENAME},0"
+  WriteRegStr SHELL_CONTEXT "${ZENIUM_PROGID_KEY}\shell\open\command" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"'
+  !insertmacro forEachExtension registerExtension
+  ; Last, so Settings never sees a half-written registration.
+  WriteRegStr SHELL_CONTEXT "Software\RegisteredApplications" "${PRODUCT_NAME}" "${ZENIUM_CAPABILITIES_KEY}"
+  ; SHCNE_ASSOCCHANGED: the shell re-reads the associations.
+  System::Call 'Shell32::SHChangeNotify(i 0x8000000, i 0, i 0, i 0)'
+!macroend
+
+; The user's own http/https choice (UserChoice) is not touched: Windows owns it and asks for a
+; new browser by itself once the ProgID it names is gone.
+!macro unregisterDefaultBrowser
+  DetailPrint "Removing the ${PRODUCT_NAME} web browser registration"
+  DeleteRegValue SHELL_CONTEXT "Software\RegisteredApplications" "${PRODUCT_NAME}"
+  DeleteRegKey SHELL_CONTEXT "${ZENIUM_CLIENT_KEY}"
+  DeleteRegKey SHELL_CONTEXT "${ZENIUM_PROGID_KEY}"
+  !insertmacro forEachExtension unregisterExtension
+  System::Call 'Shell32::SHChangeNotify(i 0x8000000, i 0, i 0, i 0)'
+!macroend
+
+!macro customUnInstall
+  !insertmacro unregisterDefaultBrowser
+!macroend
 
 !macro customInstall
   ; Declared here rather than at file scope: makensis also compiles this script for the
@@ -103,4 +216,6 @@
     ${endIf}
   ${endIf}
   ClearErrors
+
+  !insertmacro registerDefaultBrowser
 !macroend

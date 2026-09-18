@@ -4,6 +4,7 @@ import { MonitorSmartphone, Plus } from 'lucide-react'
 import type { Rect, UIState } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
 import { chromeUnderPages } from '@renderer/lib/cover'
+import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import { captureActiveTab, panelAloneOverContent, uiStore, type UiState } from '@renderer/lib/ui'
@@ -12,6 +13,7 @@ import { dropStore } from '@renderer/lib/drag'
 import { Urlbar } from '../urlbar/Urlbar'
 import { OverlayHost } from '../overlays/OverlayHost'
 import { CoverImage } from './CoverImage'
+import { DefaultBrowserBanner } from './DefaultBrowserBanner'
 import { FindBar } from './FindBar'
 import { GlanceFrame } from './GlanceFrame'
 import { PullIndicator } from './PullIndicator'
@@ -65,6 +67,9 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
     (contentHidden || glanceActive) && Boolean(tab) && !staged && !(phone && ui.urlbar.open)
   const dropKey = dropStore.use((s) => s.key)
   const foreign = isForeignTab(state, tab?.id)
+  // The "Make Zenium your default browser" strip sits above the page, inside the frame, so the
+  // layout reporter's viewport (and the tab view under it) shrink by its height.
+  const banner = !phone && wantsDefaultBrowserBanner(state)
 
   // Overlays are hosted beside the frame, not inside it: on phones the frame recedes (scales to
   // .97) under a sheet, and a sheet mounted within it would shrink with the page – its 44 px
@@ -75,6 +80,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
         className="zen-content-frame relative flex h-full min-h-0 flex-col overflow-hidden"
         data-staged={staged || undefined}
       >
+        {banner && <DefaultBrowserBanner state={state} />}
         <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden">
           {state.capabilities.pullToRefresh && <PullIndicator />}
           {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
