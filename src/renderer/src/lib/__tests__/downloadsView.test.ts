@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { DownloadItem } from '@shared/types'
 import { downloadItem } from '@shared/__tests__/downloadFixtures'
 import {
+  blockedStatus,
+  bubbleDescription,
+  dangerActionLabels,
+  dangerSummary,
   dayLabel,
   describeDownloadError,
   downloadStatus,
@@ -12,7 +16,8 @@ import {
   formatSpeed,
   groupDownloadsByDay,
   hasClearable,
-  isOnDisk
+  isOnDisk,
+  splitFileName
 } from '../downloadsView'
 
 const MB = 1024 * 1024
@@ -77,12 +82,34 @@ describe('downloadStatus', () => {
     ).toBe('Paused · 30.0 MB of 100 MB')
   })
 
-  it('words the engine failure reasons', () => {
+  it('words the engine failure reasons as Failed – <reason>, in Chrome’s words where it has them', () => {
     expect(describeDownloadError(undefined)).toBe('Failed')
     expect(describeDownloadError('interrupted')).toBe('Failed')
     expect(describeDownloadError('shutdown')).toBe('Interrupted when Zenium closed')
-    expect(describeDownloadError('file-error')).toBe('Failed - File error')
-    expect(describeDownloadError('net::ERR_CONNECTION_RESET')).toBe('Failed - connection reset')
+    expect(describeDownloadError('file-error')).toBe('Failed – Something went wrong')
+    expect(describeDownloadError('net::ERR_CONNECTION_RESET')).toBe(
+      'Failed – Check internet connection'
+    )
+    expect(describeDownloadError('net::ERR_INTERNET_DISCONNECTED')).toBe(
+      'Failed – Check internet connection'
+    )
+    expect(describeDownloadError('NETWORK_DISCONNECTED')).toBe('Failed – Check internet connection')
+    expect(describeDownloadError('SERVER_BAD_CONTENT')).toBe(
+      "Failed – File wasn't available on site"
+    )
+    expect(describeDownloadError('net::ERR_HTTP_RESPONSE_CODE_FAILURE')).toBe(
+      "Failed – Site wasn't available"
+    )
+    expect(describeDownloadError('net::ERR_CONTENT_LENGTH_MISMATCH')).toBe(
+      "Failed – Couldn't finish download"
+    )
+    expect(describeDownloadError('FILE_NO_SPACE')).toBe('Failed – Out of storage space')
+    expect(describeDownloadError('DOWNLOAD_INTERRUPT_REASON_FILE_ACCESS_DENIED')).toBe(
+      'Failed – Needs permission to download'
+    )
+    expect(describeDownloadError('FILE_BLOCKED')).toBe('Failed – Blocked by your organization')
+    // Outside the table: the name, readable.
+    expect(describeDownloadError('net::ERR_UNEXPECTED_THING')).toBe('Failed – unexpected thing')
   })
 
   it('words paused, cancelled, failed and done like Chrome', () => {
@@ -108,15 +135,16 @@ describe('downloadStatus', () => {
     expect(downloadStatus(item({ id: 'a', state: 'completed', totalBytes: 0 })).text).toBe('Done')
   })
 
-  it('shows the engine danger message until the user decides', () => {
+  it('shows Chrome’s blocked status with the engine’s sentence as detail until the user decides', () => {
     const danger = {
       level: 'dangerous' as const,
       reason: 'executable' as const,
       message: 'setup.exe may harm'
     }
     expect(downloadStatus(item({ id: 'a', state: 'completed', danger }))).toEqual({
-      text: 'setup.exe may harm',
-      tone: 'danger'
+      text: 'Blocked · Dangerous',
+      tone: 'danger',
+      detail: 'setup.exe may harm'
     })
     expect(
       downloadStatus(
@@ -124,8 +152,112 @@ describe('downloadStatus', () => {
       ).tone
     ).toBe('warn')
     expect(
-      downloadStatus(item({ id: 'a', state: 'completed', danger, dangerAccepted: true })).text
-    ).toBe('Done · 100 MB')
+      downloadStatus(item({ id: 'a', state: 'completed', danger, dangerAccepted: true }))
+    ).toEqual({ text: 'Done · 100 MB', tone: 'muted' })
+  })
+})
+
+describe('danger copy (Chrome 112 download bubble)', () => {
+  const verdict = (
+    level: DownloadItem['danger']['level'],
+    reason: DownloadItem['danger']['reason'],
+    message = ''
+  ): DownloadItem['danger'] => ({ level, reason, message })
+
+  it('names the block by verdict', () => {
+    expect(blockedStatus(verdict('dangerous', 'executable'))).toBe('Blocked · Dangerous')
+    expect(blockedStatus(verdict('suspicious', 'archive'))).toBe('Blocked · Dangerous')
+    expect(blockedStatus(verdict('dangerous', 'url-verdict'))).toBe('Blocked · Dangerous')
+    expect(blockedStatus(verdict('suspicious', 'url-verdict'))).toBe('Blocked · Uncommon file')
+    expect(blockedStatus(verdict('suspicious', 'insecure-download'))).toBe(
+      'Blocked · Insecure download'
+    )
+  })
+
+  it('explains with the engine’s sentence, else Chrome’s per reason', () => {
+    expect(dangerSummary(verdict('dangerous', 'executable', 'This type can harm.'))).toBe(
+      'This type can harm.'
+    )
+    expect(dangerSummary(verdict('dangerous', 'executable'))).toBe(
+      'Zenium blocked this file because this type of file is dangerous'
+    )
+    expect(dangerSummary(verdict('dangerous', 'url-verdict'))).toBe(
+      'Zenium blocked this file because it is dangerous'
+    )
+    expect(dangerSummary(verdict('suspicious', 'url-verdict'))).toBe(
+      'This file is not commonly downloaded and may be dangerous'
+    )
+    expect(dangerSummary(verdict('suspicious', 'insecure-download'))).toBe(
+      "This file may have been read or edited because this site isn't using a secure connection"
+    )
+  })
+
+  it('labels the pair Keep / Delete and fills Delete only for a dangerous verdict', () => {
+    expect(dangerActionLabels(verdict('dangerous', 'executable'))).toEqual({
+      keep: 'Keep',
+      discard: 'Delete',
+      prominent: 'discard'
+    })
+    expect(dangerActionLabels(verdict('suspicious', 'archive')).prominent).toBeNull()
+  })
+})
+
+describe('splitFileName', () => {
+  it('keeps the extension and the end of the stem in the tail of a long name', () => {
+    expect(splitFileName('quarterly-report-final-version-2.pdf')).toEqual({
+      head: 'quarterly-report-final-ver',
+      tail: 'sion-2.pdf'
+    })
+    expect(splitFileName('averyveryverylongnamewithoutanextension')).toEqual({
+      head: 'averyveryverylongnamewithoutanext',
+      tail: 'ension'
+    })
+  })
+
+  it('leaves short names whole', () => {
+    expect(splitFileName('notes.txt')).toEqual({ head: 'notes.txt', tail: '' })
+    expect(splitFileName('README')).toEqual({ head: 'README', tail: '' })
+    expect(splitFileName('a.tar.gz')).toEqual({ head: 'a.tar.gz', tail: '' })
+  })
+})
+
+describe('bubbleDescription', () => {
+  it('sums the list up: running, paused, blocked, failed, done', () => {
+    expect(bubbleDescription([])).toBeNull()
+    expect(bubbleDescription([item({ id: 'a' }), item({ id: 'b', state: 'completed' })])).toBe(
+      '1 in progress'
+    )
+    expect(bubbleDescription([item({ id: 'a' }), item({ id: 'b' })])).toBe('2 in progress')
+    expect(bubbleDescription([item({ id: 'a', state: 'paused' })])).toBe('1 paused')
+    // One paused, one running: the running one is what the line is about.
+    expect(bubbleDescription([item({ id: 'a', state: 'paused' }), item({ id: 'b' })])).toBe(
+      '2 in progress'
+    )
+    const danger = { level: 'dangerous' as const, reason: 'executable' as const, message: 'x' }
+    expect(
+      bubbleDescription([
+        item({ id: 'a', state: 'completed', danger }),
+        item({ id: 'b', state: 'interrupted' })
+      ])
+    ).toBe('1 file blocked')
+    expect(
+      bubbleDescription([
+        item({ id: 'a', state: 'completed', danger }),
+        item({ id: 'b', state: 'completed', danger })
+      ])
+    ).toBe('2 files blocked')
+    expect(
+      bubbleDescription([
+        item({ id: 'a', state: 'interrupted' }),
+        item({ id: 'b', state: 'completed' })
+      ])
+    ).toBe('1 failed')
+    expect(
+      bubbleDescription([
+        item({ id: 'a', state: 'completed' }),
+        item({ id: 'b', state: 'cancelled' })
+      ])
+    ).toBe('All done')
   })
 })
 

@@ -1,10 +1,16 @@
-import type { DownloadItem } from '@shared/types'
-import { displayName, isActiveDownload, needsDangerDecision } from '@shared/downloadsShell'
+import type { DownloadDanger, DownloadItem } from '@shared/types'
+import {
+  allPaused,
+  displayName,
+  isActiveDownload,
+  needsDangerDecision
+} from '@shared/downloadsShell'
 import { formatBytes } from './utils'
 
 /*
  * Pure presentation helpers for the downloads bubble and the `zen://downloads` page: the status
- * line under a file name, day grouping and search for the page, the file-type glyph.
+ * line under a file name, the wording of a flagged file's warning, the split that lets a long
+ * name truncate in its middle, day grouping and search for the page, the file-type glyph.
  */
 
 // ---------------------------------------------------------------------------
@@ -15,7 +21,39 @@ export interface DownloadStatus {
   text: string
   /** Which ink the line is set in: deemphasised text, the warning or the danger colour. */
   tone: 'muted' | 'warn' | 'danger'
+  /** A second line explaining the status (a flagged file's warning); the rows show it under `text`. */
+  detail?: string
 }
+
+/**
+ * Chrome's one-line reasons for a stopped download (its download bubble's interrupted
+ * statuses), keyed by the Chromium `net::` error and download interrupt reason names the
+ * engine passes through in `error`.
+ */
+const FAILURE_REASONS: Array<[RegExp, string]> = [
+  [
+    /^(INTERNET_DISCONNECTED|NETWORK_CHANGED|NETWORK_(FAILED|TIMEOUT|DISCONNECTED|SERVER_DOWN|INVALID_REQUEST)|CONNECTION_\w+|NAME_NOT_RESOLVED|TIMED_OUT|ADDRESS_UNREACHABLE)$/,
+    'Check internet connection'
+  ],
+  [/^(SERVER_BAD_CONTENT|FILE_NOT_FOUND)$/, "File wasn't available on site"],
+  [
+    /^(SERVER_(FAILED|UNREACHABLE|UNAUTHORIZED|FORBIDDEN|CERT_PROBLEM|CROSS_ORIGIN_REDIRECT|NO_RANGE)|HTTP_RESPONSE_CODE_FAILURE|INVALID_RESPONSE)$/,
+    "Site wasn't available"
+  ],
+  [
+    /^(SERVER_CONTENT_LENGTH_MISMATCH|CONTENT_LENGTH_MISMATCH|INCOMPLETE_CHUNKED_ENCODING|EMPTY_RESPONSE)$/,
+    "Couldn't finish download"
+  ],
+  [/^FILE_NO_SPACE$/, 'Out of storage space'],
+  [/^(FILE_NAME_TOO_LONG|FILE_PATH_TOO_LONG)$/, 'File name or location is too long'],
+  [/^(FILE_TOO_LARGE|FILE_TOO_BIG)$/, 'File is too big for this device'],
+  [
+    /^(FILE_ACCESS_DENIED|ACCESS_DENIED|FILE_SECURITY_CHECK_FAILED)$/,
+    'Needs permission to download'
+  ],
+  [/^FILE_BLOCKED$/, 'Blocked by your organization'],
+  [/^FILE_(FAILED|TRANSIENT_ERROR|HASH_MISMATCH|SAME_AS_SOURCE)$/, 'Something went wrong']
+]
 
 /** Chrome's phrasing: "3 secs left", "1 min left", "2 hours left", "1 day left". */
 export function formatRemaining(ms: number | null | undefined): string {
@@ -37,9 +75,10 @@ export function formatSpeed(bytesPerSecond: number): string {
 }
 
 /**
- * Why a transfer stopped, from the engine's `error`: its short reasons (`shutdown` for rows in
- * flight when the app quit, `file-error` when the final rename failed, `interrupted` from the
- * Electron host) get Chrome's wording; a Chromium `net::` name is shown readably.
+ * Why a transfer stopped, as `Failed – <reason>`, from the engine's `error`: its short reasons
+ * (`shutdown` for rows in flight when the app quit, `file-error` when the final rename failed,
+ * `interrupted` from the Electron host) and the Chromium `net::` error and interrupt-reason
+ * names get the wording of Chrome's download bubble; a name outside that table is shown readably.
  */
 export function describeDownloadError(error: string | undefined): string {
   switch (error) {
@@ -50,18 +89,73 @@ export function describeDownloadError(error: string | undefined): string {
     case 'shutdown':
       return 'Interrupted when Zenium closed'
     case 'file-error':
-      return 'Failed - File error'
+      return 'Failed – Something went wrong'
+    default: {
+      const name = error.replace(/^net::/, '').replace(/^(ERR_|DOWNLOAD_INTERRUPT_REASON_)/, '')
+      const known = FAILURE_REASONS.find(([pattern]) => pattern.test(name))?.[1]
+      return `Failed – ${known ?? name.replace(/_/g, ' ').toLowerCase()}`
+    }
+  }
+}
+
+/**
+ * Chrome's status for a blocked file, by the engine's verdict: `Blocked · Dangerous` for a
+ * flagged file type or a dangerous URL, `Blocked · Uncommon file` for a URL verdict short of
+ * dangerous, `Blocked · Insecure download` for a plaintext transfer from a secure page.
+ */
+export function blockedStatus(danger: DownloadDanger): string {
+  switch (danger.reason) {
+    case 'insecure-download':
+      return 'Blocked · Insecure download'
+    case 'url-verdict':
+      return danger.level === 'dangerous' ? 'Blocked · Dangerous' : 'Blocked · Uncommon file'
     default:
-      return `Failed - ${error
-        .replace(/^net::(ERR_)?/, '')
-        .replace(/_/g, ' ')
-        .toLowerCase()}`
+      return 'Blocked · Dangerous'
+  }
+}
+
+/**
+ * The sentence explaining a blocked file (Chrome's subpage summary): the engine's own wording
+ * for the verdict when it sent one, else Chrome's sentence for the reason.
+ */
+export function dangerSummary(danger: DownloadDanger): string {
+  if (danger.message) return danger.message
+  switch (danger.reason) {
+    case 'insecure-download':
+      return "This file may have been read or edited because this site isn't using a secure connection"
+    case 'url-verdict':
+      return danger.level === 'dangerous'
+        ? 'Zenium blocked this file because it is dangerous'
+        : 'This file is not commonly downloaded and may be dangerous'
+    default:
+      return 'Zenium blocked this file because this type of file is dangerous'
+  }
+}
+
+export interface DangerActionLabels {
+  keep: string
+  discard: string
+  /** Which of the two Chrome sets in the prominent (filled) style; null when neither. */
+  prominent: 'keep' | 'discard' | null
+}
+
+/**
+ * The Keep / Discard pair's labels for a verdict, as Chrome's bubble words them: Delete takes
+ * the file away in every case; Keep releases it. A dangerous verdict makes Delete the prominent
+ * one, the way Chrome fills it; a lesser warning leaves both plain.
+ */
+export function dangerActionLabels(danger: DownloadDanger): DangerActionLabels {
+  return {
+    keep: 'Keep',
+    discard: 'Delete',
+    prominent: danger.level === 'dangerous' ? 'discard' : null
   }
 }
 
 /**
  * The one-line status under the file name: the engine's speed and time left while running,
- * the failure reason when interrupted, the warning while a flagged file waits.
+ * the failure reason when interrupted, Chrome's blocked status with the verdict's sentence as
+ * its detail while a flagged file waits.
  */
 export function downloadStatus(item: DownloadItem): DownloadStatus {
   const received = formatBytes(item.receivedBytes)
@@ -81,8 +175,9 @@ export function downloadStatus(item: DownloadItem): DownloadStatus {
     case 'completed':
       if (needsDangerDecision(item)) {
         return {
-          text: item.danger.message,
-          tone: item.danger.level === 'dangerous' ? 'danger' : 'warn'
+          text: blockedStatus(item.danger),
+          tone: item.danger.level === 'dangerous' ? 'danger' : 'warn',
+          detail: dangerSummary(item.danger)
         }
       }
       return { text: total ? `Done · ${total}` : 'Done', tone: 'muted' }
@@ -92,6 +187,43 @@ export function downloadStatus(item: DownloadItem): DownloadStatus {
 /** A finished file that can be opened, shown or dragged (a flagged one waits for Keep). */
 export function isOnDisk(item: DownloadItem): boolean {
   return item.state === 'completed' && !needsDangerDecision(item)
+}
+
+// ---------------------------------------------------------------------------
+// Names and the bubble's description
+// ---------------------------------------------------------------------------
+
+/** How many characters before the extension the tail of a split name keeps. */
+const NAME_TAIL_STEM = 6
+/** Names this many characters over the tail's length are split; shorter ones show whole. */
+const NAME_SPLIT_SLACK = 4
+
+/**
+ * A file name in two parts for middle truncation: the `head` may lose its end to an ellipsis
+ * while the `tail` – the extension and the last few characters of the stem, which tell one
+ * `report-final-v2.pdf` from another – always shows. Short names come back whole, `tail` empty.
+ */
+export function splitFileName(name: string): { head: string; tail: string } {
+  const ext = extensionOf(name)
+  const tailLength = NAME_TAIL_STEM + (ext ? ext.length + 1 : 0)
+  if (name.length <= tailLength + NAME_SPLIT_SLACK) return { head: name, tail: '' }
+  return { head: name.slice(0, -tailLength), tail: name.slice(-tailLength) }
+}
+
+/**
+ * The line under the bubble's title, summing the list up: what is still running (or that all
+ * of it is paused), else what waits on a Keep / Discard, else what failed, else that all is
+ * done; null for an empty list, whose empty state speaks instead.
+ */
+export function bubbleDescription(items: readonly DownloadItem[]): string | null {
+  if (items.length === 0) return null
+  const active = items.filter(isActiveDownload).length
+  if (active > 0) return allPaused(items) ? `${active} paused` : `${active} in progress`
+  const blocked = items.filter(needsDangerDecision).length
+  if (blocked > 0) return blocked === 1 ? '1 file blocked' : `${blocked} files blocked`
+  const failed = items.filter((i) => i.state === 'interrupted').length
+  if (failed > 0) return `${failed} failed`
+  return 'All done'
 }
 
 // ---------------------------------------------------------------------------
