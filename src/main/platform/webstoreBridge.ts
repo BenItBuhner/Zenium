@@ -225,7 +225,8 @@ export class WebstoreBridge {
         payload = this.info(record)
         break
       case 'allowPrivate':
-        // No management event for it: Chrome's store pages re-read the info on demand.
+      case 'allowUserScripts':
+        // No management event for them: Chrome's store pages re-read the info on demand.
         return
     }
     for (const wc of this.pages) {
