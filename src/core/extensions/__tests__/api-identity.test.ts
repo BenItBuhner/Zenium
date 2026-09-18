@@ -13,6 +13,8 @@ import {
   normalizeWebAuthFlowDetails,
   redirectUrl
 } from '../api/identity'
+import { installExtensionApi, type ShimHost } from '../api/shim'
+import { API_SPEC } from '../api/spec'
 import {
   IdentityApi,
   type AuthWindowEvents,
@@ -219,5 +221,51 @@ describe('identity.launchWebAuthFlow', () => {
     expect(h.api.handlers.getProfileUserInfo(h.ctx)).toEqual({ email: '', id: '' })
     expect(h.api.handlers.getAccounts(h.ctx)).toEqual([])
     expect(() => h.api.handlers.getAuthToken(h.ctx, {})).toThrow(ERROR_GET_AUTH_TOKEN)
+  })
+})
+
+describe('the shim answers getRedirectURL synchronously', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tests poke at the patched globals
+  type Any = any
+  const g = globalThis as Any
+  const calls: Array<{ namespace: string; method: string }> = []
+
+  beforeEach(() => {
+    calls.length = 0
+    const manifest = { manifest_version: 3, name: 'Probe', version: '1.0' }
+    const chrome: Any = {
+      runtime: {
+        id: EXT,
+        getManifest: () => manifest,
+        getURL: (path: string) => `chrome-extension://${EXT}/${path}`
+      }
+    }
+    Object.defineProperty(g, 'chrome', { value: chrome, configurable: true, writable: true })
+    const host: ShimHost = {
+      kind: 'worker',
+      invoke(namespace, method) {
+        calls.push({ namespace, method })
+        return Promise.resolve({ ok: true, value: undefined })
+      },
+      notify: () => undefined,
+      onEvent: () => undefined
+    }
+    installExtensionApi(host, API_SPEC)
+  })
+
+  afterEach(() => {
+    delete g.chrome
+    delete g.browser
+  })
+
+  it('returns the string itself, with an optional path, without a host round trip', () => {
+    expect(g.chrome.identity.getRedirectURL()).toBe(REDIRECT)
+    expect(g.chrome.identity.getRedirectURL('cb')).toBe(`${REDIRECT}cb`)
+    expect(g.chrome.identity.getRedirectURL('/deep/path')).toBe(`${REDIRECT}deep/path`)
+    expect(() => g.chrome.identity.getRedirectURL(42)).toThrow(TypeError)
+    expect(calls).toEqual([])
+    // The async members still go to the host.
+    void g.chrome.identity.getProfileUserInfo()
+    expect(calls).toEqual([{ namespace: 'identity', method: 'getProfileUserInfo' }])
   })
 })

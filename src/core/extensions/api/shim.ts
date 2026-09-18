@@ -874,6 +874,29 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // identity: `getRedirectURL` returns synchronously in Chrome (extensions splice it straight
+  // into an authorization URL), so it is computed here from the extension's own id
+  // ---------------------------------------------------------------------------
+
+  if (spec.identity) {
+    const ownId: string =
+      safely(() => String(chrome.runtime.id)) ??
+      /^chrome-extension:\/\/([^/]+)\//.exec(extensionUrl)?.[1] ??
+      ''
+    for (const root of roots) {
+      define(namespaceOn(root, 'identity'), 'getRedirectURL', function (path?: unknown): string {
+        if (path !== undefined && path !== null && typeof path !== 'string') {
+          throw new TypeError(
+            "Error in invocation of identity.getRedirectURL(optional string path): Error at parameter 'path': Invalid type: expected string."
+          )
+        }
+        const suffix = typeof path === 'string' ? path.replace(/^\/+/, '') : ''
+        return `https://${ownId}.chromiumapp.org/${suffix}`
+      })
+    }
+  }
+
   /** A click on an item created with `onclick`: Chrome calls that handler besides `onClicked`. */
   function menuClicked(args: unknown[]): void {
     const info = args[0]
