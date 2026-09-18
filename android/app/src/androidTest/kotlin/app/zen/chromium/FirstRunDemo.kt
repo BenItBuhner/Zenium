@@ -1,21 +1,25 @@
 package app.zen.chromium
 
+import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 
 /**
  * Drives the first run and the default-browser prompts from a cleared profile so the
  * `android-firstrun-demo` workflow can record them: the welcome flow step by step (a look picked,
- * a search engine, "Set as default" opening the system's browser-role dialog, cancelled there so
- * there is still something to ask for), a first page with the one-time gesture hint, the Settings
- * row offering the role; then the app started again for two more sessions until the promo sheet
- * is due (the third session – the rules in `shared/defaultBrowser.ts` run unchanged, nothing is
- * lowered), "Not now", the lighter banner in the session after, and the banner's "Set as default"
- * taking the role in the dialog, so Settings ends on "Zenium is your default browser". Only
- * asserts that it could run; what the chrome does is what the recording shows.
+ * a search engine, the Set as default step left with Skip, so the role stays up for grabs and
+ * the promos later have something to ask for), a first page with the one-time gesture hint; then
+ * the app started again for two more sessions until the promo sheet is due (the third session –
+ * the rules in `shared/defaultBrowser.ts` run unchanged, nothing is lowered), "Not now", the
+ * banner (#72's top banner carrying the default-browser message) in the session after, swiped
+ * away, and Settings > About with the row still offering the role. Only asserts that it could
+ * run; what the chrome does is what the recording shows, with one PASS or FAIL per surface in
+ * `firstrun-findings.txt` next to the screenshots. The role dialog itself is on record from the
+ * functional half's run (#46).
  *
  * Handshake with the workflow through files under `files/firstrun-demo/` as in GestureDemo;
  * screenshots land next to them as `firstrun-*.png`.
@@ -24,6 +28,8 @@ import org.junit.runner.RunWith
 class FirstRunDemo : DemoHarness(stateAsset = null, shotPrefix = "firstrun", handshakeDir = "firstrun-demo") {
     override val tag = "FirstRunDemo"
 
+    private lateinit var findings: File
+
     @Test
     fun record() {
         runDemo()
@@ -31,7 +37,13 @@ class FirstRunDemo : DemoHarness(stateAsset = null, shotPrefix = "firstrun", han
 
     /** Nothing to warm up: the welcome step is the first frame. Just make sure it is there. */
     override fun warmUp() {
-        if (waitFor("Get started", 20_000) == null) Log.w(tag, "the welcome step never showed")
+        findings = File(out, "firstrun-findings.txt")
+        findings.writeText(
+            "Zenium Android first run and default-browser prompts (API ${Build.VERSION.SDK_INT}, ${width}x$height, density $density)\n\n"
+        )
+        val welcome = waitFor("Get started", 20_000) != null
+        if (!welcome) Log.w(tag, "the welcome step never showed")
+        finding("first run: welcome step from the cleared profile ${verdict(welcome)}")
     }
 
     override fun demo() {
@@ -43,114 +55,91 @@ class FirstRunDemo : DemoHarness(stateAsset = null, shotPrefix = "firstrun", han
         tapLabel(f, "Get started")
         step()
         shot("02-look")
+        val look = findByLabel("Ocean") != null
         tapLabel(f, "Ocean")
         SystemClock.sleep(1_800)
         shot("03-look-ocean")
+        finding("look step: preset tiles ${verdict(look)}, Ocean picked and applied live (see 03-look-ocean)")
         tapLabel(f, "Continue")
         step()
         shot("04-search")
+        val search = findByLabel("DuckDuckGo") != null
         tapLabel(f, "DuckDuckGo")
         SystemClock.sleep(1_200)
+        finding("search step: engine rows ${verdict(search)}")
         tapLabel(f, "Continue")
         step()
         shot("05-set-as-default")
 
-        // 2. "Set as default" hands over to the system's role dialog. Cancel it: the promos later
-        //    need the role to still be up for grabs. Either answer ends the first run; when the
-        //    dialog never comes, Skip does, so the rest of the demo still runs.
-        if (tapPrimary(f) && awaitSystemWindow()) {
-            SystemClock.sleep(1_500)
-            shot("06-role-dialog")
-            if (!tapLabel(f, "Cancel")) back()
-        } else {
-            Log.w(tag, "no role dialog came up; skipping the step")
-            tapLabel(f, "Skip")
-        }
+        // 2. The Set as default step, left with Skip: the promos later need the role to still be
+        //    up for grabs. Either button ends the first run.
+        val defaultStep = findAny("Skip") != null
+        finding("default step: Skip beside Set as default ${verdict(defaultStep)}")
+        if (!tapLabel(f, "Skip")) Log.w(tag, "no Skip on the default step")
         // The first run ends in the omnibox, offered for the first address; let it settle.
         SystemClock.sleep(4_000)
-        shot("07-first-session")
+        shot("06-first-session")
+        finding("first run ended in the browser ${verdict(findByLabelPrefix(PILL_LABEL) != null)}")
 
         // 3. A first page, arriving the way a link from another app does (the omnibox the first
-        //    run ends in keeps no input focus for injected keys after the role dialog), once that
-        //    omnibox is out of the way. The one-time gesture hint then shows beside the pill.
+        //    run ends in keeps no input focus for injected keys), once that omnibox is out of the
+        //    way. The one-time gesture hint then shows beside the pill.
         closeUrlbar()
         openLink("https://example.com/")
         SystemClock.sleep(5_000)
-        shot("08-gesture-hint")
+        shot("07-gesture-hint")
+        finding("gesture hint after the first page ${verdict(hintShown())}")
         SystemClock.sleep(2_000)
 
-        // 4. Settings > About: the row offers the role.
-        openAbout(f)
-        shot("09-settings-set-as-default")
-        back()
-        SystemClock.sleep(1_500)
-
-        // 5. Two more sessions: the promo sheet is due in the third.
+        // 4. Two more sessions: the promo sheet is due in the third.
         launch()
         SystemClock.sleep(1_000)
         launch()
-        waitFor("Not now", 10_000)
+        val sheet = waitFor("Not now", 15_000) != null
         SystemClock.sleep(1_500)
-        shot("10-promo-sheet")
+        shot("08-promo-sheet")
+        finding("promo sheet in the third session ${verdict(sheet)}")
         tapLabel(f, "Not now")
         SystemClock.sleep(2_500)
+        finding("sheet gone after Not now ${verdict(findByLabel("Not now") == null)}")
 
-        // 6. The session after: the lighter banner. Its button takes the role for real this time.
+        // 5. The session after: the banner. Swiped off to the side, the way #72's cards go.
         launch()
-        waitFor("Open links in Zenium", 10_000)
+        val banner = waitFor(BANNER_TITLE, 10_000)
         SystemClock.sleep(1_500)
-        shot("11-banner")
-        tapLabel(f, "Set as default")
-        if (awaitSystemWindow()) {
-            SystemClock.sleep(1_500)
-            shot("12-role-dialog-again")
-            grantRole(f)
-        } else {
-            Log.w(tag, "no role dialog came up from the banner")
+        shot("09-banner")
+        finding("banner in the fourth session ${verdict(banner != null)}")
+        if (banner != null) {
+            // From the title, not the action: a touch on a control stays the control's.
+            f.down(banner.left + 0.3f * banner.width(), banner.exactCenterY())
+            f.moveBy(NUDGE, 0f, 80)
+            f.moveBy(0.6f * width, 0f, 260)
+            f.up()
+            SystemClock.sleep(1_800)
+            shot("10-banner-swiped")
+            finding("banner gone after the swipe ${verdict(findByLabel(BANNER_TITLE) == null)}")
         }
-        SystemClock.sleep(3_000)
-        shot("13-default-held")
 
-        // 7. Settings > About once more: "Zenium is your default browser".
+        // 6. Settings > About: the row still offers the role.
         openAbout(f)
-        shot("14-settings-default")
+        shot("11-settings-set-as-default")
+        finding(
+            "Settings > About row: Default browser ${verdict(findByLabel("Default browser") != null)}, " +
+                "Set as default ${verdict(findByLabel("Set as default") != null)}"
+        )
         SystemClock.sleep(1_500)
     }
 
     /** A step's content slides in on SPRING_GENTLE; let it settle before the next touch. */
     private fun step() = SystemClock.sleep(1_500)
 
-    /**
-     * The last step's primary button. Looked up by label like everything else; when the tree has
-     * no such node, Skip, its mirror image in the same row, gives the place to touch: the row is
-     * centred and both buttons share one width. Three recordings on the API 34 emulator exposed
-     * Skip and never this button (Blink names both, as the preview host's tree shows; clearing
-     * UiAutomation's cache made no difference), while the banner's identical button is found.
-     */
-    private fun tapPrimary(f: Finger): Boolean {
-        waitFor("Set as default", 8_000)?.let {
-            f.tap(it.exactCenterX(), it.exactCenterY())
-            return true
-        }
-        val skip = findByLabel("Skip") ?: run {
-            Log.w(tag, "neither Set as default nor Skip is in the tree")
-            return false
-        }
-        Log.w(tag, "no node labelled 'Set as default'; touching the mirror of Skip")
-        f.tap(width - skip.exactCenterX(), skip.exactCenterY())
-        return true
-    }
-
-    /** Android 12+ lists the browsers with Zenium preselected; older dialogs confirm directly. */
-    private fun grantRole(f: Finger) {
-        if (tapLabel(f, "Zenium")) SystemClock.sleep(1_000)
-        if (!tapLabel(f, "Set as default")) Log.w(tag, "no confirm button in the role dialog")
-    }
+    /** The hint is a status line starting with its first words; the rest may wrap. */
+    private fun hintShown(): Boolean = findNode { it.startsWith("Swipe the address bar") } != null
 
     /**
      * Menu, expanded, scrolled to its end, Settings, then the About section. Rows are picked
      * through the accessibility tree, as MenuSheetDemo does. Settings takes seconds to come up on
-     * the emulator after the role dialog, so its tabs and the row are waited for, not slept for.
+     * the emulator, so its tabs and the row are waited for, not slept for.
      */
     private fun openAbout(f: Finger) {
         ensureForeground()
@@ -183,5 +172,16 @@ class FirstRunDemo : DemoHarness(stateAsset = null, shotPrefix = "firstrun", han
         }
         if (waitFor("Default browser", 5_000) == null) Log.w(tag, "no Default browser row")
         SystemClock.sleep(1_500)
+    }
+
+    private fun verdict(ok: Boolean) = if (ok) "PASS" else "FAIL"
+
+    private fun finding(line: String) {
+        Log.i(tag, line.trim())
+        findings.appendText(line + "\n")
+    }
+
+    companion object {
+        private const val BANNER_TITLE = "Open links in Zenium"
     }
 }
