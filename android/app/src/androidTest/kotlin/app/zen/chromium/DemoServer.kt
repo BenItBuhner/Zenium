@@ -10,22 +10,28 @@ import java.net.Socket
  * process, so a driver can serve its own pages and need nothing from the network or the runner.
  *
  * `routes` maps a path (`/`, `/second.html`) to a content type and body; anything else is a 404.
- * Everything is `Cache-Control: no-store`, so a reload fetches again.
+ * Everything is `Cache-Control: no-store`, so a reload fetches again. `address` is the loopback
+ * address to listen on – 127.0.0.1 unless a demo needs several sites, which are told apart by
+ * host: any 127.x.y.z is the loopback too, so one server per address on one port gives each
+ * site its own host.
  */
-class DemoServer(private val port: Int, private val routes: Map<String, Pair<String, ByteArray>>) :
-    Thread("demo-server-$port") {
+class DemoServer(
+    private val port: Int,
+    private val routes: Map<String, Pair<String, ByteArray>>,
+    private val address: String = "127.0.0.1"
+) : Thread("demo-server-$address-$port") {
     // Android's InetAddress.getLoopbackAddress() is ::1; a socket bound to it alone refuses the
     // 127.0.0.1 the pages' URLs name, so bind the IPv4 loopback explicitly.
-    private val socket = ServerSocket(port, 16, InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
+    private val socket = ServerSocket(port, 16, InetAddress.getByAddress(ipv4(address)))
     @Volatile private var closed = false
 
-    val origin: String get() = "http://127.0.0.1:$port"
+    val origin: String get() = "http://$address:$port"
 
     /** Fetch `/` the way the WebView will and describe the outcome. */
     fun selfCheck(): String = runCatching {
-        Socket("127.0.0.1", port).use { s ->
+        Socket(address, port).use { s ->
             s.soTimeout = 5_000
-            s.getOutputStream().write("GET / HTTP/1.1\r\nHost: 127.0.0.1:$port\r\n\r\n".toByteArray())
+            s.getOutputStream().write("GET / HTTP/1.1\r\nHost: $address:$port\r\n\r\n".toByteArray())
             s.getOutputStream().flush()
             val status = s.getInputStream().bufferedReader().readLine()
             "listening on ${socket.localSocketAddress}, GET / -> $status"
@@ -71,6 +77,13 @@ class DemoServer(private val port: Int, private val routes: Map<String, Pair<Str
     }
 
     companion object {
+        /** The four bytes of a dotted IPv4 address (no name lookup, which would go to the network). */
+        private fun ipv4(address: String): ByteArray {
+            val parts = address.split('.')
+            require(parts.size == 4) { "not a dotted IPv4 address: $address" }
+            return ByteArray(4) { parts[it].toInt().toByte() }
+        }
+
         /** A minimal HTML document with a heading, and `body` after it. */
         fun page(title: String, body: String = ""): Pair<String, ByteArray> =
             "text/html; charset=utf-8" to (
