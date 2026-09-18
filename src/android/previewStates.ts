@@ -112,21 +112,24 @@ function reach(spec: string): void {
   const target = parsePreviewSpec(spec)
 
   if (target.kind === 'page') {
-    // The page tab is the state: reached once the active tab is a page tab, then a frame for the
-    // page (and its drill-in's slide) to settle before the search is typed or a row shown.
+    // The page tab is the state: reached once the active tab is a page tab and the page has its
+    // rows (its chunk loads on the first open), then a moment for its drill-in's slide to settle
+    // before the search is typed, a row shown or a step taken.
     whenActiveTabIs(isInternalPageUrl, () => {
-      setTimeout(() => {
-        // The landing keeps its query between states unless it is retyped: an empty one clears it.
-        type('input[aria-label="Find in Settings"]', target.search ?? '')
-        requestAnimationFrame(() => {
-          // The page keeps where a previous state scrolled it; every state starts at the top.
-          for (const el of document.querySelectorAll<HTMLElement>('[data-page] *')) {
-            if (el.scrollTop > 0) el.scrollTop = 0
-          }
-          show(target.show)
-          steps(target.then ?? [], () => done(spec))
-        })
-      }, 300)
+      whenPageRendered(() => {
+        setTimeout(() => {
+          // The landing keeps its query between states unless it is retyped: an empty one clears it.
+          type('input[aria-label="Find in Settings"]', target.search ?? '')
+          requestAnimationFrame(() => {
+            // The page keeps where a previous state scrolled it; every state starts at the top.
+            for (const el of document.querySelectorAll<HTMLElement>('[data-page] *')) {
+              if (el.scrollTop > 0) el.scrollTop = 0
+            }
+            show(target.show)
+            steps(target.then ?? [], () => done(spec))
+          })
+        }, 300)
+      })
     })
     run('page.open', { id: target.page, section: target.section ?? null })
   } else if (target.kind === 'overlay') {
@@ -251,6 +254,22 @@ function tap(text: string): void {
       return
     }
   }
+}
+
+/** How long the page's first render (its chunk) is waited for before the state goes ahead anyway. */
+const PAGE_RENDER_MS = 4000
+
+/**
+ * Runs `fn` once the page in the frame has drawn a row (a section's or the landing's), or after
+ * {@link PAGE_RENDER_MS}: the page's code loads on its first open, and a search typed, a row
+ * shown or a step taken before the rows exist would find nothing.
+ */
+function whenPageRendered(fn: () => void, deadline = performance.now() + PAGE_RENDER_MS): void {
+  if (document.querySelector('[data-page] button') || performance.now() > deadline) {
+    fn()
+    return
+  }
+  setTimeout(() => whenPageRendered(fn, deadline), 50)
 }
 
 /** Runs `fn` once the active tab satisfies `test` (at once when it already does). */
