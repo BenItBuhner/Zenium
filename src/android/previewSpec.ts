@@ -24,7 +24,14 @@ export type PreviewState =
   | {
       kind: 'overlay'
       overlay: OverlayKind
+      /** Settings section to land on. */
+      section?: string
       /** Text of an element in the overlay to scroll into view once it is open. */
+      show?: string
+    }
+  | {
+      kind: 'menu'
+      /** Text of an item in the menu to scroll into view once it is open. */
       show?: string
     }
   | { kind: 'find'; text: string }
@@ -38,19 +45,31 @@ export type PreviewState =
 
 /**
  * A preview state spec is a query string: `idle` (or anything unrecognised), `overlay=<kind>` for
- * one of PREVIEW_OVERLAYS (with `show=<text>` to scroll a row of the overlay into view),
- * `find=<text>` for the find bar with that text typed (`find=` opens it empty), or `pull=<n>` for
- * the active page held pulled down at n percent of the refresh threshold (`pull=refresh` pulls
- * past it and lets go). `overlay` wins over `find`, and `find` over `pull`, when several are
- * given. A leading `#` (the URL hash as read) is ignored.
+ * one of PREVIEW_OVERLAYS (with `section=<id>` to land on a Settings section and `show=<text>` to
+ * scroll a row of the overlay into view), `menu=app` for the app menu sheet (with `show=<text>` to
+ * scroll an item into view), `find=<text>` for the find bar with that text typed (`find=` opens it
+ * empty), or `pull=<n>` for the active page held
+ * pulled down at n percent of the refresh threshold (`pull=refresh` pulls past it and lets go).
+ * When several are given, `overlay` wins over `menu`, `menu` over `find`, and `find` over `pull`.
+ * A leading `#` (the URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
   const overlay = params.get('overlay')
   if (overlay !== null && (PREVIEW_OVERLAYS as readonly string[]).includes(overlay)) {
-    const kind = overlay as OverlayKind
+    const state: Extract<PreviewState, { kind: 'overlay' }> = {
+      kind: 'overlay',
+      overlay: overlay as OverlayKind
+    }
+    const section = params.get('section')
+    if (section) state.section = section
     const show = params.get('show')
-    return show ? { kind: 'overlay', overlay: kind, show } : { kind: 'overlay', overlay: kind }
+    if (show) state.show = show
+    return state
+  }
+  if (params.get('menu') === 'app') {
+    const show = params.get('show')
+    return show ? { kind: 'menu', show } : { kind: 'menu' }
   }
   const find = params.get('find')
   if (find !== null) return { kind: 'find', text: find }

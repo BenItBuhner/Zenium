@@ -134,10 +134,8 @@ function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Bro
   const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
   const apply = (state: UIState): void => {
     const space = state.spaces.find((s) => s.id === state.activeSpaceId) ?? state.spaces[0]
-    const dark =
-      state.settings.colorScheme === 'system'
-        ? systemDark.matches
-        : state.settings.colorScheme === 'dark'
+    const scheme = state.settings.colorScheme
+    const dark = scheme === 'system' ? systemDark.matches : scheme === 'dark'
     const resolved = resolveTheme(space?.theme ?? null, dark)
     const background = rgbToHex(resolved.averageColor)
     // The token is read back from the document a frame later, once React has written the
@@ -146,10 +144,12 @@ function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Bro
     frame = requestAnimationFrame(() => {
       frame = null
       const scrim = computedTokenColor('--zen-scrim') ?? ''
-      const key = `${dark}|${background}|${scrim}`
+      const key = `${scheme}|${dark}|${background}|${scrim}`
       if (key === last) return
       last = key
-      bridge.send('chrome.setTheme', { dark, background, scrim })
+      // `scheme` lets the host set the app's night mode, so pages' `prefers-color-scheme`
+      // follows Zenium's own Light / Dark choice and not only the system's.
+      bridge.send('chrome.setTheme', { dark, scheme, background, scrim })
     })
   }
   platform.events.on('state', apply)

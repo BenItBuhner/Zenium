@@ -74,6 +74,11 @@ export interface HostCapabilities {
   defaultBrowser: boolean
   /** The host runs a request engine that blocks ads and trackers (Settings → Privacy and security). */
   requestBlocking: boolean
+  /**
+   * Pages follow the page controls (desktop site, dark theme for sites, page zoom and its
+   * sheet); hosts without them keep the plain zoom menu.
+   */
+  pageControls: boolean
 }
 
 export interface Rect {
@@ -1021,6 +1026,8 @@ export interface Settings {
   defaultBrowserPromo: DefaultBrowserPromoState
   /** Ad and tracker blocking (Settings → Privacy and security). */
   blocking: BlockingSettings
+  /** How pages are presented: desktop site, dark theme for sites, page zoom (Chrome's page controls). */
+  pageControls: PageControlsSettings
 }
 
 // ---------------------------------------------------------------------------
@@ -1107,6 +1114,65 @@ export interface DefaultBrowserStatus {
 
 /** Where a request to become the default browser was made from. */
 export type DefaultBrowserRequestSource = 'onboarding' | 'sheet' | 'banner' | 'settings'
+
+// ---------------------------------------------------------------------------
+// Page controls (desktop site, dark theme for sites, page zoom)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether sites get the desktop layout by default. `auto` is Chrome's rule: on large screens
+ * (tablets, foldables open) or with a keyboard and mouse attached.
+ */
+export type DesktopSiteDefault = 'auto' | 'on' | 'off'
+
+/**
+ * The per-site keys are registrable domains (`getDomain`), the way Chrome remembers "desktop
+ * site" and zoom per site. A site is listed only when it differs from the default.
+ */
+export interface PageControlsSettings {
+  desktopSite: DesktopSiteDefault
+  /** Desktop-site exceptions: domain → on / off. */
+  desktopSites: Record<string, boolean>
+  /** Apply a dark theme to sites without one while Zenium itself is dark (algorithmic darkening). */
+  darkenSites: boolean
+  /** Darkening exceptions: domain → on / off ("Turn off for this site"). */
+  darkenSiteExceptions: Record<string, boolean>
+  /** Default page zoom (1 = 100 %). */
+  zoom: number
+  /** Multiply the system font size (Android `fontScale`) into the default zoom. */
+  zoomIncludesOsFontSize: boolean
+  /** Per-site zoom: domain → factor. */
+  siteZooms: Record<string, number>
+  /** Override `user-scalable=no` and `maximum-scale` so pinch zoom works everywhere. */
+  forceZoom: boolean
+}
+
+/**
+ * The page-controls policy a host keeps a copy of, so a navigation gets its user agent and its
+ * viewport before the request leaves and before the document starts: the defaults already
+ * resolved for this device, plus the sites that differ. Sites are registrable domains
+ * (`siteKey`); a host matches a URL's host against them by suffix (`siteValue`).
+ */
+export interface PageRules {
+  desktop: { default: boolean; sites: Record<string, boolean> }
+  darken: { default: boolean; sites: Record<string, boolean> }
+  /** A site's factor (or the default) times `scale` – the system font size when included. */
+  zoom: { default: number; sites: Record<string, number>; scale: number }
+  forceZoom: boolean
+}
+
+/**
+ * What the host knows about the device that the settings alone do not: `auto` desktop mode
+ * follows the screen and the peripherals, the default zoom may follow the system font size.
+ */
+export interface PageEnvironment {
+  /** The smallest width of the screen is 600 dp or more (a tablet, an open foldable, DeX). */
+  largeScreen: boolean
+  /** A hardware keyboard and a mouse are attached. */
+  pointerAndKeyboard: boolean
+  /** The system font scale (Android `Configuration.fontScale`); 1 on hosts without one. */
+  fontScale: number
+}
 
 // ---------------------------------------------------------------------------
 // AI agents (the built-in MCP server)
@@ -1484,6 +1550,8 @@ export interface UIState {
   blocking: BlockingStatus
   /** Page translation: preferences, models on the device and the per-tab translation state. */
   translate: TranslateUIState
+  /** The device facts the page controls resolve against (screen class, peripherals, font scale). */
+  pageEnvironment: PageEnvironment
 }
 
 export interface FindResult {
@@ -1647,6 +1715,17 @@ export interface Commands {
   /** The back/forward list as a menu (long press / right click on the back and forward buttons). */
   'tab.navigationMenu': { args: { tabId: string }; result: void }
   'tab.setZoom': { args: { tabId: string; delta: number | null }; result: void }
+  /** Set the tab's site to an exact zoom factor (remembered per site). */
+  'tab.setZoomFactor': { args: { tabId: string; factor: number }; result: void }
+  /** "Desktop site" for the tab's site (remembered per site; null clears the exception). */
+  'tab.setDesktopSite': { args: { tabId: string; on: boolean | null }; result: void }
+  /** "Dark theme for this site" (remembered per site; null clears the exception). */
+  'tab.setDarkenSite': { args: { tabId: string; on: boolean | null }; result: void }
+  /** Per-site lists in Settings: drop one site's exception (`kind` picks the map). */
+  'pageControls.forgetSite': {
+    args: { kind: 'desktop' | 'darken' | 'zoom'; domain: string }
+    result: void
+  }
   'tab.contextMenu': { args: { tabId: string }; result: void }
   'tab.toggleDevtools': { args: { tabId: string }; result: void }
   'tab.copyUrl': { args: { tabId: string; markdown?: boolean }; result: void }

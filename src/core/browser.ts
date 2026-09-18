@@ -44,6 +44,7 @@ import { LiveFolderService } from './livefolders'
 import { ModService } from './mods'
 import { SiteInfoService } from './siteInfo'
 import { TranslateService } from './translate/service'
+import { PageControls } from './pageControls'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
@@ -151,6 +152,8 @@ export class Browser {
   readonly blocking: BlockingService
   /** Offline page translation: detection, offers, the engine and its models. */
   readonly translate: TranslateService
+  /** Desktop site, dark theme for sites and page zoom, remembered per site (Chrome's page controls). */
+  readonly pageControls: PageControls
   readonly windows = new Map<string, ZenWindow>()
   quitting = false
   private readonly handlers: CommandHandlers
@@ -193,6 +196,7 @@ export class Browser {
     this.popups = new PopupBlocker(this)
     this.external = new ExternalLaunches(this)
     this.security = new SecurityPromptService(this)
+    this.pageControls = new PageControls(this)
     this.tabs = new TabManager(this)
     this.session = new SessionService(this)
     this.history.onChange((kind) => {
@@ -447,6 +451,7 @@ export class Browser {
     this.defaultBrowser.start()
     this.translate.start()
     this.syncShortcuts()
+    this.pageControls.push()
     this.state.commit()
   }
 
@@ -1184,6 +1189,10 @@ export class Browser {
       'tab.navigationMenu': ({ tabId }, win) => this.menus.showNavigationMenu(tabId, win),
       'tab.setZoom': ({ tabId, delta }) =>
         delta === null ? tabs.setZoom(tabId, 1) : tabs.adjustZoom(tabId, delta),
+      'tab.setZoomFactor': ({ tabId, factor }) => this.pageControls.setZoomFactor(tabId, factor),
+      'tab.setDesktopSite': ({ tabId, on }) => this.pageControls.setDesktopSite(tabId, on),
+      'tab.setDarkenSite': ({ tabId, on }) => this.pageControls.setDarkenSite(tabId, on),
+      'pageControls.forgetSite': ({ kind, domain }) => this.pageControls.forgetSite(kind, domain),
       'tab.contextMenu': ({ tabId }, win) => this.menus.showTabContextMenu(tabId, win),
       'tab.toggleDevtools': ({ tabId }) => tabs.toggleDevtools(tabId),
       'tab.copyUrl': ({ tabId, markdown }) => tabs.copyUrl(tabId, markdown),
@@ -1666,6 +1675,8 @@ export class Browser {
           ...s.blocking,
           ...(value as Partial<Settings['blocking']>)
         })
+      } else if (key === 'pageControls' && value && typeof value === 'object') {
+        this.pageControls.update(value as Partial<Settings['pageControls']>)
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }
