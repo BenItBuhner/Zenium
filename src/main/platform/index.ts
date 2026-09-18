@@ -20,7 +20,7 @@ import {
   type NotificationPermissionStatus
 } from '../../shared/notifications'
 import { Browser } from '../../core/browser'
-import { safeOrigin } from '../../core/permissions'
+import { permissionSite } from '../../core/permissions'
 import type {
   AppHost,
   ClipboardHost,
@@ -58,7 +58,7 @@ import { electronDownloadBridge } from './extensionApi/downloadsBridge'
 import { createDnrSink } from './extensionApi/dnrSink'
 import { ExtensionFavicons, faviconRequestHandler } from './extensionApi/favicons'
 import { ExtensionResourceOrigin } from './extensionApi/resourceOrigin'
-import { edgeStoreUserAgent, webstoreClientHints } from './requestHeaders'
+import { edgeStoreUserAgent, navigationClientHints, webstoreClientHints } from './requestHeaders'
 import { ResourceGovernor } from './resources/governor'
 import { SyncEngine } from '../sync/engine'
 import { ElectronAgentTransport } from '../agent/server'
@@ -420,9 +420,13 @@ export class ElectronPlatform implements Platform {
     this.requestBlocking.onDecision((request, decision) =>
       extensionApi.declarativeNetRequest.decided(request, decision)
     )
-    // The stores' header rewrites (Chrome's brand for the Chrome Web Store, Edge's user agent
-    // and brand for Edge Add-ons) run as builtin handlers of the multiplexer, which owns each
-    // session's one onBeforeSendHeaders slot; persistent sessions only, like the store preload.
+    // Chrome's low-entropy client hints on the navigations Electron sends without any (every
+    // session, the private window's included), then the stores' header rewrites (Chrome's brand
+    // for the Chrome Web Store, Edge's user agent and brand for Edge Add-ons); all builtin
+    // handlers of the multiplexer, which owns each session's one onBeforeSendHeaders slot. The
+    // store rewrites run after the hints, so the brand they add lands in a list that exists;
+    // persistent sessions only, like the store preload.
+    this.requestBlocking.registerHeaderRewrite(navigationClientHints)
     this.requestBlocking.registerHeaderRewrite(webstoreClientHints, { persistentOnly: true })
     this.requestBlocking.registerHeaderRewrite(edgeStoreUserAgent, { persistentOnly: true })
     // Safe Browsing ahead of the rules, the cookie and signal edits after them; the upgrade
@@ -536,7 +540,7 @@ export class ElectronPlatform implements Platform {
       for (const view of this.views.all()) {
         if (view.isDestroyed()) continue
         const url = view.getURL()
-        if (change.origin !== null && safeOrigin(url) !== change.origin) continue
+        if (change.origin !== null && permissionSite(url) !== change.origin) continue
         view.webContents.send(NOTIFICATION_PERMISSION_CHANNEL, statusOf(url, view.webContents))
       }
     })

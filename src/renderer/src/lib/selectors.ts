@@ -63,13 +63,18 @@ export function tabTitle(tab: Tab): string {
  * driven by an agent.
  */
 export function tabTooltip(tab: Tab, agentName: string | null = null): string {
-  const lines = [tabTitle(tab)]
+  return [tabTitle(tab), ...tabStateLines(tab, agentName)].join('\n')
+}
+
+/** The state a row is in, one line each: driven by an agent, asleep (and what it held), frozen. */
+export function tabStateLines(tab: Tab, agentName: string | null = null): string[] {
+  const lines: string[] = []
   if (agentName) lines.push(`Driven by ${agentName}`)
   if (tab.discarded) {
-    lines.push('Sleeping - click to wake')
+    lines.push('Sleeping – click to wake')
     if (tab.sleepSavedMb) lines.push(`Memory saved: ${tab.sleepSavedMb} MB`)
   } else if (tab.frozen) lines.push('Frozen by the resource governor')
-  return lines.join('\n')
+  return lines
 }
 
 export function isDarkScheme(state: UIState): boolean {

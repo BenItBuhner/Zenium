@@ -33,6 +33,7 @@ import { Onboarding } from './components/overlays/Onboarding'
 import { PhoneShell } from './components/phone/PhoneShell'
 import { COLLAPSED_WIDTH, Sidebar } from './components/sidebar/Sidebar'
 import { TabDialogs } from './components/TabDialogs'
+import { TabHoverCard } from './components/TabHoverCard'
 import { Toolbar } from './components/Toolbar'
 
 /** Width of the compact-mode hover zone along the window edge (px). */
@@ -166,6 +167,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
       data-window-kind={state.window.kind}
       data-window-chrome={state.window.chrome}
       data-caption-overlay={overlay.width > 0 ? 'true' : 'false'}
+      data-testid="chrome-root"
     >
       <ModStyles mods={state.mods} />
       <div className="zen-texture" />
@@ -257,6 +259,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
       )}
 
       {ui.drag && <DragLayer state={state} drag={ui.drag} />}
+      <TabHoverCard state={state} />
       {onboarding && <Onboarding state={state} />}
     </div>
   )

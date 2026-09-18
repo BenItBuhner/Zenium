@@ -14,7 +14,7 @@ import type {
   TabViewHost,
   WindowHost
 } from '../../platform'
-import { HTTPS_ONLY_EXEMPT_HOSTS, httpsOnlyRule } from '../service'
+import { httpsOnlyRule } from '../service'
 
 function memoryIo(): StoreIO {
   const files: Record<string, string> = {}
@@ -217,7 +217,7 @@ describe('ProtectionService: the policy the hosts get', () => {
 describe('ProtectionService: HTTPS-only mode', () => {
   it('keeps the upgrade rule set in the engine, following the mode', () => {
     const f = fixture()
-    expect(httpsOnlySet(f)).toEqual({ enabled: true, excluded: [...HTTPS_ONLY_EXEMPT_HOSTS] })
+    expect(httpsOnlySet(f)).toEqual({ enabled: true, excluded: [] })
     const decision = f.browser.blocking.engine.decide({
       url: 'http://example.com/page',
       type: 'main_frame',
@@ -255,14 +255,77 @@ describe('ProtectionService: HTTPS-only mode', () => {
     ).toBe('allow')
   })
 
-  it('never upgrades loopback or single-label hosts', () => {
+  it('never upgrades non-unique hosts: loopback, private addresses, names without a registrable suffix', () => {
     const f = fixture()
-    for (const url of ['http://localhost:3000/', 'http://127.0.0.1/', 'http://intranet/wiki'])
+    const exempt = [
+      'http://localhost:3000/',
+      'http://app.localhost:3000/',
+      'http://127.0.0.1/',
+      'http://127.5.6.7:8080/',
+      'http://[::1]:8080/',
+      'http://10.0.0.7/',
+      'http://172.20.1.1/',
+      'http://192.168.1.1/admin',
+      'http://169.254.169.254/latest',
+      'http://[fe80::1]/',
+      'http://[fd00:1::2]/',
+      'http://0.0.0.0:8000/',
+      'http://intranet/wiki',
+      'http://printer.local/',
+      'http://nas.lan/'
+    ]
+    for (const url of exempt)
       expect(
-        f.browser.blocking.engine.decide({ url, type: 'main_frame', method: 'GET' }).action
+        f.browser.blocking.engine.decide({ url, type: 'main_frame', method: 'GET' }).action,
+        url
       ).toBe('allow')
+    // Public hosts and public addresses are upgraded as before.
+    for (const url of ['http://example.com/', 'http://8.8.8.8/', 'http://[2606:4700::1111]/'])
+      expect(
+        f.browser.blocking.engine.decide({ url, type: 'main_frame', method: 'GET' }).action,
+        url
+      ).toBe('upgrade')
+
+    // `always` mode leaves their subresources alone as well.
+    setPrivacy(f, { httpsOnly: 'always' })
+    for (const url of exempt)
+      expect(
+        f.browser.blocking.engine.decide({
+          url,
+          type: 'image',
+          method: 'GET',
+          documentUrl: 'https://example.com/'
+        }).action,
+        url
+      ).toBe('allow')
+
+    expect(httpsOnlyRule('always').condition).toMatchObject({
+      urlFilter: '|http://',
+      excludedNonUniqueHosts: true
+    })
     expect(httpsOnlyRule('always').condition.resourceTypes).toBeUndefined()
     expect(httpsOnlyRule('ask').condition.resourceTypes).toEqual(['main_frame'])
+    expect(httpsOnlyRule('ask', ['old.example']).condition.excludedRequestDomains).toEqual([
+      'old.example'
+    ])
+  })
+
+  it('never shows the plaintext question for a non-unique host, even after a stale upgrade', () => {
+    const f = fixture()
+    const view = open(f, 'https://start.example/')
+    view.commit('https://start.example/')
+    expect(f.browser.protection.allowsPlaintext('http://192.168.1.20/')).toBe(true)
+    expect(f.browser.protection.allowsPlaintext('http://[::1]:8080/')).toBe(true)
+    expect(f.browser.protection.allowsPlaintext('http://dev.localhost/')).toBe(true)
+    expect(f.browser.protection.allowsPlaintext('http://example.com/')).toBe(false)
+
+    // A rule set the host had yet to reload upgraded the address; https failed: the page loads
+    // over plaintext without the question, and no exception is recorded for it.
+    view.events.onUpgraded('http://192.168.1.20/', 'https://192.168.1.20/')
+    view.events.onFailLoad(-102, 'net::ERR_CONNECTION_REFUSED', 'https://192.168.1.20/')
+    expect(view.loads[view.loads.length - 1]).toBe('http://192.168.1.20/')
+    expect(f.browser.protection.status().httpsOnlySessionExceptions).toEqual([])
+    expect(f.browser.protection.status().httpsOnlyExceptions).toEqual([])
   })
 
   it('asks on the warning page after an engine upgrade fails, then honours the answer at once', () => {

@@ -160,7 +160,7 @@ export function SettingsPanel({
   const fadeNav = useFadeEdges<HTMLElement>({ axis: 'auto', size: 24 })
   const fadeContent = useFadeEdges<HTMLDivElement>({ axis: 'y' })
   return (
-    <OverlayShell title="Settings" variant="full" className="zen-settings">
+    <OverlayShell title="Settings" variant="full" className="zen-settings" testId="settings-panel">
       <div className="flex h-full">
         <nav
           ref={fadeNav}

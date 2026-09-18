@@ -74,6 +74,37 @@ export function deriveStartupProfile(settings: ResourceSettings): StartupProfile
   return { switches, hardwareAcceleration: settings.gpuMode !== 'off' }
 }
 
+/**
+ * Blink features the desktop browser switches off whatever the resource settings say.
+ *
+ * FedCM: Chromium exposes the API (`IdentityCredential`, `navigator.credentials.get({ identity })`)
+ * but Electron has no account-chooser UI behind it, so every call fails at once with "Error
+ * retrieving a token". Identity providers feature-detect the API – Google's "Sign in with
+ * Google" button takes the FedCM path when `IdentityCredential` exists and then just stops, the
+ * click doing nothing. Without the feature the API is absent, as in Firefox and Safari, and the
+ * providers use their pop-up flow, which works.
+ */
+export const BASELINE_DISABLED_FEATURES: readonly string[] = ['FedCm']
+
+/**
+ * The switches to put on the command line for a profile: its own, with the baseline features
+ * merged into its one `disable-features` (Chromium reads a single such switch; a second one
+ * replaces the first).
+ */
+export function startupSwitches(
+  profile: StartupProfile,
+  baseline: readonly string[] = BASELINE_DISABLED_FEATURES
+): StartupSwitch[] {
+  const switches = profile.switches.filter((sw) => sw.name !== 'disable-features')
+  const disabled = new Set<string>()
+  for (const sw of profile.switches)
+    if (sw.name === 'disable-features')
+      for (const feature of (sw.value ?? '').split(',')) if (feature) disabled.add(feature)
+  for (const feature of baseline) disabled.add(feature)
+  if (disabled.size) switches.push({ name: 'disable-features', value: [...disabled].join(',') })
+  return switches
+}
+
 /** Stable string form used to detect that the running process was started with other switches. */
 export function serializeProfile(profile: StartupProfile): string {
   const parts = profile.switches

@@ -8,8 +8,11 @@ import {
   ChromePortal,
   POPOVER_MARGIN,
   POPOVER_WIDTH,
+  type PopoverBox,
   placePopover,
+  popoverStyle,
   toRect,
+  useLightDismiss,
   viewportSize
 } from '@renderer/lib/portals'
 import { activeTab } from '@renderer/lib/selectors'
@@ -31,10 +34,13 @@ const WIDTH = POPOVER_WIDTH.list
  * or the chip itself puts it away. Escape hands the keyboard back to the chip (§9.22).
  *
  * A desktop popover (v2 draft §9.20): 320 wide, its top border on the pill's bottom edge,
- * end-aligned with the chip, through the chrome layer. The page under it is a picture while it
- * is up (chrome cannot overlap a live view), refreshed at every step by `showZoomBubble`; so the
- * bubble also takes the wheel the page would have had – Ctrl+wheel keeps zooming, a plain turn
- * gives the page back at once.
+ * end-aligned with the chip, through the chrome layer, and registered for the layer's light
+ * dismiss (`useLightDismiss`): a press anywhere else, a plain wheel or scroll, a resize and
+ * another popover opening put it away; the chip's own press closes it and keeps the focus. The
+ * page under it is a picture while it is up (chrome cannot overlap a live view), refreshed at
+ * every step by `showZoomBubble`; so the bubble also takes the wheel the page would have had –
+ * Ctrl+wheel keeps zooming (a zoom, not a scroll: the registry lets it by), a plain turn gives
+ * the page back at once.
  */
 export function ZoomBubble({ state, bubble }: { state: UIState; bubble: Bubble }): JSX.Element {
   const tab = state.tabs[bubble.tabId]
@@ -43,7 +49,7 @@ export function ZoomBubble({ state, bubble }: { state: UIState; bubble: Bubble }
   const firstRef = useRef<HTMLButtonElement>(null)
   const [hovered, setHovered] = useState(false)
   const [clicked, setClicked] = useState(false)
-  const [box, setBox] = useState(() => place(null))
+  const [box, setBox] = useState<PopoverBox>(() => place(null))
   const lastAnchor = useRef<Rect | null>(null)
 
   // The bubble speaks for the page on screen; another tab coming forward, or the tab going,
@@ -61,9 +67,7 @@ export function ZoomBubble({ state, bubble }: { state: UIState; bubble: Bubble }
       const chip = document.querySelector(CHIP)
       if (chip) lastAnchor.current = toRect(chip.getBoundingClientRect())
       const next = place(lastAnchor.current)
-      setBox((prev) =>
-        prev.left === next.left && prev.top === next.top && prev.width === next.width ? prev : next
-      )
+      setBox((prev) => (sameBox(prev, next) ? prev : next))
     }
     measure()
     window.addEventListener('resize', measure)
@@ -93,33 +97,25 @@ export function ZoomBubble({ state, bubble }: { state: UIState; bubble: Bubble }
     }
   })
 
-  // A click anywhere else puts the bubble away; the chip toggles it itself. The wheel over the
-  // page's picture: Ctrl+wheel goes on zooming, any other turn is meant for the page, which
-  // gets it back as soon as the bubble is gone.
+  // The chrome layer's light dismiss (§9.20 amended): a press anywhere else puts the bubble away
+  // and the focus goes back to the page; the chip's own press closes it and the focus stays on
+  // the chip, where the press went. A plain wheel or scroll outside, a resize and another
+  // popover opening close it too (the page gets its wheel back as soon as the bubble is gone).
+  useLightDismiss(panelRef, (reason) => closeZoomBubble({ keepFocus: reason === 'anchor' }), {
+    anchor: () => document.querySelector(CHIP)
+  })
+
+  // Ctrl+wheel over the page's picture goes on zooming.
   useEffect(() => {
-    const outside = (target: EventTarget | null): boolean => {
-      const el = target instanceof Element ? target : null
-      return !el || (!panelRef.current?.contains(el) && !el.closest(CHIP))
-    }
-    const onDown = (e: PointerEvent): void => {
-      if (outside(e.target)) closeZoomBubble()
-    }
     const wheel = new WheelZoom()
     const onWheel = (e: WheelEvent): void => {
-      if (e.ctrlKey) {
-        e.preventDefault()
-        const step = wheel.step(e.deltaY)
-        if (step) run('tab.setZoom', { tabId: bubble.tabId, delta: step })
-        return
-      }
-      if (outside(e.target)) closeZoomBubble()
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      const step = wheel.step(e.deltaY)
+      if (step) run('tab.setZoom', { tabId: bubble.tabId, delta: step })
     }
-    window.addEventListener('pointerdown', onDown, true)
     window.addEventListener('wheel', onWheel, { capture: true, passive: false })
-    return () => {
-      window.removeEventListener('pointerdown', onDown, true)
-      window.removeEventListener('wheel', onWheel, { capture: true })
-    }
+    return () => window.removeEventListener('wheel', onWheel, { capture: true })
   }, [bubble.tabId])
 
   const { pageControls } = state.settings
@@ -148,7 +144,7 @@ export function ZoomBubble({ state, bubble }: { state: UIState; bubble: Bubble }
         aria-describedby="zen-zoom-level"
         data-zoom-bubble=""
         className="zen-animate-pop zen-bm-popover fixed z-[70] flex flex-col"
-        style={{ left: box.left, top: box.top, width: box.width }}
+        style={popoverStyle(box)}
         onKeyDown={onKeyDown}
         onPointerEnter={() => setHovered(true)}
         onPointerLeave={() => setHovered(false)}
@@ -203,7 +199,7 @@ export function ZoomBubble({ state, bubble }: { state: UIState; bubble: Bubble }
  * sits in the pill's trailing half); with no pill on screen (compact mode) in the window's top
  * trailing corner, like the star bubble.
  */
-function place(chip: Rect | null): { left: number; top: number; width: number } {
+function place(chip: Rect | null): PopoverBox {
   const viewport = viewportSize()
   const pill = document.querySelector('.zen-pill')
   const pillRect = pill ? toRect(pill.getBoundingClientRect()) : null
@@ -219,6 +215,12 @@ function place(chip: Rect | null): { left: number; top: number; width: number } 
       width: 28,
       height: 28
     }
-  const { left, top, width } = placePopover(anchor, pillRect ?? anchor, viewport, WIDTH)
-  return { left, top, width }
+  return placePopover(anchor, pillRect ?? anchor, viewport, WIDTH)
+}
+
+function sameBox(a: PopoverBox, b: PopoverBox): boolean {
+  if (a.left !== b.left || a.width !== b.width || a.maxHeight !== b.maxHeight) return false
+  return a.side === 'below'
+    ? b.side === 'below' && a.top === b.top
+    : b.side === 'above' && a.bottom === b.bottom
 }

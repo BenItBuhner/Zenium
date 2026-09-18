@@ -84,6 +84,24 @@ describe('plaintextAllowed', () => {
     expect(plaintextAllowed(f, 'http://other.example/')).toBe(false)
     expect(plaintextAllowed(f, 'not a url')).toBe(false)
   })
+
+  it('is true for non-unique hosts, which the mode never upgrades', () => {
+    const f = flags()
+    for (const url of [
+      'http://localhost/',
+      'http://dev.localhost:5173/',
+      'http://127.0.0.1:8080/',
+      'http://[::1]/',
+      'http://10.0.0.5/',
+      'http://192.168.0.10/status',
+      'http://[fe80::1%25eth0]/',
+      'http://router/',
+      'http://printer.local/'
+    ])
+      expect(plaintextAllowed(f, url), url).toBe(true)
+    expect(plaintextAllowed(f, 'http://example.com/')).toBe(false)
+    expect(plaintextAllowed(f, 'http://8.8.8.8/')).toBe(false)
+  })
 })
 
 describe('signalHeaders', () => {

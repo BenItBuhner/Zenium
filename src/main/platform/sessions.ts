@@ -1,6 +1,7 @@
 import type { EngineDataCounts, EngineDataKind, SessionHost } from '../../core/platform'
 import { app, session, type Session } from 'electron'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../../shared/types'
+import { acceptLanguages, chromeUserAgent } from '../../shared/browserIdentity'
 
 /** Every storage kind of `clearStorageData` but cookies. */
 const SITE_STORAGES: Array<
@@ -23,7 +24,10 @@ export class SessionManager implements SessionHost {
   private readonly sessions = new Map<string, Session>()
   private readonly onCreate: Array<(ses: Session, containerId: string) => void> = []
 
-  constructor(private readonly userAgent: string) {
+  constructor(
+    private readonly userAgent: string,
+    private readonly languages: string = buildAcceptLanguages()
+  ) {
     // `session.setUserAgent` covers frames and their requests; extension service workers read the
     // app-level fallback for `navigator.userAgent` (LastPass sees "Electron/" there and takes its
     // desktop-app path, touching `document` in a worker), so both present the same plain UA.
@@ -51,7 +55,9 @@ export class SessionManager implements SessionHost {
     const existing = this.sessions.get(containerId)
     if (existing) return existing
     const ses = session.fromPartition(this.partitionFor(containerId))
-    ses.setUserAgent(this.userAgent)
+    // The language list makes the session's `Accept-Language` Chrome's (`en-US,en;q=0.9`);
+    // Electron's own header names the locale alone.
+    ses.setUserAgent(this.userAgent, this.languages)
     this.sessions.set(containerId, ses)
     for (const hook of this.onCreate) hook(ses, containerId)
     return ses
@@ -118,15 +124,22 @@ export class SessionManager implements SessionHost {
 }
 
 /**
- * Present a plain Chrome user agent. Sites treat unknown "Electron/x" tokens as bots and
+ * Present a plain Chrome user agent: Electron's default string without its "Electron/x" and
+ * "Zenium/x" tokens and with the Chrome version reduced to `<major>.0.0.0`, as every Chrome
+ * sends it. Sites treat the extra tokens and an unreduced version as an embedded browser and
  * serve degraded experiences; Zen likewise ships a standard Firefox UA.
  */
 export function buildUserAgent(): string {
-  return app.userAgentFallback
-    .replace(/\sElectron\/[\d.]+/, '')
-    .replace(new RegExp(`\\s${escapeRegExp(app.getName())}\\/[\\d.]+`), '')
+  return chromeUserAgent(app.userAgentFallback, app.getName())
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/** Chrome's `Accept-Language` list for this system (see `acceptLanguages`). */
+export function buildAcceptLanguages(): string {
+  let preferred: string[] = []
+  try {
+    preferred = app.getPreferredSystemLanguages()
+  } catch {
+    // Not every platform reports a list; the locale alone is still expanded.
+  }
+  return acceptLanguages(app.getLocale(), preferred)
 }

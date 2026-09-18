@@ -14,6 +14,8 @@ interface Props {
   variant?: 'dock' | 'dialog' | 'full'
   actions?: ReactNode
   className?: string
+  /** Stable hook for the desktop boot smoke (`data-testid` on the panel). */
+  testId?: string
 }
 
 /** Common chrome for panels that open over the content area. */
@@ -22,7 +24,8 @@ export function OverlayShell({
   children,
   variant = 'dock',
   actions,
-  className
+  className,
+  testId
 }: Props): JSX.Element {
   const phone = useViewport().formFactor === 'phone'
   // The system back gesture: the panel recedes towards the bottom edge, shrinking and fading
@@ -55,6 +58,7 @@ export function OverlayShell({
           variant === 'full' && (phone ? 'm-2 flex-1' : 'm-3 flex-1'),
           className
         )}
+        data-testid={testId}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--zen-border)] px-4">

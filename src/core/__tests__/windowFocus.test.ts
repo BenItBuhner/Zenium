@@ -279,6 +279,44 @@ describe('keyboard focus on layout reports', () => {
     expect(f.chromeFocusCalls()).toBe(before)
   })
 
+  it('gives a page the user typed in the keyboard back when the chrome over it lifts by itself', () => {
+    const f = fixture()
+    const page = f.openPage('https://example.com')
+    typingIn(f, page)
+    // The tab hover card rests over the page and goes again without asking for its focus.
+    f.win.applyLayout(hidden([page.tabId]))
+    expect(f.keyboard.document).toBe('chrome')
+    const focused = page.focusCalls
+    f.win.applyLayout(shown([page.tabId]))
+    expect(page.focusCalls).toBe(focused + 1)
+    expect(page.focused).toBe(true)
+  })
+
+  it('leaves the keyboard with the chrome when it held it before the cover', () => {
+    const f = fixture()
+    const page = f.openPage('https://example.com')
+    // A row of the sidebar has the keyboard (keyboard focus put the hover card up).
+    f.keyboard.document = 'chrome'
+    page.focused = false
+    f.win.applyLayout(hidden([page.tabId]))
+    const focused = page.focusCalls
+    f.win.applyLayout(shown([page.tabId]))
+    expect(page.focusCalls).toBe(focused)
+    expect(f.keyboard.document).toBe('chrome')
+  })
+
+  it('does not pull the keyboard into a window the user has left', () => {
+    const f = fixture()
+    const page = f.openPage('https://example.com')
+    typingIn(f, page)
+    f.win.applyLayout(hidden([page.tabId]))
+    // The user went to another window; the chrome that covered the page closes on the blur.
+    ;(f.win.host as { isFocused: () => boolean }).isFocused = () => false
+    const focused = page.focusCalls
+    f.win.applyLayout(shown([page.tabId]))
+    expect(page.focusCalls).toBe(focused)
+  })
+
   it('hands the keyboard back to the page once the overlay that hid it closes', () => {
     const f = fixture()
     const page = f.openPage('https://example.com')

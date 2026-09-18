@@ -269,11 +269,6 @@ export function panelBase(resolved: ResolvedTheme): RGB {
     : mix(resolved.averageColor, [255, 255, 255], 0.7)
 }
 
-/** Base colour of the scrim under sheets and drawers: the space darkened, never flat black. */
-export function scrimBase(resolved: ResolvedTheme): RGB {
-  return mix(resolved.averageColor, [0, 0, 0], 0.7)
-}
-
 /** The chrome's ink (`--zen-fg`) on a resolved theme. */
 export function themeInk(resolved: ResolvedTheme): RGB {
   return resolved.isDark ? [240, 240, 245] : [30, 30, 36]
@@ -317,7 +312,6 @@ export function themeCssVariables(resolved: ResolvedTheme): Record<string, strin
     '--zen-accent': rgbToHex(resolved.accent),
     '--zen-accent-rgb': resolved.accent.join(' '),
     '--zen-panel-rgb': panelBase(resolved).join(' '),
-    '--zen-scrim-rgb': scrimBase(resolved).join(' '),
     '--zen-texture': String(resolved.texture)
   }
 }

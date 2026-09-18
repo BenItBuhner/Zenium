@@ -84,6 +84,7 @@ export function HistoryPage({ state }: { state: UIState }): JSX.Element {
         title="History"
         variant="full"
         className="zen-history"
+        testId="history-page"
         actions={
           <button
             type="button"

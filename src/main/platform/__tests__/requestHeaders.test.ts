@@ -6,23 +6,30 @@ import {
 import {
   EDGE_ADD_ONS_URL_PATTERNS,
   WEBSTORE_URL_PATTERNS,
+  WEB_URL_PATTERNS,
   compileMatchPatterns,
   edgeStoreUserAgent,
   matchesPattern,
+  navigationClientHints,
   parseMatchPattern,
   webstoreClientHints
 } from '../requestHeaders'
+import { lowEntropyClientHints } from '../../../shared/browserIdentity'
 
 type Details = Electron.OnBeforeSendHeadersListenerDetails
 
-function details(url: string, requestHeaders: Record<string, string>): Details {
+function details(
+  url: string,
+  requestHeaders: Record<string, string>,
+  resourceType: Details['resourceType'] = 'mainFrame'
+): Details {
   return {
     id: 1,
     url,
     method: 'GET',
     webContentsId: 1,
     frame: undefined,
-    resourceType: 'mainFrame',
+    resourceType,
     referrer: '',
     timestamp: 0,
     uploadData: [],
@@ -274,5 +281,94 @@ describe('match patterns', () => {
     for (const bad of ['https://*foo.example/*', 'https://example', '*.example/*'])
       expect(compileMatchPatterns([bad])('https://example/')).toBe(false)
     expect(compileMatchPatterns(['https://example', '<all_urls>'])('https://example/')).toBe(true)
+  })
+})
+
+describe('navigationClientHints', () => {
+  const versions = process.versions
+  beforeAll(() => {
+    Object.defineProperty(process, 'versions', {
+      value: { ...versions, chrome: '152.0.7977.78' },
+      configurable: true
+    })
+  })
+  afterAll(() => {
+    Object.defineProperty(process, 'versions', { value: versions, configurable: true })
+  })
+
+  /** What Electron puts on a document request: no client hints at all. */
+  const navigation = {
+    'User-Agent':
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
+    Accept: 'text/html,application/xhtml+xml',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Upgrade-Insecure-Requests': '1',
+    Cookie: 'SID=abc'
+  }
+
+  it('is registered for every web URL, http and https', () => {
+    expect(navigationClientHints.id).toBe('navigation-client-hints')
+    expect(navigationClientHints.urls).toBe(WEB_URL_PATTERNS)
+    const web = compileMatchPatterns(navigationClientHints.urls)
+    expect(web('https://accounts.google.com/v3/signin/identifier?x=1')).toBe(true)
+    expect(web('http://localhost:8787/')).toBe(true)
+    expect(web('chrome-extension://abc/page.html')).toBe(false)
+    expect(web('zen://newtab')).toBe(false)
+  })
+
+  it('adds Chrome’s three low-entropy hints to a document request that has none', () => {
+    const url = 'https://accounts.google.com/signin/v2/identifier'
+    const result = navigationClientHints.rewrite({ ...navigation }, details(url, navigation))
+    expect(result).toEqual({
+      ...navigation,
+      ...lowEntropyClientHints('152.0.7977.78', process.platform)
+    })
+    expect(result['sec-ch-ua']).toBe('"Not?A_Brand";v="24", "Chromium";v="152"')
+    expect(result['sec-ch-ua-mobile']).toBe('?0')
+    expect(result['sec-ch-ua-platform']).toMatch(/^"(Linux|Windows|macOS)"$/)
+    for (const [name, value] of Object.entries(navigation)) expect(result[name]).toBe(value)
+  })
+
+  it('does the same for a frame navigation', () => {
+    const result = navigationClientHints.rewrite(
+      { ...navigation },
+      details('https://accounts.youtube.com/accounts/CheckConnection', navigation, 'subFrame')
+    )
+    expect(result['sec-ch-ua']).toBe('"Not?A_Brand";v="24", "Chromium";v="152"')
+  })
+
+  it('leaves a request that already carries hints alone, whatever the casing', () => {
+    for (const name of ['Sec-CH-UA', 'sec-ch-ua', 'SEC-CH-UA']) {
+      const input = { ...navigation, [name]: '"Chromium";v="152", "Not_A Brand";v="24"' }
+      expect(navigationClientHints.rewrite(input, details('https://a.example/', input))).toBe(input)
+    }
+  })
+
+  it('never touches subresource requests: the renderer already sent their hints', () => {
+    for (const type of [
+      'xhr',
+      'script',
+      'image',
+      'stylesheet',
+      'font',
+      'ping',
+      'webSocket'
+    ] as const)
+      expect(
+        navigationClientHints.rewrite(
+          { ...navigation },
+          details('https://accounts.google.com/_/lookup', navigation, type)
+        ),
+        type
+      ).toEqual(navigation)
+  })
+
+  it('is pure and idempotent', () => {
+    const input = { ...navigation }
+    const once = navigationClientHints.rewrite(input, details('https://a.example/', input))
+    expect(input).toEqual(navigation)
+    expect(navigationClientHints.rewrite({ ...once }, details('https://a.example/', once))).toEqual(
+      once
+    )
   })
 })
