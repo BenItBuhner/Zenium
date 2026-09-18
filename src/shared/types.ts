@@ -245,6 +245,12 @@ export interface Tab {
   lastActiveAt: number
   /** Set when a navigation failed – rendered by the zen://error page. */
   errorCode: number | null
+  /**
+   * The page's certificate failed verification: the tab shows the certificate interstitial for
+   * `certificateError.url`, or (`bypassed`) the page itself after the user proceeded past it.
+   * Absent or null on every other page.
+   */
+  certificateError?: CertificateError | null
   /** Whether the current URL is bookmarked (denormalised for the UI). */
   bookmarked: boolean
   /** The page looks like an article Reader View can render (Firefox's "reader mode" icon). */
@@ -1974,6 +1980,31 @@ export type SecurityPrompt = HttpAuthPrompt | ClientCertificatePrompt
 export type SecurityPromptResponse =
   | { kind: 'http-auth'; username: string; password: string; remember: boolean }
   | { kind: 'client-certificate'; index: number }
+
+/** What the interstitial and site information show of a server certificate Zenium refused. */
+export interface CertificateDetails {
+  subjectName: string
+  issuerName: string
+  /** Unix milliseconds; 0 when the host does not know. */
+  validStart: number
+  validExpiry: number
+  /** `sha256/…` as Chromium prints it; the session's exceptions are keyed by it. */
+  fingerprint: string
+}
+
+/**
+ * A main-frame https load whose certificate failed verification (`ERR_CERT_*`). Until the user
+ * proceeds the tab shows the certificate interstitial for `url`; once `bypassed`, the page is
+ * shown over the broken certificate and the connection reports as not secure, as in Chrome.
+ */
+export interface CertificateError {
+  /** The Chromium `net::` error code (-200 … -299). */
+  code: number
+  url: string
+  /** Null when the host could not describe the certificate. */
+  certificate: CertificateDetails | null
+  bypassed: boolean
+}
 
 // ---------------------------------------------------------------------------
 // Page dialogs: alert / confirm / prompt and "Leave site?"

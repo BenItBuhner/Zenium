@@ -406,6 +406,58 @@
   font-family: inherit;
   cursor: pointer;
 }
+/*
+ * The certificate interstitial (the page's ERR_CERT_* variant): the row of Back to safety and
+ * Advanced, and the Advanced block – a card holding the explanation, the certificate's fields and
+ * the proceed control, which is text rather than a button so it is read before it is pressed.
+ */
+.zen-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+.zen-error-advanced {
+  padding: var(--v2-card-padding);
+  border-radius: var(--v2-radius-card);
+  background: var(--v2-card);
+}
+.zen-error-advanced[hidden] {
+  display: none;
+}
+.zen-error-certificate {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 16px;
+  margin: 0 0 12px;
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+.zen-error-certificate div {
+  display: contents;
+}
+.zen-error-certificate dt {
+  color: var(--v2-text-deemphasized);
+}
+.zen-error-certificate dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.zen-error-proceed {
+  padding: 0;
+  background: none;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  text-decoration: underline;
+  text-align: left;
+}
+.zen-error-proceed:focus-visible {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: 2px;
+  border-radius: var(--v2-radius-checkbox);
+}
 
 @layer base {
   html,

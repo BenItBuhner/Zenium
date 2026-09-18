@@ -4,6 +4,7 @@
  * command boundary to the chrome; the helpers are the pure half of the classification both hosts
  * feed their raw readings through.
  */
+import type { CertificateError } from './types'
 import {
   BLANK_URL,
   ERROR_URL_PREFIX,
@@ -31,6 +32,11 @@ export interface SiteSecurity {
   certificate: SiteCertificate | null
   /** An https page loaded http subresources; null when that could not be checked. */
   mixedContent: boolean | null
+  /**
+   * Why an https connection reports as `insecure`: the page's certificate failed verification
+   * and the tab shows the interstitial, or the user proceeded past it. Absent otherwise.
+   */
+  certificateError?: CertificateError | null
 }
 
 export interface SiteCookie {
@@ -201,11 +207,16 @@ export function isCertificateError(code: number | null | undefined): boolean {
 }
 
 /**
- * Derive the pill's indicator from what the core knows about the tab: its address and the code
- * of a failed load (a certificate the browser refused is a `zen://error` page standing in for an
- * https address). Pure, so the chrome maps state to glyph and nothing more.
+ * Derive the pill's indicator from what the core knows about the tab: its address, the code of
+ * a failed load and the certificate error it holds (the interstitial, at the https address itself
+ * or as a `zen://error` page standing in for it, and the page shown after the user proceeded past
+ * the warning are all "Not secure"). Pure, so the chrome maps state to glyph and nothing more.
  */
-export function securityIndicator(url: string, errorCode: number | null): SecurityIndicator {
+export function securityIndicator(
+  url: string,
+  errorCode: number | null,
+  certificateError: CertificateError | null = null
+): SecurityIndicator {
   if (!url || url === BLANK_URL) return { state: 'empty', label: null, title: 'Site information' }
   const site = describeSite(url)
   if (url.startsWith(ERROR_URL_PREFIX)) {
@@ -224,13 +235,15 @@ export function securityIndicator(url: string, errorCode: number | null): Securi
         title: 'This site does not support a secure connection · HTTPS-only mode'
       }
     }
-    if (isCertificateError(errorCode) && site.state === 'secure') {
-      return {
-        state: 'certificate-error',
-        label: 'Not secure',
-        title: 'Certificate error · The connection to this site is not secure'
-      }
+  }
+  if (site.state === 'secure' && (certificateError || isCertificateError(errorCode))) {
+    return {
+      state: 'certificate-error',
+      label: 'Not secure',
+      title: 'Certificate error · The connection to this site is not secure'
     }
+  }
+  if (url.startsWith(ERROR_URL_PREFIX)) {
     return { state: 'internal', label: null, title: 'Page could not be loaded' }
   }
   switch (site.state) {
@@ -252,6 +265,26 @@ export function securityIndicator(url: string, errorCode: number | null): Securi
       return { state: 'internal', label: null, title: 'Zenium page' }
     default:
       return { state: 'unknown', label: null, title: 'Site information' }
+  }
+}
+
+/** What site information says about a connection whose certificate failed verification. */
+export function certificateErrorDetail(error: CertificateError): string {
+  return error.bypassed
+    ? 'You chose to proceed past a certificate warning. What you send to this site could be read or changed on the way.'
+    : 'The certificate this site sent could not be verified, so Zenium did not load the page.'
+}
+
+/** The refused certificate as the site-information card lists certificates. */
+export function refusedCertificate(error: CertificateError): SiteCertificate | null {
+  const cert = error.certificate
+  if (!cert) return null
+  return {
+    subject: cert.subjectName,
+    issuer: cert.issuerName,
+    validFrom: cert.validStart || null,
+    validTo: cert.validExpiry || null,
+    protocol: null
   }
 }
 
