@@ -1,7 +1,20 @@
 import { run } from '@renderer/lib/api'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
+import { Download, Smartphone, Star } from 'lucide-react'
 import { activeTab } from '@renderer/lib/selectors'
-import { browserStore, closeMenu, closeOverlay, openOverlay, uiStore } from '@renderer/lib/ui'
+import {
+  browserStore,
+  closeMenu,
+  closeOverlay,
+  dismissBanner,
+  dismissToast,
+  forgetBanner,
+  forgetToast,
+  openOverlay,
+  pushToast,
+  showBanner,
+  uiStore
+} from '@renderer/lib/ui'
 import type { HostGlobal } from './boot'
 import { parsePreviewSpec } from './previewSpec'
 
@@ -12,9 +25,10 @@ import { parsePreviewSpec } from './previewSpec'
  * `section=<id>` picks a Settings section, `show=<text>` scrolls the row with that text into
  * view), `menu=app` (the app menu sheet; `show=<text>` scrolls an item into view), `find=<text>`
  * (the find bar with that text typed), `pull=<n>` (the page held pulled down at n percent of the
- * refresh threshold; `pull=refresh` lets go past it) or `error=<code>` (the active tab's load
+ * refresh threshold; `pull=refresh` lets go past it), `error=<code>` (the active tab's load
  * failed with that Chromium `net::` code, `url=<target>` naming the URL that failed: the
- * zen://error page is up). It comes in as the URL hash,
+ * zen://error page is up) or the message surfaces and the load bar:
+ * `toast=<text>&action=<label>`, `banners=<n>`, `progress=<0…1>`. It comes in as the URL hash,
  * `http://localhost:41734/#overlay=history`, or as `window.postMessage({ zenPreview: 'find=coffee' }, '*')`,
  * which also re-applies an unchanged state. Once applied it is echoed in `<html data-preview-state>`
  * so a driver can wait for it; `.github/scripts/android-preview-shots.mjs` is one.
@@ -43,6 +57,7 @@ function apply(spec: string): void {
     closeMenu()
     uiStore.set({ findOpen: false, findTabId: null })
     abortPull()
+    clearMessages(tab?.loading ? tab.id : null)
 
     if (target.kind === 'overlay') {
       void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
@@ -83,6 +98,9 @@ function apply(spec: string): void {
     } else if (target.kind === 'error' && tab) {
       failLoad(tab.id, target.code, target.url ?? tab.url)
       requestAnimationFrame(() => done(spec))
+    } else if (target.kind === 'messages') {
+      showMessages(target, tab?.id ?? null)
+      done(spec)
     } else {
       done(spec)
     }
@@ -125,6 +143,75 @@ function show(text: string | undefined): void {
       return
     }
   }
+}
+
+const SAMPLE_BANNERS = [
+  {
+    title: 'Add Zenium to your home screen',
+    detail: 'Open pages in a window of their own, without the address bar.',
+    icon: Smartphone,
+    action: 'Install'
+  },
+  {
+    title: 'Make Zenium your default browser',
+    detail: 'Links from other apps will open here.',
+    icon: Star,
+    action: 'Make default'
+  },
+  { title: 'Download finished', detail: 'zenium-0.3.7.apk · 84 MB', icon: Download, action: 'Open' }
+]
+
+/** Put up the requested messages (all at once: the springs run, the driver waits for them). */
+function showMessages(
+  target: Extract<ReturnType<typeof parsePreviewSpec>, { kind: 'messages' }>,
+  tabId: string | null
+): void {
+  for (let i = 0; i < target.banners; i++) {
+    const sample = SAMPLE_BANNERS[i % SAMPLE_BANNERS.length]
+    showBanner({
+      title: sample.title,
+      detail: sample.detail,
+      icon: sample.icon,
+      action: { label: sample.action, onPick: () => undefined },
+      key: `preview-${i}`
+    })
+  }
+  if (target.toast) {
+    pushToast(target.toast.message, target.toast.error ? 'error' : 'info', {
+      action: target.toast.action
+        ? { label: target.toast.action, onPick: () => undefined }
+        : undefined,
+      // A screenshot state stays put; the real clock is the unit tests' business.
+      duration: 600_000
+    })
+  }
+  if (target.progress !== null && tabId) {
+    // Mid-load: the bar shows the tab loading and springs to the reported fraction; no page
+    // finishes underneath because the preview host raises no `stopLoading` on its own.
+    hostGlobal().viewEvent(tabId, 'startLoading', '')
+    hostGlobal().viewEvent(tabId, 'progress', JSON.stringify({ progress: target.progress }))
+  }
+}
+
+/**
+ * Every message off at once, and the load a previous `progress` state left running on
+ * `loadingTabId` finished, so the next state starts clean.
+ */
+function clearMessages(loadingTabId: string | null): void {
+  const ui = uiStore.get()
+  for (const t of ui.toasts) {
+    dismissToast(t.id)
+    forgetToast(t.id)
+  }
+  for (const b of ui.banners) {
+    dismissBanner(b.id)
+    forgetBanner(b.id)
+  }
+  if (loadingTabId) hostGlobal().viewEvent(loadingTabId, 'stopLoading', '{}')
+}
+
+function hostGlobal(): { viewEvent(tabId: string, name: string, json: string): void } {
+  return (window as unknown as { __zenHost: ReturnType<typeof hostGlobal> }).__zenHost
 }
 
 function done(spec: string): void {

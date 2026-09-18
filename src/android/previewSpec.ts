@@ -49,6 +49,18 @@ export type PreviewState =
       /** The URL that failed; null for the active tab's own. */
       url: string | null
     }
+  | {
+      kind: 'messages'
+      /** A toast with this text (and an action labelled `action`, an `error` when so marked). */
+      toast: { message: string; action: string | null; error: boolean } | null
+      /** This many sample banners stacked under the toolbar. */
+      banners: number
+      /** The active tab shown loading, its bar at this fraction. */
+      progress: number | null
+    }
+
+/** More sample banners than the stack holds are pointless. */
+const MAX_PREVIEW_BANNERS = 3
 
 /**
  * A preview state spec is a query string: `idle` (or anything unrecognised), `overlay=<kind>` for
@@ -56,10 +68,12 @@ export type PreviewState =
  * scroll a row of the overlay into view), `menu=app` for the app menu sheet (with `show=<text>` to
  * scroll an item into view), `find=<text>` for the find bar with that text typed (`find=` opens it
  * empty), `pull=<n>` for the active page held pulled down at n percent of the refresh threshold
- * (`pull=refresh` pulls past it and lets go), or `error=<code>` for the active tab's load failing
+ * (`pull=refresh` pulls past it and lets go), `error=<code>` for the active tab's load failing
  * with that Chromium `net::` code (with `url=<target>` for the URL that failed, else the tab's
- * own), which puts up the zen://error page. When several are given, `overlay` wins over `menu`,
- * `menu` over `find`, `find` over `pull`, and `pull` over `error`. A leading `#` (the URL hash as
+ * own), which puts up the zen://error page, or any of `toast=<text>` (with `action=<label>`,
+ * `kind=error`), `banners=<n>` and `progress=<0…1>` together for the message surfaces and the
+ * load bar. When several are given, `overlay` wins over `menu`, `menu` over `find`, `find` over
+ * `pull`, `pull` over `error`, and `error` over the messages. A leading `#` (the URL hash as
  * read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
@@ -91,6 +105,26 @@ export function parsePreviewSpec(spec: string): PreviewState {
   const error = params.get('error')
   if (error !== null && error !== '' && Number.isInteger(Number(error))) {
     return { kind: 'error', code: Number(error), url: params.get('url') || null }
+  }
+  const toast = params.get('toast')
+  const banners = params.get('banners')
+  const progress = params.get('progress')
+  if (toast !== null || banners !== null || progress !== null) {
+    const count = banners === null ? 0 : Math.floor(Number(banners))
+    const fraction = progress === null ? Number.NaN : Number(progress)
+    return {
+      kind: 'messages',
+      toast:
+        toast === null
+          ? null
+          : {
+              message: toast,
+              action: params.get('action'),
+              error: params.get('kind') === 'error'
+            },
+      banners: Number.isFinite(count) ? Math.min(MAX_PREVIEW_BANNERS, Math.max(0, count)) : 0,
+      progress: Number.isFinite(fraction) ? Math.min(1, Math.max(0, fraction)) : null
+    }
   }
   return { kind: 'idle' }
 }

@@ -148,10 +148,12 @@ export function useMainEvents(): void {
           `${name} was added to Zenium`,
           'info',
           toolbarPinned
-            ? undefined
+            ? {}
             : {
-                label: 'Pin',
-                run: () => run('extension.setToolbarPinned', { id, pinned: true })
+                action: {
+                  label: 'Pin',
+                  onPick: () => run('extension.setToolbarPinned', { id, pinned: true })
+                }
               }
         )
       ),

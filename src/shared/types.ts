@@ -224,6 +224,12 @@ export interface Tab {
   windowId: string | null
   folderId: string | null
   loading: boolean
+  /**
+   * How far the current load has come, 0…1, for the progress bar. Hosts that measure it
+   * (Android's `onProgressChanged`) report it as it grows; others only mark 0 at the start and
+   * 1 at the end.
+   */
+  progress: number
   canGoBack: boolean
   canGoForward: boolean
   audible: boolean
@@ -2289,15 +2295,27 @@ export interface MenuDescriptor {
 // Layout reports (renderer → main)
 // ---------------------------------------------------------------------------
 
+/**
+ * Strips along a view's top and bottom edges (CSS px) that chrome messages – toasts, banners –
+ * draw over. Hosts that layer pages above the chrome clip the page out of them and let touches
+ * there through to the chrome (see `TabView.setCover`).
+ */
+export interface ContentCover {
+  top: number
+  bottom: number
+}
+
 export interface ViewPlacement {
   tabId: string
   rect: Rect
   radius: number
+  /** Set while chrome messages cover the view's edges. */
+  cover?: ContentCover
 }
 
 export interface LayoutReport {
   placements: ViewPlacement[]
-  glance: { tabId: string; rect: Rect; radius: number } | null
+  glance: { tabId: string; rect: Rect; radius: number; cover?: ContentCover } | null
   /** When true no tab views should be visible (a chrome overlay covers the content area). */
   contentHidden: boolean
   /** Where the extension side panel's view goes (`UIState.sidePanel`), or null when none shows. */

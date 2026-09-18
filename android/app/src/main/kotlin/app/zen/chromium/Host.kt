@@ -129,6 +129,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override fun hostEvent(name: String, payload: Any?) = chrome.hostEvent(name, payload)
     override fun onKey(tabId: String?, input: JSONObject) = chrome.onKey(tabId, input)
     override fun pullEvent(tabId: String, phase: String, payload: JSONObject?) = chrome.pullEvent(tabId, phase, payload)
+    override fun progress(tabId: String, percent: Int) = chrome.viewEvent(tabId, "progress", json("progress" to percent / 100.0))
+    override val underlay: View get() = chrome
     override fun backChanged() = back.refresh()
     override fun onPageTransitionEnded(transition: PageBackTransition) = back.onPageTransitionEnded(transition)
 
@@ -238,6 +240,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.setBounds" -> { tabs.setBounds(args.str("tabId"), args.obj("rect")); reply(null) }
             "view.setRadius" -> { tabs.setRadius(args.str("tabId"), args.num("radius")); reply(null) }
             "view.setPullOffset" -> { tab?.setPullOffset(args.num("offset")); reply(null) }
+            "view.setCover" -> { tabs.setCover(args.str("tabId"), args.obj("cover")); reply(null) }
             "view.setVisible" -> { setTabVisible(args.str("tabId"), args.bool("visible")); reply(null) }
             "view.bringToFront" -> { tabs.bringToFront(args.str("tabId")); reply(null) }
             "view.download" -> {

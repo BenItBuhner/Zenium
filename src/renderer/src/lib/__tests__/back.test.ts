@@ -35,6 +35,7 @@ function tab(id: string, patch: Partial<Tab> = {}): Tab {
     windowId: null,
     folderId: null,
     loading: false,
+    progress: 0,
     canGoBack: false,
     canGoForward: false,
     audible: false,

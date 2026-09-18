@@ -1,4 +1,5 @@
 import type {
+  ContentCover,
   EventName,
   Events,
   FindResult,
@@ -334,6 +335,7 @@ export class ZenWindow {
           view.bringToFront()
           view.setBounds({ x: 0, y: 0, width, height })
           view.setBorderRadius(0)
+          view.setCover?.(NO_COVER)
           view.setVisible(true)
         } else if (view.isVisible()) {
           view.setVisible(false)
@@ -346,9 +348,10 @@ export class ZenWindow {
       this,
       report.contentHidden ? null : (report.sidePanel ?? null)
     )
-    const wanted = new Map<string, { rect: Rect; radius: number }>()
+    const wanted = new Map<string, { rect: Rect; radius: number; cover: ContentCover }>()
     if (!report.contentHidden) {
-      for (const p of report.placements) wanted.set(p.tabId, { rect: p.rect, radius: p.radius })
+      for (const p of report.placements)
+        wanted.set(p.tabId, { rect: p.rect, radius: p.radius, cover: p.cover ?? NO_COVER })
     }
     const glance = report.glance
     // Whether a page that was showing goes away under this report (chrome UI covers it), and
@@ -363,6 +366,7 @@ export class ZenWindow {
       if (placement) {
         view.setBounds(roundRect(placement.rect))
         view.setBorderRadius(Math.round(placement.radius))
+        view.setCover?.(placement.cover)
         if (!view.isVisible()) view.setVisible(true)
       } else if (view.isVisible()) {
         if (view.isFocused?.()) coveredTyping = true
@@ -376,6 +380,7 @@ export class ZenWindow {
         view.bringToFront()
         view.setBounds(roundRect(glance.rect))
         view.setBorderRadius(Math.round(glance.radius))
+        view.setCover?.(glance.cover ?? NO_COVER)
         if (!view.isVisible()) view.setVisible(true)
       }
     }
@@ -484,3 +489,5 @@ function roundRect(r: Rect): Rect {
     height: Math.max(0, Math.round(r.height))
   }
 }
+
+const NO_COVER: ContentCover = { top: 0, bottom: 0 }

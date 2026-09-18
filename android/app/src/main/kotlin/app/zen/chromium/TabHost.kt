@@ -116,6 +116,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     private fun drop(view: TabWebView) {
         host.exitFullscreen(view)
         view.backTransition?.abort()
+        view.cover.reset()
         host.snapshots.forget(view.tabId)
         (view.parent as? ViewGroup)?.removeView(view)
         view.stopLoading()
@@ -143,6 +144,9 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         // replacement can still move to another window later.
         val fresh = TabWebView(dead.context, tabId, dead.containerId, host)
         fresh.visibility = if (visible) View.VISIBLE else View.GONE
+        fresh.setRadius(dead.radiusPx)
+        fresh.cover.set(dead.cover.topTarget, dead.cover.bottomTarget, snap = true)
+        dead.cover.reset()
         container.addView(fresh, if (index >= 0) index else -1, lp ?: FrameLayout.LayoutParams(0, 0))
         views[tabId] = fresh
         return true
@@ -166,6 +170,13 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
 
     fun setRadius(tabId: String, radiusCss: Double) {
         views[tabId]?.setRadius((radiusCss * density).toFloat())
+    }
+
+    /** Chrome messages cover these strips (CSS px) of the view's edges; see `ContentCover`. */
+    fun setCover(tabId: String, cover: JSONObject) {
+        val view = views[tabId] ?: return
+        // A view that is not showing has nothing to animate: it takes the value for when it is.
+        view.cover.set(cover.num("top").toFloat(), cover.num("bottom").toFloat(), snap = view.visibility != View.VISIBLE)
     }
 
     fun setVisible(tabId: String, visible: Boolean) {

@@ -1,8 +1,9 @@
 import '@renderer/assets/main.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { Download, Smartphone, Star } from 'lucide-react'
 import { ErrorBoundary, Root } from '@renderer/Root'
-import { startBrowserSync } from '@renderer/lib/ui'
+import { dismissBanner, pushToast, showBanner, startBrowserSync } from '@renderer/lib/ui'
 import { bootAndroid } from './boot'
 import { installPreviewStates } from './previewStates'
 
@@ -16,6 +17,12 @@ if (preview) {
   document.documentElement.dataset.preview = 'true'
   installPreviewStates()
 }
+// The instrumentation drivers (android/app/src/androidTest, through `DemoHarness.chromeJs`)
+// raise messages here while nothing in the app raises an action toast or a banner of its own
+// yet. Like `__zenStores`, it hands a script in the chrome nothing it could not reach anyway.
+Object.assign(window, {
+  __zenMessages: { pushToast, showBanner, dismissBanner, icons: { Download, Smartphone, Star } }
+})
 
 startBrowserSync()
 

@@ -102,6 +102,15 @@ export class AgentService implements SessionStore, McpHandlers {
   private status: AgentServerStatus = emptyAgentServerStatus()
   private token = ''
   private applying: Promise<void> = Promise.resolve()
+  /**
+   * Every write of `agent.json` is chained here, one after the other. The hosts' writes are
+   * atomic (a temp file renamed into place; Kotlin's storage thread) but not ordered against
+   * each other, and a first run issues two in a row: the mint's `{ token, running: false }` and,
+   * once the server is bound, `storeEndpoint`'s full document. Landing the mint's last left the
+   * file at `running: false` while the server was up, and the `zen --mcp` shim, which reads it,
+   * refused to connect until the next start.
+   */
+  private writing: Promise<void> = Promise.resolve()
   private sweeper: ReturnType<typeof setInterval> | null = null
   private started = false
 
@@ -147,6 +156,7 @@ export class AgentService implements SessionStore, McpHandlers {
     for (const id of [...this.sessions.keys()]) this.close(id)
     await this.applying
     await this.stopServer()
+    await this.writing
   }
 
   private async apply(): Promise<void> {
@@ -219,7 +229,7 @@ export class AgentService implements SessionStore, McpHandlers {
       /* corrupt file: mint a new token */
     }
     const token = randomToken()
-    void this.browser.platform.io.write(AGENT_FILE, JSON.stringify({ token, running: false }))
+    this.writeEndpointFile(JSON.stringify({ token, running: false }))
     return token
   }
 
@@ -230,7 +240,16 @@ export class AgentService implements SessionStore, McpHandlers {
       port: port ?? undefined,
       url: port ? endpointUrl('127.0.0.1', port) : null
     }
-    void this.browser.platform.io.write(AGENT_FILE, JSON.stringify(data, null, 2))
+    this.writeEndpointFile(JSON.stringify(data, null, 2))
+  }
+
+  /** Queue a write of `agent.json` behind the ones before it (see {@link writing}). */
+  private writeEndpointFile(text: string): void {
+    this.writing = this.writing
+      .then(() => this.browser.platform.io.write(AGENT_FILE, text))
+      .catch((error: unknown) => {
+        console.warn(`[zenium] ${AGENT_FILE} not written:`, error)
+      })
   }
 
   regenerateToken(): string {
