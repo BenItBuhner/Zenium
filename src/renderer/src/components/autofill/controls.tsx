@@ -255,7 +255,10 @@ export function SheetHeader({ id, title }: { id?: string; title: string }): JSX.
   )
 }
 
-/** A sheet's body copy under its 48 header: 15/20 in the text colour, the sheet's 16 sides. */
+/**
+ * Body copy (§9.23): the paragraph that introduces a form or rows, under a sheet's 48 header or
+ * a dialog's title block – 15/20 in the text colour at the 16 sides, 16 to what it introduces.
+ */
 export function SheetCopy({ children }: { children: ReactNode }): JSX.Element {
   return <p className="zen-v2-af-copy">{children}</p>
 }
