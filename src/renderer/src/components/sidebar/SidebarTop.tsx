@@ -292,7 +292,17 @@ export function NavRow({
                 <Copy className="h-3 w-3" />
               </PillChip>
             )}
-            {tab && isWebPage && <StarChip tab={tab} filled={bookmarked} />}
+            {tab && isWebPage && (
+              <StarChip
+                tab={tab}
+                filled={bookmarked}
+                title={hint(
+                  bookmarked ? 'Edit bookmark' : 'Bookmark this tab',
+                  state,
+                  'bookmark.add'
+                )}
+              />
+            )}
           </span>
         </div>
       )}

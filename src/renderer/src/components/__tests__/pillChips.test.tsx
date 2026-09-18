@@ -20,7 +20,7 @@ const { NavRow, SidebarTop } = await import('../sidebar/SidebarTop')
 const { Toolbar } = await import('../Toolbar')
 const { PillContent } = await import('../phone/PhoneShell')
 const { PillChip } = await import('../urlbar/PillChip')
-const { browserStore, openUrlbar, uiStore } = await import('@renderer/lib/ui')
+const { openUrlbar, uiStore } = await import('@renderer/lib/ui')
 const { closeSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
 const { defaultShortcuts } = await import('@shared/shortcuts')
 
@@ -143,8 +143,6 @@ function expectChip(el: HTMLElement, label: string): void {
 }
 
 beforeEach(() => {
-  // The star reads its chord from the mirrored browser state, like every tooltip.
-  browserStore.set({ state: state(tab('https://example.com/')) })
   uiStore.set({ siteInfoOpen: false, overlay: 'none', starDialog: null })
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   siteInfoStore.set({ tabId: null, anchor: null })
