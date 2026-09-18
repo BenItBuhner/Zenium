@@ -578,6 +578,91 @@ describe('a group changing height', () => {
     expect(group.dataset.chrome).toBeUndefined()
   })
 
+  it('a card entering: the mirror – it glides in while the height grows; the cards below glide after', () => {
+    // A group of two across the top (one row), then two loose cards, then the New Tab card.
+    bodyHeights.set(`group:${GROUP}`, bodyOf(1))
+    place(`group:${GROUP}`, 0, 0, 220, groupOf(1))
+    place('m1', 10, 36)
+    place('m2', 120, 36)
+    place('a', 0, groupOf(1) + 10)
+    place('b', 110, groupOf(1) + 10)
+    place(NEW_TAB_CELL, 0, groupOf(1) + 150)
+    render(
+      stateOf([
+        tab('m1', 'https://one.example/', { folderId: GROUP }),
+        tab('m2', 'https://two.example/', { folderId: GROUP }),
+        tab('a', 'https://a.example/'),
+        tab('b', 'https://b.example/')
+      ])
+    )
+
+    // b joins the group (dropped on m2; the browser has moved it): two rows now. The group card
+    // holds the old height for the commit, so the row below is laid out where it was, one card
+    // shorter; b is laid out in its inner slot, the second row of the body.
+    bodyHeights.set(`group:${GROUP}`, bodyOf(2))
+    place('b', 10, 178)
+    place('a', 0, groupOf(1) + 10)
+    place(NEW_TAB_CELL, 110, groupOf(1) + 10)
+    render(
+      stateOf([
+        tab('m1', 'https://one.example/', { folderId: GROUP }),
+        tab('m2', 'https://two.example/', { folderId: GROUP }),
+        tab('b', 'https://b.example/', { folderId: GROUP }),
+        tab('a', 'https://a.example/')
+      ])
+    )
+    const group = cellOf(`group:${GROUP}`)
+    const b = cellOf('b')
+    const a = cellOf('a')
+    const plus = cellOf(NEW_TAB_CELL)
+    expect(groupAround('b')).toBe(`group:${GROUP}`)
+    // The height sets out from the old one on its spring…
+    expect(layoutAnimations.has(`group:${GROUP}`)).toBe(true)
+    expect(group.style.height).toBe(`${groupOf(1)}px`)
+    // …b glides from its loose slot into its inner one from the first frame…
+    expect(translate(b)).toEqual({ x: 100, y: 0 })
+    // …and a and the New Tab card are held where they were: a is laid out where it was and
+    // drawn there, the New Tab card is laid out a column over and a row up and drawn back where
+    // it was. Nothing below moves yet.
+    expect(a.style.transform).toBe('')
+    expect(translate(plus)).toEqual({ x: -110, y: 140 })
+
+    // The height grows; the browser lays the row below out lower for each frame's height, and
+    // the hold keeps it where it was, while b's glide runs.
+    const rowBelowAt = (h: number): void => {
+      place('a', 0, h + 10)
+      place(NEW_TAB_CELL, 110, h + 10)
+    }
+    let previous = groupOf(1)
+    const grew = framesUntil(() => {
+      const h = parseFloat(group.style.height)
+      if (h > previous) rowBelowAt(h)
+      previous = h
+      return h > groupOf(1) + 40
+    })
+    expect(grew).toBeGreaterThan(0)
+    const h = parseFloat(group.style.height)
+    expect(translate(b).x).toBeLessThan(100)
+    expect(translate(b).x).toBeGreaterThan(0)
+    expect(translate(a).y).toBeCloseTo(groupOf(1) - h, 3)
+    expect(translate(plus).y).toBeCloseTo(groupOf(1) - h + 140, 3)
+    expect(layoutAnimations.has(`group:${GROUP}`)).toBe(true)
+    // Until the height settles: then the row below glides down to its slots, together.
+    rowBelowAt(groupOf(2))
+    const settledAt = framesUntil(() => !layoutAnimations.has(`group:${GROUP}`))
+    expect(settledAt).toBeGreaterThan(0)
+    expect(translate(a).y).toBeLessThan(0)
+    expect(translate(a).y).toBeGreaterThanOrEqual(groupOf(1) - groupOf(2))
+    act(() => settleSprings())
+    expect(group.style.height).toBe('')
+    expect(a.style.transform).toBe('')
+    expect(plus.style.transform).toBe('')
+    expect(b.style.transform).toBe('')
+    // An existing group keeps its header and tint throughout; only a group being made switches
+    // them on at the end.
+    expect(group.dataset.chrome).toBeUndefined()
+  })
+
   it('the group dissolving: it shrinks to nothing with its chrome on, and leaves when it has', () => {
     // A group of one, then two loose cards and the New Tab card.
     const single = stateOf([
