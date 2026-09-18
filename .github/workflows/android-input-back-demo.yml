@@ -10,9 +10,6 @@ name: Android input and back demo
 # in android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-input-back-fixes-7d5c
 
 permissions:
   contents: read
