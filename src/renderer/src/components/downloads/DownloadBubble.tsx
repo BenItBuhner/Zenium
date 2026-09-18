@@ -1,8 +1,6 @@
-import type { JSX } from 'react'
+import type { JSX, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Download } from 'lucide-react'
-import type { DownloadItem, UIState } from '@shared/types'
-import { displayName, isActiveDownload } from '@shared/downloadsShell'
+import type { Rect, UIState } from '@shared/types'
 import {
   DOWNLOAD_LINGER_MS,
   bubbleItems,
@@ -10,28 +8,36 @@ import {
   downloadsUi,
   showAllDownloads
 } from '@renderer/lib/downloads'
-import { downloadsEngine, showsDangerDecision } from '@renderer/lib/downloadsEngine'
-import { isOnDisk } from '@renderer/lib/downloadsView'
+import { downloadsEngine } from '@renderer/lib/downloadsEngine'
+import { bubbleDescription } from '@renderer/lib/downloadsView'
+import {
+  ChromePortal,
+  POPOVER_MARGIN,
+  POPOVER_WIDTH,
+  type PopoverBox,
+  placePopover,
+  popoverStyle,
+  toRect,
+  useLightDismiss,
+  viewportSize
+} from '@renderer/lib/portals'
 import { browserStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import {
-  DangerActions,
-  DlButton,
-  DownloadActions,
-  DownloadProgressBar,
-  FileTypeGlyph,
-  StatusLine
-} from './DownloadParts'
+import { useEscapeTrap } from '../bookmarks/escape'
+import { tabbables, useScrolled, wrapTab } from '../bookmarks/popover'
+import { DownloadRow } from './DownloadParts'
 
-const WIDTH = 360
-/** Rows shown before the list scrolls. */
-const VISIBLE_ROWS = 6
-const ROW_HEIGHT = 52
+/** The toolbar button the bubble hangs from, and the bar or toolbar row it sits in. */
+const BUTTON = '[data-zen-downloads-button]'
+const BAR = '[data-zen-nav-bar]'
+const ROW = '[data-zen-nav-row]'
+/** Rows with trailing controls: the 400 popover (design language v2 §9.20). */
+const WIDTH = POPOVER_WIDTH.form
 
 /**
- * The downloads bubble (Chrome 112+): a panel anchored under the toolbar button with the
- * current list, or only the items that just finished when it opened by itself. Mounted once
- * above whichever shell is up; the live page behind shows its snapshot while the bubble is up.
+ * The downloads bubble (Chrome 112+): the current list under the toolbar button, or only the
+ * items that just finished when it opened by itself. Mounted once above whichever shell is up;
+ * the live page behind shows its snapshot while the bubble is up.
  */
 export function DownloadBubbleLayer(): JSX.Element | null {
   const open = downloadsUi.use((s) => s.open)
@@ -40,40 +46,56 @@ export function DownloadBubbleLayer(): JSX.Element | null {
   return <Bubble state={state} />
 }
 
+/**
+ * A desktop popover (v2 draft §9.20) through the chrome layer: 400 wide, its top border on the
+ * bottom edge of the bar the button sits in, end-aligned with the button (it sits in the bar's
+ * trailing half), never taller than 60% of the window – the rows scroll under the sticky title
+ * block (§9.23), which draws the §9.7 hairline once they have moved. Placed once on open and
+ * again when the chrome changes; never animated between positions. Registered for the layer's
+ * light dismiss: a press anywhere else, a scroll, a resize and another popover opening put it
+ * away and hand the keyboard back to the page; the button's own press closes it and keeps the
+ * keyboard there. Escape closes it and returns the keyboard to the button (§9.22); opened by
+ * the user, the keyboard moves to the first row and Tab wraps inside.
+ */
 function Bubble({ state }: { state: UIState }): JSX.Element {
   const ui = downloadsUi.use()
   const panelRef = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState({ left: 8, top: 8 })
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const [box, setBox] = useState<PopoverBox>(() => place())
   const [held, setHeld] = useState(false)
-  const width = Math.min(WIDTH, window.innerWidth - 16)
+  const scrolled = useScrolled(bodyRef)
   const items = bubbleItems(downloadsEngine.list(state), ui.partial)
+  const description = bubbleDescription(items)
 
-  // 8px below the button, its centre inside the panel's first 40px; clamped to the window.
+  // Hangs from the button in its bar, measured again on every state push (the bar's buttons
+  // come and go with the tab) and on resize; the box only changes when the measurement does.
   useLayoutEffect(() => {
-    const el = panelRef.current
-    if (!el) return
-    const anchor = document.querySelector<HTMLElement>('[data-zen-downloads-button]')
-    const rect = el.getBoundingClientRect()
-    const a = anchor?.getBoundingClientRect()
-    const x = a ? a.left + a.width / 2 - 20 : window.innerWidth - width - 8
-    const y = a ? a.bottom + 8 : 48
-    setPos({
-      left: Math.max(8, Math.min(x, window.innerWidth - width - 8)),
-      top: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))
-    })
-    if (!ui.autoClose) el.focus({ preventScroll: true })
-  }, [width, ui.autoClose, items.length])
+    const measure = (): void => setBox((prev) => (sameBox(prev, place()) ? prev : place()))
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [state])
 
+  // The keyboard moves into a bubble the user asked for (§9.22): its first row, or the panel
+  // itself when there is none. An auto-opened bubble leaves the keyboard where it was.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      closeDownloadBubble()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
+    if (!ui.takeFocus) return
+    const panel = panelRef.current
+    if (!panel) return
+    const first = panel.querySelector<HTMLElement>('[data-download-id]') ?? tabbables(panel)[0]
+    ;(first ?? panel).focus({ preventScroll: true })
+  }, [ui.takeFocus])
+
+  useEscapeTrap(true, () => closeDownloadBubble({ focus: 'anchor' }))
+
+  useLightDismiss(
+    panelRef,
+    (reason) =>
+      closeDownloadBubble({
+        focus: reason === 'anchor' || reason === 'replaced' || reason === 'all' ? 'keep' : 'page'
+      }),
+    { anchor: () => document.querySelector(BUTTON), disabled: ui.closing }
+  )
 
   // The auto-opened bubble leaves after five idle seconds; a pointer or focus on it holds it.
   useEffect(() => {
@@ -82,125 +104,95 @@ function Bubble({ state }: { state: UIState }): JSX.Element {
     return () => clearTimeout(timer)
   }, [ui.autoClose, held])
 
+  const onKeyDown = (e: ReactKeyboardEvent): void => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+    wrapTab(e, panelRef.current)
+  }
+
   return (
-    <div className="fixed inset-0 z-[80]" onMouseDown={() => closeDownloadBubble()}>
+    <ChromePortal>
       <div
         ref={panelRef}
         role="dialog"
-        aria-label="Downloads"
+        aria-labelledby="zen-dl-title"
+        aria-describedby={description ? 'zen-dl-desc' : undefined}
         data-zen-downloads-bubble
+        data-partial={ui.partial ? 'true' : undefined}
         tabIndex={-1}
         className={cn(
-          'zen-dl-surface zen-dl-bubble absolute flex flex-col outline-none',
-          ui.closing ? 'zen-dl-pop-out' : 'zen-dl-pop'
+          'zen-bm-popover zen-dl-surface zen-dl-bubble fixed z-[70] flex flex-col outline-none',
+          ui.closing ? 'zen-dl-pop-out' : 'zen-animate-pop'
         )}
-        style={{ left: pos.left, top: pos.top, width }}
-        onMouseDown={(e) => e.stopPropagation()}
-        onMouseEnter={() => setHeld(true)}
-        onMouseLeave={() => setHeld(false)}
+        style={popoverStyle(box)}
+        onKeyDown={onKeyDown}
+        onPointerEnter={() => setHeld(true)}
+        onPointerLeave={() => setHeld(false)}
         onFocus={() => setHeld(true)}
         onBlur={(e) => {
           if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHeld(false)
         }}
       >
-        <header className="flex shrink-0 items-center px-4 pb-2 pt-3">
-          <h2 className="flex-1 text-[17px] font-semibold leading-6">Downloads</h2>
-        </header>
-        {items.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 px-4 pb-6 pt-4 text-center">
-            <Download className="zen-dl-deemph h-4 w-4" strokeWidth={1.5} aria-hidden />
-            <p className="zen-dl-deemph text-[15px] leading-5">Files you download appear here</p>
-          </div>
-        ) : (
-          <ul
-            className="zen-dl-list overflow-y-auto px-2"
-            style={{ maxHeight: VISIBLE_ROWS * ROW_HEIGHT + 8 }}
+        <div className="zen-bm-title-block" data-scrolled={scrolled || undefined}>
+          <h2 id="zen-dl-title" className="zen-bm-title">
+            Downloads
+          </h2>
+          {description && (
+            <p id="zen-dl-desc" className="zen-bm-title-desc tabular-nums" aria-live="polite">
+              {description}
+            </p>
+          )}
+        </div>
+        <div ref={bodyRef} className="zen-bm-popover-body">
+          {items.length === 0 ? (
+            <p className="zen-dl-empty">Files you download appear here</p>
+          ) : (
+            <ul className="zen-dl-list">
+              {items.map((item) => (
+                <DownloadRow key={item.id} item={item} highlighted={item.id === ui.highlightId} />
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="zen-dl-bubble-footer">
+          <button
+            type="button"
+            className="zen-button zen-dl-show-all"
+            data-variant="quiet"
+            onClick={() => showAllDownloads(state)}
           >
-            {items.map((item) => (
-              <BubbleRow key={item.id} item={item} highlighted={item.id === ui.highlightId} />
-            ))}
-          </ul>
-        )}
-        <footer className="flex shrink-0 items-center justify-end px-3 pb-3 pt-2">
-          <DlButton onClick={() => showAllDownloads(state)}>Show all</DlButton>
-        </footer>
+            Show all downloads
+          </button>
+        </div>
       </div>
-    </div>
+    </ChromePortal>
   )
 }
 
-function BubbleRow({
-  item,
-  highlighted
-}: {
-  item: DownloadItem
-  highlighted: boolean
-}): JSX.Element {
-  const ref = useRef<HTMLLIElement>(null)
-  useEffect(() => {
-    if (highlighted) ref.current?.scrollIntoView({ block: 'nearest' })
-  }, [highlighted])
-  const active = isActiveDownload(item)
-  const openable = isOnDisk(item)
-  const name = displayName(item)
-  const open = (): void => {
-    if (openable) downloadsEngine.open(item.id)
-  }
-  return (
-    <li
-      ref={ref}
-      className={cn(
-        'zen-dl-row group/row relative flex min-h-[52px] items-start gap-3 px-2 py-[6px]',
-        highlighted && 'zen-dl-row-marked'
-      )}
-      data-state={item.state}
-      data-download-id={item.id}
-      onDoubleClick={open}
-      onKeyDown={(e) => {
-        if (openable && e.key === 'Enter' && e.target === e.currentTarget) {
-          e.preventDefault()
-          open()
-        }
-      }}
-      tabIndex={0}
-      aria-label={`${name}. ${item.state}`}
-    >
-      <FileTypeGlyph item={item} />
-      <div className="min-w-0 flex-1">
-        {openable ? (
-          <button
-            type="button"
-            className="zen-dl-name block max-w-full truncate text-left text-[15px] leading-5"
-            title={item.savePath || item.url}
-            onClick={open}
-          >
-            {name}
-          </button>
-        ) : (
-          <div
-            className={cn(
-              'zen-dl-name truncate text-[15px] leading-5',
-              item.state === 'cancelled' && 'zen-dl-deemph'
-            )}
-            title={item.savePath || item.url}
-          >
-            {name}
-          </div>
-        )}
-        <StatusLine item={item} />
-        {active && (
-          <div className="mt-1.5 pb-0.5">
-            <DownloadProgressBar item={item} />
-          </div>
-        )}
-      </div>
-      {showsDangerDecision(item) ? (
-        <DangerActions item={item} />
-      ) : (
-        <div className="zen-dl-actions -mr-1 flex shrink-0 items-center">
-          <DownloadActions item={item} />
-        </div>
-      )}
-    </li>
-  )
+/**
+ * Where the bubble goes: hanging from the bar the toolbar button sits in (the sidebar's
+ * navigation row or the top toolbar's row), end-aligned with the button. A button standing in
+ * a column (compact mode) is its own bar; a button not on screen (a shortcut opened the bubble
+ * before the button appeared) puts it in the window's top trailing corner.
+ */
+function place(): PopoverBox {
+  const viewport = viewportSize()
+  const button = document.querySelector(BUTTON)
+  const anchor: Rect = button
+    ? toRect(button.getBoundingClientRect())
+    : { x: viewport.width - POPOVER_MARGIN - 28, y: 28, width: 28, height: 28 }
+  const barEl = button?.closest(BAR) ?? button?.closest(ROW) ?? null
+  const measured = barEl ? toRect(barEl.getBoundingClientRect()) : anchor
+  const bar = measured.height > measured.width ? anchor : measured
+  return placePopover(anchor, bar, viewport, WIDTH)
+}
+
+function sameBox(a: PopoverBox, b: PopoverBox): boolean {
+  if (a.left !== b.left || a.width !== b.width || a.maxHeight !== b.maxHeight) return false
+  return a.side === 'below'
+    ? b.side === 'below' && a.top === b.top
+    : b.side === 'above' && a.bottom === b.bottom
 }

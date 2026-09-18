@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DownloadItem, DownloadSettings, UIState } from '@shared/types'
 import { downloadItem } from '@shared/__tests__/downloadFixtures'
@@ -10,8 +11,10 @@ vi.mock('../api', () => ({
 vi.mock('../formFactor', () => ({ isPhone: () => false }))
 
 import {
+  BUBBLE_POP_MS,
   DOWNLOAD_LINGER_MS,
   bubbleItems,
+  closeDownloadBubble,
   dismissDownloadBubble,
   downloadButtonVisible,
   downloadsUi,
@@ -217,12 +220,13 @@ describe('downloads chrome state', () => {
     expect(downloadsUi.get().open).toBe(false)
   })
 
-  it('opening the bubble by hand marks everything seen and hides the page', async () => {
+  it('opening the bubble by hand marks everything seen, takes the keyboard and hides the page', async () => {
     downloadsUi.set({ unseen: ['a'] })
     await openDownloadBubble({ takeFocus: true, highlightId: 'a' })
     expect(downloadsUi.get()).toMatchObject({
       open: true,
       autoClose: false,
+      takeFocus: true,
       partial: null,
       highlightId: 'a',
       unseen: []
@@ -230,6 +234,45 @@ describe('downloads chrome state', () => {
     expect(uiStore.get().downloadsOpen).toBe(true)
     dismissDownloadBubble()
     expect(uiStore.get().downloadsOpen).toBe(false)
+    expect(downloadsUi.get()).toMatchObject({ open: false, takeFocus: false, highlightId: null })
+  })
+
+  it('an auto-open leaves the keyboard where it was', async () => {
+    await openDownloadBubble({ partial: ['a'], autoClose: true })
+    expect(downloadsUi.get()).toMatchObject({ open: true, takeFocus: false, autoClose: true })
+  })
+
+  it('closing hands the keyboard to the page, the button, or nobody, as asked (§9.22)', async () => {
+    const button = document.createElement('button')
+    button.setAttribute('data-zen-downloads-button', '')
+    document.body.appendChild(button)
+    const { run } = await import('../api')
+    const focusCalls = (): number =>
+      vi.mocked(run).mock.calls.filter(([name]) => name === 'focus.content').length
+    try {
+      // Escape: the button, at once, and the page is not asked.
+      await openDownloadBubble({ takeFocus: true })
+      const before = focusCalls()
+      closeDownloadBubble({ focus: 'anchor' })
+      expect(document.activeElement).toBe(button)
+      await vi.advanceTimersByTimeAsync(BUBBLE_POP_MS + 1)
+      expect(downloadsUi.get().open).toBe(false)
+      expect(focusCalls()).toBe(before)
+      // An outside press: the page, once the exit animation is over.
+      await openDownloadBubble({ takeFocus: true })
+      closeDownloadBubble()
+      expect(downloadsUi.get()).toMatchObject({ open: true, closing: true })
+      await vi.advanceTimersByTimeAsync(BUBBLE_POP_MS + 1)
+      expect(downloadsUi.get().open).toBe(false)
+      expect(focusCalls()).toBe(before + 1)
+      // The button's own press: nobody – the keyboard is on the button already.
+      await openDownloadBubble({ takeFocus: true })
+      closeDownloadBubble({ focus: 'keep' })
+      await vi.advanceTimersByTimeAsync(BUBBLE_POP_MS + 1)
+      expect(focusCalls()).toBe(before + 1)
+    } finally {
+      button.remove()
+    }
   })
 
   it('the partial bubble falls back to the whole list when its items are gone', () => {

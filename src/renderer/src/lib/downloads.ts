@@ -39,6 +39,8 @@ export interface DownloadsUi {
   partial: string[] | null
   /** The bubble opened by itself and leaves again after five idle seconds. */
   autoClose: boolean
+  /** The user asked for the bubble: the keyboard moves into it (§9.22); an auto-open leaves it. */
+  takeFocus: boolean
   /** Row to draw attention to (a notification was clicked). */
   highlightId: string | null
   /** Finished while the bubble was closed; the button's badge counts them. */
@@ -57,6 +59,7 @@ export const downloadsUi = createStore<DownloadsUi>(
     closing: false,
     partial: null,
     autoClose: false,
+    takeFocus: false,
     highlightId: null,
     unseen: [],
     pulse: 0,
@@ -100,22 +103,33 @@ export async function openDownloadBubble(
     closing: false,
     partial: options.partial ?? null,
     autoClose: options.autoClose ?? false,
+    takeFocus: options.takeFocus ?? false,
     highlightId: options.highlightId ?? null,
     unseen: []
   })
 }
 
+/**
+ * Where the keyboard goes when the bubble closes (design language v2 §9.22): back to the page
+ * (an outside press, the auto-close timer, a shortcut that opened something else), to the
+ * toolbar button (Escape), or nowhere (the button's own press already put it there; another
+ * surface is taking it).
+ */
+export type BubbleCloseFocus = 'page' | 'anchor' | 'keep'
+
 /** Close with the exit animation (Escape, outside click, the auto-close timer). */
-export function closeDownloadBubble(): void {
+export function closeDownloadBubble(options: { focus?: BubbleCloseFocus } = {}): void {
   if (!bubbleIsOpen()) return
+  const focus = options.focus ?? 'page'
+  if (focus === 'anchor') focusDownloadButton()
   if (reducedMotion()) {
-    finishClose()
+    finishClose(focus)
     return
   }
   downloadsUi.set({ closing: true })
   exitTimer = setTimeout(() => {
     exitTimer = null
-    finishClose()
+    finishClose(focus)
   }, BUBBLE_POP_MS)
 }
 
@@ -126,14 +140,26 @@ export function dismissDownloadBubble(): void {
     clearTimeout(exitTimer)
     exitTimer = null
   }
-  finishClose()
+  finishClose('page')
 }
 
-function finishClose(): void {
-  downloadsUi.set({ open: false, closing: false, partial: null, autoClose: false })
+/** Escape's landing: the toolbar button the bubble hangs from, while it is on screen. */
+function focusDownloadButton(): void {
+  document.querySelector<HTMLElement>('[data-zen-downloads-button]')?.focus({ preventScroll: true })
+}
+
+function finishClose(focus: BubbleCloseFocus): void {
+  downloadsUi.set({
+    open: false,
+    closing: false,
+    partial: null,
+    autoClose: false,
+    takeFocus: false,
+    highlightId: null
+  })
   if (uiStore.get().downloadsOpen) uiStore.set({ downloadsOpen: false })
   invalidateSnapshot()
-  returnFocusToPage()
+  if (focus === 'page') returnFocusToPage()
   // Nothing left in flight: the button leaves a little after the bubble did.
   const state = browserStore.get().state
   if (state && !state.downloads.some(isActiveDownload)) holdButton(Date.now() + DOWNLOAD_LINGER_MS)
@@ -145,7 +171,10 @@ export function toggleDownloadBubble(activeTabId: string | null): void {
     downloadsEngine.openPanel(activeTabId)
     return
   }
-  if (bubbleIsOpen()) closeDownloadBubble()
+  // A pointer press on the button while the bubble is up never gets here (the chrome layer's
+  // light dismiss closes the bubble on `pointerdown` and swallows the click); a keyboard
+  // activation does, and the keyboard is on the button already.
+  if (bubbleIsOpen()) closeDownloadBubble({ focus: 'keep' })
   else void openDownloadBubble({ takeFocus: true })
 }
 

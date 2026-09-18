@@ -127,7 +127,10 @@ export function NavRow({
     return () => window.removeEventListener(APP_MENU_EVENT, fromKeyboard)
   }, [])
   return (
-    <div className={cn('zen-no-drag flex items-center gap-0.5', compact && 'flex-col', className)}>
+    <div
+      className={cn('zen-no-drag flex items-center gap-0.5', compact && 'flex-col', className)}
+      data-zen-nav-row
+    >
       <NavigationButton
         tab={tab}
         title={hint('Back', state, 'nav.back')}

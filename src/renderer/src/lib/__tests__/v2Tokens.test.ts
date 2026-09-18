@@ -36,6 +36,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The sidebar tab drag – drop-into targets, the audio indicator, ghost, caret and tear-off card
   // (lib/drag.ts, components/DragLayer.tsx, components/sidebar/TabItem.tsx).
   ['[data-drop-into] {', '.zen-panel {'],
+  // The downloads bubble, toolbar button and zen://downloads page (components/downloads,
+  // overlays/DownloadsPanel.tsx). Its block sits between the bookmark chrome's rules and the
+  // comment that ends them, so it is taken out first.
+  ['.zen-dl-surface {', '@keyframes zen-dl-pop-out {'],
   // The bookmark chrome: bar, panels, star bubble, dialogs, manager (components/bookmarks/*).
   ['.zen-bm-bar {', '/*\n * Fading scroll edges'],
   // Find in page, zoom and fullscreen: the docked find bar (components/content/FindBar.tsx).
@@ -44,9 +48,7 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // DefaultBrowserSection.tsx, content/DefaultBrowserBanner.tsx): the flat card and its inks.
   ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {'],
   // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
-  ['.zen-message {', '.zen-suggestion {'],
-  // The downloads bubble, toolbar button and zen://downloads page (components/downloads, overlays/DownloadsPanel.tsx).
-  ['.zen-dl-surface {', '@keyframes zen-dl-pop-out {']
+  ['.zen-message {', '.zen-suggestion {']
 ]
 
 /** The text of the first `selector {` block found after `from`. */

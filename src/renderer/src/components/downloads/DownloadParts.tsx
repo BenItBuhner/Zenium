@@ -1,4 +1,5 @@
-import type { JSX, ReactNode } from 'react'
+import type { JSX, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ExternalLink,
   File,
@@ -18,15 +19,28 @@ import {
   type LucideIcon
 } from 'lucide-react'
 import type { DownloadItem } from '@shared/types'
-import { canResumeDownload, canRetryDownload } from '@shared/downloadsShell'
-import { downloadsEngine } from '@renderer/lib/downloadsEngine'
-import { downloadStatus, fileGlyphFor, isOnDisk, type FileGlyph } from '@renderer/lib/downloadsView'
+import {
+  canResumeDownload,
+  canRetryDownload,
+  displayName,
+  isActiveDownload
+} from '@shared/downloadsShell'
+import { downloadsEngine, showsDangerDecision } from '@renderer/lib/downloadsEngine'
+import {
+  dangerActionLabels,
+  downloadStatus,
+  fileGlyphFor,
+  isOnDisk,
+  splitFileName,
+  type FileGlyph
+} from '@renderer/lib/downloadsView'
 import { cn } from '@renderer/lib/utils'
 
 /*
  * Pieces a download row is made of, shared by the bubble and the `zen://downloads` page: the
- * file-type glyph, the status line, the thin progress bar, the hover actions and the Keep /
- * Discard pair for flagged files, all on the engine's commands (PR #69).
+ * row itself (design language v2 §9.2 two-line row with §9.18 centred trailing controls), the
+ * file-type glyph, the middle-truncated name, the status line, the thin progress bar, the hover
+ * actions and the Keep / Delete pair for flagged files, all on the engine's commands (PR #69).
  */
 
 const GLYPHS: Record<FileGlyph, LucideIcon> = {
@@ -40,16 +54,62 @@ const GLYPHS: Record<FileGlyph, LucideIcon> = {
   file: File
 }
 
+/** How long a Keep / Delete button spins before it gives up on a reply that never came. */
+const BUSY_TIMEOUT_MS = 8000
+
 /** The 16px file-type glyph, dimmed for records whose file is gone. */
 export function FileTypeGlyph({ item }: { item: DownloadItem }): JSX.Element {
   const Icon = GLYPHS[fileGlyphFor(item.finalName || item.filename, item.mimeType)]
   const gone = item.state === 'cancelled' || item.state === 'interrupted'
   return (
-    <span
-      className={cn('zen-dl-glyph flex h-5 w-4 shrink-0 items-center', gone && 'opacity-50')}
-      aria-hidden
-    >
+    <span className={cn('zen-dl-glyph', gone && 'opacity-40')} aria-hidden>
       <Icon className="h-4 w-4" strokeWidth={1.5} />
+    </span>
+  )
+}
+
+/**
+ * The file name, truncated in its middle when it does not fit: the head may lose its end to
+ * an ellipsis, the tail – the extension and the end of the stem – always shows.
+ */
+export function FileName({
+  name,
+  title,
+  dim,
+  onOpen
+}: {
+  name: string
+  title?: string
+  /** A record whose file is not coming (cancelled): the name in the deemphasised ink. */
+  dim?: boolean
+  /** The file can be opened: the name is a button that does. */
+  onOpen?: () => void
+}): JSX.Element {
+  const { head, tail } = splitFileName(name)
+  const parts = (
+    <>
+      <span className="zen-dl-name-head">{head}</span>
+      {tail && <span className="zen-dl-name-tail">{tail}</span>}
+    </>
+  )
+  if (onOpen) {
+    return (
+      <button
+        type="button"
+        className="zen-dl-name zen-dl-name-open"
+        title={title}
+        onClick={(e) => {
+          e.stopPropagation()
+          onOpen()
+        }}
+      >
+        {parts}
+      </button>
+    )
+  }
+  return (
+    <span className={cn('zen-dl-name', dim && 'zen-dl-deemph')} title={title}>
+      {parts}
     </span>
   )
 }
@@ -65,7 +125,7 @@ export function StatusLine({
 }): JSX.Element {
   const status = downloadStatus(item)
   return (
-    <div className="zen-dl-status truncate text-[13px] leading-[18px] tabular-nums">
+    <div className="zen-dl-status truncate tabular-nums">
       {status.text && (
         <span
           className={cn(
@@ -102,36 +162,46 @@ export function DownloadProgressBar({ item }: { item: DownloadItem }): JSX.Eleme
   )
 }
 
-/** A 32-tall text button of the downloads surfaces (secondary by default). */
+/**
+ * A 32-tall text button of the downloads surfaces on the chassis `zen-button` (secondary by
+ * default). Disabled is the whole control at .4; busy keeps full opacity, swaps the label for a
+ * 16px spinner at the same width and says `aria-busy` (§9.30).
+ */
 export function DlButton({
   children,
   onClick,
   tone = 'secondary',
   title,
-  className
+  disabled,
+  busy,
+  className,
+  ...rest
 }: {
   children: ReactNode
   onClick: () => void
   tone?: 'secondary' | 'primary' | 'danger'
   title?: string
+  disabled?: boolean
+  busy?: boolean
   className?: string
+  'data-zen-dl-action'?: string
 }): JSX.Element {
   return (
     <button
       type="button"
-      className={cn(
-        'zen-dl-button',
-        tone === 'primary' && 'zen-dl-button-primary',
-        tone === 'danger' && 'zen-dl-button-danger',
-        className
-      )}
+      className={cn('zen-button', busy && 'zen-dl-busy', className)}
+      data-variant={tone === 'secondary' ? undefined : tone}
       title={title}
+      disabled={disabled}
+      aria-busy={busy || undefined}
       onClick={(e) => {
         e.stopPropagation()
-        onClick()
+        if (!busy) onClick()
       }}
+      {...rest}
     >
-      {children}
+      <span className="zen-dl-button-label">{children}</span>
+      {busy && <span className="zen-dl-spinner" aria-hidden />}
     </button>
   )
 }
@@ -140,13 +210,15 @@ function IconAction({
   title,
   icon: Icon,
   onClick,
-  pressed
+  pressed,
+  disabled
 }: {
   title: string
   icon: LucideIcon
   onClick: () => void
   /** A toggle: rendered pressed while on. */
   pressed?: boolean
+  disabled?: boolean
 }): JSX.Element {
   return (
     <button
@@ -155,6 +227,7 @@ function IconAction({
       title={title}
       aria-label={title}
       aria-pressed={pressed}
+      disabled={disabled}
       onClick={(e) => {
         e.stopPropagation()
         onClick()
@@ -204,14 +277,140 @@ export function DownloadActions({ item }: { item: DownloadItem }): JSX.Element {
   )
 }
 
-/** Keep / Discard for a file the engine flagged; Discard deletes it. */
+/**
+ * Keep / Delete for a file the engine flagged, worded and weighted per verdict as Chrome's
+ * bubble words them (`dangerActionLabels`). The pressed one spins until the engine answers –
+ * the row leaves the danger state or goes – and the other waits disabled meanwhile.
+ */
 export function DangerActions({ item }: { item: DownloadItem }): JSX.Element {
+  const labels = dangerActionLabels(item.danger)
+  const [busy, setBusy] = useState<'keep' | 'discard' | null>(null)
+  useEffect(() => {
+    if (!busy) return
+    const timer = setTimeout(() => setBusy(null), BUSY_TIMEOUT_MS)
+    return () => clearTimeout(timer)
+  }, [busy])
+  const decide = (which: 'keep' | 'discard'): void => {
+    setBusy(which)
+    if (which === 'keep') downloadsEngine.acceptDanger(item.id)
+    else downloadsEngine.discard(item.id)
+  }
   return (
-    <div className="flex shrink-0 items-center gap-2">
-      <DlButton onClick={() => downloadsEngine.acceptDanger(item.id)}>Keep</DlButton>
-      <DlButton tone="danger" onClick={() => downloadsEngine.discard(item.id)}>
-        Discard
+    <div className="zen-dl-decision">
+      <DlButton
+        tone={labels.prominent === 'keep' ? 'primary' : 'secondary'}
+        busy={busy === 'keep'}
+        disabled={busy === 'discard'}
+        data-zen-dl-action="keep"
+        onClick={() => decide('keep')}
+      >
+        {labels.keep}
+      </DlButton>
+      <DlButton
+        tone={labels.prominent === 'discard' ? 'primary' : 'danger'}
+        busy={busy === 'discard'}
+        disabled={busy === 'keep'}
+        data-zen-dl-action="discard"
+        onClick={() => decide('discard')}
+      >
+        {labels.discard}
       </DlButton>
     </div>
+  )
+}
+
+/**
+ * One download in a list: a §9.2 two-line row (name over status, 52 tall, growing around a
+ * progress bar or a warning's sentence) with the glyph on the first line and the controls
+ * centred on the row's height (§9.18); rows touch (§9.21). Enter or a double click opens a
+ * finished file, the name is a button that opens it, a right click or the menu key asks the
+ * core for the row's menu, and on desktop hosts a finished file can be dragged out to the OS.
+ */
+export function DownloadRow({
+  item,
+  highlighted = false,
+  source,
+  draggable = false
+}: {
+  item: DownloadItem
+  /** Marked for attention (a notification was clicked): scrolled into view and tinted. */
+  highlighted?: boolean
+  /** The page adds where the file came from after the status. */
+  source?: string
+  /** The host can start an OS drag of the finished file. */
+  draggable?: boolean
+}): JSX.Element {
+  const ref = useRef<HTMLLIElement>(null)
+  useEffect(() => {
+    if (highlighted) ref.current?.scrollIntoView({ block: 'nearest' })
+  }, [highlighted])
+  const active = isActiveDownload(item)
+  const openable = isOnDisk(item)
+  const flagged = showsDangerDecision(item)
+  const name = displayName(item)
+  const status = downloadStatus(item)
+  const open = (): void => {
+    if (openable) downloadsEngine.open(item.id)
+  }
+  const contextMenu = (e: ReactMouseEvent<HTMLLIElement>): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    // A right click opens at the pointer; the menu key and Shift+F10 come without one and
+    // open on the row's text, with the keyboard on the first item.
+    if (e.button === 2) {
+      downloadsEngine.contextMenu(item.id, { x: e.clientX, y: e.clientY })
+    } else {
+      const box = e.currentTarget.getBoundingClientRect()
+      downloadsEngine.contextMenu(item.id, {
+        x: Math.round(box.left + 36),
+        y: Math.round(box.bottom - 4),
+        keyboard: true
+      })
+    }
+  }
+  return (
+    <li
+      ref={ref}
+      className={cn('zen-dl-row group/row', highlighted && 'zen-dl-row-marked')}
+      data-state={item.state}
+      data-download-id={item.id}
+      data-flagged={flagged || undefined}
+      draggable={draggable && openable}
+      onDragStart={(e) => {
+        // The OS drag is the host's: hand the file over and drop the HTML5 one.
+        e.preventDefault()
+        downloadsEngine.dragOut(item.id)
+      }}
+      onDoubleClick={open}
+      onContextMenu={contextMenu}
+      onKeyDown={(e) => {
+        if (openable && e.key === 'Enter' && e.target === e.currentTarget) {
+          e.preventDefault()
+          open()
+        }
+      }}
+      tabIndex={0}
+      aria-label={`${name}. ${status.text}`}
+    >
+      <FileTypeGlyph item={item} />
+      <div className="zen-dl-row-text">
+        <FileName
+          name={name}
+          title={item.savePath || item.url}
+          dim={item.state === 'cancelled'}
+          onOpen={openable ? open : undefined}
+        />
+        <StatusLine item={item} suffix={source} />
+        {status.detail && <p className="zen-dl-detail">{status.detail}</p>}
+        {active && <DownloadProgressBar item={item} />}
+      </div>
+      {flagged ? (
+        <DangerActions item={item} />
+      ) : (
+        <div className="zen-dl-actions">
+          <DownloadActions item={item} />
+        </div>
+      )}
+    </li>
   )
 }
