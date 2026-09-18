@@ -291,6 +291,12 @@ export interface UiState {
   externalProtocol: ExternalProtocolRequest | null
   /** Phone layout: the sheet that rearranges the bar's controls is up. */
   barEditorOpen: boolean
+  /**
+   * Phone layout: a `FrameDialogHost` sheet holds the page under its cover, from before it
+   * rises until it has left the screen (`coverPageUnderSheet`); the dialogs it hosts set their
+   * own flags later and drop them sooner than the sheet's motion runs.
+   */
+  frameSheetOpen: boolean
   /** Phone layout: the Tabs button's quick menu is up, anchored to the button (window px). */
   tabsMenu: Rect | null
   /** The downloads bubble (anchored under the toolbar button) is up. */
@@ -371,6 +377,7 @@ export const uiStore = createStore<UiState>(
     siteInfoOpen: false,
     externalProtocol: null,
     barEditorOpen: false,
+    frameSheetOpen: false,
     tabsMenu: null,
     downloadsOpen: false,
     defaultBrowserPrompt: false,
@@ -585,6 +592,9 @@ function holdMessage(id: number, held: boolean, fire: () => void): void {
  */
 export const coverBandStore = createStore<ContentCover>({ top: 0, bottom: 0 }, 'cover-band')
 
+/** Captures in flight, per tab: a sheet and the dialog it hosts asking together pay for one. */
+const captures = new Map<string, Promise<void>>()
+
 /** Capture the active tab before a chrome overlay hides it. */
 export async function captureActiveTab(tabId: string | null): Promise<void> {
   if (!tabId) {
@@ -592,11 +602,19 @@ export async function captureActiveTab(tabId: string | null): Promise<void> {
     return
   }
   if (snapshotHeld(tabId)) return
-  const data = await cmd('overlay.snapshot', { tabId }).catch(() => null)
-  if (data) rememberThumbnail(tabId, data)
-  // A page that is already hidden (behind the gesture stage) cannot be captured: show what it
-  // looked like the last time it was.
-  uiStore.set({ snapshot: data ?? thumbnailOf(tabId), snapshotTabId: tabId })
+  const pending = captures.get(tabId)
+  if (pending) return pending
+  const capture = (async (): Promise<void> => {
+    const data = await cmd('overlay.snapshot', { tabId }).catch(() => null)
+    if (data) rememberThumbnail(tabId, data)
+    // A page that is already hidden (behind the gesture stage) cannot be captured: show what it
+    // looked like the last time it was.
+    uiStore.set({ snapshot: data ?? thumbnailOf(tabId), snapshotTabId: tabId })
+  })().finally(() => {
+    captures.delete(tabId)
+  })
+  captures.set(tabId, capture)
+  return capture
 }
 
 /**
@@ -721,6 +739,7 @@ export function invalidateSnapshot(): void {
     !ui.extensionPopup &&
     ui.floatingChrome === 0 &&
     !ui.barEditorOpen &&
+    !ui.frameSheetOpen &&
     !ui.tabsMenu &&
     !ui.securityPromptOpen &&
     !ui.permissionPromptOpen &&
@@ -755,6 +774,57 @@ export function activePageCovered(): Hold {
   const ui = uiStore.get()
   if (!state || !overlayCoversContent(ui)) return { promise: Promise.resolve(), cancel: () => {} }
   return pageCovered(activeTab(state)?.id ?? null, state.platform)
+}
+
+export interface SheetCover {
+  /** Resolves once the live page is off the screen under the sheet's cover; never rejects. */
+  promise: Promise<void>
+  /** The sheet has left the screen (or never came up): let the page back. */
+  release(): void
+}
+
+/** Sheets holding the page under their cover (`coverPageUnderSheet`) right now. */
+let sheetCovers = 0
+
+/**
+ * A chassis sheet that mounts before anything covers the page – `FrameDialogHost` on a phone,
+ * whose dialogs capture the page and set their own flag only after they are up, and drop it
+ * the moment they go – takes the cover itself, in the order every other surface keeps: the live
+ * page is captured first, then `frameSheetOpen` asks the host to hide the page views (the
+ * layout reporter hides them once the picture is painted, `lib/cover.ts`), and the promise
+ * resolves once they are down (`pageCovered`), so the recede never starts on a page about to
+ * be swapped. `release` drops the flag: call it once the sheet has left the screen, so the page
+ * comes back at the transform it left at, and the picture goes once the host has drawn it.
+ */
+export function coverPageUnderSheet(): SheetCover {
+  const state = browserStore.get().state
+  const tabId = state ? (activeTab(state)?.id ?? null) : null
+  let live = true
+  let taken = false
+  let hold: Hold | null = null
+  const promise = captureActiveTab(tabId).then(() => {
+    if (!live) return
+    taken = true
+    sheetCovers++
+    if (!uiStore.get().frameSheetOpen) uiStore.set({ frameSheetOpen: true })
+    // No session yet (or no page in it): nothing to wait for.
+    if (!state) return
+    hold = pageCovered(tabId, state.platform)
+    return hold.promise
+  })
+  return {
+    promise,
+    release() {
+      if (!live) return
+      live = false
+      hold?.cancel()
+      if (!taken) return
+      taken = false
+      if (--sheetCovers > 0) return
+      uiStore.set({ frameSheetOpen: false })
+      invalidateSnapshot()
+    }
+  }
 }
 
 const snapshotFlags = globalThis as unknown as { __zenSnapshotWired?: boolean }
@@ -1127,6 +1197,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.extensionPopup !== null ||
     ui.floatingChrome > 0 ||
     ui.barEditorOpen ||
+    ui.frameSheetOpen ||
     ui.tabsMenu !== null ||
     ui.securityPromptOpen ||
     ui.permissionPromptOpen ||

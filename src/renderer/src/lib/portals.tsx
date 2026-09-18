@@ -15,9 +15,8 @@ import type { Rect } from '@shared/types'
 import { useViewport } from './formFactor'
 import { registerRecedeLayer, type RecedeHandle, type RecedeLayerFrame } from './motion/recede'
 import { SPRING_GENTLE, SpringAnimation, type SpringConfig } from './motion/spring'
-import type { Hold } from './pageView'
 import { closeAllPopovers } from './popoverStore'
-import { activePageCovered } from './ui'
+import { coverPageUnderSheet, type SheetCover } from './ui'
 
 export {
   closeAllPopovers,
@@ -190,12 +189,15 @@ interface SheetChassis {
  * progress value `p`, run 0 → 1 on `SPRING_GENTLE` when a dialog opens and back to 0 when the
  * last one closes, is the scrim's opacity, the slot's rise and fade and – through the recede
  * registry – the page's recede and the bottom bar's fade; a sheet above recedes the slot and
- * makes it inert like any lower sheet (§11.2). Where the chrome lies under the pages the open
- * waits for the live page to have given way to its picture (`activePageCovered`), so the
- * recede never starts on a page that is about to be swapped. Everything is written straight to
- * the three elements the returned refs are put on; React renders none of it. While anything of
- * the sheet shows the host carries `data-sheet-up` (main.css: it takes the pointer, so a press
- * during the way down lands on the scrim and not on the page under it).
+ * makes it inert like any lower sheet (§11.2). The sheet holds the page under its cover for as
+ * long as anything of it shows (`coverPageUnderSheet`): the dialogs it hosts mount before they
+ * capture the page and set their own flag, and drop that flag the moment they go, so the sheet
+ * captures the page itself before it rises, waits for the live page to have given way to its
+ * picture (the recede never starts on a page about to be swapped), and lets the page back only
+ * once the spring has landed at 0 (the page comes back at the transform it left at). Everything
+ * is written straight to the three elements the returned refs are put on; React renders none of
+ * it. While anything of the sheet shows the host carries `data-sheet-up` (main.css: it takes
+ * the pointer, so a press during the way down lands on the scrim and not on the page under it).
  */
 function useSheetChassis(active: boolean, open: boolean): SheetChassis {
   const hostRef = useRef<HTMLDivElement>(null)
@@ -204,7 +206,9 @@ function useSheetChassis(active: boolean, open: boolean): SheetChassis {
   const p = useRef(0)
   const layer = useRef<RecedeLayerFrame>(LAYER_AT_REST)
   const recede = useRef<RecedeHandle | null>(null)
-  const hold = useRef<Hold | null>(null)
+  /** The page's cover, held from before the rise; `leaving` while the spring runs it back down. */
+  const cover = useRef<SheetCover | null>(null)
+  const leaving = useRef<SheetCover | null>(null)
   const spring = useRef<SpringAnimation | null>(null)
   /** Whether the chassis is wanted up (the latest `open`, for the spring's rest). */
   const up = useRef(false)
@@ -255,20 +259,25 @@ function useSheetChassis(active: boolean, open: boolean): SheetChassis {
       },
       (x) => {
         // Down and at rest, and nothing has opened meanwhile (a dialog that opened on the way
-        // down keeps the layer; its rise comes once the page is covered): off the stack.
+        // down keeps the layer and the cover; its rise comes once the page is covered): off the
+        // stack, and the page may come back.
         if (x > 0 || up.current) return
         recede.current?.release()
         recede.current = null
+        leaving.current?.release()
+        leaving.current = null
         reset()
       }
     ))
 
   const clear = (): void => {
-    hold.current?.cancel()
-    hold.current = null
     spring.current?.stop()
     recede.current?.release()
     recede.current = null
+    cover.current?.release()
+    cover.current = null
+    leaving.current?.release()
+    leaving.current = null
     p.current = 0
     layer.current = LAYER_AT_REST
     reset()
@@ -290,20 +299,26 @@ function useSheetChassis(active: boolean, open: boolean): SheetChassis {
         paint()
       })
       paint()
-      if (hold.current) return
-      const h = activePageCovered()
-      hold.current = h
-      void h.promise.then(() => {
-        if (hold.current !== h) return
-        hold.current = null
+      if (cover.current) return
+      // The cover is taken once per stay on screen: a dialog opening on the way down keeps the
+      // one being let go of, and the spring turns round where it is.
+      const c = leaving.current ?? coverPageUnderSheet()
+      leaving.current = null
+      cover.current = c
+      void c.promise.then(() => {
+        if (cover.current !== c) return
         motion().retarget(1)
       })
       return
     }
     // The last dialog went: the same spring runs the scrim and the recede back to 0, from
-    // wherever they are. A host that never came up has nothing to run.
-    hold.current?.cancel()
-    hold.current = null
+    // wherever they are, and lets the page back when it lands (a host still waiting for its
+    // cover lands at once).
+    if (cover.current) {
+      leaving.current?.release()
+      leaving.current = cover.current
+      cover.current = null
+    }
     if (recede.current) motion().retarget(0)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only refs besides `active` and `open`
   }, [active, open])

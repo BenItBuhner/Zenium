@@ -7,6 +7,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { Rect } from '@shared/types'
 import { viewportStore } from '../formFactor'
 import { registerRecedeLayer } from '../motion/recede'
+import { uiStore } from '../ui'
 import {
   ChromePortal,
   FrameDialogHost,
@@ -470,6 +471,9 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
     expect(host().hasAttribute('data-sheet-up')).toBe(false)
 
     await settle()
+    // The sheet holds the page under its cover from before the rise (§11.5): the host is asked
+    // to hide the page views by the sheet itself, not by the dialog it hosts.
+    expect(uiStore.get().frameSheetOpen).toBe(true)
     expect(scheduled()).toBe(true)
     let last = 0
     for (let i = 0; i < 60 && scheduled(); i++) {
@@ -486,11 +490,13 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
     )
     expect(host().hasAttribute('data-sheet-up')).toBe(true)
 
-    // The dialog goes: the scrim stays for the way down and everything runs back to 0 together.
+    // The dialog goes: the scrim stays for the way down and everything runs back to 0 together;
+    // the page stays under its cover until the spring has landed, then comes back where it was.
     rerender(<FrameDialogHost />)
     expect(host().hasAttribute('data-open')).toBe(false)
     expect(scrim()).not.toBeNull()
     expect(document.documentElement.dataset.receding).toBe('true')
+    expect(uiStore.get().frameSheetOpen).toBe(true)
     last = 1
     for (let i = 0; i < 60 && scheduled(); i++) {
       frames(1)
@@ -499,11 +505,29 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
       expect(p).toBeLessThanOrEqual(last + 1e-9)
       expect(last - p).toBeLessThan(0.25)
       last = p
+      if (p > 0) expect(uiStore.get().frameSheetOpen).toBe(true)
     }
     expect(opacity(scrim())).toBe(0)
     expect(host().hasAttribute('data-sheet-up')).toBe(false)
     expect(document.documentElement.dataset.receding).toBeUndefined()
     expect(recedeVar()).toBe('')
+    expect(uiStore.get().frameSheetOpen).toBe(false)
+  })
+
+  it('a dialog gone before the sheet came up lets the page back without a slide', async () => {
+    render(
+      <FrameDialogHost>
+        <Dialog name="edit" />
+      </FrameDialogHost>
+    )
+    // Closed while the wait for the page's cover is still on (nothing on screen yet).
+    rerender(<FrameDialogHost />)
+    await settle()
+    frames(2)
+    expect(opacity(scrim())).toBe(0)
+    expect(host().hasAttribute('data-sheet-up')).toBe(false)
+    expect(document.documentElement.dataset.receding).toBeUndefined()
+    expect(uiStore.get().frameSheetOpen).toBe(false)
   })
 
   it('a dialog opening again on the way down catches the spring where it is: no jump', async () => {
@@ -527,9 +551,12 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
     await settle()
     frames(1)
     expect(Math.abs(opacity(scrim()) - midway)).toBeLessThan(0.2)
+    // The cover was never let go of on the way down: the page stayed hidden throughout.
+    expect(uiStore.get().frameSheetOpen).toBe(true)
     frames(60)
     expect(recedeVar()).toBe('1.0000')
     expect(opacity(scrim())).toBe(1)
+    expect(uiStore.get().frameSheetOpen).toBe(true)
   })
 
   it('under a sheet registered above it the slot recedes about its bottom centre, is inert, and gives up its scrim', async () => {
