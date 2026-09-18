@@ -576,24 +576,43 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
     }
 
     /**
-     * Type into the focused field. On the software-rendered emulator injected keys go missing
-     * under load (the f6b2b10a run signed in as "ada.lovelac"), so a page field's value is read
-     * back and, when it is not the text, selected and typed over again at a slower pitch; the
-     * system's PIN field (`intoPage = false`) cannot be read and is typed once.
+     * Type into the focused field. The software-rendered emulator takes injected keys slower than
+     * they come and loses some under load (the f6b2b10a run signed in as "ada.lovelac"; the
+     * 7e904b04 run read the field back while keys were still landing), so a page field is typed at
+     * a walking pitch, read once its value has stopped changing and, when that is not the text,
+     * selected and typed over again slower still. The system's PIN field (`intoPage = false`)
+     * cannot be read and is typed once.
      */
     private fun type(text: String, intoPage: Boolean = true) {
-        keys(text, 25)
-        if (!intoPage) return
-        val value = { pageString("(function(){var e=document.activeElement;return e && 'value' in e ? e.value : null})()") }
+        if (!intoPage) {
+            keys(text, 25)
+            return
+        }
+        keys(text, 60)
+        var typed = settledValue()
         for (attempt in 1..2) {
-            val typed = value()
             if (typed == text) return
             note("typed '$text' but the field holds '$typed' (attempt $attempt); typing it again")
             page("(function(){var e=document.activeElement;if(e&&e.select)e.select()})()")
-            SystemClock.sleep(300)
-            keys(text, 60)
+            SystemClock.sleep(400)
+            keys(text, 110)
+            typed = settledValue()
         }
-        note("the field holds '${value()}' after retyping '$text'")
+        note(if (typed == text) "the field holds the text after retyping" else "the field holds '$typed' after retyping '$text'")
+    }
+
+    /** The focused page field's value once it has held still for a moment (the keys land late). */
+    private fun settledValue(): String? {
+        val read = { pageString("(function(){var e=document.activeElement;return e && 'value' in e ? e.value : null})()") }
+        var last = read()
+        val deadline = SystemClock.uptimeMillis() + 8_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(700)
+            val now = read()
+            if (now == last) return now
+            last = now
+        }
+        return last
     }
 
     private fun keys(text: String, pitchMs: Long) {
