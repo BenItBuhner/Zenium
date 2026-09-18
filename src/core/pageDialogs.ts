@@ -59,8 +59,8 @@ export class PageDialogService {
 
   /**
    * A page opened a dialog. Resolves once the user answered (an alert counts as accepted when
-   * dismissed) or the dialog became moot (its tab went away, the user switched tabs – Chrome
-   * dismisses dialogs of a tab the user leaves).
+   * dismissed) or the dialog became moot (its tab went away, or is being checked for unload).
+   * A dialog of a background tab waits, unseen, until its tab is on screen again.
    */
   ask(tabId: string, request: PageDialogRequest): Promise<PageDialogResponse> {
     if (!this.browser.tabs.tab(tabId)) return Promise.resolve(CANCELLED)

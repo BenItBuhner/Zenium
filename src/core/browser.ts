@@ -526,6 +526,8 @@ export class Browser {
       })
     }
     if (!(await this.quitCheck)) return false
+    // Every request that waited on the same check quits once.
+    if (this.quitting) return true
     this.shutdown()
     this.platform.app.quit()
     return true
@@ -654,8 +656,9 @@ export class Browser {
     if (!restoreSession) {
       const win = this.allWindows()[0]
       if (win) this.openFreshTab(win)
-    } else if (this.state.uncleanExit) {
-      // The last run crashed (or was killed): its pages are offered, not loaded.
+    } else if (this.state.uncleanExit && this.state.platform !== 'android') {
+      // The last run crashed (or was killed): its pages are offered, not loaded. Android ends
+      // most runs by killing the process – that is its normal exit, and the pages just come back.
       this.session.onUncleanStart()
     }
     // The host may have come up under another icon (a fresh install with a restored profile,

@@ -496,7 +496,9 @@ export class ElectronPlatform implements Platform {
         answer(DISMISSED_ANSWER)
         return
       }
-      view.askDialog(call, event.senderFrame?.url ?? '').then(answer, () => answer(DISMISSED_ANSWER))
+      view
+        .askDialog(call, event.senderFrame?.url ?? '')
+        .then(answer, () => answer(DISMISSED_ANSWER))
     })
     this.attachNotificationStatus(browser)
   }

@@ -111,7 +111,11 @@ export function installLeaveSite(send: (message: PageMessage) => void): void {
     intent = { at: Date.now(), replay }
     send({
       type: 'navigate-intent',
-      intent: { url: e.destination.url, navigationType: e.navigationType, post: e.formData !== null }
+      intent: {
+        url: e.destination.url,
+        navigationType: e.navigationType,
+        post: e.formData !== null
+      }
     })
   })
   ipcRenderer.on(LEAVE_SITE_CHANNEL, () => {
@@ -156,10 +160,7 @@ function formSubmission(
   source: Element | null
 ): { form: HTMLFormElement; submitter: HTMLElement | undefined } | null {
   if (source instanceof HTMLFormElement) return { form: source, submitter: undefined }
-  if (
-    (source instanceof HTMLButtonElement || source instanceof HTMLInputElement) &&
-    source.form
-  ) {
+  if ((source instanceof HTMLButtonElement || source instanceof HTMLInputElement) && source.form) {
     // `requestSubmit` accepts only a submit button as the submitter.
     const submits = source.type === 'submit' || source.type === 'image'
     return { form: source.form, submitter: submits ? source : undefined }

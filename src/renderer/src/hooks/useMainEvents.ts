@@ -37,6 +37,8 @@ export function useMainEvents(): void {
         }
         if (ui.overlay === 'onboarding') return
         const state = browserStore.get().state
+        // A popup's location bar is read-only (Chrome): Ctrl+L and Ctrl+K have nothing to open.
+        if (state?.window.chrome === 'popup' && mode !== 'new-tab') return
         // Phones always anchor the bar to the top: the keyboard owns the bottom half.
         const attached = isPhone() || state?.settings.urlbarBehavior === 'normal'
         void openUrlbar(mode, currentActiveTabId(), { text, attached })

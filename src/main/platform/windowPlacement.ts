@@ -74,7 +74,10 @@ export function placeWindow(input: PlacementInput, displays: DisplayArea[]): Rec
     const area = primary.workArea
     return centredIn(
       area,
-      { width: Math.min(input.defaultSize.width, area.width - 40), height: Math.min(input.defaultSize.height, area.height - 40) },
+      {
+        width: Math.min(input.defaultSize.width, area.width - 40),
+        height: Math.min(input.defaultSize.height, area.height - 40)
+      },
       minWidth,
       minHeight
     )
@@ -87,7 +90,8 @@ export function placeWindow(input: PlacementInput, displays: DisplayArea[]): Rec
   const height = Math.max(minHeight, Math.min(saved.height, area.height))
   // A window that lay on none of the displays (its screen is gone) is centred on the one it
   // gets; one that lay on its display is only nudged back in where it hangs over the edge.
-  if (!remembered && overlap(saved, area) === 0) return centredIn(area, { width, height }, minWidth, minHeight)
+  if (!remembered && overlap(saved, area) === 0)
+    return centredIn(area, { width, height }, minWidth, minHeight)
   return {
     width,
     height,
