@@ -130,4 +130,14 @@ describe('acceptLanguages', () => {
     expect(acceptLanguages('en', [])).toBe('en')
     expect(acceptLanguages('', [])).toBe('en-US,en')
   })
+
+  it('drops entries that are not language tags and normalises POSIX spellings', () => {
+    // A CI runner's locale list: `C` is the POSIX locale, not a language (Chrome never sends it).
+    expect(acceptLanguages('en-US', ['en-US', 'C'])).toBe('en-US,en')
+    expect(acceptLanguages('en-US', ['POSIX', 'C.UTF-8', 'de_DE.UTF-8', 'sr_RS@latin'])).toBe(
+      'en-US,en,de-DE,de,sr-RS,sr'
+    )
+    expect(acceptLanguages('zh-Hant-TW', ['es-419'])).toBe('zh-Hant-TW,zh,es-419,es')
+    expect(acceptLanguages('C', ['POSIX'])).toBe('en-US,en')
+  })
 })

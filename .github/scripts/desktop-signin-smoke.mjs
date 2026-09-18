@@ -190,10 +190,14 @@ try {
     Boolean(h['sec-ch-ua'] && h['sec-ch-ua-mobile'] && h['sec-ch-ua-platform']),
     `sec-ch-ua=${h['sec-ch-ua']} mobile=${h['sec-ch-ua-mobile']} platform=${h['sec-ch-ua-platform']}`
   )
+  // `en-US,en;q=0.9`: a region variant followed by its base language, q-values, and nothing
+  // that is not a language tag (a runner's POSIX `C` locale must not leak into it).
+  const languages = (h['accept-language'] ?? '').split(',').map((part) => part.split(';')[0])
   check(
     'document request sends Chrome’s Accept-Language',
-    /^[a-z]{2}(-[A-Za-z]{2})?,[a-z]{2}/.test(h['accept-language'] ?? '') &&
-      /;q=/.test(h['accept-language'] ?? ''),
+    languages.length >= 2 &&
+      /;q=/.test(h['accept-language'] ?? '') &&
+      languages.every((tag) => /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(tag)),
     h['accept-language']
   )
   check('document request user agent equals navigator.userAgent', h['user-agent'] === page.ua)
