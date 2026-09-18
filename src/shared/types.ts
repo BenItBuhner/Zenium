@@ -3521,6 +3521,13 @@ export interface Commands {
   'blocking.setEnabled': { args: { enabled: boolean }; result: void }
   /** Except a site (origin, URL or host) from blocking, or block on it again. */
   'blocking.setSiteException': { args: { site: string; excepted: boolean }; result: void }
+  /** Refresh one Safe Browsing feed (or every feed) now, whatever its age. */
+  'protection.updateFeeds': { args: { id?: string }; result: void }
+  /**
+   * The system's Private DNS screen (Android, where secure DNS is the system's: no
+   * `capabilities.secureDns`); a toast on hosts without one.
+   */
+  'protection.openPrivateDnsSettings': { args: void; result: void }
   /** Translate the tab's page (into the default target when `target` is omitted). */
   'translate.page': {
     args: { tabId: string; target?: string; source?: string }
