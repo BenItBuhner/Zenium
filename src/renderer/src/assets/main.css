@@ -308,6 +308,81 @@
   --zen-inset-left: 0px;
 }
 
+/*
+ * The zen://error page (design-language-v2-draft §1, §2, §4; the document is written by
+ * src/shared/zenPages.ts). It is a page inside the tab, not part of the chrome, so it cannot link
+ * this stylesheet: zenPages.ts cuts the v2 token block, the v2 button and this block out of the
+ * stylesheet's text at build time and writes them into the page, whose root carries the chrome's
+ * data-theme / data-pointer / data-form-factor from the media the tab sees, so the same selectors
+ * apply. Nothing in the chrome carries these classes. The page has no `@layer base` reset, hence
+ * the button's own.
+ */
+.zen-error-document {
+  /* The space's accent is unknown inside the tab: the v2 accent (the ring) derives from the text. */
+  --zen-accent: var(--v2-text);
+  /* The chrome's easing (§7), which the v2 button's press transition reads. */
+  --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  height: 100%;
+  color-scheme: light;
+}
+.zen-error-document[data-theme='dark'] {
+  color-scheme: dark;
+}
+.zen-error-page {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 100%;
+  margin: 0;
+  padding: 24px;
+  background: var(--v2-page);
+  color: var(--v2-text);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    'Noto Sans',
+    sans-serif;
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  -webkit-tap-highlight-color: transparent;
+}
+.zen-error-page main {
+  width: 100%;
+  max-width: var(--v2-content-max);
+  margin: 0 auto;
+}
+.zen-error-page h1 {
+  margin: 0 0 12px;
+  font-size: var(--v2-font-title);
+  font-weight: var(--v2-weight-heading);
+  line-height: 28px;
+}
+.zen-error-page p {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+.zen-error-page strong {
+  font-weight: var(--v2-weight-heading);
+}
+.zen-error-code {
+  margin: 0 0 24px;
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  color: var(--v2-text-deemphasized);
+}
+.zen-error-page button {
+  margin: 0;
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
 @layer base {
   html,
   body,

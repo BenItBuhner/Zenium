@@ -33,6 +33,8 @@ interface PageHost {
     val snapshots: HistorySnapshots
     val tabs: TabHost
     val fullscreenTab: TabWebView?
+    /** Whether the host is in its own fullscreen (Menu > Fullscreen: the bars hidden, no element fullscreen). */
+    val immersive: Boolean get() = false
     /** The colour scheme and scrim of the surrounding chrome, for what is drawn natively. */
     val themeDark: Boolean
     val themeScrim: Int
@@ -61,6 +63,8 @@ interface PageHost {
 
     fun enterFullscreen(tab: TabWebView, view: View, callback: WebChromeClient.CustomViewCallback)
     fun exitFullscreen(tab: TabWebView)
+    /** Leave the host's own fullscreen (a back while [immersive]); a host without one has nothing to do. */
+    fun leaveImmersive() {}
     fun openExternal(url: String)
 
     /** A page's history or fullscreen state changed: whoever handles back re-decides its target. */

@@ -85,7 +85,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override var fullscreenTab: TabWebView? = null
         private set
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
-    var immersive = false
+    override var immersive = false
         private set
     /** The chrome's colour scheme, so native pieces (the back preview) match it. */
     override var themeDark = false
@@ -362,10 +362,25 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         back.refresh()
     }
 
+    /**
+     * The window left the screen (launcher, another app, the lock screen). Fullscreen is a way of
+     * looking at a page, not a setting: the app comes back with its bars, like Chrome does, rather
+     * than in the fullscreen it was left in – a relaunch from the launcher is a new start to the
+     * user, whether or not the process survived.
+     */
+    fun onStop() {
+        if (immersive) setImmersive(false)
+    }
+
+    /** Back while in Zenium's own fullscreen (and nothing is fullscreen on the page) leaves it. */
+    override fun leaveImmersive() = setImmersive(false)
+
     private fun setImmersive(on: Boolean) {
+        if (immersive == on) return
         immersive = on
         setSystemBarsHidden(on || fullscreenTab != null)
         chrome.hostEvent("fullscreen", json("fullscreen" to on))
+        back.refresh()
     }
 
     private fun setSystemBarsHidden(hidden: Boolean) {
@@ -489,7 +504,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         tab.saveWebArchive(file.absolutePath, false) { path -> reply(path) }
     }
 
-    /** Store bytes as a file in the public Downloads collection; resolves with a path or URI. */
+    /**
+     * Store bytes as a file in the public Downloads collection; resolves with the file's path. The
+     * core names the download after the last segment of what it gets back, so the path it is –
+     * the MediaStore row's URI ends in the row's id, and a screenshot listed as "1000000025" was
+     * that id. `Downloads.open` finds the row again from the path.
+     */
     fun saveToDownloads(name: String, mimeType: String, bytes: ByteArray?, reply: (Any?) -> Unit) {
         if (bytes == null) {
             reply(null)
@@ -509,7 +529,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                     values.clear()
                     values.put(MediaStore.Downloads.IS_PENDING, 0)
                     resolver.update(uri, values, null, null)
-                    uri.toString()
+                    pathOf(uri) ?: uri.toString()
                 } else {
                     val dir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: activity.filesDir
                     val file = File(dir, name)
@@ -520,6 +540,23 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             main.post { reply(result) }
         }
     }
+
+    /**
+     * Where MediaStore put the file behind one of its Downloads rows: its `DATA` column (still
+     * filled in on Q+, where the row may have renamed the file to keep names unique), or the
+     * display name under the public Downloads folder; null when the row says neither.
+     */
+    @Suppress("DEPRECATION") // DATA, see above
+    private fun pathOf(uri: Uri): String? = runCatching {
+        val columns = arrayOf(MediaStore.MediaColumns.DATA, MediaStore.MediaColumns.DISPLAY_NAME)
+        activity.contentResolver.query(uri, columns, null, null, null)?.use { c ->
+            if (!c.moveToFirst()) return@use null
+            c.getString(0)?.takeIf { it.isNotEmpty() }
+                ?: c.getString(1)?.takeIf { it.isNotEmpty() }?.let { name ->
+                    File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), name).absolutePath
+                }
+        }
+    }.getOrNull()
 
     private fun copyImage(url: String, reply: (Any?) -> Unit) {
         io.execute {
