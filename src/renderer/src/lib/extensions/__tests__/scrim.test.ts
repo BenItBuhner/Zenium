@@ -51,7 +51,17 @@ describe('extensionChromeAloneOverContent', () => {
     expect(alone({ ...withPanel, drawerOpen: true })).toBe(false)
     expect(alone({ ...withPanel, siteInfoOpen: true })).toBe(false)
     expect(alone({ ...withPanel, stageActive: true })).toBe(false)
-    expect(alone({ ...withPanel, drag: { tabId: 't', x: 0, y: 0 } })).toBe(false)
+    const drag: UiState['drag'] = {
+      tabId: 't',
+      remote: false,
+      title: 't',
+      favicon: null,
+      width: 200,
+      height: 32,
+      tile: false,
+      settling: false
+    }
+    expect(alone({ ...withPanel, drag })).toBe(false)
     expect(alone({ ...withPanel, urlbar: { ...quiet.urlbar, open: true } })).toBe(false)
     expect(alone({ ...withPanel, barEditorOpen: true })).toBe(false)
     expect(alone({ ...withPanel, securityPromptOpen: true })).toBe(false)

@@ -18,7 +18,6 @@ import {
 } from '@renderer/lib/ui'
 import { activeTab } from '@renderer/lib/selectors'
 import { browserStore } from '@renderer/lib/ui'
-import { run } from '@renderer/lib/api'
 import {
   closeExtensionPopup,
   enqueueExtensionPrompt,
