@@ -280,7 +280,7 @@ export const BUILTIN_RULE_SETS = {
   /** `allowAllRequests` for every site the user excepted. */
   siteExceptions: 'builtin:site-exceptions',
   /**
-   * HTTPS-only mode's `upgradeScheme` rule (`src/core/privacy`), the sites the user allowed
+   * HTTPS-only mode's `upgradeScheme` rule (`src/core/protection`), the sites the user allowed
    * over plaintext as its `excludedRequestDomains`. The same sites travel in `PrivacyFlags`
    * (`httpsOnlyAllowed`) for a host whose engine reloads the store with a delay (Android), so
    * an answer given on the warning page holds on the very next request either way.

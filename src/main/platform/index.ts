@@ -154,7 +154,7 @@ export class ElectronPlatform implements Platform {
     this.views = new ElectronTabViewHost(this.sessions, this.downloads)
     // The core's Safe Browsing service exists once the browser does (`start`); no request runs before.
     this.privacy = new ElectronPrivacy(this.views, {
-      lookup: (url) => (this.browser ? this.browser.privacy.safeBrowsing.lookup(url) : null)
+      lookup: (url) => (this.browser ? this.browser.protection.safeBrowsing.lookup(url) : null)
     })
     this.siteData = new ElectronSiteData(this.sessions)
     this.menus = new ElectronMenus()

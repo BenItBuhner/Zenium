@@ -1,5 +1,5 @@
 /**
- * The desktop host of the privacy and security policy (`src/core/privacy`, `src/core/safebrowsing`).
+ * The desktop host of the privacy and security policy (`src/core/protection`, `src/core/safebrowsing`).
  * The core pushes one {@link PrivacyFlags} document here whenever the effective policy changes;
  * this module keeps it and turns it into Electron behaviour:
  *
@@ -24,7 +24,7 @@ import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { BUILTIN_RULE_SETS, type Decision } from '../../core/blocking/rules'
 import type { PrivacyHost } from '../../core/platform'
-import { blocksThirdPartyCookies, signalHeaders } from '../../core/privacy/policy'
+import { blocksThirdPartyCookies, signalHeaders } from '../../core/protection/policy'
 import type { PrivacyFlags, SafeBrowsingHit } from '../../shared/privacy'
 import { PRIVACY_SIGNALS_CHANNEL, type PrivacySignals } from '../../shared/privacySignals'
 import type { ElectronBlocking } from './blocking'

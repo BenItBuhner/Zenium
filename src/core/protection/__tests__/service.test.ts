@@ -170,7 +170,7 @@ function httpsOnlySet(f: Fixture): { enabled: boolean; excluded: string[] } {
   }
 }
 
-describe('PrivacyService: the policy the hosts get', () => {
+describe('ProtectionService: the policy the hosts get', () => {
   it('pushes the flags at start and again only when the effective policy changes', () => {
     const f = fixture()
     expect(f.applied).toHaveLength(1)
@@ -200,7 +200,7 @@ describe('PrivacyService: the policy the hosts get', () => {
       secureDnsMode: 'provider',
       secureDnsServers: ['https://dns.quad9.net/dns-query']
     })
-    expect(f.browser.privacy.status().secureDns).toEqual({
+    expect(f.browser.protection.status().secureDns).toEqual({
       supported: true,
       mode: 'provider',
       servers: ['https://dns.quad9.net/dns-query']
@@ -214,7 +214,7 @@ describe('PrivacyService: the policy the hosts get', () => {
   })
 })
 
-describe('PrivacyService: HTTPS-only mode', () => {
+describe('ProtectionService: HTTPS-only mode', () => {
   it('keeps the upgrade rule set in the engine, following the mode', () => {
     const f = fixture()
     expect(httpsOnlySet(f)).toEqual({ enabled: true, excluded: [...HTTPS_ONLY_EXEMPT_HOSTS] })
@@ -299,13 +299,13 @@ describe('PrivacyService: HTTPS-only mode', () => {
       url: 'http://old.example/news'
     })
     expect(view.loads[view.loads.length - 1]).toBe('http://old.example/news')
-    expect(f.browser.privacy.allowsPlaintext('http://old.example/other')).toBe(true)
-    expect(f.browser.privacy.allowsPlaintext('http://sub.old.example/')).toBe(true)
-    expect(f.browser.privacy.allowsPlaintext('http://other.example/')).toBe(false)
+    expect(f.browser.protection.allowsPlaintext('http://old.example/other')).toBe(true)
+    expect(f.browser.protection.allowsPlaintext('http://sub.old.example/')).toBe(true)
+    expect(f.browser.protection.allowsPlaintext('http://other.example/')).toBe(false)
     expect(httpsOnlySet(f).excluded).toContain('old.example')
     expect(f.applied[f.applied.length - 1].httpsOnlyAllowed).toEqual(['old.example'])
-    expect(f.browser.privacy.status().httpsOnlySessionExceptions).toEqual(['old.example'])
-    expect(f.browser.privacy.status().httpsOnlyExceptions).toEqual([])
+    expect(f.browser.protection.status().httpsOnlySessionExceptions).toEqual(['old.example'])
+    expect(f.browser.protection.status().httpsOnlyExceptions).toEqual([])
     expect(
       f.browser.blocking.engine.decide({
         url: 'http://old.example/next',
@@ -336,18 +336,18 @@ describe('PrivacyService: HTTPS-only mode', () => {
     })
     expect(view.loads[view.loads.length - 1]).toBe('http://legacy.example/')
     expect(f.browser.permissions.get(HTTPS_ONLY_PERMISSION, 'http://legacy.example')).toBe('allow')
-    expect(f.browser.privacy.status().httpsOnlyExceptions).toEqual(['legacy.example'])
-    expect(f.browser.privacy.status().httpsOnlySessionExceptions).toEqual([])
+    expect(f.browser.protection.status().httpsOnlyExceptions).toEqual(['legacy.example'])
+    expect(f.browser.protection.status().httpsOnlySessionExceptions).toEqual([])
     expect(httpsOnlySet(f).excluded).toContain('legacy.example')
 
     // The site-information sheet's reset goes through the permission store; the policy follows.
     f.browser.permissions.resetOrigin('http://legacy.example')
-    expect(f.browser.privacy.allowsPlaintext('http://legacy.example/')).toBe(false)
+    expect(f.browser.protection.allowsPlaintext('http://legacy.example/')).toBe(false)
     expect(httpsOnlySet(f).excluded).not.toContain('legacy.example')
     expect(f.applied[f.applied.length - 1].httpsOnlyAllowed).toEqual([])
 
-    f.browser.privacy.allowPlaintext('http://legacy.example/', true)
-    f.browser.privacy.forgetPlaintext('legacy.example')
+    f.browser.protection.allowPlaintext('http://legacy.example/', true)
+    f.browser.protection.forgetPlaintext('legacy.example')
     expect(
       f.browser.permissions.get(HTTPS_ONLY_PERMISSION, 'http://legacy.example')
     ).toBeUndefined()
@@ -382,7 +382,7 @@ describe('PrivacyService: HTTPS-only mode', () => {
       action: 'continue',
       url: 'http://old.example/'
     })
-    expect(f.browser.privacy.allowsPlaintext('http://old.example/')).toBe(false)
+    expect(f.browser.protection.allowsPlaintext('http://old.example/')).toBe(false)
 
     view.events.onUpgraded('http://old.example/', 'https://old.example/')
     view.events.onFailLoad(-102, 'net::ERR_CONNECTION_REFUSED', 'https://old.example/')
@@ -393,23 +393,27 @@ describe('PrivacyService: HTTPS-only mode', () => {
       action: 'continue',
       url: 'http://forged.example/'
     })
-    expect(f.browser.privacy.allowsPlaintext('http://forged.example/')).toBe(false)
+    expect(f.browser.protection.allowsPlaintext('http://forged.example/')).toBe(false)
     // A Safe Browsing answer on an HTTPS-only page does nothing.
     f.browser.handlePageMessage(view.tabId, {
       type: 'interstitial',
       action: 'proceed',
       url: 'http://old.example/'
     })
-    expect(f.browser.privacy.safeBrowsing.isBypassed('http://old.example/')).toBe(false)
+    expect(f.browser.protection.safeBrowsing.isBypassed('http://old.example/')).toBe(false)
     expect(view.loads.filter((u) => u === 'http://old.example/')).toHaveLength(0)
   })
 })
 
-describe('PrivacyService: Safe Browsing interstitial', () => {
+describe('ProtectionService: Safe Browsing interstitial', () => {
   it('turns a block the host applied into the warning page and lets the user proceed once bypassed', () => {
     const f = fixture()
-    f.browser.privacy.safeBrowsing.setTable('urlhaus', PrefixTable.fromHosts(['evil.example']), 1)
-    const hit = f.browser.privacy.safeBrowsing.lookup('http://evil.example/payload')
+    f.browser.protection.safeBrowsing.setTable(
+      'urlhaus',
+      PrefixTable.fromHosts(['evil.example']),
+      1
+    )
+    const hit = f.browser.protection.safeBrowsing.lookup('http://evil.example/payload')
     expect(hit).toMatchObject({ feedId: 'urlhaus', threat: 'malware' })
 
     const view = open(f, 'https://start.example/')
@@ -440,9 +444,9 @@ describe('PrivacyService: Safe Browsing interstitial', () => {
       action: 'proceed',
       url: 'http://evil.example/payload'
     })
-    expect(f.browser.privacy.safeBrowsing.isBypassed('http://evil.example/other')).toBe(true)
-    expect(f.browser.privacy.safeBrowsing.lookup('http://evil.example/other')).toBeNull()
-    expect(f.browser.privacy.safeBrowsing.lookup('https://evil.example/payload')).toBeNull()
+    expect(f.browser.protection.safeBrowsing.isBypassed('http://evil.example/other')).toBe(true)
+    expect(f.browser.protection.safeBrowsing.lookup('http://evil.example/other')).toBeNull()
+    expect(f.browser.protection.safeBrowsing.lookup('https://evil.example/payload')).toBeNull()
     expect(view.loads[view.loads.length - 1]).toBe('http://evil.example/payload')
     // The Android guard learns of the bypass from the flags, pushed before the reload.
     expect(f.applied[f.applied.length - 1].safeBrowsingBypassed).toEqual(['evil.example'])
@@ -467,11 +471,15 @@ describe('PrivacyService: Safe Browsing interstitial', () => {
 
   it('reports Safe Browsing in the state and reflects the switch', () => {
     const f = fixture()
-    expect(f.browser.privacy.status().safeBrowsing.enabled).toBe(true)
+    expect(f.browser.protection.status().safeBrowsing.enabled).toBe(true)
     setPrivacy(f, { safeBrowsingEnabled: false })
-    expect(f.browser.privacy.status().safeBrowsing.enabled).toBe(false)
+    expect(f.browser.protection.status().safeBrowsing.enabled).toBe(false)
     expect(f.applied[f.applied.length - 1].safeBrowsing).toBe(false)
-    f.browser.privacy.safeBrowsing.setTable('urlhaus', PrefixTable.fromHosts(['evil.example']), 1)
-    expect(f.browser.privacy.safeBrowsing.lookup('http://evil.example/')).toBeNull()
+    f.browser.protection.safeBrowsing.setTable(
+      'urlhaus',
+      PrefixTable.fromHosts(['evil.example']),
+      1
+    )
+    expect(f.browser.protection.safeBrowsing.lookup('http://evil.example/')).toBeNull()
   })
 })

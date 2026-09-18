@@ -29,8 +29,11 @@ import { BLOCKED_BY_CLIENT_CODE } from '../../shared/zenPages'
  * "always allow over plaintext" answers in `permissions.json` under the `https-only` permission
  * (so the site-information sheet lists and resets them), Safe Browsing's tables under
  * `safebrowsing/`. The session-only answers die with the browser.
+ *
+ * The other privacy tools of Settings, Clear browsing data and Safety check, are
+ * `PrivacyService` (`src/core/privacy.ts`).
  */
-export class PrivacyService {
+export class ProtectionService {
   readonly safeBrowsing: SafeBrowsingService
   /** Hosts allowed over plaintext until the browser closes (the warning page's "Continue"). */
   private readonly sessionPlaintext = new Set<string>()

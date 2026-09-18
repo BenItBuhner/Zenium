@@ -2,7 +2,7 @@
  * Privacy and security features as the chrome sees them: Safe Browsing, HTTPS-only mode, secure
  * DNS, third-party cookie controls and the Global Privacy Control / Do Not Track signals. The
  * settings model, its defaults and sanitiser, the provider tables and the status card live here;
- * the services themselves are `src/core/safebrowsing` and `src/core/privacy`.
+ * the services themselves are `src/core/safebrowsing` and `src/core/protection`.
  */
 
 // ---------------------------------------------------------------------------

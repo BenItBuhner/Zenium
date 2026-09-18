@@ -404,7 +404,7 @@ export class TabManager {
             t.loading = false
           })
         // The host's request engine refused the navigation on Safe Browsing's word.
-        const unsafe = this.browser.privacy.safeBrowsing.takePendingBlock(tabId, url)
+        const unsafe = this.browser.protection.safeBrowsing.takePendingBlock(tabId, url)
         if (unsafe) {
           this.httpsUpgraded.delete(tabId)
           failed()
@@ -414,8 +414,8 @@ export class TabManager {
         const plaintext = this.httpsUpgraded.get(tabId)
         if (plaintext && url.startsWith('https://') && HTTP_FALLBACK_CODES.has(code)) {
           this.httpsUpgraded.delete(tabId)
-          const { privacy } = this.browser
-          if (privacy.httpsOnly !== 'off' && !privacy.allowsPlaintext(plaintext)) {
+          const { protection } = this.browser
+          if (protection.httpsOnly !== 'off' && !protection.allowsPlaintext(plaintext)) {
             // HTTPS-only mode asks before loading the page over plaintext.
             failed()
             v.loadURL(httpsOnlyPageUrl(plaintext, code))
@@ -430,7 +430,7 @@ export class TabManager {
       },
       onUpgraded: (from, to) => this.noteUpgrade(tabId, from, to),
       onUnsafeNavigation: (url, hit) =>
-        this.browser.privacy.safeBrowsing.notePendingBlock(tabId, url, hit),
+        this.browser.protection.safeBrowsing.notePendingBlock(tabId, url, hit),
       onCrashed: (reason) => {
         if (reason === 'clean-exit') return
         const tab = this.tab(tabId)
@@ -577,7 +577,7 @@ export class TabManager {
       if (w.findResult?.tabId === tabId) w.findResult = null
     this.sendPageFlags(tabId)
     this.browser.onNavigated(tabId)
-    this.browser.privacy.onNavigated(tabId, url)
+    this.browser.protection.onNavigated(tabId, url)
     this.browser.state.commit()
   }
 
@@ -671,7 +671,7 @@ export class TabManager {
     if (!view) return
     this.views.delete(tabId)
     this.httpsUpgraded.delete(tabId)
-    this.browser.privacy.safeBrowsing.forgetTab(tabId)
+    this.browser.protection.safeBrowsing.forgetTab(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
     this.pendingTransition.delete(tabId)
     this.browser.popups.onTabGone(tabId)

@@ -56,7 +56,7 @@ import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
 import { DefaultBrowserService } from './defaultBrowser'
 import { BlockingService } from './blocking/service'
-import { PrivacyService } from './privacy/service'
+import { ProtectionService } from './protection/service'
 import { NoExtensions, NoSync, NoUpdateHost, NoopGovernor } from './hostDefaults'
 import {
   activeSpace,
@@ -169,7 +169,7 @@ export class Browser {
   /** Ad and tracker blocking: the rule engine, its lists and the blocked-request counters. */
   readonly blocking: BlockingService
   /** Safe Browsing, HTTPS-only mode, secure DNS, third-party cookies and the GPC / DNT signals. */
-  readonly privacy: PrivacyService
+  readonly protection: ProtectionService
   /** Offline page translation: detection, offers, the engine and its models. */
   readonly translate: TranslateService
   /** Desktop site, dark theme for sites and page zoom, remembered per site (Chrome's page controls). */
@@ -261,7 +261,7 @@ export class Browser {
     this.passwords = new PasswordService(this, platform.passwords)
     this.defaultBrowser = new DefaultBrowserService(this)
     this.blocking = new BlockingService(this)
-    this.privacy = new PrivacyService(this)
+    this.protection = new ProtectionService(this)
     this.translate = new TranslateService(this)
     this.privacy = new PrivacyService(this)
     this.state.extras = (win) => ({
@@ -282,7 +282,7 @@ export class Browser {
       permissionPrompts: this.permissionPrompts.list(),
       securityPrompts: this.security.list(),
       blocking: this.blocking.status(),
-      privacy: this.privacy.status(),
+      privacy: this.protection.status(),
       translate: this.translate.uiState()
     })
     this.handlers = this.commandHandlers()
@@ -526,7 +526,7 @@ export class Browser {
     // Rule sets load synchronously so the first page is protected.
     this.blocking.start()
     // After the blocking store is attached: HTTPS-only mode's set is persisted like the others.
-    this.privacy.start()
+    this.protection.start()
     // Zen restores every synced window (and the space each one was in). With "restore previous
     // session" off, the last session's tabs are forgotten and one window starts fresh.
     const { restoreSession } = this.state.settings
@@ -1180,7 +1180,7 @@ export class Browser {
     void this.agents.stop()
     this.updates.stop()
     this.downloads.shutdown()
-    this.privacy.stop()
+    this.protection.stop()
     this.blocking.stop()
     this.translate.stop()
     this.flushSync()
@@ -1345,7 +1345,7 @@ export class Browser {
     }
     if (message.type === 'interstitial') {
       if (typeof message.action === 'string' && typeof message.url === 'string')
-        this.privacy.handleInterstitial(tabId, message.action, message.url)
+        this.protection.handleInterstitial(tabId, message.action, message.url)
       return
     }
     if (message.type === 'media') {
@@ -2037,7 +2037,7 @@ export class Browser {
     if (before.updates !== JSON.stringify(s.updates)) this.updates.onSettingsChanged()
     if (before.appIcon !== s.appIcon) this.platform.app.setAppIcon?.(s.appIcon)
     if (before.blocking !== s.blocking) this.blocking.onSettingsChanged()
-    if (before.privacy !== JSON.stringify(s.privacy)) this.privacy.onSettingsChanged()
+    if (before.privacy !== JSON.stringify(s.privacy)) this.protection.onSettingsChanged()
     this.state.commit()
   }
 
