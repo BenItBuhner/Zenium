@@ -2808,8 +2808,9 @@
   }
   /*
    * The bubble's list: 8 to the popover's sides so a row's 8 padding puts its text on the title
-   * block's 16 (§5, box to box); rows touch. The footer holds the one action at full width
-   * behind a hairline, 8 around its 32 (§9.21).
+   * block's 16 (§5, box to box); rows touch. The footer under the hairline is one full-width row
+   * (§6 has no text-only buttons): the popover's 32 row with the hover fill, its 15/400 label at
+   * the 16 gutter; the popover's clipped corners round its bottom.
    */
   .zen-dl-list {
     list-style: none;
@@ -2821,12 +2822,31 @@
   }
   .zen-dl-bubble-footer {
     flex-shrink: 0;
-    padding: 8px;
     border-top: 1px solid var(--v2-border);
   }
   .zen-dl-show-all {
+    display: flex;
+    align-items: center;
     width: 100%;
-    justify-content: flex-start;
+    height: var(--v2-row);
+    padding: 0 16px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--v2-text);
+    font-size: var(--v2-font-body);
+    font-weight: 400;
+    line-height: var(--v2-line-body);
+    text-align: start;
+    outline: none;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-dl-show-all:hover {
+    background: var(--v2-fill-hover);
+  }
+  .zen-dl-show-all:focus-visible {
+    outline: 2px solid var(--v2-ring);
+    outline-offset: -2px;
   }
   /*
    * Empty states (§9.17): one sentence 15 at 69%, centred inside a 32 gutter, its line 32 below

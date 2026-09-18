@@ -39,7 +39,10 @@ export interface DownloadsUi {
   partial: string[] | null
   /** The bubble opened by itself and leaves again after five idle seconds. */
   autoClose: boolean
-  /** The user asked for the bubble: the keyboard moves into it (§9.22); an auto-open leaves it. */
+  /**
+   * The user asked for the bubble: a dialog the keyboard moves into (§9.22). Off, it opened by
+   * itself as a notice (`role="status"`) and leaves the keyboard where it was.
+   */
   takeFocus: boolean
   /** Row to draw attention to (a notification was clicked). */
   highlightId: string | null

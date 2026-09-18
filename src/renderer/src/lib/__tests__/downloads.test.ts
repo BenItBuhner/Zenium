@@ -237,9 +237,23 @@ describe('downloads chrome state', () => {
     expect(downloadsUi.get()).toMatchObject({ open: false, takeFocus: false, highlightId: null })
   })
 
-  it('an auto-open leaves the keyboard where it was', async () => {
+  it('an auto-open is a notice: it takes no keyboard and asks the chrome for none (§9.22)', async () => {
+    const { run } = await import('../api')
+    const chromeFocusCalls = (): number =>
+      vi.mocked(run).mock.calls.filter(([name]) => name === 'focus.chrome').length
+    const before = chromeFocusCalls()
     await openDownloadBubble({ partial: ['a'], autoClose: true })
     expect(downloadsUi.get()).toMatchObject({ open: true, takeFocus: false, autoClose: true })
+    expect(chromeFocusCalls()).toBe(before)
+    // A flagged file's warning and the panel-on-start open are notices too.
+    dismissDownloadBubble()
+    await openDownloadBubble({ highlightId: 'a' })
+    expect(downloadsUi.get().takeFocus).toBe(false)
+    expect(chromeFocusCalls()).toBe(before)
+    // Opened by hand, the chrome is asked for the keyboard.
+    dismissDownloadBubble()
+    await openDownloadBubble({ takeFocus: true })
+    expect(chromeFocusCalls()).toBe(before + 1)
   })
 
   it('closing hands the keyboard to the page, the button, or nobody, as asked (§9.22)', async () => {

@@ -24,11 +24,11 @@ import {
 import { browserStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { useEscapeTrap } from '../bookmarks/escape'
-import { tabbables, useScrolled, wrapTab } from '../bookmarks/popover'
+import { hopTab, useScrolled, wrapTab } from '../bookmarks/popover'
 import { DownloadRow } from './DownloadParts'
+import { DOWNLOADS_BUTTON as BUTTON, bubbleEntry } from './focus'
 
-/** The toolbar button the bubble hangs from, and the bar or toolbar row it sits in. */
-const BUTTON = '[data-zen-downloads-button]'
+/** The bar or toolbar row the button sits in. */
 const BAR = '[data-zen-nav-bar]'
 const ROW = '[data-zen-nav-row]'
 /** Rows with trailing controls: the 400 popover (design language v2 §9.20). */
@@ -54,8 +54,14 @@ export function DownloadBubbleLayer(): JSX.Element | null {
  * again when the chrome changes; never animated between positions. Registered for the layer's
  * light dismiss: a press anywhere else, a scroll, a resize and another popover opening put it
  * away and hand the keyboard back to the page; the button's own press closes it and keeps the
- * keyboard there. Escape closes it and returns the keyboard to the button (§9.22); opened by
- * the user, the keyboard moves to the first row and Tab wraps inside.
+ * keyboard there. Escape closes it and returns the keyboard to the button (§9.22).
+ *
+ * Two ways in, two keyboards (§9.22): opened by the user (the button, a notification) it is a
+ * dialog – the keyboard moves to its first row and Tab wraps inside. Opened by itself (a
+ * completion, a flagged file, the panel-on-start setting) it is a notice – a `role="status"`
+ * region that takes no focus and moves none, is read out on its own, stands right after the
+ * button in the Tab order (the button's Tab steps in, Shift+Tab at its first row steps back,
+ * Tab at its last moves on) and closes on Escape like any popover.
  */
 function Bubble({ state }: { state: UIState }): JSX.Element {
   const ui = downloadsUi.use()
@@ -66,6 +72,7 @@ function Bubble({ state }: { state: UIState }): JSX.Element {
   const scrolled = useScrolled(bodyRef)
   const items = bubbleItems(downloadsEngine.list(state), ui.partial)
   const description = bubbleDescription(items)
+  const notice = !ui.takeFocus
 
   // Hangs from the button in its bar, measured again on every state push (the bar's buttons
   // come and go with the tab) and on resize; the box only changes when the measurement does.
@@ -77,13 +84,9 @@ function Bubble({ state }: { state: UIState }): JSX.Element {
   }, [state])
 
   // The keyboard moves into a bubble the user asked for (§9.22): its first row, or the panel
-  // itself when there is none. An auto-opened bubble leaves the keyboard where it was.
+  // itself when there is none. A notice leaves the keyboard where it was.
   useEffect(() => {
-    if (!ui.takeFocus) return
-    const panel = panelRef.current
-    if (!panel) return
-    const first = panel.querySelector<HTMLElement>('[data-download-id]') ?? tabbables(panel)[0]
-    ;(first ?? panel).focus({ preventScroll: true })
+    if (ui.takeFocus) bubbleEntry()?.focus({ preventScroll: true })
   }, [ui.takeFocus])
 
   useEscapeTrap(true, () => closeDownloadBubble({ focus: 'anchor' }))
@@ -110,18 +113,20 @@ function Bubble({ state }: { state: UIState }): JSX.Element {
       e.stopPropagation()
       return
     }
-    wrapTab(e, panelRef.current)
+    if (notice) hopTab(e, panelRef.current, document.querySelector<HTMLElement>(BUTTON))
+    else wrapTab(e, panelRef.current)
   }
 
   return (
     <ChromePortal>
       <div
         ref={panelRef}
-        role="dialog"
+        role={notice ? 'status' : 'dialog'}
         aria-labelledby="zen-dl-title"
         aria-describedby={description ? 'zen-dl-desc' : undefined}
         data-zen-downloads-bubble
         data-partial={ui.partial ? 'true' : undefined}
+        data-notice={notice ? 'true' : undefined}
         tabIndex={-1}
         className={cn(
           'zen-bm-popover zen-dl-surface zen-dl-bubble fixed z-[70] flex flex-col outline-none',
@@ -140,8 +145,13 @@ function Bubble({ state }: { state: UIState }): JSX.Element {
           <h2 id="zen-dl-title" className="zen-bm-title">
             Downloads
           </h2>
+          {/* A notice is read out whole by its own region; a dialog announces the state line. */}
           {description && (
-            <p id="zen-dl-desc" className="zen-bm-title-desc tabular-nums" aria-live="polite">
+            <p
+              id="zen-dl-desc"
+              className="zen-bm-title-desc tabular-nums"
+              aria-live={notice ? undefined : 'polite'}
+            >
               {description}
             </p>
           )}
@@ -163,12 +173,7 @@ function Bubble({ state }: { state: UIState }): JSX.Element {
           )}
         </div>
         <div className="zen-dl-bubble-footer">
-          <button
-            type="button"
-            className="zen-button zen-dl-show-all"
-            data-variant="quiet"
-            onClick={() => showAllDownloads(state)}
-          >
+          <button type="button" className="zen-dl-show-all" onClick={() => showAllDownloads(state)}>
             Show all downloads
           </button>
         </div>

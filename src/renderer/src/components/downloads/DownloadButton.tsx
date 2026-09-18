@@ -1,10 +1,11 @@
-import type { JSX } from 'react'
+import type { JSX, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Download } from 'lucide-react'
 import type { UIState } from '@shared/types'
 import { allPaused, progressBarFor } from '@shared/downloadsShell'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
 import { downloadButtonVisible, downloadsUi, toggleDownloadBubble } from '@renderer/lib/downloads'
 import { cn } from '@renderer/lib/utils'
+import { bubbleEntry } from './focus'
 
 /** Ring geometry around the 16px glyph inside the 28px button. */
 const RING_SIZE = 24
@@ -41,6 +42,16 @@ export function DownloadButton({
         ? `Downloads, ${unseen.length} new`
         : 'Downloads'
 
+  // The bubble stands right after the button in the Tab order (§9.22): it renders in the chrome
+  // layer at the end of the document, so a bubble that opened by itself is stepped into here.
+  const onKeyDown = (e: ReactKeyboardEvent): void => {
+    if (e.key !== 'Tab' || e.shiftKey || !open) return
+    const entry = bubbleEntry()
+    if (!entry) return
+    e.preventDefault()
+    entry.focus({ preventScroll: true })
+  }
+
   return (
     <button
       type="button"
@@ -54,6 +65,7 @@ export function DownloadButton({
       aria-expanded={open}
       aria-haspopup="dialog"
       onClick={() => toggleDownloadBubble(activeTabId)}
+      onKeyDown={onKeyDown}
     >
       {/* Remounted per started download so the start pulse plays again. */}
       <span
