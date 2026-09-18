@@ -84,7 +84,11 @@ export function NavRow({
   const shown = tab ? (state.settings.showFullUrls || revealed ? fullUrl(tab.url) : url) : ''
   const address = addressParts(shown)
   // What the site icon says (derived in the core's site-information module, drawn here).
-  const indicator = securityIndicator(tab?.url ?? '', tab?.errorCode ?? null)
+  const indicator = securityIndicator(
+    tab?.url ?? '',
+    tab?.errorCode ?? null,
+    tab?.certificateError ?? null
+  )
   const isPrivate = isPrivateWindow(state)
   const isWebPage = Boolean(tab && /^https?:/.test(tab.url))
   const isReader = Boolean(tab?.url.startsWith('zen://reader'))

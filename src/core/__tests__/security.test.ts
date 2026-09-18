@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import type { ClientCertificateInfo } from '../../shared/types'
+import type { CertificateDetails, ClientCertificateInfo } from '../../shared/types'
 import type { Browser } from '../browser'
 import {
   AUTH_RETRY_WINDOW_MS,
+  CertificateExceptions,
   SecurityPromptService,
   SessionHttpCredentialStore,
+  certificateSiteOf,
   httpAuthKey,
   type HttpAuthChallenge
 } from '../security'
@@ -227,5 +229,110 @@ describe('SecurityPromptService: client certificates', () => {
     s.respond(s.list()[0].id, { kind: 'client-certificate', index: 0 })
     expect(await a).toBe(0)
     expect(await b).toBe(0)
+  })
+})
+
+describe('certificateSiteOf', () => {
+  it('is the https host and port, 443 when left out; nothing for other addresses', () => {
+    expect(certificateSiteOf('https://Expired.BadSSL.com/')).toBe('expired.badssl.com:443')
+    expect(certificateSiteOf('https://self-signed.badssl.com:8443/a?b#c')).toBe(
+      'self-signed.badssl.com:8443'
+    )
+    expect(certificateSiteOf('http://plain.example/')).toBeNull()
+    expect(certificateSiteOf('zen://error?url=https%3A%2F%2Fa.example%2F')).toBeNull()
+    expect(certificateSiteOf('not a url')).toBeNull()
+    expect(certificateSiteOf('')).toBeNull()
+  })
+})
+
+describe('CertificateExceptions: the certificates proceeded past this session', () => {
+  const server = (fingerprint: string, subjectName = 'expired.badssl.com'): CertificateDetails => ({
+    subjectName,
+    issuerName: 'COMODO RSA Domain Validation Secure Server CA',
+    validStart: 1_427_846_400_000,
+    validExpiry: 1_428_883_200_000,
+    fingerprint
+  })
+
+  it('remembers a certificate per container, site and fingerprint', () => {
+    const x = new CertificateExceptions()
+    expect(x.isAllowed('default', 'https://expired.badssl.com/', 'sha256/a')).toBe(false)
+    expect(x.allow('default', 'https://expired.badssl.com/', -201, server('sha256/a'))).toBe(true)
+    expect(x.isAllowed('default', 'https://expired.badssl.com/', 'sha256/a')).toBe(true)
+    // Any page of the site, over the same certificate; the host's case does not matter.
+    expect(x.isAllowed('default', 'https://EXPIRED.badssl.com/deep/path?q', 'sha256/a')).toBe(true)
+    // Another certificate of the site asks again (the site changed it), as in Chrome.
+    expect(x.isAllowed('default', 'https://expired.badssl.com/', 'sha256/b')).toBe(false)
+    // Another port is another site; another container another session.
+    expect(x.isAllowed('default', 'https://expired.badssl.com:8443/', 'sha256/a')).toBe(false)
+    expect(x.isAllowed('private', 'https://expired.badssl.com/', 'sha256/a')).toBe(false)
+    expect(x.size).toBe(1)
+  })
+
+  it('refuses to remember what it cannot key: plain http, or a certificate without a fingerprint', () => {
+    const x = new CertificateExceptions()
+    expect(x.allow('default', 'http://plain.example/', -201, server('sha256/a'))).toBe(false)
+    expect(x.allow('default', 'https://expired.badssl.com/', -201, server(''))).toBe(false)
+    expect(x.isAllowed('default', 'https://expired.badssl.com/', '')).toBe(false)
+    expect(x.size).toBe(0)
+  })
+
+  it('names the exception a page of the site loads under, the latest when there are several', () => {
+    const x = new CertificateExceptions()
+    expect(x.exceptionFor('default', 'https://expired.badssl.com/')).toBeNull()
+    x.allow('default', 'https://expired.badssl.com/', -201, server('sha256/a'))
+    expect(x.exceptionFor('default', 'https://expired.badssl.com/about')).toEqual({
+      code: -201,
+      certificate: server('sha256/a')
+    })
+    x.allow('default', 'https://expired.badssl.com/', -202, server('sha256/b', 'renewed'))
+    expect(x.exceptionFor('default', 'https://expired.badssl.com/')?.certificate.subjectName).toBe(
+      'renewed'
+    )
+    // Allowing the first again makes it the latest.
+    x.allow('default', 'https://expired.badssl.com/', -201, server('sha256/a'))
+    expect(x.exceptionFor('default', 'https://expired.badssl.com/')?.code).toBe(-201)
+    expect(x.size).toBe(2)
+    expect(x.exceptionFor('private', 'https://expired.badssl.com/')).toBeNull()
+    expect(x.exceptionFor('default', 'https://other.badssl.com/')).toBeNull()
+    expect(x.exceptionFor('default', 'http://expired.badssl.com/')).toBeNull()
+  })
+
+  it("forgets a container's exceptions and no other's (a private session's end, cleared site data)", () => {
+    const x = new CertificateExceptions()
+    x.allow('default', 'https://expired.badssl.com/', -201, server('sha256/a'))
+    x.allow('private', 'https://expired.badssl.com/', -201, server('sha256/a'))
+    x.allow(
+      'private',
+      'https://self-signed.badssl.com/',
+      -202,
+      server('sha256/c', 'self-signed.badssl.com')
+    )
+    x.forgetContainer('private')
+    expect(x.isAllowed('private', 'https://expired.badssl.com/', 'sha256/a')).toBe(false)
+    expect(x.isAllowed('private', 'https://self-signed.badssl.com/', 'sha256/c')).toBe(false)
+    expect(x.isAllowed('default', 'https://expired.badssl.com/', 'sha256/a')).toBe(true)
+    expect(x.size).toBe(1)
+    // A container named like another's prefix is not swept up with it.
+    x.allow('work', 'https://a.example/', -207, server('sha256/w', 'a.example'))
+    x.allow('work2', 'https://a.example/', -207, server('sha256/w', 'a.example'))
+    x.forgetContainer('work')
+    expect(x.isAllowed('work2', 'https://a.example/', 'sha256/w')).toBe(true)
+  })
+
+  it('is the security service’s, apart from the sign-ins forgetSession clears', () => {
+    const { s } = service()
+    expect(
+      s.certificateExceptions.allow(
+        'default',
+        'https://expired.badssl.com/',
+        -201,
+        server('sha256/a')
+      )
+    ).toBe(true)
+    s.forgetSession()
+    expect(
+      s.certificateExceptions.isAllowed('default', 'https://expired.badssl.com/', 'sha256/a')
+    ).toBe(true)
   })
 })

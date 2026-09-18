@@ -744,6 +744,8 @@ export class BrowserState {
           loading: false,
           audible: false,
           errorCode: null,
+          // A certificate proceeded past is a decision of the session, not of the tab.
+          certificateError: null,
           blockedCount: 0,
           // Restored by us, not sent by an app that is long gone (Chrome: FROM_RESTORE).
           fromIntent: false,

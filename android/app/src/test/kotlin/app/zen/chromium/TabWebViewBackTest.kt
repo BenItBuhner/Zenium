@@ -1,11 +1,14 @@
 package app.zen.chromium
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
  * Where back lands from the core's error page: over WebView's own entry for the load that
- * failed, when it sits right behind (`TabWebView.backIndexOf`, the pure half of `goBack`).
+ * failed, when it sits right behind (`TabWebView.backIndexOf`, the pure half of `goBack`); and
+ * when a load from the page runs from that entry instead (`retriesFailedEntryOf`, `loadUrl`'s).
  */
 class TabWebViewBackTest {
     private val entries = listOf("https://start.example/", "https://old.example/news", "data:text/html;charset=utf-8,<html>")
@@ -35,5 +38,28 @@ class TabWebViewBackTest {
         // [failed, core's page]: the failed load is the only way back; the reload asks again.
         assertEquals(0, TabWebView.backIndexOf(1, { listOf("https://old.example/news", "data:x")[it] }, true, "https://old.example/news"))
         assertEquals(-1, back(0, onErrorPage = true, skipped = "https://old.example/news"))
+    }
+
+    // --- Proceed past the certificate interstitial: the failed address asked for again ----------
+
+    private val refused = "https://expired.badssl.com/"
+
+    @Test
+    fun `from the core's error page, a load of the failed address runs from WebView's entry for it`() {
+        assertTrue(TabWebView.retriesFailedEntryOf(onErrorPage = true, target = refused, behindUrl = refused, skipped = refused))
+    }
+
+    @Test
+    fun `any other load from the error page is a load like any other`() {
+        // Another address; the failed entry not right behind; WebView made no entry for the failure.
+        assertFalse(TabWebView.retriesFailedEntryOf(onErrorPage = true, target = "https://other.example/", behindUrl = refused, skipped = refused))
+        assertFalse(TabWebView.retriesFailedEntryOf(onErrorPage = true, target = refused, behindUrl = "https://start.example/", skipped = refused))
+        assertFalse(TabWebView.retriesFailedEntryOf(onErrorPage = true, target = refused, behindUrl = null, skipped = refused))
+        assertFalse(TabWebView.retriesFailedEntryOf(onErrorPage = true, target = refused, behindUrl = refused, skipped = null))
+    }
+
+    @Test
+    fun `off the error page nothing is retried through history`() {
+        assertFalse(TabWebView.retriesFailedEntryOf(onErrorPage = false, target = refused, behindUrl = refused, skipped = refused))
     }
 }

@@ -4,6 +4,7 @@ import { Lock, LockOpen } from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import {
+  certificateErrorDetail,
   cookieBytes,
   describeSite,
   formatBytes,
@@ -476,6 +477,7 @@ function ConnectionCard({ info, url }: { info: SiteInfo | null; url: string }): 
   const state = info?.security.state ?? site.state
   const cert = info?.security.certificate ?? null
   const mixed = info?.security.mixedContent === true
+  const certificateError = info?.security.certificateError ?? null
   const secure = state === 'secure' && !mixed
   const headline =
     state === 'secure'
@@ -494,13 +496,15 @@ function ConnectionCard({ info, url }: { info: SiteInfo | null; url: string }): 
       ? mixed
         ? 'The page is encrypted, but some of what it loaded came over a plain connection.'
         : 'Everything you send to this site is encrypted on the way.'
-      : state === 'insecure'
-        ? 'What you send to this site can be read by anyone along the way.'
-        : state === 'local'
-          ? 'Served from this device; nothing crosses the network.'
-          : state === 'internal'
-            ? 'Built into the browser; no site is involved.'
-            : ''
+      : certificateError
+        ? certificateErrorDetail(certificateError)
+        : state === 'insecure'
+          ? 'What you send to this site can be read by anyone along the way.'
+          : state === 'local'
+            ? 'Served from this device; nothing crosses the network.'
+            : state === 'internal'
+              ? 'Built into the browser; no site is involved.'
+              : ''
   return (
     <div className="zen-sheet-card flex flex-col gap-2 p-3">
       <div className="flex items-start gap-3">

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SiteCookie } from '../../shared/siteInfo'
+import type { CertificateError } from '../../shared/types'
 import { EMPTY_PROBE, composeSiteInfo, parseProbe, type ComposeInput } from '../siteInfo'
 
 const cookie = (name: string, domain = '.google.com'): SiteCookie => ({
@@ -96,6 +97,44 @@ describe('composeSiteInfo', () => {
     expect(info.cookies.items).toEqual([])
     expect(info.storage.usageBytes).toBe(null)
     expect(info.storage.localStorageItems).toBe(null)
+  })
+
+  it('reports an https connection over a refused certificate as not secure, with the reason and the certificate', () => {
+    const certificateError: CertificateError = {
+      code: -201,
+      url: 'https://www.google.com/',
+      certificate: {
+        subjectName: '*.google.com',
+        issuerName: 'Someone Else',
+        validStart: 1,
+        validExpiry: 2,
+        fingerprint: 'sha256/x'
+      },
+      bypassed: false
+    }
+    // The interstitial is showing: the engine's certificate reading would be of the error page.
+    const warned = composeSiteInfo({ ...base, certificate: null, certificateError })
+    expect(warned.security.state).toBe('insecure')
+    expect(warned.security.certificateError).toEqual(certificateError)
+    expect(warned.security.certificate).toMatchObject({
+      subject: '*.google.com',
+      issuer: 'Someone Else'
+    })
+    // Mixed content is beside the point when the connection itself is not trusted.
+    expect(warned.security.mixedContent).toBe(null)
+    // Proceeded past: the page loaded over the broken certificate, still not secure.
+    const bypassed = composeSiteInfo({
+      ...base,
+      certificateError: { ...certificateError, bypassed: true }
+    })
+    expect(bypassed.security.state).toBe('insecure')
+    expect(bypassed.security.certificateError?.bypassed).toBe(true)
+    expect(bypassed.security.certificate?.issuer).toBe('Someone Else')
+    // Without one, nothing changes; an http page cannot carry a certificate error.
+    expect(composeSiteInfo(base).security.certificateError).toBeUndefined()
+    const plain = composeSiteInfo({ ...base, url: 'http://example.com/', certificateError })
+    expect(plain.security.state).toBe('insecure')
+    expect(plain.security.certificateError).toBeUndefined()
   })
 })
 

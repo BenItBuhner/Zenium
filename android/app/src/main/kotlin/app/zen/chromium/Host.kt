@@ -329,15 +329,24 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "download.chooseDirectory" -> downloads.chooseDirectory(reply)
             "download.open" -> { downloads.open(args.str("savePath"), args.str("mimeType")); reply(null) }
             "download.showAll" -> { downloads.showAll(); reply(null) }
-            "profile.clear" -> Profiles.clear(activity, args.str("containerId")) { reply(null) }
+            "profile.clear" -> {
+                security.forgetCertificates(args.str("containerId"))
+                Profiles.clear(activity, args.str("containerId")) { reply(null) }
+            }
             // Clear browsing data: the engine's kinds (cookies, storage, cache) per container, and the
             // preview's counts. A live tab of a container clears its cache; otherwise a throwaway view.
-            "profile.clearBrowsingData" -> BrowsingData.clear(
-                activity,
-                BrowsingData.strings(args.arr("containerIds")),
-                BrowsingData.strings(args.arr("kinds")).toSet(),
-                { containerId -> tabs.all().firstOrNull { it.containerId == containerId } }
-            ) { reply(null) }
+            "profile.clearBrowsingData" -> {
+                val containerIds = BrowsingData.strings(args.arr("containerIds"))
+                val kinds = BrowsingData.strings(args.arr("kinds")).toSet()
+                // Certificate decisions go with the cookies, as the core's do.
+                if ("cookies" in kinds) containerIds.forEach(security::forgetCertificates)
+                BrowsingData.clear(
+                    activity,
+                    containerIds,
+                    kinds,
+                    { containerId -> tabs.all().firstOrNull { it.containerId == containerId } }
+                ) { reply(null) }
+            }
             "profile.browsingDataCounts" -> BrowsingData.counts(BrowsingData.strings(args.arr("containerIds"))) { reply(it) }
             "permission.respond" -> { permissions.respond(args.str("requestId"), args.bool("allow")); reply(null) }
             "auth.respond" -> {
@@ -345,6 +354,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "security.forgetSession" -> { security.forgetSession(); reply(null) }
+            "security.allowCertificate" -> {
+                security.allowCertificate(args.str("containerId"), args.str("url"), args.str("fingerprint"))
+                reply(null)
+            }
 
             // --- AI agents (MCP server) ------------------------------------------------------------
             "agent.start" -> reply(agentServer.start(args.num("port", 41735.0).toInt(), args.bool("lan")))

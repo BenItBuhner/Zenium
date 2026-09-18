@@ -53,6 +53,7 @@ import { ModService } from './mods'
 import { SiteInfoService } from './siteInfo'
 import { TranslateService } from './translate/service'
 import { PageControls } from './pageControls'
+import { FindMemory } from './find'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
@@ -189,6 +190,8 @@ export class Browser {
   readonly translate: TranslateService
   /** Desktop site, dark theme for sites and page zoom, remembered per site (Chrome's page controls). */
   readonly pageControls: PageControls
+  /** The last find-in-page query per tab and profile-wide (what the bar reopens with). */
+  readonly find = new FindMemory()
   readonly windows = new Map<string, ZenWindow>()
   /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
@@ -599,6 +602,8 @@ export class Browser {
     if (this.allWindows().some((w) => w.isPrivate)) return
     if (this.tabs.privateTabs().length > 0) return
     this.downloads.endPrivateSession()
+    // Certificates proceeded past in private windows are forgotten with the session, as in Chrome.
+    this.security.certificateExceptions.forgetContainer(PRIVATE_CONTAINER_ID)
     void this.platform.sessions.clearPrivate()
   }
 
@@ -1493,8 +1498,12 @@ export class Browser {
       return
     }
     if (message.type === 'interstitial') {
-      if (typeof message.action === 'string' && typeof message.url === 'string')
-        this.protection.handleInterstitial(tabId, message.action, message.url)
+      if (typeof message.action === 'string' && typeof message.url === 'string') {
+        // The certificate interstitial's tab answers first; the other warning pages are the
+        // protection service's.
+        if (!this.tabs.handleCertificateInterstitial(tabId, message.action, message.url))
+          this.protection.handleInterstitial(tabId, message.action, message.url)
+      }
       return
     }
     if (message.type === 'media') {
@@ -1883,6 +1892,7 @@ export class Browser {
           state.commitVolatile()
           return
         }
+        this.find.remember(tabId, text)
         view.findInPage(text, forward, newSession)
       },
       'find.stop': ({ tabId, keepSelection }, win) => {
@@ -1911,6 +1921,7 @@ export class Browser {
         for (const tab of Object.values(state.model.tabs))
           if (tab.containerId === id) tab.containerId = DEFAULT_CONTAINER_ID
         void platform.sessions.clearContainerData(id)
+        this.security.certificateExceptions.forgetContainer(id)
         state.commit()
       },
       'container.reorder': ({ id, index }) => {
@@ -1923,6 +1934,7 @@ export class Browser {
         win.host.isMaximized() ? win.host.unmaximize() : win.host.maximize(),
       'window.close': (_a, win) => void this.requestWindowClose(win),
       'window.toggleFullscreen': (_a, win) => this.toggleFullscreen(win),
+      'window.fullscreenInset': ({ bottom }, win) => win.setFullscreenInset(bottom),
       'window.formFactor': ({ formFactor }, win) => {
         win.formFactor = formFactor
       },

@@ -9,11 +9,11 @@ import { activeTab } from '@renderer/lib/selectors'
 import {
   captureActiveTab,
   clearTabSelection,
+  closeFindBar,
   closeOverlay,
   closeUrlbar,
   invalidateSnapshot,
   lastPointer,
-  returnFocusToPage,
   uiStore,
   useBrowser
 } from '@renderer/lib/ui'
@@ -24,6 +24,7 @@ import { useTheme } from '@renderer/hooks/useTheme'
 import { BookmarksBar } from './components/bookmarks/BookmarksBar'
 import { captionBandInMain } from '@renderer/lib/layout'
 import { ContentArea } from './components/content/ContentArea'
+import { FindBar } from './components/content/FindBar'
 import { DragLayer } from './components/DragLayer'
 import { ModStyles } from './components/ModStyles'
 import { Onboarding } from './components/overlays/Onboarding'
@@ -132,8 +133,17 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   }, [popupChrome, sidebarHidden, reveal, unreveal])
 
   if (htmlFullscreen) {
-    // The fullscreen view covers everything; keep the tree alive but paint nothing.
-    return <div className="h-full w-full bg-black" />
+    // The fullscreen view covers everything; keep the tree alive but paint nothing. Only the
+    // find bar shares the window with it, docked at the bottom on a strip the view leaves free.
+    const findTabId = ui.findOpen ? ui.findTabId : null
+    return (
+      <div className="flex h-full w-full flex-col bg-black">
+        <div className="flex-1" />
+        {findTabId && findTabId === state.window.htmlFullscreenTabId && state.tabs[findTabId] && (
+          <FindBar state={state} tabId={findTabId} ui={ui} docked="fullscreen" />
+        )}
+      </div>
+    )
   }
 
   return (
@@ -305,11 +315,7 @@ function useGlobalKeys(state: UIState): void {
         clearTabSelection()
         return
       }
-      if (ui.findOpen && ui.findTabId) {
-        run('find.stop', { tabId: ui.findTabId, keepSelection: true })
-        uiStore.set({ findOpen: false, findTabId: null })
-        returnFocusToPage()
-      }
+      if (ui.findOpen && ui.findTabId) closeFindBar()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

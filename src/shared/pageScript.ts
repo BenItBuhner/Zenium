@@ -269,10 +269,14 @@ function cssEscape(s: string): string {
  * The interstitials (`zen://error?kind=…`) post their button presses on the window; only a
  * document of Zenium's own scheme may relay them, so a web page cannot except itself from Safe
  * Browsing or HTTPS-only mode by posting the same message. The core still checks the URL against
- * the block it is holding for the tab.
+ * the block it is holding for the tab. The certificate interstitial is also written into the
+ * engine's own error document (`chrome-error:`, what Chromium commits for a failed load; no web
+ * content is ever such a document), so that one relays too.
  */
+export const INTERSTITIAL_DOCUMENT_PROTOCOLS: readonly string[] = ['zen:', 'chrome-error:']
+
 function installInterstitialRelay(transport: PageScriptTransport): void {
-  if (location.protocol !== 'zen:') return
+  if (!INTERSTITIAL_DOCUMENT_PROTOCOLS.includes(location.protocol)) return
   const actions = new Set<string>(INTERSTITIAL_ACTIONS)
   window.addEventListener('message', (e: MessageEvent) => {
     if (e.source !== window) return

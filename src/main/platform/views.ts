@@ -16,6 +16,7 @@ import {
 import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import type {
+  CertificateDetails,
   NavigationSnapshot,
   NavigationSnapshotEntry,
   PageDialogResponse,
@@ -23,7 +24,9 @@ import type {
   Tab
 } from '../../shared/types'
 import type { SafeBrowsingHit } from '../../shared/privacy'
-import type { SiteCertificate } from '../../shared/siteInfo'
+import { isCertificateError, type SiteCertificate } from '../../shared/siteInfo'
+import { inPlaceErrorPageScript } from '../../shared/zenPages'
+import { certificateSiteOf } from '../../core/security'
 import {
   DISMISSED_ANSWER,
   LEAVE_SITE_CHANNEL,
@@ -175,6 +178,11 @@ export class ElectronTabView implements TabView {
   private visible = false
   private navigationHint: ViewNavigationHint | null = null
   /**
+   * The main-frame certificate the current navigation was refused over (`certificate-error`),
+   * handed to the core with the `did-fail-load` that follows so the interstitial can show it.
+   */
+  private refusedCertificate: { url: string; certificate: CertificateDetails } | null = null
+  /**
    * A `window.open` / `target=_blank` the core may turn into a tab (`onCreatedNavigationTarget`);
    * returns the function that withdraws the announcement when it does not.
    */
@@ -223,7 +231,16 @@ export class ElectronTabView implements TabView {
     wc.on('page-favicon-updated', (_e, favicons) => ev.onFaviconUpdated(favicons))
     wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
       if (!isMainFrame || wc.isDestroyed()) return
-      ev.onFailLoad(code, description, url)
+      const refused = this.refusedCertificate
+      this.refusedCertificate = null
+      // The certificate the failure is about: refused for this site in this navigation.
+      const certificate =
+        refused &&
+        isCertificateError(code) &&
+        certificateSiteOf(refused.url) === certificateSiteOf(url)
+          ? refused.certificate
+          : null
+      ev.onFailLoad(code, description, url, isCertificateError(code) ? { certificate } : undefined)
     })
     wc.on('render-process-gone', (_e, details) => ev.onCrashed(details.reason))
     wc.on('audio-state-changed', (e) => ev.onAudioStateChanged(e.audible))
@@ -268,6 +285,8 @@ export class ElectronTabView implements TabView {
       this.leaveApproved = false
       this.hostNavigation = null
       this.pageIntent = null
+      // A refused certificate belongs to the navigation it happened in (which asks after this).
+      this.refusedCertificate = null
     })
     wc.on('dom-ready', () => ev.onDomReady())
     // By the time this fires `this.view.webContents` no longer returns the object (Electron drops
@@ -439,6 +458,29 @@ export class ElectronTabView implements TabView {
     this.navigationHint = {}
     this.recordHostNavigation(false, () => this.loadURL(url))
     void this.wc.loadURL(url).catch(() => undefined)
+  }
+
+  /**
+   * `certificate-error` refused the main frame's certificate for `url`: kept for the failure
+   * Chromium reports next, so the core can render the interstitial with it.
+   */
+  expectCertificateFailure(url: string, certificate: CertificateDetails): void {
+    this.refusedCertificate = { url, certificate }
+  }
+
+  /**
+   * The certificate interstitial, written into the empty document Chromium committed for the
+   * failed load rather than loaded as a document of its own: the entry stays the failed
+   * address's, so the tab shows that address, back leads to the page before and a load of the
+   * address asks for it again. The error document is complete by the time `did-fail-load`
+   * reports, so the script runs at once; the page preload is in that document and relays the
+   * interstitial's controls like in any other.
+   */
+  showErrorPage(url: string): void {
+    if (this.wc.isDestroyed()) return
+    void this.wc
+      .executeJavaScript(inPlaceErrorPageScript(new URL(url)), true)
+      .catch(() => undefined)
   }
 
   /** The hint for the next main-frame commit, consumed once (`webNavigation.onCommitted`). */

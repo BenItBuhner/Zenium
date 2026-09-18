@@ -245,6 +245,12 @@ export interface Tab {
   lastActiveAt: number
   /** Set when a navigation failed – rendered by the zen://error page. */
   errorCode: number | null
+  /**
+   * The page's certificate failed verification: the tab shows the certificate interstitial for
+   * `certificateError.url`, or (`bypassed`) the page itself after the user proceeded past it.
+   * Absent or null on every other page.
+   */
+  certificateError?: CertificateError | null
   /** Whether the current URL is bookmarked (denormalised for the UI). */
   bookmarked: boolean
   /** The page looks like an article Reader View can render (Firefox's "reader mode" icon). */
@@ -1210,7 +1216,7 @@ export type ShortcutAction =
   | 'find.open'
   | 'find.next'
   | 'find.prev'
-  /** Chrome's "Use Selection for Find" (Cmd+E on macOS). */
+  /** macOS "Use Selection for Find" (Cmd+E): the page's selection becomes the find query. */
   | 'find.useSelection'
   | 'page.savePage'
   | 'page.openFile'
@@ -1975,6 +1981,31 @@ export type SecurityPromptResponse =
   | { kind: 'http-auth'; username: string; password: string; remember: boolean }
   | { kind: 'client-certificate'; index: number }
 
+/** What the interstitial and site information show of a server certificate Zenium refused. */
+export interface CertificateDetails {
+  subjectName: string
+  issuerName: string
+  /** Unix milliseconds; 0 when the host does not know. */
+  validStart: number
+  validExpiry: number
+  /** `sha256/…` as Chromium prints it; the session's exceptions are keyed by it. */
+  fingerprint: string
+}
+
+/**
+ * A main-frame https load whose certificate failed verification (`ERR_CERT_*`). Until the user
+ * proceeds the tab shows the certificate interstitial for `url`; once `bypassed`, the page is
+ * shown over the broken certificate and the connection reports as not secure, as in Chrome.
+ */
+export interface CertificateError {
+  /** The Chromium `net::` error code (-200 … -299). */
+  code: number
+  url: string
+  /** Null when the host could not describe the certificate. */
+  certificate: CertificateDetails | null
+  bypassed: boolean
+}
+
 // ---------------------------------------------------------------------------
 // Page dialogs: alert / confirm / prompt and "Leave site?"
 // ---------------------------------------------------------------------------
@@ -2678,6 +2709,11 @@ export interface Commands {
   'window.toggleMaximize': { args: void; result: void }
   'window.close': { args: void; result: void }
   'window.toggleFullscreen': { args: void; result: void }
+  /**
+   * Chrome docked under a page in HTML fullscreen (the find bar): the fullscreen view keeps
+   * `bottom` pixels of the window free for it; 0 gives the page the whole window back.
+   */
+  'window.fullscreenInset': { args: { bottom: number }; result: void }
   /** Renderer → main: the layout the chrome settled on (sent on start and whenever it changes). */
   'window.formFactor': { args: { formFactor: FormFactor }; result: void }
   /** Zen: a new synced window starts at the current space showing the same tabs. */
@@ -3010,8 +3046,15 @@ export interface Events {
   'urlbar.toggle': { mode: UrlbarOpenMode; text?: string }
   'urlbar.close': void
   'overlay.open': { kind: OverlayKind; folderId?: string; section?: string }
-  /** Open the find bar; `text` replaces what it holds and is searched for at once ("use selection for find"). */
-  'find.open': { tabId: string; again?: 'next' | 'prev'; text?: string }
+  /**
+   * Show the find bar for a tab with `text` in its field (the tab's last query, else the
+   * profile's, else the page's selection when it is short; empty for a first search), the text
+   * selected so typing replaces it. `again` runs the search at once and steps to the next or
+   * previous match (F3 / Ctrl+G with the bar closed reopen it with the last query, as Chrome).
+   */
+  'find.open': { tabId: string; text: string; again?: 'next' | 'prev' }
+  /** "Use Selection for Find" took `text` as the query; a bar open for the tab shows and searches it. */
+  'find.selection': { tabId: string; text: string }
   /**
    * A shortcut asked for the application menu: the renderer focuses the menu button and opens
    * the menu from it (`app.menu` with `keyboard`), so Escape leaves the keyboard on the button.
