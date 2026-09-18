@@ -200,10 +200,12 @@ export class Actions {
 
       // --- history & bookmarks ---
       case 'bookmark.add':
-        if (target) this.browser.toggleBookmark(target.id, win)
+        if (target) this.browser.starTab(target.id, win)
         return
       case 'bookmark.allTabs':
         return this.browser.bookmarkTabs(win)
+      case 'bookmark.toggleBar':
+        return this.browser.toggleBookmarksBar(win)
       case 'bookmark.sidebar':
       case 'bookmark.library':
       case 'bookmarks.open':

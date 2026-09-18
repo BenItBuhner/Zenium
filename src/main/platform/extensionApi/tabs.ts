@@ -1,8 +1,16 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { NativeImage, WebContents } from 'electron'
 import type { Tab, TabSection } from '../../../shared/types'
 import { BLANK_URL, isNavigableUrl } from '../../../shared/url'
 import type { ZenWindow } from '../../../core/window'
+import {
+  CAPTURE_QUOTA_ERROR,
+  CaptureQuota,
+  captureDenial,
+  coversAllUrls,
+  normalizeCaptureOptions
+} from '../../../core/extensions/api/capture'
 import {
   type ChromeTab,
   type TabChangeInfo,
@@ -19,6 +27,7 @@ import {
   extensionUrl,
   isInteger,
   isRecord,
+  validated,
   type ApiContext,
   type ApiHost,
   type LoadedExtension,
@@ -36,6 +45,8 @@ const FORBIDDEN_URL = /^\s*(javascript|chrome|devtools|about):/i
 export class TabsApi {
   /** `insertCSS` keys per WebContents, so `removeCSS` can find them by their CSS again. */
   private readonly insertedCss = new Map<string, string>()
+  /** `captureVisibleTab` calls per extension within the last second. */
+  private readonly captureQuota = new CaptureQuota()
 
   constructor(private readonly host: ApiHost) {}
 
@@ -368,21 +379,80 @@ export class TabsApi {
     }
   }
 
+  /**
+   * The page shown in a window: the active tab of a Zenium window, the single page of an
+   * extension popup window. `WINDOW_ID_CURRENT` from a page inside a popup window is that window.
+   */
+  private visiblePage(
+    ctx: ApiContext,
+    windowId: unknown
+  ): { wc: WebContents; url: string; tabId: number } | null {
+    if (isInteger(windowId) && windowId >= 0) {
+      const popup = this.model.popups.get(windowId)
+      if (popup) {
+        if (popup.bw.isDestroyed()) throw new ApiError(`No window with id: ${windowId}.`)
+        const wc = popup.bw.webContents
+        return { wc, url: wc.getURL(), tabId: wc.id }
+      }
+    } else if (ctx.sender.kind === 'frame') {
+      const popup = this.model.popupForTabId(ctx.sender.webContents.id)
+      if (popup) {
+        const wc = popup.bw.webContents
+        return { wc, url: wc.getURL(), tabId: wc.id }
+      }
+    }
+    const win = this.resolveWindow(ctx, windowId)
+    const active = this.host.browser.tabs.activeTabFor(win)
+    if (!active) return null
+    const wc = this.model.webContentsOf(active)
+    if (!wc) return null
+    return { wc, url: active.url, tabId: this.model.chromeTabId(active) }
+  }
+
+  /** Chrome's "Allow access to file URLs" toggle of an extension, kept in the registry. */
+  private allowsFileAccess(ctx: ApiContext): boolean {
+    const info = this.host.browser.extensions
+      .list()
+      .find((entry) => entry.id === ctx.extensionId || entry.path === ctx.extension.path)
+    return info?.allowFileAccess ?? false
+  }
+
+  /**
+   * Chrome's checks in order: the options, the quota, some host access at all, then what the
+   * page is (`captureDenial`); a hidden or unloaded page is "view is invisible".
+   */
   private async captureVisibleTab(
     ctx: ApiContext,
     windowId: unknown,
     options: unknown
   ): Promise<string> {
-    const win = this.resolveWindow(ctx, windowId)
-    const active = this.host.browser.tabs.activeTabFor(win)
-    const wc = active ? this.model.webContentsOf(active) : undefined
-    if (!wc) throw new ApiError('Failed to capture tab: the active tab has no page.')
-    const o = isRecord(options) ? options : {}
-    const image = await wc.capturePage()
-    if (image.isEmpty()) throw new ApiError('Failed to capture tab: view is invisible.')
+    const o = validated(() => normalizeCaptureOptions(options))
+    if (!this.captureQuota.take(ctx.extensionId, Date.now())) {
+      throw new ApiError(CAPTURE_QUOTA_ERROR)
+    }
+    const page = this.visiblePage(ctx, windowId)
+    if (!page) throw new ApiError('Failed to capture tab: view is invisible')
+    const denial = captureDenial(page.url, {
+      allUrls: coversAllUrls(this.host.grants(ctx.extensionId).origins),
+      activeTab: this.host.hostAccess(ctx.extensionId, page.url),
+      fileAccess: this.allowsFileAccess(ctx),
+      extensionId: ctx.extensionId
+    })
+    if (denial) throw new ApiError(denial)
+    if (page.wc.isDestroyed() || page.wc.isCrashed()) {
+      throw new ApiError('Failed to capture tab: view is invisible')
+    }
+    let image: NativeImage
+    try {
+      image = await page.wc.capturePage()
+    } catch {
+      throw new ApiError('Failed to capture tab: unknown error')
+    }
+    if (image.isEmpty()) throw new ApiError('Failed to capture tab: view is invisible')
     if (o.format === 'png') return image.toDataURL()
-    const quality = isInteger(o.quality) ? Math.max(0, Math.min(100, o.quality)) : 90
-    return `data:image/jpeg;base64,${image.toJPEG(quality).toString('base64')}`
+    const jpeg = image.toJPEG(o.quality)
+    if (jpeg.length === 0) throw new ApiError('Failed to capture tab: encoding failed')
+    return `data:image/jpeg;base64,${jpeg.toString('base64')}`
   }
 
   private cssOf(ctx: ApiContext, details: unknown): string {

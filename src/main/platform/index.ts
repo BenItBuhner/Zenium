@@ -1,5 +1,6 @@
-import { app, clipboard, dialog, ipcMain, net, shell, type Session } from 'electron'
+import { app, clipboard, dialog, ipcMain, nativeTheme, net, shell, type Session } from 'electron'
 import { readFileSync, writeFileSync } from 'node:fs'
+import { release } from 'node:os'
 import { basename, join } from 'node:path'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { Browser } from '../../core/browser'
@@ -14,7 +15,8 @@ import type {
   PickedTextFile,
   Platform,
   PlatformInfo,
-  ShellHost
+  ShellHost,
+  ThemeHost
 } from '../../core/platform'
 import type { ZenWindow } from '../../core/window'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
@@ -47,9 +49,12 @@ import {
   permissionRequestDetails
 } from './security'
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
+import { supportsWindowMaterial } from './appShell'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
+  windowControlsOverlay: process.platform === 'win32',
+  windowMaterial: supportsWindowMaterial(process.platform, release()),
   nativeMenus: true,
   windowDrag: true,
   devtools: true,
@@ -92,6 +97,7 @@ export class ElectronPlatform implements Platform {
   readonly shell: ShellHost
   readonly net: NetHost
   readonly app: AppHost
+  readonly theme: ThemeHost
   readonly siteData: ElectronSiteData
   readonly passwords: PasswordsHost
   readonly blocking: ElectronBundledLists
@@ -226,6 +232,13 @@ export class ElectronPlatform implements Platform {
       isDefaultBrowser: async () => null,
       requestDefaultBrowser: async () => null
     }
+    this.theme = {
+      systemDark: () => nativeTheme.shouldUseDarkColors,
+      onChanged: (listener) => void nativeTheme.on('updated', listener),
+      setSource: (scheme) => {
+        nativeTheme.themeSource = scheme
+      }
+    }
   }
 
   /**
@@ -284,8 +297,12 @@ export class ElectronPlatform implements Platform {
       this.views,
       this.io,
       this.userDataDir,
-      // Extensions' declarativeNetRequest rule sets go straight into the request-blocking engine.
-      createDnrSink(browser.blocking.engine, extensionResources),
+      // Extensions' declarativeNetRequest rule sets go straight into the request-blocking
+      // engine, each scoped to the sessions its extension is loaded into (never the private
+      // window's unless the user allowed the extension there).
+      createDnrSink(browser.blocking.engine, extensionResources, {
+        partitionsOf: (id) => extensionApi.partitionsOf(id)
+      }),
       electronDownloadBridge(this.downloads)
     )
     extensionApi.install()
@@ -294,6 +311,10 @@ export class ElectronPlatform implements Platform {
     extensionService.onChange((event) => extensionApi.registryChanged(event))
     this.requestBlocking = new ElectronBlocking(browser, this.views, this.profileDir)
     this.requestBlocking.start()
+    // Extensions' chrome.webRequest listeners run over the same hook, after the rule engine;
+    // so do the request-side effects of chrome.privacy (pings, Referer, DNT).
+    extensionApi.webRequest.attach(this.requestBlocking)
+    extensionApi.privacy.attach(this.requestBlocking)
     // Decisions the engine took by an extension's rule feed getMatchedRules, the action badge
     // count and onRuleMatchedDebug.
     this.requestBlocking.onDecision((request, decision) =>

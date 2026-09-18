@@ -27,6 +27,8 @@ export interface IndexEntry {
   version?: string
   updatedAt?: number
   attribution?: RuleSetAttribution
+  /** Session partitions the set is scoped to (see `RuleSet.partitions`); absent: every one. */
+  partitions?: string[]
   rules?: Rule[]
   hasFilterText: boolean
   filterCount: number
@@ -86,6 +88,9 @@ export class RuleSetStore {
       if (typeof raw.version === 'string') entry.version = raw.version
       if (typeof raw.updatedAt === 'number') entry.updatedAt = raw.updatedAt
       if (raw.attribution) entry.attribution = raw.attribution
+      if (Array.isArray(raw.partitions)) {
+        entry.partitions = raw.partitions.filter((p): p is string => typeof p === 'string')
+      }
       if (Array.isArray(raw.rules)) entry.rules = raw.rules
       if (typeof raw.file === 'string') entry.file = raw.file
       if (entry.hasFilterText && (!entry.file || !this.exists(`${BLOCKING_DIR}/${entry.file}`))) {
@@ -170,6 +175,7 @@ export class RuleSetStore {
     if (set.version !== undefined) entry.version = set.version
     if (set.updatedAt !== undefined) entry.updatedAt = set.updatedAt
     if (set.attribution) entry.attribution = { ...set.attribution }
+    if (set.partitions) entry.partitions = [...set.partitions]
     if (set.rules && set.rules.length > 0) entry.rules = set.rules
     if (change.persisted) {
       // Content already on disk (startup, a bundled snapshot the host copied in, an enable /
@@ -218,6 +224,7 @@ export class RuleSetStore {
     if (entry.version !== undefined) set.version = entry.version
     if (entry.updatedAt !== undefined) set.updatedAt = entry.updatedAt
     if (entry.attribution) set.attribution = entry.attribution
+    if (entry.partitions) set.partitions = [...entry.partitions]
     return set
   }
 }

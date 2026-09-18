@@ -26,7 +26,12 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   [
     '.zen-sheet.zen-bar-editor {',
     '/* The editor draws a hairline when its rows scroll under the header'
-  ]
+  ],
+  // The zen://error page (shared/zenPages.ts cuts this block, the token block and the v2 button
+  // out of the stylesheet's text and writes them into the page, which cannot link main.css).
+  ['.zen-error-document {', '@layer base {'],
+  // The bookmark chrome: bar, panels, star bubble, dialogs, manager (components/bookmarks/*).
+  ['.zen-bm-bar {', '/*\n * Fading scroll edges']
 ]
 
 /** Custom-property names declared inside the first `selector {` block found after `from`. */

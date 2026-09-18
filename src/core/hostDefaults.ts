@@ -119,6 +119,7 @@ export class NoExtensions implements ExtensionHost {
   newTabUrl(): string | null {
     return null
   }
+  setAllowPrivate(): void {}
   async reload(): Promise<void> {}
   async checkForUpdates(): Promise<void> {}
   async update(): Promise<void> {}

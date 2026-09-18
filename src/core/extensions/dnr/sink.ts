@@ -134,6 +134,11 @@ export interface EngineRuleSet {
   updatedAt?: number
   /** The extension and ruleset the set came from; see `dnrAttribution`. */
   attribution?: EngineRuleSetAttribution
+  /**
+   * Session partitions the set applies to (the engine's `RuleSet.partitions`). The translator
+   * leaves it out; the host's sink scopes each set to the sessions its extension is loaded into.
+   */
+  partitions?: string[]
 }
 
 /** The engine's `RULE_SET_PRIORITY.dnr`: the base of the band extension rule sets live in. */

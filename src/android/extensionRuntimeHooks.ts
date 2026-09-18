@@ -19,8 +19,8 @@ export interface ExtensionRuntimeHooks {
   /** Stop running an extension: it was disabled, removed, or is about to be replaced by an update. */
   detach(id: string): Promise<void>
   /**
-   * A record changed while the extension stays attached: `pinned`, `allowFileAccess` or the
-   * manifest-derived fields after a reload. The runtime re-reads what it configures from them.
+   * A record changed while the extension stays attached: `pinned`, `allowFileAccess`,
+   * `allowPrivate` or the manifest-derived fields after a reload. The runtime re-reads what it configures from them.
    */
   reconfigure(record: ExtensionRecord): Promise<void>
 }

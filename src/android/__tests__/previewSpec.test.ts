@@ -91,4 +91,28 @@ describe('parsePreviewSpec', () => {
     // The find bar and overlays come first.
     expect(parsePreviewSpec('find=x&pull=40')).toEqual({ kind: 'find', text: 'x' })
   })
+
+  it("fails the active tab's load with a Chromium net:: code, naming the URL that failed", () => {
+    expect(parsePreviewSpec('error=-105&url=http%3A%2F%2Fnonexistent.invalid%2F')).toEqual({
+      kind: 'error',
+      code: -105,
+      url: 'http://nonexistent.invalid/'
+    })
+    expect(parsePreviewSpec('error=-102&url=http://localhost:1/')).toEqual({
+      kind: 'error',
+      code: -102,
+      url: 'http://localhost:1/'
+    })
+    expect(parsePreviewSpec('error=-106')).toEqual({ kind: 'error', code: -106, url: null })
+    expect(parsePreviewSpec('error=-1&url=')).toEqual({ kind: 'error', code: -1, url: null })
+    expect(parsePreviewSpec('error=')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('error=dns')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('error=-1.5')).toEqual({ kind: 'idle' })
+    // A pull comes first.
+    expect(parsePreviewSpec('pull=40&error=-105')).toEqual({
+      kind: 'pull',
+      progress: 0.4,
+      released: false
+    })
+  })
 })

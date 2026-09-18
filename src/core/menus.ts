@@ -4,7 +4,12 @@ import type { MenuItemTemplate, MenuSource, PageContextParams } from './platform
 import { buildSearchUrl } from '../shared/search'
 import { copyConfirmation } from '../shared/clipboard'
 import { displayUrl, getDomain, isNavigableUrl } from '../shared/url'
-import { DEFAULT_CONTAINER_ID, type BookmarkNode, type Tab } from '../shared/types'
+import {
+  DEFAULT_CONTAINER_ID,
+  type BookmarkNode,
+  type BookmarksBarMode,
+  type Tab
+} from '../shared/types'
 import { siteKey } from '../shared/pageControls'
 import { spaceLabel } from '../shared/defaults'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
@@ -839,36 +844,68 @@ export class Menus {
   }
 
   // ---------------------------------------------------------------------------
-  // Bookmarks (the manager's item and background menus)
+  // Bookmarks (the manager's and the bar's item and background menus)
   // ---------------------------------------------------------------------------
 
   /**
-   * Chrome's bookmark manager menu. `ids` are the selected nodes (empty when the folder's empty
-   * space was clicked); `folderId` is the folder on screen – where pasted and new items go.
+   * Chrome's bookmark menus. `ids` are the selected nodes (empty when a folder's empty space was
+   * clicked); `folderId` is the folder on screen – where pasted and new items go. The bar's menu
+   * ("bar": chips, folder panels, the empty strip) adds the open-in-window targets, "Sort by
+   * name", the "Show bookmarks bar" choice and a way into the manager.
    */
   showBookmarkContextMenu(
     ids: string[],
     folderId: string,
     anchor: { x: number; y: number },
-    win: ZenWindow
+    win: ZenWindow,
+    surface: 'manager' | 'bar' = 'manager'
   ): void {
-    const { bookmarks } = this.browser
+    const { bookmarks, state } = this.browser
+    const windows = state.capabilities.windows
     const nodes = ids.map((id) => bookmarks.get(id)).filter((n): n is BookmarkNode => Boolean(n))
     const single = nodes.length === 1 ? nodes[0] : null
     const urls = bookmarkUrlCount(bookmarks.tree, ids)
     const editable = nodes.length > 0 && nodes.every((n) => !isBookmarkRoot(n.id))
+    const bar = surface === 'bar'
     const template: Template = []
     if (single?.type === 'url') {
       template.push({
         label: 'Open in New Tab',
         click: () => this.browser.openBookmark(single.id, true, null, win)
       })
+      if (windows) {
+        template.push(
+          {
+            label: 'Open in New Window',
+            click: () => this.browser.openBookmarksInWindow(ids, false, win)
+          },
+          {
+            label: 'Open in New Private Window',
+            enabled: !win.isPrivate,
+            click: () => this.browser.openBookmarksInWindow(ids, true, win)
+          }
+        )
+      }
     } else if (nodes.length) {
       template.push({
         label: `Open All (${urls})`,
         enabled: urls > 0,
         click: () => this.browser.openBookmarks(ids, win)
       })
+      if (windows) {
+        template.push(
+          {
+            label: `Open All (${urls}) in New Window`,
+            enabled: urls > 0,
+            click: () => this.browser.openBookmarksInWindow(ids, false, win)
+          },
+          {
+            label: `Open All (${urls}) in New Private Window`,
+            enabled: urls > 0 && !win.isPrivate,
+            click: () => this.browser.openBookmarksInWindow(ids, true, win)
+          }
+        )
+      }
     }
     if (nodes.length) {
       template.push(
@@ -885,16 +922,19 @@ export class Menus {
             )
         },
         { type: 'separator' },
-        { label: 'Cut', enabled: editable, click: () => bookmarks.cut(ids) },
-        { label: 'Copy', enabled: editable, click: () => bookmarks.copy(ids) },
-        // Touch users have no drag and drop; the nested chooser moves the selection anywhere.
-        { label: 'Move to', enabled: editable, submenu: this.moveToSubmenu(ids) }
+        { label: 'Cut', enabled: editable, click: () => this.browser.clipBookmarks(ids, 'cut') },
+        { label: 'Copy', enabled: editable, click: () => this.browser.clipBookmarks(ids, 'copy') }
       )
+      // Touch users have no drag and drop; the nested chooser moves the selection anywhere.
+      if (!bar)
+        template.push({ label: 'Move to', enabled: editable, submenu: this.moveToSubmenu(ids) })
     }
+    // Pasting next to a chip lands right after it; on empty space it appends.
+    const pasteIndex = bar && single && single.parentId === folderId ? single.index + 1 : undefined
     template.push({
       label: 'Paste',
       enabled: bookmarks.canPaste(),
-      click: () => void bookmarks.paste(folderId)
+      click: () => void bookmarks.paste(folderId, pasteIndex)
     })
     if (nodes.length) {
       template.push(
@@ -909,16 +949,32 @@ export class Menus {
     template.push(
       { type: 'separator' },
       {
-        label: 'Add New Bookmark…',
+        label: bar ? 'Add Page…' : 'Add New Bookmark…',
         click: () =>
           this.browser.emit('bookmark.edit', { id: null, parentId: folderId, type: 'url' }, win)
       },
       {
-        label: 'Add New Folder',
+        label: bar ? 'Add Folder…' : 'Add New Folder',
         click: () =>
           this.browser.emit('bookmark.edit', { id: null, parentId: folderId, type: 'folder' }, win)
       }
     )
+    if (bar) {
+      if (single?.type === 'folder') {
+        template.push(
+          { type: 'separator' },
+          { label: 'Sort by Name', click: () => this.browser.sortBookmarkFolder(single.id) }
+        )
+      }
+      template.push(
+        { type: 'separator' },
+        { label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) },
+        {
+          label: 'Bookmark Manager',
+          click: () => this.browser.emit('overlay.open', { kind: 'bookmarks', folderId }, win)
+        }
+      )
+    }
     this.popup(template, win, 'bookmark', anchor)
   }
 
@@ -938,6 +994,22 @@ export class Menus {
       'bookmark',
       anchor
     )
+  }
+
+  /** Always / Only on the new tab page / Never, as radio rows (Edge's "Show favorites bar"). */
+  private bookmarksBarSubmenu(win: ZenWindow): Template {
+    const current = this.browser.state.settings.bookmarksBar
+    const choices: Array<{ mode: BookmarksBarMode; label: string }> = [
+      { mode: 'always', label: 'Always' },
+      { mode: 'newtab', label: 'Only on New Tab Page' },
+      { mode: 'never', label: 'Never' }
+    ]
+    return choices.map(({ mode, label }) => ({
+      type: 'radio' as const,
+      label,
+      checked: current === mode,
+      click: () => this.browser.setBookmarksBarMode(mode, win)
+    }))
   }
 
   /** Every folder as a nested submenu ("Move Here" first), minus the selection's own subtrees. */
@@ -1140,6 +1212,7 @@ export class Menus {
               label: 'Show Bookmarks',
               click: () => this.browser.emit('overlay.open', { kind: 'bookmarks' }, win)
             },
+            ...desktop({ label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) }),
             { type: 'separator' },
             {
               label: 'Import Bookmarks…',

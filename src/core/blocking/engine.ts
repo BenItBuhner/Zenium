@@ -205,6 +205,26 @@ function frameContext(ctx: RequestContext): RequestContext | null {
   }
 }
 
+/**
+ * Whether a set scoped to `partitions` applies to a request from `partition`. An unscoped set
+ * applies everywhere; a scoped one only where the request's partition is known and listed.
+ */
+export function appliesToPartition(
+  partitions: readonly string[] | undefined,
+  partition: string | undefined
+): boolean {
+  if (!partitions) return true
+  return partition !== undefined && partitions.includes(partition)
+}
+
+function samePartitions(
+  a: readonly string[] | undefined,
+  b: readonly string[] | undefined
+): boolean {
+  if (a === undefined || b === undefined) return a === b
+  return a.length === b.length && a.every((value, index) => value === b[index])
+}
+
 function decisionFor(r: CompiledRule, f: Facts): Decision | null {
   const matched = { setId: r.setId, ruleId: r.rule.id }
   switch (r.rule.action.type) {
@@ -278,6 +298,7 @@ export class RuleEngine implements BlockingEngine {
     if (input.version !== undefined) summary.version = input.version
     if (input.updatedAt !== undefined) summary.updatedAt = input.updatedAt
     if (input.attribution) summary.attribution = { ...input.attribution }
+    if (input.partitions) summary.partitions = [...input.partitions]
     this.sets.set(input.id, { summary, rules, compiled })
     this.ordered = null
     this.notify({
@@ -313,6 +334,24 @@ export class RuleEngine implements BlockingEngine {
     const stored = this.sets.get(id)
     if (!stored || stored.summary.enabled === enabled) return
     stored.summary.enabled = enabled
+    this.notify({
+      kind: 'set',
+      id,
+      set: this.toRuleSet(stored),
+      summary: { ...stored.summary },
+      persisted: true
+    })
+  }
+
+  /**
+   * Re-scope a set to other partitions (`undefined` for every partition) without re-sending
+   * its content: an extension was loaded into, or unloaded from, a session.
+   */
+  setPartitions(id: string, partitions: readonly string[] | undefined): void {
+    const stored = this.sets.get(id)
+    if (!stored || samePartitions(stored.summary.partitions, partitions)) return
+    if (partitions) stored.summary.partitions = [...partitions]
+    else delete stored.summary.partitions
     this.notify({
       kind: 'set',
       id,
@@ -371,6 +410,7 @@ export class RuleEngine implements BlockingEngine {
 
     for (const stored of this.orderedSets()) {
       if (!stored.summary.enabled || stored.compiled.length === 0) continue
+      if (!appliesToPartition(stored.summary.partitions, ctx.partition)) continue
       // Lower bands cannot beat a definitive winner from a higher band.
       if (best && stored.summary.priority < Math.floor(best.effective / (RULE_PRIORITY_MAX + 1)))
         break
@@ -472,6 +512,7 @@ export class RuleEngine implements BlockingEngine {
     if (s.version !== undefined) out.version = s.version
     if (s.updatedAt !== undefined) out.updatedAt = s.updatedAt
     if (s.attribution) out.attribution = s.attribution
+    if (s.partitions) out.partitions = [...s.partitions]
     return out
   }
 

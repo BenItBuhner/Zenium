@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CAPTION_HEIGHT,
   THEME_PRESETS,
+  captionColors,
   colorToWheel,
   cssColorToHex,
   deriveColors,
@@ -15,6 +17,7 @@ import {
   rgbToHsl,
   scrimBase,
   themeCssVariables,
+  themeInk,
   toMonochrome,
   wheelToColor
 } from '../theme'
@@ -110,5 +113,29 @@ describe('resolveTheme', () => {
     expect(panelBase(resolveTheme(null, true))).toEqual([23, 23, 25])
     expect(scrimBase(resolveTheme(null, false))).toEqual([73, 72, 74])
     expect(scrimBase(resolveTheme(null, true))).toEqual([8, 8, 10])
+  })
+})
+
+describe('captionColors', () => {
+  it('rests the native buttons on the space colour at alpha 0 with the chrome ink as glyphs', () => {
+    const light = resolveTheme(makeTheme('#4080ff'), false)
+    const colors = captionColors(light)
+    expect(colors.color).toBe(`${rgbToHex(light.averageColor)}00`)
+    expect(colors.color).toMatch(/^#[0-9a-f]{8}$/)
+    expect(colors.symbolColor).toBe(rgbToHex(themeInk(light)))
+    expect(colors.symbolColor).toMatch(/^#[0-9a-f]{6}$/)
+  })
+
+  it('flips the glyph ink with the scheme so it stays legible on the gradient', () => {
+    const light = captionColors(resolveTheme(null, false))
+    const dark = captionColors(resolveTheme(null, true))
+    expect(isDarkColor(hexToRgb(light.symbolColor)!)).toBe(true)
+    expect(isDarkColor(hexToRgb(dark.symbolColor)!)).toBe(false)
+    expect(light.symbolColor).toBe(themeCssVariables(resolveTheme(null, false))['--zen-fg'])
+    expect(dark.symbolColor).toBe(themeCssVariables(resolveTheme(null, true))['--zen-fg'])
+  })
+
+  it('matches the chrome header row', () => {
+    expect(CAPTION_HEIGHT).toBe(38)
   })
 })

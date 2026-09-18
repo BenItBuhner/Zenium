@@ -308,6 +308,81 @@
   --zen-inset-left: 0px;
 }
 
+/*
+ * The zen://error page (design-language-v2-draft §1, §2, §4; the document is written by
+ * src/shared/zenPages.ts). It is a page inside the tab, not part of the chrome, so it cannot link
+ * this stylesheet: zenPages.ts cuts the v2 token block, the v2 button and this block out of the
+ * stylesheet's text at build time and writes them into the page, whose root carries the chrome's
+ * data-theme / data-pointer / data-form-factor from the media the tab sees, so the same selectors
+ * apply. Nothing in the chrome carries these classes. The page has no `@layer base` reset, hence
+ * the button's own.
+ */
+.zen-error-document {
+  /* The space's accent is unknown inside the tab: the v2 accent (the ring) derives from the text. */
+  --zen-accent: var(--v2-text);
+  /* The chrome's easing (§7), which the v2 button's press transition reads. */
+  --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  height: 100%;
+  color-scheme: light;
+}
+.zen-error-document[data-theme='dark'] {
+  color-scheme: dark;
+}
+.zen-error-page {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 100%;
+  margin: 0;
+  padding: 24px;
+  background: var(--v2-page);
+  color: var(--v2-text);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    'Noto Sans',
+    sans-serif;
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  -webkit-tap-highlight-color: transparent;
+}
+.zen-error-page main {
+  width: 100%;
+  max-width: var(--v2-content-max);
+  margin: 0 auto;
+}
+.zen-error-page h1 {
+  margin: 0 0 12px;
+  font-size: var(--v2-font-title);
+  font-weight: var(--v2-weight-heading);
+  line-height: 28px;
+}
+.zen-error-page p {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+.zen-error-page strong {
+  font-weight: var(--v2-weight-heading);
+}
+.zen-error-code {
+  margin: 0 0 24px;
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  color: var(--v2-text-deemphasized);
+}
+.zen-error-page button {
+  margin: 0;
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
 @layer base {
   html,
   body,
@@ -384,10 +459,30 @@
     background: var(--zen-bg);
     transition: background 600ms var(--zen-ease);
   }
+  .zen-window ::selection {
+    background: color-mix(in srgb, var(--zen-accent) 30%, transparent);
+    color: inherit;
+  }
   /* Private windows: Zen tints the chrome purple and marks it with a mask. */
   .zen-window[data-window-kind='private'] {
     --zen-accent: #a98bff;
     --zen-accent-rgb: 169 139 255;
+  }
+  /*
+   * Windows 11 Mica: the OS paints its material wherever the window is see-through, so the
+   * chrome stops covering it and lays the space gradient over it as a tint instead.
+   */
+  :root[data-material='mica'] body,
+  :root[data-material='mica'] .zen-window {
+    background: transparent;
+  }
+  :root[data-material='mica'] .zen-window::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--zen-bg);
+    opacity: 0.6;
+    pointer-events: none;
   }
 
   .zen-texture {
@@ -1270,6 +1365,711 @@
   .zen-sheet[data-dragging='true'] .zen-sheet-item:active {
     background: transparent;
   }
+}
+
+@layer components {
+  /*
+   * Bookmarks, built to the v2 draft (docs/design-language-v2-draft.md §1–3, §6, §9): the bar
+   * is a strip of chips in the chrome gutter above the content frame, its folders open desktop
+   * popovers (§9.20), the star sits in the address pill with its bubble hung from the pill,
+   * the dialogs dim only the content frame and the manager is a page. Chips and the star sit on
+   * the window and take the window fills; everything on a panel takes the text fills.
+   */
+  .zen-bm-bar {
+    display: flex;
+    align-items: center;
+    height: 30px;
+    gap: 4px;
+    padding: 0 2px 4px;
+  }
+  .zen-bm-strip {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    overflow: hidden;
+  }
+  .zen-bm-chip {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 8px;
+    color: var(--zen-fg);
+    font-size: 12.5px;
+    font-weight: 400;
+    white-space: nowrap;
+    outline: none;
+    transition:
+      background 120ms var(--zen-ease),
+      opacity 120ms var(--zen-ease);
+  }
+  .zen-bm-chip:hover {
+    background: var(--v2-window-fill);
+  }
+  /* The chip whose popover is open keeps its pressed fill (§9.20). */
+  .zen-bm-chip:active,
+  .zen-bm-chip[data-open='true'] {
+    background: var(--v2-window-fill-hover);
+  }
+  .zen-bm-chip:focus-visible {
+    outline: 2px solid var(--v2-accent);
+    outline-offset: 0;
+  }
+  /* Drop-into target: keeps its size, gains the hover fill and a 2px inset accent outline. */
+  .zen-bm-chip[data-target='true'] {
+    background: var(--v2-window-fill);
+    box-shadow: inset 0 0 0 2px var(--v2-accent);
+  }
+  .zen-bm-chip[data-lifted='true'] {
+    visibility: hidden;
+  }
+  .zen-bm-chip[data-overflow='true'] {
+    visibility: hidden;
+  }
+  .zen-bm-chip-label {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* The overflow chevron, and a bookmark without a name: the icon alone (Chrome). */
+  .zen-bm-chip[data-icon-only='true'] {
+    padding: 0 6px;
+  }
+  .zen-bm-chip[data-icon-only='true'] .zen-bm-chip-label {
+    display: none;
+  }
+  /*
+   * What travels under the pointer: lifted to level 2, scale(1.02) at 90%. The drag hooks place
+   * the ghost with an inline transform, so the scale is the separate property.
+   */
+  .zen-bm-ghost {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 100;
+    pointer-events: none;
+    will-change: transform;
+    transition: opacity 120ms var(--zen-ease);
+  }
+  /* Resting on a folder chip, the chip in the hand thins out so the target's fill and outline read through it. */
+  .zen-bm-ghost[data-into='true'] {
+    opacity: 0.45;
+  }
+  .zen-bm-lift {
+    background: var(--v2-panel);
+    opacity: 0.9;
+    /* The hairline is an inset ring: a border would take 2px off the copied item's width. */
+    box-shadow:
+      inset 0 0 0 1px var(--v2-border),
+      var(--zen-shadow-2);
+    scale: 1.02;
+  }
+  /* The list's empty space is the append target of a drag. */
+  .zen-bm-list[data-target='true'] {
+    background: var(--v2-fill);
+    box-shadow: inset 0 0 0 2px var(--v2-accent);
+  }
+  .zen-bm-empty {
+    padding: 0 8px;
+    color: var(--v2-text-deemphasized);
+    font-size: 12.5px;
+    white-space: nowrap;
+  }
+
+  /* Insertion caret: a 2px accent line, radius 1, 8px short of either end. */
+  .zen-bm-insert {
+    position: absolute;
+    pointer-events: none;
+    background: var(--v2-accent);
+    border-radius: 1px;
+    transition: opacity 100ms var(--zen-ease);
+  }
+  .zen-bm-insert[data-axis='x'] {
+    width: 2px;
+  }
+  .zen-bm-insert[data-axis='y'] {
+    height: 2px;
+    left: 8px;
+    right: 8px;
+    width: auto;
+  }
+
+  /*
+   * Desktop popovers (§9.20): a folder's panel, the overflow panel and the star bubble. One of
+   * three fixed widths (set in script), the top border flush with the bar or pill the anchor
+   * sits in, radius 8 on the panel surface with the panel shadow, no scrim. The body scrolls
+   * under a sticky header once the content passes 60% of the window.
+   */
+  .zen-bm-popover {
+    border-radius: 8px;
+    corner-shape: var(--zen-corner);
+    overflow: hidden;
+    background: var(--v2-panel);
+    border: 1px solid var(--v2-border);
+    box-shadow: var(--v2-shadow-panel);
+    color: var(--v2-text);
+  }
+  .zen-bm-popover-body {
+    min-height: 0;
+    flex: 1;
+    overflow-y: auto;
+  }
+  /* A list popover's body: 16 around 32px rows (§9.20); the empty line 32 below the top (§9.17). */
+  .zen-bm-popover-list {
+    padding: 16px;
+  }
+  .zen-bm-popover-row {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 8px;
+    border-radius: 4px;
+    color: var(--v2-text);
+    font-size: 13px;
+    font-weight: 400;
+    text-align: left;
+    outline: none;
+  }
+  /* One highlight, native-menu style: the active row follows the pointer and the keyboard. */
+  .zen-bm-popover-row[data-active='true'] {
+    background: var(--v2-fill);
+  }
+  .zen-bm-popover-row[data-target='true'] {
+    background: var(--v2-fill);
+    box-shadow: inset 0 0 0 2px var(--v2-accent);
+  }
+  .zen-bm-popover-row[data-lifted='true'] {
+    opacity: 0.4;
+  }
+  .zen-bm-empty-row {
+    padding: 16px 16px 0;
+    color: var(--v2-text-deemphasized);
+    font-size: 15px;
+    line-height: 20px;
+    text-align: center;
+  }
+  /*
+   * A pushed-in level's bar header (§9.16): its 28px back button at 6px margins makes 40, the
+   * folder's name at the panel title size (§9.7); the §9.7 hairline only while the rows below
+   * have scrolled under it.
+   */
+  .zen-bm-popover-header {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 4px;
+    height: 40px;
+    padding: 0 6px;
+    border-bottom: 1px solid transparent;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.012em;
+    line-height: 22px;
+    transition: border-color 120ms var(--zen-ease);
+  }
+  .zen-bm-popover-header[data-scrolled='true'] {
+    border-color: var(--v2-border);
+  }
+  .zen-bm-popover-header .zen-toolbar-button {
+    border-radius: 6px;
+  }
+  .zen-bm-popover-header .zen-toolbar-button:hover:not(:disabled) {
+    background: var(--v2-fill);
+  }
+  .zen-bm-menu-level {
+    will-change: transform;
+  }
+
+  /*
+   * Title blocks (§9.23) for the star bubble and the dialogs: no bar, no X; padding 16, the
+   * title 17/600 on 22, a description 15 at 69% 4px under it, 16 to the body. Sticky over a
+   * scrolling body with the §9.7 hairline once the body has moved.
+   */
+  .zen-bm-title-block {
+    flex-shrink: 0;
+    padding: 16px;
+    border-bottom: 1px solid transparent;
+    transition: border-color 120ms var(--zen-ease);
+  }
+  .zen-bm-title-block[data-scrolled='true'] {
+    border-color: var(--v2-border);
+  }
+  .zen-bm-title {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.012em;
+    line-height: 22px;
+  }
+  .zen-bm-title-desc {
+    margin-top: 4px;
+    color: var(--v2-text-deemphasized);
+    font-size: 15px;
+    line-height: 20px;
+  }
+  /* The body of a form popover or dialog: the title block's 16 above it, 16 to the sides and below. */
+  .zen-bm-form {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 12px;
+    padding: 0 16px 16px;
+  }
+  .zen-bm-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  /* Menus (§6): the manager's own menu. Rows 31 with a 16 icon, hairline separators at 4px. */
+  .zen-bm-menu {
+    min-width: 232px;
+    padding: 4px;
+    border-radius: 8px;
+    corner-shape: var(--zen-corner);
+    overflow: hidden;
+    background: var(--v2-panel);
+    border: 1px solid var(--v2-border);
+    box-shadow: var(--v2-shadow-panel);
+    color: var(--v2-text);
+  }
+  .zen-bm-menu-row {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 8px;
+    height: 31px;
+    padding: 0 8px;
+    border-radius: 6px;
+    color: var(--v2-text);
+    font-size: 13px;
+    font-weight: 400;
+    text-align: left;
+    outline: none;
+  }
+  .zen-bm-menu-row:hover,
+  .zen-bm-menu-row:focus-visible {
+    background: var(--v2-fill);
+  }
+  .zen-bm-menu-row:disabled {
+    opacity: 0.4;
+  }
+  .zen-bm-menu-sep {
+    height: 1px;
+    margin: 4px 0;
+    background: var(--v2-border);
+  }
+  .zen-bm-menu-heading {
+    padding: 6px 8px 2px;
+    color: var(--v2-text-deemphasized);
+    font-size: 13px;
+  }
+
+  /*
+   * The folder field's popup (§9.13 menulist popup): a panel under the trigger, radius 12,
+   * padding 6, 28px rows at radius 6, the current option marked with a trailing 16px check.
+   */
+  .zen-bm-listbox {
+    padding: 6px;
+    border-radius: 12px;
+    corner-shape: var(--zen-corner);
+    overflow: hidden;
+    background: var(--v2-panel);
+    border: 1px solid var(--v2-border);
+    box-shadow: var(--v2-shadow-panel);
+    color: var(--v2-text);
+  }
+  .zen-bm-option {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 8px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 6px;
+    color: var(--v2-text);
+    font-size: 13px;
+    font-weight: 400;
+    text-align: left;
+    outline: none;
+  }
+  .zen-bm-option:hover,
+  .zen-bm-option:focus-visible {
+    background: var(--v2-fill);
+  }
+
+  /* The star in the address pill: the outline fills in 120 ms (the pop follows in script). */
+  .zen-bm-star {
+    opacity: 0.7;
+    transition:
+      background 120ms var(--zen-ease),
+      opacity 120ms var(--zen-ease);
+  }
+  .zen-bm-star svg {
+    fill: currentColor;
+    fill-opacity: 0;
+    transition: fill-opacity 120ms var(--zen-ease);
+  }
+  .zen-bm-star[data-filled='true'] svg {
+    fill-opacity: 1;
+  }
+  .zen-bm-star:hover {
+    background: var(--v2-window-fill);
+    opacity: 1;
+  }
+  /* The chip keeps its pressed fill while its bubble is open (§9.20). */
+  .zen-bm-star:active,
+  .zen-bm-star[data-open='true'] {
+    background: var(--v2-window-fill-hover);
+    opacity: 1;
+  }
+
+  /* The dialogs sit over a scrim that dims only the content frame (§9.5); the manager is a page. */
+  .zen-bm-scrim {
+    background: var(--v2-scrim-modal);
+  }
+  .zen-bm-dialog {
+    border-radius: 12px;
+    corner-shape: var(--zen-corner);
+    overflow: hidden;
+    background: var(--v2-panel);
+    border: 1px solid var(--v2-border);
+    box-shadow: var(--v2-shadow-sheet);
+    color: var(--v2-text);
+  }
+  .zen-bm-page {
+    border-radius: 8px;
+    background: var(--v2-page);
+    backdrop-filter: none;
+    border: 1px solid var(--v2-border);
+    box-shadow: var(--v2-shadow-panel);
+    color: var(--v2-text);
+  }
+  /* Page header (v2 §9.7): no hairline at rest; the list's toolbar is the sticky edge rows
+   * scroll under, so that is where the 1px line appears while scrolled. */
+  .zen-bm-toolbar {
+    border-bottom: 1px solid transparent;
+    transition: border-color 120ms var(--zen-ease);
+  }
+  .zen-bm-toolbar[data-scrolled='true'] {
+    border-color: var(--v2-border);
+  }
+  /* Form fields (§9.12): the label above the field, 15/400, 4px to the field. */
+  .zen-bm-label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    color: var(--v2-text);
+    font-size: 15px;
+    line-height: 20px;
+    font-weight: 400;
+  }
+  .zen-bm-dim {
+    color: var(--v2-text-deemphasized);
+  }
+
+  /*
+   * Manager rows (v2 §9.2): label 15/20 over a 13/20 description, 6px block padding, so a row is
+   * 52 and grows with its content; rows touch (§9.21). The icon sits on the first text line,
+   * (line − glyph) / 2 below its top.
+   */
+  .zen-bm-row {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    min-height: var(--v2-row-two-line);
+    padding: 6px 10px;
+    border-radius: 4px;
+    color: var(--v2-text);
+    outline: none;
+    user-select: none;
+    transition:
+      background 100ms var(--zen-ease),
+      box-shadow 100ms var(--zen-ease),
+      opacity 100ms var(--zen-ease);
+  }
+  .zen-bm-row:hover {
+    background: var(--v2-fill);
+  }
+  /* A selected row: the control accent at 16% (the draft names no token for list selection). */
+  .zen-bm-row[aria-selected='true'] {
+    background: color-mix(in srgb, var(--v2-accent) 16%, transparent);
+  }
+  .zen-bm-row[data-focused='true'] {
+    outline: 2px solid var(--v2-accent);
+    outline-offset: -2px;
+  }
+  .zen-bm-row[data-target='true'] {
+    background: var(--v2-fill);
+    box-shadow: inset 0 0 0 2px var(--v2-accent);
+  }
+  .zen-bm-row[data-lifted='true'] {
+    opacity: 0.4;
+  }
+  .zen-bm-row-icon {
+    flex-shrink: 0;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+  }
+  .zen-bm-row-title {
+    overflow: hidden;
+    font-size: 15px;
+    line-height: var(--v2-line-body);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .zen-bm-row-desc {
+    overflow: hidden;
+    color: var(--v2-text-deemphasized);
+    font-size: 13px;
+    line-height: var(--v2-line-body);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .zen-bm-row-meta {
+    flex-shrink: 0;
+    width: 88px;
+    color: var(--v2-text-deemphasized);
+    font-size: 13px;
+    line-height: var(--v2-line-body);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The folder tree is the page's nav column: 34px items, the shown folder filled with a 3px bar. */
+  .zen-bm-tree-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    height: 34px;
+    padding-right: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    color: var(--v2-text);
+    font-size: 15px;
+    transition:
+      background 100ms var(--zen-ease),
+      box-shadow 100ms var(--zen-ease);
+  }
+  .zen-bm-tree-row:hover {
+    background: var(--v2-fill);
+  }
+  .zen-bm-tree-row[aria-selected='true'] {
+    background: var(--v2-nav-active);
+  }
+  .zen-bm-tree-row[aria-selected='true']::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 3px;
+    background: var(--v2-accent);
+  }
+  .zen-bm-tree-row[data-target='true'] {
+    background: var(--v2-fill);
+    box-shadow: inset 0 0 0 2px var(--v2-accent);
+  }
+
+  /* The folder chooser's rows inside a dialog: single line, 32 tall; the keyboard's row is ringed. */
+  .zen-bm-pick-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    height: 32px;
+    padding-right: 8px;
+    border-radius: 4px;
+    color: var(--v2-text);
+    font-size: 13px;
+  }
+  .zen-bm-pick-row:hover {
+    background: var(--v2-fill);
+  }
+  .zen-bm-pick-row[aria-selected='true'] {
+    background: color-mix(in srgb, var(--v2-accent) 16%, transparent);
+  }
+  .zen-bm-pick-row[data-off='true'] {
+    opacity: 0.4;
+  }
+  .zen-bm-pick-row:has(:focus-visible) {
+    outline: 2px solid var(--v2-accent);
+    outline-offset: -2px;
+  }
+  .zen-bm-pick-row :focus-visible {
+    outline: none;
+  }
+
+  /* Breadcrumb segments: buttons and drop-into targets. */
+  .zen-bm-crumb {
+    max-width: 220px;
+    overflow: hidden;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--v2-text-deemphasized);
+    font-size: 15px;
+    line-height: 20px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition:
+      background 100ms var(--zen-ease),
+      box-shadow 100ms var(--zen-ease);
+  }
+  .zen-bm-crumb:hover:not(:disabled) {
+    background: var(--v2-fill);
+    color: var(--v2-text);
+  }
+  .zen-bm-crumb[aria-current='location'] {
+    color: var(--v2-text);
+    font-weight: 600;
+  }
+  .zen-bm-crumb[data-target='true'] {
+    background: var(--v2-fill);
+    box-shadow: inset 0 0 0 2px var(--v2-accent);
+    color: var(--v2-text);
+  }
+
+  /* In-place title editor: a 24px field on the row, focus ring only. */
+  .zen-bm-rename {
+    height: 24px;
+    min-width: 0;
+    flex: 1;
+    padding: 0 6px;
+    border-radius: 4px;
+    background: var(--v2-page);
+    color: var(--v2-text);
+    font: inherit;
+    outline: 2px solid var(--v2-accent);
+    outline-offset: 0;
+  }
+
+  /* Proton-like controls of the bookmark chrome (§6): 32 tall, radius 4, 1px border on fields. */
+  .zen-select {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 8px;
+    height: var(--v2-control);
+    padding: 0 12px;
+    border-radius: var(--v2-radius-control);
+    border: 1px solid var(--v2-border);
+    background: transparent;
+    color: var(--v2-text);
+    font-size: 13px;
+    outline: none;
+  }
+  .zen-select:hover {
+    background: var(--v2-fill);
+  }
+  .zen-select:focus-visible {
+    outline: 2px solid var(--v2-accent);
+    outline-offset: 0;
+  }
+  .zen-field {
+    display: block;
+    width: 100%;
+    height: var(--v2-control);
+    padding: 0 12px;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-control);
+    background: transparent;
+    color: var(--v2-text);
+    font-size: 13px;
+    outline: none;
+  }
+  .zen-field::placeholder {
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-field:focus-visible {
+    outline: 2px solid var(--v2-accent);
+    outline-offset: 0;
+  }
+  .zen-field::-webkit-search-cancel-button {
+    display: none;
+  }
+  .zen-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: var(--v2-control);
+    padding: 0 12px;
+    border-radius: var(--v2-radius-control);
+    background: var(--v2-fill);
+    color: var(--v2-text);
+    font-size: 13px;
+    font-weight: var(--v2-weight-button);
+    white-space: nowrap;
+    outline: none;
+  }
+  .zen-button:hover:not(:disabled) {
+    background: var(--v2-fill-hover);
+  }
+  .zen-button:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+  .zen-button:disabled {
+    opacity: 0.4;
+  }
+  .zen-button:focus-visible {
+    outline: 2px solid var(--v2-accent);
+    outline-offset: 0;
+  }
+  .zen-button[data-variant='primary'] {
+    background: var(--v2-accent);
+    color: var(--v2-on-accent);
+  }
+  .zen-button[data-variant='primary']:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+  .zen-button[data-variant='danger'] {
+    color: var(--v2-danger);
+  }
+  .zen-button[data-variant='quiet'] {
+    background: transparent;
+  }
+  .zen-button[data-variant='quiet']:hover:not(:disabled) {
+    background: var(--v2-fill);
+  }
+}
+
+/*
+ * The address pill's hover-only actions (boost, copy) yield when the pill is narrow, so the star
+ * chip stays where the pointer finds it instead of being pushed out under the menu button.
+ * Unlayered: it has to beat the `group-hover` utility that reveals them.
+ */
+.zen-pill {
+  container-type: inline-size;
+}
+@container (width < 170px) {
+  .zen-pill-extra {
+    display: none;
+  }
+}
+
+/*
+ * The manager page's header (v2 §9.7): a 22/600 title and no hairline at rest. Unlayered on
+ * purpose: OverlayShell's header carries utility classes (`border-b`, `text-[14px]`), and the
+ * utilities layer would beat anything in `@layer components`.
+ */
+.zen-bm-page > header {
+  border-color: transparent;
+}
+.zen-bm-page > header > h2 {
+  font-size: 22px;
+  letter-spacing: -0.014em;
 }
 
 /*

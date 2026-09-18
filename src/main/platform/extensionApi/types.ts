@@ -80,6 +80,12 @@ export interface ApiHost {
   canSeeTab(extension: LoadedExtension, url: string): boolean
   /** Whether the extension has host access to `url`: a granted host permission or `activeTab`. */
   hostAccess(extensionId: string, url: string): boolean
+  /**
+   * The session partitions (container ids) the extension's request rules and listeners apply
+   * to: the sessions it is loaded into, plus the private partition when the user allowed it
+   * there (`ExtensionInfo.allowPrivate`). Empty for an extension that is not loaded.
+   */
+  partitionsOf(extensionId: string): readonly string[]
   /** The extension's currently granted permissions. */
   grants(extensionId: string): PermissionSet
   /** Ask the renderer to re-render (extension state shown in the UI changed). */
@@ -93,6 +99,19 @@ export interface ApiHost {
     options: { message: string; detail?: string; okLabel: string; danger?: boolean },
     win?: ZenWindow
   ): Promise<boolean>
+}
+
+/**
+ * Run one of the core's binding-style validators: the `TypeError` Chrome's binding would throw at
+ * the caller becomes the call's error (a rejection / `runtime.lastError` on this side of the IPC).
+ */
+export function validated<T>(fn: () => T): T {
+  try {
+    return fn()
+  } catch (error) {
+    if (error instanceof ApiError) throw error
+    throw new ApiError(error instanceof Error ? error.message : String(error))
+  }
 }
 
 /** Chrome's `windows.WINDOW_ID_CURRENT` and `WINDOW_ID_NONE`. */

@@ -1,7 +1,7 @@
 import type { SplitLayout, Tab, TabSection, UIState } from '@shared/types'
 import { run } from './api'
 import { browserStore, captureActiveTab, invalidateSnapshot, uiStore } from './ui'
-import { activeTab, pinnedOf, regularOf } from './selectors'
+import { activeTab, pinnedOf, regularOf, tabTitle } from './selectors'
 import { createStore } from './store'
 
 /**
@@ -154,6 +154,21 @@ function performDrop(tabId: string, key: string): void {
         const ids = side === 'left' || side === 'top' ? [tabId, active.id] : [active.id, tabId]
         run('split.create', { tabIds: ids, layout })
       }
+      return
+    }
+    case 'bookmark': {
+      // The bookmarks bar: `bookmark:<folderId>:<index>` slots the page between two chips,
+      // `bookmark:<folderId>:` files it at the end of that folder. The tab itself stays put.
+      if (!tab.url || tab.url.startsWith('zen://')) return
+      const [, parentId, index] = parts
+      run('bookmark.create', {
+        parentId,
+        index: index === '' ? undefined : Number(index),
+        title: tabTitle(tab),
+        url: tab.url,
+        favicon: tab.favicon,
+        type: 'url'
+      })
       return
     }
   }

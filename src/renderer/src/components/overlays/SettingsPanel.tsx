@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useState } from 'react'
 import { ArrowDown, ArrowUp, Check, Sparkles, Trash2 } from 'lucide-react'
 import type {
+  BookmarksBarMode,
   ColorScheme,
   ContainerColor,
   ContainerIcon as ContainerIconName,
@@ -37,7 +38,7 @@ import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { OverlayShell } from './OverlayShell'
 import { AccessibilitySection, SitesGroups } from './PageControlsSettings'
 import { ResourcesSection } from './ResourcesSection'
-import { Choice, Group, Row, Segmented } from './SettingsPrimitives'
+import { Choice, Group, MENULIST_HEIGHT, Row, SWITCH_HEIGHT, Segmented } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
 import { SyncSection } from './SyncSection'
 import { UpdatesSection } from './UpdatesSection'
@@ -216,7 +217,7 @@ function LookSection({
   return (
     <>
       <Group title="Appearance">
-        <Row label="Colour scheme">
+        <Row label="Colour scheme" control={MENULIST_HEIGHT}>
           <Choice<ColorScheme>
             value={s.colorScheme}
             onChange={(v) => set({ colorScheme: v })}
@@ -259,9 +260,50 @@ function LookSection({
         <Row label="Remove browser padding" hint="Hide the rounded frame around web content.">
           <Switch checked={s.borderless} onCheckedChange={(v) => set({ borderless: v })} />
         </Row>
+        {caps.windowMaterial && (
+          <Row
+            label="Use Windows transparency effects"
+            hint="Let the desktop show through the window frame (Mica). Applies to new windows."
+            control={SWITCH_HEIGHT}
+          >
+            <Switch
+              checked={s.windowMaterial === 'mica'}
+              onCheckedChange={(v) => set({ windowMaterial: v ? 'mica' : 'none' })}
+            />
+          </Row>
+        )}
       </Group>
       {caps.pageControls && <SitesGroups s={s} set={set} />}
       <AppIconGroup value={s.appIcon} platform={platform} onChange={(id) => set({ appIcon: id })} />
+      <Group title="Bookmarks">
+        <Row
+          label="Show bookmarks bar"
+          hint="Always, only on the new tab page, or never. Compact mode hides it with the toolbar."
+        >
+          <Choice<BookmarksBarMode>
+            value={s.bookmarksBar}
+            onChange={(v) => set({ bookmarksBar: v })}
+            options={[
+              { value: 'always', label: 'Always' },
+              { value: 'newtab', label: 'Only on new tab page' },
+              { value: 'never', label: 'Never' }
+            ]}
+          />
+        </Row>
+        <Row
+          label="Import and export"
+          hint="Netscape HTML files that Chrome, Edge and Firefox share."
+        >
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => void run('bookmark.import', undefined)}>
+              Import
+            </Button>
+            <Button variant="secondary" onClick={() => void run('bookmark.export', undefined)}>
+              Export
+            </Button>
+          </div>
+        </Row>
+      </Group>
       <Group title="URL Bar">
         <Row label="Floating behaviour">
           <Choice<UrlbarBehavior>

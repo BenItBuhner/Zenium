@@ -224,6 +224,9 @@ export class WebstoreBridge {
         name = event.type === 'enabled' ? 'onEnabled' : 'onDisabled'
         payload = this.info(record)
         break
+      case 'allowPrivate':
+        // No management event for it: Chrome's store pages re-read the info on demand.
+        return
     }
     for (const wc of this.pages) {
       if (wc.isDestroyed()) {

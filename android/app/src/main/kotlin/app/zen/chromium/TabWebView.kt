@@ -110,10 +110,23 @@ class TabWebView(
     private var lastDeviceWidth = 0
     var muted = false
         private set
-    /** True while `onPageStarted` has fired and `onPageFinished` has not. */
-    private var pageStarted = false
     /** The `domReady` view event, once per document (see `DomReadyGate`). */
     private val domReady = DomReadyGate()
+    /** `onPageStarted` fired for a document whose commit `doUpdateVisitedHistory` has not reported yet. */
+    private var awaitingCommit = false
+    /**
+     * The main-frame URL whose load failed last. WebView has already committed its own error page
+     * under that URL (or is about to, and reports the commit through `doUpdateVisitedHistory` and
+     * the page's title, "Webpage not available", through `onReceivedTitle`) by the time the core
+     * hears of the failure and replaces it with `zen://error`. Neither is the page the user asked
+     * for: the commit is not reported as a navigation and the title is dropped, so nothing of the
+     * interstitial reaches history. Cleared by the next `onPageStarted`.
+     */
+    private var failedUrl: String? = null
+    /** WebView's built-in error page is the committed document, until another commit replaces it. */
+    private var interstitial = false
+    /** A certificate `onReceivedSslError` refused; the request's own failure follows and is the same news. */
+    private var refusedCertificateUrl: String? = null
 
     init {
         Profiles.apply(this, containerId)
@@ -643,7 +656,6 @@ class TabWebView(
 
     fun loadHtml(url: String, html: String) {
         rememberCurrentPage()
-        pageStarted = false
         loadDataWithBaseURL(url, html, "text/html", "utf-8", url)
     }
 
@@ -823,10 +835,13 @@ class TabWebView(
 
     fun navState(): JSONObject = json(
         "url" to (url ?: ""),
-        "title" to (title ?: ""),
+        "title" to reportableTitle(),
         "canGoBack" to canGoBack(),
         "canGoForward" to canGoForward()
     )
+
+    /** The page's title – but not the built-in error page's, which stands in for a failed load (see [failedUrl]). */
+    private fun reportableTitle(): String = if (failedUrl != null || interstitial) "" else title ?: ""
 
     /** The main frame's certificate for the site-information sheet, or null on an insecure page. */
     fun certificateInfo(): JSONObject? {
@@ -946,8 +961,9 @@ class TabWebView(
             // Navigations with no link click ahead of them (forms, history.back(), redirects).
             rememberCurrentPage()
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.STARTED)
+            awaitingCommit = true
+            failedUrl = null
             currentDocument = url
-            pageStarted = true
             loading = true
             domReady.documentStarted()
             // Whatever the user agent is now, this page was requested with it.
@@ -956,17 +972,30 @@ class TabWebView(
             if (PageRules.isWebPage(url)) setDarkening(host.pageRules.darken(url))
             failPendingEvals("the page navigated away before the script finished")
             host.viewEvent(tabId, "startLoading", null)
-            host.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", false))
             if (muted) setMuted(true)
         }
 
+        /**
+         * A navigation committed – the moment Electron's `did-navigate` reports to the core, and
+         * the first at which the load's outcome is known: WebView fires `onPageStarted` for a
+         * failed load too (right before `onReceivedError`), so reporting from there would record
+         * a visit to a page that never loaded.
+         */
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
             currentDocument = url
             onHistoryCommitted()
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.HISTORY_UPDATED)
-            if (!loading) {
-                // pushState / hash navigation after the page finished loading.
-                host.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", true))
+            // pushState / hash navigations have no onPageStarted of their own.
+            val inPage = !awaitingCommit
+            awaitingCommit = false
+            if (failedUrl != null && url == failedUrl) {
+                // WebView's own error page, committing under the failed URL while the core's
+                // `zen://error` page is on its way (see failedUrl).
+                interstitial = true
+            } else {
+                interstitial = false
+                refusedCertificateUrl = null
+                host.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", inPage))
             }
             host.backChanged()
         }
@@ -977,7 +1006,6 @@ class TabWebView(
 
         override fun onPageFinished(view: WebView, url: String) {
             loading = false
-            pageStarted = false
             if (pendingFlags && host.pageScript.isNotEmpty()) {
                 evaluateJavascript(startScriptSource(), null)
             }
@@ -993,27 +1021,29 @@ class TabWebView(
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
             host.blocking.onRequestError(this@TabWebView, request, error.errorCode)
             if (!request.isForMainFrame) return
+            val url = request.url.toString()
+            failedUrl = url
             loading = false
-            host.viewEvent(
-                tabId, "failLoad",
-                json(
-                    "code" to netErrorCode(error.errorCode),
-                    "description" to error.description.toString(),
-                    "url" to request.url.toString()
-                )
-            )
+            // The request behind a refused certificate fails in turn; onReceivedSslError said it all.
+            if (url == refusedCertificateUrl) return
+            val failure = NetErrors.failure(error.errorCode, error.description, NetErrors.offline(context))
+            failLoad(failure.code, failure.name ?: error.description.toString(), url)
         }
 
         override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
             // Like Chrome, never proceed with a broken certificate; the error page explains why.
             handler.cancel()
-            val code = when (error.primaryError) {
-                SslError.SSL_EXPIRED, SslError.SSL_NOTYETVALID -> -201
-                SslError.SSL_UNTRUSTED, SslError.SSL_IDMISMATCH -> -200
-                else -> -202
-            }
+            val url = error.url
+            failedUrl = url
+            refusedCertificateUrl = url
             loading = false
-            host.viewEvent(tabId, "failLoad", json("code" to code, "description" to "ERR_CERT_INVALID", "url" to error.url))
+            val code = NetErrors.sslCode(error.primaryError)
+            failLoad(code, NetErrors.name(code) ?: "ERR_CERT_INVALID", url)
+        }
+
+        /** Tell the core, in Chromium's terms: the `net::` code and the `ERR_…` name (or reason) the page prints. */
+        private fun failLoad(code: Int, description: String, url: String) {
+            host.viewEvent(tabId, "failLoad", json("code" to code, "description" to description, "url" to url))
         }
 
         override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
@@ -1033,6 +1063,8 @@ class TabWebView(
 
     private inner class Chrome : WebChromeClient() {
         override fun onReceivedTitle(view: WebView, title: String?) {
+            // "Webpage not available" is the built-in error page's, not the tab's (see failedUrl).
+            if (failedUrl != null || interstitial) return
             host.viewEvent(tabId, "title", json("title" to (title ?: "")))
         }
 
@@ -1129,22 +1161,5 @@ class TabWebView(
         /** Where the visual viewport sits in the layout viewport (non-zero only while pinch-zoomed). */
         private const val VISUAL_OFFSET_SCRIPT =
             "(function(){var v=window.visualViewport;return v?[v.offsetLeft,v.offsetTop]:[0,0]})()"
-
-        /** WebViewClient error codes → Chromium `net::` codes the core (and error page) understand. */
-        fun netErrorCode(code: Int): Int = when (code) {
-            WebViewClient.ERROR_HOST_LOOKUP -> -105
-            WebViewClient.ERROR_CONNECT -> -102
-            WebViewClient.ERROR_TIMEOUT -> -118
-            WebViewClient.ERROR_IO -> -100
-            WebViewClient.ERROR_REDIRECT_LOOP -> -310
-            WebViewClient.ERROR_UNSUPPORTED_SCHEME, WebViewClient.ERROR_BAD_URL -> -300
-            WebViewClient.ERROR_FAILED_SSL_HANDSHAKE -> -200
-            WebViewClient.ERROR_FILE, WebViewClient.ERROR_FILE_NOT_FOUND -> -6
-            WebViewClient.ERROR_UNSAFE_RESOURCE -> -20
-            WebViewClient.ERROR_TOO_MANY_REQUESTS -> -100
-            WebViewClient.ERROR_AUTHENTICATION, WebViewClient.ERROR_PROXY_AUTHENTICATION,
-            WebViewClient.ERROR_UNSUPPORTED_AUTH_SCHEME -> -100
-            else -> -2
-        }
     }
 }

@@ -8,7 +8,7 @@
  * defined when the engine does not already provide them (Electron's implementation of those
  * works), everything else replaces the engine's inert binding in place.
  */
-import { PRIVACY_SETTINGS } from './privacy'
+import { PRIVACY_METHODS, PRIVACY_SETTING_NAMES } from './privacy'
 
 export type ParamType = 'integer' | 'number' | 'string' | 'boolean' | 'object' | 'array' | 'any'
 
@@ -38,6 +38,11 @@ export interface EventSpec {
   /** Documents keep receiving this event from the engine; the shim only adds the host's deliveries. */
   nativeInFrames?: boolean
   keepNative?: boolean
+  /**
+   * `webRequest` events: the `extraInfoSpec` values the event accepts (`blocking` among them
+   * for the events with a blocking variant). The shim validates registrations against the list.
+   */
+  extraInfoSpec?: readonly string[]
 }
 
 export interface NamespaceSpec {
@@ -53,12 +58,26 @@ export interface NamespaceSpec {
    */
   shape?: true
   /**
-   * `types.ChromeSetting` objects grouped under sub-objects (`privacy.network.webRTCIPHandlingPolicy`).
-   * Each gets `get` / `set` / `clear` that route to the namespace's methods of those names with
-   * the setting's `group.name` as the first argument, and an `onChange` event; the methods are
-   * not defined on the namespace object itself (Chrome has none there).
+   * Chrome hides permission-gated namespaces: this one exists only for extensions whose
+   * manifest lists one of these permissions (the engine's own namespace, when it made one, is
+   * patched regardless).
    */
-  settings?: Record<string, readonly string[]>
+  permissions?: readonly string[]
+  /**
+   * `webRequest`: the events take `(callback, RequestFilter filter, extraInfoSpec)` instead of
+   * Chrome's generic `(callback, filters)`, and a delivery to a `blocking` listener carries a
+   * token the shim answers with the listener's return value. The shim builds these events
+   * itself from `EventSpec.extraInfoSpec`.
+   */
+  eventStyle?: 'webRequest'
+  /**
+   * `privacy`: the namespace's members are objects (`network`, `websites`, …) of
+   * `types.ChromeSetting`s, each with `get` / `set` / `clear` and an `onChange` event. The shim
+   * builds them from this map of object name to setting names and routes the calls as
+   * `<namespace>.<method>(object, setting, details)`; the host fires
+   * `<namespace>.<object>.<setting>.onChange`.
+   */
+  settings?: Readonly<Record<string, readonly string[]>>
 }
 
 export type ApiSpec = Record<string, NamespaceSpec>
@@ -180,9 +199,20 @@ export const API_SPEC: ApiSpec = {
   runtime: {
     methods: {
       openOptionsPage: { params: [] },
-      setUninstallURL: { params: [string('url')] }
+      setUninstallURL: { params: [string('url')] },
+      getContexts: { params: [object('filter')] }
     },
-    events: { onInstalled: {}, onStartup: {} }
+    events: { onInstalled: {}, onStartup: {} },
+    constants: {
+      ContextType: {
+        TAB: 'TAB',
+        POPUP: 'POPUP',
+        BACKGROUND: 'BACKGROUND',
+        OFFSCREEN_DOCUMENT: 'OFFSCREEN_DOCUMENT',
+        SIDE_PANEL: 'SIDE_PANEL',
+        DEVELOPER_TOOLS: 'DEVELOPER_TOOLS'
+      }
+    }
   },
   action: { methods: ACTION_METHODS, events: { onClicked: {} }, manifestVersion: 3 },
   browserAction: { methods: ACTION_METHODS, events: { onClicked: {} }, manifestVersion: 2 },
@@ -668,15 +698,97 @@ export const API_SPEC: ApiSpec = {
     },
     events: {}
   },
-  // Every setting answers `get` with what Zenium has and `not_controllable`; `set` / `clear` refuse.
-  privacy: {
+  // Electron has the binding, but the session's own `webRequest` hook (the blocking engine's)
+  // switches the engine's extension path off, so the events never fire. The emulation runs the
+  // listeners over the same hook (`main/platform/webRequest.ts`): registrations go to the host
+  // through the internal `addListener` / `removeListener` calls, deliveries come back addressed
+  // to the listener, and a blocking listener's return value travels back as the answer.
+  // `onAuthRequired` exists for extensions that probe it; nothing fires it (no session hook).
+  webRequest: {
     methods: {
-      get: { params: [string('setting'), object('details', true)] },
-      set: { params: [string('setting'), object('details')] },
-      clear: { params: [string('setting'), object('details', true)] }
+      handlerBehaviorChanged: { params: [], inert: {} }
     },
+    events: {
+      onBeforeRequest: { extraInfoSpec: ['blocking', 'requestBody', 'extraHeaders'] },
+      onBeforeSendHeaders: { extraInfoSpec: ['requestHeaders', 'blocking', 'extraHeaders'] },
+      onSendHeaders: { extraInfoSpec: ['requestHeaders', 'extraHeaders'] },
+      onHeadersReceived: { extraInfoSpec: ['blocking', 'responseHeaders', 'extraHeaders'] },
+      onAuthRequired: {
+        extraInfoSpec: ['responseHeaders', 'blocking', 'asyncBlocking', 'extraHeaders']
+      },
+      onResponseStarted: { extraInfoSpec: ['responseHeaders', 'extraHeaders'] },
+      onBeforeRedirect: { extraInfoSpec: ['responseHeaders', 'extraHeaders'] },
+      onCompleted: { extraInfoSpec: ['responseHeaders', 'extraHeaders'] },
+      onErrorOccurred: { extraInfoSpec: ['extraHeaders'] }
+    },
+    constants: {
+      MAX_HANDLER_BEHAVIOR_CHANGED_CALLS_PER_10_MINUTES: 20,
+      ResourceType: {
+        MAIN_FRAME: 'main_frame',
+        SUB_FRAME: 'sub_frame',
+        STYLESHEET: 'stylesheet',
+        SCRIPT: 'script',
+        IMAGE: 'image',
+        FONT: 'font',
+        OBJECT: 'object',
+        XMLHTTPREQUEST: 'xmlhttprequest',
+        PING: 'ping',
+        CSP_REPORT: 'csp_report',
+        MEDIA: 'media',
+        WEBSOCKET: 'websocket',
+        WEBBUNDLE: 'webbundle',
+        OTHER: 'other'
+      },
+      OnBeforeRequestOptions: {
+        BLOCKING: 'blocking',
+        REQUEST_BODY: 'requestBody',
+        EXTRA_HEADERS: 'extraHeaders'
+      },
+      OnBeforeSendHeadersOptions: {
+        REQUEST_HEADERS: 'requestHeaders',
+        BLOCKING: 'blocking',
+        EXTRA_HEADERS: 'extraHeaders'
+      },
+      OnSendHeadersOptions: { REQUEST_HEADERS: 'requestHeaders', EXTRA_HEADERS: 'extraHeaders' },
+      OnHeadersReceivedOptions: {
+        BLOCKING: 'blocking',
+        RESPONSE_HEADERS: 'responseHeaders',
+        EXTRA_HEADERS: 'extraHeaders'
+      },
+      OnAuthRequiredOptions: {
+        RESPONSE_HEADERS: 'responseHeaders',
+        BLOCKING: 'blocking',
+        ASYNC_BLOCKING: 'asyncBlocking',
+        EXTRA_HEADERS: 'extraHeaders'
+      },
+      OnResponseStartedOptions: {
+        RESPONSE_HEADERS: 'responseHeaders',
+        EXTRA_HEADERS: 'extraHeaders'
+      },
+      OnBeforeRedirectOptions: {
+        RESPONSE_HEADERS: 'responseHeaders',
+        EXTRA_HEADERS: 'extraHeaders'
+      },
+      OnCompletedOptions: { RESPONSE_HEADERS: 'responseHeaders', EXTRA_HEADERS: 'extraHeaders' },
+      OnErrorOccurredOptions: { EXTRA_HEADERS: 'extraHeaders' },
+      IgnoredActionType: {
+        REDIRECT: 'redirect',
+        REQUEST_HEADERS: 'request_headers',
+        RESPONSE_HEADERS: 'response_headers',
+        AUTH_CREDENTIALS: 'auth_credentials'
+      }
+    },
+    permissions: ['webRequest', 'webRequestBlocking'],
+    eventStyle: 'webRequest'
+  },
+  // Absent from Electron altogether (Chrome's preference service is not part of the engine),
+  // and probed at start-up by uBlock Origin and Privacy Badger. The settings live in the host
+  // (`core/extensions/api/privacy.ts` has the table and Chrome's precedence rules); the ones
+  // Zenium can act on are applied to the pages and the request pipeline, the rest are
+  // remembered and reported back.
+  privacy: {
+    methods: {},
     events: {},
-    settings: PRIVACY_SETTINGS,
     constants: {
       IPHandlingPolicy: {
         DEFAULT: 'default',
@@ -684,7 +796,9 @@ export const API_SPEC: ApiSpec = {
         DEFAULT_PUBLIC_INTERFACE_ONLY: 'default_public_interface_only',
         DISABLE_NON_PROXIED_UDP: 'disable_non_proxied_udp'
       }
-    }
+    },
+    permissions: ['privacy'],
+    settings: PRIVACY_SETTING_NAMES
   },
   // Site storage and the cache through the engine's sessions, history and downloads through the models.
   browsingData: {
@@ -760,6 +874,18 @@ export const API_SPEC: ApiSpec = {
     }
   }
 }
+
+/**
+ * The `webRequest` registration calls the shim makes on behalf of an event's `addListener` /
+ * `removeListener`: not members of `chrome.webRequest`, but routed like one.
+ */
+export const WEB_REQUEST_INTERNAL_METHODS = ['addListener', 'removeListener'] as const
+
+/**
+ * The calls the shim makes on behalf of a `privacy` setting object's `get` / `set` / `clear`:
+ * not members of `chrome.privacy`, but routed like one (with the setting's names first).
+ */
+export const PRIVACY_INTERNAL_METHODS = PRIVACY_METHODS
 
 /** Storage areas the host implements; the engine's `local` and `session` stay native for data. */
 export const STORAGE_AREAS = ['local', 'sync', 'session', 'managed'] as const

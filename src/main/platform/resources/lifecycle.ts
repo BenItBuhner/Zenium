@@ -108,9 +108,12 @@ export class TabLifecycle {
     return this.sessions.get(wc.id)?.cpuThrottle ?? 1
   }
 
-  /** The WebContents is gone – nothing to detach from any more. */
-  forget(wc: WebContents): void {
-    this.sessions.delete(wc.id)
+  /**
+   * The WebContents is gone – nothing to detach from any more. Takes the id: after a page closes
+   * itself the view's accessor is already dead by the time the host reports it.
+   */
+  forget(webContentsId: number): void {
+    this.sessions.delete(webContentsId)
   }
 
   // ---------------------------------------------------------------------------
