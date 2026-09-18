@@ -125,7 +125,11 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       }}
     >
       <div className="zen-texture" />
+      {/* The chrome under the sheets – the content column, the messages, the stage, the bar, the
+          drawer and the tabs menu – carries `data-window-chrome`: it goes inert while a sheet or
+          a frame dialog is up (§9.22, `holdChromeInert` in lib/portals.tsx). */}
       <main
+        data-window-chrome
         className="relative flex min-h-0 flex-1 flex-col"
         style={{
           // The bar's edge reserves the bar band (the URL bar's field takes it over while the bar
@@ -142,6 +146,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       </main>
       {/* Messages sit on the content frame's box, over the bar and the stage but under sheets. */}
       <div
+        data-window-chrome
         className="zen-message-frame pointer-events-none absolute z-[36]"
         style={{
           top: edgePadding('top', edge),
@@ -244,6 +249,7 @@ function PhoneBar({
         inert && 'pointer-events-none'
       )}
       aria-hidden={inert || undefined}
+      data-window-chrome
       style={{
         ...style,
         left: 'var(--zen-inset-left)',
@@ -399,7 +405,7 @@ function BarDockLayer({
   const scale = 1 + 0.04 * dock.lift
   const { style: pillStyle, ...pillHandlers } = pill
   return (
-    <div className="pointer-events-none absolute inset-0 z-[35]">
+    <div className="pointer-events-none absolute inset-0 z-[35]" data-window-chrome>
       {hero && area && (
         <div
           className="zen-stage-card absolute"

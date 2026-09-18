@@ -96,8 +96,15 @@ function subscribeFrameHost(listener: () => void): () => void {
   return () => frameHostListeners.delete(listener)
 }
 
-/** The window chrome roots (§9.29): what goes inert while a frame dialog is open (§9.5). */
-const WINDOW_CHROME_ROOTS = '[data-surface="window"]'
+/**
+ * The window chrome roots: what goes inert while a frame dialog or a sheet is open (§9.5,
+ * §9.22). On a mouse, the window surfaces (§9.29: the toolbar, the sidebar, the bookmarks bar);
+ * on a phone, the shell's chrome under its sheets – the content column, the messages, the bar,
+ * the pill's stage, the drawer, the tabs menu – each marked `data-window-chrome` where it is
+ * rendered (PhoneShell and the phone components), never the shell itself, which the frame
+ * dialog host and its sheets sit inside.
+ */
+const WINDOW_CHROME_ROOTS = '[data-surface="window"], [data-window-chrome]'
 /** Where a window root does not count as chrome to make inert: inside a host or the chrome layer. */
 const NOT_CHROME = '.zen-frame-dialogs, .zen-chrome-layer'
 
@@ -116,10 +123,13 @@ function markWindowChromeInert(): void {
 /**
  * Make the window chrome inert (§9.5: while a dialog is open the sidebar, toolbar, pill and
  * bookmarks bar stay undimmed and inert – no press, hover, focus or shortcut button reaches
- * them) until the returned release runs. Holds nest: the chrome comes back when the last one is
- * released. The roots are the `data-surface="window"` elements outside the dialog hosts and the
- * chrome layer, including any mounted while the hold lasts (a compact-mode sidebar revealed
- * under a prompt); an element that was inert already is left to whoever made it so.
+ * them; §9.22: nothing focusable is left behind a sheet's scrim) until the returned release
+ * runs. Holds nest: the chrome comes back when the last one is released. The roots are the
+ * `WINDOW_CHROME_ROOTS` outside the dialog hosts and the chrome layer, including any mounted
+ * while the hold lasts (a compact-mode sidebar revealed under a prompt); an element that was
+ * inert already is left to whoever made it so. The frame dialog host holds while it has a
+ * dialog, and every `BottomSheet` holds while it is up, so a sheet on the phone shell and one
+ * inside the host are one mechanism.
  */
 export function holdChromeInert(): () => void {
   if (++inertHolds === 1) {

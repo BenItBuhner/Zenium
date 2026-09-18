@@ -10,6 +10,8 @@ import {
   type SheetDetents
 } from '@renderer/lib/motion/sheet'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
+import { isTextField, sheetInitialFocus, wrapTab } from '@renderer/lib/popover'
+import { holdChromeInert } from '@renderer/lib/portals'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 
@@ -83,14 +85,6 @@ interface Touch {
   tracker: VelocityTracker
 }
 
-/** An element the keyboard comes up for. */
-function isField(el: Element): el is HTMLElement {
-  if (el instanceof HTMLTextAreaElement) return true
-  if (el instanceof HTMLInputElement)
-    return !/^(button|checkbox|radio|range|submit|reset|file|color|image|hidden)$/.test(el.type)
-  return el instanceof HTMLElement && el.isContentEditable
-}
-
 /**
  * Feed a move event to the tracker – including the samples the browser coalesced into it while
  * the main thread was busy, so a fling is measured from the real finger path.
@@ -119,6 +113,15 @@ function track(tracker: VelocityTracker, e: ReactPointerEvent<HTMLElement>): voi
  * sits at its top drags the sheet instead. Everything else (Escape, system back, a picked item)
  * goes through `dismiss`, and the `back*` methods let a predictive back gesture drive the same
  * motion.
+ *
+ * The keyboard (v2 draft §9.22, §9.24) is the chassis's too, so every sheet has it: as the sheet
+ * opens, focus moves into it – the checked option, else the first row or control that is not a
+ * text field, else the dialog itself (`sheetInitialFocus`; a surface that wants another element
+ * focuses it from its own effect, which runs after this one and wins) – and moves in again when
+ * the content is swapped from under it; Tab wraps inside the sheet; the chrome behind the scrim
+ * is inert while the sheet is up (`holdChromeInert`, the one mechanism the frame dialog host
+ * uses); and when the sheet has gone, focus returns to the control that opened it. Escape is
+ * the surface's (`useEscape`), since some sheets step back a level before they close.
  */
 export function BottomSheet({
   ref,
@@ -152,6 +155,10 @@ export function BottomSheet({
   const lower = useRef<StackedSheet | null>(null)
   /** This sheet is the lowest of its stack: the page's recede is its to write and to release. */
   const ownsPage = useRef(false)
+  /** This sheet's place on the stack, once it has one. */
+  const entry = useRef<StackedSheet | null>(null)
+  /** No sheet above this one: it holds the focus and answers the keyboard (§9.24). */
+  const onTop = (): boolean => entry.current !== null && stack.at(-1) === entry.current
 
   // The motion lives in a ref and is only ever touched from effects and event handlers.
   const motionRef = useRef<SheetMotion | null>(null)
@@ -227,7 +234,7 @@ export function BottomSheet({
     const sheet = sheetRef.current
     const sc = scrollRef.current
     const active = document.activeElement
-    if (!sheet || !sc || !active || !sheet.contains(active) || !isField(active)) return
+    if (!sheet || !sc || !active || !sheet.contains(active) || !isTextField(active)) return
     const m = motion()
     if (!m.isOpen || m.dismissing || touch.current) return
     const inset = insetBottom.current
@@ -257,15 +264,17 @@ export function BottomSheet({
 
   // Take a place on the stack before the first frame, so it knows whether it draws the scrim and
   // recedes the page (the content frame is promoted while it is up, and released – with the
-  // recede – after) or recedes the sheet beneath. While this sheet is up the lower one is inert;
-  // when it goes the lower one comes back, and focus – still in this sheet, or dropped to nothing
-  // by a scrim tap or the inert beneath – returns to the control that opened it (§9.22, §9.24),
-  // which for a stacked sheet is a row of the sheet beneath.
+  // recede – after) or recedes the sheet beneath. While this sheet is up the chrome behind the
+  // scrim is inert (one hold per sheet; they nest) and so is the lower sheet; when it goes the
+  // chrome or the lower sheet comes back first, and then focus – still in this sheet, or dropped
+  // to nothing by a scrim tap or the inert beneath – returns to the control that opened it
+  // (§9.22, §9.24), which for a stacked sheet is a row of the sheet beneath.
   useLayoutEffect(() => {
     const sheet = sheetRef.current
     if (!sheet) return
     const root = document.documentElement
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const releaseChrome = holdChromeInert()
     const takePage = (): void => {
       if (ownsPage.current) return
       ownsPage.current = true
@@ -280,7 +289,7 @@ export function BottomSheet({
       // frame stood receded is 3 % small, so have it look again now that the frame is back.
       if (resizedWhileUp.current) window.dispatchEvent(new Event('resize'))
     }
-    const entry: StackedSheet = {
+    const place: StackedSheet = {
       recede: (progress) => {
         sheet.style.setProperty('--zen-sheet-recede', progress.toFixed(4))
         sheet.style.scale = progress > 0 ? (1 - 0.03 * progress).toFixed(4) : ''
@@ -297,19 +306,22 @@ export function BottomSheet({
         paint()
       }
     }
+    entry.current = place
     lower.current = stack.at(-1) ?? null
-    stack.push(entry)
+    stack.push(place)
     if (lower.current) lower.current.setInert(true)
     else takePage()
     return () => {
-      const at = stack.indexOf(entry)
+      const at = stack.indexOf(place)
       const above = at === -1 ? undefined : stack[at + 1]
       if (at !== -1) stack.splice(at, 1)
+      entry.current = null
       const beneath = lower.current
       lower.current = null
       beneath?.recede(0)
       beneath?.setInert(false)
       releasePage()
+      releaseChrome()
       // Left from under another sheet: that one now sits on whatever this one sat on.
       above?.under(beneath)
       const active = document.activeElement
@@ -317,6 +329,31 @@ export function BottomSheet({
         opener?.focus({ preventScroll: true })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on mount
+  }, [])
+
+  // Focus moves into the sheet as it opens (§9.22) – after the layout effects above have shown
+  // the sheet, since a hidden element takes no focus – and again when its content is swapped
+  // from under it (a menu stepping into a submenu) and the focus fell to nothing with the old
+  // rows. Focus a surface put elsewhere in the sheet stays. A sheet with a sheet above it does
+  // not take the focus back: the top one holds it (§9.24).
+  useEffect(() => {
+    const sheet = sheetRef.current
+    const body = scrollRef.current
+    if (!sheet || !body || !onTop()) return
+    const active = document.activeElement
+    if (active && active !== document.body && sheet.contains(active)) return
+    sheetInitialFocus(sheet, body).focus({ preventScroll: true })
+  }, [contentKey])
+
+  // Tab wraps inside the sheet on top (§9.22): the chrome is inert, but past the last control the
+  // WebView would otherwise hand the focus to the next native view.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      const sheet = sheetRef.current
+      if (sheet && onTop()) wrapTab(sheet, e)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [])
 
   useLayoutEffect(() => {
