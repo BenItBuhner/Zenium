@@ -152,7 +152,10 @@ export class ElectronDownloads implements DownloadHost {
    */
   private readonly saveAsUrls: string[] = []
   /** Refusals of requests no live item claimed yet (canonical URL → reason), see `observeRequests`. */
-  private readonly pendingReasons = new Map<string, { reason: DownloadInterruptReason; at: number }>()
+  private readonly pendingReasons = new Map<
+    string,
+    { reason: DownloadInterruptReason; at: number }
+  >()
   private readonly sessions = new Map<string, Session>()
   private service: DownloadService | null = null
   /** Set by `park`: Chromium's teardown of the live items is not to be reported as cancels. */
@@ -199,7 +202,9 @@ export class ElectronDownloads implements DownloadHost {
       'onHeadersReceived',
       (details) => {
         const reason =
-          details.statusCode === undefined ? null : interruptReasonFromHttpStatus(details.statusCode)
+          details.statusCode === undefined
+            ? null
+            : interruptReasonFromHttpStatus(details.statusCode)
         if (reason) this.noteReason(details.url, reason)
       },
       options

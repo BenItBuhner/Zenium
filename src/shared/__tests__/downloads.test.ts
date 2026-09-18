@@ -1,12 +1,107 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_DOWNLOAD_SETTINGS,
+  INTERRUPT_REASONS,
+  chromeInterruptReasonName,
   downloadHost,
   fileExtension,
   finalName,
+  interruptMessage,
+  interruptReasonFrom,
+  interruptReasonFromHttpStatus,
+  interruptReasonFromNetError,
+  isInterruptReason,
   normalizeExtension,
   resolveDownloadSettings
 } from '../downloads'
+
+describe('interrupt reasons', () => {
+  it('is the closed set of 22, each with Chrome’s wording and Chrome’s spelling', () => {
+    expect(INTERRUPT_REASONS).toHaveLength(22)
+    expect(new Set(INTERRUPT_REASONS).size).toBe(22)
+    for (const reason of INTERRUPT_REASONS) {
+      expect(isInterruptReason(reason)).toBe(true)
+      expect(interruptMessage(reason).length).toBeGreaterThan(0)
+      expect(chromeInterruptReasonName(reason)).toMatch(/^[A-Z_]+$/)
+    }
+    expect(chromeInterruptReasonName('file-security-check-failed')).toBe(
+      'FILE_SECURITY_CHECK_FAILED'
+    )
+    expect(isInterruptReason('interrupted')).toBe(false)
+    expect(isInterruptReason(42)).toBe(false)
+  })
+
+  it('reads Chromium’s net errors the way its download core does', () => {
+    expect(interruptReasonFromNetError('net::ERR_TIMED_OUT')).toBe('network-timeout')
+    expect(interruptReasonFromNetError('ERR_CONNECTION_TIMED_OUT')).toBe('network-timeout')
+    expect(interruptReasonFromNetError('net::ERR_INTERNET_DISCONNECTED')).toBe(
+      'network-disconnected'
+    )
+    expect(interruptReasonFromNetError('net::ERR_NETWORK_CHANGED')).toBe('network-disconnected')
+    expect(interruptReasonFromNetError('net::ERR_CONNECTION_REFUSED')).toBe('network-server-down')
+    expect(interruptReasonFromNetError('net::ERR_NAME_NOT_RESOLVED')).toBe('server-unreachable')
+    expect(interruptReasonFromNetError('net::ERR_CERT_DATE_INVALID')).toBe('server-failed')
+    expect(interruptReasonFromNetError('net::ERR_SSL_PROTOCOL_ERROR')).toBe('server-failed')
+    expect(interruptReasonFromNetError('net::ERR_FILE_NO_SPACE')).toBe('file-no-space')
+    expect(interruptReasonFromNetError('net::ERR_FILE_PATH_TOO_LONG')).toBe('file-name-too-long')
+    expect(interruptReasonFromNetError('net::ERR_ACCESS_DENIED')).toBe('file-access-denied')
+    expect(interruptReasonFromNetError('net::ERR_BLOCKED_BY_ADMINISTRATOR')).toBe('file-blocked')
+    expect(interruptReasonFromNetError('net::ERR_FILE_EXISTS')).toBe('file-failed')
+    expect(interruptReasonFromNetError('net::ERR_ABORTED')).toBe('user-canceled')
+    // Anything else the stack reports (a reset, an empty response, a short body) is a network failure.
+    expect(interruptReasonFromNetError('net::ERR_CONNECTION_RESET')).toBe('network-failed')
+    expect(interruptReasonFromNetError('net::ERR_EMPTY_RESPONSE')).toBe('network-failed')
+    expect(interruptReasonFromNetError('net::ERR_CONTENT_LENGTH_MISMATCH')).toBe('network-failed')
+    expect(interruptReasonFromNetError('')).toBe('network-failed')
+  })
+
+  it('reads a refusing HTTP status, and none from one a download proceeds under', () => {
+    for (const ok of [200, 201, 202, 203, 206, 304]) {
+      expect(interruptReasonFromHttpStatus(ok)).toBeNull()
+    }
+    expect(interruptReasonFromHttpStatus(204)).toBe('server-bad-content')
+    expect(interruptReasonFromHttpStatus(205)).toBe('server-bad-content')
+    expect(interruptReasonFromHttpStatus(404)).toBe('server-bad-content')
+    expect(interruptReasonFromHttpStatus(401)).toBe('server-unauthorized')
+    expect(interruptReasonFromHttpStatus(407)).toBe('server-unauthorized')
+    expect(interruptReasonFromHttpStatus(403)).toBe('server-forbidden')
+    expect(interruptReasonFromHttpStatus(416)).toBe('server-no-range')
+    expect(interruptReasonFromHttpStatus(410)).toBe('server-failed')
+    expect(interruptReasonFromHttpStatus(429)).toBe('server-failed')
+    expect(interruptReasonFromHttpStatus(500)).toBe('server-failed')
+    expect(interruptReasonFromHttpStatus(503)).toBe('server-failed')
+  })
+
+  it('normalises whatever a host or an older file names onto the set', () => {
+    expect(interruptReasonFrom('file-no-space')).toBe('file-no-space')
+    expect(interruptReasonFrom(' user-canceled ')).toBe('user-canceled')
+    expect(interruptReasonFrom('shutdown')).toBe('user-shutdown')
+    expect(interruptReasonFrom('file-error')).toBe('file-failed')
+    expect(interruptReasonFrom('cancelled')).toBe('user-canceled')
+    expect(interruptReasonFrom('NETWORK_TIMEOUT')).toBe('network-timeout')
+    expect(interruptReasonFrom('DOWNLOAD_INTERRUPT_REASON_FILE_NO_SPACE')).toBe('file-no-space')
+    expect(interruptReasonFrom('net::ERR_NAME_NOT_RESOLVED')).toBe('server-unreachable')
+    expect(interruptReasonFrom('ERR_TIMED_OUT')).toBe('network-timeout')
+    expect(interruptReasonFrom('interrupted')).toBe('network-failed')
+    expect(interruptReasonFrom(undefined)).toBe('network-failed')
+    expect(interruptReasonFrom(null, 'crash')).toBe('crash')
+    expect(interruptReasonFrom('SERVER_CERT_PROBLEM', 'server-failed')).toBe('server-failed')
+    expect(interruptReasonFrom(7)).toBe('network-failed')
+  })
+
+  it('words each reason as Chrome’s download bubble does', () => {
+    expect(interruptMessage('network-failed')).toBe('Check internet connection')
+    expect(interruptMessage('network-disconnected')).toBe('Check internet connection')
+    expect(interruptMessage('server-unreachable')).toBe('Site wasn’t available')
+    expect(interruptMessage('server-bad-content')).toBe('File wasn’t available on site')
+    expect(interruptMessage('file-no-space')).toBe('Out of storage space')
+    expect(interruptMessage('file-virus-infected')).toBe('Virus detected')
+    expect(interruptMessage('file-blocked')).toBe('Blocked by your organization')
+    expect(interruptMessage('user-canceled')).toBe('Cancelled')
+    expect(interruptMessage('user-shutdown')).toBe('Couldn’t finish download')
+    expect(interruptMessage('crash')).toBe('Couldn’t finish download')
+  })
+})
 
 describe('download settings', () => {
   it('fills in defaults for profiles from before the block existed', () => {

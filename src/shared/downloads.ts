@@ -125,7 +125,10 @@ export function interruptReasonFrom(
   if (value === 'file-error') return 'file-failed'
   if (value === 'cancelled' || value === 'canceled') return 'user-canceled'
   if (/^(net::)?ERR_/.test(value)) return interruptReasonFromNetError(value)
-  const chrome = value.replace(/^DOWNLOAD_INTERRUPT_REASON_/, '').toLowerCase().replace(/_/g, '-')
+  const chrome = value
+    .replace(/^DOWNLOAD_INTERRUPT_REASON_/, '')
+    .toLowerCase()
+    .replace(/_/g, '-')
   if (isInterruptReason(chrome)) return chrome
   return fallback
 }

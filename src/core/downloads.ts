@@ -33,14 +33,16 @@ import {
   type DangerVerdictRegistry
 } from './downloads/danger'
 
+/** Earlier schemas are read field by field; their rows are whatever an older build wrote. */
 interface PersistedV1 {
   version: 1
-  items: Array<Record<string, unknown>>
+  items: unknown[]
 }
 
+/** Version 2 had the version 3 shape with a free-form `error` string and no `fileMissing`. */
 interface PersistedV2 {
   version: 2
-  items: Array<Record<string, unknown>>
+  items: unknown[]
 }
 
 /**
@@ -232,11 +234,10 @@ export class DownloadService {
     this.registry = deps.verdicts ?? dangerVerdicts
     this.store = new JsonStore<Persisted>(io, 'downloads.json', 1000)
     this.items = migrate(this.store.readSync(), this.now())
-    // Files deleted while the browser was closed: checked once the host is up (next turn), so
-    // the first snapshot goes out at once and the rows that lost their file follow as changes.
-    this.loaded = new Promise((resolve) => {
-      setTimeout(() => void this.refreshFiles().finally(resolve), 0)
-    })
+    // Files deleted while the browser was closed: the loaded rows are checked as the list loads
+    // (the host answers asynchronously), so the first snapshot goes out at once and the rows
+    // that lost their file follow as changes.
+    this.loaded = this.refreshFiles([...this.items])
   }
 
   /** Safe Browsing and friends register here (or on the registry directly). */
@@ -968,8 +969,10 @@ export function basename(path: string): string {
 export function migrate(data: Persisted | null, now: number): DownloadItem[] {
   if (!data || !Array.isArray(data.items)) return []
   const items: DownloadItem[] = []
-  for (const raw of data.items as Array<Record<string, unknown>>) {
-    if (!raw || typeof raw !== 'object' || typeof raw['id'] !== 'string') continue
+  for (const entry of data.items as unknown[]) {
+    if (!entry || typeof entry !== 'object') continue
+    const raw = entry as Record<string, unknown>
+    if (typeof raw['id'] !== 'string') continue
     const item =
       data.version === 1
         ? fromV1(raw, now)

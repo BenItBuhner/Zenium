@@ -61,6 +61,25 @@ class FakeHost implements DownloadHost {
   async deletePartial(item: DownloadItem): Promise<void> {
     this.calls.push({ method: 'deletePartial', id: item.id })
   }
+  /**
+   * The files "on disk": null means every path is there (the default, so the rest of the suite
+   * never sees a missing file); a set names the paths that exist. `deleteFailsFor` are locked.
+   */
+  files: Set<string> | null = null
+  deleteFailsFor = new Set<string>()
+  /** Set to make `exists` reject (a host without an answer changes nothing). */
+  existsThrows = false
+  async exists(item: DownloadItem): Promise<boolean> {
+    this.calls.push({ method: 'exists', id: item.id })
+    if (this.existsThrows) throw new Error('no answer')
+    return this.files === null || this.files.has(item.savePath)
+  }
+  async deleteFile(item: DownloadItem): Promise<'deleted' | 'missing' | 'failed'> {
+    this.calls.push({ method: 'deleteFile', id: item.id })
+    if (this.deleteFailsFor.has(item.savePath)) return 'failed'
+    if (this.files === null) return 'deleted'
+    return this.files.delete(item.savePath) ? 'deleted' : 'missing'
+  }
   async open(item: DownloadItem): Promise<void> {
     this.opened.push(item.id)
   }
@@ -96,8 +115,11 @@ interface Harness {
   verdicts: DangerVerdictRegistry
 }
 
-function harness(overrides: Partial<DownloadServiceDeps> = {}, io = new MemoryIO()): Harness {
-  const host = new FakeHost()
+function harness(
+  overrides: Partial<DownloadServiceDeps> = {},
+  io = new MemoryIO(),
+  host = new FakeHost()
+): Harness {
   const changes: Harness['changes'] = []
   const dangers: string[] = []
   const settings: DownloadSettings = { ...DEFAULT_DOWNLOAD_SETTINGS }
@@ -181,7 +203,7 @@ describe('DownloadService state machine', () => {
     expect(item.bytesPerSecond).toBe(200)
     expect(item.etaMs).toBe(3000)
     const data = stored(h)
-    expect(data.version).toBe(2)
+    expect(data.version).toBe(3)
     expect(data.items[0]!.receivedBytes).toBe(400)
   })
 
@@ -286,9 +308,10 @@ describe('DownloadService state machine', () => {
   it('an interruption keeps the partial file when the server can resume', () => {
     const item = begin(h)
     h.service.progress(item.id, { receivedBytes: 500, state: 'progressing' })
-    h.service.finish(item.id, 'interrupted', { canResume: true, error: 'network-failed' })
+    h.service.finish(item.id, 'interrupted', { canResume: true, error: 'network-timeout' })
     expect(item.state).toBe('interrupted')
-    expect(item.error).toBe('network-failed')
+    expect(item.error).toBe('network-timeout')
+    expect(item.errorMessage).toBe('Check internet connection')
     expect(item.savePath).toBe('/dl/report.pdf.zeniumdownload')
     expect(item.canResume).toBe(true)
     h.service.resume(item.id)
@@ -299,7 +322,9 @@ describe('DownloadService state machine', () => {
   it('resume of a non-resumable interruption is a retry that keeps the row', () => {
     const item = begin(h)
     h.service.finish(item.id, 'interrupted', { canResume: false })
-    expect(item.error).toBe('interrupted')
+    // A host that names no reason leaves a plain network failure.
+    expect(item.error).toBe('network-failed')
+    expect(item.errorMessage).toBe('Check internet connection')
     h.service.resume(item.id)
     expect(h.host.count('retry')).toBe(1)
     expect(h.host.count('deletePartial')).toBe(1)
@@ -660,6 +685,256 @@ describe('danger: quarantine, Keep and Discard', () => {
   })
 })
 
+describe('interrupt reasons', () => {
+  let h: Harness
+  beforeEach(() => {
+    h = harness()
+  })
+
+  it('carries the host’s reason with Chrome’s wording, cleared when the transfer goes on', () => {
+    const item = begin(h)
+    h.service.progress(item.id, {
+      receivedBytes: 10,
+      state: 'interrupted',
+      canResume: true,
+      error: 'file-no-space'
+    })
+    expect(item).toMatchObject({
+      state: 'interrupted',
+      error: 'file-no-space',
+      errorMessage: 'Out of storage space'
+    })
+    // A later report of the same interruption without a reason keeps the one it has.
+    h.service.progress(item.id, { receivedBytes: 10, state: 'interrupted', canResume: true })
+    expect(item.error).toBe('file-no-space')
+    h.service.progress(item.id, { receivedBytes: 20, state: 'progressing' })
+    expect(item.error).toBeUndefined()
+    expect(item.errorMessage).toBeUndefined()
+    h.service.finish(item.id, 'interrupted', { canResume: false, error: 'server-forbidden' })
+    expect(item.errorMessage).toBe('File wasn’t available on site')
+    expect(stored(h).items[0]).toMatchObject({
+      error: 'server-forbidden',
+      errorMessage: 'File wasn’t available on site'
+    })
+  })
+
+  it('a file the host could not place fails as file-failed', async () => {
+    h.host.releaseResult = null
+    const item = begin(h)
+    h.service.finish(item.id, 'completed', { receivedBytes: 1000 })
+    await flush()
+    expect(item).toMatchObject({
+      state: 'interrupted',
+      error: 'file-failed',
+      errorMessage: 'Something went wrong',
+      canResume: false
+    })
+  })
+
+  it('a cancelled row carries no reason', async () => {
+    const item = begin(h)
+    h.service.progress(item.id, {
+      receivedBytes: 10,
+      state: 'interrupted',
+      error: 'network-timeout'
+    })
+    h.service.finish(item.id, 'cancelled')
+    await flush()
+    expect(item.error).toBeUndefined()
+    expect(item.errorMessage).toBeUndefined()
+  })
+})
+
+describe('the file on disk: deleteFile, exists and fileMissing', () => {
+  let h: Harness
+  beforeEach(() => {
+    h = harness()
+    h.host.files = new Set()
+  })
+
+  async function completed(over: Parameters<typeof begin>[1] = {}): Promise<DownloadItem> {
+    const item = begin(h, over)
+    h.service.finish(item.id, 'completed', { receivedBytes: 1000 })
+    await flush()
+    h.host.files!.add(item.savePath)
+    return item
+  }
+
+  it('deleteFile removes the completed file, marks the row and keeps it', async () => {
+    const item = await completed()
+    h.changes.length = 0
+    await expect(h.service.deleteFile(item.id)).resolves.toBe('deleted')
+    expect(h.host.files!.has('/dl/report.pdf')).toBe(false)
+    expect(item.fileMissing).toBe(true)
+    expect(item.state).toBe('completed')
+    expect(item.savePath).toBe('/dl/report.pdf')
+    expect(h.service.items).toEqual([item])
+    expect(h.changes).toEqual([{ id: item.id, kind: 'progress' }])
+    expect(stored(h).items[0]!.fileMissing).toBe(true)
+    // Again: nothing to do, said clearly, and no second change.
+    await expect(h.service.deleteFile(item.id)).resolves.toBe('missing')
+    expect(h.host.count('deleteFile')).toBe(1)
+    expect(h.changes).toHaveLength(1)
+  })
+
+  it('deleteFile on a file that vanished already marks the row and says so', async () => {
+    const item = await completed()
+    h.host.files!.delete(item.savePath)
+    await expect(h.service.deleteFile(item.id)).resolves.toBe('missing')
+    expect(item.fileMissing).toBe(true)
+  })
+
+  it('deleteFile leaves a row alone when the host cannot remove the file', async () => {
+    const item = await completed()
+    h.host.deleteFailsFor.add(item.savePath)
+    await expect(h.service.deleteFile(item.id)).resolves.toBe('failed')
+    expect(item.fileMissing).toBeUndefined()
+    expect(h.host.files!.has(item.savePath)).toBe(true)
+  })
+
+  it('deleteFile acts on completed, released rows only', async () => {
+    const running = begin(h)
+    await expect(h.service.deleteFile(running.id)).resolves.toBe('not-completed')
+    await expect(h.service.deleteFile('nope')).resolves.toBe('not-completed')
+    h.service.finish(running.id, 'interrupted', { canResume: false })
+    await expect(h.service.deleteFile(running.id)).resolves.toBe('not-completed')
+    const flagged = begin(h, {
+      url: 'http://sketchy.example/setup.exe',
+      filename: 'setup.exe',
+      savePath: '/dl/setup.exe.zeniumdownload'
+    })
+    h.service.finish(flagged.id, 'completed', { receivedBytes: 1000 })
+    await flush()
+    expect(isQuarantined(flagged)).toBe(true)
+    await expect(h.service.deleteFile(flagged.id)).resolves.toBe('not-completed')
+    expect(h.host.count('deleteFile')).toBe(0)
+  })
+
+  it('exists checks now and the row follows the answer both ways', async () => {
+    const item = await completed()
+    await expect(h.service.exists(item.id)).resolves.toBe(true)
+    expect(item.fileMissing).toBeUndefined()
+    h.host.files!.delete(item.savePath)
+    h.changes.length = 0
+    await expect(h.service.exists(item.id)).resolves.toBe(false)
+    expect(item.fileMissing).toBe(true)
+    expect(h.changes).toEqual([{ id: item.id, kind: 'progress' }])
+    // The file came back (restored from the bin): the mark goes.
+    h.host.files!.add(item.savePath)
+    await expect(h.service.exists(item.id)).resolves.toBe(true)
+    expect(item.fileMissing).toBeUndefined()
+    // Rows without a completed file answer false and are not marked.
+    const running = begin(h, { url: 'https://x.example/b', savePath: '/dl/b.zeniumdownload' })
+    await expect(h.service.exists(running.id)).resolves.toBe(false)
+    expect(running.fileMissing).toBeUndefined()
+    await expect(h.service.exists('nope')).resolves.toBe(false)
+  })
+
+  it('a host without an answer changes nothing', async () => {
+    const item = await completed()
+    h.host.existsThrows = true
+    await expect(h.service.exists(item.id)).resolves.toBe(true)
+    expect(item.fileMissing).toBeUndefined()
+  })
+
+  it('checks the loaded rows as the list loads and marks those whose file is gone', async () => {
+    const kept = await completed()
+    const lost = await completed({
+      url: 'https://x.example/lost.bin',
+      filename: 'lost.bin',
+      savePath: '/dl/lost.bin.zeniumdownload'
+    })
+    h.host.files!.delete(lost.savePath)
+    h.service.flushSync()
+
+    const disk = new FakeHost()
+    disk.files = h.host.files
+    const second = harness({}, h.io, disk)
+    // The first snapshot goes out untouched; the rows that lost their file follow as changes.
+    expect(second.service.item(lost.id)!.fileMissing).toBeUndefined()
+    await second.service.loaded
+    expect(second.service.item(lost.id)!.fileMissing).toBe(true)
+    expect(second.service.item(kept.id)!.fileMissing).toBeUndefined()
+    expect(second.changes).toEqual([{ id: lost.id, kind: 'progress' }])
+    expect(second.host.ids('exists').sort()).toEqual([kept.id, lost.id].sort())
+  })
+
+  it('open checks the file first and refuses one that is gone', async () => {
+    const item = await completed()
+    await h.service.open(item.id)
+    expect(h.host.opened).toEqual([item.id])
+    h.host.files!.delete(item.savePath)
+    await h.service.open(item.id)
+    expect(h.host.opened).toEqual([item.id])
+    expect(item.fileMissing).toBe(true)
+  })
+
+  it('a snapshot after a row was opened or revealed checks its file again', async () => {
+    const item = await completed()
+    await h.service.open(item.id)
+    h.host.calls.length = 0
+    h.service.visibleTo(false)
+    await flush()
+    expect(h.host.ids('exists')).toEqual([item.id])
+    // Once per open or reveal: the next snapshot is quiet.
+    h.service.visibleTo(false)
+    await flush()
+    expect(h.host.ids('exists')).toEqual([item.id])
+
+    h.service.showInFolder(item.id)
+    expect(h.host.count('showInFolder')).toBe(1)
+    h.host.files!.delete(item.savePath)
+    h.service.visibleTo(true)
+    await flush()
+    expect(item.fileMissing).toBe(true)
+  })
+
+  it('a deleted row retries into the same row, with nothing of ours to delete first', async () => {
+    const item = await completed()
+    expect(canRetry(item)).toBe(false)
+    await h.service.deleteFile(item.id)
+    expect(canRetry(item)).toBe(true)
+    h.service.resume(item.id)
+    expect(h.host.ids('retry')).toEqual([item.id])
+    expect(h.host.count('deletePartial')).toBe(0)
+    // As with any retry, the row waits for the host's report of the new transfer.
+    expect(item).toMatchObject({ state: 'completed', savePath: '', receivedBytes: 0 })
+    const again = h.service.begin({
+      url: item.url,
+      filename: 'report.pdf',
+      totalBytes: 1000,
+      mimeType: 'application/pdf',
+      savePath: '/dl/report.pdf.zeniumdownload',
+      resumes: item.id
+    })
+    expect(again).toBe(item)
+    expect(item.state).toBe('progressing')
+    expect(item.fileMissing).toBeUndefined()
+    h.service.finish(item.id, 'completed', { receivedBytes: 1000 })
+    await flush()
+    expect(item.state).toBe('completed')
+    expect(h.service.items).toHaveLength(1)
+  })
+
+  it('fileMissing survives a restart; a row whose file is back is un-marked on load', async () => {
+    const item = await completed()
+    await h.service.deleteFile(item.id)
+    h.service.flushSync()
+    const disk = new FakeHost()
+    disk.files = h.host.files
+    const second = harness({}, h.io, disk)
+    expect(second.service.item(item.id)!.fileMissing).toBe(true)
+    await second.service.loaded
+    expect(second.service.item(item.id)!.fileMissing).toBe(true)
+    expect(second.changes).toEqual([])
+    h.host.files!.add(item.savePath)
+    const third = harness({}, h.io, disk)
+    await third.service.loaded
+    expect(third.service.item(item.id)!.fileMissing).toBeUndefined()
+    expect(third.changes).toEqual([{ id: item.id, kind: 'progress' }])
+  })
+})
+
 describe('persistence and migration', () => {
   it('reads version 1 records and turns what was in flight into interruptions', () => {
     const items = migrate(
@@ -708,16 +983,18 @@ describe('persistence and migration', () => {
       endedAt: 5
     })
     expect(items[0]!.error).toBeUndefined()
+    // Version 1 builds did not write their rows on quit: one still in flight was shut down over.
     expect(items[1]).toMatchObject({
       id: 'dl-2',
       state: 'interrupted',
-      error: 'shutdown',
+      error: 'user-shutdown',
+      errorMessage: 'Couldn’t finish download',
       canResume: false
     })
     expect(items[1]!.completedAt).toBeUndefined()
   })
 
-  it('reads version 2 records; in-flight ones come back interrupted by the shutdown', () => {
+  it('reads this build’s records; a row still in flight in the file was never shut down (crash)', () => {
     const io = new MemoryIO()
     const first = harness({}, io)
     const item = begin(first, {
@@ -736,7 +1013,7 @@ describe('persistence and migration', () => {
     const restored = second.service.items[0]!
     expect(restored.id).toBe(item.id)
     expect(restored.state).toBe('interrupted')
-    expect(restored.error).toBe('shutdown')
+    expect(restored.error).toBe('crash')
     expect(restored.canResume).toBe(true)
     expect(restored.etag).toBe('"abc"')
     expect(restored.finalName).toBe('setup(1).exe')
@@ -773,19 +1050,28 @@ describe('persistence and migration', () => {
     expect(paused.savePath).toBe('/dl/b.bin.quit.zeniumdownload')
     expect(secret.savePath).toBe('/dl/c.bin.zeniumdownload')
 
-    // Chromium now cancels the live items: nothing of that reaches the rows or the files.
+    // The rows read as interrupted by the shutdown; Chromium now cancels the live items and
+    // nothing of that reaches the rows or the files.
+    expect(running).toMatchObject({ state: 'interrupted', error: 'user-shutdown' })
     first.service.finish(running.id, 'cancelled', { receivedBytes: 300 })
     first.service.progress(paused.id, { receivedBytes: 100, state: 'interrupted' })
-    expect(running.state).toBe('progressing')
+    expect(running.state).toBe('interrupted')
+    expect(running.receivedBytes).toBe(300)
     expect(running.savePath).toBe('/dl/report.pdf.quit.zeniumdownload')
     expect(first.host.count('deletePartial')).toBe(0)
     first.service.flushSync()
 
+    // The shutdown wrote the in-flight rows as interrupted by it, so the file says so itself.
+    expect(stored(first).items.find((i) => i.id === running.id)).toMatchObject({
+      state: 'interrupted',
+      error: 'user-shutdown'
+    })
     const second = harness({}, io)
     const restored = second.service.item(running.id)!
     expect(restored).toMatchObject({
       state: 'interrupted',
-      error: 'shutdown',
+      error: 'user-shutdown',
+      errorMessage: 'Couldn’t finish download',
       canResume: true,
       savePath: '/dl/report.pdf.quit.zeniumdownload',
       receivedBytes: 300
@@ -843,6 +1129,114 @@ describe('persistence and migration', () => {
   it('survives garbage', () => {
     expect(migrate(null, 0)).toEqual([])
     expect(migrate({ version: 2, items: 'x' as unknown as DownloadItem[] }, 0)).toEqual([])
+  })
+
+  it('reads version 2 reasons onto the closed set, network-failed when nothing closer is known', () => {
+    const row = (id: string, over: Record<string, unknown>): Record<string, unknown> => ({
+      id,
+      url: `https://a/${id}`,
+      filename: id,
+      finalName: id,
+      savePath: `/dl/${id}.zeniumdownload`,
+      totalBytes: 10,
+      receivedBytes: 4,
+      state: 'interrupted',
+      startedAt: 5,
+      endedAt: 9,
+      mimeType: '',
+      canResume: false,
+      ...over
+    })
+    const items = migrate(
+      {
+        version: 2,
+        items: [
+          row('plain', { error: 'interrupted' }),
+          row('none', {}),
+          row('quit', { error: 'shutdown' }),
+          row('disk', { error: 'file-error' }),
+          row('net', { error: 'net::ERR_CONNECTION_TIMED_OUT' }),
+          row('cert', { error: 'ERR_CERT_DATE_INVALID' }),
+          row('chrome', { error: 'SERVER_NO_RANGE' }),
+          row('member', { error: 'file-no-space' }),
+          row('odd', { error: 'something else entirely' }),
+          row('flight', { state: 'progressing', error: undefined })
+        ]
+      },
+      100
+    )
+    const reasons = Object.fromEntries(items.map((i) => [i.id, i.error]))
+    expect(reasons).toEqual({
+      plain: 'network-failed',
+      none: 'network-failed',
+      quit: 'user-shutdown',
+      disk: 'file-failed',
+      net: 'network-timeout',
+      cert: 'server-failed',
+      chrome: 'server-no-range',
+      member: 'file-no-space',
+      odd: 'network-failed',
+      // Version 2 builds did not write in-flight rows on quit: the browser was shut down over it.
+      flight: 'user-shutdown'
+    })
+    for (const item of items) {
+      expect(item.state).toBe('interrupted')
+      expect(item.errorMessage).not.toBe('')
+    }
+    expect(items.find((i) => i.id === 'net')!.errorMessage).toBe('Check internet connection')
+    expect(items.find((i) => i.id === 'quit')!.errorMessage).toBe('Couldn’t finish download')
+  })
+
+  it('reads version 3 rows as written; in-flight ones were never shut down', () => {
+    const base = {
+      url: 'https://a/x',
+      filename: 'x',
+      finalName: 'x',
+      totalBytes: 10,
+      receivedBytes: 10,
+      startedAt: 5,
+      endedAt: 9,
+      mimeType: '',
+      canResume: false
+    }
+    const items = migrate(
+      {
+        version: 3,
+        items: [
+          {
+            ...base,
+            id: 'gone',
+            state: 'completed',
+            savePath: '/dl/x',
+            completedAt: 9,
+            fileMissing: true
+          },
+          { ...base, id: 'there', state: 'completed', savePath: '/dl/y', completedAt: 9 },
+          {
+            ...base,
+            id: 'failed',
+            state: 'interrupted',
+            savePath: '',
+            error: 'server-unauthorized',
+            errorMessage: 'stale wording from an older build'
+          },
+          { ...base, id: 'flight', state: 'progressing', savePath: '/dl/z.zeniumdownload' }
+        ] as unknown as DownloadItem[]
+      },
+      100
+    )
+    const byId = Object.fromEntries(items.map((i) => [i.id, i]))
+    expect(byId['gone']!.fileMissing).toBe(true)
+    expect(byId['there']!.fileMissing).toBeUndefined()
+    expect(byId['failed']).toMatchObject({
+      error: 'server-unauthorized',
+      errorMessage: 'File wasn’t available on site'
+    })
+    expect(byId['flight']).toMatchObject({
+      state: 'interrupted',
+      error: 'crash',
+      errorMessage: 'Couldn’t finish download'
+    })
   })
 })
 
