@@ -339,6 +339,17 @@
 .zen-v2-button[data-danger] {
   color: var(--v2-danger);
 }
+/*
+ * On the window gradient (the first run) the secondary fill is of the window's ink, not the
+ * page's – beside the rule and unlayered like it, since a layered override would lose to it.
+ */
+.zen-firstrun .zen-v2-button:not([data-primary]) {
+  background: var(--v2-window-fill);
+  color: var(--zen-fg);
+}
+.zen-firstrun .zen-v2-button:not([data-primary]):active:not(:disabled) {
+  background: var(--v2-window-fill-hover);
+}
 
 /*
  * The v2 badge (§9.19): a text pill 20 tall, 13/600, padding 0 8, in the family of the surface
@@ -3371,6 +3382,241 @@
   }
   45% {
     opacity: 1;
+  }
+}
+
+@layer components {
+  /*
+   * v2 controls and surfaces (design-language-v2-draft.md §2, §3, §6), shared by the first run,
+   * the default-browser prompts and the gesture hint (the button is the `.zen-v2-button` rule
+   * beside the token block). Proton-like: 20 px radio circles on 44 px rows; cards flat with a
+   * hairline; panels and sheets opaque with a border and a shallow shadow. Everything reads the
+   * --v2-* tokens, nothing carries a colour of its own.
+   */
+  /* A card: flat, hairline border, radius 8; rows sit inside it edge to edge. */
+  .zen-v2-card {
+    overflow: hidden;
+    border: 1px solid var(--v2-card-border);
+    border-radius: var(--v2-radius-card);
+    background: var(--v2-card);
+    color: var(--v2-text);
+  }
+  /*
+   * A radio row (§9.2, §9.14, §9.21): the circle, then the label, on the row's base height – 44
+   * on the phone, 32 on desktop – growing with its content; the circle alone does not raise it.
+   * The vertical padding is what sets one line of body text on that height ((row − line) / 2:
+   * 12 on the phone, 6 on desktop), so the leading circle can sit on the first text line rather
+   * than the row's centre: `align-self: flex-start` and (line − box) / 2 below the line's top –
+   * 0 for the phone's 20 px circle on a 20 px line, 2 for desktop's 16 – never a constant. Rows
+   * in a card touch; there is no gap between them.
+   */
+  .zen-v2-radio {
+    display: flex;
+    width: 100%;
+    min-height: var(--v2-row);
+    align-items: center;
+    gap: 12px;
+    padding: calc((var(--v2-row) - var(--v2-line-body)) / 2) 12px;
+    color: var(--v2-text);
+    text-align: left;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-v2-radio:active {
+    background: var(--v2-fill);
+  }
+  .zen-v2-radio-mark {
+    width: var(--v2-checkbox);
+    height: var(--v2-checkbox);
+    flex-shrink: 0;
+    align-self: flex-start;
+    margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
+    border: 1px solid rgb(var(--v2-text-rgb) / 0.4);
+    border-radius: 9999px;
+    background: var(--v2-page);
+    transition:
+      border 120ms var(--zen-ease),
+      background 120ms var(--zen-ease);
+  }
+  /* Checked: the accent fills the circle around a 6 px dot (§9.14) – a 7 px ring on the phone's 20, 5 on desktop's 16. */
+  .zen-v2-radio[aria-checked='true'] .zen-v2-radio-mark {
+    border-width: calc((var(--v2-checkbox) - 6px) / 2);
+    border-color: var(--v2-accent);
+    background: var(--v2-on-accent);
+  }
+  /* An image radio card (a colour preset): the picture at the card radius, a 2 px accent outline when chosen. */
+  .zen-v2-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    line-height: 16px;
+    color: var(--v2-text);
+  }
+  .zen-v2-tile-image {
+    width: 84px;
+    height: 52px;
+    border: 1px solid var(--v2-card-border);
+    border-radius: var(--v2-radius-card);
+    transition: transform 120ms var(--zen-ease);
+  }
+  .zen-v2-tile:active .zen-v2-tile-image {
+    transform: scale(0.96);
+  }
+  .zen-v2-tile[aria-checked='true'] .zen-v2-tile-image {
+    outline: 2px solid var(--v2-accent);
+    outline-offset: 2px;
+  }
+  /* A glyph in a small box of the text fill: a search engine's letter, a feature's icon. */
+  .zen-v2-glyph {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--v2-radius-control);
+    background: var(--v2-fill);
+    color: var(--v2-text);
+  }
+  /*
+   * Between a radio row's circle and its label (a search engine's letter) the box is taller than
+   * the text line: §9.2's expression with the box's own 28, on both sides, centres it on the first
+   * line without letting it grow the row.
+   */
+  .zen-v2-radio .zen-v2-glyph {
+    align-self: flex-start;
+    margin-top: calc((var(--v2-line-body) - 28px) / 2);
+    margin-bottom: calc((var(--v2-line-body) - 28px) / 2);
+  }
+  .zen-firstrun .zen-v2-glyph {
+    background: var(--v2-window-fill);
+    color: var(--zen-fg);
+  }
+  .zen-firstrun .zen-v2-card .zen-v2-glyph {
+    background: var(--v2-fill);
+    color: var(--v2-text);
+  }
+
+  /*
+   * The first run on a phone. The overlay wears the window gradient itself (the page card
+   * underneath must not show through) and follows a change of look the way the window does;
+   * its text is the window's ink, its choices sit in neutral cards on the gradient.
+   */
+  .zen-firstrun {
+    background: var(--zen-bg);
+    transition: background 600ms var(--zen-ease);
+  }
+  .zen-firstrun-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    background: rgb(var(--zen-fg-rgb) / 0.3);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-firstrun-dot[data-active='true'] {
+    background: var(--zen-fg);
+  }
+
+  /* A phone sheet on the v2 surface: opaque panel, hairline, radius 12, the dialog shadow. */
+  .zen-v2-sheet {
+    --zen-sheet-inner: 8px;
+    border: 1px solid var(--v2-border);
+    border-bottom: 0;
+    border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
+    background: var(--v2-panel);
+    color: var(--v2-text);
+    backdrop-filter: none;
+    box-shadow: var(--v2-shadow-sheet);
+  }
+  :root[data-theme='dark'] .zen-v2-sheet {
+    box-shadow: var(--v2-shadow-sheet);
+  }
+  .zen-v2-sheet .zen-sheet-handle {
+    background: rgb(var(--v2-text-rgb) / 0.25);
+  }
+  /* The sheet's scrim is a sibling in the same layer: black, never the gradient's tint. */
+  :has(> .zen-v2-sheet) > .zen-sheet-scrim,
+  .zen-v2-scrim {
+    background: var(--v2-scrim);
+  }
+  /* The same prompt as a dialog for a mouse. */
+  .zen-v2-dialog {
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-sheet);
+    background: var(--v2-panel);
+    color: var(--v2-text);
+    box-shadow: var(--v2-shadow-sheet);
+  }
+  /*
+   * The glyph on a title block's title (§9.23): the row glyph – 20 on phones and tablets, 16 on
+   * desktop, at the row stroke – with no box behind it, centred on the 22 px title line by
+   * (line − glyph) / 2 rather than a constant; the CSS stroke width beats the SVG's attribute.
+   */
+  .zen-v2-title-glyph {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    flex-shrink: 0;
+    margin-top: calc((22px - var(--v2-icon)) / 2);
+    stroke-width: var(--v2-icon-stroke);
+  }
+
+  /*
+   * The "set as default" banner above the page: a panel that sits on the window like the
+   * content frame does, with the stage gutter between them. Text left, the primary button and
+   * the close right.
+   */
+  .zen-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 56px;
+    margin-bottom: var(--zen-padding);
+    padding: 8px 4px 8px 12px;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-card);
+    background: var(--v2-panel);
+    box-shadow: var(--v2-shadow-panel);
+    color: var(--v2-text);
+  }
+  .zen-banner .zen-toolbar-button {
+    color: var(--v2-text);
+  }
+
+  /*
+   * The one-time gesture hint beside the address pill: a small panel, no tail, in a slot on the
+   * bar's side of the content frame. The slot opens to the panel's height in one step (the
+   * component sets it), the panel hangs from the slot's edge nearest the pill and the spring
+   * moves only the panel; `will-change` is on only while it does (`data-moving`).
+   */
+  .zen-hint-slot {
+    position: relative;
+    flex-shrink: 0;
+    overflow: visible;
+  }
+  .zen-hint {
+    position: absolute;
+    left: 0;
+    max-width: 300px;
+    padding: 10px 12px;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-card);
+    background: var(--v2-panel);
+    box-shadow: var(--v2-shadow-panel);
+    color: var(--v2-text);
+    font-size: 14px;
+    line-height: 20px;
+  }
+  .zen-hint[data-moving] {
+    will-change: transform, opacity;
+  }
+  .zen-hint-slot[data-edge='bottom'] .zen-hint {
+    bottom: 0;
+  }
+  .zen-hint-slot[data-edge='top'] .zen-hint {
+    top: 0;
   }
 }
 

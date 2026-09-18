@@ -30,8 +30,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-ptr-disc {', '.zen-space-strip {'],
   // The v2 badge (§9.19): site information's Private badge (components/siteinfo/SiteInfoSheet.tsx).
   ['.zen-v2-badge {', '/* Safe-area insets pushed by mobile hosts'],
-  // The v2 button, shared by every v2 surface (today the Settings > Look and Feel > Navigation bar
-  // button, components/overlays/SettingsPanel.tsx); its layering is pinned by the tests below.
+  // The v2 button, shared by every v2 surface (the Settings > Look and Feel > Navigation bar button,
+  // components/overlays/SettingsPanel.tsx; the first run, overlays/PhoneOnboarding.tsx; the
+  // default-browser prompts, defaultbrowser/*), with the first run's unlayered override beside it;
+  // its layering is pinned by the tests below.
   ['.zen-v2-button {', '/*\n * The v2 badge (§9.19)'],
   // The Tabs button's hold menu (components/phone/TabsQuickMenu.tsx).
   ['.zen-quick-menu {', '/* The chassis sheet is the v2 surface (§6)'],
@@ -48,7 +50,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // comment that ends them, so it is taken out first.
   ['.zen-dl-surface {', '@keyframes zen-dl-pop-out {'],
   // The bookmark chrome: bar, panels, star bubble, dialogs, manager (components/bookmarks/*).
-  ['.zen-bm-bar {', '/*\n * Fading scroll edges'],
+  ['.zen-bm-bar {', '/*\n   * v2 controls and surfaces'],
+  // The v2 controls and surfaces shared by the first run (overlays/PhoneOnboarding.tsx), the
+  // default-browser prompts (defaultbrowser/*) and the gesture hint (phone/GestureHint.tsx).
+  [' * v2 controls and surfaces', ' * Fading scroll edges'],
   // Find in page, zoom and fullscreen: the docked find bar (components/content/FindBar.tsx).
   ['.zen-find-bar {', '/*\n * Settings → Default Browser and the'],
   // The phone page zoom sheet, docked under the live page, and its own instance of the stepper

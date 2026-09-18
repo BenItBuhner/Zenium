@@ -286,7 +286,8 @@ export const DEFAULT_SETTINGS: Settings = {
   bookmarksBar: 'newtab',
   shortcutPreset: 'chrome',
   privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
-  newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS)
+  newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS),
+  gestureHintDone: false
 }
 
 /** Firefox's four default containers plus "No Container". */

@@ -21,11 +21,13 @@ import {
   openBarEditor,
   openTabsMenu,
   openUrlbar,
+  overlayCoversContent,
   uiStore,
   type UiState
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ContentArea } from '../content/ContentArea'
+import { DefaultBrowserBanner } from '../defaultbrowser/DefaultBrowserBanner'
 import { MessageLayer } from '../messages/MessageLayer'
 import { Onboarding } from '../overlays/Onboarding'
 import { Favicon } from '../sidebar/Favicon'
@@ -34,6 +36,7 @@ import { PillChip } from '../urlbar/PillChip'
 import { Urlbar } from '../urlbar/Urlbar'
 import { BarButton } from './BarButton'
 import { barContext, barLayout } from './barItems'
+import { GestureHint } from './GestureHint'
 import { PhoneStage } from './PhoneStage'
 import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
@@ -113,6 +116,20 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   // simply renders there, under the ghost that is setting down on it.
   const fromHere = dock.phase !== 'idle' && dock.from === edge
   const p = Math.min(1, Math.max(0, dock.progress))
+  // The one-time gesture hint takes a slot on the bar's side of the content frame.
+  const hint = !onboarding && !barHidden && (
+    <GestureHint
+      state={state}
+      edge={edge}
+      calm={
+        tab !== null &&
+        !overlayCoversContent(ui) &&
+        !overviewOpen &&
+        dock.phase === 'idle' &&
+        state.defaultBrowser.prompt !== 'sheet'
+      }
+    />
+  )
   return (
     <div
       className="zen-window relative flex h-full w-full flex-col overflow-hidden"
@@ -140,9 +157,12 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           paddingRight: 'var(--zen-padding)'
         }}
       >
+        {state.defaultBrowser.prompt === 'banner' && !onboarding && <DefaultBrowserBanner />}
+        {edge === 'top' && hint}
         <div className="relative min-h-0 flex-1">
           <ContentArea state={state} ui={ui} />
         </div>
+        {edge === 'bottom' && hint}
       </main>
       {/* Messages sit on the content frame's box, over the bar and the stage but under sheets. */}
       <div
