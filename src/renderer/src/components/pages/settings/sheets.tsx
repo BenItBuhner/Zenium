@@ -1,7 +1,7 @@
 import type { JSX, ReactNode, RefObject } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { useBackSurface } from '@renderer/lib/back'
+import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../../sheet/BottomSheet'
 import { Field, RadioOption, SheetActions, ValidationMessage } from './blocks'
@@ -17,8 +17,11 @@ import { SheetDismissContext, useSheetDismiss } from './sheetContext'
  * and that one opens nothing) and resolves each to its row again on every render, so a sheet
  * always shows the row's current value and closes by itself when its row is gone.
  *
- * Sheets mount through a portal on `document.body`: the content frame they would otherwise sit
- * in recedes (scales) under a sheet, and a sheet inside it would shrink with the page.
+ * Sheets are modal dialogs, so they mount through the frame's `FrameDialogHost` (lib/portals.tsx,
+ * reached with `FrameDialogPortal`): over the content frame, which recedes under a sheet and
+ * would shrink a sheet inside it. Each sheet draws the stack's one scrim itself (`ownScrim`),
+ * fading with its motion; a stacked sheet's is clear, so the page never darkens twice (§9.24),
+ * and the sheet beneath recedes on the stacked one's progress with its content `inert`.
  */
 
 /** Every open sheet, lowest first; each resolves its row in `groups`. */
@@ -129,11 +132,21 @@ interface SheetProps {
 }
 
 /**
- * One v2 sheet on the shared `BottomSheet`: neutral panel at radius 12 with a hairline edge, no
- * side padding of its own (§9.25: rows run edge to edge, text inset 16), the system back and
- * Escape dismiss it, and the header takes §9.7's hairline once the body has scrolled under it.
+ * One v2 sheet on the shared `BottomSheet`, placed in the frame's dialog host: neutral panel at
+ * radius 12 with a hairline edge, no side padding of its own (§9.25: rows run edge to edge, text
+ * inset 16), the system back and Escape dismiss it, the header takes §9.7's hairline once the
+ * body has scrolled under it, and when it leaves, focus returns to the row that opened it (§9.24).
  */
-export function SettingsSheet({
+export function SettingsSheet(props: SheetProps): JSX.Element {
+  return (
+    <FrameDialogPortal>
+      <HostedSheet {...props} />
+    </FrameDialogPortal>
+  )
+}
+
+/** The sheet inside the host: registered with it as a dialog that draws its own scrim. */
+function HostedSheet({
   name,
   title,
   description,
@@ -148,12 +161,14 @@ export function SettingsSheet({
   const sheet = sheetRef ?? own
   const body = useRef<HTMLDivElement>(null)
   const dismiss = (): void => sheet.current?.dismiss()
+  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
   useBackSurface({
     name,
     onProgress: (progress) => sheet.current?.backProgress(progress),
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
+  useReturnFocus()
   useEffect(() => {
     if (under) return
     const onKey = (e: KeyboardEvent): void => {
@@ -176,14 +191,16 @@ export function SettingsSheet({
     scroller.addEventListener('scroll', sync, { passive: true })
     return () => scroller.removeEventListener('scroll', sync)
   }, [])
-  return createPortal(
+  return (
     <div
-      className="zen-settings-sheet-layer"
+      className="zen-settings-sheet-layer absolute inset-0"
+      data-surface="page"
       data-under={under || undefined}
       inert={under || undefined}
     >
       <BottomSheet
         ref={sheet}
+        hosted
         onDismissed={onClose}
         stacked={stacked}
         contentKey={contentKey}
@@ -207,9 +224,28 @@ export function SettingsSheet({
           <SheetDismissContext.Provider value={dismiss}>{children}</SheetDismissContext.Provider>
         </div>
       </BottomSheet>
-    </div>,
-    document.body
+    </div>
   )
+}
+
+/**
+ * Focus returns to the row that opened the sheet once the sheet is gone (§9.24): the row is
+ * what had focus as the sheet mounted. Restored after the commit that removes the sheet, so a
+ * row inside the sheet beneath – `inert` until then – can take it; not restored when focus has
+ * since gone somewhere else that is still on screen.
+ */
+function useReturnFocus(): void {
+  useEffect(() => {
+    const opener = document.activeElement
+    return () => {
+      queueMicrotask(() => {
+        if (!(opener instanceof HTMLElement) || !opener.isConnected) return
+        const now = document.activeElement
+        if (now && now !== document.body && now.isConnected) return
+        opener.focus()
+      })
+    }
+  }, [])
 }
 
 // ---------------------------------------------------------------------------

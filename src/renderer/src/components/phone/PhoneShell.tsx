@@ -258,9 +258,10 @@ type PillLook = 'docked' | 'well' | 'well-target'
  * sideways to move to the previous / next tab (the neighbour's card follows the finger), pull it
  * towards the middle of the screen for the tab overview, tap it for the URL bar, hold it to
  * carry the whole bar to the other edge. A hold anywhere else on the bar opens the editor that
- * rearranges it (on the Tabs button, its quick menu).
+ * rearranges it (on the Tabs button, its quick menu). Window chrome (v2 §9.29): the bar and the
+ * pill carry `data-surface="window"`, so their chips draw in the window family.
  */
-function PhoneBar({
+export function PhoneBar({
   state,
   edge,
   pill,
@@ -296,6 +297,8 @@ function PhoneBar({
         pillLook !== 'docked' && 'zen-phone-bar-lifted',
         inert && 'pointer-events-none'
       )}
+      // Window chrome: the bar, the pill and their chips draw in the window family (v2 §9.29).
+      data-surface="window"
       aria-hidden={inert || undefined}
       data-shell-chrome
       style={{
@@ -325,6 +328,7 @@ function PhoneBar({
           pillLook !== 'docked' && 'zen-pill-well',
           pillLook === 'well-target' && 'zen-pill-well-target'
         )}
+        data-surface="window"
         {...(inert ? {} : pill)}
       >
         {pillLook === 'docked' && (
@@ -481,6 +485,7 @@ function BarDockLayer({
       <div
         className="zen-phone-pill zen-pill-ghost pointer-events-auto absolute flex items-center gap-2 overflow-hidden rounded-full px-3.5 text-left"
         aria-hidden
+        data-surface="window"
         data-lifted={dock.phase === 'lifted' || dock.phase === 'settling'}
         style={{
           ...pillStyle,

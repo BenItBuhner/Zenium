@@ -4612,10 +4612,26 @@
  * a hairline edge in place of the tinted chassis sheet; no side padding of its own, so rows run
  * edge to edge and everything else sits at 16; a 48 header with the title 17/600 centred, or a
  * title block when the sheet has a description; §9.7's hairline under the header once the body
- * has scrolled; the black v2 scrim on its own scrim element.
+ * has scrolled; the black v2 scrim on its own scrim element. The layer lives in the frame's
+ * dialog host, outside the page host, so it states the page's type and row padding itself.
  */
+.zen-settings-sheet-layer {
+  --zen-settings-pad: calc((var(--v2-row) - var(--v2-line-body)) / 2);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  user-select: none;
+}
 .zen-settings-sheet-layer .zen-sheet-scrim {
   background: var(--v2-scrim);
+}
+/*
+ * The sheet beneath a stacked sheet recedes (§9.24) on the stacked one's progress, written per
+ * frame to `--zen-stack-recede`: the same 3 % the page gives up under a sheet, anchored at the
+ * bottom edge so the panel stays seated; `scale` composes with the motion's own transform.
+ */
+.zen-settings-sheet-layer[data-under] .zen-sheet {
+  scale: calc(1 - 0.03 * var(--zen-stack-recede, 0));
+  transform-origin: 50% 100%;
 }
 .zen-sheet.zen-settings-sheet {
   padding-left: 0;
