@@ -14,10 +14,16 @@ interface DepartState {
   items: Departure[]
   /** Ids of the tabs whose cards are hidden behind a departure (the group's members too). */
   hidden: ReadonlySet<string>
+  /**
+   * Keys of the exits that run: an exit stands still over its card until the grid shows the
+   * gap – the commit in which the tab has left the state, whose glide closes the gap – so the
+   * collapse and the neighbours' glide start on the same frame (v2 §11.4).
+   */
+  released: ReadonlySet<string>
 }
 
 export const departStore = createStore<DepartState>(
-  { items: [], hidden: new Set() },
+  { items: [], hidden: new Set(), released: new Set() },
   'card-departures'
 )
 
@@ -36,7 +42,16 @@ export function depart(items: Departure[]): void {
   const s = departStore.get()
   const keys = new Set(items.map((i) => i.key))
   const next = [...s.items.filter((i) => !keys.has(i.key)), ...items]
-  departStore.set({ items: next, hidden: hiddenBy(next) })
+  const released = new Set([...s.released].filter((k) => !keys.has(k)))
+  departStore.set({ items: next, hidden: hiddenBy(next), released })
+}
+
+/** The grid shows the gap these cards left (or has waited long enough): their exits run. */
+export function releaseDepartures(keys: Iterable<string>): void {
+  const s = departStore.get()
+  const released = new Set(s.released)
+  for (const key of keys) if (s.items.some((i) => i.key === key)) released.add(key)
+  if (released.size !== s.released.size) departStore.set({ released })
 }
 
 /** An exit has finished (or the overview went away). */
@@ -44,11 +59,14 @@ export function departed(key: string): void {
   const s = departStore.get()
   if (!s.items.some((i) => i.key === key)) return
   const next = s.items.filter((i) => i.key !== key)
-  departStore.set({ items: next, hidden: hiddenBy(next) })
+  const released = new Set(s.released)
+  released.delete(key)
+  departStore.set({ items: next, hidden: hiddenBy(next), released })
 }
 
 export function clearDepartures(): void {
-  if (departStore.get().items.length > 0) departStore.set({ items: [], hidden: new Set() })
+  if (departStore.get().items.length > 0)
+    departStore.set({ items: [], hidden: new Set(), released: new Set() })
 }
 
 /** A window-coordinates rect of an element, as the departure needs it. */

@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   SPRING_GENTLE,
   SPRING_SNAPPY,
+  SpringAnimation,
   isAtRest,
+  reducedMotion,
   stepSpring,
   type SpringConfig,
   type SpringState
@@ -96,5 +98,63 @@ describe('stepSpring', () => {
     const px = simulate({ x: 190, v: 0 }, 0, SPRING_SNAPPY)
     expect(px.length).toBeGreaterThan(15)
     expect(px[px.length - 2].x).toBeLessThan(1)
+  })
+})
+
+describe('SpringAnimation', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /** The animation frame, held for the test to run by hand. */
+  const frames = (): { queue: FrameRequestCallback[] } => {
+    const queue: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => queue.push(cb))
+    vi.stubGlobal('cancelAnimationFrame', () => undefined)
+    vi.stubGlobal('performance', { now: () => 0 })
+    return { queue }
+  }
+
+  it('runs on the animation frame towards a destination it can be asked for', () => {
+    const { queue } = frames()
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) })
+    expect(reducedMotion()).toBe(false)
+    const onFrame = vi.fn()
+    const onRest = vi.fn()
+    const spring = new SpringAnimation(SPRING_SNAPPY, onFrame, onRest)
+    spring.start(0, 0, 300)
+    expect(spring.running).toBe(true)
+    expect(spring.destination).toBe(300)
+    expect(queue).toHaveLength(1)
+    expect(onFrame).not.toHaveBeenCalled()
+    spring.retarget(120)
+    expect(spring.destination).toBe(120)
+    // Retargeting mid-flight asks for no second frame: the one in flight carries on.
+    expect(queue).toHaveLength(1)
+  })
+
+  it('under reduced motion jumps to its destination and rests in the same call, asking for no frame (v2 §11.3)', () => {
+    const { queue } = frames()
+    vi.stubGlobal('window', {
+      matchMedia: (q: string) => ({ matches: q === '(prefers-reduced-motion: reduce)' })
+    })
+    expect(reducedMotion()).toBe(true)
+    const onFrame = vi.fn()
+    const onRest = vi.fn()
+    const spring = new SpringAnimation(SPRING_GENTLE, onFrame, onRest)
+    // A release with the velocity of the hand behind it: the ghost is in its slot at once.
+    spring.start(40, 900, 300)
+    expect(onFrame).toHaveBeenCalledTimes(1)
+    expect(onFrame).toHaveBeenCalledWith(300, 0)
+    expect(onRest).toHaveBeenCalledTimes(1)
+    expect(onRest).toHaveBeenCalledWith(300)
+    expect(spring.running).toBe(false)
+    expect(spring.current).toEqual({ x: 300, v: 0 })
+    expect(queue).toHaveLength(0)
+    // A drag tracks 1:1: every new destination is where the motion is, at once.
+    spring.retarget(120)
+    expect(onFrame).toHaveBeenLastCalledWith(120, 0)
+    expect(spring.current).toEqual({ x: 120, v: 0 })
+    expect(queue).toHaveLength(0)
   })
 })

@@ -1747,16 +1747,20 @@
       0 0 0 2px rgb(var(--zen-accent-rgb) / 0.55);
   }
   /*
-   * The card in the hand is positioned per frame; its elevation is a level swap (2 while held,
-   * back to 1 as it lands), never a per-frame shadow.
+   * The card in the hand is positioned per frame at 90% opacity (v2 §11.4); its elevation is a
+   * level swap (2 while held, back to 1 as it lands), never a per-frame shadow.
    */
   .zen-overview-ghost {
+    opacity: 0.9;
     box-shadow: var(--zen-shadow-2);
     transform-origin: center;
-    transition: box-shadow 200ms var(--zen-ease);
+    transition:
+      opacity 120ms var(--zen-ease),
+      box-shadow 200ms var(--zen-ease);
     will-change: transform, left, top;
   }
   .zen-overview-ghost[data-landing] {
+    opacity: 1;
     box-shadow: var(--zen-shadow-1);
   }
 
@@ -1764,6 +1768,8 @@
    * Tab groups: a tinted card wrapping the members' cards. Its corners are the card radius plus
    * the 6px inset, so the nested corners stay concentric; the container is a squircle, the
    * cards inside stay round with the page they morph into. `--zen-group-rgb` is the group colour.
+   * The body is clipped only while the card is folded or folding (`data-clip`): a card gliding
+   * into or out of the group must not be cut at the group's edge on the way.
    */
   .zen-group {
     border-radius: calc(var(--zen-card-radius) + 6px);
@@ -1771,8 +1777,20 @@
     corner-shape: var(--zen-corner);
     transition: box-shadow 200ms var(--zen-ease);
   }
+  .zen-group[data-collapsed],
+  .zen-group[data-clip] {
+    overflow: hidden;
+  }
   .zen-group[data-targeted] {
     box-shadow: 0 0 0 2px rgb(var(--zen-group-rgb) / 0.6);
+  }
+  /* A group being made: header and tint switch on at the end of the glide, not per frame (v2 §11.4). */
+  .zen-group[data-chrome='off'] {
+    background: transparent;
+    box-shadow: none;
+  }
+  .zen-group[data-chrome='off'] > .zen-group-header {
+    opacity: 0;
   }
   .zen-group-header {
     border-radius: calc(var(--zen-card-radius) + 6px);
@@ -1790,6 +1808,30 @@
   .zen-overview-card[data-swiping] {
     transition: none;
     will-change: transform, opacity;
+  }
+  /*
+   * Reduced motion in the overview (v2 §11.3): the grid appears with a 120 ms fade at scale 1
+   * (`TabOverview` leaves the transform and opacity alone then); state changes other than
+   * opacity's take at most 1 ms – the ghost's landing fade stays.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .zen-overview {
+      animation: zen-fade 120ms var(--zen-ease);
+    }
+    .zen-overview-card,
+    .zen-overview-new,
+    .zen-overview .zen-essential,
+    .zen-overview-strip > button,
+    .zen-group,
+    .zen-group-header,
+    .zen-group-swatch {
+      transition-duration: 1ms;
+    }
+    .zen-overview-ghost {
+      transition:
+        opacity 120ms var(--zen-ease),
+        box-shadow 1ms;
+    }
   }
   /* Along the top of a grouped tab's card on the swipe track. */
   .zen-group-ribbon {

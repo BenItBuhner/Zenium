@@ -1,5 +1,5 @@
 import type { CSSProperties, JSX } from 'react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { PanelLeft, PanelRight, Plus } from 'lucide-react'
 import type {
   Folder,
@@ -24,6 +24,7 @@ import {
 import { groupColorHex, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { overviewColumns } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
+import { reducedMotion } from '@renderer/lib/motion/spring'
 import {
   activeSpace,
   activeTab,
@@ -43,7 +44,7 @@ import { DEFAULT_FOLDER_ICON, GroupCard } from './GroupCard'
 import { CARD_HEADER, CARD_RADIUS, CardBody, OverviewCard } from './OverviewCard'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
 import { TabPreview } from './TabPreview'
-import { cancelLift, liftStore, settleLift, type LiftHover } from './useCardLift'
+import { cancelLift, liftStore, retargetLift, settleLift, type LiftHover } from './useCardLift'
 import { useFlip } from './useFlip'
 import { useOverviewHandle } from './usePillGestures'
 
@@ -75,6 +76,22 @@ interface PendingDrop {
   /** True once the browser state shows the drop – then the card's new slot can be measured. */
   landed: (state: UIState) => boolean
   deadline: number
+}
+
+/** A group as the grid last showed it holding cards. */
+interface HeldGroup {
+  folder: Folder
+  count: number
+}
+
+interface ShownGroups {
+  /** The groups holding cards after the last render, by folder id. */
+  held: ReadonlyMap<string, HeldGroup>
+  /**
+   * Groups that have lost their last card while on screen and are shrinking to nothing
+   * (v2 §11.4), at the span and count they had, until their spring has settled.
+   */
+  lingering: ReadonlyMap<string, HeldGroup>
 }
 
 /**
@@ -201,19 +218,22 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     []
   )
 
-  // A dropped card flies to its new slot once the browser has moved it there.
+  // A dropped card flies to its new slot once the browser has moved it there: to where its
+  // stand-in is drawn, and after it while the stand-in glides (the cells below a group set off
+  // once its height has settled, v2 §11.4), so the ghost lands on the card wherever that is.
   const liftPhase = liftStore.use((s) => s.phase)
   const pendingDrop = useRef<PendingDrop | null>(null)
+  const standInRect = (tabId: string): Rect | null => {
+    // Before the grid has settled nothing is tracked yet and the cell's own box is the answer.
+    const rect = flip.drawnRect(tabId) ?? flip.element(tabId)?.getBoundingClientRect()
+    return rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null
+  }
   useLayoutEffect(() => {
     const pending = pendingDrop.current
     if (!pending || liftPhase !== 'dropping' || !liftTabId) return
     if (!pending.landed(state) && performance.now() < pending.deadline) return
     pendingDrop.current = null
-    // The slot as laid out (any glide in flight stripped); before the grid has settled nothing
-    // is tracked yet and the cell's own box is the answer.
-    const rect = flip.layoutRect(liftTabId) ?? flip.element(liftTabId)?.getBoundingClientRect()
-    const origin = liftStore.get().origin
-    const to = rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : origin
+    const to = standInRect(liftTabId) ?? liftStore.get().origin
     if (to) settleLift(to)
     else cancelLift()
   })
@@ -227,10 +247,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           pendingDrop.current = null
           const s = liftStore.get()
           if (s.phase !== 'dropping') return
-          const rect = s.tabId ? flip.layoutRect(s.tabId) : null
-          const to = rect
-            ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
-            : s.origin
+          const to = (s.tabId ? standInRect(s.tabId) : null) ?? s.origin
           if (to) settleLift(to)
           else cancelLift()
         }
@@ -238,7 +255,76 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       Math.max(0, pending.deadline - performance.now())
     )
     return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- standInRect reads the tracker, which is stable
   }, [liftPhase, flip])
+  useEffect(() => {
+    if (liftPhase !== 'dropping') return
+    return flip.onFrame(() => {
+      const s = liftStore.get()
+      if (s.phase !== 'dropping' || !s.tabId) return
+      const to = standInRect(s.tabId)
+      if (to) retargetLift(to)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- standInRect reads the tracker, which is stable
+  }, [liftPhase, flip])
+
+  // Groups made or emptied while the grid is on screen (v2 §11.4). A group whose card the
+  // tracker has not seen, holding cards it has, was just made from them: it grows out of their
+  // row with its header and tint off until the tracker's release at the end of the glide. A group
+  // that has just lost its last card lingers, shrinking to nothing on its spring while the card
+  // glides out and the cells below wait; it leaves once it has settled.
+  const forming = (folder: Folder, tabs: Tab[]): boolean =>
+    settled &&
+    flip.element(`group:${folder.id}`) === null &&
+    tabs.some((t) => flip.element(t.id) !== null)
+  const subscribeRelease = useCallback((fn: () => void) => flip.onRelease(fn), [flip])
+  // The groups holding cards after the last render, and the ones lingering since: a group that
+  // has lost its last card since the last render must be on the grid in this very render, so it
+  // is found here, from the last render's groups, not in an effect after it.
+  const [shownGroups, setShownGroups] = useState<ShownGroups>(() => ({
+    held: new Map(),
+    lingering: new Map()
+  }))
+  const held = new Map<string, HeldGroup>()
+  for (const folder of groups) {
+    const count = members.get(folder.id)?.length ?? 0
+    if (count) held.set(folder.id, { folder, count })
+  }
+  const lost = [...shownGroups.held].filter(([id]) => !held.has(id))
+  const back = [...shownGroups.lingering.keys()].filter((id) => held.has(id))
+  let lingering = shownGroups.lingering
+  if (lost.length || back.length) {
+    const next = new Map(shownGroups.lingering)
+    for (const [id, was] of lost) next.set(id, was)
+    for (const id of back) next.delete(id)
+    lingering = next
+  }
+  if (
+    lingering !== shownGroups.lingering ||
+    held.size !== shownGroups.held.size ||
+    [...held].some(([id, h]) => shownGroups.held.get(id)?.count !== h.count)
+  ) {
+    setShownGroups({ held, lingering })
+  }
+  const dissolvedGroup = (folder: Folder): void =>
+    setShownGroups((shown) => {
+      if (!shown.lingering.has(folder.id)) return shown
+      const next = new Map(shown.lingering)
+      next.delete(folder.id)
+      return { held: shown.held, lingering: next }
+    })
+  // The group cards, one keyed list: a group that has just lost its last card (or whose folder
+  // is gone with it) keeps its element – the same key in the same list – so its card's height
+  // spring runs on from where the card is rather than starting over in a fresh mount.
+  const groupCards: Array<{ folder: Folder; tabs: Tab[]; gone: HeldGroup | undefined }> = []
+  for (const folder of groups) {
+    const tabs = members.get(folder.id) ?? []
+    const gone = lingering.get(folder.id)
+    if (tabs.length || gone) groupCards.push({ folder, tabs, gone })
+  }
+  for (const gone of lingering.values())
+    if (!groups.some((f) => f.id === gone.folder.id))
+      groupCards.push({ folder: gone.folder, tabs: [], gone })
 
   const pick = (tab: Tab): void => closeOverview(tab.id)
 
@@ -472,7 +558,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           data-surface="window"
           style={{
             opacity: Math.min(1, p * 1.6),
-            transform: `scale(${0.94 + 0.06 * p})`
+            // Under reduced motion the grid appears at scale 1 with a 120 ms fade (v2 §11.3).
+            transform: reducedMotion() ? undefined : `scale(${0.94 + 0.06 * p})`
           }}
         >
           <header className="flex h-14 shrink-0 items-center gap-2.5 px-3" {...handle}>
@@ -528,26 +615,27 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
               style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
             >
               {pinned.map(card)}
-              {groups.map((folder) => {
-                const tabs = members.get(folder.id) ?? []
-                if (tabs.length === 0) return null
-                return (
-                  <GroupCard
-                    key={folder.id}
-                    folder={folder}
-                    tabs={tabs}
-                    card={card}
-                    columns={columns}
-                    onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
-                  />
-                )
-              })}
+              {groupCards.map(({ folder, tabs, gone }) => (
+                <GroupCard
+                  key={folder.id}
+                  folder={folder}
+                  tabs={tabs}
+                  card={card}
+                  columns={columns}
+                  onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
+                  forming={tabs.length > 0 && forming(folder, tabs)}
+                  dissolving={tabs.length === 0}
+                  held={gone?.count}
+                  onDissolved={dissolvedGroup}
+                  onRelease={subscribeRelease}
+                />
+              ))}
               {loose.map(card)}
               <NewTabCard />
             </div>
           </div>
         </div>
-        <Departures activeTabId={active?.id ?? null} />
+        <Departures state={state} activeTabId={active?.id ?? null} />
         <LiftGhost state={state} activeTabId={active?.id ?? null} />
       </div>
       {hero && heroRect && p < 1 && (
