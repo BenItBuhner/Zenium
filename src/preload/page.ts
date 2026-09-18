@@ -20,6 +20,9 @@ import type { FormsCommand } from '../shared/forms'
 import { USER_SCRIPTS_CHANNELS } from '../shared/userScripts'
 import { installUserScripts } from './userScripts'
 import { completeChromeObject } from '../shared/chromeObject'
+import { installNewTabPage } from '../shared/newTabPageScript'
+import type { NewTabPageCommand, NewTabPageState } from '../shared/types'
+import { isNewTabUrl } from '../shared/url'
 
 /**
  * Runs inside every web page (isolated world). The behaviours – Glance, pinned-tab link rules,
@@ -107,4 +110,23 @@ if (process.isMainFrame) {
     onCommand: (listener) =>
       ipcRenderer.on('zen:forms', (_event, command: FormsCommand) => listener(command))
   })
+
+  // The new tab page is filled by `shared/newTabPageScript` over the same kind of transport.
+  // The first state is fetched synchronously so the page paints in its theme from the first
+  // frame; the main process checks the sender before answering, so a site cannot ask.
+  if (isNewTabUrl(location.href)) {
+    installNewTabPage({
+      initialState: () => {
+        const state: unknown = ipcRenderer.sendSync('zen:newtab-state')
+        return state && typeof state === 'object' ? (state as NewTabPageState) : null
+      },
+      onState: (listener) =>
+        ipcRenderer.on('zen:newtab-state', (_event, state: NewTabPageState) => listener(state)),
+      onCommand: (listener) =>
+        ipcRenderer.on('zen:newtab-command', (_event, command: NewTabPageCommand) =>
+          listener(command)
+        ),
+      send: (action) => ipcRenderer.send('zen:newtab', action)
+    })
+  }
 }

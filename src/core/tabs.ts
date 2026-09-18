@@ -20,6 +20,7 @@ import {
   essentialsForSpace,
   getSpace,
   insertTabIntoSpace,
+  loadProgressAfter,
   moveTab,
   nextTabAfterClose,
   orderedTabsForSpace,
@@ -38,6 +39,7 @@ import {
   errorPageUrl,
   httpsOnlyPageUrl,
   interstitialKindOf,
+  isEmptyTabUrl,
   isNavigableUrl,
   safeBrowsingPageUrl,
   titleForUrl
@@ -393,16 +395,25 @@ export class TabManager {
     const ownerWindow = (): ZenWindow => this.windowFor(tabId)
 
     return {
-      onStartLoading: () => update((t) => (t.loading = true), true),
+      onStartLoading: () =>
+        update((t) => {
+          t.loading = true
+          t.progress = 0
+        }, true),
       onStopLoading: () => {
         this.browser.governor.onLoadFinished(tabId)
         update((t) => {
           const v = view()
           t.loading = false
+          t.progress = 1
           t.canGoBack = v?.canGoBack() ?? false
           t.canGoForward = v?.canGoForward() ?? false
         })
       },
+      onProgress: (progress) =>
+        update((t) => {
+          t.progress = loadProgressAfter(t, progress)
+        }, true),
       onNavigated: (url, inPage) => {
         if (!inPage) this.browser.blocking.onNavigated(tabId)
         const v = view()
@@ -441,6 +452,7 @@ export class TabManager {
             t.errorCode = code
             t.certificateError = certificateError
             t.loading = false
+            t.progress = 1
           })
         // The host's request engine refused the navigation on Safe Browsing's word.
         const unsafe = this.browser.protection.safeBrowsing.takePendingBlock(tabId, url)
@@ -604,7 +616,8 @@ export class TabManager {
         const leave = await this.browser.pageDialogs.confirmLeave(tabId, reload)
         if (!leave) this.stayedOnPage(tabId)
         return leave
-      }
+      },
+      onNewTabAction: (action) => this.browser.newTab.handleAction(tabId, action)
     }
   }
 
@@ -892,6 +905,7 @@ export class TabManager {
     tab.frozen = false
     tab.cpuThrottle = 1
     tab.loading = false
+    tab.progress = 0
     tab.audible = false
     tab.canGoBack = false
     tab.canGoForward = false
@@ -1033,6 +1047,31 @@ export class TabManager {
     this.browser.state.commit()
     win.relayout()
     return { tab, events: this.eventsFor(tab.id) }
+  }
+
+  /**
+   * Give a tab without a page a live view that already exists (a new tab page preloaded off
+   * screen under a placeholder id). The view already hangs in `win`; from now on its host events
+   * must reach the returned sink. Undefined when the tab is unknown or already has a page.
+   */
+  attachView(view: TabView, tabId: string, win: ZenWindow): TabViewEvents | undefined {
+    const tab = this.tab(tabId)
+    if (!tab || this.view(tabId) || view.isDestroyed()) return undefined
+    this.browser.platform.views.retargetView?.(view, tabId)
+    view.attachTo(win.host)
+    view.setBackgroundColor(this.backgroundFor(tab.url))
+    view.setVisible(false)
+    this.views.set(tabId, view)
+    this.owners.set(tabId, win)
+    this.browser.governor.onViewCreated(tabId, view)
+    tab.discarded = false
+    tab.frozen = false
+    tab.cpuThrottle = 1
+    tab.loading = false
+    tab.title = view.getTitle() || titleForUrl(tab.url)
+    if (tab.muted) view.setMuted(true)
+    if (tab.zoom !== 1) view.setZoom(tab.zoom)
+    return this.eventsFor(tabId)
   }
 
   /**
@@ -1374,7 +1413,7 @@ export class TabManager {
 
   /**
    * What "Recently Closed" remembers about a tab that is going away. Private tabs and tabs that
-   * never left the blank page are not worth keeping (Firefox skips those too).
+   * never left the blank page or the new tab page are not worth keeping (Firefox skips those too).
    */
   private captureClosed(tab: Tab, index: number, closedAt: number): ClosedTabEntry | null {
     if (this.isPrivate(tab)) return null
@@ -1382,8 +1421,8 @@ export class TabManager {
     const navigation = view
       ? view.navigationEntries()
       : (this.pendingNavigation.get(tab.id) ?? null)
-    const visited = navigation?.entries.some((e) => e.url !== BLANK_URL && e.url !== '') ?? false
-    if (tab.url === BLANK_URL && !visited) return null
+    const visited = navigation?.entries.some((e) => !isEmptyTabUrl(e.url)) ?? false
+    if (isEmptyTabUrl(tab.url) && !visited) return null
     return closedTabEntry(
       tab,
       { spaceId: tab.spaceId, folderId: tab.folderId, index, windowId: tab.windowId },
@@ -2511,6 +2550,7 @@ export class TabManager {
           tab.frozen = false
           tab.cpuThrottle = 1
           tab.loading = false
+          tab.progress = 0
           tab.audible = false
         }
       }

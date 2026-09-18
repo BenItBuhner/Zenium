@@ -47,6 +47,7 @@ function tab(id: string): UIState['tabs'][string] {
     windowId: null,
     folderId: null,
     loading: false,
+    progress: 0,
     canGoBack: false,
     canGoForward: false,
     audible: false,

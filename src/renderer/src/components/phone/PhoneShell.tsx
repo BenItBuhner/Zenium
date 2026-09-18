@@ -26,6 +26,7 @@ import {
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ContentArea } from '../content/ContentArea'
+import { MessageLayer } from '../messages/MessageLayer'
 import { Onboarding } from '../overlays/Onboarding'
 import { Favicon } from '../sidebar/Favicon'
 import { TabDialogs } from '../TabDialogs'
@@ -138,6 +139,18 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           <ContentArea state={state} ui={ui} />
         </div>
       </main>
+      {/* Messages sit on the content frame's box, over the bar and the stage but under sheets. */}
+      <div
+        className="zen-message-frame pointer-events-none absolute z-[36]"
+        style={{
+          top: edgePadding('top', edge),
+          bottom: edgePadding('bottom', edge),
+          left: 'var(--zen-padding)',
+          right: 'var(--zen-padding)'
+        }}
+      >
+        <MessageLayer />
+      </div>
       <PhoneStage state={state} />
       {!barHidden && (
         <PhoneBar
@@ -168,7 +181,6 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       {ui.tabsMenu && !barHidden && (
         <TabsQuickMenu state={state} anchor={ui.tabsMenu} edge={edge} onClose={closeTabsMenu} />
       )}
-      <PhoneToasts ui={ui} barEdge={barHidden ? null : edge} />
       <TabDialogs state={state} />
       {onboarding && <Onboarding state={state} />}
     </div>
@@ -421,35 +433,6 @@ function BarDockLayer({
           interactive={false}
         />
       </div>
-    </div>
-  )
-}
-
-function PhoneToasts({
-  ui,
-  barEdge
-}: {
-  ui: UiState
-  /** Edge the bar is docked at, or null while it is hidden. */
-  barEdge: PhoneBarPosition | null
-}): JSX.Element | null {
-  if (ui.toasts.length === 0) return null
-  return (
-    <div
-      className="pointer-events-none absolute inset-x-0 z-50 flex flex-col items-center gap-1 px-4"
-      style={{ bottom: `calc(var(--zen-inset-bottom) + ${barEdge === 'bottom' ? 64 : 12}px)` }}
-    >
-      {ui.toasts.map((t) => (
-        <div
-          key={t.id}
-          className={cn(
-            'zen-toast zen-panel px-3.5 py-2 text-[13px]',
-            t.kind === 'error' && 'text-red-500'
-          )}
-        >
-          {t.message}
-        </div>
-      ))}
     </div>
   )
 }

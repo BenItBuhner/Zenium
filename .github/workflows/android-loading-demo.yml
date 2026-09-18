@@ -1,0 +1,43 @@
+name: Android loading feedback demo
+
+# Records the loading feedback on a hardware-accelerated Android emulator and uploads the video,
+# the screenshots and the driver's findings: the 2 px load bar during a slow and a fast page load,
+# a toast with an Undo action over the page (tapped, then one swiped off), a toast held under a
+# finger past its time, three stacked banners with a key replacement, a swipe-up, a close and an
+# action, and a pass with motion reduced when the WebView follows the animator scale. Dispatch-only,
+# like the gesture demo: it says nothing about a change being correct. The build, the emulator
+# and its caches live in android-emulator-demo.yml; this file only picks the driver and the
+# colour scheme.
+on:
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: Colour scheme the profile is seeded with
+        type: choice
+        default: light
+        options:
+          - light
+          - dark
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-loading-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Loading feedback demo (${{ inputs.theme || 'light' }})
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.LoadingFeedbackDemo
+        DEMO_DIR=loading-demo
+        DEMO_OUT=artifacts/android-loading-demo
+        DEMO_VIDEO=loading-demo-${{ inputs.theme || 'light' }}.mp4
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+      artifact-name: android-loading-demo-${{ inputs.theme || 'light' }}
+      artifact-path: artifacts/android-loading-demo/

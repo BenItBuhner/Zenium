@@ -39,6 +39,11 @@ interface PageHost {
     val fullscreenTab: TabWebView?
     /** Whether the host is in its own fullscreen (Menu > Fullscreen: the bars hidden, no element fullscreen). */
     val immersive: Boolean get() = false
+    /**
+     * The view drawn under the pages that a touch on a covered strip (a message card's, see
+     * [ContentCover]) is handed to: the browser window's chrome WebView. A custom tab has none.
+     */
+    val underlay: View? get() = null
     /** The colour scheme and scrim of the surrounding chrome, for what is drawn natively. */
     val themeDark: Boolean
     val themeScrim: Int
@@ -68,7 +73,7 @@ interface PageHost {
     /** Something happened outside any one page: a download, a permission request, a popup. */
     fun hostEvent(name: String, payload: Any?)
 
-    /** Load progress of a page's main document, 0…100. */
+    /** Load progress of a page's main document, 0…100 (at most one report per 100 ms, and 100 always). */
     fun progress(tabId: String, percent: Int) {}
 
     /** A pull-to-refresh on a page moved on: `start`, `move`, `release` or `cancel` (see `lib/pull.ts`). */

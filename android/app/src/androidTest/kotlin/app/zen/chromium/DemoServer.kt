@@ -10,10 +10,14 @@ import java.net.Socket
  * process, so a driver can serve its own pages and need nothing from the network or the runner.
  *
  * `routes` maps a path (`/`, `/second.html`) to a content type and body; anything else is a 404.
- * Everything is `Cache-Control: no-store`, so a reload fetches again.
+ * Everything is `Cache-Control: no-store`, so a reload fetches again. A path in `delays` answers
+ * that many milliseconds late: a slow script or image, for a page that takes its time to load.
  */
-class DemoServer(private val port: Int, private val routes: Map<String, Pair<String, ByteArray>>) :
-    Thread("demo-server-$port") {
+class DemoServer(
+    private val port: Int,
+    private val routes: Map<String, Pair<String, ByteArray>>,
+    private val delays: Map<String, Long> = emptyMap()
+) : Thread("demo-server-$port") {
     // Android's InetAddress.getLoopbackAddress() is ::1; a socket bound to it alone refuses the
     // 127.0.0.1 the pages' URLs name, so bind the IPv4 loopback explicitly.
     private val socket = ServerSocket(port, 16, InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
@@ -52,6 +56,7 @@ class DemoServer(private val port: Int, private val routes: Map<String, Pair<Str
                 if (header.isNullOrEmpty()) break
             }
             val path = line.split(' ').getOrNull(1)?.substringBefore('?') ?: "/"
+            delays[path]?.let { Thread.sleep(it) }
             val route = routes[path]
             val status = if (route != null) "200 OK" else "404 Not Found"
             val (type, body) = route ?: ("text/plain; charset=utf-8" to "no such page: $path\n".toByteArray())

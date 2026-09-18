@@ -544,4 +544,29 @@ describe('SuggestionService: rows and limits', () => {
     const results = await suggestions.suggest('site', null, win)
     expect(results.length).toBeLessThanOrEqual(10)
   })
+
+  it('offers no Switch to tab for a new tab page or a blank tab', async () => {
+    const { suggestions, state, win } = setup()
+    const space = state.model.spaces[0]
+    for (const [id, url, title] of [
+      ['tab_ntp', 'zen://newtab', 'New Tab'],
+      ['tab_blank', 'zen://blank/', 'New Tab'],
+      ['tab_real', 'https://newtab.example/', 'New Tab']
+    ]) {
+      const tab = createTabRecord({
+        id,
+        url,
+        title,
+        spaceId: space.id,
+        containerId: space.containerId
+      })
+      state.model.tabs[tab.id] = tab
+      space.tabIds.push(tab.id)
+    }
+    const results = await suggestions.suggest('new tab', null, win)
+    const rows = results.filter((r) => r.kind === 'tab')
+    expect(rows.map((r) => r.targetId)).toEqual(['tab_real'])
+    const scoped = await suggestions.suggest('@tabs new', null, win)
+    expect(scoped.filter((r) => r.kind === 'tab').map((r) => r.targetId)).toEqual(['tab_real'])
+  })
 })
