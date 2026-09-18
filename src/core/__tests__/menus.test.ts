@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import type { FormFactor, HostCapabilities, Platform as PlatformOs } from '../../shared/types'
+import type {
+  FormFactor,
+  HostCapabilities,
+  Platform as PlatformOs,
+  Settings
+} from '../../shared/types'
 import { searchCommands, type CommandContext } from '../../shared/commands'
+import { buildSearchUrl } from '../../shared/search'
 import { Browser } from '../browser'
 import type {
   AppHost,
@@ -123,6 +129,8 @@ interface Harness {
   viewCalls: string[]
   /** What the host's clipboard says on `readText`. */
   clipboardText: { value: string }
+  /** The names of the events sent to the window's chrome, in order. */
+  sent: string[]
 }
 
 interface HarnessOptions {
@@ -143,6 +151,7 @@ function harness(
   let count = 0
   const viewCalls: string[] = []
   const clipboardText = { value: '' }
+  const sent: string[] = []
   const menus: MenuHost = {
     popup: (items) => {
       last = items
@@ -185,7 +194,8 @@ function harness(
           isFullScreen: () => Boolean(opts.fullScreen),
           isMaximized: () => false,
           isFocused: () => true,
-          isVisible: () => true
+          isVisible: () => true,
+          send: (name) => void sent.push(name)
         })
     },
     views: stub<TabViewHost>({ createView: () => recordingView() }),
@@ -205,8 +215,11 @@ function harness(
   const win = browser.allWindows()[0] as ZenWindow
   if (opts.formFactor)
     browser.handleCommand(win, 'window.formFactor', { formFactor: opts.formFactor })
-  return { browser, win, shown: () => last, popups: () => count, viewCalls, clipboardText }
+  return { browser, win, shown: () => last, popups: () => count, viewCalls, clipboardText, sent }
 }
+
+/** Let a click that reads the host's clipboard finish. */
+const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
 /** Labels in order, separators as `-`, submenus flattened one level as `Parent > Child`. */
 function labels(items: MenuItemTemplate[]): string[] {
@@ -1004,24 +1017,47 @@ describe('the chrome context menus', () => {
       '-',
       'Manage Search Engines…'
     ])
+    h.sent.length = 0
     h.click('Paste and Go')
+    await settle()
     expect(h.browser.tabs.tab(h.tabId)?.url).toBe('https://example.org/from-clipboard')
+    // The open bar closes, as a submit does.
+    expect(h.sent).toContain('urlbar.close')
   })
 
   it('says Paste and Search when the clipboard is not an address, and greys it when empty', async () => {
     const h = pageHarness()
-    h.clipboardText.value = 'weather tomorrow'
+    h.clipboardText.value = 'weather  tomorrow'
     let menu = await show(
       h,
       chromeParams({ target: 'urlbar', tabId: h.tabId, isEditable: true, editFlags: ALL_EDITS })
     )
     expect(menu).toContain('Paste and Search')
     h.click('Paste and Search')
+    await settle()
+    // Searched with the default engine, whitespace collapsed as the omnibox pastes it.
     expect(h.browser.tabs.tab(h.tabId)?.url).toContain('weather%20tomorrow')
     h.clipboardText.value = '   '
     menu = await show(h, chromeParams({ target: 'urlbar', isEditable: true, editFlags: ALL_EDITS }))
     expect(menu).toContain('Paste and Search')
     expect(item(h.shown(), 'Paste and Search').enabled).toBe(false)
+  })
+
+  it('searches what Paste and Search offered even when it reads as an engine keyword', async () => {
+    const h = pageHarness()
+    const engines = h.browser.state.searchEngines
+    const keyword = engines.find((e) => e.id !== h.browser.state.settings.searchEngineId)
+    if (!keyword) throw new Error('the defaults need a second engine')
+    h.clipboardText.value = `${keyword.keyword} cats`
+    await show(
+      h,
+      chromeParams({ target: 'urlbar', tabId: h.tabId, isEditable: true, editFlags: ALL_EDITS })
+    )
+    h.click('Paste and Search')
+    await settle()
+    const url = h.browser.tabs.tab(h.tabId)?.url ?? ''
+    const defaultEngine = engines.find((e) => e.id === h.browser.state.settings.searchEngineId)
+    expect(url).toBe(buildSearchUrl(defaultEngine ?? engines[0], `${keyword.keyword} cats`))
   })
 
   it('opens a new tab from the new-tab URL bar’s Paste and Go', async () => {
@@ -1030,6 +1066,7 @@ describe('the chrome context menus', () => {
     const before = Object.keys(h.browser.state.model.tabs).length
     await show(h, chromeParams({ target: 'urlbar', isEditable: true, editFlags: ALL_EDITS }))
     h.click('Paste and Go')
+    await settle()
     expect(Object.keys(h.browser.state.model.tabs).length).toBe(before + 1)
     expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe('https://example.net')
   })
@@ -1040,6 +1077,37 @@ describe('the chrome context menus', () => {
     const menu = await show(h, chromeParams({ target: 'urlpill', tabId: h.tabId }))
     expect(menu).toEqual(['Copy', 'Paste and Go', '-', 'Manage Search Engines…'])
     expect(item(h.shown(), 'Copy').action).toBe('tab.copyUrl')
+  })
+
+  it('offers Always Show Full URLs once the build has the elision setting', async () => {
+    const h = pageHarness()
+    const params = chromeParams({ target: 'urlpill', tabId: h.tabId })
+    expect(await show(h, params)).not.toContain('Always Show Full URLs')
+    // The omnibox work adds `showFullUrls` to the settings; the item follows it.
+    const settings: Settings & { showFullUrls?: boolean } = h.browser.state.settings
+    settings.showFullUrls = false
+    let menu = await show(h, params)
+    expect(menu).toEqual([
+      'Copy',
+      'Paste and Search',
+      '-',
+      'Always Show Full URLs',
+      'Manage Search Engines…'
+    ])
+    let toggle = item(h.shown(), 'Always Show Full URLs')
+    expect(toggle.type).toBe('checkbox')
+    expect(toggle.checked).toBe(false)
+    h.click('Always Show Full URLs')
+    expect(settings.showFullUrls).toBe(true)
+    menu = await show(
+      h,
+      chromeParams({ target: 'urlbar', tabId: h.tabId, isEditable: true, editFlags: ALL_EDITS })
+    )
+    expect(menu).toContain('Always Show Full URLs')
+    toggle = item(h.shown(), 'Always Show Full URLs')
+    expect(toggle.checked).toBe(true)
+    h.click('Always Show Full URLs')
+    expect(settings.showFullUrls).toBe(false)
   })
 
   it('shows the reload choices only while the tab’s DevTools are open', async () => {

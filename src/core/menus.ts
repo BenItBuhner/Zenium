@@ -16,6 +16,7 @@ import {
   type BookmarkNode,
   type BookmarksBarMode,
   type Rect,
+  type Settings,
   type Shortcut,
   type ShortcutAction,
   type Tab
@@ -643,10 +644,16 @@ export class Menus {
       const clipboard = (await this.browser.platform.clipboard.readText?.().catch(() => '')) ?? ''
       const pasted = clipboard.trim()
       const targetTabId = tab?.id ?? null
+      // One item, as in Chrome's omnibox: it goes to an address and searches anything else.
+      const isAddress = Boolean(pasted && inputToUrl(pasted))
       const pasteAndGo: MenuItemTemplate = {
-        label: pasted && inputToUrl(pasted) ? 'Paste and Go' : 'Paste and Search',
+        label: isAddress ? 'Paste and Go' : 'Paste and Search',
         enabled: pasted.length > 0,
-        click: () => this.browser.pasteAndGo(pasted, targetTabId, win)
+        click: () => {
+          // An open bar closes, as a submit does.
+          this.browser.emit('urlbar.close', undefined, win)
+          void this.browser.pasteAndGo(targetTabId, !isAddress, win)
+        }
       }
       const groups: Template[] = []
       if (params.target === 'urlbar') {
@@ -663,7 +670,9 @@ export class Menus {
           pasteAndGo
         ])
       }
+      const fullUrls = this.fullUrlsItem(win)
       groups.push([
+        ...(fullUrls ? [fullUrls] : []),
         {
           label: 'Manage Search Engines…',
           click: () =>
@@ -678,6 +687,23 @@ export class Menus {
       return
     }
     if (params.selectionText.trim()) this.popup([{ label: 'Copy', role: 'copy' }], win, 'urlbar')
+  }
+
+  /**
+   * Chrome's "Always show full URLs" toggle. It drives the address elision setting
+   * (`showFullUrls`), which the omnibox work adds: a build without the setting has nothing to
+   * toggle, so the item stays out until it is there.
+   */
+  private fullUrlsItem(win: ZenWindow): MenuItemTemplate | null {
+    const settings: Settings = this.browser.state.settings
+    if (!('showFullUrls' in settings) || typeof settings.showFullUrls !== 'boolean') return null
+    const shown = settings.showFullUrls
+    return {
+      label: 'Always Show Full URLs',
+      type: 'checkbox',
+      checked: shown,
+      click: () => this.browser.handleCommand(win, 'settings.update', { showFullUrls: !shown })
+    }
   }
 
   /** Chrome's reload button menu (DevTools open): Normal Reload, Hard Reload, Empty Cache and Hard Reload. */
