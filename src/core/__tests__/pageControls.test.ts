@@ -315,7 +315,9 @@ describe('zoom memory on the desktop', () => {
 
   it('zooms internal pages and files per tab, without remembering them', () => {
     const { browser, platform, win } = start(memoryIo(), 'desktop')
-    const tab = browser.tabs.createTab({ url: 'zen://settings', active: true }, win)
+    // A document page (zen://newtab has a view); a chrome page such as zen://settings has none
+    // to zoom and is left alone (pages.test.ts).
+    const tab = browser.tabs.createTab({ url: 'zen://newtab', active: true }, win)
     const record = platform.records.get(tab.id)!
     browser.handleCommand(win, 'tab.setZoom', { tabId: tab.id, delta: 1 })
     expect(last(record.zoom)).toBe(1.1)

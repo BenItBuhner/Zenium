@@ -1635,12 +1635,13 @@ export class TabManager {
   /**
    * Zoom a tab's page to an exact factor. A web page's factor is its site's, remembered in the
    * settings and applied to every tab of the site (Chrome's per-host zoom); any other page
-   * (internal pages, files) zooms on its own on the desktop, the tab keeping the factor, and
-   * not at all under the full page controls (the sheet is about sites).
+   * (internal document pages, files) zooms on its own on the desktop, the tab keeping the factor,
+   * and not at all under the full page controls (the sheet is about sites). A chrome page
+   * (Settings) has no page view to zoom: the factor stays 1 and the chip has nothing to show.
    */
   setZoom(tabId: string, factor: number): void {
     const tab = this.tab(tabId)
-    if (!tab) return
+    if (!tab || this.browser.pages.isChromePage(tab)) return
     if (this.browser.pageControls.remembersZoom(tab)) {
       this.browser.pageControls.setZoomFactor(tabId, factor)
       return
@@ -1659,7 +1660,7 @@ export class TabManager {
   /** Zoom In / Zoom Out: one step along the host's ladder (Chrome's presets on the desktop). */
   adjustZoom(tabId: string, direction: number): void {
     const tab = this.tab(tabId)
-    if (!tab) return
+    if (!tab || this.browser.pages.isChromePage(tab)) return
     if (this.browser.pageControls.remembersZoom(tab)) {
       this.browser.pageControls.adjustZoom(tabId, direction)
       return

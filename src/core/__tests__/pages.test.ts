@@ -493,6 +493,18 @@ describe('registry attributes the core reads', () => {
     f.browser.toggleBookmark(id, f.win)
     expect(f.browser.bookmarks.has('zen://welcome')).toBe(false)
   })
+
+  it('leaves zoom alone on a chrome page: no view to zoom, so the factor stays 1 and no chip shows', () => {
+    const f = fixture()
+    const id = openPage(f) ?? ''
+    f.sent.length = 0
+    f.browser.handleCommand(f.win, 'tab.setZoom', { tabId: id, delta: 1 })
+    f.browser.handleCommand(f.win, 'tab.setZoomFactor', { tabId: id, factor: 1.5 })
+    f.browser.handleCommand(f.win, 'tab.setZoom', { tabId: id, delta: null })
+    expect(f.browser.tabs.tab(id)?.zoom).toBe(1)
+    expect(f.sent.some((s) => s.name === 'zoom.changed')).toBe(false)
+    expect(f.browser.state.settings.pageControls.siteZooms).toEqual({})
+  })
 })
 
 describe('the address the user gets (zen:// never leaves tab.url)', () => {
