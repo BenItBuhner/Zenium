@@ -155,6 +155,16 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     h.containers.push({ id: 'work', name: 'Work', color: 'blue', icon: 'briefcase' })
     h.notifyState()
     expect(h.engine.summary(setId)?.partitions).toEqual(['default', 'work', 'private'])
+    // The host's `setAllowPrivate` flips the flag on the very record object the runtime holds
+    // and then calls the hook with it: the scope must follow the record, not a remembered copy.
+    const live = { ...rec, allowFileAccess: true, allowPrivate: true }
+    await h.runtime.reconfigure(live)
+    live.allowPrivate = false
+    await h.runtime.reconfigure(live)
+    expect(h.engine.summary(setId)?.partitions).toEqual(['default', 'work'])
+    live.allowPrivate = true
+    await h.runtime.reconfigure(live)
+    expect(h.engine.summary(setId)?.partitions).toEqual(['default', 'work', 'private'])
     // Detached: the set leaves the engine.
     await h.runtime.detach(ID)
     expect(h.engine.has(setId)).toBe(false)

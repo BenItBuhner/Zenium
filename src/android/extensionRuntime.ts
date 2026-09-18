@@ -563,11 +563,12 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   async reconfigure(record: ExtensionRecord): Promise<void> {
     const ext = this.extensions.get(record.id)
     if (!ext) return
-    const privateBefore = ext.record.allowPrivate === true
     ext.record = record
     await this.configure(ext)
-    // Its rules apply in private tabs only while it is allowed there.
-    if (privateBefore !== (record.allowPrivate === true)) this.dnr.sessionsChanged(record.id)
+    // Its rules apply in private tabs only while it is allowed there. Always re-scoped: the
+    // host hands the runtime the record object it mutated in place (`setAllowPrivate`), so a
+    // before/after comparison here would see no change; the engine skips an unchanged scope.
+    this.dnr.sessionsChanged(record.id)
   }
 
   /** The extension was uninstalled: its persisted runtime state and `chrome.storage` go too. */
