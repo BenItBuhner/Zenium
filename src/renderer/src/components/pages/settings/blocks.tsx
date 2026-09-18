@@ -5,6 +5,7 @@ import type { ContainerColor, ContainerIcon as ContainerIconName, Space } from '
 import { APP_ICON_VARIANTS, type AppIconId } from '@shared/appIcon'
 import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
 import { formatZoom } from '@shared/pageControls'
+import { inputToUrl } from '@shared/url'
 import { cn } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
 import { ZoomStepper } from '../../ZoomStepper'
@@ -519,6 +520,58 @@ export function UrlForm({
         />
       </Field>
       <SheetActions action={action} disabled={!trimmed} onCancel={close} onAction={submit} />
+    </div>
+  )
+}
+
+/**
+ * The §9.12 form of a new tab page shortcut (Settings › New Tab › Add shortcut): a name and an
+ * address, the address read as the URL bar reads typed text (`inputToUrl`), the button held
+ * until it makes a URL – the desktop's inline form, as a sheet.
+ */
+export function ShortcutForm({
+  onSubmit,
+  close
+}: {
+  onSubmit: (title: string, url: string) => void
+  close: () => void
+}): JSX.Element {
+  const [title, setTitle] = useState('')
+  const [url, setUrl] = useState('')
+  const valid = Boolean(inputToUrl(url.trim()))
+  const submit = (): void => {
+    if (!valid) return
+    onSubmit(title.trim(), url.trim())
+    close()
+  }
+  return (
+    <div className="zen-settings-form">
+      <Field id="shortcut-name" label="Name">
+        <input
+          id="shortcut-name"
+          className="zen-settings-input zen-v2-field"
+          placeholder="Name"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
+      </Field>
+      <Field id="shortcut-url" label="Address">
+        <input
+          id="shortcut-url"
+          className="zen-settings-input zen-v2-field"
+          placeholder="example.com"
+          inputMode="url"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submit()
+          }}
+        />
+      </Field>
+      <SheetActions action="Add" disabled={!valid} onCancel={close} onAction={submit} />
     </div>
   )
 }

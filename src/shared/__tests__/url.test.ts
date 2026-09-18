@@ -82,7 +82,8 @@ describe('new tab and settings pages', () => {
   it('resolves the zenium:// name users see and Chrome’s chrome:// pages to zen://', () => {
     expect(inputToUrl('zenium://newtab')).toBe(NEW_TAB_URL)
     expect(inputToUrl('zenium://settings')).toBe(SETTINGS_URL)
-    expect(inputToUrl('zenium://settings/privacy')).toBe(SETTINGS_URL)
+    // A section is part of the address (the deep link adb sends, v2 §10.1).
+    expect(inputToUrl('zenium://settings/privacy')).toBe(`${SETTINGS_URL}/privacy`)
     expect(inputToUrl('ZENIUM://Newtab/')).toBe(NEW_TAB_URL)
     expect(inputToUrl('zenium://reader/?id=1')).toBe('zen://reader/?id=1')
     expect(inputToUrl('chrome://settings')).toBe(SETTINGS_URL)
@@ -201,8 +202,9 @@ describe('internal pages', () => {
     expect(inputToUrl('zenium://settings/privacy')).toBe('zen://settings/privacy')
     expect(inputToUrl('zen://settings/look')).toBe('zen://settings/look')
     expect(inputToUrl('ZENIUM://Settings/Look')).toBe('zen://settings/look')
-    // An alias address that names no page opens nothing, like an unknown about: page.
-    expect(inputToUrl('zenium://nothing-here')).toBe(BLANK_URL)
+    // An alias address that names no registered page is still the zen:// address it stands for
+    // (`zenium://reader/?id=1` above): the host answers it as it answers zen://nothing-here.
+    expect(inputToUrl('zenium://nothing-here')).toBe('zen://nothing-here')
     expect(isProbablyUrl('zenium://settings')).toBe(true)
   })
 

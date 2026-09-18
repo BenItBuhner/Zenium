@@ -8,7 +8,9 @@ import type {
   CrashRestoreMode,
   DesktopSiteDefault,
   GlanceTrigger,
+  NewTabBackgroundKind,
   NewTabPosition,
+  NewTabShortcutsMode,
   PhoneBarPosition,
   PinnedCloseBehavior,
   Settings,
@@ -21,9 +23,15 @@ import type {
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { TRACKING_LEVEL_LABELS, type TrackingLevel } from '@shared/blocking'
-import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
+import {
+  CONTAINER_COLORS,
+  CONTAINER_ICONS,
+  MAX_NEW_TAB_SHORTCUTS,
+  spaceLabel
+} from '@shared/defaults'
 import { formatZoom } from '@shared/pageControls'
 import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
+import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { describePermissionRule } from '@renderer/lib/security'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
@@ -36,6 +44,7 @@ import {
   CopyRow,
   CssEditor,
   NewContainerForm,
+  ShortcutForm,
   UpdateStatusBlock,
   UrlForm,
   ZoomBlock
@@ -87,6 +96,7 @@ type Builder = (ctx: SectionContext) => RowGroup[]
 const BUILDERS: Readonly<Record<string, Builder>> = {
   look: lookSection,
   accessibility: accessibilitySection,
+  newtab: newTabSection,
   tabs: tabsSection,
   privacy: privacySection,
   search: searchSection,
@@ -434,6 +444,183 @@ function accessibilitySection({ state, set }: SectionContext): RowGroup[] {
         ])
       ),
       empty: 'No sites yet'
+    }
+  ]
+}
+
+// ---------------------------------------------------------------------------
+// New Tab
+// ---------------------------------------------------------------------------
+
+/**
+ * Settings › New Tab, on a host that renders `zen://newtab` (`newTabPage`; #148's desktop
+ * section row for row): the page on or off, the shortcuts source, the background and the
+ * greeting, then the "My shortcuts" tiles as item rows – each with its address, its place in the
+ * grid and a confirmed removal – and an Add shortcut form. The image background is offered only
+ * where the host can pick a file; choosing it there opens the host's picker.
+ */
+function newTabSection({ state, set }: SectionContext): RowGroup[] {
+  const prefs = state.settings.newTab
+  const update = (patch: Partial<Settings['newTab']>): void =>
+    set({ newTab: { ...prefs, ...patch } })
+  const { image, canPick } = state.newTabBackground
+  const backgroundOptions: Array<{ value: NewTabBackgroundKind; label: string }> = [
+    { value: 'space', label: 'Space gradient' },
+    { value: 'solid', label: 'Solid colour' }
+  ]
+  if (canPick) backgroundOptions.push({ value: 'image', label: 'Image from file' })
+  const shortcuts = state.newTabShortcuts
+  const full = shortcuts.length >= MAX_NEW_TAB_SHORTCUTS
+  return [
+    {
+      id: 'newtab',
+      heading: 'New tab page',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'newtab-enabled',
+          label: 'Open the new tab page',
+          description: 'Off, a new tab shows only the address bar.',
+          checked: prefs.enabled,
+          onChange: (v) => update({ enabled: v })
+        },
+        choice<NewTabShortcutsMode>({
+          id: 'newtab-shortcuts',
+          label: 'Shortcuts',
+          value: prefs.shortcuts,
+          options: [
+            { value: 'most-visited', label: 'Most visited' },
+            { value: 'custom', label: 'My shortcuts' },
+            { value: 'hidden', label: 'Hide' }
+          ],
+          onChange: (v) => update({ shortcuts: v })
+        }),
+        choice<NewTabBackgroundKind>({
+          id: 'newtab-background',
+          label: 'Background',
+          keywords: ['image', 'gradient', 'colour', 'color'],
+          value: prefs.background === 'image' && !image ? 'space' : prefs.background,
+          options: backgroundOptions,
+          sheetDescription:
+            prefs.background === 'image' && image
+              ? 'Your image is stored on this device only.'
+              : undefined,
+          onChange: (v) => {
+            // Picking the file sets the background once a file was chosen; a cancelled picker
+            // keeps the current choice.
+            if (v === 'image' && !image) void run('newtab.pickBackgroundImage', undefined)
+            else update({ background: v })
+          }
+        }),
+        {
+          kind: 'action',
+          id: 'newtab-remove-image',
+          label: 'Remove background image',
+          disabled: !image,
+          onPress: () => run('newtab.clearBackgroundImage', undefined)
+        },
+        {
+          kind: 'switch',
+          id: 'newtab-greeting',
+          label: 'Show a greeting',
+          description: 'A line above the search box that follows the hour.',
+          checked: prefs.greeting,
+          onChange: (v) => update({ greeting: v })
+        }
+      ]
+    },
+    {
+      id: 'newtab-shortcuts',
+      heading: 'My shortcuts',
+      description: 'The sites on every new tab when Shortcuts is set to My shortcuts.',
+      rows: shortcuts.map((shortcut, i) => {
+        const move = (dir: -1 | 1): void => {
+          const ids = shortcuts.map((x) => x.id)
+          ;[ids[i], ids[i + dir]] = [ids[i + dir], ids[i]]
+          run('newtab.reorderShortcuts', { ids })
+        }
+        return item(`shortcut:${shortcut.id}`, shortcut.title || shortcut.url, shortcut.url, [
+          {
+            kind: 'field',
+            id: `shortcut:${shortcut.id}:title`,
+            label: 'Name',
+            value: shortcut.title,
+            input: 'text',
+            placeholder: 'Name',
+            onCommit: (v) => {
+              run('newtab.updateShortcut', { id: shortcut.id, title: v.trim(), url: shortcut.url })
+              return undefined
+            }
+          },
+          {
+            kind: 'field',
+            id: `shortcut:${shortcut.id}:url`,
+            label: 'Address',
+            value: shortcut.url,
+            input: 'text',
+            placeholder: 'example.com',
+            onCommit: (v) => {
+              if (!inputToUrl(v.trim())) return 'Enter a web address.'
+              run('newtab.updateShortcut', {
+                id: shortcut.id,
+                title: shortcut.title,
+                url: v.trim()
+              })
+              return undefined
+            }
+          },
+          {
+            kind: 'action',
+            id: `shortcut:${shortcut.id}:up`,
+            label: 'Move up',
+            disabled: i === 0,
+            onPress: () => move(-1)
+          },
+          {
+            kind: 'action',
+            id: `shortcut:${shortcut.id}:down`,
+            label: 'Move down',
+            disabled: i === shortcuts.length - 1,
+            onPress: () => move(1)
+          },
+          {
+            kind: 'action',
+            id: `shortcut:${shortcut.id}:remove`,
+            label: 'Remove shortcut',
+            destructive: true,
+            confirm: {
+              title: `Remove ${shortcut.title || shortcut.url}?`,
+              description: 'The tile leaves the grid; the site itself is not affected.',
+              action: 'Remove'
+            },
+            onPress: () => run('newtab.removeShortcut', { id: shortcut.id })
+          }
+        ])
+      }),
+      empty: 'No shortcuts yet. Add the sites you want on every new tab.'
+    },
+    {
+      id: 'newtab-add',
+      heading: null,
+      rows: [
+        {
+          kind: 'action',
+          id: 'newtab-add-shortcut',
+          label: 'Add shortcut',
+          description: full ? `The grid holds ${MAX_NEW_TAB_SHORTCUTS} shortcuts.` : undefined,
+          disabled: full,
+          keywords: ['tile', 'site'],
+          form: {
+            title: 'Add shortcut',
+            render: (close) => (
+              <ShortcutForm
+                onSubmit={(title, url) => void run('newtab.addShortcut', { title, url })}
+                close={close}
+              />
+            )
+          }
+        }
+      ]
     }
   ]
 }

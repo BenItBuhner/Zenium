@@ -31,6 +31,7 @@ describe('the page registry', () => {
     expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual([
       'look',
       'compact',
+      'newtab',
       'tabs',
       'resources',
       'search',

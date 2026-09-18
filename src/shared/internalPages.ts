@@ -144,6 +144,12 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     layouts: ['desktop', 'tablet']
   },
   {
+    id: 'newtab',
+    label: 'New Tab',
+    keywords: ['new tab page', 'start page', 'shortcuts', 'most visited', 'background', 'greeting'],
+    requires: 'newTabPage'
+  },
+  {
     id: 'tabs',
     label: 'Tab Management',
     keywords: ['tabs', 'pinned', 'essentials', 'unload', 'session', 'downloads', 'window']

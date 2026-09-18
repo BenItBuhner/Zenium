@@ -6,6 +6,7 @@ import { emptyBlockingStatus } from '@shared/blocking'
 import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
+  MAX_NEW_TAB_SHORTCUTS,
   emptyAgentServerStatus,
   emptyPasswordsStatus,
   emptyResourceSnapshot
@@ -59,6 +60,7 @@ const ANDROID: HostCapabilities = {
   pageControls: true,
   privateTabs: true,
   secureDns: false,
+  newTabPage: false,
   pageTabs: true
 }
 
@@ -150,6 +152,8 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     permissionRules: [],
     blocking: emptyBlockingStatus(),
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
+    newTabShortcuts: [],
+    newTabBackground: { image: false, canPick: false },
     ...patch
   } as unknown as UIState
 }
@@ -317,6 +321,92 @@ describe('the section model', () => {
       { crashRestore: 'never' },
       { warnOnCloseWindow: !DEFAULT_SETTINGS.warnOnCloseWindow }
     ])
+  })
+
+  it('carries #148’s New Tab rows on a host that renders the page; the phone has none', () => {
+    expect(phoneSections().some((m) => m.section.id === 'newtab')).toBe(false)
+
+    const c = context(
+      state({
+        capabilities: { ...ANDROID, newTabPage: true },
+        newTabShortcuts: [
+          { id: 'a', title: 'Zen', url: 'https://zen.test/' },
+          { id: 'b', title: '', url: 'https://b.test/' }
+        ]
+      } as Partial<UIState>)
+    )
+    const models = buildSections(availableSections(PAGE, c.ctx.state.capabilities, 'phone'), c.ctx)
+    expect(models.map((m) => m.section.id).slice(0, 3)).toEqual(['look', 'newtab', 'tabs'])
+    const newtab = models[1]
+    expect(newtab.groups.map((g) => g.heading)).toEqual(['New tab page', 'My shortcuts', null])
+    expect(newtab.groups.every(groupShows)).toBe(true)
+
+    // The page's preferences patch inside `newTab`, keeping the rest of it.
+    const enabled = row(newtab, 'newtab-enabled')
+    if (enabled.kind !== 'switch') throw new Error('not a switch')
+    enabled.onChange(false)
+    const background = row(newtab, 'newtab-background')
+    if (background.kind !== 'value') throw new Error('not a value row')
+    // No file picker on this host: the image option is not offered.
+    expect(background.options.map((o) => o.value)).toEqual(['space', 'solid'])
+    background.onChange('solid')
+    expect(c.patches).toEqual([
+      { newTab: { ...DEFAULT_SETTINGS.newTab, enabled: false } },
+      { newTab: { ...DEFAULT_SETTINGS.newTab, background: 'solid' } }
+    ])
+
+    // A shortcut without a name is listed by its address; its sheet edits, moves and removes it.
+    expect(row(newtab, 'shortcut:b').label).toBe('https://b.test/')
+    const up = row(newtab, 'shortcut:b:up')
+    if (up.kind !== 'action') throw new Error('not an action')
+    up.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('newtab.reorderShortcuts', { ids: ['b', 'a'] })
+    const first = row(newtab, 'shortcut:a:up')
+    expect(first.disabled).toBe(true)
+    const address = row(newtab, 'shortcut:a:url')
+    if (address.kind !== 'field') throw new Error('not a field')
+    expect(address.onCommit('not an address')).toBe('Enter a web address.')
+    expect(address.onCommit('zen.test/docs')).toBeUndefined()
+    expect(invoke).toHaveBeenCalledWith('newtab.updateShortcut', {
+      id: 'a',
+      title: 'Zen',
+      url: 'zen.test/docs'
+    })
+    const remove = row(newtab, 'shortcut:a:remove')
+    expect(remove).toMatchObject({ kind: 'action', destructive: true })
+    if (remove.kind !== 'action') throw new Error('not an action')
+    expect(remove.confirm?.action).toBe('Remove')
+    remove.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('newtab.removeShortcut', { id: 'a' })
+    expect(row(newtab, 'newtab-add-shortcut')).toMatchObject({ kind: 'action', disabled: false })
+
+    // An empty list shows its one-line empty state; a full grid disables Add shortcut.
+    const empty = context(
+      state({ capabilities: { ...ANDROID, newTabPage: true } } as Partial<UIState>)
+    )
+    const none = buildSection(
+      PAGE.sections.find((x) => x.id === 'newtab')!,
+      empty.ctx
+    )
+    expect(none.groups.find((g) => g.id === 'newtab-shortcuts')).toMatchObject({
+      rows: [],
+      empty: 'No shortcuts yet. Add the sites you want on every new tab.'
+    })
+    const full = context(
+      state({
+        capabilities: { ...ANDROID, newTabPage: true },
+        newTabShortcuts: Array.from({ length: MAX_NEW_TAB_SHORTCUTS }, (_, i) => ({
+          id: `s${i}`,
+          title: `Site ${i}`,
+          url: `https://s${i}.test/`
+        }))
+      } as Partial<UIState>)
+    )
+    const packed = buildSection(
+      PAGE.sections.find((x) => x.id === 'newtab')!,
+      full.ctx
+    )
+    expect(row(packed, 'newtab-add-shortcut').disabled).toBe(true)
   })
 
   it('orders Look and Feel identity, chrome, page behaviour, Glance (design lead, #134)', () => {

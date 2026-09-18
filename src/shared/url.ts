@@ -130,24 +130,23 @@ export function inputToUrl(raw: string): string | null {
       const rest = input.slice('about:'.length).toLowerCase()
       return INTERNAL_PAGE_ALIASES[rest] ?? BLANK_URL
     }
-    // `zenium://` is the name users see for `zen://`; `chrome://settings` and its siblings are
-    // the pages a Chrome user types – both resolve to the canonical `zen://` address.
-    if (scheme === 'zenium' || scheme === 'chrome') {
-      const rest = input.slice(`${scheme}://`.length)
-      const page = rest.split(/[/?#]/, 1)[0].toLowerCase()
-      const alias = INTERNAL_PAGE_ALIASES[page]
-      if (alias) return alias
-      if (scheme === 'zenium') return `zen://${rest}`
-    }
-    // Internal pages are stored under `zen://`; the `zenium://` alias is what people type.
+    // Internal pages are stored under `zen://`. `zenium://` is the name users see for it, and
+    // `chrome://settings` and its siblings are the pages a Chrome user types from habit: a
+    // registered page resolves to its canonical address, section and all
+    // (`zenium://settings/privacy`, `chrome://settings/privacy`); a page known by an alias by
+    // that name (`zenium://newtab`, `chrome://history`); any other zenium:// address is the
+    // zen:// one, and other chrome:// addresses stay what they are (Chromium answers them).
     const page = parseInternalPageUrl(input)
     if (page) return internalPageUrl(page)
-    if (scheme === INTERNAL_ALIAS_SCHEME) return BLANK_URL
-    if (scheme === 'chrome') {
-      // Chrome's address for a page Zenium has too (`chrome://settings/privacy`, typed from
-      // habit) opens Zenium's; other chrome:// addresses stay what they are.
-      const chromePage = parseInternalPageUrl(`zen://${input.slice('chrome://'.length)}`)
-      if (chromePage) return internalPageUrl(chromePage)
+    if (scheme === INTERNAL_ALIAS_SCHEME || scheme === 'chrome') {
+      const rest = input.slice(`${scheme}://`.length)
+      const name = rest.split(/[/?#]/, 1)[0].toLowerCase()
+      const alias = INTERNAL_PAGE_ALIASES[name]
+      if (alias) {
+        const aliased = parseInternalPageUrl(`${alias}${rest.slice(name.length)}`)
+        return aliased ? internalPageUrl(aliased) : alias
+      }
+      if (scheme === INTERNAL_ALIAS_SCHEME) return `zen://${rest}`
     }
     return input
   }
