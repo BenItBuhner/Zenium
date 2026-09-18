@@ -202,6 +202,8 @@ export interface UiState {
   /** The query in the find bar's field (kept here so the bar survives a remount, e.g. into HTML fullscreen). */
   findText: string
   findRequest: FindRequest | null
+  /** The page zoom sheet is docked under this tab's page (hosts with page controls). */
+  zoomTabId: string | null
   /** Data URL of the active tab, shown dimmed behind overlays. */
   snapshot: string | null
   snapshotTabId: string | null
@@ -328,6 +330,7 @@ export const uiStore = createStore<UiState>(
     findTabId: null,
     findText: '',
     findRequest: null,
+    zoomTabId: null,
     snapshot: null,
     snapshotTabId: null,
     toasts: [],
@@ -832,11 +835,13 @@ export function openFindBar(tabId: string, text = '', again: 'next' | 'prev' | n
   const ui = uiStore.get()
   const moving = ui.findOpen && ui.findTabId !== tabId
   if (moving && ui.findTabId) run('find.stop', { tabId: ui.findTabId, keepSelection: true })
+  // The find bar and the zoom sheet share the frame's bottom edge: one at a time.
   uiStore.set({
     findOpen: true,
     findTabId: tabId,
     findText: text || (moving ? '' : ui.findText),
-    findRequest: { seq: ++findSeq, text, again }
+    findRequest: { seq: ++findSeq, text, again },
+    zoomTabId: null
   })
 }
 
@@ -852,6 +857,23 @@ export function closeFindBar(release: 'now' | 'afterKey' = 'now'): void {
   uiStore.set({ findOpen: false, findTabId: null, findRequest: null })
   if (release === 'afterKey') afterKeyRelease(returnFocusToPage)
   else returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
+// The page zoom sheet (docked under the page, which stays live)
+// ---------------------------------------------------------------------------
+
+/** "Zoom…" in the menu: the sheet takes the frame's bottom edge, so the find bar gives it up. */
+export function openZoom(tabId: string): void {
+  const ui = uiStore.get()
+  if (ui.findOpen && ui.findTabId) run('find.stop', { tabId: ui.findTabId, keepSelection: true })
+  uiStore.set({ zoomTabId: tabId, findOpen: false, findTabId: null, findRequest: null })
+}
+
+export function closeZoom(): void {
+  if (!uiStore.get().zoomTabId) return
+  uiStore.set({ zoomTabId: null })
+  returnFocusToPage()
 }
 
 // ---------------------------------------------------------------------------
