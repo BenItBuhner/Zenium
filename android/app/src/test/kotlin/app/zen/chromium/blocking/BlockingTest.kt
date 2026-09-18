@@ -222,6 +222,63 @@ class BlockingTest {
     }
 
     @Test
+    fun `HTTPS-only mode leaves non-unique hosts alone: the rule the core writes, and the policy ahead of a stale one`() {
+        // The rule as `httpsOnlyRule` in `src/core/protection/service.ts` writes it.
+        val httpsOnly = EngineSnapshot(
+            listOf(
+                RuleSetInfo.parse(
+                    JSONObject(
+                        """{"id":"${Blocking.HTTPS_ONLY_SET}","source":"builtin","priority":1500,"enabled":true,"rules":[
+                            {"id":1,"action":{"type":"upgradeScheme"},"condition":{"urlFilter":"|http://","excludedRequestDomains":[],"excludedNonUniqueHosts":true,"resourceTypes":["main_frame"]}}
+                        ]}"""
+                    )
+                )!!
+            ),
+            TextEngine.parse(emptyList())
+        )
+        val tab = FakeTab()
+        val exempt = listOf(
+            "http://localhost:3000/", "http://dev.localhost:5173/", "http://127.0.0.1:8080/", "http://[::1]/",
+            "http://10.0.0.5/", "http://172.20.1.1/", "http://192.168.0.10/status", "http://169.254.1.1/",
+            "http://[fe80::1]/", "http://[fd12::1]/", "http://0.0.0.0:8000/", "http://router/", "http://printer.local/"
+        )
+        for (url in exempt) {
+            assertEquals(url, Decision.Action.ALLOW, Blocking.decideNavigation(httpsOnly, tab, url).action)
+            assertSame(url, Verdict.Pass, Blocking.evaluate(httpsOnly, tab, url, true, "text/html", "GET", null))
+        }
+        assertTrue(tab.upgrades.isEmpty())
+        assertEquals(Decision.Action.UPGRADE, Blocking.decideNavigation(httpsOnly, tab, "http://legacy.example/").action)
+        assertEquals(Decision.Action.UPGRADE, Blocking.decideNavigation(httpsOnly, tab, "http://8.8.8.8/").action)
+
+        // A rule set written before the flag existed still upgrades them; the policy the core
+        // pushes (PrivacyFlags.plaintextAllowed) skips the upgrade on the way to the tab.
+        val stale = EngineSnapshot(
+            listOf(
+                RuleSetInfo.parse(
+                    JSONObject(
+                        """{"id":"${Blocking.HTTPS_ONLY_SET}","source":"builtin","priority":1500,"enabled":true,"rules":[
+                            {"id":1,"action":{"type":"upgradeScheme"},"condition":{"regexFilter":"^http://[^/?#]*\\.[^/?#]*","resourceTypes":["main_frame"]}}
+                        ]}"""
+                    )
+                )!!
+            ),
+            TextEngine.parse(emptyList())
+        )
+        val flags = app.zen.chromium.privacy.PrivacyFlags.parse(JSONObject("""{"httpsOnly":"ask"}"""))
+        val policy = object : RequestPolicy {
+            override fun unsafe(url: String): SafeBrowsingHit? = null
+            override fun plaintextAllowed(url: String): Boolean = flags.plaintextAllowed(url)
+        }
+        val decision = Blocking.decideNavigation(stale, tab, "http://192.168.0.10/status")
+        assertEquals(Decision.Action.UPGRADE, decision.action)
+        assertEquals(false, Blocking.applyUpgrade(policy, tab, "http://192.168.0.10/status", decision))
+        assertSame(Verdict.Pass, Blocking.evaluate(stale, tab, "http://[::1]:8080/", true, "text/html", "GET", policy))
+        assertTrue(tab.upgrades.isEmpty())
+        assertTrue(Blocking.applyUpgrade(policy, tab, "http://legacy.example/", Blocking.decideNavigation(stale, tab, "http://legacy.example/")))
+        assertEquals("http://legacy.example/" to "https://legacy.example/", tab.upgrades.last())
+    }
+
+    @Test
     fun extractFilterTextReadsTheStringLiteralWithoutParsingTheDocument() {
         assertEquals("||a.example^\n||b.example^", Blocking.extractFilterText("""{"id":"x","filterText":"||a.example^\n||b.example^","rules":[]}"""))
         assertEquals("tab\there \"quoted\" back\\slash \u00e9", Blocking.extractFilterText("""{"filterText": "tab\there \"quoted\" back\\slash \u00e9"}"""))
