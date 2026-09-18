@@ -207,7 +207,8 @@ function ResultText({
  * The popover (§9.20, §9.23): 400 wide, a title block – glyph and "Translation" – over a body
  * that scrolls under it once the popover reaches 60% of the window, and a footer that hugs its
  * one button. Focus moves onto its menulist when it opens, Tab wraps inside it, Escape closes it
- * and the page gets focus back (§9.22); an outside click closes it too. No X.
+ * and the page gets focus back (§9.22); a press outside it – consumed, reaching nothing beneath –
+ * and a window resize close it too (§9.20). No X.
  */
 function Popover({
   request,
@@ -236,6 +237,12 @@ function Popover({
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
+  // The window changed size under the popover: the point it was placed at is stale (§9.20).
+  useEffect(() => {
+    const away = (): void => closeTranslateSelection()
+    window.addEventListener('resize', away)
+    return () => window.removeEventListener('resize', away)
   }, [])
   // On open, focus moves into the popover (§9.22): its first field (the menulist), else the
   // popover itself – once it has been placed and is visible, since a hidden element cannot take
@@ -329,6 +336,12 @@ function Popover({
 // Phone: a sheet
 // ---------------------------------------------------------------------------
 
+/**
+ * The sheet (§9.16, §9.25): the grip strip and a 48 header over a body at the sheet's one 16
+ * gutter – the languages row, the original, a hairline, the translation, then Copy filling the
+ * width (§9.11) and ending 16 above the bottom inset, the sheet's own bottom padding (at least 8)
+ * supplying part of that.
+ */
 function PhoneSheet({
   request,
   state
@@ -339,6 +352,7 @@ function PhoneSheet({
   const translation = useSelectionTranslation(request)
   const { copied, copy } = useCopy(translation.result?.translation ?? null)
   const sheet = useRef<BottomSheetHandle>(null)
+  const inset = uiStore.use((s) => s.insets.bottom)
 
   useBackSurface({
     name: 'translate-selection',
@@ -371,7 +385,7 @@ function PhoneSheet({
         </div>
       }
     >
-      <div className="flex flex-col gap-3 px-3 pb-3">
+      <div className="zen-translate-sheet-body" style={{ paddingBottom: Math.min(16, 8 + inset) }}>
         <LanguagesRow state={state} translation={translation} glyph />
         <p className="zen-translate-original">{request.text}</p>
         <div className="zen-translate-rule" />
