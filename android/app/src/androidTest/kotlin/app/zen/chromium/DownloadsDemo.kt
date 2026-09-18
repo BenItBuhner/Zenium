@@ -10,6 +10,8 @@ import android.provider.MediaStore
 import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.json.JSONObject
+import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -17,11 +19,14 @@ import org.junit.runner.RunWith
  * Drives the Zenium downloader on an emulator and checks what lands in `MediaStore.Downloads`:
  * a throttled file paused and resumed from the downloads panel, a file whose connection the
  * server cuts halfway (resumed on our own with `Range`), a `data:` link and a `blob:` link named
- * from their anchors, the progress and completion notifications, and the files in the system
- * Downloads app. The page and the files come from a small Node server on the runner
- * (`.github/scripts/downloads-demo-server.mjs`, reached at `10.0.2.2:18923` from inside the
- * emulator), which generates every byte from the same formula as [expectedByte], so a resumed
- * file is checked byte for byte.
+ * from their anchors, the progress and completion notifications, a file whose server dies on
+ * every attempt until the row fails with Chrome's reason and wording (`network-failed`, "Check
+ * internet connection") and is completed by Retry, a completed file removed through
+ * `download.deleteFile` and one deleted behind the browser's back (both rows read "Deleted",
+ * Retry downloads the file again), and the files in the system Downloads app. The page and the
+ * files come from a small Node server on the runner (`.github/scripts/downloads-demo-server.mjs`,
+ * reached at `10.0.2.2:18923` from inside the emulator), which generates every byte from the same
+ * formula as [expectedByte], so a resumed file is checked byte for byte.
  *
  * Run from the dispatch-only workflow `.github/workflows/android-downloads-demo.yml`, a caller of
  * the shared `android-emulator-demo.yml` that starts the server from `setup-script` and hands the
@@ -94,10 +99,57 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
         SystemClock.sleep(1_500)
         shot("06-data-and-blob")
 
-        // 4. The files are ordinary downloads: the system Downloads app lists them.
+        // 4. The server dies on every dead.bin response (one more time than the downloader resumes
+        //    on its own), so the row fails with the reason the engine mapped the failure to and
+        //    Chrome's wording for it; Retry gets the seventh response, which is served whole.
+        closePanel()
+        click(LINK_DEAD)
+        val failed = awaitRow("dead.bin", 120_000) { it.optString("state") == "interrupted" }
+        check(
+            failed != null && failed.optString("error") == "network-failed" &&
+                failed.optString("errorMessage") == "Check internet connection",
+            "dead.bin did not fail as network-failed / Check internet connection: $failed"
+        )
+        if (waitFor(FAILED_NETWORK, 8_000) == null) fail("no row reads \"$FAILED_NETWORK\"")
+        shot("07-failed-network")
+        click("Retry")
+        val dead = awaitPublished("dead.bin", DEAD_SIZE, 60_000)
+        check(dead != null && intact(dead, DEAD_SIZE), "dead.bin did not complete intact on Retry")
+        val retried = awaitRow("dead.bin", 10_000) { it.optString("state") == "completed" }
+        check(retried != null && !retried.has("error") && !retried.has("errorMessage"), "Retry left the failure on the row: $retried")
+        SystemClock.sleep(1_000)
+        shot("08-retried")
+
+        // 5. The file on disk. download.deleteFile removes flaky.bin through the MediaStore uri the
+        //    downloader recorded and greys its row "Deleted" (a second call finds it missing);
+        //    slow.bin deleted behind the browser's back (the Files app, say) is caught by
+        //    download.exists; Retry downloads the deleted file again into the same row.
+        val flakyId = rowFor("flaky.bin")?.optString("id").orEmpty()
+        val deleted = downloadCommand("download.deleteFile", flakyId)
+        check(deleted == "deleted", "download.deleteFile answered $deleted for flaky.bin")
+        check(publishedRow("flaky.bin") == null, "flaky.bin is still in MediaStore.Downloads after download.deleteFile")
+        check(downloadCommand("download.deleteFile", flakyId) == "missing", "a second download.deleteFile did not answer missing")
+        check(rowFor("flaky.bin")?.optBoolean("fileMissing") == true, "flaky.bin's row is not marked fileMissing")
+        val slowId = rowFor("slow.bin")?.optString("id").orEmpty()
+        check(slow != null && app.contentResolver.delete(slow, null, null) == 1, "could not delete slow.bin behind the browser's back")
+        check(downloadCommand("download.exists", slowId) == false, "download.exists still finds the deleted slow.bin")
+        check(rowFor("slow.bin")?.optBoolean("fileMissing") == true, "slow.bin's row is not marked fileMissing")
+        if (waitFor("Deleted", 8_000) == null) fail("no row reads \"Deleted\"")
+        SystemClock.sleep(1_000)
+        shot("09-deleted")
+        downloadCommand("download.retry", slowId)
+        val slowAgain = awaitPublished("slow.bin", SLOW_SIZE, 60_000)
+        check(slowAgain != null && intact(slowAgain, SLOW_SIZE), "the deleted slow.bin did not download again intact on Retry")
+        val slowRow = awaitRow("slow.bin", 10_000) { it.optString("state") == "completed" && !it.has("fileMissing") }
+        check(slowRow != null && slowRow.optString("id") == slowId, "Retry did not clear fileMissing on slow.bin's row: ${rowFor("slow.bin")}")
+        check(rowFor("flaky.bin")?.optBoolean("fileMissing") == true, "flaky.bin's row lost its Deleted state")
+        SystemClock.sleep(1_000)
+        shot("10-retried-after-delete")
+
+        // 6. The files are ordinary downloads: the system Downloads app lists them.
         app.startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         SystemClock.sleep(5_000)
-        shot("07-system-downloads")
+        shot("11-system-downloads")
         app.startActivity(
             Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         )
@@ -133,7 +185,46 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
         failures.add(message)
     }
 
+    // --- the engine's list ----------------------------------------------------------------------
+
+    /** The engine's row for this file (`app.getState().downloads`), null when there is none. */
+    private fun rowFor(name: String): JSONObject? {
+        val rows = coreState().optJSONArray("downloads") ?: return null
+        for (i in 0 until rows.length()) {
+            val row = rows.getJSONObject(i)
+            if (row.optString("filename") == name) return row
+        }
+        return null
+    }
+
+    /** Poll the engine until its row for `name` satisfies `accept`; null (logged) when it never does. */
+    private fun awaitRow(name: String, timeoutMs: Long, accept: (JSONObject) -> Boolean): JSONObject? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val row = rowFor(name)
+            if (row != null && accept(row)) return row
+            SystemClock.sleep(500)
+        }
+        Log.e(tag, "$name never reached the expected state; last row ${rowFor(name)}")
+        return null
+    }
+
+    /** A `download.*` command on one row; the JSON value it resolved with (a string, a boolean, null). */
+    private fun downloadCommand(command: String, id: String): Any? {
+        val raw = coreInvoke(command, JSONObject().put("id", id).toString())
+        val value = JSONTokener(raw).nextValue()
+        Log.i(tag, "$command($id) -> $raw")
+        return if (value == JSONObject.NULL) null else value
+    }
+
     // --- what landed in MediaStore.Downloads ----------------------------------------------------
+
+    /** The published (not pending) row with this name, null when there is none. */
+    private fun publishedRow(name: String): Uri? =
+        app.contentResolver.query(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.MediaColumns._ID),
+            "${MediaStore.MediaColumns.DISPLAY_NAME} = ?", arrayOf(name), null
+        )?.use { c -> if (c.moveToFirst()) Uri.withAppendedPath(MediaStore.Downloads.EXTERNAL_CONTENT_URI, c.getLong(0).toString()) else null }
 
     /** Bytes on disk of the still-pending (in-flight) row with this name, -1 when there is none. */
     private fun pendingSize(name: String): Long {
@@ -154,10 +245,7 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
     private fun awaitPublished(name: String, size: Long, timeoutMs: Long): Uri? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            val uri = app.contentResolver.query(
-                MediaStore.Downloads.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.MediaColumns._ID),
-                "${MediaStore.MediaColumns.DISPLAY_NAME} = ?", arrayOf(name), null
-            )?.use { c -> if (c.moveToFirst()) Uri.withAppendedPath(MediaStore.Downloads.EXTERNAL_CONTENT_URI, c.getLong(0).toString()) else null }
+            val uri = publishedRow(name)
             if (uri != null) {
                 val onDisk = runCatching { app.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } }.getOrNull() ?: -1L
                 if (onDisk == size) {
@@ -198,11 +286,15 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
     companion object {
         const val LINK_SLOW = "Download slow.bin"
         const val LINK_FLAKY = "Download flaky.bin"
+        const val LINK_DEAD = "Download dead.bin"
         const val LINK_DATA = "Download hello-data.txt"
         const val LINK_BLOB = "Download hello-blob.txt"
         const val CLOSE = "Close (Esc)"
+        /** The panel's status line for a `network-failed` row: Chrome's wording behind "Failed –". */
+        const val FAILED_NETWORK = "Failed \u2013 Check internet connection"
         const val SLOW_SIZE = 3L * 1024 * 1024
         const val FLAKY_SIZE = 2L * 1024 * 1024
+        const val DEAD_SIZE = 1L * 1024 * 1024
         const val DATA_TEXT = "Hello from a Zenium data: link\n"
         const val BLOB_TEXT = "Hello from a Zenium blob: link\n"
 
