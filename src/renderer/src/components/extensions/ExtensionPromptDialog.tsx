@@ -182,7 +182,8 @@ function SheetPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
     sheet.current?.dismiss(() => answerExtensionPrompt(prompt, accept))
   }
   const copy = copyFor(prompt)
-  const glyph = <ExtensionIcon icon={prompt.icon} size={16} box={16} />
+  // The phone's glyph size (§9.23: 20 on a phone, 16 on desktop).
+  const glyph = <ExtensionIcon icon={prompt.icon} size={20} box={20} />
   return (
     <BottomSheet
       ref={sheet}

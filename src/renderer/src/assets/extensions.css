@@ -638,11 +638,12 @@
     line-height: 22px;
     overflow-wrap: anywhere;
   }
+  /* The glyph at the title's start: 16 on desktop, 20 on a phone (§9.23), on the title's line. */
   .zen-v2-title-block-title > :first-child:not(:last-child) {
     flex-shrink: 0;
-    width: 16px;
-    height: 16px;
-    margin-top: 3px;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    margin-top: calc((22px - var(--v2-icon)) / 2);
   }
   .zen-v2-title-block-description {
     margin: 4px 0 0;
@@ -769,8 +770,8 @@
   }
   .zen-v2-sheet-title > :first-child:not(:last-child) {
     flex-shrink: 0;
-    width: 16px;
-    height: 16px;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
   }
 
   /* --- Extensions: the management page ---------------------------------------------------- */
