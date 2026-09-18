@@ -7,7 +7,8 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  useState
+  useState,
+  useSyncExternalStore
 } from 'react'
 import { createPortal } from 'react-dom'
 import type { Rect } from '@shared/types'
@@ -62,13 +63,38 @@ export {
 interface FrameDialogEntry {
   /** Pressing the scrim: dismiss, or nothing for a prompt the page waits on. */
   onScrimPress: () => void
+  /**
+   * The dialog draws the stack's one scrim itself – a sheet whose scrim fades with its own
+   * motion (§9.24, §9.28) – so the host draws none while it is on top.
+   */
+  ownScrim: boolean
 }
 
 interface FrameDialogHostApi {
   register: (entry: FrameDialogEntry) => () => void
+  /** The host's slot, once mounted: what `FrameDialogPortal` renders into. */
+  element: HTMLElement | null
 }
 
 const FrameDialogHostContext = createContext<FrameDialogHostApi | null>(null)
+
+/*
+ * The frame's own host – the one TabDialogs mounts over the content frame (the shell on
+ * phones) – published for `FrameDialogPortal`, which a dialog whose state lives outside every
+ * host's subtree (a page's sheets, the new tab page's customise sheet) reaches from anywhere.
+ */
+let frameHost: FrameDialogHostApi | null = null
+const frameHostListeners = new Set<() => void>()
+
+function setFrameHost(api: FrameDialogHostApi | null): void {
+  frameHost = api
+  for (const listener of frameHostListeners) listener()
+}
+
+function subscribeFrameHost(listener: () => void): () => void {
+  frameHostListeners.add(listener)
+  return () => frameHostListeners.delete(listener)
+}
 
 /** The window chrome roots (§9.29): what goes inert while a frame dialog is open (§9.5). */
 const WINDOW_CHROME_ROOTS = '[data-surface="window"]'
@@ -138,23 +164,43 @@ export function chromeInertHeld(): boolean {
  * positioned itself; between the dialogs the slot lets the pointer through to the scrim, whose
  * press – consumed on `pointerdown` (§9.20 amended) – goes to the dialog on top. While a dialog
  * is open the window chrome outside the frame is inert (`holdChromeInert`, §9.5) and every open
- * popover closes; Escape and the dialog's own controls stay live.
+ * popover closes; Escape and the dialog's own controls stay live. A dialog that draws the
+ * stack's one scrim itself (`ownScrim`: a sheet, whose scrim fades with its motion) gets none
+ * from the host while it is on top.
+ *
+ * `frame` marks the frame's host (TabDialogs'): `FrameDialogPortal` reaches it from anywhere in
+ * the tree, for a dialog whose state lives outside the host's subtree.
  *
  * Modal dialogs render in the content frame through FrameDialogHost (scrim dims the frame only).
  * Popovers, menus, toasts and anything anchored to chrome outside the frame render through
  * ChromePortal. Never position a dialog with `fixed` inside the frame.
  */
-export function FrameDialogHost({ children }: { children?: ReactNode }): JSX.Element {
+export function FrameDialogHost({
+  children,
+  frame = false
+}: {
+  children?: ReactNode
+  frame?: boolean
+}): JSX.Element {
   const [dialogs, setDialogs] = useState<FrameDialogEntry[]>([])
+  const [element, setElement] = useState<HTMLElement | null>(null)
   const api = useMemo<FrameDialogHostApi>(
     () => ({
       register: (entry) => {
         setDialogs((list) => [...list, entry])
         return () => setDialogs((list) => list.filter((d) => d !== entry))
-      }
+      },
+      element
     }),
-    []
+    [element]
   )
+  useLayoutEffect(() => {
+    if (!frame) return
+    setFrameHost(api)
+    return () => {
+      if (frameHost === api) setFrameHost(null)
+    }
+  }, [frame, api])
   const top = dialogs[dialogs.length - 1]
   const open = dialogs.length > 0
   useEffect(() => {
@@ -176,13 +222,15 @@ export function FrameDialogHost({ children }: { children?: ReactNode }): JSX.Ele
         data-surface="page"
         data-open={top ? 'true' : undefined}
       >
-        {top && (
+        {top && !top.ownScrim && (
           <div
             className="zen-frame-scrim zen-animate-in"
             onPointerDown={() => top.onScrimPress()}
           />
         )}
-        <div className="zen-frame-dialogs-slot">{children}</div>
+        <div ref={setElement} className="zen-frame-dialogs-slot">
+          {children}
+        </div>
       </div>
     </FrameDialogHostContext.Provider>
   )
@@ -193,7 +241,9 @@ export function FrameDialogHost({ children }: { children?: ReactNode }): JSX.Ele
  * its scrim, makes the window chrome inert and takes the pointer, and a press on the scrim – on
  * `pointerdown`, mouse, touch or pen alike – runs `onScrimPress` of the dialog on top (omit it
  * for a prompt the page waits on, which only its buttons and Escape answer). Renders nothing
- * itself: the dialog returns its panel, which the host centres above the scrim.
+ * itself: the dialog returns its panel, which the host centres above the scrim. `ownScrim` is
+ * for a sheet that draws the stack's one scrim itself, fading with its motion: the host then
+ * draws none while that sheet is on top.
  *
  * Modal dialogs render in the content frame through FrameDialogHost (scrim dims the frame only).
  * Popovers, menus, toasts and anything anchored to chrome outside the frame render through
@@ -201,8 +251,9 @@ export function FrameDialogHost({ children }: { children?: ReactNode }): JSX.Ele
  */
 export function useFrameDialog({
   onScrimPress,
-  active = true
-}: { onScrimPress?: () => void; active?: boolean } = {}): void {
+  active = true,
+  ownScrim = false
+}: { onScrimPress?: () => void; active?: boolean; ownScrim?: boolean } = {}): void {
   const host = useContext(FrameDialogHostContext)
   const latest = useRef(onScrimPress)
   useLayoutEffect(() => {
@@ -210,8 +261,31 @@ export function useFrameDialog({
   }, [onScrimPress])
   useLayoutEffect(() => {
     if (!active || !host) return
-    return host.register({ onScrimPress: () => latest.current?.() })
-  }, [active, host])
+    return host.register({ onScrimPress: () => latest.current?.(), ownScrim })
+  }, [active, host, ownScrim])
+}
+
+/**
+ * Render a dialog into a `FrameDialogHost` from anywhere in the tree: the nearest host when
+ * there is one above, else the frame's (`FrameDialogHost frame`, which TabDialogs mounts). For
+ * a dialog whose state lives outside the host's subtree – a page's sheets, opened by its rows –
+ * which must still mount in the host, over the frame, not inside the frame's transform. The
+ * children are the host's for `useFrameDialog` too, so they register with the host they render
+ * in. Renders nothing until the host has mounted.
+ *
+ * Modal dialogs render in the content frame through FrameDialogHost (scrim dims the frame only).
+ * Popovers, menus, toasts and anything anchored to chrome outside the frame render through
+ * ChromePortal. Never position a dialog with `fixed` inside the frame.
+ */
+export function FrameDialogPortal({ children }: { children: ReactNode }): JSX.Element | null {
+  const nearest = useContext(FrameDialogHostContext)
+  const frame = useSyncExternalStore(subscribeFrameHost, () => frameHost)
+  const host = nearest ?? frame
+  if (!host?.element) return null
+  return createPortal(
+    <FrameDialogHostContext.Provider value={host}>{children}</FrameDialogHostContext.Provider>,
+    host.element
+  )
 }
 
 // ---------------------------------------------------------------------------

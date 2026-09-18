@@ -48,7 +48,7 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-v2-sheet {', '.zen-ntp {'],
   // The new tab page: wallpaper, search field, .zen-v2-shortcut tiles, the customise sheet's
   // preset previews, the grow surface (components/newtab/NewTabPage.tsx).
-  ['.zen-ntp {', '@property --zen-fade-start {']
+  ['.zen-ntp {', '/*\n * A sheet coming up pushes the page back']
 ]
 
 /** The text of the first `selector {` block found after `from`. */

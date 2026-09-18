@@ -1,6 +1,6 @@
 import type { ChangeEvent, JSX, ReactNode } from 'react'
-import { useEffect, useRef } from 'react'
-import { Check, SlidersHorizontal } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Check, Loader2, SlidersHorizontal } from 'lucide-react'
 import type {
   NewTabModules,
   NewTabPreset,
@@ -28,6 +28,7 @@ import {
   setWallpaperImage,
   wallpaperImageStore
 } from '@renderer/lib/newtab'
+import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { browserStore, pushToast } from '@renderer/lib/ui'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
@@ -50,11 +51,20 @@ const SHORTCUT_STYLES: Array<{ style: NewTabShortcutStyle; label: string; descri
   { style: 'my-shortcuts', label: 'My shortcuts', description: 'Only the sites you pin' }
 ]
 
-/** Mounted above whichever shell is up; the sheet itself renders while the store says open. */
+/**
+ * Mounted once, above whichever shell is up; while the store says open, the sheet renders in the
+ * frame's dialog host (`FrameDialogPortal`, lib/portals.tsx) – a modal dialog over the content
+ * frame, which recedes under a sheet and would shrink a sheet mounted inside it.
+ */
 export function NewTabCustomizeLayer(): JSX.Element | null {
   const open = customizeStore.use((s) => s.open)
   const state = browserStore.use((s) => s.state)
-  return open && state ? <CustomizeSheet state={state} /> : null
+  if (!open || !state) return null
+  return (
+    <FrameDialogPortal>
+      <CustomizeSheet state={state} />
+    </FrameDialogPortal>
+  )
 }
 
 /**
@@ -62,6 +72,10 @@ export function NewTabCustomizeLayer(): JSX.Element | null {
  * the layout presets as image radio cards, the sections as checkbox rows, the shortcut style and
  * the wallpaper source as radio rows. Every change is written to the settings at once, so the
  * page behind the sheet shows it as the sheet is used.
+ *
+ * A page surface (§9.29) registered with the host as a dialog that draws its own scrim, fading
+ * with its motion (§9.28); the scrim's press, the system back and Escape dismiss it, and focus
+ * returns to the gear that opened it once it is gone (§9.24).
  */
 function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
   const settings = state.settings.newTab
@@ -69,18 +83,23 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
   const image = wallpaperImageStore.use()
   const sheet = useRef<BottomSheetHandle>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  /** The picked picture is being read and scaled: the button shows a spinner meanwhile (§9.30). */
+  const [reading, setReading] = useState(false)
 
   useEffect(() => {
     void loadWallpaperImage()
   }, [])
 
+  const dismiss = (): void => sheet.current?.dismiss()
+  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
   useBackSurface({
     name: 'newtab-customize',
     onProgress: (progress) => sheet.current?.backProgress(progress),
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
-  useEscape(() => sheet.current?.dismiss())
+  useEscape(dismiss)
+  useReturnFocus()
 
   const update = (next: NewTabSettings): void => run('settings.update', { newTab: next })
 
@@ -94,126 +113,137 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
+    setReading(true)
     try {
       await setWallpaperImage(await readWallpaperFile(file))
       // Picking a picture is meant to be seen: the sheet moves to a preset that shows it.
       if (!sections.wallpaper) update(toggleNewTabModule(settings, 'wallpaper', true))
     } catch (error) {
       pushToast(error instanceof Error ? error.message : 'The image could not be used', 'error')
+    } finally {
+      setReading(false)
     }
   }
 
   return (
-    <BottomSheet
-      ref={sheet}
-      className="zen-v2-sheet"
-      fadeEdges={false}
-      onDismissed={closeCustomize}
-      handleLabel="Resize sheet"
-      header={
-        <div className="zen-v2-sheet-header">
-          <h2 className="zen-v2-title min-w-0 truncate">New Tab Page</h2>
-        </div>
-      }
-    >
-      <div className="flex flex-col gap-6 pb-4">
-        <Section title="Layout">
-          <div
-            role="radiogroup"
-            aria-label="Layout"
-            className="grid grid-cols-2 gap-x-3 gap-y-4 px-4 pt-1"
-          >
-            {NEW_TAB_PRESETS.map((preset) => (
-              <PresetCard
-                key={preset}
-                preset={preset}
-                sections={newTabSections(pickNewTabPreset(settings, preset))}
-                active={settings.preset === preset}
-                disabled={!presetAvailable(preset)}
-                onSelect={() => update(pickNewTabPreset(settings, preset))}
-              />
-            ))}
+    <div className="zen-ntp-customize-layer absolute inset-0" data-surface="page">
+      <BottomSheet
+        ref={sheet}
+        hosted
+        className="zen-v2-sheet"
+        fadeEdges={false}
+        onDismissed={closeCustomize}
+        handleLabel="Resize sheet"
+        header={
+          <div className="zen-v2-sheet-header">
+            <h2 className="zen-v2-title min-w-0 truncate">New Tab Page</h2>
           </div>
-          {!FEED_AVAILABLE && (
-            <p className="zen-v2-description px-4 pt-3">
-              Informational is not available: Zenium has no feed.
-            </p>
-          )}
-        </Section>
+        }
+      >
+        <div className="flex flex-col gap-6 pb-4">
+          <Section title="Layout">
+            <div role="radiogroup" aria-label="Layout" className="zen-ntp-preset-grid">
+              {NEW_TAB_PRESETS.map((preset) => (
+                <PresetCard
+                  key={preset}
+                  preset={preset}
+                  sections={newTabSections(pickNewTabPreset(settings, preset))}
+                  active={settings.preset === preset}
+                  disabled={!presetAvailable(preset)}
+                  onSelect={() => update(pickNewTabPreset(settings, preset))}
+                />
+              ))}
+            </div>
+            {!FEED_AVAILABLE && (
+              <p className="zen-v2-description px-4 pt-3">
+                Informational is not available: Zenium has no feed.
+              </p>
+            )}
+          </Section>
 
-        <Section title="Show">
-          {MODULE_LABELS.map(({ key, label }) => {
-            const unavailable = key === 'feed' && !FEED_AVAILABLE
-            return (
-              <CheckRow
-                key={key}
-                label={label}
-                checked={sections[key]}
-                disabled={unavailable}
-                trailing={unavailable ? 'Not available' : undefined}
-                onChange={(checked) => update(toggleNewTabModule(settings, key, checked))}
-              />
-            )
-          })}
-        </Section>
+          <Section title="Show">
+            {MODULE_LABELS.map(({ key, label }) => {
+              const unavailable = key === 'feed' && !FEED_AVAILABLE
+              return (
+                <CheckRow
+                  key={key}
+                  label={label}
+                  checked={sections[key]}
+                  disabled={unavailable}
+                  trailing={unavailable ? 'Not available' : undefined}
+                  onChange={(checked) => update(toggleNewTabModule(settings, key, checked))}
+                />
+              )
+            })}
+          </Section>
 
-        <Section title="Shortcuts">
-          <div role="radiogroup" aria-label="Shortcuts">
-            {SHORTCUT_STYLES.map(({ style, label, description }) => (
+          <Section title="Shortcuts">
+            <div role="radiogroup" aria-label="Shortcuts">
+              {SHORTCUT_STYLES.map(({ style, label, description }) => (
+                <RadioRow
+                  key={style}
+                  label={label}
+                  description={description}
+                  checked={settings.shortcutStyle === style}
+                  onSelect={() => update({ ...settings, shortcutStyle: style })}
+                />
+              ))}
+            </div>
+          </Section>
+
+          <Section title="Wallpaper">
+            <div role="radiogroup" aria-label="Wallpaper">
               <RadioRow
-                key={style}
-                label={label}
-                description={description}
-                checked={settings.shortcutStyle === style}
-                onSelect={() => update({ ...settings, shortcutStyle: style })}
+                label="Space colours"
+                checked={settings.wallpaper === 'space'}
+                onSelect={() => pickWallpaper('space')}
               />
-            ))}
-          </div>
-        </Section>
-
-        <Section title="Wallpaper">
-          <div role="radiogroup" aria-label="Wallpaper">
-            <RadioRow
-              label="Space colours"
-              checked={settings.wallpaper === 'space'}
-              onSelect={() => pickWallpaper('space')}
-            />
-            <RadioRow
-              label="Image"
-              description={image.dataUrl ? 'The picture you chose' : 'A picture from this device'}
-              checked={settings.wallpaper === 'image'}
-              onSelect={() => pickWallpaper('image')}
-            />
-          </div>
-          <div className="zen-v2-control-row">
-            <button
-              type="button"
-              className="zen-v2-button"
-              onClick={() => fileInput.current?.click()}
-            >
-              {image.dataUrl ? 'Choose another image' : 'Choose an image'}
-            </button>
-            {image.dataUrl && (
+              <RadioRow
+                label="Image"
+                description={image.dataUrl ? 'The picture you chose' : 'A picture from this device'}
+                checked={settings.wallpaper === 'image'}
+                onSelect={() => pickWallpaper('image')}
+              />
+            </div>
+            <div className="zen-v2-control-row">
               <button
                 type="button"
                 className="zen-v2-button"
-                data-danger
-                onClick={() => void setWallpaperImage(null)}
+                aria-busy={reading || undefined}
+                onClick={() => {
+                  if (!reading) fileInput.current?.click()
+                }}
               >
-                Remove
+                <span className="zen-v2-button-label">
+                  {image.dataUrl ? 'Choose another image' : 'Choose an image'}
+                </span>
+                {reading && (
+                  <Loader2 className="zen-v2-button-spinner h-4 w-4 animate-spin" aria-hidden />
+                )}
               </button>
-            )}
-          </div>
-          <input
-            ref={fileInput}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => void onFile(e)}
-          />
-        </Section>
-      </div>
-    </BottomSheet>
+              {image.dataUrl && (
+                <button
+                  type="button"
+                  className="zen-v2-button"
+                  data-danger
+                  disabled={reading}
+                  onClick={() => void setWallpaperImage(null)}
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => void onFile(e)}
+            />
+          </Section>
+        </div>
+      </BottomSheet>
+    </div>
   )
 }
 
@@ -345,9 +375,28 @@ function PresetCard({
           )}
         </span>
       </span>
-      <span className="truncate px-0.5">{PRESET_LABELS[preset]}</span>
+      <span className="truncate px-0.5 text-center">{PRESET_LABELS[preset]}</span>
     </button>
   )
+}
+
+/**
+ * Focus returns to the gear that opened the sheet once the sheet is gone (§9.24): the gear is
+ * what had focus as the sheet mounted. Restored after the commit that removes the sheet, and not
+ * when focus has since gone somewhere else that is still on screen.
+ */
+function useReturnFocus(): void {
+  useEffect(() => {
+    const opener = document.activeElement
+    return () => {
+      queueMicrotask(() => {
+        if (!(opener instanceof HTMLElement) || !opener.isConnected) return
+        const now = document.activeElement
+        if (now && now !== document.body && now.isConnected) return
+        opener.focus()
+      })
+    }
+  }, [])
 }
 
 /** Escape closes the sheet (hardware keyboards exist on tablets and DeX too). */

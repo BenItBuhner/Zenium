@@ -71,8 +71,11 @@ export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
         : undefined
 
   return (
+    // A window surface (design language v2 §9.29): the page is the space's gradient, and the
+    // tiles, their captions and the gear draw in the window family; the field is a panel on it.
     <div
       className="zen-ntp absolute inset-0 flex flex-col"
+      data-surface="window"
       data-wallpaper={wallpaper}
       data-hidden={hidden || undefined}
       data-grow={growPhase !== 'idle' ? growPhase : undefined}
@@ -111,7 +114,13 @@ function SearchField({ tab }: { tab: Tab }): JSX.Element {
     window.dispatchEvent(new CustomEvent(name, { detail: { tabId: tab.id } }))
   }
   return (
-    <div role="group" aria-label="Search" className="zen-ntp-field flex w-full max-w-[520px]">
+    // The floating URL bar's field is an opaque panel on the window: a page surface of its own.
+    <div
+      role="group"
+      aria-label="Search"
+      className="zen-ntp-field flex w-full max-w-[520px]"
+      data-surface="page"
+    >
       <button
         type="button"
         className={cn(

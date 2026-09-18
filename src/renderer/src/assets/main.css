@@ -330,6 +330,21 @@
 .zen-v2-button[data-danger] {
   color: var(--v2-danger);
 }
+/*
+ * Busy (§9.30): a working button keeps its size and full opacity, and its label gives way to a
+ * 16 px spinner in the same box (`aria-busy`). Unlayered with the rule above for the same reason.
+ */
+.zen-v2-button[aria-busy='true'] {
+  position: relative;
+}
+.zen-v2-button[aria-busy='true'] .zen-v2-button-label {
+  visibility: hidden;
+}
+.zen-v2-button[aria-busy='true'] .zen-v2-button-spinner {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+}
 
 /* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME); zero on desktop. */
 :root {
@@ -2466,6 +2481,60 @@
   letter-spacing: -0.014em;
 }
 
+/*
+ * Fading scroll edges (`useFadeEdges`). The scroll container is masked, so content dissolves
+ * into whatever is behind it – no gradient overlay, no assumption about the background. The
+ * depth of each edge is a registered length: 0 at an edge with nothing past it, the fade size
+ * once there is, eased between the two.
+ */
+@property --zen-fade-start {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@property --zen-fade-end {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+[data-fade-axis] {
+  transition:
+    --zen-fade-start 180ms var(--zen-ease),
+    --zen-fade-end 180ms var(--zen-ease);
+}
+[data-fade-axis='y'] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+}
+[data-fade-axis='x'] {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+}
+
 @layer components {
   /*
    * v2 controls (design language v2 draft, sections 2, 3 and 6): a phone sheet on the neutral
@@ -2524,24 +2593,23 @@
     line-height: 20px;
   }
   .zen-v2-description {
-    font-size: 13px;
-    line-height: 18px;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
     color: var(--v2-text-deemphasized);
   }
   /*
    * A row: at least 44 tall, growing with its text and never clamping. What trails the text is
    * centred on the row (section 9.18); the leading control alone sits on the first text line
-   * (section 9.2, the offset on the box itself). The press fill keeps 8 px from the sheet's edge.
+   * (section 9.2, the offset on the box itself). Rows run edge to edge with the press fill
+   * bleeding to the sheet's border and their text inset 16 (section 9.25).
    */
   .zen-v2-row {
     display: flex;
-    width: calc(100% - 16px);
+    width: 100%;
     min-height: 44px;
-    margin: 0 8px;
-    padding: 12px 8px;
+    padding: 12px 16px;
     gap: 12px;
     align-items: center;
-    border-radius: var(--v2-radius-control);
     color: var(--v2-text);
     text-align: left;
     font-size: var(--v2-font-body);
@@ -2630,10 +2698,10 @@
     flex-direction: column;
     gap: 8px;
     color: var(--v2-text);
-    text-align: left;
-    font-size: 13px;
+    text-align: center;
+    font-size: var(--v2-font-small);
     font-weight: 600;
-    line-height: 18px;
+    line-height: var(--v2-line-small);
   }
   .zen-v2-image-radio:disabled {
     opacity: 0.4;
@@ -2663,6 +2731,20 @@
   }
   .zen-v2-sheet[data-scrolled] .zen-sheet-grip {
     box-shadow: 0 1px 0 var(--v2-border);
+  }
+  /*
+   * The customise sheet's layer in the frame's dialog host: a v2 surface draws the stack's one
+   * scrim in `--v2-scrim` (section 9.28) until the scrim tokens are made one.
+   */
+  .zen-ntp-customize-layer .zen-sheet-scrim {
+    background: var(--v2-scrim);
+  }
+  /* The layout presets: image radio cards two to a row in the 16 gutter, 8 apart (section 10.4). */
+  .zen-ntp-preset-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 4px 16px 0;
   }
 }
 
@@ -2736,25 +2818,25 @@
   .zen-ntp-tile {
     border-radius: var(--v2-radius-card);
     corner-shape: var(--zen-corner);
-    background: var(--v2-window-fill);
+    background: var(--v2-control-fill);
     transition:
       background 120ms var(--zen-ease),
       transform 120ms var(--zen-ease);
   }
   .zen-v2-shortcut:active .zen-ntp-tile {
-    background: var(--v2-window-fill-hover);
+    background: var(--v2-control-fill-hover);
     transform: scale(0.96);
   }
   .zen-ntp-caption {
-    font-size: 13px;
-    line-height: 18px;
-    color: rgb(var(--zen-fg-rgb) / 0.69);
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-control-text-deemphasized);
   }
   /* The empty state (section 9.17): one sentence at 15/400, deemphasised, in the window's ink. */
   .zen-ntp-empty {
-    font-size: 15px;
-    line-height: 20px;
-    color: rgb(var(--zen-fg-rgb) / 0.69);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    color: var(--v2-control-text-deemphasized);
   }
   /* A site's icon fades in once it has loaded; until then the tile is the fill alone. */
   .zen-ntp-icon {
@@ -2765,7 +2847,7 @@
     opacity: 1;
   }
   .zen-ntp-letter {
-    color: rgb(var(--zen-fg-rgb) / 0.69);
+    color: var(--v2-control-text-deemphasized);
   }
   /*
    * The layout preset pictures in the customise sheet: the space's gradient as a miniature window
@@ -2840,60 +2922,6 @@
     opacity: 0;
     transition: opacity 200ms var(--zen-ease);
   }
-}
-
-/*
- * Fading scroll edges (`useFadeEdges`). The scroll container is masked, so content dissolves
- * into whatever is behind it – no gradient overlay, no assumption about the background. The
- * depth of each edge is a registered length: 0 at an edge with nothing past it, the fade size
- * once there is, eased between the two.
- */
-@property --zen-fade-start {
-  syntax: '<length>';
-  inherits: false;
-  initial-value: 0px;
-}
-@property --zen-fade-end {
-  syntax: '<length>';
-  inherits: false;
-  initial-value: 0px;
-}
-[data-fade-axis] {
-  transition:
-    --zen-fade-start 180ms var(--zen-ease),
-    --zen-fade-end 180ms var(--zen-ease);
-}
-[data-fade-axis='y'] {
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    transparent,
-    #000 var(--zen-fade-start),
-    #000 calc(100% - var(--zen-fade-end)),
-    transparent
-  );
-  mask-image: linear-gradient(
-    to bottom,
-    transparent,
-    #000 var(--zen-fade-start),
-    #000 calc(100% - var(--zen-fade-end)),
-    transparent
-  );
-}
-[data-fade-axis='x'] {
-  -webkit-mask-image: linear-gradient(
-    to right,
-    transparent,
-    #000 var(--zen-fade-start),
-    #000 calc(100% - var(--zen-fade-end)),
-    transparent
-  );
-  mask-image: linear-gradient(
-    to right,
-    transparent,
-    #000 var(--zen-fade-start),
-    #000 calc(100% - var(--zen-fade-end)),
-    transparent
-  );
 }
 
 /*

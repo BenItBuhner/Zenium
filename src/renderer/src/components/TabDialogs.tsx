@@ -46,7 +46,8 @@ const TAB_ICONS = [
  * a scrim that dims only that box
  * (lib/portals.tsx). The star bubble is a popover: on desktop it portals to the chrome layer,
  * anchored under the star; on phones it is a sheet in the host. The zoom bubble is a desktop
- * popover too, under the pill's zoom chip.
+ * popover too, under the pill's zoom chip. This is the frame's host: a dialog whose state lives
+ * outside it (the new tab page's customise sheet) reaches it through `FrameDialogPortal`.
  */
 export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const pinnedTabId = uiStore.use((s) => s.editingPinnedUrlTabId)
@@ -59,7 +60,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const pinnedTab = pinnedTabId ? state.tabs[pinnedTabId] : undefined
   const iconTab = iconTabId ? state.tabs[iconTabId] : undefined
   return (
-    <FrameDialogHost>
+    <FrameDialogHost frame>
       <BookmarkDialog
         state={state}
         star={star}
