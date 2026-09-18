@@ -345,28 +345,51 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
 
     // --- moves -----------------------------------------------------------------------------------
 
-    /** Open the overview from the bar's tabs button (the pill's pull when the bar has none) and let it settle. */
+    /**
+     * Open the overview from the bar's tabs button (the pill's pull when the bar has none) and let
+     * it settle. The emulator's input pipeline can hand a tap's release to the WebView 300 ms and
+     * more late; then the bar's 400 ms hold fires first and the Tabs button's quick menu (or the
+     * bar editor) opens in the overview's place (run 35406158318). That is dismissed and the tap
+     * tried again, a few times.
+     */
     private fun openOverview() {
         if (overviewOpen()) return
-        val tabs = findNode { it.startsWith("Tabs (") }?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
-            ?: domRect("[aria-label^=\"Tabs (\"]")
-        if (tabs != null) {
-            Finger().tap(tabs.exactCenterX(), tabs.exactCenterY())
-        } else {
-            val f = Finger()
-            f.down(pillCenterX, pillY)
-            f.settleIn(0f, -NUDGE)
-            f.moveBy(0f, -0.75f * overviewTravel + NUDGE, 400)
-            f.up()
+        repeat(OPEN_ATTEMPTS) { attempt ->
+            val tabs = findNode { it.startsWith("Tabs (") }?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+                ?: domRect("[aria-label^=\"Tabs (\"]")
+            if (tabs != null) {
+                Finger().tap(tabs.exactCenterX(), tabs.exactCenterY())
+            } else {
+                val f = Finger()
+                f.down(pillCenterX, pillY)
+                f.settleIn(0f, -NUDGE)
+                f.moveBy(0f, -0.75f * overviewTravel + NUDGE, 400)
+                f.up()
+            }
+            val deadline = SystemClock.uptimeMillis() + 8_000
+            while (!overviewOpen() && SystemClock.uptimeMillis() < deadline) {
+                if (heldInstead()) {
+                    finding("  (the tap on Tabs was read as a hold, attempt ${attempt + 1}: dismissed, trying again)")
+                    back()
+                    val gone = SystemClock.uptimeMillis() + 4_000
+                    while (heldInstead() && SystemClock.uptimeMillis() < gone) SystemClock.sleep(200)
+                    SystemClock.sleep(1_000)
+                    break
+                }
+                SystemClock.sleep(200)
+            }
+            if (overviewOpen()) {
+                SystemClock.sleep(2_000)
+                calibrate()
+                return
+            }
         }
-        val deadline = SystemClock.uptimeMillis() + 8_000
-        while (!overviewOpen()) {
-            if (SystemClock.uptimeMillis() >= deadline) error("the overview never opened")
-            SystemClock.sleep(200)
-        }
-        SystemClock.sleep(2_000)
-        calibrate()
+        error("the overview never opened")
     }
+
+    /** What a hold on the bar opens where a tap was meant: the Tabs button's quick menu or the bar editor. */
+    private fun heldInstead(): Boolean =
+        jsString("(function(){return document.querySelector('.zen-quick-menu, .zen-sheet') ? 'held' : ''})()") == "held"
 
     /** The overview is on screen and has finished growing in (its root at scale 1). */
     private fun overviewOpen(): Boolean =
@@ -810,6 +833,8 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         private const val MOMENT_WAIT = 5_000L
         /** Largest DOM-to-screen offset (px) [calibrate] takes for real rather than for a stale tree. */
         private const val MAX_OFFSET = 200f
+        /** Taps on the Tabs button [openOverview] tries before giving up (each may be read as a hold). */
+        private const val OPEN_ATTEMPTS = 4
 
         // The seeded profile's ids, and the DOM of the grid.
         private const val ALPHA = "tab_alpha"
