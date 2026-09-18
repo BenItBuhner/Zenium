@@ -9,8 +9,11 @@ import {
   POPOVER_MARGIN,
   POPOVER_WIDTH,
   placePopover,
+  popoverStyle,
   useFrameDialog,
-  viewportSize
+  useLightDismiss,
+  viewportSize,
+  type DismissReason
 } from '@renderer/lib/portals'
 import { browserStore, closeBookmarkChrome, openBookmarkChrome } from '@renderer/lib/ui'
 import { FolderField } from './FolderField'
@@ -33,10 +36,11 @@ const WIDTH = POPOVER_WIDTH.list
 const ARRIVAL_GRACE_MS = 2000
 
 const close = (): void => closeBookmarkChrome({ starDialog: null })
-/** Escape: the bubble goes and the star it hung from takes the focus back (§9.22). */
+const starChip = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-bm-star]')
+/** Escape or the star's own press: the bubble goes and the star takes the focus back (§9.22). */
 const closeToAnchor = (): void => {
   closeBookmarkChrome({ starDialog: null }, { keepFocus: true })
-  document.querySelector<HTMLElement>('[data-bm-star]')?.focus({ preventScroll: true })
+  starChip()?.focus({ preventScroll: true })
 }
 
 /**
@@ -79,10 +83,13 @@ export function StarDialog({
 
 /**
  * A desktop popover (v2 draft §9.20): 320 wide, its top border on the pill's bottom edge,
- * end-aligned with the star (the star sits in the pill's trailing half), clamped 8px inside the
- * window, no taller than 60% of it; a §9.23 title block over a body that scrolls under it. It
- * renders through the chrome layer (`ChromePortal`), never inside the frame. On phones it is a
- * sheet placed through the `FrameDialogHost` TabDialogs mounts, over that host's scrim.
+ * end-aligned with the star (the star sits in the pill's trailing half), placed by
+ * `placePopover` (flip, slide, shrink, 8px inside the window), no taller than 60% of it; a §9.23
+ * title block over a body that scrolls under it. It renders through the chrome layer
+ * (`ChromePortal`), never inside the frame, and the layer's light dismiss puts it away: a press
+ * anywhere else keeps the bookmark and closes it (the press goes no further), the star's own
+ * press closes it and hands it the focus, scroll and resize close it. On phones it is a sheet
+ * placed through the `FrameDialogHost` TabDialogs mounts, over that host's scrim.
  */
 function StarBubble({
   tree,
@@ -127,23 +134,15 @@ function StarBubble({
     []
   )
 
-  // A click anywhere else keeps the bookmark and puts the bubble away; the star chip toggles
-  // the bubble itself, and the folder field's popup is part of the bubble though portalled out.
-  useEffect(() => {
-    if (phone) return
-    const onDown = (e: PointerEvent): void => {
-      const target = e.target as Element | null
-      if (
-        !target ||
-        panelRef.current?.contains(target) ||
-        target.closest('[data-bm-star], [data-bm-listbox]')
-      )
-        return
-      close()
-    }
-    window.addEventListener('pointerdown', onDown, true)
-    return () => window.removeEventListener('pointerdown', onDown, true)
-  }, [phone])
+  // The chrome layer's light dismiss (§9.20 amended): a press anywhere else keeps the bookmark
+  // and puts the bubble away – the star's own press hands it the focus back, as Escape does –
+  // and so do a scroll, a resize and another popover opening. The folder field's list is the
+  // bubble's child popover (its anchor is inside), so a press in it leaves the bubble alone.
+  useLightDismiss(
+    panelRef,
+    (reason: DismissReason) => (reason === 'anchor' ? closeToAnchor() : close()),
+    { anchor: starChip, disabled: phone }
+  )
 
   const title = star.created ? 'Bookmark Added' : 'Edit Bookmark'
   const remove = (): void => {
@@ -259,7 +258,7 @@ function StarBubble({
         role="dialog"
         aria-labelledby="zen-bm-star-title"
         className="zen-animate-pop zen-bm-popover fixed z-[70] flex flex-col"
-        style={{ left: box.left, top: box.top, width: box.width, maxHeight: box.maxHeight }}
+        style={popoverStyle(box)}
         onKeyDown={onKeyDown}
       >
         {body}

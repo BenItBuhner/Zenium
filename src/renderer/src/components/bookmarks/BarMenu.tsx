@@ -5,7 +5,15 @@ import type { BookmarkNode, Rect } from '@shared/types'
 import { BOOKMARKS_BAR_ID, type BookmarkTree } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
 import { SPRING_SNAPPY, SpringAnimation, reducedMotion } from '@renderer/lib/motion/spring'
-import { ChromePortal, POPOVER_WIDTH, placePopover, viewportSize } from '@renderer/lib/portals'
+import {
+  ChromePortal,
+  POPOVER_WIDTH,
+  placePopover,
+  popoverStyle,
+  useLightDismiss,
+  viewportSize,
+  type DismissReason
+} from '@renderer/lib/portals'
 import { BookmarkIcon } from './BookmarkRow'
 import { useScrolled } from './popover'
 import { nodeLabel } from './tree'
@@ -23,6 +31,8 @@ interface Props {
   /** The chip the panel hangs from, and the bar it sits in (the panel's top edge is the bar's bottom). */
   anchor: Rect
   bar: Rect
+  /** The chip itself, for the layer's light dismiss: its own press closes the panel. */
+  anchorEl: () => Element | null
   tabId: string | null
   /** A bar drag's target, so the row or folder about to take the drop is marked. */
   dropTarget: BarDropTarget | null
@@ -42,17 +52,22 @@ interface Nav {
 /**
  * A folder's panel on the bookmarks bar (and the overflow panel): a desktop popover of the
  * folder's contents (design-language-v2-draft §9.20: 320 wide, flush with the bar's bottom edge,
- * start-aligned with its chip or end-aligned from the trailing half, 60% of the window at most).
+ * start-aligned with its chip or end-aligned from the trailing half – flipped, slid or shrunk by
+ * `placePopover` to stay 8px inside the window and on its chip – 60% of the window at most).
  * Subfolders push in from the right under a bar header with a back chevron and the folder's
  * name; going back slides the same way in reverse. Keyboard (§9.22): focus lands on the first
  * row, arrows and Tab move it and wrap, Enter opens, Right pushes, Left or Backspace comes back,
- * Escape closes and hands focus back to the chip.
+ * Escape closes and hands focus back to the chip. The chrome layer's light dismiss closes it
+ * otherwise: a press anywhere else (consumed, §9.20 amended), its chip's own press (which hands
+ * the chip the focus), a scroll, a resize, another popover; hovering another folder chip
+ * switches the panel to it (`BookmarksBar`), which is not a close.
  */
 export function BarMenu({
   tree,
   root,
   anchor,
   bar,
+  anchorEl,
   tabId,
   dropTarget,
   liftedId,
@@ -114,14 +129,16 @@ export function BarMenu({
   const bodyRef = useRef<HTMLDivElement>(null)
   const scrolled = useScrolled(bodyRef)
 
-  // Outside click closes; the chips decide for themselves (a click toggles, a hover switches).
+  // The layer's light dismiss: the chip's own press closes the panel and keeps the keyboard, as
+  // Escape does; any other outside press, a scroll or a resize closes it and leaves the focus be.
+  useLightDismiss(
+    panelRef,
+    (reason: DismissReason) => onClose({ focusAnchor: reason === 'anchor' }),
+    { anchor: anchorEl }
+  )
+
+  // Escape closes the level, then the panel; the chip takes the focus back (§9.22).
   useEffect(() => {
-    const onDown = (e: PointerEvent): void => {
-      const target = e.target as Element | null
-      if (!target || panelRef.current?.contains(target)) return
-      if (target.closest('[data-bm-anchor]')) return
-      onClose()
-    }
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
       e.preventDefault()
@@ -129,12 +146,8 @@ export function BarMenu({
       if (path.length) pop()
       else onClose({ focusAnchor: true })
     }
-    window.addEventListener('pointerdown', onDown, true)
     window.addEventListener('keydown', onKey, true)
-    return () => {
-      window.removeEventListener('pointerdown', onDown, true)
-      window.removeEventListener('keydown', onKey, true)
-    }
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose, path.length, pop])
 
   // ---------------------------------------------------------------------------
@@ -350,7 +363,7 @@ export function BarMenu({
         data-bar-panel
         data-append-target={dropTarget?.kind === 'append' && dropTarget.parentId === folderId}
         className="zen-bm-popover zen-animate-pop fixed z-[80] flex flex-col outline-none"
-        style={{ left: box.left, top: box.top, width: box.width, maxHeight: box.maxHeight }}
+        style={popoverStyle(box)}
         onKeyDown={onKeyDown}
       >
         <div ref={enteringRef} className="zen-bm-menu-level flex min-h-0 flex-col">

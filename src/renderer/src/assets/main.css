@@ -845,28 +845,43 @@
 
   /*
    * Where dialogs and popovers render (lib/portals.tsx). The frame dialog host lies over the
-   * content frame's box (the whole shell on phones): one grid cell, so dialogs open at once stack
-   * centred rather than sit side by side, and a phone sheet aligns itself to the bottom edge. It
-   * is inert until a dialog registers; then its scrim dims only the frame (§9.5). The chrome
-   * layer is the window-wide home of popovers, menus and toasts: above everything, catching no
-   * pointer of its own (each portal turns pointer events back on for its subtree).
+   * content frame's box (the whole shell on phones). It is inert until a dialog registers; then
+   * its scrim dims only the frame (§9.5) and the window chrome outside goes inert. The dialogs
+   * render in a slot after the scrim with a stacking context of its own above it (z-index 1), so
+   * a dialog paints over the scrim and takes the pointer whether or not it is positioned itself;
+   * the slot is one grid cell, so dialogs open at once stack centred rather than sit side by
+   * side, and a phone sheet aligns itself to the bottom edge; between the dialogs the slot lets
+   * the pointer through to the scrim. The chrome layer is the window-wide home of popovers,
+   * menus and toasts: above everything, catching no pointer of its own (each portal turns pointer
+   * events back on for its subtree).
    */
   .zen-frame-dialogs {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr);
-    place-items: center;
     isolation: isolate;
     pointer-events: none;
   }
   .zen-frame-dialogs[data-open] {
     pointer-events: auto;
   }
-  .zen-frame-dialogs > * {
+  .zen-frame-scrim {
+    position: absolute;
+    inset: 0;
+    background: var(--v2-scrim-modal);
+  }
+  .zen-frame-dialogs-slot {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    place-items: center;
+    pointer-events: none;
+  }
+  .zen-frame-dialogs-slot > * {
     grid-area: 1 / 1;
   }
-  .zen-frame-scrim {
-    background: var(--v2-scrim-modal);
+  .zen-frame-dialogs[data-open] .zen-frame-dialogs-slot > * {
+    pointer-events: auto;
   }
   .zen-chrome-layer {
     position: fixed;
