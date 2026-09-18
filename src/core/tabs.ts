@@ -355,8 +355,13 @@ export class TabManager {
         if (!inPage) this.browser.blocking.onNavigated(tabId)
         const v = view()
         this.browser.popups.onNavigated(tabId, inPage)
-        // A new document supersedes whatever challenge the previous request was waiting on.
-        if (!inPage) this.browser.security.cancelForTab(tabId)
+        // A new document supersedes whatever challenge the previous request was waiting on,
+        // and whatever permission question the previous page asked.
+        if (!inPage) {
+          this.browser.security.cancelForTab(tabId)
+          this.browser.permissionPrompts.cancelForTab(tabId)
+          this.browser.permissions.onTabNavigated(tabId, url)
+        }
         if (v) this.onNavigated(tabId, v, url)
       },
       onTitleUpdated: (title) =>
@@ -575,6 +580,8 @@ export class TabManager {
     this.pendingTransition.delete(tabId)
     this.browser.popups.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
+    this.browser.permissionPrompts.cancelForTab(tabId)
+    this.browser.permissions.onTabGone(tabId)
     if (this.owners.has(tabId)) view.detach()
     this.owners.delete(tabId)
     if (!view.isDestroyed()) {
@@ -944,7 +951,32 @@ export class TabManager {
       }
     }
     this.browser.updateMedia()
+    if (this.isPrivate(tab)) this.browser.onPrivateTabClosed()
     this.browser.state.commit()
+  }
+
+  /**
+   * Private browsing as a tab of this window (`capabilities.privateTabs`, hosts without private
+   * windows): the tab lives in the in-memory private container – no history, no persisted
+   * downloads, never restored – and the private session is wiped when the last one closes.
+   * Resolves with the tab id, or null on hosts that offer private windows instead.
+   */
+  newPrivateTab(
+    url: string | undefined,
+    win: ZenWindow = this.browser.focusedWindow()
+  ): string | null {
+    if (!this.browser.state.capabilities.privateTabs) return null
+    return this.createTab({ url, active: true, containerId: PRIVATE_CONTAINER_ID }, win).id
+  }
+
+  /** Every private tab (the private-session count in the chrome). */
+  privateTabs(): Tab[] {
+    return Object.values(this.model.tabs).filter((tab) => this.isPrivate(tab))
+  }
+
+  /** Close every private tab, which ends the private session. */
+  closePrivateTabs(win: ZenWindow = this.browser.focusedWindow()): void {
+    for (const tab of this.privateTabs()) this.closeTab(tab.id, true, win)
   }
 
   /**

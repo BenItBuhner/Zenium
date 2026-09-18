@@ -1,8 +1,9 @@
 import { app, Menu } from 'electron'
 import { join } from 'node:path'
-import { electronApp, optimizer } from '@electron-toolkit/utils'
+import { optimizer } from '@electron-toolkit/utils'
 import { registerZenScheme } from './platform/protocol'
 import { ElectronPlatform } from './platform'
+import { APP_USER_MODEL_ID } from './platform/notifications'
 import { moveLegacyDirectory } from './platform/legacyPaths'
 import { applyResourceSwitches } from './platform/resources/startup'
 import { installShellTasks } from './platform/shellTasks'
@@ -118,9 +119,10 @@ function main(): void {
   })
 
   app.whenReady().then(() => {
-    // Must equal electron-builder's appId: the installer stamps it on the shortcuts, and Windows
-    // groups taskbar buttons and notifications by it.
-    electronApp.setAppUserModelId('io.github.benitbuhner.zenium')
+    // Windows groups taskbar buttons and toast notifications by this id; it must be the one the
+    // installer stamps on the shortcuts, in development too (electron-toolkit's helper would
+    // substitute the executable's path there, which no toast registration can carry).
+    if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID)
     app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
     const platform = new ElectronPlatform(app.getPath('userData'))

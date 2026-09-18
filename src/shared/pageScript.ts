@@ -17,7 +17,8 @@ export interface PageScriptFlags {
 }
 
 export interface PageScriptMessage {
-  type: 'glance' | 'open-tab' | 'navigate' | 'media' | 'zap' | 'activation' | 'popup-blocked'
+  type:
+    'glance' | 'open-tab' | 'navigate' | 'media' | 'zap' | 'activation' | 'popup-blocked' | 'focus'
   url?: string
   x?: number
   y?: number

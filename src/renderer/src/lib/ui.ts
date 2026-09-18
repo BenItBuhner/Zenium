@@ -107,6 +107,8 @@ export interface UiState {
   bookmarkAllTabs: { tabIds: string[]; defaultTitle: string } | null
   /** A folder panel of the bookmarks bar hangs over the page. */
   barMenuOpen: boolean
+  /** A permission prompt ("Allow example.com to use your camera?") is up over the page. */
+  permissionPromptOpen: boolean
   /** Zen's multi-select: tabs picked with Ctrl / Shift+click (acted on together). */
   selectedTabIds: string[]
   /** Last plainly clicked / toggled tab – the anchor for Shift+click ranges. */
@@ -167,6 +169,7 @@ export const uiStore = createStore<UiState>(
     bookmarkEdit: null,
     bookmarkAllTabs: null,
     barMenuOpen: false,
+    permissionPromptOpen: false,
     selectedTabIds: [],
     selectionAnchorId: null,
     glanceActive: false,
@@ -249,6 +252,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.barEditorOpen &&
     !ui.tabsMenu &&
     !ui.securityPromptOpen &&
+    !ui.permissionPromptOpen &&
     !ui.stageActive &&
     !bookmarkChromeOpen(ui)
   )
@@ -274,6 +278,7 @@ export function invalidateSnapshot(): void {
     !ui.barEditorOpen &&
     !ui.tabsMenu &&
     !ui.securityPromptOpen &&
+    !ui.permissionPromptOpen &&
     !ui.stageActive &&
     !bookmarkChromeOpen(ui)
   ) {
@@ -449,6 +454,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.barEditorOpen ||
     ui.tabsMenu !== null ||
     ui.securityPromptOpen ||
+    ui.permissionPromptOpen ||
     ui.stageActive ||
     bookmarkChromeOpen(ui)
   )

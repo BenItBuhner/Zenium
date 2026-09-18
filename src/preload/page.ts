@@ -1,5 +1,7 @@
-import { ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 import { installPageScript, type PageScriptFlags } from '../shared/pageScript'
+import { NOTIFICATION_PERMISSION_CHANNEL } from '../shared/notifications'
+import { installNotificationBridge, installNotificationShim } from './notifications'
 
 /**
  * Runs inside every web page (isolated world). The behaviours – Glance, pinned-tab link rules,
@@ -16,4 +18,17 @@ if (process.isMainFrame) {
       ipcRenderer.on('zen:page-flags', (_event, next: PageScriptFlags) => listener(next)),
     onZap: (listener) => ipcRenderer.on('zen:zap', (_event, on: boolean) => listener(on))
   })
+  // Web notifications are a web-site matter; the browser's own pages have none.
+  if (location.protocol === 'https:' || location.protocol === 'http:') {
+    installNotificationBridge({
+      status: () => ipcRenderer.sendSync(NOTIFICATION_PERMISSION_CHANNEL),
+      onStatus: (listener) =>
+        ipcRenderer.on(NOTIFICATION_PERMISSION_CHANNEL, (_event, status: unknown) =>
+          listener(status)
+        ),
+      focus: () => ipcRenderer.send('zen:page', { type: 'focus' }),
+      installShim: (events) =>
+        contextBridge.executeInMainWorld({ func: installNotificationShim, args: [events] })
+    })
+  }
 }

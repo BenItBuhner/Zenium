@@ -1,6 +1,15 @@
 import { JsonStore } from './store/JsonStore'
-import type { DialogHost, StoreIO } from './platform'
-import type { PermissionRule } from '../shared/types'
+import type { PermissionPromptHost, StoreIO } from './platform'
+import type { PermissionPrompt, PermissionRule } from '../shared/types'
+import {
+  MEDIA_ROWS,
+  allowOnceFor,
+  builtInDefault,
+  contentSettingId,
+  promptLabelFor,
+  type ContentDefault
+} from '../shared/contentSettings'
+import { newId } from '../shared/ids'
 
 export type PermissionDecision = PermissionRule['decision']
 type Decision = PermissionDecision
@@ -24,6 +33,13 @@ const DEFAULT_ORIGIN = '*'
 
 /** Facts about one request that shape the prompt, or the key the answer is remembered under. */
 export interface PermissionRequestDetails {
+  /**
+   * Tab whose page asks. Prompts queue per tab and go away when it navigates; an "Allow once"
+   * lasts while this tab stays on the site.
+   */
+  tabId?: string
+  /** `media`: the capture devices the request is for (both when the host does not say). */
+  mediaTypes?: Array<'video' | 'audio'>
   /** Top-level page the request happens in, when the requesting frame is embedded in another site. */
   embedderUrl?: string
   /** `openExternal`: the URL that would be handed to another application. */
@@ -49,46 +65,26 @@ export interface PermissionPromptCopy {
 }
 
 /**
- * Pages get these without asking: they are either harmless or already gated by the engine on a
- * user gesture (fullscreen, pointer lock, keyboard lock, sanitised clipboard writes).
- */
-const ALWAYS_ALLOW = new Set([
-  'fullscreen',
-  'clipboard-sanitized-write',
-  'pointerLock',
-  'keyboardLock',
-  'speaker-selection',
-  'background-sync'
-])
-const ALWAYS_DENY = new Set(['midiSysex', 'hid', 'serial', 'usb', 'display-capture', 'unknown'])
-
-/** Permissions the user is asked about; a blocked pop-up is never a question, only a stored allow. */
-const PROMPT_LABELS: Record<string, string> = {
-  media: 'use your camera and/or microphone',
-  camera: 'use your camera',
-  microphone: 'use your microphone',
-  geolocation: 'know your location',
-  notifications: 'send you notifications',
-  midi: 'access MIDI devices',
-  'clipboard-read': 'read from your clipboard',
-  mediaKeySystem: 'play protected (DRM) content',
-  'window-management': 'manage windows on all your displays',
-  'idle-detection': 'know when you are actively using this device',
-  'top-level-storage-access': 'let the sites embedded in it use their cookies and site data'
-}
-
-/**
  * A "Block" for these is a one-time answer: the site can ask again. Refusing to hand a link to
  * another application once should not silence that application on the site for good.
  */
 const ONE_SHOT_DENY = new Set(['openExternal'])
 
+/**
+ * Chrome blocks a permission for a site once its prompt was dismissed this many times in a row
+ * without an answer (the "ignored prompts" embargo).
+ */
+export const DISMISSALS_BEFORE_BLOCK = 3
+
 /** Longest URL or path shown inside a prompt. */
 const MAX_SHOWN = 80
 
 /**
- * Chromium-style permission prompts with per-origin persistence. Zen (Firefox) asks the user for
- * camera/microphone/location/notifications; everything exotic is denied by default.
+ * Chromium-style permission prompts with per-origin persistence. What a site gets without a
+ * decision of its own comes from the content-settings catalogue (`shared/contentSettings`):
+ * an answer (fullscreen is granted, USB refused) or a question, which the chrome shows as a
+ * non-modal per-tab prompt with Allow / Block / Allow once; the user may change any default in
+ * Settings, and every answer is remembered here.
  *
  * Keys are `${origin}|${permission}` where the permission may carry a qualifier after a colon
  * (`openExternal:zoommtg`, `storage-access:https://embedder.example`), so one answer never covers
@@ -105,10 +101,17 @@ export class PermissionService {
   private readonly listeners = new Set<(change: PermissionChange) => void>()
   /** Files the user chose in a save dialog this session (`origin|path`): writable, as in Chrome. */
   private readonly savedFiles = new Set<string>()
+  /** "Allow once" grants: decision keys per tab, dropped when the tab leaves the site or closes. */
+  private readonly sessionAllows = new Map<string, Set<string>>()
+  /** Prompts dismissed without an answer, per decision key (reset by an answer). */
+  private readonly dismissals = new Map<string, number>()
+  /** Requests answered from a stored allow this session, per key (the notification review). */
+  private readonly hits = new Map<string, number>()
 
   constructor(
     io: StoreIO,
-    private readonly dialogs: DialogHost
+    private readonly prompts: PermissionPromptHost,
+    private readonly now: () => number = Date.now
   ) {
     this.store = new JsonStore<Persisted>(io, 'permissions.json', 500)
     const data = this.store.readSync()
@@ -117,14 +120,16 @@ export class PermissionService {
 
   /**
    * Synchronous check (`Notification.permission`, or the engine's own status question before it
-   * would prompt); never prompts, unknown → false. File System Access is the one exception, see
-   * `checkFileSystem`.
+   * would prompt); never prompts, a question counts as no. File System Access is the one
+   * exception, see `checkFileSystem`.
    */
   check(permission: string, requestingOrigin: string, details?: PermissionRequestDetails): boolean {
-    if (ALWAYS_ALLOW.has(permission)) return true
-    if (ALWAYS_DENY.has(permission)) return false
     if (permission === 'fileSystem') return this.checkFileSystem(requestingOrigin, details ?? {})
-    return this.stored(permission, requestingOrigin, details) === 'allow'
+    if (permission === 'media')
+      return mediaRows(details).every(
+        (row) => this.resolve(row, requestingOrigin, details) === 'allow'
+      )
+    return this.resolve(permission, requestingOrigin, details) === 'allow'
   }
 
   /**
@@ -147,6 +152,25 @@ export class PermissionService {
     if (file && this.savedFiles.has(file)) return true
     if (details.pageActivated) void this.decide('fileSystem', requestingOrigin, details)
     return false
+  }
+
+  /**
+   * What a request comes down to before anyone is asked: the site's own decision, an "Allow
+   * once" of the asking tab, the user's default for the permission, or the catalogue's built-in
+   * default (`ask` for the prompted ones). Opaque origins are refused.
+   */
+  resolve(
+    permission: string,
+    requestingUrl: string,
+    details?: PermissionRequestDetails
+  ): ContentDefault {
+    const origin = safeOrigin(requestingUrl)
+    if (!origin || origin === 'null') return 'deny'
+    const key = decisionKey(origin, permission, details)
+    const stored = this.decisions[key]
+    if (stored) return stored
+    if (details?.tabId && this.sessionAllows.get(details.tabId)?.has(key)) return 'allow'
+    return this.effectiveDefault(permission)
   }
 
   /**
@@ -209,50 +233,174 @@ export class PermissionService {
     this.update(key, null, changeFor(key))
   }
 
-  /** Decide a permission request, prompting the user once per origin + permission. */
+  /**
+   * Decide a permission request: the resolved answer when there is one, else the prompt, shown
+   * once per origin + permission however many requests wait on it. Types the catalogue never
+   * asks about (pop-ups, unknown names) are refused without a question.
+   */
   async decide(
     permission: string,
     requestingUrl: string,
     details: PermissionRequestDetails = {}
   ): Promise<boolean> {
-    if (ALWAYS_ALLOW.has(permission)) return true
-    if (ALWAYS_DENY.has(permission)) return false
-    // Pop-ups are decided by the blocker from the user's gesture; there is nothing to ask.
-    if (permission === 'popups') return this.stored(permission, requestingUrl) === 'allow'
     const origin = safeOrigin(requestingUrl)
     if (!origin || origin === 'null') return false
+    if (permission === 'media') return this.decideMedia(origin, details)
+    const outcome = this.resolve(permission, requestingUrl, details)
     const key = decisionKey(origin, permission, details)
-    const stored = this.decisions[key] ?? this.defaultFor(permission)
-    if (stored) return stored === 'allow'
-    const inFlight = this.pending.get(key)
-    if (inFlight) return inFlight
-    const promise = this.prompt(permission, origin, key, details)
-    this.pending.set(key, promise)
-    try {
-      return await promise
-    } finally {
-      this.pending.delete(key)
+    if (outcome !== 'ask') {
+      if (outcome === 'allow') this.recordHit(key)
+      return outcome === 'allow'
     }
+    if (promptLabelFor(permission) === null) return false
+    return this.askOnce(key, () => this.prompt(permission, origin, [key], details))
+  }
+
+  /**
+   * A `media` request asks for the camera and microphone rows it names: any row the site is
+   * refused refuses the request, and only the rows still open are asked about (one prompt,
+   * "camera and microphone" when both are).
+   */
+  private async decideMedia(origin: string, details: PermissionRequestDetails): Promise<boolean> {
+    const rows = mediaRows(details)
+    const outcomes = rows.map((row) => this.resolve(row, origin, details))
+    if (outcomes.some((outcome) => outcome === 'deny')) return false
+    const open = rows.filter((_row, i) => outcomes[i] === 'ask')
+    if (open.length === 0) {
+      for (const row of rows) this.recordHit(decisionKey(origin, row, details))
+      return true
+    }
+    const keys = open.map((row) => decisionKey(origin, row, details))
+    const permission = open.length === 1 ? open[0] : 'media'
+    return this.askOnce(keys.join('+'), () => this.prompt(permission, origin, keys, details))
+  }
+
+  /** Concurrent requests for the same question share one prompt and its answer. */
+  private askOnce(pendingKey: string, ask: () => Promise<boolean>): Promise<boolean> {
+    const inFlight = this.pending.get(pendingKey)
+    if (inFlight) return inFlight
+    const promise = ask().finally(() => this.pending.delete(pendingKey))
+    this.pending.set(pendingKey, promise)
+    return promise
   }
 
   private async prompt(
     permission: string,
     origin: string,
-    key: string,
+    keys: string[],
     details: PermissionRequestDetails
   ): Promise<boolean> {
-    const allowed = await this.dialogs.confirm(permissionPromptCopy(permission, origin, details))
-    if (allowed || !ONE_SHOT_DENY.has(permission))
-      this.update(key, allowed ? 'allow' : 'deny', changeFor(key))
-    return allowed
+    const copy = permissionPromptCopy(permission, origin, details)
+    const request: PermissionPrompt = {
+      id: newId('perm'),
+      tabId: details.tabId ?? null,
+      origin,
+      permission: contentSettingId(permission),
+      message: copy.message,
+      detail: copy.detail,
+      allowLabel: copy.okLabel,
+      blockLabel: copy.cancelLabel,
+      allowOnce: allowOnceFor(permission),
+      requestedAt: this.now()
+    }
+    const answer = await this.prompts.show(request)
+    switch (answer) {
+      // Withdrawn (the page navigated away): refused this once, nothing counted or remembered.
+      case null:
+        return false
+      case 'allow':
+        for (const key of keys) {
+          this.dismissals.delete(key)
+          this.update(key, 'allow', changeFor(key))
+        }
+        return true
+      case 'allow-once':
+        for (const key of keys) this.dismissals.delete(key)
+        if (details.tabId) {
+          const grants = this.sessionAllows.get(details.tabId) ?? new Set<string>()
+          for (const key of keys) grants.add(key)
+          this.sessionAllows.set(details.tabId, grants)
+        }
+        return true
+      case 'block':
+        for (const key of keys) {
+          this.dismissals.delete(key)
+          if (!ONE_SHOT_DENY.has(permission)) this.update(key, 'deny', changeFor(key))
+        }
+        return false
+      case 'dismiss':
+        for (const key of keys) {
+          const count = (this.dismissals.get(key) ?? 0) + 1
+          if (count >= DISMISSALS_BEFORE_BLOCK && !ONE_SHOT_DENY.has(permission)) {
+            this.dismissals.delete(key)
+            this.update(key, 'deny', changeFor(key))
+          } else this.dismissals.set(key, count)
+        }
+        return false
+    }
+  }
+
+  private recordHit(key: string): void {
+    this.hits.set(key, (this.hits.get(key) ?? 0) + 1)
+  }
+
+  /**
+   * Sites whose stored allow for `permission` answered requests this session, busiest first:
+   * for notifications, how often a site showed one (each display is a request to the engine).
+   */
+  activity(permission: string): Array<{ origin: string; count: number }> {
+    const suffix = `|${permission}`
+    const out: Array<{ origin: string; count: number }> = []
+    for (const [key, count] of this.hits) {
+      if (!key.endsWith(suffix)) continue
+      const origin = key.slice(0, -suffix.length)
+      if (origin && origin !== DEFAULT_ORIGIN) out.push({ origin, count })
+    }
+    return out.sort((a, b) => b.count - a.count || a.origin.localeCompare(b.origin))
   }
 
   reset(): void {
     const keys = Object.keys(this.decisions)
     this.decisions = {}
     this.savedFiles.clear()
+    this.sessionAllows.clear()
+    this.dismissals.clear()
     this.store.write({ version: 1, decisions: this.decisions })
     for (const key of keys) this.notify(changeFor(key))
+  }
+
+  /**
+   * Clear browsing data's "Site settings": every per-site decision goes, the defaults the user
+   * chose in Settings stay (Chrome clears exceptions the same way).
+   */
+  resetSites(): void {
+    const removed = Object.keys(this.decisions).filter(
+      (key) => key.slice(0, key.lastIndexOf('|')) !== DEFAULT_ORIGIN
+    )
+    if (removed.length === 0 && this.savedFiles.size === 0 && this.sessionAllows.size === 0) return
+    for (const key of removed) delete this.decisions[key]
+    this.savedFiles.clear()
+    this.sessionAllows.clear()
+    this.dismissals.clear()
+    this.store.write({ version: 1, decisions: this.decisions })
+    for (const key of removed) this.notify(changeFor(key))
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tab lifecycle: "Allow once" grants live with the tab and the site it is on
+  // ---------------------------------------------------------------------------
+
+  /** The tab committed a document of `url`: grants for other sites end. */
+  onTabNavigated(tabId: string, url: string): void {
+    const grants = this.sessionAllows.get(tabId)
+    if (!grants) return
+    const origin = safeOrigin(url)
+    for (const key of grants) if (!origin || !key.startsWith(`${origin}|`)) grants.delete(key)
+    if (grants.size === 0) this.sessionAllows.delete(tabId)
+  }
+
+  onTabGone(tabId: string): void {
+    this.sessionAllows.delete(tabId)
   }
 
   // ---------------------------------------------------------------------------
@@ -272,13 +420,38 @@ export class PermissionService {
     this.update(`${origin}|${permission}`, decision, { permission, origin })
   }
 
-  /** A permission's default for origins without a decision of their own (`undefined`: none set). */
+  /**
+   * A permission's default for origins without a decision of their own (`undefined`: none set).
+   * Defaults are kept per catalogue row: a qualified or aliased name reads its row's.
+   */
   defaultFor(permission: string): Decision | undefined {
-    return this.decisions[`${DEFAULT_ORIGIN}|${permission}`]
+    return this.decisions[`${DEFAULT_ORIGIN}|${contentSettingId(permission)}`]
   }
 
   setDefault(permission: string, decision: Decision | null): void {
-    this.update(`${DEFAULT_ORIGIN}|${permission}`, decision, { permission, origin: null })
+    const row = contentSettingId(permission)
+    this.update(`${DEFAULT_ORIGIN}|${row}`, decision, { permission: row, origin: null })
+  }
+
+  /** The default sites without a decision get: the user's, else the catalogue's. */
+  effectiveDefault(permission: string): ContentDefault {
+    return this.defaultFor(permission) ?? builtInDefault(permission)
+  }
+
+  /**
+   * Settings chose a default. `ask`, and the built-in default itself, clear the stored one so
+   * the catalogue answers again (and the blocking engine's master switch reads its row as before).
+   */
+  chooseDefault(permission: string, decision: ContentDefault): void {
+    const keep = decision !== 'ask' && decision !== builtInDefault(permission)
+    this.setDefault(permission, keep ? decision : null)
+  }
+
+  /** The effective default of every catalogue row (Settings › Site settings). */
+  defaults(rows: Iterable<string>): Record<string, ContentDefault> {
+    const out: Record<string, ContentDefault> = {}
+    for (const id of rows) out[id] = this.effectiveDefault(id)
+    return out
   }
 
   /** Every origin with its own decision for `permission` (the exception lists in Settings). */
@@ -303,6 +476,8 @@ export class PermissionService {
   }
 
   private update(key: string, decision: Decision | null, change: PermissionChange): void {
+    // A stored answer supersedes any "Allow once" for the same question.
+    for (const grants of this.sessionAllows.values()) grants.delete(key)
     if ((this.decisions[key] ?? null) === decision) return
     if (decision === null) delete this.decisions[key]
     else this.decisions[key] = decision
@@ -345,10 +520,27 @@ export class PermissionService {
       for (const file of this.savedFiles)
         if (file.startsWith(`${origin}|`)) this.savedFiles.delete(file)
     }
+    for (const grants of this.sessionAllows.values()) {
+      for (const key of grants) {
+        if (!key.startsWith(`${origin}|`)) continue
+        if (permission === undefined || key.slice(origin.length + 1) === permission)
+          grants.delete(key)
+      }
+    }
     if (removed.length === 0) return
     this.store.write({ version: 1, decisions: this.decisions })
     for (const key of removed) this.notify(changeFor(key))
   }
+}
+
+/** The camera / microphone rows a `media` request names (both when the host does not say). */
+function mediaRows(details?: PermissionRequestDetails): string[] {
+  const types = details?.mediaTypes
+  if (!types || types.length === 0) return [...MEDIA_ROWS]
+  const rows: string[] = []
+  if (types.includes('video')) rows.push('camera')
+  if (types.includes('audio')) rows.push('microphone')
+  return rows.length > 0 ? rows : [...MEDIA_ROWS]
 }
 
 function changeFor(key: string): PermissionChange {
@@ -381,7 +573,8 @@ export function qualifiedPermission(
   // Viewing the folders a site is handed and editing what it is handed are separate answers.
   if (permission === 'fileSystem' && details?.fileAccessType === 'readable')
     return 'fileSystem:read'
-  return permission
+  // Engine variants of a row (approximate location, periodic background sync) share its answer.
+  return permission.includes(':') ? permission : contentSettingId(permission)
 }
 
 /** The words of a permission prompt, shared by every host so the copy matches everywhere. */
@@ -438,7 +631,7 @@ export function permissionPromptCopy(
       }
     }
     default: {
-      const label = PROMPT_LABELS[permission] ?? `use "${permission}"`
+      const label = promptLabelFor(permission) ?? `use "${permission}"`
       return {
         message: `Allow ${site} to ${label}?`,
         detail: remembered,

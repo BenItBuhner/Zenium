@@ -897,6 +897,11 @@ export class ElectronTabViewHost implements TabViewHost {
   viewForWebContents(wc: WebContents): ElectronTabView | undefined {
     return this.byWebContentsId.get(wc.id)
   }
+
+  /** Every live tab view. */
+  all(): Iterable<ElectronTabView> {
+    return this.byWebContentsId.values()
+  }
 }
 
 /** Copy an image on the clipboard from a URL (data: or remote). */

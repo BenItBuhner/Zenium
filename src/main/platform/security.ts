@@ -16,17 +16,21 @@ type CheckDetails = Parameters<
 const FRESH_SAVE_MS = 30_000
 
 /**
- * What the core's prompt needs to know about an Electron permission request: the embedding page
- * for requests from frames, the external URL of a protocol launch, the file of a File System
- * Access request.
+ * What the core's prompt needs to know about an Electron permission request: the tab it queues
+ * under, the embedding page for requests from frames, the capture devices of a media request,
+ * the external URL of a protocol launch, the file of a File System Access request.
  */
 export function permissionRequestDetails(
   webContents: WebContents | null,
-  details: RequestDetails
+  details: RequestDetails,
+  tabId?: string
 ): PermissionRequestDetails {
   const out: PermissionRequestDetails = {}
+  if (tabId) out.tabId = tabId
   const top = webContents && !webContents.isDestroyed() ? webContents.getURL() : ''
   if (!details.isMainFrame && top) out.embedderUrl = top
+  if ('mediaTypes' in details && details.mediaTypes && details.mediaTypes.length > 0)
+    out.mediaTypes = [...details.mediaTypes]
   if ('externalURL' in details && details.externalURL) out.externalUrl = details.externalURL
   if ('filePath' in details && details.filePath !== undefined) {
     out.filePath = details.filePath
@@ -51,6 +55,8 @@ export function permissionCheckDetails(
 ): PermissionRequestDetails {
   const out: PermissionRequestDetails = {}
   if (details.embeddingOrigin) out.embedderUrl = details.embeddingOrigin
+  if (permission === 'media' && (details.mediaType === 'video' || details.mediaType === 'audio'))
+    out.mediaTypes = [details.mediaType]
   if (permission === 'fileSystem' && details.filePath !== undefined) {
     out.filePath = details.filePath
     out.isDirectory = details.isDirectory

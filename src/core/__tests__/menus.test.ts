@@ -45,7 +45,8 @@ const DESKTOP: HostCapabilities = {
   defaultBrowser: false,
   requestBlocking: true,
   reducedExtensionIsolation: false,
-  pageControls: false
+  pageControls: false,
+  privateTabs: false
 }
 
 /**
@@ -79,7 +80,8 @@ const ANDROID: HostCapabilities = {
   defaultBrowser: true,
   requestBlocking: true,
   reducedExtensionIsolation: false,
-  pageControls: true
+  pageControls: true,
+  privateTabs: true
 }
 
 function memoryIo(): StoreIO {

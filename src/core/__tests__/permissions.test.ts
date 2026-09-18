@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { ConfirmOptions, DialogHost, StoreIO } from '../platform'
+import type { PermissionPromptHost, StoreIO } from '../platform'
+import type { PermissionPrompt, PermissionPromptAnswer } from '../../shared/types'
 import {
   PermissionService,
   decisionKey,
@@ -24,17 +25,20 @@ function fakeIo(initial: string | null = null): StoreIO & { writes: string[] } {
   return io
 }
 
-function dialogs(answer: boolean | ((o: ConfirmOptions) => boolean)): DialogHost & {
-  asked: ConfirmOptions[]
-} {
+type Answer = PermissionPromptAnswer | boolean
+
+/** The chrome's side of a prompt: records what was asked and answers as told (true = Allow). */
+function prompts(
+  answer: Answer | ((request: PermissionPrompt) => Answer)
+): PermissionPromptHost & { asked: PermissionPrompt[] } {
   const host = {
-    asked: [] as ConfirmOptions[],
-    confirm: async (options: ConfirmOptions) => {
-      host.asked.push(options)
-      return typeof answer === 'function' ? answer(options) : answer
+    asked: [] as PermissionPrompt[],
+    show: async (request: PermissionPrompt): Promise<PermissionPromptAnswer | null> => {
+      host.asked.push(request)
+      const a = typeof answer === 'function' ? answer(request) : answer
+      return a === true ? 'allow' : a === false ? 'block' : a
     },
-    pickTextFiles: async () => [],
-    saveTextFile: async () => false
+    cancel: () => undefined
   }
   return host
 }
@@ -43,7 +47,7 @@ const PAGE = 'https://example.com/page'
 
 describe('PermissionService: what is asked', () => {
   it('no longer hands out file system, storage access, window management or idle detection', async () => {
-    const d = dialogs(false)
+    const d = prompts(false)
     const p = new PermissionService(fakeIo(), d)
     for (const permission of [
       'fileSystem',
@@ -59,7 +63,7 @@ describe('PermissionService: what is asked', () => {
   })
 
   it('still grants the harmless set without a prompt and denies the exotic set', async () => {
-    const d = dialogs(true)
+    const d = prompts(true)
     const p = new PermissionService(fakeIo(), d)
     expect(await p.decide('fullscreen', PAGE)).toBe(true)
     expect(await p.decide('pointerLock', PAGE)).toBe(true)
@@ -69,7 +73,7 @@ describe('PermissionService: what is asked', () => {
   })
 
   it('remembers the answer per origin and permission', async () => {
-    const d = dialogs(true)
+    const d = prompts(true)
     const p = new PermissionService(fakeIo(), d)
     expect(await p.decide('idle-detection', PAGE)).toBe(true)
     expect(await p.decide('idle-detection', 'https://example.com/other')).toBe(true)
@@ -81,7 +85,7 @@ describe('PermissionService: what is asked', () => {
   })
 
   it('collapses concurrent requests for the same key into one prompt', async () => {
-    const d = dialogs(true)
+    const d = prompts(true)
     const p = new PermissionService(fakeIo(), d)
     const [a, b] = await Promise.all([p.decide('camera', PAGE), p.decide('camera', PAGE)])
     expect(a).toBe(true)
@@ -90,7 +94,7 @@ describe('PermissionService: what is asked', () => {
   })
 
   it('never asks for pop-ups: they are a stored allow or nothing', async () => {
-    const d = dialogs(true)
+    const d = prompts(true)
     const p = new PermissionService(fakeIo(), d)
     expect(await p.decide('popups', PAGE)).toBe(false)
     expect(d.asked).toEqual([])
@@ -102,7 +106,7 @@ describe('PermissionService: what is asked', () => {
   })
 
   it('refuses opaque and unparsable origins', async () => {
-    const d = dialogs(true)
+    const d = prompts(true)
     const p = new PermissionService(fakeIo(), d)
     expect(await p.decide('camera', 'not a url')).toBe(false)
     expect(await p.decide('camera', 'data:text/html,hi')).toBe(false)
@@ -114,7 +118,7 @@ describe('PermissionService: what is asked', () => {
 describe('PermissionService: external applications', () => {
   it('keeps one answer per scheme and forgets a refusal', async () => {
     let answer = false
-    const d = dialogs(() => answer)
+    const d = prompts(() => answer)
     const p = new PermissionService(fakeIo(), d)
     const zoom = { externalUrl: 'zoommtg://zoom.us/join?confno=1' }
     expect(await p.decide('openExternal', PAGE, zoom)).toBe(false)
@@ -165,7 +169,7 @@ describe('PermissionService: qualified keys and prompt copy', () => {
   })
 
   it('keeps storage access grants apart per embedder', async () => {
-    const d = dialogs(true)
+    const d = prompts(true)
     const p = new PermissionService(fakeIo(), d)
     const inNews = { embedderUrl: 'https://news.example/' }
     const inShop = { embedderUrl: 'https://shop.example/' }
@@ -242,7 +246,7 @@ describe('PermissionService: File System Access status checks', () => {
   })
 
   it('grants reading a picked file, and reading a folder unless the site was refused', async () => {
-    const d = dialogs(false)
+    const d = prompts(false)
     const p = new PermissionService(fakeIo(), d)
     expect(p.check('fileSystem', ORIGIN, file('readable'))).toBe(true)
     expect(p.check('fileSystem', ORIGIN, folder('readable'))).toBe(true)
@@ -257,7 +261,7 @@ describe('PermissionService: File System Access status checks', () => {
   })
 
   it('refuses a write it cannot ask about, and asks once the page has been interacted with', async () => {
-    const d = dialogs(true)
+    const d = prompts(true)
     const p = new PermissionService(fakeIo(), d)
     expect(p.check('fileSystem', ORIGIN, file('writable'))).toBe(false)
     expect(d.asked).toEqual([])
@@ -277,7 +281,7 @@ describe('PermissionService: File System Access status checks', () => {
   })
 
   it('lets a file chosen in a save dialog be written for the session, that file only', () => {
-    const d = dialogs(false)
+    const d = prompts(false)
     const p = new PermissionService(fakeIo(), d)
     const saved = file('writable', { pickedForSaving: true })
     expect(p.check('fileSystem', ORIGIN, saved)).toBe(true)
@@ -294,7 +298,7 @@ describe('PermissionService: File System Access status checks', () => {
   })
 
   it('honours a refusal over everything, and forgets session grants with the site', async () => {
-    const d = dialogs(false)
+    const d = prompts(false)
     const p = new PermissionService(fakeIo(), d)
     expect(await p.decide('fileSystem', ORIGIN, file('writable'))).toBe(false)
     expect(p.check('fileSystem', ORIGIN, file('writable', { pickedForSaving: true }))).toBe(false)
@@ -319,7 +323,7 @@ describe('PermissionService: persistence and rules', () => {
         }
       })
     )
-    const p = new PermissionService(io, dialogs(true))
+    const p = new PermissionService(io, prompts(true))
     expect(p.check('camera', 'https://a.example')).toBe(false)
     expect(p.stored('popups', 'https://b.example/x')).toBe('allow')
     expect(p.rules()).toEqual([
@@ -333,7 +337,7 @@ describe('PermissionService: persistence and rules', () => {
   })
 
   it('tells listeners which decision changed', async () => {
-    const p = new PermissionService(fakeIo(), dialogs(true))
+    const p = new PermissionService(fakeIo(), prompts(true))
     const changes: PermissionChange[] = []
     const off = p.subscribe((c) => changes.push(c))
     p.remember('popups', PAGE, 'allow')
@@ -353,7 +357,7 @@ describe('PermissionService: persistence and rules', () => {
   })
 
   it('keeps a permission default out of the site rules but lets it answer for a site', () => {
-    const p = new PermissionService(fakeIo(), dialogs(true))
+    const p = new PermissionService(fakeIo(), prompts(true))
     p.setDefault('ads', 'allow')
     expect(p.rules()).toEqual([])
     expect(p.stored('ads', PAGE)).toBe('allow')
@@ -386,13 +390,14 @@ function service(answer = true): {
 } {
   const io = memoryIo()
   const prompts: string[] = []
-  const dialogs = {
-    confirm: async (options: { message: string }) => {
-      prompts.push(options.message)
-      return answer
-    }
-  } as unknown as DialogHost
-  return { permissions: new PermissionService(io, dialogs), io, prompts }
+  const host: PermissionPromptHost = {
+    show: async (request) => {
+      prompts.push(request.message)
+      return answer ? 'allow' : 'block'
+    },
+    cancel: () => undefined
+  }
+  return { permissions: new PermissionService(io, host), io, prompts }
 }
 
 describe('PermissionService content settings', () => {

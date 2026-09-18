@@ -62,6 +62,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val updates = Updates(activity, this)
     val translate = Translate(activity, this)
     val siteData = SiteData()
+
+    init {
+        // A private session the last run did not get to end (a crash, the system killing the app)
+        // ends now, before any tab exists and while its profile is free to be deleted.
+        Profiles.wipePrivate(activity)
+    }
+
     /** The launcher icon colour (one enabled `activity-alias`), driven by Settings → Look and Feel. */
     val launcherIcon = LauncherIcon(activity)
     override val pageToken: String = SecureRandom().let { r -> ByteArray(16).also(r::nextBytes).joinToString("") { "%02x".format(it) } }
@@ -129,6 +136,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "signer" to Updates.signerSha256(activity),
             // The applicationId; a release whose APK carries another one installs as a new app.
             "packageName" to activity.packageName,
+            // Multi-profile WebView: what makes a private tab private (and containers separate).
+            "profiles" to Profiles.supported,
             "appIcon" to launcherIcon.current(),
             "files" to storage.readAll(),
             "downloadsDir" to (Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)?.absolutePath ?: ""),
@@ -288,7 +297,16 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "download.chooseDirectory" -> downloads.chooseDirectory(reply)
             "download.open" -> { downloads.open(args.str("savePath"), args.str("mimeType")); reply(null) }
             "download.showAll" -> { downloads.showAll(); reply(null) }
-            "profile.clear" -> { Profiles.clear(args.str("containerId")); reply(null) }
+            "profile.clear" -> Profiles.clear(activity, args.str("containerId")) { reply(null) }
+            // Clear browsing data: the engine's kinds (cookies, storage, cache) per container, and the
+            // preview's counts. A live tab of a container clears its cache; otherwise a throwaway view.
+            "profile.clearBrowsingData" -> BrowsingData.clear(
+                activity,
+                BrowsingData.strings(args.arr("containerIds")),
+                BrowsingData.strings(args.arr("kinds")).toSet(),
+                { containerId -> tabs.all().firstOrNull { it.containerId == containerId } }
+            ) { reply(null) }
+            "profile.browsingDataCounts" -> BrowsingData.counts(BrowsingData.strings(args.arr("containerIds"))) { reply(it) }
             "permission.respond" -> { permissions.respond(args.str("requestId"), args.bool("allow")); reply(null) }
             "auth.respond" -> {
                 security.respondAuth(args.str("requestId"), args.strOrNull("username"), args.strOrNull("password"))

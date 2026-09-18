@@ -335,6 +335,25 @@ export class PasswordService {
     return this.store.restore(entry.credential)
   }
 
+  /**
+   * Clear browsing data: forget every login saved in `[fromMs, toMs)` after re-authentication;
+   * resolves with how many went. A locked vault is refused (nothing to check the user against).
+   */
+  async removeInRange(
+    fromMs: number,
+    toMs: number,
+    passphrase?: string,
+    win?: ZenWindow
+  ): Promise<ReauthOutcome<number>> {
+    if (!this.store.unlocked())
+      return { status: 'denied', reason: 'Unlock the password vault first' }
+    const gate = await this.reauth('Clear saved passwords', passphrase, win)
+    if (gate.status !== 'ok') return gate
+    const gone = this.store.list().filter((c) => c.createdAt >= fromMs && c.createdAt < toMs)
+    for (const credential of gone) this.store.remove(credential.id)
+    return { status: 'ok', value: gone.length }
+  }
+
   neverSaveAdd(domain: string): void {
     this.store.neverSaveAdd(domain)
   }
