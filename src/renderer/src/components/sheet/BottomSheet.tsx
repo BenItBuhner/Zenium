@@ -156,6 +156,19 @@ export function BottomSheet({
     sheet.style.visibility = 'visible'
   }
 
+  // The header shows its hairline once the body has scrolled under it, and loses it at the top
+  // (design language v2 §9.7); every sheet gets this from the chassis.
+  useEffect(() => {
+    const sc = scrollRef.current
+    const sheetEl = sheetRef.current
+    if (!sc || !sheetEl) return
+    const sync = (): void => {
+      sheetEl.dataset.scrolled = String(sc.scrollTop > 0)
+    }
+    sync()
+    sc.addEventListener('scroll', sync, { passive: true })
+    return () => sc.removeEventListener('scroll', sync)
+  }, [])
   useEffect(() => {
     latest.current = { onDismissed }
   })
@@ -374,6 +387,7 @@ export function BottomSheet({
         )}
         style={{ paddingBottom: Math.max(8, insets.bottom), visibility: 'hidden' }}
         data-locked="true"
+        data-surface="page"
       >
         <div data-sheet-grip className="zen-sheet-grip shrink-0">
           <button
@@ -384,7 +398,7 @@ export function BottomSheet({
           >
             <span className="zen-sheet-handle" />
           </button>
-          {header}
+          {header && <div className="zen-sheet-header">{header}</div>}
         </div>
         <div
           ref={(el) => {

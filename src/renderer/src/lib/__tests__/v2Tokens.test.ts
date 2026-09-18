@@ -18,18 +18,18 @@ const css = readFileSync(fileURLToPath(new URL('../../assets/main.css', import.m
 const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The frame dialog host's scrim (lib/portals.tsx), which dims only the content frame (§9.5).
   ['.zen-frame-dialogs {', '.zen-chrome-layer {'],
+  // The phone sheet chassis (components/sheet/BottomSheet.tsx): surface, header, grabber, rows
+  // and separators shared by every phone sheet (v2 §6, §9.16, §9.25) – the shell pass.
+  ['.zen-sheet {', '/*\n   * Bookmarks, built to the v2 draft'],
   // The pull-to-refresh disc (components/content/PullIndicator.tsx).
   ['.zen-ptr-disc {', '.zen-space-strip {'],
   // The v2 button, shared by every v2 surface (today the Settings > Look and Feel > Navigation bar
   // button, components/overlays/SettingsPanel.tsx); its layering is pinned by the tests below.
   ['.zen-v2-button {', '/* Safe-area insets pushed by mobile hosts'],
   // The Tabs button's hold menu (components/phone/TabsQuickMenu.tsx).
-  ['.zen-quick-menu {', '.zen-sheet.zen-bar-editor {'],
+  ['.zen-quick-menu {', '/* The chassis sheet is the v2 surface (§6)'],
   // The navigation bar's editor (components/phone/BarEditorSheet.tsx, BarPreview.tsx).
-  [
-    '.zen-sheet.zen-bar-editor {',
-    '/* The editor draws a hairline when its rows scroll under the header'
-  ],
+  ['.zen-bar-row {', '/* The editor draws a hairline when its rows scroll under the header'],
   // The zen://error page (shared/zenPages.ts cuts this block, the token block and the v2 button
   // out of the stylesheet's text and writes them into the page, which cannot link main.css).
   ['.zen-error-document {', '@layer base {'],

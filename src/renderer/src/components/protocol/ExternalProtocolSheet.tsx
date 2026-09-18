@@ -96,8 +96,26 @@ function displayAddress(url: string): string {
 // Shared content
 // ---------------------------------------------------------------------------
 
-function Header({ request }: { request: ExternalProtocolRequest }): JSX.Element {
+function Header({
+  request,
+  phone
+}: {
+  request: ExternalProtocolRequest
+  phone: boolean
+}): JSX.Element {
   const Icon = wordsFor(request.scheme).icon
+  if (phone) {
+    // A prompt: a title block (design language v2 §9.23), not a bar header.
+    return (
+      <div className="zen-sheet-title-block">
+        <h2>
+          <Icon className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
+          <span className="min-w-0 truncate">{titleOf(request)}</span>
+        </h2>
+        <p className="truncate">{subtitleOf(request)}</p>
+      </div>
+    )
+  }
   return (
     <div className="flex h-14 items-center gap-3 px-3">
       <span
@@ -118,9 +136,6 @@ function Header({ request }: { request: ExternalProtocolRequest }): JSX.Element 
   )
 }
 
-/** §8.3: 44 tall, radius 12 on the phone; the primitive's own 32 / 8 under a mouse. */
-const PHONE_BUTTON = 'h-11 rounded-xl px-5 text-sm'
-
 function Body({
   request,
   always,
@@ -135,34 +150,54 @@ function Body({
   phone: boolean
 }): JSX.Element {
   const words = wordsFor(request.scheme)
-  const buttonClass = phone ? PHONE_BUTTON : undefined
   return (
-    <div className="flex flex-col gap-4 pb-1 pt-1">
+    <div className={phone ? 'flex flex-col pb-1' : 'flex flex-col gap-4 pb-1 pt-1'}>
       <div
-        className="truncate px-3 text-[13px] leading-snug text-[var(--zen-muted)]"
+        className={
+          phone
+            ? 'truncate px-4 pb-2 text-[13px] leading-5 text-[var(--v2-text-deemphasized)]'
+            : 'truncate px-3 text-[13px] leading-snug text-[var(--zen-muted)]'
+        }
         title={request.url}
       >
         {displayAddress(request.url)}
       </div>
       {request.canRemember && (
-        <label className="zen-sheet-item cursor-pointer">
+        <label className="zen-sheet-item zen-sheet-item-two-line cursor-pointer">
           <span className="min-w-0 flex-1">
             <span className="block truncate">Always open {words.plural}</span>
-            <span className="block truncate text-[13px] leading-snug text-[var(--zen-muted)]">
+            <span className="zen-sheet-item-secondary block truncate text-[13px] leading-5">
               {request.appName ? `In ${request.appName}, without asking` : 'Without asking again'}
             </span>
           </span>
           <Switch checked={always} onCheckedChange={onAlways} aria-label="Always allow" />
         </label>
       )}
-      <div className="flex justify-end gap-2 px-3">
-        <Button variant="secondary" className={buttonClass} onClick={() => onAnswer(false)}>
-          Not now
-        </Button>
-        <Button variant="default" className={buttonClass} onClick={() => onAnswer(true)}>
-          Open
-        </Button>
-      </div>
+      {phone ? (
+        // §9.11: two peers split the width, the primary trailing.
+        <div className="zen-sheet-footer">
+          <button type="button" className="zen-v2-button" onClick={() => onAnswer(false)}>
+            Not now
+          </button>
+          <button
+            type="button"
+            className="zen-v2-button"
+            data-primary
+            onClick={() => onAnswer(true)}
+          >
+            Open
+          </button>
+        </div>
+      ) : (
+        <div className="flex justify-end gap-2 px-3">
+          <Button variant="secondary" onClick={() => onAnswer(false)}>
+            Not now
+          </Button>
+          <Button variant="default" onClick={() => onAnswer(true)}>
+            Open
+          </Button>
+        </div>
+      )}
     </div>
   )
 }
@@ -211,8 +246,8 @@ function ProtocolSheet({ request }: { request: ExternalProtocolRequest }): JSX.E
       onDismissed={() => answer(false)}
       contentKey={`${request.requestId}:${request.canRemember}`}
       handleLabel="Dismiss"
-      header={<Header request={request} />}
     >
+      <Header request={request} phone />
       <Body
         request={request}
         always={always}
@@ -243,7 +278,7 @@ function ProtocolPanel({ request }: { request: ExternalProtocolRequest }): JSX.E
         aria-label={titleOf(request)}
         className="zen-panel zen-animate-pop relative w-full max-w-[400px] px-3 pb-3 pt-2"
       >
-        <Header request={request} />
+        <Header request={request} phone={false} />
         <Body
           request={request}
           always={always}
