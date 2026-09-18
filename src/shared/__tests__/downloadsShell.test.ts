@@ -57,9 +57,15 @@ describe('rows', () => {
     expect(needsDangerDecision(item({ id: 'a' }))).toBe(false)
   })
 
-  it('retries failed and cancelled rows except blob ones; resumes paused and resumable ones', () => {
+  it('retries failed, cancelled and deleted rows except blob ones; resumes paused and resumable ones', () => {
     expect(canRetryDownload(item({ id: 'a', state: 'interrupted' }))).toBe(true)
     expect(canRetryDownload(item({ id: 'a', state: 'cancelled' }))).toBe(true)
+    // A finished file the engine found gone from disk: Chrome's Retry on a "Deleted" row.
+    expect(canRetryDownload(item({ id: 'a', fileMissing: true }))).toBe(true)
+    expect(canRetryDownload(item({ id: 'a', fileMissing: false }))).toBe(false)
+    expect(canRetryDownload(item({ id: 'a', fileMissing: true, url: 'blob:https://x/1' }))).toBe(
+      false
+    )
     expect(canRetryDownload(item({ id: 'a', state: 'cancelled', url: 'blob:https://x/1' }))).toBe(
       false
     )

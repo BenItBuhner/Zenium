@@ -180,7 +180,7 @@ describe('the desktop downloads shell', () => {
     const a = progressing('a', 50)
     const b = progressing('b', 50)
     publish([a, b], a, 'started')
-    const bFailed = { ...b, state: 'interrupted' as const, error: 'net::ERR_FAILED' }
+    const bFailed = { ...b, state: 'interrupted' as const, error: 'network-failed' as const }
     publish([a, bFailed], bFailed, 'done')
     expect(w.bars.at(-1)).toEqual({ value: 0.5, mode: 'error' })
     vi.advanceTimersByTime(PROGRESS_ERROR_FLASH_MS)
@@ -196,7 +196,12 @@ describe('the desktop downloads shell', () => {
     const b = progressing('b', 50)
     publish([a, b], a, 'started')
     // The connection dropped: the host reports the row interrupted but resumable.
-    const bDropped = { ...b, state: 'interrupted' as const, canResume: true, error: 'interrupted' }
+    const bDropped = {
+      ...b,
+      state: 'interrupted' as const,
+      canResume: true,
+      error: 'network-failed' as const
+    }
     publish([a, bDropped], bDropped, 'progress')
     expect(w.bars.at(-1)).toEqual({ value: 0.5, mode: 'error' })
     vi.advanceTimersByTime(PROGRESS_ERROR_FLASH_MS / 2)

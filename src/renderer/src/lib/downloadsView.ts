@@ -105,10 +105,12 @@ export function formatSpeed(bytesPerSecond: number): string {
 
 /**
  * Why a transfer stopped, as `Failed – <reason>` in the words of Chrome's download bubble, from
- * the engine's `error`: its short reasons (`shutdown` for rows in flight when the app quit,
- * `file-error` when the final rename failed), Chrome's interrupt-reason names and the Chromium
- * `net::` error names a host may pass through. The Electron host names no reason at all
- * (`interrupted`): that row reads a bare `Failed` rather than a guess.
+ * the engine's `error`: its `DownloadInterruptReason` (Chromium's interrupt reasons spelled
+ * `network-failed`, one for one with the `chrome.downloads` names the table holds), the older
+ * short reasons persisted before it (`shutdown` for rows in flight when the app quit,
+ * `file-error` when the final rename failed), Chrome's interrupt-reason names themselves and
+ * the Chromium `net::` error names a host may pass through. No reason at all (`interrupted`)
+ * reads a bare `Failed` rather than a guess.
  */
 export function describeDownloadError(error: string | undefined): string {
   switch (error) {
@@ -122,6 +124,7 @@ export function describeDownloadError(error: string | undefined): string {
       return `Failed – ${REASON_FALLBACK}`
     default: {
       let name = error.replace(/^net::/, '').replace(/^DOWNLOAD_INTERRUPT_REASON_/, '')
+      if (/^[a-z]+(-[a-z]+)*$/.test(name)) name = name.toUpperCase().replace(/-/g, '_')
       if (name.startsWith('ERR_')) {
         name = NET_ERROR_REASONS.find(([pattern]) => pattern.test(name))?.[1] ?? ''
       }
@@ -187,7 +190,8 @@ export function dangerActionLabels(danger: DownloadDanger): DangerActionLabels {
 /**
  * The one-line status under the file name: the engine's speed and time left while running,
  * the failure reason when interrupted, Chrome's blocked status with the verdict's sentence as
- * its detail while a flagged file waits.
+ * its detail while a flagged file waits, `Deleted` for a finished file the engine found gone
+ * from disk (`fileMissing`).
  */
 export function downloadStatus(item: DownloadItem): DownloadStatus {
   const received = formatBytes(item.receivedBytes)
@@ -212,13 +216,17 @@ export function downloadStatus(item: DownloadItem): DownloadStatus {
           detail: dangerSummary(item.danger)
         }
       }
+      if (item.fileMissing) return { text: 'Deleted', tone: 'muted' }
       return { text: total ? `Done · ${total}` : 'Done', tone: 'muted' }
   }
 }
 
-/** A finished file that can be opened, shown or dragged (a flagged one waits for Keep). */
+/**
+ * A finished file that can be opened, shown or dragged (a flagged one waits for Keep; one the
+ * engine found deleted has nothing to open).
+ */
 export function isOnDisk(item: DownloadItem): boolean {
-  return item.state === 'completed' && !needsDangerDecision(item)
+  return item.state === 'completed' && !needsDangerDecision(item) && !item.fileMissing
 }
 
 // ---------------------------------------------------------------------------
