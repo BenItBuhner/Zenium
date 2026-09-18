@@ -324,6 +324,11 @@
   .zen-v2-field[aria-invalid='true'] {
     border-color: var(--v2-danger);
   }
+  /* Disabled (§9.30): opacity .4 on the whole control, border and fill included, at full size. */
+  .zen-v2-field:disabled,
+  .zen-v2-menulist:disabled {
+    opacity: 0.4;
+  }
   .zen-v2-field-lead {
     position: absolute;
     left: 10px;
@@ -425,7 +430,7 @@
     line-height: var(--v2-line-body);
     transition: background 120ms var(--zen-ease);
   }
-  .zen-v2-menulist:hover,
+  .zen-v2-menulist:hover:not(:disabled),
   .zen-v2-menulist[aria-expanded='true'] {
     background: color-mix(in srgb, var(--v2-page), var(--v2-text) 7%);
   }
@@ -528,8 +533,16 @@
   .zen-v2-check-row {
     cursor: default;
   }
+  /*
+   * A disabled check row is a dependent row (§9.30): the one number, opacity .4, on the row's
+   * text and control together, laid out at full size, with no ink swap on top – the row carries
+   * the .4, so the box inside it does not compound to .16; a description already at 69% does.
+   */
   .zen-v2-check-row:has(.zen-v2-checkbox:disabled) {
-    color: var(--v2-text-deemphasized);
+    opacity: 0.4;
+  }
+  .zen-v2-check-row .zen-v2-checkbox:disabled {
+    opacity: 1;
   }
 
   /*
@@ -876,9 +889,12 @@
   .zen-ext-sub[data-tone='warn'] {
     color: var(--v2-warn);
   }
-  /* A disabled extension's icon and name recede; its controls stay at full strength. */
+  /*
+   * A disabled extension's icon and name recede to the one disabled number (§9.30: .4, no ink
+   * swap); its controls, which turn it back on, stay at full strength.
+   */
   .zen-ext-card[data-disabled] .zen-ext-fade {
-    opacity: 0.5;
+    opacity: 0.4;
   }
   .zen-ext-card-controls {
     display: flex;
@@ -968,8 +984,9 @@
 
   /*
    * An action the extension turned off for this tab (`chrome.action.disable`) keeps its button
-   * and dims to the v2 disabled treatment (§9.3) instead of vanishing and returning per tab. It
-   * is `aria-disabled`, not `disabled`, so its context menu still opens; a click does nothing.
+   * and takes the one disabled number (§9.30): opacity .4 on the whole control – glyph and badge
+   * together – laid out at full size, no fill on hover or press, no ink swap. It is
+   * `aria-disabled`, not `disabled`, so its context menu still opens; a click does nothing.
    */
   .zen-toolbar-button.zen-ext-action[aria-disabled='true'],
   .zen-toolbar-button.zen-ext-action[aria-disabled='true']:hover,
@@ -1205,6 +1222,35 @@
 }
 .zen-v2-button[data-variant='danger'] {
   color: var(--v2-danger);
+}
+/*
+ * Busy is not disabled (§9.30): a working button keeps its opacity, its fill and its width – the
+ * label stays in the flow at opacity 0, so it still sizes and names the button – and a 16
+ * spinner in the label's ink takes the label's place; the button is `aria-busy`. The spinner is
+ * the shipped ring (`GlanceFrame`, the tab favicon): a 2px ring of the current ink with a clear
+ * top, turning at `zen-spin`'s 900ms.
+ */
+.zen-v2-button[aria-busy='true'] {
+  position: relative;
+}
+.zen-v2-button-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0;
+}
+.zen-v2-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: zen-spin 900ms linear infinite;
+}
+.zen-v2-button > .zen-v2-spinner {
+  position: absolute;
+  inset: 0;
+  margin: auto;
 }
 /*
  * A toast's action sits at its natural width, not the dialog's 96; a phone sheet's or form's

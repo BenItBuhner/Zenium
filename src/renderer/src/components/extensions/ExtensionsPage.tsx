@@ -8,7 +8,6 @@ import {
   Pin,
   PinOff,
   RefreshCw,
-  RotateCw,
   SlidersHorizontal,
   Store,
   Trash2
@@ -367,17 +366,16 @@ function ExtensionCard({
         </span>
       </button>
       <div className="zen-ext-card-controls">
-        {ext.updateState === 'available' && (
+        {/* Working, the button stays at its size with a spinner for its label (§9.30 busy). */}
+        {(ext.updateState === 'available' || ext.updateState === 'updating') && (
           <V2Button
             className="mr-1"
             title={ext.availableVersion ? `Update to ${ext.availableVersion}` : 'Update'}
+            busy={ext.updateState === 'updating'}
             onClick={() => run('extension.update', { id: ext.id })}
           >
             Update
           </V2Button>
-        )}
-        {ext.updateState === 'updating' && (
-          <RotateCw className="zen-spin zen-v2-deemphasized mr-1 h-4 w-4" />
         )}
         <V2Switch
           checked={ext.enabled}

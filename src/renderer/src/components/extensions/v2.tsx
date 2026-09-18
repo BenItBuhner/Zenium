@@ -13,16 +13,22 @@ type Variant = 'primary' | 'secondary' | 'danger'
 
 /**
  * main.css's `.zen-v2-button` (the secondary; `data-primary` for the accent fill) plus a danger
- * variant, the hover fills and icon sizing from `extensions.css`.
+ * variant, the hover fills and icon sizing from `extensions.css`. `busy` is §9.30's working
+ * state, which is not disabled: full opacity and the same width, a 16 spinner in the label's
+ * place, `aria-busy`; a press while busy does nothing.
  */
 export function V2Button({
   variant = 'secondary',
+  busy = false,
   className,
   ref,
   type = 'button',
+  onClick,
+  children,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: Variant
+  busy?: boolean
   ref?: Ref<HTMLButtonElement>
 }): JSX.Element {
   return (
@@ -32,8 +38,20 @@ export function V2Button({
       className={cn('zen-v2-button', className)}
       data-primary={variant === 'primary' || undefined}
       data-variant={variant === 'danger' ? 'danger' : undefined}
+      aria-busy={busy || undefined}
+      onClick={busy ? undefined : onClick}
       {...props}
-    />
+    >
+      {busy ? (
+        <>
+          {/* Still the button's name and width; only its paint goes. */}
+          <span className="zen-v2-button-label">{children}</span>
+          <span className="zen-v2-spinner" aria-hidden />
+        </>
+      ) : (
+        children
+      )}
+    </button>
   )
 }
 
