@@ -333,22 +333,10 @@
   color: var(--v2-danger);
 }
 /*
- * Busy (§9.30): a working button keeps its size and full opacity – busy is not disabled, so the
- * .4 above never applies to it – and its label gives way to a 16 px spinner in the same box
- * (`aria-busy`). Unlayered with the rule above for the same reason.
+ * Busy (§9.30) is `aria-busy` with the label kept in the flow unpainted and a `.zen-v2-spinner`
+ * over it: the rules are the extensions UI's (`.zen-v2-button[aria-busy='true']`,
+ * `.zen-v2-button-label`, `.zen-v2-spinner` in extensions.css, imported above).
  */
-.zen-v2-button[aria-busy='true'] {
-  position: relative;
-  opacity: 1;
-}
-.zen-v2-button[aria-busy='true'] .zen-v2-button-label {
-  visibility: hidden;
-}
-.zen-v2-button[aria-busy='true'] .zen-v2-button-spinner {
-  position: absolute;
-  inset: 0;
-  margin: auto;
-}
 
 /* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME); zero on desktop. */
 :root {
@@ -3269,6 +3257,14 @@
    * chassis (`.zen-sheet` above, which is the v2 surface, header and grabber): rows that grow with
    * their text, the switch row, Proton's round radio, image radio cards. Built from the `--v2-*`
    * tokens alone. Type: hierarchy by size, weights 400 and 600 only.
+   *
+   * The extensions UI (#68, extensions.css, imported above) already draws `.zen-v2-row`,
+   * `.zen-v2-row-text`, `.zen-v2-label`, `.zen-v2-description`, `.zen-v2-radio` and
+   * `.zen-v2-switch` (its 26 × 14 moz-toggle) in this layer, for rows inside its cards. The rules
+   * below that read the same names differently – the sheet's edge-to-edge rows and its 36 × 20
+   * switch – are scoped to the customise sheet (`.zen-ntp-customize`) so they stay off those
+   * pages; the radio is the extensions UI's as it stands (section 9.14: an accent ring round a
+   * 6 px page dot), with only its leading alignment added here.
    */
   .zen-v2-heading {
     font-size: var(--v2-font-body);
@@ -3298,7 +3294,7 @@
    * (section 9.2, the offset on the box itself). Rows run edge to edge with the press fill
    * bleeding to the sheet's border and their text inset 16 (section 9.25).
    */
-  .zen-v2-row {
+  .zen-ntp-customize .zen-v2-row {
     display: flex;
     width: 100%;
     min-height: 44px;
@@ -3311,29 +3307,29 @@
     line-height: var(--v2-line-body);
     transition: background 120ms var(--zen-ease);
   }
-  .zen-v2-row:active:not(:disabled):not([aria-disabled='true']) {
+  .zen-ntp-customize .zen-v2-row:active:not(:disabled):not([aria-disabled='true']) {
     background: var(--v2-fill);
   }
   /* Disabled (section 9.30): .4 on the whole row, text and control together, still laid out. */
-  .zen-v2-row:disabled,
-  .zen-v2-row[aria-disabled='true'] {
+  .zen-ntp-customize .zen-v2-row:disabled,
+  .zen-ntp-customize .zen-v2-row[aria-disabled='true'] {
     opacity: 0.4;
   }
-  .zen-sheet[data-dragging='true'] .zen-v2-row:active {
+  .zen-sheet[data-dragging='true'] .zen-ntp-customize .zen-v2-row:active {
     background: transparent;
   }
   /* A row's text block: the label on the first line, its description under it, no gap (section 9.2). */
-  .zen-v2-row-text {
+  .zen-ntp-customize .zen-v2-row-text {
     display: flex;
     min-width: 0;
     flex: 1;
     flex-direction: column;
   }
-  .zen-v2-label {
+  .zen-ntp-customize .zen-v2-label {
     display: block;
     overflow-wrap: anywhere;
   }
-  .zen-v2-row-text > .zen-v2-description {
+  .zen-ntp-customize .zen-v2-row-text > .zen-v2-description {
     display: -webkit-box;
     overflow: hidden;
     -webkit-box-orient: vertical;
@@ -3345,7 +3341,7 @@
    * thumb, on = accent under the on-accent thumb. It trails the row's text, centred on the row
    * (section 9.18); the whole row is the switch (`role="switch"`, `aria-checked`).
    */
-  .zen-v2-switch {
+  .zen-ntp-customize .zen-v2-switch {
     position: relative;
     display: block;
     width: 36px;
@@ -3355,7 +3351,7 @@
     background: rgb(var(--v2-text-rgb) / 0.25);
     transition: background 150ms var(--zen-ease);
   }
-  .zen-v2-switch::after {
+  .zen-ntp-customize .zen-v2-switch::after {
     content: '';
     position: absolute;
     top: 2px;
@@ -3368,10 +3364,10 @@
       transform 150ms var(--zen-ease),
       background 150ms var(--zen-ease);
   }
-  .zen-v2-row[aria-checked='true'] .zen-v2-switch {
+  .zen-ntp-customize .zen-v2-row[aria-checked='true'] .zen-v2-switch {
     background: var(--v2-accent);
   }
-  .zen-v2-row[aria-checked='true'] .zen-v2-switch::after {
+  .zen-ntp-customize .zen-v2-row[aria-checked='true'] .zen-v2-switch::after {
     background: var(--v2-on-accent);
     transform: translateX(16px);
   }
@@ -3388,42 +3384,15 @@
     padding: 4px 16px;
   }
   /*
-   * Radio: the token's ring (20 under a finger, 16 on desktop); picked, the ring turns accent and
-   * a dot of half its size fills its middle. Leading, it sits on the first text line (section
-   * 9.2): its top is (line − box) / 2 below the line's top – 0 on phones, 2 on desktop – and it
-   * never grows the line. (Booleans are switch rows on a phone, section 10.4: no checkbox here.)
+   * Radio: the extensions UI's `.zen-v2-radio` (section 9.14: the token's ring, 20 under a finger
+   * and 16 on desktop; picked, an accent ring round a 6 px page dot). Leading, it sits on the
+   * first text line (section 9.2): its top is (line − box) / 2 below the line's top – 0 on
+   * phones, 2 on desktop – and it never grows the line. (Booleans are switch rows on a phone,
+   * section 10.4: no checkbox here.)
    */
-  .zen-v2-radio {
-    display: inline-flex;
-    flex-shrink: 0;
+  .zen-ntp-customize .zen-v2-radio {
     align-self: flex-start;
-    width: var(--v2-checkbox);
-    height: var(--v2-checkbox);
     margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
-    align-items: center;
-    justify-content: center;
-    border: 1px solid rgb(var(--v2-text-rgb) / 0.4);
-    border-radius: 9999px;
-    background: var(--v2-page);
-    color: var(--v2-on-accent);
-    transition:
-      background 120ms var(--zen-ease),
-      border-color 120ms var(--zen-ease);
-  }
-  .zen-v2-radio::after {
-    content: '';
-    width: calc(var(--v2-checkbox) / 2);
-    height: calc(var(--v2-checkbox) / 2);
-    border-radius: 9999px;
-    background: var(--v2-accent);
-    transform: scale(0);
-    transition: transform 160ms var(--zen-ease);
-  }
-  .zen-v2-radio[data-checked] {
-    border-color: var(--v2-accent);
-  }
-  .zen-v2-radio[data-checked]::after {
-    transform: scale(1);
   }
   /* Image radio card: the picture at radius 8 with a hairline, the picked one outlined in accent. */
   .zen-v2-image-radio {

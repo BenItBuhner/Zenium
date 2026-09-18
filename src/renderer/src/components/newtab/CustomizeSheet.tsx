@@ -1,6 +1,6 @@
 import type { ChangeEvent, JSX, ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { Loader2, SlidersHorizontal } from 'lucide-react'
+import { SlidersHorizontal } from 'lucide-react'
 import type {
   NewTabModules,
   NewTabPreset,
@@ -104,6 +104,7 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
   useReturnFocus()
 
   const update = (next: NewTabPhoneSettings): void => run('settings.update', { newTabPhone: next })
+  const chooseLabel = image.dataUrl ? 'Choose another image' : 'Choose an image'
 
   const pickWallpaper = (wallpaper: NewTabWallpaper): void => {
     // "Image" without one picked yet asks for the picture first; the pick turns the source over.
@@ -136,7 +137,7 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
       handleLabel="Resize sheet"
       header={<h2 className="zen-sheet-title">New tab page</h2>}
     >
-      <div className="flex flex-col pb-4">
+      <div className="zen-ntp-customize flex flex-col pb-4">
         <Section title="Layout">
           <div role="radiogroup" aria-label="Layout" className="zen-ntp-preset-grid">
             {NEW_TAB_PRESETS.map((preset) => (
@@ -211,11 +212,16 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
                 if (!reading) fileInput.current?.click()
               }}
             >
-              <span className="zen-v2-button-label">
-                {image.dataUrl ? 'Choose another image' : 'Choose an image'}
-              </span>
-              {reading && (
-                <Loader2 className="zen-v2-button-spinner h-4 w-4 animate-spin" aria-hidden />
+              {reading ? (
+                // Busy (§9.30), as the extensions UI's button does it (#68, assets/extensions.css):
+                // the label stays in the flow unpainted, so the button keeps its width and its
+                // name, and the 16 px spinner sits where the label was.
+                <>
+                  <span className="zen-v2-button-label">{chooseLabel}</span>
+                  <span className="zen-v2-spinner" aria-hidden />
+                </>
+              ) : (
+                chooseLabel
               )}
             </button>
             {image.dataUrl && (
