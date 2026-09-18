@@ -75,7 +75,9 @@ type Sheet = { kind: 'tab'; tabId: string } | { kind: 'group'; folderId: string 
 interface PendingDrop {
   /** True once the browser state shows the drop – then the card's new slot can be measured. */
   landed: (state: UIState) => boolean
+  /** When to stop waiting for the browser (`performance.now()`), and whether that has come. */
   deadline: number
+  expired: boolean
 }
 
 /** A group as the grid last showed it holding cards. */
@@ -221,6 +223,11 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   // A dropped card flies to its new slot once the browser has moved it there: to where its
   // stand-in is drawn, and after it while the stand-in glides (the cells below a group set off
   // once its height has settled, v2 §11.4), so the ghost lands on the card wherever that is.
+  // The stand-in's slot goes with the confirmation, before that slot is measured: the browser
+  // shows the card where the drop put it, which for a drop on a target is not the slot the
+  // stand-in held – kept, the card would stand in the old slot for one more render (a group made
+  // from it would form with the other card alone) and glide to the new one when the ghost had
+  // landed, in a second step.
   const liftPhase = liftStore.use((s) => s.phase)
   const pendingDrop = useRef<PendingDrop | null>(null)
   const standInRect = (tabId: string): Rect | null => {
@@ -231,26 +238,36 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   useLayoutEffect(() => {
     const pending = pendingDrop.current
     if (!pending || liftPhase !== 'dropping' || !liftTabId) return
-    if (!pending.landed(state) && performance.now() < pending.deadline) return
+    if (!pending.landed(state) && !pending.expired && performance.now() < pending.deadline) return
+    if (liftSlot) {
+      // The render this asks for lays the card out where the tab is; it lands there.
+      liftStore.set({ slot: null })
+      return
+    }
     pendingDrop.current = null
     const to = standInRect(liftTabId) ?? liftStore.get().origin
     if (to) settleLift(to)
     else cancelLift()
   })
   useEffect(() => {
-    // The browser may never confirm (the command failed): land the card where its stand-in is.
+    // The browser may never confirm (the command failed): land the card where the tab is.
     const pending = pendingDrop.current
     if (!pending || liftPhase !== 'dropping') return
     const timer = setTimeout(
       () => {
-        if (pendingDrop.current === pending) {
-          pendingDrop.current = null
-          const s = liftStore.get()
-          if (s.phase !== 'dropping') return
-          const to = (s.tabId ? standInRect(s.tabId) : null) ?? s.origin
-          if (to) settleLift(to)
-          else cancelLift()
+        if (pendingDrop.current !== pending) return
+        pending.expired = true
+        const s = liftStore.get()
+        if (s.phase !== 'dropping') return
+        if (s.slot) {
+          // The layout effect above lands the card on the render this asks for.
+          liftStore.set({ slot: null })
+          return
         }
+        pendingDrop.current = null
+        const to = (s.tabId ? standInRect(s.tabId) : null) ?? s.origin
+        if (to) settleLift(to)
+        else cancelLift()
       },
       Math.max(0, pending.deadline - performance.now())
     )
@@ -412,7 +429,11 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
    */
   const dropCard = (tab: Tab, outcome: DropOutcome): void => {
     const expect = (landed: (s: UIState) => boolean): void => {
-      pendingDrop.current = { landed, deadline: performance.now() + DROP_TIMEOUT_MS }
+      pendingDrop.current = {
+        landed,
+        deadline: performance.now() + DROP_TIMEOUT_MS,
+        expired: false
+      }
     }
     const unchanged = (): void => expect(() => true)
     const regularWithout = regular.filter((t) => t.id !== tab.id)

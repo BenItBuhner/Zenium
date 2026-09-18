@@ -13,7 +13,13 @@ import { BLANK_URL, SETTINGS_URL } from '@shared/url'
  * every way the gesture can end.
  */
 
-const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
+const SPACE = 'space'
+const GROUP = 'g'
+
+/** The browser: every command is taken; a group made on the grid is `GROUP`. */
+const invoke = vi.fn<(name: string, args?: unknown) => Promise<string | null>>(async (name) =>
+  name === 'folder.create' ? GROUP : null
+)
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -26,9 +32,6 @@ const { collectCells, FlipTracker, layoutAnimations, REDUCED_FADE_MS } =
 const { SLOT_DWELL_MS } = await import('@renderer/lib/gestures/dropTarget')
 
 // --- a profile ---------------------------------------------------------------------------------
-
-const SPACE = 'space'
-const GROUP = 'g'
 
 function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {
   return {
@@ -866,6 +869,108 @@ describe('a group changing height', () => {
     expect(group.style.height).toBe('')
     expect(c.style.transform).toBe('')
     expect(plus.style.transform).toBe('')
+  })
+
+  it("a group made by a drop forms in one step: the stand-in's slot goes with the confirmation", async () => {
+    const loose = stateOf(
+      [
+        tab('a', 'https://a.example/'),
+        tab('b', 'https://b.example/'),
+        tab('c', 'https://c.example/')
+      ],
+      []
+    )
+    place('a', 0, 0)
+    place('b', 110, 0)
+    place('c', 0, 140)
+    place(NEW_TAB_CELL, 110, 140)
+    render(loose)
+    pickUp('c')
+    // Onto the left edge of a, resting there: c's stand-in takes the slot before a, and the
+    // grid reflows – a moves a column over, b down a row.
+    const edge = at('a', 0.08, 0.5)
+    drag(edge.x, edge.y)
+    place('c', 0, 0)
+    place('a', 110, 0)
+    place('b', 0, 140)
+    place(NEW_TAB_CELL, 110, 140)
+    act(() => elapse(SLOT_DWELL_MS))
+    expect(liftStore.get().slot).toEqual({ folderId: null, index: 0 })
+    expect(groupAround('c')).toBeNull()
+    act(() => settleSprings())
+    // Then onto the middle of a, where it is now, and let go: the two become a group. The
+    // stand-in keeps its slot until the browser shows the drop.
+    const middle = at('a', 0.5, 0.5)
+    drag(middle.x, middle.y)
+    expect(liftStore.get().target).toBe('card:a')
+    letGo(middle.x, middle.y)
+    expect(liftStore.get()).toMatchObject({
+      phase: 'dropping',
+      target: null,
+      slot: { folderId: null, index: 0 }
+    })
+    await act(async () => {})
+    expect(commands()).toEqual([
+      ['folder.create', expect.objectContaining({ spaceId: SPACE, rename: false })],
+      ['tab.moveToFolder', { tabId: 'a', folderId: GROUP }],
+      ['tab.moveToFolder', { tabId: 'c', folderId: GROUP }]
+    ])
+
+    // The browser shows the group: a and c in it across the top, b and the New Tab card below.
+    // The card sets out at the height of the bare row (see above), the grid laid out for it.
+    const start = Math.max(GROUP_HEADER, bodyOf(1) - GROUP_PAD)
+    const rowBelowAt = (h: number): void => {
+      place(`group:${GROUP}`, 0, 0, 220, h)
+      place('b', 0, h + 10)
+      place(NEW_TAB_CELL, 110, h + 10)
+    }
+    bodyHeights.set(`group:${GROUP}`, bodyOf(1))
+    rowBelowAt(start)
+    place('a', 10, 36)
+    place('c', 120, 36)
+    render(
+      stateOf([
+        tab('a', 'https://a.example/', { folderId: GROUP }),
+        tab('b', 'https://b.example/'),
+        tab('c', 'https://c.example/', { folderId: GROUP })
+      ])
+    )
+    // One step: the stand-in's slot went with the confirmation, so c is in the group from this
+    // very render – not loose in the slot it held, with a alone in the group, joining once the
+    // ghost had landed – and the group forms with both cards, header and tint off, its height
+    // setting out from the bare row…
+    expect(liftStore.get()).toMatchObject({ phase: 'dropping', slot: null })
+    expect(groupAround('c')).toBe(`group:${GROUP}`)
+    expect(groupAround('a')).toBe(`group:${GROUP}`)
+    const group = cellOf(`group:${GROUP}`)
+    expect(group.querySelectorAll('[data-cell]')).toHaveLength(2)
+    expect(group.dataset.chrome).toBe('off')
+    expect(layoutAnimations.has(`group:${GROUP}`)).toBe(true)
+    expect(group.style.height).toBe(`${start}px`)
+    // …a and c gliding into their inner slots from their loose ones, b held where it was.
+    expect(translate(cellOf('c'))).toEqual({ x: -120, y: -36 })
+    expect(translate(cellOf('a'))).toEqual({ x: 100, y: -36 })
+    expect(cellOf('b').style.transform).toBe('')
+    // The height runs out, the row below laid out for it; the ghost lands; the chrome comes on
+    // at the end – and no second height run, no second glide, follows the landing.
+    const runs = vi.spyOn(layoutAnimations, 'start')
+    let previous = start
+    framesUntil(() => {
+      const h = parseFloat(group.style.height)
+      if (h > previous) rowBelowAt(h)
+      previous = h
+      return !layoutAnimations.has(`group:${GROUP}`)
+    })
+    rowBelowAt(groupOf(1))
+    act(() => settleSprings())
+    expect(liftStore.get().phase).toBe('idle')
+    expect(runs).not.toHaveBeenCalled()
+    expect(group.dataset.chrome).toBeUndefined()
+    expect(group.style.height).toBe('')
+    expect(groupAround('c')).toBe(`group:${GROUP}`)
+    expect(cellOf('c').style.transform).toBe('')
+    expect(cellOf('a').style.transform).toBe('')
+    expect(cellOf('b').style.transform).toBe('')
   })
 })
 
