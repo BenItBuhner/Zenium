@@ -1,14 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type {
-  HostCapabilities,
-  PageBackOutcome,
-  Platform as PlatformOs,
-  Tab
-} from '../../shared/types'
+import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared/types'
+import { INTERNAL_PAGES, type InternalPageRegistry } from '../../shared/internalPages'
 import { Browser } from '../browser'
 import type { ZenWindow } from '../window'
 import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
 import { createSpace, createTabRecord } from '../model'
+import { PageService } from '../pages'
 
 function memoryIo(initial: string | null = null): StoreIO {
   const files: Record<string, string> = {}
@@ -40,12 +37,17 @@ interface Fixture {
   win: ZenWindow
   /** Tab ids a page view was created for, in order. */
   viewsFor: string[]
+  /** URLs loaded into page views, in order. */
+  loaded: string[]
   /** Events the core sent the chrome. */
   sent: Sent[]
 }
 
-function fixture(opts: { pageTabs?: boolean; profile?: unknown } = {}): Fixture {
+function fixture(
+  opts: { pageTabs?: boolean; profile?: unknown; pages?: InternalPageRegistry } = {}
+): Fixture {
   const viewsFor: string[] = []
+  const loaded: string[] = []
   const sent: Sent[] = []
   const capabilities = stub<HostCapabilities>({
     windows: false,
@@ -87,6 +89,7 @@ function fixture(opts: { pageTabs?: boolean; profile?: unknown } = {}): Fixture 
           getZoom: () => 1,
           loadURL: (u: string) => {
             url = u
+            loaded.push(u)
           }
         })
       }
@@ -102,10 +105,14 @@ function fixture(opts: { pageTabs?: boolean; profile?: unknown } = {}): Fixture 
     readabilitySource: () => null
   }
   const browser = new Browser(platform)
+  // A registry on trial (a document page before the desktop registers it) replaces the service.
+  if (opts.pages) {
+    ;(browser as { pages: PageService }).pages = new PageService(browser, opts.pages)
+  }
   browser.state.settings.onboardingDone = true
   browser.start()
   const win = browser.focusedWindow()
-  return { browser, win, viewsFor, sent }
+  return { browser, win, viewsFor, loaded, sent }
 }
 
 function activeTab(f: Fixture): Tab | undefined {
@@ -128,8 +135,9 @@ function openPage(f: Fixture, section?: string | null, openerTabId?: string | nu
   }) as string | null
 }
 
-function back(f: Fixture, tabId: string): PageBackOutcome {
-  return f.browser.handleCommand(f.win, 'page.back', { tabId }) as PageBackOutcome
+/** The tab's back – the toolbar's, the bottom bar's and the system's are all `tab.back`. */
+function back(f: Fixture, tabId: string): void {
+  f.browser.handleCommand(f.win, 'tab.back', { tabId })
 }
 
 describe('opening Settings as a tab', () => {
@@ -159,7 +167,7 @@ describe('opening Settings as a tab', () => {
     expect(tab?.title).toBe('Settings')
     // v2 §10.2: a link into a section has the landing beneath it in history.
     expect(tab?.canGoBack).toBe(true)
-    expect(back(f, id)).toBe('popped')
+    back(f, id)
     expect(f.browser.tabs.tab(id)?.url).toBe('zen://settings')
     expect(f.browser.tabs.tab(id)?.canGoBack).toBe(false)
   })
@@ -253,17 +261,26 @@ describe('typed and external page addresses', () => {
     expect(activeTab(f)?.url).toBe('zen://settings/about')
   })
 
-  it('opens a deep link from outside the app without an opener', () => {
+  it('opens a deep link from outside the app without an opener, marked as the intent’s', () => {
     const f = fixture()
     openSite(f, 'https://a.test/')
-    f.browser.openExternalUrl('zenium://settings/privacy', f.win)
+    f.browser.openExternalUrl('zenium://settings/privacy', f.win, { fromIntent: true })
     const tab = activeTab(f)
     expect(tab?.url).toBe('zen://settings/privacy')
     expect(tab?.openerTabId).toBeNull()
+    // The chrome's root-back rule reads this: back at the landing returns to the app that sent it.
+    expect(tab?.fromIntent).toBe(true)
     // A second deep link reuses the tab.
-    f.browser.openExternalUrl('zenium://settings/look', f.win)
+    f.browser.openExternalUrl('zenium://settings/look', f.win, { fromIntent: true })
     expect(spaceUrls(f).filter((u) => u.startsWith('zen://settings'))).toHaveLength(1)
     expect(activeTab(f)?.url).toBe('zen://settings/look')
+  })
+
+  it('does not mark a page the browser opens on its own behalf as another app’s', () => {
+    const f = fixture()
+    openSite(f, 'https://a.test/')
+    f.browser.openExternalUrl('zenium://settings', f.win)
+    expect(activeTab(f)?.fromIntent).toBe(false)
   })
 })
 
@@ -333,72 +350,48 @@ describe('moving between sections', () => {
   })
 })
 
-describe('system back inside Settings', () => {
-  it('pops the section first, then closes the tab and returns to its opener', () => {
+describe('back inside Settings (the tab’s history)', () => {
+  it('steps back through the sections; at the landing the tab stays for the chrome’s root rule', () => {
     const f = fixture()
     const site = openSite(f, 'https://a.test/')
     const id = openPage(f) ?? ''
     f.browser.handleCommand(f.win, 'page.navigate', { tabId: id, section: 'privacy' })
-    expect(back(f, id)).toBe('popped')
+    expect(f.browser.tabs.tab(id)?.canGoBack).toBe(true)
+    back(f, id)
     expect(f.browser.tabs.tab(id)?.url).toBe('zen://settings')
-    expect(back(f, id)).toBe('closed')
-    expect(f.browser.tabs.tab(id)).toBeUndefined()
-    expect(activeTab(f)?.id).toBe(site.id)
+    expect(f.browser.tabs.tab(id)?.canGoBack).toBe(false)
+    // Nothing beneath the landing: the tab is left as it is, and the chrome's one root-back rule
+    // (`rootBackAction`, renderer back.ts) decides from what the tab remembers – here the
+    // opener it closes back to.
+    back(f, id)
+    expect(f.browser.tabs.tab(id)?.url).toBe('zen://settings')
+    expect(activeTab(f)?.id).toBe(id)
+    expect(f.browser.tabs.tab(id)?.openerTabId).toBe(site.id)
+    expect(f.browser.tabs.tab(id)?.fromIntent).toBe(false)
   })
 
-  it('switches to the most recent other tab when it has no opener (a deep link)', () => {
+  it('remembers the opener as an id the chrome checks is still open', () => {
     const f = fixture()
-    const a = openSite(f, 'https://a.test/')
-    const b = openSite(f, 'https://b.test/')
-    f.browser.tabs.activateTab(a.id, f.win)
-    f.browser.tabs.tab(b.id)!.lastActiveAt = 1
-    f.browser.tabs.tab(a.id)!.lastActiveAt = 2
-    f.browser.openExternalUrl('zenium://settings/privacy', f.win)
-    const id = activeTab(f)?.id ?? ''
-    // The deep link's landing page first, then out to the most recently used tab.
-    expect(back(f, id)).toBe('popped')
-    expect(back(f, id)).toBe('switched')
-    expect(activeTab(f)?.id).toBe(a.id)
-    // The Settings tab stays open in the space: nothing of it was the user's to lose.
-    expect(f.browser.tabs.tab(id)?.url).toBe('zen://settings')
-  })
-
-  it('switches to another tab when the opener is gone', () => {
-    const f = fixture()
-    const a = openSite(f, 'https://a.test/')
+    openSite(f, 'https://a.test/')
     const b = openSite(f, 'https://b.test/')
     const id = openPage(f) ?? ''
     expect(f.browser.tabs.tab(id)?.openerTabId).toBe(b.id)
     f.browser.tabs.closeTab(b.id, false, f.win)
-    f.browser.tabs.activateTab(id, f.win)
-    expect(f.browser.tabs.tab(id)?.openerTabId).toBeNull()
-    expect(back(f, id)).toBe('switched')
-    expect(activeTab(f)?.id).toBe(a.id)
+    // A dangling opener is no opener: the root rule falls through to the previous tab.
+    expect(f.browser.tabs.tab(id)?.openerTabId).toBe(b.id)
+    expect(f.browser.tabs.tab(b.id)).toBeUndefined()
   })
 
-  it('keeps a pinned Settings tab and only leaves it', () => {
+  it('forgets a closed page tab’s history and starts a reopened one afresh', () => {
     const f = fixture()
-    const site = openSite(f, 'https://a.test/')
+    openSite(f, 'https://a.test/')
     const id = openPage(f) ?? ''
-    f.browser.tabs.tab(id)!.pinned = true
-    expect(back(f, id)).toBe('switched')
-    expect(f.browser.tabs.tab(id)).toBeDefined()
-    expect(activeTab(f)?.id).toBe(site.id)
-  })
-
-  it('has nothing to do when Settings is the only tab, and for tabs that are not pages', () => {
-    const f = fixture()
-    const site = openSite(f, 'https://a.test/')
-    f.browser.tabs.closeTab(site.id, false, f.win)
-    for (const t of Object.values(f.browser.state.model.tabs)) {
-      f.browser.tabs.closeTab(t.id, true, f.win)
-    }
-    const id = openPage(f, null, null) ?? ''
-    expect(spaceUrls(f)).toEqual(['zen://settings'])
-    expect(back(f, id)).toBe('none')
-    expect(f.browser.tabs.tab(id)).toBeDefined()
-    const other = openSite(f, 'https://b.test/')
-    expect(back(f, other.id)).toBe('none')
+    f.browser.handleCommand(f.win, 'page.navigate', { tabId: id, section: 'privacy' })
+    f.browser.tabs.closeTab(id, false, f.win)
+    const again = openPage(f) ?? ''
+    expect(again).not.toBe(id)
+    expect(f.browser.tabs.tab(again)?.url).toBe('zen://settings')
+    expect(f.browser.tabs.tab(again)?.canGoBack).toBe(false)
   })
 })
 
@@ -432,14 +425,105 @@ describe('a restored session', () => {
     expect(restored?.url).toBe('zen://settings/privacy')
     expect(restored?.title).toBe('Settings')
     expect(restored?.discarded).toBe(false)
+    // Opener relationships are a session's own (Chrome forgets them too), and a restored tab
+    // was restored by us, not sent by an app.
     expect(restored?.openerTabId).toBeNull()
+    expect(restored?.fromIntent).toBe(false)
     expect(f.viewsFor).not.toContain(settings.id)
-    // Its history starts afresh from the URL: the landing beneath the section, then the tab
-    // leaves for the other tab of the space.
+    // Its history starts afresh from the URL: the landing beneath the section.
     expect(restored?.canGoBack).toBe(true)
-    expect(back(f, settings.id)).toBe('popped')
+    back(f, settings.id)
     expect(f.browser.tabs.tab(settings.id)?.url).toBe('zen://settings')
-    expect(back(f, settings.id)).toBe('switched')
+    expect(f.browser.tabs.tab(settings.id)?.canGoBack).toBe(false)
+    expect(f.browser.tabs.tab(site.id)).toBeDefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Document pages: the same route with a page view (the new tab page, once the desktop
+// registers it). Tried here with a registry the desktop's entries would look like.
+// ---------------------------------------------------------------------------
+
+// `welcome` stands in for the new tab page: `zen://newtab` is an alias `inputToUrl` folds into
+// `zen://blank` today, and the shared normaliser only knows the pages in the real registry.
+const TRIAL: InternalPageRegistry = {
+  ...INTERNAL_PAGES,
+  welcome: { id: 'welcome', title: 'Welcome', render: 'document', reuse: 'none', sections: [] },
+  downloads: {
+    id: 'downloads',
+    title: 'Downloads',
+    render: 'document',
+    reuse: 'window',
+    sections: [{ id: 'active', label: 'Active', keywords: [] }]
+  }
+}
+
+describe('a document page on the same route', () => {
+  it('opens in a tab with a page view every time (reuse: none), an opener remembered', () => {
+    const f = fixture({ pages: TRIAL })
+    const site = openSite(f, 'https://a.test/')
+    const first = f.browser.handleCommand(f.win, 'page.open', { id: 'welcome' }) as string
+    const second = f.browser.handleCommand(f.win, 'page.open', { id: 'welcome' }) as string
+    expect(first).not.toBe(second)
+    expect(f.browser.tabs.tab(first)?.url).toBe('zen://welcome')
+    // The page's title until the document reports its own.
+    expect(f.browser.tabs.tab(first)?.title).toBe('Welcome')
+    expect(f.browser.tabs.tab(first)?.openerTabId).toBe(site.id)
+    // Its page is a document: the view loads it, and the view's history is the tab's.
+    expect(f.viewsFor).toContain(first)
+    expect(f.loaded).toContain('zen://welcome')
+    expect(spaceUrls(f).filter((u) => u === 'zen://welcome')).toHaveLength(2)
+  })
+
+  it('is a tab on a host without page tabs too: only chrome pages fall back to an overlay', () => {
+    const f = fixture({ pages: TRIAL, pageTabs: false })
+    openSite(f, 'https://a.test/')
+    const id = f.browser.handleCommand(f.win, 'page.open', { id: 'downloads' })
+    expect(typeof id).toBe('string')
+    expect(activeTab(f)?.url).toBe('zen://downloads')
+    expect(f.sent.filter((s) => s.name === 'overlay.open')).toHaveLength(0)
+  })
+
+  it('keeps one per window when asked, focusing it from a typed address in another tab', () => {
+    const f = fixture({ pages: TRIAL })
+    const site = openSite(f, 'https://a.test/')
+    const id = f.browser.handleCommand(f.win, 'page.open', { id: 'downloads' }) as string
+    f.browser.tabs.activateTab(site.id, f.win)
+    // (The canonical form: `inputToUrl` only knows the alias for pages in the real registry.)
+    f.browser.handleCommand(f.win, 'urlbar.submit', {
+      input: 'zen://downloads/active',
+      newTab: false,
+      tabId: site.id,
+      background: false
+    })
+    expect(activeTab(f)?.id).toBe(id)
+    expect(f.browser.tabs.tab(id)?.url).toBe('zen://downloads/active')
+    expect(f.browser.tabs.tab(site.id)?.url).toBe('https://a.test/')
+    expect(spaceUrls(f).filter((u) => u.startsWith('zen://downloads'))).toHaveLength(1)
+    // Loaded by the view, as a document: no section history of the service's own.
+    expect(f.loaded).toContain('zen://downloads/active')
+    expect(f.browser.tabs.tab(id)?.canGoBack).toBe(false)
+  })
+
+  it('loads a typed address for a page with no tab to reuse in the tab it was typed into', () => {
+    const f = fixture({ pages: TRIAL })
+    const site = openSite(f, 'https://a.test/')
+    f.browser.handleCommand(f.win, 'urlbar.submit', {
+      input: 'zen://welcome',
+      newTab: false,
+      tabId: site.id,
+      background: false
+    })
     expect(activeTab(f)?.id).toBe(site.id)
+    expect(f.browser.tabs.tab(site.id)?.url).toBe('zen://welcome')
+  })
+
+  it('navigates a document page to a section through its view', () => {
+    const f = fixture({ pages: TRIAL })
+    openSite(f, 'https://a.test/')
+    const id = f.browser.handleCommand(f.win, 'page.open', { id: 'downloads' }) as string
+    f.browser.handleCommand(f.win, 'page.navigate', { tabId: id, section: 'active' })
+    expect(f.browser.tabs.tab(id)?.url).toBe('zen://downloads/active')
+    expect(f.loaded.at(-1)).toBe('zen://downloads/active')
   })
 })

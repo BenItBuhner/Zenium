@@ -1,5 +1,5 @@
 import type { CSSProperties, JSX } from 'react'
-import { isInternalPageUrl } from '@shared/internalPages'
+import { isChromePageUrl } from '@shared/internalPages'
 import type { Tab } from '@shared/types'
 import { getHost, isEmptyTabUrl } from '@shared/url'
 import { tabTitle } from '@renderer/lib/selectors'
@@ -35,8 +35,8 @@ export function TabPreview({
   style
 }: Props): JSX.Element {
   const thumbnail = useThumbnail(tab.id)
-  // An internal page is chrome, never captured: its card shows the page drawn small (v2 §10.1).
-  if (isInternalPageUrl(tab.url)) {
+  // A chrome page is never captured: its card shows the page drawn small (v2 §10.1).
+  if (isChromePageUrl(tab.url)) {
     return (
       <div className={cn('h-full w-full', className)} style={style}>
         <SettingsPreview />

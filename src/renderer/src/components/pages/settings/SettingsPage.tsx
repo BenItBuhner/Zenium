@@ -274,7 +274,7 @@ function DrillIn({
         const el = pane.current
         if (el) el.style.transform = `translate3d(${(value * 100).toFixed(3)}%, 0, 0)`
       },
-      dismissed: () => run('page.back', { tabId: tab.id })
+      dismissed: () => run('tab.back', { tabId: tab.id })
     })
     dismissal.current = created
     return () => {
@@ -291,7 +291,7 @@ function DrillIn({
   })
   const back = (): void => {
     if (dismissal.current) dismissal.current.commit()
-    else run('page.back', { tabId: tab.id })
+    else run('tab.back', { tabId: tab.id })
   }
   return (
     <section

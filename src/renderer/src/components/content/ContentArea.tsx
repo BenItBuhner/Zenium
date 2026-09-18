@@ -124,7 +124,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
           <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden" data-tear-zone>
             {state.capabilities.pullToRefresh && <PullIndicator />}
             {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
-            {tab && pageTab && <InternalPageHost state={state} tab={tab} />}
+            {tab && pageTab && <InternalPageHost state={state} tab={tab} hidden={staged} />}
             {tab && foreign && !contentHidden && !glanceActive && (
               <ForeignTabPreview tabId={tab.id} />
             )}

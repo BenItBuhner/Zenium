@@ -33,6 +33,8 @@ type Row = ReturnType<typeof allRows>[number]
 
 const ANDROID: HostCapabilities = {
   windowControls: false,
+  windowControlsOverlay: false,
+  windowMaterial: false,
   nativeMenus: false,
   windowDrag: false,
   devtools: false,

@@ -1,11 +1,18 @@
 /**
- * Internal pages: browser UI that lives in a tab of its own (Settings today; the history page and
- * others can follow). A page is a `zen://<page>[/<section>]` address – the internal scheme every
- * other `zen://` document already uses – and `zenium://` is its user-facing alias: what the
- * address bar shows, what deep links from outside the app carry (`zenium://settings/privacy`),
- * and what typed input accepts. `zenium://` never reaches `tab.url`; it is normalised to `zen://`
- * on the way in (`inputToUrl`, `openExternalUrl`) and produced from it on the way out
- * (`displayUrl`). Every navigation guard, error page and host therefore keeps a single scheme.
+ * Internal pages: browser UI that lives in a tab of its own – one route for every page the
+ * browser itself provides, Settings today, the new tab page, History, Bookmarks and Downloads as
+ * the desktop program moves them over. A page is a `zen://<page>[/<section>]` address – the
+ * internal scheme every other `zen://` document already uses – and `zenium://` is its
+ * user-facing alias: what the address bar shows, what deep links from outside the app carry
+ * (`zenium://settings/privacy`), and what typed input accepts. `zenium://` never reaches
+ * `tab.url`; it is normalised to `zen://` on the way in (`inputToUrl`, `openExternalUrl`) and
+ * produced from it on the way out (`displayUrl`). Every navigation guard, error page and host
+ * therefore keeps a single scheme.
+ *
+ * A page is drawn one of two ways ({@link InternalPageRender}): by the chrome inside the content
+ * area, with no page view at all (Settings), or as a document the core serves into an ordinary
+ * page view (the new tab page). The core's `PageService` opens, reuses and deep-links both the
+ * same way; only what the tab holds differs.
  *
  * The section is the URL: `zen://settings` is the landing page, `zen://settings/look` the Look
  * and Feel section, so a restored session lands on the section it left. The tab's title, the
@@ -13,16 +20,43 @@
  * design language v2 §10.1); the section's own label is the drill-in header's.
  *
  * Pure data and parsing shared by the core (tab metadata, reuse, back) and the renderer (what to
- * draw). Nothing here knows how a page is rendered.
+ * draw). Every function takes the registry it reads as an optional last argument, defaulting to
+ * {@link INTERNAL_PAGES}, so a page can be tried against the mechanism before it is registered.
  */
-import type { FormFactor, HostCapabilities } from './types'
+import type { FormFactor, HostCapabilities, OverlayKind } from './types'
 
 /** The scheme `tab.url` carries for every internal document and page. */
 export const INTERNAL_SCHEME = 'zen'
 /** The user-facing alias: shown in the address bar, accepted from typed input and deep links. */
 export const INTERNAL_ALIAS_SCHEME = 'zenium'
 
+/** The pages registered today. Widened as pages move onto the mechanism. */
 export type InternalPageId = 'settings'
+
+/**
+ * How a page's tab holds its page.
+ *
+ * `chrome`: the chrome draws the page inside the content area (React, the `InternalPageHost`);
+ * the tab has no page view, fetches no favicon, records no history and is never snapshotted or
+ * unloaded, and its history is the list of sections visited, kept by the core's `PageService`
+ * and mirrored into `tab.canGoBack` / `canGoForward`. Needs `capabilities.pageTabs` (the chrome
+ * must be able to draw into the content area); hosts without it open the page's `overlay`.
+ *
+ * `document`: the core serves the page as a document (`shared/zenPages.ts`: the new tab page,
+ * the error page) into an ordinary page view, with the document's own history, favicon and
+ * snapshot; loading, unloading and back are the view's, as for a site. Open, reuse, deep links
+ * and typed addresses still go through the `PageService`, so both kinds are one route.
+ */
+export type InternalPageRender = 'chrome' | 'document'
+
+/**
+ * Whether opening a page focuses the tab of it the window already has. `window`: one per window,
+ * as Firefox's `switchToTabHavingURI` keeps one about:preferences and Chrome its singleton
+ * chrome://settings, chrome://history and chrome://downloads (v2 §10.1); a second open focuses
+ * the tab and, given a section, moves it there. `none`: every open is a new tab (the new tab
+ * page).
+ */
+export type InternalPageReuse = 'window' | 'none'
 
 /** One section of an internal page: `zen://<page>/<id>`. */
 export interface InternalPageSection {
@@ -38,11 +72,23 @@ export interface InternalPageSection {
 }
 
 export interface InternalPageDefinition {
-  id: InternalPageId
-  /** The tab title on the landing page ("Settings"). */
+  /** The `zen://<id>` path segment; a registry key. */
+  id: string
+  /** The tab title on the landing page ("Settings"), and on every section for a chrome page. */
   title: string
+  render: InternalPageRender
+  reuse: InternalPageReuse
+  /**
+   * A chrome page on a host without `capabilities.pageTabs` (the desktop, whose content frame the
+   * chrome cannot draw into) opens as this overlay instead; a document page never needs one.
+   */
+  overlay?: OverlayKind
+  /** The page's sections (`zen://<id>/<section>`); a page without sections has none. */
   sections: readonly InternalPageSection[]
 }
+
+/** A registry of pages by id: {@link INTERNAL_PAGES}, or one a test or a migration assembles. */
+export type InternalPageRegistry = Readonly<Record<string, InternalPageDefinition>>
 
 /**
  * Settings sections in nav order (Zen's `about:preferences` order, the desktop panel's). Ids are
@@ -161,8 +207,24 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
   }
 ]
 
+/**
+ * The pages this build routes. Pages the desktop program registers as it moves them onto this
+ * route (design entries, not implementations – `internal-page-tabs.md` §1): the new tab page is
+ * `{ render: 'document', reuse: 'none' }` (its document is `zen://blank` today, `zen://newtab`
+ * an alias in `shared/url.ts`); History, Bookmarks and Downloads are `{ reuse: 'window' }` with
+ * the render the desktop chooses for each (`chrome` with an `overlay` where the chrome already
+ * draws them, or `document`). A page in the registry is a page the parser routes, so nothing is
+ * registered ahead of its implementation.
+ */
 export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinition>> = {
-  settings: { id: 'settings', title: 'Settings', sections: SETTINGS_SECTIONS }
+  settings: {
+    id: 'settings',
+    title: 'Settings',
+    render: 'chrome',
+    reuse: 'window',
+    overlay: 'settings',
+    sections: SETTINGS_SECTIONS
+  }
 }
 
 /** Every registered page id. */
@@ -172,12 +234,8 @@ export const INTERNAL_PAGE_IDS: readonly InternalPageId[] = Object.keys(
 
 /** A page and the section in it (`null` = the landing page). */
 export interface InternalPageRef {
-  id: InternalPageId
+  id: string
   section: string | null
-}
-
-function isPageId(value: string): value is InternalPageId {
-  return Object.prototype.hasOwnProperty.call(INTERNAL_PAGES, value)
 }
 
 const PAGE_URL_RE = /^(zen|zenium):\/\/([a-z][a-z0-9-]*)(?:\/([a-z][a-z0-9-]*))?\/?(?:[?#].*)?$/i
@@ -189,14 +247,27 @@ const PAGE_URL_RE = /^(zen|zenium):\/\/([a-z][a-z0-9-]*)(?:\/([a-z][a-z0-9-]*))?
  * link still opens Settings. Sections a host lacks are the renderer's call
  * ({@link availableSections}); the parser is host neutral.
  */
-export function parseInternalPageUrl(url: string): InternalPageRef | null {
+export function parseInternalPageUrl(
+  url: string,
+  pages: InternalPageRegistry = INTERNAL_PAGES
+): InternalPageRef | null {
   const m = PAGE_URL_RE.exec(url.trim())
   if (!m) return null
   const id = m[2].toLowerCase()
-  if (!isPageId(id)) return null
+  const page = Object.prototype.hasOwnProperty.call(pages, id) ? pages[id] : undefined
+  if (!page) return null
   const section = m[3]?.toLowerCase() ?? null
-  const known = section !== null && INTERNAL_PAGES[id].sections.some((s) => s.id === section)
+  const known = section !== null && page.sections.some((s) => s.id === section)
   return { id, section: known ? section : null }
+}
+
+/** The page a `zen://` / `zenium://` address names, if it is a registered one. */
+export function internalPageOf(
+  url: string,
+  pages: InternalPageRegistry = INTERNAL_PAGES
+): InternalPageDefinition | null {
+  const ref = parseInternalPageUrl(url, pages)
+  return ref ? pages[ref.id] : null
 }
 
 /** The canonical `zen://` address of a page reference (what `tab.url` carries). */
@@ -205,37 +276,65 @@ export function internalPageUrl(ref: InternalPageRef): string {
 }
 
 /** The user-facing `zenium://` form of a page address; other URLs come back unchanged. */
-export function internalPageAliasUrl(url: string): string {
-  const ref = parseInternalPageUrl(url)
+export function internalPageAliasUrl(
+  url: string,
+  pages: InternalPageRegistry = INTERNAL_PAGES
+): string {
+  const ref = parseInternalPageUrl(url, pages)
   return ref ? `${INTERNAL_ALIAS_SCHEME}://${ref.id}${ref.section ? `/${ref.section}` : ''}` : url
 }
 
-/** Whether the address is an internal page (as opposed to a document or a site). */
-export function isInternalPageUrl(url: string): boolean {
-  return parseInternalPageUrl(url) !== null
+/** Whether the address is an internal page of either kind (as opposed to a document or a site). */
+export function isInternalPageUrl(
+  url: string,
+  pages: InternalPageRegistry = INTERNAL_PAGES
+): boolean {
+  return parseInternalPageUrl(url, pages) !== null
+}
+
+/**
+ * Whether the address is a page the chrome draws (`render: 'chrome'`): the tab has no page view,
+ * so everything that would read one – loading, snapshots, favicons, the WebView's history – asks
+ * this first. A document page answers false and is treated as any document.
+ */
+export function isChromePageUrl(
+  url: string,
+  pages: InternalPageRegistry = INTERNAL_PAGES
+): boolean {
+  return internalPageOf(url, pages)?.render === 'chrome'
 }
 
 /** The page's section definition, when the address names one. */
-export function internalPageSection(url: string): InternalPageSection | null {
-  const ref = parseInternalPageUrl(url)
+export function internalPageSection(
+  url: string,
+  pages: InternalPageRegistry = INTERNAL_PAGES
+): InternalPageSection | null {
+  const ref = parseInternalPageUrl(url, pages)
   if (!ref || !ref.section) return null
-  return INTERNAL_PAGES[ref.id].sections.find((s) => s.id === ref.section) ?? null
+  return pages[ref.id].sections.find((s) => s.id === ref.section) ?? null
 }
 
 /**
  * What the tab, the pill and the overview card are called: the page's title ("Settings") on the
  * landing page and inside every section alike (v2 §10.1: the tab is "Settings"; the section's
- * label is the drill-in header's). `null` for URLs that are not internal pages.
+ * label is the drill-in header's). `null` for URLs that are not internal pages. A document page
+ * starts with this title and then reports its own, as any document does.
  */
-export function internalPageTitle(url: string): string | null {
-  const ref = parseInternalPageUrl(url)
-  return ref ? INTERNAL_PAGES[ref.id].title : null
+export function internalPageTitle(
+  url: string,
+  pages: InternalPageRegistry = INTERNAL_PAGES
+): string | null {
+  return internalPageOf(url, pages)?.title ?? null
 }
 
 /** Two addresses are the same page when they name the same page id, whatever the section. */
-export function sameInternalPage(a: string, b: string): boolean {
-  const ra = parseInternalPageUrl(a)
-  const rb = parseInternalPageUrl(b)
+export function sameInternalPage(
+  a: string,
+  b: string,
+  pages: InternalPageRegistry = INTERNAL_PAGES
+): boolean {
+  const ra = parseInternalPageUrl(a, pages)
+  const rb = parseInternalPageUrl(b, pages)
   return ra !== null && rb !== null && ra.id === rb.id
 }
 

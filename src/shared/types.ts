@@ -108,9 +108,10 @@ export interface HostCapabilities {
    */
   newTabPage: boolean
   /**
-   * Internal pages (Settings) open as tabs of their own, drawn by the chrome inside the content
-   * area, rather than as an overlay above the current tab (`shared/internalPages.ts`). Android
-   * has this; the desktop keeps its overlay until its program adopts the page model.
+   * The chrome can draw an internal page inside the content area, so chrome-rendered pages
+   * (Settings) open as tabs of their own rather than as an overlay above the current tab
+   * (`shared/internalPages.ts`, `render: 'chrome'`). Android has this; the desktop keeps its
+   * overlay until its program adopts the page model. Document pages are tabs on every host.
    */
   pageTabs: boolean
 }
@@ -2021,9 +2022,6 @@ export interface GlanceState {
   originY: number
 }
 
-/** What `page.back` did: see the command. */
-export type PageBackOutcome = 'popped' | 'closed' | 'switched' | 'none'
-
 export type OverlayKind =
   | 'none'
   | 'urlbar'
@@ -3061,12 +3059,15 @@ export interface Commands {
   'window.moveTabsToSpace': { args: { spaceId: string }; result: void }
 
   /**
-   * Open an internal page (`shared/internalPages.ts`). On hosts with `capabilities.pageTabs` a
-   * page tab already open in the window's space is focused and, when `section` is given, moved
-   * to that section; otherwise a new tab opens after `openerTabId` (default: the active tab) and
-   * remembers it as its opener. `section: null` is the landing page; leaving it out keeps the
-   * section a reused tab is on. Without page tabs the page's overlay opens instead. Resolves
-   * with the tab id, or null when an overlay was opened.
+   * Open an internal page (`shared/internalPages.ts`) in its tab. A page with `reuse: 'window'`
+   * that the window already has (in any of its spaces) is focused and, when `section` is given,
+   * moved to that section; otherwise a new tab opens after `openerTabId` (default: the active
+   * tab) and remembers it as its opener (`Tab.openerTabId`), so a back at the page's first entry
+   * closes it back to that tab. `section: null` is the landing page; leaving it out keeps the
+   * section a reused tab is on. A chrome page's section history is the tab's history: `tab.back`
+   * / `tab.forward` step through it and `Tab.canGoBack` reads it. A chrome page on a host
+   * without `capabilities.pageTabs` opens as its overlay instead. Resolves with the tab id, or
+   * null when an overlay was opened.
    */
   'page.open': {
     args: { id: InternalPageId; section?: string | null; openerTabId?: string | null }
@@ -3075,18 +3076,13 @@ export interface Commands {
   /**
    * Move a page tab to a section of its page (`null` is the landing page): a new history entry,
    * or with `replace` the current one rewritten – the two-pane layout's nav switches categories
-   * without stacking them (v2 §10.5, Firefox's `about:preferences#category`).
+   * without stacking them (v2 §10.5, Firefox's `about:preferences#category`). A document page
+   * loads the section's address in its view.
    */
   'page.navigate': {
     args: { tabId: string; section: string | null; replace?: boolean }
     result: void
   }
-  /**
-   * System back inside a page tab: steps back through the page's own history first; at its
-   * start, returns to the tab's opener (closing the page tab, as Chrome does) or, without one,
-   * to the most recently used other tab. `none` means there was nothing to go back to.
-   */
-  'page.back': { args: { tabId: string }; result: PageBackOutcome }
   'page.screenshot': { args: { tabId: string }; result: void }
   'page.print': { args: { tabId: string }; result: void }
   'page.savePage': { args: { tabId: string }; result: void }

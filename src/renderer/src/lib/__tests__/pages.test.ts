@@ -3,16 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Space, Tab, UIState } from '@shared/types'
 
 /*
- * Internal pages from the chrome's side: which tabs are pages, when a system back inside the
- * Settings tab is the chrome's to answer (a section beneath the one shown, or a tab to return
- * to) and when it is the system's, and the one call every entry point opens Settings through.
+ * Internal pages from the chrome's side: which tabs are chrome pages, what a back does in the
+ * Settings tab – a section beneath the one shown is the tab's own history (`tab.back`); at the
+ * landing the one root-back rule (`rootBackAction`) closes it back to its opener, to the tab
+ * before it, or to the app that sent the deep link – what the host is told ahead of the gesture,
+ * and the one call every entry point opens Settings through.
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
-const { isPageTab, openPage, openSettings, pageTabWithBack } = await import('../pages')
-const { backStore, handleSystemBack, refreshBackState } = await import('../back')
+const { isPageTab, openPage, openSettings } = await import('../pages')
+const { backStore, handleSystemBack, refreshBackState, rootBackAction } = await import('../back')
 const { browserStore, uiStore } = await import('../ui')
 
 function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {
@@ -47,6 +49,7 @@ function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {
     readerable: false,
     blockedCount: 0,
     openerTabId: null,
+    fromIntent: false,
     ...patch
   } as Tab
 }
@@ -79,42 +82,56 @@ function state(tabs: Tab[], activeTabId: string | null, other: Tab[] = []): UISt
 }
 
 describe('page tabs', () => {
-  it('knows a page tab by its address, in either scheme', () => {
+  it('knows a chrome page tab by its address, in either scheme', () => {
     expect(isPageTab(tab('t', 'zen://settings'))).toBe(true)
     expect(isPageTab(tab('t', 'zen://settings/privacy'))).toBe(true)
     expect(isPageTab(tab('t', 'zenium://settings/look'))).toBe(true)
     expect(isPageTab(tab('t', 'https://settings.example/'))).toBe(false)
+    // Documents – the new tab page among them, registered or not – have a view of their own.
     expect(isPageTab(tab('t', 'zen://newtab'))).toBe(false)
+    expect(isPageTab(tab('t', 'zen://blank'))).toBe(false)
     expect(isPageTab(null)).toBe(false)
     expect(isPageTab(undefined)).toBe(false)
   })
 })
 
-describe('a system back inside the Settings tab', () => {
-  it('is the chrome’s while a section sits over the landing', () => {
-    const settings = tab('s', 'zen://settings/privacy', { canGoBack: true })
-    expect(pageTabWithBack(state([settings], 's'))).toBe(settings)
-  })
-
-  it('is the chrome’s on the landing while another tab of the space can be returned to', () => {
-    const settings = tab('s', 'zen://settings')
+describe('a back at the landing of the Settings tab (rootBackAction)', () => {
+  it('closes the tab back to the tab it was opened from', () => {
     const site = tab('a', 'https://a.test/')
-    expect(pageTabWithBack(state([site, settings], 's'))).toBe(settings)
+    const settings = tab('s', 'zen://settings', { openerTabId: 'a' })
+    expect(rootBackAction(settings, state([site, settings], 's'))).toBe('opener')
   })
 
-  it('is the system’s when Settings is the only tab of its space and shows its landing', () => {
+  it('leaves for the app that sent the deep link when there is no opener', () => {
+    const site = tab('a', 'https://a.test/')
+    const settings = tab('s', 'zen://settings', { fromIntent: true })
+    expect(rootBackAction(settings, state([site, settings], 's'))).toBe('caller')
+  })
+
+  it('closes back to the previous tab of the space when the opener is gone or was never there', () => {
+    const site = tab('a', 'https://a.test/')
+    const orphan = tab('s', 'zen://settings', { openerTabId: 'gone' })
+    expect(rootBackAction(orphan, state([site, orphan], 's'))).toBe('previousTab')
+    const restored = tab('s', 'zen://settings')
+    expect(rootBackAction(restored, state([site, restored], 's'))).toBe('previousTab')
+  })
+
+  it('never gives way to a new-tab page: alone in its space it backgrounds the app, pinned it stays', () => {
     const settings = tab('s', 'zen://settings')
-    expect(pageTabWithBack(state([settings], 's'))).toBeNull()
-    // A tab in another space is not where the page service would return to.
+    expect(rootBackAction(settings, state([settings], 's'))).toBe('background')
+    // A tab in another space is not where the user came from.
     const elsewhere = tab('w', 'https://work.test/')
-    expect(pageTabWithBack(state([settings], 's', [elsewhere]))).toBeNull()
+    expect(rootBackAction(settings, state([settings], 's', [elsewhere]))).toBe('background')
+    const pinned = tab('s', 'zen://settings', { pinned: true })
+    expect(rootBackAction(pinned, state([tab('a', 'https://a.test/'), pinned], 's'))).toBe(
+      'background'
+    )
   })
 
-  it('is nobody’s business when the active tab is a site, or there is none', () => {
-    const site = tab('a', 'https://a.test/', { canGoBack: true })
-    const settings = tab('s', 'zen://settings/look', { canGoBack: true })
-    expect(pageTabWithBack(state([site, settings], 'a'))).toBeNull()
-    expect(pageTabWithBack(state([site, settings], null))).toBeNull()
+  it('leaves sites to the rules they had', () => {
+    const site = tab('a', 'https://a.test/')
+    const other = tab('b', 'https://b.test/')
+    expect(rootBackAction(site, state([site, other], 'a'))).toBe('newTabPage')
   })
 })
 
@@ -127,25 +144,52 @@ describe('the back the host is told about', () => {
     browserStore.set({ state: null })
   })
 
-  it('registers the chrome for a page tab with somewhere to go, not for a page tab without', () => {
+  it('claims the back for the chrome while a section sits over the landing (no WebView to ask)', () => {
+    const site = tab('a', 'https://a.test/')
+    const settings = tab('s', 'zen://settings/privacy', { canGoBack: true, openerTabId: 'a' })
+    browserStore.set({ state: state([site, settings], 's') })
+    refreshBackState()
+    expect(backStore.get()).toEqual({ chrome: true, tabId: 's', root: true })
+  })
+
+  it('reports a root back at the landing while the tab has somewhere to go, none when alone', () => {
     const settings = tab('s', 'zen://settings')
     browserStore.set({ state: state([settings], 's') })
     refreshBackState()
-    expect(backStore.get()).toEqual({ chrome: false, tabId: 's' })
+    expect(backStore.get()).toEqual({ chrome: false, tabId: 's', root: false })
 
     browserStore.set({ state: state([tab('a', 'https://a.test/'), settings], 's') })
     refreshBackState()
-    expect(backStore.get()).toEqual({ chrome: true, tabId: 's' })
+    expect(backStore.get()).toEqual({ chrome: false, tabId: 's', root: true })
   })
 
-  it('answers a back on a page tab with page.back, ahead of the tab’s own history', () => {
+  it('pops the section with tab.back while one sits over the landing', () => {
     const site = tab('a', 'https://a.test/')
-    const settings = tab('s', 'zen://settings/privacy', { canGoBack: true })
+    const settings = tab('s', 'zen://settings/privacy', { canGoBack: true, openerTabId: 'a' })
     browserStore.set({ state: state([site, settings], 's') })
     expect(uiStore.get().overlay).toBe('none')
     expect(handleSystemBack()).toBe(true)
-    expect(invoke).toHaveBeenCalledWith('page.back', { tabId: 's' })
-    expect(invoke).not.toHaveBeenCalledWith('tab.back', expect.anything())
+    expect(invoke).toHaveBeenCalledWith('tab.back', { tabId: 's' })
+    expect(invoke).not.toHaveBeenCalledWith('tab.close', expect.anything())
+  })
+
+  it('closes the tab back to its opener at the landing', () => {
+    const site = tab('a', 'https://a.test/')
+    const settings = tab('s', 'zen://settings', { openerTabId: 'a' })
+    browserStore.set({ state: state([site, settings], 's') })
+    expect(handleSystemBack()).toBe(true)
+    expect(invoke).toHaveBeenCalledWith('tab.activate', { tabId: 'a' })
+    expect(invoke).toHaveBeenCalledWith('tab.close', { tabId: 's' })
+  })
+
+  it('closes the tab back to the most recently active tab when the opener is gone', () => {
+    const older = tab('a', 'https://a.test/', { lastActiveAt: 1 })
+    const recent = tab('b', 'https://b.test/', { lastActiveAt: 2 })
+    const settings = tab('s', 'zen://settings', { openerTabId: 'gone' })
+    browserStore.set({ state: state([older, recent, settings], 's') })
+    expect(handleSystemBack()).toBe(true)
+    expect(invoke).toHaveBeenCalledWith('tab.activate', { tabId: 'b' })
+    expect(invoke).toHaveBeenCalledWith('tab.close', { tabId: 's' })
   })
 
   it('has nothing to do when Settings is alone on its landing (the host may leave the app)', () => {

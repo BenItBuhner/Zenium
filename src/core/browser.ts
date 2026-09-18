@@ -1510,8 +1510,19 @@ export class Browser {
       }
     }
     if (!url) return
-    // `zenium://settings/…` opens (or reuses) the page's tab, with the current tab as opener.
-    if (this.pages.openUrl(url, win, tabId)) return
+    // `zenium://settings/…` typed into the bar: a chrome page opens (or reuses) its own tab with
+    // the current tab as opener, whatever tab the text was typed into; a document page loads
+    // like any document, in this tab or a new one, unless the window already shows the one it
+    // keeps (`routeNavigation`).
+    const pageRef = this.pages.parse(url)
+    if (pageRef) {
+      const page = this.pages.pages[pageRef.id]
+      if (page.render === 'chrome') {
+        this.pages.open(pageRef.id, pageRef.section, win, tabId ?? null)
+        return
+      }
+      if (tabId && !newTab && this.pages.routeNavigation(tabId, url)) return
+    }
     const overlay = overlayForUrl(url)
     if (overlay) {
       // `zen://history` opens its chrome surface; no tab is spent on it.
@@ -1964,7 +1975,6 @@ export class Browser {
         this.pages.open(id, section, win, openerTabId),
       'page.navigate': ({ tabId, section, replace }) =>
         this.pages.navigate(tabId, section, replace ?? false),
-      'page.back': ({ tabId }, win) => this.pages.back(tabId, win),
 
       'history.contextMenu': ({ visitId, url }, win) =>
         this.menus.showHistoryContextMenu(visitId, url, win),

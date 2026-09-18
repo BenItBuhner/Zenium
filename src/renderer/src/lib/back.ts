@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { isChromePageUrl } from '@shared/internalPages'
 import type { Tab, UIState } from '@shared/types'
 import { BLANK_URL } from '@shared/url'
 import { run } from './api'
@@ -218,6 +219,12 @@ export function handleSystemBack(): boolean {
     case 'closeTab':
       run('tab.close', { tabId: tab.id })
       return true
+    case 'previousTab': {
+      const previous = lastActiveOther(tab, state)
+      if (previous) run('tab.activate', { tabId: previous.id })
+      run('tab.close', { tabId: tab.id })
+      return true
+    }
     case 'background':
       return false
   }
@@ -236,6 +243,11 @@ export type RootBackAction =
   | 'newTabPage'
   /** A blank tab has nothing to go back to: close it and show the previous tab. */
   | 'closeTab'
+  /**
+   * Close the tab and return to the tab the user was on before it (the most recently active
+   * other tab of the space): a page tab whose opener is gone.
+   */
+  | 'previousTab'
   /** The last tab of the space (or a pinned one) stays; the app goes to the background. */
   | 'background'
 
@@ -243,12 +255,20 @@ export type RootBackAction =
  * Chrome's back at a tab's root, in Zenium's model: a child tab closes back to its opener, a tab
  * another app opened closes back to that app, any other page gives way to a new-tab page, and a
  * new-tab page closes – unless it is the last tab the space has, or a pinned one, which stay.
+ *
+ * A chrome page tab (Settings) at its landing is the one more case: it was opened from a tab and
+ * closes back to it through the opener rule, or came from another app's deep link and leaves
+ * through the caller rule; with neither left (the opener closed meanwhile, a restored session) it
+ * closes back to the tab the user was on before it (`previousTab`), never to a new-tab page –
+ * Settings is a place one visits, not a page one browses – and stays when it is all the space
+ * has, or is pinned.
  */
 export function rootBackAction(tab: Tab, state: UIState): RootBackAction {
   const others = tabOrderOf(state, activeSpace(state)).filter((t) => t.id !== tab.id)
   if (tab.openerTabId && state.tabs[tab.openerTabId]) return 'opener'
   if (tab.fromIntent) return 'caller'
   if (tab.pinned || tab.essential) return 'background'
+  if (isChromePageUrl(tab.url)) return others.length > 0 ? 'previousTab' : 'background'
   if (tab.url && tab.url !== BLANK_URL) return 'newTabPage'
   return others.length > 0 ? 'closeTab' : 'background'
 }
@@ -301,7 +321,12 @@ export const backStore = createStore<BackHostState>(
 )
 
 function chromeHandlesBack(ui: UiState, state: UIState | null): boolean {
+  // A chrome page tab's history is its sections, which the host cannot see (the tab has no
+  // WebView to ask): while one sits over the landing the chrome has the back.
+  const tab = state ? activeTab(state) : null
+  const pageHistory = tab !== null && tab.canGoBack && isChromePageUrl(tab.url)
   return (
+    pageHistory ||
     stack.length > 0 ||
     ui.menu !== null ||
     ui.urlbar.open ||

@@ -49,7 +49,6 @@ import type { ZenWindow } from './window'
 import { describeNetError, HTTP_FALLBACK_CODES, overlayForUrl } from '../shared/zenPages'
 import { isCertificateError } from '../shared/siteInfo'
 import type { InterstitialAction } from '../shared/interstitial'
-import { parseInternalPageUrl } from '../shared/internalPages'
 import { closedTabEntry, closedWindowEntry } from './session'
 import { newId } from '../shared/ids'
 import { clampZoom, stepZoom } from '../shared/pageControls'
@@ -192,8 +191,8 @@ export class TabManager {
     if (!tab) return undefined
     const existing = this.view(tabId)
     if (existing) return existing
-    if (this.browser.pages.isPageTab(tab)) {
-      // An internal page is drawn by the chrome: there is nothing to load and never a view.
+    if (this.browser.pages.isChromePage(tab)) {
+      // A chrome page is drawn by the chrome: there is nothing to load and never a view.
       tab.discarded = false
       return undefined
     }
@@ -210,7 +209,7 @@ export class TabManager {
     if (!tab) return undefined
     const existing = this.view(tabId)
     if (existing) return existing
-    if (this.browser.pages.isPageTab(tab)) {
+    if (this.browser.pages.isChromePage(tab)) {
       tab.discarded = false
       return undefined
     }
@@ -903,8 +902,8 @@ export class TabManager {
   /** Unload a tab's page while keeping it in the sidebar (Zen's "pending" tabs). */
   discard(tabId: string): void {
     const tab = this.tab(tabId)
-    // A page tab holds no page: there is nothing to unload and it never reads as pending.
-    if (!tab || this.browser.pages.isPageTab(tab)) return
+    // A chrome page tab holds no page: there is nothing to unload and it never reads as pending.
+    if (!tab || this.browser.pages.isChromePage(tab)) return
     // What the page held, for the sleeping row's "memory saved" line; read while it still runs.
     const saved = this.view(tabId) ? this.browser.governor.memoryOf?.(tabId) : null
     if (saved !== null && saved !== undefined && saved > 0) tab.sleepSavedMb = Math.round(saved)
@@ -1503,13 +1502,10 @@ export class TabManager {
   ): void {
     const tab = this.tab(tabId)
     if (!tab || !isNavigableUrl(url)) return
-    const page = parseInternalPageUrl(url)
-    if (page) {
-      // An internal page (Settings) lives in a tab of its own, or in its overlay on hosts
-      // without page tabs; the document in this tab stays where it is.
-      this.browser.pages.navigateTabTo(tabId, page)
-      return
-    }
+    // An internal page: a chrome page (Settings) lives in a tab of its own, or in its overlay on
+    // hosts without page tabs, and the document in this tab stays where it is; a document page
+    // the window already shows is focused instead. Otherwise the URL loads here like any other.
+    if (this.browser.pages.routeNavigation(tabId, url)) return
     const overlay = overlayForUrl(url)
     if (overlay) {
       // `zen://history` and friends are chrome surfaces: open them over the page instead.
@@ -1534,7 +1530,9 @@ export class TabManager {
   }
 
   goBack(tabId: string): void {
-    if (this.browser.pages.isPageTab(this.tab(tabId))) {
+    // A chrome page's history is its sections; at the first one the tab stays, and the chrome's
+    // root-back rule (renderer `back.ts`) says what a back does then.
+    if (this.browser.pages.isChromePage(this.tab(tabId))) {
       this.browser.pages.popSection(tabId)
       return
     }
@@ -1545,7 +1543,7 @@ export class TabManager {
   }
 
   goForward(tabId: string): void {
-    if (this.browser.pages.isPageTab(this.tab(tabId))) {
+    if (this.browser.pages.isChromePage(this.tab(tabId))) {
       this.browser.pages.forward(tabId)
       return
     }
@@ -2264,8 +2262,8 @@ export class TabManager {
       const t = this.tab(id)
       return (
         t &&
-        // Internal pages fill the content area themselves; they do not share it in a split.
-        !this.browser.pages.isPageTab(t) &&
+        // A chrome page fills the content area itself; it does not share it in a split.
+        !this.browser.pages.isChromePage(t) &&
         tabVisibleIn(t, win.id) &&
         (!t.spaceId || !m.localSpaces[t.spaceId] || t.spaceId === space.id)
       )
