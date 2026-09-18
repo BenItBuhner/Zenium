@@ -153,6 +153,8 @@
   /* Focus ring and text selection: one accent, one rule (§1, §9.6). */
   --v2-ring: var(--v2-accent);
   --v2-selection: color-mix(in srgb, var(--v2-accent) 30%, transparent);
+  /* A selected row (selection mode, a picked item), not text selection: the accent at 12 % (§9.6). */
+  --v2-selected: color-mix(in srgb, var(--v2-accent) 12%, transparent);
   /* Behind a desktop dialog: only the content frame dims (§9.5). */
   --v2-scrim-modal: rgb(21 20 26 / 0.45);
   /* Status inks, never a filled surface (§1; the v1 values). */
@@ -169,6 +171,9 @@
   --v2-font-heading: 17px;
   --v2-font-body: 15px;
   --v2-font-small: 13px;
+  /* Fixed line boxes per size (§4): 22 → 28, 17 → 22, 15 → 20, 13 → 20. */
+  --v2-line-title: 28px;
+  --v2-line-heading: 22px;
   --v2-line-body: 20px;
   /* 13 px text sits on the same 20 px line as 15 px text (v2 §4, §9.2): 18 is not used. */
   --v2-line-small: 20px;
@@ -212,6 +217,7 @@
   --v2-urlpill: rgb(255 255 255 / 0.1);
   --v2-nav-active: #252630;
   --v2-scrim-modal: rgb(0 0 0 / 0.55);
+  --v2-selected: color-mix(in srgb, var(--v2-accent) 16%, transparent);
 }
 :root[data-pointer='coarse'] {
   --v2-radius-control: 6px;
@@ -328,7 +334,8 @@
 .zen-v2-button[data-primary]:active:not(:disabled) {
   background: color-mix(in srgb, var(--v2-on-accent) 30%, var(--v2-accent));
 }
-/* `data-danger`: the secondary in the danger ink (§6) – a sheet's Delete beside its Save. */
+/* `data-danger`: the secondary in the danger ink (§6), never a filled surface (§1) – a sheet's
+   Delete beside its Save, site information's Clear. */
 .zen-v2-button[data-danger] {
   color: var(--v2-danger);
 }
@@ -337,6 +344,27 @@
  * over it: the rules are the extensions UI's (`.zen-v2-button[aria-busy='true']`,
  * `.zen-v2-button-label`, `.zen-v2-spinner` in extensions.css, imported above).
  */
+
+/*
+ * The v2 badge (§9.19): a text pill 20 tall, 13/600, padding 0 8, in the family of the surface
+ * it sits on – the page fill on the deemphasised ink inside a panel or list, the window fill on
+ * the theme foreground at 69% on the URL pill – through the `data-surface` control roles. It
+ * trails a label after an 8 px gap and never shrinks, so the label truncates first.
+ */
+.zen-v2-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--v2-control-fill, var(--v2-fill));
+  color: var(--v2-control-text-deemphasized, var(--v2-text-deemphasized));
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-heading);
+  line-height: 20px;
+  white-space: nowrap;
+}
 
 /* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME); zero on desktop. */
 :root {
@@ -1762,10 +1790,11 @@
    * The phone sheet chassis (design language v2 §6 sheets, §3, §9.16, §9.25): a neutral, opaque
    * dialog surface with a hairline edge and the sheet shadow, radius 12 on top, no side padding
    * of its own – rows run edge to edge and carry the 16 px gutter themselves. Dark adds nothing:
-   * the border is the edge. `--zen-sheet-inner` stays for the site-information cards until #39.
+   * the border is the edge. Under a sheet stacked on it (§11.2) it recedes as a page does, on
+   * `--zen-sheet-recede` (0…1, written per frame by the sheet above): scaled about its bottom
+   * edge so it does not lift off it, its top corners 12 → 18.
    */
   .zen-sheet {
-    --zen-sheet-inner: 8px;
     border: 1px solid var(--v2-border);
     border-bottom: 0;
     /* Under a second sheet the corner grows by 6 with the recede (v2 §9.24), as the page's does. */
@@ -1775,6 +1804,7 @@
     color: var(--v2-text);
     box-shadow: var(--v2-shadow-sheet);
     corner-shape: var(--zen-corner);
+    transform-origin: 50% 100%;
     will-change: transform;
   }
   /*
@@ -1828,70 +1858,11 @@
   .zen-sheet[data-scrolled='true'] .zen-sheet-grip {
     box-shadow: 0 1px 0 var(--v2-border);
   }
-  .zen-sheet-panel {
-    --zen-sheet-inner: 12px;
-    border-radius: 24px;
-  }
-  .zen-sheet-card {
-    border-radius: var(--zen-sheet-inner);
-    background: rgb(var(--zen-fg-rgb) / 0.055);
-    corner-shape: var(--zen-corner);
-  }
+  /* A round glyph tile in a v1 panel header (the external-protocol panel on a mouse). */
   .zen-sheet-badge {
     border-radius: 9999px;
     background: rgb(var(--zen-fg-rgb) / 0.08);
     color: var(--zen-fg);
-  }
-  .zen-sheet-badge-secure {
-    background: rgb(34 160 96 / 0.16);
-    color: rgb(22 125 72);
-  }
-  :root[data-theme='dark'] .zen-sheet-badge-secure {
-    color: rgb(112 214 156);
-  }
-  .zen-sheet-badge-warn {
-    background: rgb(214 122 24 / 0.18);
-    color: rgb(178 92 8);
-  }
-  :root[data-theme='dark'] .zen-sheet-badge-warn {
-    color: rgb(245 178 96);
-  }
-  .zen-sheet-action {
-    border-radius: var(--zen-sheet-inner);
-    background: var(--zen-element-bg);
-    color: var(--zen-fg);
-    corner-shape: var(--zen-corner);
-    transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
-  }
-  .zen-sheet-action:active:not(:disabled) {
-    background: var(--zen-element-bg-hover);
-    transform: scale(0.985);
-  }
-  .zen-sheet-action:disabled {
-    opacity: 0.5;
-  }
-  .zen-sheet-action[data-danger] {
-    color: rgb(196 52 52);
-  }
-  :root[data-theme='dark'] .zen-sheet-action[data-danger] {
-    color: rgb(255 128 128);
-  }
-  .zen-sheet-confirm {
-    border-radius: var(--zen-sheet-inner);
-    background: rgb(var(--zen-fg-rgb) / 0.055);
-    corner-shape: var(--zen-corner);
-  }
-  .zen-sheet-action-inner {
-    border-radius: calc(var(--zen-sheet-inner) - 8px);
-    background: rgb(var(--zen-fg-rgb) / 0.08);
-  }
-  .zen-sheet-text-button {
-    border-radius: 6px;
-  }
-  .zen-sheet-text-button:active:not(:disabled) {
-    opacity: 0.6;
   }
 }
 
@@ -2032,6 +2003,217 @@
   /* A row under a finger that is dragging the sheet is not being pressed. */
   .zen-sheet[data-dragging='true'] .zen-sheet-item:active {
     background: transparent;
+  }
+  /* A destructive action row: danger ink, nothing else (§10.4). */
+  .zen-sheet-item[data-danger] {
+    color: var(--v2-danger);
+  }
+  /* A row's trailing value (§9.18): 13 on 20 at 69%, centred on the row, the label truncates first. */
+  .zen-sheet-item-value {
+    flex-shrink: 0;
+    max-width: 50%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+    font-variant-numeric: tabular-nums;
+  }
+  .zen-sheet-item-value[data-tone='warn'] {
+    color: var(--v2-warn);
+  }
+  /* A row holding a 40 px control is 48 (§9.21): the control's height plus the row's 4 + 4. */
+  .zen-sheet-item-control {
+    height: auto;
+    min-height: 48px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+  /* Leading glyphs (§9.3): 20 at stroke 1.75 in the text ink; status glyphs in status ink only. */
+  .zen-sheet-item-glyph {
+    display: flex;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+  }
+  .zen-sheet-item-glyph > svg {
+    width: 20px;
+    height: 20px;
+    stroke-width: 1.75;
+  }
+  .zen-sheet-item-glyph[data-tone='ok'] {
+    color: var(--v2-ok);
+  }
+  .zen-sheet-item-glyph[data-tone='warn'] {
+    color: var(--v2-warn);
+  }
+  .zen-sheet-item-glyph[data-tone='danger'] {
+    color: var(--v2-danger);
+  }
+  /* A group inside a sheet (§10.3): a 15/600 heading on 20, 20 above and 4 below, at the gutter. */
+  .zen-sheet-heading {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 20px 16px 4px;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+  }
+  .zen-sheet-heading > .zen-sheet-item-value {
+    margin-left: auto;
+  }
+  /*
+   * An empty state in a sheet (§9.17): one sentence at 15/400, 69%, centred inside a 32 gutter,
+   * its line 48 below the header; top-anchored, never centred in the free height.
+   */
+  .zen-sheet-empty {
+    padding: 48px 32px 24px;
+    text-align: center;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    color: var(--v2-text-deemphasized);
+  }
+  /*
+   * Levels inside one sheet (site information): the panes slide past each other on a spring
+   * while the sheet's own height follows its chassis; the one arriving is in flow and sizes the
+   * track, the one leaving is laid over it. Only transform and opacity move per frame.
+   */
+  .zen-sheet-track {
+    position: relative;
+    overflow: hidden;
+  }
+  .zen-sheet-pane[data-leaving] {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    pointer-events: none;
+  }
+}
+
+@layer components {
+  /*
+   * Site information on a mouse: a §9.20 popover at the form width (its rows carry controls),
+   * rows at 32 in the menu size with a 13/69% value, rows holding a 32 px control at 40 (§9.21),
+   * a group heading at 13/600, and a footer of 32 px buttons behind a hairline in the gutter.
+   */
+  .zen-siteinfo-row {
+    display: flex;
+    width: 100%;
+    min-height: 32px;
+    align-items: center;
+    gap: 8px;
+    padding: 0 8px;
+    border-radius: var(--v2-radius-control);
+    color: var(--v2-text);
+    font-size: 13px;
+    line-height: var(--v2-line-small);
+    text-align: left;
+    transition: background 120ms var(--zen-ease);
+  }
+  button.zen-siteinfo-row:hover:not(:disabled),
+  button.zen-siteinfo-row:focus-visible {
+    background: var(--v2-fill);
+    outline: none;
+  }
+  button.zen-siteinfo-row:active:not(:disabled) {
+    background: var(--v2-fill-hover);
+  }
+  button.zen-siteinfo-row:disabled {
+    opacity: 0.4;
+  }
+  .zen-siteinfo-row[data-danger] {
+    color: var(--v2-danger);
+  }
+  .zen-siteinfo-row[data-control] {
+    min-height: 40px;
+  }
+  .zen-siteinfo-row > svg,
+  .zen-siteinfo-glyph > svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    stroke-width: 1.5;
+  }
+  .zen-siteinfo-glyph {
+    display: flex;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+  }
+  .zen-siteinfo-glyph[data-tone='ok'] {
+    color: var(--v2-ok);
+  }
+  .zen-siteinfo-glyph[data-tone='warn'] {
+    color: var(--v2-warn);
+  }
+  .zen-siteinfo-glyph[data-tone='danger'] {
+    color: var(--v2-danger);
+  }
+  .zen-siteinfo-value {
+    flex-shrink: 0;
+    max-width: 55%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+    color: var(--v2-text-deemphasized);
+    font-variant-numeric: tabular-nums;
+  }
+  .zen-siteinfo-value[data-tone='warn'] {
+    color: var(--v2-warn);
+  }
+  .zen-siteinfo-caption {
+    display: block;
+    font-size: 13px;
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-siteinfo-chevron {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-siteinfo-heading {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 12px 8px 4px;
+    font-size: 13px;
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-small);
+  }
+  .zen-siteinfo-heading > .zen-siteinfo-value {
+    margin-left: auto;
+    font-weight: var(--v2-weight-body);
+  }
+  .zen-siteinfo-empty {
+    padding: 32px 32px 16px;
+    text-align: center;
+    font-size: 13px;
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-siteinfo-footer {
+    display: flex;
+    flex-shrink: 0;
+    justify-content: flex-end;
+    gap: 8px;
+    margin: 0 16px;
+    padding: 12px 0;
+    border-top: 1px solid var(--v2-border);
+  }
+  /* The root level sits under the title block, whose own 16 below is the gap to the rows (§9.23). */
+  .zen-siteinfo-under-title {
+    padding-top: 0;
   }
 }
 

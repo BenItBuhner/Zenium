@@ -664,13 +664,16 @@ describe('placePopover (design-language-v2-draft §9.20): widths', () => {
     expect(tiny.width).toBe(25)
     expect(tiny.maxHeight).toBe(25)
     expect(tiny.left).toBe(100)
-    // A manifest popup's document at its requested size: not the 60% cap, only the window − 16.
+    // A manifest popup's document at its requested size, still under the 60% cap (600 in a
+    // 1000-high window) and the window − 16.
     const popup = placePopover(anchor, bar, viewport, { measured: 800 }, 600)
     expect(popup.width).toBe(800)
     expect(popup.maxHeight).toBe(600)
     expect(popup.side).toBe('below')
+    // An explicit height crossing the cap shrinks to 60% of the window (420 of 700) and its
+    // document scrolls under the sticky title (§9.20), as a chassis popover's body does.
     const tall = placePopover(anchor, bar, { width: 1600, height: 700 }, { measured: 400 }, 600)
-    expect(tall.maxHeight).toBe(600)
+    expect(tall.maxHeight).toBe(420)
     // The known height of a menu, not the cap, when it is shorter.
     expect(placePopover(anchor, bar, viewport, { measured: 300 }, 220).maxHeight).toBe(220)
   })
@@ -690,7 +693,8 @@ describe('placePopover (design-language-v2-draft §9.20): widths', () => {
     )
     expect(popup.width).toBe(700 - 16)
     expect(popup.left).toBe(M)
-    expect(popup.maxHeight).toBe(Math.min(600, 500 - 16, 500 - 70 - M))
+    // Height: the 60% cap (300 of 500) before the room below the bar (500 − 70 − 8).
+    expect(popup.maxHeight).toBe(Math.min(600, 500 * 0.6, 500 - 16, 500 - 70 - M))
   })
 })
 

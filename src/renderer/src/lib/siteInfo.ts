@@ -1,6 +1,5 @@
 import type { Rect, Tab } from '@shared/types'
 import { pushBackSurface } from './back'
-import { SHEET_CLOSED, SheetMotion, type SheetState } from './motion/sheet'
 import { createStore } from './store'
 import {
   captureActiveTab,
@@ -16,32 +15,47 @@ export interface SiteInfoState {
   tabId: string | null
   /** Where the site icon that opened it is (window coordinates); anchors the desktop popover. */
   anchor: Rect | null
-  /** Motion of the phone sheet. */
-  sheet: SheetState
   /** Bumped by actions so the sheet reads the site again. */
   revision: number
 }
 
 export const siteInfoStore = createStore<SiteInfoState>(
-  { tabId: null, anchor: null, sheet: SHEET_CLOSED, revision: 0 },
+  { tabId: null, anchor: null, revision: 0 },
   'site-info'
 )
-
-/** Height of the mounted sheet (px), reported by the component; the motion's travel. */
-let sheetTravel = 0
-
-export function setSiteInfoTravel(px: number): void {
-  sheetTravel = px
-}
 
 /** The chip that opened the sheet from the keyboard's point of view; it gets the focus back. */
 let opener: HTMLElement | null = null
 
-const motion = new SheetMotion({
-  travel: () => sheetTravel || Math.round(window.innerHeight * 0.6),
-  onChange: (sheet) => siteInfoStore.set({ sheet }),
-  onClosed: () => finishClose()
-})
+/**
+ * What the mounted surface (the phone sheet on the `BottomSheet` chassis, or the desktop
+ * popover) exposes to this module: the sheet's own motion lives in the chassis, the levels
+ * inside it (certificate, cookies, permissions) in the component, so dismissal and the system
+ * back gesture are routed through here to whichever of the two should answer.
+ */
+export interface SiteInfoSurface {
+  /** Levels pushed above the root. */
+  depth(): number
+  /** Return one level (the back button, Escape). */
+  pop(): void
+  /** Slide the surface away; `finishClose` runs once it is gone. */
+  dismiss(): void
+  /** Predictive back on the top level: peek it away, commit, or spring back. */
+  backProgress(p: number): void
+  backCommit(): void
+  backCancel(): void
+}
+
+let surface: SiteInfoSurface | null = null
+
+export function registerSiteInfoSurface(next: SiteInfoSurface | null): void {
+  surface = next
+}
+
+/** The chip the open surface hangs from, for the popover's light dismiss (§9.20). */
+export function siteInfoOpener(): HTMLElement | null {
+  return opener
+}
 
 export function siteInfoIsOpen(): boolean {
   return siteInfoStore.get().tabId !== null
@@ -64,21 +78,30 @@ export async function openSiteInfo(
   opener = from
   uiStore.set({ siteInfoOpen: true, drawerOpen: false })
   siteInfoStore.set({ tabId: tab.id, anchor, revision: 0 })
-  motion.present()
 }
 
 /** Dismiss with the spring (a tap outside, the back gesture, Escape). */
 export function closeSiteInfo(): void {
   if (!siteInfoIsOpen()) return
-  if (motion.isOpen) motion.dismiss()
+  if (surface) surface.dismiss()
   else finishClose()
 }
 
 /** Drop the sheet at once: another surface took over or the layout changed. */
 export function dismissSiteInfo(): void {
   if (!siteInfoIsOpen()) return
-  motion.close()
+  finishClose()
+}
+
+/** The surface has left the screen (its chassis reported the dismissal). */
+export function siteInfoDismissed(): void {
   if (siteInfoIsOpen()) finishClose()
+}
+
+/** Escape, or the back button: one level up, or away. */
+export function stepBackSiteInfo(): void {
+  if (surface && surface.depth() > 0) surface.pop()
+  else closeSiteInfo()
 }
 
 /** An action changed the site's state: read it again. */
@@ -86,28 +109,25 @@ export function refreshSiteInfo(): void {
   siteInfoStore.set((s) => ({ revision: s.revision + 1 }))
 }
 
-/** The drag surface of the phone sheet reports through these; the motion does the physics. */
-export const siteInfoDrag = {
-  begin: (): boolean => motion.beginDrag(),
-  move: (deltaPx: number): void => motion.drag(deltaPx),
-  release: (velocity: number): void => motion.release(velocity)
-}
-
 /**
  * Progress-driven dismissal for the system back gesture: the back-surface registry (`back.ts`)
- * drives the sheet through these as the swipe advances, for as long as the sheet is open.
+ * drives the surface through these as the swipe advances, for as long as the sheet is open.
+ * With a level pushed, the gesture peeks and pops that level; on the root it pulls the sheet.
  */
 export const siteInfoBack = {
   isOpen: (): boolean => siteInfoIsOpen(),
-  progress: (p: number): void => motion.backProgress(p),
-  commit: (): void => motion.backCommit(),
-  cancel: (): void => motion.backCancel()
+  progress: (p: number): void => surface?.backProgress(p),
+  commit: (): void => {
+    if (surface) surface.backCommit()
+    else finishClose()
+  },
+  cancel: (): void => surface?.backCancel()
 }
 
 function finishClose(): void {
   const from = opener
   opener = null
-  siteInfoStore.set({ tabId: null, anchor: null, sheet: SHEET_CLOSED })
+  siteInfoStore.set({ tabId: null, anchor: null })
   if (uiStore.get().siteInfoOpen) uiStore.set({ siteInfoOpen: false })
   invalidateSnapshot()
   // Escape, a click outside, the back gesture: the keyboard returns to the chip that opened the

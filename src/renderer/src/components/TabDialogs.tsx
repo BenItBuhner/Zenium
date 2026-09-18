@@ -21,6 +21,7 @@ import { EditBookmarkDialog } from './bookmarks/EditBookmarkDialog'
 import { StarDialog } from './bookmarks/StarDialog'
 import { NewTabShortcutDialog } from './newtab/NewTabShortcutDialog'
 import { BookmarkEditSheet } from './phone/BookmarkEditSheet'
+import { SiteDataConfirmDialog } from './siteinfo/SiteInfoSheet'
 import { ZoomBubble } from './zoom/ZoomBubble'
 
 const TAB_ICONS = [
@@ -45,8 +46,9 @@ const TAB_ICONS = [
  * and the icon picker, the security prompts (HTTP sign-in, certificate choice) the page's
  * requests wait on, the permission prompts a page's requests wait on, the page's own dialogs
  * (`alert`, `confirm`, `prompt`, "Leave site?"), the questions asked before a window closes
- * or Zenium quits, the new tab page's add / edit shortcut dialog, and the extension install and
- * permission prompts. The modal ones render through the `FrameDialogHost` this mounts, so they
+ * or Zenium quits, the new tab page's add / edit shortcut dialog, the extension install and
+ * permission prompts, and the site-information popover's "Clear site data?" confirmation. The
+ * modal ones render through the `FrameDialogHost` this mounts, so they
  * centre in the box it is placed in – the content frame on desktop, the shell on phones – over
  * a scrim that dims only that box (lib/portals.tsx). The star bubble is a popover: on desktop
  * it portals to the chrome layer, anchored under the star; on phones it is a sheet in the host.
@@ -62,6 +64,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const allTabs = uiStore.use((s) => s.bookmarkAllTabs)
   const edit = uiStore.use((s) => s.bookmarkEdit)
   const shortcut = uiStore.use((s) => s.newTabShortcutDialog)
+  const siteData = uiStore.use((s) => s.siteDataConfirm)
   const managerOpen = uiStore.use((s) => s.overlay === 'bookmarks')
   const phone = useViewport().formFactor === 'phone'
   const pinnedTab = pinnedTabId ? state.tabs[pinnedTabId] : undefined
@@ -80,6 +83,13 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       />
       {shortcut && (
         <NewTabShortcutDialog key={shortcut.id ?? 'new'} state={state} request={shortcut} />
+      )}
+      {siteData && (
+        <SiteDataConfirmDialog
+          key={`${siteData.tabId}:${siteData.kind}`}
+          state={state}
+          request={siteData}
+        />
       )}
       <SecurityPrompts state={state} />
       <PermissionPrompts state={state} />
