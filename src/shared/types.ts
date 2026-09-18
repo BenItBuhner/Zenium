@@ -355,6 +355,11 @@ export interface ExtensionInfo {
   pinned: boolean
   /** Chrome's "Allow access to file URLs"; off by default. */
   allowFileAccess: boolean
+  /**
+   * Chrome's "Allow in Incognito": whether the extension's request rules (declarativeNetRequest,
+   * webRequest listeners) apply in private windows. Off by default.
+   */
+  allowPrivate: boolean
   manifestVersion: number
   permissions: string[]
   hostPermissions: string[]
@@ -2051,6 +2056,8 @@ export interface Commands {
   'extension.remove': { args: { id: string }; result: void }
   'extension.setEnabled': { args: { id: string; enabled: boolean }; result: void }
   'extension.setPinned': { args: { id: string; pinned: boolean }; result: void }
+  /** Chrome's "Allow in Incognito": let the extension's request rules reach private windows. */
+  'extension.setAllowPrivate': { args: { id: string; allowed: boolean }; result: void }
   'extension.reload': { args: { id: string }; result: void }
   'extension.checkForUpdates': { args: void; result: void }
   'extension.update': { args: { id: string }; result: void }

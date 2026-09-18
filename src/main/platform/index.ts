@@ -284,8 +284,12 @@ export class ElectronPlatform implements Platform {
       this.views,
       this.io,
       this.userDataDir,
-      // Extensions' declarativeNetRequest rule sets go straight into the request-blocking engine.
-      createDnrSink(browser.blocking.engine, extensionResources)
+      // Extensions' declarativeNetRequest rule sets go straight into the request-blocking
+      // engine, each scoped to the sessions its extension is loaded into (never the private
+      // window's unless the user allowed the extension there).
+      createDnrSink(browser.blocking.engine, extensionResources, {
+        partitionsOf: (id) => extensionApi.partitionsOf(id)
+      })
     )
     extensionApi.install()
     const extensionService = browser.extensions as ExtensionService
@@ -293,6 +297,10 @@ export class ElectronPlatform implements Platform {
     extensionService.onChange((event) => extensionApi.registryChanged(event))
     this.requestBlocking = new ElectronBlocking(browser, this.views, this.profileDir)
     this.requestBlocking.start()
+    // Extensions' chrome.webRequest listeners run over the same hook, after the rule engine;
+    // so do the request-side effects of chrome.privacy (pings, Referer, DNT).
+    extensionApi.webRequest.attach(this.requestBlocking)
+    extensionApi.privacy.attach(this.requestBlocking)
     // Decisions the engine took by an extension's rule feed getMatchedRules, the action badge
     // count and onRuleMatchedDebug.
     this.requestBlocking.onDecision((request, decision) =>

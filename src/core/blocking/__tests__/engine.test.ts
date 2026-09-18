@@ -527,6 +527,101 @@ describe('RuleEngine bookkeeping', () => {
   })
 })
 
+describe('RuleEngine partition scope', () => {
+  const ad = (partition?: string): RequestContext =>
+    req(
+      'https://ads.example/x.js',
+      partition ? { partition, isPrivate: partition === 'private' } : {}
+    )
+
+  it('applies a scoped set only to requests from a listed partition', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('ext:a:static:one', [block(1, { urlFilter: '||ads.example^' })], {
+        priority: RULE_SET_PRIORITY.dnr,
+        partitions: ['default', 'work']
+      })
+    )
+    expect(e.decide(ad('default')).action).toBe('block')
+    expect(e.decide(ad('work')).action).toBe('block')
+    expect(e.decide(ad('private')).action).toBe('allow')
+    // A scoped set needs to know where the request runs; unknown means not listed.
+    expect(e.decide(ad()).action).toBe('allow')
+    expect(e.summary('ext:a:static:one')?.partitions).toEqual(['default', 'work'])
+  })
+
+  it('leaves unscoped sets applying everywhere, private windows included', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('easylist', [block(1, { urlFilter: '||ads.example^' })], {
+        source: 'filter-list',
+        priority: RULE_SET_PRIORITY.filterList
+      })
+    )
+    expect(e.decide(ad('default')).action).toBe('block')
+    expect(e.decide(ad('private')).action).toBe('block')
+    expect(e.decide(ad()).action).toBe('block')
+    expect(e.summary('easylist')?.partitions).toBeUndefined()
+  })
+
+  it('re-scopes a set in place, notifying subscribers as a persisted change', () => {
+    const e = new RuleEngine()
+    const changes: RuleSetChange[] = []
+    e.subscribe((c) => changes.push(c))
+    e.setRuleSet(
+      set('ext:a:_dynamic', [block(1, { urlFilter: '||ads.example^' })], {
+        priority: RULE_SET_PRIORITY.dnr,
+        partitions: ['default']
+      })
+    )
+    expect(e.decide(ad('private')).action).toBe('allow')
+
+    e.setPartitions('ext:a:_dynamic', ['default', 'private'])
+    expect(e.decide(ad('private')).action).toBe('block')
+    e.setPartitions('ext:a:_dynamic', ['default', 'private'])
+    e.setPartitions('ext:a:_dynamic', undefined)
+    expect(e.decide(ad()).action).toBe('block')
+    expect(e.summary('ext:a:_dynamic')?.partitions).toBeUndefined()
+    e.setPartitions('ext:a:_dynamic', [])
+    expect(e.decide(ad('default')).action).toBe('allow')
+    e.setPartitions('missing', ['default'])
+
+    expect(changes.map((c) => `${c.kind}:${c.persisted ? 'persisted' : 'new'}`)).toEqual([
+      'set:new',
+      'set:persisted',
+      'set:persisted',
+      'set:persisted'
+    ])
+    expect(changes[1].set?.partitions).toEqual(['default', 'private'])
+    expect(changes[1].summary?.partitions).toEqual(['default', 'private'])
+    expect(changes[2].set?.partitions).toBeUndefined()
+    expect(changes[3].set?.partitions).toEqual([])
+  })
+
+  it('lets a scoped extension set stay out of a private request the lists still block', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('easylist', [block(1, { urlFilter: '||tracker.example^' })], {
+        source: 'filter-list',
+        priority: RULE_SET_PRIORITY.filterList
+      })
+    )
+    e.setRuleSet(
+      set('ext:a:static:one', [block(1, { urlFilter: '||ads.example^' })], {
+        priority: RULE_SET_PRIORITY.dnr,
+        partitions: ['default']
+      })
+    )
+    const tracker = req('https://tracker.example/t.js', { partition: 'private', isPrivate: true })
+    expect(e.decide(tracker)).toMatchObject({ action: 'block', matched: { setId: 'easylist' } })
+    expect(e.decide(ad('private')).action).toBe('allow')
+    expect(e.decide(ad('default'))).toMatchObject({
+      action: 'block',
+      matched: { setId: 'ext:a:static:one' }
+    })
+  })
+})
+
 describe('resourceTypeFromElectron', () => {
   it('maps Electron names to declarativeNetRequest types', () => {
     expect(resourceTypeFromElectron('mainFrame')).toBe('main_frame')

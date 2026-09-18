@@ -4,6 +4,7 @@ import type { StoreIO } from '../../../core/platform'
 import { JsonStore } from '../../../core/store/JsonStore'
 import type { Alarm } from '../../../core/extensions/api/alarms'
 import type { PermissionSet } from '../../../core/extensions/api/permissions'
+import type { ScopedValues } from '../../../core/extensions/api/privacy'
 import type { StorageItems } from '../../../core/extensions/api/storage'
 import { FileStoreIO } from '../storeIo'
 
@@ -16,10 +17,20 @@ interface PersistedApi {
   uninstallUrls: Record<string, string>
   /** Events an extension's worker listened to, so it can be woken for them after a restart. */
   workerEvents: Record<string, string[]>
+  /** `chrome.privacy` values per extension, by `category.setting`, then scope. */
+  privacy?: Record<string, Record<string, ScopedValues>>
 }
 
 function emptyPersisted(): PersistedApi {
-  return { version: 1, installed: {}, alarms: {}, grants: {}, uninstallUrls: {}, workerEvents: {} }
+  return {
+    version: 1,
+    installed: {},
+    alarms: {},
+    grants: {},
+    uninstallUrls: {},
+    workerEvents: {},
+    privacy: {}
+  }
 }
 
 /**
@@ -97,6 +108,17 @@ export class ApiStore {
     this.save()
   }
 
+  privacyValues(extensionId: string): Record<string, ScopedValues> {
+    return this.data.privacy?.[extensionId] ?? {}
+  }
+
+  setPrivacyValues(extensionId: string, values: Record<string, ScopedValues>): void {
+    const privacy = this.data.privacy ?? (this.data.privacy = {})
+    if (Object.keys(values).length === 0) delete privacy[extensionId]
+    else privacy[extensionId] = values
+    this.save()
+  }
+
   /** The extension is gone for good: drop everything about it. */
   forget(extensionId: string): void {
     delete this.data.installed[extensionId]
@@ -104,6 +126,7 @@ export class ApiStore {
     delete this.data.grants[extensionId]
     delete this.data.uninstallUrls[extensionId]
     delete this.data.workerEvents[extensionId]
+    delete this.data.privacy?.[extensionId]
     this.save()
     this.syncStores.get(extensionId)?.store.write({})
   }
