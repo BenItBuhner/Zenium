@@ -8,6 +8,7 @@ import {
   Globe,
   Info,
   Layers,
+  Puzzle,
   Search,
   Terminal,
   X
@@ -218,6 +219,8 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     (keepDraft: boolean) => {
       if (keepDraft && text.trim() && text !== tab?.url) drafts.set(draftKey, text)
       else drafts.delete(draftKey)
+      // An extension's omnibox session, if one was on, ends without an entry.
+      run('urlbar.cancel', undefined)
       closeUrlbar()
     },
     [draftKey, tab, text]
@@ -278,6 +281,10 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
           setText(item.fill)
           setKeywordFill({ fill: item.fill, seq: ++keywordSeq })
           return
+        case 'omnibox':
+          // The keyword-prefixed text goes back whole: the extension takes it from there.
+          navigate(item.fill)
+          break
         case 'bookmark':
           // Through the bookmark so its "last used" date is recorded.
           if (item.targetId && !opts.background) {
@@ -307,6 +314,16 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     const row = results[index]
     if (!row || row.kind !== 'history' || !row.url) return false
     run('history.delete', { url: row.url })
+    setResults((r) => r.filter((_, i) => i !== index))
+    setSelected(-1)
+    setTyped(lastTyped.current, false)
+    return true
+  }
+
+  const removeOmniboxRow = (index: number): boolean => {
+    const row = results[index]
+    if (!row || row.kind !== 'omnibox' || !row.deletable) return false
+    run('urlbar.deleteSuggestion', { input: row.fill })
     setResults((r) => r.filter((_, i) => i !== index))
     setSelected(-1)
     setTyped(lastTyped.current, false)
@@ -379,8 +396,10 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
       }
       case 'Delete':
         // Shift+Delete removes the highlighted history row (Chrome); plain Delete does too when a
-        // row is highlighted, since the field's caret then has nothing to delete.
-        if (selected >= 0 && removeHistoryRow(selected)) e.preventDefault()
+        // row is highlighted, since the field's caret then has nothing to delete. An omnibox row
+        // its extension marked deletable goes the same way (`omnibox.onDeleteSuggestion`).
+        if (selected >= 0 && (removeHistoryRow(selected) || removeOmniboxRow(selected)))
+          e.preventDefault()
         return
     }
   }
@@ -679,7 +698,8 @@ const ROW_ICONS: Record<SuggestionKind, typeof Globe> = {
   command: Terminal,
   engine: Search,
   answer: Calculator,
-  entity: Info
+  entity: Info,
+  omnibox: Puzzle
 }
 
 function SuggestionRow({

@@ -1,5 +1,13 @@
 /* eslint-disable @typescript-eslint/no-empty-function -- deliberate no-op host services */
-import type { ExtensionInfo, Rect, ResourceSnapshot, SyncScope, SyncStatus } from '../shared/types'
+import type {
+  ExtensionInfo,
+  Rect,
+  ResourceSnapshot,
+  SidePanelInfo,
+  Suggestion,
+  SyncScope,
+  SyncStatus
+} from '../shared/types'
 import { emptyResourceSnapshot } from '../shared/defaults'
 import { updateOsOf, type UpdateTarget } from '../shared/updates'
 import type { Browser } from './browser'
@@ -107,6 +115,10 @@ export class NoExtensions implements ExtensionHost {
   async remove(): Promise<void> {}
   async setEnabled(): Promise<void> {}
   setPinned(): void {}
+  setNewTabOverride(): void {}
+  newTabUrl(): string | null {
+    return null
+  }
   setAllowPrivate(): void {}
   async reload(): Promise<void> {}
   async checkForUpdates(): Promise<void> {}
@@ -118,6 +130,22 @@ export class NoExtensions implements ExtensionHost {
     this.unavailable(win)
   }
   closePopup(): void {}
+  sidePanel(): SidePanelInfo | null {
+    return null
+  }
+  toggleSidePanel(_id: string, win: ZenWindow): void {
+    this.unavailable(win)
+  }
+  closeSidePanel(): void {}
+  placeSidePanel(): void {}
+  async omniboxSuggest(): Promise<Suggestion[] | null> {
+    return null
+  }
+  omniboxSubmit(): boolean {
+    return false
+  }
+  omniboxCancel(): void {}
+  omniboxDeleteSuggestion(): void {}
   pageContextMenuItems(): MenuItemTemplate[] {
     return []
   }

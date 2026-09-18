@@ -1,4 +1,11 @@
-import type { ExtensionInfo, ExtensionSource, ExtensionUpdateState, Rect } from '@shared/types'
+import type {
+  ExtensionInfo,
+  ExtensionSource,
+  ExtensionUpdateState,
+  Rect,
+  SidePanelInfo,
+  Suggestion
+} from '@shared/types'
 import type { Browser } from '@core/browser'
 import type { ExtensionHost, MenuItemTemplate } from '@core/platform'
 import type { ZenWindow } from '@core/window'
@@ -37,6 +44,7 @@ import {
 import {
   migrateRegistry,
   newRecord,
+  setNewTabOverride,
   withManifest,
   type ExtensionRecord,
   type ExtensionRegistry
@@ -373,6 +381,8 @@ export class AndroidExtensions implements ExtensionHost {
         permissions: record.permissions,
         hostPermissions: record.hostPermissions,
         optionsPage: record.optionsPage,
+        newTabPage: record.newTabPage,
+        newTabOverride: record.newTabOverride,
         warnings: permissionWarningLines(manifest, 'other'),
         pendingWarnings: record.pendingWarnings,
         updateState: update.state,
@@ -714,6 +724,51 @@ export class AndroidExtensions implements ExtensionHost {
     this.persist()
     void this.reconfigure(record)
     this.browser.state.commitVolatile()
+  }
+
+  /** The flag is the desktop's registry schema; the Android host does not route new tabs yet. */
+  setNewTabOverride(id: string, enabled: boolean): void {
+    if (setNewTabOverride(this.registry.extensions, id, enabled).length === 0) return
+    this.persist()
+    this.browser.state.commitVolatile()
+  }
+
+  newTabUrl(): string | null {
+    return null
+  }
+
+  /** No side panels on the phone: the chrome.sidePanel calls answer, nothing docks a view. */
+  sidePanel(): SidePanelInfo | null {
+    return null
+  }
+
+  toggleSidePanel(): void {
+    // The phone has no room beside the page for a panel.
+  }
+
+  closeSidePanel(): void {
+    // Nothing is ever open.
+  }
+
+  placeSidePanel(): void {
+    // Nothing to place.
+  }
+
+  /** No omnibox keywords on the phone: the URL bar suggests as usual. */
+  async omniboxSuggest(): Promise<Suggestion[] | null> {
+    return null
+  }
+
+  omniboxSubmit(): boolean {
+    return false
+  }
+
+  omniboxCancel(): void {
+    // No session to end.
+  }
+
+  omniboxDeleteSuggestion(): void {
+    // No rows of an extension's to delete.
   }
 
   setAllowPrivate(id: string, allowed: boolean): void {

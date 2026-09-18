@@ -79,6 +79,11 @@ export class SuggestionService {
 
     if (!query) return isPrivate ? [] : this.emptyState()
 
+    // An extension's `chrome.omnibox` keyword owns the input from the space after it on: the
+    // rows are what the extension suggests, nothing else (Chrome's keyword mode).
+    const omnibox = isPrivate ? null : await this.browser.extensions.omniboxSuggest(rawQuery, win)
+    if (omnibox) return omnibox
+
     // "` " prefix → spaces only (Zen's space-only search mode).
     if (query.startsWith('`')) {
       if (local) return []

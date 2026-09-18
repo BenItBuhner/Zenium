@@ -689,10 +689,7 @@ export class Menus {
     const local = Boolean(win.localSpace)
     this.popup(
       [
-        {
-          label: 'New Tab',
-          click: () => this.browser.emit('urlbar.toggle', { mode: 'new-tab' }, win)
-        },
+        { label: 'New Tab', click: () => this.browser.openNewTab(win) },
         {
           label: 'New Tab in Container',
           enabled: !win.isPrivate,
@@ -1182,10 +1179,7 @@ export class Menus {
     const desktop = (...items: Template): Template => (phone ? [] : items)
     this.popup(
       [
-        {
-          label: 'New Tab',
-          click: () => this.browser.emit('urlbar.toggle', { mode: 'new-tab' }, win)
-        },
+        { label: 'New Tab', click: () => this.browser.openNewTab(win) },
         // Phone slot: "New Private Tab" goes here once Android has private tabs (Chrome: New
         // Incognito tab, second item).
         ...when(!local, {

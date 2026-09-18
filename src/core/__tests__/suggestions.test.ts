@@ -58,7 +58,15 @@ function setup(
   const bookmarks = new BookmarkService(state)
   const history = new HistoryService(io)
   const net = fakeNet(opts.resolver ?? true)
-  const browser = { state, bookmarks, history, platform: { net } } as unknown as Browser
+  // No extension holds an omnibox keyword: the URL bar's own sources answer.
+  const extensions = { omniboxSuggest: async () => null }
+  const browser = {
+    state,
+    bookmarks,
+    history,
+    extensions,
+    platform: { net }
+  } as unknown as Browser
   const win = new ZenWindow(browser, {
     id: 'window_1',
     kind,

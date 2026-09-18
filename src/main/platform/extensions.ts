@@ -9,7 +9,14 @@ import {
 } from 'electron'
 import { existsSync, promises as fs, readFileSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
-import type { ExtensionInfo, ExtensionSource, ExtensionUpdateState, Rect } from '../../shared/types'
+import type {
+  ExtensionInfo,
+  ExtensionSource,
+  ExtensionUpdateState,
+  Rect,
+  SidePanelInfo,
+  Suggestion
+} from '../../shared/types'
 import { JsonStore } from '../../core/store/JsonStore'
 import type { Browser } from '../../core/browser'
 import type {
@@ -35,8 +42,11 @@ import {
   type WarningPlatform
 } from '../../core/extensions/permissionMessages'
 import {
+  manifestFields,
   migrateRegistry,
   newRecord,
+  newTabOverrideUrl,
+  setNewTabOverride,
   withManifest,
   type ExtensionRecord,
   type ExtensionRegistry
@@ -262,6 +272,7 @@ export class ExtensionService implements ExtensionHost {
           }))
         // Electron derives the id itself (from `manifest.key` or the path); trust what it says.
         if (ext.id !== record.id) this.rekey(record, ext.id)
+        this.backfillNewTabPage(record, ext.manifest)
         if (!this.loadedById.has(ext.id)) this.loadedById.set(ext.id, ext)
         for (const listener of this.loadedListeners) listener(ext, ses)
       } catch (error) {
@@ -282,6 +293,15 @@ export class ExtensionService implements ExtensionHost {
     }
     this.loadedById.delete(record.id)
     for (const listener of this.unloadedListeners) listener(record.id)
+  }
+
+  /** Records written before `newTabPage` existed learn theirs from the manifest Electron loaded. */
+  private backfillNewTabPage(record: ExtensionRecord, manifest: unknown): void {
+    if (record.newTabPage !== null) return
+    const page = manifestFields(manifest).newTabPage
+    if (!page) return
+    record.newTabPage = page
+    this.persist()
   }
 
   private rekey(record: ExtensionRecord, id: string): void {
@@ -332,6 +352,8 @@ export class ExtensionService implements ExtensionHost {
         permissions: record.permissions,
         hostPermissions: record.hostPermissions,
         optionsPage: record.optionsPage,
+        newTabPage: record.newTabPage,
+        newTabOverride: record.newTabOverride,
         warnings: permissionWarningLines(manifest ?? {}, warningPlatform()),
         pendingWarnings: record.pendingWarnings,
         updateState: update.state,
@@ -671,6 +693,21 @@ export class ExtensionService implements ExtensionHost {
     record.pinned = pinned
     this.persist()
     this.browser.state.commitVolatile()
+  }
+
+  setNewTabOverride(id: string, enabled: boolean): void {
+    if (setNewTabOverride(this.registry.extensions, id, enabled).length === 0) return
+    this.persist()
+    this.browser.state.commitVolatile()
+  }
+
+  newTabUrl(): string | null {
+    for (const record of this.registry.extensions) {
+      const url = newTabOverrideUrl(record)
+      // A record that failed to load has no page to show; the URL bar is better than an error.
+      if (url && this.loadedById.has(record.id)) return url
+    }
+    return null
   }
 
   /**
@@ -1078,6 +1115,48 @@ export class ExtensionService implements ExtensionHost {
     this.popup = null
     if (win.alive) (win.host as ElectronWindow).win.contentView.removeChildView(view)
     if (!view.webContents.isDestroyed()) view.webContents.close()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Side panels (hosted by the chrome.* layer; nothing without it)
+  // ---------------------------------------------------------------------------
+
+  sidePanel(win: ZenWindow): SidePanelInfo | null {
+    return this.api ? this.api.sidePanelInfo(win) : null
+  }
+
+  toggleSidePanel(id: string, win: ZenWindow): void {
+    const record = this.record(id)
+    if (!record || !this.loadedById.has(record.id) || !this.api) return
+    this.api.toggleSidePanel(record.id, win)
+  }
+
+  closeSidePanel(win: ZenWindow): void {
+    this.api?.closeSidePanel(win)
+  }
+
+  placeSidePanel(win: ZenWindow, rect: Rect | null): void {
+    this.api?.placeSidePanel(win, rect)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Omnibox keywords (the chrome.* layer's)
+  // ---------------------------------------------------------------------------
+
+  async omniboxSuggest(input: string, win: ZenWindow): Promise<Suggestion[] | null> {
+    return this.api ? this.api.omniboxSuggest(input, win) : null
+  }
+
+  omniboxSubmit(input: string, newTab: boolean, background: boolean, win: ZenWindow): boolean {
+    return this.api ? this.api.omniboxSubmit(input, newTab, background, win) : false
+  }
+
+  omniboxCancel(win: ZenWindow): void {
+    this.api?.omniboxCancel(win)
+  }
+
+  omniboxDeleteSuggestion(input: string): void {
+    this.api?.omniboxDeleteSuggestion(input)
   }
 
   // ---------------------------------------------------------------------------

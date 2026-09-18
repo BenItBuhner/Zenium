@@ -75,6 +75,7 @@ interface ManifestShape {
   manifest_version?: unknown
   background?: unknown
   permissions?: unknown
+  optional_permissions?: unknown
 }
 
 /** A native `chrome.Event` the shim keeps registering listeners on (documents' storage events). */
@@ -152,6 +153,12 @@ export function installExtensionApi(
   const permissions: string[] = Array.isArray(manifest.permissions)
     ? manifest.permissions.filter((p): p is string => typeof p === 'string')
     : []
+  /** Required and optional permissions alike: an optional one may be granted at run time. */
+  const declaredPermissions: string[] = permissions.concat(
+    Array.isArray(manifest.optional_permissions)
+      ? manifest.optional_permissions.filter((p): p is string => typeof p === 'string')
+      : []
+  )
   const extensionUrl: string =
     safely(() => String(chrome.runtime.getURL(''))) ??
     (typeof real.location === 'object' && real.location
@@ -493,11 +500,14 @@ export function installExtensionApi(
     dispatch(...args: unknown[]): unknown[]
   }
 
+  /** Sees what the listeners of one delivery returned (events whose answer the host waits for). */
+  type After = (results: unknown[]) => void
+
   interface EventRecord {
     object: EventObject
     /** Listener → the id of its URL filter set, null for an unfiltered listener. */
     listeners: Map<Listener, number | null>
-    pending: Array<{ args: unknown[]; at: number; delivery?: EventDelivery }>
+    pending: Array<{ args: unknown[]; at: number; delivery?: EventDelivery; after?: After }>
     nativeDelivers: boolean
     /** With `nativeDelivers`: which host deliveries the engine already made (dropped here). */
     nativeHandles: (args: unknown[]) => boolean
@@ -585,7 +595,10 @@ export function installExtensionApi(
             if (now - item.at > PENDING_TTL) continue
             // A filtered listener registered after the host matched cannot be matched now; it
             // only receives deliveries the host addressed to everyone.
-            if (wants(filterId, item.delivery)) callListener(fn, item.args)
+            if (!wants(filterId, item.delivery)) continue
+            const results: unknown[] = []
+            callListener(fn, item.args, results)
+            item.after?.(results)
           }
         }
       },
@@ -629,15 +642,22 @@ export function installExtensionApi(
     })
   }
 
-  function deliver(fullName: string, args: unknown[], delivery?: EventDelivery): void {
+  function deliver(
+    fullName: string,
+    args: unknown[],
+    delivery?: EventDelivery,
+    after?: After
+  ): void {
     const record = events.get(fullName)
     if (!record) return
     // The engine already fired this one at our listeners; a second delivery would duplicate it.
     if (record.nativeDelivers && record.nativeHandles(args)) return
     if (record.listeners.size > 0) {
+      const results: unknown[] = []
       for (const [fn, filterId] of [...record.listeners]) {
-        if (wants(filterId, delivery)) callListener(fn, args)
+        if (wants(filterId, delivery)) callListener(fn, args, results)
       }
+      after?.(results)
       return
     }
     const now = Date.now()
@@ -645,8 +665,39 @@ export function installExtensionApi(
     if (record.pending.length < 50) {
       const item: EventRecord['pending'][number] = { args, at: now }
       if (delivery) item.delivery = delivery
+      if (after) item.after = after
       record.pending.push(item)
     }
+  }
+
+  /**
+   * `downloads.onDeterminingFilename(item, suggest)`: the host holds the file's placement until
+   * this context answers once. A listener that returns true answers later through `suggest`;
+   * otherwise the answer is whatever it passed synchronously, or nothing.
+   */
+  function determineFilename(args: unknown[]): void {
+    const token = args[1]
+    let answered = false
+    const suggest = (suggestion?: unknown): void => {
+      if (answered) return
+      answered = true
+      host.notify('downloads-determined', { token, suggestion: suggestion ?? null })
+    }
+    deliver('downloads.onDeterminingFilename', [args[0], suggest], undefined, (results) => {
+      if (!results.includes(true)) suggest()
+    })
+  }
+
+  /**
+   * `omnibox.onInputChanged(text, suggest)`: the URL bar is waiting for `suggest(results)`; each
+   * call answers the host for this change (the latest one wins), and functions cannot cross.
+   */
+  function omniboxInputChanged(args: unknown[]): void {
+    const token = args[1]
+    const suggest = (results?: unknown): void => {
+      host.notify('omnibox-suggest', { token, results: Array.isArray(results) ? results : [] })
+    }
+    deliver('omnibox.onInputChanged', [args[0], suggest])
   }
 
   // ---------------------------------------------------------------------------
@@ -894,10 +945,10 @@ export function installExtensionApi(
   // Generic namespaces from the table
   // ---------------------------------------------------------------------------
 
-  /** Permission-gated namespaces exist for extensions holding one (or when the engine made one). */
+  /** Permission-gated namespaces exist for extensions declaring one (or when the engine made one). */
   function namespaceAllowed(namespace: string, nsSpec: NamespaceSpec): boolean {
     if (!nsSpec.permissions) return true
-    if (nsSpec.permissions.some((p) => permissions.includes(p))) return true
+    if (nsSpec.permissions.some((p) => declaredPermissions.includes(p))) return true
     return isObject(safely(() => roots[0][namespace]))
   }
 
@@ -1025,6 +1076,84 @@ export function installExtensionApi(
           invoke('contextMenus', 'removeAll', []),
           callback
         )
+      })
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // tts: `speak`'s `onEvent` stays on this side, keyed by a token the host echoes back
+  // ---------------------------------------------------------------------------
+
+  if (spec.tts && namespaceAllowed('tts', spec.tts)) {
+    const ttsHandlers = new Map<string, Listener>()
+    const ttsPrefix = Math.random().toString(36).slice(2)
+    let ttsTokens = 0
+    let ttsRelay: EventObject | null = null
+    const ttsQualified =
+      'tts.speak(string utterance, optional object options, optional function callback)'
+    /** The hidden `tts.onEvent` listener: registered with the host on the first `onEvent`. */
+    const relayEvents = (): void => {
+      if (ttsRelay) return
+      ttsRelay = createEvent('tts.onEvent', undefined, { nativeDelivers: false })
+      ttsRelay.addListener((token: unknown, event: unknown) => {
+        if (typeof token !== 'string') return
+        const handler = ttsHandlers.get(token)
+        if (!handler) return
+        if (isObject(event) && event.isFinalEvent === true) ttsHandlers.delete(token)
+        callListener(handler, [event])
+      })
+    }
+    for (const root of roots) {
+      const tts = namespaceOn(root, 'tts')
+      define(tts, 'speak', function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const [utterance, options] = normalizeArgs(ttsQualified, raw, [
+          { name: 'utterance', type: 'string' },
+          { name: 'options', type: 'object', optional: true }
+        ])
+        let token: string | null = null
+        let sent: unknown = options
+        if (isObject(options)) {
+          const { onEvent, ...rest } = options
+          sent = rest
+          if (isFunction(onEvent)) {
+            ttsTokens += 1
+            token = `${ttsPrefix}:${ttsTokens}`
+            ttsHandlers.set(token, onEvent)
+            relayEvents()
+          }
+        }
+        const work = invoke('tts', 'speak', [utterance, sent, token]).then(
+          () => undefined,
+          (error: unknown) => {
+            if (token) ttsHandlers.delete(token)
+            throw error
+          }
+        )
+        return settle(ttsQualified, work, callback)
+      })
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // identity: `getRedirectURL` returns synchronously in Chrome (extensions splice it straight
+  // into an authorization URL), so it is computed here from the extension's own id
+  // ---------------------------------------------------------------------------
+
+  if (spec.identity && namespaceAllowed('identity', spec.identity)) {
+    const ownId: string =
+      safely(() => String(chrome.runtime.id)) ??
+      /^chrome-extension:\/\/([^/]+)\//.exec(extensionUrl)?.[1] ??
+      ''
+    for (const root of roots) {
+      define(namespaceOn(root, 'identity'), 'getRedirectURL', function (path?: unknown): string {
+        if (path !== undefined && path !== null && typeof path !== 'string') {
+          throw new TypeError(
+            "Error in invocation of identity.getRedirectURL(optional string path): Error at parameter 'path': Invalid type: expected string."
+          )
+        }
+        const suffix = typeof path === 'string' ? path.replace(/^\/+/, '') : ''
+        return `https://${ownId}.chromiumapp.org/${suffix}`
       })
     }
   }
@@ -1312,6 +1441,14 @@ export function installExtensionApi(
       return
     }
     if (namespace === 'contextMenus' && event === 'onClicked') menuClicked(args)
+    if (namespace === 'downloads' && event === 'onDeterminingFilename') {
+      determineFilename(args)
+      return
+    }
+    if (namespace === 'omnibox' && event === 'onInputChanged') {
+      omniboxInputChanged(args)
+      return
+    }
     const names =
       namespace === 'action'
         ? [`action.${event}`, `browserAction.${event}`]
