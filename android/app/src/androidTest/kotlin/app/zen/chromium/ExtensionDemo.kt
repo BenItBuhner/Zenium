@@ -373,7 +373,7 @@ class ExtensionDemo {
         // as a tab on install, and `executeScript` targets the active tab.
         showTab(probeTab)
         results.put("extensionTabPages", extensionTabPages())
-        val probePopupReady = popupDemo(PROBE_ID, "03-probe-popup", 20_000, { view -> tabEval(view, "document.title") == "probe-popup-ready" }) { view ->
+        val probePopupReady = popupDemo(PROBE_ID, "03-probe-popup", 45_000, { view -> tabEval(view, "document.title") == "probe-popup-ready" }) { view ->
             val report = json(tabEval(view, "JSON.stringify(window.__popupReport || null)"))
             results.put("probePopup", report)
             val steps = report.optJSONObject("steps") ?: JSONObject()
@@ -383,7 +383,7 @@ class ExtensionDemo {
         if (!probePopupReady) stage(PROBE_ID, "popup", "FAIL", "popup never reported ready")
 
         // 4. Dark Reader's popup.
-        val darkPopup = popupDemo(DARK_READER, "04-dark-reader-popup", 15_000, { view -> tabEval(view, "String(document.body && document.body.innerText.length > 40)") == "true" }) { view ->
+        val darkPopup = popupDemo(DARK_READER, "04-dark-reader-popup", 45_000, { view -> tabEval(view, "String(document.body && document.body.innerText.length > 40)") == "true" }) { view ->
             val text = tabEval(view, "document.body.innerText.slice(0, 300)")
             results.put("darkReaderPopupText", text)
             stage(DARK_READER, "popup", "PASS", text.take(120))
@@ -427,7 +427,7 @@ class ExtensionDemo {
             },
             "decisions ${verdicts.entries.joinToString { "${it.key}=${it.value}" }}, control=${ads.optString("control")}/$control, page saw ${trackerUrls.keys.count { ads.optString(it) == "error" }} onerror"
         )
-        val ubolPopup = popupDemo(UBOL, "06-ubol-popup", 15_000, { view -> tabEval(view, "String(document.body && document.body.innerText.length > 20)") == "true" }) { view ->
+        val ubolPopup = popupDemo(UBOL, "06-ubol-popup", 45_000, { view -> tabEval(view, "String(document.body && document.body.innerText.length > 20)") == "true" }) { view ->
             stage(UBOL, "popup", "PASS", tabEval(view, "document.body.innerText.slice(0, 200)").take(120))
         }
         if (!ubolPopup) stage(UBOL, "popup", "FAIL", "popup document stayed empty")
@@ -435,7 +435,7 @@ class ExtensionDemo {
         // 6. Stylus: the popup for the probe page (no styles installed: the empty state).
         showTab(probeTab)
         SystemClock.sleep(900)
-        val stylusPopup = popupDemo(STYLUS, "07-stylus-popup", 15_000, { view -> tabEval(view, "String(document.body && document.body.innerText.length > 20)") == "true" }) { view ->
+        val stylusPopup = popupDemo(STYLUS, "07-stylus-popup", 45_000, { view -> tabEval(view, "String(document.body && document.body.innerText.length > 20)") == "true" }) { view ->
             stage(STYLUS, "popup", "PASS", tabEval(view, "document.body.innerText.slice(0, 200)").take(120))
         }
         if (!stylusPopup) stage(STYLUS, "popup", "FAIL", "popup document stayed empty")
@@ -631,7 +631,10 @@ class ExtensionDemo {
     /**
      * Open an extension's popup through the core, wait for `ready`, screenshot, hand the live
      * WebView to `use` (the sheet is dismissed – and its WebView destroyed – right after), and
-     * report whether the popup became ready at all.
+     * report whether the popup became ready at all. The callers' 45 s is for the emulator's
+     * software renderer, not the popups: measured on WebView 156 under swangle, uBlock Origin
+     * Lite's popup had its text (123 characters) when the sheet was read after a 15 s wait had
+     * given up on it; a popup that is ready sooner costs nothing of the wait.
      */
     private fun popupDemo(id: String, shotName: String, timeoutMs: Long, ready: (WebView) -> Boolean, use: (WebView) -> Unit): Boolean {
         chromeInvoke("extension.openPopup", """{"id":${JSONObject.quote(id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
@@ -836,7 +839,7 @@ class ExtensionDemo {
         report.put("containerId", state().optJSONObject("tabs")?.optJSONObject(tab)?.optString("containerId"))
         report.put("cssWhileDisallowed", tabEval(view, PROBE_CSS))
         var verdict = "FAIL"
-        val bg = backgroundView(PROBE_ID)
+        val bg = probeBackground()
         if (bg == null) {
             report.put("error", "no probe background")
         } else {
@@ -887,7 +890,7 @@ class ExtensionDemo {
         }
         SystemClock.sleep(1_000)
         var verdict = "FAIL"
-        val bg = backgroundView(PROBE_ID)
+        val bg = probeBackground()
         if (bg == null) {
             report.put("error", "no probe background")
         } else {
@@ -987,7 +990,7 @@ class ExtensionDemo {
         }
         chromeInvoke("extension.closePopup", null)
         SystemClock.sleep(900)
-        val bg = backgroundView(PROBE_ID)
+        val bg = probeBackground()
         if (bg != null) {
             tabEval(bg, "(function(){window.__opt=null;chrome.storage.local.get(['greeting'],function(i){window.__opt=JSON.stringify(i||{})})})()")
             val raw = waitFor(8_000, 200) { val v = tabEval(bg, "window.__opt"); if (v == "null") null else v }
@@ -1015,7 +1018,7 @@ class ExtensionDemo {
      */
     private fun contextMenu(probeView: TabWebView) {
         val report = JSONObject()
-        val bg = backgroundView(PROBE_ID)
+        val bg = probeBackground()
         report.put("registered", bg?.let { json(tabEval(it, "JSON.stringify({items: report.menuItems, clicks: report.menuClicks})")) } ?: JSONObject.NULL)
         val clicksBefore = report.optJSONObject("registered")?.optJSONArray("clicks")?.length() ?: 0
         val link = json(
@@ -1063,22 +1066,23 @@ class ExtensionDemo {
                 tap(target.first, target.second)
                 tappedAt = SystemClock.uptimeMillis()
                 picked = "tap"
-                clicked = waitFor(12_000, 250) { menuClick(bg, clicksBefore) }
+                clicked = waitFor(20_000, 250) { menuClick(bg, clicksBefore) }
             }
             if (clicked == null) {
                 val row = pickMenuItem(MENU_LINK_LABEL)
                 when {
                     row -> {
                         picked = "$picked, then a click in the document"
-                        clicked = waitFor(6_000, 250) { menuClick(bg, clicksBefore) }
+                        clicked = waitFor(20_000, 250) { menuClick(bg, clicksBefore) }
                     }
                     target != null -> {
                         // No row left: the tap took the menu down, and its click is still on its
                         // way through a stalled main thread (measured on WebView 156 under the
                         // emulator's swangle renderer: the sheet closed 6.3 s after the tap, one
-                        // app frame every 1.3–3.5 s). Only the tap's click can arrive now.
+                        // app frame every 1.3–3.5 s, and a click of the document's row reached
+                        // the background 8 s later). Only the tap's click can arrive now.
                         picked = "tap (late)"
-                        clicked = waitFor(12_000, 250) { menuClick(bg, clicksBefore) }
+                        clicked = waitFor(20_000, 250) { menuClick(bg, clicksBefore) }
                     }
                     else -> picked = "$picked, then no row left to click"
                 }
@@ -1134,7 +1138,7 @@ class ExtensionDemo {
             ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE)
             SystemClock.sleep(800)
         }
-        val bg = backgroundView(PROBE_ID)
+        val bg = probeBackground()
         var events = waitFor(8_000, 300) {
             val list = bg?.let { json(tabEval(it, "JSON.stringify({list: report.notificationEvents})")) }?.optJSONArray("list")
             if (list != null && list.length() > 0) list else null
@@ -1177,7 +1181,7 @@ class ExtensionDemo {
      */
     private fun authSheet() {
         val report = JSONObject()
-        val bg = backgroundView(PROBE_ID)
+        val bg = probeBackground()
         if (bg == null) {
             stage(PROBE_ID, "identity", "FAIL", "no probe background")
             return
@@ -1359,34 +1363,55 @@ class ExtensionDemo {
      */
     private fun webNavigation() {
         showTab(probeTab)
-        val probeView = waitForView(probeTab)
-        val before = w22("navigation").optInt("count")
-        tabEval(probeView, "location.hash = '#w22'")
-        SystemClock.sleep(1_200)
-        tabEval(probeView, "history.pushState({}, '', location.pathname + '?w22=1')")
-        SystemClock.sleep(1_200)
-        val all = w22("navigation").optJSONArray("list") ?: JSONArray()
-        val entries = (0 until all.length()).map { all.getJSONObject(it) }
         val report = JSONObject()
         report.put("navigationListener", NavigationReports.supported)
+        val phases = listOf("onBeforeNavigate", "onCommitted", "onDOMContentLoaded", "onCompleted")
+        fun probeMainFrame(list: List<JSONObject>) = list.filter {
+            it.optString("url").startsWith("$BASE/probe.html") && it.optInt("frameId", -1) == 0 && !it.optString("event").endsWith(":filtered")
+        }
+        fun recorded(): List<JSONObject> {
+            val all = w22("navigation").optJSONArray("list") ?: JSONArray()
+            return (0 until all.length()).map { all.getJSONObject(it) }
+        }
+        // One full load of the probe page, made here: the stage used to read whatever load an
+        // earlier stage had left in the worker's array, and the worker restarts at the
+        // `lateInjection` stage (its `report` fresh) and idles out between slow stages, so on
+        // one run the array held no probe load at all. The reload's `tabs.onUpdated` and the
+        // content script's ping wake an idled worker; the derived events are held until it is
+        // ready and arrive in order.
+        val loadFrom = recorded().size
+        chromeInvoke("tab.reload", """{"tabId":${JSONObject.quote(probeTab)}}""")
+        SystemClock.sleep(400)
+        val probeView = waitForView(probeTab)
+        waitFor(30_000) { if (tabEval(probeView, "document.readyState") == "complete") true else null }
+        val loaded = waitFor(20_000, 500) {
+            val events = probeMainFrame(recorded().drop(loadFrom)).map { it.optString("event") }
+            if (events.windowed(4).any { it == phases }) true else null
+        } == true
+        report.put("loadRecorded", loaded)
+        val before = recorded().size
+        tabEval(probeView, "location.hash = '#w22'")
+        waitFor(10_000, 300) { if (recorded().drop(before).any { it.optString("event") == "onReferenceFragmentUpdated" }) true else null }
+        tabEval(probeView, "history.pushState({}, '', location.pathname + '?w22=1')")
+        waitFor(10_000, 300) { if (recorded().drop(before).any { it.optString("event") == "onHistoryStateUpdated" }) true else null }
+        // WebView finishes a hash change too (`onPageFinished`), and Chrome reports no load for
+        // it: anything the inferred path might still add comes within a settle.
+        SystemClock.sleep(1_500)
+        val entries = recorded()
         report.put("count", entries.size)
-        report.put("tail", JSONArray(entries.takeLast(24)))
+        report.put("tail", JSONArray(entries.drop(loadFrom).takeLast(24)))
         // What the two same-document moves produced on the probe page: the fragment event, the
-        // history event, and nothing else (WebView finishes a hash change too; Chrome reports
-        // no load for it).
+        // history event, and nothing else.
         val sameDocument = entries.drop(before).filter { it.optString("url").startsWith("$BASE/probe.html") }
         val fragment = sameDocument.any { it.optString("event") == "onReferenceFragmentUpdated" && it.optString("url").endsWith("#w22") }
         val pushed = sameDocument.any { it.optString("event") == "onHistoryStateUpdated" && it.optString("url").contains("w22=1") }
         val sameDocumentOnly = sameDocument.all { it.optString("event") in listOf("onReferenceFragmentUpdated", "onHistoryStateUpdated") }
         report.put("sameDocumentOnly", sameDocumentOnly)
-        // The phases of one probe page load, in order, for the same tab. The filtered listener's
+        // The phases of the stage's load, in order, for the same tab. The filtered listener's
         // copy of `onCommitted` is recorded alongside and graded on its own below.
-        val probeLoads = entries.filter {
-            it.optString("url").startsWith("$BASE/probe.html") && it.optInt("frameId", -1) == 0 && !it.optString("event").endsWith(":filtered")
-        }
-        val phases = listOf("onBeforeNavigate", "onCommitted", "onDOMContentLoaded", "onCompleted")
+        val probeLoads = probeMainFrame(entries.drop(loadFrom))
         val orderedLoad = probeLoads.map { it.optString("event") }.windowed(4).any { it == phases }
-        val filtered = entries.filter { it.optString("event") == "onCommitted:filtered" }
+        val filtered = entries.drop(loadFrom).filter { it.optString("event") == "onCommitted:filtered" }
         val filterRight = filtered.isNotEmpty() && filtered.all { it.optString("url").startsWith("$BASE/probe.html") }
         val transitions = probeLoads.filter { it.optString("event") == "onCommitted" }.map { it.optString("transitionType") }.distinct()
         report.put("orderedLoad", orderedLoad).put("fragment", fragment).put("pushState", pushed).put("filteredCount", filtered.size).put("filterRight", filterRight).put("transitions", JSONArray(transitions))
@@ -1405,7 +1430,7 @@ class ExtensionDemo {
 
     /** Run a W2-2 stage in the probe's background (`window.__w22`) and wait for its JSON result. */
     private fun w22(name: String, args: String = "{}", timeoutMs: Long = 20_000): JSONObject {
-        val bg = backgroundView(PROBE_ID) ?: return JSONObject().put("error", "no probe background")
+        val bg = probeBackground() ?: return JSONObject().put("error", "no probe background")
         tabEval(bg, "window.__w22(${JSONObject.quote(name)}, $args)")
         return waitFor(timeoutMs, 250) { w22Result(bg) } ?: JSONObject().put("error", "never settled")
     }
@@ -1453,14 +1478,23 @@ class ExtensionDemo {
      * The centre of the menu row labelled `label` once the sheet has come to rest: the row the
      * accessibility tree reports (screen bounds from the WebView itself), else the document's
      * rectangle, unchanged over three readings 300 ms apart and on the screen. Null when the row
-     * never stood still on screen within the wait, or is gone.
+     * never stood still on screen within the wait, or is gone: three readings in a row without it
+     * (one missed reading is a stalled main thread, not a closed menu; measured on WebView 156
+     * under the emulator's swangle renderer, where an `evaluateJavascript` waited past its 10 s).
      */
     private fun settledMenuItemPoint(label: String): Pair<Float, Float>? {
         var last: Pair<Float, Float>? = null
         var still = 0
-        val deadline = SystemClock.uptimeMillis() + 8_000
+        var missed = 0
+        val deadline = SystemClock.uptimeMillis() + 20_000
         while (SystemClock.uptimeMillis() < deadline) {
-            val point = findByLabel(label)?.let { it.exactCenterX() to it.exactCenterY() } ?: menuItemPoint(label) ?: return null
+            val point = findByLabel(label)?.let { it.exactCenterX() to it.exactCenterY() } ?: menuItemPoint(label)
+            if (point == null) {
+                if (++missed >= 3) return null
+                SystemClock.sleep(300)
+                continue
+            }
+            missed = 0
             val onScreen = point.first in 0f..(width - 1).toFloat() && point.second in 0f..(height - 1).toFloat()
             still = if (last != null && abs(point.first - last.first) < 0.5f && abs(point.second - last.second) < 0.5f) still + 1 else 0
             if (onScreen && still >= 2) return point
@@ -1734,6 +1768,30 @@ class ExtensionDemo {
         var v: ExtensionWebView? = null
         instrumentation.runOnMainSync { v = host.extensions.backgroundView(id) }
         return v
+    }
+
+    /**
+     * The probe's background view, woken when its MV3 worker has idled out: the lifecycle stops
+     * a worker 30 s after its last bridge traffic, as Chrome does, and a stage that follows a slow
+     * one finds it gone (measured on WebView 156 under the emulator's swangle renderer: the
+     * private tab of the `privateTabs` stage, hidden from the probe while disallowed, took over
+     * 30 s to load and the stage found no background). The wake is a `tabs.onUpdated` the probe
+     * listens for, raised by a title change of the probe tab (`onReceivedTitle` → the runtime's
+     * `onUpdated {title}`); a stopped worker is started for an event it has a listener for and
+     * the event is held until it is ready. The title is put back once the worker is up. Null when
+     * it never came up; `results.backgroundWakes` counts the wakes.
+     */
+    private fun probeBackground(timeoutMs: Long = 20_000): ExtensionWebView? {
+        backgroundView(PROBE_ID)?.let { return it }
+        val view = runCatching { waitForView(probeTab) }.getOrNull() ?: return null
+        val title = tabEval(view, "(function(){var t=document.title;document.title=t+' \\u00b7 wake';return t})()")
+        val woken = waitFor(timeoutMs, 300) { backgroundView(PROBE_ID) }
+        tabEval(view, "document.title=${JSONObject.quote(title)}")
+        if (woken == null) return null
+        // The worker's `report` is fresh: its startup registers the listeners and the menu items.
+        waitFor(10_000, 250) { if (tabEval(woken, "String(typeof report === 'object' && report.menuItems !== null)") == "true") true else null }
+        results.put("backgroundWakes", results.optInt("backgroundWakes") + 1)
+        return woken
     }
 
     private fun decisions(): List<String> {
