@@ -2016,6 +2016,8 @@ export class Browser {
           platform.downloads.startFileDrag?.(item, win)
       },
       'download.openFolder': () => platform.downloads.openDownloadsFolder?.(),
+      'download.contextMenu': ({ id, x, y, keyboard }, win) =>
+        this.menus.showDownloadContextMenu(id, { x, y, keyboard }, win),
 
       'find.start': ({ tabId, text, forward, newSession }, win) => {
         const view = tabs.view(tabId)

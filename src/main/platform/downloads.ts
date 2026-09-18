@@ -15,7 +15,7 @@ import { PARTIAL_SUFFIX, finalName as stripPartial } from '../../shared/download
 import type { DownloadHost } from '../../core/platform'
 import type { DownloadService } from '../../core/downloads'
 import type { ZenWindow } from '../../core/window'
-import type { AppIconId } from '../../shared/appIcon'
+import { APP_ICON_DEFAULT, type AppIconId } from '../../shared/appIcon'
 import { openDownloadsFolder, startFileDrag } from './downloadsShell'
 import { uniquePath } from './uniquePath'
 
@@ -136,7 +136,7 @@ export class ElectronDownloads implements DownloadHost {
   constructor(
     private readonly settings: () => ElectronDownloadSettings,
     /** The app icon a dragged-out file falls back to when the OS has none for its type. */
-    private readonly appIcon: () => AppIconId
+    private readonly appIcon: () => AppIconId = () => APP_ICON_DEFAULT
   ) {
     setDownloadDirectoryProvider(() => this.settings().directory)
   }

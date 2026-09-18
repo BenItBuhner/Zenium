@@ -41,6 +41,11 @@ export interface DownloadsEngine {
   dragOut: IdCommand
   /** Desktop UI plumbing: the downloads folder in the file manager. */
   openFolder(): void
+  /**
+   * The row's context menu (downloads-11), built by the core from the record's state; at the
+   * pointer, or at `x, y` with `keyboard` when the menu key or Shift+F10 opened it.
+   */
+  contextMenu(id: string, at?: { x: number; y: number; keyboard?: boolean }): void
 }
 
 export const downloadsEngine: DownloadsEngine = {
@@ -59,7 +64,8 @@ export const downloadsEngine: DownloadsEngine = {
   chooseDirectory: () => cmd('download.chooseDirectory', undefined),
   openPanel: (activeTabId) => void openOverlay('downloads', activeTabId),
   dragOut: (id) => run('download.dragOut', { id }),
-  openFolder: () => run('download.openFolder', undefined)
+  openFolder: () => run('download.openFolder', undefined),
+  contextMenu: (id, at) => run('download.contextMenu', { id, ...at })
 }
 
 /** A row shows Keep / Discard instead of its actions while the engine holds its file back. */

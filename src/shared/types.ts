@@ -2376,6 +2376,7 @@ export interface MenuDescriptor {
     | 'app'
     | 'bookmark'
     | 'history'
+    | 'download'
     | 'urlbar'
   /** Anchor in chrome CSS pixels, when known. */
   x: number | null
@@ -2850,6 +2851,14 @@ export interface Commands {
   'download.dragOut': { args: { id: string }; result: void }
   /** Desktop UI plumbing: open the folder downloads are saved to in the file manager. */
   'download.openFolder': { args: void; result: void }
+  /**
+   * A row's context menu (Open, Show in folder, Copy download link, Pause / Resume / Cancel /
+   * Retry, Remove from list), at the pointer or at `x, y` when opened from the keyboard.
+   */
+  'download.contextMenu': {
+    args: { id: string; x?: number; y?: number; keyboard?: boolean }
+    result: void
+  }
 
   'find.start': {
     /** `newSession` starts a fresh search for `text`; otherwise steps to the next/previous match. */

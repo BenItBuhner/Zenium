@@ -1202,6 +1202,124 @@ describe('menu helpers', () => {
   })
 })
 
+describe('the download row menu', () => {
+  const start = (h: Harness, url = 'https://example.com/report.pdf'): string =>
+    h.browser.downloads.begin({
+      url,
+      filename: 'report.pdf',
+      totalBytes: 100,
+      mimeType: 'application/pdf'
+    }).id
+
+  const menu = (h: Harness, id: string): string[] => {
+    h.browser.handleCommand(h.win, 'download.contextMenu', { id })
+    return labels(h.shown())
+  }
+
+  const enabled = (h: Harness, label: string): boolean | undefined =>
+    h.shown().find((item) => item.label === label)?.enabled
+
+  it('offers Pause and Cancel while the transfer runs, with Open greyed', () => {
+    const h = harness(DESKTOP)
+    const id = start(h)
+    expect(menu(h, id)).toEqual([
+      'Open',
+      'Show in Folder',
+      '-',
+      'Copy Download Link',
+      '-',
+      'Pause',
+      'Cancel',
+      '-',
+      'Remove from List'
+    ])
+    expect(enabled(h, 'Open')).toBe(false)
+    expect(enabled(h, 'Show in Folder')).toBe(false)
+    expect(enabled(h, 'Remove from List')).toBe(false)
+  })
+
+  it('swaps Pause for Resume once paused', () => {
+    const h = harness(DESKTOP)
+    const id = start(h)
+    h.browser.downloads.progress(id, { state: 'paused' })
+    expect(menu(h, id)).toContain('Resume')
+    expect(menu(h, id)).not.toContain('Pause')
+    expect(menu(h, id)).toContain('Cancel')
+  })
+
+  it('offers Retry for a failed or cancelled transfer and Remove from List', () => {
+    const h = harness(DESKTOP)
+    const failed = start(h)
+    h.browser.downloads.finish(failed, 'interrupted')
+    expect(menu(h, failed)).toEqual([
+      'Open',
+      'Show in Folder',
+      '-',
+      'Copy Download Link',
+      '-',
+      'Retry',
+      '-',
+      'Remove from List'
+    ])
+    expect(enabled(h, 'Remove from List')).toBe(true)
+    const cancelled = start(h)
+    h.browser.downloads.finish(cancelled, 'cancelled')
+    expect(menu(h, cancelled)).toContain('Retry')
+  })
+
+  it('prefers Resume over Retry when the failed transfer can continue', () => {
+    const h = harness(DESKTOP)
+    const id = start(h)
+    h.browser.downloads.progress(id, { state: 'interrupted', canResume: true })
+    const shown = menu(h, id)
+    expect(shown).toContain('Resume')
+    expect(shown).not.toContain('Retry')
+  })
+
+  it('has no Retry for a blob: download – the page object is gone', () => {
+    const h = harness(DESKTOP)
+    const id = start(h, 'blob:https://example.com/0b1')
+    h.browser.downloads.finish(id, 'cancelled')
+    expect(menu(h, id)).toEqual([
+      'Open',
+      'Show in Folder',
+      '-',
+      'Copy Download Link',
+      '-',
+      'Remove from List'
+    ])
+  })
+
+  it('opens and reveals a finished file, and copies its link', async () => {
+    const h = harness(DESKTOP)
+    const id = h.browser.downloads.addCompleted('/tmp/shot.png', 'image/png').id
+    expect(menu(h, id)).toEqual([
+      'Open',
+      'Show in Folder',
+      '-',
+      'Copy Download Link',
+      '-',
+      'Remove from List'
+    ])
+    expect(enabled(h, 'Open')).toBe(true)
+    expect(enabled(h, 'Show in Folder')).toBe(true)
+    let copied = ''
+    h.browser.platform.clipboard.writeText = (text: string) => void (copied = text)
+    h.shown()
+      .find((item) => item.label === 'Copy Download Link')
+      ?.click?.()
+    await settle()
+    expect(copied).toBe('file:///tmp/shot.png')
+  })
+
+  it('shows nothing for an unknown record', () => {
+    const h = harness(DESKTOP)
+    const before = h.popups()
+    h.browser.handleCommand(h.win, 'download.contextMenu', { id: 'dl-missing' })
+    expect(h.popups()).toBe(before)
+  })
+})
+
 describe('navigationWindow', () => {
   it('lists a short stack whole', () => {
     expect(navigationWindow(4, 2, NAVIGATION_MENU_MAX)).toEqual({ start: 0, end: 4 })

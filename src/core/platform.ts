@@ -726,6 +726,7 @@ export type MenuSource =
   | 'app'
   | 'bookmark'
   | 'history'
+  | 'download'
   | 'urlbar'
 
 export interface MenuPopupOptions {
