@@ -314,7 +314,10 @@ describe('page dialogs', () => {
     // Leaving changes nothing here: the navigation that follows writes the new page itself.
     f.browser.tabs.navigate(tab.id, 'https://example.org/next')
     const go = fake.events.onLeaveSite(false)
-    f.browser.pageDialogs.respond(f.browser.pageDialogs.list()[0].id, { accepted: true, value: null })
+    f.browser.pageDialogs.respond(f.browser.pageDialogs.list()[0].id, {
+      accepted: true,
+      value: null
+    })
     await expect(go).resolves.toBe(true)
     expect(f.browser.tabs.tab(tab.id)?.url).toBe('https://example.org/next')
   })
