@@ -8,7 +8,7 @@ import {
   VISUAL_SEARCH_AVAILABLE,
   VOICE_SEARCH_AVAILABLE,
   newTabSections
-} from '@shared/newtab'
+} from '@shared/newTabPhone'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { topSites, type TopSite } from '@renderer/lib/historyAdapter'
@@ -41,7 +41,7 @@ interface Props {
  * the space's colours – or a picked image under a legibility scrim – behind it all.
  */
 export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
-  const settings = state.settings.newTab
+  const settings = state.settings.newTabPhone
   const sections = newTabSections(settings)
   const growPhase = newTabGrowStore.use((s) => s.phase)
   const image = wallpaperImageStore.use()
@@ -168,7 +168,7 @@ function SearchField({ tab }: { tab: Tab }): JSX.Element {
  * history is empty.
  */
 function TopSites({ state, tab }: { state: UIState; tab: Tab }): JSX.Element | null {
-  const { pinned, hiddenHosts, shortcutStyle } = state.settings.newTab
+  const { pinned, hiddenHosts, shortcutStyle } = state.settings.newTabPhone
   const [ranked, setRanked] = useState<TopSite[] | null>(null)
   const hiddenKey = hiddenHosts.join('\n')
 
@@ -235,7 +235,7 @@ function TopSites({ state, tab }: { state: UIState; tab: Tab }): JSX.Element | n
 function TopSiteTile({ site, tabId }: { site: TopSiteTile; tabId: string }): JSX.Element {
   const label = tileLabel(site.title, site.url)
   const hold = useLongPress(() =>
-    run('newtab.tileContextMenu', { url: site.url, title: site.title })
+    run('newTabPhone.tileContextMenu', { url: site.url, title: site.title })
   )
   return (
     <button

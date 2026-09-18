@@ -1341,7 +1341,7 @@ export interface NewTabPinnedSite {
   title: string
 }
 
-export interface NewTabSettings {
+export interface NewTabPhoneSettings {
   preset: NewTabPreset
   /** Sections the `custom` preset shows; the named presets ignore them. */
   modules: NewTabModules
@@ -1449,7 +1449,7 @@ export interface Settings {
   /** Safe Browsing, HTTPS-only, secure DNS, cookies, GPC / DNT (Settings → Privacy and security). */
   privacy: PrivacySettings
   /** The phone's new tab page (preset, sections, wallpaper, pinned and removed sites). */
-  newTab: NewTabSettings
+  newTabPhone: NewTabPhoneSettings
 }
 
 // ---------------------------------------------------------------------------
@@ -2501,11 +2501,11 @@ export interface Commands {
   'folder.contextMenu': { args: { folderId: string }; result: void }
   'newtab.contextMenu': { args: void; result: void }
   /** Long-press on a new tab page tile: pin / unpin, remove, open in a new tab. */
-  'newtab.tileContextMenu': { args: { url: string; title: string }; result: void }
+  'newTabPhone.tileContextMenu': { args: { url: string; title: string }; result: void }
   /** The picked new tab wallpaper image as a data URL (null when none was picked). */
-  'newtab.wallpaper': { args: void; result: string | null }
+  'newTabPhone.wallpaper': { args: void; result: string | null }
   /** Store (or with null, forget) the picked wallpaper image; the settings pick when it shows. */
-  'newtab.setWallpaper': { args: { dataUrl: string | null }; result: void }
+  'newTabPhone.setWallpaper': { args: { dataUrl: string | null }; result: void }
   /**
    * The "⋯" application menu. `anchor` is the menu button in chrome CSS pixels: the menu opens
    * along its bottom edge; without it the menu opens at the pointer. `keyboard` marks a menu

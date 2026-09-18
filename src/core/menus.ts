@@ -1223,8 +1223,8 @@ export class Menus {
   /** Long-press on a new tab page tile: open it elsewhere, pin it, or take it off the page. */
   showTopSiteContextMenu(url: string, title: string, win: ZenWindow): void {
     if (!isNavigableUrl(url)) return
-    const { tabs, state, newTab } = this.browser
-    const pinned = state.settings.newTab.pinned.some((p) => p.url === url)
+    const { tabs, state, newTabPhone } = this.browser
+    const pinned = state.settings.newTabPhone.pinned.some((p) => p.url === url)
     this.popup(
       [
         {
@@ -1238,9 +1238,9 @@ export class Menus {
         { type: 'separator' },
         {
           label: pinned ? 'Unpin Shortcut' : 'Pin Shortcut',
-          click: () => (pinned ? newTab.unpin(url) : newTab.pin(url, title))
+          click: () => (pinned ? newTabPhone.unpin(url) : newTabPhone.pin(url, title))
         },
-        { label: 'Remove', click: () => newTab.remove(url) }
+        { label: 'Remove', click: () => newTabPhone.remove(url) }
       ],
       win,
       'topsite'

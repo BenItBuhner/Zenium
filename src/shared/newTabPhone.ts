@@ -6,13 +6,13 @@ import type {
   NewTabModules,
   NewTabPinnedSite,
   NewTabPreset,
-  NewTabSettings,
+  NewTabPhoneSettings,
   NewTabShortcutStyle,
   NewTabWallpaper
 } from './types'
 
 /** Zen-quiet by default: the search field and the tiles on the bare space gradient. */
-export const DEFAULT_NEW_TAB_SETTINGS: NewTabSettings = {
+export const DEFAULT_NEW_TAB_PHONE_SETTINGS: NewTabPhoneSettings = {
   preset: 'focused',
   modules: { searchBox: true, shortcuts: true, wallpaper: false, feed: false },
   shortcutStyle: 'most-visited',
@@ -88,10 +88,10 @@ function bool(value: unknown, fallback: boolean): boolean {
 }
 
 /** Fill in missing fields and drop values that are not ours. */
-export function sanitizeNewTabSettings(
-  raw: Partial<NewTabSettings> | undefined | null
-): NewTabSettings {
-  const d = DEFAULT_NEW_TAB_SETTINGS
+export function sanitizeNewTabPhoneSettings(
+  raw: Partial<NewTabPhoneSettings> | undefined | null
+): NewTabPhoneSettings {
+  const d = DEFAULT_NEW_TAB_PHONE_SETTINGS
   const r = raw ?? {}
   const m = (r.modules && typeof r.modules === 'object' ? r.modules : {}) as Partial<NewTabModules>
   return {
@@ -121,7 +121,7 @@ const PRESET_SECTIONS: Record<Exclude<NewTabPreset, 'custom'>, NewTabSections> =
  * gives the same page; the feed is only ever drawn once a feed core exists, whatever the
  * preset or the toggles say.
  */
-export function newTabSections(settings: NewTabSettings): NewTabSections {
+export function newTabSections(settings: NewTabPhoneSettings): NewTabSections {
   const sections =
     settings.preset === 'custom' ? settings.modules : PRESET_SECTIONS[settings.preset]
   return { ...sections, feed: sections.feed && FEED_AVAILABLE }
@@ -132,10 +132,10 @@ export function newTabSections(settings: NewTabSettings): NewTabSections {
  * showed, so the page only changes in the one thing that was toggled.
  */
 export function toggleNewTabModule(
-  settings: NewTabSettings,
+  settings: NewTabPhoneSettings,
   module: keyof NewTabModules,
   enabled: boolean
-): NewTabSettings {
+): NewTabPhoneSettings {
   const modules: NewTabModules = { ...newTabSections(settings), [module]: enabled }
   return { ...settings, preset: 'custom', modules }
 }
@@ -144,7 +144,10 @@ export function toggleNewTabModule(
  * Picking a preset: the named ones simply apply; `custom` starts from the sections of the preset
  * the user is leaving, so the switch itself changes nothing on the page.
  */
-export function pickNewTabPreset(settings: NewTabSettings, preset: NewTabPreset): NewTabSettings {
+export function pickNewTabPreset(
+  settings: NewTabPhoneSettings,
+  preset: NewTabPreset
+): NewTabPhoneSettings {
   if (preset === 'custom' && settings.preset !== 'custom') {
     return { ...settings, preset, modules: newTabSections(settings) }
   }
@@ -165,7 +168,10 @@ export function siteHost(url: string): string {
   }
 }
 
-export function pinSite(settings: NewTabSettings, site: NewTabPinnedSite): NewTabSettings {
+export function pinSite(
+  settings: NewTabPhoneSettings,
+  site: NewTabPinnedSite
+): NewTabPhoneSettings {
   if (settings.pinned.some((p) => p.url === site.url)) return settings
   const host = siteHost(site.url)
   return {
@@ -176,12 +182,12 @@ export function pinSite(settings: NewTabSettings, site: NewTabPinnedSite): NewTa
   }
 }
 
-export function unpinSite(settings: NewTabSettings, url: string): NewTabSettings {
+export function unpinSite(settings: NewTabPhoneSettings, url: string): NewTabPhoneSettings {
   return { ...settings, pinned: settings.pinned.filter((p) => p.url !== url) }
 }
 
 /** Remove a tile: its pin goes and its host stays out of the most-visited tiles. */
-export function removeSite(settings: NewTabSettings, url: string): NewTabSettings {
+export function removeSite(settings: NewTabPhoneSettings, url: string): NewTabPhoneSettings {
   const host = siteHost(url)
   return {
     ...settings,

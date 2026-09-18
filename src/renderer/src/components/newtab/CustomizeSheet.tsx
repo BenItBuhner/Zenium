@@ -4,7 +4,7 @@ import { Loader2, SlidersHorizontal } from 'lucide-react'
 import type {
   NewTabModules,
   NewTabPreset,
-  NewTabSettings,
+  NewTabPhoneSettings,
   NewTabShortcutStyle,
   NewTabWallpaper,
   UIState
@@ -17,7 +17,7 @@ import {
   presetAvailable,
   toggleNewTabModule,
   type NewTabSections
-} from '@shared/newtab'
+} from '@shared/newTabPhone'
 import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import {
@@ -80,7 +80,7 @@ export function NewTabCustomizeLayer(): JSX.Element | null {
  * gear that opened it once it is gone (§9.24).
  */
 function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
-  const settings = state.settings.newTab
+  const settings = state.settings.newTabPhone
   const sections = newTabSections(settings)
   const image = wallpaperImageStore.use()
   const sheet = useRef<BottomSheetHandle>(null)
@@ -103,7 +103,7 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
   useEscape(dismiss)
   useReturnFocus()
 
-  const update = (next: NewTabSettings): void => run('settings.update', { newTab: next })
+  const update = (next: NewTabPhoneSettings): void => run('settings.update', { newTabPhone: next })
 
   const pickWallpaper = (wallpaper: NewTabWallpaper): void => {
     // "Image" without one picked yet asks for the picture first; the pick turns the source over.

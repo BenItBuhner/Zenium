@@ -55,7 +55,7 @@ import { TranslateService } from './translate/service'
 import { PageControls } from './pageControls'
 import { FindMemory } from './find'
 import { FullscreenService } from './fullscreen'
-import { NewTabService } from './newtab'
+import { NewTabPhoneService } from './newTabPhone'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
@@ -101,7 +101,7 @@ import { sanitizePromoState } from '../shared/defaultBrowser'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizePrivacySettings } from '../shared/privacy'
-import { sanitizeNewTabSettings } from '../shared/newtab'
+import { sanitizeNewTabPhoneSettings } from '../shared/newTabPhone'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 import { JsonStore } from './store/JsonStore'
 
@@ -206,7 +206,7 @@ export class Browser {
   /** Fullscreen hints (F11, a page's element) and the Esc hold that leaves the window's fullscreen. */
   readonly fullscreen: FullscreenService
   /** The new tab page's pins, removals and wallpaper. */
-  readonly newTab: NewTabService
+  readonly newTabPhone: NewTabPhoneService
   readonly windows = new Map<string, ZenWindow>()
   /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
@@ -305,7 +305,7 @@ export class Browser {
     this.protection = new ProtectionService(this)
     this.translate = new TranslateService(this)
     this.privacy = new PrivacyService(this)
-    this.newTab = new NewTabService(this)
+    this.newTabPhone = new NewTabPhoneService(this)
     this.state.extras = (win) => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -1386,7 +1386,7 @@ export class Browser {
     this.passwords.flushSync()
     this.blocking.flushSync()
     this.translate.flushSync()
-    this.newTab.flushSync()
+    this.newTabPhone.flushSync()
   }
 
   private syncShortcuts(): void {
@@ -1769,10 +1769,10 @@ export class Browser {
       'folder.delete': ({ folderId, unpack }) => this.deleteFolder(folderId, unpack),
       'folder.contextMenu': ({ folderId }, win) => this.menus.showFolderContextMenu(folderId, win),
       'newtab.contextMenu': (_a, win) => this.menus.showNewTabContextMenu(win),
-      'newtab.tileContextMenu': ({ url, title }, win) =>
+      'newTabPhone.tileContextMenu': ({ url, title }, win) =>
         this.menus.showTopSiteContextMenu(url, title, win),
-      'newtab.wallpaper': () => this.newTab.wallpaperImage(),
-      'newtab.setWallpaper': ({ dataUrl }) => this.newTab.setWallpaperImage(dataUrl),
+      'newTabPhone.wallpaper': () => this.newTabPhone.wallpaperImage(),
+      'newTabPhone.setWallpaper': ({ dataUrl }) => this.newTabPhone.setWallpaperImage(dataUrl),
       'app.menu': ({ anchor, keyboard }, win) =>
         this.menus.showAppMenu(win, { anchor, keyboard: Boolean(keyboard) }),
       'focus.content': (_a, win) => win.focusContent(),
@@ -2249,10 +2249,10 @@ export class Browser {
           ...s.privacy,
           ...(value as Partial<Settings['privacy']>)
         })
-      } else if (key === 'newTab' && value && typeof value === 'object') {
-        s.newTab = sanitizeNewTabSettings({
-          ...s.newTab,
-          ...(value as Partial<Settings['newTab']>)
+      } else if (key === 'newTabPhone' && value && typeof value === 'object') {
+        s.newTabPhone = sanitizeNewTabPhoneSettings({
+          ...s.newTabPhone,
+          ...(value as Partial<Settings['newTabPhone']>)
         })
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value

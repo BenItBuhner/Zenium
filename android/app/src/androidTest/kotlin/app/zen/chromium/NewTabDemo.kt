@@ -38,7 +38,7 @@ import java.io.FileInputStream
  *  - the predictive back gesture on the sheet: held, the sheet follows the finger; let go, it is
  *    dismissed.
  *
- * The picture behind the Image source is written through `newtab.setWallpaper` in the warm-up –
+ * The picture behind the Image source is written through `newTabPhone.setWallpaper` in the warm-up –
  * the system's file picker is not driven – and the source is set back to the space's colours so
  * the recording shows the change. Gesture navigation is turned on for the run, since the
  * predictive back is an edge swipe. The seeded profile has HTTPS-only mode off: on (`ask`, the
@@ -116,7 +116,7 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
         val ranked = coreInvoke("history.topSites", "{\"n\":8}")
         finding("history.topSites after the visits: ${summarise(ranked)}")
 
-        coreInvoke("newtab.setWallpaper", "{\"dataUrl\":${JSONObject.quote(wallpaperDataUrl())}}")
+        coreInvoke("newTabPhone.setWallpaper", "{\"dataUrl\":${JSONObject.quote(wallpaperDataUrl())}}")
         updateNewTab { it.put("wallpaper", "space") }
         finding("wallpaper picture stored (${newTabSettings()})")
 
@@ -473,7 +473,7 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
         settle()
     }
 
-    private fun newTabSettingsJson(): JSONObject = coreState().getJSONObject("settings").getJSONObject("newTab")
+    private fun newTabSettingsJson(): JSONObject = coreState().getJSONObject("settings").getJSONObject("newTabPhone")
 
     private fun newTabSetting(key: String): String = newTabSettingsJson().optString(key)
 
@@ -483,7 +483,7 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
     private fun updateNewTab(edit: (JSONObject) -> Unit) {
         val next = newTabSettingsJson()
         edit(next)
-        coreInvoke("settings.update", "{\"newTab\":$next}")
+        coreInvoke("settings.update", "{\"newTabPhone\":$next}")
     }
 
     private fun summarise(topSites: String): String = runCatching {

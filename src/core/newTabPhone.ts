@@ -1,5 +1,5 @@
-import type { NewTabSettings } from '../shared/types'
-import { pinSite, removeSite, sanitizeNewTabSettings, unpinSite } from '../shared/newtab'
+import type { NewTabPhoneSettings } from '../shared/types'
+import { pinSite, removeSite, sanitizeNewTabPhoneSettings, unpinSite } from '../shared/newTabPhone'
 import { JsonStore } from './store/JsonStore'
 import type { Browser } from './browser'
 
@@ -17,7 +17,7 @@ const MAX_WALLPAPER_BYTES = 6 * 1024 * 1024
  * `Settings.newTab` (small: a preset, a few flags, pinned sites, removed hosts); the picked
  * wallpaper image is kept in its own document so it is never part of a state broadcast.
  */
-export class NewTabService {
+export class NewTabPhoneService {
   private readonly store: JsonStore<Persisted>
   private wallpaper: string | null
 
@@ -59,9 +59,9 @@ export class NewTabService {
     this.update((s) => removeSite(s, url))
   }
 
-  private update(mutate: (settings: NewTabSettings) => NewTabSettings): void {
+  private update(mutate: (settings: NewTabPhoneSettings) => NewTabPhoneSettings): void {
     const { state } = this.browser
-    state.settings.newTab = sanitizeNewTabSettings(mutate(state.settings.newTab))
+    state.settings.newTabPhone = sanitizeNewTabPhoneSettings(mutate(state.settings.newTabPhone))
     state.commit()
   }
 

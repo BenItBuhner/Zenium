@@ -1,33 +1,33 @@
 import { describe, expect, it } from 'vitest'
-import type { NewTabSettings } from '../types'
+import type { NewTabPhoneSettings } from '../types'
 import {
-  DEFAULT_NEW_TAB_SETTINGS,
+  DEFAULT_NEW_TAB_PHONE_SETTINGS,
   MAX_TOP_SITES,
   newTabSections,
   pickNewTabPreset,
   pinSite,
   presetAvailable,
   removeSite,
-  sanitizeNewTabSettings,
+  sanitizeNewTabPhoneSettings,
   siteHost,
   toggleNewTabModule,
   unpinSite
-} from '../newtab'
+} from '../newTabPhone'
 
-const settings = (patch: Partial<NewTabSettings> = {}): NewTabSettings => ({
-  ...structuredClone(DEFAULT_NEW_TAB_SETTINGS),
+const settings = (patch: Partial<NewTabPhoneSettings> = {}): NewTabPhoneSettings => ({
+  ...structuredClone(DEFAULT_NEW_TAB_PHONE_SETTINGS),
   ...patch
 })
 
-describe('sanitizeNewTabSettings', () => {
+describe('sanitizeNewTabPhoneSettings', () => {
   it('fills in the defaults for nothing at all', () => {
-    expect(sanitizeNewTabSettings(undefined)).toEqual(DEFAULT_NEW_TAB_SETTINGS)
-    expect(sanitizeNewTabSettings(null)).toEqual(DEFAULT_NEW_TAB_SETTINGS)
-    expect(sanitizeNewTabSettings({})).toEqual(DEFAULT_NEW_TAB_SETTINGS)
+    expect(sanitizeNewTabPhoneSettings(undefined)).toEqual(DEFAULT_NEW_TAB_PHONE_SETTINGS)
+    expect(sanitizeNewTabPhoneSettings(null)).toEqual(DEFAULT_NEW_TAB_PHONE_SETTINGS)
+    expect(sanitizeNewTabPhoneSettings({})).toEqual(DEFAULT_NEW_TAB_PHONE_SETTINGS)
   })
 
   it('drops values that are not ours and keeps the ones that are', () => {
-    const out = sanitizeNewTabSettings({
+    const out = sanitizeNewTabPhoneSettings({
       preset: 'sparkly' as never,
       shortcutStyle: 'my-shortcuts',
       wallpaper: 'video' as never,
@@ -53,7 +53,7 @@ describe('sanitizeNewTabSettings', () => {
       { url: 'https://b.example' },
       ...Array.from({ length: 12 }, (_, i) => ({ url: `https://s${i}.example`, title: `${i}` }))
     ]
-    const out = sanitizeNewTabSettings({ pinned: pinned as never })
+    const out = sanitizeNewTabPhoneSettings({ pinned: pinned as never })
     expect(out.pinned).toHaveLength(MAX_TOP_SITES)
     expect(out.pinned[0]).toEqual({ url: 'https://a.example', title: 'A' })
     expect(out.pinned[1]).toEqual({ url: 'https://b.example', title: '' })
@@ -61,7 +61,7 @@ describe('sanitizeNewTabSettings', () => {
   })
 
   it('normalises the removed hosts', () => {
-    const out = sanitizeNewTabSettings({
+    const out = sanitizeNewTabPhoneSettings({
       hiddenHosts: ['Example.COM', ' example.com', '', 42 as never, 'other.org']
     })
     expect(out.hiddenHosts).toEqual(['example.com', 'other.org'])

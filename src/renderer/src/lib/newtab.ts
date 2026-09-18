@@ -312,7 +312,7 @@ let wallpaperRequest: Promise<void> | null = null
 /** Fetch the picked wallpaper once; later callers share the answer. */
 export function loadWallpaperImage(): Promise<void> {
   if (wallpaperImageStore.get().loaded) return Promise.resolve()
-  wallpaperRequest ??= cmd('newtab.wallpaper', undefined)
+  wallpaperRequest ??= cmd('newTabPhone.wallpaper', undefined)
     .then((dataUrl) => wallpaperImageStore.set({ loaded: true, dataUrl }))
     .catch(() => wallpaperImageStore.set({ loaded: true, dataUrl: null }))
     .finally(() => {
@@ -323,7 +323,7 @@ export function loadWallpaperImage(): Promise<void> {
 
 /** Store a picked image (or, with null, let it go); the page shows it as soon as it is stored. */
 export async function setWallpaperImage(dataUrl: string | null): Promise<void> {
-  await cmd('newtab.setWallpaper', { dataUrl })
+  await cmd('newTabPhone.setWallpaper', { dataUrl })
   wallpaperImageStore.set({ loaded: true, dataUrl })
 }
 
