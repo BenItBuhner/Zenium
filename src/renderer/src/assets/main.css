@@ -2780,6 +2780,72 @@
 }
 
 /*
+ * Find in page, zoom and fullscreen (the `find` cluster) on design language v2: the docked find
+ * bar, the zoom bubble and the fullscreen hint. They read the token block and nothing else.
+ */
+@layer components {
+  /*
+   * The find bar (§9.21): a panel row of control + 8 under the page, a 320px field with Chrome's
+   * n/m count inside it (13 tabular at 69%), 28px icon buttons at 8. Plain: the hairline above
+   * is the only edge, the miss shows in the count alone.
+   */
+  .zen-find-bar {
+    height: calc(var(--v2-control) + 8px);
+    gap: 8px;
+    padding: 0 8px 0 12px;
+    border-top: 1px solid var(--v2-border);
+    background: var(--v2-panel);
+    color: var(--v2-text);
+  }
+  .zen-find-field {
+    display: flex;
+    width: 320px;
+    max-width: 100%;
+    height: var(--v2-control);
+    align-items: center;
+    padding: 0 12px;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-control);
+  }
+  .zen-find-field:focus-within {
+    outline: 2px solid var(--v2-accent);
+    outline-offset: 0;
+  }
+  .zen-find-field > input {
+    min-width: 0;
+    flex: 1;
+    height: 100%;
+    background: transparent;
+    color: var(--v2-text);
+    font-size: 13px;
+    outline: none;
+  }
+  .zen-find-field > input::placeholder {
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-find-count {
+    flex-shrink: 0;
+    padding-left: 8px;
+    color: var(--v2-text-deemphasized);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .zen-find-field[data-no-match='true'] .zen-find-count {
+    color: var(--v2-danger);
+  }
+  .zen-find-button {
+    border-radius: 6px;
+    color: var(--v2-text);
+  }
+  .zen-find-button:hover:not(:disabled) {
+    background: var(--v2-fill);
+  }
+  .zen-find-button:active:not(:disabled) {
+    background: var(--v2-fill-hover);
+  }
+}
+
+/*
  * Settings → Default Browser and the "Make Zenium your default browser" strip, on design
  * language v2 (docs/design-language-v2-draft.md §1–§3, §9): a flat card with a 1 px border, the
  * shared v2 button above, and rows that grow around their control (§9.21). v1 motion only. They

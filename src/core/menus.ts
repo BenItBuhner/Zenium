@@ -1808,7 +1808,7 @@ export class Menus {
           label: 'Find in Page…',
           action: 'find.open',
           enabled: Boolean(active),
-          click: () => active && this.browser.emit('find.open', { tabId: active.id }, win)
+          click: () => this.browser.actions.run('find.open', { sourceTabId: null, win })
         },
         {
           label: 'Reader View',

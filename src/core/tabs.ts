@@ -1203,6 +1203,7 @@ export class TabManager {
     this.destroyView(tabId)
     this.browser.governor.onTabRemoved(tabId)
     this.browser.agents.onTabRemoved(tabId)
+    this.browser.find.forget(tabId)
     this.browser.liveFolders.onTabLeftFolder(tabId, tab.folderId)
     if (closed) this.browser.session.pushTab(closed)
     for (const { w, s, next } of reselect) {
