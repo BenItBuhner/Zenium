@@ -60,6 +60,8 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/bookmarks/BookmarkManager.tsx',
   // The window prompts' checkbox accent (§9.5 modals, #129).
   'components/dialogs/WindowPromptDialog.tsx',
+  // The external-protocol sheet on the v2 sheet chassis (#140): its deemphasised host line.
+  'components/protocol/ExternalProtocolSheet.tsx',
   // The sidebar's tab count badge, drawn in its surface's family through the §9.29 control roles.
   'components/sidebar/SpacePanel.tsx'
 ]

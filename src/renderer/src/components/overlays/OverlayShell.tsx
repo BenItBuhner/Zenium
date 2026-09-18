@@ -53,8 +53,10 @@ export function OverlayShell({
   const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
   return (
     <div className="absolute inset-0 z-30 flex" onMouseDown={() => closeOverlay()}>
+      {/* A panel is a page surface (design language v2 §9.29): its controls draw in the page family. */}
       <div
         ref={panelRef}
+        data-surface="page"
         style={{ transformOrigin: '50% 100%' }}
         className={cn(
           'zen-panel zen-animate-in flex flex-col overflow-hidden',

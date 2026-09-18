@@ -8,11 +8,12 @@ import { useRowGestures } from './useRowGestures'
 
 /**
  * The phone panels' list vocabulary (design-language v2 draft, sections 5, 6 and 9): a 56 header
- * with a 17/600 title and 44 icon buttons, the selection header that stands in for it, the
- * search field, day and folder headings, and rows of 44 (64 with a description) that grow with
- * their content – swipeable to delete where the list allows it. Styles live under `.zen-list-*`,
- * `.zen-field` and `.zen-swipe` in `phonePanels.css`; the panels' shared behaviour (undoable
- * deletes, the in-panel back step, the header's scrolled line) is in `phonePanel.ts`.
+ * with a 17/600 title and 44 icon buttons at 6 px margins, the selection header that stands in
+ * for it, the search field, day and folder headings, and rows of 44 (64 with a description)
+ * that grow with their content, running edge to edge with their text at the 16 gutter –
+ * swipeable to delete where the list allows it. Styles live under `.zen-list-*`,
+ * `.zen-phone-field` and `.zen-swipe` in `phonePanels.css`; the panels' shared behaviour
+ * (undoable deletes, the in-panel back step, the header's scrolled line) is in `phonePanel.ts`.
  */
 
 /** A 44 icon button (glyph 20, stroke 1.75; the box is sized in `phonePanels.css`). */
@@ -54,10 +55,14 @@ export function PhoneHeader({
   actions?: ReactNode
   onClose: () => void
 }): JSX.Element {
+  // 56 tall (9.16): 44 controls at 6 px margins; the title 8 after a leading control, else at
+  // the 16 gutter.
   return (
-    <header className="flex h-14 shrink-0 items-center gap-1 px-2">
+    <header className="flex h-14 shrink-0 items-center gap-1 px-1.5">
       {leading}
-      <h2 className={cn('zen-phone-title min-w-0 flex-1 truncate', !leading && 'px-3')}>{title}</h2>
+      <h2 className={cn('zen-phone-title min-w-0 flex-1 truncate', leading ? 'pl-1' : 'pl-2.5')}>
+        {title}
+      </h2>
       {actions}
       <PhoneIconButton label="Close" onClick={onClose}>
         <X className="h-5 w-5" strokeWidth={1.75} />
@@ -77,11 +82,11 @@ export function PhoneSelectionHeader({
   onExit: () => void
 }): JSX.Element {
   return (
-    <header className="zen-animate-fade flex h-14 shrink-0 items-center gap-1 px-2">
+    <header className="zen-animate-fade flex h-14 shrink-0 items-center gap-1 px-1.5">
       <PhoneIconButton label="Stop selecting" onClick={onExit}>
         <X className="h-5 w-5" strokeWidth={1.75} />
       </PhoneIconButton>
-      <h2 className="zen-phone-title min-w-0 flex-1 truncate tabular-nums" aria-live="polite">
+      <h2 className="zen-phone-title min-w-0 flex-1 truncate pl-1 tabular-nums" aria-live="polite">
         {count} selected
       </h2>
       {actions}
@@ -90,8 +95,10 @@ export function PhoneSelectionHeader({
 }
 
 /**
- * The search field pinned above a list. It is the bottom of what stays put, so it carries the
- * hairline that appears once the list has scrolled under it (v2 draft 9.7).
+ * The search field pinned above a list, in the 16 gutter with 8 to the list below (the first
+ * heading or row sits 8 under it, 10.2). It is the bottom of what stays put, so it carries the
+ * hairline that appears once the list has scrolled under it (v2 draft 9.7). It never takes the
+ * focus on its own: the keyboard would come up with the panel.
  */
 export function PhoneSearchField({
   value,
@@ -109,9 +116,9 @@ export function PhoneSearchField({
 }): JSX.Element {
   const ref = useRef<HTMLInputElement>(null)
   return (
-    <div className="zen-phone-top shrink-0 px-4 pb-3" data-scrolled={scrolled}>
-      <div className="zen-field">
-        <Search className="zen-field-icon h-4 w-4" strokeWidth={1.75} aria-hidden />
+    <div className="zen-phone-top shrink-0 px-4 pb-2" data-scrolled={scrolled}>
+      <div className="zen-phone-field">
+        <Search className="zen-phone-field-icon h-5 w-5" strokeWidth={1.75} aria-hidden />
         <input
           ref={ref}
           type="search"
@@ -127,14 +134,14 @@ export function PhoneSearchField({
         {value && (
           <button
             type="button"
-            className="zen-field-clear zen-v2-field-clear"
+            className="zen-phone-field-clear zen-v2-field-clear"
             aria-label="Clear search"
             onClick={() => {
               onChange('')
               ref.current?.focus()
             }}
           >
-            <X className="h-4 w-4" />
+            <X className="h-5 w-5" strokeWidth={1.75} />
           </button>
         )}
       </div>
@@ -142,7 +149,7 @@ export function PhoneSearchField({
   )
 }
 
-/** A group's heading (a day, a folder section): a 15/600 sub-heading, sentence case, 20 above. */
+/** A group's heading (a day, a folder section): a 15/600 sub-heading, sentence case, 20 above and 8 to its first row (9.27). */
 export function PhoneGroupHeading({ children }: { children: ReactNode }): JSX.Element {
   return <h3 className="zen-list-heading">{children}</h3>
 }
@@ -165,7 +172,7 @@ export function PhoneEmptyNote({
       {action && (
         <button
           type="button"
-          className="zen-sheet-button zen-v2-sheet-button zen-phone-empty-action"
+          className="zen-v2-button zen-phone-empty-action"
           onClick={action.onSelect}
         >
           {action.label}

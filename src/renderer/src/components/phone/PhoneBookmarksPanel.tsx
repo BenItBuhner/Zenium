@@ -51,6 +51,7 @@ import {
   RowFavicon
 } from './PhoneList'
 import {
+  noteSheetOpener,
   removeWithUndo,
   useBookmarkTree,
   usePanelStep,
@@ -66,7 +67,8 @@ const SEARCH_LIMIT = 200
  * a trailing menu (edit, open in a new tab, copy the link, delete) – with a search field over
  * the whole tree. A long press starts selection mode, whose header replaces the panel's; the
  * back gesture leaves it, then climbs out of folders, then closes the panel. Deletes are
- * undoable from their toast. The editor is the `BookmarkEditSheet` the shell renders.
+ * undoable from their toast. The editor is the `BookmarkEditSheet` that `TabDialogs` mounts in
+ * the frame's dialog host on a phone; the row menus are the shared menu sheet.
  */
 export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element {
   const tree = useBookmarkTree(state)
@@ -194,15 +196,17 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
 
   const edit = (node: BookmarkNode): void => editBookmark(node.id)
 
-  // Menu items are Title Case (v2 draft 9.1), like the core's rows in the same sheet.
+  // Menu items are Title Case (v2 draft 9.1) and read as the core's bookmark menus do (#119:
+  // "Edit…" and "Rename…" open a sheet, "Open All (N)" counts what a folder opens).
   const rowMenu = (node: BookmarkNode): void => {
+    noteSheetOpener()
     const urlCount = tree.urlsUnder(node.id).length
     const items: Array<LocalMenuItem | typeof MENU_GAP> =
       node.type === 'folder'
         ? [
-            { label: 'Rename', onSelect: () => edit(node) },
+            { label: 'Rename…', onSelect: () => edit(node) },
             {
-              label: 'Open All in New Tabs',
+              label: `Open All (${urlCount})`,
               enabled: urlCount > 0,
               onSelect: () => openInNewTabs([node.id])
             },
@@ -210,7 +214,7 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
             { label: 'Delete', danger: true, onSelect: () => remove([node.id]) }
           ]
         : [
-            { label: 'Edit', onSelect: () => edit(node) },
+            { label: 'Edit…', onSelect: () => edit(node) },
             { label: 'Open in New Tab', onSelect: () => openInNewTabs([node.id]) },
             { label: 'Copy Link', onSelect: () => copyLinks([node.id]) },
             // The system share sheet, where the host has one (`app.share`, capabilities.share).
@@ -237,7 +241,7 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
       'selection',
       [
         {
-          label: urlCount === 1 ? 'Open in New Tab' : 'Open in New Tabs',
+          label: urlCount === 1 ? 'Open in New Tab' : `Open All (${urlCount})`,
           enabled: urlCount > 0,
           onSelect: () => openInNewTabs(ids)
         },
@@ -247,7 +251,11 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
           onSelect: () => copyLinks(ids)
         },
         MENU_GAP,
-        { label: 'Delete', danger: true, onSelect: () => remove(ids) }
+        {
+          label: ids.length === 1 ? 'Delete' : `Delete ${ids.length} Items`,
+          danger: true,
+          onSelect: () => remove(ids)
+        }
       ],
       tab?.id ?? null,
       { title: `${ids.length} selected` }
@@ -316,7 +324,7 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
         placeholder="Search bookmarks"
         scrolled={listScrolled}
       />
-      <div ref={attachList} className="zen-phone-list min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      <div ref={attachList} className="zen-phone-list min-h-0 flex-1 overflow-y-auto pb-2">
         {rows.length === 0 ? (
           searching ? (
             <PhoneEmptyNote>No matching bookmarks</PhoneEmptyNote>

@@ -327,6 +327,10 @@
 .zen-v2-button[data-primary]:active:not(:disabled) {
   background: color-mix(in srgb, var(--v2-on-accent) 30%, var(--v2-accent));
 }
+/* `data-danger`: the secondary in the danger ink (§6) – a sheet's Delete beside its Save. */
+.zen-v2-button[data-danger] {
+  color: var(--v2-danger);
+}
 
 /* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME); zero on desktop. */
 :root {
