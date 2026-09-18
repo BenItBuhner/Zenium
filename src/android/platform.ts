@@ -853,7 +853,9 @@ export class AndroidPlatform implements Platform {
         return
       }
       case 'openUrl':
-        browser.openExternalUrl((payload as HostEventPayloads['openUrl']).url, this.window)
+        browser.openExternalUrl((payload as HostEventPayloads['openUrl']).url, this.window, {
+          fromIntent: true
+        })
         return
       case 'intent':
         browser.openSharedIntent(payload as HostEventPayloads['intent'], this.window)

@@ -225,7 +225,7 @@ function installHostGlobal(bridge: Bridge, platformRef: { current: AndroidPlatfo
       dispatchPullEvent(tabId, phase as PullEventPhase, parse<PullEventPayload | null>(json)),
     openUrl: (url) => {
       const platform = platformRef.current
-      platform?.browser.openExternalUrl(url, platform.window)
+      platform?.browser.openExternalUrl(url, platform.window, { fromIntent: true })
     }
   }
   ;(window as unknown as { __zenHost: HostGlobal }).__zenHost = host
