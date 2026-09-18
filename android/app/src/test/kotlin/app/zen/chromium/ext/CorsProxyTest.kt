@@ -31,6 +31,7 @@ class CorsProxyTest {
     private val proxy = CorsProxy(jar) { "Zenium/test" }
 
     private class FakeCookies : CorsProxy.Cookies {
+        override var intercepts = false
         var cookieHeader: String? = null
         val asked = ArrayList<String>()
         val stored = ArrayList<Pair<String, String>>()
@@ -240,6 +241,28 @@ class CorsProxyTest {
             ?: throw AssertionError("answered")
         assertEquals(listOf(url("/cookie") to "sid=1; Path=/"), jar.stored)
         assertNull(withCredentials.header("Set-Cookie"))
+        assertTrue("nothing for the WebView to store when it does not intercept cookies", withCredentials.cookies.isEmpty())
+    }
+
+    @Test
+    fun `with COOKIE_INTERCEPT the response's cookies ride in the reply for the WebView to store, except after a redirect`() {
+        jar.intercepts = true
+        val anonymous = proxy.handle(request("GET", "/cookie"), id, origin) ?: throw AssertionError("answered")
+        assertTrue("an uncredentialed fetch ignores Set-Cookie either way", anonymous.cookies.isEmpty())
+        val withCredentials = proxy.handle(request("GET", "/cookie", CREDENTIALS_HEADER to "include"), id, origin)
+            ?: throw AssertionError("answered")
+        assertEquals(listOf("sid=1; Path=/"), withCredentials.cookies)
+        assertTrue("the jar is the WebView's to write", jar.stored.isEmpty())
+        assertNull(withCredentials.header("Set-Cookie"))
+
+        // The WebView files a response's cookies under the URL it asked for; the ones of a redirect
+        // the proxy followed belong to where it landed, so those go through the jar.
+        server.route("/to-cookie") { Response(302, headers = mapOf("Location" to "/cookie")) }
+        val redirected = proxy.handle(request("GET", "/to-cookie", CREDENTIALS_HEADER to "include"), id, origin)
+            ?: throw AssertionError("answered")
+        assertEquals(200, redirected.status)
+        assertTrue(redirected.cookies.isEmpty())
+        assertEquals(listOf(url("/cookie") to "sid=1; Path=/"), jar.stored)
     }
 
     @Test

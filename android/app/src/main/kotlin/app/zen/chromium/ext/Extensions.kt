@@ -15,6 +15,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.ScriptHandler
+import androidx.webkit.WebResourceResponseCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import app.zen.chromium.Host
@@ -191,9 +192,22 @@ class Extensions(private val host: Host) {
     private val pendingNotificationEvents = HashMap<String, ArrayDeque<JSONObject>>()
     /** The notification permission is asked for once per process, on the first card (Android 13+). */
     private var askedNotifications = false
-    /** Cross-origin fetches of extension pages to permitted hosts (see [CorsProxy]). */
+    /**
+     * Whether the WebView stores the cookies of an intercepted response handed over through
+     * `WebResourceResponseCompat.setCookies` (`COOKIE_INTERCEPT`, Chromium 137+); read once, and
+     * defensively, as [NavigationReports] reads its features.
+     */
+    val cookieIntercept: Boolean by lazy {
+        runCatching { WebViewFeature.isFeatureSupported(WebViewFeature.COOKIE_INTERCEPT) }.getOrDefault(false)
+    }
+    /**
+     * Cross-origin fetches of extension pages to permitted hosts (see [CorsProxy]). A credentialed
+     * response's `Set-Cookie` reaches the WebView's jar as the response's cookies where the WebView
+     * files those itself, through `CookieManager` otherwise.
+     */
     private val corsProxy = CorsProxy(
         object : CorsProxy.Cookies {
+            override val intercepts: Boolean get() = cookieIntercept
             override fun header(url: String): String? = CookieManager.getInstance().getCookie(url)
             override fun store(url: String, setCookie: String) = CookieManager.getInstance().setCookie(url, setCookie)
         }
@@ -1055,7 +1069,14 @@ class Extensions(private val host: Host) {
                     // A 3xx the proxy could not follow cannot be a WebResourceResponse; the WebView tries itself.
                     if (reply != null && reply.status !in 300..399) {
                         if (debug) recordProxy(id, proxied, reply.status)
-                        return WebResourceResponse(reply.mime, reply.charset, reply.status, reply.reason, reply.headers, reply.body)
+                        if (reply.cookies.isEmpty()) {
+                            return WebResourceResponse(reply.mime, reply.charset, reply.status, reply.reason, reply.headers, reply.body)
+                        }
+                        // COOKIE_INTERCEPT: the WebView stores the response's cookies itself (it drops a
+                        // plain Set-Cookie header of an intercepted response).
+                        return WebResourceResponseCompat(reply.mime, reply.charset, reply.status, reply.reason, reply.headers, reply.body)
+                            .apply { setCookies(reply.cookies) }
+                            .toWebResourceResponse()
                     }
                 }
             }

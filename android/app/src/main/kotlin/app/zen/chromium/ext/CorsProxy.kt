@@ -23,13 +23,22 @@ import java.util.Locale
  * [PROXY_HEADER] of the request ([putBody] / [takeBody]); the interceptor waits briefly for a body
  * that is still in flight. Credentials follow the fetch: the bootstrap marks `credentials:
  * "include"` and `withCredentials` requests with [CREDENTIALS_HEADER], and only those carry the
- * WebView's cookies for the URL and store the `Set-Cookie` the response brings.
+ * WebView's cookies for the URL and keep the `Set-Cookie` the response brings. The WebView drops
+ * the `Set-Cookie` of an intercepted response; one with `COOKIE_INTERCEPT` (Chromium 137+) stores
+ * the lines handed to it as the response's cookies ([Reply.cookies], which the caller passes on
+ * through `WebResourceResponseCompat.setCookies`), an older one leaves it to the jar ([Cookies.store]).
  *
  * Plain JVM: the unit tests run it against a local server. What is Android (the cookie jar, the
  * WebView response object, the user agent) comes in through [Cookies] and the caller.
  */
 class CorsProxy(private val cookies: Cookies, private val userAgent: () -> String?) {
     interface Cookies {
+        /**
+         * Whether the WebView stores the cookies of an intercepted response itself when they are
+         * handed over as such (`WebViewFeature.COOKIE_INTERCEPT`); when false the proxy writes
+         * them into the jar through [store].
+         */
+        val intercepts: Boolean
         /** The `Cookie` header value for `url`, or null when the jar has nothing for it. */
         fun header(url: String): String?
         /** Store one `Set-Cookie` value the response to `url` carried. */
@@ -47,7 +56,9 @@ class CorsProxy(private val cookies: Cookies, private val userAgent: () -> Strin
         val mime: String,
         val charset: String?,
         val headers: Map<String, String>,
-        val body: InputStream
+        val body: InputStream,
+        /** `Set-Cookie` lines of a credentialed response for the WebView to store ([Cookies.intercepts]); else empty. */
+        val cookies: List<String> = emptyList()
     )
 
     private class Body(val bytes: ByteArray, val at: Long)
@@ -153,22 +164,33 @@ class CorsProxy(private val cookies: Cookies, private val userAgent: () -> Strin
                 connection.disconnect()
                 continue
             }
-            return reply(connection, status, url, extensionOrigin, credentials)
+            return reply(connection, status, url, extensionOrigin, credentials, redirected = url != request.url)
         }
     }
 
-    private fun reply(connection: HttpURLConnection, status: Int, url: String, extensionOrigin: String, credentials: Boolean): Reply {
+    private fun reply(
+        connection: HttpURLConnection,
+        status: Int,
+        url: String,
+        extensionOrigin: String,
+        credentials: Boolean,
+        redirected: Boolean
+    ): Reply {
         val stream = (if (status >= 400) connection.errorStream else connection.inputStream) ?: ByteArrayInputStream(ByteArray(0))
         val contentType = connection.contentType ?: "application/octet-stream"
         val mime = contentType.substringBefore(';').trim().ifEmpty { "application/octet-stream" }
         val charset = contentType.substringAfter("charset=", "").substringBefore(';').trim().ifEmpty { null }
         val headers = LinkedHashMap<String, String>()
         val exposed = ArrayList<String>()
+        // The WebView files a response's cookies under the URL it asked for; after a redirect the
+        // proxy followed they belong to the final URL, which only the jar can be told.
+        val handOver = cookies.intercepts && !redirected
+        val forWebView = ArrayList<String>()
         for ((name, values) in connection.headerFields) {
             if (name == null || values.isNullOrEmpty()) continue
             val lower = name.lowercase(Locale.ROOT)
             if (lower == "set-cookie" || lower == "set-cookie2") {
-                if (credentials) for (value in values) cookies.store(url, value)
+                if (credentials) for (value in values) if (handOver) forWebView.add(value) else cookies.store(url, value)
                 continue
             }
             if (DROPPED_RESPONSE_HEADERS.contains(lower)) continue
@@ -189,7 +211,7 @@ class CorsProxy(private val cookies: Cookies, private val userAgent: () -> Strin
                 }
             }
         }
-        return Reply(status, reason, mime, charset, headers, body)
+        return Reply(status, reason, mime, charset, headers, body, forWebView)
     }
 
     companion object {

@@ -1207,6 +1207,7 @@ class ExtensionDemo {
         var log: List<String> = emptyList()
         instrumentation.runOnMainSync { log = synchronized(host.extensions.proxied) { host.extensions.proxied.toList() } }
         val report = JSONObject().put("probe", probe).put("proxied", JSONArray(log.takeLast(40)))
+            .put("cookieIntercept", host.extensions.cookieIntercept)
         val probeOk = probe.optInt("status") == 200 && probe.optString("body").contains("{") && probe.optInt("xhrStatus") == 200
         val postSeen = probe.has("postStatus")
         stage(
