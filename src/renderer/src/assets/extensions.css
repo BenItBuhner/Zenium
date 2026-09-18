@@ -1139,16 +1139,10 @@
    * icon at 16, the title 17/600, the source as its description – then what it can do as 32
    * rows with a glyph, and two buttons, the primary last. The title block and the footer stay
    * put; between them the body scrolls when the frame is short (§9.7's hairline on the title).
-   * It sits in the frame dialog host (lib/portals.tsx), 16 inside the frame at the least.
-   *
-   * `position: relative` is a local fix for the host: its scrim is a positioned sibling that
-   * comes before the dialogs in the DOM, so once the pop animation's transform is gone a
-   * dialog with no stacking context of its own paints under the scrim (dimmed, and the scrim
-   * takes its pointer). A dialog that is positioned paints after the scrim in tree order. The
-   * host's own `.zen-frame-dialogs > *` rule is where this belongs; until it has it, here.
+   * It sits in the frame dialog host (lib/portals.tsx), which paints it above its scrim, 16
+   * inside the frame at the least.
    */
   .zen-ext-dialog {
-    position: relative;
     display: flex;
     flex-direction: column;
     width: 400px;

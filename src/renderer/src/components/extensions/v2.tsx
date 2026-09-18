@@ -242,7 +242,6 @@ export function V2TitleBlock({
   description,
   glyph,
   scrolled,
-  surface,
   className
 }: {
   id?: string
@@ -251,16 +250,10 @@ export function V2TitleBlock({
   /** A 16 glyph (an icon, an extension's own) at the title's start. */
   glyph?: ReactNode
   scrolled?: boolean
-  /** Set when the block is itself the surface root (a sheet's header), §9.29. */
-  surface?: 'page'
   className?: string
 }): JSX.Element {
   return (
-    <div
-      className={cn('zen-v2-title-block', className)}
-      data-surface={surface}
-      data-scrolled={scrolled || undefined}
-    >
+    <div className={cn('zen-v2-title-block', className)} data-scrolled={scrolled || undefined}>
       <h2 id={id} className="zen-v2-title-block-title">
         {glyph}
         <span className="min-w-0 flex-1">{title}</span>

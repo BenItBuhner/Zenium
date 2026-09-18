@@ -120,11 +120,12 @@ function PromptBody({
 }
 
 /**
- * The desktop dialog: its panel in flow in the frame dialog host, which centres it and takes
- * the pointer over the frame; a press on the host's scrim answers no. Focus lands on the
+ * The desktop dialog: its panel in flow in the frame dialog host, which centres it above its
+ * scrim, takes the pointer over the frame, makes the window chrome inert (§9.5) and closes the
+ * popover that is open when it appears; a press on the scrim answers no. Focus lands on the
  * accepting button, as Firefox's install prompt has it; Tab wraps inside; nothing in the chrome
- * opened it, so there is no control to return focus to (§9.22). A modal, not a popover: it
- * closes the popover open when it appears, a resize re-centres rather than closes it, and a
+ * opened it, so there is no control to return focus to (§9.22). A modal, not a popover: it is
+ * not in the layer's popover registry, so a resize re-centres rather than closes it and a
  * popover opening later does not dismiss it.
  */
 function PanelPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Element {
@@ -134,8 +135,6 @@ function PanelPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
   useFrameDialog({ onScrimPress: () => answer(false) })
   usePopover(ref, {
     onClose: () => answer(false),
-    anchored: false,
-    claim: false,
     initial: (root) => root.querySelector<HTMLElement>('[data-accept]'),
     returnTo: null
   })
@@ -186,13 +185,12 @@ function SheetPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
         copy.subtitle ? (
           <V2TitleBlock
             className="zen-v2"
-            surface="page"
             title={copy.title}
             description={copy.subtitle}
             glyph={glyph}
           />
         ) : (
-          <div className="zen-v2 zen-v2-sheet-title" data-surface="page">
+          <div className="zen-v2 zen-v2-sheet-title">
             {glyph}
             <span className="min-w-0">{copy.title}</span>
           </div>
@@ -206,7 +204,7 @@ function SheetPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
         }
       }}
     >
-      <div className="zen-v2 zen-ext-dialog" data-surface="page">
+      <div className="zen-v2 zen-ext-dialog">
         <PromptBody prompt={prompt} onAnswer={answer} />
       </div>
     </BottomSheet>
