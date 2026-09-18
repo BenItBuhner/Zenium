@@ -12,10 +12,6 @@ name: Android zoom sheet demo
 # android-emulator-demo.yml; this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  # TEMPORARY: the authorised run from this branch (dispatch needs the workflow on main); removed
-  # once it has run.
-  push:
-    branches: [cursor/android-zoom-sheet-a814]
 
 permissions:
   contents: read
