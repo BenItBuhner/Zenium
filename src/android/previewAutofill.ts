@@ -161,7 +161,9 @@ export async function stageAutofill(
       return
     }
     case 'manager-locked':
-      // The vault as the preview starts it: locked, so the section shows its gate.
+      // The vault as the preview starts it – locked, so the section shows its gate – which an
+      // earlier state's unlock must not have undone.
+      browser.passwords.lock()
       await openOverlay('settings', tabId, null, null, 'autofill')
       return
     case 'manager-empty':
