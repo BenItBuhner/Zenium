@@ -38,6 +38,7 @@ import { AgentsSection } from './AgentsSection'
 import { AppIconGroup } from './AppIconPicker'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { DefaultBrowserSection } from './DefaultBrowserSection'
+import { NewTabSection } from './NewTabSection'
 import { OverlayShell } from './OverlayShell'
 import {
   AccessibilitySection,
@@ -55,6 +56,7 @@ export type SettingsSection =
   | 'look'
   | 'accessibility'
   | 'compact'
+  | 'newtab'
   | 'tabs'
   | 'resources'
   | 'search'
@@ -74,6 +76,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'look', label: 'Look and Feel' },
   { id: 'accessibility', label: 'Accessibility' },
   { id: 'compact', label: 'Compact Mode' },
+  { id: 'newtab', label: 'New Tab' },
   { id: 'tabs', label: 'Tab Management' },
   { id: 'resources', label: 'Resources' },
   { id: 'search', label: 'Search' },
@@ -93,6 +96,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
 /** Sections that only make sense on hosts with the matching feature. */
 const SECTION_CAPABILITY: Partial<Record<SettingsSection, keyof HostCapabilities>> = {
   accessibility: 'pageControls',
+  newtab: 'newTabPage',
   resources: 'resourceGovernor',
   extensions: 'extensions',
   agents: 'agents',
@@ -193,6 +197,7 @@ export function SettingsPanel({
             )}
             {section === 'accessibility' && <AccessibilitySection state={state} set={set} />}
             {section === 'compact' && <CompactSection s={s} set={set} />}
+            {section === 'newtab' && <NewTabSection state={state} set={set} />}
             {section === 'tabs' && (
               <TabsSection s={s} set={set} windows={state.capabilities.windows} />
             )}

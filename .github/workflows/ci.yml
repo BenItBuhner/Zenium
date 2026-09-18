@@ -76,7 +76,7 @@ jobs:
         # Exercises the electron-builder configuration without producing installers;
         # the release workflow builds the real packages for every platform.
         run: npx electron-builder --linux --dir --publish never
-      - name: Display tools (Xvfb; ffmpeg grabs the screenshots; xdotool drives the sign-in smoke's gesture)
+      - name: Display tools (Xvfb; ffmpeg grabs the screenshots; xdotool drives the real clicks of both smokes)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends xvfb ffmpeg x11-utils xdotool
@@ -86,8 +86,11 @@ jobs:
         # is not setuid and ubuntu-latest denies unprivileged user namespaces. Every profile lives
         # under a temporary XDG_CONFIG_HOME; the scenarios, their screenshots and result.json land
         # in smoke-out/unpacked. boot and restore run on every platform; the crash pair (a killed
-        # run, then "Restore pages?") and the Chrome-preset shortcut walkthrough run here only.
-        # Known bugs are named through .github/smoke/known-failures.json.
+        # run, then "Restore pages?") and the Chrome-preset shortcut walkthrough run here only –
+        # the walkthrough ends with a pop-up opened by a real xdotool click on a button inside a
+        # cross-origin iframe of a local fixture (the #142 regressions: the frame's gesture must
+        # reach the pop-up blocker and the pop-up's page must run the page preload). Known bugs
+        # are named through .github/smoke/known-failures.json.
         run: >
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label unpacked

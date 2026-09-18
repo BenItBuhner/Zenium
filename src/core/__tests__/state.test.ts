@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform } from '../../shared/types'
+import { DEFAULT_SETTINGS } from '../../shared/defaults'
 import type { StoreIO } from '../platform'
-import { BrowserState } from '../state'
+import { BrowserState, PERSISTED_VERSION, sanitizeNewTabShortcuts, type Persisted } from '../state'
 import { createSpace, createTabRecord } from '../model'
 import { closedTabEntry } from '../session'
 
-function fakeIo(): StoreIO & { writes: string[] } {
+function fakeIo(initial: string | null = null): StoreIO & { writes: string[] } {
   const io = {
     writes: [] as string[],
-    readSync: () => null,
+    readSync: () => initial,
     write: async (_name: string, text: string) => {
       io.writes.push(text)
     },
@@ -159,7 +160,7 @@ describe('recently closed persistence', () => {
       version: number
       recentlyClosed: unknown[]
     }
-    expect(written.version).toBe(3)
+    expect(written.version).toBe(PERSISTED_VERSION)
     expect(written.recentlyClosed).toHaveLength(1)
     const reloaded = stateFrom(written).s
     expect(reloaded.recentlyClosed).toHaveLength(1)
@@ -242,5 +243,113 @@ describe('forgetSession', () => {
     expect(s.model.essentialTabIds).toEqual([essential])
     expect(s.restoredWindows).toHaveLength(1)
     expect(s.restoredWindows[0].selection).toEqual({})
+  })
+})
+
+// ---------------------------------------------------------------------------
+// New tab page persistence (state.json v4)
+// ---------------------------------------------------------------------------
+
+/** A minimal profile as an older build wrote it (`version` picks the schema). */
+function legacyProfile(version: 1 | 2 | 3 | 4, extra: Partial<Persisted> = {}): string {
+  const base: Persisted = {
+    version,
+    spaces: [],
+    tabs: [],
+    essentialTabIds: [],
+    activeSpaceId: 'space_1',
+    containers: [],
+    folders: [],
+    splitGroups: [],
+    settings: structuredClone(DEFAULT_SETTINGS),
+    shortcutOverrides: {},
+    bookmarks: [],
+    ...extra
+  }
+  return JSON.stringify(base)
+}
+
+describe('state.json v4 (new tab page)', () => {
+  it('writes the current schema version with the shortcuts list and the block list', async () => {
+    const io = fakeIo()
+    const s = state(io)
+    s.newTabShortcuts = [{ id: 'sc_1', title: 'Zen', url: 'https://zen-browser.app/' }]
+    s.newTabHiddenHosts = ['news.example']
+    await s.flush()
+    const written = JSON.parse(io.writes.at(-1) ?? '{}') as Persisted
+    expect(written.version).toBe(PERSISTED_VERSION)
+    expect(written.version).toBe(4)
+    expect(written.newTabShortcuts).toEqual([
+      { id: 'sc_1', title: 'Zen', url: 'https://zen-browser.app/' }
+    ])
+    expect(written.newTabHiddenHosts).toEqual(['news.example'])
+    expect(written.settings.newTab).toEqual(DEFAULT_SETTINGS.newTab)
+  })
+
+  it('migrates a v2 profile: no shortcuts, default new tab settings', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS) as Partial<typeof DEFAULT_SETTINGS>
+    delete settings.newTab
+    const s = state(fakeIo(legacyProfile(2, { settings: settings as typeof DEFAULT_SETTINGS })))
+    expect(s.newTabShortcuts).toEqual([])
+    expect(s.settings.newTab).toEqual(DEFAULT_SETTINGS.newTab)
+  })
+
+  it('migrates a v1 profile the same way', () => {
+    const s = state(fakeIo(legacyProfile(1, { windowBounds: null, maximized: false })))
+    expect(s.newTabShortcuts).toEqual([])
+    expect(s.settings.newTab.enabled).toBe(true)
+  })
+
+  it('migrates a v3 profile (bookmark tree, recently closed) keeping its closed list', () => {
+    const s = state(fakeIo(legacyProfile(3, { bookmarks: undefined, recentlyClosed: [] })))
+    expect(s.newTabShortcuts).toEqual([])
+    expect(s.newTabHiddenHosts).toEqual([])
+    expect(s.recentlyClosed).toEqual([])
+    expect(s.settings.newTab).toEqual(DEFAULT_SETTINGS.newTab)
+  })
+
+  it('ignores stray new tab data in profiles older than v4', () => {
+    const s = state(
+      fakeIo(
+        legacyProfile(3, {
+          newTabShortcuts: [{ id: 'x', title: 'x', url: 'https://x.example/' }],
+          newTabHiddenHosts: ['x.example']
+        })
+      )
+    )
+    expect(s.newTabShortcuts).toEqual([])
+    expect(s.newTabHiddenHosts).toEqual([])
+  })
+
+  it('reads v4 shortcuts and the block list and sanitises the new tab settings', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS)
+    ;(settings.newTab as unknown as Record<string, unknown>).shortcuts = 'bogus'
+    ;(settings.newTab as unknown as Record<string, unknown>).background = 'solid'
+    const s = state(
+      fakeIo(
+        legacyProfile(4, {
+          settings,
+          newTabHiddenHosts: ['WWW.News.Example', 'news.example', '', 7 as unknown as string],
+          newTabShortcuts: [
+            { id: 'a', title: 'A', url: 'https://a.example/' },
+            { id: 'a', title: 'dup', url: 'https://dup.example/' },
+            { id: 'b', title: '  ', url: 'https://b.example/' },
+            { id: '', title: 'no id', url: 'https://c.example/' }
+          ]
+        })
+      )
+    )
+    expect(s.newTabShortcuts).toEqual([
+      { id: 'a', title: 'A', url: 'https://a.example/' },
+      { id: 'b', title: 'https://b.example/', url: 'https://b.example/' }
+    ])
+    expect(s.newTabHiddenHosts).toEqual(['news.example'])
+    expect(s.settings.newTab).toEqual({ ...DEFAULT_SETTINGS.newTab, background: 'solid' })
+  })
+
+  it('sanitizeNewTabShortcuts rejects anything that is not a list of records', () => {
+    expect(sanitizeNewTabShortcuts(undefined)).toEqual([])
+    expect(sanitizeNewTabShortcuts('nope')).toEqual([])
+    expect(sanitizeNewTabShortcuts([null, 4, { id: 'a' }])).toEqual([])
   })
 })

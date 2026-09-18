@@ -1,6 +1,7 @@
 /**
- * `zen://` internal pages. Zen has no new-tab page (the URL bar replaces it), so `zen://blank` is
- * an empty page that picks up the theme; `zen://error` renders navigation failures,
+ * `zen://` internal pages. `zen://newtab` is the new tab page (its document lives in
+ * `newTabPage.ts`; the host's preload fills it), `zen://blank` an empty page that picks up the
+ * theme (new tabs on hosts without the page); `zen://error` renders navigation failures,
  * `zen://reader` shows Reader View articles and `zen://image` an image another app shared in.
  *
  * Pure HTML generation shared by every host: Electron serves these through a privileged protocol,
@@ -18,6 +19,7 @@ import { SAFE_BROWSING_THREAT_LABELS, type SafeBrowsingThreat } from './privacy'
 import { INTERSTITIAL_MESSAGE_KEY, type InterstitialAction } from './interstitial'
 import { isCertificateError } from './siteInfo'
 import { errorPageCertificate } from './url'
+import { newTabPageHtml } from './newTabPage'
 
 export const ZEN_SCHEME = 'zen'
 
@@ -682,6 +684,8 @@ export function zenPageHtml(
   const url = parseZenUrl(rawUrl)
   if (!url) return blankPageHtml()
   switch (url.hostname) {
+    case 'newtab':
+      return newTabPageHtml()
     case 'error':
       return errorPageHtml(url)
     case 'reader':
