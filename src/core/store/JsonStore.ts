@@ -12,15 +12,30 @@ export interface JsonStoreOptions {
 /**
  * Tiny debounced JSON document store. The host's `StoreIO` decides how documents are made durable
  * (Electron writes a temp file and renames it over the target; Android hands the text to Kotlin).
+ *
+ * Writes land in the order they were asked for, whichever way they go: the asynchronous ones run
+ * one after the other, and the synchronous write of a shutdown supersedes every asynchronous one
+ * still waiting its turn and is repeated after one that had already started – which would
+ * otherwise land after it and put its older document back (a graceful quit whose last debounced
+ * write fired just before it left `cleanExit: false` in the profile).
  */
 export class JsonStore<T> {
   private pending: T | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
+  /** The asynchronous writes in order; each starts once the one before it has landed. */
   private writing: Promise<void> = Promise.resolve()
+  /** Asynchronous writes are numbered as they are queued; a synchronous write supersedes them. */
+  private queued = 0
+  private superseded = 0
+  /** Asynchronous writes that have started (their document is being written by the host). */
+  private inFlight = 0
   private readonly debounceMs: number
   private readonly writeOptions: StoreWriteOptions | undefined
   /** Whether the last `readSync` had to fall back to the backup. */
   readFromBackup = false
+
+  /** Every store's asynchronous writes that have not landed yet. */
+  private static readonly active = new Set<Promise<void>>()
 
   constructor(
     private readonly io: StoreIO,
@@ -30,6 +45,20 @@ export class JsonStore<T> {
     const opts = typeof options === 'number' ? { debounceMs: options } : options
     this.debounceMs = opts.debounceMs ?? 400
     this.writeOptions = opts.backup ? { backup: true } : undefined
+  }
+
+  /** Whether any store still has a write in flight (`idle` resolves once none has). */
+  static get busy(): boolean {
+    return JsonStore.active.size > 0
+  }
+
+  /**
+   * Resolves once every store's writes have landed – the asynchronous ones in flight and the
+   * repeat of a synchronous write that followed one of them. Shutdown paths wait for this before
+   * the process goes away, so that the final write is complete and the last one.
+   */
+  static async idle(): Promise<void> {
+    while (JsonStore.active.size > 0) await Promise.allSettled([...JsonStore.active])
   }
 
   /**
@@ -75,27 +104,59 @@ export class JsonStore<T> {
     const data = this.pending
     if (data === null) return
     this.pending = null
-    this.writing = this.writing
-      .then(() => this.io.write(this.name, JSON.stringify(data), this.writeOptions))
-      .catch((error) => {
-        console.error(`[zen] failed writing ${this.name}:`, error)
-      })
+    const seq = ++this.queued
+    this.writing = this.track(
+      this.writing
+        .then(async () => {
+          // A synchronous write landed a newer document while this one waited its turn.
+          if (seq <= this.superseded) return
+          this.inFlight++
+          try {
+            await this.io.write(this.name, JSON.stringify(data), this.writeOptions)
+          } finally {
+            this.inFlight--
+          }
+        })
+        .catch((error) => {
+          console.error(`[zen] failed writing ${this.name}:`, error)
+        })
+    )
     await this.writing
   }
 
-  /** Synchronous flush for shutdown paths where async work may not complete. */
+  /**
+   * Synchronous flush for shutdown paths where async work may not complete. The document written
+   * here is the last one to land: asynchronous writes still queued are dropped, and one that has
+   * already started is followed by a repeat of this write (`idle` covers the repeat).
+   */
   flushSync(): void {
     if (this.timer) {
       clearTimeout(this.timer)
       this.timer = null
     }
     if (this.pending === null) return
-    const data = this.pending
+    const text = JSON.stringify(this.pending)
     this.pending = null
+    this.superseded = this.queued
+    this.writeNow(text)
+    if (this.inFlight > 0) {
+      this.writing = this.track(this.writing.then(() => this.writeNow(text)))
+    }
+  }
+
+  private writeNow(text: string): void {
     try {
-      this.io.writeSync(this.name, JSON.stringify(data), this.writeOptions)
+      this.io.writeSync(this.name, text, this.writeOptions)
     } catch (error) {
       console.error(`[zen] failed writing ${this.name}:`, error)
     }
+  }
+
+  private track(write: Promise<void>): Promise<void> {
+    const tracked: Promise<void> = write.finally(() => {
+      JsonStore.active.delete(tracked)
+    })
+    JsonStore.active.add(tracked)
+    return tracked
   }
 }

@@ -159,6 +159,16 @@ function main(): void {
     setImmediate(() => void b.requestQuit())
   })
 
+  // The windows are closed and the process is about to go: a write of the profile still in
+  // flight (the OS-shutdown paths above quit right after `shutdown`'s synchronous write) lands
+  // first, so the final document is the last one on disk.
+  app.on('will-quit', (event) => {
+    const b = browser
+    if (!b || !b.writing) return
+    event.preventDefault()
+    void b.settled().then(() => app.quit())
+  })
+
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()
   })
