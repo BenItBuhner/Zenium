@@ -231,7 +231,10 @@ function TopSites({ state, tab }: { state: UIState; tab: Tab }): JSX.Element | n
   )
 }
 
-/** A 56 tile at radius 8 with the site's icon and its name beneath; a hold opens the tile's menu. */
+/**
+ * A 56 tile at radius 8 with the site's icon and, 8 below, its name (§9.29's phone sizes; the
+ * look is the shared `zen-ntp-*` rules'); a hold opens the tile's menu.
+ */
 function TopSiteTile({ site, tabId }: { site: TopSiteTile; tabId: string }): JSX.Element {
   const label = tileLabel(site.title, site.url)
   const hold = useLongPress(() =>
@@ -240,7 +243,7 @@ function TopSiteTile({ site, tabId }: { site: TopSiteTile; tabId: string }): JSX
   return (
     <button
       type="button"
-      className="zen-v2-shortcut flex w-full min-w-0 flex-col items-center gap-1.5"
+      className="zen-v2-shortcut flex w-full min-w-0 flex-col items-center gap-2"
       aria-label={label}
       {...hold.handlers}
       onClick={() => {
@@ -258,7 +261,8 @@ function TopSiteTile({ site, tabId }: { site: TopSiteTile; tabId: string }): JSX
 
 /**
  * The site's icon at 24, fading in once it has loaded; a letter in the deemphasised ink when the
- * site has none (or it failed), and the globe when there is no letter to show either.
+ * site has none (or it failed), and the globe when there is no letter to show either (the
+ * fallbacks' type and ink are the shared `zen-ntp-*` rules', the desktop page's too).
  */
 function TileIcon({ favicon, label }: { favicon: string | null; label: string }): JSX.Element {
   const [loaded, setLoaded] = useState(false)
@@ -279,12 +283,9 @@ function TileIcon({ favicon, label }: { favicon: string | null; label: string })
     )
   }
   const letter = label.trim().charAt(0).toUpperCase()
-  if (!letter) return <Globe className="h-6 w-6 opacity-60" strokeWidth={1.5} />
+  if (!letter) return <Globe className="h-6 w-6" strokeWidth={1.5} />
   return (
-    <span
-      className="zen-ntp-letter flex h-6 w-6 items-center justify-center text-[13px] font-semibold leading-none"
-      aria-hidden
-    >
+    <span className="zen-ntp-letter flex h-6 w-6 items-center justify-center" aria-hidden>
       {letter}
     </span>
   )

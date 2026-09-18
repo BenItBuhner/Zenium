@@ -3019,32 +3019,103 @@
   .zen-v2-image-radio:active:not(:disabled) .zen-v2-image-radio-picture {
     transform: scale(0.98);
   }
-  /* The layout presets: image radio cards two to a row in the 16 gutter, 8 apart (section 10.4). */
-  .zen-ntp-preset-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-    padding: 4px 16px 0;
-  }
 }
 
 @layer components {
   /*
-   * The phone's new tab page (`NewTabPage`). As in Zen, a new tab is the window itself: the page
-   * is the space gradient – drawn at the window's size and offset by the frame's position from
-   * JS, so the frame reads as a window onto the space – with the floating URL bar's surface as the
-   * search field and Essentials-style tiles beneath. The wallpaper presets put the space's colours
-   * at full strength, or a picked picture under a neutral scrim, behind it all instead.
+   * The new tab page: one vocabulary on both platforms (design language v2 §9.29). The phone's
+   * page (components/newtab/NewTabPage.tsx, drawn in the chrome) and the desktop's `zen://newtab`
+   * document (shared/newTabPage.ts) share these class names – `zen-ntp-field`, `zen-v2-shortcut`,
+   * `zen-ntp-tile`, `zen-ntp-caption`, `zen-ntp-empty`, `zen-ntp-icon`, `zen-ntp-letter`,
+   * `zen-ntp-scrim` – and read the look of each from here alone: the field's surface, the tile's
+   * fill and radius, the caption's and the fallbacks' ink, the picture's scrim. Each platform's
+   * sizes are its own layout's (§9.29: the phone's field 56 tall at 520 with 56 tiles and a 24
+   * icon, the desktop's 48 at 560 with 64 tiles and a 32 icon). The desktop document cannot link
+   * this stylesheet: `newTabSharedCss` cuts the rules from `.zen-ntp-field` up to the phone's
+   * additions out of this text at build time and the document adds its layout after them. The
+   * phone's additions further down are gated on the phone form factor, which that document never
+   * carries. A page is the window (§9.29): the tiles, captions and fallbacks read the window
+   * family's control roles; the field is a page surface on it.
    */
-  .zen-ntp {
+  /* The floating URL bar's field as a resting control: opaque, radius 12, the panel's shadow – not
+     the URL bar's halo, which would darken the tiles under a resting field – and no border. */
+  .zen-ntp-field {
+    border: 0;
+    border-radius: var(--v2-radius-sheet);
+    background: var(--v2-urlbar);
+    box-shadow: var(--v2-shadow-panel);
+    color: var(--v2-text);
+  }
+  /* The legibility scrim over a picture: neutral black, 10 % → 45 % towards the captions. */
+  .zen-ntp-scrim {
+    background: linear-gradient(180deg, rgb(0 0 0 / 0.1), rgb(0 0 0 / 0.45));
+  }
+  /* A tile: a square of the window's fill at radius 8; hovered (where a pointer hovers) or pressed
+     the fill deepens, pressed it also shrinks a little. Tile and caption are one target. */
+  .zen-ntp-tile {
+    border-radius: var(--v2-radius-card);
+    background: var(--v2-control-fill);
+    transition:
+      background-color 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease),
+      box-shadow 200ms var(--zen-ease);
+  }
+  @media (hover: hover) {
+    .zen-v2-shortcut:hover .zen-ntp-tile {
+      background: var(--v2-control-fill-hover);
+    }
+  }
+  .zen-v2-shortcut:active .zen-ntp-tile {
+    background: var(--v2-control-fill-hover);
+    transform: scale(0.96);
+  }
+  .zen-ntp-icon {
+    object-fit: contain;
+  }
+  /* The fallbacks – the site's letter, or the globe when there is none – in the deemphasised ink. */
+  .zen-ntp-tile svg {
+    color: var(--v2-control-text-deemphasized);
+  }
+  .zen-ntp-letter {
+    font-size: var(--v2-font-heading);
+    line-height: 1;
+    font-weight: var(--v2-weight-heading);
+    color: var(--v2-control-text-deemphasized);
+  }
+  /* The caption: 13 in the deemphasised window ink, one line with an ellipsis. */
+  .zen-ntp-caption {
+    overflow: hidden;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-control-text-deemphasized);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  /* The empty state (section 9.17): one sentence at 15/400, deemphasised, in the window's ink. */
+  .zen-ntp-empty {
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    color: var(--v2-control-text-deemphasized);
+    text-align: center;
+  }
+  /*
+   * The phone's page (components/newtab/NewTabPage.tsx). As in Zen, a new tab is the window
+   * itself: the page is the space gradient – drawn at the window's size and offset by the frame's
+   * position from JS, so the frame reads as a window onto the space – with the floating URL bar's
+   * surface as the search field and Essentials-style tiles beneath. The wallpaper presets put the
+   * space's colours at full strength, or a picked picture under a neutral scrim, behind it all
+   * instead. Everything from here to the recede is the phone's alone and is gated on its form
+   * factor, so the desktop document's cut of the rules above never carries it.
+   */
+  :root[data-form-factor='phone'] .zen-ntp {
     background: var(--zen-bg);
     background-repeat: no-repeat;
     color: var(--zen-fg);
   }
-  .zen-ntp[data-wallpaper='space'] {
+  :root[data-form-factor='phone'] .zen-ntp[data-wallpaper='space'] {
     background: var(--zen-wallpaper);
   }
-  .zen-ntp[data-wallpaper='image'] {
+  :root[data-form-factor='phone'] .zen-ntp[data-wallpaper='image'] {
     background-size: cover;
     background-position: center;
     /* Ink over a picture is white; the tiles' fills and captions are alphas of it, a little stronger. */
@@ -3054,26 +3125,17 @@
     --v2-window-fill-hover: rgb(255 255 255 / 0.26);
     color: #fff;
   }
-  .zen-ntp[data-hidden] {
+  :root[data-form-factor='phone'] .zen-ntp[data-hidden] {
     visibility: hidden;
   }
-  /* The legibility scrim: neutral black, deeper towards the bottom where the captions sit. */
-  .zen-ntp-scrim {
-    background: linear-gradient(180deg, rgb(0 0 0 / 0.1), rgb(0 0 0 / 0.45));
-  }
   /*
-   * The search field is the floating URL bar's field: opaque, radius 12, its shadow and no border.
-   * Inside it the chrome's ink tokens are the v2 surface's, so the icon buttons read on it whatever
-   * the space's colours are.
+   * The phone's field is 56 tall (§9.29). Inside it the chrome's ink tokens are the v2 surface's,
+   * so the icon buttons read on it whatever the space's colours are; a press mixes 6 % of the ink
+   * into the surface.
    */
-  .zen-ntp-field {
+  :root[data-form-factor='phone'] .zen-ntp-field {
     height: 56px;
-    border-radius: var(--v2-radius-sheet);
     corner-shape: var(--zen-corner);
-    background: var(--v2-urlbar);
-    /* The panel's shadow, not the URL bar's halo: a resting field on a gradient must not darken the tiles. */
-    box-shadow: var(--v2-shadow-panel);
-    color: var(--v2-text);
     font-size: var(--v2-font-body);
     line-height: var(--v2-line-body);
     --zen-fg: var(--v2-text);
@@ -3082,10 +3144,10 @@
     --zen-element-bg-hover: var(--v2-fill-hover);
     transition: background 120ms var(--zen-ease);
   }
-  .zen-ntp-field:has(.zen-ntp-field-main:active) {
+  :root[data-form-factor='phone'] .zen-ntp-field:has(.zen-ntp-field-main:active) {
     background: color-mix(in srgb, var(--v2-urlbar) 94%, var(--v2-text));
   }
-  .zen-ntp-placeholder {
+  :root[data-form-factor='phone'] .zen-ntp-placeholder {
     color: var(--v2-text-deemphasized);
   }
   /*
@@ -3093,62 +3155,46 @@
    * (7 × 20 + 120 = 260). The run waits while the page is not being painted, and while the grow
    * surface is still opaque over it (`data-grow='growing'`): it starts as the page shows through.
    */
-  .zen-ntp-site {
+  :root[data-form-factor='phone'] .zen-ntp-site {
     animation: zen-fade 120ms var(--zen-ease) both;
     animation-delay: calc(var(--zen-ntp-i, 0) * 20ms);
   }
-  .zen-ntp[data-hidden] .zen-ntp-site,
-  .zen-ntp[data-grow='growing'] .zen-ntp-site {
+  :root[data-form-factor='phone'] .zen-ntp[data-hidden] .zen-ntp-site,
+  :root[data-form-factor='phone'] .zen-ntp[data-grow='growing'] .zen-ntp-site {
     animation-play-state: paused;
   }
   /* Reduced motion (v2 §11.3): one 120 ms fade for all of them, no stagger; the global rule that
      cuts every animation to nothing is overruled here on purpose – the fade is the orientation. */
   @media (prefers-reduced-motion: reduce) {
-    .zen-ntp-site {
+    :root[data-form-factor='phone'] .zen-ntp-site {
       animation-duration: 120ms !important;
       animation-delay: 0ms;
     }
   }
-  /* A tile is an Essentials tile: radius 8, a fill of the window's ink, pressed a little deeper. */
-  .zen-ntp-tile {
-    border-radius: var(--v2-radius-card);
+  /* The phone's tiles take the space's corner shape, as the Essentials tiles do. */
+  :root[data-form-factor='phone'] .zen-ntp-tile {
     corner-shape: var(--zen-corner);
-    background: var(--v2-control-fill);
-    transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
-  }
-  .zen-v2-shortcut:active .zen-ntp-tile {
-    background: var(--v2-control-fill-hover);
-    transform: scale(0.96);
-  }
-  .zen-ntp-caption {
-    font-size: var(--v2-font-small);
-    line-height: var(--v2-line-small);
-    color: var(--v2-control-text-deemphasized);
-  }
-  /* The empty state (section 9.17): one sentence at 15/400, deemphasised, in the window's ink. */
-  .zen-ntp-empty {
-    font-size: var(--v2-font-body);
-    line-height: var(--v2-line-body);
-    color: var(--v2-control-text-deemphasized);
   }
   /* A site's icon fades in once it has loaded; until then the tile is the fill alone. */
-  .zen-ntp-icon {
+  :root[data-form-factor='phone'] .zen-ntp-icon {
     opacity: 0;
     transition: opacity 160ms var(--zen-ease);
   }
-  .zen-ntp-icon-loaded {
+  :root[data-form-factor='phone'] .zen-ntp-icon-loaded {
     opacity: 1;
   }
-  .zen-ntp-letter {
-    color: var(--v2-control-text-deemphasized);
+  /* The layout presets: image radio cards two to a row in the 16 gutter, 8 apart (section 10.4). */
+  :root[data-form-factor='phone'] .zen-ntp-preset-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 4px 16px 0;
   }
   /*
    * The layout preset pictures in the customise sheet: the space's gradient as a miniature window
    * with the field and the tiles drawn on it as bars and squares.
    */
-  .zen-ntp-preview {
+  :root[data-form-factor='phone'] .zen-ntp-preview {
     position: absolute;
     inset: 0;
     display: flex;
@@ -3160,31 +3206,31 @@
     background-size: cover;
     color: var(--v2-text);
   }
-  .zen-ntp-preview[data-picture]::before {
+  :root[data-form-factor='phone'] .zen-ntp-preview[data-picture]::before {
     content: '';
     position: absolute;
     inset: 0;
     background: linear-gradient(160deg, rgb(255 255 255 / 0.35), transparent 45%, rgb(0 0 0 / 0.3));
   }
-  .zen-ntp-preview-field {
+  :root[data-form-factor='phone'] .zen-ntp-preview-field {
     position: relative;
     width: 58%;
     height: 10px;
     border-radius: 3px;
     background: var(--v2-urlbar);
   }
-  .zen-ntp-preview-tiles {
+  :root[data-form-factor='phone'] .zen-ntp-preview-tiles {
     position: relative;
     display: flex;
     gap: 5px;
   }
-  .zen-ntp-preview-tile {
+  :root[data-form-factor='phone'] .zen-ntp-preview-tile {
     width: 9px;
     height: 9px;
     border-radius: 2px;
     background: rgb(var(--zen-fg-rgb) / 0.2);
   }
-  .zen-ntp-preview-line {
+  :root[data-form-factor='phone'] .zen-ntp-preview-line {
     position: relative;
     width: 58%;
     height: 4px;
@@ -3192,7 +3238,7 @@
     background: rgb(var(--zen-fg-rgb) / 0.2);
   }
   /* Custom: the sliders glyph over the page, in the window's ink. */
-  .zen-ntp-preview-glyph {
+  :root[data-form-factor='phone'] .zen-ntp-preview-glyph {
     position: absolute;
     right: 6px;
     bottom: 6px;
@@ -3211,11 +3257,11 @@
    * written per frame by NewTabGrowLayer; no transition of its own. The page's last capture lies
    * under it with the surface's rectangle cut out, so the fade shows the new page, not the old.
    */
-  .zen-ntp-grow-surface {
+  :root[data-form-factor='phone'] .zen-ntp-grow-surface {
     background: var(--zen-bg);
     will-change: clip-path, opacity;
   }
-  .zen-ntp-grow-capture {
+  :root[data-form-factor='phone'] .zen-ntp-grow-capture {
     will-change: clip-path;
   }
 }

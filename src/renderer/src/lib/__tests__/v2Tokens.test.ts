@@ -46,12 +46,14 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
   ['.zen-message {', '.zen-suggestion {'],
   // The zen-v2-* controls inside the chassis: headings and sections, rows, the switch row
-  // (components/sheet/SwitchRow.tsx), radio, image radio card, the presets grid
-  // (components/newtab/CustomizeSheet.tsx).
-  ['.zen-v2-heading {', '.zen-ntp {'],
-  // The new tab page: wallpaper, search field, .zen-v2-shortcut tiles, the customise sheet's
-  // preset previews, the grow surface (components/newtab/NewTabPage.tsx).
-  ['.zen-ntp {', '/*\n * A sheet coming up pushes the page back']
+  // (components/sheet/SwitchRow.tsx), radio, image radio card (components/newtab/CustomizeSheet.tsx).
+  ['.zen-v2-heading {', '.zen-ntp-field {'],
+  // The new tab page, one .zen-ntp-* block for both platforms (§9.29): the shared vocabulary –
+  // search field, .zen-v2-shortcut tiles, captions, fallbacks, scrim – that shared/newTabPage.ts
+  // cuts out for the desktop's zen://newtab document, then the phone page's gated additions:
+  // wallpaper, stagger, the customise sheet's presets grid and previews, the grow surface
+  // (components/newtab/NewTabPage.tsx, CustomizeSheet.tsx, NewTabGrowLayer.tsx).
+  ['.zen-ntp-field {', '/*\n * A sheet coming up pushes the page back']
 ]
 
 /** The text of the first `selector {` block found after `from`. */
