@@ -320,6 +320,7 @@ export class Browser {
       zappingTabId: this.boosts.zappingTabId(),
       liveFolders: this.liveFolders.all(),
       extensions: this.extensions.list(),
+      extensionUpdates: this.extensions.updateCheck(),
       sidePanel: this.extensions.sidePanel(win),
       mods: this.mods.all(),
       sync: this.sync.status(),
@@ -2144,10 +2145,15 @@ export class Browser {
       'extension.installFromFile': (_a, win) => this.extensions.installFromFileDialog(win),
       'extension.installFromStore': ({ ref, store }, win) =>
         this.extensions.installFromStore(ref, store ?? null, win),
+      'extension.installFromDrop': ({ paths }, win) => this.extensions.installFromDrop(paths, win),
       'extension.remove': ({ id }) => this.extensions.remove(id),
       'extension.setEnabled': ({ id, enabled }, win) =>
         this.extensions.setEnabled(id, enabled, win),
       'extension.setPinned': ({ id, pinned }) => this.extensions.setPinned(id, pinned),
+      'extension.setToolbarPinned': ({ id, pinned }) =>
+        this.extensions.setToolbarPinned(id, pinned),
+      'extension.setAllowFileAccess': ({ id, allow }) =>
+        this.extensions.setAllowFileAccess(id, allow),
       'extension.setNewTabOverride': ({ id, enabled }) =>
         this.extensions.setNewTabOverride(id, enabled),
       'extension.toggleSidePanel': ({ id }, win) => this.extensions.toggleSidePanel(id, win),
@@ -2158,7 +2164,15 @@ export class Browser {
       'extension.checkForUpdates': (_a, win) => this.extensions.checkForUpdates(win),
       'extension.update': ({ id }, win) => this.extensions.update(id, win),
       'extension.openOptions': ({ id }, win) => this.extensions.openOptions(id, win),
-      'extension.openPopup': ({ id, anchor }, win) => this.extensions.openPopup(id, anchor, win),
+      'extension.openPopup': ({ id, anchor, bounds, radius }, win) =>
+        this.extensions.openPopup(
+          id,
+          anchor,
+          win,
+          bounds ? { bounds, radius: radius ?? 12 } : undefined
+        ),
+      'extension.resizePopup': ({ bounds, visible }) =>
+        this.extensions.resizePopup(bounds, visible),
       'extension.closePopup': () => this.extensions.closePopup(),
       'extension.actionContextMenu': ({ id, x, y }, win) =>
         this.menus.showExtensionActionMenu(
@@ -2166,6 +2180,10 @@ export class Browser {
           win,
           x !== undefined && y !== undefined ? { x, y } : undefined
         ),
+      'extension.confirmInstall': ({ requestId, accept }) =>
+        this.extensions.respondPrompt(requestId, accept),
+      'extension.respondPermissionRequest': ({ requestId, accept }) =>
+        this.extensions.respondPrompt(requestId, accept),
 
       'mod.add': ({ name, css, source }) => this.mods.add(name, css, source ?? null).id,
       'mod.update': ({ id, patch }) => this.mods.update(id, patch),

@@ -16,6 +16,7 @@ import type {
   EventName,
   Events,
   ExtensionInfo,
+  ExtensionUpdateCheck,
   HapticKind,
   HostCapabilities,
   KeyBinding,
@@ -292,6 +293,24 @@ export type AgentInputEvent =
   | { type: 'text'; text: string }
 
 /**
+ * One frame of a page's frame tree, for agents that reach into iframes. Ids are Chrome's frame
+ * ids (`PageContextParams.frameId`): `0` for the top frame, the frame tree node id – stable for
+ * the frame's lifetime, across its navigations – for every other frame.
+ */
+export interface AgentFrame {
+  id: number
+  /** `null` for the top frame. */
+  parentId: number | null
+  url: string
+  /** The serialised origin; `"null"` for opaque origins (sandboxed frames, `data:` documents). */
+  origin: string
+  /** The frame's `window.name`. */
+  name: string
+  /** Whether this frame holds the page's keyboard focus. */
+  focused: boolean
+}
+
+/**
  * What an agent wants captured: the visible viewport, the whole scrollable page, or a region
  * given in CSS pixels relative to the document (viewport position plus scroll offset).
  */
@@ -440,8 +459,8 @@ export interface TabView {
   stopFind(action: 'clearSelection' | 'keepSelection'): void
   /**
    * Run `code` in the page's main frame, or in the sub-frame `frameId`
-   * (`PageContextParams.frameId`) on hosts that can address frames; others run it in the main
-   * frame.
+   * (`PageContextParams.frameId`) on hosts that can address frames – rejecting when that frame
+   * is gone; hosts without frames run it in the main frame.
    */
   executeJavaScript(code: string, frameId?: number): Promise<unknown>
   /** Inject a stylesheet; resolves with a key for `removeInsertedCSS`. */
@@ -524,10 +543,20 @@ export interface TabView {
   addWordToDictionary(word: string): void
 
   // AI agents (optional – the core falls back to in-page JavaScript when missing).
-  /** Deliver trusted input to the page. */
+  /**
+   * Deliver trusted input to the page, at top-viewport CSS coordinates. The host routes it to
+   * the frame under the point (content inside cross-origin iframes included), so it behaves as
+   * a person's input would: `isTrusted`, user activation, pop-ups and autoplay allowed.
+   */
   sendInput?(event: AgentInputEvent): Promise<void>
   /** Run script in a world the page cannot observe (Electron's isolated world). */
   executeIsolatedJavaScript?(code: string): Promise<unknown>
+  /**
+   * The page's frame tree (the top frame first, then every sub-frame, parents before children).
+   * Hosts that cannot address frames leave it out; agents then only see the top document plus
+   * the same-origin frames its script can enter.
+   */
+  frames?(): AgentFrame[]
   /** Let a hidden page keep running at full speed while an agent drives it. */
   setBackgroundThrottling?(allowed: boolean): void
   /**
@@ -1098,9 +1127,15 @@ export interface ExtensionHost {
     store: 'chrome-web-store' | 'edge-add-ons' | null,
     win?: ZenWindow
   ): Promise<void>
+  /** Paths dropped on the management page: packages install, folders load unpacked after a prompt. */
+  installFromDrop(paths: string[], win: ZenWindow): Promise<void>
   remove(id: string): Promise<void>
   setEnabled(id: string, enabled: boolean, win?: ZenWindow): Promise<void>
+  /** Pin to a version: left out of update checks. */
   setPinned(id: string, pinned: boolean): void
+  /** Show as a toolbar button. */
+  setToolbarPinned(id: string, pinned: boolean): void
+  setAllowFileAccess(id: string, allow: boolean): Promise<void>
   /** Lets this extension's `chrome_url_overrides.newtab` page open new tabs (one at most), or stops it. */
   setNewTabOverride(id: string, enabled: boolean): void
   /** The page new tabs open with while an enabled extension holds the override, else null. */
@@ -1110,8 +1145,13 @@ export interface ExtensionHost {
   reload(id: string): Promise<void>
   checkForUpdates(win?: ZenWindow): Promise<void>
   update(id: string, win?: ZenWindow): Promise<void>
+  /** The last update check across all extensions, for the management page's caption. */
+  updateCheck(): ExtensionUpdateCheck
   openOptions(id: string, win: ZenWindow): void
-  openPopup(id: string, anchor: Rect, win: ZenWindow): void
+  /** `frame` is where the renderer's popup panel wants the view (see `extension.openPopup`). */
+  openPopup(id: string, anchor: Rect, win: ZenWindow, frame?: PopupFrame): void
+  /** Move the open popup view (and show it once the renderer's frame has popped in). */
+  resizePopup(bounds: Rect, visible: boolean): void
   closePopup(): void
   /** The `chrome.sidePanel` a window shows beside its page right now (for `UIState.sidePanel`). */
   sidePanel(win: ZenWindow): SidePanelInfo | null
@@ -1143,7 +1183,15 @@ export interface ExtensionHost {
    * the host dispatched it (`commands.onCommand`, or the toolbar action for `_execute_action`).
    */
   handleKey(input: KeyEventInput, win: ZenWindow): boolean
+  /** The user answered an install or permission prompt the host raised. */
+  respondPrompt(requestId: string, accept: boolean): void
   flushSync(): void
+}
+
+/** Where the renderer's popup frame puts the popup view: exact bounds and the inner corner. */
+export interface PopupFrame {
+  bounds: Rect
+  radius: number
 }
 
 /** Cross-device sync through a shared folder; Electron only for now. */

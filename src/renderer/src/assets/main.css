@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@import './extensions.css';
 /* The chrome is built from two roots (Electron renderer, Android WebView); always scan the UI. */
 @source '../';
 
@@ -1741,7 +1742,9 @@
     --zen-sheet-inner: 8px;
     border: 1px solid var(--v2-border);
     border-bottom: 0;
-    border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
+    /* Under a second sheet the corner grows by 6 with the recede (v2 §9.24), as the page's does. */
+    border-radius: calc(var(--v2-radius-sheet) + 6px * var(--zen-sheet-recede, 0))
+      calc(var(--v2-radius-sheet) + 6px * var(--zen-sheet-recede, 0)) 0 0;
     background: var(--v2-panel);
     color: var(--v2-text);
     box-shadow: var(--v2-shadow-sheet);
@@ -1883,6 +1886,11 @@
     height: 0;
     touch-action: none;
     transform: translate3d(0, 0, 0);
+    /* The recede under a stacked sheet (v2 §9.24) scales it about its bottom centre. */
+    transform-origin: 50% 100%;
+  }
+  .zen-sheet-detents[data-recessed] {
+    will-change: transform, scale;
   }
   /*
    * The grabber's tap target is a 44 px band (v2 §9.9), drawn as the same 32×4 bar 8 px from the

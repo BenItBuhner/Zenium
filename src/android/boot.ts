@@ -31,6 +31,8 @@ import type { ViewEventPayloads } from './views'
 export interface ZenApi {
   invoke<K extends CommandName>(name: K, args: CommandArgs<K>): Promise<CommandResult<K>>
   on<K extends EventName>(name: K, listener: (payload: Events[K]) => void): () => void
+  /** Filesystem path of a dropped `File`; Android has no file drops, so it is left undefined. */
+  pathForFile?(file: File): string
 }
 
 /** What Kotlin calls (`window.__zenHost`). Payloads travel as JSON strings. */

@@ -23,6 +23,11 @@ import {
 } from '@renderer/lib/ui'
 import { activeTab } from '@renderer/lib/selectors'
 import { browserStore } from '@renderer/lib/ui'
+import {
+  closeExtensionPopup,
+  enqueueExtensionPrompt,
+  popupSizeReported
+} from '@renderer/lib/extensions/popup'
 
 function currentActiveTabId(): string | null {
   const state: UIState | null = browserStore.get().state
@@ -138,6 +143,32 @@ export function useMainEvents(): void {
       }),
       onEvent('compact.reveal', (reveal) =>
         window.dispatchEvent(new CustomEvent('zen-compact-reveal', { detail: reveal }))
+      ),
+      onEvent('extension.popupSize', ({ id, width, height }) =>
+        popupSizeReported(id, width, height)
+      ),
+      onEvent('extension.popupClosed', () => closeExtensionPopup(false)),
+      onEvent(
+        'extensionInstallRequest',
+        (prompt) => void enqueueExtensionPrompt(prompt, currentActiveTabId())
+      ),
+      onEvent(
+        'extensionPermissionRequest',
+        (prompt) => void enqueueExtensionPrompt(prompt, currentActiveTabId())
+      ),
+      onEvent('extension.installed', ({ id, name, toolbarPinned }) =>
+        pushToast(
+          `${name} was added to Zenium`,
+          'info',
+          toolbarPinned
+            ? {}
+            : {
+                action: {
+                  label: 'Pin',
+                  onPick: () => run('extension.setToolbarPinned', { id, pinned: true })
+                }
+              }
+        )
       ),
       onEvent('menu.show', (menu) => void showMenu(menu, currentActiveTabId())),
       onEvent('menu.hide', ({ menuId }) => {

@@ -4,11 +4,21 @@ import { inputToUrl } from '../../shared/url'
 import type { Browser } from '../browser'
 import { createFolder } from '../model'
 import type { AgentCapture, InputModifier, TabView } from '../platform'
+import {
+  deepSnapshot,
+  frameAction,
+  locateAtPoint,
+  locateTarget,
+  type DeepSnapshot,
+  type FramePage,
+  type Located
+} from './frames'
 import { RpcError } from './jsonrpc'
-import { pageCall, type PageActionResult, type PageLocation, type PageSnapshot } from './page'
+import { pageCall, type PageLocation } from './page'
 import type { JsonSchema, ToolDefinition, ToolResult } from './protocol'
 import type { AgentService, AgentSession } from './service'
 import { looksLikeStatements, sleep, textError } from './util'
+import type { ZenWindow } from '../window'
 
 export { looksLikeStatements }
 
@@ -177,6 +187,7 @@ export function acceptedArgs(def: ToolDefinition): Set<string> {
 interface Target {
   tab: Tab
   view: TabView
+  page: FramePage
 }
 
 /**
@@ -250,24 +261,31 @@ function tabArg(ctx: ToolContext, args: Record<string, unknown>): string | undef
 async function actOn(ctx: ToolContext, args: Record<string, unknown>): Promise<Target> {
   const tab = ctx.agents.resolveTab(ctx.session, tabArg(ctx, args))
   const view = await ctx.agents.prepare(ctx.session, tab.id)
-  return { tab, view }
+  return { tab, view, page: framePage(ctx, tab.id, view) }
 }
 
-async function snapshot(
-  ctx: ToolContext,
-  view: TabView,
-  opts: SnapshotOpts = {}
-): Promise<PageSnapshot> {
-  return (await ctx.agents.evalPage(
-    view,
-    pageCall('snapshot', {
-      agent: ctx.session.id,
-      filter: opts.filter ?? null,
-      interactiveOnly: Boolean(opts.interactiveOnly),
-      boxes: Boolean(opts.boxes),
-      maxChars: Math.min(Math.max(opts.maxChars ?? SNAPSHOT_MAX_CHARS, 500), 200_000)
-    })
-  )) as PageSnapshot
+/**
+ * The page as the frame orchestration (`frames.ts`) sees it: the top document is reached the
+ * usual way (the isolated world where the host has one), a sub-frame through the host's
+ * frame-addressed `executeJavaScript`, and the agent's frame bookkeeping for the tab comes along.
+ */
+export function framePage(ctx: ToolContext, tabId: string, view: TabView): FramePage {
+  return {
+    eval: (frameId, code) =>
+      frameId === 0 ? ctx.agents.evalPage(view, code) : view.executeJavaScript(code, frameId),
+    frames: () => view.frames?.() ?? null,
+    agent: ctx.session.id,
+    state: ctx.agents.frameState(ctx.session, tabId)
+  }
+}
+
+async function snapshot(page: FramePage, opts: SnapshotOpts = {}): Promise<DeepSnapshot> {
+  return deepSnapshot(page, {
+    filter: opts.filter ?? null,
+    interactiveOnly: Boolean(opts.interactiveOnly),
+    boxes: Boolean(opts.boxes),
+    maxChars: Math.min(Math.max(opts.maxChars ?? SNAPSHOT_MAX_CHARS, 500), 200_000)
+  })
 }
 
 interface SnapshotOpts {
@@ -292,9 +310,9 @@ async function pageResult(
   headline: string,
   opts: SnapshotOpts = {}
 ): Promise<ToolResult> {
-  let snap: PageSnapshot
+  let snap: DeepSnapshot
   try {
-    snap = await snapshot(ctx, view, opts)
+    snap = await snapshot(framePage(ctx, tab.id, view), opts)
   } catch (error) {
     return text(
       `${headline}\n\n(The page could not be read yet: ${(error as Error).message}. Take a browser_snapshot in a moment.)`
@@ -316,45 +334,38 @@ async function pageResult(
   return text(lines.join('\n'))
 }
 
-async function locate(ctx: ToolContext, view: TabView, target: string): Promise<PageLocation> {
-  const loc = (await ctx.agents.evalPage(
-    view,
-    pageCall('locate', ctx.session.id, target, true)
-  )) as PageLocation | { error: string }
-  if ('error' in loc) throw new RpcError(-32602, loc.error)
-  return loc
-}
-
-async function locateAt(
-  ctx: ToolContext,
-  view: TabView,
-  p: { x: number; y: number }
-): Promise<PageLocation> {
-  const loc = (await ctx.agents.evalPage(view, pageCall('locateAt', ctx.session.id, p.x, p.y))) as
-    PageLocation | { error: string }
-  if ('error' in loc) throw new RpcError(-32602, loc.error)
-  return loc
+/**
+ * Where a target is, in top-viewport coordinates, whichever frame it lives in (a ref goes to
+ * the frame that issued it; selectors and text are looked up in every frame of the last
+ * snapshot). Throws a clear error when nothing matches.
+ */
+function locate(page: FramePage, target: string): Promise<Located> {
+  return locateTarget(page, target, true)
 }
 
 /** `target` or a point: what the tool should act on, with a helpful error when neither is given. */
 async function locateArg(
-  ctx: ToolContext,
-  view: TabView,
+  page: FramePage,
   args: Record<string, unknown>,
   tool: string
-): Promise<{ loc: PageLocation; target: string | null }> {
+): Promise<{ loc: Located; target: string | null }> {
   const target = str(args, 'target')
-  if (target) return { loc: await locate(ctx, view, target), target }
+  if (target) return { loc: await locate(page, target), target }
   const p = point(args)
-  if (p) return { loc: await locateAt(ctx, view, p), target: null }
+  if (p) return { loc: await locateAtPoint(page, p), target: null }
   throw new RpcError(
     -32602,
     `${tool} needs a "target" (a ref like "e12" from browser_snapshot, a CSS selector, or "text=Visible label") or viewport coordinates "x" and "y"`
   )
 }
 
-function describeElement(loc: PageLocation): string {
-  return `${loc.role}${loc.name ? ` "${loc.name.length > 60 ? loc.name.slice(0, 59) + '…' : loc.name}"` : ''}${loc.ref ? ` [ref=${loc.ref}]` : ''}`
+function describeElement(loc: PageLocation & { frameLabel?: string | null }): string {
+  const frame = loc.frameLabel ? ` in frame ${JSON.stringify(cutName(loc.frameLabel))}` : ''
+  return `${loc.role}${loc.name ? ` "${cutName(loc.name)}"` : ''}${loc.ref ? ` [ref=${loc.ref}]` : ''}${frame}`
+}
+
+function cutName(name: string): string {
+  return name.length > 60 ? name.slice(0, 59) + '…' : name
 }
 
 function describeCapture(kind: string, cap: AgentCapture, tab: Tab): string {
@@ -370,24 +381,108 @@ async function settle(ctx: ToolContext, tabId: string): Promise<void> {
 }
 
 /**
- * Trusted OS-level input when the tab is actually on screen (foreground), synthetic in-page
- * input otherwise. Trusted events carry `isTrusted` and drive complex widgets, but Chromium only
- * hit-tests a painted, visible view; a hidden background tab is driven through the page runtime,
- * whose native `.click()` still performs default actions.
+ * How long a foreground tool waits for the page to come on screen before it degrades: long
+ * enough for a cold start's first layout report to place the view (the sign-in smoke of #151
+ * saw it arrive late on a busy runner), short enough not to stall an agent on a tab the user
+ * keeps covered.
  */
-function wantTrustedInput(view: TabView, loc?: PageLocation): boolean {
-  return Boolean(view.sendInput) && view.isVisible() && (!loc || !loc.covered)
+export const ON_SCREEN_WAIT_MS = 2000
+let onScreenWaitMs = ON_SCREEN_WAIT_MS
+
+/** Test seam: the degraded path without a real two-second wait. */
+export function setOnScreenWaitMsForTests(ms: number): void {
+  onScreenWaitMs = ms
+}
+
+/**
+ * Whether the tab's page is painted where the user sees it: its view is shown, the chrome's
+ * last layout report placed it, and no chrome covers the content area (the URL bar, a menu, a
+ * dialog – anything the report flags as `contentHidden`). Only such a view hit-tests real input.
+ */
+function isOnScreen(win: ZenWindow, view: TabView, tabId: string): boolean {
+  return view.isVisible() && !win.contentHidden && win.viewRect(tabId) !== null
+}
+
+async function waitOnScreen(ctx: ToolContext, tabId: string, view: TabView): Promise<boolean> {
+  const win = ctx.browser.tabs.windowFor(tabId)
+  const deadline = Date.now() + onScreenWaitMs
+  for (;;) {
+    if (isOnScreen(win, view, tabId)) return true
+    if (Date.now() >= deadline) return false
+    await sleep(Math.min(60, Math.max(1, deadline - Date.now())))
+  }
+}
+
+/** The way a tool delivers input, decided before it acts (see `routeInput`). */
+export interface InputRouting {
+  /** Real, trusted input through the host; false is the synthetic in-page path. */
+  trusted: boolean
+  /** The warning the tool result carries when the input was synthetic, else null. */
+  note: string | null
+}
+
+export function syntheticInputNote(cause: string): string {
+  return `input: synthetic – ${cause}, so the event was dispatched as a scripted DOM event instead of real input. It is untrusted (isTrusted: false) and armed no user gesture: a pop-up, download or permission prompt it would have opened did not fire. Real input needs the tab on screen: foreground mode, with no URL bar or other chrome overlay covering the page.`
+}
+
+/**
+ * Real input – a trusted OS-level event Chromium routes to the frame under the point, cross-origin
+ * iframes included, that counts as a user gesture – only works on a painted, on-screen view. This
+ * decides the path once per tool call and never degrades silently: background mode is synthetic
+ * by design (the agent asked to keep the tab off screen); in the foreground the tool waits up to
+ * `ON_SCREEN_WAIT_MS` for the chrome to place the view and drop any overlay, and if the page is
+ * still not on screen – or another element covers the point, where a real click would hit that
+ * element instead – it takes the synthetic path and says so in the result.
+ *
+ * Both paths reach into cross-origin iframes: trusted input is sent at top-viewport coordinates
+ * and the host routes it to the frame under the point; synthetic input runs the page runtime
+ * inside the frame the element belongs to (`Located.frameId`).
+ */
+export async function routeInput(
+  ctx: ToolContext,
+  tabId: string,
+  view: TabView,
+  loc?: PageLocation
+): Promise<InputRouting> {
+  if (!view.sendInput)
+    return { trusted: false, note: syntheticInputNote('this browser cannot send real input') }
+  if (ctx.session.mode === 'background')
+    return {
+      trusted: false,
+      note: syntheticInputNote('you are in background mode and the tab is kept off screen')
+    }
+  if (!(await waitOnScreen(ctx, tabId, view)))
+    return {
+      trusted: false,
+      note: syntheticInputNote(
+        `the tab did not come on screen within ${Math.round(onScreenWaitMs / 1000)} s (chrome such as the URL bar covers the page, or another tab is in front)`
+      )
+    }
+  if (loc?.covered)
+    return {
+      trusted: false,
+      note: syntheticInputNote(
+        'another element covers this point, so real input would have hit that element'
+      )
+    }
+  return { trusted: true, note: null }
+}
+
+/** The tool's headline plus the synthetic-input warning line when the input was not real. */
+function withInputNote(headline: string, routing: InputRouting): string {
+  return routing.trusted || !routing.note ? headline : `${headline}\n${routing.note}`
 }
 
 async function clickAt(
-  ctx: ToolContext,
+  page: FramePage,
   view: TabView,
-  loc: PageLocation,
+  loc: Located,
   target: string,
-  opts: { button: 'left' | 'right' | 'middle'; count: number; modifiers: InputModifier[] }
+  opts: { button: 'left' | 'right' | 'middle'; count: number; modifiers: InputModifier[] },
+  trusted: boolean
 ): Promise<'trusted' | 'synthetic'> {
-  if (wantTrustedInput(view, loc)) {
-    await view.sendInput!({
+  if (trusted && view.sendInput) {
+    await view.sendInput({
       type: 'click',
       x: loc.x,
       y: loc.y,
@@ -397,44 +492,54 @@ async function clickAt(
     })
     return 'trusted'
   }
-  const r = (await ctx.agents.evalPage(
-    view,
-    pageCall('clickJs', ctx.session.id, target, opts.count)
-  )) as PageActionResult
+  const r = await frameAction(
+    page,
+    loc.frameId,
+    pageCall('clickJs', page.agent, target, opts.count)
+  )
   if (!r.ok) throw new RpcError(-32602, r.error ?? 'Click failed')
   return 'synthetic'
 }
 
-/** Move the pointer over an element: trusted when the page is on screen, synthetic otherwise. */
+/** Move the pointer over an element: real input when routed so, synthetic in-page events otherwise. */
 async function hoverAt(
-  ctx: ToolContext,
+  page: FramePage,
   view: TabView,
-  loc: PageLocation,
-  target: string | null
+  loc: Located,
+  target: string | null,
+  trusted: boolean
 ): Promise<'trusted' | 'synthetic'> {
-  if (wantTrustedInput(view, loc) && view.sendInput) {
+  if (trusted && view.sendInput) {
     await view.sendInput({ type: 'mouseMove', x: loc.x, y: loc.y })
     return 'trusted'
   }
-  const r = (await ctx.agents.evalPage(
-    view,
-    pageCall('hoverJs', ctx.session.id, target, loc.x, loc.y)
-  )) as PageActionResult
+  // The frame's runtime speaks its own viewport: hand it the point in those coordinates.
+  const r = await frameAction(
+    page,
+    loc.frameId,
+    pageCall('hoverJs', page.agent, target, loc.local.x, loc.local.y)
+  )
   if (!r.ok) throw new RpcError(-32602, r.error ?? 'Hover failed')
   return 'synthetic'
 }
 
+/** The frame holding the keyboard focus (the top document when the host cannot tell). */
+function focusedFrame(page: FramePage): number {
+  return page.frames()?.find((f) => f.focused)?.id ?? 0
+}
+
 async function pressKey(
-  ctx: ToolContext,
+  page: FramePage,
   view: TabView,
   key: string,
-  mods: InputModifier[]
+  mods: InputModifier[],
+  trusted: boolean
 ): Promise<void> {
-  if (wantTrustedInput(view)) {
-    await view.sendInput!({ type: 'key', key, modifiers: mods })
+  if (trusted && view.sendInput) {
+    await view.sendInput({ type: 'key', key, modifiers: mods })
     return
   }
-  const r = (await ctx.agents.evalPage(view, pageCall('keyJs', key, mods))) as PageActionResult
+  const r = await frameAction(page, focusedFrame(page), pageCall('keyJs', key, mods))
   if (!r.ok) throw new RpcError(-32602, r.error ?? 'Key press failed')
 }
 
@@ -1039,28 +1144,33 @@ const browserClick: AgentTool = {
     annotations: { openWorldHint: true }
   },
   async run(ctx, args) {
-    const { tab, view } = await actOn(ctx, args)
-    const { loc, target } = await locateArg(ctx, view, args, 'browser_click')
+    const { tab, view, page } = await actOn(ctx, args)
+    const { loc, target } = await locateArg(page, args, 'browser_click')
     if (loc.disabled)
       return textError(`${describeElement(loc)} is disabled, so it cannot be clicked`)
+    const routing = await routeInput(ctx, tab.id, view, loc)
     await ctx.agents.cursor(ctx.session, tab.id, view, loc.x, loc.y, 'move')
     await sleep(ctx.agents.settings.showCursor ? 260 : 30)
     const button =
       (str(args, 'button')?.toLowerCase() as 'left' | 'right' | 'middle' | undefined) ?? 'left'
-    const how = await clickAt(ctx, view, loc, target ?? loc.ref ?? '', {
-      button,
-      count: bool(args, 'doubleClick') ? 2 : 1,
-      modifiers: modifiers(args)
-    })
+    await clickAt(
+      page,
+      view,
+      loc,
+      target ?? loc.ref ?? '',
+      { button, count: bool(args, 'doubleClick') ? 2 : 1, modifiers: modifiers(args) },
+      routing.trusted
+    )
     await ctx.agents.cursor(ctx.session, tab.id, view, loc.x, loc.y, 'click')
     await settle(ctx, tab.id)
     const current = ctx.browser.tabs.view(tab.id) ?? view
-    const note =
-      how === 'synthetic' && loc.covered
-        ? ' (another element covered it, so the click was dispatched to it directly)'
-        : ''
     const where = target ? '' : ` at (${loc.x}, ${loc.y})`
-    return pageResult(ctx, tab, current, `Clicked ${describeElement(loc)}${where}${note}.`)
+    return pageResult(
+      ctx,
+      tab,
+      current,
+      withInputNote(`Clicked ${describeElement(loc)}${where}.`, routing)
+    )
   }
 }
 
@@ -1078,17 +1188,18 @@ const browserHover: AgentTool = {
     annotations: { openWorldHint: false }
   },
   async run(ctx, args) {
-    const { tab, view } = await actOn(ctx, args)
-    const { loc, target } = await locateArg(ctx, view, args, 'browser_hover')
+    const { tab, view, page } = await actOn(ctx, args)
+    const { loc, target } = await locateArg(page, args, 'browser_hover')
+    const routing = await routeInput(ctx, tab.id, view, loc)
     await ctx.agents.cursor(ctx.session, tab.id, view, loc.x, loc.y, 'move')
-    const how = await hoverAt(ctx, view, loc, target)
+    await hoverAt(page, view, loc, target, routing.trusted)
     await sleep(350)
     const where = target ? '' : ` at (${loc.x}, ${loc.y})`
     return pageResult(
       ctx,
       tab,
       view,
-      `Hovering ${describeElement(loc)}${where}${how === 'synthetic' ? ' (the tab is not on screen, so hover events were dispatched to the page directly)' : ''}.`
+      withInputNote(`Hovering ${describeElement(loc)}${where}.`, routing)
     )
   }
 }
@@ -1119,34 +1230,49 @@ const browserType: AgentTool = {
     )
     const raw = pick(args, 'text')
     const value = typeof raw === 'string' ? raw : raw === undefined ? '' : String(raw)
-    const { tab, view } = await actOn(ctx, args)
-    const loc = await locate(ctx, view, target)
+    const { tab, view, page } = await actOn(ctx, args)
+    const loc = await locate(page, target)
     if (!loc.editable)
       return textError(
         `${describeElement(loc)} is not an editable field${loc.role === 'combobox' ? ' – use browser_select_option to choose an option' : loc.role === 'checkbox' || loc.role === 'radio' ? ' – use browser_click to toggle it' : ''}`
       )
     if (loc.disabled) return textError(`${describeElement(loc)} is disabled`)
+    const routing = await routeInput(ctx, tab.id, view, loc)
     await ctx.agents.cursor(ctx.session, tab.id, view, loc.x, loc.y, 'move')
     await sleep(ctx.agents.settings.showCursor ? 220 : 20)
     // Focus the way a person would, so focus handlers and autocomplete popups behave.
-    await clickAt(ctx, view, loc, target, { button: 'left', count: 1, modifiers: [] })
+    await clickAt(
+      page,
+      view,
+      loc,
+      target,
+      { button: 'left', count: 1, modifiers: [] },
+      routing.trusted
+    )
     await ctx.agents.cursor(ctx.session, tab.id, view, loc.x, loc.y, 'click')
     await sleep(60)
-    const filled = (await ctx.agents.evalPage(
-      view,
+    // The field's own frame runs the fill: that is where the ref (and the element) lives.
+    const filled = await frameAction(
+      page,
+      loc.frameId,
       pageCall('fill', ctx.session.id, target, value, bool(args, 'clear', true))
-    )) as PageActionResult
+    )
     if (!filled.ok) return textError(filled.error ?? 'Could not type into the element')
     let headline = `Typed ${JSON.stringify(value)} into ${describeElement(loc)}`
     if (bool(args, 'submit')) {
       await sleep(80)
-      if (wantTrustedInput(view))
-        await view.sendInput!({ type: 'key', key: 'Enter', modifiers: [] })
-      else await ctx.agents.evalPage(view, pageCall('submit', ctx.session.id, target))
+      if (routing.trusted && view.sendInput)
+        await view.sendInput({ type: 'key', key: 'Enter', modifiers: [] })
+      else await frameAction(page, loc.frameId, pageCall('submit', ctx.session.id, target))
       headline += ' and pressed Enter'
     }
     await settle(ctx, tab.id)
-    return pageResult(ctx, tab, ctx.browser.tabs.view(tab.id) ?? view, `${headline}.`)
+    return pageResult(
+      ctx,
+      tab,
+      ctx.browser.tabs.view(tab.id) ?? view,
+      withInputNote(`${headline}.`, routing)
+    )
   }
 }
 
@@ -1171,14 +1297,15 @@ const browserPressKey: AgentTool = {
   },
   async run(ctx, args) {
     const key = normalizeKey(need(args, 'key', 'e.g. "Enter", "Escape", "ArrowDown", "a"'))
-    const { tab, view } = await actOn(ctx, args)
-    await pressKey(ctx, view, key, modifiers(args))
+    const { tab, view, page } = await actOn(ctx, args)
+    const routing = await routeInput(ctx, tab.id, view)
+    await pressKey(page, view, key, modifiers(args), routing.trusted)
     await settle(ctx, tab.id)
     return pageResult(
       ctx,
       tab,
       ctx.browser.tabs.view(tab.id) ?? view,
-      `Pressed ${key === ' ' ? 'Space' : key}.`
+      withInputNote(`Pressed ${key === ' ' ? 'Space' : key}.`, routing)
     )
   }
 }
@@ -1203,7 +1330,7 @@ const browserScroll: AgentTool = {
     annotations: { openWorldHint: false }
   },
   async run(ctx, args) {
-    const { tab, view } = await actOn(ctx, args)
+    const { tab, view, page } = await actOn(ctx, args)
     let to = str(args, 'to')?.toLowerCase() ?? null
     let direction = str(args, 'direction')?.toLowerCase() ?? null
     if (direction === 'top' || direction === 'bottom') {
@@ -1215,18 +1342,36 @@ const browserScroll: AgentTool = {
         -32602,
         `direction must be up, down, left or right (got ${JSON.stringify(direction)}); use to: "top"/"bottom" to jump`
       )
-    const r = (await ctx.agents.evalPage(
-      view,
+    const target = str(args, 'target') ?? null
+    // A target inside a cross-origin frame is scrolled into view by the frame's own runtime
+    // (Chromium carries scrollIntoView across frame boundaries); the top document then says where
+    // the page stands.
+    let frameId = 0
+    if (target) {
+      try {
+        frameId = (await locateTarget(page, target, false)).frameId
+      } catch (error) {
+        if (error instanceof RpcError) return textError(error.message)
+        throw error
+      }
+    }
+    const r = await frameAction(
+      page,
+      frameId,
       pageCall('scroll', ctx.session.id, {
-        target: str(args, 'target') ?? null,
+        target,
         direction,
         amount: num(args, 'amount') ?? null,
         to
       })
-    )) as PageActionResult
+    )
     if (!r.ok) return textError(r.error ?? 'Could not scroll')
     await sleep(250)
-    return pageResult(ctx, tab, view, `Scrolled (now at ${r.scrollY ?? 0}px from the top).`)
+    const scrollY =
+      frameId === 0
+        ? r.scrollY
+        : ((await page.eval(0, 'Math.round(scrollY)').catch(() => r.scrollY)) as number | undefined)
+    return pageResult(ctx, tab, view, `Scrolled (now at ${scrollY ?? 0}px from the top).`)
   }
 }
 
@@ -1259,13 +1404,14 @@ const browserSelectOption: AgentTool = {
     const values = strings(args, 'values')
     if (!values.length)
       throw new RpcError(-32602, 'values must list at least one option value or label')
-    const { tab, view } = await actOn(ctx, args)
-    const loc = await locate(ctx, view, target)
+    const { tab, view, page } = await actOn(ctx, args)
+    const loc = await locate(page, target)
     await ctx.agents.cursor(ctx.session, tab.id, view, loc.x, loc.y, 'click')
-    const r = (await ctx.agents.evalPage(
-      view,
+    const r = await frameAction(
+      page,
+      loc.frameId,
       pageCall('select', ctx.session.id, target, values)
-    )) as PageActionResult
+    )
     if (!r.ok) return textError(r.error ?? 'Could not select')
     await settle(ctx, tab.id)
     return pageResult(
@@ -1292,7 +1438,7 @@ const browserTakeScreenshot: AgentTool = {
     annotations: { readOnlyHint: true, openWorldHint: false }
   },
   async run(ctx, args) {
-    const { tab, view } = await actOn(ctx, args)
+    const { tab, view, page } = await actOn(ctx, args)
     const format = str(args, 'type')?.toLowerCase() === 'png' ? 'png' : 'jpeg'
     const target = str(args, 'target')
     const fullPage = bool(args, 'fullPage')
@@ -1310,7 +1456,7 @@ const browserTakeScreenshot: AgentTool = {
         .catch(() => undefined)
     await overlays(false)
     try {
-      cap = await captureFor(ctx, view, { target, fullPage, format })
+      cap = await captureFor(ctx, view, page, { target, fullPage, format })
       if (cap) kind = cap.kind
       else if (!view.capture && (target || fullPage))
         note = ` Note: this host can only capture the visible viewport, so the ${target ? 'target' : 'fullPage'} option was ignored${target ? ' – browser_scroll {"target":…} brings it into view first' : ''}.`
@@ -1348,12 +1494,13 @@ const browserTakeScreenshot: AgentTool = {
 async function captureFor(
   ctx: ToolContext,
   view: TabView,
+  page: FramePage,
   opts: { target?: string; fullPage: boolean; format: 'jpeg' | 'png' }
 ): Promise<(AgentCapture & { kind: string }) | null> {
   if (!view.capture) return null
   const { target, fullPage, format } = opts
   if (target) {
-    const loc = await locate(ctx, view, target)
+    const loc = await locate(page, target)
     const scroll = (await ctx.agents
       .evalPage(view, '({x: window.scrollX, y: window.scrollY})')
       .catch(() => ({ x: 0, y: 0 }))) as { x: number; y: number }
@@ -1636,7 +1783,7 @@ export function agentInstructions(mode: AgentMode, allowScripts: boolean): strin
     '- browser_snapshot returns the page as an accessibility tree whose elements carry [ref=eN] handles; pass the eN as target to browser_click, browser_type, browser_hover, browser_select_option and browser_take_screenshot. target also takes a CSS selector or text=Visible label, and browser_click / browser_hover take x,y viewport coordinates instead. Every action returns a fresh snapshot.',
     '- Navigation: browser_navigate (also changes the URL of an existing tab via tabId), browser_navigate_back, browser_navigate_forward, browser_reload. Tabs: browser_tabs list / new / select / close / move (reorder) / group (folder) / ungroup.',
     '- browser_read_page is the cheap way to read an article; browser_take_screenshot (viewport, fullPage: true, or target for one element) only when the layout or an image matters.',
-    `- You start in ${mode.toUpperCase()} mode. Foreground: your tab is brought in front of the user before each action and a cursor with your name shows what you do. Background: you work in your tabs without changing what the user sees. Switch with zen_mode.`,
+    `- You start in ${mode.toUpperCase()} mode. Foreground: your tab is brought in front of the user before each action, a cursor with your name shows what you do, and clicks, hovers and keys are real input (trusted user gestures: pop-ups and downloads open). Background: you work in your tabs without changing what the user sees, and input is synthetic – the result says "input: synthetic" whenever that happened, also in foreground when the page could not be brought on screen. Switch with zen_mode.`,
     '- browser_navigate accepts URLs or search words. Use zen_spaces to keep your work in its own space when it is more than a quick lookup.',
     allowScripts
       ? '- browser_evaluate runs JavaScript in the page (an expression or an arrow function) when nothing else does the job, e.g. to read attributes.'
