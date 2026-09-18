@@ -18,6 +18,7 @@ import org.junit.runner.RunWith
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.security.MessageDigest
@@ -31,10 +32,14 @@ import java.util.concurrent.TimeUnit
  * and allowed by the exception list and blocked in a private tab, and the GPC / DNT signals on
  * the request and on `navigator`. Secure DNS has no scene: Android resolves through the system.
  *
- * The pages come from a loopback HTTP server inside this process, answering as several sites:
- * every `127.0.0.x` address is its own site to the WebView, so the demo needs no DNS. The
- * server answers a TLS handshake with plain HTTP, which is how the upgrade of a plaintext site
- * fails here. Safe Browsing's hit on `127.0.0.5` comes from a feed document seeded next to the
+ * The pages come from a loopback HTTP server inside this process, answering as several sites.
+ * HTTPS-only mode leaves loopback and every other non-unique host alone (as Chrome's HTTPS-First
+ * does), so the sites it has to upgrade are `127.0.0.x.nip.io` names: the nip.io wildcard DNS
+ * answers each with the address in its name, the server answers by `Host`, and every name is a
+ * site of its own (`nip.io` is a public suffix to both engines). The server answers a TLS
+ * handshake with plain HTTP, which is how the upgrade of a plaintext site fails here. The
+ * tracker frame and the phishing host stay bare `127.0.0.x` addresses (each its own site to the
+ * WebView): Safe Browsing's hit on `127.0.0.5` comes from a feed document seeded next to the
  * bundled ones (the Kotlin guard loads every document under `safebrowsing/`; the core ignores
  * ids it does not know), `malware.zenium.test` from the reserved test hosts. Notes go to
  * `<shotPrefix>-notes.txt` next to the screenshots. See [DemoHarness] for the plumbing.
@@ -44,6 +49,16 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
     override val tag = "SafeBrowsingDemo"
     private lateinit var server: PrivacyDemoServer
     private lateinit var notes: File
+
+    /**
+     * The plaintext sites of the HTTPS-only scenes: the `nip.io` names once [chooseSites] has
+     * seen them resolve, the bare loopback addresses otherwise – which the mode leaves alone, so
+     * the warning-page scenes are then skipped with a note rather than waited out.
+     */
+    private var demoHost = DEMO_IP
+    private var legacyHost = LEGACY_IP
+    private var plainHost = PLAIN_IP
+    private var plaintextSites = false
 
     @Test
     fun record() {
@@ -64,19 +79,22 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         notes = File(out, "services-safebrowsing-android-notes.txt")
         notes.writeText("Zenium Android privacy demo (Safe Browsing, HTTPS-only, cookies, GPC / DNT)\n\n")
         note("demo server: ${server.selfCheck()}")
+        chooseSites()
         val privacy = Privacy.shared(app)
         val blocking = Blocking.shared(app)
 
         // The core seeds the bundled feeds after boot and the Kotlin guard follows the files;
-        // the engine rebuilds its snapshot from the rule index the core writes. Wait for both.
+        // the engine rebuilds its snapshot from the rule index the core writes. Wait for both
+        // (the engine's upgrade only where the plaintext site is one it upgrades).
         val deadline = SystemClock.uptimeMillis() + 120_000
         var lastReport = 0L
         while (SystemClock.uptimeMillis() < deadline) {
             val status = runCatching { state().getJSONObject("privacy").getJSONObject("safeBrowsing") }.getOrNull()
             val coreReady = status?.optBoolean("ready") == true && status.optInt("entries") > 0
             val guardReady = privacy.safeBrowsing.tables.lookup(PHISHING_HOST) != null
-            val upgrade = upgradeDecision("http://$DEMO_HOST:$PORT/")
-            val engineReady = upgrade.action == Decision.Action.UPGRADE && upgrade.matchedSet == Blocking.HTTPS_ONLY_SET
+            val upgrade = upgradeDecision("http://$demoHost:$PORT/")
+            val engineReady = !plaintextSites ||
+                (upgrade.action == Decision.Action.UPGRADE && upgrade.matchedSet == Blocking.HTTPS_ONLY_SET)
             if (coreReady && guardReady && engineReady) break
             if (SystemClock.uptimeMillis() - lastReport > 10_000) {
                 lastReport = SystemClock.uptimeMillis()
@@ -95,8 +113,8 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
             "[${privacy.safeBrowsing.tables.feeds.joinToString(", ") { "${it.id}(${it.threat}, ${it.table.size})" }}] " +
             "in ${privacy.safeBrowsing.lastLoadMs} ms")
         note("guard: flags=${privacy.flags.toJson()} signalHeadersByProfile=${privacy.headersSupported}")
-        val upgrade = upgradeDecision("http://$DEMO_HOST:$PORT/")
-        note("engine: http://$DEMO_HOST:$PORT/ -> ${upgrade.action} by ${upgrade.matchedSet} to ${upgrade.redirectUrl}; " +
+        val upgrade = upgradeDecision("http://$demoHost:$PORT/")
+        note("engine: http://$demoHost:$PORT/ -> ${upgrade.action} by ${upgrade.matchedSet} to ${upgrade.redirectUrl}; " +
             "${blocking.snapshot.setCount} sets, ${blocking.snapshot.filterCount} filters")
         note("settings.privacy=${state().getJSONObject("settings").getJSONObject("privacy")}")
         // The seeded tab is on the exempt loopback name: it loads over http without a question.
@@ -108,64 +126,14 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
     override fun demo() {
         val f = Finger()
 
-        // 1. HTTPS-only mode (ask, the default): the upgrade of a plaintext-only site fails and
-        //    Zenium asks before loading it over http.
-        note("\n1. HTTPS-only mode (ask): a site https cannot reach")
-        navigate("http://$DEMO_HOST:$PORT/")
-        var tab = waitForUrl("zen://error", 25_000)
-        note("  ${describeTab(tab)}")
-        shot("01-https-only-warning")
-        beat()
-
-        // 1b. Back to safety: the page before the failed upgrade (WebView's own entry for the
-        //     failed https load sits in between and is stepped over).
-        note("\n1b. Back to safety from the warning")
-        pressInterstitial(f, "Back to safety", "back", "http://$DEMO_HOST:$PORT/")
-        tab = waitForTitle("Demo site", 25_000)
-        note("  ${describeTab(tab)}")
-        shot("01b-https-only-back-to-safety")
-        beat()
-
-        // 2. The warning again, then continue to the HTTP site: allowed for this session, the
-        //    page loads over http.
-        note("\n2. Continue to HTTP site")
-        navigate("http://$DEMO_HOST:$PORT/")
-        tab = waitForUrl("zen://error", 25_000)
-        note("  ${describeTab(tab)}")
-        pressInterstitial(f, "Continue to HTTP site", "continue", "http://$DEMO_HOST:$PORT/")
-        tab = waitForTitle("Demo site", 25_000)
-        note("  ${describeTab(tab)}")
-        note("  ${describeHttpsOnly()}")
-        shot("02-https-only-continued")
-        beat()
-
-        // 3. The same site again: no question for the rest of the session.
-        note("\n3. the same site, another page: no question")
-        navigate("http://$DEMO_HOST:$PORT/headers")
-        tab = waitForTitle("Request headers", 25_000)
-        note("  ${describeTab(tab)}")
-        note("  page: ${pageText().replace('\n', '|')}")
-        beat()
-
-        // 4. Always: another plaintext site, allowed for good from the warning page.
-        note("\n4. HTTPS-only mode (always): allow a site for good")
-        setPrivacy("""{"httpsOnly":"always"}""")
-        navigate("http://$LEGACY_HOST:$PORT/")
-        tab = waitForUrl("zen://error", 25_000)
-        note("  ${describeTab(tab)}")
-        shot("03-https-only-always-warning")
-        pressInterstitial(f, "Always allow for this site", "continue-always", "http://$LEGACY_HOST:$PORT/")
-        tab = waitForTitle("Demo site", 25_000)
-        note("  ${describeTab(tab)}")
-        note("  ${describeHttpsOnly()}")
-        shot("04-https-only-always-allowed")
-        beat()
+        if (plaintextSites) httpsOnlyScenes(f)
+        else note("\n1-4. HTTPS-only mode: skipped – without DNS for the nip.io names there is no plaintext site here the mode upgrades")
 
         // 5. Off: plaintext loads as it is.
         note("\n5. HTTPS-only mode off")
         setPrivacy("""{"httpsOnly":"off"}""")
-        navigate("http://$PLAIN_HOST:$PORT/")
-        tab = waitForTitle("Demo site", 25_000)
+        navigate("http://$plainHost:$PORT/")
+        var tab = waitForTitle("Demo site", 25_000)
         note("  ${describeTab(tab)}")
         shot("05-https-only-off")
         beat()
@@ -207,7 +175,7 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
 
         // 9. Third-party cookies: block in private (the default) leaves a normal tab's frame its cookie.
         note("\n9. third-party cookies: block-private (default), normal tab")
-        navigate("http://$DEMO_HOST:$PORT/cookies")
+        navigate("http://$demoHost:$PORT/cookies")
         tab = waitForTitle("Cookies", 25_000)
         note("  ${describeTab(tab)}")
         note("  frame: ${frameReport()}")
@@ -217,7 +185,7 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         // 10. Block all: the frame's cookie is neither sent nor readable.
         note("\n10. third-party cookies: block")
         setPrivacy("""{"thirdPartyCookies":"block"}""")
-        navigate("http://$DEMO_HOST:$PORT/cookies?block")
+        navigate("http://$demoHost:$PORT/cookies?block")
         tab = waitForTitle("Cookies", 25_000)
         note("  ${describeTab(tab)}")
         note("  frame: ${frameReport()}")
@@ -225,9 +193,9 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         beat()
 
         // 11. The exception list names the site the user is on: its embedded sites get their cookies.
-        note("\n11. third-party cookies: block, with $DEMO_HOST on the exception list")
-        setPrivacy("""{"thirdPartyCookies":"block","thirdPartyCookieExceptions":["$DEMO_HOST"]}""")
-        navigate("http://$DEMO_HOST:$PORT/cookies?exception")
+        note("\n11. third-party cookies: block, with $demoHost on the exception list")
+        setPrivacy("""{"thirdPartyCookies":"block","thirdPartyCookieExceptions":["$demoHost"]}""")
+        navigate("http://$demoHost:$PORT/cookies?exception")
         tab = waitForTitle("Cookies", 25_000)
         note("  ${describeTab(tab)}")
         note("  frame: ${frameReport()}")
@@ -238,7 +206,7 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         note("\n12. third-party cookies: block-private, private tab")
         setPrivacy("""{"thirdPartyCookies":"block-private","thirdPartyCookieExceptions":[]}""")
         val privateId = runCatching {
-            invoke("tab.create", """{"url":"http://$DEMO_HOST:$PORT/cookies?private","active":true,"containerId":"$PRIVATE_CONTAINER"}""").trim('"')
+            invoke("tab.create", """{"url":"http://$demoHost:$PORT/cookies?private","active":true,"containerId":"$PRIVATE_CONTAINER"}""").trim('"')
         }.getOrElse { e ->
             note("  tab.create failed: ${e.message}")
             null
@@ -256,7 +224,7 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
 
         // 13. GPC and DNT: off, then on; the request headers and what the page sees.
         note("\n13. GPC / DNT off")
-        navigate("http://$DEMO_HOST:$PORT/headers?off")
+        navigate("http://$demoHost:$PORT/headers?off")
         tab = waitForTitle("Request headers", 25_000)
         note("  ${describeTab(tab)}")
         note("  page: ${pageText().replace('\n', '|')}")
@@ -264,7 +232,7 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         beat()
         note("\n14. GPC / DNT on")
         setPrivacy("""{"gpc":true,"dnt":true}""")
-        navigate("http://$DEMO_HOST:$PORT/headers?on")
+        navigate("http://$demoHost:$PORT/headers?on")
         tab = waitForTitle("Request headers", 25_000)
         note("  ${describeTab(tab)}")
         note("  page: ${pageText().replace('\n', '|')}")
@@ -279,6 +247,82 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
 
         note("\nend: ${describeSafeBrowsing(state().getJSONObject("privacy").getJSONObject("safeBrowsing"))}")
         note("done")
+    }
+
+    /** Scenes 1–4: the warning page of a plaintext site the mode upgrades, answered each way. */
+    private fun httpsOnlyScenes(f: Finger) {
+        // 1. HTTPS-only mode (ask, the default): the upgrade of a plaintext-only site fails and
+        //    Zenium asks before loading it over http.
+        note("\n1. HTTPS-only mode (ask): a site https cannot reach")
+        navigate("http://$demoHost:$PORT/")
+        var tab = waitForUrl("zen://error", 25_000)
+        note("  ${describeTab(tab)}")
+        shot("01-https-only-warning")
+        beat()
+
+        // 1b. Back to safety: the page before the failed upgrade (WebView's own entry for the
+        //     failed https load sits in between and is stepped over).
+        note("\n1b. Back to safety from the warning")
+        pressInterstitial(f, "Back to safety", "back", "http://$demoHost:$PORT/")
+        tab = waitForTitle("Demo site", 25_000)
+        note("  ${describeTab(tab)}")
+        shot("01b-https-only-back-to-safety")
+        beat()
+
+        // 2. The warning again, then continue to the HTTP site: allowed for this session, the
+        //    page loads over http.
+        note("\n2. Continue to HTTP site")
+        navigate("http://$demoHost:$PORT/")
+        tab = waitForUrl("zen://error", 25_000)
+        note("  ${describeTab(tab)}")
+        pressInterstitial(f, "Continue to HTTP site", "continue", "http://$demoHost:$PORT/")
+        tab = waitForTitle("Demo site", 25_000)
+        note("  ${describeTab(tab)}")
+        note("  ${describeHttpsOnly()}")
+        shot("02-https-only-continued")
+        beat()
+
+        // 3. The same site again: no question for the rest of the session.
+        note("\n3. the same site, another page: no question")
+        navigate("http://$demoHost:$PORT/headers")
+        tab = waitForTitle("Request headers", 25_000)
+        note("  ${describeTab(tab)}")
+        note("  page: ${pageText().replace('\n', '|')}")
+        beat()
+
+        // 4. Always: another plaintext site, allowed for good from the warning page.
+        note("\n4. HTTPS-only mode (always): allow a site for good")
+        setPrivacy("""{"httpsOnly":"always"}""")
+        navigate("http://$legacyHost:$PORT/")
+        tab = waitForUrl("zen://error", 25_000)
+        note("  ${describeTab(tab)}")
+        shot("03-https-only-always-warning")
+        pressInterstitial(f, "Always allow for this site", "continue-always", "http://$legacyHost:$PORT/")
+        tab = waitForTitle("Demo site", 25_000)
+        note("  ${describeTab(tab)}")
+        note("  ${describeHttpsOnly()}")
+        shot("04-https-only-always-allowed")
+        beat()
+    }
+
+    /**
+     * Pick the plaintext sites: the `127.0.0.x.nip.io` names when the emulator's DNS answers
+     * them with the loopback address in the name (the demo server then serves them, and
+     * HTTPS-only mode – which leaves loopback itself alone – has sites to upgrade), the bare
+     * addresses otherwise, noted either way.
+     */
+    private fun chooseSites() {
+        val name = loopbackName(DEMO_IP)
+        val answer = runCatching { InetAddress.getByName(name).hostAddress }.getOrElse { "no answer (${it.javaClass.simpleName})" }
+        plaintextSites = answer == DEMO_IP
+        if (plaintextSites) {
+            demoHost = loopbackName(DEMO_IP)
+            legacyHost = loopbackName(LEGACY_IP)
+            plainHost = loopbackName(PLAIN_IP)
+            note("plaintext sites: $demoHost, $legacyHost, $plainHost ($name -> $answer; the server answers by Host)")
+        } else {
+            note("plaintext sites: $name -> $answer, so the loopback addresses stand in and HTTPS-only mode leaves them alone")
+        }
     }
 
     // --- Settings > Privacy and Security ----------------------------------------------------------
@@ -850,13 +894,23 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
 
     companion object {
         private const val PORT = 18124
-        /** The site of most scenes; every `127.0.0.x` is a site of its own to the WebView. */
-        private const val DEMO_HOST = "127.0.0.2"
+        /**
+         * The addresses the server answers as; every `127.0.0.x` is a site of its own to the
+         * WebView. The plaintext sites of the HTTPS-only scenes are their `nip.io` names (see
+         * [chooseSites]); the tracker frame and the phishing host are the bare addresses.
+         */
+        private const val DEMO_IP = "127.0.0.2"
         private const val TRACKER_HOST = "127.0.0.3"
-        private const val LEGACY_HOST = "127.0.0.4"
+        private const val LEGACY_IP = "127.0.0.4"
         /** Listed by the phishing feed the demo seeds (see [seedMore]). */
         private const val PHISHING_HOST = "127.0.0.5"
-        private const val PLAIN_HOST = "127.0.0.6"
+        private const val PLAIN_IP = "127.0.0.6"
+
+        /**
+         * A public name for a loopback address: nip.io's wildcard DNS answers `<ip>.nip.io` with
+         * `<ip>`, and `nip.io` is a public suffix to both engines, so each name is its own site.
+         */
+        private fun loopbackName(ip: String): String = "$ip.nip.io"
         private const val PRIVATE_CONTAINER = "private"
         /** The picker sheets' options, as `HTTPS_ONLY_LABELS` / `THIRD_PARTY_COOKIE_LABELS` word them. */
         private const val HTTPS_ALWAYS_LABEL = "Always use secure connections"
