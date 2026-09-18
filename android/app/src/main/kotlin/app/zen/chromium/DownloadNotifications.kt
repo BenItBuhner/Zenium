@@ -174,20 +174,8 @@ class DownloadNotifications(private val context: Context, private val onAction: 
             return String.format(Locale.US, if (value >= 100) "%.0f %s" else "%.1f %s", value, units[unit])
         }
 
-        /** Chrome's wording for its interrupt reasons. */
-        fun describe(reason: String): String = when (reason) {
-            "network-disconnected" -> "No internet"
-            "network-timeout" -> "Network timed out"
-            "network-failed" -> "Network error"
-            "server-unauthorized" -> "Needs authorization"
-            "server-forbidden" -> "Forbidden"
-            "server-bad-content" -> "No file"
-            "server-no-range" -> "Server problem"
-            "server-failed" -> "Server problem"
-            "file-no-space" -> "Not enough space"
-            "file-access-denied" -> "Insufficient permissions"
-            "shutdown" -> "Zenium was closed"
-            else -> "Download error"
-        }
+        /** Chrome's download-bubble wording for an interrupt reason (the row in the core says the same). */
+        fun describe(reason: String): String =
+            DownloadLogic.InterruptReason.fromWire(reason)?.message ?: DownloadLogic.InterruptReason.FILE_FAILED.message
     }
 }

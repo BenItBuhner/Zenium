@@ -6,9 +6,14 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.FileNotFoundException
 import java.io.IOException
+import java.net.ConnectException
+import java.net.NoRouteToHostException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import javax.net.ssl.SSLHandshakeException
+import app.zen.chromium.DownloadLogic.InterruptReason as R
 
 class DownloadLogicTest {
     private val ext: (String) -> String? = { mime -> DownloadLogic.fallbackExtension(mime) }
@@ -37,7 +42,7 @@ class DownloadLogicTest {
     fun aMismatchedRangeOrLengthRestarts() {
         assertEquals(DownloadLogic.Continuation.Restart, DownloadLogic.continuation(206, "bytes 0-999/1000", 500, 1000))
         assertEquals(DownloadLogic.Continuation.Restart, DownloadLogic.continuation(206, "bytes 500-1999/2000", 500, 1000))
-        assertEquals(DownloadLogic.Continuation.Fail("server-bad-content"), DownloadLogic.continuation(206, null, 500, 1000))
+        assertEquals(DownloadLogic.Continuation.Fail(R.SERVER_BAD_CONTENT), DownloadLogic.continuation(206, null, 500, 1000))
     }
 
     @Test
@@ -57,10 +62,10 @@ class DownloadLogicTest {
 
     @Test
     fun otherStatusesFailWithChromiumsReasons() {
-        assertEquals(DownloadLogic.Continuation.Fail("server-unauthorized"), DownloadLogic.continuation(401, null, 500, 1000))
-        assertEquals(DownloadLogic.Continuation.Fail("server-forbidden"), DownloadLogic.continuation(403, null, 500, 1000))
-        assertEquals(DownloadLogic.Continuation.Fail("server-bad-content"), DownloadLogic.continuation(404, null, 500, 1000))
-        assertEquals(DownloadLogic.Continuation.Fail("server-failed"), DownloadLogic.continuation(503, null, 0, 1000))
+        assertEquals(DownloadLogic.Continuation.Fail(R.SERVER_UNAUTHORIZED), DownloadLogic.continuation(401, null, 500, 1000))
+        assertEquals(DownloadLogic.Continuation.Fail(R.SERVER_FORBIDDEN), DownloadLogic.continuation(403, null, 500, 1000))
+        assertEquals(DownloadLogic.Continuation.Fail(R.SERVER_BAD_CONTENT), DownloadLogic.continuation(404, null, 500, 1000))
+        assertEquals(DownloadLogic.Continuation.Fail(R.SERVER_FAILED), DownloadLogic.continuation(503, null, 0, 1000))
     }
 
     @Test
@@ -86,18 +91,18 @@ class DownloadLogicTest {
     @Test
     fun flakyConnectionsRetryQuietlyABoundedNumberOfTimes() {
         for (attempt in 0 until DownloadLogic.MAX_AUTO_RESUMES) {
-            assertTrue("attempt $attempt", DownloadLogic.shouldAutoResume("network-failed", true, attempt, false))
-            assertTrue("attempt $attempt", DownloadLogic.shouldAutoResume("network-timeout", true, attempt, false))
+            assertTrue("attempt $attempt", DownloadLogic.shouldAutoResume(R.NETWORK_FAILED, true, attempt, false))
+            assertTrue("attempt $attempt", DownloadLogic.shouldAutoResume(R.NETWORK_TIMEOUT, true, attempt, false))
         }
         // The sixth failure in a row reaches the user.
-        assertFalse(DownloadLogic.shouldAutoResume("network-failed", true, DownloadLogic.MAX_AUTO_RESUMES, false))
+        assertFalse(DownloadLogic.shouldAutoResume(R.NETWORK_FAILED, true, DownloadLogic.MAX_AUTO_RESUMES, false))
         // Server answers and local problems are never retried on their own.
-        assertFalse(DownloadLogic.shouldAutoResume("server-bad-content", true, 0, false))
-        assertFalse(DownloadLogic.shouldAutoResume("server-precondition", true, 0, false))
-        assertFalse(DownloadLogic.shouldAutoResume("file-failed", true, 0, false))
+        assertFalse(DownloadLogic.shouldAutoResume(R.SERVER_BAD_CONTENT, true, 0, false))
+        assertFalse(DownloadLogic.shouldAutoResume(R.SERVER_NO_RANGE, true, 0, false))
+        assertFalse(DownloadLogic.shouldAutoResume(R.FILE_FAILED, true, 0, false))
         // Nor a transfer that cannot append, or one the user paused or cancelled meanwhile.
-        assertFalse(DownloadLogic.shouldAutoResume("network-failed", false, 0, false))
-        assertFalse(DownloadLogic.shouldAutoResume("network-failed", true, 0, true))
+        assertFalse(DownloadLogic.shouldAutoResume(R.NETWORK_FAILED, false, 0, false))
+        assertFalse(DownloadLogic.shouldAutoResume(R.NETWORK_FAILED, true, 0, true))
     }
 
     @Test
@@ -211,15 +216,101 @@ class DownloadLogicTest {
         assertNull(DownloadLogic.parseDataUrl("https://x/y"))
     }
 
+    // --- the file behind a savePath --------------------------------------------------------------
+
+    @Test
+    fun aSavePathNamesItsStore() {
+        val media = "content://media/external_primary/downloads/1000000025"
+        assertEquals(DownloadLogic.SinkKind.MEDIA_STORE, DownloadLogic.sinkKind(media, 29))
+        assertEquals(DownloadLogic.SinkKind.MEDIA_STORE, DownloadLogic.sinkKind(media, 34))
+        // Before scoped storage the public directory was written directly; a media uri is another app's document.
+        assertEquals(DownloadLogic.SinkKind.DOCUMENT, DownloadLogic.sinkKind(media, 28))
+        assertEquals(
+            DownloadLogic.SinkKind.DOCUMENT,
+            DownloadLogic.sinkKind("content://com.android.externalstorage.documents/document/primary%3ADownload%2Freport.pdf", 34)
+        )
+        assertEquals(
+            DownloadLogic.SinkKind.DOCUMENT,
+            DownloadLogic.sinkKind("content://com.android.providers.downloads.documents/document/msf%3A42", 30)
+        )
+        assertEquals(DownloadLogic.SinkKind.FILE, DownloadLogic.sinkKind("/storage/emulated/0/Download/report.pdf", 34))
+        assertEquals(DownloadLogic.SinkKind.FILE, DownloadLogic.sinkKind("/storage/emulated/0/Download/report.pdf.zeniumdownload", 28))
+        assertEquals(DownloadLogic.SinkKind.NONE, DownloadLogic.sinkKind("", 34))
+        assertEquals(DownloadLogic.SinkKind.NONE, DownloadLogic.sinkKind("   ", 34))
+    }
+
+    @Test
+    fun deleteFileAnswersFromBeforeAndAfter() {
+        assertEquals("deleted", DownloadLogic.deleteResult(existedBefore = true, existsAfter = false))
+        assertEquals("failed", DownloadLogic.deleteResult(existedBefore = true, existsAfter = true))
+        assertEquals("missing", DownloadLogic.deleteResult(existedBefore = false, existsAfter = false))
+        // A file that appears during the attempt was never ours to report on.
+        assertEquals("missing", DownloadLogic.deleteResult(existedBefore = false, existsAfter = true))
+    }
+
     // --- failures --------------------------------------------------------------------------------
 
     @Test
-    fun failuresGetShortReasons() {
-        assertEquals("network-disconnected", DownloadLogic.failureReason(UnknownHostException("x")))
-        assertEquals("network-timeout", DownloadLogic.failureReason(SocketTimeoutException("x")))
-        assertEquals("file-no-space", DownloadLogic.failureReason(IOException("write failed: ENOSPC (No space left on device)")))
-        assertEquals("file-access-denied", DownloadLogic.failureReason(IOException("open failed: EACCES (Permission denied)")))
-        assertEquals("network-failed", DownloadLogic.failureReason(IOException("unexpected end of stream")))
-        assertEquals("file-failed", DownloadLogic.failureReason(IllegalStateException("x")))
+    fun theReasonsAreTheCoresClosedSet() {
+        // The 22 members of `DownloadInterruptReason` (src/shared/types.ts), same wire names.
+        val wires = listOf(
+            "network-failed", "network-timeout", "network-disconnected", "network-server-down",
+            "server-failed", "server-no-range", "server-bad-content", "server-unauthorized", "server-forbidden", "server-unreachable",
+            "file-failed", "file-access-denied", "file-no-space", "file-name-too-long", "file-too-large",
+            "file-virus-infected", "file-blocked", "file-security-check-failed", "file-same-as-source",
+            "user-canceled", "user-shutdown", "crash"
+        )
+        assertEquals(wires, R.entries.map { it.wire })
+        for (reason in R.entries) {
+            assertEquals(reason, R.fromWire(reason.wire))
+            assertEquals(reason, R.fromWire(" ${reason.wire} "))
+            assertTrue(reason.wire, reason.message.isNotEmpty())
+            // Chrome's constant name is the wire name upper-cased, as in the core's `chromeInterruptReasonName`.
+            assertEquals(reason.name, reason.wire.uppercase().replace('-', '_'))
+        }
+        assertNull(R.fromWire("interrupted"))
+        assertNull(R.fromWire(null))
+        assertTrue(R.NETWORK_TIMEOUT.isNetwork)
+        assertFalse(R.SERVER_FAILED.isNetwork)
+        assertEquals("Check internet connection", R.NETWORK_FAILED.message)
+        assertEquals("Out of storage space", R.FILE_NO_SPACE.message)
+        assertEquals("Couldn’t finish download", R.USER_SHUTDOWN.message)
+        assertEquals("Check internet connection", DownloadNotifications.describe("network-timeout"))
+        assertEquals("Something went wrong", DownloadNotifications.describe("nonsense"))
+    }
+
+    @Test
+    fun exceptionsOutOfTheTransferAreNamed() {
+        assertEquals(R.SERVER_UNREACHABLE, DownloadLogic.failureReason(UnknownHostException("x")))
+        assertEquals(R.NETWORK_TIMEOUT, DownloadLogic.failureReason(SocketTimeoutException("x")))
+        assertEquals(R.NETWORK_SERVER_DOWN, DownloadLogic.failureReason(ConnectException("Connection refused")))
+        assertEquals(R.NETWORK_DISCONNECTED, DownloadLogic.failureReason(NoRouteToHostException("x")))
+        assertEquals(R.NETWORK_DISCONNECTED, DownloadLogic.failureReason(IOException("connect failed: ENETUNREACH (Network is unreachable)")))
+        assertEquals(R.SERVER_FAILED, DownloadLogic.failureReason(SSLHandshakeException("bad cert")))
+        assertEquals(R.FILE_NO_SPACE, DownloadLogic.failureReason(IOException("write failed: ENOSPC (No space left on device)")))
+        assertEquals(R.FILE_ACCESS_DENIED, DownloadLogic.failureReason(IOException("open failed: EACCES (Permission denied)")))
+        assertEquals(R.FILE_ACCESS_DENIED, DownloadLogic.failureReason(IOException("open failed: EROFS (Read-only file system)")))
+        assertEquals(R.FILE_ACCESS_DENIED, DownloadLogic.failureReason(SecurityException("Permission Denial: reading document")))
+        assertEquals(R.FILE_NAME_TOO_LONG, DownloadLogic.failureReason(IOException("open failed: ENAMETOOLONG (File name too long)")))
+        assertEquals(R.FILE_TOO_LARGE, DownloadLogic.failureReason(IOException("write failed: EFBIG (File too large)")))
+        assertEquals(R.FILE_FAILED, DownloadLogic.failureReason(FileNotFoundException("/x/y")))
+        assertEquals(R.NETWORK_FAILED, DownloadLogic.failureReason(IOException("unexpected end of stream")))
+        assertEquals(R.NETWORK_FAILED, DownloadLogic.failureReason(IOException(null as String?)))
+        assertEquals(R.FILE_FAILED, DownloadLogic.failureReason(IllegalStateException("x")))
+    }
+
+    @Test
+    fun httpStatusesAreReadAsChromiumsDownloadCoreReadsThem() {
+        assertEquals(R.SERVER_BAD_CONTENT, DownloadLogic.serverReason(204))
+        assertEquals(R.SERVER_BAD_CONTENT, DownloadLogic.serverReason(205))
+        assertEquals(R.SERVER_BAD_CONTENT, DownloadLogic.serverReason(404))
+        assertEquals(R.SERVER_UNAUTHORIZED, DownloadLogic.serverReason(401))
+        assertEquals(R.SERVER_UNAUTHORIZED, DownloadLogic.serverReason(407))
+        assertEquals(R.SERVER_FORBIDDEN, DownloadLogic.serverReason(403))
+        assertEquals(R.SERVER_NO_RANGE, DownloadLogic.serverReason(416))
+        assertEquals(R.SERVER_FAILED, DownloadLogic.serverReason(410))
+        assertEquals(R.SERVER_FAILED, DownloadLogic.serverReason(429))
+        assertEquals(R.SERVER_FAILED, DownloadLogic.serverReason(500))
+        assertEquals(R.SERVER_FAILED, DownloadLogic.serverReason(503))
     }
 }

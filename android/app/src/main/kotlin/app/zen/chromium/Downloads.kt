@@ -332,6 +332,42 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         }
     }
 
+    /**
+     * Whether a completed download's file is still behind its recorded `savePath` (a MediaStore
+     * or SAF `content:` uri, or a path on API 26–28): the core's `fileMissing` sweep, so the
+     * answer is a content query or a stat, never a read.
+     */
+    fun exists(savePath: String, reply: (Any?) -> Unit) {
+        io.execute {
+            val present = runCatching { DownloadSink.reopen(activity, savePath, "") != null }.getOrDefault(false)
+            main.post { reply(present) }
+        }
+    }
+
+    /**
+     * Chrome's "Delete file" on a completed row: the MediaStore row, the SAF document or the
+     * file behind `savePath` goes; the core keeps the row and marks it. `missing` when nothing was
+     * there to begin with, `failed` when it is still there afterwards.
+     */
+    fun deleteFile(savePath: String, reply: (Any?) -> Unit) {
+        io.execute {
+            val result = runCatching {
+                val sink = DownloadSink.sinkFor(activity, savePath, "") ?: return@runCatching "missing"
+                val before = sink.exists()
+                if (before) {
+                    sink.delete()
+                    // A path MediaStore owns (a screenshot saved to Downloads on API 29+) does not
+                    // go through the file system: its row is the file.
+                    if (sink is DownloadSink.FileSink && sink.exists() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        mediaStoreUri(File(savePath))?.let { activity.contentResolver.delete(it, null, null) }
+                    }
+                }
+                DownloadLogic.deleteResult(before, sink.exists())
+            }.getOrDefault("failed")
+            main.post { reply(result) }
+        }
+    }
+
     fun open(savePath: String, mimeType: String) {
         val uri = shareUri(savePath) ?: return
         val type = mimeType.ifEmpty { activity.contentResolver.getType(uri) ?: DownloadSink.mimeFor(savePath) }
@@ -427,7 +463,7 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
      * connection never reaches the user; anything else, or the sixth failure in a row, is reported
      * as interrupted.
      */
-    private fun fail(l: Live, reason: String, resumable: Boolean) {
+    private fun fail(l: Live, reason: DownloadLogic.InterruptReason, resumable: Boolean) {
         val canRetry = resumable && l.kind == Kind.HTTP && l.canResume && l.sink != null
         if (!DownloadLogic.shouldAutoResume(reason, canRetry, l.autoResumes, userStopped = l.control != Control.RUN)) {
             main.post { interrupted(l, reason, resumable) }
@@ -479,7 +515,8 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
                 Control.RUN -> {}
             }
             if (l.total > 0 && l.received < l.total) {
-                fail(l, "network-failed", resumable = l.canResume)
+                // The body ended short of Content-Length: the connection dropped mid-way.
+                fail(l, DownloadLogic.InterruptReason.NETWORK_FAILED, resumable = l.canResume)
                 return false
             }
             main.post { completed(l) }
@@ -679,11 +716,11 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         report(l, "paused", force = true)
     }
 
-    private fun interrupted(l: Live, reason: String, resumable: Boolean) {
+    private fun interrupted(l: Live, reason: DownloadLogic.InterruptReason, resumable: Boolean) {
         l.canResume = resumable && l.sink != null
         if (!l.canResume) l.sink?.delete()
-        done(l, "interrupted", error = reason)
-        l.coreId?.let { notifications.failed(it, displayName(l), reason, private = l.isPrivate) }
+        done(l, "interrupted", error = reason.wire)
+        l.coreId?.let { notifications.failed(it, displayName(l), reason.wire, private = l.isPrivate) }
     }
 
     private fun completed(l: Live) {
