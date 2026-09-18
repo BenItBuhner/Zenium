@@ -16,16 +16,29 @@ export interface LayoutInfo {
  * Measures the viewport element and tells the main process where every visible tab view goes.
  * Runs after paint so the report always matches what the chrome is showing.
  */
+function sameRect(prev: Rect | null, next: Rect | null): boolean {
+  if (prev === null || next === null) return prev === next
+  return (
+    prev.x === next.x &&
+    prev.y === next.y &&
+    prev.width === next.width &&
+    prev.height === next.height
+  )
+}
+
 export function useLayoutReporter(
   viewportRef: RefObject<HTMLDivElement | null>,
+  sidePanelRef: RefObject<HTMLDivElement | null>,
   state: UIState,
   ui: UiState,
   glanceActive: boolean
 ): LayoutInfo {
   const [area, setArea] = useState<Rect | null>(null)
+  const [panelArea, setPanelArea] = useState<Rect | null>(null)
   const lastSent = useRef<string>('')
   const { coarse, formFactor } = useViewport()
   const gap = coarse ? SPLIT_GAP_TOUCH : SPLIT_GAP
+  const panelOpen = state.sidePanel !== null
 
   useLayoutEffect(() => {
     const el = viewportRef.current
@@ -33,15 +46,9 @@ export function useLayoutReporter(
     const measure = (): void => {
       const r = el.getBoundingClientRect()
       const next = { x: r.left, y: r.top, width: r.width, height: r.height }
-      const same = (prev: Rect | null): boolean =>
-        prev !== null &&
-        prev.x === next.x &&
-        prev.y === next.y &&
-        prev.width === next.width &&
-        prev.height === next.height
       // Chrome that stands in for the page (the phone's gesture stage) lays out against it.
-      if (!same(contentAreaStore.get().area)) contentAreaStore.set({ area: next })
-      setArea((prev) => (same(prev) ? prev : next))
+      if (!sameRect(contentAreaStore.get().area, next)) contentAreaStore.set({ area: next })
+      setArea((prev) => (sameRect(prev, next) ? prev : next))
     }
     measure()
     const ro = new ResizeObserver(measure)
@@ -54,12 +61,35 @@ export function useLayoutReporter(
   }, [
     viewportRef,
     formFactor,
+    panelOpen,
     state.settings.sidebarSide,
     state.settings.toolbarLayout,
     state.settings.compactMode.enabled,
     // The phone bar changing edges slides the viewport without resizing it.
     state.settings.phoneBarPosition
   ])
+
+  // The extension side panel's strip: its body is where the panel's view goes.
+  useLayoutEffect(() => {
+    const el = sidePanelRef.current
+    if (!el || !panelOpen) {
+      setPanelArea(null)
+      return
+    }
+    const measure = (): void => {
+      const r = el.getBoundingClientRect()
+      const next = { x: r.left, y: r.top, width: r.width, height: r.height }
+      setPanelArea((prev) => (sameRect(prev, next) ? prev : next))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    window.addEventListener('resize', measure)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [sidePanelRef, panelOpen, formFactor, state.settings.sidebarSide])
 
   const contentHidden = overlayCoversContent(ui) || ui.compactHover
 
@@ -76,7 +106,8 @@ export function useLayoutReporter(
           }
         ],
         glance: null,
-        contentHidden: false
+        contentHidden: false,
+        sidePanel: null
       }
     } else if (!area) {
       return
@@ -101,13 +132,13 @@ export function useLayoutReporter(
             glance = { tabId: state.glance.tabId, rect: glanceRect(area), radius: 12 }
         }
       }
-      report = { placements, glance, contentHidden }
+      report = { placements, glance, contentHidden, sidePanel: panelOpen ? panelArea : null }
     }
     const key = JSON.stringify(report)
     if (key === lastSent.current) return
     lastSent.current = key
     run('layout.report', report)
-  }, [area, state, ui.glanceReady, glanceActive, contentHidden, gap])
+  }, [area, panelArea, panelOpen, state, ui.glanceReady, glanceActive, contentHidden, gap])
 
   return { area, contentHidden }
 }

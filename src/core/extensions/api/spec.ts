@@ -612,6 +612,17 @@ export const API_SPEC: ApiSpec = {
     methods: { get: { params: [] } },
     events: {}
   },
+  // The panel is Zenium's own view beside the page; the options follow Chrome's default-plus-per-tab rules.
+  sidePanel: {
+    methods: {
+      setOptions: { params: [object('options')] },
+      getOptions: { params: [object('options', true)] },
+      setPanelBehavior: { params: [object('behavior')] },
+      getPanelBehavior: { params: [] },
+      open: { params: [object('options')] }
+    },
+    events: {}
+  },
   // Zenium's folders are the groups; `tabs.group` / `tabs.ungroup` are declared on `tabs`.
   tabGroups: {
     methods: {

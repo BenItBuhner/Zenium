@@ -9,7 +9,13 @@ import {
 } from 'electron'
 import { existsSync, promises as fs, readFileSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
-import type { ExtensionInfo, ExtensionSource, ExtensionUpdateState, Rect } from '../../shared/types'
+import type {
+  ExtensionInfo,
+  ExtensionSource,
+  ExtensionUpdateState,
+  Rect,
+  SidePanelInfo
+} from '../../shared/types'
 import { JsonStore } from '../../core/store/JsonStore'
 import type { Browser } from '../../core/browser'
 import type {
@@ -1091,6 +1097,28 @@ export class ExtensionService implements ExtensionHost {
     this.popup = null
     if (win.alive) (win.host as ElectronWindow).win.contentView.removeChildView(view)
     if (!view.webContents.isDestroyed()) view.webContents.close()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Side panels (hosted by the chrome.* layer; nothing without it)
+  // ---------------------------------------------------------------------------
+
+  sidePanel(win: ZenWindow): SidePanelInfo | null {
+    return this.api ? this.api.sidePanelInfo(win) : null
+  }
+
+  toggleSidePanel(id: string, win: ZenWindow): void {
+    const record = this.record(id)
+    if (!record || !this.loadedById.has(record.id) || !this.api) return
+    this.api.toggleSidePanel(record.id, win)
+  }
+
+  closeSidePanel(win: ZenWindow): void {
+    this.api?.closeSidePanel(win)
+  }
+
+  placeSidePanel(win: ZenWindow, rect: Rect | null): void {
+    this.api?.placeSidePanel(win, rect)
   }
 
   // ---------------------------------------------------------------------------

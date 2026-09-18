@@ -372,6 +372,14 @@ export interface ExtensionInfo {
   commandConflicts?: string[]
 }
 
+/** The extension side panel a window is showing (`chrome.sidePanel`), beside the page. */
+export interface SidePanelInfo {
+  extensionId: string
+  name: string
+  /** Data URL of the extension's icon, when it has one. */
+  icon: string | null
+}
+
 /** One `chrome.commands` entry as the extensions page shows it. */
 export interface ExtensionCommandInfo {
   name: string
@@ -1462,6 +1470,8 @@ export interface UIState {
   zappingTabId: string | null
   liveFolders: Record<string, LiveFolderConfig>
   extensions: ExtensionInfo[]
+  /** The extension side panel this window shows beside the page, if one is open for its tab. */
+  sidePanel: SidePanelInfo | null
   mods: Mod[]
   sync: SyncStatus
   /** Connected AI agents (MCP sessions) and the tabs they drive. */
@@ -1574,6 +1584,8 @@ export interface LayoutReport {
   glance: { tabId: string; rect: Rect; radius: number } | null
   /** When true no tab views should be visible (a chrome overlay covers the content area). */
   contentHidden: boolean
+  /** Where the extension side panel's view goes (`UIState.sidePanel`), or null when none shows. */
+  sidePanel?: Rect | null
 }
 
 // ---------------------------------------------------------------------------
@@ -1977,6 +1989,9 @@ export interface Commands {
   'extension.setPinned': { args: { id: string; pinned: boolean }; result: void }
   /** Lets (or stops letting) this extension's `chrome_url_overrides.newtab` page open new tabs. */
   'extension.setNewTabOverride': { args: { id: string; enabled: boolean }; result: void }
+  /** Opens this extension's `chrome.sidePanel` beside the page, or closes it when it is showing. */
+  'extension.toggleSidePanel': { args: { id: string }; result: void }
+  'extension.closeSidePanel': { args: void; result: void }
   'extension.reload': { args: { id: string }; result: void }
   'extension.checkForUpdates': { args: void; result: void }
   'extension.update': { args: { id: string }; result: void }

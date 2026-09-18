@@ -1,4 +1,10 @@
-import type { ExtensionInfo, ExtensionSource, ExtensionUpdateState, Rect } from '@shared/types'
+import type {
+  ExtensionInfo,
+  ExtensionSource,
+  ExtensionUpdateState,
+  Rect,
+  SidePanelInfo
+} from '@shared/types'
 import type { Browser } from '@core/browser'
 import type { ExtensionHost, MenuItemTemplate } from '@core/platform'
 import type { ZenWindow } from '@core/window'
@@ -705,6 +711,23 @@ export class AndroidExtensions implements ExtensionHost {
 
   newTabUrl(): string | null {
     return null
+  }
+
+  /** No side panels on the phone: the chrome.sidePanel calls answer, nothing docks a view. */
+  sidePanel(): SidePanelInfo | null {
+    return null
+  }
+
+  toggleSidePanel(): void {
+    // The phone has no room beside the page for a panel.
+  }
+
+  closeSidePanel(): void {
+    // Nothing is ever open.
+  }
+
+  placeSidePanel(): void {
+    // Nothing to place.
   }
 
   /** Stop and start again, re-reading the installed files. */

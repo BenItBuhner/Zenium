@@ -220,11 +220,12 @@ export class Browser {
     this.defaultBrowser = new DefaultBrowserService(this)
     this.blocking = new BlockingService(this)
     this.translate = new TranslateService(this)
-    this.state.extras = () => ({
+    this.state.extras = (win) => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
       liveFolders: this.liveFolders.all(),
       extensions: this.extensions.list(),
+      sidePanel: this.extensions.sidePanel(win),
       mods: this.mods.all(),
       sync: this.sync.status(),
       agents: this.agents.list(),
@@ -1520,6 +1521,8 @@ export class Browser {
       'extension.setPinned': ({ id, pinned }) => this.extensions.setPinned(id, pinned),
       'extension.setNewTabOverride': ({ id, enabled }) =>
         this.extensions.setNewTabOverride(id, enabled),
+      'extension.toggleSidePanel': ({ id }, win) => this.extensions.toggleSidePanel(id, win),
+      'extension.closeSidePanel': (_a, win) => this.extensions.closeSidePanel(win),
       'extension.reload': ({ id }) => this.extensions.reload(id),
       'extension.checkForUpdates': (_a, win) => this.extensions.checkForUpdates(win),
       'extension.update': ({ id }, win) => this.extensions.update(id, win),

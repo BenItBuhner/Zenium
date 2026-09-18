@@ -21,6 +21,7 @@ import type {
   Rect,
   ResourceSnapshot,
   SharePayload,
+  SidePanelInfo,
   SyncScope,
   SyncStatus,
   Tab
@@ -642,6 +643,13 @@ export interface ExtensionHost {
   openOptions(id: string, win: ZenWindow): void
   openPopup(id: string, anchor: Rect, win: ZenWindow): void
   closePopup(): void
+  /** The `chrome.sidePanel` a window shows beside its page right now (for `UIState.sidePanel`). */
+  sidePanel(win: ZenWindow): SidePanelInfo | null
+  /** Open an extension's side panel in `win`, or close it when that extension's panel is showing. */
+  toggleSidePanel(id: string, win: ZenWindow): void
+  closeSidePanel(win: ZenWindow): void
+  /** The chrome laid the side panel out here (null: it is not showing); place the panel's view. */
+  placeSidePanel(win: ZenWindow, rect: Rect | null): void
   /**
    * The `chrome.contextMenus` items extensions add to a page's context menu, already grouped
    * per extension the way Chrome does; empty when nothing matches the click.

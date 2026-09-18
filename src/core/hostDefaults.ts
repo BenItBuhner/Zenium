@@ -1,5 +1,12 @@
 /* eslint-disable @typescript-eslint/no-empty-function -- deliberate no-op host services */
-import type { ExtensionInfo, Rect, ResourceSnapshot, SyncScope, SyncStatus } from '../shared/types'
+import type {
+  ExtensionInfo,
+  Rect,
+  ResourceSnapshot,
+  SidePanelInfo,
+  SyncScope,
+  SyncStatus
+} from '../shared/types'
 import { emptyResourceSnapshot } from '../shared/defaults'
 import { updateOsOf, type UpdateTarget } from '../shared/updates'
 import type { Browser } from './browser'
@@ -121,6 +128,14 @@ export class NoExtensions implements ExtensionHost {
     this.unavailable(win)
   }
   closePopup(): void {}
+  sidePanel(): SidePanelInfo | null {
+    return null
+  }
+  toggleSidePanel(_id: string, win: ZenWindow): void {
+    this.unavailable(win)
+  }
+  closeSidePanel(): void {}
+  placeSidePanel(): void {}
   pageContextMenuItems(): MenuItemTemplate[] {
     return []
   }

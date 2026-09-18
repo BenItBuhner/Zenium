@@ -16,10 +16,20 @@ interface PersistedApi {
   uninstallUrls: Record<string, string>
   /** Events an extension's worker listened to, so it can be woken for them after a restart. */
   workerEvents: Record<string, string[]>
+  /** `sidePanel.setPanelBehavior`: extensions whose toolbar click opens their side panel. */
+  sidePanelOnActionClick?: Record<string, boolean>
 }
 
 function emptyPersisted(): PersistedApi {
-  return { version: 1, installed: {}, alarms: {}, grants: {}, uninstallUrls: {}, workerEvents: {} }
+  return {
+    version: 1,
+    installed: {},
+    alarms: {},
+    grants: {},
+    uninstallUrls: {},
+    workerEvents: {},
+    sidePanelOnActionClick: {}
+  }
 }
 
 /**
@@ -97,6 +107,17 @@ export class ApiStore {
     this.save()
   }
 
+  sidePanelOnActionClick(extensionId: string): boolean {
+    return this.data.sidePanelOnActionClick?.[extensionId] === true
+  }
+
+  setSidePanelOnActionClick(extensionId: string, enabled: boolean): void {
+    const table = (this.data.sidePanelOnActionClick ??= {})
+    if (enabled) table[extensionId] = true
+    else delete table[extensionId]
+    this.save()
+  }
+
   /** The extension is gone for good: drop everything about it. */
   forget(extensionId: string): void {
     delete this.data.installed[extensionId]
@@ -104,6 +125,7 @@ export class ApiStore {
     delete this.data.grants[extensionId]
     delete this.data.uninstallUrls[extensionId]
     delete this.data.workerEvents[extensionId]
+    delete this.data.sidePanelOnActionClick?.[extensionId]
     this.save()
     this.syncStores.get(extensionId)?.store.write({})
   }

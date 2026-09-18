@@ -232,6 +232,7 @@ export class ZenWindow {
     const fullscreenTabId = this.htmlFullscreenTabId
     if (fullscreenTabId && owned.has(fullscreenTabId)) {
       // An element in HTML fullscreen covers the whole window, chrome included.
+      this.browser.extensions.placeSidePanel(this, null)
       const { width, height } = this.host.contentSize()
       for (const [tabId, view] of owned) {
         if (view.isDestroyed()) continue
@@ -246,6 +247,11 @@ export class ZenWindow {
       }
       return
     }
+    // The extension side panel sits beside the page and hides with it.
+    this.browser.extensions.placeSidePanel(
+      this,
+      report.contentHidden ? null : (report.sidePanel ?? null)
+    )
     const wanted = new Map<string, { rect: Rect; radius: number }>()
     if (!report.contentHidden) {
       for (const p of report.placements) wanted.set(p.tabId, { rect: p.rect, radius: p.radius })

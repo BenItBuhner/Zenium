@@ -15,7 +15,9 @@ import {
   DEFAULT_CONTAINER_ID,
   type ExtensionAction,
   type ExtensionCommandInfo,
-  type ExtensionInfo
+  type ExtensionInfo,
+  type Rect,
+  type SidePanelInfo
 } from '../../../shared/types'
 import type { StoreIO } from '../../../core/platform'
 import type { Browser } from '../../../core/browser'
@@ -55,6 +57,8 @@ import { NotificationsApi } from './notifications'
 import { PermissionsApi } from './permissions'
 import { RuntimeApi } from './runtime'
 import { SessionsApi } from './sessions'
+import { SidePanelApi } from './sidePanel'
+import { electronPanelViewHost } from './sidePanelBridge'
 import { ApiStore } from './store'
 import { StorageApi } from './storage'
 import { TabGroupsApi } from './tabGroups'
@@ -108,6 +112,11 @@ export interface ExtensionApiHooks {
   actionContextMenuItems(extensionId: string, win: ZenWindow): MenuItemTemplate[]
   /** A key press no Zenium shortcut claimed; true when an extension command took it. */
   handleKey(input: KeyEventInput, win: ZenWindow): boolean
+  /** The `chrome.sidePanel` a window shows beside its page (see `ExtensionHost.sidePanel`). */
+  sidePanelInfo(win: ZenWindow): SidePanelInfo | null
+  toggleSidePanel(extensionId: string, win: ZenWindow): void
+  closeSidePanel(win: ZenWindow): void
+  placeSidePanel(win: ZenWindow, rect: Rect | null): void
 }
 
 type FrameSender = Extract<Sender, { kind: 'frame' }>
@@ -147,6 +156,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly recentlyClosed: SessionsApi
   readonly topSites: TopSitesApi
   readonly tabGroups: TabGroupsApi
+  readonly sidePanel: SidePanelApi
 
   private readonly namespaces: Record<string, NamespaceHandlers>
   private readonly extensions = new Map<string, LoadedExtension>()
@@ -190,7 +200,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.activeTab = new ActiveTabGrants(this)
     this.webNavigation = new WebNavigationApi(this)
     this.contextMenus = new ContextMenusApi(this, this.activeTab)
-    this.commands = new CommandsApi(this, this.action, this.activeTab)
+    this.sidePanel = new SidePanelApi(this, electronPanelViewHost(this.model))
+    this.commands = new CommandsApi(this, this.action, this.activeTab, this.sidePanel)
     this.notifications = new NotificationsApi(this)
     this.cookies = new CookiesApi(this)
     this.declarativeNetRequest = new DeclarativeNetRequestHostApi(
@@ -227,7 +238,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       downloads: this.downloads.handlers,
       sessions: this.recentlyClosed.handlers,
       topSites: this.topSites.handlers,
-      tabGroups: this.tabGroups.handlers
+      tabGroups: this.tabGroups.handlers,
+      sidePanel: this.sidePanel.handlers
     }
     // A tab's outermost document changed: `activeTab` grants for another origin end and the
     // declarativeNetRequest action counts start over.
@@ -355,6 +367,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.permissions.load(loaded)
     this.alarms.load(ext.id)
     this.commands.load(loaded)
+    this.sidePanel.load(loaded)
     // After the permissions: the state exists only for extensions holding the permission.
     this.declarativeNetRequest.load(loaded)
     // Existing tabs, bookmarks, downloads and folders are the baseline, not a burst of `onCreated`.
@@ -380,6 +393,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.alarms.unload(ext.id)
     this.permissions.unload(ext.id)
     this.commands.unload(ext.id)
+    this.sidePanel.unload(ext.id)
     this.declarativeNetRequest.unload(ext.id)
     this.contextMenus.forget(ext.id)
     this.notifications.forget(ext.id)
@@ -524,6 +538,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     const wc = sender.webContents
     if (this.views.tabIdForWebContents(wc) || this.model.popupForTabId(wc.id)) return 'tab'
     if (wc.getType() === 'backgroundPage') return 'background'
+    if (this.sidePanel.hosts(wc)) return 'other'
     const popup = this.action.clickState(ctx.extensionId, ctx.window ?? this.lastWindow()).popup
     if (popup && hello.url.split('#')[0] === extensionUrl(ctx.extensionId, popup)) return 'popup'
     return ctx.window ? 'popup' : 'other'
@@ -647,9 +662,30 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     if (!enabled) return null
     const active = this.browser.tabs.activeTabFor(win)
     if (active) this.activeTab.grant(extensionId, active)
+    // `sidePanel.setPanelBehavior({ openPanelOnActionClick: true })`: the click toggles the panel.
+    if (this.sidePanel.opensOnActionClick(extensionId, win)) {
+      this.sidePanel.toggle(extensionId, win)
+      return null
+    }
     if (popup) return popup
     this.action.clicked(extensionId, win)
     return null
+  }
+
+  sidePanelInfo(win: ZenWindow): SidePanelInfo | null {
+    return this.sidePanel.info(win)
+  }
+
+  toggleSidePanel(extensionId: string, win: ZenWindow): void {
+    this.sidePanel.toggle(extensionId, win)
+  }
+
+  closeSidePanel(win: ZenWindow): void {
+    this.sidePanel.close(win)
+  }
+
+  placeSidePanel(win: ZenWindow, rect: Rect | null): void {
+    this.sidePanel.place(win, rect)
   }
 
   pageContextMenuItems(tabId: string, params: PageContextParams): MenuItemTemplate[] {
@@ -700,9 +736,12 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       this.action.tabRemoved(before.chrome.id)
       this.activeTab.tabRemoved(before.chrome.id)
       this.declarativeNetRequest.tabRemoved(before.chrome.id)
+      this.sidePanel.tabRemoved(before.chrome.id)
     }
     this.tabs.diff(prev, next)
     this.windows.diff(prev, next)
+    // The active tab may have changed: an open panel follows it to the page for that tab.
+    this.sidePanel.refresh()
   }
 
   /** Bounds changes never commit state; follow the windows themselves for `onBoundsChanged`. */
