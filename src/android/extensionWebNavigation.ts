@@ -99,6 +99,13 @@ export class AndroidWebNavigation {
    * is reported as usual and, once it commits, the tab is ordinary again.
    */
   private readonly hidden = new Set<string>()
+  /**
+   * Tabs whose current document has reported `onCompleted` (inferred path only). WebView calls
+   * `onPageFinished` for a same-document navigation too (measured on WebView 113: a hash change
+   * finished under the new URL), and Chrome reports nothing but the same-document event for it;
+   * a document finishes once, the next document's commit starts over.
+   */
+  private readonly finished = new Set<string>()
 
   constructor(private readonly now: () => number) {}
 
@@ -107,6 +114,7 @@ export class AndroidWebNavigation {
     this.documents.delete(tabId)
     this.urls.delete(tabId)
     this.hidden.delete(tabId)
+    this.finished.delete(tabId)
   }
 
   // ---------------------------------------------------------------------------
@@ -198,6 +206,7 @@ export class AndroidWebNavigation {
     if (this.hidden.has(tabId) && (inPage || isChromeDocument(url))) return []
     if (inPage) return this.sameDocument(tabId, tab, url)
     this.hidden.delete(tabId)
+    this.finished.delete(tabId)
     const doc = documentId()
     this.documents.set(tabId, doc)
     this.urls.set(tabId, url)
@@ -213,12 +222,15 @@ export class AndroidWebNavigation {
   }
 
   /**
-   * `onPageFinished`: the document is done loading. After a failure the finish is WebView's own
-   * error page's, under the failed URL, and stays hidden (a document of the page's commits first
-   * when the tab moves on).
+   * `onPageFinished`: the document is done loading, once. After a failure the finish is WebView's
+   * own error page's, under the failed URL, and stays hidden (a document of the page's commits
+   * first when the tab moves on); after a same-document navigation it is the finished document's
+   * again and is dropped.
    */
   inferredFinish(tabId: string, tab: TabFacts, url: string): DerivedEvent[] {
     if (url.startsWith(ERROR_PAGE_PREFIX) || this.hidden.has(tabId)) return []
+    if (this.finished.has(tabId)) return []
+    this.finished.add(tabId)
     const doc = this.documents.get(tabId)
     return [
       this.event('onDOMContentLoaded', tab, url, doc),

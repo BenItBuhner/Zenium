@@ -210,6 +210,13 @@ describe('AndroidWebNavigation: the navigation listener path', () => {
     expect(names(nav.inferredCommit('t1', TAB, 'https://a.test/#x', true))).toEqual([
       'onReferenceFragmentUpdated'
     ])
+    // As measured on WebView 113: `onPageFinished` fires for the hash change too, under the new
+    // URL. The document finished already; Chrome reports nothing more than the fragment event.
+    expect(nav.inferredFinish('t1', TAB, 'https://a.test/#x')).toEqual([])
+    expect(names(nav.inferredCommit('t1', TAB, 'https://a.test/?q', true))).toEqual([
+      'onHistoryStateUpdated'
+    ])
+    expect(nav.inferredFinish('t1', TAB, 'https://a.test/?q')).toEqual([])
     const failed = nav.inferredFailure('t1', TAB, 'https://b.test/', 'net::ERR_CONNECTION_REFUSED')
     expect(names(failed)).toEqual(['onErrorOccurred'])
     // As measured on WebView 113 after a failed load: WebView's own error page finishes under
