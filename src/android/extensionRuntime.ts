@@ -1186,7 +1186,13 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
             transitionQualifiers: []
           })
         } else {
-          this.router.unregisterTab(tabId)
+          // The previous document's endpoints are not dropped here: this event is posted from
+          // Kotlin at commit and lands after the new document's bootstraps have said hello often
+          // enough (measured on the emulator) that dropping the tab's endpoints now would take the
+          // new document's with them, and every call they make afterwards would go unanswered.
+          // Kotlin owns endpoint liveness and reports the old document through `ext.gone` (the
+          // first hello of a new document, onPageStarted for a document without units, a dead
+          // reply proxy).
           nav('onBeforeNavigate', p.url)
           nav('onCommitted', p.url, { transitionType: 'link', transitionQualifiers: [] })
         }

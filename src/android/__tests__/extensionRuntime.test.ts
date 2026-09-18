@@ -984,10 +984,12 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
     expect(events(h, 'bg1', 'tabs.onRemoved')).toHaveLength(1)
   })
 
-  it('a navigation drops the frame endpoints of the tab', async () => {
+  it('a navigation event landing after the new document said hello leaves its endpoints answering; Kotlin says which are gone', async () => {
     const h = harness()
     await h.runtime.attach(record(h))
-    hello(h, 'doc1.n.abcdefgh', 'content')
+    // The commit callback is posted from Kotlin and often lands after the new document's
+    // bootstrap has said hello: the endpoint that hello registered must survive it.
+    hello(h, 'doc2.n.abcdefgh', 'content', { url: 'https://example.com/other' })
     expect(h.runtime.router.of(ID, 'content')).toHaveLength(1)
     h.runtime.onViewEvent('t1', 'navigated', {
       url: 'https://example.com/other',
@@ -996,6 +998,11 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
       canGoBack: true,
       canGoForward: false
     })
+    expect(h.runtime.router.of(ID, 'content')).toHaveLength(1)
+    const set = await call(h, 'doc2.n.abcdefgh', 'storage', 'set', ['local', { k: 1 }])
+    expect(set.ok).toBe(true)
+    // The previous document's endpoint goes when Kotlin reports it (ext.gone), not before.
+    h.runtime.onGone(['doc2.n.abcdefgh'])
     expect(h.runtime.router.of(ID, 'content')).toHaveLength(0)
   })
 })
