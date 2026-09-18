@@ -16,10 +16,11 @@ import { shortcutFormError } from './shortcutForm'
 type ShortcutDialogRequest = NonNullable<UiState['newTabShortcutDialog']>
 
 /**
- * The new tab page's "Add Shortcut" / "Edit Shortcut" dialog (Chrome's, with Name and URL). A
- * v2 dialog (design language v2 draft §9.23): a title block and no X; Escape, the scrim and the
- * footer close it; the name field takes focus and Tab wraps (§9.22); the fields carry their
- * label above them and the validation line below (§9.12). Rendered inside TabDialogs'
+ * The new tab page's "Add shortcut" / "Edit shortcut" dialog (Chrome's, with Name and URL; the
+ * title in sentence case, §9.1). A v2 dialog (design language v2 draft §9.23): a title block and
+ * no X; Escape, the scrim and the footer close it; the name field takes focus and Tab wraps
+ * (§9.22); the fields carry their label above them and the validation line below (§9.12).
+ * Rendered inside TabDialogs'
  * `FrameDialogHost` over the page's picture, so the dialog never sits inside the page.
  */
 export function NewTabShortcutDialog({
@@ -94,7 +95,7 @@ export function NewTabShortcutDialog({
     >
       <div className="zen-bm-title-block">
         <h2 id="zen-ntp-shortcut-title" className="zen-bm-title">
-          {editing ? 'Edit Shortcut' : 'Add Shortcut'}
+          {editing ? 'Edit shortcut' : 'Add shortcut'}
         </h2>
       </div>
       <form
