@@ -52,13 +52,16 @@ export function progressFraction(progress: DownloadsProgress): number {
   return Math.min(1, progress.received / progress.total)
 }
 
-export type ProgressBarMode = 'none' | 'normal' | 'indeterminate' | 'paused'
+export type ProgressBarMode = 'none' | 'normal' | 'indeterminate' | 'paused' | 'error'
 
 export interface ProgressBar {
   /** `BrowserWindow.setProgressBar` value: -1 clears, 0–1 fills, above 1 is indeterminate. */
   value: number
   mode: ProgressBarMode
 }
+
+/** How long the taskbar entry shows a failure before it goes back to the aggregate. */
+export const PROGRESS_ERROR_FLASH_MS = 3000
 
 /**
  * What the taskbar (and the toolbar ring) shows for the engine's aggregate: nothing when no
@@ -70,6 +73,18 @@ export function progressBarFor(progress: DownloadsProgress, allPaused: boolean):
   if (progress.indeterminate)
     return { value: allPaused ? 0 : 2, mode: allPaused ? 'paused' : 'indeterminate' }
   return { value: progressFraction(progress), mode: allPaused ? 'paused' : 'normal' }
+}
+
+/**
+ * The taskbar entry just after a transfer failed while others still run: the aggregate's fill
+ * in the OS's error tone (red on Windows; hosts without one paint it as usual) for
+ * `PROGRESS_ERROR_FLASH_MS`, then `progressBarFor` again. A failure that leaves nothing in
+ * flight clears the bar at once, as Chrome does – the toolbar badge carries the failure.
+ */
+export function failedProgressBar(progress: DownloadsProgress): ProgressBar {
+  if (progress.active === 0) return { value: -1, mode: 'none' }
+  // Above 1 would turn the entry indeterminate and lose the tone: a size-less aggregate fills.
+  return { value: progress.indeterminate ? 1 : progressFraction(progress), mode: 'error' }
 }
 
 /** Every in-flight row is paused (the bar greys out); false when nothing is in flight. */

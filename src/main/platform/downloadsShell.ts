@@ -4,8 +4,10 @@ import type { AppIconId } from '../../shared/appIcon'
 import type { DownloadItem } from '../../shared/types'
 import { resolveDownloadSettings } from '../../shared/downloads'
 import {
+  PROGRESS_ERROR_FLASH_MS,
   allPaused,
   completionNotice,
+  failedProgressBar,
   needsDangerDecision,
   progressBarFor,
   sameProgressBar,
@@ -20,19 +22,23 @@ import type { ElectronWindow } from './window'
 
 /**
  * The desktop's OS integration for downloads, driven by the engine's `download.changed`: the
- * aggregate progress lands on each window's taskbar entry (and the macOS dock), completions
- * while no window is focused post a notification whose click reveals the item, and the dock
- * badge counts those until a window takes focus again. The engine calls neither
- * `setProgressBar` nor `Notification` (contract); nothing here touches `downloads.json` or the
- * transfers.
+ * aggregate progress lands on each window's taskbar entry (and the macOS dock) – normal, paused
+ * while everything is, indeterminate for size-less transfers, the error tone for a moment after
+ * a failure while others run, cleared when the last one ends – completions while no window is
+ * focused post a notification whose click reveals the item, and the dock badge counts those
+ * until a window takes focus again. The engine calls neither `setProgressBar` nor
+ * `Notification` (contract); nothing here touches `downloads.json` or the transfers.
  */
 export class ElectronDownloadsShell {
   private readonly bars = new WeakMap<BrowserWindow, ProgressBar>()
   private unseen = 0
   private readonly notifications = new Set<Notification>()
+  /** A transfer just failed: its list's entries paint the error tone until this fires. */
+  private errorFlash: { timer: ReturnType<typeof setTimeout>; private: boolean } | null = null
 
   constructor(private readonly browser: Browser) {
     browser.onDownloadChange((item, kind) => {
+      if (kind === 'done' && item.state === 'interrupted') this.flashError(item.private)
       this.updateProgressBars()
       if (kind === 'done') this.onDone(item)
     })
@@ -49,17 +55,31 @@ export class ElectronDownloadsShell {
     for (const win of this.browser.allWindows()) {
       const bw = browserWindowOf(win)
       if (!bw) continue
-      const filter = win.isPrivate ? {} : { private: false }
-      const progress = this.browser.downloads.aggregateProgress(filter)
-      const next = progressBarFor(
-        progress,
-        allPaused(this.browser.downloads.visibleTo(win.isPrivate))
-      )
+      const next = this.barFor(win)
       const previous = this.bars.get(bw)
       if (previous && sameProgressBar(previous, next)) continue
       this.bars.set(bw, next)
       bw.setProgressBar(next.value, { mode: next.mode })
     }
+  }
+
+  private barFor(win: ZenWindow): ProgressBar {
+    const filter = win.isPrivate ? {} : { private: false }
+    const progress = this.browser.downloads.aggregateProgress(filter)
+    // A private failure is only the private windows' business; a regular one is everyone's.
+    if (this.errorFlash && (win.isPrivate || !this.errorFlash.private))
+      return failedProgressBar(progress)
+    return progressBarFor(progress, allPaused(this.browser.downloads.visibleTo(win.isPrivate)))
+  }
+
+  /** Paint the failure for a moment, then go back to the aggregate; a second failure restarts it. */
+  private flashError(isPrivate: boolean): void {
+    if (this.errorFlash) clearTimeout(this.errorFlash.timer)
+    const timer = setTimeout(() => {
+      this.errorFlash = null
+      this.updateProgressBars()
+    }, PROGRESS_ERROR_FLASH_MS)
+    this.errorFlash = { timer, private: isPrivate }
   }
 
   /** `done` covers completed, cancelled and interrupted; a flagged file waits for Keep instead. */

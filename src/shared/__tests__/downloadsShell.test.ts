@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import type { DownloadsProgress } from '../types'
 import { DEFAULT_DOWNLOAD_SETTINGS, resolveDownloadSettings } from '../downloads'
 import {
+  PROGRESS_ERROR_FLASH_MS,
   allPaused,
   canResumeDownload,
   canRetryDownload,
   completionNotice,
   displayName,
+  failedProgressBar,
   needsDangerDecision,
   progressBarFor,
   progressFraction,
@@ -93,6 +95,19 @@ describe('taskbar progress from the engine aggregate', () => {
     const p = progress({ received: 5, total: 0, indeterminate: true, active: 1 })
     expect(progressBarFor(p, false)).toEqual({ value: 2, mode: 'indeterminate' })
     expect(progressBarFor(p, true)).toEqual({ value: 0, mode: 'paused' })
+  })
+
+  it('paints the error tone over the aggregate after a failure while others run, clears otherwise', () => {
+    expect(failedProgressBar(progress({ received: 25, total: 100, active: 1 }))).toEqual({
+      value: 0.25,
+      mode: 'error'
+    })
+    // A size-less aggregate fills rather than going indeterminate, which would lose the tone.
+    expect(
+      failedProgressBar(progress({ received: 5, total: 0, indeterminate: true, active: 1 }))
+    ).toEqual({ value: 1, mode: 'error' })
+    expect(failedProgressBar(progress({}))).toEqual({ value: -1, mode: 'none' })
+    expect(PROGRESS_ERROR_FLASH_MS).toBeGreaterThan(0)
   })
 
   it('knows when every in-flight row is paused', () => {
