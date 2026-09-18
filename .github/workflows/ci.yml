@@ -80,6 +80,15 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends xvfb ffmpeg x11-utils
+      - name: Sign-in fidelity smoke test
+        # Boots the packaged build under Xvfb on its own (no automation flags, so the check on
+        # navigator.webdriver is honest) and checks what a site sees: navigator.webdriver false,
+        # Chrome's window.chrome members (Google's sign-in refuses a Chrome without chrome.app),
+        # the reduced user agent, client hints and Accept-Language on the document request, FedCM
+        # off, and a window.open pop-up that keeps its opener and runs the page preload.
+        run: >
+          xvfb-run -a -s '-screen 0 1600x1000x24'
+          node .github/scripts/desktop-signin-smoke.mjs dist/linux-unpacked/zenium
       - name: Boot the unpacked build under Xvfb and walk through it
         # Playwright for Electron drives dist/linux-unpacked/zenium (the devDependency ships no
         # browsers; nothing to download). --no-sandbox: the unpacked build's chrome-sandbox helper
