@@ -599,6 +599,8 @@ export class Browser {
     if (this.allWindows().some((w) => w.isPrivate)) return
     if (this.tabs.privateTabs().length > 0) return
     this.downloads.endPrivateSession()
+    // Certificates proceeded past in private windows are forgotten with the session, as in Chrome.
+    this.security.certificateExceptions.forgetContainer(PRIVATE_CONTAINER_ID)
     void this.platform.sessions.clearPrivate()
   }
 
@@ -1493,8 +1495,12 @@ export class Browser {
       return
     }
     if (message.type === 'interstitial') {
-      if (typeof message.action === 'string' && typeof message.url === 'string')
-        this.protection.handleInterstitial(tabId, message.action, message.url)
+      if (typeof message.action === 'string' && typeof message.url === 'string') {
+        // The certificate interstitial's tab answers first; the other warning pages are the
+        // protection service's.
+        if (!this.tabs.handleCertificateInterstitial(tabId, message.action, message.url))
+          this.protection.handleInterstitial(tabId, message.action, message.url)
+      }
       return
     }
     if (message.type === 'media') {
@@ -1911,6 +1917,7 @@ export class Browser {
         for (const tab of Object.values(state.model.tabs))
           if (tab.containerId === id) tab.containerId = DEFAULT_CONTAINER_ID
         void platform.sessions.clearContainerData(id)
+        this.security.certificateExceptions.forgetContainer(id)
         state.commit()
       },
       'container.reorder': ({ id, index }) => {

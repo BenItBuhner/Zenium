@@ -9,6 +9,7 @@
  * import from `electron`, `node:*` or the DOM.
  */
 import type {
+  CertificateDetails,
   ColorScheme,
   DownloadItem,
   EventName,
@@ -158,6 +159,15 @@ export interface PageDialogRequest {
   pageUrl: string
 }
 
+/** What a host knows about a failed main-frame load beyond its code. */
+export interface LoadDetails {
+  /**
+   * An `ERR_CERT_*` failure: the server certificate Zenium refused, which the interstitial shows
+   * and the session's exception is keyed by. Null when the host could not describe it.
+   */
+  certificate?: CertificateDetails | null
+}
+
 export interface PageContextParams {
   /** Click position in the view's coordinates (DIP), as the host's `context-menu` event gives it. */
   x: number
@@ -302,8 +312,11 @@ export interface TabViewEvents {
   onNavigated(url: string, inPage: boolean): void
   onTitleUpdated(title: string): void
   onFaviconUpdated(favicons: string[]): void
-  /** Main-frame load failure (Chromium `net::` error code; hosts map their own codes). */
-  onFailLoad(code: number, description: string, url: string): void
+  /**
+   * Main-frame load failure (Chromium `net::` error code; hosts map their own codes). For an
+   * `ERR_CERT_*` failure `details.certificate` describes the certificate the host refused.
+   */
+  onFailLoad(code: number, description: string, url: string, details?: LoadDetails): void
   /**
    * The host's request engine upgraded a main-frame navigation from `from` (http) to `to`
    * (HTTPS-only mode's rule); if `to` then fails, the tab offers `from`.
@@ -383,6 +396,14 @@ export interface WindowOpenTicket {
  */
 export interface TabView {
   loadURL(url: string): void
+  /**
+   * Show the `zen://error` page `url` in place of the document a failed load left behind, under
+   * the failed address's own history entry, so back leads to the page before and a load of the
+   * address asks for it again (Chrome's interstitials live in the failed entry). The core uses it
+   * for the certificate interstitial; hosts without it get the page loaded as a document of its
+   * own, and the core then keeps `zen://error` as the tab's URL.
+   */
+  showErrorPage?(url: string): void
   getURL(): string
   getTitle(): string
   canGoBack(): boolean
@@ -879,6 +900,13 @@ export interface SessionHost {
    * session, so a site asks again (the core forgets its own copies alongside).
    */
   clearAuthCache?(): Promise<void>
+  /**
+   * The user proceeded past the certificate interstitial: engines that decide certificate errors
+   * on their own side (the Android WebView) mirror the core's exception (`CertificateExceptions`)
+   * so the next request for the site of `url` over this certificate goes ahead. Resolves once
+   * mirrored; the core loads the address again after. Electron asks the core directly.
+   */
+  allowCertificate?(containerId: string, url: string, fingerprint: string): Promise<void>
   /**
    * Clear browsing data: `kinds` of every listed container. Engines cannot limit these to a
    * time range (Chromium's session API has none), so the core tells the user everything goes.
