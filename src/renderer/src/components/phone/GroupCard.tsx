@@ -27,17 +27,15 @@ interface Props {
   onMenu: (folder: Folder) => void
   /** Columns of the overview grid: a group of two or more spans them all and lays out in as many. */
   columns: number
-  /** The card's element, for the hero morph and the grid's glide. */
-  ref: (el: HTMLDivElement | null) => void
 }
 
 /**
  * A tab group in the overview: a tinted card with the group's name and colour in a header row
  * and its tabs in a grid below. The header toggles it; collapsed, the card is clipped to the
  * header and shows the members' icons instead. The height runs on a spring that a second tap
- * retargets mid-flight.
+ * retargets mid-flight. The card is the grid's cell `group:<id>` for the glide and the morph.
  */
-export function GroupCard({ folder, tabs, card, onMenu, columns, ref }: Props): JSX.Element {
+export function GroupCard({ folder, tabs, card, onMenu, columns }: Props): JSX.Element {
   const shellRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const collapsed = folder.collapsed
@@ -111,15 +109,13 @@ export function GroupCard({ folder, tabs, card, onMenu, columns, ref }: Props): 
   const single = tabs.length === 1
   return (
     <div
-      ref={(el) => {
-        shellRef.current = el
-        ref(el)
-      }}
+      ref={shellRef}
       className={cn(
         'zen-group flex flex-col overflow-hidden',
         single ? 'col-span-1' : 'col-span-full'
       )}
       style={style}
+      data-cell={`group:${folder.id}`}
       data-targeted={targeted || undefined}
       data-collapsed={collapsed || undefined}
     >

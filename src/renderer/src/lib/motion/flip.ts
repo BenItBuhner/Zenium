@@ -27,6 +27,25 @@ export const layoutAnimations = {
   }
 }
 
+/**
+ * The attribute that makes an element a cell of a FLIP grid (written `data-cell={key}` in JSX);
+ * its value is the cell's key. The grid is the registry: every element carrying it under the
+ * grid's root is measured and glides, whatever component drew it – a page card, the New Tab
+ * card, a group – so no card kind can fall out of the choreography by forgetting to register.
+ */
+export const CELL_ATTR = 'data-cell'
+
+/** The cells under `root`, by key, in document order. */
+export function collectCells(root: ParentNode | null): Map<string, HTMLElement> {
+  const cells = new Map<string, HTMLElement>()
+  if (!root) return cells
+  for (const el of root.querySelectorAll<HTMLElement>(`[${CELL_ATTR}]`)) {
+    const key = el.getAttribute(CELL_ATTR)
+    if (key) cells.set(key, el)
+  }
+  return cells
+}
+
 interface Tracked {
   /** Layout position in the scroll content's coordinates (no transform, no scrolling). */
   x: number
@@ -107,6 +126,20 @@ export class FlipTracker {
       this.draw()
       this.spring.start(travel, 0, 0)
     }
+  }
+
+  /**
+   * The cells on screen, not measured: before the grid has settled (it is scaling in, and a
+   * measurement per card per frame would slow the very frames the spring is paced by) the set is
+   * kept current so `element()` answers, and the first settled commit takes the baseline.
+   */
+  observe(elements: Map<string, HTMLElement>): void {
+    this.elements = new Map(elements)
+  }
+
+  /** The element of cell `id` as of the last commit or observation. */
+  element(id: string): HTMLElement | null {
+    return this.elements.get(id) ?? null
   }
 
   /**

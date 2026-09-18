@@ -55,6 +55,8 @@ import { useOverviewHandle } from './usePillGestures'
 
 /** Name a group gets when a gesture makes it; the header renames it in a tap. */
 const NEW_GROUP_NAME = 'Group'
+/** Cell key of the New Tab card: the last cell of the grid, in the glide with the rest. */
+export const NEW_TAB_CELL = 'new-tab'
 /** How long a dropped card waits for the browser to confirm its new place before it lands anyway. */
 const DROP_TIMEOUT_MS = 900
 /**
@@ -130,11 +132,12 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const rootRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const fadeGrid = useFadeEdges<HTMLDivElement>({ axis: 'y' })
-  const cells = useRef(new Map<string, HTMLElement>())
   const [heroCell, setHeroCell] = useState<Rect | null>(null)
   const [sheet, setSheet] = useState<Sheet | null>(null)
   const handle = useOverviewHandle({ edge })
-  const flip = useFlip(cells, scrollRef, settled)
+  // Every `data-cell` under the grid – page and blank-tab cards, group cards, the New Tab card –
+  // is one set on one spring; the same set answers where a card is for the morph and the exits.
+  const flip = useFlip(scrollRef, settled)
 
   // Where the hero's own card sits, in layout space (the root's entrance scale divided out). A
   // hero inside a collapsed group has no card to land on: it heads for the group's card instead
@@ -145,7 +148,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const cardsKey = [...essentials, ...pinned, ...regular].map((t) => t.id).join('|')
   const measure = (): void => {
     const root = rootRef.current
-    const cell = heroCellKey ? cells.current.get(heroCellKey) : undefined
+    const cell = heroCellKey ? flip.element(heroCellKey) : null
     if (!root || !cell) {
       setHeroCell(null)
       return
@@ -163,7 +166,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     })
   }
   useLayoutEffect(() => {
-    const cell = heroCellKey ? cells.current.get(heroCellKey) : undefined
+    const cell = heroCellKey ? flip.element(heroCellKey) : null
     // The page morphs out of / into its card: make sure that card is fully on screen first.
     const morphing = (phase === 'dragging' && progress < 0.05) || phase === 'settling'
     if (cell && morphing) cell.scrollIntoView({ block: 'nearest' })
@@ -214,7 +217,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     pendingDrop.current = null
     // The slot as laid out (any glide in flight stripped); before the grid has settled nothing
     // is tracked yet and the cell's own box is the answer.
-    const rect = flip.layoutRect(liftTabId) ?? cells.current.get(liftTabId)?.getBoundingClientRect()
+    const rect = flip.layoutRect(liftTabId) ?? flip.element(liftTabId)?.getBoundingClientRect()
     const origin = liftStore.get().origin
     const to = rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : origin
     if (to) settleLift(to)
@@ -244,10 +247,6 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   }, [liftPhase, flip])
 
   const pick = (tab: Tab): void => closeOverview(tab.id)
-  const register = (id: string) => (el: HTMLElement | null) => {
-    if (el) cells.current.set(id, el)
-    else cells.current.delete(id)
-  }
 
   const groupTabs = (tabIds: string[], folderId: string): void => {
     for (const tabId of tabIds) run('tab.moveToFolder', { tabId, folderId })
@@ -315,12 +314,13 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     }
     if (inside(flip.layoutRect(tab.id))) return keep
     const looseWithout = loose.filter((t) => t.id !== tab.id)
+    const end: LiftHover = { target: null, slot: { folderId: null, index: looseWithout.length } }
+    if (inside(flip.layoutRect(NEW_TAB_CELL))) return end
     const lastGroup = groups.filter((f) => (members.get(f.id) ?? []).length > 0).at(-1)
     const lastKey =
       looseWithout.at(-1)?.id ?? (lastGroup ? `group:${lastGroup.id}` : pinned.at(-1)?.id)
     const last = lastKey ? flip.layoutRect(lastKey) : null
-    if (!last || y > last.bottom || (y >= last.top && x > last.right))
-      return { target: null, slot: { folderId: null, index: looseWithout.length } }
+    if (!last || y > last.bottom || (y >= last.top && x > last.right)) return end
     return keep
   }
 
@@ -388,7 +388,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const closeTabs = (tabs: Tab[]): void => {
     depart(
       tabs.flatMap((tab) => {
-        const rect = closesForReal(tab) ? rectOf(cells.current.get(tab.id)) : null
+        const rect = closesForReal(tab) ? rectOf(flip.element(tab.id)) : null
         return rect ? [{ key: tab.id, kind: 'tab' as const, tab, rect }] : []
       })
     )
@@ -398,14 +398,14 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     const others = regular.filter((t) => t.id !== tab.id)
     depart(
       others.flatMap((t) => {
-        const rect = rectOf(cells.current.get(t.id))
+        const rect = rectOf(flip.element(t.id))
         return rect ? [{ key: t.id, kind: 'tab' as const, tab: t, rect }] : []
       })
     )
     run('tab.closeOthers', { tabId: tab.id })
   }
   const closeGroup = (folder: Folder): void => {
-    const rect = rectOf(cells.current.get(`group:${folder.id}`))
+    const rect = rectOf(flip.element(`group:${folder.id}`))
     if (rect)
       depart([
         {
@@ -425,7 +425,6 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const card = (tab: Tab): JSX.Element => (
     <OverviewCard
       key={tab.id}
-      ref={register(tab.id)}
       tab={tab}
       active={tab.id === active?.id}
       hidden={tab.id === heroTabId && p < 1}
@@ -537,7 +536,6 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                 return (
                   <GroupCard
                     key={folder.id}
-                    ref={register(`group:${folder.id}`)}
                     folder={folder}
                     tabs={tabs}
                     card={card}
@@ -777,12 +775,17 @@ function GroupDot({ color }: { color: FolderColor | null | undefined }): JSX.Ele
   return <span className="h-2.5 w-2.5 rounded-full" style={{ background: groupColorHex(color) }} />
 }
 
+/**
+ * The last card of the grid, a cell like the others (`data-cell`): when cards are rearranged,
+ * closed or grouped it glides to its new place on the same spring as they do.
+ */
 function NewTabCard(): JSX.Element {
   return (
     <button
       type="button"
       className="zen-overview-new flex flex-col items-center justify-center gap-2 text-[var(--zen-muted)] active:text-[var(--zen-fg)]"
       style={{ aspectRatio: '3 / 4' }}
+      data-cell={NEW_TAB_CELL}
       onClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
     >
       <Plus className="h-6 w-6" />
