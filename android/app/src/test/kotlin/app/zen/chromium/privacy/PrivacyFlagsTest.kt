@@ -84,6 +84,18 @@ class PrivacyFlagsTest {
     }
 
     @Test
+    fun `plaintext is allowed for non-unique hosts, which the mode never upgrades`() {
+        val flags = PrivacyFlags.parse(JSONObject("""{"httpsOnly":"always"}"""))
+        for (url in listOf(
+            "http://localhost/", "http://dev.localhost:5173/", "http://127.0.0.1:8080/", "http://[::1]/",
+            "http://10.0.0.5/", "http://192.168.0.10/status", "http://[fe80::1%25eth0]/", "http://router/",
+            "http://printer.local/"
+        )) assertTrue(url, flags.plaintextAllowed(url))
+        assertFalse(flags.plaintextAllowed("http://example.com/"))
+        assertFalse(flags.plaintextAllowed("http://8.8.8.8/"))
+    }
+
+    @Test
     fun `Safe Browsing bypasses are keyed on the host, as the core keys them`() {
         val flags = PrivacyFlags.parse(pushed)
         assertTrue(flags.isBypassed("https://evil.example/landing?x=1"))

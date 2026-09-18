@@ -113,6 +113,15 @@ export interface RuleCondition {
   excludedInitiatorDomains?: string[]
   requestDomains?: string[]
   excludedRequestDomains?: string[]
+  /**
+   * Zenium's addition to the declarativeNetRequest shape: the rule never matches a request
+   * whose host is non-unique (`isNonUniqueHost` in `src/shared/nonUniqueHost.ts`: loopback,
+   * private and other non-routable IP literals, names without a registrable suffix). Domain
+   * lists cannot name an IP range and RE2 has no lookaround to write "every host but these",
+   * so HTTPS-only mode's rule says it with this flag; both engines evaluate it, the translator
+   * never emits it.
+   */
+  excludedNonUniqueHosts?: boolean
   resourceTypes?: ResourceType[]
   excludedResourceTypes?: ResourceType[]
   /** HTTP methods in lowercase (`get`, `post`, …). */

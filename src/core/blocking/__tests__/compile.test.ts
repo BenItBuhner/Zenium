@@ -101,9 +101,18 @@ describe('compileRule', () => {
       reasons({
         id: 4,
         action: { type: 'block' },
-        condition: { urlFilter: 'x', tabIds: [1], excludedRequestDomains: ['a'] }
+        condition: {
+          urlFilter: 'x',
+          tabIds: [1],
+          excludedRequestDomains: ['a'],
+          excludedNonUniqueHosts: true
+        }
       })
-    ).toEqual([expect.stringMatching(/tabIds/), expect.stringMatching(/excludedRequestDomains/)])
+    ).toEqual([
+      expect.stringMatching(/tabIds/),
+      expect.stringMatching(/excludedRequestDomains/),
+      expect.stringMatching(/excludedNonUniqueHosts/)
+    ])
     expect(
       reasons({ id: 5, priority: 3, action: { type: 'block' }, condition: { urlFilter: 'x' } })[0]
     ).toMatch(/priority/)

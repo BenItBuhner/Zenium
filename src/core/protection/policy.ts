@@ -1,5 +1,6 @@
 import { hostnameOf, isThirdParty } from '../blocking/domain'
 import type { RequestContext } from '../blocking/rules'
+import { isNonUniqueHost } from '../../shared/nonUniqueHost'
 import { hostInSites, type PrivacyFlags } from '../../shared/privacy'
 
 /**
@@ -29,14 +30,15 @@ export function blocksThirdPartyCookies(flags: PrivacyFlags, ctx: RequestContext
 }
 
 /**
- * Whether HTTPS-only mode leaves an `http://` request of `url` alone: the mode is off, or the
- * host is on (or under) a site the user allowed over plaintext. The engine's own rule already
- * excludes those sites; this is for a host that consults the flags ahead of a reloaded rule set.
+ * Whether HTTPS-only mode leaves an `http://` request of `url` alone: the mode is off, the host
+ * is non-unique (`isNonUniqueHost`), or it is on (or under) a site the user allowed over
+ * plaintext. The engine's own rule already excludes both; this is for a host that consults the
+ * flags ahead of a reloaded rule set.
  */
 export function plaintextAllowed(flags: PrivacyFlags, url: string): boolean {
   if (flags.httpsOnly === 'off') return true
   const host = hostnameOf(url)
-  return host !== null && hostInSites(host, flags.httpsOnlyAllowed)
+  return host !== null && (isNonUniqueHost(host) || hostInSites(host, flags.httpsOnlyAllowed))
 }
 
 /** The request headers the privacy signals add, by their wire names. */
