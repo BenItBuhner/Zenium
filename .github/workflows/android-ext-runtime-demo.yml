@@ -11,6 +11,9 @@ name: Android extension runtime demo
 # sideloads.
 on:
   workflow_dispatch:
+  # TEMPORARY (W2-3 verification run; removed before the PR is marked ready).
+  push:
+    branches: [cursor/android-ext-runtime-dnr-f955]
 
 permissions:
   contents: read
