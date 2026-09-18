@@ -526,7 +526,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                     values.clear()
                     values.put(MediaStore.Downloads.IS_PENDING, 0)
                     resolver.update(uri, values, null, null)
-                    Downloads.pathOf(resolver, uri) ?: uri.toString()
+                    pathOf(uri) ?: uri.toString()
                 } else {
                     val dir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: activity.filesDir
                     val file = File(dir, name)
@@ -537,6 +537,23 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             main.post { reply(result) }
         }
     }
+
+    /**
+     * Where MediaStore put the file behind one of its Downloads rows: its `DATA` column (still
+     * filled in on Q+, where the row may have renamed the file to keep names unique), or the
+     * display name under the public Downloads folder; null when the row says neither.
+     */
+    @Suppress("DEPRECATION") // DATA, see above
+    private fun pathOf(uri: Uri): String? = runCatching {
+        val columns = arrayOf(MediaStore.MediaColumns.DATA, MediaStore.MediaColumns.DISPLAY_NAME)
+        activity.contentResolver.query(uri, columns, null, null, null)?.use { c ->
+            if (!c.moveToFirst()) return@use null
+            c.getString(0)?.takeIf { it.isNotEmpty() }
+                ?: c.getString(1)?.takeIf { it.isNotEmpty() }?.let { name ->
+                    File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), name).absolutePath
+                }
+        }
+    }.getOrNull()
 
     private fun copyImage(url: String, reply: (Any?) -> Unit) {
         io.execute {

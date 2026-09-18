@@ -3,13 +3,11 @@ package app.zen.chromium
 import android.Manifest
 import android.app.DownloadManager
 import android.content.ActivityNotFoundException
-import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -756,22 +754,5 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         private const val BLOB_CHUNK = 512 * 1024
         /** The core's `PRIVATE_CONTAINER_ID`: tabs of a private window run in this container. */
         const val PRIVATE_CONTAINER = "private"
-
-        /**
-         * Where MediaStore put the file behind one of its Downloads rows: its `DATA` column (still
-         * filled in on Q+, where the row may have renamed the file to keep names unique), or the
-         * display name under the public Downloads folder; null when the row says neither.
-         */
-        @Suppress("DEPRECATION") // DATA, see above
-        fun pathOf(resolver: ContentResolver, uri: Uri): String? = runCatching {
-            val columns = arrayOf(MediaStore.MediaColumns.DATA, MediaStore.MediaColumns.DISPLAY_NAME)
-            resolver.query(uri, columns, null, null, null)?.use { c ->
-                if (!c.moveToFirst()) return@use null
-                c.getString(0)?.takeIf { it.isNotEmpty() }
-                    ?: c.getString(1)?.takeIf { it.isNotEmpty() }?.let { name ->
-                        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), name).absolutePath
-                    }
-            }
-        }.getOrNull()
     }
 }

@@ -320,6 +320,8 @@
 .zen-error-document {
   /* The space's accent is unknown inside the tab: the v2 accent (the ring) derives from the text. */
   --zen-accent: var(--v2-text);
+  /* The chrome's easing (§7), which the v2 button's press transition reads. */
+  --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   height: 100%;
   color-scheme: light;
 }
