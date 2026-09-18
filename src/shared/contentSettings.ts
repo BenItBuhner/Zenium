@@ -510,6 +510,13 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
 const BY_ID = new Map(CONTENT_SETTINGS.map((setting) => [setting.id, setting]))
 
 /**
+ * The site every local file's decisions are kept under. A `file:` page has no origin (its
+ * `URL.origin` is 'null'), so all local files share one site, as Chrome keeps their exceptions
+ * under `file:///`.
+ */
+export const FILE_SITE = 'file://'
+
+/**
  * Engine permission names that are a row under another name: Chromium's finer-grained
  * variants share their row's decision (approximate location is location, periodic background
  * sync is background sync, VR, AR and hand tracking are the one XR row).

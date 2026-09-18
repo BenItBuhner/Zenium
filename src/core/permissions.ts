@@ -2,11 +2,13 @@ import { JsonStore } from './store/JsonStore'
 import type { PermissionPromptHost, StoreIO } from './platform'
 import type { PermissionPrompt, PermissionRule } from '../shared/types'
 import {
+  FILE_SITE,
   MEDIA_ROWS,
   allowOnceFor,
   builtInDefault,
   contentSettingId,
   promptLabelFor,
+  type ContentDecision,
   type ContentDefault
 } from '../shared/contentSettings'
 import { newId } from '../shared/ids'
@@ -88,7 +90,9 @@ const MAX_SHOWN = 80
  *
  * Keys are `${origin}|${permission}` where the permission may carry a qualifier after a colon
  * (`openExternal:zoommtg`, `storage-access:https://embedder.example`), so one answer never covers
- * a different scheme or a different embedding site.
+ * a different scheme or a different embedding site. The origin is the site of `permissionSite`:
+ * local files share the one `file://` site, and pages without a site (`zen://`, `chrome-error://`)
+ * store nothing and are asked nothing; they get what the catalogue grants without a prompt.
  *
  * `permissions.json` is also the store of record for content settings the user sets without a
  * prompt (ad and tracker blocking per site, and its default): the same `origin|permission` keys,
@@ -145,8 +149,8 @@ export class PermissionService {
     const stored = this.stored('fileSystem', requestingOrigin, details)
     if (details.fileAccessType === 'readable') return details.isDirectory ? stored !== 'deny' : true
     if (stored) return stored === 'allow'
-    const origin = safeOrigin(requestingOrigin)
-    if (!origin || origin === 'null') return false
+    const origin = permissionSite(requestingOrigin)
+    if (!origin) return false
     const file = details.filePath ? `${origin}|${details.filePath}` : null
     if (file && details.pickedForSaving) this.savedFiles.add(file)
     if (file && this.savedFiles.has(file)) return true
@@ -157,20 +161,31 @@ export class PermissionService {
   /**
    * What a request comes down to before anyone is asked: the site's own decision, an "Allow
    * once" of the asking tab, the user's default for the permission, or the catalogue's built-in
-   * default (`ask` for the prompted ones). Opaque origins are refused.
+   * default (`ask` for the prompted ones). A page without a site gets only what needs no prompt.
    */
   resolve(
     permission: string,
     requestingUrl: string,
     details?: PermissionRequestDetails
   ): ContentDefault {
-    const origin = safeOrigin(requestingUrl)
-    if (!origin || origin === 'null') return 'deny'
+    const origin = permissionSite(requestingUrl)
+    if (!origin) return this.siteless(permission, requestingUrl)
     const key = decisionKey(origin, permission, details)
     const stored = this.decisions[key]
     if (stored) return stored
     if (details?.tabId && this.sessionAllows.get(details.tabId)?.has(key)) return 'allow'
     return this.effectiveDefault(permission)
+  }
+
+  /**
+   * A page without a site (`zen://`, `chrome-error://`, `data:`, `about:blank`) cannot be asked
+   * about or remembered, so it gets what would be granted without a prompt anyway (fullscreen,
+   * pointer and keyboard lock, a clipboard write after a click) and is refused whatever a site
+   * would be asked about. Something that is not a URL at all gets nothing.
+   */
+  private siteless(permission: string, url: string): ContentDecision {
+    if (!safeUrl(url)) return 'deny'
+    return this.effectiveDefault(permission) === 'allow' ? 'allow' : 'deny'
   }
 
   /**
@@ -182,8 +197,8 @@ export class PermissionService {
     requestingUrl: string,
     details?: PermissionRequestDetails
   ): PermissionDecision | null {
-    const origin = safeOrigin(requestingUrl)
-    if (!origin || origin === 'null') return null
+    const origin = permissionSite(requestingUrl)
+    if (!origin) return null
     return (
       this.decisions[decisionKey(origin, permission, details)] ??
       this.defaultFor(permission) ??
@@ -198,15 +213,15 @@ export class PermissionService {
     decision: PermissionDecision,
     details?: PermissionRequestDetails
   ): void {
-    const origin = safeOrigin(requestingUrl)
-    if (!origin || origin === 'null') return
+    const origin = permissionSite(requestingUrl)
+    if (!origin) return
     const key = decisionKey(origin, permission, details)
     this.update(key, decision, changeFor(key))
   }
 
   /** Forget one origin's answer for a permission: the site is asked (or blocked) again. */
   forget(permission: string, requestingUrl: string, details?: PermissionRequestDetails): void {
-    const origin = safeOrigin(requestingUrl)
+    const origin = permissionSite(requestingUrl)
     if (!origin) return
     const key = decisionKey(origin, permission, details)
     this.update(key, null, changeFor(key))
@@ -243,8 +258,8 @@ export class PermissionService {
     requestingUrl: string,
     details: PermissionRequestDetails = {}
   ): Promise<boolean> {
-    const origin = safeOrigin(requestingUrl)
-    if (!origin || origin === 'null') return false
+    const origin = permissionSite(requestingUrl)
+    if (!origin) return this.check(permission, requestingUrl, details)
     if (permission === 'media') return this.decideMedia(origin, details)
     const outcome = this.resolve(permission, requestingUrl, details)
     const key = decisionKey(origin, permission, details)
@@ -394,7 +409,7 @@ export class PermissionService {
   onTabNavigated(tabId: string, url: string): void {
     const grants = this.sessionAllows.get(tabId)
     if (!grants) return
-    const origin = safeOrigin(url)
+    const origin = permissionSite(url)
     for (const key of grants) if (!origin || !key.startsWith(`${origin}|`)) grants.delete(key)
     if (grants.size === 0) this.sessionAllows.delete(tabId)
   }
@@ -409,14 +424,14 @@ export class PermissionService {
 
   /** The decision stored for an origin and permission (no default, no prompt). */
   get(permission: string, requestingOrigin: string): Decision | undefined {
-    const origin = safeOrigin(requestingOrigin)
+    const origin = permissionSite(requestingOrigin)
     return origin ? this.decisions[`${origin}|${permission}`] : undefined
   }
 
   /** Remember a decision for an origin, or forget it with `null`. */
   set(permission: string, requestingOrigin: string, decision: Decision | null): void {
-    const origin = safeOrigin(requestingOrigin)
-    if (!origin || origin === 'null') return
+    const origin = permissionSite(requestingOrigin)
+    if (!origin) return
     this.update(`${origin}|${permission}`, decision, { permission, origin })
   }
 
@@ -493,7 +508,7 @@ export class PermissionService {
   listForOrigin(
     requestingOrigin: string
   ): Array<{ permission: string; decision: PermissionDecision }> {
-    const origin = safeOrigin(requestingOrigin)
+    const origin = permissionSite(requestingOrigin)
     if (!origin) return []
     const out: Array<{ permission: string; decision: PermissionDecision }> = []
     for (const [key, decision] of Object.entries(this.decisions)) {
@@ -506,7 +521,7 @@ export class PermissionService {
 
   /** Forget the decisions of an origin (one permission, or all of them): the site asks again. */
   resetOrigin(requestingOrigin: string, permission?: string): void {
-    const origin = safeOrigin(requestingOrigin)
+    const origin = permissionSite(requestingOrigin)
     if (!origin) return
     const removed: string[] = []
     for (const key of Object.keys(this.decisions)) {
@@ -642,8 +657,12 @@ export function permissionPromptCopy(
   }
 }
 
-/** `https://example.com` → `example.com`; other schemes keep their prefix so they stay honest. */
+/**
+ * `https://example.com` → `example.com`; local files are `file:///`, as Chrome names their site;
+ * other schemes keep their prefix so they stay honest.
+ */
 export function displayOrigin(origin: string): string {
+  if (origin === FILE_SITE) return 'file:///'
   return origin.replace(/^https:\/\//, '')
 }
 
@@ -667,5 +686,26 @@ export function safeOrigin(url: string): string {
     return new URL(url).origin
   } catch {
     return ''
+  }
+}
+
+/**
+ * The site a page's permissions are decided for and remembered under: a web page's origin;
+ * `FILE_SITE` for every local file, whose origin is opaque (`new URL('file:///x').origin` is
+ * 'null') but which Chrome treats as one site; null for pages that have no site to remember
+ * anything for (`zen://`, `chrome-error://`, `data:`, `about:blank`) and for what is not a URL.
+ */
+export function permissionSite(url: string): string | null {
+  const parsed = safeUrl(url)
+  if (!parsed) return null
+  if (parsed.protocol === 'file:') return FILE_SITE
+  return parsed.origin && parsed.origin !== 'null' ? parsed.origin : null
+}
+
+function safeUrl(url: string): URL | null {
+  try {
+    return new URL(url)
+  } catch {
+    return null
   }
 }
