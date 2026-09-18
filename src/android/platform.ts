@@ -4,6 +4,7 @@ import type {
   Events,
   HapticKind,
   HostCapabilities,
+  PageEnvironment,
   ShareAction
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
@@ -93,7 +94,8 @@ export function androidCapabilities({
     pullToRefresh: true,
     passwords: true,
     defaultBrowser: true,
-    requestBlocking: true
+    requestBlocking: true,
+    pageControls: true
   }
 }
 
@@ -175,11 +177,15 @@ export interface BootInfo {
   extensionsRoot?: string
   insets: { top: number; right: number; bottom: number; left: number }
   fullscreen: boolean
+  /** Screen class, peripherals and font scale for the page controls (absent in old hosts). */
+  environment?: PageEnvironment
 }
 
 /** Events Kotlin raises for the whole app (`__zenHost.hostEvent(name, payload)`). */
 export interface HostEventPayloads {
   insets: { top: number; right: number; bottom: number; left: number }
+  /** A configuration change: screen class, keyboard / mouse or font scale differ now. */
+  environment: PageEnvironment
   focus: { focused: boolean }
   fullscreen: { fullscreen: boolean }
   openUrl: { url: string }
@@ -626,6 +632,7 @@ export class AndroidPlatform implements Platform {
   /** `files/zen/extensions` when Kotlin has one; the preview host installs nothing. */
   private readonly extensionsRoot: string | null
   private extensions: AndroidExtensions | null = null
+  private readonly bootEnvironment: PageEnvironment | null
 
   constructor(
     private readonly bridge: Bridge,
@@ -637,6 +644,7 @@ export class AndroidPlatform implements Platform {
       sdkInt: boot.sdkInt,
       extensions: this.extensionsRoot !== null
     })
+    this.bootEnvironment = boot.environment ?? null
     this.io = new AndroidStoreIO(bridge, boot.files)
     this.agentTransport = new AndroidAgentTransport(bridge)
     this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null, boot.packageName ?? null)
@@ -746,6 +754,7 @@ export class AndroidPlatform implements Platform {
     this.browser = browser
     this.views.pages.reader = (id) => browser.reader.pageHtml(id)
     this.views.pages.image = (id) => browser.sharedImage(id)
+    if (this.bootEnvironment) browser.pageControls.setEnvironment(this.bootEnvironment)
   }
 
   createAgentTransport(): AgentTransport {
@@ -806,6 +815,9 @@ export class AndroidPlatform implements Platform {
     switch (name) {
       case 'insets':
         this.events.send('insets', payload as HostEventPayloads['insets'])
+        return
+      case 'environment':
+        browser.pageControls.setEnvironment(payload as HostEventPayloads['environment'])
         return
       case 'focus': {
         const { focused } = payload as HostEventPayloads['focus']

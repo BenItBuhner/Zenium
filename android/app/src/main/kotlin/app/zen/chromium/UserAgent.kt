@@ -39,8 +39,21 @@ object UserAgent {
             .replace(WHITESPACE, " ")
             .trim()
 
+    private val PLATFORM_SECTION = Regex("\\(Linux; Android [^)]*\\)")
+    private val MOBILE_TOKEN = Regex(" Mobile Safari/")
+
     /** The full Chrome version a user-agent string reports (`122.0.6261.119`), or null. */
     fun chromeVersion(userAgent: String): String? = CHROME_VERSION.find(userAgent)?.groupValues?.get(1)
+
+    /**
+     * Chrome for Android's "Desktop site" user agent: the platform section becomes Linux x86_64
+     * and the `Mobile` token goes, so sites serve their desktop pages. Everything else – engine,
+     * Chrome version – stays as normalized. Already-desktop strings pass unchanged.
+     */
+    fun desktop(normalized: String): String =
+        normalized
+            .replace(PLATFORM_SECTION, "(X11; Linux x86_64)")
+            .replace(MOBILE_TOKEN, " Safari/")
 
     /** Major version of a dotted version string (`122.0.6261.119` → `122`, `0.2.0` → `0`). */
     fun major(version: String): String = version.substringBefore('.')
@@ -65,9 +78,12 @@ object UserAgent {
      * behind `navigator.userAgentData` and the `Sec-CH-UA-*` headers. The platform, its version, the
      * model and the architecture are left to the WebView so they stay truthful.
      */
-    fun apply(settings: WebSettings, productVersion: String) {
-        val original = settings.userAgentString
-        settings.userAgentString = normalize(original)
+    fun apply(settings: WebSettings, productVersion: String, desktop: Boolean = false, default: String = settings.userAgentString) {
+        // `default` is the WebView's own string (captured before the first rewrite), so every
+        // switch between the mobile and the desktop shape derives from the same truth.
+        val original = default
+        val mobile = normalize(original)
+        settings.userAgentString = if (desktop) desktop(mobile) else mobile
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) return
         val chrome = chromeVersion(original) ?: return
         val brands = brands(chrome, productVersion).map {
@@ -78,10 +94,13 @@ object UserAgent {
                 .build()
         }
         runCatching {
-            WebSettingsCompat.setUserAgentMetadata(
-                settings,
-                UserAgentMetadata.Builder().setBrandVersionList(brands).setFullVersion(chrome).build()
-            )
+            val metadata = UserAgentMetadata.Builder().setBrandVersionList(brands).setFullVersion(chrome)
+            if (desktop) {
+                // Client hints of a desktop Chrome on Linux (what Chrome for Android sends in
+                // desktop mode): platform, its version, the model and mobile-ness change with it.
+                metadata.setPlatform("Linux").setPlatformVersion("").setModel("").setMobile(false).setArchitecture("x86").setBitness(64)
+            }
+            WebSettingsCompat.setUserAgentMetadata(settings, metadata.build())
         }
     }
 }

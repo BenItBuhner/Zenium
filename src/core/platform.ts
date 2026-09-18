@@ -18,6 +18,7 @@ import type {
   HostCapabilities,
   KeyBinding,
   NavigationSnapshot,
+  PageRules,
   Platform as PlatformOs,
   Rect,
   ResourceSnapshot,
@@ -308,13 +309,29 @@ export interface TabView {
   // Site information (optional).
   /** Certificate of the main frame's connection; null on http pages or when unavailable. */
   certificate?(): Promise<SiteCertificate | null>
+
+  // Page controls (optional – hosts without them, Electron today, present pages as they are).
+  /**
+   * Desktop site: a desktop user agent and client hints plus the desktop layout width. Takes
+   * effect on the next load; the core reloads when the user asks for it.
+   */
+  setDesktopMode?(on: boolean): void
+  /**
+   * Darken a page that has no dark theme of its own (algorithmic darkening). Hosts apply it only
+   * while the chrome itself is dark; pages that declare `color-scheme: dark` are left alone.
+   */
+  setDarkening?(on: boolean): void
 }
+
+export type { PageRules } from '../shared/types'
 
 export interface TabViewHost {
   /** Create the live page for `tab`, attached to `host`'s window. */
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView
   /** Shortcut table changed – hosts that pre-filter native key events refresh their copy. */
   setShortcuts?(bindings: KeyBinding[]): void
+  /** Page controls changed – hosts that decide per navigation refresh their copy of the rules. */
+  setPageRules?(rules: PageRules): void
 }
 
 // ---------------------------------------------------------------------------

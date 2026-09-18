@@ -19,6 +19,10 @@ interface PageHost {
     val pageToken: String
     /** The request engine every page's requests run through (`shouldInterceptRequest`). */
     val blocking: Blocking
+    /** The page-controls policy pages are laid out by (desktop site, dark theme for sites, zoom); none by default. */
+    val pageRules: PageRules get() = PageRules.NONE
+    /** The same rules as the core sent them, handed to every page's document-start script. */
+    val pageRulesJson: JSONObject get() = JSONObject()
     val keys: Keys
     val downloads: Downloads
     val permissions: Permissions

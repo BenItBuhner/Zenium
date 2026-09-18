@@ -55,7 +55,8 @@ export function createPreviewBridge(): NativeBridge {
       files,
       downloadsDir: '/Downloads',
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
-      fullscreen: false
+      fullscreen: false,
+      environment: { largeScreen: false, pointerAndKeyboard: false, fontScale: 1 }
     }),
     'storage.write': ({ name, text }) =>
       localStorage.setItem(STORAGE_PREFIX + String(name), String(text)),
@@ -162,6 +163,11 @@ export function createPreviewBridge(): NativeBridge {
     'view.eval': () => {
       throw new Error('not available in the preview host')
     },
+    // Page controls act inside the page WebViews; a cross-origin iframe offers no way in.
+    'view.setZoom': () => undefined,
+    'view.setDesktopMode': () => undefined,
+    'view.setDarkening': () => undefined,
+    'view.setPageRules': () => undefined,
     // Find in page: a same-origin frame is searched for real; a cross-origin one (any live site)
     // cannot be read, so it gets a stand-in count derived from the text (0 to 9 matches, so both
     // the found and the not-found states can be reached), enough for the find bar to lay out.

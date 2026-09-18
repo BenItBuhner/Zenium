@@ -41,7 +41,8 @@ const DESKTOP: HostCapabilities = {
   pullToRefresh: false,
   passwords: true,
   defaultBrowser: false,
-  requestBlocking: true
+  requestBlocking: true,
+  pageControls: false
 }
 
 /**
@@ -71,7 +72,8 @@ const ANDROID: HostCapabilities = {
   pullToRefresh: true,
   passwords: true,
   defaultBrowser: true,
-  requestBlocking: true
+  requestBlocking: true,
+  pageControls: true
 }
 
 function memoryIo(): StoreIO {
@@ -275,6 +277,7 @@ describe('the app menu', () => {
       'Print…',
       'Save Page As…',
       'Take Screenshot',
+      'Desktop Site',
       '-',
       'Settings',
       '-',
@@ -293,6 +296,26 @@ describe('the app menu', () => {
     // A device build has the extension store: the management page is reachable from the menu.
     const withStore = appMenu(harness({ ...ANDROID, extensions: true }, 'phone'))
     expect(withStore.indexOf('Add-ons and Themes')).toBe(withStore.indexOf('Downloads') + 1)
+  })
+
+  it('closes the page group with the page controls where the host has them', () => {
+    // Desktop Site is Chrome's per-site checkbox; the dark-theme exception only joins it while
+    // sites are being darkened. A host without page controls shows neither.
+    expect(appMenu(harness(DESKTOP, 'phone'))).not.toContain('Desktop Site')
+    expect(appMenu(harness({ ...ANDROID, pageControls: false }, 'phone'))).not.toContain(
+      'Desktop Site'
+    )
+    const h = harness(ANDROID, 'phone')
+    expect(appMenu(h)).not.toContain('Dark Theme for This Site')
+    h.browser.pageControls.update({ darkenSites: true })
+    expect(appMenu(h).slice(-6)).toEqual([
+      'Desktop Site',
+      'Dark Theme for This Site',
+      '-',
+      'Settings',
+      '-',
+      'About Zenium 1.2.3'
+    ])
   })
 
   it('leaves the phone layout again when the window widens', () => {

@@ -1,15 +1,18 @@
+import { run } from '@renderer/lib/api'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
 import { activeTab } from '@renderer/lib/selectors'
-import { browserStore, closeOverlay, openOverlay, uiStore } from '@renderer/lib/ui'
+import { browserStore, closeMenu, closeOverlay, openOverlay, uiStore } from '@renderer/lib/ui'
 import { parsePreviewSpec } from './previewSpec'
 
 /**
  * Chrome states selectable from outside the preview host (`npm run dev:android`), so screenshots
  * and quick checks need no tapping through the menus. A state is a query string (see
  * `parsePreviewSpec`): `idle`, `overlay=<kind>` (history, bookmarks, downloads, settings, addons, …;
- * `show=<text>` scrolls the row with that text into view), `find=<text>` (the find bar with that
- * text typed) or `pull=<n>` (the page held pulled down at n percent of the refresh threshold;
- * `pull=refresh` lets go past it). It comes in as the URL hash,
+ * `section=<id>` picks a Settings section, `show=<text>` scrolls the row with that text into
+ * view), `menu=app` (the app menu sheet; `show=<text>` scrolls an item into view), `find=<text>`
+ * (the find bar with that text typed) or
+ * `pull=<n>` (the page held pulled down at n percent of the refresh threshold; `pull=refresh` lets
+ * go past it). It comes in as the URL hash,
  * `http://localhost:41734/#overlay=history`, or as `window.postMessage({ zenPreview: 'find=coffee' }, '*')`,
  * which also re-applies an unchanged state. Once applied it is echoed in `<html data-preview-state>`
  * so a driver can wait for it; `.github/scripts/android-preview-shots.mjs` is one.
@@ -35,14 +38,31 @@ function apply(spec: string): void {
     // Every spec starts from idle so states do not stack: a pull in flight is put back at once
     // (a `cancel` would spring home, and the next pull would catch that spring part-way).
     closeOverlay()
+    closeMenu()
     uiStore.set({ findOpen: false, findTabId: null })
     abortPull()
 
     if (target.kind === 'overlay') {
-      void openOverlay(target.overlay, tab?.id ?? null).then(() => {
-        if (target.show) requestAnimationFrame(() => show(target.show))
-        done(spec)
+      void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
+        () => {
+          if (target.show) requestAnimationFrame(() => show(target.show))
+          done(spec)
+        }
+      )
+    } else if (target.kind === 'menu') {
+      // The core answers with `menu.show`; the state is reached once the descriptor is in the store.
+      const unsubscribe = uiStore.subscribe(() => {
+        if (!uiStore.get().menu) return
+        unsubscribe()
+        // The sheet mounts on the next render; give it a frame before scrolling an item into view.
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            show(target.show)
+            done(spec)
+          })
+        )
       })
+      run('app.menu', undefined)
     } else if (target.kind === 'find' && tab) {
       uiStore.set({ findOpen: true, findTabId: tab.id })
       // The bar mounts on the next render; type into it the way a keyboard would.
