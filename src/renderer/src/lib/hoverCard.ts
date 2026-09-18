@@ -1,5 +1,5 @@
 import type { Rect } from '@shared/types'
-import { getHost } from '@shared/url'
+import { BLANK_URL, displayHost, ERROR_URL_PREFIX, getHost, READER_URL_PREFIX } from '@shared/url'
 import type { PopoverBox, Size } from './portals'
 import {
   chromeInertHeld,
@@ -303,16 +303,19 @@ export function placeHoverCard(
 }
 
 /**
- * The card's second line, what Chrome shows under the title: the page's host for web pages
- * (a leading `www.` trimmed, as Chrome's card does), the address itself for Zenium's own pages,
- * a plain word for a local file, nothing for a blank tab.
+ * The card's second line, what Chrome shows under the title: the page's site for web pages as
+ * the URL pill shows it (`displayHost`: a leading `www.` trimmed, a non-default port kept, an
+ * error or Reader page standing in for its site), the address itself for Zenium's own pages, a
+ * plain word for a local file, nothing for a blank tab.
  */
 export function hoverCardHost(url: string): string {
-  if (!url || url === 'about:blank') return ''
-  if (/^https?:\/\//i.test(url))
-    return getHost(url)
-      .toLowerCase()
-      .replace(/^www\./, '')
+  if (!url || url === 'about:blank' || url === BLANK_URL) return ''
+  if (
+    /^https?:\/\//i.test(url) ||
+    url.startsWith(ERROR_URL_PREFIX) ||
+    url.startsWith(READER_URL_PREFIX)
+  )
+    return displayHost(url).toLowerCase()
   if (/^zen:\/\//i.test(url)) return url.replace(/[?#].*$/, '').replace(/\/$/, '')
   if (/^file:\/\//i.test(url)) return 'File on this computer'
   return getHost(url).toLowerCase() || url.replace(/[?#].*$/, '')

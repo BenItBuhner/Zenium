@@ -112,15 +112,26 @@ describe('placeHoverCard', () => {
 })
 
 describe('hoverCardHost', () => {
-  it('shows the host of a web page without a leading www', () => {
+  it('shows the site of a web page as the pill does: no www, a non-default port kept', () => {
     expect(hoverCardHost('https://www.example.com/a/b?c#d')).toBe('example.com')
-    expect(hoverCardHost('http://docs.example.org:8080/x')).toBe('docs.example.org')
+    expect(hoverCardHost('http://docs.example.org:8080/x')).toBe('docs.example.org:8080')
+    expect(hoverCardHost('HTTPS://WWW.Example.COM/')).toBe('example.com')
+  })
+
+  it('an error or Reader page shows the site it stands in for', () => {
+    expect(hoverCardHost('zen://error?url=https%3A%2F%2Fwww.example.com%2Fx&code=-105')).toBe(
+      'example.com'
+    )
+    expect(hoverCardHost('zen://reader?url=https%3A%2F%2Fnews.example.org%2Fa')).toBe(
+      'news.example.org'
+    )
   })
 
   it('shows the address of a Zenium page, the word for a file, nothing for a blank tab', () => {
     expect(hoverCardHost('zen://settings/?pane=tabs')).toBe('zen://settings')
     expect(hoverCardHost('file:///home/me/notes.html')).toBe('File on this computer')
     expect(hoverCardHost('about:blank')).toBe('')
+    expect(hoverCardHost('zen://blank')).toBe('')
     expect(hoverCardHost('')).toBe('')
   })
 })
