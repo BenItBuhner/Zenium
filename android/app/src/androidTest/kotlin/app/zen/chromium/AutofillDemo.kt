@@ -575,12 +575,33 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         SystemClock.sleep(900)
     }
 
-    private fun type(text: String) {
+    /**
+     * Type into the focused field. On the software-rendered emulator injected keys go missing
+     * under load (the f6b2b10a run signed in as "ada.lovelac"), so a page field's value is read
+     * back and, when it is not the text, selected and typed over again at a slower pitch; the
+     * system's PIN field (`intoPage = false`) cannot be read and is typed once.
+     */
+    private fun type(text: String, intoPage: Boolean = true) {
+        keys(text, 25)
+        if (!intoPage) return
+        val value = { pageString("(function(){var e=document.activeElement;return e && 'value' in e ? e.value : null})()") }
+        for (attempt in 1..2) {
+            val typed = value()
+            if (typed == text) return
+            note("typed '$text' but the field holds '$typed' (attempt $attempt); typing it again")
+            page("(function(){var e=document.activeElement;if(e&&e.select)e.select()})()")
+            SystemClock.sleep(300)
+            keys(text, 60)
+        }
+        note("the field holds '${value()}' after retyping '$text'")
+    }
+
+    private fun keys(text: String, pitchMs: Long) {
         val events = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray())
             ?: error("no key events for '$text'")
         for (event in events) {
             ui.injectInputEvent(event, true)
-            SystemClock.sleep(25)
+            SystemClock.sleep(pitchMs)
         }
         SystemClock.sleep(200)
     }
@@ -614,7 +635,7 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         SystemClock.sleep(1_200)
         snap(shotName)
         pinPrompts += shotName
-        type(PIN)
+        type(PIN, intoPage = false)
         pressKey(KeyEvent.KEYCODE_ENTER)
         val deadline = SystemClock.uptimeMillis() + 10_000
         while (credentialPromptShowing() && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(250)
