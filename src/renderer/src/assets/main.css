@@ -389,11 +389,7 @@
   white-space: nowrap;
 }
 
-/*
- * The shared v2 field (§9.12): the control height, a hairline, the page behind it. Unlayered
- * beside the button for the same reason; the Settings tab (#134) carries this same rule, so the
- * two merge as one text.
- */
+/* The shared v2 field (§9.12): the control height, a hairline, the page behind it. */
 .zen-v2-field {
   display: block;
   width: 100%;
