@@ -71,9 +71,10 @@
   /*
    * Rows (9.2, 9.18, 9.21, 9.25): a minimum height that grows with the content, never a clamp;
    * 44 for one line, 64 for a label with a description, the 12 above and below being the row's
-   * own padding (20 + 24 = 44, 20 + 2 + 18 + 24 = 64). They run edge to edge, the press fill
-   * bleeding to the panel's border and their text inset 16 – the one gutter, shared with the
-   * header's title, the search field and the headings. Whatever trails the text centres on the
+   * own padding (20 + 24 = 44, 20 + 20 + 24 = 64: the two line boxes touch). They run edge to
+   * edge, the press fill bleeding to the panel's border and their text inset 16 – the one
+   * gutter, shared with the header's title, the search field and the headings. Whatever trails
+   * the text centres on the
    * row's height; only the leading box takes the first text line. The title and the description
    * each keep to one line here, so the three-line case (a trailing control on the label line)
    * does not arise. The rows hold no 40 px control, only 44 icon buttons whose 20 px glyph is
@@ -152,7 +153,6 @@
     min-width: 0;
     flex: 1;
     flex-direction: column;
-    gap: 2px;
   }
   .zen-list-title {
     font-size: var(--v2-font-body);
