@@ -156,8 +156,13 @@ export function NavRow({
                 expanded={siteInfoOpen}
                 className="order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] hover:opacity-100"
                 onActivate={(e) => {
-                  const r = e.currentTarget.getBoundingClientRect()
-                  void openSiteInfo(tab, { x: r.left, y: r.top, width: r.width, height: r.height })
+                  const chip = e.currentTarget
+                  const r = chip.getBoundingClientRect()
+                  void openSiteInfo(
+                    tab,
+                    { x: r.left, y: r.top, width: r.width, height: r.height },
+                    chip
+                  )
                 }}
               >
                 {secure ? <Lock className="h-3 w-3" /> : <Search className="h-3 w-3" />}

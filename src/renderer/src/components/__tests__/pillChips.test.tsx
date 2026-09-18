@@ -11,14 +11,14 @@ import type { Space, Tab, UIState } from '@shared/types'
  * desktop pill (`NavRow`) and the phone pill (`PillContent`), collapsed and expanded.
  */
 
-const invoke = vi.fn(async () => null)
+const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { NavRow } = await import('../sidebar/SidebarTop')
 const { PillContent } = await import('../phone/PhoneShell')
-const { uiStore } = await import('@renderer/lib/ui')
-const { siteInfoStore } = await import('@renderer/lib/siteInfo')
+const { openUrlbar, uiStore } = await import('@renderer/lib/ui')
+const { closeSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
 
 function tab(url: string, patch: Partial<Tab> = {}): Tab {
   return {
@@ -98,6 +98,30 @@ const focusable = (scope: ParentNode): HTMLElement[] =>
 
 const labels = (els: HTMLElement[]): (string | null)[] =>
   els.map((el) => el.getAttribute('aria-label'))
+
+/** The commands the chrome sent the host so far, in order. */
+const commands = (): string[] => invoke.mock.calls.map(([name]) => name)
+
+/** Open the site information from the chip with the keyboard: Enter on the focused button. */
+async function openFromChip(chip: HTMLElement): Promise<void> {
+  chip.focus()
+  expect(document.activeElement).toBe(chip)
+  await act(async () => {
+    chip.click()
+    await vi.waitFor(() => expect(uiStore.get().siteInfoOpen).toBe(true))
+  })
+}
+
+/**
+ * Escape, a click outside or the back gesture: the sheet's dismissal, whose spring runs on the
+ * animation frame (`setImmediate` under happy-dom) and ends where every close does.
+ */
+async function dismiss(): Promise<void> {
+  await act(async () => {
+    closeSiteInfo()
+    await vi.waitFor(() => expect(uiStore.get().siteInfoOpen).toBe(false))
+  })
+}
 
 function expectChip(el: HTMLElement, label: string): void {
   expect(el.tagName).toBe('BUTTON')
@@ -200,6 +224,50 @@ describe('desktop pill (NavRow)', () => {
     expect(uiStore.get().urlbar.open).toBe(true)
     expect(uiStore.get().urlbar.mode).toBe('edit')
     expect(uiStore.get().siteInfoOpen).toBe(false)
+  })
+
+  it('hands the keyboard back to the chip once the site information closes', async () => {
+    const el = render(<NavRow state={state(page)} tab={page} compact={false} />)
+    const chip = el.querySelector<HTMLElement>('[aria-label="Site information"]')!
+    await openFromChip(chip)
+    expect(commands()).toContain('focus.chrome')
+    expect(chip.getAttribute('aria-expanded')).toBe('true')
+
+    await dismiss()
+    expect(chip.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(chip)
+    // The page gets the keyboard back only when it had it; the chip did.
+    expect(commands()).not.toContain('focus.content')
+  })
+
+  it('hands the keyboard to the page instead once the chip is gone', async () => {
+    const el = render(<NavRow state={state(page)} tab={page} compact={false} />)
+    const chip = el.querySelector<HTMLElement>('[aria-label="Site information"]')!
+    await openFromChip(chip)
+    // The tab went away: the pill re-renders without its chips.
+    act(() => root!.render(<NavRow state={state(null)} tab={null} compact={false} />))
+    expect(chip.isConnected).toBe(false)
+
+    await dismiss()
+    expect(document.activeElement).not.toBe(chip)
+    expect(commands()).toContain('focus.content')
+  })
+
+  it('leaves the keyboard alone when another surface takes over from the sheet', async () => {
+    const el = render(<NavRow state={state(page)} tab={page} compact={false} />)
+    const chip = el.querySelector<HTMLElement>('[aria-label="Site information"]')!
+    await openFromChip(chip)
+    chip.blur()
+    expect(document.activeElement).not.toBe(chip)
+
+    // The URL bar opening over the sheet dismisses it at once and wants the keyboard itself.
+    await act(async () => {
+      await openUrlbar('edit', page.id, { attached: true })
+    })
+    expect(uiStore.get().urlbar.open).toBe(true)
+    expect(uiStore.get().siteInfoOpen).toBe(false)
+    expect(document.activeElement).not.toBe(chip)
+    expect(commands()).not.toContain('focus.content')
   })
 
   it('reveals the hover-only chips while the keyboard is on one of the chips', () => {
