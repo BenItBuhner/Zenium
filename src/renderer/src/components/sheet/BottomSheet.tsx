@@ -42,6 +42,19 @@ interface Props {
 type Zone = 'grip' | 'body' | 'scrim'
 type Mode = 'pending' | 'sheet' | 'none'
 
+/**
+ * Sheets stack two deep (v2 draft §9.24). The stack has one scrim, the lowest sheet's, which
+ * stays; a sheet that opens over a sheet draws none of its own and instead recedes the sheet
+ * under it exactly as the page recedes under a single sheet – scale .97 about its bottom centre
+ * and 6 px more corner radius, driven by the upper sheet's progress – with the lower sheet's
+ * content inert. The page keeps the recede it already has.
+ */
+interface StackedSheet {
+  recede(progress: number): void
+  setInert(on: boolean): void
+}
+const stack: StackedSheet[] = []
+
 interface Touch {
   id: number
   x0: number
@@ -106,6 +119,8 @@ export function BottomSheet({
   const resizedWhileUp = useRef(false)
   const latest = useRef({ onDismissed })
   const insets = uiStore.use((s) => s.insets)
+  /** The sheet this one opened over, if any (§9.24): it takes the recede in place of the page. */
+  const lower = useRef<StackedSheet | null>(null)
 
   // The motion lives in a ref and is only ever touched from effects and event handlers.
   const motionRef = useRef<SheetMotion | null>(null)
@@ -119,10 +134,16 @@ export function BottomSheet({
         const frame = motionRef.current!.frame()
         sheet.style.height = `${frame.height}px`
         sheet.style.transform = `translate3d(0, ${frame.translateY}px, 0)`
-        // The scrim's colour and full opacity are the `--zen-scrim` token's; only its share moves.
-        scrim.style.opacity = frame.scrim.toFixed(4)
-        // The page behind recedes and the bottom bar fades with the same progress (main.css).
-        document.documentElement.style.setProperty('--zen-recede', frame.scrim.toFixed(4))
+        const progress = frame.scrim.toFixed(4)
+        if (lower.current) {
+          // Over another sheet: no scrim of its own; the sheet beneath recedes instead (§9.24).
+          lower.current.recede(frame.scrim)
+        } else {
+          // The scrim's colour and full opacity are the `--zen-scrim` token's; only its share moves.
+          scrim.style.opacity = progress
+          // The page behind recedes and the bottom bar fades with the same progress (main.css).
+          document.documentElement.style.setProperty('--zen-recede', progress)
+        }
         syncLock()
       },
       onClosed: () => {
@@ -159,6 +180,39 @@ export function BottomSheet({
     latest.current = { onDismissed }
   })
 
+  // Take a place on the stack before the first frame, so it knows whether it draws the scrim or
+  // recedes the sheet beneath. While this sheet is up the lower one is inert; when it goes the
+  // lower one comes back, and focus – if it is still in this sheet – returns to the control that
+  // opened it (§9.22, §9.24), which for a stacked sheet is a row of the sheet beneath.
+  useLayoutEffect(() => {
+    const sheet = sheetRef.current
+    if (!sheet) return
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const entry: StackedSheet = {
+      recede: (progress) => {
+        sheet.style.setProperty('--zen-sheet-recede', progress.toFixed(4))
+        sheet.style.scale = progress > 0 ? (1 - 0.03 * progress).toFixed(4) : ''
+      },
+      setInert: (on) => {
+        sheet.inert = on
+        if (on) sheet.dataset.recessed = 'true'
+        else delete sheet.dataset.recessed
+      }
+    }
+    lower.current = stack.at(-1) ?? null
+    stack.push(entry)
+    lower.current?.setInert(true)
+    return () => {
+      const at = stack.indexOf(entry)
+      if (at !== -1) stack.splice(at, 1)
+      const beneath = lower.current
+      lower.current = null
+      beneath?.recede(0)
+      beneath?.setInert(false)
+      if (sheet.contains(document.activeElement)) opener?.focus({ preventScroll: true })
+    }
+  }, [])
+
   useLayoutEffect(() => {
     insetTop.current = insets.top
     // New content starts at its top; the old scroll offset belonged to what was there before.
@@ -184,7 +238,9 @@ export function BottomSheet({
   }, [])
 
   // The content frame is promoted while a sheet is up, and released – with the recede – after.
+  // The page's recede belongs to the lowest sheet of a stack; one above it leaves both alone.
   useEffect(() => {
+    if (lower.current) return
     const root = document.documentElement
     root.dataset.receding = 'true'
     return () => {
