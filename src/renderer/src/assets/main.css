@@ -1442,27 +1442,72 @@
   }
 
   /*
-   * The site-information sheet. Surfaces nest concentrically: the sheet's corner minus its
-   * padding is the cards' corner (--zen-sheet-inner), and a card's corner minus its padding is
-   * the corner of anything inside it. Sections are told apart by spacing and tone, not lines.
+   * The phone sheet chassis (design language v2 §6 sheets, §3, §9.16, §9.25): a neutral, opaque
+   * dialog surface with a hairline edge and the sheet shadow, radius 12 on top, no side padding
+   * of its own – rows run edge to edge and carry the 16 px gutter themselves. Dark adds nothing:
+   * the border is the edge. `--zen-sheet-inner` stays for the site-information cards until #39.
    */
   .zen-sheet {
-    --zen-sheet-inner: 16px;
-    padding-left: 12px;
-    padding-right: 12px;
-    border-radius: 28px 28px 0 0;
-    background: var(--zen-panel-bg);
-    backdrop-filter: var(--zen-blur-panel);
-    box-shadow:
-      0 -1px 0 rgb(255 255 255 / 0.35) inset,
-      0 -12px 48px rgb(0 0 0 / 0.22);
+    --zen-sheet-inner: 8px;
+    border: 1px solid var(--v2-border);
+    border-bottom: 0;
+    border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
+    background: var(--v2-panel);
+    color: var(--v2-text);
+    box-shadow: var(--v2-shadow-sheet);
     corner-shape: var(--zen-corner);
     will-change: transform;
   }
-  :root[data-theme='dark'] .zen-sheet {
-    box-shadow:
-      0 -1px 0 rgb(255 255 255 / 0.08) inset,
-      0 -12px 48px rgb(0 0 0 / 0.5);
+  /*
+   * The header after the grip strip: 48 tall, the title 17/600 at line-height 22 centred over
+   * the whole width, with room for a 44 px control at 2 px margins on either side so a leading
+   * back or trailing action never shifts it (§9.16). Once the body scrolls under it the header
+   * shows a hairline at its bottom edge, gone again at the top (§9.7).
+   */
+  .zen-sheet-header {
+    position: relative;
+    display: flex;
+    min-height: 48px;
+    align-items: center;
+    justify-content: center;
+    padding: 0 46px;
+  }
+  .zen-sheet-title {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--v2-font-heading);
+    font-weight: var(--v2-weight-heading);
+    line-height: 22px;
+  }
+  .zen-sheet-header-control {
+    position: absolute;
+    top: 2px;
+    display: flex;
+    width: 44px;
+    height: 44px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    color: inherit;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-sheet-header-control:active {
+    background: var(--v2-fill);
+  }
+  .zen-sheet-header-control[data-side='leading'] {
+    left: 2px;
+  }
+  .zen-sheet-header-control[data-side='trailing'] {
+    right: 2px;
+  }
+  .zen-sheet-grip {
+    transition: box-shadow 120ms var(--zen-ease);
+  }
+  .zen-sheet[data-scrolled='true'] .zen-sheet-grip {
+    box-shadow: 0 1px 0 var(--v2-border);
   }
   .zen-sheet-panel {
     --zen-sheet-inner: 12px;
@@ -1573,11 +1618,11 @@
     width: 32px;
     height: 4px;
     border-radius: 2px;
-    background: rgb(var(--zen-fg-rgb) / 0.25);
+    background: rgb(var(--v2-text-rgb) / 0.25);
     transition: background 120ms var(--zen-ease);
   }
   .zen-sheet[data-dragging='true'] .zen-sheet-handle {
-    background: rgb(var(--zen-fg-rgb) / 0.4);
+    background: rgb(var(--v2-text-rgb) / 0.4);
   }
   /* The body scrolls on its own only while the sheet rests expanded; otherwise a pan is a drag. */
   .zen-sheet-scroll {
@@ -1594,19 +1639,68 @@
   .zen-sheet-item {
     display: flex;
     width: 100%;
-    height: 48px;
+    height: var(--v2-row);
     align-items: center;
     gap: 12px;
-    padding: 0 12px;
-    border-radius: 10px;
-    corner-shape: var(--zen-corner);
-    color: var(--zen-fg);
+    padding: 0 16px;
+    color: var(--v2-text);
     text-align: left;
-    font-size: var(--zen-sidebar-font);
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
     transition: background 120ms var(--zen-ease);
   }
   .zen-sheet-item:active:not(:disabled) {
-    background: var(--zen-element-bg-hover);
+    background: var(--v2-fill);
+  }
+  .zen-sheet-item-secondary {
+    color: var(--v2-text-deemphasized);
+  }
+  /* Groups of rows are told apart by a hairline in the gutter (§6 menus, phone). */
+  .zen-sheet-sep {
+    height: 1px;
+    margin: 8px 16px;
+    background: var(--v2-border);
+  }
+  .zen-sheet-item-two-line {
+    height: auto;
+    min-height: var(--v2-row-two-line);
+    padding: 12px 16px;
+  }
+  /*
+   * A prompt sheet (title, one paragraph, actions) opens on a title block instead of the bar
+   * header (§9.23): the glyph on the title's start with no fill box, the description 4 below.
+   */
+  .zen-sheet-title-block {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 16px;
+  }
+  .zen-sheet-title-block h2 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    font-size: var(--v2-font-heading);
+    font-weight: var(--v2-weight-heading);
+    line-height: 22px;
+  }
+  .zen-sheet-title-block p {
+    margin: 0;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    color: var(--v2-text-deemphasized);
+  }
+  /* The footer of a prompt (§9.11): peers split the width at an 8 px gap, the primary trailing. */
+  .zen-sheet-footer {
+    display: flex;
+    gap: 8px;
+    padding: 16px 16px 8px;
+  }
+  .zen-sheet-footer > * {
+    flex: 1;
+    min-width: 0;
   }
   .zen-sheet-item:disabled {
     opacity: 0.4;
@@ -2546,34 +2640,7 @@
    * transform alone. A row in the hand lifts to the dragged card's level – two percent larger,
    * a touch translucent – and follows the finger while a caret marks where it will land.
    */
-  .zen-sheet.zen-bar-editor {
-    border: 1px solid var(--v2-border);
-    border-bottom: 0;
-    border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
-    background: var(--v2-panel);
-    color: var(--v2-text);
-    backdrop-filter: none;
-    box-shadow: var(--v2-shadow-sheet);
-  }
-  /* Outranks the tinted sheet's dark shadow (v2 §3: dark adds nothing, the border is the edge). */
-  :root[data-theme='dark'] .zen-sheet.zen-bar-editor {
-    box-shadow: var(--v2-shadow-sheet);
-  }
-  .zen-bar-editor .zen-sheet-handle {
-    background: rgb(var(--v2-text-rgb) / 0.25);
-  }
-  .zen-bar-editor .zen-sheet-grip {
-    transition: box-shadow 120ms var(--zen-ease);
-  }
-  .zen-bar-editor[data-scrolled='true'] .zen-sheet-grip {
-    box-shadow: 0 1px 0 var(--v2-border);
-  }
-  .zen-bar-title {
-    font-size: var(--v2-font-heading);
-    font-weight: var(--v2-weight-heading);
-    line-height: 24px;
-    letter-spacing: -0.01em;
-  }
+  /* The chassis sheet is the v2 surface (§6); the editor adds only its own rows and drag. */
   .zen-bar-row {
     position: relative;
     display: flex;
