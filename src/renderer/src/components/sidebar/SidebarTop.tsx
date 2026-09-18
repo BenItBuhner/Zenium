@@ -9,7 +9,6 @@ import {
   Info,
   Lock,
   MoreHorizontal,
-  Puzzle,
   RotateCw,
   Search,
   Sparkles,
@@ -20,6 +19,7 @@ import {
 import type { Tab, UIState } from '@shared/types'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
 import { addressParts, displayUrl, fullUrl, getDomain } from '@shared/url'
+import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { run } from '@renderer/lib/api'
 import { isPrivateWindow } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
@@ -28,10 +28,14 @@ import { openOverlay, openUrlbar, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { StarChip } from '../bookmarks/StarChip'
 import { useBookmarkTree } from '../bookmarks/tree'
+import { ToolbarActions } from '../extensions/ToolbarActions'
 import { useLongPress } from '../phone/useLongPress'
 import { PillChip } from '../urlbar/PillChip'
 import { WindowControls } from '../WindowControls'
 import { ZoomChip } from '../zoom/ZoomChip'
+
+/** Back, forward, reload, the puzzle piece and the menu: always in the row, never folded. */
+const FIXED_BUTTONS = 5
 
 interface Props {
   state: UIState
@@ -96,7 +100,8 @@ export function NavRow({
   const boosted = Boolean(
     tab && isWebPage && state.boosts.some((b) => b.domain === getDomain(tab.url) && b.enabled)
   )
-  const extensions = state.extensions.filter((e) => e.enabled && !e.error && e.popup)
+  const row = useRef<HTMLDivElement>(null)
+  const rowWidth = useElementWidth(row)
   // What the chips have open, for their `aria-expanded`.
   const siteInfoOpen = uiStore.use((s) => s.siteInfoOpen)
   const boostsOpen = uiStore.use((s) => s.overlay === 'boosts')
@@ -126,7 +131,13 @@ export function NavRow({
     return () => window.removeEventListener(APP_MENU_EVENT, fromKeyboard)
   }, [])
   return (
-    <div className={cn('zen-no-drag flex items-center gap-0.5', compact && 'flex-col', className)}>
+    <div
+      ref={row}
+      className={cn('zen-no-drag flex items-center gap-0.5', compact && 'flex-col', className)}
+      // The bar the extension popovers hang from (v2 §9.20): flush under it, aligned by half.
+      // (Its token family is the window's, from the `data-surface` on SidebarTop's root.)
+      data-bar={compact ? undefined : ''}
+    >
       <NavigationButton
         tab={tab}
         title={hint('Back', state, 'nav.back')}
@@ -329,7 +340,12 @@ export function NavRow({
           </span>
         </div>
       )}
-      {!compact && extensions.slice(0, 4).map((ext) => <ExtensionButton key={ext.id} ext={ext} />)}
+      <ToolbarActions
+        state={state}
+        rowWidth={compact ? null : rowWidth}
+        fixedButtons={FIXED_BUTTONS}
+        compact={compact}
+      />
       <button
         ref={menuButton}
         type="button"
@@ -398,37 +414,6 @@ function NavigationButton({
       }}
     >
       {children}
-    </button>
-  )
-}
-
-/** Browser-action button of a loaded extension; its popup opens anchored below the button. */
-function ExtensionButton({ ext }: { ext: UIState['extensions'][number] }): JSX.Element {
-  const ref = useRef<HTMLButtonElement>(null)
-  return (
-    <button
-      ref={ref}
-      type="button"
-      className="zen-toolbar-button"
-      title={ext.name}
-      onClick={() => {
-        const r = ref.current?.getBoundingClientRect()
-        if (!r) return
-        run('extension.openPopup', {
-          id: ext.id,
-          anchor: { x: r.left, y: r.top, width: r.width, height: r.height }
-        })
-      }}
-      onContextMenu={(e) => {
-        e.preventDefault()
-        run('extension.actionContextMenu', { id: ext.id, x: e.clientX, y: e.clientY })
-      }}
-    >
-      {ext.icon ? (
-        <img src={ext.icon} alt="" className="h-4 w-4 rounded-[3px]" draggable={false} />
-      ) : (
-        <Puzzle className="h-4 w-4" />
-      )}
     </button>
   )
 }

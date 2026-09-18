@@ -807,6 +807,10 @@ export class Menus {
         enabled: info.enabled && Boolean(info.optionsPage),
         click: () => extensions.openOptions(id, win)
       },
+      {
+        label: info.toolbarPinned ? 'Unpin from Toolbar' : 'Pin to Toolbar',
+        click: () => extensions.setToolbarPinned(id, !info.toolbarPinned)
+      },
       { type: 'separator' },
       { label: 'Remove from Zenium', click: () => void extensions.remove(id) },
       {

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-empty-function -- deliberate no-op host services */
 import type {
   ExtensionInfo,
+  ExtensionUpdateCheck,
   Rect,
   ResourceSnapshot,
   SidePanelInfo,
@@ -112,9 +113,15 @@ export class NoExtensions implements ExtensionHost {
     this.unavailable(win)
   }
 
+  async installFromDrop(_paths: string[], win: ZenWindow): Promise<void> {
+    this.unavailable(win)
+  }
+
   async remove(): Promise<void> {}
   async setEnabled(): Promise<void> {}
   setPinned(): void {}
+  setToolbarPinned(): void {}
+  async setAllowFileAccess(): Promise<void> {}
   setNewTabOverride(): void {}
   newTabUrl(): string | null {
     return null
@@ -123,12 +130,16 @@ export class NoExtensions implements ExtensionHost {
   async reload(): Promise<void> {}
   async checkForUpdates(): Promise<void> {}
   async update(): Promise<void> {}
+  updateCheck(): ExtensionUpdateCheck {
+    return { lastCheckedAt: null, checking: false }
+  }
   openOptions(_id: string, win: ZenWindow): void {
     this.unavailable(win)
   }
   openPopup(_id: string, _anchor: Rect, win: ZenWindow): void {
     this.unavailable(win)
   }
+  resizePopup(): void {}
   closePopup(): void {}
   sidePanel(): SidePanelInfo | null {
     return null
@@ -155,6 +166,7 @@ export class NoExtensions implements ExtensionHost {
   handleKey(): boolean {
     return false
   }
+  respondPrompt(): void {}
   flushSync(): void {}
 }
 

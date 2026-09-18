@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { CommandArgs, CommandName, CommandResult, EventName, Events } from '../shared/types'
 
 /**
@@ -8,6 +8,8 @@ import type { CommandArgs, CommandName, CommandResult, EventName, Events } from 
 export interface ZenApi {
   invoke<K extends CommandName>(name: K, args: CommandArgs<K>): Promise<CommandResult<K>>
   on<K extends EventName>(name: K, listener: (payload: Events[K]) => void): () => void
+  /** Filesystem path of a dropped `File` (extension packages dropped on the management page). */
+  pathForFile?(file: File): string
 }
 
 type Listener = (payload: unknown) => void
@@ -22,6 +24,7 @@ ipcRenderer.on('zen:event', (_event, eventName: string, payload: unknown) => {
 
 const api: ZenApi = {
   invoke: (name, args) => ipcRenderer.invoke('zen:cmd', name, args),
+  pathForFile: (file) => webUtils.getPathForFile(file),
   on: (name, listener) => {
     let set = listeners.get(name)
     if (!set) {

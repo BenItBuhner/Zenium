@@ -185,6 +185,8 @@ interface Harness {
   toasts: Array<{ message: string; kind: string }>
   opened: string[]
   dialogs: string[]
+  /** Events sent to the chrome (the prompts `confirmInstall` raises through its sheet). */
+  emitted: Array<{ name: string; payload: { requestId: string; kind: string; name: string } }>
   prompts: InstallConfirmation[]
   answer: (ok: boolean) => void
   files: Map<string, string>
@@ -210,6 +212,7 @@ function harness(options: { registry?: string; nativeConfirm?: boolean } = {}): 
   const toasts: Harness['toasts'] = []
   const opened: string[] = []
   const dialogs: string[] = []
+  const emitted: Harness['emitted'] = []
   const browser = {
     platform: {
       io: storeIo,
@@ -223,6 +226,9 @@ function harness(options: { registry?: string; nativeConfirm?: boolean } = {}): 
     state: { commitVolatile: () => undefined },
     toast: (message: string, kind: string) => {
       toasts.push({ message, kind })
+    },
+    emit: (name: string, payload: Harness['emitted'][number]['payload']) => {
+      emitted.push({ name, payload })
     },
     tabs: {
       createTab: (opts: { url: string }) => {
@@ -263,6 +269,7 @@ function harness(options: { registry?: string; nativeConfirm?: boolean } = {}): 
     toasts,
     opened,
     dialogs,
+    emitted,
     prompts,
     answer: (value) => {
       ok = value
@@ -530,6 +537,23 @@ describe('AndroidExtensions: installing from a store', () => {
     expect(h.ext.record(ID)).toBeDefined()
   })
 
+  it("puts the prompt to the chrome's sheet when a live window can show it", async () => {
+    const h = harness({ nativeConfirm: true })
+    await storeFront(h.kt, { cws: crx1 })
+    const live = { alive: true } as unknown as ZenWindow
+    const install = h.ext.installFromStore(ID, null, live)
+    while (h.emitted.length === 0) await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(h.emitted[0].name).toBe('extensionInstallRequest')
+    expect(h.emitted[0].payload).toMatchObject({ kind: 'install', name: 'Sample' })
+    expect(h.dialogs).toEqual([])
+    // An answer to a prompt nobody asked is ignored; the real one completes the install.
+    h.ext.respondPrompt('extensionInstallRequest:stale', true)
+    h.ext.respondPrompt(h.emitted[0].payload.requestId, true)
+    await install
+    expect(h.ext.record(ID)).toBeDefined()
+    expect(h.emitted).toHaveLength(1)
+  })
+
   it('keeps the install when the runtime cannot load it, and says so', async () => {
     const h = harness()
     h.runtime.refuse = () => 'manifest version 3 is not supported yet'
@@ -751,6 +775,50 @@ describe('AndroidExtensions: managing installs', () => {
     expect(h.ext.record(ID)?.version).toBe('1.0.0')
     await h.ext.update(ID, WIN)
     expect(h.toasts.at(-1)?.message).toBe('Sample is pinned to version 1.0.0.')
+  })
+
+  it('shows on the toolbar through the registry alone: the runtime is not told', async () => {
+    const h = await installed()
+    expect(h.ext.list()[0].toolbarPinned).toBe(false)
+    h.ext.setToolbarPinned(ID, true)
+    expect(h.runtime.events).toEqual([])
+    expect(h.ext.list()[0].toolbarPinned).toBe(true)
+    expect(h.registry().extensions[0].toolbarPinned).toBe(true)
+    h.ext.setToolbarPinned(ID, true)
+    h.ext.setToolbarPinned('not-installed', true)
+    expect(h.registry().extensions[0].toolbarPinned).toBe(true)
+  })
+
+  it('applies the file-URL toggle through reconfigure', async () => {
+    const h = await installed()
+    await h.ext.setAllowFileAccess(ID, true)
+    expect(h.runtime.events).toEqual([`reconfigure ${ID}`])
+    expect(h.ext.list()[0].allowFileAccess).toBe(true)
+    expect(h.registry().extensions[0].allowFileAccess).toBe(true)
+    await h.ext.setAllowFileAccess(ID, true)
+    expect(h.runtime.events).toHaveLength(1)
+  })
+
+  it('reports the last update check for the management page', async () => {
+    const h = await installed()
+    expect(h.ext.updateCheck()).toEqual({ lastCheckedAt: null, checking: false })
+    await storeFront(h.kt, { update: { crx: crx2, version: '1.1.0' } })
+    const check = h.ext.checkForUpdates()
+    expect(h.ext.updateCheck().checking).toBe(true)
+    await check
+    expect(h.ext.updateCheck()).toEqual({ lastCheckedAt: h.clock.now, checking: false })
+  })
+
+  it('points a drop at the file picker: Android hands over content, not paths', async () => {
+    const h = await installed()
+    const requests = h.kt.requests.length
+    await h.ext.installFromDrop(['/sdcard/Download/sample.crx'], WIN)
+    expect(h.toasts.at(-1)).toEqual({
+      message: 'Use "Install from file" to add a .crx or .zip here.',
+      kind: 'info'
+    })
+    expect(h.kt.requests).toHaveLength(requests)
+    expect(h.ext.list()).toHaveLength(1)
   })
 
   it('opens the options page in a tab', async () => {

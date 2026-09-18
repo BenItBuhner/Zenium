@@ -381,6 +381,9 @@ export type PopoverBox =
   | (PopoverBoxBase & { side: 'below'; top: number })
   | (PopoverBoxBase & { side: 'above'; bottom: number })
 
+/** Which of the anchor's edges a popover's own edge lines up with (§9.20's horizontal order). */
+export type PopoverAlignment = 'start' | 'end'
+
 const extent = (width: PopoverExtent): number =>
   typeof width === 'number' ? width : width.measured
 
@@ -410,31 +413,42 @@ const extent = (width: PopoverExtent): number =>
  * `width` is one of the three fixed widths for chassis popovers, or `{ measured }` for a menu or
  * a manifest-sized popup (`PopoverExtent`). Pure: pass `viewportSize()` for the window; compute
  * once on open and again when the anchor moves, never animate between positions.
+ *
+ * `preferredAlignment` is §9.20's continuity clause: "a surface opened from another surface on
+ * the same anchor – an extension's popup from the puzzle panel, a submenu's panel from its menu
+ * – inherits its predecessor's alignment when that alignment fits, and falls back to the order
+ * only when it does not, so the eye stays where the first surface was instead of jumping across
+ * the anchor." Pass the predecessor's resolved `alignment` (returned with every box); without
+ * it the anchor's half of the bar decides, as in (1).
  */
 export function placePopover(
   anchor: Rect,
   bar: Rect,
   viewport: Size,
   width: PopoverExtent,
-  height?: number
-): PopoverBox {
+  height?: number,
+  preferredAlignment?: PopoverAlignment
+): PopoverBox & { alignment: PopoverAlignment } {
   // (4) A window narrower than the popover plus the margins: the popover gives, centred.
   const w = Math.max(0, Math.min(extent(width), viewport.width - 2 * POPOVER_MARGIN))
   const minLeft = POPOVER_MARGIN
   const maxLeft = viewport.width - POPOVER_MARGIN - w
   const fits = (left: number): boolean => left >= minLeft && left <= maxLeft
-  const start = anchor.x
-  const end = anchor.x + anchor.width - w
+  const at = { start: anchor.x, end: anchor.x + anchor.width - w }
   const trailing = anchor.x + anchor.width / 2 > bar.x + bar.width / 2
-  const preferred = trailing ? end : start
-  const flipped = trailing ? start : end
+  const preferred: PopoverAlignment = preferredAlignment ?? (trailing ? 'end' : 'start')
+  const flipped: PopoverAlignment = preferred === 'start' ? 'end' : 'start'
+  let alignment: PopoverAlignment = preferred
   let left: number
-  if (fits(preferred)) left = preferred
-  else if (fits(flipped)) left = flipped
+  if (fits(at[preferred])) left = at[preferred]
+  else if (fits(at[flipped])) {
+    alignment = flipped
+    left = at[flipped]
+  }
   // (3) Slide the aligned box the least distance inside the margins. Inside the window this
   // still overlaps the anchor (otherwise the flipped alignment would have fit); an anchor off
   // the window's edge gets the nearest box there is.
-  else left = Math.min(Math.max(minLeft, preferred), maxLeft)
+  else left = Math.min(Math.max(minLeft, at[preferred]), maxLeft)
 
   const edge = Math.max(0, viewport.height - 2 * POPOVER_MARGIN)
   const cap = height === undefined ? Math.min(viewport.height * 0.6, edge) : edge
@@ -445,8 +459,8 @@ export function placePopover(
     wanted <= below ? 'below' : above > below || below < POPOVER_HEIGHT_FLOOR ? 'above' : 'below'
   const maxHeight = Math.max(0, Math.min(wanted, side === 'below' ? below : above))
   return side === 'below'
-    ? { side, left, top: bar.y + bar.height, width: w, maxHeight }
-    : { side, left, bottom: viewport.height - bar.y, width: w, maxHeight }
+    ? { side, left, top: bar.y + bar.height, width: w, maxHeight, alignment }
+    : { side, left, bottom: viewport.height - bar.y, width: w, maxHeight, alignment }
 }
 
 /** The inline style that puts a popover where `placePopover` said, on a `fixed` element. */
