@@ -73,7 +73,7 @@ function InstallSheet({ prompt }: { prompt: WebAppInstallPrompt }): JSX.Element 
       contentKey={`${prompt.tabId}:${info ? 'app' : 'page'}`}
       header={
         <h2 id={TITLE_ID} className="zen-sheet-title">
-          Add to Home Screen
+          Add to Home screen
         </h2>
       }
       footer={
