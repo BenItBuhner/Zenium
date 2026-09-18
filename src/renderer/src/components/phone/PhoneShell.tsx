@@ -39,6 +39,7 @@ import { PillChip } from '../urlbar/PillChip'
 import { Urlbar } from '../urlbar/Urlbar'
 import { BarButton } from './BarButton'
 import { barContext, barLayout } from './barItems'
+import { InstallBanner } from './InstallBanner'
 import { PhoneStage } from './PhoneStage'
 import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
@@ -188,6 +189,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           paddingRight: 'var(--zen-padding)'
         }}
       >
+        <InstallBanner banner={ui.installBanner} activeTabId={activeTabId} />
         <div className="relative min-h-0 flex-1">
           <ContentArea state={state} ui={ui} />
         </div>

@@ -3,6 +3,7 @@ import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { dismissOverview, openOverview } from '@renderer/lib/gestures/stage'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
 import { Download, Smartphone, Star } from 'lucide-react'
+import { installBannerShown, presentInstallBanner } from '@renderer/lib/installBanner'
 import { isInternalPageUrl } from '@shared/internalPages'
 import { activeTab } from '@renderer/lib/selectors'
 import {
@@ -22,7 +23,8 @@ import {
   uiStore
 } from '@renderer/lib/ui'
 import type { HostGlobal } from './boot'
-import { parsePreviewSpec, type PreviewStep } from './previewSpec'
+import { PREVIEW_WEB_APP, postPreviewManifest } from './preview'
+import { parsePreviewSpec, type PreviewStep, type PreviewWebAppSurface } from './previewSpec'
 
 /** A pause between steps for a sheet to mount, slide in and settle before the next tap. */
 const STEP_SETTLE_MS = 450
@@ -48,7 +50,8 @@ const SHEET_LEAVE_MS = 1500
  * page zoom sheet at that factor), `error=<code>` (the active tab's load failed with that
  * Chromium `net::` code, `url=<target>` naming the URL that failed: the zen://error page is up)
  * or the message surfaces and the load bar: `toast=<text>&action=<label>`, `banners=<n>`,
- * `progress=<0…1>`. It comes in as the URL hash,
+ * `progress=<0…1>`, or `webapp=<surface>` (an "Add to Home screen" surface on the active tab). It
+ * comes in as the URL hash,
  * `http://localhost:41734/#overlay=history`, or as `window.postMessage({ zenPreview: 'find=coffee' }, '*')`,
  * which also re-applies an unchanged state. Once applied it is echoed in `<html data-preview-state>`
  * so a driver can wait for it; `.github/scripts/android-preview-shots.mjs` is one.
@@ -74,7 +77,7 @@ function apply(spec: string): void {
     closeMenu()
     closeUrlbar()
     dismissOverview()
-    uiStore.set({ findOpen: false, findTabId: null, zoomTabId: null })
+    uiStore.set({ findOpen: false, findTabId: null, zoomTabId: null, install: null, installBanner: null })
     abortPull()
     const state = browserStore.get().state
     const tab = state ? activeTab(state) : null
@@ -173,6 +176,8 @@ function reach(spec: string): void {
   } else if (target.kind === 'messages') {
     showMessages(target, tab?.id ?? null)
     done(spec)
+  } else if (target.kind === 'webapp' && tab) {
+    applyWebApp(target.surface, tab.id, spec)
   } else {
     done(spec)
   }
@@ -386,6 +391,62 @@ function clearMessages(loadingTabId: string | null): void {
 
 function hostGlobal(): { viewEvent(tabId: string, name: string, json: string): void } {
   return (window as unknown as { __zenHost: ReturnType<typeof hostGlobal> }).__zenHost
+}
+
+/** The surface is up once the core's event has landed in the UI store; give up after this long. */
+const SURFACE_TIMEOUT_MS = 5000
+
+/**
+ * Raise an "Add to Home screen" surface the way the app would: the demo manifest is posted for
+ * the tab (or withdrawn, for the plain page's name-edit sheet), then the core is asked to open
+ * the sheet or to pin. The banner is presented the way the core's event would be – the core
+ * itself raises one only once a day per app, after enough visits – and its "Add" opens the
+ * install sheet through the core like the real one.
+ */
+function applyWebApp(surface: PreviewWebAppSurface, tabId: string, spec: string): void {
+  postPreviewManifest(tabId, surface !== 'name')
+  const { manifest } = PREVIEW_WEB_APP
+  switch (surface) {
+    case 'install':
+    case 'name':
+      void run('webapp.openInstall', { tabId })
+      whenStore(() => uiStore.get().install?.tabId === tabId, spec)
+      return
+    case 'banner':
+      presentInstallBanner({
+        tabId,
+        name: manifest.short_name,
+        origin: new URL(manifest.start_url, PREVIEW_WEB_APP.manifestUrl).host,
+        icon: manifest.icons[0].src,
+        tint: manifest.theme_color
+      })
+      whenStore(() => installBannerShown(tabId), spec)
+      return
+    case 'pinned':
+      void run('webapp.pin', { tabId, title: manifest.short_name })
+      whenStore(() => uiStore.get().toasts.some((t) => t.message.includes('Home screen')), spec)
+      return
+  }
+}
+
+/** Echo `spec` once `ready` holds (or the wait runs out, so a driver sees the state it got). */
+function whenStore(ready: () => boolean, spec: string): void {
+  if (ready()) {
+    done(spec)
+    return
+  }
+  let settled = false
+  const finish = (): void => {
+    if (settled) return
+    settled = true
+    unsubscribe()
+    clearTimeout(timer)
+    done(spec)
+  }
+  const unsubscribe = uiStore.subscribe(() => {
+    if (ready()) finish()
+  })
+  const timer = setTimeout(finish, SURFACE_TIMEOUT_MS)
 }
 
 function done(spec: string): void {

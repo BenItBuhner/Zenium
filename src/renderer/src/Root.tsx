@@ -5,6 +5,7 @@ import { DownloadBubbleLayer } from './components/downloads/DownloadBubble'
 import { MenuSheet } from './components/menus/MenuSheet'
 import { ExternalProtocolLayer } from './components/protocol/ExternalProtocolSheet'
 import { BarEditorLayer } from './components/phone/BarEditorSheet'
+import { InstallLayer } from './components/phone/InstallSheet'
 import { SiteInfoLayer } from './components/siteinfo/SiteInfoSheet'
 import { browserStore, uiStore } from './lib/ui'
 
@@ -21,6 +22,7 @@ export function Root(): JSX.Element {
       <DownloadBubbleLayer />
       <MenuLayer />
       <ExternalProtocolLayer />
+      <InstallLayer />
     </>
   )
 }

@@ -1,4 +1,8 @@
-import { installPageScript, type PageScriptFlags } from '@shared/pageScript'
+import {
+  installPageScript,
+  type PageScriptFlags,
+  type PageScriptHostMessage
+} from '@shared/pageScript'
 import type { PageRules } from '@shared/types'
 import { installFormsScript } from '@shared/formsScript'
 import { installPasskeyObserver } from '@shared/passkeyObserver'
@@ -96,6 +100,7 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
   let onFlags: ((flags: PageScriptFlags) => void) | null = null
   let onZap: ((on: boolean) => void) | null = null
   let onForms: ((command: FormsCommand) => void) | null = null
+  let onWebApp: ((message: PageScriptHostMessage) => void) | null = null
   const onMessage = (event: { data: string }): void => {
     try {
       const data = JSON.parse(event.data) as {
@@ -105,10 +110,14 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
         rules?: PageRules
         deviceWidth?: number
         command?: FormsCommand
+        action?: PageScriptHostMessage['action']
+        outcome?: PageScriptHostMessage['outcome']
       }
       if (data.type === 'flags' && data.flags) onFlags?.(data.flags)
       else if (data.type === 'zap') onZap?.(Boolean(data.on))
       else if (data.type === 'forms' && data.command) onForms?.(data.command)
+      else if (data.type === 'webapp' && data.action)
+        onWebApp?.({ type: 'webapp', action: data.action, outcome: data.outcome })
       else if (data.type === 'pageRules' && data.rules && topFrame) {
         const config: PageRulesConfig = {
           rules: data.rules,
@@ -163,6 +172,9 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     },
     onZap: (listener) => {
       onZap = listener
+    },
+    onWebApp: (listener) => {
+      onWebApp = listener
     }
   })
 })()

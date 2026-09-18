@@ -389,6 +389,39 @@
   white-space: nowrap;
 }
 
+/*
+ * The shared v2 field (§9.12): the control height, a hairline, the page behind it. Unlayered
+ * beside the button for the same reason; the Settings tab (#134) carries this same rule, so the
+ * two merge as one text.
+ */
+.zen-v2-field {
+  display: block;
+  width: 100%;
+  height: var(--v2-control);
+  padding: 0 12px;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-control);
+  background: var(--v2-page);
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  outline: none;
+}
+.zen-v2-field::placeholder {
+  color: var(--v2-text-deemphasized);
+}
+.zen-v2-field:focus-visible {
+  border-color: var(--v2-accent);
+}
+.zen-v2-field[aria-invalid='true'] {
+  border-color: var(--v2-danger);
+}
+/* Disabled is one number on the whole control (§9.30), as `.zen-v2-button:disabled` above. */
+.zen-v2-field:disabled {
+  opacity: 0.4;
+}
+
 /* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME); zero on desktop. */
 :root {
   --zen-inset-top: 0px;
@@ -3590,6 +3623,144 @@
   }
 }
 
+@layer components {
+  /*
+   * "Add to Home screen" (`InstallSheet`, `InstallBanner`), to the v2 draft: an opaque neutral
+   * sheet with a hairline edge on the menu sheet's motion, the app's icon as a tile – a letter
+   * on the app's colour when it has none – and the manifest's screenshots as bordered cards in
+   * a strip that snaps shot by shot. The ambient banner is a floating panel of the same cloth.
+   */
+  .zen-install-sheet {
+    --zen-sheet-inner: var(--v2-radius-card);
+    padding-left: 16px;
+    padding-right: 16px;
+    border: 1px solid var(--v2-border);
+    border-bottom: 0;
+    border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
+    background: var(--v2-panel);
+    color: var(--v2-text);
+    backdrop-filter: none;
+    box-shadow: var(--v2-shadow-sheet);
+  }
+  .zen-install-sheet .zen-sheet-handle {
+    background: rgb(var(--v2-text-rgb) / 0.25);
+  }
+  /* The header carries no line at rest; one appears once the body has scrolled under it. */
+  .zen-install-sheet[data-scrolled='true'] .zen-sheet-grip {
+    box-shadow: 0 1px 0 var(--v2-border);
+  }
+  /* A 48 header after the 20 px grip strip (draft 9.16): the title, 17/600 at 22, centred in
+   * it, so the first row starts at 68; the hairline (above) sits on its bottom edge. */
+  .zen-install-title {
+    padding: 13px 0;
+    font-size: var(--v2-font-heading);
+    font-weight: var(--v2-weight-heading);
+    line-height: 22px;
+  }
+  .zen-install-name {
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+  }
+  .zen-install-detail {
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+  }
+  .zen-install-body {
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-install-description {
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-install-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-radius: var(--v2-radius-card);
+    background: var(--v2-card);
+  }
+  .zen-install-icon img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  /* The letter tile sits on the accent with its ink unless the core names the app's colour, in
+   * which case both the colour and an ink chosen by its luminance are inline (AppIcon). */
+  .zen-install-icon[data-letter] {
+    background: var(--v2-accent);
+    color: var(--v2-on-accent);
+    font-weight: var(--v2-weight-heading);
+    line-height: 1;
+  }
+  /* The strip runs edge to edge under the sheet's 16 px gutters and snaps a shot to the gutter. */
+  .zen-install-shots {
+    display: flex;
+    gap: 12px;
+    margin: 0 -16px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 16px;
+    scroll-snap-type: x mandatory;
+    scroll-padding: 0 16px;
+    touch-action: pan-x pan-y;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .zen-install-shots::-webkit-scrollbar {
+    display: none;
+  }
+  .zen-install-shot {
+    flex: none;
+    overflow: hidden;
+    border: 1px solid var(--v2-card-border);
+    border-radius: var(--v2-radius-card);
+    background: var(--v2-card);
+    scroll-snap-align: start;
+  }
+  .zen-install-shot img {
+    display: block;
+    width: auto;
+    height: 100%;
+  }
+  /* A shot whose card is sized from its declared `sizes` fills the card to the border. */
+  .zen-install-shot[data-sized] img {
+    width: 100%;
+    object-fit: cover;
+  }
+  /* One row holding a control (draft 9.21): its height is the control plus 8, the 4 above and
+   * below being the row's own padding around the 40 px Add and the 40 px tile. */
+  .zen-install-banner {
+    min-height: calc(var(--v2-control) + 8px);
+    padding: 4px 12px;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-card);
+    background: var(--v2-panel);
+    color: var(--v2-text);
+    box-shadow: var(--v2-shadow-panel);
+    animation: zen-banner-in 180ms var(--zen-ease);
+    touch-action: none;
+  }
+  /* Promoted only while a finger or the spring moves it (v1 §7.4), never at rest. */
+  .zen-install-banner[data-moving] {
+    will-change: transform, opacity;
+  }
+}
+@keyframes zen-banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /*
  * Fading scroll edges (`useFadeEdges`). The scroll container is masked, so content dissolves
  * into whatever is behind it – no gradient overlay, no assumption about the background. The
@@ -3642,6 +3813,11 @@
     #000 calc(100% - var(--zen-fade-end)),
     transparent
   );
+}
+/* A v2 sheet's header marks scrolled-under content with a hairline, not a fade (draft 9.7). */
+.zen-install-sheet .zen-sheet-scroll[data-fade-axis] {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 /*

@@ -523,8 +523,8 @@ class TabWebView(
         postToPage(formsConfig())
     }
 
-    /** Deliver a browser → page message over the reply proxy (or the legacy bridge). */
-    private fun postToPage(payload: String) {
+    /** Deliver a browser → page message (JSON text) over the reply proxy (or the legacy bridge). */
+    fun postToPage(payload: String) {
         val proxy = replyProxy
         if (proxy != null) {
             runCatching { proxy.postMessage(payload) }

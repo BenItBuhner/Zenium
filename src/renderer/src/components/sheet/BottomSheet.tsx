@@ -41,6 +41,8 @@ interface Props {
   header?: ReactNode
   /** The scrolling body. */
   children: ReactNode
+  /** Non-scrolling content under the body (a button row that must stay in reach at every detent). */
+  footer?: ReactNode
   /** Change it when the body is swapped, so the detents are measured again. */
   contentKey?: string
   /** Accessible name of the handle. */
@@ -132,6 +134,7 @@ export function BottomSheet({
   onDismissed,
   header,
   children,
+  footer,
   contentKey,
   handleLabel = 'Resize sheet',
   labelledBy,
@@ -612,6 +615,7 @@ export function BottomSheet({
         >
           {children}
         </div>
+        {footer && <div className="shrink-0">{footer}</div>}
       </div>
     </div>
   )

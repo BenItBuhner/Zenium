@@ -69,7 +69,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-message {', '.zen-suggestion {'],
   // The Settings tab (components/pages/settings): the page host, the shared v2 rows, fields,
   // icon buttons and image radio cards it introduces, its sheets and its overview thumbnail.
-  ['.zen-page-host {', ' * History page (design language v2 draft']
+  ['.zen-page-host {', ' * History page (design language v2 draft'],
+  // "Add to Home screen": the install and name-edit sheets' app tile, screenshot strip and field
+  // (components/phone/InstallSheet.tsx).
+  ['.zen-install-sheet {', '@layer base {']
 ]
 
 /**

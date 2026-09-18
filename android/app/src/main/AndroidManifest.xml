@@ -306,6 +306,11 @@
         </activity-alias>
         <!-- app-icon-aliases:end -->
 
+        <!-- The launcher's confirmation that a Home-screen shortcut was pinned (Shortcuts.kt). -->
+        <receiver
+            android:name=".ShortcutPinnedReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"
