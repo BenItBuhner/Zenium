@@ -2,10 +2,11 @@ import chromeCss from '../renderer/src/assets/main.css?raw'
 
 /**
  * `zen://newtab`: the document of the new tab page. It is a static shell – search box, grid,
- * Customize button and the containers for the panel, dialog, menu and toast – that the page
- * script (`newTabPageScript.ts`, run from the host's preload) fills from `NewTabPageState`.
- * The page has no scripts of its own and no network access beyond favicons and the custom
- * background image.
+ * Customize button and the Undo toast's container – that the page script
+ * (`newTabPageScript.ts`, run from the host's preload) fills from `NewTabPageState`. The page
+ * has no scripts of its own and no network access beyond favicons and the custom background
+ * image. It draws no popover, menu or dialog (design language v2 §9.20–9.23): the tile menu is
+ * the host's, the add / edit dialog and Customize are the chrome's.
  *
  * Design: the page background is the space gradient (design language v2 §1 – the page area of an
  * empty tab is the window), painted by the page itself so a space switch crossfades over 600 ms
@@ -13,7 +14,7 @@ import chromeCss from '../renderer/src/assets/main.css?raw'
  * own: its stylesheet starts with the chrome's token blocks, taken verbatim from main.css at
  * build time (`chromeTokenCss`), and reads `--v2-*` for every surface, radius, size and weight;
  * the space theme's `--zen-*` values arrive inline from the page script. Motion is v1 §7: 120 ms
- * state changes, 180 ms pop for panel and dialog, springs for the drag.
+ * state changes, 180 ms pop for the toast, springs for the drag.
  */
 
 /** A token block's selector: `:root`, `:root[attribute]`, or a `data-surface` family root (§9.29). */
@@ -77,9 +78,9 @@ export const NEW_TAB_PAGE_STYLE = `
   svg { stroke-width: var(--v2-icon-stroke); }
   /* The script shows and hides with the attribute; a class setting display must not win over it. */
   [hidden] { display: none !important; }
-  /* One focus ring (v2 §1): outside on buttons, tiles, radios and rows; inside on text fields. */
+  /* One focus ring (v2 §1): outside on buttons and tiles; inside on the search box. */
   :focus-visible { outline: 2px solid var(--v2-ring); outline-offset: 2px; }
-  .zen-search:focus-within, .zen-field:focus-visible { outline: 2px solid var(--v2-ring); outline-offset: -2px; }
+  .zen-search:focus-within { outline: 2px solid var(--v2-ring); outline-offset: -2px; }
   .zen-search input:focus-visible { outline: none; }
 
   /* Two stacked background layers: the next background fades in over the current one. */
@@ -148,8 +149,8 @@ export const NEW_TAB_PAGE_STYLE = `
     transition: opacity 120ms var(--zen-ease), background-color 120ms var(--zen-ease);
   }
   .zen-tile-menu svg { width: var(--v2-icon); height: var(--v2-icon); }
-  .zen-tile:hover .zen-tile-menu, .zen-tile:focus-within .zen-tile-menu, .zen-tile-menu[aria-expanded='true'] { opacity: 1; }
-  .zen-tile-menu:hover, .zen-tile-menu[aria-expanded='true'] { background: var(--v2-fill); }
+  .zen-tile:hover .zen-tile-menu, .zen-tile:focus-within .zen-tile-menu { opacity: 1; }
+  .zen-tile-menu:hover { background: var(--v2-fill); }
   .zen-caret { position: fixed; width: 2px; border-radius: 1px; background: var(--v2-accent); pointer-events: none; z-index: 3; }
 
   /* Buttons (v2 §6): secondary is the text at 10%, primary the accent; press scale(.98). */
@@ -173,71 +174,6 @@ export const NEW_TAB_PAGE_STYLE = `
   body[data-bg='image'] .zen-customize { background: var(--v2-panel); color: var(--v2-text); border: 1px solid var(--v2-border); }
   body[data-bg='image'] .zen-customize:hover { background: color-mix(in srgb, var(--v2-panel) 92%, var(--v2-text)); }
 
-  /* The Customize popover (v2 §9.20, §9.23): 320 wide, panel surface, a title block, 32 px rows. */
-  .zen-panel {
-    position: fixed; right: 20px; bottom: 60px; z-index: 5; box-sizing: border-box; width: 320px; padding: var(--v2-card-padding);
-    background: var(--v2-panel); color: var(--v2-text); border: 1px solid var(--v2-border);
-    border-radius: var(--v2-radius-card); box-shadow: var(--v2-shadow-panel);
-    transform-origin: 100% 100%; animation: zen-pop 180ms var(--zen-ease);
-  }
-  .zen-panel h2 { margin: 0 0 16px; font-size: var(--v2-font-heading); line-height: 22px; font-weight: var(--v2-weight-heading); }
-  .zen-panel h3 { margin: 12px 0 4px; font-size: var(--v2-font-body); line-height: var(--v2-line-body); font-weight: var(--v2-weight-heading); }
-  .zen-panel h3:first-of-type { margin-top: 0; }
-  .zen-option { display: flex; align-items: center; gap: 8px; min-height: var(--v2-row); }
-  /* Proton controls (v2 §6, §9.14): 16 px radio and checkbox, 1 px border at 45%, accent when on. */
-  .zen-option input {
-    appearance: none; position: relative; flex: none; box-sizing: border-box; margin: 0;
-    width: var(--v2-checkbox); height: var(--v2-checkbox);
-    background: var(--v2-page); border: 1px solid rgb(var(--v2-text-rgb) / 0.45);
-    transition: background-color 120ms var(--zen-ease), border-color 120ms var(--zen-ease);
-  }
-  .zen-option input[type='radio'] { border-radius: 50%; }
-  .zen-option input[type='radio']:checked { border-color: var(--v2-accent); box-shadow: inset 0 0 0 4px var(--v2-accent); }
-  .zen-option input[type='checkbox'] { border-radius: var(--v2-radius-checkbox); }
-  .zen-option input[type='checkbox']:checked { border-color: var(--v2-accent); background: var(--v2-accent); }
-  .zen-option input[type='checkbox']:checked::after {
-    content: ''; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px;
-    border: solid var(--v2-on-accent); border-width: 0 2px 2px 0; transform: rotate(45deg);
-  }
-  .zen-option input:disabled { opacity: 0.4; }
-  .zen-option input:disabled + span { color: var(--v2-text-deemphasized); }
-  .zen-panel-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-  .zen-image-actions { display: flex; gap: 8px; margin: 4px 0 0 24px; }
-
-  /* The add / edit dialog (v2 §3, §9.5, §9.20): 400 wide, radius 12, the modal scrim behind it. */
-  dialog.zen-dialog {
-    box-sizing: border-box; width: 400px; max-width: calc(100vw - 32px); padding: var(--v2-card-padding); margin: auto;
-    background: var(--v2-panel); color: var(--v2-text);
-    border: 1px solid var(--v2-border); border-radius: var(--v2-radius-sheet); box-shadow: var(--v2-shadow-sheet);
-  }
-  dialog.zen-dialog[open] { animation: zen-pop 180ms var(--zen-ease); }
-  dialog.zen-dialog::backdrop { background: var(--v2-scrim-modal); }
-  dialog.zen-dialog[open]::backdrop { animation: zen-fade 180ms var(--zen-ease); }
-  .zen-dialog h2 { margin: 0 0 16px; font-size: var(--v2-font-heading); line-height: 22px; font-weight: var(--v2-weight-heading); }
-  .zen-dialog label { display: block; margin: 12px 0 4px; font-size: var(--v2-font-small); line-height: var(--v2-line-small); color: var(--v2-text-deemphasized); }
-  .zen-dialog label:first-of-type { margin-top: 0; }
-  .zen-field {
-    box-sizing: border-box; width: 100%; height: var(--v2-control); padding: 0 8px;
-    background: var(--v2-page); border: 1px solid var(--v2-border); border-radius: var(--v2-radius-control);
-  }
-  .zen-dialog-error { min-height: var(--v2-line-small); margin: 8px 0 0; font-size: var(--v2-font-small); line-height: var(--v2-line-small); color: var(--v2-danger); }
-  .zen-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-
-  /* The tile's context menu (v2 §2, §6): radius 6, 31 px rows with a 16 px glyph. */
-  .zen-menu {
-    position: fixed; z-index: 6; box-sizing: border-box; min-width: 232px; padding: 4px;
-    background: var(--v2-panel); color: var(--v2-text); border: 1px solid var(--v2-border);
-    border-radius: var(--v2-radius-inner); box-shadow: var(--v2-shadow-panel);
-    animation: zen-pop 180ms var(--zen-ease);
-  }
-  .zen-menu button {
-    display: flex; align-items: center; gap: 10px; box-sizing: border-box; width: 100%; height: var(--v2-menu-row); padding: 0 10px;
-    border: 0; border-radius: var(--v2-radius-control); background: transparent; text-align: left;
-    font-size: 14px; font-weight: var(--v2-weight-body);
-  }
-  .zen-menu button:hover, .zen-menu button:focus-visible { background: var(--v2-fill); outline: none; }
-  .zen-menu button svg { width: var(--v2-icon); height: var(--v2-icon); color: var(--v2-text-deemphasized); }
-
   /* The Undo toast: a panel surface holding a 32 px control, so 40 tall (v2 §9.21). */
   .zen-toast {
     position: fixed; left: 50%; bottom: 24px; z-index: 5; display: flex; align-items: center; gap: 12px; box-sizing: border-box;
@@ -259,10 +195,7 @@ export const NEW_TAB_ICONS = {
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
-  sliders: '<path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/>',
-  pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
-  trash:
-    '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'
+  sliders: '<path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/>'
 } as const
 
 export type NewTabIcon = keyof typeof NEW_TAB_ICONS
@@ -283,10 +216,7 @@ export function newTabPageHtml(): string {
   <p class="zen-empty zen-on-bg" id="zen-empty" hidden>Sites you visit often will appear here</p>
   <div class="zen-grid" id="zen-grid" role="list" aria-label="Shortcuts" hidden></div>
 </main>
-<button type="button" class="zen-btn zen-customize" id="zen-customize" aria-haspopup="dialog" aria-expanded="false">${newTabIconSvg('sliders')}<span>Customize</span></button>
-<div class="zen-panel" id="zen-panel" role="dialog" aria-labelledby="zen-panel-title" hidden></div>
-<div class="zen-menu" id="zen-menu" role="menu" hidden></div>
-<dialog class="zen-dialog" id="zen-dialog" aria-labelledby="zen-dialog-title"></dialog>
+<button type="button" class="zen-btn zen-customize" id="zen-customize" aria-haspopup="dialog">${newTabIconSvg('sliders')}<span>Customize</span></button>
 <div class="zen-toast" id="zen-toast" role="status" hidden></div>
 </body></html>`
 }

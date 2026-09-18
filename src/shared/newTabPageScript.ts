@@ -1,6 +1,6 @@
 import type {
-  NewTabBackgroundKind,
   NewTabPageAction,
+  NewTabPageCommand,
   NewTabPageShortcut,
   NewTabPageState,
   NewTabShortcutsMode,
@@ -8,19 +8,24 @@ import type {
 } from './types'
 import { NEW_TAB_ICONS, newTabIconSvg, type NewTabIcon } from './newTabPage'
 import { SPRING_SNAPPY, stepSpring, type SpringState } from './spring'
-import { getHost, inputToUrl } from './url'
+import { getHost } from './url'
 
 /**
  * Runs inside `zen://newtab` (the host's preload supplies the transport). The page is filled
  * from `NewTabPageState`: theme, search box hand-off, the shortcuts grid (most visited or
- * custom, with add/edit dialogs, remove with Undo and drag-reorder on the design-language spring),
- * the Customize panel and the keyboard. Nothing here touches browser state directly: every wish
- * is a `NewTabPageAction`, and the answer arrives as the next state.
+ * custom, remove with Undo and drag-reorder on the design-language spring) and the keyboard.
+ * Nothing here touches browser state directly: every wish is a `NewTabPageAction`, and the
+ * answer arrives as the next state. The page draws no popover or dialog of its own (design
+ * language v2 §9.20–9.23): a tile's menu is the host's context menu, the add / edit dialog and
+ * Customize (Settings → New Tab) are the chrome's, asked for through actions; the one surface it
+ * keeps is the Undo toast, and the chrome tells it through a `NewTabPageCommand` when the menu
+ * picked Remove so that toast follows.
  */
 export interface NewTabTransport {
   /** The state to paint first, fetched synchronously before the document renders (null when unknown). */
   initialState(): NewTabPageState | null
   onState(listener: (state: NewTabPageState) => void): void
+  onCommand(listener: (command: NewTabPageCommand) => void): void
   send(action: NewTabPageAction): void
 }
 
@@ -138,9 +143,6 @@ class NewTabPage {
   private readonly empty = byId<HTMLParagraphElement>('zen-empty')
   private readonly grid = byId<HTMLDivElement>('zen-grid')
   private readonly customize = byId<HTMLButtonElement>('zen-customize')
-  private readonly panel = byId<HTMLDivElement>('zen-panel')
-  private readonly menu = byId<HTMLDivElement>('zen-menu')
-  private readonly dialog = byId<HTMLDialogElement>('zen-dialog')
   private readonly toast = byId<HTMLDivElement>('zen-toast')
   private readonly systemDark = window.matchMedia('(prefers-color-scheme: dark)')
 
@@ -162,6 +164,7 @@ class NewTabPage {
     this.wireGlobalKeys()
     this.systemDark.addEventListener('change', () => this.applyTheme())
     transport.onState((state) => this.apply(state))
+    transport.onCommand((command) => this.onCommand(command))
     const initial = transport.initialState()
     if (initial) this.apply(initial)
     transport.send({ type: 'ready' })
@@ -184,7 +187,13 @@ class NewTabPage {
           ? state.topSites.map(fromTopSite)
           : []
     if (!this.drag) this.renderGrid()
-    if (!this.panel.hidden) this.renderPanel()
+  }
+
+  /** The chrome's tile menu picked Remove: the page removes the tile itself, with Undo. */
+  private onCommand(command: NewTabPageCommand): void {
+    if (command.type !== 'remove-tile') return
+    const tile = this.tiles.find((t) => t.id === command.id)
+    if (tile) this.remove(tile)
   }
 
   private isDark(): boolean {
@@ -308,7 +317,7 @@ class NewTabPage {
     window.addEventListener(
       'keydown',
       (e) => {
-        if (this.dialog.open || !this.menu.hidden || !this.panel.hidden || this.drag) return
+        if (this.drag) return
         const target = e.target as HTMLElement | null
         if (target === this.input) return
         const tag = target?.tagName
@@ -337,6 +346,7 @@ class NewTabPage {
       const tile = (e.target as HTMLElement).closest<HTMLElement>('.zen-tile')
       const id = tile?.dataset.id
       if (!tile || !id) return
+      // The tile's own menu replaces the page's context menu (Chrome's tiles do the same).
       e.preventDefault()
       const item = this.tiles.find((t) => t.id === id)
       if (!item) return
@@ -345,9 +355,9 @@ class NewTabPage {
       const rect = tile.getBoundingClientRect()
       this.openMenu(
         item,
-        tile,
         fromKeyboard ? rect.left + 12 : e.clientX,
-        fromKeyboard ? rect.top + 12 : e.clientY
+        fromKeyboard ? rect.top + 12 : e.clientY,
+        fromKeyboard
       )
     })
     this.grid.addEventListener('click', (e) => {
@@ -413,8 +423,9 @@ class NewTabPage {
     more.addEventListener('click', (e) => {
       e.preventDefault()
       e.stopPropagation()
+      // Flush under the button (v2 §9.20, gap 0); a key press on it anchors the same way.
       const rect = more.getBoundingClientRect()
-      this.openMenu(tile, wrap, rect.left, rect.bottom + 4)
+      this.openMenu(tile, rect.left, rect.bottom, e.detail === 0)
     })
     more.addEventListener('pointerdown', (e) => e.stopPropagation())
     wrap.appendChild(more)
@@ -430,7 +441,7 @@ class NewTabPage {
     iconBox.appendChild(icon('plus'))
     button.appendChild(iconBox)
     button.appendChild(el('span', 'zen-tile-label', 'Add shortcut'))
-    button.addEventListener('click', () => this.openDialog(null))
+    button.addEventListener('click', () => this.transport.send({ type: 'edit-shortcut', id: null }))
     wrap.appendChild(button)
     return wrap
   }
@@ -507,65 +518,21 @@ class NewTabPage {
   // Tile menu, removal and Undo
   // ---------------------------------------------------------------------------
 
-  private openMenu(tile: Tile, anchor: HTMLElement, x: number, y: number): void {
-    this.closeMenu()
-    this.menu.textContent = ''
-    const items: Array<{ label: string; glyph: NewTabIcon; run: () => void }> = []
-    if (this.custom)
-      items.push({ label: 'Edit Shortcut', glyph: 'pencil', run: () => this.openDialog(tile) })
-    items.push({ label: 'Remove', glyph: 'trash', run: () => this.remove(tile) })
-    for (const item of items) {
-      const button = el('button')
-      button.type = 'button'
-      button.setAttribute('role', 'menuitem')
-      button.appendChild(icon(item.glyph))
-      button.appendChild(el('span', undefined, item.label))
-      button.addEventListener('click', () => {
-        this.closeMenu()
-        item.run()
-      })
-      this.menu.appendChild(button)
-    }
-    anchor.querySelector('.zen-tile-menu')?.setAttribute('aria-expanded', 'true')
-    this.menu.hidden = false
-    const width = this.menu.offsetWidth
-    const height = this.menu.offsetHeight
-    this.menu.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, x))}px`
-    this.menu.style.top = `${Math.max(8, Math.min(window.innerHeight - height - 8, y))}px`
-    this.menu.querySelector<HTMLElement>('button')?.focus()
-    const onDown = (e: PointerEvent): void => {
-      if (!this.menu.contains(e.target as Node)) this.closeMenu()
-    }
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        this.closeMenu()
-        anchor.querySelector<HTMLElement>('.zen-tile-link')?.focus()
-      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault()
-        const buttons = [...this.menu.querySelectorAll<HTMLElement>('button')]
-        const index = buttons.indexOf(document.activeElement as HTMLElement)
-        const next = (index + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
-        buttons[next]?.focus()
-      }
-    }
-    window.addEventListener('pointerdown', onDown, true)
-    window.addEventListener('keydown', onKey, true)
-    this.menuCleanup = () => {
-      window.removeEventListener('pointerdown', onDown, true)
-      window.removeEventListener('keydown', onKey, true)
-    }
-  }
-
-  private menuCleanup: (() => void) | null = null
-
-  private closeMenu(): void {
-    if (this.menu.hidden) return
-    this.menu.hidden = true
-    this.menuCleanup?.()
-    this.menuCleanup = null
-    for (const b of this.grid.querySelectorAll('.zen-tile-menu[aria-expanded]'))
-      b.removeAttribute('aria-expanded')
+  /**
+   * The tile's menu is the host's (native on desktop, the chrome's sheet elsewhere), opened at
+   * `x`, `y` in the page's CSS pixels: Open in New Tab / Window / Private Window, Edit Shortcut
+   * (custom tiles), Remove. Remove comes back as a `remove-tile` command so Undo is the page's.
+   */
+  private openMenu(tile: Tile, x: number, y: number, keyboard: boolean): void {
+    this.transport.send({
+      type: 'tile-menu',
+      id: tile.id,
+      url: tile.url,
+      title: tile.title,
+      x: Math.round(x),
+      y: Math.round(y),
+      keyboard
+    })
   }
 
   private remove(tile: Tile): void {
@@ -617,196 +584,11 @@ class NewTabPage {
   }
 
   // ---------------------------------------------------------------------------
-  // Add / edit dialog
-  // ---------------------------------------------------------------------------
-
-  private openDialog(existing: Tile | null): void {
-    const dialog = this.dialog
-    dialog.textContent = ''
-    const title = el('h2', undefined, existing ? 'Edit Shortcut' : 'Add Shortcut')
-    title.id = 'zen-dialog-title'
-    dialog.appendChild(title)
-    const form = el('form')
-    form.method = 'dialog'
-    form.autocomplete = 'off'
-    const nameLabel = el('label', undefined, 'Name')
-    nameLabel.htmlFor = 'zen-shortcut-name'
-    const name = el('input', 'zen-field')
-    name.id = 'zen-shortcut-name'
-    name.type = 'text'
-    name.value = existing?.title ?? ''
-    name.maxLength = 120
-    const urlLabel = el('label', undefined, 'URL')
-    urlLabel.htmlFor = 'zen-shortcut-url'
-    const url = el('input', 'zen-field')
-    url.id = 'zen-shortcut-url'
-    url.type = 'text'
-    url.placeholder = 'example.com'
-    url.spellcheck = false
-    url.value = existing?.url ?? ''
-    const error = el('p', 'zen-dialog-error')
-    error.setAttribute('aria-live', 'polite')
-    const actions = el('div', 'zen-dialog-actions')
-    const cancel = el('button', 'zen-btn', 'Cancel')
-    cancel.type = 'button'
-    cancel.addEventListener('click', () => dialog.close())
-    const ok = el('button', 'zen-btn zen-btn-primary', existing ? 'Save' : 'Add')
-    ok.type = 'submit'
-    actions.append(cancel, ok)
-    form.append(nameLabel, name, urlLabel, url, error, actions)
-    form.addEventListener('submit', (e) => {
-      e.preventDefault()
-      const address = inputToUrl(url.value.trim())
-      if (!address || !/^https?:\/\//i.test(address)) {
-        error.textContent = 'Enter a web address, like example.com.'
-        url.focus()
-        return
-      }
-      const label = name.value.trim() || getHost(address).replace(/^www\./, '') || address
-      if (existing) {
-        this.transport.send({
-          type: 'update-shortcut',
-          id: existing.id,
-          title: label,
-          url: address
-        })
-      } else {
-        this.transport.send({ type: 'add-shortcut', title: label, url: address })
-      }
-      dialog.close()
-    })
-    dialog.appendChild(form)
-    dialog.addEventListener(
-      'close',
-      () => {
-        // Focus returns to the grid: the edited tile, or the "Add shortcut" tile.
-        this.setFocusIndex(this.focusIndex, true)
-      },
-      { once: true }
-    )
-    dialog.showModal()
-    if (existing) name.select()
-    else name.focus()
-  }
-
-  // ---------------------------------------------------------------------------
-  // Customize panel
+  // Customize: Settings opens on its New Tab section
   // ---------------------------------------------------------------------------
 
   private wireCustomize(): void {
-    this.customize.addEventListener('click', () => {
-      if (this.panel.hidden) this.openPanel()
-      else this.closePanel()
-    })
-  }
-
-  private panelCleanup: (() => void) | null = null
-
-  private openPanel(): void {
-    this.closeMenu()
-    this.renderPanel()
-    this.panel.hidden = false
-    this.customize.setAttribute('aria-expanded', 'true')
-    this.panel.querySelector<HTMLElement>('input:checked, input')?.focus()
-    const onDown = (e: PointerEvent): void => {
-      const target = e.target as Node
-      if (!this.panel.contains(target) && !this.customize.contains(target)) this.closePanel()
-    }
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || this.dialog.open) return
-      e.preventDefault()
-      this.closePanel()
-      this.customize.focus()
-    }
-    window.addEventListener('pointerdown', onDown, true)
-    window.addEventListener('keydown', onKey, true)
-    this.panelCleanup = () => {
-      window.removeEventListener('pointerdown', onDown, true)
-      window.removeEventListener('keydown', onKey, true)
-    }
-  }
-
-  private closePanel(): void {
-    if (this.panel.hidden) return
-    this.panel.hidden = true
-    this.customize.setAttribute('aria-expanded', 'false')
-    this.panelCleanup?.()
-    this.panelCleanup = null
-  }
-
-  private renderPanel(): void {
-    const state = this.state
-    if (!state) return
-    const panel = this.panel
-    panel.textContent = ''
-    const title = el('h2', undefined, 'Customize New Tab')
-    title.id = 'zen-panel-title'
-    panel.appendChild(title)
-
-    panel.appendChild(el('h3', undefined, 'Shortcuts'))
-    const modes: Array<{ value: NewTabShortcutsMode; label: string }> = [
-      { value: 'most-visited', label: 'Most visited' },
-      { value: 'custom', label: 'My shortcuts' },
-      { value: 'hidden', label: 'Hide shortcuts' }
-    ]
-    for (const mode of modes) {
-      panel.appendChild(
-        option('zen-shortcuts', mode.label, state.shortcutsMode === mode.value, false, () =>
-          this.transport.send({ type: 'set-shortcuts-mode', mode: mode.value })
-        )
-      )
-    }
-
-    panel.appendChild(el('h3', undefined, 'Background'))
-    const backgrounds: Array<{ value: NewTabBackgroundKind; label: string; disabled: boolean }> = [
-      { value: 'space', label: 'Space gradient', disabled: false },
-      { value: 'solid', label: 'Solid', disabled: false },
-      { value: 'image', label: 'Image from file', disabled: !state.canPickImage }
-    ]
-    for (const bg of backgrounds) {
-      panel.appendChild(
-        option('zen-background', bg.label, state.background === bg.value, bg.disabled, () =>
-          this.transport.send({ type: 'set-background', background: bg.value })
-        )
-      )
-    }
-    if (state.canPickImage && (state.background === 'image' || state.backgroundImage)) {
-      const actions = el('div', 'zen-image-actions')
-      const choose = el(
-        'button',
-        'zen-btn',
-        state.backgroundImage ? 'Change image' : 'Choose image'
-      )
-      choose.type = 'button'
-      choose.addEventListener('click', () => this.transport.send({ type: 'pick-background-image' }))
-      actions.appendChild(choose)
-      if (state.backgroundImage) {
-        const clear = el('button', 'zen-btn', 'Remove image')
-        clear.type = 'button'
-        clear.addEventListener('click', () =>
-          this.transport.send({ type: 'clear-background-image' })
-        )
-        actions.appendChild(clear)
-      }
-      panel.appendChild(actions)
-    }
-
-    panel.appendChild(el('h3', undefined, 'Greeting'))
-    panel.appendChild(
-      option(null, 'Show a greeting', state.greeting, false, (checked) =>
-        this.transport.send({ type: 'set-greeting', greeting: checked })
-      )
-    )
-
-    const actions = el('div', 'zen-panel-actions')
-    const done = el('button', 'zen-btn', 'Done')
-    done.type = 'button'
-    done.addEventListener('click', () => {
-      this.closePanel()
-      this.customize.focus()
-    })
-    actions.appendChild(done)
-    panel.appendChild(actions)
+    this.customize.addEventListener('click', () => this.transport.send({ type: 'customize' }))
   }
 
   // ---------------------------------------------------------------------------
@@ -884,7 +666,6 @@ class NewTabPage {
 
   private startDrag(drag: Drag): void {
     drag.active = true
-    this.closeMenu()
     this.hideToast()
     const tiles = this.tileElements().filter((t) => t.dataset.id)
     drag.ids = tiles.map((t) => t.dataset.id as string)
@@ -1037,25 +818,6 @@ function letterFor(tile: Tile): HTMLElement {
 /** A key that would insert a character into a text field. */
 function isTypedCharacter(e: KeyboardEvent): boolean {
   return e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing
-}
-
-function option(
-  group: string | null,
-  label: string,
-  checked: boolean,
-  disabled: boolean,
-  onChange: (checked: boolean) => void
-): HTMLLabelElement {
-  const wrap = el('label', 'zen-option')
-  const input = el('input')
-  input.type = group ? 'radio' : 'checkbox'
-  if (group) input.name = group
-  input.checked = checked
-  input.disabled = disabled
-  input.addEventListener('change', () => onChange(input.checked))
-  wrap.appendChild(input)
-  wrap.appendChild(el('span', undefined, label))
-  return wrap
 }
 
 /** Exposed for tests: the glyph names the page uses. */
