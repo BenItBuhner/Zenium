@@ -878,10 +878,12 @@ export class AndroidExtensions implements ExtensionHost {
   confirmPermissionRequest(id: string, warnings: string[], win?: ZenWindow): Promise<boolean> {
     const record = this.record(id)
     const name = record?.name || id
-    if (win?.alive)
+    // A worker has no window; the question goes to the one window the user is in.
+    const target = win?.alive ? win : this.browser.allWindows()[0]
+    if (target)
       return this.prompts.ask(
         { kind: 'request', name, icon: this.details.get(id)?.icon ?? null, warnings },
-        win
+        target
       )
     return this.browser.platform.dialogs.confirm(
       {

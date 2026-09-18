@@ -1147,7 +1147,9 @@ export class ExtensionService implements ExtensionHost {
   /**
    * A running extension's `permissions.request` (the API layer already found the new permissions
    * warrant a prompt): Chrome's "wants additional permissions" question through the chrome's
-   * dialog, the same way as the install prompts; the native box when no window can show it.
+   * dialog, the same way as the install prompts. A worker has no window of its own, so the
+   * question goes to the window the user is in, as Chrome anchors it to the active browser
+   * window; the native box only when no window is open at all.
    */
   confirmPermissionRequest(id: string, warnings: string[], win?: ZenWindow): Promise<boolean> {
     const record = this.record(id)
@@ -1157,7 +1159,8 @@ export class ExtensionService implements ExtensionHost {
       icon: record ? this.icon(record.path, record.version, readManifest(record.path)) : null,
       warnings
     }
-    return win?.alive ? this.prompts.ask(request, win) : this.nativeConfirm(request, win)
+    const target = win?.alive ? win : mostRecentWindow(this.browser)
+    return target ? this.prompts.ask(request, target) : this.nativeConfirm(request, win)
   }
 
   private async nativeConfirm(request: PromptRequest, win?: ZenWindow): Promise<boolean> {
@@ -1443,6 +1446,15 @@ export function warningPlatform(): WarningPlatform {
     default:
       return 'other'
   }
+}
+
+/** The focused window, else the one focused last; undefined when none is open (no window is created). */
+function mostRecentWindow(browser: Browser): ZenWindow | undefined {
+  const alive = browser.allWindows()
+  return (
+    alive.find((w) => w.host.isFocused()) ??
+    [...alive].sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0]
+  )
 }
 
 function browserWindowOf(win: ZenWindow | undefined): Electron.BrowserWindow | undefined {
