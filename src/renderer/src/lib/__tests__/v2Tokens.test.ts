@@ -362,6 +362,20 @@ describe('the v2 button', () => {
   })
 })
 
+describe('the Settings drill-in pane (§10.2)', () => {
+  it('enters by a keyframe animation that does not fill, so the back gesture’s inline transform moves it', () => {
+    // BackDismissal writes `transform` inline as the finger moves and as the commit slides the
+    // pane out; a `forwards` or `both` fill on the entrance would sit over that for the pane's
+    // whole life (the recorded emulator run: the finger moved nothing).
+    for (const side of ['right', 'left']) {
+      const rule = block(`.zen-settings-drill-in[data-from='${side}']`)
+      expect(rule).toMatch(new RegExp(`animation:\\s*zen-settings-enter-${side}\\b`))
+      expect(rule).not.toMatch(/\b(forwards|both)\b/)
+      expect(rule).not.toMatch(/animation-fill-mode/)
+    }
+  })
+})
+
 describe('the fullscreen hint palette', () => {
   /** The value a token is declared with in the first `selector {` block after `from`. */
   const value = (selector: string, from: number, name: string): string => {

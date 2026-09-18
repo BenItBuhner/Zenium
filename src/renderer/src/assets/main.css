@@ -4133,7 +4133,7 @@
   display: block;
   color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-small);
-  line-height: var(--v2-line-body);
+  line-height: var(--v2-line-small);
 }
 
 /* Drill-in (§10.2): a 56 bar header – 44 back button at 6, title 17/600 – sticky over the groups. */
@@ -4141,11 +4141,17 @@
   z-index: 1;
   will-change: transform;
 }
+/*
+ * The entrance is the only keyframe animation on the pane and it must not fill forwards: once
+ * it has run, the pane's transform belongs to the back gesture (BackDismissal writes it inline
+ * as the finger moves and as the commit slides the pane out), and a filled `to` keyframe would
+ * sit over that inline value for as long as the pane lives – the finger would move nothing.
+ */
 .zen-settings-drill-in[data-from='right'] {
-  animation: zen-settings-enter-right 240ms var(--zen-ease) both;
+  animation: zen-settings-enter-right 240ms var(--zen-ease);
 }
 .zen-settings-drill-in[data-from='left'] {
-  animation: zen-settings-enter-left 240ms var(--zen-ease) both;
+  animation: zen-settings-enter-left 240ms var(--zen-ease);
 }
 @keyframes zen-settings-enter-right {
   from {
@@ -4259,7 +4265,7 @@
   overflow: hidden;
   color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-small);
-  line-height: var(--v2-line-body);
+  line-height: var(--v2-line-small);
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -4317,7 +4323,7 @@
   gap: 8px;
   color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-small);
-  line-height: var(--v2-line-body);
+  line-height: var(--v2-line-small);
 }
 .zen-settings-trailing > svg,
 .zen-settings-trailing-glyph {
@@ -4389,7 +4395,8 @@
 }
 [aria-checked='true'] > .zen-settings-radio {
   border-color: var(--v2-accent);
-  box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 8px) / 2) var(--v2-accent);
+  /* The ring leaves §9.14's 6 px page-colour dot, whatever the circle's size (16 desktop, 20 phone). */
+  box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 6px) / 2) var(--v2-accent);
 }
 .zen-settings-radio-list {
   display: flex;
@@ -4430,7 +4437,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--v2-font-small);
-  line-height: var(--v2-line-body);
+  line-height: var(--v2-line-small);
 }
 .zen-settings-swatches {
   display: flex;
@@ -4537,7 +4544,7 @@
   white-space: nowrap;
   color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-small);
-  line-height: var(--v2-line-body);
+  line-height: var(--v2-line-small);
   user-select: text;
 }
 .zen-settings-mono,
@@ -4545,7 +4552,7 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
   font-variant-ligatures: none;
   font-size: var(--v2-font-small);
-  line-height: var(--v2-line-body);
+  line-height: var(--v2-line-small);
   user-select: text;
 }
 .zen-settings-code {
@@ -4600,7 +4607,7 @@
   gap: 6px;
   color: var(--v2-danger);
   font-size: var(--v2-font-small);
-  line-height: var(--v2-line-body);
+  line-height: var(--v2-line-small);
 }
 .zen-settings-validation > svg {
   width: 16px;

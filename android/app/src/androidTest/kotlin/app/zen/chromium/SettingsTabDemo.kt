@@ -96,7 +96,9 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
         // The Settings page is a chunk of its own that loads on its first open: pay for it off
         // camera, then put the profile back as seeded (the warm tab closed, the demo page active).
         val warm = coreInvoke("page.open", "{\"id\":\"settings\",\"section\":null}")
-        val painted = waitForText("Find in Settings", 12_000) != null
+        // The field's name is its hint in the accessibility tree (an empty text field has no text
+        // and no content description there), so the chrome's own DOM says when the page is up.
+        val painted = awaitChrome("!!document.querySelector('$SEARCH_FIELD')", 12_000)
         SystemClock.sleep(800)
         coreInvoke("tab.close", "{\"tabId\":$warm}")
         SystemClock.sleep(800)
@@ -189,13 +191,20 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
                 finding("  no section over the landing to slide out")
                 return@step
             }
-            edgeSwipe(0.34f * width, hold = 700) { shot("06-predictive-back") }
+            // With the finger held, the pane is where the finger put it: BackDismissal's inline
+            // transform, a positive share of its width.
+            var held = ""
+            edgeSwipe(0.34f * width, hold = 700) {
+                held = chromeValue("(document.querySelector('.zen-settings-drill-in')||{style:{}}).style.transform||''")
+                shot("06-predictive-back")
+            }
+            val displaced = Regex("translate3d\\(([0-9.]+)%").find(held)?.groupValues?.get(1)?.toDoubleOrNull()?.let { it > 5 } == true
             commitSwipe()
             val gone = awaitSurface(up = false, timeoutMs = 8_000)
             SystemClock.sleep(1_200)
             val tab = activeCoreTab()
             finding(
-                "  drill-in gone: surface down $gone, url ${tab?.optString("url")}, canGoBack ${tab?.optBoolean("canGoBack")} " +
+                "  held: pane transform '$held' ${verdict(displaced)}; drill-in gone: surface down $gone, url ${tab?.optString("url")}, canGoBack ${tab?.optBoolean("canGoBack")} " +
                     verdict(gone && tab?.optString("url") == SETTINGS_URL && tab?.optBoolean("canGoBack") == false)
             )
         }
@@ -295,24 +304,30 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
                 awaitSurface(up = false, timeoutMs = 6_000)
             }
             SystemClock.sleep(800)
-            val field = waitForText("Find in Settings", 6_000) ?: run {
+            // The field is found in the chrome's DOM: an empty text field carries its name as the
+            // accessibility node's hint, which no label lookup reads.
+            if (!awaitChrome("!!document.querySelector('$SEARCH_FIELD')", 6_000)) {
                 finding("  no Find in Settings field on the landing")
                 return@step
             }
-            Finger().tap(field.exactCenterX(), field.exactCenterY())
+            val field = chromePoint(SEARCH_FIELD) ?: run {
+                finding("  the Find in Settings field has no place on screen")
+                return@step
+            }
+            Finger().tap(field.x, field.y)
             val keyboard = awaitIme(shown = true, timeoutMs = 6_000)
             shell("input text site")
             SystemClock.sleep(1_500)
-            var query = chromeValue("(document.querySelector('.zen-settings-search-field')||{}).value||''")
+            var query = chromeValue("(document.querySelector('$SEARCH_FIELD')||{}).value||''")
             if (query != "site") {
                 Log.w(tag, "input text left the field at '$query'; typing through the chrome")
                 chromeJs(
-                    "(function(){var i=document.querySelector('.zen-settings-search-field');if(!i)return;" +
+                    "(function(){var i=document.querySelector('$SEARCH_FIELD');if(!i)return;" +
                         "var s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;" +
                         "s.call(i,'site');i.dispatchEvent(new Event('input',{bubbles:true}))})()"
                 )
                 SystemClock.sleep(1_200)
-                query = chromeValue("(document.querySelector('.zen-settings-search-field')||{}).value||''")
+                query = chromeValue("(document.querySelector('$SEARCH_FIELD')||{}).value||''")
             }
             val hits = chromeValue(
                 "(function(){var c=Array.from(document.querySelectorAll('.zen-settings-results .zen-settings-caption'))" +
@@ -353,25 +368,43 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
                 return@step
             }
             SystemClock.sleep(1_500)
-            val sheets = chromeValue("String(document.querySelectorAll('.zen-sheet').length)")
+            val sheets = sheetCount()
             val recede = chromeValue("getComputedStyle(document.documentElement).getPropertyValue('--zen-stack-recede').trim()")
             shot("13-stacked-sheet")
-            finding("  sheets up: $sheets; --zen-stack-recede on the root: '$recede' ${verdict(sheets == "2" && recede.toDoubleOrNull()?.let { it > 0.9 } == true)}")
+            finding("  sheets up: $sheets; --zen-stack-recede on the root: '$recede' ${verdict(sheets == 2 && recede.toDoubleOrNull()?.let { it > 0.9 } == true)}")
+            // A dismissed sheet stays mounted until its spring has carried it out, and the spring
+            // advances at most 64 ms per frame (lib/motion/spring.ts): under the emulator's software
+            // GPU a frame is long, so the close takes seconds and is waited for, never slept over.
             tapText("Cancel", exact = true)
-            SystemClock.sleep(1_200)
-            val after = chromeValue("String(document.querySelectorAll('.zen-sheet').length)")
-            finding("  Cancel: sheets up $after ${verdict(after == "1")}")
-            // The item sheet, then the section: two backs to the landing.
+            val cancelled = awaitSheets(1, 8_000)
+            finding("  Cancel: sheets up ${sheetCount()} ${verdict(cancelled)}")
+            // The item sheet by a back, then the section by the gesture: each dismissal settles first.
             back()
-            SystemClock.sleep(1_200)
-            edgeSwipe(0.36f * width, hold = 300)
-            commitSwipe()
-            awaitSurface(up = false, timeoutMs = 8_000)
+            if (!awaitSheets(0, 8_000) && sheetCount() > 0) {
+                // A sheet still mounted past its time: one more back – a back only ever goes to a
+                // sheet or the section here, never to the landing.
+                back()
+                awaitSheets(0, 8_000)
+            }
+            SystemClock.sleep(500)
+            // The section by the gesture, only while it is up: at the landing of this tab (fromIntent)
+            // the gesture would hand the user to the sender and leave the app.
+            if (chromeSurfaceUp()) {
+                edgeSwipe(0.36f * width, hold = 300)
+                commitSwipe()
+                awaitSurface(up = false, timeoutMs = 8_000)
+            }
             SystemClock.sleep(800)
         }
 
         // 12. The pill, editing: the page's user-facing alias, section and all.
         step("The pill edits zenium://settings/look") {
+            // From the landing: whatever the last step left up (a sheet, its section) goes first.
+            if (chromeSurfaceUp()) {
+                closeSurfaces()
+                awaitSurface(up = false, timeoutMs = 6_000)
+                SystemClock.sleep(800)
+            }
             if (!tapText("Look and Feel")) return@step
             awaitSurface(up = true, timeoutMs = 6_000)
             SystemClock.sleep(1_200)
@@ -492,12 +525,13 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
         SystemClock.sleep(1_500)
     }
 
-    /** Back out of whatever chrome surface is up, a few at most. */
+    /** Back out of whatever chrome surface is up, a few at most, each given time to go. */
     private fun closeSurfaces() {
         repeat(3) {
             if (!chromeSurfaceUp()) return
             back()
-            SystemClock.sleep(1_500)
+            awaitSurface(up = false, timeoutMs = 5_000)
+            SystemClock.sleep(500)
         }
     }
 
@@ -582,6 +616,43 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
 
     /** Evaluate in the chrome; the value as text ("" when it never answered). */
     private fun chromeValue(code: String): String = jsonString(chromeJs(code))
+
+    /** Poll the chrome until the expression `code` is true; false when it is not in time. */
+    private fun awaitChrome(code: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (chromeValue("String(!!($code))") == "true") return true
+            SystemClock.sleep(200)
+        }
+        return chromeValue("String(!!($code))") == "true"
+    }
+
+    /** How many sheets the chrome has mounted (a closing one counts until its spring has carried it out). */
+    private fun sheetCount(): Int = chromeValue("String(document.querySelectorAll('.zen-sheet').length)").toIntOrNull() ?: -1
+
+    /** Poll until the chrome has `count` sheets mounted; false when it does not in time. */
+    private fun awaitSheets(count: Int, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (sheetCount() == count) return true
+            SystemClock.sleep(200)
+        }
+        return sheetCount() == count
+    }
+
+    /** Where the middle of the first chrome element matching `selector` is on screen, or null. */
+    private fun chromePoint(selector: String): PointF? {
+        val raw = chromeJs(
+            "(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return null;" +
+                "var r=e.getBoundingClientRect();return [r.left+r.width/2,r.top+r.height/2]})()"
+        )
+        val point = runCatching { JSONArray(raw) }.getOrNull()?.takeIf { it.length() == 2 } ?: return null
+        val origin = onMain { host.chrome.let { v -> IntArray(2).also(v::getLocationOnScreen) } }
+        return PointF(
+            origin[0] + point.getDouble(0).toFloat() * density,
+            origin[1] + point.getDouble(1).toFloat() * density
+        )
+    }
 
     private fun jsonString(raw: String): String =
         runCatching { JSONTokener(raw).nextValue() }.getOrNull()?.takeIf { it != JSONObject.NULL }?.toString() ?: ""
@@ -671,6 +742,8 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
         private const val DEMO_TITLE = "Settings tab demo"
         /** The address the core stores the page under; the pill and the deep link carry `zenium://`. */
         private const val SETTINGS_URL = "zen://settings"
+        /** The landing's Find in Settings field, in the chrome's DOM. */
+        private const val SEARCH_FIELD = ".zen-settings-search-field"
         /** Inside the system's back-gesture inset on any density. */
         private const val EDGE_X = 2f
     }
