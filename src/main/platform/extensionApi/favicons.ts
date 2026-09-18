@@ -9,6 +9,13 @@
  * icon: the URL the history and bookmarks models already keep for the page (its own entry, a
  * bookmark of it, else the newest icon of its domain), fetched once per run and served as stored,
  * or the default globe when they know none.
+ *
+ * The icon is cross-origin to the page where Chrome's is `'self'`, and that is as close as
+ * Electron 44 gets: the `chrome-extension` scheme cannot be intercepted with a pass-through
+ * (`net.fetch` does not load it), and a redirect to a `data:` URL is aborted by the renderer. So
+ * a page restricting `img-src` refuses the icon (its `onerror` path, its own fallback), and a
+ * canvas an icon is drawn on is tainted (OneTab caches icons through `toDataURL`). Serving it
+ * same-origin needs the favicon path of Electron's extension URL loader.
  */
 import { net } from 'electron'
 import type { BookmarkService } from '../../../core/bookmarks'
