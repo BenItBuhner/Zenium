@@ -946,10 +946,13 @@ class TabWebView(
         /**
          * The engine's word on a main-frame navigation: true when it took the navigation over
          * (onto the Zenium blocked page, or to the redirect target), false when the page may go.
+         * An extension's web-auth flow running in this tab ends on its way back first: that
+         * navigation is the flow's result and is never loaded.
          */
         private fun interceptNavigation(request: WebResourceRequest): Boolean {
             if (!request.isForMainFrame) return false
             val target = request.url.toString()
+            if (host.extensions?.interceptNavigation(this@TabWebView, target) == true) return true
             val decision = host.blocking.decideNavigation(this@TabWebView, target)
             when (decision.action) {
                 Decision.Action.BLOCK -> {

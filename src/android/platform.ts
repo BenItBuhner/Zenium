@@ -309,6 +309,11 @@ export interface HostEventPayloads {
   'ext.popupClosed': { id: string }
   /** One intercepted request, while an extension listens for `webRequest` events. */
   'ext.request': ExtRequestEvent
+  /**
+   * A tab running an extension's `identity.launchWebAuthFlow` was about to navigate back to
+   * `https://<id>.chromiumapp.org/…`: Kotlin cancelled the load and the URL is the flow's result.
+   */
+  'ext.identityRedirect': { tabId: string; url: string }
   /** Bytes of a translation model file arriving (`translate.download` in flight). */
   'translate.progress': TranslateProgressEvent
 }
@@ -1072,6 +1077,11 @@ export class AndroidPlatform implements Platform {
         return
       case 'ext.request':
         this.extensionRuntime?.onRequest(payload as HostEventPayloads['ext.request'])
+        return
+      case 'ext.identityRedirect':
+        this.extensionRuntime?.onIdentityRedirect(
+          payload as HostEventPayloads['ext.identityRedirect']
+        )
         return
       case 'translate.progress':
         this.translate.onProgress(payload as HostEventPayloads['translate.progress'])

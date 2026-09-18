@@ -154,6 +154,12 @@ class Extensions(private val host: Host) {
     /** The rules of the extensions allowed in private tabs, for those tabs' requests. */
     @Volatile private var privateRules: NetRules? = null
     @Volatile private var observeRequests = false
+    /**
+     * Tab id → the extension whose `identity.launchWebAuthFlow` runs in that tab (`ext.authFlow`):
+     * the tab's navigation back to `https://<id>.chromiumapp.org/…` is the flow's result and is
+     * never loaded.
+     */
+    @Volatile private var authFlows: Map<String, String> = emptyMap()
     @Volatile var debug = true
         private set
     private val handlers = WeakHashMap<WebView, ViewHandlers>()
@@ -221,6 +227,12 @@ class Extensions(private val host: Host) {
             "ext.background.stop" -> { stopBackground(args.str("id")); reply(null) }
             "ext.popup.open" -> { openPopup(args.str("id"), args.str("url"), args.str("context", "popup")); reply(null) }
             "ext.popup.close" -> { closePopup(); reply(null) }
+            "ext.authFlow" -> {
+                val tabId = args.str("tabId")
+                val id = args.strOrNull("id")
+                authFlows = if (id == null) authFlows - tabId else authFlows + (tabId to id)
+                reply(null)
+            }
             "ext.exec" -> exec(args, reply)
             "ext.cookies.get" -> reply(CookieManager.getInstance().getCookie(args.str("url")))
             "ext.cookies.set" -> { CookieManager.getInstance().setCookie(args.str("url"), args.str("cookie")); reply(null) }
@@ -372,6 +384,7 @@ class Extensions(private val host: Host) {
         rules = null
         privateRules = null
         observeRequests = false
+        authFlows = emptyMap()
     }
 
     /**
@@ -906,6 +919,19 @@ class Extensions(private val host: Host) {
     // ---------------------------------------------------------------------------------------------
 
     /**
+     * A tab's main-frame navigation is about to start (`shouldOverrideUrlLoading`, main thread):
+     * true when the tab runs an extension's web-auth flow and this is the way back to its redirect
+     * origin, which ends the flow (`ext.identityRedirect` carries the URL, tokens and all) and is
+     * never loaded, nothing being fetched from `<id>.chromiumapp.org`.
+     */
+    fun interceptNavigation(tab: TabWebView, url: String): Boolean {
+        val id = authFlows[tab.tabId] ?: return false
+        if (!IdentityRedirect.isRedirectBack(id, url)) return false
+        host.chrome.hostEvent("ext.identityRedirect", json("tabId" to tab.tabId, "url" to url))
+        return true
+    }
+
+    /**
      * Every WebView's `shouldInterceptRequest` (background thread). Tab pages: a top-level
      * navigation to an extension origin gets any file (Chrome lets any extension page open as a
      * tab), other frames only its web-accessible resources; then the DNR decision. Extension
@@ -938,6 +964,15 @@ class Extensions(private val host: Host) {
                 return response("text/html", 200, "OK", ext.backgroundHtml.toByteArray())
             }
             return serve(ext, path)
+        }
+        // The way back from a web-auth flow the WebView did not ask about first (a POST): an
+        // empty page stands in for the redirect host, and the runtime reads the URL off the
+        // navigation that commits.
+        if (request.isForMainFrame && tab != null) {
+            val flow = authFlows[tab.tabId]
+            if (flow != null && IdentityRedirect.isRedirectBack(flow, url.toString())) {
+                return response("text/html", 200, "OK", REDIRECT_LANDING)
+            }
         }
         if (extensionPage != null) return null
         val rules = if (tab?.isPrivateTab == true) privateRules else this.rules
@@ -1188,6 +1223,8 @@ class Extensions(private val host: Host) {
         )
         const val ORIGIN_SUFFIX = ".ext.zenium.invalid"
         const val GENERATED_BACKGROUND = "_generated_background_page.html"
+        /** What a flow tab shows for the instant before the runtime closes it. */
+        val REDIRECT_LANDING: ByteArray = "<!doctype html><meta charset=\"utf-8\"><title>Signing in…</title>".toByteArray()
         val VALID_ID = Regex("^[a-p]{32}$")
         /** `_locales/<dir>`: a language tag with underscores, nothing that could leave the directory. */
         val LOCALE_DIR = Regex("^[A-Za-z0-9_]{1,16}$")

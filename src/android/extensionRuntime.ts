@@ -51,6 +51,7 @@ import {
   type ExtensionRules
 } from './extensionApi'
 import { AndroidExtensions, type AndroidExtensionsOptions } from './extensionHost'
+import { AndroidIdentity } from './extensionIdentity'
 import type { ExtensionRuntimeHooks } from './extensionRuntimeHooks'
 import type { ClientInfo } from './extensionServiceWorker'
 import type { AndroidExtensionStoreIo } from './extensionStoreIo'
@@ -77,7 +78,9 @@ import type { ViewEventPayloads } from './views'
  *  ext.background.start / stop { id }, ext.popup.open { id, url, context }, ext.popup.close
  *  ext.send { ep, message }, ext.exec {…}, ext.readFile { id, path }, ext.cookies.get / set
  *  ext.setRules { extensions: [{ ext, allowPrivate, paths, dynamic }] }, ext.observeRequests { on }
- * Kotlin → runtime (host events): ext.message, ext.gone, ext.popupClosed, ext.request.
+ *  ext.authFlow { tabId, id | null }         the tab an identity.launchWebAuthFlow runs in
+ * Kotlin → runtime (host events): ext.message, ext.gone, ext.popupClosed, ext.request,
+ * ext.identityRedirect.
  */
 
 /** The bridge calls the runtime makes (`Bridge` satisfies it; tests pass a fake). */
@@ -264,6 +267,7 @@ export function pickMessages(
 export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   readonly router: MessageRouter
   readonly api: ExtensionApi
+  readonly identity: AndroidIdentity
   readonly background: BackgroundLifecycle
   /** The store, once it has been constructed around this runtime. */
   store: RuntimeStoreLink | null = null
@@ -330,6 +334,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       },
       tabIdFromChrome: (chromeTabId) => this.api.tabs.coreIdFor(chromeTabId)
     })
+    this.identity = new AndroidIdentity(this, this.timers)
     this.api = new ExtensionApi(this)
     this.background = new BackgroundLifecycle(
       {
@@ -472,6 +477,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     this.backgroundEps.delete(id)
     this.installEvents.delete(id)
     this.api.forget(id)
+    this.identity.unload(id)
     this.clearAlarmTimer(id)
     for (const endpoint of this.router.of(id)) {
       this.router.unregister(endpoint.id)
@@ -801,6 +807,11 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     return this.bridge.call('ext.cookies.set', { url, cookie })
   }
 
+  /** Kotlin cancels the flow tab's navigation back to `https://<id>.chromiumapp.org/` itself. */
+  authFlowTab(tabId: string, extensionId: string | null): void {
+    this.bridge.send('ext.authFlow', { tabId, id: extensionId })
+  }
+
   openPopup(id: string): void {
     const ext = this.extensions.get(id)
     if (!ext) return
@@ -1124,6 +1135,11 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     this.popupOpen = null
   }
 
+  /** Kotlin cancelled a flow tab's navigation to `https://<id>.chromiumapp.org/…`: the flow's result. */
+  onIdentityRedirect(event: { tabId: string; url: string }): void {
+    this.identity.onRedirect(event.tabId, event.url)
+  }
+
   /** Observational `webRequest` from `shouldInterceptRequest` (only while someone listens). */
   onRequest(event: ExtRequestEvent): void {
     const tabId = event.tabId ? this.api.tabs.chromeIdFor(event.tabId) : -1
@@ -1154,6 +1170,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     payload: ViewEventPayloads[K]
   ): void {
     if (this.extensions.size === 0) return
+    this.identity.onViewEvent(tabId, name, payload)
     const tab = this.browser.tabs.tab(tabId)
     const chromeTabId = this.api.tabs.chromeIdFor(tabId)
     const nav = (event: string, url: string, extra: Record<string, unknown> = {}): void =>
@@ -1247,6 +1264,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
         { windowId: 1, isWindowClosing: false }
       ])
       this.router.unregisterTab(id)
+      this.identity.onTabRemoved(id)
     }
     this.knownTabs = now
     if (active !== this.activeTabId) {

@@ -112,6 +112,7 @@ class FakeKotlin implements RuntimeBridge {
       case 'ext.popup.open':
       case 'ext.popup.close':
       case 'ext.cookies.set':
+      case 'ext.authFlow':
         return undefined
       case 'ext.cookies.get':
         return null
@@ -133,6 +134,8 @@ interface Harness {
   files: Map<string, string>
   tabs: Record<string, Tab>
   active: { id: string | null }
+  /** Every `tabs.createTab` the runtime made, in order: the new tab's id and whether it was activated. */
+  created: Array<{ id: string; active: boolean }>
   clock: { now: number }
   timers: Array<{ fn: () => void; ms: number; at: number; cleared: boolean }>
   /** Run every timer due at or before `clock.now`. */
@@ -174,8 +177,10 @@ function harness(
   }
   const tabs: Record<string, Tab> = { t1: makeTab('t1', 'https://example.com/') }
   const active = { id: 't1' as string | null }
+  const created: Harness['created'] = []
   const listeners: Array<() => void> = []
   const toasts: string[] = []
+  const notifyState = (): void => listeners.forEach((fn) => fn())
   const win = {
     isPrivate: false,
     host: {
@@ -201,10 +206,23 @@ function harness(
       activeTabFor: () => (active.id ? tabs[active.id] : undefined),
       model: { tabs, spaces: [] },
       isPrivate: (tab: Tab) => tab.containerId === 'private',
-      createTab: (opts: { url: string }) => {
-        const id = `t${Object.keys(tabs).length + 1}`
+      createTab: (opts: { url: string; active?: boolean }) => {
+        const id = `t${created.length + 2}`
         tabs[id] = makeTab(id, opts.url)
+        const activate = opts.active !== false
+        if (activate) active.id = id
+        created.push({ id, active: activate })
+        notifyState()
         return tabs[id]
+      },
+      activateTab: (id: string) => {
+        active.id = id
+        notifyState()
+      },
+      closeTab: (id: string) => {
+        delete tabs[id]
+        if (active.id === id) active.id = 't1'
+        notifyState()
       }
     }
   } as unknown as Browser
@@ -239,10 +257,11 @@ function harness(
     files,
     tabs,
     active,
+    created,
     clock,
     timers,
     tick,
-    notifyState: () => listeners.forEach((fn) => fn()),
+    notifyState,
     toasts,
     saved: (name) => {
       runtime.flushSync()
@@ -1112,6 +1131,202 @@ describe('AndroidExtensionRuntime: popups and options', () => {
     expect(Object.values(inTab.tabs).map((t) => t.url)).toContain(
       `https://${ID}.ext.zenium.invalid/options.html`
     )
+  })
+})
+
+describe('AndroidExtensionRuntime: chrome.identity', () => {
+  const REDIRECT = `https://${ID}.chromiumapp.org/`
+  const PROVIDER = 'https://auth.test/authorize?client=1'
+
+  /** Starts a `launchWebAuthFlow` from the background; the reply arrives when the flow ends. */
+  function launch(
+    h: Harness,
+    details: Record<string, unknown>
+  ): { reply: () => Record<string, unknown> | undefined } {
+    const id = ++callSeq
+    message(h, 'bg1', {
+      t: 'call',
+      id,
+      ns: 'identity',
+      method: 'launchWebAuthFlow',
+      args: [details]
+    })
+    return { reply: () => h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id) }
+  }
+
+  async function withIdentity(): Promise<Harness> {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['identity', 'storage'] })))
+    backgroundUp(h, 'bg1')
+    return h
+  }
+
+  it('runs an interactive flow in a tab in front and resolves with the URL Kotlin cancelled on the way back', async () => {
+    const h = await withIdentity()
+    const flow = launch(h, { url: PROVIDER, interactive: true })
+    await until(() => h.created.length === 1)
+    const tabId = h.created[0].id
+    expect(h.created[0].active).toBe(true)
+    expect(h.tabs[tabId].url).toBe(PROVIDER)
+    expect(h.kt.calledWith('ext.authFlow')).toEqual([{ tabId, id: ID }])
+    expect(h.runtime.identity.running(ID)).toBe(true)
+    expect(h.runtime.identity.flowTab(ID)).toBe(tabId)
+
+    // The provider's pages come and go; only the way back ends the flow.
+    h.runtime.onViewEvent(tabId, 'navigated', {
+      url: 'https://auth.test/login',
+      title: '',
+      canGoBack: false,
+      canGoForward: false,
+      inPage: false
+    })
+    h.runtime.onViewEvent(tabId, 'stopLoading', {
+      url: 'https://auth.test/login',
+      title: '',
+      canGoBack: false,
+      canGoForward: false
+    })
+    expect(flow.reply()).toBeUndefined()
+    h.runtime.onIdentityRedirect({ tabId, url: `${REDIRECT}cb#access_token=abc&state=s` })
+    await until(() => flow.reply() !== undefined)
+    expect(flow.reply()).toMatchObject({
+      ok: true,
+      result: `${REDIRECT}cb#access_token=abc&state=s`
+    })
+    // The tab is closed and Kotlin told the flow is over.
+    expect(h.tabs[tabId]).toBeUndefined()
+    expect(h.kt.calledWith('ext.authFlow')).toEqual([
+      { tabId, id: ID },
+      { tabId, id: null }
+    ])
+    expect(h.runtime.identity.running(ID)).toBe(false)
+  })
+
+  it("a redirect that committed anyway (a POST) ends the flow from the tab's navigation event", async () => {
+    const h = await withIdentity()
+    const flow = launch(h, { url: PROVIDER, interactive: true })
+    await until(() => h.created.length === 1)
+    const tabId = h.created[0].id
+    h.runtime.onViewEvent(tabId, 'navigated', {
+      url: `${REDIRECT}?code=posted`,
+      title: '',
+      canGoBack: false,
+      canGoForward: false,
+      inPage: false
+    })
+    await until(() => flow.reply() !== undefined)
+    expect(flow.reply()).toMatchObject({ ok: true, result: `${REDIRECT}?code=posted` })
+  })
+
+  it('a silent flow loads in the background and fails, tab closed unseen, once a page wants the user', async () => {
+    const h = await withIdentity()
+    const flow = launch(h, { url: PROVIDER })
+    await until(() => h.created.length === 1)
+    const tabId = h.created[0].id
+    expect(h.created[0].active).toBe(false)
+    expect(h.active.id).toBe('t1')
+    h.runtime.onViewEvent(tabId, 'stopLoading', {
+      url: 'https://auth.test/login',
+      title: '',
+      canGoBack: false,
+      canGoForward: false
+    })
+    await until(() => flow.reply() !== undefined)
+    expect(flow.reply()).toMatchObject({ ok: false, error: 'User interaction required.' })
+    expect(h.tabs[tabId]).toBeUndefined()
+    expect(h.active.id).toBe('t1')
+    // Its timeout was cleared with it.
+    expect(h.timers.filter((t) => t.ms === 60_000 && !t.cleared)).toHaveLength(0)
+  })
+
+  it('a silent flow that may load pages times out on the runtime clock', async () => {
+    const h = await withIdentity()
+    const flow = launch(h, {
+      url: PROVIDER,
+      abortOnLoadForNonInteractive: false,
+      timeoutMsForNonInteractive: 5_000
+    })
+    await until(() => h.created.length === 1)
+    h.tick(5_000)
+    await until(() => flow.reply() !== undefined)
+    expect(flow.reply()).toMatchObject({ ok: false, error: 'The flow timed out.' })
+    expect(Object.keys(h.tabs)).toEqual(['t1'])
+  })
+
+  it('the user closing the tab cancels the flow; a failed page load fails it', async () => {
+    const h = await withIdentity()
+    const cancelled = launch(h, { url: PROVIDER, interactive: true })
+    await until(() => h.created.length === 1)
+    delete h.tabs[h.created[0].id]
+    h.notifyState()
+    await until(() => cancelled.reply() !== undefined)
+    expect(cancelled.reply()).toMatchObject({
+      ok: false,
+      error: 'The user did not approve access.'
+    })
+    expect(h.kt.calledWith('ext.authFlow').at(-1)).toEqual({ tabId: h.created[0].id, id: null })
+
+    const failed = launch(h, { url: PROVIDER, interactive: true })
+    await until(() => h.created.length === 2)
+    h.runtime.onViewEvent(h.created[1].id, 'failLoad', {
+      code: -105,
+      description: 'ERR_NAME_NOT_RESOLVED',
+      url: PROVIDER
+    })
+    await until(() => failed.reply() !== undefined)
+    expect(failed.reply()).toMatchObject({
+      ok: false,
+      error: 'Authorization page could not be loaded.'
+    })
+  })
+
+  it('one flow per extension at a time; detaching the extension ends it', async () => {
+    const h = await withIdentity()
+    const first = launch(h, { url: PROVIDER, interactive: true })
+    await until(() => h.created.length === 1)
+    const second = launch(h, { url: PROVIDER, interactive: true })
+    await until(() => second.reply() !== undefined)
+    expect(second.reply()).toMatchObject({
+      ok: false,
+      error: 'A web auth flow is already running for this extension.'
+    })
+    expect(h.created).toHaveLength(1)
+    await h.runtime.detach(ID)
+    await until(() => first.reply() !== undefined)
+    expect(first.reply()).toMatchObject({ ok: false, error: 'The user did not approve access.' })
+    expect(h.tabs[h.created[0].id]).toBeUndefined()
+  })
+
+  it('checks the details like Chrome and answers the account members without an account', async () => {
+    const h = await withIdentity()
+    expect(await call(h, 'bg1', 'identity', 'launchWebAuthFlow', [{ url: 'nope' }])).toMatchObject({
+      ok: false,
+      error: 'Invalid URL'
+    })
+    expect(await call(h, 'bg1', 'identity', 'launchWebAuthFlow', [{}])).toMatchObject({
+      ok: false,
+      error: 'Invalid details'
+    })
+    expect(h.created).toHaveLength(0)
+    expect(await call(h, 'bg1', 'identity', 'getProfileUserInfo', [{}])).toMatchObject({
+      ok: true,
+      result: { email: '', id: '' }
+    })
+    expect(await call(h, 'bg1', 'identity', 'getAuthToken', [{}])).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('no signed-in browser account') as string
+    })
+    expect(await call(h, 'bg1', 'identity', 'getAccounts', [])).toMatchObject({
+      ok: true,
+      result: []
+    })
+    expect(await call(h, 'bg1', 'identity', 'clearAllCachedAuthTokens', [])).toMatchObject({
+      ok: true
+    })
+    expect(await call(h, 'bg1', 'identity', 'getRedirectURL', ['cb'])).toMatchObject({
+      ok: true,
+      result: `${REDIRECT}cb`
+    })
   })
 })
 

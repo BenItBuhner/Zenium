@@ -10,6 +10,7 @@ import { normalizeRuleset, type NetRule } from '@core/extensions/runtime/dnr'
 import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
 import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
 import type { Endpoint, MessageRouter } from '@core/extensions/runtime/router'
+import type { AndroidIdentity } from './extensionIdentity'
 
 /**
  * The `chrome.*` calls the Android runtime answers itself, over the browser core: everything the
@@ -55,6 +56,8 @@ export interface ExecRequest {
 export interface ApiHost {
   readonly browser: Browser
   readonly router: MessageRouter
+  /** `chrome.identity`: the web-auth flows (`extensionIdentity.ts`). */
+  readonly identity: AndroidIdentity
   window(): ZenWindow
   attached(id: string): AttachedExtension | undefined
   allAttached(): AttachedExtension[]
@@ -290,6 +293,8 @@ export class ExtensionApi {
         return this.webNavigationCall(id, method, args)
       case 'cookies':
         return this.cookiesCall(method, args)
+      case 'identity':
+        return this.host.identity.call(id, method, args)
       case 'history':
         return this.historyCall(method, args)
       case 'bookmarks':

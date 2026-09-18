@@ -435,13 +435,14 @@ export const ENGINE_SPEC: ApiSpec = {
   },
   identity: {
     methods: {
+      // No signed-in browser account: the host refuses with the shared message.
       getAuthToken: stub(object('details', true)),
       getProfileUserInfo: stub(object('details', true)),
-      removeCachedAuthToken: stub(object('details')),
-      clearAllCachedAuthTokens: stub(),
-      launchWebAuthFlow: stub(object('details')),
+      removeCachedAuthToken: routed(object('details')),
+      clearAllCachedAuthTokens: routed(),
+      launchWebAuthFlow: routed(object('details')),
       getRedirectURL: engine(string('path', true)),
-      getAccounts: stub()
+      getAccounts: routed()
     },
     events: { onSignInChanged: {} },
     constants: { AccountStatus: { SYNC: 'SYNC', ANY: 'ANY' } }
