@@ -3362,6 +3362,13 @@
   height: 44px;
   border-radius: 12px;
 }
+/* The new tab page's icon buttons – Customize, the field's voice and camera – at v2 §9.3's phone
+   box: 44 × 44 with the 20 glyph, radius 8 (§9.29: Customize is a §9.3 icon button on the phone). */
+:root[data-pointer='coarse'] .zen-ntp .zen-toolbar-button {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+}
 :root[data-pointer='coarse'] .zen-essential {
   height: 48px;
 }
