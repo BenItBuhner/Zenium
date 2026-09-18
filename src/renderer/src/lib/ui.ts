@@ -1166,8 +1166,10 @@ export function closeTabsMenu(): void {
 
 /**
  * Only anchored panels are up: a bar panel, the star bubble, the zoom bubble, the tab hover
- * card, the downloads bubble. The page behind them is captured all the same (they overlap the
- * live view), but panels draw no scrim, so the capture shows undimmed; dialogs dim it.
+ * card, the downloads bubble, site information. The page behind them is captured all the same
+ * (they overlap the live view), but panels draw no scrim, so the capture shows undimmed; dialogs
+ * dim it. A chassis sheet's scrim is its own one dim (§11.5), so the same holds under the
+ * site-information sheet.
  */
 export function panelAloneOverContent(ui: UiState): boolean {
   return (
@@ -1175,14 +1177,18 @@ export function panelAloneOverContent(ui: UiState): boolean {
       ui.starDialog !== null ||
       ui.zoomBubble !== null ||
       ui.hoverCard.tabId !== null ||
-      ui.downloadsOpen) &&
+      ui.downloadsOpen ||
+      // Site information is a popover on a mouse (no scrim, §9.5) and a chassis sheet on a
+      // phone, whose own scrim is the one dim over the page (§11.5).
+      ui.siteInfoOpen) &&
     !overlayCoversContent({
       ...ui,
       barMenuOpen: false,
       starDialog: null,
       zoomBubble: null,
       hoverCard: HOVER_CARD_HIDDEN,
-      downloadsOpen: false
+      downloadsOpen: false,
+      siteInfoOpen: false
     })
   )
 }
