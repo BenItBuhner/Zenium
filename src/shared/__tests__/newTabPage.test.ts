@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import mainCss from '../../renderer/src/assets/main.css?raw'
-import { chromeTokenCss, NEW_TAB_PAGE_STYLE, newTabPageHtml } from '../newTabPage'
+import {
+  chromeTokenCss,
+  NEW_TAB_PAGE_STYLE,
+  PRIVATE_EXPLAINER,
+  newTabPageHtml
+} from '../newTabPage'
 import { PRIVATE_ACCENT, PRIVATE_ACCENT_RGB } from '../newTabPageScript'
 import { PRIVATE_THEME, resolveTheme, themeCssVariables } from '../theme'
 
@@ -44,7 +49,19 @@ describe('zen://newtab tokens', () => {
   })
 
   it('defines no token of its own and reads only tokens main.css or the theme provides', () => {
-    expect([...declared(NEW_TAB_PAGE_STYLE)]).toEqual([])
+    // Over a picture the page re-declares the window's ink and fills (white, §9.29) – existing
+    // names with the picture's values, as the phone page does – and nothing else.
+    expect([...declared(NEW_TAB_PAGE_STYLE)].sort()).toEqual([
+      '--v2-window-fill',
+      '--v2-window-fill-hover',
+      '--zen-fg',
+      '--zen-fg-rgb'
+    ])
+    for (const name of declared(NEW_TAB_PAGE_STYLE)) expect(declared(mainCss)).toContain(name)
+    const imageBlock = NEW_TAB_PAGE_STYLE.slice(
+      NEW_TAB_PAGE_STYLE.indexOf("body[data-bg='image'] {")
+    )
+    expect(imageBlock.slice(0, imageBlock.indexOf('}'))).toContain('--zen-fg: #fff;')
     const provided = new Set([
       ...declared(tokens),
       ...Object.keys(themeCssVariables(resolveTheme(null, false)))
@@ -74,12 +91,62 @@ describe('zen://newtab tokens', () => {
     expect(resolveTheme(PRIVATE_THEME, true).isDark).toBe(true)
   })
 
-  it('hides with the attribute whatever display a class sets (the private badge is inline-flex)', () => {
+  it('hides with the attribute whatever display a class sets (the grid is a grid)', () => {
     expect(NEW_TAB_PAGE_STYLE).toMatch(/^\s*\[hidden\] \{ display: none !important; \}$/m)
-    expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-private \{\s*display: inline-flex;/)
-    // The badge starts hidden in a normal window; the script shows it from `isPrivate` only.
-    expect(newTabPageHtml()).toContain(
-      '<div class="zen-private" id="zen-private" hidden>Private</div>'
+    expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-grid \{\s*display: grid;/)
+    // The grid, the empty sentence and the explainer start hidden; the script shows one of them.
+    const html = newTabPageHtml()
+    expect(html).toMatch(/<div class="zen-grid" id="zen-grid" role="list"[^>]* hidden>/)
+    expect(html).toMatch(/<p class="zen-ntp-empty" id="zen-empty" hidden>/)
+    expect(html).toMatch(/<section class="zen-ntp-private" id="zen-private"[^>]* hidden>/)
+  })
+
+  it('is the window (§9.29): a window-family root, the field and toast page surfaces on it', () => {
+    const html = newTabPageHtml()
+    expect(html).toContain('<body data-surface="window">')
+    expect(html).toMatch(/<form class="zen-ntp-field" id="zen-search"[^>]* data-surface="page">/)
+    expect(html).toMatch(
+      /<div class="zen-toast" id="zen-toast" role="status" data-surface="page" hidden>/
+    )
+    // The page's own vocabulary is the phone page's: tiles, captions and Customize in the window family.
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /\.zen-ntp-tile \{[^}]*width: 64px; height: 64px;[^}]*background: var\(--v2-control-fill\);/
+    )
+    expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-ntp-icon \{ width: 32px; height: 32px;/)
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /\.zen-v2-shortcut:hover \.zen-ntp-tile \{ background: var\(--v2-control-fill-hover\); \}/
+    )
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /\.zen-ntp-caption \{[^}]*color: var\(--v2-control-text-deemphasized\);/
+    )
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /\.zen-grid \{[^}]*repeat\(4, minmax\(0, 104px\)\); gap: 12px;/
+    )
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /\.zen-ntp-field \{[^}]*height: 48px;[^}]*background: var\(--v2-urlbar\);[^}]*border: 0; border-radius: var\(--v2-radius-sheet\); box-shadow: var\(--v2-shadow-panel\);/
+    )
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /\.zen-customize \{ position: fixed; right: 12px; bottom: 12px;/
+    )
+    expect(html).toMatch(
+      /<button type="button" class="zen-v2-button zen-customize" id="zen-customize"/
+    )
+    // No card, no hairline around a tile, no label inside the square.
+    expect(NEW_TAB_PAGE_STYLE).not.toMatch(/\.zen-ntp-tile \{[^}]*border: 1px/)
+    expect(NEW_TAB_PAGE_STYLE).not.toContain('--v2-card')
+  })
+
+  it('says what a private window keeps, where the tiles would be (§9.23 title block)', () => {
+    const html = newTabPageHtml()
+    expect(html).toContain(`<h2 id="zen-private-title">${PRIVATE_EXPLAINER.title}</h2>`)
+    expect(html).toContain(`<p>${PRIVATE_EXPLAINER.description}</p>`)
+    expect(PRIVATE_EXPLAINER.title).toBe("You're in a private window")
+    expect(PRIVATE_EXPLAINER.description).not.toMatch(/[—–]/)
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /\.zen-ntp-private h2 \{[^}]*font-size: var\(--v2-font-heading\); line-height: 22px; font-weight: var\(--v2-weight-heading\);/
+    )
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /\.zen-ntp-private p \{ margin: 4px 0 0; color: var\(--v2-control-text-deemphasized\); \}/
     )
   })
 })

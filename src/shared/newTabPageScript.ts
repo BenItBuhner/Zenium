@@ -7,6 +7,7 @@ import type {
   TopSite
 } from './types'
 import { NEW_TAB_ICONS, newTabIconSvg, type NewTabIcon } from './newTabPage'
+import { MAX_NEW_TAB_SHORTCUTS } from './defaults'
 import { SPRING_SNAPPY, stepSpring, type SpringState } from './spring'
 import { getHost } from './url'
 
@@ -14,8 +15,8 @@ import { getHost } from './url'
  * Runs inside `zen://newtab` (the host's preload supplies the transport). The page is filled
  * from `NewTabPageState`: theme, search box hand-off, the shortcuts grid (most visited or
  * custom, remove with Undo and drag-reorder on the design-language spring) and the keyboard.
- * Nothing here touches browser state directly: every wish is a `NewTabPageAction`, and the
- * answer arrives as the next state. The page draws no popover or dialog of its own (design
+ * In a private window the grid gives way to the explainer. Nothing here touches browser state
+ * directly: every wish is a `NewTabPageAction`, and the answer arrives as the next state. The page draws no popover or dialog of its own (design
  * language v2 §9.20–9.23): a tile's menu is the host's context menu, the add / edit dialog and
  * Customize (Settings → New Tab) are the chrome's, asked for through actions; the one surface it
  * keeps is the Undo toast, and the chrome tells it through a `NewTabPageCommand` when the menu
@@ -136,7 +137,7 @@ class NewTabPage {
   private readonly body = document.body
   private readonly bgCurrent = byId<HTMLDivElement>('zen-bg-current')
   private readonly bgNext = byId<HTMLDivElement>('zen-bg-next')
-  private readonly privateLabel = byId<HTMLDivElement>('zen-private')
+  private readonly privateExplainer = byId<HTMLElement>('zen-private')
   private readonly greeting = byId<HTMLHeadingElement>('zen-greeting')
   private readonly search = byId<HTMLFormElement>('zen-search')
   private readonly input = byId<HTMLInputElement>('zen-search-input')
@@ -177,7 +178,6 @@ class NewTabPage {
   private apply(state: NewTabPageState): void {
     this.state = state
     this.applyTheme()
-    this.privateLabel.hidden = !state.isPrivate
     this.applyGreeting()
     this.custom = state.shortcutsMode === 'custom'
     this.tiles =
@@ -350,13 +350,13 @@ class NewTabPage {
       e.preventDefault()
       const item = this.tiles.find((t) => t.id === id)
       if (!item) return
-      // Keyboard (Shift+F10, the Menu key): anchor to the tile rather than the pointer.
+      // Keyboard (Shift+F10, the Menu key): flush under the tile's square rather than at the pointer.
       const fromKeyboard = e.button === 0 && e.clientX === 0 && e.clientY === 0
-      const rect = tile.getBoundingClientRect()
+      const rect = (tile.querySelector('.zen-ntp-tile') ?? tile).getBoundingClientRect()
       this.openMenu(
         item,
-        fromKeyboard ? rect.left + 12 : e.clientX,
-        fromKeyboard ? rect.top + 12 : e.clientY,
+        fromKeyboard ? rect.left : e.clientX,
+        fromKeyboard ? rect.bottom : e.clientY,
         fromKeyboard
       )
     })
@@ -376,71 +376,70 @@ class NewTabPage {
     return [...this.grid.querySelectorAll<HTMLElement>('.zen-tile')]
   }
 
+  /**
+   * The grid (four by two, most visited or the user's own), the empty sentence when the history
+   * has nothing to show, or – in a private window – the explainer where the tiles would be.
+   */
   private renderGrid(): void {
     const state = this.state
-    const mode: NewTabShortcutsMode = state?.shortcutsMode ?? 'hidden'
+    const isPrivate = Boolean(state?.isPrivate)
+    const mode: NewTabShortcutsMode = isPrivate ? 'hidden' : (state?.shortcutsMode ?? 'hidden')
     const showGrid = mode === 'custom' || (mode === 'most-visited' && this.tiles.length > 0)
+    this.privateExplainer.hidden = !isPrivate
     this.empty.hidden = !(mode === 'most-visited' && this.tiles.length === 0)
     this.grid.hidden = !showGrid
     this.grid.textContent = ''
     if (!showGrid) return
     for (const tile of this.tiles) this.grid.appendChild(this.renderTile(tile))
-    if (this.custom && this.tiles.length < 10) this.grid.appendChild(this.renderAddTile())
+    if (this.custom && this.tiles.length < MAX_NEW_TAB_SHORTCUTS)
+      this.grid.appendChild(this.renderAddTile())
     const count = this.tileElements().length
     if (this.focusIndex >= count) this.focusIndex = Math.max(0, count - 1)
     this.applyTabStops()
   }
 
+  /**
+   * A shortcut is the tile – a 64 square holding the site's 32 icon, or its letter, or the globe
+   * – and its caption 8 below, one target (the phone page's `zen-v2-shortcut`). Its menu is the
+   * host's context menu: right-click, Shift+F10 or the Menu key open it, Delete removes.
+   */
   private renderTile(tile: Tile): HTMLElement {
     const wrap = el('div', 'zen-tile')
     wrap.dataset.id = tile.id
     wrap.setAttribute('role', 'listitem')
-    const link = el('a', 'zen-tile-link')
+    const link = el('a', 'zen-v2-shortcut')
     link.href = tile.url
     link.title = tile.url
     link.draggable = false
-    const iconBox = el('span', 'zen-tile-icon')
+    const square = el('span', 'zen-ntp-tile')
     if (tile.favicon) {
-      const img = el('img')
+      const img = el('img', 'zen-ntp-icon')
       img.src = tile.favicon
       img.alt = ''
+      img.width = 32
+      img.height = 32
       img.draggable = false
       img.referrerPolicy = 'no-referrer'
       img.addEventListener('error', () => {
-        img.replaceWith(letterFor(tile))
+        img.replaceWith(fallbackFor(tile))
       })
-      iconBox.appendChild(img)
-    } else iconBox.appendChild(letterFor(tile))
-    link.appendChild(iconBox)
-    link.appendChild(el('span', 'zen-tile-label', tile.title))
+      square.appendChild(img)
+    } else square.appendChild(fallbackFor(tile))
+    link.appendChild(square)
+    link.appendChild(el('span', 'zen-ntp-caption', tile.title))
     wrap.appendChild(link)
-    const more = el('button', 'zen-tile-menu')
-    more.type = 'button'
-    more.tabIndex = -1
-    more.setAttribute('aria-label', `More options for ${tile.title}`)
-    more.setAttribute('aria-haspopup', 'menu')
-    more.appendChild(icon('more'))
-    more.addEventListener('click', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      // Flush under the button (v2 §9.20, gap 0); a key press on it anchors the same way.
-      const rect = more.getBoundingClientRect()
-      this.openMenu(tile, rect.left, rect.bottom, e.detail === 0)
-    })
-    more.addEventListener('pointerdown', (e) => e.stopPropagation())
-    wrap.appendChild(more)
     return wrap
   }
 
   private renderAddTile(): HTMLElement {
-    const wrap = el('div', 'zen-tile')
+    const wrap = el('div', 'zen-tile zen-tile-add')
     wrap.setAttribute('role', 'listitem')
-    const button = el('button', 'zen-tile-link zen-tile-add')
+    const button = el('button', 'zen-v2-shortcut')
     button.type = 'button'
-    const iconBox = el('span', 'zen-tile-icon')
-    iconBox.appendChild(icon('plus'))
-    button.appendChild(iconBox)
-    button.appendChild(el('span', 'zen-tile-label', 'Add shortcut'))
+    const square = el('span', 'zen-ntp-tile')
+    square.appendChild(icon('plus'))
+    button.appendChild(square)
+    button.appendChild(el('span', 'zen-ntp-caption', 'Add shortcut'))
     button.addEventListener('click', () => this.transport.send({ type: 'edit-shortcut', id: null }))
     wrap.appendChild(button)
     return wrap
@@ -448,7 +447,7 @@ class NewTabPage {
 
   private applyTabStops(): void {
     this.tileElements().forEach((tile, i) => {
-      const control = tile.querySelector<HTMLElement>('.zen-tile-link')
+      const control = tile.querySelector<HTMLElement>('.zen-v2-shortcut')
       if (control) control.tabIndex = i === this.focusIndex ? 0 : -1
     })
   }
@@ -458,7 +457,7 @@ class NewTabPage {
     if (tiles.length === 0) return
     this.focusIndex = Math.max(0, Math.min(tiles.length - 1, index))
     this.applyTabStops()
-    if (focus) tiles[this.focusIndex].querySelector<HTMLElement>('.zen-tile-link')?.focus()
+    if (focus) tiles[this.focusIndex].querySelector<HTMLElement>('.zen-v2-shortcut')?.focus()
   }
 
   private columns(): number {
@@ -520,8 +519,9 @@ class NewTabPage {
 
   /**
    * The tile's menu is the host's (native on desktop, the chrome's sheet elsewhere), opened at
-   * `x`, `y` in the page's CSS pixels: Open in New Tab / Window / Private Window, Edit Shortcut
-   * (custom tiles), Remove. Remove comes back as a `remove-tile` command so Undo is the page's.
+   * `x`, `y` in the page's CSS pixels: Open in New Tab / Window / Private Window, then Edit
+   * Shortcut (custom tiles) and Remove. Remove comes back as a `remove-tile` command so Undo is
+   * the page's.
    */
   private openMenu(tile: Tile, x: number, y: number, keyboard: boolean): void {
     this.transport.send({
@@ -552,7 +552,7 @@ class NewTabPage {
     this.toast.appendChild(
       el('span', undefined, removed.custom ? 'Shortcut removed' : 'Site removed')
     )
-    const undo = el('button', 'zen-btn', 'Undo')
+    const undo = el('button', 'zen-v2-button', 'Undo')
     undo.type = 'button'
     undo.addEventListener('click', () => this.undo())
     this.toast.appendChild(undo)
@@ -597,7 +597,7 @@ class NewTabPage {
 
   private onPointerDown(e: PointerEvent): void {
     if (!this.custom || e.button !== 0 || this.drag) return
-    const link = (e.target as HTMLElement).closest<HTMLElement>('a.zen-tile-link')
+    const link = (e.target as HTMLElement).closest<HTMLElement>('a.zen-v2-shortcut')
     const tile = link?.closest<HTMLElement>('.zen-tile')
     const id = tile?.dataset.id
     if (!link || !tile || !id) return
@@ -809,10 +809,12 @@ function fromTopSite(s: TopSite): Tile {
   return { id: `site:${s.url}`, url: s.url, title: s.title, favicon: s.favicon }
 }
 
-function letterFor(tile: Tile): HTMLElement {
+/** No icon: the site's first letter in the deemphasised ink, or the globe when there is none. */
+function fallbackFor(tile: Tile): Element {
   const host = getHost(tile.url).replace(/^www\./, '')
-  const letter = (host || tile.title).trim().charAt(0).toUpperCase() || '·'
-  return el('span', 'zen-tile-letter', letter)
+  const letter = (host || tile.title).trim().charAt(0).toUpperCase()
+  if (!letter) return icon('globe')
+  return el('span', 'zen-ntp-letter', letter)
 }
 
 /** A key that would insert a character into a text field. */
