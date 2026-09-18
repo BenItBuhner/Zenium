@@ -70,6 +70,32 @@ let seq = 0
 /** The open popovers in the order they opened: the last one is on top. */
 const entries: Entry[] = []
 
+/**
+ * What the registry tells its subscribers: a popover registered (`'open'`), or popovers closed
+ * for a `DismissReason` – `'all'` also for a `closeAllPopovers()` that found none open, which
+ * a frame dialog opening sends.
+ */
+export type PopoverChange = 'open' | DismissReason
+const subscribers = new Set<(change: PopoverChange) => void>()
+
+function notify(change: PopoverChange): void {
+  for (const listener of [...subscribers]) listener(change)
+}
+
+/**
+ * Run `listener` when a popover opens, when popovers are closed by the registry (a press outside,
+ * a scroll, a resize, another popover, a frame dialog) and on every `closeAllPopovers()`. For
+ * chrome that is not a popover but keeps §9.20's one at a time all the same – the tab hover
+ * card, which shows no popover beside itself and clears when one opens. A popover taking itself
+ * out (Escape, a row chosen) is not reported. Returns the unsubscribe.
+ */
+export function subscribePopovers(listener: (change: PopoverChange) => void): () => void {
+  subscribers.add(listener)
+  return () => {
+    subscribers.delete(listener)
+  }
+}
+
 const contains = (entry: Entry, node: Node): boolean => entry.element()?.contains(node) ?? false
 const anchorContains = (entry: Entry, node: Node): boolean =>
   entry.anchor?.()?.contains(node) ?? false
@@ -95,10 +121,13 @@ function closeEntries(
     while (entry.parent && list.includes(entry.parent)) entry.parent = entry.parent.parent
   }
   syncListeners()
+  const reasonOf = (entry: Entry): DismissReason =>
+    typeof reason === 'function' ? reason(entry) : reason
   for (let i = list.length - 1; i >= 0; i--) {
     const entry = list[i]
-    entry.close(typeof reason === 'function' ? reason(entry) : reason)
+    entry.close(reasonOf(entry))
   }
+  notify(reasonOf(list[list.length - 1]))
 }
 
 /**
@@ -125,6 +154,7 @@ export function openPopover(registration: PopoverRegistration): () => void {
   )
   entries.push(entry)
   syncListeners()
+  notify('open')
   return () => {
     const at = entries.indexOf(entry)
     if (at === -1) return
@@ -134,9 +164,13 @@ export function openPopover(registration: PopoverRegistration): () => void {
   }
 }
 
-/** Close every open popover: a frame dialog opening, a command that wants the chrome clear. */
+/**
+ * Close every open popover: a frame dialog opening, a command that wants the chrome clear.
+ * Subscribers hear of it whether or not any was open (see `subscribePopovers`).
+ */
 export function closeAllPopovers(reason: DismissReason = 'all'): void {
-  closeEntries([...entries], reason)
+  if (entries.length) closeEntries([...entries], reason)
+  else notify(reason)
 }
 
 /** How many popovers are open (registered). */

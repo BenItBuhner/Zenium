@@ -1866,16 +1866,22 @@
     overflow-y: auto;
   }
   /*
-   * The tab hover card (components/TabHoverCard.tsx; v2 draft §9.20): a popover in the page
-   * family flush against the sidebar, padding 16, the full title at 15/400 on two lines at most,
-   * the host and the row's state lines at 13 in the deemphasised ink. It takes no pointer.
+   * The tab hover card (components/TabHoverCard.tsx; v2 draft §9.20, §9.29): a page surface in
+   * the chrome layer – `--v2-panel`, 1 px `--v2-border`, radius 8, `--v2-shadow-panel`, padding
+   * 16 – flush against the sidebar. The full title at 15/400 on a 20 line, two lines at most;
+   * 4 below its line box the host and the row's state lines at 13 on a 20 line (§4: 13 → 20;
+   * the body line token until `--v2-line-small` moves in the shell pass) in the deemphasised
+   * ink. Its height is capped by the placement (never taller than the window minus 16), and it
+   * takes no pointer.
    */
   .zen-tab-hover-card {
     position: fixed;
     z-index: 80;
+    box-sizing: border-box;
     padding: 16px;
     border-radius: 8px;
     corner-shape: var(--zen-corner);
+    overflow: hidden;
     background: var(--v2-panel);
     border: 1px solid var(--v2-border);
     box-shadow: var(--v2-shadow-panel);
@@ -1892,13 +1898,15 @@
     line-height: var(--v2-line-body);
     font-weight: var(--v2-weight-body);
   }
-  .zen-tab-hover-card-host {
+  .zen-tab-hover-card-meta {
     margin-top: 4px;
+  }
+  .zen-tab-hover-card-host {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: var(--v2-font-small);
-    line-height: var(--v2-line-small);
+    line-height: var(--v2-line-body);
     color: var(--v2-text-deemphasized);
   }
   /* A list popover's body: 16 around 32px rows (§9.20); the empty line 32 below the top (§9.17). */

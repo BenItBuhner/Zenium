@@ -134,13 +134,11 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
 
   // The hover card (lib/hoverCard.ts) replaces the row's native tooltip: it shows after the
   // pointer rests on the row, or at once when keyboard focus lands on it (§9.22), never for the
-  // focus a click leaves behind, and not while the URL bar, a menu or an overlay has the chrome.
-  // The row's buttons keep their own tooltips.
+  // focus a click leaves behind; the controller holds it back while a popover, a menu, a dialog
+  // or an overlay has the chrome. The row's buttons keep their own tooltips.
   const cardUp = uiStore.use((s) => s.hoverCard.tabId === tab.id)
   const onPointerEnter = (e: React.PointerEvent): void => {
     if (e.pointerType !== 'mouse' || renaming || dragging) return
-    const ui = uiStore.get()
-    if (ui.urlbar.open || ui.menu || ui.overlay !== 'none') return
     const el = e.currentTarget as HTMLElement
     hoverCard.pointerEnter(tab.id, () => measureRow(el))
   }

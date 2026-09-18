@@ -11,6 +11,7 @@ import {
   POPOVER_HEIGHT_FLOOR,
   POPOVER_MARGIN,
   POPOVER_WIDTH,
+  chromeInertHeld,
   chromeLayer,
   closeAllPopovers,
   holdChromeInert,
@@ -394,14 +395,18 @@ describe('chrome inertness while a frame dialog is open (§9.5)', () => {
 
   it('holdChromeInert nests: the chrome comes back when the last hold is released, once', () => {
     render(<Chrome />)
+    expect(chromeInertHeld()).toBe(false)
     const first = holdChromeInert()
     const second = holdChromeInert()
     expect(inert(chrome('sidebar'))).toBe(true)
+    expect(chromeInertHeld()).toBe(true)
     first()
     first()
     expect(inert(chrome('sidebar'))).toBe(true)
+    expect(chromeInertHeld()).toBe(true)
     second()
     expect(inert(chrome('sidebar'))).toBe(false)
+    expect(chromeInertHeld()).toBe(false)
   })
 })
 
