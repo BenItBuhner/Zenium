@@ -7,6 +7,12 @@
  * Android loads them straight into the tab's WebView. Reader articles and shared images live in
  * the core; hosts pass lookups so this module stays free of state.
  */
+// The chrome's stylesheet as text (a Vite `?raw` import: nothing of the renderer runs here). The
+// error page is a document inside the tab and cannot link the stylesheet, so it cuts the design
+// language v2 token block, the v2 button and its own rules out of this text instead of carrying
+// a copy of any value; `v2Tokens.test.ts` lists the page among the v2 surfaces.
+import chromeStylesheet from '../renderer/src/assets/main.css?raw'
+import { PHONE_MAX_WIDTH } from './formFactor'
 import type { OverlayKind } from './types'
 
 export const ZEN_SCHEME = 'zen'
@@ -274,80 +280,65 @@ export function blankPageHtml(): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>New Tab</title><style>${BASE_STYLE}</style></head><body></body></html>`
 }
 
-/*
- * The design-language v2 tokens the error page uses (draft §1, §2, §4, §5), under the names and
- * with the values of the chrome's block in `main.css` (`zenPages.test.ts` keeps them equal). The
- * page is a standalone document inside the tab, so it cannot read the chrome's stylesheet and
- * carries this copy; it is the only per-document copy. Media queries stand in for the chrome's
- * `data-theme` / `data-form-factor` attributes, and for `light-dark()`, which the system WebView
- * this page ships to (113 on the emulator) does not know yet.
+/**
+ * `css` from `start` up to the next `end`, without comments and blank lines: the part of the
+ * chrome's stylesheet the error page reads. '' when a marker is gone, so the page degrades to an
+ * unstyled document rather than failing (`zenPages.test.ts` fails instead).
  */
-export const ERROR_PAGE_TOKENS = `
-  :root {
-    color-scheme: light dark;
-    --v2-page: #fbfbfe;
-    --v2-text: #15141a;
-    --v2-text-deemphasized: rgb(21 20 26 / 0.69);
-    --v2-fill: rgb(21 20 26 / 0.1);
-    --v2-fill-hover: rgb(21 20 26 / 0.16);
-    --v2-radius-control: 4px;
-    --v2-font-title: 22px;
-    --v2-font-body: 15px;
-    --v2-font-small: 13px;
-    --v2-line-body: 20px;
-    --v2-line-small: 18px;
-    --v2-weight-body: 400;
-    --v2-weight-button: 500;
-    --v2-weight-heading: 600;
-    --v2-control: 32px;
-    --v2-content-max: 664px;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --v2-page: #1c1b22;
-      --v2-text: #fbfbfe;
-      --v2-text-deemphasized: rgb(251 251 254 / 0.69);
-      --v2-fill: rgb(251 251 254 / 0.1);
-      --v2-fill-hover: rgb(251 251 254 / 0.16);
-    }
-  }
-  @media (pointer: coarse) {
-    :root {
-      --v2-radius-control: 6px;
-      --v2-control: 40px;
-    }
-  }
-`
+function cssBetween(css: string, start: number, end: string): string {
+  const to = start === -1 ? -1 : css.indexOf(end, start)
+  if (to === -1) return ''
+  return css
+    .slice(start, to)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\n(?:[ \t]*\n)+/g, '\n')
+    .trim()
+}
 
-/*
- * The error page itself (v2 draft §1, §4, §6): a neutral page with the chrome's colour kept off
- * it, body 15/400, title 22/600, the error name at 13 deemphasised, one secondary Proton-style
- * button (text at 10% fill, weight 500). The focus ring is the text colour: the space's accent is
- * not known inside the tab.
+/** Ends the design language v2 token block of `main.css` (it starts at the `:root {` declaring `--v2-page`). */
+export const V2_TOKENS_END = '/* Zen clamps its primary colour'
+
+/** The `.zen-v2-button` rule and its variants (a v2 surface of its own in `main.css`). */
+export const V2_BUTTON_END = '/* Safe-area insets pushed by mobile hosts'
+
+/** The error page's own rules in `main.css`, listed in `v2Tokens.test.ts` as the page's surface. */
+export const ERROR_PAGE_RULES_START = '.zen-error-document {'
+export const ERROR_PAGE_RULES_END = '@layer base {'
+
+/**
+ * The error page's stylesheet, cut from the chrome's (design-language-v2-draft §1, §2, §4): the
+ * token block (light, dark, coarse pointer, phone, the shared `zen-v2-*` focus ring), the v2
+ * button that the Reload control is, and the page's own layout and type rules. Every colour and
+ * size is read from a token; `light-dark()`, which the system WebView the page ships to (113 on
+ * the emulator) does not know, appears nowhere.
  */
-const ERROR_STYLE = `${ERROR_PAGE_TOKENS}
-  html, body { margin: 0; min-height: 100%; }
-  body {
-    display: flex; flex-direction: column; justify-content: center; box-sizing: border-box;
-    min-height: 100vh; padding: 24px;
-    background: var(--v2-page); color: var(--v2-text);
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    font-size: var(--v2-font-body); font-weight: var(--v2-weight-body); line-height: var(--v2-line-body);
-  }
-  main { width: 100%; max-width: var(--v2-content-max); margin: 0 auto; }
-  h1 { font-size: var(--v2-font-title); font-weight: var(--v2-weight-heading); line-height: 28px; margin: 0 0 12px; }
-  p { margin: 0 0 8px; overflow-wrap: anywhere; }
-  strong { font-weight: var(--v2-weight-heading); }
-  .code { font-size: var(--v2-font-small); line-height: var(--v2-line-small); color: var(--v2-text-deemphasized); margin: 0 0 24px; }
-  button {
-    font-family: inherit; font-size: var(--v2-font-body); font-weight: var(--v2-weight-button); line-height: var(--v2-line-body);
-    min-height: var(--v2-control); padding: 0 16px; border: 0; border-radius: var(--v2-radius-control);
-    background: var(--v2-fill); color: var(--v2-text); cursor: pointer;
-  }
-  button:hover { background: var(--v2-fill-hover); }
-  button:active { transform: scale(0.98); }
-  button:focus-visible { outline: 2px solid var(--v2-text); outline-offset: 2px; }
-`
+export function errorPageStyle(css: string = chromeStylesheet): string {
+  const tokens = css.indexOf('--v2-page:')
+  return [
+    cssBetween(css, tokens === -1 ? -1 : css.lastIndexOf(':root {', tokens), V2_TOKENS_END),
+    cssBetween(css, css.indexOf('.zen-v2-button {'), V2_BUTTON_END),
+    cssBetween(css, css.indexOf(ERROR_PAGE_RULES_START), ERROR_PAGE_RULES_END)
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+const ERROR_STYLE = errorPageStyle()
+
+/**
+ * Puts the chrome's root attributes on the page's root from the media the tab sees, so the token
+ * block's `:root[data-theme='dark']`, `[data-pointer='coarse']` and `[data-form-factor='phone']`
+ * rules apply to the page as they do to the chrome. The classification is `classifyViewport`'s
+ * (`formFactor.ts`), including the WebView's `pointer: fine` on plain touch screens; the theme
+ * is the tab's colour scheme, the same one every page in the tab sees.
+ */
+export const ERROR_PAGE_ATTRIBUTES_SCRIPT =
+  '(function(){var d=document.documentElement,q=function(m){return matchMedia(m).matches};' +
+  "if(q('(prefers-color-scheme: dark)'))d.dataset.theme='dark';" +
+  "var hover=q('(hover: hover)'),coarse=q('(pointer: coarse)')||(navigator.maxTouchPoints>0&&!hover)," +
+  'side=coarse&&!hover?Math.min(innerWidth,innerHeight):innerWidth;' +
+  "d.dataset.pointer=coarse?'coarse':'fine';" +
+  `d.dataset.formFactor=side<${PHONE_MAX_WIDTH}?'phone':coarse?'tablet':'desktop'})()`
 
 /** The reason with the site's name set in bold, the way Chrome names the site it could not reach. */
 function emphasiseSite(reason: string, site: string): string {
@@ -366,11 +357,11 @@ export function errorPageHtml(url: URL): string {
   if (code === BLOCKED_BY_CLIENT_CODE) return blockedPageHtml(target)
   const content = errorPageContent(code, url.searchParams.get('description') ?? '', target)
   const reload = content.target
-    ? `\n  <button type="button" onclick="location.replace(${escapeHtml(JSON.stringify(content.target))})">Reload</button>`
+    ? `\n  <button type="button" class="zen-v2-button" onclick="location.replace(${escapeHtml(JSON.stringify(content.target))})">Reload</button>`
     : ''
-  const name = content.code ? `\n  <p class="code">${escapeHtml(content.code)}</p>` : ''
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(content.site || 'Problem loading page')}</title><style>${ERROR_STYLE}</style></head>
-<body><main>
+  const name = content.code ? `\n  <p class="zen-error-code">${escapeHtml(content.code)}</p>` : ''
+  return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(content.site || 'Problem loading page')}</title><script>${ERROR_PAGE_ATTRIBUTES_SCRIPT}</script><style>${ERROR_STYLE}</style></head>
+<body class="zen-error-page"><main>
   <h1>${escapeHtml(content.title)}</h1>
   <p>${emphasiseSite(content.reason, content.site)}</p>${name}${reload}
 </main></body></html>`

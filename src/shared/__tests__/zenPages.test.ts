@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import chromeCss from '../../renderer/src/assets/main.css?raw'
+import { classifyViewport, type ViewportMetrics } from '../formFactor'
 import { errorPageUrl } from '../url'
 import {
   BLOCKED_BY_CLIENT_CODE,
-  ERROR_PAGE_TOKENS,
+  ERROR_PAGE_ATTRIBUTES_SCRIPT,
+  ERROR_PAGE_RULES_START,
   describeNetError,
   errorPageContent,
   errorPageHtml,
+  errorPageStyle,
   overlayForUrl,
   parseZenUrl,
   zenPageHtml
@@ -154,9 +158,9 @@ describe('errorPageHtml', () => {
     expect(html).toContain(
       '<p><strong>nonexistent.invalid</strong>&#39;s server IP address could not be found.</p>'
     )
-    expect(html).toContain('<p class="code">ERR_NAME_NOT_RESOLVED</p>')
+    expect(html).toContain('<p class="zen-error-code">ERR_NAME_NOT_RESOLVED</p>')
     expect(html).toContain(
-      '<button type="button" onclick="location.replace(&quot;http://nonexistent.invalid/&quot;)">Reload</button>'
+      '<button type="button" class="zen-v2-button" onclick="location.replace(&quot;http://nonexistent.invalid/&quot;)">Reload</button>'
     )
     expect(html).not.toContain('New Tab')
   })
@@ -165,27 +169,28 @@ describe('errorPageHtml', () => {
     const html = errorPageHtml(
       parseZenUrl(errorPageUrl(-102, '', 'http://x.example/?q="><script>alert(1)</script>'))!
     )
-    expect(html).not.toContain('<script>')
-    expect(html).toContain('&lt;script&gt;')
+    expect(html).not.toContain('<script>alert(1)</script>')
+    expect(html).not.toContain('location.replace("')
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
   })
 
   it('leaves out what it does not have: no site, no code, no target', () => {
     const html = errorPageHtml(parseZenUrl('zen://error?code=-999')!)
     expect(html).toContain('<title>Problem loading page</title>')
     expect(html).not.toContain('<button')
-    expect(html).not.toContain('class="code"')
+    expect(html).not.toContain('class="zen-error-code"')
     expect(html).toContain('The page could not be loaded.')
   })
 
-  it('carries no light-dark() and no per-component hex: colours come from the token block', () => {
+  it('is a v2 surface: the root attributes, the classes and the shared button', () => {
     const html = errorPageHtml(parseZenUrl(REFUSED)!)
-    expect(html).not.toContain('light-dark(')
+    expect(html).toContain('<html class="zen-error-document">')
+    expect(html).toContain(`<script>${ERROR_PAGE_ATTRIBUTES_SCRIPT}</script><style>`)
+    expect(html).toContain('<body class="zen-error-page">')
+    expect(html).toContain('<p class="zen-error-code">ERR_CONNECTION_REFUSED</p>')
+    expect(html).toContain('<button type="button" class="zen-v2-button" onclick=')
     const style = html.slice(html.indexOf('<style>') + '<style>'.length, html.indexOf('</style>'))
-    expect(style.startsWith(ERROR_PAGE_TOKENS)).toBe(true)
-    const rules = style.slice(ERROR_PAGE_TOKENS.length)
-    expect(rules).not.toMatch(/#[0-9a-f]{3,8}\b/i)
-    expect(rules).not.toMatch(/rgba?\(/)
-    expect(rules).toMatch(/var\(--v2-page\)/)
+    expect(style).toBe(errorPageStyle())
   })
 
   it('hands a request the engine blocked to the Zenium blocked page', () => {
@@ -197,6 +202,109 @@ describe('errorPageHtml', () => {
     expect(html).toContain('<title>Page blocked</title>')
     expect(html).toContain('Zenium blocked this page')
     expect(html).toContain('<strong>ads.example</strong>')
+  })
+})
+
+describe('errorPageStyle', () => {
+  const style = errorPageStyle(chromeCss)
+
+  it("is cut from the chrome's stylesheet: the v2 token block, the v2 button and the page's rules", () => {
+    // The token block, light and dark, and the pointer and form-factor overrides.
+    expect(style).toMatch(/^:root \{\n\s+--v2-page: #fbfbfe;/)
+    expect(style).toContain(":root[data-theme='dark'] {")
+    expect(style).toContain(":root[data-pointer='coarse'] {")
+    expect(style).toContain(":root[data-form-factor='phone'] {")
+    expect(style).toContain("[class^='zen-v2-']:focus-visible")
+    // The button the Reload control is, with its variants.
+    expect(style).toContain('.zen-v2-button {')
+    expect(style).toContain('.zen-v2-button:active:not(:disabled) {')
+    // The page's own rules, up to the layers.
+    expect(style).toContain(ERROR_PAGE_RULES_START)
+    expect(style).toContain('.zen-error-page {')
+    expect(style).toContain('.zen-error-code {')
+    expect(style).not.toContain('@layer')
+    expect(style).not.toContain('/*')
+    expect(style).not.toContain('light-dark(')
+  })
+
+  it('reads every colour and size of its own rules from a token', () => {
+    const own = style.slice(style.indexOf(ERROR_PAGE_RULES_START))
+    expect(own).toMatch(/var\(--v2-page\)/)
+    expect(own).toMatch(/var\(--v2-text\)/)
+    expect(own).not.toMatch(/#[0-9a-f]{3,8}\b/i)
+    expect(own).not.toMatch(/rgba?\(/)
+    expect(own).not.toMatch(/color-mix\(/)
+  })
+
+  it('is what the built page carries, and degrades to nothing when a marker is gone', () => {
+    expect(errorPageStyle()).toBe(style)
+    expect(errorPageStyle('')).toBe('')
+    const withoutOwnRules = chromeCss.replace(ERROR_PAGE_RULES_START, '.gone {')
+    const parts = errorPageStyle(withoutOwnRules)
+    expect(parts).toContain('.zen-v2-button {')
+    expect(parts).not.toContain('.zen-error-page {')
+  })
+})
+
+describe('ERROR_PAGE_ATTRIBUTES_SCRIPT', () => {
+  /**
+   * Runs the page's inline script against a fake window and returns the root's data attributes.
+   * `webViewSaysFine` is the Android WebView reporting `pointer: fine` on a plain touch screen,
+   * which the script (like the chrome) sees through by the touch points.
+   */
+  function attributes(
+    metrics: ViewportMetrics,
+    { dark = false, webViewSaysFine = false } = {}
+  ): Record<string, string> {
+    const dataset: Record<string, string> = {}
+    const queries: Record<string, boolean> = {
+      '(prefers-color-scheme: dark)': dark,
+      '(hover: hover)': metrics.hover,
+      '(pointer: coarse)': metrics.coarse && !webViewSaysFine
+    }
+    const maxTouchPoints = metrics.coarse ? 5 : 0
+    const run = new Function(
+      'document',
+      'matchMedia',
+      'navigator',
+      'innerWidth',
+      'innerHeight',
+      ERROR_PAGE_ATTRIBUTES_SCRIPT
+    )
+    run(
+      { documentElement: { dataset } },
+      (m: string) => ({ matches: queries[m] ?? false }),
+      { maxTouchPoints },
+      metrics.width,
+      metrics.height
+    )
+    return dataset
+  }
+
+  it("classifies the viewport the way the chrome does, with the chrome's attribute names", () => {
+    const cases: ViewportMetrics[] = [
+      { width: 412, height: 915, coarse: true, hover: false },
+      { width: 915, height: 412, coarse: true, hover: false },
+      { width: 800, height: 1280, coarse: true, hover: false },
+      { width: 1280, height: 800, coarse: true, hover: true },
+      { width: 1440, height: 900, coarse: false, hover: true },
+      { width: 500, height: 900, coarse: false, hover: true }
+    ]
+    for (const metrics of cases) {
+      const attrs = attributes(metrics)
+      expect(attrs.formFactor, JSON.stringify(metrics)).toBe(classifyViewport(metrics))
+      expect(attrs.pointer).toBe(metrics.coarse ? 'coarse' : 'fine')
+    }
+  })
+
+  it('sets the theme only for dark, and reads a touch screen with or without pointer: coarse', () => {
+    const phone = { width: 412, height: 915, coarse: true, hover: false }
+    expect(attributes(phone).theme).toBeUndefined()
+    expect(attributes(phone, { dark: true }).theme).toBe('dark')
+    const seenAsFine = attributes(phone, { webViewSaysFine: true })
+    expect(seenAsFine.pointer).toBe('coarse')
+    expect(seenAsFine.formFactor).toBe('phone')
+    expect(attributes({ ...phone, coarse: false, hover: true }).pointer).toBe('fine')
   })
 })
 
