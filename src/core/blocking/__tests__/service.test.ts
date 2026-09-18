@@ -1,3 +1,6 @@
+// The Kotlin engine's fixture is compared here, test-only (the core itself never touches Node).
+// eslint-disable-next-line no-restricted-imports
+import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   DEFAULT_BLOCKING_SETTINGS,
@@ -9,8 +12,17 @@ import type { Tab } from '../../../shared/types'
 import type { Browser } from '../../browser'
 import { PermissionService } from '../../permissions'
 import type { BlockingHost, BundledFilterList, StoreIO } from '../../platform'
+import { CONNECTIVITY_PROBES, connectivityProbesRuleSet } from '../connectivityProbes'
+import { TEXT_MATCH_SET_ID, type TextMatch } from '../engine'
 import { BlockingService, siteExceptionRule } from '../service'
-import { BUILTIN_RULE_SETS, USER_RULE_SET_ID, type RequestContext, type RuleSet } from '../rules'
+import type { IndexFile } from '../store'
+import {
+  BUILTIN_RULE_SETS,
+  RULE_SET_PRIORITY,
+  USER_RULE_SET_ID,
+  type RequestContext,
+  type RuleSet
+} from '../rules'
 import { memoryIo } from './store.test'
 
 type FetchResult = { ok: boolean; status: number; text: string }
@@ -304,6 +316,138 @@ describe('BlockingService site exceptions and user filters', () => {
     service.onSettingsChanged()
     expect(service.engine.has(USER_RULE_SET_ID)).toBe(false)
     expect(service.status().userFilterErrors).toEqual([])
+  })
+})
+
+describe('BlockingService connectivity probes', () => {
+  /** The fixture the Kotlin engine's test reads: the set exactly as the store writes it. */
+  const fixture = new URL(
+    '../../../../android/app/src/test/resources/blocking/connectivity-probes.json',
+    import.meta.url
+  )
+
+  /**
+   * Stands in for the lists: EasyPrivacy's `/generate_204?$image` heuristic plus a tracker on
+   * the sign-in host, matched the way the text matcher answers.
+   */
+  function listsMatcher(): { calls: string[]; match: (ctx: RequestContext) => TextMatch | null } {
+    const calls: string[] = []
+    return {
+      calls,
+      match: (ctx) => {
+        calls.push(ctx.url)
+        if (ctx.type === 'image' && /\/generate_204\?/.test(ctx.url))
+          return { action: 'block', filter: '/generate_204?$image' }
+        if (/^https:\/\/accounts\.google\.com\/tracker\.gif/.test(ctx.url))
+          return { action: 'block', filter: '||accounts.google.com/tracker.gif' }
+        return null
+      }
+    }
+  }
+
+  const signIn =
+    'https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fmail.google.com'
+
+  it('allows a sign-in page’s generate_204 above the lists while a tracker on the host stays blocked', () => {
+    const h = harness()
+    const service = start(h)
+    expect(service.engine.summary(BUILTIN_RULE_SETS.connectivityProbes)).toMatchObject({
+      source: 'builtin',
+      priority: RULE_SET_PRIORITY.connectivityProbes,
+      enabled: true,
+      ruleCount: CONNECTIVITY_PROBES.length,
+      hasFilterText: false
+    })
+    expect(RULE_SET_PRIORITY.connectivityProbes).toBeGreaterThan(RULE_SET_PRIORITY.filterList)
+    expect(RULE_SET_PRIORITY.connectivityProbes).toBeLessThan(RULE_SET_PRIORITY.user)
+
+    const lists = listsMatcher()
+    service.engine.setTextMatcher(lists)
+    const probe = req('https://accounts.google.com/generate_204?ZxpZxpZx', {
+      type: 'image',
+      documentUrl: signIn,
+      initiator: 'https://accounts.google.com'
+    })
+    expect(service.engine.decide(probe)).toEqual({
+      action: 'allow',
+      matched: { setId: BUILTIN_RULE_SETS.connectivityProbes, ruleId: 1 }
+    })
+    // The structured allow settles it above the lists' band: the matcher is not even asked.
+    expect(lists.calls).toEqual([])
+    expect(
+      service.engine.decide(
+        req('https://accounts.google.com/tracker.gif?u=1', { type: 'image', documentUrl: signIn })
+      )
+    ).toMatchObject({ action: 'block', matched: { setId: TEXT_MATCH_SET_ID } })
+    // Only the probe path is excepted: the heuristic still blocks it elsewhere on the host, and
+    // a longer path is nobody's business (the default allow, no rule named).
+    expect(
+      service.engine.decide(
+        req('https://accounts.google.com/x/generate_204?p', { type: 'image', documentUrl: signIn })
+      ).action
+    ).toBe('block')
+    expect(
+      service.engine.decide(
+        req('https://accounts.google.com/generate_204x?p', { type: 'image', documentUrl: signIn })
+      )
+    ).toEqual({ action: 'allow' })
+
+    // Every probe, with or without a query, as the probe request Chrome sends and as an image.
+    for (const [index, path] of CONNECTIVITY_PROBES.entries()) {
+      for (const url of [`https://${path}`, `http://${path}?${index}`, `https://${path}?a=1&b=2`]) {
+        for (const type of ['image', 'main_frame', 'xmlhttprequest', 'other'] as const) {
+          const decision = service.engine.decide(
+            req(url, type === 'main_frame' ? { type } : { type, documentUrl: signIn })
+          )
+          expect(decision, `${type} ${url}`).toEqual({
+            action: 'allow',
+            matched: { setId: BUILTIN_RULE_SETS.connectivityProbes, ruleId: index + 1 }
+          })
+        }
+      }
+    }
+    // Subdomains of a probe host are covered (`||`), unrelated hosts are not.
+    expect(
+      service.engine.decide(req('https://www.accounts.google.com/generate_204', { type: 'image' }))
+        .matched?.setId
+    ).toBe(BUILTIN_RULE_SETS.connectivityProbes)
+    expect(
+      service.engine.decide(
+        req('https://evil.example/generate_204?x', { type: 'image', documentUrl: signIn })
+      ).action
+    ).toBe('block')
+  })
+
+  it('is written to the shared store as the Kotlin engine reads it, and is not a user list', async () => {
+    const h = harness()
+    const service = start(h)
+    await service.store.flush()
+    const index = JSON.parse(h.io.files.get('blocking/index.json') ?? 'null') as IndexFile
+    const entry = index.sets.find((s) => s.id === BUILTIN_RULE_SETS.connectivityProbes)
+    expect(entry).toEqual(JSON.parse(readFileSync(fixture, 'utf8')))
+    expect(entry?.rules).toEqual(connectivityProbesRuleSet().rules)
+
+    // Whatever the level or the master switch, the probes are allowed.
+    h.settings.blocking = { ...h.settings.blocking, level: 'off' }
+    service.onSettingsChanged()
+    expect(service.engine.summary(BUILTIN_RULE_SETS.connectivityProbes)?.enabled).toBe(true)
+    service.setEnabled(false)
+    expect(service.engine.summary(BUILTIN_RULE_SETS.connectivityProbes)?.enabled).toBe(true)
+
+    // Settings lists the filter lists only.
+    const status = service.status()
+    expect(status.lists.map((l) => l.id)).not.toContain(BUILTIN_RULE_SETS.connectivityProbes)
+    expect(JSON.stringify(status)).not.toContain('connectivity')
+
+    // A second start finds the set on disk and keeps exactly one copy of it.
+    service.stop()
+    const service2 = start(harness({ io: h.io }))
+    expect(
+      service2.engine.listRuleSets().filter((s) => s.id === BUILTIN_RULE_SETS.connectivityProbes)
+    ).toHaveLength(1)
+    expect(service2.engine.summary(BUILTIN_RULE_SETS.connectivityProbes)?.ruleCount).toBe(
+      CONNECTIVITY_PROBES.length
+    )
   })
 })
 

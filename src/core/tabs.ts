@@ -20,6 +20,7 @@ import {
   essentialsForSpace,
   getSpace,
   insertTabIntoSpace,
+  loadProgressAfter,
   moveTab,
   nextTabAfterClose,
   orderedTabsForSpace,
@@ -393,16 +394,25 @@ export class TabManager {
     const ownerWindow = (): ZenWindow => this.windowFor(tabId)
 
     return {
-      onStartLoading: () => update((t) => (t.loading = true), true),
+      onStartLoading: () =>
+        update((t) => {
+          t.loading = true
+          t.progress = 0
+        }, true),
       onStopLoading: () => {
         this.browser.governor.onLoadFinished(tabId)
         update((t) => {
           const v = view()
           t.loading = false
+          t.progress = 1
           t.canGoBack = v?.canGoBack() ?? false
           t.canGoForward = v?.canGoForward() ?? false
         })
       },
+      onProgress: (progress) =>
+        update((t) => {
+          t.progress = loadProgressAfter(t, progress)
+        }, true),
       onNavigated: (url, inPage) => {
         if (!inPage) this.browser.blocking.onNavigated(tabId)
         const v = view()
@@ -441,6 +451,7 @@ export class TabManager {
             t.errorCode = code
             t.certificateError = certificateError
             t.loading = false
+            t.progress = 1
           })
         // The host's request engine refused the navigation on Safe Browsing's word.
         const unsafe = this.browser.protection.safeBrowsing.takePendingBlock(tabId, url)
@@ -892,6 +903,7 @@ export class TabManager {
     tab.frozen = false
     tab.cpuThrottle = 1
     tab.loading = false
+    tab.progress = 0
     tab.audible = false
     tab.canGoBack = false
     tab.canGoForward = false
@@ -2511,6 +2523,7 @@ export class TabManager {
           tab.frozen = false
           tab.cpuThrottle = 1
           tab.loading = false
+          tab.progress = 0
           tab.audible = false
         }
       }

@@ -11,6 +11,7 @@
 import type {
   CertificateDetails,
   ColorScheme,
+  ContentCover,
   DownloadItem,
   EventName,
   Events,
@@ -309,6 +310,8 @@ export interface AgentCapture {
 export interface TabViewEvents {
   onStartLoading(): void
   onStopLoading(): void
+  /** Load progress 0…1 from hosts that measure it (Android); optional between start and stop. */
+  onProgress(progress: number): void
   /** Main-frame navigation committed (`inPage` for pushState / hash changes). */
   onNavigated(url: string, inPage: boolean): void
   onTitleUpdated(title: string): void
@@ -479,6 +482,13 @@ export interface TabView {
   setVisible(visible: boolean): void
   isVisible(): boolean
   bringToFront(): void
+  /**
+   * Chrome messages (toasts, banners) cover these strips of the view's edges. Hosts whose pages
+   * are layered above the chrome clip the page out of the strips – animating the clip so it
+   * moves with the message – and hand touches inside them to the chrome. Optional: on Electron
+   * the chrome draws over the page as it is.
+   */
+  setCover?(cover: ContentCover): void
 
   // Page operations.
   openDevTools(mode: 'toggle' | 'inspect' | 'console'): void

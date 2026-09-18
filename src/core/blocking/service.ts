@@ -8,7 +8,8 @@
  * The master switch and the per-site exceptions are content settings in the permission store
  * ({@link BLOCKING_PERMISSION}: `allow` as the default switches blocking off, `allow` for an
  * origin excepts that site), so the site-information sheet lists and resets them with the other
- * permissions; this service turns them into the two builtin rule sets.
+ * permissions; this service turns them into two builtin rule sets. A third builtin set, the
+ * connectivity-probe exceptions (`connectivityProbes.ts`), is fixed and always on.
  */
 import {
   BLOCKING_PERMISSION,
@@ -24,6 +25,7 @@ import {
 } from '../../shared/blocking'
 import type { Browser } from '../browser'
 import type { BundledFilterList } from '../platform'
+import { connectivityProbesRuleSet } from './connectivityProbes'
 import { RuleEngine } from './engine'
 import {
   parseListHeader,
@@ -459,7 +461,7 @@ export class BlockingService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Make the engine reflect the settings and the permission store: the two builtin sets, the
+   * Make the engine reflect the settings and the permission store: the three builtin sets, the
    * user's filters, which lists are on, and which custom lists exist. Sets are only touched when
    * something changed since the last sync.
    */
@@ -481,6 +483,9 @@ export class BlockingService {
       enabled: exceptions.length > 0,
       rules: exceptions.map(siteExceptionRule)
     })
+    // Not a setting: the probes are allowed whatever the level, so the set is written once and
+    // re-written only when a build changes it (the signature covers its rules).
+    this.ensureBuiltin(connectivityProbesRuleSet())
 
     const userText = s.userFilters.trim()
     if (
