@@ -155,13 +155,14 @@ describe('new-tab override', () => {
 })
 
 describe('newRecord and withManifest', () => {
-  it('applies Chrome defaults: enabled, not pinned, no file or private access, nothing pending', () => {
+  it('applies Chrome defaults: enabled, not pinned, no file, private or user-script access, nothing pending', () => {
     const r = record()
     expect(r).toMatchObject({
       enabled: true,
       pinned: false,
       allowFileAccess: false,
       allowPrivate: false,
+      allowUserScripts: false,
       pendingWarnings: null,
       installedAt: NOW,
       updatedAt: NOW,
@@ -282,6 +283,7 @@ describe('migrateRegistry', () => {
             enabled: false,
             pinned: true,
             allowPrivate: true,
+            allowUserScripts: 'yes',
             pendingWarnings: ['Read your browsing history', 3]
           },
           { path: '/no-id' },
@@ -302,6 +304,7 @@ describe('migrateRegistry', () => {
       enabled: true,
       allowFileAccess: false,
       allowPrivate: false,
+      allowUserScripts: false,
       installedAt: NOW,
       updatedAt: NOW,
       version: '',
@@ -317,6 +320,8 @@ describe('migrateRegistry', () => {
       enabled: false,
       pinned: true,
       allowPrivate: true,
+      // Only a literal `true` turns the toggle on.
+      allowUserScripts: false,
       pendingWarnings: ['Read your browsing history']
     })
   })

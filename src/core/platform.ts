@@ -1055,6 +1055,8 @@ export interface ExtensionHost {
   newTabUrl(): string | null
   /** Chrome's "Allow in Incognito": whether the extension's request rules reach private windows. */
   setAllowPrivate(id: string, allowed: boolean): void
+  /** Chrome's "Allow user scripts": whether `chrome.userScripts` works for the extension. */
+  setAllowUserScripts(id: string, allowed: boolean): void
   reload(id: string): Promise<void>
   checkForUpdates(win?: ZenWindow): Promise<void>
   update(id: string, win?: ZenWindow): Promise<void>

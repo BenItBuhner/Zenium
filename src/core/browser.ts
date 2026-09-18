@@ -2018,6 +2018,8 @@ export class Browser {
       'extension.closeSidePanel': (_a, win) => this.extensions.closeSidePanel(win),
       'extension.setAllowPrivate': ({ id, allowed }) =>
         this.extensions.setAllowPrivate(id, allowed),
+      'extension.setAllowUserScripts': ({ id, allowed }) =>
+        this.extensions.setAllowUserScripts(id, allowed),
       'extension.reload': ({ id }) => this.extensions.reload(id),
       'extension.checkForUpdates': (_a, win) => this.extensions.checkForUpdates(win),
       'extension.update': ({ id }, win) => this.extensions.update(id, win),

@@ -406,6 +406,12 @@ export interface ExtensionInfo {
    * webRequest listeners) apply in private windows. Off by default.
    */
   allowPrivate: boolean
+  /**
+   * Chrome's "Allow user scripts": whether `chrome.userScripts` is available to the extension and
+   * its registered user scripts run in pages. Off by default; only shown for an extension whose
+   * manifest asks for the `userScripts` permission.
+   */
+  allowUserScripts: boolean
   manifestVersion: number
   permissions: string[]
   hostPermissions: string[]
@@ -2803,6 +2809,8 @@ export interface Commands {
   'extension.closeSidePanel': { args: void; result: void }
   /** Chrome's "Allow in Incognito": let the extension's request rules reach private windows. */
   'extension.setAllowPrivate': { args: { id: string; allowed: boolean }; result: void }
+  /** Chrome's "Allow user scripts": make `chrome.userScripts` available and run its scripts. */
+  'extension.setAllowUserScripts': { args: { id: string; allowed: boolean }; result: void }
   'extension.reload': { args: { id: string }; result: void }
   'extension.checkForUpdates': { args: void; result: void }
   'extension.update': { args: { id: string }; result: void }
