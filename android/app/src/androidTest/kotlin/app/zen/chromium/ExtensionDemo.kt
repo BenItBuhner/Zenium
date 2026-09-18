@@ -22,6 +22,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewCompat
 import app.zen.chromium.blocking.Request
 import app.zen.chromium.blocking.ResourceType
+import app.zen.chromium.blocking.RuleSetInfo
 import app.zen.chromium.ext.ExtensionFiles
 import app.zen.chromium.ext.ExtensionNotifications
 import app.zen.chromium.ext.ExtensionWebView
@@ -256,9 +257,19 @@ class ExtensionDemo {
         val rulesStarted = SystemClock.uptimeMillis()
         val dynamicReady = waitFor(90_000, 500) {
             val bg = backgroundView(PROBE_ID) ?: return@waitFor null
-            if (tabEval(bg, "String(typeof report === 'object' && report.dynamicRules >= 1)") == "true") true else null
+            if (tabEval(bg, "String(typeof report === 'object' && report.dynamicRules >= 1 && report.sessionRules >= 1)") == "true") true else null
         }
         results.put("dynamicRuleReadyMs", if (dynamicReady == true) SystemClock.uptimeMillis() - rulesStarted else -1)
+        // W2-3: the rules reach the request path when the engine has compiled the index the
+        // core's translator wrote; wait for that snapshot (a build per index write, debounced).
+        val engineReady = waitFor(30_000, 250) {
+            var ready = false
+            instrumentation.runOnMainSync {
+                ready = host.blocking.snapshot.ruleSets.any { it.id.startsWith("ext:$PROBE_ID:") && it.id.endsWith(":_session") }
+            }
+            if (ready) true else null
+        }
+        results.put("engineRulesReadyMs", if (engineReady == true) SystemClock.uptimeMillis() - rulesStarted else -1)
         SystemClock.sleep(2_000)
         for (i in 0 until list.length()) {
             val ext = list.getJSONObject(i)
@@ -290,6 +301,16 @@ class ExtensionDemo {
         chromeInvoke("tab.activate", """{"tabId":${JSONObject.quote(tabId)}}""")
         waitFor(10_000, 200) { if (activeTabId() == tabId) true else null }
         SystemClock.sleep(600)
+    }
+
+    /** The toolbar action of an extension for the active tab (`ExtensionInfo.action`), as the core lists it. */
+    private fun extensionAction(id: String): JSONObject? {
+        val list = state().optJSONArray("extensions") ?: return null
+        for (i in 0 until list.length()) {
+            val ext = list.optJSONObject(i) ?: continue
+            if (ext.optString("id") == id) return ext.optJSONObject("action")
+        }
+        return null
     }
 
     /** The active tab of the window's active space, as the core's snapshot reports it. */
@@ -330,6 +351,7 @@ class ExtensionDemo {
         if (worlds) mergeWorldReports(probeView, probe)
         results.put("probePage", probe)
         gradeProbe(probe)
+        matchedRules()
         val dark = json(tabEval(probeView, DARK_READER_REPORT))
         results.put("darkReader", dark)
         val darkApplied = dark.optInt("styles") > 0 && dark.optString("bodyBackground") != "rgb(255, 255, 255)"
@@ -426,6 +448,42 @@ class ExtensionDemo {
                 else -> "FAIL"
             },
             "decisions ${verdicts.entries.joinToString { "${it.key}=${it.value}" }}, control=${ads.optString("control")}/$control, page saw ${trackerUrls.keys.count { ads.optString(it) == "error" }} onerror"
+        )
+        // W2-3: the engine's decisions feed the action count. uBOL turns the badge on at startup
+        // (`setExtensionActionOptions({ displayActionCountAsBadgeText: true })`), so the toolbar
+        // action of the active tab, as the core lists it, carries the number of requests its
+        // rules stopped on the ads page: one per tracker, and no more than the decisions taken.
+        val badge = waitFor(10_000, 250) {
+            val text = extensionAction(UBOL)?.optString("badgeText") ?: ""
+            if ((text.toIntOrNull() ?: 0) >= stopped && stopped > 0) text else null
+        } ?: (extensionAction(UBOL)?.optString("badgeText") ?: "")
+        val badgeCount = badge.toIntOrNull() ?: 0
+        val blockedDecisions = all.count { it.startsWith("block ") || it.startsWith("redirect ") }
+        results.put("ubolBadge", JSONObject().put("badgeText", badge).put("stoppedTrackers", stopped).put("blockingDecisions", blockedDecisions))
+        stage(
+            UBOL, "badgeCount",
+            when {
+                stopped > 0 && badgeCount >= stopped && badgeCount <= blockedDecisions -> "PASS"
+                badgeCount > 0 -> "PARTIAL"
+                else -> "FAIL"
+            },
+            "badge=\"$badge\" trackers stopped=$stopped blocking decisions in the log=$blockedDecisions"
+        )
+        // W2-3: decision latency is what `EngineSnapshot.decide` took per request (the observer's
+        // elapsed time), over every decision the log holds up to here: uBOL's ~18.5k enabled rules
+        // plus the probe's and the default lists. The provisional matcher (`NetRules.kt`) measured
+        // an 18–54 ms p90 on the same page; the engine-level target is single-digit milliseconds.
+        val micros = results.optJSONObject("decisionMicros") ?: JSONObject()
+        val p90Us = micros.optLong("p90Us", -1)
+        stage(
+            UBOL, "decisionLatency",
+            when {
+                p90Us < 0 -> "FAIL"
+                p90Us < 10_000 -> "PASS"
+                p90Us < 18_000 -> "PARTIAL"
+                else -> "FAIL"
+            },
+            "n=${micros.optInt("count")} median=${micros.optLong("medianUs")}us p90=${p90Us}us max=${micros.optLong("maxUs")}us (provisional matcher p90: 18–54 ms)"
         )
         val ubolPopup = popupDemo(UBOL, "06-ubol-popup", 45_000, { view -> tabEval(view, "String(document.body && document.body.innerText.length > 20)") == "true" }) { view ->
             stage(UBOL, "popup", "PASS", tabEval(view, "document.body.innerText.slice(0, 200)").take(120))
@@ -828,16 +886,25 @@ class ExtensionDemo {
      * with `tabs.query`. Allowed in private tabs (`extension.setAllowPrivate`, the record change
      * the runtime's `reconfigure` hook reads), a reload brings the probe's units and the query
      * lists the tab; the toggle goes back afterwards.
+     *
+     * W2-3 adds the network side: the probe's declarativeNetRequest rules (static `ads=1`, dynamic
+     * `dyn=1`, session `sess=1`) reach the engine scoped to the partitions the extension is loaded
+     * into, so the private tab's pixels all load while the probe is disallowed there, and the
+     * three go the way they do in a normal tab once it is allowed. The engine's compiled snapshot
+     * is read for the scope (`RuleSetInfo.partitions`) before each load rather than sleeping for
+     * the translator round trip.
      */
     private fun privateTabs() {
         val report = JSONObject()
         val url = "$BASE/probe.html?private=1"
+        report.put("rulesReachPrivateBefore", probeRulesReachPrivate())
         val tab = chromeInvoke("tab.create", """{"url":${JSONObject.quote(url)},"active":true,"containerId":"private"}""").trim('"')
         val view = waitForView(tab)
         waitFor(30_000) { if (tabEval(view, "document.readyState") == "complete") true else null }
         SystemClock.sleep(1_500)
         report.put("containerId", state().optJSONObject("tabs")?.optJSONObject(tab)?.optString("containerId"))
         report.put("cssWhileDisallowed", tabEval(view, PROBE_CSS))
+        report.put("pixelsWhileDisallowed", pixels(view))
         var verdict = "FAIL"
         val bg = probeBackground()
         if (bg == null) {
@@ -845,28 +912,103 @@ class ExtensionDemo {
         } else {
             report.put("listedWhileDisallowed", queryTabs(bg, url))
             chromeInvoke("extension.setAllowPrivate", """{"id":${JSONObject.quote(PROBE_ID)},"allowed":true}""")
-            SystemClock.sleep(1_500)
+            report.put("rescopedToPrivateMs", timeUntil(15_000) { probeRulesReachPrivate() == true })
+            SystemClock.sleep(1_000)
             chromeInvoke("tab.reload", """{"tabId":${JSONObject.quote(tab)}}""")
             SystemClock.sleep(400)
             val reloaded = waitForView(tab)
             waitFor(30_000) { if (tabEval(reloaded, "document.readyState") == "complete") true else null }
             SystemClock.sleep(1_500)
             report.put("cssWhenAllowed", tabEval(reloaded, PROBE_CSS))
+            report.put("pixelsWhenAllowed", pixels(reloaded))
             report.put("listedWhenAllowed", queryTabs(bg, url))
             chromeInvoke("extension.setAllowPrivate", """{"id":${JSONObject.quote(PROBE_ID)},"allowed":false}""")
-            SystemClock.sleep(1_000)
+            report.put("rescopedBackMs", timeUntil(15_000) { probeRulesReachPrivate() == false })
+            SystemClock.sleep(600)
             val kept = report.optString("cssWhileDisallowed") == "" && report.optInt("listedWhileDisallowed", -1) == 0
             val admitted = report.optString("cssWhenAllowed") == "injected" && report.optInt("listedWhenAllowed", -1) == 1
+            val before = report.optJSONObject("pixelsWhileDisallowed") ?: JSONObject()
+            val after = report.optJSONObject("pixelsWhenAllowed") ?: JSONObject()
+            val untouched = listOf("ads", "dyn", "sess", "ok").all { before.optString(it) == "loaded" }
+            val ruled = listOf("ads", "dyn", "sess").all { after.optString(it) == "error" } && after.optString("ok") == "loaded"
+            report.put("rulesUntouchedWhileDisallowed", untouched).put("rulesAppliedWhenAllowed", ruled)
             verdict = when {
-                kept && admitted -> "PASS"
-                kept || admitted -> "PARTIAL"
+                kept && admitted && untouched && ruled -> "PASS"
+                kept || admitted || untouched || ruled -> "PARTIAL"
                 else -> "FAIL"
             }
         }
         results.put("privateTabs", report)
-        stage(PROBE_ID, "privateTabs", verdict, report.toString().take(500))
+        stage(PROBE_ID, "privateTabs", verdict, report.toString().take(700))
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(tab)},"force":true}""")
         SystemClock.sleep(800)
+    }
+
+    /**
+     * W2-3: the engine's decisions on the probe page's pixels come back to the extension the way
+     * Chrome reports them. `onRuleMatchedDebug` (unpacked extensions) named the rule and ruleset
+     * of each match as it happened – the probe's background keeps them in `report.ruleMatches` –
+     * and `getMatchedRules` (`declarativeNetRequestFeedback`) lists the matches of the last
+     * minutes per tab from the same record. The three rulesets that decided the probe page's
+     * pixels – the manifest's `probe`, `_dynamic` and `_session` – must show up in both.
+     */
+    private fun matchedRules() {
+        val report = JSONObject()
+        var verdict = "FAIL"
+        val bg = probeBackground()
+        if (bg == null) {
+            report.put("error", "no probe background")
+        } else {
+            val readDebug = { runCatching { JSONArray(tabEval(bg, "JSON.stringify(report.ruleMatches || [])")) }.getOrDefault(JSONArray()) }
+            val debug = waitFor(10_000, 250) { readDebug().takeIf { it.length() >= 3 } } ?: readDebug()
+            report.put("onRuleMatchedDebug", debug)
+            tabEval(bg, "__askMatchedRules()")
+            val raw = waitFor(10_000, 250) { tabEval(bg, "JSON.stringify(self.__matchedRules)").takeIf { it != "null" } }
+            val matched = raw?.let { runCatching { JSONArray(it) }.getOrNull() }
+            report.put("getMatchedRules", matched ?: raw ?: "no answer")
+            val want = setOf("probe", "_dynamic", "_session")
+            val debugSets = (0 until debug.length()).map { debug.getJSONObject(it).optString("rulesetId") }.toSet()
+            val matchedSets = matched?.let { m -> (0 until m.length()).map { m.getJSONObject(it).optString("rulesetId") }.toSet() } ?: emptySet()
+            report.put("debugRulesets", JSONArray(debugSets.sorted())).put("matchedRulesets", JSONArray(matchedSets.sorted()))
+            verdict = when {
+                want.all { it in debugSets } && want.all { it in matchedSets } -> "PASS"
+                (debugSets intersect want).isNotEmpty() || (matchedSets intersect want).isNotEmpty() -> "PARTIAL"
+                else -> "FAIL"
+            }
+        }
+        results.put("matchedRules", report)
+        stage(
+            PROBE_ID, "matchedRules", verdict,
+            "onRuleMatchedDebug rulesets=${report.opt("debugRulesets")} (${report.optJSONArray("onRuleMatchedDebug")?.length() ?: 0} events) " +
+                "getMatchedRules rulesets=${report.opt("matchedRulesets")}"
+        )
+    }
+
+    /** The probe page's pixel outcomes (`__page.images`: `loaded` | `error` per name), once all four settled. */
+    private fun pixels(view: TabWebView): JSONObject {
+        waitFor(15_000, 250) {
+            if (tabEval(view, "String(Object.keys((window.__page || {}).images || {}).length >= 4)") == "true") true else null
+        }
+        return json(tabEval(view, "JSON.stringify((window.__page || {}).images || {})"))
+    }
+
+    /**
+     * Whether the engine's compiled snapshot lets the probe's rule sets take part in private tabs
+     * (`RuleSetInfo.appliesTo("private")`, every set of the extension agreeing); null while the
+     * snapshot holds none of them.
+     */
+    private fun probeRulesReachPrivate(): Boolean? {
+        var sets: List<RuleSetInfo> = emptyList()
+        instrumentation.runOnMainSync { sets = host.blocking.snapshot.ruleSets.filter { it.id.startsWith("ext:$PROBE_ID:") } }
+        if (sets.isEmpty()) return null
+        return sets.all { it.appliesTo("private") }
+    }
+
+    /** Milliseconds until `ready` holds, polled every 200 ms; -1 when it did not within `timeoutMs`. */
+    private fun timeUntil(timeoutMs: Long, ready: () -> Boolean): Long {
+        val started = SystemClock.uptimeMillis()
+        val done = waitFor(timeoutMs, 200) { if (ready()) true else null }
+        return if (done == true) SystemClock.uptimeMillis() - started else -1
     }
 
     /**
@@ -1660,15 +1802,17 @@ class ExtensionDemo {
         val images = page.optJSONObject("images") ?: JSONObject()
         val ads = images.optString("ads")
         val dyn = images.optString("dyn")
+        val sess = images.optString("sess")
         val ok = images.optString("ok")
         stage(
             PROBE_ID, "declarativeNetRequest",
             when {
-                ads == "error" && dyn == "error" && ok == "loaded" -> "PASS"
-                ok == "loaded" && (ads == "error" || dyn == "error") -> "PARTIAL"
+                ads == "error" && dyn == "error" && sess == "error" && ok == "loaded" -> "PASS"
+                ok == "loaded" && (ads == "error" || dyn == "error" || sess == "error") -> "PARTIAL"
                 else -> "FAIL"
             },
-            "static rule (ads=1)=$ads dynamic rule (dyn=1)=$dyn control (ok=1)=$ok"
+            "static rule (ads=1)=$ads dynamic rule (dyn=1)=$dyn session rule (sess=1)=$sess control (ok=1)=$ok " +
+                "(background: dynamicRules=${bg?.opt("dynamicRules")} sessionRules=${bg?.opt("sessionRules")})"
         )
         results.put(
             "isolation",

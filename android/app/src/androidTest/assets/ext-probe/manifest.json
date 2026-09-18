@@ -12,6 +12,7 @@
     "scripting",
     "webNavigation",
     "declarativeNetRequest",
+    "declarativeNetRequestFeedback",
     "contextMenus",
     "cookies",
     "notifications",
