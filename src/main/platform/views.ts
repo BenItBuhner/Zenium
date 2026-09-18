@@ -7,7 +7,11 @@ import {
   nativeImage,
   net,
   type BrowserWindow,
-  type WebContents
+  type BrowserWindowConstructorOptions,
+  type LoadURLOptions,
+  type Session,
+  type WebContents,
+  type WebPreferences
 } from 'electron'
 import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
@@ -25,7 +29,8 @@ import type {
   TabViewEvents,
   TabViewHost,
   WindowHost,
-  WindowOpenDisposition
+  WindowOpenDisposition,
+  WindowOpenTicket
 } from '../../core/platform'
 import type { SessionManager } from './sessions'
 import { downloadDir } from './downloads'
@@ -74,12 +79,39 @@ export interface ViewNavigationHint {
   typed?: boolean
 }
 
+/** What Electron hands `createWindow`: the window options plus the page Chromium made, if any. */
+type ChildWindowOptions = BrowserWindowConstructorOptions & { webContents?: WebContents }
+
+/** What every tab page runs with; `session` picks the container (omitted for pages that exist). */
+function pageWebPreferences(session?: Session): WebPreferences {
+  return {
+    ...(session ? { session } : {}),
+    preload: pagePreload,
+    sandbox: true,
+    contextIsolation: true,
+    nodeIntegration: false,
+    // Preloads reach sub-frames too: the extension API layer's preload installs `chrome.*`
+    // in extension iframes (content-script UIs, extension pages embedding their own
+    // frames); `page.ts` keeps to the top document.
+    nodeIntegrationInSubFrames: true,
+    webSecurity: true,
+    allowRunningInsecureContent: false,
+    spellcheck: true,
+    safeDialogs: true,
+    autoplayPolicy: 'document-user-activation-required',
+    backgroundThrottling: true,
+    scrollBounce: true,
+    enableWebSQL: false
+  }
+}
+
 /**
  * A tab page hosted in a `WebContentsView`. The view is a child of whichever window currently
- * owns the tab's live page (Zen's window sync moves it between windows).
+ * owns the tab's live page (Zen's window sync moves it between windows). Built by
+ * `ElectronTabViewHost`, which wires the core's events once the tab exists – a page Chromium
+ * created for `window.open` is adopted after the fact.
  */
 export class ElectronTabView implements TabView {
-  readonly view: WebContentsView
   /** Captured up front: on Electron 44 `view.webContents` is already undefined when `destroyed` fires. */
   readonly webContentsId: number
   /**
@@ -97,40 +129,15 @@ export class ElectronTabView implements TabView {
    * returns the function that withdraws the announcement when it does not.
    */
   onNavigationTarget: ((source: WebContents, url: string) => () => void) | null = null
+  private events!: TabViewEvents
 
   constructor(
-    host: ElectronWindow,
-    tab: Tab,
-    sessions: SessionManager,
-    private readonly events: TabViewEvents,
-    private readonly onDestroyed: (view: ElectronTabView) => void
+    readonly view: WebContentsView,
+    private readonly owner: ElectronTabViewHost
   ) {
-    this.view = new WebContentsView({
-      webPreferences: {
-        session: sessions.get(tab.containerId),
-        preload: pagePreload,
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-        // Preloads reach sub-frames too: the extension API layer's preload installs `chrome.*`
-        // in extension iframes (content-script UIs, extension pages embedding their own
-        // frames); `page.ts` keeps to the top document.
-        nodeIntegrationInSubFrames: true,
-        webSecurity: true,
-        allowRunningInsecureContent: false,
-        spellcheck: true,
-        safeDialogs: true,
-        autoplayPolicy: 'document-user-activation-required',
-        backgroundThrottling: true,
-        scrollBounce: true,
-        enableWebSQL: false
-      }
-    })
     this.wc = this.view.webContents
     this.webContentsId = this.wc.id
     this.view.setVisible(false)
-    this.wire(tab)
-    this.attachTo(host)
   }
 
   get webContents(): WebContents {
@@ -143,9 +150,12 @@ export class ElectronTabView implements TabView {
     return bw && !bw.isDestroyed() ? bw : null
   }
 
-  private wire(tab: Tab): void {
+  /** Connect the page's events to its tab; called exactly once, right after the tab exists. */
+  wire(events: TabViewEvents, tab: Tab): void {
+    this.events = events
     const wc = this.wc
-    const ev = this.events
+    const ev = events
+    const id = wc.id
     wc.on('did-start-loading', () => ev.onStartLoading())
     wc.on('did-stop-loading', () => ev.onStopLoading())
     wc.on('did-navigate', (_e, url) => ev.onNavigated(url, false))
@@ -214,30 +224,50 @@ export class ElectronTabView implements TabView {
     // the view's reference before emitting), which is why the captured `wc` is used throughout.
     wc.on('destroyed', () => {
       ev.onDestroyed()
-      this.onDestroyed(this)
+      this.owner.forget(id)
     })
     // Trusted input on its way to the page: the core's user-activation clock for pop-ups.
     wc.on('input-event', (_e, input) => {
       if (isActivatingInput(input)) ev.onUserActivation()
     })
-    wc.setWindowOpenHandler(({ url, disposition }) => {
+    wc.setWindowOpenHandler(({ url, disposition, features, referrer, postBody }) => {
       // Announced before the core creates the tab, so the new view finds the pending target.
       const cancelTarget = this.onNavigationTarget?.(wc, url)
-      // Electron does not say whether the user asked; the core knows from the activation clock.
-      const verdict = ev.onOpenWindow(url, disposition as WindowOpenDisposition, null)
-      if (verdict !== 'tab') cancelTarget?.()
-      if (verdict === 'popup') {
-        return {
-          action: 'allow',
-          overrideBrowserWindowOptions: {
-            width: 720,
-            height: 640,
-            autoHideMenuBar: true,
-            webPreferences: { preload: undefined, sandbox: true, contextIsolation: true }
-          }
-        }
+      // Electron does not say whether the user asked; the core knows from the activation clock
+      // and its pop-up blocker answers null for a window the page may not open.
+      const ticket = ev.onOpenWindow(
+        url,
+        disposition as WindowOpenDisposition,
+        null,
+        features ?? ''
+      )
+      if (!ticket) {
+        cancelTarget?.()
+        return { action: 'deny' }
       }
-      return { action: 'deny' }
+      // Chromium's own bare window never shows. The page it creates for a script `window.open`
+      // keeps its opener link and is adopted into the Zenium tab or window the core asked for; a
+      // link's new window (Shift+click) gets a fresh page there. Only security preferences are
+      // inherited, so the page preload is handed down explicitly. Like Chrome, the new page is
+      // not torn down when its opener navigates away or closes.
+      return {
+        action: 'allow',
+        outlivesOpener: true,
+        overrideBrowserWindowOptions: { webPreferences: pageWebPreferences() },
+        // Electron passes the page it created (if any) alongside the window options.
+        createWindow: (options) =>
+          this.owner.openTicket(ticket, this, (options as ChildWindowOptions).webContents, {
+            httpReferrer: referrer,
+            ...(postBody
+              ? {
+                  postData: postBody.data,
+                  extraHeaders: `content-type: ${postBody.contentType}${
+                    postBody.boundary ? `; boundary=${postBody.boundary}` : ''
+                  }`
+                }
+              : {})
+          })
+      }
     })
   }
 
@@ -390,6 +420,10 @@ export class ElectronTabView implements TabView {
 
   focus(): void {
     this.wc.focus()
+  }
+
+  isFocused(): boolean {
+    return !this.wc.isDestroyed() && this.wc.isFocused()
   }
 
   isDestroyed(): boolean {
@@ -795,16 +829,15 @@ export class ElectronTabViewHost implements TabViewHost {
   constructor(private readonly sessions: SessionManager) {}
 
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView {
-    // The view no longer has web contents by the time `destroyed` fires: the id is kept here.
-    let id = -1
-    const view = new ElectronTabView(host as ElectronWindow, tab, this.sessions, events, () => {
-      this.byWebContentsId.delete(id)
-      this.tabIds.delete(id)
-    })
-    id = view.webContentsId
-    this.byWebContentsId.set(id, view)
-    this.tabIds.set(id, tab.id)
-    for (const listener of this.viewListeners) listener(view)
+    const view = new ElectronTabView(
+      new WebContentsView({
+        webPreferences: pageWebPreferences(this.sessions.get(tab.containerId))
+      }),
+      this
+    )
+    view.wire(events, tab)
+    view.attachTo(host)
+    this.track(view, tab.id)
     return view
   }
 
@@ -813,6 +846,48 @@ export class ElectronTabViewHost implements TabViewHost {
     this.viewListeners.add(listener)
     for (const view of this.byWebContentsId.values()) listener(view)
     return () => this.viewListeners.delete(listener)
+  }
+
+  /**
+   * Complete the core's answer to a page opening a window (Electron's `createWindow` callback).
+   * The new tab adopts `guest`, the opener-linked page Chromium made for a script `window.open`;
+   * a window opened from a link has no page yet and gets a fresh one in the opener's session,
+   * pointed at the URL. Returns the page Electron should consider the child window's.
+   */
+  openTicket(
+    ticket: WindowOpenTicket,
+    opener: ElectronTabView,
+    guest: WebContents | undefined,
+    load: LoadURLOptions
+  ): WebContents {
+    const view = new ElectronTabView(
+      guest
+        ? new WebContentsView({ webContents: guest })
+        : new WebContentsView({
+            webPreferences: pageWebPreferences(opener.webContents.session)
+          }),
+      this
+    )
+    const { tab, events } = ticket.adopt(view)
+    view.wire(events, tab)
+    this.track(view, tab.id)
+    // A link's new window navigates from here (Electron only does so for windows it creates);
+    // the referrer and any form body come along as they would in Chrome.
+    if (!guest) void view.webContents.loadURL(ticket.url, load).catch(() => undefined)
+    return guest ?? view.webContents
+  }
+
+  /** A page went away; its web contents id no longer maps to a tab. */
+  forget(webContentsId: number): void {
+    this.byWebContentsId.delete(webContentsId)
+    this.tabIds.delete(webContentsId)
+  }
+
+  /** Map the page to its tab, then let the followers (the extension API layer) see the view. */
+  private track(view: ElectronTabView, tabId: string): void {
+    this.byWebContentsId.set(view.webContentsId, view)
+    this.tabIds.set(view.webContentsId, tabId)
+    for (const listener of this.viewListeners) listener(view)
   }
 
   tabIdForWebContents(wc: WebContents): string | undefined {

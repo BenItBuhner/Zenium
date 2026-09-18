@@ -151,6 +151,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sidebarExpanded: true,
   sidebarExpandOnHover: false,
   borderless: false,
+  windowMaterial: 'none',
   compactMode: {
     enabled: false,
     hideSidebar: true,
@@ -187,8 +188,10 @@ export const DEFAULT_SETTINGS: Settings = {
   externalProtocols: {},
   passwords: structuredClone(DEFAULT_PASSWORD_SETTINGS),
   defaultBrowserPromo: structuredClone(DEFAULT_PROMO_STATE),
+  defaultBrowserPromptDismissed: null,
   blocking: structuredClone(DEFAULT_BLOCKING_SETTINGS),
-  pageControls: structuredClone(DEFAULT_PAGE_CONTROLS)
+  pageControls: structuredClone(DEFAULT_PAGE_CONTROLS),
+  bookmarksBar: 'newtab'
 }
 
 /** Firefox's four default containers plus "No Container". */

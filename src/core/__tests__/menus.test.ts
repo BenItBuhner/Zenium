@@ -22,6 +22,8 @@ import { NAVIGATION_MENU_MAX, navigationWindow } from '../menus'
  */
 const DESKTOP: HostCapabilities = {
   windowControls: true,
+  windowControlsOverlay: false,
+  windowMaterial: false,
   nativeMenus: true,
   windowDrag: true,
   devtools: true,
@@ -53,6 +55,8 @@ const DESKTOP: HostCapabilities = {
  */
 const ANDROID: HostCapabilities = {
   windowControls: false,
+  windowControlsOverlay: false,
+  windowMaterial: false,
   nativeMenus: false,
   windowDrag: false,
   devtools: false,
@@ -178,6 +182,7 @@ const DESKTOP_APP_MENU = [
   'Bookmarks > Bookmark All Tabs…',
   'Bookmarks > -',
   'Bookmarks > Show Bookmarks',
+  'Bookmarks > Show Bookmarks Bar',
   'Bookmarks > -',
   'Bookmarks > Import Bookmarks…',
   'Bookmarks > Export Bookmarks…',

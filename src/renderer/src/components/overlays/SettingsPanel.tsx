@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useState } from 'react'
 import { ArrowDown, ArrowUp, Check, Sparkles, Trash2 } from 'lucide-react'
 import type {
+  BookmarksBarMode,
   ColorScheme,
   ContainerColor,
   ContainerIcon as ContainerIconName,
@@ -34,10 +35,11 @@ import { Switch } from '../ui/switch'
 import { AgentsSection } from './AgentsSection'
 import { AppIconGroup } from './AppIconPicker'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
+import { DefaultBrowserSection } from './DefaultBrowserSection'
 import { OverlayShell } from './OverlayShell'
 import { AccessibilitySection, SitesGroups } from './PageControlsSettings'
 import { ResourcesSection } from './ResourcesSection'
-import { Choice, Group, Row, Segmented } from './SettingsPrimitives'
+import { Choice, Group, MENULIST_HEIGHT, Row, SWITCH_HEIGHT, Segmented } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
 import { SyncSection } from './SyncSection'
 import { UpdatesSection } from './UpdatesSection'
@@ -57,6 +59,7 @@ export type SettingsSection =
   | 'agents'
   | 'sync'
   | 'shortcuts'
+  | 'default-browser'
   | 'updates'
   | 'about'
 
@@ -75,6 +78,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'agents', label: 'AI Agents' },
   { id: 'sync', label: 'Sync' },
   { id: 'shortcuts', label: 'Keyboard Shortcuts' },
+  { id: 'default-browser', label: 'Default Browser' },
   { id: 'updates', label: 'Updates' },
   { id: 'about', label: 'About' }
 ]
@@ -86,11 +90,21 @@ const SECTION_CAPABILITY: Partial<Record<SettingsSection, keyof HostCapabilities
   extensions: 'extensions',
   agents: 'agents',
   sync: 'sync',
+  'default-browser': 'defaultBrowser',
   updates: 'updates'
 }
 
-function availableSections(caps: HostCapabilities): typeof SECTIONS {
+/**
+ * The browser role has its own section on the desktop OSes (registration, status and the way to
+ * Windows Settings need the room); Android keeps the one row under About.
+ */
+function hasDefaultBrowserSection(platform: Platform): boolean {
+  return platform !== 'android'
+}
+
+function availableSections(caps: HostCapabilities, platform: Platform): typeof SECTIONS {
   return SECTIONS.filter((s) => {
+    if (s.id === 'default-browser' && !hasDefaultBrowserSection(platform)) return false
     const cap = SECTION_CAPABILITY[s.id]
     return !cap || caps[cap]
   })
@@ -130,7 +144,7 @@ export function SettingsPanel({
   // The open section lives in the UI store so main-process events can retarget the panel while
   // it stays mounted (e.g. "Resource Settings…" from a menu).
   const stored = uiStore.use((u) => u.overlaySection)
-  const sections = availableSections(state.capabilities)
+  const sections = availableSections(state.capabilities, state.platform)
   const section = resolveSection(stored ?? initialSection, sections)
   const setSection = (id: SettingsSection): void => uiStore.set({ overlaySection: id })
   const s = state.settings
@@ -185,6 +199,7 @@ export function SettingsPanel({
             {section === 'agents' && <AgentsSection state={state} set={set} />}
             {section === 'sync' && <SyncSection state={state} />}
             {section === 'shortcuts' && <ShortcutsSection state={state} />}
+            {section === 'default-browser' && <DefaultBrowserSection state={state} />}
             {section === 'updates' && <UpdatesSection state={state} set={set} />}
             {section === 'about' && <AboutSection state={state} setSection={setSection} />}
           </div>
@@ -216,7 +231,7 @@ function LookSection({
   return (
     <>
       <Group title="Appearance">
-        <Row label="Colour scheme">
+        <Row label="Colour scheme" control={MENULIST_HEIGHT}>
           <Choice<ColorScheme>
             value={s.colorScheme}
             onChange={(v) => set({ colorScheme: v })}
@@ -259,9 +274,50 @@ function LookSection({
         <Row label="Remove browser padding" hint="Hide the rounded frame around web content.">
           <Switch checked={s.borderless} onCheckedChange={(v) => set({ borderless: v })} />
         </Row>
+        {caps.windowMaterial && (
+          <Row
+            label="Use Windows transparency effects"
+            hint="Let the desktop show through the window frame (Mica). Applies to new windows."
+            control={SWITCH_HEIGHT}
+          >
+            <Switch
+              checked={s.windowMaterial === 'mica'}
+              onCheckedChange={(v) => set({ windowMaterial: v ? 'mica' : 'none' })}
+            />
+          </Row>
+        )}
       </Group>
       {caps.pageControls && <SitesGroups s={s} set={set} />}
       <AppIconGroup value={s.appIcon} platform={platform} onChange={(id) => set({ appIcon: id })} />
+      <Group title="Bookmarks">
+        <Row
+          label="Show bookmarks bar"
+          hint="Always, only on the new tab page, or never. Compact mode hides it with the toolbar."
+        >
+          <Choice<BookmarksBarMode>
+            value={s.bookmarksBar}
+            onChange={(v) => set({ bookmarksBar: v })}
+            options={[
+              { value: 'always', label: 'Always' },
+              { value: 'newtab', label: 'Only on new tab page' },
+              { value: 'never', label: 'Never' }
+            ]}
+          />
+        </Row>
+        <Row
+          label="Import and export"
+          hint="Netscape HTML files that Chrome, Edge and Firefox share."
+        >
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => void run('bookmark.import', undefined)}>
+              Import
+            </Button>
+            <Button variant="secondary" onClick={() => void run('bookmark.export', undefined)}>
+              Export
+            </Button>
+          </div>
+        </Row>
+      </Group>
       <Group title="URL Bar">
         <Row label="Floating behaviour">
           <Choice<UrlbarBehavior>
@@ -895,7 +951,7 @@ function AboutSection({
           <span />
         )}
       </Row>
-      {state.capabilities.defaultBrowser && (
+      {state.capabilities.defaultBrowser && !hasDefaultBrowserSection(state.platform) && (
         <DefaultBrowserRow isDefault={state.defaultBrowser.isDefault} />
       )}
       <Row

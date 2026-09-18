@@ -30,6 +30,7 @@ const ext = (over: Partial<ExtensionInfo>): ExtensionInfo => ({
   pinned: false,
   toolbarPinned: true,
   allowFileAccess: false,
+  allowPrivate: false,
   manifestVersion: 3,
   permissions: [],
   hostPermissions: [],

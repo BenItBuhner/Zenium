@@ -34,6 +34,11 @@ export interface ExtensionRecord {
   toolbarPinned: boolean
   /** Chrome's "Allow access to file URLs" toggle; off by default like Chrome. */
   allowFileAccess: boolean
+  /**
+   * Chrome's "Allow in Incognito": whether the extension's request rules and listeners reach
+   * private windows. Off by default; the private session itself loads no extension yet.
+   */
+  allowPrivate: boolean
   manifestVersion: number
   name: string
   description: string
@@ -132,6 +137,7 @@ export interface NewRecordOptions {
   updateUrl?: string | null
   enabled?: boolean
   allowFileAccess?: boolean
+  allowPrivate?: boolean
 }
 
 export function newRecord(options: NewRecordOptions): ExtensionRecord {
@@ -149,6 +155,7 @@ export function newRecord(options: NewRecordOptions): ExtensionRecord {
     pinned: false,
     toolbarPinned: false,
     allowFileAccess: options.allowFileAccess ?? false,
+    allowPrivate: options.allowPrivate ?? false,
     manifestVersion: fields.manifestVersion,
     name: fields.name,
     description: fields.description,
@@ -278,6 +285,7 @@ function sanitizeRecord(entry: unknown, now: number): ExtensionRecord | null {
     pinned: r.pinned === true,
     toolbarPinned: r.toolbarPinned === true,
     allowFileAccess: r.allowFileAccess === true,
+    allowPrivate: r.allowPrivate === true,
     manifestVersion: typeof r.manifestVersion === 'number' ? r.manifestVersion : 2,
     name: str(r.name),
     description: str(r.description),

@@ -27,7 +27,7 @@ interface Props {
   onPointerLeave?: () => void
 }
 
-const COLLAPSED_WIDTH = 56
+export const COLLAPSED_WIDTH = 56
 
 export function Sidebar({ state, isDark, floating, onPointerLeave }: Props): JSX.Element {
   const space = activeSpace(state)

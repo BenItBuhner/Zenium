@@ -36,7 +36,9 @@ function setup(kind: 'synced' | 'private' = 'synced'): {
     activeSpaceId: state.model.activeSpaceId,
     selection: {},
     compact: false,
-    localSpace: null
+    localSpace: null,
+    chrome: 'full',
+    material: 'none'
   })
   const suggestions = new SuggestionService(browser)
   return { suggestions, bookmarks, history, win }

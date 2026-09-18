@@ -1,4 +1,4 @@
-import type { UiState } from '@renderer/lib/ui'
+import { bookmarkChromeOpen, type UiState } from '@renderer/lib/ui'
 
 /** The parts of the UI state that decide what covers the content frame. */
 export type ScrimInput = Pick<
@@ -14,6 +14,10 @@ export type ScrimInput = Pick<
   | 'tabsMenu'
   | 'securityPromptOpen'
   | 'stageActive'
+  | 'starDialog'
+  | 'bookmarkEdit'
+  | 'bookmarkAllTabs'
+  | 'barMenuOpen'
   | 'extensionPrompts'
   | 'extensionPopup'
   | 'floatingChrome'
@@ -37,7 +41,8 @@ export function extensionChromeScrim(ui: ScrimInput): 'none' | 'dialog' | null {
     ui.barEditorOpen ||
     ui.tabsMenu !== null ||
     ui.securityPromptOpen ||
-    ui.stageActive
+    ui.stageActive ||
+    bookmarkChromeOpen(ui)
   if (shipped) return null
   if (ui.extensionPrompts.length > 0) return 'dialog'
   if (ui.extensionPopup !== null || ui.floatingChrome > 0) return 'none'

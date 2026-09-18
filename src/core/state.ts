@@ -79,6 +79,8 @@ import { defer, type StoreIO } from './platform'
 import { sanitizeClosedEntries, summarizeClosed } from './session'
 import type { ZenWindow } from './window'
 
+const BOOKMARKS_BAR_MODES: ReadonlyArray<Settings['bookmarksBar']> = ['always', 'newtab', 'never']
+
 /** A synced window as remembered between sessions (blank / private windows are never restored). */
 export interface PersistedWindow {
   id: string
@@ -189,6 +191,8 @@ export class BrowserState {
   resources: ResourceSnapshot = emptyResourceSnapshot()
   /** Device facts from the host (Android reports them at boot and on configuration changes). */
   pageEnvironment: PageEnvironment = { ...DEFAULT_PAGE_ENVIRONMENT }
+  /** The host's reading of the OS colour scheme (null: the renderer reads its media query). */
+  systemDark: boolean | null = null
   windowBounds: Rect | null = null
   /** Windows to restore on startup (from the previous session). */
   restoredWindows: PersistedWindow[] = []
@@ -308,6 +312,9 @@ export class BrowserState {
     this.settings.defaultBrowserPromo = sanitizePromoState(data.settings?.defaultBrowserPromo)
     this.settings.blocking = sanitizeBlockingSettings(data.settings?.blocking)
     this.settings.pageControls = sanitizePageControls(data.settings?.pageControls)
+    if (!BOOKMARKS_BAR_MODES.includes(this.settings.bookmarksBar)) {
+      this.settings.bookmarksBar = DEFAULT_SETTINGS.bookmarksBar
+    }
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     this.bookmarks = this.loadBookmarks(data)
     if (Array.isArray(data.windows) && data.windows.length) {
@@ -556,6 +563,7 @@ export class BrowserState {
       platform: this.platform,
       capabilities: this.capabilities,
       version: this.version,
+      systemDark: this.systemDark,
       tabs,
       essentialTabIds,
       spaces,

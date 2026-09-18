@@ -67,6 +67,13 @@ describe("Zen's default shortcuts (Linux/Windows)", () => {
   it('does not bind Ctrl+Shift+K to the web console (Zen reuses it)', () => {
     expect(key('key_webconsole')).toBeNull()
   })
+
+  it('binds the bookmarks bar to Ctrl+Shift+B without colliding with another default', () => {
+    const binding = ctrl('b', { shift: true })
+    expect(key('viewBookmarksToolbarKb')).toEqual(binding)
+    expect(findConflicts(defaultShortcuts('linux'), binding, 'viewBookmarksToolbarKb')).toEqual([])
+    expect(key('bookmarkAllTabsKb')).toBeNull()
+  })
 })
 
 describe("Zen's default shortcuts (macOS)", () => {

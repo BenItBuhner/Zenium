@@ -120,6 +120,7 @@ export class NoExtensions implements ExtensionHost {
   setPinned(): void {}
   setToolbarPinned(): void {}
   async setAllowFileAccess(): Promise<void> {}
+  setAllowPrivate(): void {}
   async reload(): Promise<void> {}
   async checkForUpdates(): Promise<void> {}
   async update(): Promise<void> {}

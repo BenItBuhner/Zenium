@@ -12,6 +12,8 @@ interface HostGlobal {
 const STORAGE_PREFIX = 'zen-preview:'
 /** How long a reload takes to begin in this stand-in host (see `view.reload`). */
 const RELOAD_DELAY_MS = 3000
+/** Where the dev server keeps the documents `view.loadHtml` shows (see `vite.android.config.ts`). */
+const PAGE_ROUTE = '/__zen/page/'
 /** Whether the preview "holds the browser role" (outside the file store: it is not profile data). */
 const DEFAULT_BROWSER_KEY = 'zen-preview-default-browser'
 
@@ -42,6 +44,22 @@ export function createPreviewBridge(): NativeBridge {
     canGoBack: false,
     canGoForward: false
   })
+
+  let pageSerial = 0
+  /**
+   * Shows `html` in the frame as a document of its own, served by the dev server, the way the
+   * WebView's `loadDataWithBaseURL` shows it. As `srcdoc` the document would inherit the chrome's
+   * Content Security Policy (`script-src 'self'`), which blocks the inline script and handlers a
+   * zen:// page runs (the error page's theme and Reload among them). A load that began after this
+   * one owns the frame.
+   */
+  const showDocument = async (frame: HTMLIFrameElement, html: string): Promise<void> => {
+    const id = String(++pageSerial)
+    frame.dataset.load = id
+    const stored = await fetch(PAGE_ROUTE + id, { method: 'PUT', body: html })
+    if (!stored.ok || frame.dataset.load !== id) return
+    frame.src = PAGE_ROUTE + id
+  }
 
   // `?sdk=32` stands in for an older release (below 33 the chrome confirms copies itself).
   const sdkInt = Number(new URLSearchParams(location.search).get('sdk')) || 34
@@ -100,6 +118,7 @@ export function createPreviewBridge(): NativeBridge {
       if (!frame) return
       frame.dataset.url = String(url)
       frame.dataset.title = ''
+      frame.dataset.load = ''
       viewEvent(String(tabId), 'startLoading', null)
       frame.src = String(url)
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
@@ -117,7 +136,7 @@ export function createPreviewBridge(): NativeBridge {
       const frame = views.get(String(tabId))
       if (!frame) return
       frame.dataset.url = String(url)
-      frame.srcdoc = String(html)
+      void showDocument(frame, String(html))
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
     },
     'view.setBounds': ({ tabId, rect }) => {

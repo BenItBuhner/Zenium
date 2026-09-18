@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { ServiceWorkerMain, Session, WebContents, WebFrameMain } from 'electron'
 import type { EventDelivery, ExtensionView } from '../../../core/extensions/api/shim'
 import { matchesAnyUrlFilter, type UrlFilter } from '../../../core/extensions/api/urlFilter'
@@ -13,6 +14,10 @@ export type ListenerFilters = Map<string, Map<number, UrlFilter[]>>
 export interface FrameContext {
   key: string
   extensionId: string
+  /** Chrome's `runtime.ExtensionContext.contextId`, one per document. */
+  contextId: string
+  /** Chrome's document id (the same document across `webNavigation` and `runtime.getContexts`). */
+  documentId: string
   frame: WebFrameMain
   webContents: WebContents
   session: Session
@@ -32,6 +37,7 @@ export interface FrameContext {
 export interface WorkerContext {
   key: string
   extensionId: string
+  contextId: string
   versionId: number
   worker: ServiceWorkerMain
   session: Session
@@ -154,6 +160,8 @@ export class ContextRegistry {
     const context: FrameContext = {
       key,
       extensionId,
+      contextId: randomUUID(),
+      documentId: randomUUID().replace(/-/g, '').toUpperCase(),
       frame,
       webContents,
       session: webContents.session,
@@ -178,6 +186,7 @@ export class ContextRegistry {
     const context: WorkerContext = {
       key,
       extensionId,
+      contextId: randomUUID(),
       versionId: worker.versionId,
       worker,
       session,
@@ -246,6 +255,46 @@ export class ContextRegistry {
       return undefined
     }
     return context
+  }
+
+  /**
+   * Whether `context` is still the live registration of its frame or worker: a new document in
+   * the same frame (or a restarted worker) registers a new context object, and everything the
+   * old one registered went with it.
+   */
+  isLive(context: FrameContext | WorkerContext): boolean {
+    if ('worker' in context) {
+      return !context.worker.isDestroyed() && this.workers.get(context.key) === context
+    }
+    if (this.frames.get(context.key) !== context) return false
+    if (this.stale(context)) {
+      this.frames.delete(context.key)
+      return false
+    }
+    return true
+  }
+
+  /**
+   * Deliver `namespace.event` to one context, addressed by `delivery`, whatever it registered
+   * (the caller keeps its own listener table, as the `webRequest` emulation does). A worker that
+   * is not running yet keeps the delivery in its outbox.
+   */
+  sendTo(
+    context: FrameContext | WorkerContext,
+    namespace: string,
+    event: string,
+    args: unknown[],
+    delivery?: EventDelivery
+  ): void {
+    if ('worker' in context) {
+      this.sendToWorker(context, namespace, event, args, delivery)
+      return
+    }
+    try {
+      context.frame.send('zen-ext:event', namespace, event, args, delivery)
+    } catch {
+      /* frame went away */
+    }
   }
 
   /** Gone, or navigated to a page that is not this extension's any more (no hello follows). */

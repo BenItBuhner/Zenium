@@ -48,9 +48,10 @@ import kotlin.math.sqrt
  *  2. a chrome surface – three-dot menu, URL bar, tab overview, a panel, the drawer – is handed
  *     the gesture over the bridge (`__zenHost.backEvent`) and animates its own dismissal; the
  *     chrome says whether it has one through `back.update`;
- *  3. the page WebView can go back: [PageBackTransition] slides the live page out over a snapshot
+ *  3. Zenium's own fullscreen (Menu > Fullscreen, the system bars hidden) is left;
+ *  4. the page WebView can go back: [PageBackTransition] slides the live page out over a snapshot
  *     of the previous history entry, natively, and only navigates once the slide has committed;
- *  4. nothing – then no callback is registered at all, so the system's own back-to-home
+ *  5. nothing – then no callback is registered at all, so the system's own back-to-home
  *     animation runs untouched (before API 33 the callback stays and backgrounds the task, as the
  *     system would otherwise finish the activity).
  *
@@ -137,6 +138,7 @@ class PredictiveBack(
     private fun currentTarget(): Target = when {
         host.fullscreenTab != null -> Target.FULLSCREEN
         chromeHandles -> Target.CHROME
+        host.immersive -> Target.FULLSCREEN
         pageTab()?.canGoBack() == true -> Target.PAGE
         else -> Target.NONE
     }
@@ -181,7 +183,10 @@ class PredictiveBack(
         inFlight = false
         target = Target.NONE
         when (decided) {
-            Target.FULLSCREEN -> host.fullscreenTab?.let(host::exitFullscreen)
+            Target.FULLSCREEN -> {
+                val tab = host.fullscreenTab
+                if (tab != null) host.exitFullscreen(tab) else host.leaveImmersive()
+            }
             Target.CHROME -> {
                 val view = chrome()
                 if (view != null) view.backCommit { handled -> if (!handled) nothingLeft() }

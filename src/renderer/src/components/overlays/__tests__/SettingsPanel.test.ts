@@ -30,7 +30,9 @@ const DESKTOP: HostCapabilities = {
   passwords: true,
   defaultBrowser: false,
   requestBlocking: true,
-  pageControls: false
+  pageControls: false,
+  windowControlsOverlay: false,
+  windowMaterial: false
 }
 
 const ANDROID: HostCapabilities = {

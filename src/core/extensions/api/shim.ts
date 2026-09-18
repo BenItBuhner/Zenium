@@ -9,7 +9,7 @@
  * keeps the preload out (`contextBridge.executeInMainWorld`), and Android's WebView layer can
  * evaluate it verbatim. Everything it needs arrives through its two arguments.
  */
-import type { ApiSpec, MethodSpec, ParamSpec, ParamType } from './spec'
+import type { ApiSpec, EventSpec, MethodSpec, NamespaceSpec, ParamSpec, ParamType } from './spec'
 import type { StorageChanges, StorageItems } from './storage'
 
 export type InvokeResult = { ok: true; value: unknown } | { ok: false; error: string }
@@ -65,6 +65,7 @@ type Any = any
 interface ManifestShape {
   manifest_version?: unknown
   background?: unknown
+  permissions?: unknown
 }
 
 /** A native `chrome.Event` the shim keeps registering listeners on (documents' storage events). */
@@ -132,6 +133,9 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   const manifest: ManifestShape = safely(() => chrome.runtime.getManifest()) ?? {}
   const manifestVersion: 2 | 3 = manifest.manifest_version === 2 ? 2 : 3
   const background = isObject(manifest.background) ? manifest.background : null
+  const permissions: string[] = Array.isArray(manifest.permissions)
+    ? manifest.permissions.filter((p): p is string => typeof p === 'string')
+    : []
   const extensionUrl: string =
     safely(() => String(chrome.runtime.getURL(''))) ??
     (typeof g.location === 'object' && g.location
@@ -172,7 +176,11 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     return typeof value === 'string' || (typeof value === 'number' && Number.isInteger(value))
   }
 
-  function define(target: Any, key: string, value: unknown): void {
+  function isNativeEvent(value: unknown): value is NativeEvent {
+    return isObject(value) && isFunction(value.addListener) && isFunction(value.removeListener)
+  }
+
+  function define(target: object, key: string, value: unknown): void {
     try {
       Object.defineProperty(target, key, {
         value,
@@ -182,14 +190,14 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       })
     } catch {
       try {
-        target[key] = value
+        ;(target as Record<string, unknown>)[key] = value
       } catch {
         /* frozen */
       }
     }
   }
 
-  function defineGetter(target: Any, key: string, get: () => unknown): void {
+  function defineGetter(target: object, key: string, get: () => unknown): void {
     try {
       Object.defineProperty(target, key, { get, configurable: true, enumerable: true })
     } catch {
@@ -269,9 +277,9 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   // that never reads it gets Chrome's "Unchecked runtime.lastError" console line.
   let lastErrorDepth = 0
   function withLastError(qualified: string, message: string, fn: () => void): void {
-    const targets: Any[] = []
+    const targets: object[] = []
     for (const root of roots) {
-      const runtime = safely(() => root.runtime)
+      const runtime: unknown = safely(() => root.runtime)
       if (runtime && typeof runtime === 'object') targets.push(runtime)
     }
     const error = { message }
@@ -298,7 +306,7 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       if (lastErrorDepth === 0) {
         for (const runtime of targets) {
           try {
-            delete runtime.lastError
+            Reflect.deleteProperty(runtime, 'lastError')
           } catch {
             /* not configurable */
           }
@@ -585,7 +593,14 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
         return results
       }
     }
-    // Declarative-rule members exist on every chrome.Event; keep callers that probe them happy.
+    defineRuleMembers(object)
+    record.object = object
+    events.set(fullName, record)
+    return object
+  }
+
+  /** Declarative-rule members exist on every chrome.Event; keep callers that probe them happy. */
+  function defineRuleMembers(object: EventObject): void {
     define(object, 'addRules', () => undefined)
     define(object, 'getRules', (...raw: unknown[]) => {
       const cb = takeCallback(raw)
@@ -595,9 +610,6 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       const cb = takeCallback(raw)
       if (cb) cb()
     })
-    record.object = object
-    events.set(fullName, record)
-    return object
   }
 
   function deliver(fullName: string, args: unknown[], delivery?: EventDelivery): void {
@@ -621,11 +633,260 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   }
 
   // ---------------------------------------------------------------------------
+  // webRequest: events take a RequestFilter and extraInfoSpec; blocking listeners answer
+  // ---------------------------------------------------------------------------
+
+  interface WebRequestRegistration {
+    /** The id the host addresses deliveries to (per context). */
+    id: number
+    blocking: boolean
+    asyncBlocking: boolean
+  }
+
+  /** `webRequest.<event>` → listener → its registration with the host. */
+  const webRequestListeners = new Map<string, Map<Listener, WebRequestRegistration>>()
+  let webRequestIds = 0
+  /**
+   * Chrome allows blocking listeners to MV2 extensions holding `webRequestBlocking`, and
+   * blocking `onAuthRequired` listeners to any extension holding `webRequestAuthProvider`.
+   */
+  const canBlockRequests = manifestVersion === 2 && permissions.includes('webRequestBlocking')
+  const canBlockAuth = canBlockRequests || permissions.includes('webRequestAuthProvider')
+  const BLOCKING_PERMISSION_ERROR =
+    'You do not have permission to use blocking webRequest listeners. Be sure to declare the webRequestBlocking permission in your manifest.'
+
+  /** The shape of a match pattern; the host compiles it and rejects what this lets through. */
+  function looksLikeMatchPattern(pattern: string): boolean {
+    if (pattern === '<all_urls>') return true
+    return /^[a-z*][a-z0-9+.-]*:\/\/[^/]*\/.*$/i.test(pattern) || /^(data|urn):/.test(pattern)
+  }
+
+  function isThenable(value: unknown): value is PromiseLike<unknown> {
+    return isObject(value) && isFunction(value.then)
+  }
+
+  /** The `RequestFilter` as it crosses to the host: the known fields, copied. */
+  function requestFilterForWire(filter: Record<string, unknown>): Record<string, unknown> {
+    const out: Record<string, unknown> = { urls: filter.urls }
+    if (filter.types !== undefined) out.types = filter.types
+    if (filter.tabId !== undefined) out.tabId = filter.tabId
+    if (filter.windowId !== undefined) out.windowId = filter.windowId
+    return out
+  }
+
+  /**
+   * A blocking listener's answer as it crosses to the host: the `BlockingResponse` fields the
+   * host applies, headers as plain `{ name, value, binaryValue }` items (an `ArrayBuffer`
+   * `binaryValue` becomes its bytes).
+   */
+  function blockingResponseForWire(raw: unknown): unknown {
+    if (!isObject(raw)) return undefined
+    const out: Record<string, unknown> = {}
+    if (raw.cancel === true) out.cancel = true
+    if (typeof raw.redirectUrl === 'string') out.redirectUrl = raw.redirectUrl
+    for (const key of ['requestHeaders', 'responseHeaders']) {
+      const list = raw[key]
+      if (!Array.isArray(list)) continue
+      out[key] = list.map((item: unknown): unknown => {
+        if (!isObject(item)) return item
+        const header: Record<string, unknown> = { name: item.name }
+        if (typeof item.value === 'string') header.value = item.value
+        const binary = item.binaryValue
+        if (Array.isArray(binary)) header.binaryValue = [...binary]
+        else if (binary instanceof ArrayBuffer) header.binaryValue = [...new Uint8Array(binary)]
+        else if (ArrayBuffer.isView(binary)) {
+          header.binaryValue = [
+            ...new Uint8Array(binary.buffer, binary.byteOffset, binary.byteLength)
+          ]
+        }
+        return header
+      })
+    }
+    return out
+  }
+
+  function webRequestEvent(namespace: string, name: string, eventSpec: EventSpec): EventObject {
+    const fullName = `${namespace}.${name}`
+    const allowed = eventSpec.extraInfoSpec ?? []
+    const listeners = new Map<Listener, WebRequestRegistration>()
+    webRequestListeners.set(fullName, listeners)
+    const signature = `${fullName}.addListener(function callback, webRequest.RequestFilter filter, optional array extraInfoSpec)`
+    const fail = (detail: string): TypeError =>
+      new TypeError(`Error in invocation of ${signature}: ${detail}`)
+    const object: EventObject = {
+      addListener(fn: unknown, filter?: unknown, extraInfoSpec?: unknown): void {
+        if (!isFunction(fn)) throw fail('No matching signature.')
+        if (listeners.has(fn)) return
+        if (!isObject(filter)) throw fail('No matching signature.')
+        if (!Array.isArray(filter.urls)) {
+          throw fail(
+            "Error at parameter 'filter': Error at property 'urls': Invalid type: expected array."
+          )
+        }
+        for (const url of filter.urls) {
+          if (typeof url !== 'string') {
+            throw fail(
+              "Error at parameter 'filter': Error at property 'urls': Invalid type: expected string."
+            )
+          }
+          if (!looksLikeMatchPattern(url)) throw new Error(`'${url}' is not a valid URL pattern.`)
+        }
+        const spec: string[] = []
+        if (extraInfoSpec !== undefined && extraInfoSpec !== null) {
+          if (!Array.isArray(extraInfoSpec)) {
+            throw fail("Error at parameter 'extraInfoSpec': Invalid type: expected array.")
+          }
+          extraInfoSpec.forEach((item: unknown, index: number) => {
+            if (typeof item !== 'string' || !allowed.includes(item)) {
+              throw fail(
+                `Error at parameter 'extraInfoSpec': Error at index ${index}: Value must be one of ${allowed.join(', ')}.`
+              )
+            }
+            if (!spec.includes(item)) spec.push(item)
+          })
+        }
+        const blocking = spec.includes('blocking') || spec.includes('asyncBlocking')
+        if (blocking && !(name === 'onAuthRequired' ? canBlockAuth : canBlockRequests)) {
+          throw new Error(BLOCKING_PERMISSION_ERROR)
+        }
+        webRequestIds += 1
+        const registration: WebRequestRegistration = {
+          id: webRequestIds,
+          blocking,
+          asyncBlocking: spec.includes('asyncBlocking')
+        }
+        listeners.set(fn, registration)
+        invoke('webRequest', 'addListener', [
+          name,
+          requestFilterForWire(filter),
+          spec,
+          registration.id
+        ]).catch((error: unknown) => {
+          if (listeners.get(fn) === registration) listeners.delete(fn)
+          safely(() =>
+            console.error(
+              `${fullName}.addListener: ${error instanceof Error ? error.message : String(error)}`
+            )
+          )
+        })
+      },
+      removeListener(fn: unknown): void {
+        if (!isFunction(fn)) return
+        const registration = listeners.get(fn)
+        if (!registration) return
+        listeners.delete(fn)
+        invoke('webRequest', 'removeListener', [name, registration.id]).catch(() => undefined)
+      },
+      hasListener(fn: unknown): boolean {
+        return isFunction(fn) && listeners.has(fn)
+      },
+      hasListeners(): boolean {
+        return listeners.size > 0
+      },
+      dispatch(...args: unknown[]): unknown[] {
+        const results: unknown[] = []
+        for (const fn of [...listeners.keys()]) callListener(fn, args, results)
+        return results
+      }
+    }
+    defineRuleMembers(object)
+    return object
+  }
+
+  /**
+   * A delivery from the host: `args` is `[details, token]`, `delivery.matched` names the one
+   * listener it is for. A blocking listener's return value (or, with `asyncBlocking`, what it
+   * hands its callback; a promise either way) goes back under the token; a listener that is
+   * gone, throws, or does not block answers with nothing so the request goes on unchanged.
+   */
+  function webRequestDeliver(event: string, args: unknown[], delivery?: EventDelivery): void {
+    const listeners = webRequestListeners.get(`webRequest.${event}`)
+    const details = args[0]
+    const token = typeof args[1] === 'number' ? args[1] : null
+    let answered = token === null
+    const answer = (response: unknown): void => {
+      if (answered) return
+      answered = true
+      host.notify('webRequest-answer', { token, response: blockingResponseForWire(response) })
+    }
+    let target: [Listener, WebRequestRegistration] | undefined
+    if (listeners && delivery) {
+      for (const entry of listeners) {
+        if (delivery.matched.includes(entry[1].id)) {
+          target = entry
+          break
+        }
+      }
+    }
+    if (!target) {
+      answer(undefined)
+      return
+    }
+    const [fn, registration] = target
+    if (!registration.blocking || token === null) {
+      callListener(fn, [details])
+      return
+    }
+    try {
+      const result = registration.asyncBlocking ? fn(details, answer) : fn(details)
+      if (isThenable(result)) {
+        result.then(answer, (error: unknown) => {
+          answer(undefined)
+          setTimeout(() => {
+            throw error
+          }, 0)
+        })
+      } else if (!registration.asyncBlocking || result !== undefined) answer(result)
+    } catch (error) {
+      answer(undefined)
+      setTimeout(() => {
+        throw error
+      }, 0)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Settings namespaces (`privacy`): objects of `types.ChromeSetting`s
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A `types.ChromeSetting`: `get` / `set` / `clear` route as `<namespace>.<method>(object,
+   * setting, details)` and `onChange` is an event the host fires under the setting's full name.
+   */
+  function chromeSetting(namespace: string, object: string, setting: string): object {
+    const result: Record<string, unknown> = {}
+    for (const method of ['get', 'set', 'clear']) {
+      const qualified = `types.ChromeSetting.${method}(object details, optional function callback)`
+      define(result, method, function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const [details] = normalizeArgs(qualified, raw, [{ name: 'details', type: 'object' }])
+        return settle(qualified, invoke(namespace, method, [object, setting, details]), callback)
+      })
+    }
+    define(
+      result,
+      'onChange',
+      createEvent(`${namespace}.${object}.${setting}.onChange`, undefined, {
+        nativeDelivers: false
+      })
+    )
+    return result
+  }
+
+  // ---------------------------------------------------------------------------
   // Generic namespaces from the table
   // ---------------------------------------------------------------------------
 
+  /** Permission-gated namespaces exist for extensions holding one (or when the engine made one). */
+  function namespaceAllowed(namespace: string, nsSpec: NamespaceSpec): boolean {
+    if (!nsSpec.permissions) return true
+    if (nsSpec.permissions.some((p) => permissions.includes(p))) return true
+    return isObject(safely(() => roots[0][namespace]))
+  }
+
   for (const [namespace, nsSpec] of Object.entries(spec)) {
     if (nsSpec.manifestVersion && nsSpec.manifestVersion !== manifestVersion) continue
+    if (!namespaceAllowed(namespace, nsSpec)) continue
     const targets = roots.map((root) => namespaceOn(root, namespace))
     for (const [name, method] of Object.entries(nsSpec.methods)) {
       const fn = makeMethod(namespace, name, method)
@@ -636,6 +897,12 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       }
     }
     for (const [name, eventSpec] of Object.entries(nsSpec.events)) {
+      if (nsSpec.eventStyle === 'webRequest') {
+        // The engine's event objects never fire (see the spec); replaced, native or not.
+        const object = webRequestEvent(namespace, name, eventSpec)
+        for (const target of targets) define(target, name, object)
+        continue
+      }
       const fullName = `${namespace}.${name}`
       const primary = targets[0]
       const native = safely(() => primary[name])
@@ -645,6 +912,13 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
         nativeDelivers: Boolean(eventSpec.nativeInFrames) && host.kind === 'frame'
       })
       for (const target of targets) define(target, name, object)
+    }
+    for (const [object, settings] of Object.entries(nsSpec.settings ?? {})) {
+      const holders = targets.map((target) => namespaceOn(target, object))
+      for (const setting of settings) {
+        const value = chromeSetting(namespace, object, setting)
+        for (const holder of holders) define(holder, setting, value)
+      }
     }
     for (const [name, value] of Object.entries(nsSpec.constants ?? {})) {
       for (const target of targets) {
@@ -787,7 +1061,7 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     }
   }
 
-  function hostArea(storage: Any, areaName: string): Record<string, unknown> {
+  function hostArea(storage: object, areaName: string): Record<string, unknown> {
     const area: Record<string, unknown> = {}
     const qualifiedFor = (name: string): string => `storage.${areaName}.${name}`
     const routed = (name: string, params: ParamSpec[]): void => {
@@ -816,11 +1090,11 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     return area
   }
 
-  function wrapNativeArea(area: Any, areaName: string): void {
-    const nativeSet: unknown = safely(() => area.set)
-    const nativeGet: unknown = safely(() => area.get)
-    const nativeRemove: unknown = safely(() => area.remove)
-    const nativeClear: unknown = safely(() => area.clear)
+  function wrapNativeArea(area: Record<string, unknown>, areaName: string): void {
+    const nativeSet = safely(() => area.set)
+    const nativeGet = safely(() => area.get)
+    const nativeRemove = safely(() => area.remove)
+    const nativeClear = safely(() => area.clear)
     if (!isFunction(nativeSet) || !isFunction(nativeGet)) return
     const read = async (keys: unknown): Promise<StorageItems> => {
       const items = await callNativeArea(area, nativeGet, [keys])
@@ -887,13 +1161,17 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
         return settle(`storage.${areaName}.clear`, work, callback)
       })
     }
-    const nativeEvent: NativeEvent | undefined = safely(() => area.onChanged)
+    const onChanged = safely(() => area.onChanged)
     define(
       area,
       'onChanged',
-      createEvent(`storage.${areaName}.onChanged`, nativeEvent, {
-        nativeDelivers: host.kind === 'frame'
-      })
+      createEvent(
+        `storage.${areaName}.onChanged`,
+        isNativeEvent(onChanged) ? onChanged : undefined,
+        {
+          nativeDelivers: host.kind === 'frame'
+        }
+      )
     )
   }
 
@@ -1010,6 +1288,10 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   host.onEvent((namespace, event, args, delivery) => {
     if (namespace === '__zen') {
       if (event === 'views' && Array.isArray(args[0])) views = args[0] as ExtensionView[]
+      return
+    }
+    if (namespace === 'webRequest') {
+      webRequestDeliver(event, args, delivery)
       return
     }
     if (namespace === 'contextMenus' && event === 'onClicked') menuClicked(args)

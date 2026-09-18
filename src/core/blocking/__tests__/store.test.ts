@@ -173,6 +173,59 @@ describe('RuleSetStore', () => {
     })
   })
 
+  it('keeps a set’s partition scope in the index and restores it', async () => {
+    const io = memoryIo()
+    const first = new RuleEngine()
+    const store1 = new RuleSetStore(io)
+    store1.load()
+    store1.attach(first)
+    first.setRuleSet({
+      id: 'ext:abc:static:one',
+      source: 'dnr',
+      priority: 2000,
+      enabled: true,
+      partitions: ['default'],
+      rules: [{ id: 1, action: { type: 'block' }, condition: { urlFilter: '||ads.example^' } }]
+    })
+    first.setRuleSet({
+      id: 'easylist',
+      source: 'filter-list',
+      priority: 1,
+      enabled: true,
+      rules: [{ id: 1, action: { type: 'block' }, condition: { urlFilter: '||tracker.example^' } }]
+    })
+    await store1.flush()
+    expect(index(io).sets.map((s) => [s.id, s.partitions])).toEqual([
+      ['ext:abc:static:one', ['default']],
+      ['easylist', undefined]
+    ])
+
+    // A re-scope is a persisted change: the index follows without a rewrite of the content.
+    first.setPartitions('ext:abc:static:one', ['default', 'work'])
+    await store1.flush()
+    expect(index(io).sets[0].partitions).toEqual(['default', 'work'])
+
+    const store2 = new RuleSetStore(io)
+    const loaded = store2.load()
+    expect(loaded.map((l) => l.set.partitions)).toEqual([['default', 'work'], undefined])
+    const second = new RuleEngine()
+    for (const l of loaded) second.setRuleSet(l.set, { persisted: true })
+    const ad = (partition: string): Parameters<RuleEngine['decide']>[0] => ({
+      url: 'https://ads.example/x.js',
+      type: 'script',
+      method: 'GET',
+      partition
+    })
+    expect(second.decide(ad('work')).action).toBe('block')
+    expect(second.decide(ad('private')).action).toBe('allow')
+
+    // A hand-edited index with junk in the list keeps the strings only.
+    const raw = index(io)
+    ;(raw.sets[0] as { partitions?: unknown }).partitions = ['default', 7, null]
+    io.files.set(INDEX_FILE, JSON.stringify(raw))
+    expect(new RuleSetStore(io).load()[0].set.partitions).toEqual(['default'])
+  })
+
   it('drops the text bookkeeping when the text file has gone missing', async () => {
     const io = memoryIo()
     const engine = new RuleEngine()

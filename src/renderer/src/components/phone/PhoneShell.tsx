@@ -395,7 +395,7 @@ function BarDockLayer({
             transform: `translate3d(0, ${contentShift(dock.from, dock.progress, bar, gutter)}px, 0)`
           }}
         >
-          <TabPreview tab={hero} />
+          <TabPreview tab={hero} cover />
         </div>
       )}
       <div

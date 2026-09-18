@@ -21,6 +21,8 @@ import { isPrivateWindow } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { openOverlay, openUrlbar, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { StarChip } from '../bookmarks/StarChip'
+import { useBookmarkTree } from '../bookmarks/tree'
 import { ToolbarActions } from '../extensions/ToolbarActions'
 import { useLongPress } from '../phone/useLongPress'
 import { PillChip } from '../urlbar/PillChip'
@@ -39,10 +41,13 @@ interface Props {
 
 export function SidebarTop({ state, tab, compact, showToolbar }: Props): JSX.Element {
   const isMac = state.platform === 'darwin'
-  // Linux/Windows: Zen draws the window buttons at the top of the sidebar (macOS uses the
-  // native traffic lights, which need left padding instead). Mobile hosts have neither.
-  const showControls = state.capabilities.windowControls && !isMac && !state.window.fullscreen
-  const reserveTitleRow = showControls || isMac
+  const fullscreen = state.window.fullscreen
+  // Linux: Zen draws the window buttons at the top of the sidebar. macOS uses the native
+  // traffic lights, which need left padding instead, and Windows draws native buttons over the
+  // window's top corner, so the row stays clear for them. Mobile hosts have none of these.
+  const overlay = state.capabilities.windowControlsOverlay && !fullscreen
+  const showControls = state.capabilities.windowControls && !overlay && !isMac && !fullscreen
+  const reserveTitleRow = showControls || isMac || overlay
   return (
     <div className={cn('zen-drag flex flex-col gap-1 px-2', reserveTitleRow ? 'pt-1.5' : 'pt-2')}>
       {reserveTitleRow && (
@@ -84,6 +89,8 @@ export function NavRow({
     void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, {
       attached: state.settings.urlbarBehavior !== 'always-float'
     })
+  const tree = useBookmarkTree(state)
+  const bookmarked = Boolean(tab && isWebPage && tree.hasUrl(tab.url))
   return (
     <div
       ref={row}
@@ -131,7 +138,7 @@ export function NavRow({
         <div
           role="group"
           aria-label="Address"
-          className="zen-squircle group/pill mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--zen-element-bg)] px-2.5 text-left hover:bg-[var(--zen-element-bg-hover)]"
+          className="zen-squircle zen-pill group/pill mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--zen-element-bg)] px-2.5 text-left hover:bg-[var(--zen-element-bg-hover)]"
           title={tab?.url ?? 'Search or enter address'}
           onClick={openField}
         >
@@ -206,7 +213,7 @@ export function NavRow({
                   'h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
                   boosted
                     ? 'flex text-[var(--zen-accent)] opacity-100'
-                    : 'hidden group-hover/pill:flex group-focus-within/chips:flex'
+                    : 'zen-pill-extra hidden group-hover/pill:flex group-focus-within/chips:flex'
                 )}
                 onActivate={() => void openOverlay('boosts', tab.id)}
               >
@@ -217,12 +224,13 @@ export function NavRow({
               <PillChip
                 label="Copy URL"
                 title="Copy URL (Ctrl+Shift+C)"
-                className="hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex group-focus-within/chips:flex"
+                className="zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex group-focus-within/chips:flex"
                 onActivate={() => tab && run('tab.copyUrl', { tabId: tab.id })}
               >
                 <Copy className="h-3 w-3" />
               </PillChip>
             )}
+            {tab && isWebPage && <StarChip tab={tab} filled={bookmarked} />}
           </span>
         </div>
       )}

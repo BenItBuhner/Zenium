@@ -224,7 +224,7 @@ export class ResourceGovernor implements Governor {
   }
 
   onViewDestroyed(tabId: string, view: TabView): void {
-    if (view instanceof ElectronTabView) this.lifecycle.forget(view.webContents)
+    if (view instanceof ElectronTabView) this.lifecycle.forget(view.webContentsId)
     this.scheduler.finished(tabId)
     this.mediaPlaying.delete(tabId)
     this.lastPurgedAt.delete(tabId)

@@ -23,6 +23,8 @@ import {
   type RequestHeaderHandler
 } from '../requestHeaders'
 import { withChromeClientHints, withEdgeIdentity } from '../../../core/extensions/webstorePrivate'
+import { RuleEngine } from '../../../core/blocking/engine'
+import { RULE_SET_PRIORITY } from '../../../core/blocking/rules'
 import { PRIVATE_CONTAINER_ID } from '../../../shared/types'
 
 type BeforeRequestListener = (
@@ -1132,6 +1134,62 @@ describe('composition rules', () => {
       )
     ).toEqual({ 'x-a': ['1'], 'x-csp': ['default-src https:'], 'x-fine': ['f'] })
     expect(host).toEqual(['restorer', 'dropper'])
+  })
+})
+
+describe('partition scope', () => {
+  it('keeps an extension’s rule set out of the private session while it blocks in a normal one', () => {
+    const engine = new RuleEngine()
+    engine.setRuleSet({
+      id: 'filter-list:easylist',
+      source: 'filter-list',
+      priority: RULE_SET_PRIORITY.filterList,
+      enabled: true,
+      rules: [{ id: 1, action: { type: 'block' }, condition: { urlFilter: '||tracker.example^' } }]
+    })
+    engine.setRuleSet({
+      id: 'ext:abcdefghijklmnopabcdefghijklmnop:static:one',
+      source: 'dnr',
+      priority: RULE_SET_PRIORITY.dnr,
+      enabled: true,
+      partitions: ['default'],
+      rules: [{ id: 1, action: { type: 'block' }, condition: { urlFilter: '||ads.example^' } }]
+    })
+    // One multiplexer hooks every session; the engine handler runs first in each of them.
+    const mux = new WebRequestMultiplexer(views)
+    const normal = new FakeSession()
+    const secret = new FakeSession()
+    mux.attach(normal.asSession(), 'default')
+    mux.attach(secret.asSession(), PRIVATE_CONTAINER_ID)
+    const decided: string[] = []
+    mux.register({
+      id: 'engine',
+      order: HANDLER_ORDER.ruleEngine,
+      onBeforeRequest: (request) => {
+        const decision = engine.decide(request.ctx)
+        decided.push(`${request.containerId}:${request.ctx.url}:${decision.action}`)
+        return decision.action === 'block' ? { cancel: true } : undefined
+      }
+    })
+
+    const ad = {
+      url: 'https://ads.example/x.js',
+      webContents: fakeWebContents('https://news.example/')
+    }
+    expect(normal.beforeRequest(ad)).toEqual({ cancel: true })
+    expect(secret.beforeRequest(ad)).toEqual({})
+    // Zenium's own lists are not scoped: the private window is still protected by them.
+    const tracker = { url: 'https://tracker.example/t.js', webContents: ad.webContents }
+    expect(secret.beforeRequest(tracker)).toEqual({ cancel: true })
+    expect(decided).toEqual([
+      'default:https://ads.example/x.js:block',
+      'private:https://ads.example/x.js:allow',
+      'private:https://tracker.example/t.js:block'
+    ])
+
+    // The user allowed the extension in private windows: its set follows.
+    engine.setPartitions('ext:abcdefghijklmnopabcdefghijklmnop:static:one', ['default', 'private'])
+    expect(secret.beforeRequest(ad)).toEqual({ cancel: true })
   })
 })
 

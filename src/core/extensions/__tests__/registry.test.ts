@@ -94,13 +94,14 @@ describe('manifestFields', () => {
 })
 
 describe('newRecord and withManifest', () => {
-  it('applies Chrome defaults: enabled, not pinned, not in the toolbar, no file access, nothing pending', () => {
+  it('applies Chrome defaults: enabled, not pinned, not in the toolbar, no file or private access, nothing pending', () => {
     const r = record()
     expect(r).toMatchObject({
       enabled: true,
       pinned: false,
       toolbarPinned: false,
       allowFileAccess: false,
+      allowPrivate: false,
       pendingWarnings: null,
       installedAt: NOW,
       updatedAt: NOW,
@@ -221,6 +222,7 @@ describe('migrateRegistry', () => {
             enabled: false,
             pinned: true,
             toolbarPinned: 'yes',
+            allowPrivate: true,
             pendingWarnings: ['Read your browsing history', 3]
           },
           { path: '/no-id' },
@@ -240,6 +242,7 @@ describe('migrateRegistry', () => {
       pendingWarnings: null,
       enabled: true,
       allowFileAccess: false,
+      allowPrivate: false,
       installedAt: NOW,
       updatedAt: NOW,
       version: '',
@@ -255,6 +258,7 @@ describe('migrateRegistry', () => {
       enabled: false,
       pinned: true,
       toolbarPinned: false,
+      allowPrivate: true,
       pendingWarnings: ['Read your browsing history']
     })
   })

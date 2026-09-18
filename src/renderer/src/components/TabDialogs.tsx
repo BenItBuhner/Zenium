@@ -1,14 +1,18 @@
 import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import type { UIState } from '@shared/types'
+import type { Tab, UIState } from '@shared/types'
 import { SPACE_ICONS } from '@shared/defaults'
 import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
-import { uiStore } from '@renderer/lib/ui'
+import { activeTab, tabTitle } from '@renderer/lib/selectors'
+import { uiStore, type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { SecurityPrompts } from './security/SecurityPromptDialog'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
+import { BookmarkAllTabsDialog } from './bookmarks/BookmarkAllTabsDialog'
+import { EditBookmarkDialog } from './bookmarks/EditBookmarkDialog'
+import { StarDialog } from './bookmarks/StarDialog'
 
 const TAB_ICONS = [
   ...SPACE_ICONS,
@@ -27,25 +31,75 @@ const TAB_ICONS = [
 ]
 
 /**
- * Small dialogs that belong to a tab and are shown by every layout: the pinned-URL editor and icon
- * picker from tab context menus, and the security prompts (HTTP sign-in, certificate choice) the
- * page's requests wait on.
+/**
+ * Small dialogs over the window, shown by every layout: the star bubble, "Bookmark all tabs", a
+ * bookmark or folder edit requested outside the manager (the manager hosts its own), the
+ * pinned-URL editor and the icon picker, and the security prompts (HTTP sign-in, certificate
+ * choice) the page's requests wait on.
  */
 export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const pinnedTabId = uiStore.use((s) => s.editingPinnedUrlTabId)
   const iconTabId = uiStore.use((s) => s.iconPickerTabId)
+  const star = uiStore.use((s) => s.starDialog)
+  const allTabs = uiStore.use((s) => s.bookmarkAllTabs)
+  const edit = uiStore.use((s) => s.bookmarkEdit)
+  const managerOpen = uiStore.use((s) => s.overlay === 'bookmarks')
   const pinnedTab = pinnedTabId ? state.tabs[pinnedTabId] : undefined
   const iconTab = iconTabId ? state.tabs[iconTabId] : undefined
   return (
     <>
-      {pinnedTab ? (
-        <PinnedUrlDialog tab={pinnedTab} />
-      ) : iconTab ? (
-        <IconPickerDialog tab={iconTab} />
-      ) : null}
+      <BookmarkDialog
+        state={state}
+        star={star}
+        allTabs={allTabs}
+        edit={edit}
+        managerOpen={managerOpen}
+        pinnedTab={pinnedTab}
+        iconTab={iconTab}
+      />
       <SecurityPrompts state={state} />
     </>
   )
+}
+
+function BookmarkDialog({
+  state,
+  star,
+  allTabs,
+  edit,
+  managerOpen,
+  pinnedTab,
+  iconTab
+}: {
+  state: UIState
+  star: UiState['starDialog']
+  allTabs: UiState['bookmarkAllTabs']
+  edit: UiState['bookmarkEdit']
+  managerOpen: boolean
+  pinnedTab: Tab | undefined
+  iconTab: Tab | undefined
+}): JSX.Element | null {
+  if (star) return <StarDialog key={star.nodeId} state={state} star={star} />
+  if (allTabs) return <BookmarkAllTabsDialog state={state} request={allTabs} />
+  if (edit && !managerOpen) {
+    // "Add page…" on the bar starts from the page on screen, like Chrome.
+    const tab = edit.id === null && edit.type === 'url' ? activeTab(state) : null
+    const prefill =
+      tab && tab.url && !tab.url.startsWith('zen://')
+        ? { title: tabTitle(tab), url: tab.url }
+        : null
+    return (
+      <EditBookmarkDialog
+        key={edit.id ?? `new-${edit.type}`}
+        state={state}
+        edit={edit}
+        prefill={prefill}
+      />
+    )
+  }
+  if (pinnedTab) return <PinnedUrlDialog tab={pinnedTab} />
+  if (iconTab) return <IconPickerDialog tab={iconTab} />
+  return null
 }
 
 function Backdrop({

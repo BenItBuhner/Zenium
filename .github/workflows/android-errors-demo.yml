@@ -1,0 +1,35 @@
+name: Android errors demo
+
+# Records the failed-load fixes of the phone chrome on a hardware-accelerated Android emulator: a
+# DNS failure, localhost:1 (a port Chromium never connects to) and a refused connection typed into
+# the URL bar landing on the zen://error page, the radios switched off and a load (the offline
+# hint), Reload once they are back on, Take Screenshot
+# with the file listed under its name in Downloads, a new tab's zero-suggest without the failed
+# loads, and Fullscreen left with back (and not carried through Home and a relaunch). Dispatch-
+# only, like the gesture demo: it takes about ten minutes and says nothing about a change being
+# correct. The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this
+# file only picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-errors-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Errors demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ErrorPagesDemo
+        DEMO_DIR=errors-demo
+        DEMO_OUT=artifacts/android-errors-demo
+        DEMO_VIDEO=android-errors-demo.mp4
+      artifact-name: android-errors-demo
+      artifact-path: artifacts/android-errors-demo/

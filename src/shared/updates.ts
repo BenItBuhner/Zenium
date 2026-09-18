@@ -465,6 +465,19 @@ export function updateOsOf(os: PlatformOs): UpdateOs {
   }
 }
 
+/** The `applicationIdSuffix` Android debug builds carry (`android/app/build.gradle.kts`). */
+export const ANDROID_DEBUG_ID_SUFFIX = '.debug'
+
+/**
+ * Whether an Android applicationId is a debug build's. A debug build is not a release and no
+ * release is an upgrade for it: like the desktop's unpacked development builds it gets the `dev`
+ * target, which never looks for releases on its own (`UpdateService.schedule`) and cannot install
+ * one; the Android host refuses to download or install for the same id (`Updates.kt`).
+ */
+export function isDebugApplicationId(applicationId: string | null): boolean {
+  return applicationId?.endsWith(ANDROID_DEBUG_ID_SUFFIX) ?? false
+}
+
 export function updateModeFor(kind: UpdateInstallKind): UpdateMode {
   switch (kind) {
     case 'nsis':
