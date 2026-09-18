@@ -138,6 +138,23 @@ export class WebNavigationApi {
     return state
   }
 
+  /** Chrome's `documentId` of the document a frame shows now (`runtime.MessageSender`, injections). */
+  documentIdOf(wc: WebContents, frame: WebFrameMain): string {
+    return this.stateOf(wc, frame).documentId
+  }
+
+  /** The frame of a page showing the document with `documentId`, or null when it is gone. */
+  frameByDocumentId(wc: WebContents, documentId: string): WebFrameMain | null {
+    if (wc.isDestroyed()) return null
+    const states = this.frames.get(wc)
+    if (!states) return null
+    for (const frame of wc.mainFrame.framesInSubtree) {
+      if (states.get(`${frame.processId}:${frame.routingId}`)?.documentId === documentId)
+        return frame
+    }
+    return null
+  }
+
   private stateByIds(wc: WebContents, processId: number, routingId: number): FrameState {
     const states = this.statesOf(wc)
     const key = `${processId}:${routingId}`

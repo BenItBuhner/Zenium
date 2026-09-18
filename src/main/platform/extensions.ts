@@ -139,6 +139,8 @@ export type RegistryEvent =
   | { type: 'disabled'; id: string }
   /** The user allowed (or stopped allowing) the extension in private windows. */
   | { type: 'allowPrivate'; id: string; allowed: boolean }
+  /** The user turned the extension's "Allow user scripts" toggle on or off. */
+  | { type: 'allowUserScripts'; id: string; allowed: boolean }
 
 interface UpdateInfo {
   state: ExtensionUpdateState
@@ -426,6 +428,7 @@ export class ExtensionService implements ExtensionHost {
         toolbarPinned: record.toolbarPinned,
         allowFileAccess: record.allowFileAccess,
         allowPrivate: record.allowPrivate,
+        allowUserScripts: record.allowUserScripts,
         manifestVersion: record.manifestVersion,
         permissions: record.permissions,
         hostPermissions: record.hostPermissions,
@@ -886,6 +889,23 @@ export class ExtensionService implements ExtensionHost {
     this.persist()
     this.emit({ type: 'allowPrivate', id: record.id, allowed })
     this.browser.state.commitVolatile()
+  }
+
+  /**
+   * Chrome's "Allow user scripts": makes `chrome.userScripts` available to the extension's
+   * contexts and lets its registered user scripts run. The chrome.* layer hears the event and
+   * tells the extension's live contexts; a loaded extension reloads as well, because the
+   * managers (Tampermonkey, Violentmonkey) look for the API once, as their worker starts, and
+   * register their scripts from that first look.
+   */
+  setAllowUserScripts(id: string, allowed: boolean): void {
+    const record = this.record(id)
+    if (!record || record.allowUserScripts === allowed) return
+    record.allowUserScripts = allowed
+    this.persist()
+    this.emit({ type: 'allowUserScripts', id: record.id, allowed })
+    this.browser.state.commitVolatile()
+    if (this.loadedById.has(record.id)) void this.reload(record.id)
   }
 
   /** Unload and load again, picking up changes an unpacked folder saw on disk. */

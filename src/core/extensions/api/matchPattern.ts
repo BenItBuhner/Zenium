@@ -49,21 +49,31 @@ function compileUncached(pattern: string): CompiledMatchPattern | null {
   }
   const scheme = pattern.slice(0, separator)
   const rest = pattern.slice(separator + 3)
+  if (scheme === 'file') {
+    // Chromium's grammar: a file pattern has no host, so everything after `file://` is the
+    // path glob and the URL's host is ignored (`file:///*` and Violentmonkey's
+    // `file://*/*.user.js` both match `file:///home/me/a.user.js`).
+    if (rest === '') return null
+    const pathTest = pathGlobToRegExp(rest)
+    return {
+      pattern,
+      test: (url) => {
+        const parsed = parseUrl(url)
+        return parsed !== null && parsed.scheme === 'file' && pathTest.test(parsed.path)
+      }
+    }
+  }
   const slash = rest.indexOf('/')
   if (slash < 0) return null
   const hostPart = rest.slice(0, slash)
   const pathPart = rest.slice(slash)
-  if (scheme === 'file') {
-    if (hostPart !== '') return null
-  } else if (hostPart === '') {
-    return null
-  }
+  if (hostPart === '') return null
   const schemes = scheme === '*' ? new Set(['http', 'https']) : new Set([scheme])
   const portMatch = hostPart.match(/:(\d+|\*)$/)
   const port = portMatch ? portMatch[1] : null
   const hostName = portMatch ? hostPart.slice(0, -portMatch[0].length) : hostPart
   let hostTest: (host: string) => boolean
-  if (hostName === '*' || scheme === 'file') {
+  if (hostName === '*') {
     hostTest = () => true
   } else if (hostName.startsWith('*.')) {
     const suffix = hostName.slice(2).toLowerCase()
@@ -209,7 +219,7 @@ export interface MatchPattern {
   host: string
   /** null when the pattern has no explicit port (matches any). `*` matches any port too. */
   port: string | null
-  /** Glob over path and query with `*` wildcards; always starts with `/`. */
+  /** Glob over path and query with `*` wildcards; starts with `/` except for `file:` patterns. */
   path: string
   matchesAllUrls: boolean
 }
@@ -228,6 +238,17 @@ export function parseMatchPattern(pattern: string): MatchPattern | null {
       matchesAllUrls: true
     }
   }
+  if (/^file:\/\/./i.test(pattern)) {
+    // No host in a file pattern: the path glob is everything after `file://` (see
+    // `compileMatchPattern`), which need not start with `/`.
+    return {
+      schemes: ['file'],
+      host: '',
+      port: null,
+      path: pattern.slice(7),
+      matchesAllUrls: false
+    }
+  }
   const m = STRUCTURED_PATTERN.exec(pattern)
   if (!m) return null
   const scheme = m[1].toLowerCase()
@@ -235,10 +256,6 @@ export function parseMatchPattern(pattern: string): MatchPattern | null {
   const hostPart = m[2]
   const path = m[3] ?? ''
   if (path === '') return null
-  if (scheme === 'file') {
-    if (hostPart !== '') return null
-    return { schemes: ['file'], host: '', port: null, path, matchesAllUrls: false }
-  }
   let host = hostPart.toLowerCase()
   let port: string | null = null
   const colon = host.lastIndexOf(':')
