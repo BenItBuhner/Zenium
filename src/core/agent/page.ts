@@ -345,6 +345,18 @@ export function zenAgentPageRuntime(): PageRuntime {
     return { x, y }
   }
 
+  /** This document and those of its same-origin frames (parents first): what a lookup searches. */
+  function documents(): Document[] {
+    const out: Document[] = [document]
+    for (let i = 0; i < out.length && out.length < 64; i++) {
+      for (const f of Array.from(out[i].querySelectorAll('iframe'))) {
+        const inner = innerDocument(f)
+        if (inner) out.push(inner)
+      }
+    }
+    return out
+  }
+
   /** An element's box in this document's viewport, wherever in the same-origin frame tree it is. */
   function rectOf(el: Element): DOMRect {
     const r = el.getBoundingClientRect()
@@ -828,14 +840,16 @@ export function zenAgentPageRuntime(): PageRuntime {
       }
       let exact: Element | null = null
       let partial: Element | null = null
-      for (const c of Array.from(document.querySelectorAll<HTMLElement>('*'))) {
-        if (SKIP.has(c.tagName) || !isRendered(c) || !hasBox(c)) continue
-        const aria = collapse(c.getAttribute('aria-label') ?? '').toLowerCase()
-        const text = aria || ownText(c)
-        if (!text) continue
-        // Later elements in document order are deeper / more specific, so keep the last match.
-        if (text === needle) exact = c
-        else if (!exact && text.includes(needle) && text.length < needle.length + 40) partial = c
+      for (const doc of documents()) {
+        for (const c of Array.from(doc.querySelectorAll<HTMLElement>('*'))) {
+          if (SKIP.has(c.tagName) || !isRendered(c) || !hasBox(c)) continue
+          const aria = collapse(c.getAttribute('aria-label') ?? '').toLowerCase()
+          const text = aria || ownText(c)
+          if (!text) continue
+          // Later elements in document order are deeper / more specific, so keep the last match.
+          if (text === needle) exact = c
+          else if (!exact && text.includes(needle) && text.length < needle.length + 40) partial = c
+        }
       }
       const hit = exact ?? partial
       return hit
@@ -843,7 +857,11 @@ export function zenAgentPageRuntime(): PageRuntime {
         : { error: `No visible element with text ${JSON.stringify(t.slice(5))}` }
     }
     try {
-      const el = document.querySelector(t)
+      let el: Element | null = null
+      for (const doc of documents()) {
+        el = doc.querySelector(t)
+        if (el) break
+      }
       return el
         ? preferControl(el)
         : {
@@ -1256,9 +1274,10 @@ export function zenAgentPageRuntime(): PageRuntime {
       if (opts.textGone && body.includes(opts.textGone.toLowerCase()))
         return `text ${JSON.stringify(opts.textGone)} still on the page`
       if (opts.selector) {
+        const selector = opts.selector
         try {
-          if (!document.querySelector(opts.selector))
-            return `no element matches ${JSON.stringify(opts.selector)}`
+          if (!documents().some((doc) => doc.querySelector(selector)))
+            return `no element matches ${JSON.stringify(selector)}`
         } catch {
           return `invalid selector ${JSON.stringify(opts.selector)}`
         }

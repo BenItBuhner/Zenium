@@ -631,7 +631,14 @@ export async function locateTarget(
       pageCall('locate', page.agent, target, scroll, page.state.nextSeq)
     ) as Promise<PageLocation | { error: string }>
   let frameId = isRef(target) ? page.state.frameOf(target) : 0
-  let loc = await call(frameId)
+  let loc: PageLocation | { error: string }
+  try {
+    loc = await call(frameId)
+  } catch (error) {
+    // The frame that issued the ref is gone (navigated away, removed): its refs went with it.
+    if (frameId !== 0) throw staleFrame()
+    throw error
+  }
   if ('error' in loc && !isRef(target)) {
     for (const node of page.state.nodes) {
       if (node.id === 0) continue
