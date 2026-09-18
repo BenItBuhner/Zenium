@@ -61,7 +61,7 @@ import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
 import type { Bridge } from './bridge'
 import type { AndroidExtensions } from './extensionHost'
 import {
-  AndroidExtensionHost,
+  AndroidExtensionsWithRuntime,
   AndroidExtensionRuntime,
   type ExtMessageEvent,
   type ExtRequestEvent
@@ -843,7 +843,7 @@ export class AndroidPlatform implements Platform {
     const io = new AndroidExtensionStoreIo(this.bridge, this.extensionsRoot)
     const runtime = new AndroidExtensionRuntime(this.bridge, browser, () => this.window)
     this.extensionRuntime = runtime
-    this.extensions = new AndroidExtensionHost(browser, io, runtime)
+    this.extensions = new AndroidExtensionsWithRuntime(browser, io, runtime)
     return this.extensions
   }
 

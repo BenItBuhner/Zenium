@@ -1500,7 +1500,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
  * pages open as the runtime's sheets (or, for `open_in_tab`, as tabs), an uninstall takes the
  * runtime's persisted state with it, and the list shows the popup `action.setPopup` left.
  */
-export class AndroidExtensionHost extends AndroidExtensions {
+export class AndroidExtensionsWithRuntime extends AndroidExtensions {
   constructor(
     browser: Browser,
     io: AndroidExtensionStoreIo,
