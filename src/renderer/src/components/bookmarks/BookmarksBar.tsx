@@ -574,6 +574,7 @@ export function BookmarksBar({
           root={menuRoot}
           anchor={menu.anchor}
           bar={menu.bar}
+          anchorEl={() => chipEls.current.get(menu.anchorId) ?? null}
           tabId={tabId}
           dropTarget={target}
           liftedId={liftedId}
