@@ -1,7 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import type { LayoutReport, Rect, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
-import { COVER_WAIT_MS, coverStatus, coverStore, decideHidden } from '@renderer/lib/cover'
+import {
+  chromeUnderPages,
+  COVER_WAIT_MS,
+  coverStatus,
+  coverStore,
+  decideHidden
+} from '@renderer/lib/cover'
 import { useViewport } from '@renderer/lib/formFactor'
 import { glanceRect, placementsFor, SPLIT_GAP, SPLIT_GAP_TOUCH } from '@renderer/lib/layout'
 import { activeTab, visibleTabIds } from '@renderer/lib/selectors'
@@ -12,7 +18,7 @@ export interface LayoutInfo {
   area: Rect | null
   /**
    * Whether chrome covers the content area, so the chrome paints the page's picture there. On
-   * the phone the host is told to hide the page views a little later than this turns true: once
+   * Android the host is told to hide the page views a little later than this turns true: once
    * that picture is painted (see `lib/cover.ts`).
    */
   contentHidden: boolean
@@ -68,9 +74,10 @@ export function useLayoutReporter(
   ])
 
   const contentHidden = overlayCoversContent(ui) || ui.compactHover
-  // The phone chassis swaps the live page for its cover, so its hide follows the cover's paint.
-  // The desktop layout reports the hide the moment it is wanted, as it always has.
-  const followsCover = formFactor === 'phone'
+  // Where the chrome lies under the pages – the Android chassis, whatever its form factor – the
+  // live page is swapped for its cover, so the hide follows the cover's paint. The desktop hosts
+  // report the hide the moment it is wanted, as they always have.
+  const followsCover = chromeUnderPages(state.platform)
   /** What the last report said about the page views (the latch of `decideHidden`). */
   const reportedHidden = useRef(false)
   /** When the current wait for a cover began, or null outside one. */

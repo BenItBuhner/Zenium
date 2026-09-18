@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { MonitorSmartphone, Plus } from 'lucide-react'
 import type { Rect, UIState } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
+import { chromeUnderPages } from '@renderer/lib/cover'
 import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import { captureActiveTab, uiStore, type UiState } from '@renderer/lib/ui'
@@ -88,9 +89,9 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                 <CoverImage
                   tabId={ui.snapshotTabId}
                   src={ui.snapshot}
-                  // The phone swaps the page for this picture (see lib/cover.ts); the desktop
-                  // layout shows it as it always has.
-                  cover={phone}
+                  // The Android chassis swaps the page for this picture at every form factor
+                  // (see lib/cover.ts); the desktop hosts show it as they always have.
+                  cover={chromeUnderPages(state.platform)}
                   className="h-full w-full object-cover object-top"
                 />
               ) : null}

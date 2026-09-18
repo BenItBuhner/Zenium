@@ -11,7 +11,8 @@ package app.zen.chromium
  * the state it reported the layout from (`WebView.postVisualStateCallback`), so the view goes
  * with that frame and not before it, and in any case by [DEADLINE_MS] – a chrome that stops
  * drawing (a window on its way to the background) must not keep a page over a sheet for good.
- * A show is applied at once: a live page over its own picture is a change nobody sees.
+ * A show is applied at once; the close direction's ordering (the picture kept until the page view
+ * has drawn again) is a filed follow-up, not this class's.
  */
 class PageVisibility(private val apply: (tabId: String, visible: Boolean) -> Unit) {
     /** A deferred hide; the chrome's visual-state callback and the deadline hand it back. */

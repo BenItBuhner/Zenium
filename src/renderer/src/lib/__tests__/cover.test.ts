@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Platform } from '@shared/types'
 import {
+  chromeUnderPages,
   COVER_WAIT_MS,
   coverStatus,
   coverStore,
@@ -86,6 +88,20 @@ describe('decideHidden: the page goes only once its cover is painted', () => {
   it('a hidden page stays hidden while wanted, even under a cover that is decoding again', () => {
     expect(decideHidden(true, true, loading, false)).toBe(true)
     expect(decideHidden(true, true, none, false)).toBe(true)
+  })
+
+  it('the chassis consults the table, not the layout: Android at any form factor, no desktop host', () => {
+    // Keyed on the platform alone – a phone, an 800 × 1280 tablet and a DeX window with a mouse
+    // all run the Android host with its chrome under the pages. Listing every `Platform` keeps a
+    // new one from slipping past this table.
+    const follows: Record<Platform, boolean> = {
+      android: true,
+      linux: false,
+      win32: false,
+      darwin: false
+    }
+    for (const [platform, expected] of Object.entries(follows))
+      expect(chromeUnderPages(platform as Platform)).toBe(expected)
   })
 })
 
@@ -242,5 +258,20 @@ describe('the ordering a sheet opens in', () => {
     const later = startedAt + COVER_WAIT_MS
     reported = decideHidden(true, reported, status('a'), later - startedAt >= COVER_WAIT_MS)
     expect(reported).toBe(true)
+  })
+
+  it('a desktop host reports the hide the moment it is wanted, whatever the cover is doing', () => {
+    // The reporter's gate: the table is consulted only where the chrome lies under the pages;
+    // elsewhere the report is the wish itself, as it was before covers existed.
+    trackCover('a', image())
+    const report = (platform: Platform, wantsHidden: boolean): boolean =>
+      chromeUnderPages(platform)
+        ? decideHidden(wantsHidden, false, status('a'), false)
+        : wantsHidden
+    expect(status('a')).toEqual({ loading: true, painted: false })
+    expect(report('android', true)).toBe(false)
+    expect(report('linux', true)).toBe(true)
+    expect(report('darwin', true)).toBe(true)
+    expect(report('win32', false)).toBe(false)
   })
 })

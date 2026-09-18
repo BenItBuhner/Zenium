@@ -1,3 +1,4 @@
+import type { Platform } from '@shared/types'
 import { createStore } from './store'
 
 /**
@@ -5,7 +6,7 @@ import { createStore } from './store'
  * sheet, the hero card of the overview, the card under the finger during a tab switch – so that
  * hiding the page view swaps it for an identical picture.
  *
- * On the phone the chrome WebView lies *under* the page WebViews. Nothing the chrome draws is
+ * On Android the chrome WebView lies *under* the page WebViews. Nothing the chrome draws is
  * visible until the page is hidden, and the moment it is hidden, whatever the chrome has drawn
  * by then is what shows. A snapshot `<img>` that is in the DOM but not yet decoded and
  * rasterised shows the window's gradient in place of the page for a few frames – a second on a
@@ -25,6 +26,18 @@ export const coverStore = createStore<CoverState>(
   { loading: new Map(), painted: new Map() },
   'cover'
 )
+
+/**
+ * Whether this host's chrome lies under its page views, so that hiding a page shows whatever the
+ * chrome has drawn by then. This is a property of the chassis, not of the layout: the Android
+ * host (`Host.kt`) stacks its views this way on a phone, on a tablet and in a DeX window with a
+ * mouse alike, so a cover stands in for the page at every form factor there. Electron's
+ * compositor has the overlay painted before a page view goes, so the desktop hosts report the
+ * hide the moment it is wanted, as they always have.
+ */
+export function chromeUnderPages(platform: Platform): boolean {
+  return platform === 'android'
+}
 
 /**
  * How long a hide waits for a cover that is on its way. A decode that never finishes must not
@@ -52,7 +65,8 @@ export function coverStatus(state: CoverState, tabId: string | null | undefined)
  * for (`overlayCoversContent`), `hidden` what the previous report said, `cover` the state of the
  * active tab's cover and `waitedOut` whether the current wait has run past `COVER_WAIT_MS`.
  *
- *  - A show is honoured at once: the live page over its own picture is a swap nobody sees.
+ *  - A show is honoured at once. (The cover's unmount against the page view's return is the
+ *    close direction's own ordering; it is not decided here.)
  *  - A hidden page stays hidden while wanted, even while a fresher cover is still decoding;
  *    showing it for a frame would gain nothing.
  *  - A hide waits while a cover is on its way, until the cover is painted or the wait ran out.
