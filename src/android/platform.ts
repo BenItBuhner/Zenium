@@ -890,6 +890,10 @@ export class AndroidPlatform implements Platform {
       clearContainerData: (containerId) => bridge.call('profile.clear', { containerId }),
       clearPrivate: () => bridge.call('profile.clear', { containerId: PRIVATE_CONTAINER_ID }),
       clearAuthCache: () => bridge.call('security.forgetSession', {}),
+      // The WebView decides certificate errors on its own side: the core's exception is mirrored
+      // to Kotlin (`Security.certificateExceptions`) before the address is asked for again.
+      allowCertificate: (containerId, url, fingerprint) =>
+        bridge.call('security.allowCertificate', { containerId, url, fingerprint }),
       clearBrowsingData: (containerIds, kinds) =>
         bridge.call('profile.clearBrowsingData', { containerIds, kinds }),
       browsingDataCounts: (containerIds) =>
