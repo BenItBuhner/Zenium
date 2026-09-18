@@ -346,24 +346,37 @@ function cardBody(prompt: SaveCardPrompt): { body: ReactNode; actions: Action[] 
   }
 }
 
-/** The passkey chooser's rows: one per account, the first (most recently used) active. */
+/**
+ * The passkey chooser's rows: one per account. In the dialog the first (most recently used) is
+ * active and takes the focus as the chooser opens (§9.22); in the sheet no row is lit until a
+ * finger lands on one, as in the picker strip.
+ */
 function PasskeyRows({
   prompt,
-  respond
+  respond,
+  highlightFirst = true
 }: {
   prompt: PasskeyAccountPrompt
   respond: Respond
+  highlightFirst?: boolean
 }): JSX.Element {
-  const [active, setActive] = useState(0)
+  const [active, setActive] = useState(highlightFirst ? 0 : -1)
   const first = useRef<HTMLButtonElement>(null)
   useEffect(() => {
-    first.current?.focus()
-  }, [])
+    if (highlightFirst) first.current?.focus()
+  }, [highlightFirst])
   const onKeyDown = (e: React.KeyboardEvent): void => {
     const count = prompt.accounts.length
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault()
-      const next = e.key === 'ArrowDown' ? (active + 1) % count : (active - 1 + count) % count
+      const next =
+        active < 0
+          ? e.key === 'ArrowDown'
+            ? 0
+            : count - 1
+          : e.key === 'ArrowDown'
+            ? (active + 1) % count
+            : (active - 1 + count) % count
       setActive(next)
       const rows = e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]')
       rows[next]?.focus()
@@ -380,7 +393,7 @@ function PasskeyRows({
           aria-selected={active === i}
           data-active={active === i || undefined}
           className="zen-v2-af-row"
-          tabIndex={active === i ? 0 : -1}
+          tabIndex={active === i || (active < 0 && i === 0) ? 0 : -1}
           onPointerEnter={() => setActive(i)}
           onFocus={() => setActive(i)}
           onClick={() => respond({ action: 'pick', credentialId: account.credentialId })}
@@ -702,7 +715,7 @@ function PromptSheet({
     case 'passkey-account':
       content = (
         <>
-          <PasskeyRows prompt={prompt} respond={(r) => leave(r)} />
+          <PasskeyRows prompt={prompt} respond={(r) => leave(r)} highlightFirst={false} />
           <div className="zen-v2-af-form">{footer([{ label: 'Cancel', response: null }])}</div>
         </>
       )
