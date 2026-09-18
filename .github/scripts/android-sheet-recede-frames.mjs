@@ -163,7 +163,9 @@ function judge(name, held, frames) {
         `${name} at ${f.at} ms: brightness stepped ${(share * 100).toFixed(0)}% of the way in ${dt} ms (a spring moves at most ${(Math.min(1, allowed) * 100).toFixed(0)}% in that time)`
       )
     }
-    if (!held && moved && dt >= PLATEAU_MS) {
+    // The plateau clause counts stillness that began after the event: the window's lead-in may
+    // hold a finger's swipe and its hold (the commit of a back gesture is the finger letting go).
+    if (!held && moved && dt >= PLATEAU_MS && last.at >= 0) {
       failures.push(
         `${name} at ${f.at} ms: the page moved again (${d.toFixed(1)}) after standing still for ${dt} ms – a pop after the sheet had settled`
       )

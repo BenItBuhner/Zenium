@@ -148,21 +148,27 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         probe("siteinfo-close", Kind.TRANSITION) { f.tap(scrimPoint()) }
         settleDown()
 
-        // 3. A picker: the tab's context menu, then the icon picker its "Change Icon…" opens
-        //    (the menu slides away first, the picker rises in the frame dialog host). The menu
-        //    is pulled to its full height first, as `openMenuItem` does, so the row is in reach.
+        // 3. A picker: the tab's context menu, then the icon picker its "Change Icon…" row opens
+        //    (the menu slides away as the picker rises in the frame dialog host). The row sits
+        //    below the menu's peek and is clicked through the accessibility tree, so the menu
+        //    stays at its peek, under the band: pulled to its full height it would cover it.
         probe("context-open", Kind.TRANSITION) { coreInvoke("tab.contextMenu", "{\"tabId\":\"$TAB_ID\"}") }
         settleUp()
-        findByLabel(MENU_HANDLE_LABEL)?.let { grabber ->
-            f.down(grabber.exactCenterX(), grabber.exactCenterY())
-            f.moveBy(0f, -0.4f * height, 130)
-            f.up()
-            SystemClock.sleep(2_000)
+        var pickerUp = false
+        if (findNode { it == CHANGE_ICON } != null) {
+            probe("picker-open", Kind.TRANSITION) {
+                if (!clickByLabel(CHANGE_ICON)) Log.w(tag, "'$CHANGE_ICON' took no click through the tree")
+            }
+            SystemClock.sleep(1_500)
+            pickerUp = waitFor(PICKER_TITLE, 2_000) != null
+            finding(
+                if (pickerUp) "picker: '$PICKER_TITLE' is up, --zen-recede ${recedeValue()}"
+                else "picker: '$PICKER_TITLE' never came up"
+            )
+        } else {
+            finding("no '$CHANGE_ICON' row in the context menu")
         }
-        val changeIcon = reveal(CHANGE_ICON)
-        if (changeIcon != null) {
-            probe("picker-open", Kind.TRANSITION) { f.tap(changeIcon.exactCenterX(), changeIcon.exactCenterY()) }
-            settleUp()
+        if (pickerUp) {
             // System back when the chrome holds a surface for it (the chassis registers one for
             // the picker); a press on the scrim when it does not, as a back would leave the app.
             if (awaitSurface(up = true, timeoutMs = 1_000)) {
@@ -172,8 +178,8 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
                 finding("picker: no back surface for it; closed by a press on the scrim")
                 probe("picker-close", Kind.TRANSITION) { f.tap(scrimPoint()) }
             }
-        } else {
-            finding("no '$CHANGE_ICON' row in the context menu; closing it instead")
+        } else if (awaitSurface(up = true, timeoutMs = 500)) {
+            finding("closing the context menu instead")
             probe("context-close", Kind.TRANSITION) { back() }
         }
         settleDown()
@@ -222,10 +228,9 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
             finding("back gesture held: --zen-recede ${recedeValue()}")
             probe("back-cancel", Kind.TRANSITION, RELEASE_MS) { cancelSwipe() }
             SystemClock.sleep(800)
-            probe("back-commit", Kind.TRANSITION) {
-                edgeSwipe(0.36f * width)
-                commitSwipe()
-            }
+            // The swipe and its hold before the mark: the event is the finger letting go.
+            edgeSwipe(0.36f * width)
+            probe("back-commit", Kind.TRANSITION) { commitSwipe() }
             settleDown()
         } else {
             finding("no surface up for the back gesture: skipping it")
@@ -542,6 +547,8 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         private const val TAB_ID = "tab_article"
         private const val SITE_ICON_LABEL = "Site information"
         private const val CHANGE_ICON = "Change Icon…"
+        /** The icon picker's heading. */
+        private const val PICKER_TITLE = "Change icon"
         /** Inside the system's back-gesture inset on any density. */
         private const val EDGE_X = 2f
         /** Long enough for the slowest capture seen on the emulator (about a second) plus the sheet settling. */
