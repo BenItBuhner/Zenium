@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tide tables</title>
+<!--
+  The page the zoom sheet demo zooms: text that reflows, a pair of cards that sit side by side
+  until the layout viewport is too narrow for them, and a readout of that viewport's width, so
+  the recording shows the page laying itself out again at every level the slider passes.
+-->
+<style>
+  body { margin: 0; padding: 24px 20px 48px; font: 17px/1.5 system-ui, sans-serif; color: #1c1b1f; background: #fff; }
+  h1 { font-size: 28px; line-height: 1.15; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .meta { color: #6b6a71; font-size: 14px; margin: 0 0 18px; }
+  .readout { display: inline-block; font: 600 14px/1 ui-monospace, monospace; padding: 8px 10px; border-radius: 8px;
+    background: #eef1ff; color: #2d3a8c; margin: 0 0 20px; }
+  .cards { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 20px; }
+  .card { flex: 1 1 160px; min-width: 160px; padding: 14px 16px; border: 1px solid #dcdbe2; border-radius: 12px; }
+  .card h2 { font-size: 15px; margin: 0 0 6px; color: #4a4950; text-transform: uppercase; letter-spacing: 0.04em; }
+  .card p { margin: 0; font-size: 22px; font-weight: 600; }
+  .card small { display: block; font-size: 13px; font-weight: 400; color: #6b6a71; margin-top: 2px; }
+  p { margin: 0 0 14px; }
+  ul { margin: 0 0 14px; padding-left: 22px; }
+  li { margin: 0 0 4px; }
+  .small { font-size: 12px; color: #4a4950; }
+</style>
+</head>
+<body>
+<h1>Tide tables for the week</h1>
+<p class="meta">Harbour notice · high water, low water and the last ferry</p>
+<div class="readout" id="readout">layout viewport: … CSS px</div>
+<div class="cards">
+  <div class="card"><h2>High water</h2><p>06:42<small>4.9 m, Monday</small></p></div>
+  <div class="card"><h2>Low water</h2><p>12:58<small>0.7 m, Monday</small></p></div>
+</div>
+<p>Zoom, from the app menu, makes a page like this one larger or smaller for reading: the type
+grows, the lines wrap sooner and the two cards above stack once there is no room for them side
+by side. The page stays where it is while the slider moves, so what changes is seen at once.</p>
+<p>The zoom is remembered for the site. Open the page again, or another page on it, and it comes
+up at the size it was left at; Reset in the sheet goes back to the default set under Settings &gt;
+Accessibility.</p>
+<ul>
+  <li>Last ferry to the island: 21:10, from the north quay.</li>
+  <li>Harbour office: open until 18:00, closed on Sundays.</li>
+  <li>Fuel berth: high water only, call ahead on channel 12.</li>
+</ul>
+<p class="small">Small print a reader might want to enlarge: the tide times are for the outer
+harbour and run about twenty minutes later at the slipway; heights are above chart datum.</p>
+<script>
+  (function () {
+    var out = document.getElementById('readout');
+    function paint() { out.textContent = 'layout viewport: ' + document.documentElement.clientWidth + ' CSS px'; }
+    window.addEventListener('resize', paint);
+    paint();
+  })();
+</script>
+</body>
+</html>

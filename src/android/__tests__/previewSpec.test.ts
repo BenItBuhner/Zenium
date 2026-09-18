@@ -38,6 +38,13 @@ describe('parsePreviewSpec', () => {
     })
   })
 
+  it('opens the zoom sheet at a factor, or as it is', () => {
+    expect(parsePreviewSpec('zoom=1.5')).toEqual({ kind: 'zoom', factor: 1.5 })
+    expect(parsePreviewSpec('zoom=')).toEqual({ kind: 'zoom', factor: null })
+    expect(parsePreviewSpec('zoom=abc')).toEqual({ kind: 'zoom', factor: null })
+    expect(parsePreviewSpec('find=x&zoom=2')).toEqual({ kind: 'find', text: 'x' })
+  })
+
   it('opens the app menu, behind an overlay but ahead of the bars', () => {
     expect(parsePreviewSpec('menu=app')).toEqual({ kind: 'menu' })
     expect(parsePreviewSpec('menu=app&show=Desktop Site')).toEqual({
@@ -45,6 +52,7 @@ describe('parsePreviewSpec', () => {
       show: 'Desktop Site'
     })
     expect(parsePreviewSpec('menu=app&find=x')).toEqual({ kind: 'menu' })
+    expect(parsePreviewSpec('menu=app&zoom=2')).toEqual({ kind: 'menu' })
     expect(parsePreviewSpec('overlay=history&menu=app')).toEqual({
       kind: 'overlay',
       overlay: 'history'
