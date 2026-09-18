@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Probe options</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 20px;
+        font:
+          15px/1.4 system-ui,
+          sans-serif;
+        color: #1c1c1e;
+        background: #fff;
+      }
+      h1 {
+        font-size: 17px;
+        margin: 0 0 12px;
+      }
+      label {
+        display: block;
+        margin: 12px 0;
+      }
+      input[type='text'] {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        font: inherit;
+        border: 1px solid #d1d5db;
+        border-radius: 10px;
+      }
+      p {
+        color: #6b7280;
+        margin: 8px 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Zenium probe options</h1>
+    <label>
+      Greeting
+      <input id="greeting" type="text" placeholder="stored in chrome.storage.local" />
+    </label>
+    <label><input id="dark" type="checkbox" /> Prefer dark pages</label>
+    <p id="status">Loading…</p>
+    <p id="origin"></p>
+    <script src="options.js"></script>
+  </body>
+</html>

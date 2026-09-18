@@ -10,6 +10,7 @@ import type { SafeBrowsingHit } from '@shared/privacy'
 import type { FormsCommand } from '@shared/forms'
 import { isCertificateError, type SiteCertificate } from '@shared/siteInfo'
 import { certificateDetailsFrom } from '@shared/url'
+import type { NavigationReport } from './extensionWebNavigation'
 import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@shared/zenPages'
 import type {
   AgentCapture,
@@ -52,6 +53,11 @@ export interface ViewEventPayloads {
   favicon: { url: string }
   /** A failed load; a refused certificate (`ERR_CERT_*`) comes with what the interstitial shows of it. */
   failLoad: { code: number; description: string; url: string; certificate?: unknown }
+  /**
+   * The WebView's navigation listener reported a phase of a main-frame navigation (only on a
+   * WebView with `NAVIGATION_LISTENER`); the extension runtime derives `webNavigation` from it.
+   */
+  navigation: NavigationReport
   /** HTTPS-only mode's rule sent the navigation to `to` instead of `from` (before it loads). */
   upgraded: { from: string; to: string }
   /** The Safe Browsing guard refused the navigation (a `failLoad` of the URL follows). */

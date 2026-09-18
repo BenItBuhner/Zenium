@@ -96,8 +96,18 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
         className="zen-content-frame relative flex h-full min-h-0 flex-col overflow-hidden"
         data-staged={staged || undefined}
       >
-        {crashRestore && <CrashRestoreBanner offer={crashRestore} />}
-        {banner && <DefaultBrowserBanner state={state} />}
+        {(crashRestore || banner) && (
+          // Under a desktop overlay panel the strips keep their height (the viewport under them
+          // does not jump) but are not painted or reachable: the panel's 12 px margin showed the
+          // strip's top edge and its accent button above every overlay (services' #92 pass).
+          <div
+            className="zen-frame-strips contents"
+            data-under-overlay={ui.overlay !== 'none' || undefined}
+          >
+            {crashRestore && <CrashRestoreBanner offer={crashRestore} />}
+            {banner && <DefaultBrowserBanner state={state} />}
+          </div>
+        )}
         <div className="flex min-h-0 flex-1 flex-row">
           {/* A tab dragged onto the page (past the split zones at its edges) tears off into a new window. */}
           <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden" data-tear-zone>

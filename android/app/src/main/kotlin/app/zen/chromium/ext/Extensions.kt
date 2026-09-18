@@ -1,9 +1,13 @@
 package app.zen.chromium.ext
 
+import android.Manifest
+import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Base64
 import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
@@ -11,6 +15,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.ScriptHandler
+import androidx.webkit.WebResourceResponseCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import app.zen.chromium.Host
@@ -109,6 +114,8 @@ class Extensions(private val host: Host) {
         val allowPrivate: Boolean,
         /** `web_accessible_resources` globs (tab pages may only fetch these). */
         val webAccessible: List<Regex>,
+        /** `host_permissions` (and MV2 origin permissions): the hosts the CORS proxy reaches for the extension's pages. */
+        val hosts: List<MatchPattern>,
         /** The generated background page, or null when the extension has none / an MV2 page. */
         val backgroundHtml: String?,
         val backgroundUrl: String?,
@@ -154,12 +161,8 @@ class Extensions(private val host: Host) {
     /** The rules of the extensions allowed in private tabs, for those tabs' requests. */
     @Volatile private var privateRules: NetRules? = null
     @Volatile private var observeRequests = false
-    /**
-     * Tab id → the extension whose `identity.launchWebAuthFlow` runs in that tab (`ext.authFlow`):
-     * the tab's navigation back to `https://<id>.chromiumapp.org/…` is the flow's result and is
-     * never loaded.
-     */
-    @Volatile private var authFlows: Map<String, String> = emptyMap()
+    /** The `identity.launchWebAuthFlow` sheets open right now, by the runtime's view id (`ext.auth.*`). */
+    private val authSheets = HashMap<Int, ExtensionAuthSheet>()
     @Volatile var debug = true
         private set
     private val handlers = WeakHashMap<WebView, ViewHandlers>()
@@ -172,8 +175,47 @@ class Extensions(private val host: Host) {
     private val endpoints = HashMap<String, Endpoint>()
     private val backgrounds = HashMap<String, ExtensionWebView>()
     private var popup: ExtensionPopup? = null
+    /** The user agent extension pages send (set when the first extension view is built), for the CORS proxy's requests. */
+    @Volatile var userAgent: String? = null
+    /** Optional host permissions granted at runtime (`chrome.permissions.request`), per extension; read on request threads. */
+    @Volatile private var grantedHosts: Map<String, List<MatchPattern>> = emptyMap()
+    /** The jar half of `chrome.cookies` (see [ExtensionCookies]). */
+    private val cookies = ExtensionCookies()
+    /** The shade half of `chrome.notifications` (see [ExtensionNotifications]). */
+    private val notifications = ExtensionNotifications(host.activity, io) { id, notificationId, event, index ->
+        onNotificationEvent(id, notificationId, event, index)
+    }
+    /**
+     * Taps on cards of extensions not attached right now (the card outlived the process, or the
+     * chrome is still booting): delivered when `ext.configure` brings the extension back.
+     */
+    private val pendingNotificationEvents = HashMap<String, ArrayDeque<JSONObject>>()
+    /** The notification permission is asked for once per process, on the first card (Android 13+). */
+    private var askedNotifications = false
+    /**
+     * Whether the WebView stores the cookies of an intercepted response handed over through
+     * `WebResourceResponseCompat.setCookies` (`COOKIE_INTERCEPT`, Chromium 137+); read once, and
+     * defensively, as [NavigationReports] reads its features.
+     */
+    val cookieIntercept: Boolean by lazy {
+        runCatching { WebViewFeature.isFeatureSupported(WebViewFeature.COOKIE_INTERCEPT) }.getOrDefault(false)
+    }
+    /**
+     * Cross-origin fetches of extension pages to permitted hosts (see [CorsProxy]). A credentialed
+     * response's `Set-Cookie` reaches the WebView's jar as the response's cookies where the WebView
+     * files those itself, through `CookieManager` otherwise.
+     */
+    private val corsProxy = CorsProxy(
+        object : CorsProxy.Cookies {
+            override val intercepts: Boolean get() = cookieIntercept
+            override fun header(url: String): String? = CookieManager.getInstance().getCookie(url)
+            override fun store(url: String, setCookie: String) = CookieManager.getInstance().setCookie(url, setCookie)
+        }
+    ) { userAgent }
     /** Last request decisions ("allow|block|… type micros url"), kept while `debug` for instrumentation. */
     val decisions = ArrayDeque<String>()
+    /** While `debug`: the CORS proxy's last answers ("<ext> METHOD status url"), for instrumentation. */
+    val proxied = ArrayDeque<String>()
     /**
      * While `debug`: `"<ext> <ns>.<method>"` → `[calls, failed replies, unanswered]` over the
      * bridge, so the demo can grade messaging and storage per real extension (`msg` counts as
@@ -213,7 +255,8 @@ class Extensions(private val host: Host) {
                         "token" to token,
                         "uiLanguage" to Locale.getDefault().toLanguageTag(),
                         "isolatedWorlds" to isolatedWorlds,
-                        "worldSlots" to worldSlots.size
+                        "worldSlots" to worldSlots.size,
+                        "navigationListener" to NavigationReports.supported
                     )
                 )
             }
@@ -225,17 +268,24 @@ class Extensions(private val host: Host) {
             "ext.send" -> { send(args.str("ep"), args.str("message")); reply(null) }
             "ext.background.start" -> { startBackground(args.str("id")); reply(null) }
             "ext.background.stop" -> { stopBackground(args.str("id")); reply(null) }
-            "ext.popup.open" -> { openPopup(args.str("id"), args.str("url"), args.str("context", "popup")); reply(null) }
+            "ext.popup.open" -> { openPopup(args.str("id"), args.str("url"), args.str("context", "popup"), args.str("title", "")); reply(null) }
             "ext.popup.close" -> { closePopup(); reply(null) }
-            "ext.authFlow" -> {
-                val tabId = args.str("tabId")
-                val id = args.strOrNull("id")
-                authFlows = if (id == null) authFlows - tabId else authFlows + (tabId to id)
+            "ext.auth.open" -> { openAuthSheet(args.getInt("viewId"), args.str("id"), args.str("url"), args.str("title")); reply(null) }
+            "ext.auth.show" -> { authSheets[args.getInt("viewId")]?.show(); reply(null) }
+            "ext.auth.close" -> { authSheets.remove(args.getInt("viewId"))?.close(); reply(null) }
+            "ext.hosts" -> {
+                val id = args.str("id")
+                val hosts = args.arr("hosts").let { a -> MatchPattern.compileAll(List(a.length()) { i -> a.optString(i, "") }) }
+                grantedHosts = if (hosts.isEmpty()) grantedHosts - id else grantedHosts + (id to hosts)
                 reply(null)
             }
             "ext.exec" -> exec(args, reply)
-            "ext.cookies.get" -> reply(CookieManager.getInstance().getCookie(args.str("url")))
-            "ext.cookies.set" -> { CookieManager.getInstance().setCookie(args.str("url"), args.str("cookie")); reply(null) }
+            "ext.cookies.read" -> reply(cookies.read(args.str("container", Profiles.DEFAULT_CONTAINER), args.str("url")))
+            "ext.cookies.write" -> cookies.write(args.str("container", Profiles.DEFAULT_CONTAINER), args.str("url"), args.str("cookie"), reply)
+            "ext.notifications.show" -> { showNotification(args.str("id"), args.obj("notification")); reply(null) }
+            "ext.notifications.hide" -> { notifications.hide(args.str("id"), args.str("notificationId")); reply(null) }
+            "ext.notifications.forget" -> { notifications.forget(args.str("id")); reply(null) }
+            "ext.notifications.allowed" -> reply(notifications.allowed())
             "ext.readFile" -> {
                 val id = args.str("id")
                 val path = args.str("path")
@@ -308,6 +358,7 @@ class Extensions(private val host: Host) {
                 allowFileAccess = args.bool("allowFileAccess"),
                 allowPrivate = args.bool("allowPrivate"),
                 webAccessible = s.arr("webAccessible").let { a -> List(a.length()) { i -> globToRegex(a.optString(i, "")) } },
+                hosts = s.arr("hosts").let { a -> MatchPattern.compileAll(List(a.length()) { i -> a.optString(i, "") }) },
                 backgroundHtml = s.strOrNull("backgroundHtml"),
                 backgroundUrl = s.strOrNull("backgroundUrl"),
                 pageConfig = s.str("page", "{}"),
@@ -340,6 +391,7 @@ class Extensions(private val host: Host) {
                 units[id] = unitsNow
                 for (view in host.tabs.all()) installExtension(view, servedNow, unitsNow)
                 configureStats[id] = stats
+                flushNotificationEvents(id)
                 Log.i(
                     TAG,
                     "configured ${id.take(8)} ${servedNow.version}: ${unitsNow.size} unit(s), " +
@@ -350,6 +402,40 @@ class Extensions(private val host: Host) {
             }
         }
     }
+
+    // --- notifications ---------------------------------------------------------------------------
+
+    /**
+     * `ext.notifications.show`: the card, once the app may post (Android 13+ asks the first time,
+     * as the downloader does; a refusal leaves the card unposted, `getPermissionLevel` says so).
+     */
+    private fun showNotification(id: String, notification: JSONObject) {
+        val dir = served[id]?.dir
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !askedNotifications && !notifications.allowed()) {
+            askedNotifications = true
+            host.activity.requestRuntimePermissions(listOf(Manifest.permission.POST_NOTIFICATIONS)) {
+                notifications.show(id, dir, notification)
+            }
+            return
+        }
+        notifications.show(id, dir, notification)
+    }
+
+    /** A tap or a button on a card: the activity intent [MainActivity] received. */
+    fun onNotificationIntent(intent: Intent): Boolean = notifications.onIntent(intent)
+
+    private fun onNotificationEvent(id: String, notificationId: String, event: String, index: Int) {
+        val payload = json("id" to id, "notificationId" to notificationId, "event" to event, "index" to index)
+        if (served.containsKey(id)) host.chrome.hostEvent("ext.notification", payload)
+        else pendingNotificationEvents.getOrPut(id) { ArrayDeque() }.addLast(payload)
+    }
+
+    private fun flushNotificationEvents(id: String) {
+        val queue = pendingNotificationEvents.remove(id) ?: return
+        for (payload in queue) host.chrome.hostEvent("ext.notification", payload)
+    }
+
+    // --- detach ----------------------------------------------------------------------------------
 
     /** `ext.detach { id }`: the extension's units leave every tab; its pages and cache go. */
     private fun detachExtension(id: String) {
@@ -365,6 +451,9 @@ class Extensions(private val host: Host) {
         worldSlots.releaseAll(id)
         io.execute { compiler.forget(id) }
         configureStats.remove(id)
+        notifications.forget(id)
+        pendingNotificationEvents.remove(id)
+        closeAuthSheets(id)
         Log.i(TAG, "detached ${id.take(8)}")
     }
 
@@ -384,7 +473,7 @@ class Extensions(private val host: Host) {
         rules = null
         privateRules = null
         observeRequests = false
-        authFlows = emptyMap()
+        closeAuthSheets()
     }
 
     /**
@@ -505,6 +594,13 @@ class Extensions(private val host: Host) {
         if (debug) recordReply(ep, message)
         val ok = runCatching { endpoint.proxy.postMessage(message) }.isSuccess
         if (!ok) gone(listOf(ep))
+    }
+
+    private fun recordProxy(extensionId: String, request: CorsProxy.Request, status: Int) {
+        synchronized(proxied) {
+            if (proxied.size >= 200) proxied.removeFirst()
+            proxied.addLast("$extensionId ${request.method} $status ${request.url}")
+        }
     }
 
     private fun recordCall(ep: String, message: JSONObject) {
@@ -837,6 +933,12 @@ class Extensions(private val host: Host) {
                 popup?.resize(message.optInt("width"), message.optInt("height"))
                 return
             }
+            "proxyBody" -> {
+                // The body of a bodied cross-origin fetch, ahead of the request naming its ticket (CorsProxy).
+                val bytes = runCatching { Base64.decode(message.str("body"), Base64.DEFAULT) }.getOrNull() ?: return
+                corsProxy.putBody(message.str("ticket"), bytes)
+                return
+            }
             "closePopup" -> {
                 closePopup()
                 return
@@ -919,19 +1021,6 @@ class Extensions(private val host: Host) {
     // ---------------------------------------------------------------------------------------------
 
     /**
-     * A tab's main-frame navigation is about to start (`shouldOverrideUrlLoading`, main thread):
-     * true when the tab runs an extension's web-auth flow and this is the way back to its redirect
-     * origin, which ends the flow (`ext.identityRedirect` carries the URL, tokens and all) and is
-     * never loaded, nothing being fetched from `<id>.chromiumapp.org`.
-     */
-    fun interceptNavigation(tab: TabWebView, url: String): Boolean {
-        val id = authFlows[tab.tabId] ?: return false
-        if (!IdentityRedirect.isRedirectBack(id, url)) return false
-        host.chrome.hostEvent("ext.identityRedirect", json("tabId" to tab.tabId, "url" to url))
-        return true
-    }
-
-    /**
      * Every WebView's `shouldInterceptRequest` (background thread). Tab pages: a top-level
      * navigation to an extension origin gets any file (Chrome lets any extension page open as a
      * tab), other frames only its web-accessible resources; then the DNR decision. Extension
@@ -965,13 +1054,31 @@ class Extensions(private val host: Host) {
             }
             return serve(ext, path)
         }
-        // The way back from a web-auth flow the WebView did not ask about first (a POST): an
-        // empty page stands in for the redirect host, and the runtime reads the URL off the
-        // navigation that commits.
-        if (request.isForMainFrame && tab != null) {
-            val flow = authFlows[tab.tabId]
-            if (flow != null && IdentityRedirect.isRedirectBack(flow, url.toString())) {
-                return response("text/html", 200, "OK", REDIRECT_LANDING)
+        // A fetch or XHR of an extension page to a host its permissions cover: Chrome skips CORS
+        // there, the proxy stands in (CorsProxy). The request's `Origin` names the extension, so
+        // a popup, a background view and an extension page opened in a tab are one case.
+        val corsOrigin = request.requestHeaders?.entries?.firstOrNull { it.key.equals("Origin", true) }?.value
+        if (corsOrigin != null && corsOrigin.startsWith("https://") && corsOrigin.endsWith(ORIGIN_SUFFIX)) {
+            val id = corsOrigin.removePrefix("https://").removeSuffix(ORIGIN_SUFFIX)
+            val ext = served[id]
+            if (ext != null && (tab?.isPrivateTab != true || ext.allowPrivate)) {
+                val proxied = CorsProxy.Request(request.method ?: "GET", url.toString(), request.requestHeaders ?: emptyMap())
+                val hosts = grantedHosts[id]?.let { ext.hosts + it } ?: ext.hosts
+                if (corsProxy.applies(proxied, corsOrigin, hosts)) {
+                    val reply = corsProxy.handle(proxied, id, corsOrigin)
+                    // A 3xx the proxy could not follow cannot be a WebResourceResponse; the WebView tries itself.
+                    if (reply != null && reply.status !in 300..399) {
+                        if (debug) recordProxy(id, proxied, reply.status)
+                        if (reply.cookies.isEmpty()) {
+                            return WebResourceResponse(reply.mime, reply.charset, reply.status, reply.reason, reply.headers, reply.body)
+                        }
+                        // COOKIE_INTERCEPT: the WebView stores the response's cookies itself (it drops a
+                        // plain Set-Cookie header of an intercepted response).
+                        return WebResourceResponseCompat(reply.mime, reply.charset, reply.status, reply.reason, reply.headers, reply.body)
+                            .apply { setCookies(reply.cookies) }
+                            .toWebResourceResponse()
+                    }
+                }
             }
         }
         if (extensionPage != null) return null
@@ -1132,6 +1239,12 @@ class Extensions(private val host: Host) {
     /** The WebView of the open popup / options sheet, if any. */
     fun popupView(): ExtensionWebView? = popup?.webView
 
+    /** The WebView of an extension's open `identity.launchWebAuthFlow` sheet, if any (instrumentation). */
+    fun authSheetView(extensionId: String): WebView? = authSheets.values.firstOrNull { it.extensionId == extensionId }?.webView
+
+    /** Whether the CORS proxy's log (`proxied`) has an answer for a URL containing `fragment`, as "METHOD status url" lines. */
+    fun proxiedMatching(fragment: String): List<String> = synchronized(proxied) { proxied.filter { it.contains(fragment) } }
+
     // ---------------------------------------------------------------------------------------------
     // Background pages and popups
     // ---------------------------------------------------------------------------------------------
@@ -1158,10 +1271,10 @@ class Extensions(private val host: Host) {
         view.destroy()
     }
 
-    private fun openPopup(id: String, url: String, context: String) {
+    private fun openPopup(id: String, url: String, context: String, title: String) {
         closePopup()
         val ext = served[id] ?: return
-        val sheet = ExtensionPopup(host, this, ext, url, context) {
+        val sheet = ExtensionPopup(host, this, ext, title, url, context) {
             popup = null
             host.chrome.hostEvent("ext.popupClosed", json("id" to id))
         }
@@ -1172,6 +1285,29 @@ class Extensions(private val host: Host) {
     fun closePopup() {
         popup?.dismiss()
         popup = null
+    }
+
+    /**
+     * `ext.auth.open`: the sheet of an `identity.launchWebAuthFlow`, loading hidden until the flow
+     * says `ext.auth.show`; what happens in it goes back as `ext.authView` (see [ExtensionAuthSheet]).
+     */
+    private fun openAuthSheet(viewId: Int, id: String, url: String, title: String) {
+        authSheets.remove(viewId)?.close()
+        val sheet = ExtensionAuthSheet(host, viewId, id, title) { event, target ->
+            if (event == ExtensionAuthSheet.EVENT_CLOSED) authSheets.remove(viewId)
+            host.chrome.hostEvent("ext.authView", json("viewId" to viewId, "event" to event, "url" to target))
+        }
+        authSheets[viewId] = sheet
+        sheet.load(url)
+    }
+
+    /** Every auth sheet, or those of one extension, down without a word (the core ended the flows). */
+    private fun closeAuthSheets(extensionId: String? = null) {
+        val going = authSheets.values.filter { extensionId == null || it.extensionId == extensionId }
+        for (sheet in going) {
+            authSheets.remove(sheet.viewId)
+            sheet.close()
+        }
     }
 
     /** Endpoints of a WebView are dropped when it is destroyed. */
@@ -1199,7 +1335,9 @@ class Extensions(private val host: Host) {
 
     fun destroy() {
         closePopup()
+        closeAuthSheets()
         for (id in backgrounds.keys.toList()) stopBackground(id)
+        notifications.destroy()
         io.shutdownNow()
         rulesIo.shutdownNow()
     }
@@ -1223,8 +1361,6 @@ class Extensions(private val host: Host) {
         )
         const val ORIGIN_SUFFIX = ".ext.zenium.invalid"
         const val GENERATED_BACKGROUND = "_generated_background_page.html"
-        /** What a flow tab shows for the instant before the runtime closes it. */
-        val REDIRECT_LANDING: ByteArray = "<!doctype html><meta charset=\"utf-8\"><title>Signing in…</title>".toByteArray()
         val VALID_ID = Regex("^[a-p]{32}$")
         /** `_locales/<dir>`: a language tag with underscores, nothing that could leave the directory. */
         val LOCALE_DIR = Regex("^[A-Za-z0-9_]{1,16}$")
