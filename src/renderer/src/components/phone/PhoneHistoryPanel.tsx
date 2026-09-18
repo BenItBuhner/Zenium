@@ -1,11 +1,10 @@
 import type { JSX } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Ellipsis, Globe, History, Trash2, X } from 'lucide-react'
 import type { UIState } from '@shared/types'
 import { displayUrl, getHost } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import {
-  clearBrowsingDataSheet,
   historyAdapter,
   type ClosedEntrySummary,
   type HistoryRow
@@ -22,6 +21,7 @@ import {
 import { activeTab } from '@renderer/lib/selectors'
 import { closeOverlay, MENU_GAP, showLocalMenu } from '@renderer/lib/ui'
 import { OverlayShell } from '../overlays/OverlayShell'
+import type { BottomSheetHandle } from '../sheet/BottomSheet'
 import {
   PhoneEmptyNote,
   PhoneGroupHeading,
@@ -32,7 +32,14 @@ import {
   PhoneSelectionHeader,
   RowFavicon
 } from './PhoneList'
-import { removeWithUndo, usePanelStep, usePendingDeletes, useScrolled } from './phonePanel'
+import { PhoneSheet } from './PhoneSheet'
+import {
+  noteSheetOpener,
+  removeWithUndo,
+  usePanelStep,
+  usePendingDeletes,
+  useScrolled
+} from './phonePanel'
 
 const LIMIT = 300
 
@@ -47,9 +54,11 @@ interface Loaded {
  * a 56 header and a search field, one row per visit with its favicon, title, site and time. A row opens
  * the page; its trailing control or a sideways swipe removes it (undoable from the toast); a
  * long press starts selection mode, whose header replaces the panel's and acts on every picked
- * row. The top row clears the whole history, undoable like the rest, until shared services'
- * clear-browsing-data sheet takes its place (`clearBrowsingDataSheet`). Recently closed tabs
- * sit above the days once the session model reports them (`historyAdapter.recentlyClosed`).
+ * row. The top row clears the whole history behind the same question the desktop page asks
+ * (`ClearHistorySheet`, the count of what goes, Cancel or Clear all). Recently closed tabs sit
+ * above the days (`historyAdapter.recentlyClosed`). The list loads again whenever the core says
+ * the history or the recently closed list changed. The search field does not take the focus as
+ * the panel opens: the keyboard would come up with it (as `HistoryPage` on a phone).
  */
 export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
   const tab = activeTab(state)
@@ -57,9 +66,14 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
   const [loaded, setLoaded] = useState<Loaded>({ groups: [], at: 0 })
   const [closed, setClosed] = useState<ClosedEntrySummary[]>([])
   const [rawSelection, setSelection] = useState<Selection>(NO_SELECTION)
+  /** "Clear history" asks first: the number of visits about to go, while the question is up. */
+  const [clearing, setClearing] = useState<number | null>(null)
   const pending = usePendingDeletes()
   const [attachList, listScrolled] = useScrolled<HTMLDivElement>()
 
+  // A reload counter: bumped by the core's change events, so the effect below runs again.
+  const [generation, setGeneration] = useState(0)
+  useEffect(() => historyAdapter.onChanged(() => setGeneration((g) => g + 1)), [])
   useEffect(() => {
     let cancelled = false
     const timer = setTimeout(() => {
@@ -72,8 +86,13 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
       cancelled = true
       clearTimeout(timer)
     }
-  }, [query])
+  }, [query, generation])
 
+  const [closedGeneration, setClosedGeneration] = useState(0)
+  useEffect(
+    () => historyAdapter.onRecentlyClosedChanged(() => setClosedGeneration((g) => g + 1)),
+    []
+  )
   useEffect(() => {
     let cancelled = false
     void historyAdapter.recentlyClosed().then((list) => {
@@ -82,7 +101,7 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [closedGeneration])
 
   // Rows waiting for their delete to go through are gone from the list already.
   const groups = useMemo(
@@ -101,7 +120,7 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
   }, [selection, order, rows])
 
   const exitSelection = (): void => setSelection(NO_SELECTION)
-  usePanelStep(selection.active, exitSelection)
+  usePanelStep(selection.active && clearing === null, exitSelection)
 
   // ---------------------------------------------------------------------------
   // Actions
@@ -147,16 +166,16 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
     exitSelection()
   }
 
+  // The question is asked with the count of every visit, not only the loaded page of them.
   const clearAll = (): void => {
-    const sheet = clearBrowsingDataSheet()
-    if (sheet) {
-      sheet()
-      return
-    }
-    removeWithUndo(order, 'History cleared', () => {
-      void historyAdapter.clear()
-      setLoaded((l) => ({ ...l, groups: [] }))
-    })
+    noteSheetOpener()
+    void historyAdapter.count().then((count) => setClearing(count))
+  }
+
+  const clearConfirmed = (): void => {
+    void historyAdapter.clear()
+    setLoaded((l) => ({ ...l, groups: [] }))
+    exitSelection()
   }
 
   const restore = (entry: ClosedEntrySummary): void => {
@@ -165,19 +184,19 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
     closeOverlay()
   }
 
+  // Menu items are Title Case (v2 draft 9.1) and read as the core's history menus do (#119).
   const selectionMenu = (): void => {
     const picked = selectedRows
     void showLocalMenu(
       'selection',
       [
-        // Menu items are Title Case (v2 draft 9.1).
         {
-          label: picked.length === 1 ? 'Open in New Tab' : 'Open in New Tabs',
+          label: picked.length === 1 ? 'Open in New Tab' : `Open All (${picked.length})`,
           onSelect: () => openAll(picked)
         },
         { label: picked.length === 1 ? 'Copy Link' : 'Copy Links', onSelect: () => copy(picked) },
         MENU_GAP,
-        { label: 'Delete', danger: true, onSelect: () => remove(picked) }
+        { label: 'Remove from History', danger: true, onSelect: () => remove(picked) }
       ],
       tab?.id ?? null,
       { title: `${picked.length} selected` }
@@ -194,7 +213,7 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
       onExit={exitSelection}
       actions={
         <>
-          <PhoneIconButton label="Delete" onClick={() => remove(selectedRows)}>
+          <PhoneIconButton label="Remove from history" onClick={() => remove(selectedRows)}>
             <Trash2 className="h-5 w-5" strokeWidth={1.75} />
           </PhoneIconButton>
           <PhoneIconButton label="More" onClick={selectionMenu}>
@@ -216,7 +235,7 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
         placeholder="Search history"
         scrolled={listScrolled}
       />
-      <div ref={attachList} className="zen-phone-list min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      <div ref={attachList} className="zen-phone-list min-h-0 flex-1 overflow-y-auto pb-2">
         {!searching && rows.length > 0 && (
           <PhoneListRow
             icon={<Trash2 className="h-5 w-5" strokeWidth={1.75} />}
@@ -263,7 +282,62 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
           ))
         )}
       </div>
+      {clearing !== null && (
+        <ClearHistorySheet
+          count={clearing}
+          onClose={() => setClearing(null)}
+          onConfirm={clearConfirmed}
+        />
+      )}
     </OverlayShell>
+  )
+}
+
+/**
+ * "Clear history" asks before it wipes the history, with the count of what goes: the desktop
+ * page's question (`HistoryPage`'s `ClearAllDialog`) as a prompt sheet (v2 draft §9.23 – grip
+ * strip, title block with the glyph, the one paragraph, the §9.11 footer) in the frame's dialog
+ * host. Escape, the scrim, the back gesture and Cancel keep the history; Clear all clears it
+ * once the sheet is gone. Focus starts on Cancel so a stray Enter does no harm.
+ */
+function ClearHistorySheet({
+  count,
+  onClose,
+  onConfirm
+}: {
+  count: number
+  onClose: () => void
+  onConfirm: () => void
+}): JSX.Element {
+  const sheet = useRef<BottomSheetHandle>(null)
+  const visits = count === 1 ? '1 visit' : `${count} visits`
+  return (
+    <PhoneSheet
+      name="history-clear"
+      title="Clear all history?"
+      prompt={{
+        icon: <Trash2 className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />,
+        description: `${visits} will be removed from Zenium's history. Recently closed tabs and windows stay.`
+      }}
+      focus="first"
+      onClose={onClose}
+      handleLabel="Resize prompt"
+      sheetRef={sheet}
+    >
+      <div className="zen-sheet-footer">
+        <button type="button" className="zen-v2-button" onClick={() => sheet.current?.dismiss()}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="zen-v2-button"
+          data-primary
+          onClick={() => sheet.current?.dismiss(onConfirm)}
+        >
+          Clear all
+        </button>
+      </div>
+    </PhoneSheet>
   )
 }
 

@@ -1,20 +1,22 @@
 import type { JSX } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { BookmarkNode, UIState } from '@shared/types'
 import { isBookmarkRoot } from '@shared/bookmarks'
 import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
-import { useBackSurface } from '@renderer/lib/back'
 import { closeBookmarkEditor, type BookmarkEditRequest } from '@renderer/lib/bookmarkEdit'
-import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
+import type { BottomSheetHandle } from '../sheet/BottomSheet'
+import { PhoneSheet } from './PhoneSheet'
 import { removeWithUndo, useBookmarkTree } from './phonePanel'
 
 /**
- * The bookmark editor on a phone (HB-16): a bottom sheet with the name and the address as two
- * fields, Save as the one primary button and Delete beside it in the danger ink. It also names
- * a folder (no address field) and creates either when the request has no id. Every way out –
- * Save, Delete, the scrim, the back gesture, Escape – slides the sheet away first and clears
- * the request once it is gone.
+ * The bookmark editor on a phone (HB-16): a sheet in the frame's dialog host (`PhoneSheet`, the
+ * 48 header naming it) with the name and the address as two fields, Save as the one primary
+ * button and Delete beside it in the danger ink, the two splitting the footer (v2 draft §9.11).
+ * It also names a folder (no address field) and creates either when the request has no id.
+ * Every way out – Save, Delete, the scrim, the back gesture, Escape – slides the sheet away
+ * first and clears the request once it is gone. Focus moves to the dialog itself as it opens,
+ * not into a field (§9.22: the keyboard would come up with the sheet).
  *
  * A request for a node that has not reached the renderer yet (the star's event can overtake
  * the state push) keeps the sheet open with its fields waiting; only a node that was here and
@@ -41,23 +43,6 @@ export function BookmarkEditSheet({
     if (gone) closeBookmarkEditor()
   }, [gone])
 
-  useBackSurface({
-    name: 'bookmark-edit',
-    onProgress: (progress) => sheet.current?.backProgress(progress),
-    onCommit: () => sheet.current?.commitBack(),
-    onCancel: () => sheet.current?.cancelBack()
-  })
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      sheet.current?.dismiss()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
-
   if (gone) return null
 
   // A dialog title is Title Case (v2 draft 9.1); the labels and buttons below stay sentence case.
@@ -70,17 +55,14 @@ export function BookmarkEditSheet({
       : 'Add Bookmark'
 
   return (
-    <BottomSheet
-      ref={sheet}
-      onDismissed={closeBookmarkEditor}
+    <PhoneSheet
+      name="bookmark-edit"
+      title={title}
+      focus="dialog"
+      onClose={closeBookmarkEditor}
       contentKey={`${edit.id ?? 'new'}:${folder ? 'folder' : 'url'}:${waiting ? 'waiting' : 'ready'}`}
       handleLabel="Resize editor"
-      className="zen-phone-editor"
-      header={
-        <div className="zen-phone-sheet-header">
-          <span className="zen-phone-sheet-title">{title}</span>
-        </div>
-      }
+      sheetRef={sheet}
     >
       <EditorForm
         // Remounts when the node arrives, so the fields start from its title and address.
@@ -91,7 +73,7 @@ export function BookmarkEditSheet({
         waiting={waiting}
         dismiss={(then) => sheet.current?.dismiss(then)}
       />
-    </BottomSheet>
+    </PhoneSheet>
   )
 }
 
@@ -111,6 +93,8 @@ function EditorForm({
 }): JSX.Element {
   const [name, setName] = useState(node?.title ?? '')
   const [url, setUrl] = useState(node?.url ?? '')
+  const nameId = useId()
+  const urlId = useId()
 
   const target = folder ? null : inputToUrl(url.trim())
   const valid = !waiting && (folder ? name.trim().length > 0 : target !== null)
@@ -147,17 +131,20 @@ function EditorForm({
 
   return (
     <form
-      className="flex flex-col gap-3 px-1 pb-2"
+      className="zen-phone-form"
       aria-busy={waiting}
       onSubmit={(e) => {
         e.preventDefault()
         save()
       }}
     >
-      <label className="flex flex-col gap-1.5">
-        <span className="zen-field-label px-2">Name</span>
-        <span className="zen-field">
+      <div className="zen-phone-form-field">
+        <label htmlFor={nameId} className="zen-phone-field-label">
+          Name
+        </label>
+        <span className="zen-phone-field">
           <input
+            id={nameId}
             value={name}
             placeholder={folder ? 'Folder name' : 'Name'}
             autoComplete="off"
@@ -167,12 +154,15 @@ function EditorForm({
             onChange={(e) => setName(e.target.value)}
           />
         </span>
-      </label>
+      </div>
       {!folder && (
-        <label className="flex flex-col gap-1.5">
-          <span className="zen-field-label px-2">Address</span>
-          <span className="zen-field">
+        <div className="zen-phone-form-field">
+          <label htmlFor={urlId} className="zen-phone-field-label">
+            Address
+          </label>
+          <span className="zen-phone-field">
             <input
+              id={urlId}
               value={url}
               placeholder="https://"
               inputMode="url"
@@ -184,25 +174,16 @@ function EditorForm({
               onChange={(e) => setUrl(e.target.value)}
             />
           </span>
-        </label>
+        </div>
       )}
-      <div className="mt-1 flex gap-2">
+      {/* §9.11: two peers split the width at an 8 gap, the primary trailing. */}
+      <div className="zen-sheet-footer">
         {node && !isBookmarkRoot(node.id) && (
-          <button
-            type="button"
-            className="zen-sheet-button zen-v2-sheet-button shrink-0"
-            data-variant="danger"
-            onClick={remove}
-          >
+          <button type="button" className="zen-v2-button" data-danger onClick={remove}>
             Delete
           </button>
         )}
-        <button
-          type="submit"
-          className="zen-sheet-button zen-v2-sheet-button flex-1"
-          data-variant="primary"
-          disabled={!valid}
-        >
+        <button type="submit" className="zen-v2-button" data-primary disabled={!valid}>
           Save
         </button>
       </div>

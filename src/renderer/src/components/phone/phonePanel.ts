@@ -30,10 +30,33 @@ export function removeWithUndo(keys: readonly string[], message: string, commit:
   })
 }
 
+/*
+ * The row control a sheet was opened from, for the focus to return to once the sheet is gone
+ * (v2 draft §9.24). A sheet reads `document.activeElement` as it mounts; when a menu sheet stood
+ * between the row and the sheet it picked (the row's 3-dot menu, then "Edit…") the focus left
+ * with the menu, so the panel notes the control here as the chain starts.
+ */
+let sheetOpener: HTMLElement | null = null
+
+/** Note the focused control as what a sheet – now, or after a menu – will return the focus to. */
+export function noteSheetOpener(): void {
+  const active = document.activeElement
+  sheetOpener = active instanceof HTMLElement && active !== document.body ? active : null
+}
+
+/** The noted opener, once: the sheet that mounts takes it. */
+export function takeSheetOpener(): HTMLElement | null {
+  const opener = sheetOpener
+  sheetOpener = null
+  return opener
+}
+
 /**
  * A step back inside a panel – leaving selection mode, climbing out of a folder – taken by the
  * system back gesture and Escape ahead of the panel's own dismissal. The shell that dismisses the
  * panel is rendered *inside* it, so its surface is registered first and this one sits on top.
+ * A sheet the panel opened (a menu, the editor, a prompt) is registered later still and takes
+ * the gesture first; `enabled` is false while one is up, so Escape reaches that sheet alone.
  */
 export function usePanelStep(enabled: boolean, step: () => void): void {
   const latest = useRef(step)

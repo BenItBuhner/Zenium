@@ -34,7 +34,6 @@ import { PillChip } from '../urlbar/PillChip'
 import { Urlbar } from '../urlbar/Urlbar'
 import { BarButton } from './BarButton'
 import { barContext, barLayout } from './barItems'
-import { BookmarkEditSheet } from './BookmarkEditSheet'
 import { PhoneStage } from './PhoneStage'
 import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
@@ -183,14 +182,8 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       {ui.tabsMenu && !barHidden && (
         <TabsQuickMenu state={state} anchor={ui.tabsMenu} edge={edge} onClose={closeTabsMenu} />
       )}
+      {/* The frame's dialog host (the shell's box on a phone): the bookmark editor is one of its sheets. */}
       <TabDialogs state={state} />
-      {ui.bookmarkEdit && (
-        <BookmarkEditSheet
-          key={`${ui.bookmarkEdit.id ?? 'new'}:${ui.bookmarkEdit.type}`}
-          state={state}
-          edit={ui.bookmarkEdit}
-        />
-      )}
       {onboarding && <Onboarding state={state} />}
     </div>
   )
