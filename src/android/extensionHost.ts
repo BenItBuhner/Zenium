@@ -1,13 +1,14 @@
 import type {
   ExtensionInfo,
   ExtensionSource,
+  ExtensionUpdateCheck,
   ExtensionUpdateState,
   Rect,
   SidePanelInfo,
   Suggestion
 } from '@shared/types'
 import type { Browser } from '@core/browser'
-import type { ExtensionHost, MenuItemTemplate } from '@core/platform'
+import type { ExtensionHost, MenuItemTemplate, PageContextParams } from '@core/platform'
 import type { ZenWindow } from '@core/window'
 import { JsonStore } from '@core/store/JsonStore'
 import { base64Encode } from '@core/extensions/bytes'
@@ -19,6 +20,7 @@ import {
   type UpdateCheckResult
 } from '@core/extensions/install'
 import {
+  ChromePrompts,
   downloadFromStores,
   downloadUpdate,
   iconCandidates,
@@ -212,18 +214,23 @@ export class AndroidExtensions implements ExtensionHost {
   private foreground = true
   /** A check the interval skipped while the app was in the background. */
   private checkDue = false
+  /** Install and permission prompts put to the chrome's sheet, waiting for its answer. */
+  private readonly prompts: ChromePrompts
 
   /**
-   * Shows the install prompt and resolves with the user's decision. The default is the host's
-   * native confirm dialog; the chrome replaces it with its own sheet without touching the flow.
+   * Shows the install prompt and resolves with the user's decision: the chrome's sheet when a
+   * live window can show it, else the host's native confirm dialog. Reassignable so a host can
+   * swap the prompt without touching the install flow.
    */
-  confirmInstall: ConfirmInstall = (request, win) => this.nativeConfirm(request, win)
+  confirmInstall: ConfirmInstall = (request, win) =>
+    win?.alive ? this.prompts.ask(request, win) : this.nativeConfirm(request, win)
 
   constructor(
     protected readonly browser: Browser,
     private readonly io: AndroidExtensionStoreIo,
     options: AndroidExtensionsOptions = {}
   ) {
+    this.prompts = new ChromePrompts(browser)
     this.hooks = options.hooks ?? noRuntimeHooks
     this.chromiumVersion =
       options.chromiumVersion ??
@@ -375,6 +382,7 @@ export class AndroidExtensions implements ExtensionHost {
         installedAt: record.installedAt,
         updatedAt: record.updatedAt,
         pinned: record.pinned,
+        toolbarPinned: record.toolbarPinned,
         allowFileAccess: record.allowFileAccess,
         allowPrivate: record.allowPrivate,
         manifestVersion: record.manifestVersion,
@@ -439,6 +447,11 @@ export class AndroidExtensions implements ExtensionHost {
     const handle = await this.io.pick()
     if (!handle) return
     await this.installHandle(handle, win)
+  }
+
+  /** Files reach Android as content handles, not paths: a drop has nothing this host can read. */
+  async installFromDrop(_paths: string[], win: ZenWindow): Promise<void> {
+    this.browser.toast('Use "Install from file" to add a .crx or .zip here.', 'info', win)
   }
 
   /** A package file Kotlin holds: picked in the document picker, or sent to Zenium by another app. */
@@ -726,6 +739,25 @@ export class AndroidExtensions implements ExtensionHost {
     this.browser.state.commitVolatile()
   }
 
+  /** The toolbar is the chrome's: the runtime has nothing to learn from this. */
+  setToolbarPinned(id: string, pinned: boolean): void {
+    const record = this.record(id)
+    if (!record || record.toolbarPinned === pinned) return
+    record.toolbarPinned = pinned
+    this.persist()
+    this.browser.state.commitVolatile()
+  }
+
+  /** The runtime re-reads the flag from the record (`ExtensionRuntimeHooks.reconfigure`). */
+  async setAllowFileAccess(id: string, allow: boolean): Promise<void> {
+    const record = this.record(id)
+    if (!record || record.allowFileAccess === allow) return
+    record.allowFileAccess = allow
+    this.persist()
+    await this.reconfigure(record)
+    this.browser.state.commitVolatile()
+  }
+
   /** The flag is the desktop's registry schema; the Android host does not route new tabs yet. */
   setNewTabOverride(id: string, enabled: boolean): void {
     if (setNewTabOverride(this.registry.extensions, id, enabled).length === 0) return
@@ -811,16 +843,31 @@ export class AndroidExtensions implements ExtensionHost {
     this.browser.toast(`${record.name || 'This extension'} has no popup here yet.`, 'info', win)
   }
 
+  resizePopup(): void {
+    // The runtime places its own popup; the chrome's frame has nothing of the store's to move.
+  }
+
   closePopup(): void {
     // Nothing of the store's is open; the runtime closes its own popup.
   }
 
-  /** The runtime's `chrome.*` layer (contextMenus, commands) is not the store half's; the desktop router owns these. */
-  pageContextMenuItems(): MenuItemTemplate[] {
+  /** The chrome answered a prompt `confirmInstall` raised through its sheet. */
+  respondPrompt(requestId: string, accept: boolean): void {
+    this.prompts.respond(requestId, accept)
+  }
+
+  /**
+   * The runtime's `chrome.*` layer (contextMenus, commands) is not the store half's; the runtime
+   * subclass answers these, and an override may not take more parameters than its base, so the
+   * store half spells the full signature out.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  pageContextMenuItems(_tabId: string, _params: PageContextParams): MenuItemTemplate[] {
     return []
   }
 
-  actionContextMenuItems(): MenuItemTemplate[] {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  actionContextMenuItems(_id: string): MenuItemTemplate[] {
     return []
   }
 
@@ -870,6 +917,10 @@ export class AndroidExtensions implements ExtensionHost {
       this.checking = null
     })
     return this.checking
+  }
+
+  updateCheck(): ExtensionUpdateCheck {
+    return { lastCheckedAt: this.registry.lastUpdateCheck, checking: this.checking !== null }
   }
 
   /** Checks (and installs) an update for one extension. */

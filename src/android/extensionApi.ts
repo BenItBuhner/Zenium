@@ -1,7 +1,15 @@
 import type { BookmarkTreeNode } from '@shared/bookmarks'
 import type { Tab } from '@shared/types'
 import type { Browser } from '@core/browser'
+import type { MenuItemTemplate, PageContextParams } from '@core/platform'
 import type { ZenWindow } from '@core/window'
+import {
+  CAPTURE_QUOTA_ERROR,
+  CaptureQuota,
+  captureDenial,
+  coversAllUrls,
+  normalizeCaptureOptions
+} from '@core/extensions/api/capture'
 import type { EngineContextKind } from '@core/extensions/api/engine'
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
@@ -10,7 +18,11 @@ import { normalizeRuleset, type NetRule } from '@core/extensions/runtime/dnr'
 import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
 import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
 import type { Endpoint, MessageRouter } from '@core/extensions/runtime/router'
+import { ActiveTabGrants } from './extensionActiveTab'
+import { AndroidContextMenus } from './extensionContextMenus'
+import { AndroidCookies, type JarReading } from './extensionCookies'
 import type { AndroidIdentity } from './extensionIdentity'
+import { AndroidNotifications, type ShownNotification } from './extensionNotifications'
 
 /**
  * The `chrome.*` calls the Android runtime answers itself, over the browser core: everything the
@@ -58,6 +70,8 @@ export interface ApiHost {
   readonly router: MessageRouter
   /** `chrome.identity`: the web-auth flows (`extensionIdentity.ts`). */
   readonly identity: AndroidIdentity
+  /** The runtime's clock (tests drive it). */
+  now(): number
   window(): ZenWindow
   attached(id: string): AttachedExtension | undefined
   allAttached(): AttachedExtension[]
@@ -71,10 +85,31 @@ export interface ApiHost {
   setRules(id: string, rules: ExtensionRules): Promise<void>
   /** Raise `chrome.<ns>.<name>` in every endpoint of one extension that listens for it. */
   emit(extensionId: string, ns: string, name: string, args: unknown[]): void
+  /** Deliver `chrome.<ns>.<name>` to one endpoint, listener or not (a `contextMenus` `onclick` holder). */
+  emitTo(endpointId: string, ns: string, name: string, args: unknown[]): void
+  /** The extension's toolbar icon as a `data:` URL, when the store has read it. */
+  icon(id: string): string | null
   readFile(id: string, path: string): Promise<string | null>
   exec(request: ExecRequest): Promise<unknown>
-  cookieHeader(url: string): Promise<string | null>
-  setCookie(url: string, cookie: string): Promise<void>
+  /** The cookies a request to `url` from the container's jar would carry (`chrome.cookies`). */
+  readCookies(containerId: string, url: string): Promise<JarReading>
+  /** Store a `Set-Cookie` line against `url` in the container's jar; false when it was refused. */
+  writeCookie(containerId: string, url: string, setCookie: string): Promise<boolean>
+  /** The optional host permissions an extension holds right now (`permissions.request` / `remove`); Kotlin's CORS proxy reads them. */
+  hostsGranted(id: string, hosts: string[]): void
+  /**
+   * `tabs.captureVisibleTab`: the tab's on-screen pixels as a `data:` URL, or null when the view
+   * cannot be captured (hidden, not painted yet).
+   */
+  captureTab(tabId: string, format: 'jpeg' | 'png', quality: number): Promise<string | null>
+  /** `chrome.notifications`: show (or replace in place) one system notification of an extension. */
+  showNotification(extensionId: string, notification: ShownNotification): void
+  /** Take one down without an event. */
+  hideNotification(extensionId: string, notificationId: string): void
+  /** The extension's notifications and its channel go. */
+  forgetNotifications(extensionId: string): void
+  /** Whether the app may post notifications right now (`getPermissionLevel`). */
+  notificationsAllowed(): Promise<boolean>
   openPopup(id: string): void
   openOptions(id: string): void
   /** `runtime.reload()` and `management.uninstallSelf()`: the store re-reads or removes the extension. */
@@ -230,17 +265,88 @@ export class TabIds {
 
 export class ExtensionApi {
   readonly tabs: TabIds
+  readonly contextMenus: AndroidContextMenus
+  readonly activeTab: ActiveTabGrants
+  readonly cookies: AndroidCookies
+  readonly notifications: AndroidNotifications
   private readonly actions = new Map<string, ActionState>()
-  private readonly contextMenus = new Map<string, Map<string, Record<string, unknown>>>()
+  /** Optional host permissions granted this session, per extension (Chrome persists them; W2-3 may). */
+  private readonly grantedHosts = new Map<string, Set<string>>()
+  /** Chrome's two `captureVisibleTab` calls per second, per extension. */
+  private readonly captureQuota = new CaptureQuota()
 
   constructor(private readonly host: ApiHost) {
     this.tabs = new TabIds(host.browser, () => host.window())
+    this.activeTab = new ActiveTabGrants(
+      (id) => host.attached(id)?.manifest.permissions.includes('activeTab') === true
+    )
+    this.contextMenus = new AndroidContextMenus({
+      attached: (id) => host.attached(id),
+      allAttached: () => host.allAttached(),
+      emit: (id, ns, name, args) => host.emit(id, ns, name, args),
+      emitTo: (ep, ns, name, args) => host.emitTo(ep, ns, name, args),
+      hasEndpoint: (ep) => host.router.endpoint(ep) !== undefined,
+      chromeTab: (tab) => this.tabs.chromeTab(tab),
+      visibleTo: (ext, tab) => this.tabs.visibleTo(ext, tab),
+      icon: (id) => host.icon(id),
+      grantActiveTab: (id, tab) => this.activeTab.grant(id, tab)
+    })
+    this.cookies = new AndroidCookies({
+      read: (containerId, url) => host.readCookies(containerId, url),
+      write: (containerId, url, setCookie) => host.writeCookie(containerId, url, setCookie),
+      hostAccess: (ext, url) => this.hostAccess(ext, url),
+      hostPatterns: (ext) => this.hostPatterns(ext),
+      allAttached: () => host.allAttached(),
+      visibleTabs: (ext) => this.tabs.visibleTabs(ext),
+      chromeTabId: (tabId) => this.tabs.chromeIdFor(tabId),
+      emit: (id, ns, name, args) => host.emit(id, ns, name, args)
+    })
+    this.notifications = new AndroidNotifications({
+      show: (id, notification) => host.showNotification(id, notification),
+      hide: (id, notificationId) => host.hideNotification(id, notificationId),
+      forget: (id) => host.forgetNotifications(id),
+      allowed: () => host.notificationsAllowed(),
+      emit: (id, ns, name, args) => host.emit(id, ns, name, args)
+    })
   }
 
   /** The extension is going away: drop what this layer remembers about it. */
   forget(id: string): void {
     this.actions.delete(id)
-    this.contextMenus.delete(id)
+    this.contextMenus.forget(id)
+    this.activeTab.forget(id)
+    this.grantedHosts.delete(id)
+    this.captureQuota.forget(id)
+    this.notifications.forget(id)
+  }
+
+  /** The host patterns the extension may fetch across origins: its `host_permissions` plus what it was granted. */
+  hostPatterns(ext: AttachedExtension): string[] {
+    const granted = this.grantedHosts.get(ext.record.id)
+    return granted ? [...ext.manifest.hostPermissions, ...granted] : ext.manifest.hostPermissions
+  }
+
+  /** Whether the extension may act on `url`: a host permission covering it, or an `activeTab` grant on its tab. */
+  hostAccess(ext: AttachedExtension, url: string): boolean {
+    return (
+      matchesAnyPattern(url, this.hostPatterns(ext)) || this.activeTab.allowsUrl(ext.record.id, url)
+    )
+  }
+
+  /** An endpoint reported gone: `onclick` handlers it held go with it. */
+  endpointGone(endpointId: string): void {
+    this.contextMenus.endpointGone(endpointId)
+  }
+
+  /** The extension section of a tab's long-press menu. */
+  pageContextMenuItems(tab: Tab, params: PageContextParams): MenuItemTemplate[] {
+    return this.contextMenus.pageMenuItems(tab, params)
+  }
+
+  /** The items an extension adds to its toolbar button's menu. */
+  actionContextMenuItems(id: string): MenuItemTemplate[] {
+    const ext = this.host.attached(id)
+    return this.contextMenus.actionMenuItems(id, ext ? this.tabs.activeTabFor(ext) : undefined)
   }
 
   actionFor(id: string): ActionState {
@@ -286,13 +392,16 @@ export class ExtensionApi {
       case 'declarativeNetRequest':
         return this.dnrCall(ext, method, args)
       case 'notifications':
-        return this.notificationsCall(method, args)
+        return this.notifications.call(ext, method, args)
       case 'contextMenus':
-        return this.contextMenusCall(id, method, args)
+        return this.contextMenus.call(ext, endpoint.id, method, args)
       case 'webNavigation':
-        return this.webNavigationCall(id, method, args)
-      case 'cookies':
-        return this.cookiesCall(method, args)
+        return this.webNavigationCall(ext, method, args)
+      case 'cookies': {
+        const tabId = endpoint.context === 'content' ? endpoint.tabId : null
+        const tab = tabId ? (this.host.browser.tabs.tab(tabId) ?? null) : null
+        return this.cookies.call(ext, { tab }, method, args)
+      }
       case 'identity':
         return this.host.identity.call(id, method, args)
       case 'history':
@@ -300,7 +409,7 @@ export class ExtensionApi {
       case 'bookmarks':
         return this.bookmarksCall(method, args)
       case 'permissions':
-        return this.permissionsCall(ext.manifest, method, args)
+        return this.permissionsCall(ext, method, args)
       case 'management':
         return this.managementCall(ext, method, args)
       case 'commands':
@@ -459,8 +568,48 @@ export class ExtensionApi {
           asRecord(detailsArg)
         )
       }
+      case 'captureVisibleTab':
+        return this.captureVisibleTab(ext, args[0], args[1])
     }
     throw new Error(`chrome.tabs.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  /**
+   * Chrome's checks in order: the options, the quota, some host access at all, then what the
+   * page is (`captureDenial`); a page that cannot be copied is "view is invisible". The one
+   * window is the current one (`WINDOW_ID_CURRENT` or 1); the picture is the active tab's, which
+   * the phone shows whole (a popup sheet is its own window and never in the copy).
+   */
+  private async captureVisibleTab(
+    ext: AttachedExtension,
+    windowId: unknown,
+    options: unknown
+  ): Promise<string> {
+    const o = normalizeCaptureOptions(options)
+    if (!this.captureQuota.take(ext.record.id, this.host.now()))
+      throw new Error(CAPTURE_QUOTA_ERROR)
+    if (windowId !== undefined && windowId !== null && windowId !== -2 && windowId !== 1) {
+      if (asNumber(windowId) === null || !Number.isInteger(windowId))
+        throw new Error('Invalid window id')
+      throw new Error(`No window with id: ${windowId}.`)
+    }
+    const tab = this.tabs.activeTabFor(ext)
+    if (!tab || tab.discarded) throw new Error('Failed to capture tab: view is invisible')
+    const denial = captureDenial(tab.url, {
+      allUrls: coversAllUrls(this.hostPatterns(ext)),
+      activeTab: this.activeTab.allowsUrl(ext.record.id, tab.url),
+      fileAccess: ext.record.allowFileAccess === true,
+      extensionId: ext.record.id
+    })
+    if (denial) throw new Error(denial)
+    let image: string | null
+    try {
+      image = await this.host.captureTab(tab.id, o.format, o.quality)
+    } catch {
+      throw new Error('Failed to capture tab: unknown error')
+    }
+    if (!image) throw new Error('Failed to capture tab: view is invisible')
+    return image
   }
 
   /**
@@ -921,144 +1070,63 @@ export class ExtensionApi {
 
   // --- notifications / contextMenus / webNavigation ----------------------------
 
-  private notificationsCall(method: string, args: unknown[]): unknown {
-    switch (method) {
-      case 'create': {
-        const [first, second] = args
-        const id = typeof first === 'string' ? first : `n${Date.now()}`
-        const options = asRecord(typeof first === 'string' ? second : first)
-        const text = [options.title, options.message]
-          .filter((v) => typeof v === 'string' && v)
-          .join(': ')
-        if (text) this.host.browser.toast(text, 'info', this.host.window())
-        return id
-      }
-      case 'update':
-        return false
-      case 'clear':
-        return true
-      case 'getAll':
-        return {}
-    }
-    throw new Error(`chrome.notifications.${method} ${NOT_IMPLEMENTED}`)
-  }
-
-  private contextMenusCall(id: string, method: string, args: unknown[]): unknown {
-    let menus = this.contextMenus.get(id)
-    if (!menus) {
-      menus = new Map()
-      this.contextMenus.set(id, menus)
-    }
-    switch (method) {
-      case 'create': {
-        // The shim sends `[properties, id]`, the id it already answered synchronously.
-        const props = asRecord(args[0])
-        const menuId = String(args[1] ?? props.id ?? menus.size + 1)
-        menus.set(menuId, props)
-        return menuId
-      }
-      case 'update': {
-        const menuId = String(args[0])
-        const existing = menus.get(menuId)
-        if (!existing) throw new Error(`Cannot find menu item with id ${menuId}`)
-        menus.set(menuId, { ...existing, ...asRecord(args[1]) })
-        return undefined
-      }
-      case 'remove':
-        menus.delete(String(args[0]))
-        return undefined
-      case 'removeAll':
-        menus.clear()
-        return undefined
-    }
-    throw new Error(`chrome.contextMenus.${method} ${NOT_IMPLEMENTED}`)
-  }
-
-  private webNavigationCall(id: string, method: string, args: unknown[]): unknown {
+  /**
+   * `getFrame` / `getAllFrames`: the main frame from the tab (frame 0, its URL), the sub-frames
+   * from the content endpoints the extension has in the tab (the only frames the host can see).
+   * A tab the extension may not see (private, not allowed) is no tab, as in Chrome.
+   */
+  private webNavigationCall(ext: AttachedExtension, method: string, args: unknown[]): unknown {
     const details = asRecord(args[0])
-    const frames = (tabId: number): Array<Record<string, unknown>> => {
-      const coreId = this.tabs.coreIdFor(tabId)
-      return this.host.router
-        .of(id, 'content')
-        .filter((e) => e.tabId === coreId)
-        .map((e) => ({
+    const id = ext.record.id
+    const frames = (tabIdArg: unknown): Array<Record<string, unknown>> | null => {
+      const chromeTabId = asNumber(tabIdArg)
+      if (chromeTabId === null) throw new Error('Invalid tabId')
+      const coreId = this.tabs.coreIdFor(chromeTabId)
+      const tab = coreId ? this.host.browser.tabs.tab(coreId) : undefined
+      if (!tab || !this.tabs.visibleTo(ext, tab)) return null
+      const out: Array<Record<string, unknown>> = [
+        {
+          tabId: chromeTabId,
+          frameId: 0,
+          parentFrameId: -1,
+          processId: -1,
+          url: tab.url,
+          documentId: `tab-${chromeTabId}`,
+          frameType: 'outermost_frame',
+          documentLifecycle: 'active',
+          errorOccurred: false
+        }
+      ]
+      for (const e of this.host.router.of(id, 'content')) {
+        if (e.tabId !== coreId || e.frameId === 0) continue
+        if (out.some((f) => f.frameId === e.frameId)) continue
+        out.push({
+          tabId: chromeTabId,
           frameId: e.frameId,
-          parentFrameId: e.frameId === 0 ? -1 : 0,
+          parentFrameId: 0,
+          processId: -1,
           url: e.url,
-          documentId: e.id,
-          errorOccurred: false,
-          processId: 0
-        }))
+          documentId: e.id.split('.')[0] ?? e.id,
+          frameType: 'sub_frame',
+          documentLifecycle: 'active',
+          errorOccurred: false
+        })
+      }
+      return out
     }
     switch (method) {
-      case 'getFrame':
-        return (
-          frames(Number(details.tabId)).find((f) => f.frameId === Number(details.frameId ?? 0)) ??
-          null
-        )
+      case 'getFrame': {
+        const list = frames(details.tabId)
+        const frameId = asNumber(details.frameId) ?? 0
+        return list?.find((f) => f.frameId === frameId) ?? null
+      }
       case 'getAllFrames':
-        return frames(Number(details.tabId))
+        return frames(details.tabId)
     }
     throw new Error(`chrome.webNavigation.${method} ${NOT_IMPLEMENTED}`)
   }
 
-  // --- cookies / history / bookmarks / permissions / management ---------------
-
-  private async cookiesCall(method: string, args: unknown[]): Promise<unknown> {
-    const details = asRecord(args[0])
-    const url = typeof details.url === 'string' ? details.url : ''
-    switch (method) {
-      case 'get':
-      case 'getAll': {
-        if (!url)
-          throw new Error('A url is required (Zenium for Android reads cookies by URL only).')
-        const header = await this.host.cookieHeader(url)
-        const domain = safeHost(url)
-        const cookies = (header ?? '')
-          .split(';')
-          .map((part) => part.trim())
-          .filter(Boolean)
-          .map((part) => {
-            const eq = part.indexOf('=')
-            return {
-              name: eq === -1 ? part : part.slice(0, eq),
-              value: eq === -1 ? '' : part.slice(eq + 1),
-              domain,
-              hostOnly: true,
-              path: '/',
-              secure: url.startsWith('https:'),
-              httpOnly: false,
-              sameSite: 'unspecified',
-              session: true,
-              storeId: '0'
-            }
-          })
-        if (method === 'getAll')
-          return cookies.filter((c) => details.name === undefined || c.name === details.name)
-        return cookies.find((c) => c.name === details.name) ?? null
-      }
-      case 'set': {
-        if (!url) throw new Error('A url is required.')
-        const parts = [`${String(details.name ?? '')}=${String(details.value ?? '')}`]
-        if (typeof details.path === 'string') parts.push(`Path=${details.path}`)
-        if (typeof details.domain === 'string') parts.push(`Domain=${details.domain}`)
-        if (details.secure) parts.push('Secure')
-        if (typeof details.expirationDate === 'number')
-          parts.push(`Expires=${new Date(details.expirationDate * 1000).toUTCString()}`)
-        await this.host.setCookie(url, parts.join('; '))
-        return {
-          name: details.name,
-          value: details.value,
-          domain: safeHost(url),
-          path: details.path ?? '/'
-        }
-      }
-      case 'remove':
-        await this.host.setCookie(url, `${String(details.name ?? '')}=; Max-Age=0`)
-        return { url, name: details.name, storeId: '0' }
-    }
-    throw new Error(`chrome.cookies.${method} ${NOT_IMPLEMENTED}`)
-  }
+  // --- history / bookmarks / permissions / management -----------------------
 
   private historyCall(method: string, args: unknown[]): unknown {
     const history = this.host.browser.history
@@ -1181,24 +1249,26 @@ export class ExtensionApi {
     throw new Error(`chrome.bookmarks.${method} ${NOT_IMPLEMENTED}`)
   }
 
-  private permissionsCall(manifest: RuntimeManifest, method: string, args: unknown[]): unknown {
+  private permissionsCall(ext: AttachedExtension, method: string, args: unknown[]): unknown {
+    const { manifest } = ext
+    const id = ext.record.id
     const wanted = asRecord(args[0])
     const permissions = asStringArray(wanted.permissions)
     const origins = asStringArray(wanted.origins)
+    const granted = this.grantedHosts.get(id) ?? new Set<string>()
+    const hosts = (): string[] => [...manifest.hostPermissions, ...granted]
     const has = (): boolean =>
       permissions.every((p) => manifest.permissions.includes(p)) &&
-      origins.every(
-        (o) =>
-          manifest.hostPermissions.includes(o) || manifest.hostPermissions.includes('<all_urls>')
-      )
+      origins.every((o) => hosts().includes(o) || manifest.hostPermissions.includes('<all_urls>'))
     switch (method) {
       case 'contains':
         return has()
       case 'getAll':
-        return { permissions: manifest.permissions, origins: manifest.hostPermissions }
-      case 'request':
-        // Optional permissions declared in the manifest are granted without a prompt (W2-2 asks).
-        return (
+        return { permissions: manifest.permissions, origins: hosts() }
+      case 'request': {
+        // Optional permissions declared in the manifest are granted without a prompt (the prompt
+        // is the UI worker's); what is not declared is refused, as in Chrome.
+        const allowed =
           permissions.every(
             (p) => manifest.permissions.includes(p) || manifest.optionalPermissions.includes(p)
           ) &&
@@ -1206,9 +1276,24 @@ export class ExtensionApi {
             (o) =>
               manifest.hostPermissions.includes(o) || manifest.optionalHostPermissions.includes(o)
           )
+        if (!allowed) return false
+        const added = origins.filter(
+          (o) => !manifest.hostPermissions.includes(o) && !granted.has(o)
         )
-      case 'remove':
-        return false
+        if (added.length > 0) {
+          for (const o of added) granted.add(o)
+          this.grantedHosts.set(id, granted)
+          this.host.hostsGranted(id, [...granted])
+        }
+        return true
+      }
+      case 'remove': {
+        // Required permissions cannot be removed; optional ones granted here can.
+        if (origins.some((o) => manifest.hostPermissions.includes(o))) return false
+        const removed = origins.filter((o) => granted.delete(o))
+        if (removed.length > 0) this.host.hostsGranted(id, [...granted])
+        return true
+      }
     }
     throw new Error(`chrome.permissions.${method} ${NOT_IMPLEMENTED}`)
   }
@@ -1277,14 +1362,6 @@ function colorArray(value: string): [number, number, number, number] {
 function safeOrigin(url: string): string {
   try {
     return new URL(url).origin
-  } catch {
-    return ''
-  }
-}
-
-function safeHost(url: string): string {
-  try {
-    return new URL(url).hostname
   } catch {
     return ''
   }

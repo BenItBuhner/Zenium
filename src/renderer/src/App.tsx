@@ -6,6 +6,7 @@ import type { ResolvedTheme } from '@shared/theme'
 import { bookmarksBarVisible } from '@shared/bookmarkViews'
 import { formatBinding } from '@shared/shortcuts'
 import { run } from '@renderer/lib/api'
+import { closeExtensionPopup } from '@renderer/lib/extensions/popup'
 import { isPhone, useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
 import { openNewTabPage } from '@renderer/lib/newtab'
 import { activeTab } from '@renderer/lib/selectors'
@@ -29,6 +30,7 @@ import { captionBandInMain } from '@renderer/lib/layout'
 import { ContentArea } from './components/content/ContentArea'
 import { FindBar } from './components/content/FindBar'
 import { DragLayer } from './components/DragLayer'
+import { PopupFrame } from './components/extensions/PopupFrame'
 import { ModStyles } from './components/ModStyles'
 import { Onboarding } from './components/overlays/Onboarding'
 import { PhoneShell } from './components/phone/PhoneShell'
@@ -51,10 +53,17 @@ export function App(): JSX.Element {
   usePointerTracking()
   const ui = uiStore.use()
 
-  if (viewport.formFactor === 'phone') {
-    return <PhoneShell state={state} ui={ui} isDark={theme.isDark} />
-  }
-  return <DesktopShell state={state} theme={theme} />
+  return (
+    <>
+      {viewport.formFactor === 'phone' ? (
+        <PhoneShell state={state} ui={ui} isDark={theme.isDark} />
+      ) : (
+        <DesktopShell state={state} theme={theme} />
+      )}
+      {/* The extension popup's frame is a popover: it renders through the chrome layer. */}
+      <PopupFrame />
+    </>
+  )
 }
 
 /** Desktop, tablet and DeX: Zen's vertical sidebar next to the content card. */
@@ -125,13 +134,6 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   useEffect(() => {
     if (!sidebarHidden && ui.compactHover) uiStore.set({ compactHover: false })
   }, [sidebarHidden, ui.compactHover])
-  // Any click in the chrome dismisses an open extension popup (it lives outside the DOM).
-  useEffect(() => {
-    if (!state.extensions.some((e) => e.enabled)) return
-    const onDown = (): void => run('extension.closePopup', undefined)
-    window.addEventListener('mousedown', onDown)
-    return () => window.removeEventListener('mousedown', onDown)
-  }, [state.extensions])
   // Main tracks the real cursor (works over the page view and the frameless resize border).
   useEffect(() => {
     const onReveal = (e: Event): void => {
@@ -408,6 +410,12 @@ function useGlobalKeys(state: UIState): void {
       const ui = uiStore.get()
       if (ui.urlbar.open) return // handled by the URL bar input
       if (ui.menu) return // handled by the menu layer
+      if (ui.extensionPrompts.length) return // the prompt dialog answers Escape itself
+      if (ui.extensionPopup) {
+        e.preventDefault()
+        closeExtensionPopup()
+        return
+      }
       // Dialogs, choosers and overflow menus take Escape first (capture traps).
       if (ui.bookmarkEdit || ui.starDialog || ui.bookmarkAllTabs || ui.barMenuOpen) return
       if (ui.zoomBubble) return

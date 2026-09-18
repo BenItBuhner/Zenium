@@ -364,10 +364,13 @@ export interface HostEventPayloads {
   /** One intercepted request, while an extension listens for `webRequest` events. */
   'ext.request': ExtRequestEvent
   /**
-   * A tab running an extension's `identity.launchWebAuthFlow` was about to navigate back to
-   * `https://<id>.chromiumapp.org/…`: Kotlin cancelled the load and the URL is the flow's result.
+   * An `identity.launchWebAuthFlow` sheet (`ext/ExtensionAuthSheet.kt`) reports a top-frame
+   * navigation (one back to `https://<id>.chromiumapp.org/…` is cancelled there and ends the
+   * flow), a page loaded, a page failed, or its dismissal by the user.
    */
-  'ext.identityRedirect': { tabId: string; url: string }
+  'ext.authView': { viewId: number; event: string; url?: string }
+  /** A tap, a button or a swipe on an extension's system notification (`ext/ExtensionNotifications.kt`). */
+  'ext.notification': { id: string; notificationId: string; event: string; index?: number }
   /** Bytes of a translation model file arriving (`translate.download` in flight). */
   'translate.progress': TranslateProgressEvent
 }
@@ -1129,10 +1132,11 @@ export class AndroidPlatform implements Platform {
       case 'ext.request':
         this.extensionRuntime?.onRequest(payload as HostEventPayloads['ext.request'])
         return
-      case 'ext.identityRedirect':
-        this.extensionRuntime?.onIdentityRedirect(
-          payload as HostEventPayloads['ext.identityRedirect']
-        )
+      case 'ext.authView':
+        this.extensionRuntime?.onAuthView(payload)
+        return
+      case 'ext.notification':
+        this.extensionRuntime?.onNotification(payload)
         return
       case 'translate.progress':
         this.translate.onProgress(payload as HostEventPayloads['translate.progress'])

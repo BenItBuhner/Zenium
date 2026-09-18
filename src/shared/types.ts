@@ -410,6 +410,8 @@ export interface ExtensionInfo {
   updatedAt: number
   /** Pinned extensions are left out of update checks. */
   pinned: boolean
+  /** Shown as a toolbar button; other extensions live in the puzzle-piece panel. */
+  toolbarPinned: boolean
   /** Chrome's "Allow access to file URLs"; off by default. */
   allowFileAccess: boolean
   /**
@@ -475,6 +477,31 @@ export interface ExtensionAction {
   /** Full popup URL, or null when a click fires `action.onClicked` instead. */
   popup: string | null
   enabled: boolean
+}
+
+/**
+ * A question main puts to the user through the chrome's dialog: the store service's
+ * `InstallConfirmation` plus the id the renderer answers with (`extension.confirmInstall` or
+ * `extension.respondPermissionRequest`).
+ */
+export interface ExtensionPromptRequest {
+  requestId: string
+  /**
+   * `install`: a fresh install or a reinstall; `update`: an update that added permissions;
+   * `permissions`: approving those before an updated extension is enabled again; `request`: a
+   * running extension's `permissions.request` (raised by the API layer).
+   */
+  kind: 'install' | 'update' | 'permissions' | 'request'
+  name: string
+  icon: string | null
+  warnings: string[]
+  source?: ExtensionSource
+}
+
+/** Update checks across all extensions, for the caption on the management page. */
+export interface ExtensionUpdateCheck {
+  lastCheckedAt: number | null
+  checking: boolean
 }
 
 export interface Mod {
@@ -1107,6 +1134,11 @@ export interface DownloadSettings {
    * types automatically"); dangerous types never auto-open.
    */
   autoOpenTypes: string[]
+  /**
+   * Desktop toolbar (the desktop program's additive key): keep the downloads button in the toolbar
+   * when nothing is downloading, like Chrome's pinned button or Edge's default.
+   */
+  alwaysShowButton: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -2272,6 +2304,8 @@ export interface UIState {
   zappingTabId: string | null
   liveFolders: Record<string, LiveFolderConfig>
   extensions: ExtensionInfo[]
+  /** The last update check across all extensions, for the management page's caption. */
+  extensionUpdates: ExtensionUpdateCheck
   /** The extension side panel this window shows beside the page, if one is open for its tab. */
   sidePanel: SidePanelInfo | null
   mods: Mod[]
@@ -2415,6 +2449,7 @@ export interface MenuDescriptor {
     | 'app'
     | 'bookmark'
     | 'history'
+    | 'download'
     | 'urlbar'
   /** Anchor in chrome CSS pixels, when known. */
   x: number | null
@@ -2891,6 +2926,18 @@ export interface Commands {
   'download.chooseDirectory': { args: void; result: string | null }
   /** Show the downloads panel (Ctrl/Cmd+J, the app menu, a completion notification). */
   'download.openPanel': { args: void; result: void }
+  /** Desktop UI plumbing: begin an OS drag of a finished file out of the downloads page. */
+  'download.dragOut': { args: { id: string }; result: void }
+  /** Desktop UI plumbing: open the folder downloads are saved to in the file manager. */
+  'download.openFolder': { args: void; result: void }
+  /**
+   * A row's context menu (Open, Show in folder, Copy download link, Pause / Resume / Cancel /
+   * Retry, Remove from list), at the pointer or at `x, y` when opened from the keyboard.
+   */
+  'download.contextMenu': {
+    args: { id: string; x?: number; y?: number; keyboard?: boolean }
+    result: void
+  }
 
   'find.start': {
     /** `newSession` starts a fresh search for `text`; otherwise steps to the next/previous match. */
@@ -3000,6 +3047,7 @@ export interface Commands {
   }
   'extension.remove': { args: { id: string }; result: void }
   'extension.setEnabled': { args: { id: string; enabled: boolean }; result: void }
+  /** Pin to a version: left out of update checks. */
   'extension.setPinned': { args: { id: string; pinned: boolean }; result: void }
   /** Lets (or stops letting) this extension's `chrome_url_overrides.newtab` page open new tabs. */
   'extension.setNewTabOverride': { args: { id: string; enabled: boolean }; result: void }
@@ -3012,10 +3060,40 @@ export interface Commands {
   'extension.checkForUpdates': { args: void; result: void }
   'extension.update': { args: { id: string }; result: void }
   'extension.openOptions': { args: { id: string }; result: void }
-  'extension.openPopup': { args: { id: string; anchor: Rect }; result: void }
+  /**
+   * Open the action popup (or fire `action.onClicked` when the extension has none). `bounds` are
+   * the exact window-content coordinates for the popup view inside the frame the renderer draws,
+   * `radius` its corner; main reports the content's preferred size back via `extension.popupSize`
+   * and the renderer answers with `extension.resizePopup` once its frame has settled.
+   */
+  'extension.openPopup': {
+    args: { id: string; anchor: Rect; bounds?: Rect; radius?: number }
+    result: void
+  }
   'extension.closePopup': { args: void; result: void }
   /** Context menu of an extension's toolbar button (its `contextMenus` items plus Zenium's). */
   'extension.actionContextMenu': { args: { id: string; x?: number; y?: number }; result: void }
+  // ---- PROVISIONAL: extensions UI (PR #68) ------------------------------------------------------
+  // Added by the UI wave ahead of the engine; `src/main/platform/extensions.ts` implements them
+  // as they stand. The API layer (#91) landed without competing names (`ExtensionAction` above is
+  // its shape); its `permissions.request` still confirms natively rather than through
+  // `extensionPermissionRequest`. Later engine PRs may rename or fold these: reconcile here and
+  // keep the renderer's call sites (`lib/extensions/*`, `components/extensions/*`) in step.
+  /** Move the open popup view to where the renderer's frame has settled, and show it. */
+  'extension.resizePopup': { args: { bounds: Rect; visible: boolean }; result: void }
+  /** Paths dropped on the management page: `.crx` / `.zip` packages or unpacked folders. */
+  'extension.installFromDrop': { args: { paths: string[] }; result: void }
+  /** Show as a toolbar button (or move back into the puzzle-piece panel). */
+  'extension.setToolbarPinned': { args: { id: string; pinned: boolean }; result: void }
+  'extension.setAllowFileAccess': { args: { id: string; allow: boolean }; result: void }
+  /** The answer to an `extensionInstallRequest`. */
+  'extension.confirmInstall': { args: { requestId: string; accept: boolean }; result: void }
+  /** The answer to an `extensionPermissionRequest`. */
+  'extension.respondPermissionRequest': {
+    args: { requestId: string; accept: boolean }
+    result: void
+  }
+  // ---- end PROVISIONAL ----------------------------------------------------------------------------
 
   'mod.add': { args: { name: string; css: string; source?: string }; result: string }
   'mod.update': {
@@ -3289,6 +3367,8 @@ export interface Events {
   'download.changed': { item: DownloadItem; kind: DownloadChangeKind }
   /** A dangerous or suspicious download finished and waits for Keep / Discard. */
   'download.danger': { id: string }
+  /** Desktop shell: show the downloads bubble with this item marked (a notification was clicked). */
+  'downloads.reveal': { id: string | null }
   toast: { message: string; kind?: 'info' | 'error' }
   /** Link hover status text (Firefox shows this in the bottom corner). */
   status: { text: string }
@@ -3338,6 +3418,18 @@ export interface Events {
    * the payload carries `ArrayBuffer`s, so it is structured-cloned rather than JSON).
    */
   'translate.engine': EngineRelayRequest
+  // ---- PROVISIONAL: extensions UI (PR #68), see the matching block in `Commands` --------------
+  /** The popup's document asked for this size (CSS px); the renderer fits its frame around it. */
+  'extension.popupSize': { id: string; width: number; height: number }
+  /** Main closed the popup itself (blur, Escape inside it, a link opened a tab). */
+  'extension.popupClosed': { id: string }
+  /** Ask before an install or update; the renderer answers with `extension.confirmInstall`. */
+  extensionInstallRequest: ExtensionPromptRequest
+  /** Ask before granting permissions; the renderer answers with `extension.respondPermissionRequest`. */
+  extensionPermissionRequest: ExtensionPromptRequest
+  /** An install finished; the renderer toasts it with a Pin action while it is not in the toolbar. */
+  'extension.installed': { id: string; name: string; toolbarPinned: boolean }
+  // ---- end PROVISIONAL ----------------------------------------------------------------------------
 }
 
 export type EventName = keyof Events

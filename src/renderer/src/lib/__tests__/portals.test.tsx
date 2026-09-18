@@ -661,6 +661,69 @@ describe('placePopover (§9.20): horizontal order – align, flip, slide, shrink
     // flips to end-align, which lands 8 px from the edge.
     expect(box.left).toBe(1600 - 320 - M)
   })
+
+  it('reports the alignment it resolved to: the preferred one, the flipped one, or the slid one', () => {
+    expect(
+      placePopover({ x: 100, y: 42, width: 80, height: 26 }, bar, viewport, 320).alignment
+    ).toBe('start')
+    expect(
+      placePopover({ x: 1200, y: 42, width: 80, height: 26 }, bar, viewport, 320).alignment
+    ).toBe('end')
+    // The 400 panel from the extensions button flipped to start (2).
+    const sidebar = { x: 0, y: 0, width: 340, height: 40 }
+    const anchor = { x: 274, y: 6, width: 28, height: 28 }
+    expect(placePopover(anchor, sidebar, viewport, POPOVER_WIDTH.form).alignment).toBe('start')
+    // Slid (3): the aligned box moved, its alignment stands.
+    const small = { width: 400, height: 1000 }
+    const smallBar = { x: 0, y: 40, width: 400, height: 30 }
+    expect(
+      placePopover({ x: 100, y: 42, width: 40, height: 26 }, smallBar, small, 320).alignment
+    ).toBe('start')
+  })
+
+  it('continuity: a surface opened from another on the same anchor inherits its alignment when it fits', () => {
+    // The extension popup opened from the puzzle panel (§9.20, "continuity beats the order"):
+    // the panel resolved to start (274–674); the 278 popup on the same button would end-align
+    // by the order (its button is in the sidebar's trailing half, and end fits), and instead
+    // takes the panel's start, 274–552, so the eye stays where the panel was.
+    const sidebar = { x: 8, y: 42, width: 324, height: 32 }
+    const button = { x: 274, y: 44, width: 28, height: 28 }
+    const panel = placePopover(button, sidebar, viewport, POPOVER_WIDTH.form)
+    expect(panel.alignment).toBe('start')
+    const byOrder = placePopover(button, sidebar, viewport, { measured: 278 }, 582)
+    expect(byOrder.alignment).toBe('end')
+    expect(span(byOrder)).toEqual([24, 302])
+    const popup = placePopover(button, sidebar, viewport, { measured: 278 }, 582, panel.alignment)
+    expect(popup.alignment).toBe('start')
+    expect(span(popup)).toEqual([274, 552])
+    expect(popup.side).toBe('below')
+    expect(popup.maxHeight).toBe(582)
+    // The predecessor's alignment fitting is the condition. In a 560 window a 290 popup cannot
+    // start-align from the button (274 + 290 crosses the margin): it falls back to the order and
+    // flips to end, 12–302.
+    const narrow = { width: 560, height: 1000 }
+    const flipped = placePopover(button, sidebar, narrow, { measured: 290 }, 300, 'start')
+    expect(flipped.alignment).toBe('end')
+    expect(span(flipped)).toEqual([12, 302])
+    // When neither fits, the inherited box slides the least distance (3), not the order's.
+    const slid = placePopover(
+      button,
+      sidebar,
+      { width: 640, height: 1000 },
+      { measured: 500 },
+      300,
+      'start'
+    )
+    expect(slid.alignment).toBe('start')
+    expect(slid.left).toBe(640 - M - 500)
+    expect(overlaps(slid, button)).toBe(true)
+    // An inherited 'end' on a leading anchor holds the same way when it fits, 360–680.
+    const leading = { x: 600, y: 42, width: 80, height: 26 }
+    expect(placePopover(leading, bar, viewport, 320).alignment).toBe('start')
+    const inherited = placePopover(leading, bar, viewport, 320, undefined, 'end')
+    expect(inherited.alignment).toBe('end')
+    expect(span(inherited)).toEqual([360, 680])
+  })
 })
 
 describe('placePopover (§9.20): vertical order – below, flip above, shrink, the 160 floor', () => {

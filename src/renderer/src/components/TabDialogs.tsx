@@ -8,6 +8,7 @@ import { FrameDialogHost, useFrameDialog } from '@renderer/lib/portals'
 import { activeTab, tabTitle } from '@renderer/lib/selectors'
 import { uiStore, type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { ExtensionPromptDialog } from './extensions/ExtensionPromptDialog'
 import { PermissionPrompts } from './security/PermissionPromptDialog'
 import { PageDialogs } from './dialogs/PageDialog'
 import { WindowPromptDialog } from './dialogs/WindowPromptDialog'
@@ -41,9 +42,9 @@ const TAB_ICONS = [
  * folder edit requested outside the manager (the manager hosts its own), the pinned-URL editor
  * and the icon picker, the security prompts (HTTP sign-in, certificate choice) the page's
  * requests wait on, the permission prompts a page's requests wait on, the page's own dialogs
- * (`alert`, `confirm`, `prompt`, "Leave site?") and the questions asked before a window closes
- * or Zenium quits, and the new tab page's add / edit shortcut dialog. The modal ones render
- * through the `FrameDialogHost` this mounts, so they
+ * (`alert`, `confirm`, `prompt`, "Leave site?"), the questions asked before a window closes
+ * or Zenium quits, the new tab page's add / edit shortcut dialog, and the extension install and
+ * permission prompts. The modal ones render through the `FrameDialogHost` this mounts, so they
  * centre in the box it is placed in – the content frame on desktop, the shell on phones – over
  * a scrim that dims only that box
  * (lib/portals.tsx). The star bubble is a popover: on desktop it portals to the chrome layer,
@@ -80,6 +81,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <PermissionPrompts state={state} />
       <PageDialogs state={state} />
       <WindowPromptDialog state={state} />
+      <ExtensionPromptDialog />
       {zoom && <ZoomBubble state={state} bubble={zoom} />}
     </FrameDialogHost>
   )

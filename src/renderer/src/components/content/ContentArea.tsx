@@ -10,6 +10,7 @@ import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
 import { captureActiveTab, panelAloneOverContent, uiStore, type UiState } from '@renderer/lib/ui'
+import { extensionChromeAloneOverContent } from '@renderer/lib/extensions/scrim'
 import { cn } from '@renderer/lib/utils'
 import { dropStore } from '@renderer/lib/drag'
 import { newTabGrowStore } from '@renderer/lib/newtab'
@@ -109,8 +110,18 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
         className="zen-content-frame relative flex h-full min-h-0 flex-col overflow-hidden"
         data-staged={staged || undefined}
       >
-        {crashRestore && <CrashRestoreBanner offer={crashRestore} />}
-        {banner && <DefaultBrowserBanner state={state} />}
+        {(crashRestore || banner) && (
+          // Under a desktop overlay panel the strips keep their height (the viewport under them
+          // does not jump) but are not painted or reachable: the panel's 12 px margin showed the
+          // strip's top edge and its accent button above every overlay (services' #92 pass).
+          <div
+            className="zen-frame-strips contents"
+            data-under-overlay={ui.overlay !== 'none' || undefined}
+          >
+            {crashRestore && <CrashRestoreBanner offer={crashRestore} />}
+            {banner && <DefaultBrowserBanner state={state} />}
+          </div>
+        )}
         <div className="flex min-h-0 flex-1 flex-row">
           {/* A tab dragged onto the page (past the split zones at its edges) tears off into a new window. */}
           <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden" data-tear-zone>
@@ -138,8 +149,12 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                     className="h-full w-full object-cover object-top"
                   />
                 ) : null}
-                {/* Panels draw no scrim: a bar panel or the star bubble leaves the capture undimmed. */}
-                {!panelAloneOverContent(ui) && (
+                {/*
+                 * Panels draw no scrim: a bar panel, the star bubble, the puzzle panel, a local
+                 * menu or the popup frame leaves the capture undimmed; an extension prompt's
+                 * scrim is the frame dialog host's (the sheet's on a phone).
+                 */}
+                {!panelAloneOverContent(ui) && !extensionChromeAloneOverContent(ui) && (
                   <div
                     className={cn(
                       'absolute inset-0 bg-black/35 transition-opacity',

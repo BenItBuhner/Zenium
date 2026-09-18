@@ -1,0 +1,1 @@
+{ "probe": "w22", "served": "10.0.2.2:8765", "cors": "none of these headers come from the server; the extension runtime's proxy adds them" }

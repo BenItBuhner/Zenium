@@ -7,7 +7,7 @@ import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { dropStore } from '@renderer/lib/drag'
 import { activeTab, isLocalWindow, tabTitle } from '@renderer/lib/selectors'
-import { claimMessageCards, openOverlay, uiStore } from '@renderer/lib/ui'
+import { claimMessageCards, openOverlay, pickToastAction, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ToastCard } from '../messages/ToastCard'
 import { SpaceGlyph } from '../SpaceGlyph'
@@ -58,11 +58,21 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
             <div
               key={t.id}
               className={cn(
-                'zen-toast zen-panel px-2.5 py-1.5 text-[12px]',
-                t.kind === 'error' && 'text-red-500'
+                'zen-toast zen-panel flex items-center gap-2 px-2.5 py-1.5 text-[12px]',
+                t.kind === 'error' && 'text-[var(--zen-danger)]'
               )}
             >
-              {t.message}
+              <span className="min-w-0 flex-1">{t.message}</span>
+              {t.action && (
+                // A v2 secondary button (§6) inside the shipped toast until the toast is redone.
+                <button
+                  type="button"
+                  className="zen-v2 zen-v2-button -my-0.5 shrink-0"
+                  onClick={() => pickToastAction(t.id)}
+                >
+                  {t.action.label}
+                </button>
+              )}
             </div>
           ))}
         </div>

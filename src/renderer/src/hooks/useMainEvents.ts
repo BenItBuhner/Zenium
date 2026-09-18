@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import type { Rect, UIState } from '@shared/types'
 import { onEvent, run } from '@renderer/lib/api'
 import { remoteDragOver } from '@renderer/lib/drag'
+import { startDownloadsUi } from '@renderer/lib/downloads'
 import { isPhone } from '@renderer/lib/formFactor'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import {
@@ -22,6 +23,11 @@ import {
 } from '@renderer/lib/ui'
 import { activeTab } from '@renderer/lib/selectors'
 import { browserStore } from '@renderer/lib/ui'
+import {
+  closeExtensionPopup,
+  enqueueExtensionPrompt,
+  popupSizeReported
+} from '@renderer/lib/extensions/popup'
 
 function currentActiveTabId(): string | null {
   const state: UIState | null = browserStore.get().state
@@ -32,6 +38,8 @@ function currentActiveTabId(): string | null {
 export function useMainEvents(): void {
   useEffect(() => {
     const offs = [
+      // The downloads button and bubble follow the engine's list and the `downloads.reveal` event.
+      startDownloadsUi(),
       onEvent('urlbar.toggle', ({ mode, text }) => {
         const ui = uiStore.get()
         if (ui.urlbar.open && ui.urlbar.mode === mode && text === undefined) {
@@ -135,6 +143,32 @@ export function useMainEvents(): void {
       }),
       onEvent('compact.reveal', (reveal) =>
         window.dispatchEvent(new CustomEvent('zen-compact-reveal', { detail: reveal }))
+      ),
+      onEvent('extension.popupSize', ({ id, width, height }) =>
+        popupSizeReported(id, width, height)
+      ),
+      onEvent('extension.popupClosed', () => closeExtensionPopup(false)),
+      onEvent(
+        'extensionInstallRequest',
+        (prompt) => void enqueueExtensionPrompt(prompt, currentActiveTabId())
+      ),
+      onEvent(
+        'extensionPermissionRequest',
+        (prompt) => void enqueueExtensionPrompt(prompt, currentActiveTabId())
+      ),
+      onEvent('extension.installed', ({ id, name, toolbarPinned }) =>
+        pushToast(
+          `${name} was added to Zenium`,
+          'info',
+          toolbarPinned
+            ? {}
+            : {
+                action: {
+                  label: 'Pin',
+                  onPick: () => run('extension.setToolbarPinned', { id, pinned: true })
+                }
+              }
+        )
       ),
       onEvent('menu.show', (menu) => void showMenu(menu, currentActiveTabId())),
       onEvent('menu.hide', ({ menuId }) => {

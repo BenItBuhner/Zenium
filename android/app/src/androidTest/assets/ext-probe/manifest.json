@@ -4,16 +4,22 @@
   "version": "0.1.0",
   "description": "Zenium extension-layer probe: measures timing, isolation, messaging, storage and popup stages.",
   "default_locale": "en",
+  "icons": { "48": "icon.png" },
   "permissions": [
     "storage",
     "alarms",
     "tabs",
     "scripting",
     "webNavigation",
-    "declarativeNetRequest"
+    "declarativeNetRequest",
+    "contextMenus",
+    "cookies",
+    "notifications",
+    "identity"
   ],
   "host_permissions": ["<all_urls>"],
   "action": { "default_popup": "popup.html", "default_title": "Probe" },
+  "options_ui": { "page": "options.html", "open_in_tab": false },
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     {

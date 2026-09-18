@@ -55,6 +55,7 @@ import { FileStoreIO } from './storeIo'
 import { SessionManager, buildUserAgent } from './sessions'
 import { installZenProtocol } from './protocol'
 import { ElectronDownloads } from './downloads'
+import { ElectronDownloadsShell } from './downloadsShell'
 import { ElectronMenus } from './menus'
 import { ElectronTabViewHost, copyImageFromUrl } from './views'
 import { ElectronWindowFactory, type ElectronWindow } from './window'
@@ -151,6 +152,8 @@ export class ElectronPlatform implements Platform {
   /** Default-browser status and registration on Windows, macOS and Linux. */
   readonly defaultBrowser = new ElectronDefaultBrowser()
   readonly newTabBackground: ElectronNewTabBackground
+  /** Taskbar progress, dock badge and completion notifications for downloads. */
+  downloadsShell: ElectronDownloadsShell | null = null
   browser!: Browser
   private readonly profileDir: string
 
@@ -165,10 +168,13 @@ export class ElectronPlatform implements Platform {
       focusedChromeWebContents((id) => this.windows.windowForWebContents(id) !== undefined)
     )
     this.sessions = new SessionManager(buildUserAgent())
-    this.downloads = new ElectronDownloads(() => {
-      const downloads = resolveDownloadSettings(this.browser.state.settings)
-      return { askWhereToSave: downloads.askWhereToSave, directory: downloads.directory }
-    })
+    this.downloads = new ElectronDownloads(
+      () => {
+        const downloads = resolveDownloadSettings(this.browser.state.settings)
+        return { askWhereToSave: downloads.askWhereToSave, directory: downloads.directory }
+      },
+      () => this.browser.state.settings.appIcon
+    )
     // The views hand "Save … As…" downloads to the downloads host, which then asks where to save.
     this.views = new ElectronTabViewHost(this.sessions, this.downloads)
     // The core's Safe Browsing service exists once the browser does (`start`); no request runs before.
@@ -444,6 +450,7 @@ export class ElectronPlatform implements Platform {
     // Safe Browsing ahead of the rules, the cookie and signal edits after them; the upgrade
     // observer and the page preload's signals IPC.
     this.privacy.attach(this.requestBlocking)
+    this.downloadsShell = new ElectronDownloadsShell(browser)
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(
         ses,

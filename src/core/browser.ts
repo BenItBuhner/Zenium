@@ -4,6 +4,9 @@ import type {
   CommandArgs,
   CommandName,
   CommandResult,
+  DownloadChangeKind,
+  DownloadItem,
+  DownloadSettings,
   EventName,
   Events,
   Folder,
@@ -27,7 +30,7 @@ import { HistoryService } from './history'
 import { SessionService } from './session'
 import { NewTabService } from './newtab'
 import { BookmarkService } from './bookmarks'
-import { DownloadService } from './downloads'
+import { DownloadService, isQuarantined } from './downloads'
 import { resolveDownloadSettings } from '../shared/downloads'
 import { PermissionService } from './permissions'
 import { PermissionPromptService } from './permissionPrompts'
@@ -114,6 +117,8 @@ import { JsonStore } from './store/JsonStore'
  */
 const QUIT_SETTLE_TIMEOUT_MS = 3_000
 
+export type DownloadChangeListener = (item: DownloadItem, kind: DownloadChangeKind) => void
+
 type CommandHandlers = {
   [K in CommandName]: (
     args: CommandArgs<K>,
@@ -154,6 +159,7 @@ export class Browser {
   readonly newTab: NewTabService
   readonly bookmarks: BookmarkService
   readonly downloads: DownloadService
+  private readonly downloadListeners = new Set<DownloadChangeListener>()
   readonly permissions: PermissionService
   /** The permission prompts the chrome shows, queued per tab. */
   readonly permissionPrompts: PermissionPromptService
@@ -255,6 +261,7 @@ export class Browser {
       (item, kind) => {
         this.state.commitVolatile()
         this.emitDownload('download.changed', { item, kind }, item.private)
+        for (const listener of this.downloadListeners) listener(item, kind)
       },
       {
         os: platform.info.os,
@@ -318,6 +325,7 @@ export class Browser {
       zappingTabId: this.boosts.zappingTabId(),
       liveFolders: this.liveFolders.all(),
       extensions: this.extensions.list(),
+      extensionUpdates: this.extensions.updateCheck(),
       sidePanel: this.extensions.sidePanel(win),
       mods: this.mods.all(),
       sync: this.sync.status(),
@@ -689,12 +697,15 @@ export class Browser {
    * opened only for the download; otherwise just make sure the keyboard keeps working.
    */
   onDownloadStarted(sourceTabId: string | null): void {
-    // Firefox shows the downloads panel whenever a download begins; Chrome only animates its
-    // toolbar button. The setting decides. Let any tab switch paint first so the panel can dim a
-    // snapshot of the page behind it.
     const win = sourceTabId ? this.tabs.windowFor(sourceTabId) : this.focusedWindow()
-    if (resolveDownloadSettings(this.state.settings).openPanelOnStart)
+    // Firefox shows the downloads panel whenever a download begins; the desktop chrome decides
+    // from `download.changed` instead (Chrome-style button, or the bubble when
+    // `Settings.downloads.openPanelOnStart` asks for it). Single-window hosts (Android) keep the
+    // panel; their downloads UI is not the desktop's. Let any tab switch paint first so the
+    // panel can dim a snapshot of the page behind it.
+    if (!this.state.capabilities.windows) {
       setTimeout(() => this.emit('overlay.open', { kind: 'downloads' }, win), 200)
+    }
     const tab = this.tabs.tab(sourceTabId)
     const view = sourceTabId ? this.tabs.view(sourceTabId) : undefined
     if (!tab || !view) return
@@ -799,6 +810,15 @@ export class Browser {
       return
     }
     this.newTab.open(win)
+  }
+
+  /**
+   * Host-side listeners for the engine's `download.changed` (the desktop shell's taskbar
+   * progress and completion notifications); windows get the same event over IPC.
+   */
+  onDownloadChange(listener: DownloadChangeListener): () => void {
+    this.downloadListeners.add(listener)
+    return () => this.downloadListeners.delete(listener)
   }
 
   /** Download events go to every window; private downloads only to private windows. */
@@ -2000,6 +2020,15 @@ export class Browser {
       'download.setOpenWhenDone': ({ id, on }) => this.downloads.setOpenWhenDone(id, on),
       'download.chooseDirectory': (_args, win) => this.downloads.chooseDirectory(win),
       'download.openPanel': (_args, win) => this.emit('overlay.open', { kind: 'downloads' }, win),
+      'download.dragOut': ({ id }, win) => {
+        // Only a released file has a final path to hand to the OS; a quarantined one still waits.
+        const item = this.downloads.item(id)
+        if (item && item.state === 'completed' && !isQuarantined(item))
+          platform.downloads.startFileDrag?.(item, win)
+      },
+      'download.openFolder': () => platform.downloads.openDownloadsFolder?.(),
+      'download.contextMenu': ({ id, x, y, keyboard }, win) =>
+        this.menus.showDownloadContextMenu(id, { x, y, keyboard }, win),
 
       'find.start': ({ tabId, text, forward, newSession }, win) => {
         const view = tabs.view(tabId)
@@ -2126,10 +2155,15 @@ export class Browser {
       'extension.installFromFile': (_a, win) => this.extensions.installFromFileDialog(win),
       'extension.installFromStore': ({ ref, store }, win) =>
         this.extensions.installFromStore(ref, store ?? null, win),
+      'extension.installFromDrop': ({ paths }, win) => this.extensions.installFromDrop(paths, win),
       'extension.remove': ({ id }) => this.extensions.remove(id),
       'extension.setEnabled': ({ id, enabled }, win) =>
         this.extensions.setEnabled(id, enabled, win),
       'extension.setPinned': ({ id, pinned }) => this.extensions.setPinned(id, pinned),
+      'extension.setToolbarPinned': ({ id, pinned }) =>
+        this.extensions.setToolbarPinned(id, pinned),
+      'extension.setAllowFileAccess': ({ id, allow }) =>
+        this.extensions.setAllowFileAccess(id, allow),
       'extension.setNewTabOverride': ({ id, enabled }) =>
         this.extensions.setNewTabOverride(id, enabled),
       'extension.toggleSidePanel': ({ id }, win) => this.extensions.toggleSidePanel(id, win),
@@ -2140,7 +2174,15 @@ export class Browser {
       'extension.checkForUpdates': (_a, win) => this.extensions.checkForUpdates(win),
       'extension.update': ({ id }, win) => this.extensions.update(id, win),
       'extension.openOptions': ({ id }, win) => this.extensions.openOptions(id, win),
-      'extension.openPopup': ({ id, anchor }, win) => this.extensions.openPopup(id, anchor, win),
+      'extension.openPopup': ({ id, anchor, bounds, radius }, win) =>
+        this.extensions.openPopup(
+          id,
+          anchor,
+          win,
+          bounds ? { bounds, radius: radius ?? 12 } : undefined
+        ),
+      'extension.resizePopup': ({ bounds, visible }) =>
+        this.extensions.resizePopup(bounds, visible),
       'extension.closePopup': () => this.extensions.closePopup(),
       'extension.actionContextMenu': ({ id, x, y }, win) =>
         this.menus.showExtensionActionMenu(
@@ -2148,6 +2190,10 @@ export class Browser {
           win,
           x !== undefined && y !== undefined ? { x, y } : undefined
         ),
+      'extension.confirmInstall': ({ requestId, accept }) =>
+        this.extensions.respondPrompt(requestId, accept),
+      'extension.respondPermissionRequest': ({ requestId, accept }) =>
+        this.extensions.respondPrompt(requestId, accept),
 
       'mod.add': ({ name, css, source }) => this.mods.add(name, css, source ?? null).id,
       'mod.update': ({ id, patch }) => this.mods.update(id, patch),
@@ -2326,6 +2372,13 @@ export class Browser {
           ...s.newTabPhone,
           ...(value as Partial<Settings['newTabPhone']>)
         })
+      } else if (key === 'downloads' && value && typeof value === 'object') {
+        // The block is partial: a one-key patch from a Settings row must not drop the others.
+        // `askWhereToSave` keeps living at the top level (the resolver reads it from there).
+        const incoming = value as Partial<DownloadSettings>
+        const { askWhereToSave, ...rest } = incoming
+        s.downloads = { ...s.downloads, ...rest }
+        if (typeof askWhereToSave === 'boolean') s.askWhereToSave = askWhereToSave
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }
