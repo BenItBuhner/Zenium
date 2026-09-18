@@ -4,7 +4,7 @@
 // with `--import`, this registers the hook in ts-imports-hook.mjs, which tries `<specifier>.ts`
 // (then `<specifier>/index.ts`) for such imports:
 //
-//   node --experimental-strip-types --import ./.github/scripts/ts-imports.mjs script.mts
+//   node --experimental-strip-types --import ./scripts/ts-imports.mjs script.mts
 import { register } from 'node:module'
 
 register('./ts-imports-hook.mjs', import.meta.url)

@@ -13,9 +13,9 @@
 // snapshot only has to be recent, not current.
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { FEED_DOCUMENT_VERSION, type FeedDocument } from '../../src/core/safebrowsing/document.ts'
-import { SAFE_BROWSING_FEEDS, parseFeed } from '../../src/core/safebrowsing/feeds.ts'
-import { PrefixTable } from '../../src/core/safebrowsing/prefixes.ts'
+import { FEED_DOCUMENT_VERSION, type FeedDocument } from '../src/core/safebrowsing/document.ts'
+import { SAFE_BROWSING_FEEDS, parseFeed } from '../src/core/safebrowsing/feeds.ts'
+import { PrefixTable } from '../src/core/safebrowsing/prefixes.ts'
 
 const OUT_DIR = resolve('resources/safebrowsing')
 const ATTEMPTS = 3

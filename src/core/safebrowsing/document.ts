@@ -4,7 +4,7 @@ import { safeBrowsingFeed } from './feeds'
 /**
  * The file a Safe Browsing feed is kept in: `safebrowsing/<feed>.json` under the profile, written
  * by the service after a refresh and, marked `bundled`, by the snapshot the build ships
- * (`resources/safebrowsing`, `.github/scripts/build-safebrowsing-snapshot.mts`). A host that
+ * (`resources/safebrowsing`, `scripts/safebrowsing-snapshot.mts`). A host that
  * reads the files itself (Android's `privacy/SafeBrowsing.kt`) finds everything a hit needs in
  * them. Its own module so the snapshot script loads no more of the core than this.
  */
