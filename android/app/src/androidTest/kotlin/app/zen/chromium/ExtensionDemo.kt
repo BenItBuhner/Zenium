@@ -347,10 +347,13 @@ class ExtensionDemo {
 
         // 2. Vimium: focus the page, press f, expect link hints. The page records the key events
         // it sees (Vimium listens on the window in its own world) so a miss can be told apart:
-        // the key never reached the page, or Vimium ignored it.
+        // the key never reached the page, or Vimium ignored it. The focusing tap lands on the
+        // heading, which is not a link: a tap at a fixed fraction of the screen hit a link once
+        // the page's layout moved and the tab left for Wikipedia under every later stage.
         showTab(probeTab)
         tabEval(probeView, KEY_RECORDER)
-        tap(width / 2f, height * 0.42f)
+        val heading = screenPoint(probeView, json(tabEval(probeView, ELEMENT_CENTRE.replace("%SELECTOR%", "h1"))))
+        tap(heading?.first ?: (width / 2f), heading?.second ?: (height * 0.42f))
         SystemClock.sleep(600)
         key(KeyEvent.KEYCODE_F)
         SystemClock.sleep(1_800)
@@ -449,15 +452,19 @@ class ExtensionDemo {
         // scripts, and the software-rendered emulator spends its CPU on decoding the video in the
         // meantime (measured: the bar was there 10 s after load while the video was blocked, not
         // after 13 s with it playing; pausing the player is no help, m.youtube.com answers a pause
-        // with its "Watch in YouTube app" dialog over the page). The driver waits for the bar
+        // with its "Watch in YouTube app" dialog over the page; the dialog also comes up on its
+        // own now and then, pausing the video, and the extension writes nothing while it is up,
+        // so the driver closes it from the page when it sees it). The driver waits for the bar
         // and then gives the extension 30 s to decorate it; its own DOM ends the wait.
         val ytStarted = SystemClock.uptimeMillis()
         val ytTab = createTab("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
         val ytView = waitForView(ytTab)
         var barSeenAt = 0L
+        var upsellsClosed = 0
         waitFor(90_000, 1_000) {
             val report = json(tabEval(ytView, RYD_REPORT))
             if (barSeenAt == 0L && report.optString("actionBar").isNotEmpty()) barSeenAt = SystemClock.uptimeMillis()
+            if (report.optInt("dialogs") > 0 && tabEval(ytView, YT_CLOSE_UPSELL) == "closed") upsellsClosed++
             when {
                 rydDecorated(report) -> true
                 barSeenAt != 0L && SystemClock.uptimeMillis() - barSeenAt > 30_000 -> true
@@ -467,6 +474,7 @@ class ExtensionDemo {
         SystemClock.sleep(1_500)
         shot("11-ryd-youtube")
         val ryd = json(tabEval(ytView, RYD_REPORT))
+        ryd.put("upsellsClosed", upsellsClosed)
         // On a WebView with worlds the extension's bootstrap statistics live in its world.
         val rydWorld = if (worlds) worldEval(ytView, RYD, WORLD_REPORT)?.let(::json) else null
         val worldGroups = rydWorld?.optJSONObject("stats")?.optJSONArray("groups")?.length() ?: 0
@@ -1333,11 +1341,19 @@ class ExtensionDemo {
         report.put("navigationListener", NavigationReports.supported)
         report.put("count", entries.size)
         report.put("tail", JSONArray(entries.takeLast(24)))
-        val sameDocument = entries.drop(before)
+        // What the two same-document moves produced on the probe page: the fragment event, the
+        // history event, and nothing else (WebView finishes a hash change too; Chrome reports
+        // no load for it).
+        val sameDocument = entries.drop(before).filter { it.optString("url").startsWith("$BASE/probe.html") }
         val fragment = sameDocument.any { it.optString("event") == "onReferenceFragmentUpdated" && it.optString("url").endsWith("#w22") }
         val pushed = sameDocument.any { it.optString("event") == "onHistoryStateUpdated" && it.optString("url").contains("w22=1") }
-        // The phases of one probe page load, in order, for the same tab.
-        val probeLoads = entries.filter { it.optString("url").startsWith("$BASE/probe.html") && it.optInt("frameId", -1) == 0 }
+        val sameDocumentOnly = sameDocument.all { it.optString("event") in listOf("onReferenceFragmentUpdated", "onHistoryStateUpdated") }
+        report.put("sameDocumentOnly", sameDocumentOnly)
+        // The phases of one probe page load, in order, for the same tab. The filtered listener's
+        // copy of `onCommitted` is recorded alongside and graded on its own below.
+        val probeLoads = entries.filter {
+            it.optString("url").startsWith("$BASE/probe.html") && it.optInt("frameId", -1) == 0 && !it.optString("event").endsWith(":filtered")
+        }
         val phases = listOf("onBeforeNavigate", "onCommitted", "onDOMContentLoaded", "onCompleted")
         val orderedLoad = probeLoads.map { it.optString("event") }.windowed(4).any { it == phases }
         val filtered = entries.filter { it.optString("event") == "onCommitted:filtered" }
@@ -1348,11 +1364,12 @@ class ExtensionDemo {
         stage(
             PROBE_ID, "webNavigation",
             when {
-                orderedLoad && fragment && pushed && filterRight -> "PASS"
+                orderedLoad && fragment && pushed && sameDocumentOnly && filterRight -> "PASS"
                 orderedLoad -> "PARTIAL"
                 else -> "FAIL"
             },
-            "listener=${report.optBoolean("navigationListener")} events=${entries.size} ordered load=$orderedLoad fragment=$fragment pushState=$pushed filtered=${filtered.size}/$filterRight transitions=$transitions"
+            "listener=${report.optBoolean("navigationListener")} events=${entries.size} ordered load=$orderedLoad fragment=$fragment pushState=$pushed " +
+                "sameDocumentOnly=$sameDocumentOnly filtered=${filtered.size}/$filterRight transitions=$transitions"
         )
     }
 
@@ -1945,6 +1962,18 @@ class ExtensionDemo {
                 "video: (function(v){return v ? (v.paused ? 'paused' : (v.currentTime > 0 ? 'playing' : 'idle')) : 'none'})(document.querySelector('video')), " +
                 "dialogs: document.querySelectorAll('dialog[open], [role=\"dialog\"]').length, " +
                 "groups: (window.__zenExtStats && window.__zenExtStats.groups ? window.__zenExtStats.groups.length : 0), stats: window.__zenExtStats || null, readyState: document.readyState, title: document.title, url: location.href})"
+        /** The centre of the first element matching `%SELECTOR%`, in CSS pixels of the viewport; null without one. */
+        private const val ELEMENT_CENTRE =
+            "JSON.stringify((function(el){if(!el)return null;var r=el.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2,w:r.width,h:r.height}})(document.querySelector('%SELECTOR%')))"
+
+        /**
+         * Close m.youtube.com's "Get the best experience / Watch in YouTube app" upsell dialog when
+         * it is over the watch page (its close control is the dialog's only button with a Close
+         * label); 'closed' when one was clicked, 'none' when no such dialog is up.
+         */
+        private const val YT_CLOSE_UPSELL =
+            "(function(){var d=Array.prototype.find.call(document.querySelectorAll('dialog[open], [role=\"dialog\"]'),function(el){return /YouTube app|best experience/i.test(el.textContent||'')});" +
+                "if(!d)return 'none';var c=d.querySelector('button[aria-label*=\"lose\"], [role=\"button\"][aria-label*=\"lose\"], button[aria-label*=\"ismiss\"]');if(!c)return 'no close button';c.click();return 'closed'})()"
 
         /** Whether Return YouTube Dislike reached the page's DOM: an element of its own, or text in the dislike button. */
         private fun rydDecorated(report: JSONObject): Boolean {
