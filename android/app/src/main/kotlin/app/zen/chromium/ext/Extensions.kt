@@ -488,9 +488,13 @@ class Extensions(private val host: Host) {
             "msg", "deliver" -> {
                 val target = message.optJSONObject("target")
                 val data = message.opt("data")
-                val kind = (data as? JSONObject)?.let { it.optString("type", "").ifEmpty { it.optString("t", "") } } ?: ""
+                // The message's own discriminator, under the names extensions use for it.
+                val kind = (data as? JSONObject)?.let { d ->
+                    listOf("type", "t", "handler", "action", "method", "kind", "cmd").firstNotNullOfOrNull { k -> d.optString(k, "").ifEmpty { null } }
+                } ?: ""
                 listOfNotNull(
                     target?.opt("tabId")?.let { "tab=$it" },
+                    target?.opt("frameId")?.let { "frame=$it" },
                     kind.takeIf { it.isNotEmpty() }?.let { "type=$it" },
                     (message.optJSONObject("sender")?.has("tab"))?.let { "senderTab=$it" }
                 ).joinToString(" ")
@@ -501,7 +505,7 @@ class Extensions(private val host: Host) {
             else -> ""
         }
         synchronized(bridgeTrace) {
-            if (bridgeTrace.size >= 600) bridgeTrace.removeFirst()
+            if (bridgeTrace.size >= TRACE_LINES) bridgeTrace.removeFirst()
             bridgeTrace.addLast("${SystemClock.uptimeMillis()} $direction ${ext.take(8)}/$context $t $detail".trimEnd())
         }
     }
@@ -1020,6 +1024,8 @@ class Extensions(private val host: Host) {
          * an extension beyond the budget under the emulation proxy instead.
          */
         const val WORLD_SLOTS = 16
+        /** Bridge trace lines kept for instrumentation (one line per message, all extensions together). */
+        const val TRACE_LINES = 2400
         const val ORIGIN_SUFFIX = ".ext.zenium.invalid"
         const val GENERATED_BACKGROUND = "_generated_background_page.html"
         val VALID_ID = Regex("^[a-p]{32}$")

@@ -200,17 +200,35 @@ class ExtensionDemo {
         SystemClock.sleep(3_000)
     }
 
-    /** The store attaches every enabled record on start and the runtime configures it; wait until the seeded extensions are listed. */
+    /**
+     * The store attaches every enabled record on start and the runtime configures it. The demo
+     * waits until every seeded extension is listed by the core, configured in Kotlin (its units
+     * and served files installed) and has its background running: what the recording shows
+     * afterwards is the extensions at work, not their start-up (Return YouTube Dislike's
+     * `onInstalled` opens a changelog tab, which used to land in the middle of the probe step).
+     */
     private fun waitForExtensions(): JSONArray {
+        val seeded = results.getJSONObject("seededInstalls").keys().asSequence().toList()
         var list = JSONArray()
         val started = SystemClock.uptimeMillis()
-        waitFor(90_000, 1_000) {
+        val everyOne = waitFor(150_000, 1_000) {
             val state = state()
             list = state.optJSONArray("extensions") ?: JSONArray()
-            val units = scriptUnitsCount()
-            if (list.length() >= 2 && units > 0) true else null
+            val listed = HashMap<String, JSONObject>()
+            for (i in 0 until list.length()) list.getJSONObject(i).let { listed[it.getString("id")] = it }
+            var configured: Set<String> = emptySet()
+            instrumentation.runOnMainSync { configured = host.extensions.configureStats.keys.toSet() }
+            val pending = seeded.filter { id ->
+                val entry = listed[id]
+                // A load error is final; anything else is still on its way.
+                entry == null || (entry.isNull("error") && (id !in configured || backgroundView(id) == null))
+            }
+            if (pending.isEmpty()) true else null
         }
         results.put("configureMs", SystemClock.uptimeMillis() - started)
+        results.put("everyExtensionUp", everyOne == true)
+        // Backgrounds act on their start (`onInstalled`: tabs, storage); let the tab list settle.
+        settleTabs()
         // Rules and background pages come after the units. The probe's background adds its dynamic
         // rule on startup and `updateDynamicRules` resolves once Kotlin has the compiled rule set
         // (Chrome semantics); the dyn=1 pixel of the probe page is graded against that rule, so
@@ -230,6 +248,31 @@ class ExtensionDemo {
         return list
     }
 
+    /** Wait until the number of tabs has stayed the same for two seconds (at most fifteen). */
+    private fun settleTabs() {
+        var last = -1
+        var since = SystemClock.uptimeMillis()
+        val deadline = since + 15_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            val count = state().optJSONObject("tabs")?.length() ?: 0
+            if (count != last) {
+                last = count
+                since = SystemClock.uptimeMillis()
+            } else if (SystemClock.uptimeMillis() - since >= 2_000) return
+            SystemClock.sleep(500)
+        }
+    }
+
+    /**
+     * Make a tab the visible one and wait until the core reports it active: input injected
+     * afterwards (taps, keys) reaches its WebView and not whatever an extension opened meanwhile.
+     */
+    private fun showTab(tabId: String) {
+        chromeInvoke("tab.activate", """{"tabId":${JSONObject.quote(tabId)}}""")
+        waitFor(10_000, 200) { if (state().optString("activeTabId") == tabId) true else null }
+        SystemClock.sleep(600)
+    }
+
     private fun handshake() {
         File(out, "record").writeText("ready\n")
         val deadline = SystemClock.uptimeMillis() + 30_000
@@ -244,12 +287,12 @@ class ExtensionDemo {
         // The seeded tab is found by URL, not taken as "the active tab": Return YouTube Dislike's
         // background opens its changelog with `tabs.create` on install, which is active by then.
         probeTab = tabIdByUrl("$BASE/probe.html") ?: createTab("$BASE/probe.html")
-        chromeInvoke("tab.activate", """{"tabId":${JSONObject.quote(probeTab)}}""")
-        SystemClock.sleep(500)
+        showTab(probeTab)
         chromeInvoke("tab.reload", """{"tabId":${JSONObject.quote(probeTab)}}""")
         val probeView = waitForView(probeTab)
         waitFor(30_000) { if (tabEval(probeView, PROBE_DONE) == "true") true else null }
         SystemClock.sleep(2_500)
+        results.put("activeTabAtProbe", state().optString("activeTabId") == probeTab)
         shot("01-probe-page-dark-reader")
         val probe = json(tabEval(probeView, PROBE_REPORT))
         if (worlds) mergeWorldReports(probeView, probe)
@@ -265,13 +308,20 @@ class ExtensionDemo {
                 "drSheetsVisible=${dark.optInt("drSheetsVisible")} wasEnabledForHost=${dark.optString("wasEnabledForHost")}"
         )
 
-        // 2. Vimium: focus the page, press f, expect link hints.
+        // 2. Vimium: focus the page, press f, expect link hints. The page records the key events
+        // it sees (Vimium listens on the window in its own world) so a miss can be told apart:
+        // the key never reached the page, or Vimium ignored it.
+        showTab(probeTab)
+        tabEval(probeView, KEY_RECORDER)
         tap(width / 2f, height * 0.42f)
         SystemClock.sleep(600)
         key(KeyEvent.KEYCODE_F)
         SystemClock.sleep(1_800)
         shot("02-vimium-hints")
         val vimium = json(tabEval(probeView, VIMIUM_REPORT))
+        vimium.put("pageKeys", json(tabEval(probeView, "JSON.stringify(window.__keys || null)")))
+        vimium.put("activeTab", state().optString("activeTabId") == probeTab)
+        if (worlds) worldEval(probeView, VIMIUM, VIMIUM_WORLD_REPORT)?.let { vimium.put("world", json(it)) }
         results.put("vimium", vimium)
         stage(VIMIUM, "coreFunction", if (vimium.optInt("hints") > 0) "PASS" else "FAIL", "hints=${vimium.optInt("hints")} ui=${vimium.optInt("ui")}")
         key(KeyEvent.KEYCODE_ESCAPE)
@@ -280,8 +330,7 @@ class ExtensionDemo {
         // 3. The probe's popup: tabs, storage, messaging and executeScript from the page context.
         // The probe page is made the active tab first: Return YouTube Dislike opens its changelog
         // as a tab on install, and `executeScript` targets the active tab.
-        chromeInvoke("tab.activate", """{"tabId":${JSONObject.quote(probeTab)}}""")
-        SystemClock.sleep(800)
+        showTab(probeTab)
         results.put("extensionTabPages", extensionTabPages())
         val probePopupReady = popupDemo(PROBE_ID, "03-probe-popup", 20_000, { view -> tabEval(view, "document.title") == "probe-popup-ready" }) { view ->
             val report = json(tabEval(view, "JSON.stringify(window.__popupReport || null)"))
@@ -338,8 +387,8 @@ class ExtensionDemo {
         if (!ubolPopup) stage(UBOL, "popup", "FAIL", "popup document stayed empty")
 
         // 6. Stylus: the popup for the probe page (no styles installed: the empty state).
-        chromeInvoke("tab.activate", """{"tabId":${JSONObject.quote(probeTab)}}""")
-        SystemClock.sleep(1_500)
+        showTab(probeTab)
+        SystemClock.sleep(900)
         val stylusPopup = popupDemo(STYLUS, "07-stylus-popup", 15_000, { view -> tabEval(view, "String(document.body && document.body.innerText.length > 20)") == "true" }) { view ->
             stage(STYLUS, "popup", "PASS", tabEval(view, "document.body.innerText.slice(0, 200)").take(120))
         }
@@ -400,8 +449,9 @@ class ExtensionDemo {
         results.put("probeConsole", JSONArray(consoleOf(probeView).takeLast(40)))
         gradeCalls()
         val traces = JSONObject()
+        val seeded = results.getJSONObject("seededInstalls").keys().asSequence().toList()
         instrumentation.runOnMainSync {
-            for (id in listOf(DARK_READER, STYLUS)) traces.put(id, JSONArray(host.extensions.traceSnapshot(id).takeLast(150)))
+            for (id in seeded) traces.put(id, JSONArray(host.extensions.traceSnapshot(id).takeLast(150)))
         }
         results.put("bridgeTrace", traces)
     }
@@ -469,8 +519,7 @@ class ExtensionDemo {
         // The price of `with (proxy)` isolation: the same loop in a plain function scope and under
         // a `with` over a proxy with the bootstrap's `has`/`get` traps (median of 5). On the probe
         // page: the benchmark builds functions with `new Function`, which a strict CSP forbids.
-        chromeInvoke("tab.activate", """{"tabId":${JSONObject.quote(probeTab)}}""")
-        SystemClock.sleep(500)
+        showTab(probeTab)
         val probeView = waitForView(probeTab)
         results.put("withProxyBenchmark", json(tabEval(probeView, WITH_BENCH, 60)))
         // Content-script fetches under a strict page CSP (main-world limitation).
@@ -942,7 +991,20 @@ class ExtensionDemo {
                 "colorScheme: getComputedStyle(document.documentElement).colorScheme, wasEnabledForHost: sessionStorage.getItem('__darkreader__wasEnabledForHost')})"
         private const val VIMIUM_REPORT =
             "(function(){var n=document.querySelectorAll('.vimiumHintMarker').length,roots=0;document.querySelectorAll('*').forEach(function(el){if(el.shadowRoot){roots++;n+=el.shadowRoot.querySelectorAll('.vimiumHintMarker').length}});" +
-                "return JSON.stringify({hints:n,shadowRoots:roots,ui:document.querySelectorAll('.vimiumUIComponent,iframe[src*=\"vimium\"],[class*=\"vimium\"]').length})})()"
+                "return JSON.stringify({hints:n,shadowRoots:roots,ui:document.querySelectorAll('.vimiumUIComponent,iframe[src*=\"vimium\"],[class*=\"vimium\"]').length,focused:document.hasFocus(),active:document.activeElement&&document.activeElement.tagName})})()"
+        /** In the page's world, before the key: keep every key event the window sees (Vimium's own listener is on the window of its world). */
+        private const val KEY_RECORDER =
+            "(function(){window.__keys=[];['keydown','keypress','keyup'].forEach(function(t){window.addEventListener(t,function(e){window.__keys.push({type:t,key:e.key,code:e.code,keyCode:e.keyCode,trusted:e.isTrusted,target:e.target&&e.target.tagName||String(e.target)})},true)});return 'ok'})()"
+        /**
+         * Vimium's state in its world: its top-level `let`s are the world's script scope, which
+         * a later script in the same world reads. Whether the frame is enabled and knows its id
+         * (the `initializeFrame` handshake with the background), whether the key mapping arrived
+         * (`chrome.storage.session`), and whether the key handler saw the press.
+         */
+        private const val VIMIUM_WORLD_REPORT =
+            "(function(){try{return JSON.stringify({enabled:typeof isEnabledForUrl==='boolean'?isEnabledForUrl:null,frameId:typeof frameId==='undefined'?null:frameId," +
+                "normalMode:typeof normalMode==='undefined'?null:(normalMode?{keyMapping:normalMode.keyMapping?Object.keys(normalMode.keyMapping).length:0,passKeys:normalMode.passKeys||null}:'null'),handlers:typeof handlerStack==='undefined'?null:handlerStack.stack.length," +
+                "hud:typeof HUD,linkHints:typeof LinkHints,settingsLoaded:typeof Settings==='undefined'?null:Settings.isLoaded(),session:typeof chrome==='object'&&chrome.storage?typeof chrome.storage.session:null,runtimeId:typeof chrome==='object'&&chrome.runtime?chrome.runtime.id:null})}catch(e){return JSON.stringify({error:String(e&&e.message||e)})}})()"
         private const val RYD_REPORT =
             "JSON.stringify({elements: document.querySelectorAll('[id*=\"return-youtube-dislike\"],[class*=\"ryd-\"],#ryd-dislike-text').length, " +
                 "apiEntries: performance.getEntriesByType('resource').filter(function(e){return e.name.indexOf('returnyoutubedislike')>=0}).map(function(e){return {name:e.name,size:e.transferSize,duration:Math.round(e.duration)}}), " +
