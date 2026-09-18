@@ -6,7 +6,6 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   ReactNode,
   Ref,
-  RefObject,
   TextareaHTMLAttributes
 } from 'react'
 import { createContext, useContext, useEffect, useId, useRef, useState } from 'react'
@@ -293,30 +292,6 @@ export function Footer({
  * sheet beneath recedes, goes inert and keeps the one scrim.)
  */
 export const InSheet = createContext(false)
-
-/**
- * Whether `ref`'s content goes on below its visible end: a footer pinned under a scrolling body
- * draws §9.7's hairline while it does. Follows the scroll and the content's own growth (a
- * validation line appearing).
- */
-export function useMoreBelow(ref: RefObject<HTMLElement | null>): boolean {
-  const [more, setMore] = useState(false)
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const check = (): void => setMore(el.scrollHeight - el.scrollTop - el.clientHeight > 1)
-    check()
-    el.addEventListener('scroll', check, { passive: true })
-    const observer = new ResizeObserver(check)
-    observer.observe(el)
-    if (el.firstElementChild) observer.observe(el.firstElementChild)
-    return () => {
-      el.removeEventListener('scroll', check)
-      observer.disconnect()
-    }
-  }, [ref])
-  return more
-}
 
 /** Escape while the surface is up runs `close`, before anything under it hears the key. */
 export function useEscape(close: () => void, active = true): void {

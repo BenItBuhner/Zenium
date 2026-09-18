@@ -399,8 +399,9 @@ textarea.zen-v2-field {
 /*
  * A dialog whose form scrolls between its title block and its footer: the form element is the
  * column, the body inside it scrolls, the footer stays put with the §9.11 desktop 16 around its
- * buttons (the form's own 16 below its last field gives way to the footer's) and §9.7's hairline
- * on its top edge while more of the form lies below.
+ * buttons (the form's own 16 below its last field gives way to the footer's). No hairline over
+ * it: a dialog ends in its actions – the last field, 16, the buttons, 16 to the edge (§9.20);
+ * the hairline-and-12 footer is the row-list panel's.
  */
 .zen-v2-af-dialog-form {
   display: flex;
@@ -413,10 +414,6 @@ textarea.zen-v2-field {
 }
 .zen-v2-af-dialog-footer {
   flex-shrink: 0;
-  transition: box-shadow 120ms var(--zen-ease);
-}
-.zen-v2-af-dialog-footer[data-more] {
-  box-shadow: 0 -1px 0 var(--v2-border);
 }
 /* The body of a form: the title block's 16 above it, the 16 gutter to the sides and below. */
 .zen-v2-af-form {
