@@ -109,6 +109,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** Settings → Look and Feel → Pull to refresh, mirrored by the chrome (on until it says otherwise). */
     override var pullToRefresh = true
         private set
+    /** The core's word on the pages' forms script (`view.forms` config), kept for new documents. */
+    override var formsEnabled = true
+        private set
+    /** Settings → Passwords → autofill provider, applied to every page WebView (`autofill.setProvider`). */
+    override var autofillProvider = SystemAutofill.PROVIDER_SYSTEM
+        private set
     /** Previews of the pages a back gesture would return to. */
     override val snapshots = HistorySnapshots(activity)
     /** Page views go behind the chrome no earlier than with the chrome's next drawn frame. */
@@ -216,6 +222,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.input" -> if (tab == null) reply(null) else tab.sendAgentInput(args.obj("event")) { reply(null) }
             "view.setFlags" -> { tab?.setFlags(args.obj("flags")); reply(null) }
             "view.setZap" -> { tab?.setZap(args.bool("on")); reply(null) }
+            "view.forms" -> {
+                val command = args.obj("command")
+                // The on/off configuration is the same for every page: remember it for the next document.
+                if (command.str("type") == "config") formsEnabled = command.bool("enabled", true)
+                tab?.sendForms(command)
+                reply(null)
+            }
             "view.setPopupsAllowed" -> { tab?.setPopupsAllowed(args.bool("allowed")); reply(null) }
             "view.setBackground" -> {
                 tab?.setBackgroundColor(parseColor(args.str("color", "#ffffff")))
@@ -292,11 +305,19 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "reauth.available" -> reply(reauth.available())
             "reauth.verify" -> reauth.authenticate(args.str("reason"), strong = false) { ok -> reply(ok) }
             "clipboard.writeText" -> {
-                val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cm.setPrimaryClip(ClipData.newPlainText("Zenium", args.str("text")))
+                SecretClipboard.write(activity, args.str("text"), args.bool("sensitive"))
                 reply(null)
             }
+            "clipboard.clearText" -> reply(SecretClipboard.clear(activity, args.str("expected")))
             "clipboard.writeImage" -> copyImage(args.str("url"), reply)
+
+            // --- autofill: the system framework's status, and which provider owns the pages -----------
+            "autofill.status" -> reply(SystemAutofill.status(activity))
+            "autofill.setProvider" -> {
+                autofillProvider = SystemAutofill.provider(args.strOrNull("provider"))
+                for (view in tabs.all()) view.applyAutofillProvider()
+                reply(null)
+            }
             "net.fetch" -> fetchText(args.str("url"), args.obj("headers"), args.num("timeoutMs").toInt(), reply)
             "download.bind" -> { downloads.bind(args.str("token"), args.str("id"), args.obj("destination"), args.bool("private")); reply(null) }
             "download.cancel" -> { downloads.cancel(args.str("id")); reply(null) }

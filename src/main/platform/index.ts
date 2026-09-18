@@ -69,6 +69,7 @@ import { applyAppIcon, iconPngPath } from './appIcon'
 import { ElectronDefaultBrowser } from './defaultBrowser'
 import { ensureWindowsAppIdRegistered, notificationPermissionStatus } from './notifications'
 import { createPasswordsHost } from './passwords'
+import { attachWebAuthnHandlers, configurePlatformAuthenticators } from './webauthn'
 import {
   attachSecurityHandlers,
   permissionCheckDetails,
@@ -234,13 +235,21 @@ export class ElectronPlatform implements Platform {
     }
     this.passwords = createPasswordsHost()
     this.clipboard = {
-      // Asynchronous since Electron 44; the host contract stays fire-and-forget.
+      // Asynchronous since Electron 44; the host contract stays fire-and-forget. Electron has no
+      // sensitive flag for the system clipboard; the core's timed clearing covers desktop.
       writeText: (text) =>
         void clipboard
           .writeText(text)
           .catch((error: Error) => console.warn('[zen] clipboard:', error.message)),
       writeImageFromUrl: (url) => copyImageFromUrl(url),
-      readText: () => clipboard.readText().catch(() => '')
+      readText: () => clipboard.readText().catch(() => ''),
+      clearText: async (expected) => {
+        try {
+          if ((await clipboard.readText()) === expected) clipboard.clear()
+        } catch (error) {
+          console.warn('[zen] clipboard:', (error as Error).message)
+        }
+      }
     }
     this.shell = {
       openExternal: (url) => void shell.openExternal(url),
@@ -425,6 +434,7 @@ export class ElectronPlatform implements Platform {
       // The one webRequest listener set of the session; every request hook goes through it.
       this.requestBlocking.attach(ses, containerId)
       this.attachPermissions(ses)
+      attachWebAuthnHandlers(browser, this.views, ses)
       this.downloads.attach(ses, containerId, (sourceTabId) =>
         browser.onDownloadStarted(sourceTabId)
       )
@@ -438,6 +448,7 @@ export class ElectronPlatform implements Platform {
     this.sessions.get(DEFAULT_CONTAINER_ID)
     this.registerIpc(browser)
     attachSecurityHandlers(browser, this.views)
+    configurePlatformAuthenticators(__ZENIUM_APPLE_TEAM_ID__)
     browser.start()
     // Toasts need the app id registered with Windows; a copy without installer shortcuts
     // (development, portable) registers it itself.

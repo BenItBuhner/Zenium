@@ -1,4 +1,13 @@
-import type { Credential, ImportConflict, ImportResult } from '../../shared/types'
+import type {
+  AddressEntry,
+  AddressInput,
+  Credential,
+  ImportConflict,
+  ImportResult,
+  PasskeyEntry,
+  PaymentCard,
+  PaymentCardInput
+} from '../../shared/types'
 import { newId } from '../../shared/ids'
 import type { KeyWrapHost, StoreIO } from '../platform'
 import { bytesEqual, newDataKey } from './crypto'
@@ -16,7 +25,8 @@ import {
   wrapWithPassphrase,
   type KeyWrapRecord,
   type VaultEntry,
-  type VaultFile
+  type VaultFile,
+  type VaultRecord
 } from './vault'
 import { domainOf, normalizeDomain, normalizeOrigin, normalizeUrl, originMatches } from './origins'
 
@@ -49,6 +59,9 @@ export type Protection = { os: boolean; passphrase: boolean }
 /** The plaintext state one write seals (see `snapshot`). */
 interface Snapshot {
   credentials: Map<string, Credential>
+  addresses: Map<string, AddressEntry>
+  cards: Map<string, PaymentCard>
+  passkeys: Map<string, PasskeyEntry>
   neverSave: string[]
 }
 
@@ -56,10 +69,11 @@ const MAX_FIELD = 4096
 const MAX_NOTES = 16 * 1024
 
 /**
- * The credential store: plaintext logins in memory while unlocked, an encrypted vault document on
- * disk (see `vault.ts`). Everything the manager, the later in-page save / fill prompts, HTTP
- * authentication and sync need goes through here; the password of an entry is only handed out by
- * `get`, so callers gate it behind re-authentication themselves.
+ * The credential store: plaintext logins, addresses, payment cards and passkey records in memory
+ * while unlocked, one encrypted vault document on disk (see `vault.ts`). Everything the manager,
+ * the in-page save / fill prompts, HTTP authentication and sync need goes through here; the
+ * password of a login and the number of a card are only handed out by `get` / `getCard`, so
+ * callers gate them behind re-authentication themselves.
  *
  * Writes are eager: every mutation re-seals just the changed entry plus the manifest and hands the
  * document to the host's atomic `StoreIO.write`. `flushSync` writes the last fully sealed document
@@ -69,6 +83,9 @@ export class CredentialStore {
   private key: Uint8Array | null = null
   private file: VaultFile | null = null
   private credentials = new Map<string, Credential>()
+  private addresses = new Map<string, AddressEntry>()
+  private cards = new Map<string, PaymentCard>()
+  private passkeys = new Map<string, PasskeyEntry>()
   private neverSaveDomains: string[] = []
   private sealed = new Map<string, VaultEntry>()
   private loadError: VaultError | null = null
@@ -156,13 +173,20 @@ export class CredentialStore {
       entries: []
     }
     this.key = key
-    this.credentials = new Map()
-    this.neverSaveDomains = []
-    this.sealed = new Map()
+    this.clearPlaintext()
     this.file = file
     const plain = this.snapshot()
     await this.enqueue(() => this.commit(key, file, plain))
     this.onChange()
+  }
+
+  private clearPlaintext(): void {
+    this.credentials = new Map()
+    this.addresses = new Map()
+    this.cards = new Map()
+    this.passkeys = new Map()
+    this.neverSaveDomains = []
+    this.sealed = new Map()
   }
 
   /**
@@ -197,6 +221,9 @@ export class CredentialStore {
     const decoded = await decodeVault(key, file)
     this.key = key
     this.credentials = new Map(decoded.credentials.map((c) => [c.id, c]))
+    this.addresses = new Map(decoded.addresses.map((a) => [a.id, a]))
+    this.cards = new Map(decoded.cards.map((c) => [c.id, c]))
+    this.passkeys = new Map(decoded.passkeys.map((p) => [p.id, p]))
     this.neverSaveDomains = decoded.neverSave
     this.sealed = new Map(file.entries.map((e) => [e.id, e]))
     // A passphrase unlock on a device whose keystore has meanwhile become usable adds the OS
@@ -213,12 +240,10 @@ export class CredentialStore {
     this.onChange()
   }
 
-  /** Drop the key and every plaintext login; the sealed document stays on disk. */
+  /** Drop the key and every plaintext entry; the sealed document stays on disk. */
   lock(): void {
     this.key = null
-    this.credentials = new Map()
-    this.neverSaveDomains = []
-    this.sealed = new Map()
+    this.clearPlaintext()
     this.onChange()
   }
 
@@ -486,6 +511,184 @@ export class CredentialStore {
   }
 
   // ---------------------------------------------------------------------------
+  // Addresses
+  // ---------------------------------------------------------------------------
+
+  /** Every address, most recently used (else changed) first. */
+  listAddresses(): AddressEntry[] {
+    return [...this.addresses.values()].sort(
+      (a, b) => (b.lastUsedAt ?? b.updatedAt) - (a.lastUsedAt ?? a.updatedAt)
+    )
+  }
+
+  getAddress(id: string): AddressEntry | null {
+    return this.addresses.get(id) ?? null
+  }
+
+  addAddress(input: AddressInput, now: number = Date.now()): AddressEntry {
+    this.requireKey()
+    const address: AddressEntry = {
+      id: newId('address'),
+      ...clipAddress(input),
+      createdAt: now,
+      updatedAt: now,
+      lastUsedAt: null
+    }
+    this.addresses.set(address.id, address)
+    this.changed([address.id])
+    return address
+  }
+
+  updateAddress(id: string, patch: Partial<AddressInput>, now: number = Date.now()): AddressEntry | null {
+    this.requireKey()
+    const address = this.addresses.get(id)
+    if (!address) return null
+    Object.assign(address, clipAddress({ ...address, ...patch }), { updatedAt: now })
+    this.changed([id])
+    return address
+  }
+
+  removeAddress(id: string): AddressEntry | null {
+    this.requireKey()
+    const address = this.addresses.get(id)
+    if (!address) return null
+    this.addresses.delete(id)
+    this.sealed.delete(id)
+    this.changed([])
+    return address
+  }
+
+  markAddressUsed(id: string, now: number = Date.now()): void {
+    const address = this.addresses.get(id)
+    if (!address || !this.key) return
+    address.lastUsedAt = now
+    this.changed([id])
+  }
+
+  // ---------------------------------------------------------------------------
+  // Payment cards
+  // ---------------------------------------------------------------------------
+
+  /** Every card, most recently used (else changed) first. */
+  listCards(): PaymentCard[] {
+    return [...this.cards.values()].sort(
+      (a, b) => (b.lastUsedAt ?? b.updatedAt) - (a.lastUsedAt ?? a.updatedAt)
+    )
+  }
+
+  getCard(id: string): PaymentCard | null {
+    return this.cards.get(id) ?? null
+  }
+
+  /** The caller validates the number and expiry first (`autofill/card.ts`). */
+  addCard(input: PaymentCardInput, now: number = Date.now()): PaymentCard {
+    this.requireKey()
+    const card: PaymentCard = {
+      id: newId('card'),
+      number: input.number.replace(/\D/g, '').slice(0, 19),
+      expMonth: input.expMonth,
+      expYear: input.expYear,
+      name: clip(input.name, MAX_FIELD),
+      nickname: clip(input.nickname, MAX_FIELD),
+      createdAt: now,
+      updatedAt: now,
+      lastUsedAt: null
+    }
+    this.cards.set(card.id, card)
+    this.changed([card.id])
+    return card
+  }
+
+  updateCard(id: string, patch: Partial<PaymentCardInput>, now: number = Date.now()): PaymentCard | null {
+    this.requireKey()
+    const card = this.cards.get(id)
+    if (!card) return null
+    if (patch.number !== undefined) card.number = patch.number.replace(/\D/g, '').slice(0, 19)
+    if (patch.expMonth !== undefined) card.expMonth = patch.expMonth
+    if (patch.expYear !== undefined) card.expYear = patch.expYear
+    if (patch.name !== undefined) card.name = clip(patch.name, MAX_FIELD)
+    if (patch.nickname !== undefined) card.nickname = clip(patch.nickname, MAX_FIELD)
+    card.updatedAt = now
+    this.changed([id])
+    return card
+  }
+
+  removeCard(id: string): PaymentCard | null {
+    this.requireKey()
+    const card = this.cards.get(id)
+    if (!card) return null
+    this.cards.delete(id)
+    this.sealed.delete(id)
+    this.changed([])
+    return card
+  }
+
+  markCardUsed(id: string, now: number = Date.now()): void {
+    const card = this.cards.get(id)
+    if (!card || !this.key) return
+    card.lastUsedAt = now
+    this.changed([id])
+  }
+
+  // ---------------------------------------------------------------------------
+  // Passkey records
+  // ---------------------------------------------------------------------------
+
+  listPasskeys(): PasskeyEntry[] {
+    return [...this.passkeys.values()].sort(
+      (a, b) => (b.lastUsedAt ?? b.createdAt) - (a.lastUsedAt ?? a.createdAt)
+    )
+  }
+
+  /** The record of a passkey by relying party and credential id (or, without one, by user name). */
+  findPasskey(rpId: string, credentialId: string, userName = ''): PasskeyEntry | null {
+    for (const p of this.passkeys.values()) {
+      if (p.rpId !== rpId) continue
+      if (credentialId && p.credentialId === credentialId) return p
+      if (!credentialId && userName && p.userName === userName) return p
+    }
+    return null
+  }
+
+  addPasskey(
+    input: Omit<PasskeyEntry, 'id' | 'createdAt' | 'lastUsedAt'>,
+    now: number = Date.now()
+  ): PasskeyEntry {
+    this.requireKey()
+    const passkey: PasskeyEntry = {
+      id: newId('passkey'),
+      rpId: clip(input.rpId, MAX_FIELD),
+      rpName: clip(input.rpName, MAX_FIELD),
+      userName: clip(input.userName, MAX_FIELD),
+      userDisplayName: clip(input.userDisplayName, MAX_FIELD),
+      credentialId: clip(input.credentialId, MAX_FIELD),
+      origin: clip(input.origin, MAX_FIELD),
+      createdAt: now,
+      lastUsedAt: null
+    }
+    this.passkeys.set(passkey.id, passkey)
+    this.changed([passkey.id])
+    return passkey
+  }
+
+  markPasskeyUsed(id: string, now: number = Date.now()): void {
+    const passkey = this.passkeys.get(id)
+    if (!passkey || !this.key) return
+    passkey.lastUsedAt = now
+    this.changed([id])
+  }
+
+  removePasskey(id: string): PasskeyEntry | null {
+    this.requireKey()
+    const passkey = this.passkeys.get(id)
+    if (!passkey) return null
+    this.passkeys.delete(id)
+    this.sealed.delete(id)
+    this.changed([])
+    return passkey
+  }
+
+  // ---------------------------------------------------------------------------
   // Persistence
   // ---------------------------------------------------------------------------
 
@@ -535,8 +738,8 @@ export class CredentialStore {
     const plain = this.snapshot()
     void this.enqueue(async () => {
       for (const id of ids) {
-        const credential = plain.credentials.get(id)
-        if (credential) this.sealed.set(id, await encryptEntry(key, file.vaultId, credential))
+        const record = recordIn(plain, id)
+        if (record) this.sealed.set(id, await encryptEntry(key, file.vaultId, record))
       }
       if (seq !== this.writeSeq) return
       await this.commit(key, file, plain)
@@ -545,20 +748,30 @@ export class CredentialStore {
 
   /**
    * The plaintext a queued write seals, taken when the write is queued: a `lock()` that empties
-   * the live maps before the write lands must not empty the document.
+   * the live maps before the write lands must not empty the document. Entries are copied so a
+   * later in-place edit does not leak into an earlier write.
    */
   private snapshot(): Snapshot {
-    return { credentials: new Map(this.credentials), neverSave: [...this.neverSaveDomains] }
+    const copy = <T extends object>(map: Map<string, T>): Map<string, T> =>
+      new Map([...map].map(([id, value]) => [id, { ...value }]))
+    return {
+      credentials: copy(this.credentials),
+      addresses: copy(this.addresses),
+      cards: copy(this.cards),
+      passkeys: copy(this.passkeys),
+      neverSave: [...this.neverSaveDomains]
+    }
   }
 
   /** Seal the manifest, assemble the document and write it atomically. */
   private async commit(key: Uint8Array, file: VaultFile, plain: Snapshot): Promise<void> {
     const now = Date.now()
     const entries: VaultEntry[] = []
-    for (const [id, credential] of plain.credentials) {
+    for (const record of recordsOf(plain)) {
+      const id = record.value.id
       let entry = this.sealed.get(id)
       if (!entry) {
-        entry = await encryptEntry(key, file.vaultId, credential)
+        entry = await encryptEntry(key, file.vaultId, record)
         this.sealed.set(id, entry)
       }
       entries.push(entry)
@@ -581,4 +794,41 @@ export class CredentialStore {
 
 function clip(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) : text
+}
+
+function clipAddress(input: AddressInput): AddressInput {
+  return {
+    country: input.country.trim().toUpperCase().slice(0, 2),
+    name: clip(input.name.trim(), MAX_FIELD),
+    organization: clip(input.organization.trim(), MAX_FIELD),
+    streetAddress: clip(input.streetAddress.trim(), MAX_FIELD),
+    locality: clip(input.locality.trim(), MAX_FIELD),
+    region: clip(input.region.trim(), MAX_FIELD),
+    postalCode: clip(input.postalCode.trim(), MAX_FIELD),
+    sortingCode: clip(input.sortingCode.trim(), MAX_FIELD),
+    phone: clip(input.phone.trim(), MAX_FIELD),
+    email: clip(input.email.trim(), MAX_FIELD)
+  }
+}
+
+/** Every entry of a snapshot in document order: logins, addresses, cards, passkey records. */
+function recordsOf(plain: Snapshot): VaultRecord[] {
+  const records: VaultRecord[] = []
+  for (const value of plain.credentials.values()) records.push({ kind: 'login', value })
+  for (const value of plain.addresses.values()) records.push({ kind: 'address', value })
+  for (const value of plain.cards.values()) records.push({ kind: 'card', value })
+  for (const value of plain.passkeys.values()) records.push({ kind: 'passkey', value })
+  return records
+}
+
+function recordIn(plain: Snapshot, id: string): VaultRecord | null {
+  const login = plain.credentials.get(id)
+  if (login) return { kind: 'login', value: login }
+  const address = plain.addresses.get(id)
+  if (address) return { kind: 'address', value: address }
+  const card = plain.cards.get(id)
+  if (card) return { kind: 'card', value: card }
+  const passkey = plain.passkeys.get(id)
+  if (passkey) return { kind: 'passkey', value: passkey }
+  return null
 }

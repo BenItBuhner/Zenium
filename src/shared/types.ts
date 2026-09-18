@@ -511,13 +511,26 @@ export interface SyncStatus {
 // ---------------------------------------------------------------------------
 
 export interface PasswordSettings {
-  /** Offer to save logins submitted in pages (the prompt itself arrives with in-page fill). */
+  /** Offer to save logins submitted in pages (the save / update prompt after a sign-in). */
   offerToSave: boolean
   /**
    * Seconds a successful re-authentication keeps covering reveals, copies and exports before the
    * user is asked again (Chrome uses about a minute); 0 asks every time.
    */
   reauthGraceSeconds: number
+  /** Fill the one saved login of a site without showing the account picker first (off by default). */
+  autoSignIn: boolean
+  /**
+   * Android only: who saves and fills passwords in pages when a system autofill service is set.
+   * `system` leaves the WebView to the Android Autofill Framework; `zenium` keeps the framework
+   * off the pages and uses Zenium's own prompts.
+   */
+  androidProvider: 'system' | 'zenium'
+  /**
+   * Seconds after which a copied password or card number is cleared from the clipboard again
+   * (only when it is still there); 0 leaves it.
+   */
+  clipboardClearSeconds: number
 }
 
 /**
@@ -620,6 +633,252 @@ export interface ImportResult {
   replaced: number
   skipped: number
   invalid: number
+}
+
+// ---------------------------------------------------------------------------
+// Autofill (addresses, payment cards, passkey records; in-page prompts and pickers)
+// ---------------------------------------------------------------------------
+
+export interface AutofillSettings {
+  /** Offer to save addresses typed into forms and fill them back. */
+  addresses: boolean
+  /** Offer to save payment cards and fill them back (behind re-authentication). */
+  cards: boolean
+}
+
+/**
+ * A postal address in the vault. Field names follow libaddressinput (name, organization, address
+ * lines, locality = city, region = state / province, postal code, sorting code); which of them a
+ * country uses, and in which order, comes from the bundled address metadata.
+ */
+export interface AddressEntry {
+  id: string
+  /** ISO 3166-1 alpha-2 country code, upper case. */
+  country: string
+  name: string
+  organization: string
+  /** Street address; several lines are separated by `\n`. */
+  streetAddress: string
+  locality: string
+  /** Region as the country writes it (a key such as `CA` where the metadata has keys). */
+  region: string
+  postalCode: string
+  sortingCode: string
+  phone: string
+  email: string
+  createdAt: number
+  updatedAt: number
+  lastUsedAt: number | null
+}
+
+export type AddressInput = Omit<AddressEntry, 'id' | 'createdAt' | 'updatedAt' | 'lastUsedAt'>
+
+/** One line of a country's address form, in display order. */
+export interface AddressFieldSpec {
+  field: keyof AddressInput
+  label: string
+  required: boolean
+  /** Choices for a region field where the country has a fixed list (key and display name). */
+  options?: { key: string; name: string }[]
+}
+
+/** Everything the manager and the fill need to know about a country's addresses. */
+export interface AddressFormat {
+  country: string
+  countryName: string
+  fields: AddressFieldSpec[]
+  /** Example postal codes, when the country uses them. */
+  postalCodeExamples: string[]
+}
+
+export type CardNetwork =
+  | 'visa'
+  | 'mastercard'
+  | 'amex'
+  | 'discover'
+  | 'diners'
+  | 'jcb'
+  | 'unionpay'
+  | 'maestro'
+  | 'unknown'
+
+/** A payment card in the vault. The security code is never stored, as in every browser. */
+export interface PaymentCard {
+  id: string
+  /** Digits only. */
+  number: string
+  /** 1-12. */
+  expMonth: number
+  /** Four digits. */
+  expYear: number
+  /** Cardholder name. */
+  name: string
+  /** A name the user gave the card ("Work Visa"); '' when none. */
+  nickname: string
+  createdAt: number
+  updatedAt: number
+  lastUsedAt: number | null
+}
+
+export type PaymentCardInput = Omit<PaymentCard, 'id' | 'createdAt' | 'updatedAt' | 'lastUsedAt'>
+
+/** What the chrome lists: a card without its number. */
+export interface PaymentCardSummary extends Omit<PaymentCard, 'number'> {
+  last4: string
+  network: CardNetwork
+  /** The card's expiry lies in the past. */
+  expired: boolean
+}
+
+/**
+ * A passkey the user created in a page while Zenium was the browser. The private key lives with
+ * the platform authenticator (Windows Hello, Touch ID, Google Password Manager); this row lets
+ * the manager list where passkeys exist and when they were last used.
+ */
+export interface PasskeyEntry {
+  id: string
+  /** Relying party id (`example.com`). */
+  rpId: string
+  rpName: string
+  /** The account's user name and display name as the site handed them to the authenticator. */
+  userName: string
+  userDisplayName: string
+  /** Base64url credential id when the site exposed it; '' otherwise. */
+  credentialId: string
+  /** Page origin of the creation. */
+  origin: string
+  createdAt: number
+  lastUsedAt: number | null
+}
+
+/** Kinds of field the in-page forms script recognises. */
+export type FormFieldKind =
+  | 'username'
+  | 'password'
+  | 'new-password'
+  | 'one-time-code'
+  | 'name'
+  | 'given-name'
+  | 'family-name'
+  | 'organization'
+  | 'street-address'
+  | 'address-line1'
+  | 'address-line2'
+  | 'address-level1'
+  | 'address-level2'
+  | 'postal-code'
+  | 'country'
+  | 'tel'
+  | 'email'
+  | 'cc-name'
+  | 'cc-number'
+  | 'cc-exp'
+  | 'cc-exp-month'
+  | 'cc-exp-year'
+  | 'cc-csc'
+
+/** Which vault section a form belongs to. */
+export type FormGroup = 'login' | 'address' | 'card'
+
+/** A saved login submitted from a page: what the save / update prompt shows. */
+export interface SaveLoginPrompt {
+  id: string
+  kind: 'save-login' | 'update-login'
+  tabId: string
+  origin: string
+  /** Hostname without `www.` for the title. */
+  site: string
+  username: string
+  /** `update-login`: the saved login whose password changed. */
+  existingId: string | null
+}
+
+export interface SaveAddressPrompt {
+  id: string
+  kind: 'save-address'
+  tabId: string
+  origin: string
+  site: string
+  address: AddressInput
+  /** One-line rendering for the prompt. */
+  preview: string
+}
+
+export interface SaveCardPrompt {
+  id: string
+  kind: 'save-card'
+  tabId: string
+  origin: string
+  site: string
+  last4: string
+  network: CardNetwork
+  expMonth: number
+  expYear: number
+  name: string
+}
+
+/** Several passkeys match a sign-in: the user chooses the account (Electron's `select-webauthn-account`). */
+export interface PasskeyAccountPrompt {
+  id: string
+  kind: 'passkey-account'
+  tabId: string | null
+  rpId: string
+  accounts: { credentialId: string; userName: string }[]
+}
+
+export type AutofillPrompt =
+  | SaveLoginPrompt
+  | SaveAddressPrompt
+  | SaveCardPrompt
+  | PasskeyAccountPrompt
+
+/** The user's answer to an autofill prompt; dismissing sends null instead. */
+export type AutofillPromptResponse =
+  /** Save / update; `username` lets the user correct it in the prompt. */
+  | { action: 'save'; username?: string }
+  /** Never offer to save logins for this site again. */
+  | { action: 'never' }
+  | { action: 'pick'; credentialId: string }
+
+export interface AutofillPickerItem {
+  id: string
+  /** First line: the username, the address's name or the card's nickname. */
+  title: string
+  /** Second line: the site of a login from another subdomain, the address, the masked card. */
+  subtitle: string
+  favicon: string | null
+  /** Filling this item needs the vault passphrase (the picker asks before `autofill.pick`). */
+  needsPassphrase?: boolean
+}
+
+/** Matching entries for the focused field, anchored to it (window CSS pixels). */
+export interface AutofillPicker {
+  id: string
+  tabId: string
+  group: FormGroup
+  field: FormFieldKind
+  /** The field's rectangle in the chrome's coordinate space (view offset plus zoom applied). */
+  anchor: Rect
+  items: AutofillPickerItem[]
+  /** Manage entries opens Settings; the picker shows the shortcut when true. */
+  manageLabel: string
+}
+
+export interface AutofillUIState {
+  /** Pending save / update / account prompts, oldest first. */
+  prompts: AutofillPrompt[]
+  /** The picker for the focused field, or null. */
+  picker: AutofillPicker | null
+  addressCount: number
+  cardCount: number
+  passkeyCount: number
+  /**
+   * Android: a system autofill service (Google, Bitwarden, …) is set for the device and, under
+   * the `system` provider setting, owns saving and filling in pages. null on other hosts.
+   */
+  systemAutofill: { enabled: boolean; service: string | null } | null
+  /** Increments on every change to addresses, cards or passkeys. */
+  revision: number
 }
 
 // ---------------------------------------------------------------------------
@@ -1123,6 +1382,8 @@ export interface Settings {
    */
   externalProtocols: Record<string, boolean>
   passwords: PasswordSettings
+  /** Addresses and payment cards: whether Zenium offers to save and fill them. */
+  autofill: AutofillSettings
   /** Session counter and cooldowns of the "make Zenium your default browser" prompts. */
   defaultBrowserPromo: DefaultBrowserPromoState
   /**
@@ -1844,6 +2105,8 @@ export interface UIState {
   pageDialogs: PageDialog[]
   /** The pages of an unclean exit the chrome should offer to restore; null when there are none. */
   crashRestore: CrashRestoreOffer | null
+  /** In-page autofill: save prompts, the account / address / card picker, entry counts. */
+  autofill: AutofillUIState
   /** Ad and tracker blocking: lists, their freshness and the session counter. */
   blocking: BlockingStatus
   /** Safe Browsing feeds, HTTPS-only exceptions and the resolver's secure DNS state. */
@@ -2307,8 +2570,11 @@ export interface Commands {
   'session.restoreClosed': { args: { id: string }; result: void }
   'session.clearRecentlyClosed': { args: void; result: void }
 
-  /** Copy arbitrary text (history rows, menus) through the host clipboard. */
-  'clipboard.writeText': { args: { text: string }; result: void }
+  /**
+   * Copy arbitrary text (history rows, menus) through the host clipboard. `sensitive` marks a
+   * secret (a generated password): hidden from clipboard previews and cleared after the timeout.
+   */
+  'clipboard.writeText': { args: { text: string; sensitive?: boolean }; result: void }
 
   /** Bookmark the tab's page in the default folder, or remove its bookmarks (toast feedback). */
   'bookmark.toggle': { args: { tabId: string }; result: void }
@@ -2612,6 +2878,50 @@ export interface Commands {
     args: { passphrase?: string }
     result: ReauthOutcome<{ saved: boolean; count: number }>
   }
+  /** Answer a save / update / passkey-account prompt (null dismisses it for this page load). */
+  'autofill.respond': {
+    args: { id: string; response: AutofillPromptResponse | null }
+    result: void
+  }
+  /**
+   * Fill the picker's item into the focused form (null closes the picker). `passphrase` answers
+   * a `passphrase` outcome of the re-authentication that guards passwords and card numbers.
+   */
+  'autofill.pick': {
+    args: { id: string; itemId: string | null; passphrase?: string }
+    result: ReauthOutcome<null>
+  }
+  /** Saved addresses, most recently used first. */
+  'autofill.listAddresses': { args: void; result: AddressEntry[] }
+  'autofill.addAddress': { args: { address: AddressInput }; result: AddressEntry }
+  'autofill.updateAddress': {
+    args: { id: string; patch: Partial<AddressInput> }
+    result: AddressEntry | null
+  }
+  'autofill.removeAddress': { args: { id: string }; result: void }
+  /** The address form of a country: its fields in order, labels, required flags, region lists. */
+  'autofill.addressFormat': { args: { country: string }; result: AddressFormat }
+  /** Every country the address metadata knows, sorted by name. */
+  'autofill.countries': { args: void; result: { code: string; name: string }[] }
+  /** Saved cards without their numbers, most recently used first. */
+  'autofill.listCards': { args: void; result: PaymentCardSummary[] }
+  /** Rejects with a message when the number fails the Luhn check or the expiry is malformed. */
+  'autofill.addCard': { args: { card: PaymentCardInput }; result: PaymentCardSummary }
+  'autofill.updateCard': {
+    args: { id: string; patch: Partial<PaymentCardInput> }
+    result: PaymentCardSummary | null
+  }
+  'autofill.removeCard': { args: { id: string }; result: void }
+  /** The full number of a card, behind re-authentication. */
+  'autofill.revealCard': { args: { id: string; passphrase?: string }; result: ReauthOutcome<string> }
+  /** Copy a card's number (behind re-authentication) with the clipboard marked sensitive. */
+  'autofill.copyCardNumber': {
+    args: { id: string; passphrase?: string }
+    result: ReauthOutcome<null>
+  }
+  'autofill.listPasskeys': { args: void; result: PasskeyEntry[] }
+  /** Forget the record of a passkey (the key itself lives with the platform authenticator). */
+  'autofill.removePasskey': { args: { id: string }; result: void }
   /** "Open anyway" for one blocked pop-up of a tab. */
   'popups.open': { args: { tabId: string; url: string }; result: void }
   'popups.dismiss': { args: { tabId: string }; result: void }

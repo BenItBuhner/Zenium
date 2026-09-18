@@ -11,15 +11,37 @@
 // download-and-open-the-DMG update path). Hardened runtime is applied with the same entitlements
 // electron-builder uses for signed builds, so behaviour matches a Developer-ID build as far as an
 // ad-hoc signature allows.
+//
+// With a Developer ID and APPLE_TEAM_ID set, the signed entitlements additionally get the keychain
+// access group Electron's Touch ID passkey authenticator stores its credentials under
+// (`app.configureWebAuthn`, src/main/platform/webauthn.ts): `<TEAM_ID>.<appId>.webauthn`. The
+// group is written into build/entitlements.mac.plist right before electron-builder signs with it.
 import { execFileSync } from 'node:child_process'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
+function addWebAuthnKeychainGroup(context) {
+  const teamId = process.env.APPLE_TEAM_ID
+  if (!teamId) return
+  const group = `${teamId}.${context.packager.appInfo.id}.webauthn`
+  const file = join(here, 'entitlements.mac.plist')
+  const plist = readFileSync(file, 'utf8')
+  if (plist.includes('keychain-access-groups')) return
+  const entry = `    <key>keychain-access-groups</key>\n    <array>\n      <string>${group}</string>\n    </array>\n  </dict>`
+  writeFileSync(file, plist.replace(/\s*<\/dict>/, `\n${entry}`))
+  console.log(`  • passkeys        keychain-access-groups=${group}`)
+}
+
 export default async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return
-  if (process.env.CSC_LINK || process.env.CSC_NAME) return // a real certificate: electron-builder signs
+  if (process.env.CSC_LINK || process.env.CSC_NAME) {
+    // A real certificate: electron-builder signs, with the passkey keychain group added.
+    addWebAuthnKeychainGroup(context)
+    return
+  }
   const app = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`)
   const entitlements = join(here, 'entitlements.mac.adhoc.plist')
   const codesign = (args) => execFileSync('codesign', args, { stdio: 'inherit' })

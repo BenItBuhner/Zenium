@@ -184,6 +184,8 @@ class TabWebView(
         // Dark theme for sites: only ever while the app itself is dark (WebView ties algorithmic
         // darkening to the theme), and never for pages that bring a dark scheme of their own.
         setDarkening(host.pageRules.darkenDefault)
+        applyWebAuthn()
+        applyAutofillProvider()
         setBackgroundColor(Color.WHITE)
         clipToOutline = true
         outlineProvider = object : ViewOutlineProvider() {
@@ -463,6 +465,7 @@ class TabWebView(
 
     private fun sendFlags() {
         postToPage(json("type" to "flags", "flags" to currentFlags).toString())
+        postToPage(formsConfig())
     }
 
     /** Deliver a browser → page message over the reply proxy (or the legacy bridge). */
@@ -481,6 +484,42 @@ class TabWebView(
     /** The core's "always allow pop-ups on this site": window.open may open windows on its own. */
     fun setPopupsAllowed(allowed: Boolean) {
         settings.javaScriptCanOpenWindowsAutomatically = allowed
+    }
+
+    // --- autofill and passkeys -----------------------------------------------------------------------
+
+    /**
+     * A fill for the page's forms script, or its configuration (`{type:'config', enabled}`); the
+     * host keeps the configuration and [sendFlags] repeats it to every new document.
+     */
+    fun sendForms(command: JSONObject) {
+        postToPage(json("type" to "forms", "command" to command).toString())
+    }
+
+    private fun formsConfig(): String =
+        json("type" to "forms", "command" to json("type" to "config", "enabled" to host.formsEnabled)).toString()
+
+    /**
+     * Whose autofill the page gets (see [SystemAutofill]): under the system provider the WebView
+     * stays a client of the framework, under Zenium's it and every field in it step out of it.
+     */
+    fun applyAutofillProvider() {
+        importantForAutofill = SystemAutofill.importance(host.autofillProvider)
+    }
+
+    /**
+     * Passkeys (WebAuthn) through Android's Credential Manager, at the level a non-privileged app
+     * gets: `navigator.credentials` works for origins whose Digital Asset Links statement lists
+     * this app (Zenium's own sites). Any origin at all needs `WEB_AUTHENTICATION_SUPPORT_FOR_BROWSER`,
+     * which Android grants only to the browsers on Google's privileged-browser allowlist; those
+     * requests are refused by the platform, not by Zenium. Without the WebView feature (an old
+     * WebView) the calls fail as they always did.
+     */
+    private fun applyWebAuthn() {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) return
+        runCatching {
+            WebSettingsCompat.setWebAuthenticationSupport(settings, WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_APP)
+        }.onFailure { Log.w("ZenTab", "WebAuthn support could not be enabled: ${it.message}") }
     }
 
     // --- input ---------------------------------------------------------------------------------

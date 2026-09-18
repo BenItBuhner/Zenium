@@ -291,6 +291,14 @@ export class ZenWindow {
     if (this.lastLayout) this.applyLayout(this.lastLayout)
   }
 
+  /** Where the chrome last placed a tab's view (window coordinates), or null when it is not shown. */
+  viewRect(tabId: string): Rect | null {
+    const layout = this.lastLayout
+    if (!layout || layout.contentHidden) return null
+    if (layout.glance?.tabId === tabId) return layout.glance.rect
+    return layout.placements.find((p) => p.tabId === tabId)?.rect ?? null
+  }
+
   /** Position tab views exactly where the renderer laid the content area out. */
   applyLayout(report: LayoutReport): void {
     this.lastLayout = report
