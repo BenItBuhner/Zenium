@@ -23,11 +23,6 @@ on:
         options:
           - light
           - dark
-  # TEMPORARY, removed before the PR is marked ready: worker tokens cannot dispatch workflows.
-  # The PR branch is added for its one run (plus one retry) and taken out again.
-  push:
-    branches:
-      - cursor/android-sheet-recede-221e
 
 permissions:
   contents: read
