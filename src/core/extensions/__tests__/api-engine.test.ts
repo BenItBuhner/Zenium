@@ -457,7 +457,9 @@ describe('createEmulatedEngine', () => {
       value: false,
       levelOfControl: 'not_controllable'
     })
-    expect((h.chrome.identity.getRedirectURL as Fn)('cb')).toBe(`${ORIGIN}/_zenium/identity/cb`)
+    // Chrome's redirect host, not the emulated origin: providers know chromiumapp.org.
+    expect((h.chrome.identity.getRedirectURL as Fn)('cb')).toBe(`https://${EXT}.chromiumapp.org/cb`)
+    expect((h.chrome.identity.getRedirectURL as Fn)()).toBe(`https://${EXT}.chromiumapp.org/`)
     expect((h.chrome.idle.setDetectionInterval as Fn)(60)).toBeUndefined()
     expect(h.chrome.runtime.OnInstalledReason).toEqual({
       INSTALL: 'install',

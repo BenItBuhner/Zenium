@@ -27,6 +27,7 @@
  */
 import { ENGINE_NOOPS, ENGINE_STUB_RESULTS, engineApiSpec, namespaceGranted } from './engineSpec'
 import { getMessage, normalizeSubstitutions, type LocaleMessages } from './i18n'
+import { redirectUrl } from './identity'
 import { installExtensionApi, type InvokeResult, type ShimDiagnostics, type ShimHost } from './shim'
 
 /**
@@ -513,11 +514,11 @@ export function createEmulatedEngine(
     // contextMenus is the shim's: `create` answers its id synchronously and the wire carries
     // `[properties, id]` (functions such as `onclick` stay on this side).
     if (granted('idle')) chrome.idle = { setDetectionInterval: () => undefined }
+    // Chrome's redirect host (`https://<id>.chromiumapp.org/`), which OAuth providers have
+    // registered; the emulated origin only serves the extension's files. The host ends
+    // `launchWebAuthFlow` on the way back there.
     if (granted('identity'))
-      chrome.identity = {
-        getRedirectURL: (path?: unknown) =>
-          `${config.origin}/_zenium/identity/${path === undefined ? '' : String(path)}`
-      }
+      chrome.identity = { getRedirectURL: (path?: unknown) => redirectUrl(config.id, path) }
     if (granted('privacy')) {
       // Chrome exposes ChromeSettings objects; extensions mostly probe `websites.hyperlinkAuditingEnabled`.
       const setting = (): Record<string, unknown> => ({
