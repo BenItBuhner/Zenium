@@ -34,7 +34,10 @@ name: Android emulator demo
 # both), and the page controls demo's three deaths a minute into its recording (runs 35231597428,
 # 35239580150, 35244924856) carry the same signature. `swangle` recorded the whole site controls
 # demo, Settings painted three times over, on its first boot in run 35370429565. A `-gpu` a caller
-# still carries in emulator-options gives way to emulator-gpu, so the default reaches it unchanged.
+# still carries in emulator-options gives way to emulator-gpu, so the default reaches it unchanged:
+# in run 35373404276 the site controls demo on the plain defaults and the page controls demo handing
+# in its old `-gpu swiftshader_indirect` string both came up with gles_mode_selected:swangle and ran
+# to the end.
 on:
   workflow_call:
     inputs:
