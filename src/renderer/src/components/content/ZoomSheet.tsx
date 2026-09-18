@@ -87,7 +87,7 @@ export function ZoomSheet({ state, tabId }: { state: UIState; tabId: string }): 
       role="dialog"
       aria-label="Page zoom"
     >
-      <div className="zen-zoom-row flex items-center gap-2 pl-2">
+      <div className="zen-zoom-header flex items-center gap-2 pl-2">
         <span className="zen-zoom-title">Zoom</span>
         <span className="flex-1" />
         <span className="zen-zoom-value">{formatZoom(factor)}</span>
@@ -103,6 +103,7 @@ export function ZoomSheet({ state, tabId }: { state: UIState; tabId: string }): 
       <ZoomStepper
         value={factor}
         disabled={!site}
+        className="zen-zoom-row"
         stepClassName="zen-v2-zoom-step"
         sliderClassName="zen-zoom-slider"
         onChange={(next) => run('tab.setZoomFactor', { tabId, factor: next })}

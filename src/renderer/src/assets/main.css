@@ -4212,6 +4212,12 @@
  * boxes app-wide); their glyphs take the phone's icon size and stroke here, the way the
  * pull-to-refresh disc's does; the focusable controls carry a `zen-v2-` class for the shared
  * focus ring.
+ *
+ * Heights (§9.16, §9.21, §9.23): the header is a bar header – a row holding the close control,
+ * never a title block – at 48 on a phone, the 44 px control at 2 px margins, its title 17/600
+ * on a 22 px line centred on it. Every other row is its base height (44) or its control plus 4
+ * above and below, whichever is more: the 4 is the row's own padding, not a list gap, so the
+ * rows touch and the stepper's 40 px slider makes a 48 row, as Reset does.
  */
 .zen-zoom-sheet {
   background: var(--v2-panel);
@@ -4228,12 +4234,18 @@
   height: var(--v2-icon);
   stroke-width: var(--v2-icon-stroke);
 }
+.zen-zoom-header {
+  min-height: calc(var(--v2-icon-button) + 4px);
+}
 .zen-zoom-row {
   min-height: var(--v2-row);
+  padding-top: 4px;
+  padding-bottom: 4px;
 }
 .zen-zoom-title {
   font-size: var(--v2-font-heading);
   font-weight: var(--v2-weight-heading);
+  line-height: 22px;
 }
 .zen-zoom-value {
   font-weight: var(--v2-weight-heading);
