@@ -38,6 +38,6 @@ export function starredOnPhone(star: { nodeId: string; created: boolean }): void
   }
   pushToast('Saved to Bookmarks', 'info', {
     icon: 'star',
-    action: { label: 'Edit', run: () => editBookmark(star.nodeId) }
+    action: { label: 'Edit', onPick: () => editBookmark(star.nodeId) }
   })
 }

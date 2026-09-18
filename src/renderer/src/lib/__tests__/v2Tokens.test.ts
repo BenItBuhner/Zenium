@@ -54,12 +54,14 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
  * other renderer file reading a v2 token fails the last test.
  */
 const V2_FILES: ReadonlyArray<string> = [
-  // The phone history and bookmarks panels, the bookmark editor and the phone toast.
+  // The phone history and bookmarks panels, their sheets and the bookmark editor.
   'components/phone/phonePanels.css',
   // The desktop bookmark manager's selection count pill (components/bookmarks/*, #90).
   'components/bookmarks/BookmarkManager.tsx',
   // The window prompts' checkbox accent (§9.5 modals, #129).
   'components/dialogs/WindowPromptDialog.tsx',
+  // The new tab page's shortcut dialog: its validation line in the danger ink (#148).
+  'components/newtab/NewTabShortcutDialog.tsx',
   // The external-protocol sheet on the v2 sheet chassis (#140): its deemphasised host line.
   'components/protocol/ExternalProtocolSheet.tsx',
   // The sidebar's tab count badge, drawn in its surface's family through the §9.29 control roles.

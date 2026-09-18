@@ -3,7 +3,7 @@ import type { UIState } from '@shared/types'
 import { BookmarkTree } from '@shared/bookmarks'
 import { useBackSurface } from '@renderer/lib/back'
 import { pushToast, uiStore } from '@renderer/lib/ui'
-import { undoableDeletes } from '@renderer/lib/undo'
+import { UNDO_DELAY_MS, undoableDeletes } from '@renderer/lib/undo'
 
 /**
  * What the phone panels share besides their look: undoable deletes and the step back inside a
@@ -17,13 +17,17 @@ export function usePendingDeletes(): ReadonlySet<string> {
   return keys
 }
 
-/** Hide `keys` now, run `commit` after the grace period, and offer Undo in a toast meanwhile. */
+/**
+ * Hide `keys` now, run `commit` after the grace period, and offer Undo in a toast meanwhile:
+ * the toast lives exactly as long as the delete can still be undone.
+ */
 export function removeWithUndo(keys: readonly string[], message: string, commit: () => void): void {
   const handle = undoableDeletes.schedule(keys, commit)
   pushToast(message, 'info', {
+    duration: UNDO_DELAY_MS,
     action: {
       label: 'Undo',
-      run: () => {
+      onPick: () => {
         handle.undo()
       }
     }

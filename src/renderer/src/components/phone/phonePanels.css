@@ -341,51 +341,6 @@
     line-height: var(--v2-line-body);
     color: var(--v2-text);
   }
-
-  /* The phone toast: a small panel (hairline, radius 8, the panel shadow); its action is accent ink. */
-  .zen-phone-toast {
-    border: 1px solid var(--v2-border);
-    border-radius: var(--v2-radius-card);
-    background: var(--v2-panel);
-    box-shadow: var(--v2-shadow-panel);
-    color: var(--v2-text);
-    font-size: var(--v2-font-body);
-    line-height: var(--v2-line-body);
-  }
-  .zen-phone-toast[data-kind='error'] {
-    color: var(--v2-danger);
-  }
-  .zen-toast-action {
-    height: 32px;
-    margin: -6px -8px -6px 4px;
-    padding: 0 10px;
-    border-radius: var(--v2-radius-control);
-    font-size: var(--v2-font-body);
-    font-weight: var(--v2-weight-button);
-    color: var(--v2-accent);
-    transition: background 120ms var(--zen-ease);
-  }
-  .zen-toast-action:active {
-    background: var(--v2-fill);
-  }
-  /* The star that just filled (v1 section 7 motion). */
-  .zen-toast-star {
-    color: var(--v2-accent);
-    animation: zen-star-pop 260ms var(--zen-ease);
-  }
-}
-@keyframes zen-star-pop {
-  0% {
-    opacity: 0;
-    transform: scale(0.4);
-  }
-  60% {
-    opacity: 1;
-    transform: scale(1.18);
-  }
-  100% {
-    transform: none;
-  }
 }
 
 /*

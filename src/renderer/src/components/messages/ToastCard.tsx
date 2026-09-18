@@ -1,4 +1,5 @@
 import type { JSX } from 'react'
+import { Star } from 'lucide-react'
 import type { DismissDirections } from '@renderer/lib/gestures/dismiss'
 import { dismissToast, forgetToast, holdToast, pickToastAction, type Toast } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -18,6 +19,8 @@ interface Props {
 /**
  * One toast: the message, its one action if it has one, riding the shared message motion. It
  * comes up from the bottom edge and goes down (or sideways) when swiped, timed out or replaced.
+ * A leading glyph when the message names one: the star that just filled pops in ahead of
+ * "Saved to Bookmarks" (the phone's star, v1 §7 motion).
  */
 export function ToastCard({ toast, compact, onMeasure }: Props): JSX.Element {
   const { ref, handlers } = useMessageMotion({
@@ -39,9 +42,13 @@ export function ToastCard({ toast, compact, onMeasure }: Props): JSX.Element {
       data-surface="page"
       data-kind={toast.kind}
       data-action={toast.action ? '' : undefined}
+      data-glyph={toast.icon ? '' : undefined}
       role="status"
       {...handlers}
     >
+      {toast.icon === 'star' && (
+        <Star className="zen-message-glyph zen-message-glyph-pop" fill="currentColor" aria-hidden />
+      )}
       <span className="zen-message-text">{toast.message}</span>
       {toast.action && (
         <button
