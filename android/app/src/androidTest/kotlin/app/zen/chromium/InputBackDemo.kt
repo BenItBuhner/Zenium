@@ -32,8 +32,9 @@ import kotlin.math.roundToInt
  *  - BH-09: a long press on page text selects a word and shows the floating toolbar;
  *  - BH-01: Print…, back out of the system preview, and the chrome still takes touches;
  *  - BH-07: back over history, back on a `target=_blank` child tab returns to its opener, back
- *    on a tab another app sent (through LinkDispatchActivity) leaves to the caller, back at an
- *    ordinary tab's first page starts it over as a new tab and once more closes it.
+ *    on a tab another app sent (through LinkDispatchActivity) leaves to the caller and lands on
+ *    the tab's strip neighbour when the app is next in front, back at an ordinary tab's first
+ *    page starts it over as a new tab and once more closes it.
  *
  * The pages come from a loopback server inside this process ([DemoServer]), so nothing depends
  * on the network. The profile (`input-back-demo-state.json`) holds three tabs of those pages
@@ -198,15 +199,19 @@ class InputBackDemo : DemoHarness("input-back-demo-state.json", "input-back", "i
 
     // --- BH-09 -----------------------------------------------------------------------------------
 
-    /** A long press on page text selects a word and brings up the floating toolbar. */
+    /**
+     * A long press on page text selects a word and brings up the floating toolbar. The press lands
+     * on one word, not on the paragraph's middle: Blink selects the word under the finger and a
+     * hit between two words or two lines selects nothing.
+     */
     private fun textSelection() {
         finding("\nBH-09 long press on page text")
-        val text = pagePoint("#text") ?: run {
-            finding("  no #text on the page")
+        val word = pagePoint("#word") ?: run {
+            finding("  no #word on the page")
             return
         }
         Finger().apply {
-            down(text.x, text.y)
+            down(word.x, word.y)
             hold(1_200)
             up()
         }
@@ -215,7 +220,7 @@ class InputBackDemo : DemoHarness("input-back-demo-state.json", "input-back", "i
         val toolbar = findInWindows { it == "Copy" || it == "Select all" || it == "Share" || it == "Web search" }
         shot("06-text-long-press")
         finding(
-            "  selection '${selected}'; floating toolbar ${if (toolbar != null) "up" else "MISSING"} " +
+            "  long press on 'selectable': selection '${selected}'; floating toolbar ${if (toolbar != null) "up" else "MISSING"} " +
                 verdict(selected.isNotBlank() && toolbar != null)
         )
         // Clear it: a tap on the page's last line.
@@ -295,6 +300,9 @@ class InputBackDemo : DemoHarness("input-back-demo-state.json", "input-back", "i
         awaitLoaded("$ORIGIN/intent.html")
         SystemClock.sleep(1_500)
         shot("13-intent-tab")
+        // The sent tab has no opener, so closing it lands on its strip neighbour, as in Chrome
+        // (the tab before it; the one after it when it is first). New tabs go to the end here.
+        val neighbour = sent?.optString("id")?.let(::stripNeighbourOf).orEmpty()
         back()
         val left = awaitSystemWindow(10_000)
         SystemClock.sleep(2_000)
@@ -305,8 +313,10 @@ class InputBackDemo : DemoHarness("input-back-demo-state.json", "input-back", "i
         val afterIntent = activeTabId()
         finding(
             "  intent tab ${sent?.optString("id")} (fromIntent ${sent?.optBoolean("fromIntent")}): back → app ${if (left) "left to the caller" else "STAYED in front"}; " +
-                "back in front: active $afterIntent, tabs ${tabCount()} ${verdict(left && afterIntent == "tab_demo" && tabCount() == before)}"
+                "back in front: active $afterIntent (its neighbour: $neighbour), tabs ${tabCount()} " +
+                verdict(left && neighbour.isNotEmpty() && afterIntent == neighbour && tabCount() == before)
         )
+        ensureActive("tab_demo")
         shot("15-returned-after-intent")
 
         // (d) An ordinary tab at its first page: it starts over as a new tab; back on that closes it to a neighbour.
@@ -410,6 +420,24 @@ class InputBackDemo : DemoHarness("input-back-demo-state.json", "input-back", "i
             SystemClock.sleep(250)
         }
         Log.w(tag, "no tab other than $not became active")
+        return null
+    }
+
+    /**
+     * The tab Chrome selects when `tabId` closes without an opener: the one before it in the
+     * active space's strip, or the one after it when it is first (`TabModelImpl.getNextTabIfClosed`).
+     */
+    private fun stripNeighbourOf(tabId: String): String? {
+        val state = coreState()
+        val spaces = state.getJSONArray("spaces")
+        for (i in 0 until spaces.length()) {
+            val space = spaces.getJSONObject(i)
+            if (space.getString("id") != state.getString("activeSpaceId")) continue
+            val ids = space.getJSONArray("tabIds").let { arr -> List(arr.length()) { arr.getString(it) } }
+            val index = ids.indexOf(tabId)
+            if (index < 0) return null
+            return ids.getOrNull(if (index == 0) 1 else index - 1)
+        }
         return null
     }
 
