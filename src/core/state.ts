@@ -82,6 +82,7 @@ import {
   type BlockingStatus
 } from '../shared/blocking'
 import { DEFAULT_PAGE_ENVIRONMENT, sanitizePageControls } from '../shared/pageControls'
+import { emptyPrivacyStatus, sanitizePrivacySettings, type PrivacyStatus } from '../shared/privacy'
 import { defer, type StoreIO } from './platform'
 import { sanitizeClosedEntries, summarizeClosed } from './session'
 import type { ZenWindow } from './window'
@@ -144,6 +145,7 @@ export interface StateExtras {
   permissionPrompts: PermissionPrompt[]
   securityPrompts: SecurityPrompt[]
   blocking: BlockingStatus
+  privacy: PrivacyStatus
   translate: TranslateUIState
 }
 
@@ -255,6 +257,7 @@ export class BrowserState {
     permissionPrompts: [],
     securityPrompts: [],
     blocking: emptyBlockingStatus(),
+    privacy: emptyPrivacyStatus(),
     translate: emptyTranslateState()
   })
   searchEngines: SearchEngine[] = DEFAULT_SEARCH_ENGINES
@@ -331,6 +334,7 @@ export class BrowserState {
     this.settings.mutedHosts = Array.isArray(this.settings.mutedHosts)
       ? this.settings.mutedHosts.filter((h): h is string => typeof h === 'string' && h !== '')
       : []
+    this.settings.privacy = sanitizePrivacySettings(data.settings?.privacy)
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     const preset = migrateShortcutPreset(data.settings?.shortcutPreset, this.shortcutOverrides)
     this.settings.shortcutPreset = preset.preset

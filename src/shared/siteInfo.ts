@@ -4,7 +4,14 @@
  * command boundary to the chrome; the helpers are the pure half of the classification both hosts
  * feed their raw readings through.
  */
-import { BLANK_URL, ERROR_URL_PREFIX, READER_URL_PREFIX, getDomain, getHost } from './url'
+import {
+  BLANK_URL,
+  ERROR_URL_PREFIX,
+  READER_URL_PREFIX,
+  getDomain,
+  getHost,
+  interstitialKindOf
+} from './url'
 
 export type SecurityState = 'secure' | 'insecure' | 'internal' | 'local' | 'unknown'
 
@@ -165,11 +172,20 @@ export function describeSite(url: string): SiteDescription {
  * What the address pill's site icon says about the page. `empty`: no page (the pill shows its
  * search glyph); `secure`: https; `insecure`: http on a host other than loopback, shown with
  * Chrome's "Not secure" text; `certificate-error`: an https load Zenium refused because of the
- * certificate, also "Not secure"; `local`: loopback http and `file:` pages; `internal`: Zenium's
- * own pages and error pages that stand in for a page that did not load; `unknown`: other schemes.
+ * certificate, also "Not secure"; `dangerous`: Safe Browsing's warning page, Chrome's red
+ * "Dangerous"; `local`: loopback http and `file:` pages; `internal`: Zenium's own pages and
+ * error pages that stand in for a page that did not load; `unknown`: other schemes. HTTPS-only
+ * mode's warning page stands in for an http address and reads `insecure`, "Not secure".
  */
 export type IndicatorState =
-  'empty' | 'secure' | 'insecure' | 'certificate-error' | 'local' | 'internal' | 'unknown'
+  | 'empty'
+  | 'secure'
+  | 'insecure'
+  | 'certificate-error'
+  | 'dangerous'
+  | 'local'
+  | 'internal'
+  | 'unknown'
 
 export interface SecurityIndicator {
   state: IndicatorState
@@ -193,6 +209,21 @@ export function securityIndicator(url: string, errorCode: number | null): Securi
   if (!url || url === BLANK_URL) return { state: 'empty', label: null, title: 'Site information' }
   const site = describeSite(url)
   if (url.startsWith(ERROR_URL_PREFIX)) {
+    const interstitial = interstitialKindOf(url)
+    if (interstitial === 'safebrowsing') {
+      return {
+        state: 'dangerous',
+        label: 'Dangerous',
+        title: 'Dangerous site · Safe Browsing blocked this page'
+      }
+    }
+    if (interstitial === 'https-only') {
+      return {
+        state: 'insecure',
+        label: 'Not secure',
+        title: 'This site does not support a secure connection · HTTPS-only mode'
+      }
+    }
     if (isCertificateError(errorCode) && site.state === 'secure') {
       return {
         state: 'certificate-error',

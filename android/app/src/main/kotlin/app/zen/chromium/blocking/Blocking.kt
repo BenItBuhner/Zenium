@@ -49,6 +49,13 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
         registry.onListenerFailure = { registrant, error -> Log.e(TAG, "webRequest listener of $registrant failed", error) }
     }
 
+    /**
+     * The privacy policy's word ahead of the rule sets (Safe Browsing, the plaintext allowances
+     * of HTTPS-only mode); set once by `privacy/Privacy.kt`, read on the IO threads.
+     */
+    @Volatile
+    var policy: RequestPolicy? = null
+
     /** Wall-clock milliseconds of the last build, for the settings sheet and the demo. */
     @Volatile
     var lastBuildMs: Long = 0
@@ -144,7 +151,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     fun intercept(tab: BlockingTab, request: WebResourceRequest): WebResourceResponse? {
         val verdict = evaluate(
             snapshot, listeners, tab, request.url.toString(), request.isForMainFrame,
-            request.requestHeaders ?: emptyMap(), request.method ?: "GET"
+            request.requestHeaders ?: emptyMap(), request.method ?: "GET", policy
         )
         return when (verdict) {
             Verdict.Pass -> null
@@ -178,6 +185,15 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
 
     /** A main-frame navigation the tab is about to follow (`shouldOverrideUrlLoading`): block it? */
     fun decideNavigation(tab: BlockingTab, url: String): Decision = decideNavigation(snapshot, tab, url)
+
+    /** Safe Browsing's word on a main-frame navigation, ahead of [decideNavigation]: the hit, or null. */
+    fun guardNavigation(url: String): SafeBrowsingHit? {
+        val policy = policy ?: return null
+        return if (isHttp(url)) policy.unsafe(url) else null
+    }
+
+    /** Honour an `upgradeScheme` decision on a navigation of `tab` from `url`; see the companion's. */
+    fun applyUpgrade(tab: BlockingTab, url: String, decision: Decision): Boolean = applyUpgrade(policy, tab, url, decision)
 
     // ---------------------------------------------------------------------------------------------
     // Bundled snapshot (BlockingHost)
@@ -308,9 +324,10 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             url: String,
             isMainFrame: Boolean,
             headers: Map<String, String>,
-            method: String
+            method: String,
+            policy: RequestPolicy? = null
         ): Verdict {
-            val engine = evaluate(snap, tab, url, isMainFrame, headers["Accept"], method)
+            val engine = evaluate(snap, tab, url, isMainFrame, headers["Accept"], method, policy)
             if (listeners.isEmpty || !isHttp(url)) return engine
             val record = listeners.begin(tab, url, method, isMainFrame, ResourceType.guessKnown(url, isMainFrame, headers["Accept"]))
             if (engine !is Verdict.Pass) {
@@ -350,7 +367,9 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
         /**
          * Decide one request against `snap` and tell `tab` what happened. Everything
          * `shouldInterceptRequest` does except building the `WebResourceResponse`, so it runs on
-         * the JVM in tests.
+         * the JVM in tests. The `policy` (Safe Browsing) speaks first, on documents and frames
+         * only, whatever the rule sets say: a listed document is dropped and the tab shows the
+         * warning page; a listed frame gets an empty 403.
          */
         fun evaluate(
             snap: EngineSnapshot,
@@ -358,11 +377,24 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             url: String,
             isMainFrame: Boolean,
             accept: String?,
-            method: String
+            method: String,
+            policy: RequestPolicy? = null
         ): Verdict {
-            if (snap === EngineSnapshot.EMPTY || !isHttp(url)) return Verdict.Pass
+            if (!isHttp(url)) return Verdict.Pass
             val known = ResourceType.guessKnown(url, isMainFrame, accept)
             val type = known ?: ResourceType.XMLHTTPREQUEST
+            if (policy != null && (isMainFrame || type == ResourceType.SUB_FRAME)) {
+                val hit = policy.unsafe(url)
+                if (hit != null) {
+                    if (isMainFrame) {
+                        tab.onDocumentUnsafe(url, hit)
+                        return Verdict.Empty(204, "No Content")
+                    }
+                    tab.onRequestsBlocked(1)
+                    return Verdict.Empty(403, "Forbidden")
+                }
+            }
+            if (snap === EngineSnapshot.EMPTY) return Verdict.Pass
             val req = Request(
                 url, type, if (isMainFrame) null else tab.documentUrl, method,
                 tabId = tab.tabId, typeMask = known?.bit ?: ResourceType.AMBIGUOUS_MASK
@@ -392,11 +424,11 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                     // WebView cannot redirect a subresource from here; the translator's rule is honoured on the desktop only.
                     else -> Verdict.Pass
                 }
+                // WebView cannot redirect a subresource from here: `always` mode's subresource
+                // upgrades are the desktop's; here the page's mixed-content mode stands in.
                 Decision.Action.UPGRADE -> {
-                    if (isMainFrame && decision.redirectUrl != null) {
-                        tab.onDocumentRedirected(decision.redirectUrl)
-                        Verdict.Empty(204, "No Content")
-                    } else Verdict.Pass
+                    if (isMainFrame && applyUpgrade(policy, tab, url, decision)) Verdict.Empty(204, "No Content")
+                    else Verdict.Pass
                 }
             }
         }
@@ -404,6 +436,27 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
         fun decideNavigation(snap: EngineSnapshot, tab: BlockingTab, url: String): Decision {
             if (snap === EngineSnapshot.EMPTY || !isHttp(url)) return Decision.ALLOW
             return snap.decide(Request(url, ResourceType.MAIN_FRAME, null, "GET", tabId = tab.tabId))
+        }
+
+        /** The core's rule set for HTTPS-only mode (`BUILTIN_RULE_SETS.httpsOnly` in `rules.ts`). */
+        const val HTTPS_ONLY_SET = "builtin:https-only"
+
+        /**
+         * Honour an `upgradeScheme` decision on a main-frame navigation from `url`. HTTPS-only
+         * mode's upgrade is reported as such – the tab remembers the plaintext URL so the core
+         * can offer it when https fails – unless the user allowed the site over plaintext since
+         * the engine last reloaded the rule; any other set's upgrade is a plain redirect. True
+         * when the tab took the navigation over.
+         */
+        fun applyUpgrade(policy: RequestPolicy?, tab: BlockingTab, url: String, decision: Decision): Boolean {
+            val target = decision.redirectUrl ?: return false
+            if (decision.matchedSet == HTTPS_ONLY_SET) {
+                if (policy?.plaintextAllowed(url) == true) return false
+                tab.onDocumentUpgraded(url, target)
+            } else {
+                tab.onDocumentRedirected(target)
+            }
+            return true
         }
 
         private val TRANSPARENT_GIF = byteArrayOf(
@@ -512,6 +565,12 @@ interface BlockingTab {
     /** The navigation to `url` was blocked before it committed (IO thread). */
     fun onDocumentBlocked(url: String)
 
-    /** A `redirect` / `upgradeScheme` rule sends the navigation to `url` instead (IO thread). */
+    /** Safe Browsing refused the navigation to `url` (IO thread): the core shows the warning page. */
+    fun onDocumentUnsafe(url: String, hit: SafeBrowsingHit)
+
+    /** A `redirect` rule (or another set's `upgradeScheme`) sends the navigation to `url` instead (IO thread). */
     fun onDocumentRedirected(url: String)
+
+    /** HTTPS-only mode's rule sends the navigation to `to` instead of the plaintext `from` (IO thread). */
+    fun onDocumentUpgraded(from: String, to: String)
 }

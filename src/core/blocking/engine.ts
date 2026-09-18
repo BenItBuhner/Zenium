@@ -181,8 +181,18 @@ function factsFor(ctx: RequestContext): Facts {
     initiatorHost: initiator ? (hostnameOf(initiator) ?? '') : '',
     method: (ctx.method || 'GET').toLowerCase(),
     thirdParty: ctx.isThirdParty ?? isThirdParty(ctx.url, initiator),
-    tabId: ctx.tabId === undefined ? undefined : String(ctx.tabId).replace(/^\D+/, '')
+    tabId: tabIdFact(ctx)
   }
+}
+
+/**
+ * What `tabIds` conditions compare against: the engine-level tab id when the host supplies one
+ * (Electron's `webContents.id`, which is the Chrome tab id extensions see), otherwise the
+ * decimal part of the host's own tab id.
+ */
+function tabIdFact(ctx: RequestContext): string | undefined {
+  if (ctx.chromeTabId !== undefined) return String(ctx.chromeTabId)
+  return ctx.tabId === undefined ? undefined : String(ctx.tabId).replace(/^\D+/, '')
 }
 
 /**
@@ -200,6 +210,7 @@ function frameContext(ctx: RequestContext): RequestContext | null {
     method: 'GET',
     isThirdParty: false,
     tabId: ctx.tabId,
+    chromeTabId: ctx.chromeTabId,
     partition: ctx.partition,
     isPrivate: ctx.isPrivate
   }

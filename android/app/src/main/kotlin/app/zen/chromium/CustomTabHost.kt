@@ -12,6 +12,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import app.zen.chromium.blocking.Blocking
+import app.zen.chromium.privacy.Privacy
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.json.JSONObject
 
@@ -33,6 +34,8 @@ class CustomTabHost(
     override val pageToken = ""
     /** The browser's rule sets apply here too: same engine, same files under `zen/blocking/`. */
     override val blocking = Blocking.shared(activity)
+    /** And the privacy policy the browser last applied (kept on disk for a process without the core). */
+    override val privacy = Privacy.shared(activity)
     override val keys = Keys()
     override val downloads = Downloads(activity, this)
     override val permissions = Permissions(this)

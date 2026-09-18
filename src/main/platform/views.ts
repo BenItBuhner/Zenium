@@ -16,6 +16,7 @@ import {
 import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import type { NavigationSnapshot, Rect, Tab } from '../../shared/types'
+import type { SafeBrowsingHit } from '../../shared/privacy'
 import type { SiteCertificate } from '../../shared/siteInfo'
 import type {
   AgentCapture,
@@ -275,6 +276,16 @@ export class ElectronTabView implements TabView {
   /** A message from the page script (routed here by the platform's IPC handler). */
   dispatchPageMessage(message: PageMessage): void {
     this.events.onPageMessage(message)
+  }
+
+  /** The request engine upgraded this page's navigation from `from` to `to` (HTTPS-only mode). */
+  noteUpgraded(from: string, to: string): void {
+    this.events.onUpgraded(from, to)
+  }
+
+  /** The request engine refused this page's navigation to `url` on Safe Browsing's word. */
+  noteUnsafeNavigation(url: string, hit: SafeBrowsingHit): void {
+    this.events.onUnsafeNavigation(url, hit)
   }
 
   // --- navigation -----------------------------------------------------------
@@ -853,6 +864,7 @@ export interface SaveAsDownloads {
 /** Creates `WebContentsView`s and maps their web contents back to tabs. */
 export class ElectronTabViewHost implements TabViewHost {
   private readonly byWebContentsId = new Map<number, ElectronTabView>()
+  private readonly byTabId = new Map<string, ElectronTabView>()
   private readonly tabIds = new Map<number, string>()
   private readonly viewListeners = new Set<(view: ElectronTabView) => void>()
 
@@ -912,13 +924,17 @@ export class ElectronTabViewHost implements TabViewHost {
 
   /** A page went away; its web contents id no longer maps to a tab. */
   forget(webContentsId: number): void {
+    const view = this.byWebContentsId.get(webContentsId)
+    const tabId = this.tabIds.get(webContentsId)
     this.byWebContentsId.delete(webContentsId)
     this.tabIds.delete(webContentsId)
+    if (tabId !== undefined && this.byTabId.get(tabId) === view) this.byTabId.delete(tabId)
   }
 
   /** Map the page to its tab, then let the followers (the extension API layer) see the view. */
   private track(view: ElectronTabView, tabId: string): void {
     this.byWebContentsId.set(view.webContentsId, view)
+    this.byTabId.set(tabId, view)
     this.tabIds.set(view.webContentsId, tabId)
     for (const listener of this.viewListeners) listener(view)
   }
@@ -934,6 +950,11 @@ export class ElectronTabViewHost implements TabViewHost {
   /** Every live tab view. */
   all(): Iterable<ElectronTabView> {
     return this.byWebContentsId.values()
+  }
+
+  /** The live view of the tab `tabId` (what a request's `tabId` names). */
+  viewForTab(tabId: string): ElectronTabView | undefined {
+    return this.byTabId.get(tabId)
   }
 }
 

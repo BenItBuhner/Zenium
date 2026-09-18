@@ -132,7 +132,11 @@ function fakeDetails<T extends { id: number }>(details: Partial<T>): Partial<T> 
 }
 
 function fakeWebContents(url: string, destroyed = false): Electron.WebContents {
-  return { isDestroyed: () => destroyed, getURL: () => url } as unknown as Electron.WebContents
+  return {
+    id: 40 + url.length,
+    isDestroyed: () => destroyed,
+    getURL: () => url
+  } as unknown as Electron.WebContents
 }
 
 const views = {
@@ -1215,7 +1219,8 @@ describe('contextFor', () => {
       isPrivate: false,
       initiator: 'https://top.example/page',
       documentUrl: 'https://top.example/page',
-      tabId: 'tab-1'
+      tabId: 'tab-1',
+      chromeTabId: wc.id
     })
   })
 
@@ -1276,6 +1281,7 @@ describe('contextFor', () => {
       undefined
     )
     expect(gone.documentUrl).toBeUndefined()
+    expect(gone.chromeTabId).toBeUndefined()
   })
 })
 
