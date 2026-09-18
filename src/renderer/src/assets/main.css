@@ -2895,6 +2895,23 @@
   .zen-find-button:active:not(:disabled) {
     background: var(--v2-fill-hover);
   }
+
+  /*
+   * The zoom bubble (§9.20): the shared popover surface with a §9.23 title block ("Zoom" over
+   * the percentage) and one row of 32px controls under it – the two steps square, Reset at the
+   * trailing end – 16 to the sides and below.
+   */
+  .zen-zoom-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px 16px;
+  }
+  .zen-zoom-step {
+    width: var(--v2-control);
+    padding: 0;
+    color: var(--v2-text);
+  }
 }
 
 /*

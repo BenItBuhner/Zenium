@@ -1,8 +1,10 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
-import type { UIState } from '@shared/types'
+import { Minimize } from 'lucide-react'
+import type { Events, UIState } from '@shared/types'
 import type { ResolvedTheme } from '@shared/theme'
 import { bookmarksBarVisible } from '@shared/bookmarkViews'
+import { formatBinding } from '@shared/shortcuts'
 import { run } from '@renderer/lib/api'
 import { useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
 import { activeTab } from '@renderer/lib/selectors'
@@ -64,16 +66,23 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   // Blank / private windows never show onboarding (it belongs to the main profile window).
   const onboarding = !settings.onboardingDone && state.window.kind === 'synced' && !popupChrome
   const htmlFullscreen = state.window.htmlFullscreenTabId !== null
+  // The window's fullscreen (F11): the page runs edge to edge and the chrome hides as it does in
+  // compact mode with both switches on, coming out at its edge under the cursor.
+  const fullscreen = !popupChrome && state.window.fullscreen
 
   const sidebarHidden =
-    popupChrome || (compact.enabled && compact.hideSidebar && !compact.sidebarPersistent)
+    popupChrome ||
+    fullscreen ||
+    (compact.enabled && compact.hideSidebar && !compact.sidebarPersistent)
   const toolbarHidden =
-    !popupChrome && compact.enabled && compact.hideToolbar && settings.toolbarLayout !== 'single'
+    !popupChrome &&
+    (fullscreen || (compact.enabled && compact.hideToolbar)) &&
+    settings.toolbarLayout !== 'single'
   const showToolbar = popupChrome || (settings.toolbarLayout === 'multiple' && !toolbarHidden)
   const sidebarRevealed = !popupChrome && sidebarHidden && ui.compactHover
   // The bookmarks bar sits under the toolbar and hides with it in compact mode; popups never show it.
   const barWanted = !popupChrome && bookmarksBarVisible(settings.bookmarksBar, tab?.url ?? null)
-  const showBar = barWanted && !(compact.enabled && compact.hideToolbar)
+  const showBar = barWanted && !fullscreen && !(compact.enabled && compact.hideToolbar)
   // Windows draws the caption buttons over the top trailing corner: whatever sits there keeps
   // clear of them, and the content column starts below them when they land on it.
   const overlay = useCaptionOverlay()
@@ -124,8 +133,9 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   // Main tracks the real cursor (works over the page view and the frameless resize border).
   useEffect(() => {
     const onReveal = (e: Event): void => {
-      if (popupChrome || !sidebarHidden) return
-      if ((e as CustomEvent<boolean>).detail) reveal()
+      const { revealed, edge } = (e as CustomEvent<ChromeReveal>).detail
+      if (edge !== 'sidebar' || popupChrome || !sidebarHidden) return
+      if (revealed) reveal()
       else unreveal()
     }
     window.addEventListener('zen-compact-reveal', onReveal)
@@ -169,17 +179,17 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
           paddingBottom: 'var(--zen-padding)',
           // The hidden-sidebar side keeps a wider gutter: it is the compact-mode reveal zone and
           // must stay hoverable beyond a frameless window's resize border. Toolbar-only windows
-          // have no sidebar to reveal.
+          // have no sidebar to reveal; a fullscreen page runs to the edge (main tracks the cursor).
           paddingLeft:
             popupChrome || sidebarSide === 'right'
               ? 'var(--zen-padding)'
-              : sidebarHidden
+              : sidebarHidden && !fullscreen
                 ? REVEAL_ZONE
                 : 0,
           paddingRight:
             popupChrome || sidebarSide === 'left'
               ? 'var(--zen-padding)'
-              : sidebarHidden
+              : sidebarHidden && !fullscreen
                 ? REVEAL_ZONE
                 : 0
         }}
@@ -238,7 +248,12 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
         </>
       )}
       {toolbarHidden && !showToolbar && settings.toolbarLayout === 'multiple' && (
-        <CompactToolbar state={state} showBar={barWanted} trailingInset={captionInset} />
+        <CompactToolbar
+          state={state}
+          showBar={barWanted}
+          trailingInset={captionInset}
+          fullscreen={fullscreen}
+        />
       )}
 
       {ui.drag && <DragLayer state={state} drag={ui.drag} />}
@@ -247,44 +262,135 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   )
 }
 
-/** Compact mode with the top toolbar hidden: hover the top edge to reveal it (and the bar). */
+/** What main's cursor tracking reports (the `compact.reveal` event, as `zen-compact-reveal`). */
+type ChromeReveal = Events['compact.reveal']
+
+/**
+ * The top toolbar while hidden – compact mode with the toolbar switch on, or the window's
+ * fullscreen: the cursor on the top edge brings it (and the bookmarks bar) out over a picture
+ * of the page, as the sidebar comes out at its side, and it goes 300 ms after the cursor leaves.
+ * Main reports the edge (the page view takes the pointer there); the strip below catches the
+ * cursor where the chrome still has a gutter.
+ */
 function CompactToolbar({
   state,
   showBar,
-  trailingInset
+  trailingInset,
+  fullscreen
 }: {
   state: UIState
   showBar: boolean
   trailingInset: number
+  fullscreen: boolean
 }): JSX.Element {
   const tab = activeTab(state)
-  const ref = useRef<HTMLDivElement>(null)
+  const open = uiStore.use((s) => s.toolbarHover)
+  const urlbarOpen = uiStore.use((s) => s.urlbar.open)
+  const overlay = uiStore.use((s) => s.overlay)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const show = (): void => {
+  const revealing = useRef(false)
+  const hovering = useRef(false)
+  const show = useCallback((): void => {
     if (timer.current) clearTimeout(timer.current)
-    ref.current?.setAttribute('data-open', 'true')
-  }
-  const hide = (): void => {
-    timer.current = setTimeout(() => ref.current?.removeAttribute('data-open'), 300)
-  }
+    timer.current = null
+    if (uiStore.get().toolbarHover || revealing.current) return
+    revealing.current = true
+    void captureActiveTab(tab?.id ?? null).then(() => {
+      revealing.current = false
+      uiStore.set({ toolbarHover: true })
+    })
+  }, [tab?.id])
+  const hide = useCallback((): void => {
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = setTimeout(() => {
+      timer.current = null
+      // The toolbar stays while something it opened is up (the URL bar, an overlay).
+      const ui = uiStore.get()
+      if (ui.overlay !== 'none' || ui.urlbar.open || ui.menu || ui.zoomBubble) return
+      uiStore.set({ toolbarHover: false })
+      invalidateSnapshot()
+    }, 300)
+  }, [])
+  useEffect(() => {
+    const onReveal = (e: Event): void => {
+      const { revealed, edge } = (e as CustomEvent<ChromeReveal>).detail
+      if (edge !== 'toolbar') return
+      if (revealed) show()
+      else hide()
+    }
+    window.addEventListener('zen-compact-reveal', onReveal)
+    return () => window.removeEventListener('zen-compact-reveal', onReveal)
+  }, [show, hide])
+  // What the toolbar opened closed (a URL was entered, an overlay dismissed): with the cursor
+  // gone elsewhere the toolbar goes too, instead of standing over a picture of the old page.
+  useEffect(() => {
+    if (!urlbarOpen && overlay === 'none' && uiStore.get().toolbarHover && !hovering.current) hide()
+  }, [urlbarOpen, overlay, hide])
+  // Main's cursor tracking hears whether the toolbar is out: one it saw put away here (the hover
+  // left it while the cursor stayed near the top) it brings back on the next touch of the edge.
+  useEffect(() => {
+    run('compact.setRevealed', { revealed: open, edge: 'toolbar' })
+  }, [open])
+  // The toolbar coming back (or the window leaving fullscreen) puts the live page back.
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current)
+      if (uiStore.get().toolbarHover) {
+        uiStore.set({ toolbarHover: false })
+        invalidateSnapshot()
+      }
+      run('compact.setRevealed', { revealed: false, edge: 'toolbar' })
+    },
+    []
+  )
   return (
     <div
-      ref={ref}
-      className="group/ct absolute left-0 top-0 z-40"
+      className="absolute left-0 top-0 z-40"
       // The reveal zone stops short of the native caption buttons: the band under them stays a
       // drag region, and moving towards them does not pop the toolbar.
       style={{ right: trailingInset }}
-      onPointerEnter={show}
-      onPointerLeave={hide}
+      onPointerEnter={() => {
+        hovering.current = true
+        show()
+      }}
+      onPointerLeave={() => {
+        hovering.current = false
+        hide()
+      }}
     >
       <div className="h-1.5" />
-      <div className="px-2 opacity-0 transition-opacity group-data-[open=true]/ct:opacity-100 pointer-events-none group-data-[open=true]/ct:pointer-events-auto">
-        <Toolbar state={state} tab={tab} floating>
-          {showBar && <BookmarksBar state={state} tab={tab} className="px-1" />}
-        </Toolbar>
-      </div>
+      {open && (
+        <div className="px-2">
+          <Toolbar
+            state={state}
+            tab={tab}
+            floating
+            trailing={
+              fullscreen && (
+                <button
+                  type="button"
+                  className="zen-toolbar-button"
+                  title={`Exit full screen (${fullscreenBinding(state)})`}
+                  aria-label="Exit full screen"
+                  onClick={() => run('window.toggleFullscreen', undefined)}
+                >
+                  <Minimize className="h-4 w-4" />
+                </button>
+              )
+            }
+          >
+            {showBar && <BookmarksBar state={state} tab={tab} className="px-1" />}
+          </Toolbar>
+        </div>
+      )}
     </div>
   )
+}
+
+/** The key that leaves fullscreen, as bound ("F11"; the platform's chord on macOS). */
+function fullscreenBinding(state: UIState): string {
+  const shortcut = state.shortcuts.find((s) => s.action === 'page.fullscreen')
+  return formatBinding(shortcut?.binding ?? shortcut?.extraBindings[0] ?? null, state.platform)
 }
 
 /** Keys the renderer handles itself (main handles the shortcut table). */
@@ -300,6 +406,7 @@ function useGlobalKeys(state: UIState): void {
       if (ui.menu) return // handled by the menu layer
       // Dialogs, choosers and overflow menus take Escape first (capture traps).
       if (ui.bookmarkEdit || ui.starDialog || ui.bookmarkAllTabs || ui.barMenuOpen) return
+      if (ui.zoomBubble) return
       if (ui.overlay !== 'none') {
         e.preventDefault()
         closeOverlay()
@@ -315,7 +422,7 @@ function useGlobalKeys(state: UIState): void {
         clearTabSelection()
         return
       }
-      if (ui.findOpen && ui.findTabId) closeFindBar()
+      if (ui.findOpen && ui.findTabId) closeFindBar('afterKey')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

@@ -31,6 +31,7 @@ import { useBookmarkTree } from '../bookmarks/tree'
 import { useLongPress } from '../phone/useLongPress'
 import { PillChip } from '../urlbar/PillChip'
 import { WindowControls } from '../WindowControls'
+import { ZoomChip } from '../zoom/ZoomChip'
 
 interface Props {
   state: UIState
@@ -313,6 +314,7 @@ export function NavRow({
                 <Copy className="h-3 w-3" />
               </PillChip>
             )}
+            {tab && <ZoomChip state={state} tab={tab} />}
             {tab && isWebPage && (
               <StarChip
                 tab={tab}

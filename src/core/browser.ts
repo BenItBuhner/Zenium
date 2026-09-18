@@ -54,6 +54,7 @@ import { SiteInfoService } from './siteInfo'
 import { TranslateService } from './translate/service'
 import { PageControls } from './pageControls'
 import { FindMemory } from './find'
+import { FullscreenService } from './fullscreen'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
@@ -192,6 +193,8 @@ export class Browser {
   readonly pageControls: PageControls
   /** The last find-in-page query per tab and profile-wide (what the bar reopens with). */
   readonly find = new FindMemory()
+  /** Fullscreen hints (F11, a page's element) and the Esc hold that leaves the window's fullscreen. */
+  readonly fullscreen: FullscreenService
   readonly windows = new Map<string, ZenWindow>()
   /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
@@ -258,6 +261,7 @@ export class Browser {
     this.pageDialogs = new PageDialogService(this)
     this.windowPrompts = new WindowPrompts(this)
     this.pageControls = new PageControls(this)
+    this.fullscreen = new FullscreenService(this)
     this.tabs = new TabManager(this)
     this.tabDrag = new TabDragController(this)
     this.session = new SessionService(this)
@@ -578,6 +582,7 @@ export class Browser {
   onWindowClosed(win: ZenWindow): void {
     this.windows.delete(win.id)
     this.tabDrag.onWindowClosed(win)
+    this.fullscreen.onWindowClosed(win)
     for (const w of this.allWindows()) w.selection.delete(win.localSpace?.id ?? '')
     if (win.isPrivate) this.endPrivateSessionIfOver()
     if (this.allWindows().length === 0) {
@@ -754,6 +759,7 @@ export class Browser {
     this.extensions.closePopup()
     this.translate.onNavigated(tabId)
     this.autofill.onNavigated(tabId)
+    this.fullscreen.onNavigated(tabId)
   }
 
   updateMedia(): void {
@@ -1667,8 +1673,8 @@ export class Browser {
       'tab.goToIndex': ({ tabId, index }) => tabs.goToIndex(tabId, index),
       'tab.navigationMenu': ({ tabId }, win) => this.menus.showNavigationMenu(tabId, win),
       'tab.setZoom': ({ tabId, delta }) =>
-        delta === null ? tabs.setZoom(tabId, 1) : tabs.adjustZoom(tabId, delta),
-      'tab.setZoomFactor': ({ tabId, factor }) => this.pageControls.setZoomFactor(tabId, factor),
+        delta === null ? tabs.resetZoom(tabId) : tabs.adjustZoom(tabId, delta),
+      'tab.setZoomFactor': ({ tabId, factor }) => tabs.setZoom(tabId, factor),
       'tab.setDesktopSite': ({ tabId, on }) => this.pageControls.setDesktopSite(tabId, on),
       'tab.setDarkenSite': ({ tabId, on }) => this.pageControls.setDarkenSite(tabId, on),
       'pageControls.forgetSite': ({ kind, domain }) => this.pageControls.forgetSite(kind, domain),
@@ -1758,7 +1764,12 @@ export class Browser {
       'glance.split': (_a, win) => tabs.splitGlance(win),
 
       'compact.toggle': (_a, win) => this.toggleCompactMode(win),
-      'compact.setRevealed': ({ revealed }, win) => {
+      'compact.setRevealed': ({ revealed, edge }, win) => {
+        if (edge === 'toolbar') {
+          // Main's cursor tracking alone reads it; nothing in the snapshot changes.
+          win.compactToolbarRevealed = revealed
+          return
+        }
         if (win.compactSidebarRevealed === revealed) return
         win.compactSidebarRevealed = revealed
         state.commitVolatile()
@@ -1780,7 +1791,7 @@ export class Browser {
       'urlbar.deleteSuggestion': ({ input }, win) =>
         this.extensions.omniboxDeleteSuggestion(input, win),
 
-      'overlay.snapshot': ({ tabId }, win) => win.snapshot(tabId),
+      'overlay.snapshot': ({ tabId, fresh }, win) => win.snapshot(tabId, fresh),
 
       'site.info': ({ tabId }) => this.siteInfo.info(tabId),
       'siteInfo.snapshot': ({ tabId }) => this.siteInfo.snapshot(tabId),
