@@ -1,0 +1,58 @@
+name: Android Settings tab demo
+
+# Records Settings as a tab of the phone chrome on a hardware-accelerated Android emulator: the tab
+# opened from the app menu with its card in the overview, Look and Feel drilled in and the colour
+# scheme flipped live through the picker sheet, the predictive back gesture sliding the drill-in
+# out, the menu reusing the one Settings tab, back at the landing returning to the tab that opened
+# it, a `zenium://settings/privacy` deep link as adb sends it, a web page's own link to that
+# address refused, Find in Settings with hits across categories, a container's editor sheet with
+# its delete confirmation stacked over it, and the pill editing `zenium://settings/look`.
+# Dispatch-only, like the other demos: it takes about ten minutes and says nothing about a change
+# being correct. The build, the emulator and the Gradle cache live in android-emulator-demo.yml;
+# this file only picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+  # TEMPORARY, for PR #134's one recorded run: removed before the PR is reported on.
+  push:
+    branches: [cursor/android-settings-tab-8259]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-settings-tab-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Settings tab demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SettingsTabDemo
+        DEMO_DIR=settings-tab-demo
+        DEMO_OUT=artifacts/android-settings-tab-demo
+        DEMO_VIDEO=android-settings-tab-demo.mp4
+        DEMO_THEME=light
+      artifact-name: android-settings-tab-demo
+      artifact-path: artifacts/android-settings-tab-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Settings tab demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SettingsTabDemo
+        DEMO_DIR=settings-tab-demo
+        DEMO_OUT=artifacts/android-settings-tab-demo
+        DEMO_VIDEO=android-settings-tab-demo.mp4
+        DEMO_THEME=light
+      artifact-name: android-settings-tab-demo-second-boot
+      artifact-path: artifacts/android-settings-tab-demo/
