@@ -1,0 +1,48 @@
+name: Android snapshot swap demo
+
+# Records the swap from the live page to its snapshot when a chrome surface opens over it – the
+# site-information sheet from the pill's chip, the menu sheet and the tab overview, on a heavy
+# page (a Wikipedia article) and a light one (example.com), with the bar at the bottom and at the
+# top – on a hardware-accelerated Android emulator, and uploads the video, the driver's timed
+# screenshots (as fast as the emulator gives them, with the time since the tap in the name) and
+# frames cut from the video at 50 ms steps around every tap. The driver fails the run when a frame
+# shows the window gradient where the page or its picture should be. Dispatch-only, like the
+# gesture demo: it takes about ten minutes. Same caveats about the software GPU: a handful of
+# frames per second, and a snapshot that takes the better part of a second. The build, the
+# emulator and the Gradle cache live in android-emulator-demo.yml; this file only picks the
+# driver and the colour scheme.
+on:
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: Colour scheme of the chrome
+        type: choice
+        default: light
+        options:
+          - light
+          - dark
+  push:
+    branches:
+      - cursor/android-sheet-snapshot-blank-79c6
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-snapshot-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Snapshot swap demo (${{ inputs.theme || 'light' }})
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-snapshot-demo.sh
+      script-env: |
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+        DEMO_OUT=artifacts/android-snapshot-demo
+        DEMO_VIDEO=android-chassis-snapshot-swap-${{ inputs.theme || 'light' }}.mp4
+      setup-script: |
+        sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      artifact-name: android-snapshot-demo-${{ inputs.theme || 'light' }}
+      artifact-path: artifacts/android-snapshot-demo/
