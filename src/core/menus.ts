@@ -1157,9 +1157,11 @@ export class Menus {
         { type: 'separator' },
         {
           label: `Close ${n} Tabs`,
-          click: () => {
-            for (const t of selected) tabs.closeTab(t.id, false, win)
-          }
+          click: () =>
+            // One at a time, so a page that objects asks before the next one is touched.
+            void (async () => {
+              for (const t of selected) await tabs.requestClose(t.id, false, win)
+            })()
         }
       ],
       win,

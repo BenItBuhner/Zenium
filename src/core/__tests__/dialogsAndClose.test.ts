@@ -10,6 +10,8 @@ import { Browser } from '../browser'
 import { dialogSite, isEmbeddedDialog } from '../pageDialogs'
 import type {
   AppHost,
+  MenuHost,
+  MenuItemTemplate,
   Platform,
   StoreIO,
   TabView,
@@ -116,6 +118,8 @@ interface Fixture {
   /** `host.close()` calls per window – what a real host would turn into destruction. */
   closes: Map<string, number>
   quits: number
+  /** The items of the last context menu the core asked the host to show. */
+  menu: MenuItemTemplate[]
   viewOf(tabId: string): FakeView
 }
 
@@ -127,6 +131,7 @@ function fixture(): Fixture {
     views,
     closes,
     quits: 0,
+    menu: [],
     viewOf: (tabId) => {
       // The newest page of the tab: a reloaded tab has a destroyed one before it.
       const v = [...views].reverse().find((x) => x.tabId === tabId)
@@ -159,7 +164,11 @@ function fixture(): Fixture {
         return fake.view
       }
     }),
-    menus: stub(),
+    menus: stub<MenuHost>({
+      popup: (items) => {
+        f.menu = items
+      }
+    }),
     dialogs: stub(),
     clipboard: stub(),
     shell: stub(),
@@ -364,6 +373,33 @@ describe('closing tabs with beforeunload', () => {
     await tick()
     expect(f.browser.tabs.tab(tab.id)).toBeDefined()
     expect(f.viewOf(tab.id).unloadChecks).toBe(1)
+  })
+
+  it('"Close N Tabs" on a selection asks each page in turn and keeps the one that says stay', async () => {
+    const f = fixture()
+    const win = firstWindow(f)
+    const a = f.browser.tabs.createTab({ url: 'https://example.com/a', active: true }, win)
+    const b = f.browser.tabs.createTab({ url: 'https://example.com/b', active: true }, win)
+    const c = f.browser.tabs.createTab({ url: 'https://example.com/c', active: true }, win)
+    f.viewOf(b.id).unload = 'stay'
+    f.viewOf(c.id).unload = 'leave'
+
+    f.browser.menus.showSelectionContextMenu([a.id, b.id, c.id], win)
+    const close = f.menu.find((item) => item.label === 'Close 3 Tabs')
+    expect(close?.click).toBeDefined()
+    close?.click?.()
+    await tick()
+    await tick()
+
+    expect(f.browser.tabs.tab(a.id)).toBeUndefined()
+    expect(f.browser.tabs.tab(b.id)).toBeDefined()
+    expect(f.browser.tabs.tab(c.id)).toBeUndefined()
+    // Every page was asked, one after the other.
+    expect(f.views.filter((v) => v.unloadChecks === 1).map((v) => v.tabId)).toEqual([
+      a.id,
+      b.id,
+      c.id
+    ])
   })
 })
 
