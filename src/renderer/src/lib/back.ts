@@ -193,10 +193,19 @@ export function handleSystemBack(): boolean {
       if (tab.openerTabId) run('tab.activate', { tabId: tab.openerTabId })
       run('tab.close', { tabId: tab.id })
       return true
-    case 'caller':
-      // The tab goes; the host backgrounds the app, which returns to the app that sent the URL.
-      run('tab.close', { tabId: tab.id })
-      return false
+    case 'caller': {
+      // Background the app first, which returns to the app that sent the URL; the tab goes once
+      // the app is out of sight (Chrome's 500 ms), so the tab taking its place is never glimpsed.
+      // The sent tab was an interruption: coming back to Zenium resumes the tab the user was on.
+      const resume = lastActiveOther(tab, state)
+      const sentId = tab.id
+      run('window.minimize', undefined)
+      setTimeout(() => {
+        if (resume) run('tab.activate', { tabId: resume.id })
+        run('tab.close', { tabId: sentId })
+      }, CLOSE_AFTER_LEAVE_MS)
+      return true
+    }
     case 'newTabPage':
       // A fresh tab takes the page's place (same group, same container) and the page moves to
       // the recently closed list – the tab is back where it started, with nothing behind it.
@@ -220,7 +229,10 @@ export function handleSystemBack(): boolean {
 export type RootBackAction =
   /** Close the tab and return to the tab whose link opened it. */
   | 'opener'
-  /** Close the tab and leave the app: it was opened by another app, which gets the user back. */
+  /**
+   * Leave the app and close the tab: it was opened by another app, which gets the user back;
+   * Zenium resumes the tab the user was on when it is next in front.
+   */
   | 'caller'
   /** The page leaves and the tab starts over as a new tab (Chrome's new-tab page history entry). */
   | 'newTabPage'
@@ -241,6 +253,27 @@ export function rootBackAction(tab: Tab, state: UIState): RootBackAction {
   if (tab.pinned || tab.essential) return 'background'
   if (tab.url && tab.url !== BLANK_URL) return 'newTabPage'
   return others.length > 0 ? 'closeTab' : 'background'
+}
+
+/**
+ * How long after backgrounding the app a tab closed on the way out is actually closed
+ * (`ChromeTabbedActivity.CLOSE_TAB_ON_MINIMIZE_DELAY_MS`): late enough that the tab taking its
+ * place is not seen before the app is out of sight.
+ */
+export const CLOSE_AFTER_LEAVE_MS = 500
+
+/**
+ * The tab the user was on before `tab` took the screen: the most recently active other tab of the
+ * space (`activateTab` stamps the tab it leaves as well as the one it enters), or null when `tab`
+ * is alone. What a tab another app sent resumes when it closes.
+ */
+export function lastActiveOther(tab: Tab, state: UIState): Tab | null {
+  let latest: Tab | null = null
+  for (const other of tabOrderOf(state, activeSpace(state))) {
+    if (other.id === tab.id) continue
+    if (!latest || other.lastActiveAt > latest.lastActiveAt) latest = other
+  }
+  return latest
 }
 
 // ---------------------------------------------------------------------------

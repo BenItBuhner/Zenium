@@ -1,15 +1,83 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Space, Tab, UIState } from '@shared/types'
 import { BLANK_URL } from '@shared/url'
+
+vi.mock('../api', () => ({ cmd: vi.fn(), run: vi.fn() }))
+
+import { run } from '../api'
 import {
   BackDismissal,
   backStore,
+  CLOSE_AFTER_LEAVE_MS,
   dispatchBackEvent,
+  handleSystemBack,
+  lastActiveOther,
   pushBackSurface,
   rootBackAction,
   topBackSurface,
   type BackSurface
 } from '../back'
+import { browserStore } from '../ui'
+
+function tab(id: string, patch: Partial<Tab> = {}): Tab {
+  return {
+    id,
+    spaceId: 's1',
+    containerId: 'default',
+    url: `https://${id}.example`,
+    title: id,
+    favicon: null,
+    pinned: false,
+    essential: false,
+    pinnedUrl: null,
+    customTitle: null,
+    customIcon: null,
+    windowId: null,
+    folderId: null,
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    audible: false,
+    muted: false,
+    discarded: false,
+    frozen: false,
+    cpuThrottle: 1,
+    zoom: 1,
+    splitGroupId: null,
+    createdAt: 0,
+    lastActiveAt: 0,
+    errorCode: null,
+    bookmarked: false,
+    readerable: false,
+    blockedCount: 0,
+    openerTabId: null,
+    fromIntent: false,
+    ...patch
+  }
+}
+
+/** One space holding `tabs` (in that order), the first one active. */
+function state(...tabs: Tab[]): UIState {
+  const space: Space = {
+    id: 's1',
+    name: 'Default',
+    icon: '',
+    containerId: 'default',
+    theme: null,
+    tabIds: tabs.map((t) => t.id),
+    activeTabId: tabs[0]?.id ?? null,
+    pinnedCollapsed: false
+  }
+  return {
+    tabs: Object.fromEntries(tabs.map((t) => [t.id, t])),
+    essentialTabIds: [],
+    spaces: [space],
+    activeSpaceId: 's1',
+    folders: {},
+    glance: null,
+    settings: { containerSpecificEssentials: false }
+  } as unknown as UIState
+}
 
 function surface(name: string): BackSurface & { calls: string[] } {
   const calls: string[] = []
@@ -99,65 +167,6 @@ describe('back surface registry', () => {
 })
 
 describe('rootBackAction', () => {
-  function tab(id: string, patch: Partial<Tab> = {}): Tab {
-    return {
-      id,
-      spaceId: 's1',
-      containerId: 'default',
-      url: `https://${id}.example`,
-      title: id,
-      favicon: null,
-      pinned: false,
-      essential: false,
-      pinnedUrl: null,
-      customTitle: null,
-      customIcon: null,
-      windowId: null,
-      folderId: null,
-      loading: false,
-      canGoBack: false,
-      canGoForward: false,
-      audible: false,
-      muted: false,
-      discarded: false,
-      frozen: false,
-      cpuThrottle: 1,
-      zoom: 1,
-      splitGroupId: null,
-      createdAt: 0,
-      lastActiveAt: 0,
-      errorCode: null,
-      bookmarked: false,
-      readerable: false,
-      blockedCount: 0,
-      openerTabId: null,
-      fromIntent: false,
-      ...patch
-    }
-  }
-
-  /** One space holding `tabs` (in that order), the first one active. */
-  function state(...tabs: Tab[]): UIState {
-    const space: Space = {
-      id: 's1',
-      name: 'Default',
-      icon: '',
-      containerId: 'default',
-      theme: null,
-      tabIds: tabs.map((t) => t.id),
-      activeTabId: tabs[0]?.id ?? null,
-      pinnedCollapsed: false
-    }
-    return {
-      tabs: Object.fromEntries(tabs.map((t) => [t.id, t])),
-      essentialTabIds: [],
-      spaces: [space],
-      activeSpaceId: 's1',
-      folders: {},
-      settings: { containerSpecificEssentials: false }
-    } as unknown as UIState
-  }
-
   it('a child tab closes back to its opener while the opener is around', () => {
     const opener = tab('opener')
     const child = tab('child', { openerTabId: 'opener' })
@@ -200,6 +209,60 @@ describe('rootBackAction', () => {
     expect(rootBackAction(pinned, state(pinned, tab('other')))).toBe('background')
     const essential = tab('essential', { spaceId: null, essential: true })
     expect(rootBackAction(essential, state(essential, tab('other')))).toBe('background')
+  })
+})
+
+describe('lastActiveOther', () => {
+  it('is the most recently active other tab of the space, whatever its place in the strip', () => {
+    const sent = tab('sent', { fromIntent: true, lastActiveAt: 30 })
+    const older = tab('older', { lastActiveAt: 10 })
+    const before = tab('before', { lastActiveAt: 20 })
+    expect(lastActiveOther(sent, state(sent, older, before))?.id).toBe('before')
+    expect(lastActiveOther(sent, state(older, sent, before))?.id).toBe('before')
+    // Never the tab itself, however fresh its own stamp.
+    expect(lastActiveOther(sent, state(sent, older))?.id).toBe('older')
+  })
+
+  it('is null for a tab alone in its space', () => {
+    const sent = tab('sent', { fromIntent: true })
+    expect(lastActiveOther(sent, state(sent))).toBeNull()
+  })
+})
+
+describe('handleSystemBack at the root of a tab another app sent', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.mocked(run).mockClear()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    browserStore.set({ state: null })
+  })
+
+  it("backgrounds the app first, then resumes the user's tab and closes the sent one out of sight", () => {
+    const sent = tab('sent', { fromIntent: true, lastActiveAt: 30 })
+    const before = tab('before', { lastActiveAt: 20 })
+    const older = tab('older', { lastActiveAt: 10 })
+    browserStore.set({ state: state(sent, older, before) })
+    expect(handleSystemBack()).toBe(true)
+    // Only the leave has gone out: the tab switch would show before the app is out of sight.
+    expect(vi.mocked(run).mock.calls).toEqual([['window.minimize', undefined]])
+    vi.advanceTimersByTime(CLOSE_AFTER_LEAVE_MS)
+    expect(vi.mocked(run).mock.calls.slice(1)).toEqual([
+      ['tab.activate', { tabId: 'before' }],
+      ['tab.close', { tabId: 'sent' }]
+    ])
+  })
+
+  it('with no other tab, the sent tab still closes on the way out and nothing is activated', () => {
+    const sent = tab('sent', { fromIntent: true })
+    browserStore.set({ state: state(sent) })
+    expect(handleSystemBack()).toBe(true)
+    vi.advanceTimersByTime(CLOSE_AFTER_LEAVE_MS)
+    expect(vi.mocked(run).mock.calls).toEqual([
+      ['window.minimize', undefined],
+      ['tab.close', { tabId: 'sent' }]
+    ])
   })
 })
 
