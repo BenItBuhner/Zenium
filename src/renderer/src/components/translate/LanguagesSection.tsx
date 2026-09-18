@@ -5,7 +5,8 @@ import type { TranslateModelInfo, TranslatePreferences } from '@shared/translate
 import type { UIState } from '@shared/types'
 import { languageName } from '@shared/languageNames'
 import { cmd, run } from '@renderer/lib/api'
-import { languageOptions, pairLabel } from '@renderer/lib/translate'
+import { useViewport } from '@renderer/lib/formFactor'
+import { languageOptions, pairLabel, type LanguageOption } from '@renderer/lib/translate'
 import { formatBytes } from '@renderer/lib/utils'
 import { Checkbox, IconButton, Menulist } from './controls'
 
@@ -14,7 +15,8 @@ import { Checkbox, IconButton, Menulist } from './controls'
  * first is what pages are translated into), the always and never lists, the sites that are
  * never offered, and the translation models on the device. Laid out on the v2 draft: 17/600
  * group headings over 15 deemphasised descriptions, a bordered card for every group that has
- * its own actions, 16 px checkboxes, bordered menulists and 32 px rows.
+ * its own actions, 16 px checkboxes, bordered menulists and 32 px rows; on phones the menulists
+ * that add to a list are action rows opening a sheet (§9.13, §10.4).
  */
 export function LanguagesSection({ state }: { state: UIState }): JSX.Element {
   const { translate } = state
@@ -151,7 +153,7 @@ function Row({
   return (
     <div className="zen-translate-row">
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      {detail && <span className="zen-translate-caption shrink-0 tabular-nums">{detail}</span>}
+      {detail && <span className="zen-translate-caption shrink-0">{detail}</span>}
       {children}
     </div>
   )
@@ -160,6 +162,39 @@ function Row({
 /** An empty list (§9.17): one centred sentence, no full stop, top-anchored in the card. */
 function Empty({ children }: { children: ReactNode }): JSX.Element {
   return <div className="zen-translate-empty">{children}</div>
+}
+
+/**
+ * The control that adds to a list: on the desktop a menulist in a row of its own; on a phone
+ * settings page the menulist is not drawn (§9.13) – a §10.4 action row opens the same sheet.
+ */
+function AddRow({
+  label,
+  placeholder,
+  options,
+  onPick
+}: {
+  label: string
+  placeholder: string
+  options: LanguageOption[]
+  onPick: (value: string) => void
+}): JSX.Element {
+  const phone = useViewport().formFactor === 'phone'
+  const menulist = (
+    <Menulist
+      value={null}
+      placeholder={placeholder}
+      options={options}
+      onChange={onPick}
+      label={label}
+      row={phone}
+    />
+  )
+  return phone ? (
+    menulist
+  ) : (
+    <div className="zen-translate-row zen-translate-row-add">{menulist}</div>
+  )
 }
 
 /** A list of languages with a menulist to add one, in a card of its own. */
@@ -209,15 +244,12 @@ function LanguageList({
         </Row>
       ))}
       {remaining.length > 0 && (
-        <div className="zen-translate-row zen-translate-row-add">
-          <Menulist
-            value={null}
-            placeholder="Add a language…"
-            options={languageOptions(remaining)}
-            onChange={onAdd}
-            label={addLabel}
-          />
-        </div>
+        <AddRow
+          label={addLabel}
+          placeholder="Add a language…"
+          options={languageOptions(remaining)}
+          onPick={onAdd}
+        />
       )}
     </Group>
   )
@@ -289,18 +321,15 @@ function ModelsGroup({ state }: { state: UIState }): JSX.Element {
         <Row key={pairKey(m)} label={pairLabel(m.from, m.to)} detail="Downloading…" />
       ))}
       {available.length > 0 && (
-        <div className="zen-translate-row zen-translate-row-add">
-          <Menulist
-            value={null}
-            placeholder="Download a model…"
-            options={available.map((m) => ({
-              value: pairKey(m),
-              label: `${pairLabel(m.from, m.to)} (${formatBytes(m.bytes)})`
-            }))}
-            onChange={download}
-            label="Download a translation model"
-          />
-        </div>
+        <AddRow
+          label="Download a translation model"
+          placeholder="Download a model…"
+          options={available.map((m) => ({
+            value: pairKey(m),
+            label: `${pairLabel(m.from, m.to)} (${formatBytes(m.bytes)})`
+          }))}
+          onPick={download}
+        />
       )}
       {installed.length > 0 && (
         <p className="zen-translate-caption pt-2">{formatBytes(total)} on this device.</p>

@@ -237,13 +237,17 @@ function Popover({
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [])
-  // On open, focus moves into the popover: its first field (the menulist), else the popover.
+  // On open, focus moves into the popover (§9.22): its first field (the menulist), else the
+  // popover itself – once it has been placed and is visible, since a hidden element cannot take
+  // focus; the placement's later updates leave focus where the user has put it.
+  const focused = useRef(false)
   useEffect(() => {
     const el = ref.current
-    if (!el) return
+    if (!el || !pos || focused.current) return
+    focused.current = true
     const field = el.querySelector<HTMLElement>('.zen-v2-menulist:not(:disabled)')
     ;(field ?? el).focus({ preventScroll: true })
-  }, [])
+  }, [pos])
 
   // At the point the user asked at, inside the window.
   useLayoutEffect(() => {
@@ -345,6 +349,8 @@ function PhoneSheet({
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
+      // The menulist's sheet is up over this one: Escape is its (§9.22, the list closes first).
+      if (uiStore.get().menulistOpen) return
       e.preventDefault()
       e.stopImmediatePropagation()
       sheet.current?.dismiss()

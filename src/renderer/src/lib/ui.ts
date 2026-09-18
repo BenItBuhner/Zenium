@@ -1433,11 +1433,12 @@ export function closeTabsMenu(): void {
 /**
  * Only anchored panels or a security prompt are up: a bar panel, the star bubble, the zoom
  * bubble, the tab hover card, the downloads bubble, site information, the blocked pop-ups
- * popover, or a sign-in or certificate dialog. The page behind them is captured all the same
- * (they overlap the live view), but panels draw no scrim, so the capture shows undimmed;
- * dialogs dim it. A chassis sheet's scrim is its own one dim (§11.5), so the same holds under
- * the site-information sheet, and the security prompt's dim is the frame dialog host's scrim
- * alone (v2 §9.5, §11.5: one dim layer).
+ * popover, the translate selection popover, a menulist's list, or a sign-in or certificate
+ * dialog. The page behind them is captured all the same (they overlap the live view), but
+ * panels and popovers draw no scrim (v2 §9.5, §9.20), so the capture shows undimmed; dialogs
+ * dim it. A chassis sheet's scrim is its own one dim (§11.5), so the same holds under the
+ * site-information sheet, and the security prompt's dim is the frame dialog host's scrim alone
+ * (v2 §9.5, §11.5: one dim layer).
  */
 export function panelAloneOverContent(ui: UiState): boolean {
   return (
@@ -1450,7 +1451,9 @@ export function panelAloneOverContent(ui: UiState): boolean {
       // phone, whose own scrim is the one dim over the page (§11.5).
       ui.siteInfoOpen ||
       ui.blockedPopupsPanel !== null ||
-      ui.securityPromptOpen) &&
+      ui.securityPromptOpen ||
+      ui.translateSelection !== null ||
+      ui.menulistOpen) &&
     !overlayCoversContent({
       ...ui,
       barMenuOpen: false,
@@ -1460,7 +1463,9 @@ export function panelAloneOverContent(ui: UiState): boolean {
       downloadsOpen: false,
       siteInfoOpen: false,
       blockedPopupsPanel: null,
-      securityPromptOpen: false
+      securityPromptOpen: false,
+      translateSelection: null,
+      menulistOpen: false
     })
   )
 }

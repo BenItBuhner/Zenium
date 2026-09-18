@@ -6,7 +6,7 @@ import { languageName } from '@shared/languageNames'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { errorCaption, languageOptions, pairLabel, retarget } from '@renderer/lib/translate'
-import { formatBytes } from '@renderer/lib/utils'
+import { cn, formatBytes } from '@renderer/lib/utils'
 import { IconButton, Menulist, TranslateButton } from './controls'
 
 /**
@@ -104,7 +104,7 @@ export function TranslateBar({
             <span className="truncate">
               Translating from {languageName(tab.source ?? '')} to {languageName(tab.target ?? '')}…
               {tab.progress && tab.progress.total > 0 && (
-                <span className="zen-translate-caption tabular-nums">
+                <span className="zen-translate-caption">
                   {' '}
                   {tab.progress.done} of {tab.progress.total}
                 </span>
@@ -188,7 +188,9 @@ function PhoneBody({
   let action: ReactNode = null
   switch (tab.status) {
     case 'offered':
-      title = 'Translate this page?'
+      // Short enough to stay on its one line (§9.2) beside the hugging Translate and the two
+      // icon buttons at 412 px.
+      title = 'Translate page?'
       caption = tab.source ? pair : 'Choose the page language in the options'
       action = (
         <TranslateButton primary disabled={!tab.source || !tab.target} onClick={translate}>
@@ -222,13 +224,16 @@ function PhoneBody({
         </TranslateButton>
       )
   }
-  // The reason a translation failed is worth a second line; the other captions stay on one.
-  const wrap = tab.status === 'error'
+  // A failure's title is in the danger ink, as on the desktop bar (§1), and its reason is worth a
+  // second line; the other captions stay on one.
+  const failed = tab.status === 'error'
   return (
     <>
       <span className="zen-translate-text">
-        <span className="block truncate">{title}</span>
-        <span className={`zen-translate-caption block ${wrap ? 'zen-translate-wrap' : 'truncate'}`}>
+        <span className={cn('block truncate', failed && 'zen-translate-danger')}>{title}</span>
+        <span
+          className={cn('zen-translate-caption block', failed ? 'zen-translate-wrap' : 'truncate')}
+        >
           {caption}
         </span>
       </span>
