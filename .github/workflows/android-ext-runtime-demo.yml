@@ -11,8 +11,6 @@ name: Android extension runtime demo
 # sideloads.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/android-ext-runtime-core-f955]
 
 permissions:
   contents: read
