@@ -23,19 +23,23 @@ import org.junit.runner.RunWith
  * server cuts halfway (resumed on our own with `Range`), a `data:` link and a `blob:` link named
  * from their anchors, the progress and completion notifications, a file whose server dies on
  * every attempt until the row fails with Chrome's reason and wording (`network-failed`, "Check
- * internet connection") and is completed by Retry, a completed file removed through
- * `download.deleteFile` and one deleted behind the browser's back (both rows read "Deleted",
- * Retry downloads the file again), and the files in the system Downloads app. The page and the
- * files come from a small Node server on the runner (`.github/scripts/downloads-demo-server.mjs`,
- * reached at `10.0.2.2:18923` from inside the emulator), which generates every byte from the same
- * formula as [expectedByte], so a resumed file is checked byte for byte.
+ * internet connection") and is completed by Resume (the server takes Range and the partial file
+ * was kept), a completed file removed through `download.deleteFile` and one deleted behind the
+ * browser's back (both rows read "Deleted", Retry downloads the file again), and the files in
+ * the system Downloads app. The page and the files come from a small Node server on the runner
+ * (`.github/scripts/downloads-demo-server.mjs`, reached at `10.0.2.2:18923` from inside the
+ * emulator), which generates every byte from the same formula as [expectedByte], so a resumed
+ * file is checked byte for byte.
  *
  * The panel on screen is the shared downloads page (`DownloadRow`): each row is one focusable
  * node labelled `<name>. <status>` on the accessibility tree with its controls as children, so
  * the driver reads a row's state from that label once the row holds still ([rowReads]; the
- * software-rendered emulator seldom serves the panel's subtree while a row moves) and presses
- * its controls through the tree when they are there, else through the engine command the
- * control runs ([press]); the engine's own list is checked over `app.getState()` either way.
+ * software-rendered emulator seldom serves the panel's subtree while a row moves, and its chrome
+ * WebView answers an engine call seconds late meanwhile) and presses its controls through the
+ * tree when they are there, else through the engine command the control runs ([press]); the
+ * engine's own list is checked over `app.getState()` either way. The panel's search field takes
+ * focus when it opens and the emulator raises the keyboard over the page; [hideKeyboard] drops it
+ * before the settled screenshots.
  *
  * Run from the dispatch-only workflow `.github/workflows/android-downloads-demo.yml`, a caller of
  * the shared `android-emulator-demo.yml` that starts the server from `setup-script` and hands the
@@ -62,16 +66,19 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
 
     override fun demo() {
         // 1. A throttled download: the panel opens on the transfer, Pause holds the bytes, Resume
-        //    completes the file. While the row moves (four times a second) the emulator's
-        //    accessibility tree cannot be traversed in time, so the running row is the engine's
-        //    word plus the screenshot and the recording, Pause goes through the engine, and the
-        //    tree is read once the row holds still ("slow.bin. Paused · <received> of 3.0 MB").
+        //    completes the file. While the row moves the emulator's chrome WebView is busy
+        //    repainting it, so every engine call waits seconds and the accessibility tree cannot
+        //    be traversed in time: the running row is the engine's word plus the screenshot and
+        //    the recording, Pause goes through the engine the moment the row exists, and the tree
+        //    is read once the row holds still ("slow.bin. Paused · <received> of 3.0 MB").
+        val tapped = SystemClock.uptimeMillis()
         click(LINK_SLOW)
-        val slowId = awaitRow("slow.bin", 15_000) { it.optString("state") == "progressing" }?.optString("id").orEmpty()
+        val slowId = awaitRow("slow.bin", 20_000) { it.optString("state") == "progressing" }?.optString("id").orEmpty()
         check(slowId.isNotEmpty(), "slow.bin never started downloading")
-        SystemClock.sleep(3_500)
         shot("01-in-progress")
         press("Pause", "download.pause", "slow.bin", slowId, viaTree = false) { it.optString("state") == "paused" }
+        Log.i(tag, "Pause reached the engine ${SystemClock.uptimeMillis() - tapped} ms after the link was tapped")
+        hideKeyboard()
         if (waitForRow(15_000) { rowReads(it, "slow.bin", "Paused") } == null) {
             fail("the panel did not show the paused row (\"slow.bin. Paused · … of 3.0 MB\")")
         }
@@ -83,9 +90,10 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
         Log.i(tag, "paused at $atPause bytes")
         shot("02-paused")
         press("Resume", "download.resume", "slow.bin", slowId) { it.optString("state") != "paused" }
-        val slow = awaitPublished("slow.bin", SLOW_SIZE, 60_000)
+        val slow = awaitPublished("slow.bin", SLOW_SIZE, 90_000)
         check(slow != null && intact(slow, SLOW_SIZE), "slow.bin did not complete intact after pause and resume")
         SystemClock.sleep(1_500)
+        hideKeyboard()
         shot("03-completed")
 
         // The completion notification (and the progress one before it) live in the shade.
@@ -96,12 +104,13 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
         SystemClock.sleep(1_500)
         ensureForeground()
 
-        // 2. The server drops the connection after 1 MiB; the downloader continues with Range.
+        // 2. The server drops the downloader's connection after 1 MiB; it continues with Range.
         closePanel()
         click(LINK_FLAKY)
         val flaky = awaitPublished("flaky.bin", FLAKY_SIZE, 60_000)
         check(flaky != null && intact(flaky, FLAKY_SIZE), "flaky.bin did not survive the cut connection")
         SystemClock.sleep(1_000)
+        hideKeyboard()
         shot("05-flaky-resumed")
 
         // 3. data: and blob: links, named from their anchors.
@@ -114,13 +123,14 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
         val blob = awaitPublished("hello-blob.txt", BLOB_TEXT.length.toLong(), 30_000)
         check(blob != null && text(blob) == BLOB_TEXT, "the blob: download is missing or wrong")
         SystemClock.sleep(1_500)
+        hideKeyboard()
         shot("06-data-and-blob")
 
-        // 4. The server dies on every dead.bin response until the downloader has used its five
+        // 4. The server dies on the downloader's first dead.bin attempt and on each of its five
         //    resumes, so the row fails with the reason the engine mapped the failure to and
         //    Chrome's wording for it. The server takes Range and the failure kept the partial
-        //    file, so the row offers Resume (as Chrome's does; Retry is for the rest), which gets
-        //    the eighth response, served whole.
+        //    file, so the row offers Resume (as Chrome's does; Retry is for the rest), and the
+        //    server serves that response whole.
         closePanel()
         click(LINK_DEAD)
         val failed = awaitRow("dead.bin", 120_000) { it.optString("state") == "interrupted" }
@@ -129,6 +139,7 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
                 failed.optString("errorMessage") == "Check internet connection",
             "dead.bin did not fail as network-failed / Check internet connection: $failed"
         )
+        hideKeyboard()
         if (waitForRow(8_000) { rowReads(it, "dead.bin", FAILED_NETWORK) } == null) fail("no row reads \"$FAILED_NETWORK\"")
         shot("07-failed-network")
         val resumable = failed?.optBoolean("canResume") == true
@@ -161,7 +172,7 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
         SystemClock.sleep(1_000)
         shot("09-deleted")
         downloadCommand("download.retry", slowId)
-        val slowAgain = awaitPublished("slow.bin", SLOW_SIZE, 60_000)
+        val slowAgain = awaitPublished("slow.bin", SLOW_SIZE, 90_000)
         check(slowAgain != null && intact(slowAgain, SLOW_SIZE), "the deleted slow.bin did not download again intact on Retry")
         val slowRow = awaitRow("slow.bin", 10_000) { it.optString("state") == "completed" && !it.has("fileMissing") }
         check(slowRow != null && slowRow.optString("id") == slowId, "Retry did not clear fileMissing on slow.bin's row: ${rowFor("slow.bin")}")
@@ -279,6 +290,15 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
         SystemClock.sleep(1_200)
     }
 
+    /**
+     * Drop the keyboard the panel's search field raised when it took focus: blur the chrome's
+     * focused element (what a tap outside the field does) and give the keyboard a moment to slide out.
+     */
+    private fun hideKeyboard() {
+        chromeJs("document.activeElement&&document.activeElement.blur&&document.activeElement.blur()")
+        SystemClock.sleep(800)
+    }
+
     private fun check(ok: Boolean, message: String) {
         if (!ok) fail(message)
     }
@@ -300,23 +320,34 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
         return null
     }
 
-    /** Poll the engine until its row for `name` satisfies `accept`; null (logged) when it never does. */
+    /**
+     * Poll the engine until its row for `name` satisfies `accept`; null (logged) when it never
+     * does. The log says how long the wait was and how many state reads it took: a read of the
+     * state is an `evaluateJavascript` on the chrome WebView, seconds long while a row moves.
+     */
     private fun awaitRow(name: String, timeoutMs: Long, accept: (JSONObject) -> Boolean): JSONObject? {
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        val started = SystemClock.uptimeMillis()
+        val deadline = started + timeoutMs
+        var reads = 0
         while (SystemClock.uptimeMillis() < deadline) {
             val row = rowFor(name)
-            if (row != null && accept(row)) return row
+            reads++
+            if (row != null && accept(row)) {
+                Log.i(tag, "$name reached the expected state after ${SystemClock.uptimeMillis() - started} ms ($reads state reads)")
+                return row
+            }
             SystemClock.sleep(500)
         }
-        Log.e(tag, "$name never reached the expected state; last row ${rowFor(name)}")
+        Log.e(tag, "$name never reached the expected state in ${timeoutMs} ms ($reads state reads); last row ${rowFor(name)}")
         return null
     }
 
     /** A `download.*` command on one row; the JSON value it resolved with (a string, a boolean, null). */
     private fun downloadCommand(command: String, id: String): Any? {
+        val started = SystemClock.uptimeMillis()
         val raw = coreInvoke(command, JSONObject().put("id", id).toString())
         val value = JSONTokener(raw).nextValue()
-        Log.i(tag, "$command($id) -> $raw")
+        Log.i(tag, "$command($id) -> $raw (${SystemClock.uptimeMillis() - started} ms)")
         return if (value == JSONObject.NULL) null else value
     }
 
