@@ -62,6 +62,8 @@ export function edgeState(cursor: Point, bounds: Box, zone: EdgeZone): EdgeState
  */
 export class EdgeTracker {
   private lastSent: boolean | null = null
+  /** Whether the chrome confirmed the piece out after the last reveal sent. */
+  private confirmed = false
 
   /** Whether the last transition sent was a reveal (the piece is out as far as main knows). */
   get revealed(): boolean {
@@ -70,12 +72,19 @@ export class EdgeTracker {
 
   /**
    * The transition for this sample – true to reveal, false to hide – or null for none. `out`
-   * says whether the piece is showing right now (the chrome's word where it has one).
+   * says whether the piece is showing right now (the chrome's word where it has one). A piece
+   * the chrome put away by itself after showing it – its own hover left, still inside the keep
+   * band, and the page took the edge back – spends main's reveal: the next touch sends another.
    */
   sample(state: EdgeState, out: boolean = this.revealed): boolean | null {
+    if (this.lastSent === true) {
+      if (out) this.confirmed = true
+      else if (this.confirmed) this.lastSent = false
+    }
     if (state === 'reveal') {
       if (this.lastSent === true) return null
       this.lastSent = true
+      this.confirmed = false
       return true
     }
     if (state === 'outside') {
@@ -89,5 +98,6 @@ export class EdgeTracker {
   /** The piece is no longer hidden (or the window cannot be hovered): start afresh. */
   reset(): void {
     this.lastSent = null
+    this.confirmed = false
   }
 }

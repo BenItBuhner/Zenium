@@ -66,6 +66,8 @@ export class ZenWindow {
   glance: GlanceState | null = null
   findResult: FindResult | null = null
   compactSidebarRevealed = false
+  /** The hidden top toolbar is out (compact mode or the window's fullscreen); the chrome's word. */
+  compactToolbarRevealed = false
   compactEnabled: boolean
   compactSidebarPersistent = false
   htmlFullscreenTabId: string | null = null

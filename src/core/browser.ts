@@ -1764,7 +1764,12 @@ export class Browser {
       'glance.split': (_a, win) => tabs.splitGlance(win),
 
       'compact.toggle': (_a, win) => this.toggleCompactMode(win),
-      'compact.setRevealed': ({ revealed }, win) => {
+      'compact.setRevealed': ({ revealed, edge }, win) => {
+        if (edge === 'toolbar') {
+          // Main's cursor tracking alone reads it; nothing in the snapshot changes.
+          win.compactToolbarRevealed = revealed
+          return
+        }
         if (win.compactSidebarRevealed === revealed) return
         win.compactSidebarRevealed = revealed
         state.commitVolatile()

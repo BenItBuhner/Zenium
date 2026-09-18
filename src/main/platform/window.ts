@@ -376,7 +376,7 @@ export class ElectronWindow implements WindowHost {
       this.toolbarEdge.reset()
       return
     }
-    if (!this.win.isFocused() && !zen.compactSidebarRevealed && !this.toolbarEdge.revealed) return
+    if (!this.win.isFocused() && !zen.compactSidebarRevealed && !zen.compactToolbarRevealed) return
     const bounds = this.win.getContentBounds()
     const cursor = screen.getCursorScreenPoint()
     if (sidebarHidden) {
@@ -396,7 +396,10 @@ export class ElectronWindow implements WindowHost {
     }
     if (toolbarHidden) {
       const zone: EdgeZone = { edge: 'top', reveal: TOOLBAR_REVEAL_ZONE, keep: TOOLBAR_KEEP_ZONE }
-      const send = this.toolbarEdge.sample(edgeState(cursor, bounds, zone))
+      const send = this.toolbarEdge.sample(
+        edgeState(cursor, bounds, zone),
+        zen.compactToolbarRevealed
+      )
       if (send !== null) this.send('compact.reveal', { revealed: send, edge: 'toolbar' })
     } else {
       this.toolbarEdge.reset()

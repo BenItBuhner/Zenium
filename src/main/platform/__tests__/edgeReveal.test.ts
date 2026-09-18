@@ -74,6 +74,29 @@ describe('EdgeTracker', () => {
     expect(t.sample('outside', true)).toBe(false)
   })
 
+  it('reveals again after the chrome put the piece away by itself inside the keep band', () => {
+    const t = new EdgeTracker()
+    expect(t.sample('reveal', false)).toBe(true)
+    // Not confirmed yet (the chrome is still capturing the page): no second reveal, no hide.
+    expect(t.sample('reveal', false)).toBeNull()
+    expect(t.sample('keep', false)).toBeNull()
+    // Out, then the chrome's own hover left it and it went while the cursor stayed near the top.
+    expect(t.sample('keep', true)).toBeNull()
+    expect(t.sample('keep', false)).toBeNull()
+    expect(t.revealed).toBe(false)
+    // Nothing to hide out there; back on the edge the toolbar comes out again.
+    expect(t.sample('outside', false)).toBeNull()
+    expect(t.sample('reveal', false)).toBe(true)
+    expect(t.sample('reveal', true)).toBeNull()
+    // A stale confirmation does not carry into the next cycle: gone beyond, hidden, revealed
+    // again, the reveal stands while the chrome catches up.
+    expect(t.sample('outside', true)).toBe(false)
+    expect(t.sample('reveal', false)).toBe(true)
+    expect(t.sample('reveal', false)).toBeNull()
+    expect(t.sample('keep', false)).toBeNull()
+    expect(t.revealed).toBe(true)
+  })
+
   it('starts afresh after a reset, so a piece hidden again reveals on the next touch', () => {
     const t = new EdgeTracker()
     expect(t.sample('reveal')).toBe(true)

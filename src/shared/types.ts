@@ -2491,7 +2491,8 @@ export interface Commands {
   'glance.split': { args: void; result: void }
 
   'compact.toggle': { args: void; result: void }
-  'compact.setRevealed': { args: { revealed: boolean }; result: void }
+  /** The chrome's word on a hidden piece it shows or put away (the sidebar unless `edge` says). */
+  'compact.setRevealed': { args: { revealed: boolean; edge?: 'sidebar' | 'toolbar' }; result: void }
   'compact.toggleSidebarPersistent': { args: void; result: void }
   'compact.setOptions': {
     args: Partial<Pick<CompactModeSettings, 'hideSidebar' | 'hideToolbar'>>

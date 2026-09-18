@@ -326,6 +326,11 @@ function CompactToolbar({
   useEffect(() => {
     if (!urlbarOpen && overlay === 'none' && uiStore.get().toolbarHover && !hovering.current) hide()
   }, [urlbarOpen, overlay, hide])
+  // Main's cursor tracking hears whether the toolbar is out: one it saw put away here (the hover
+  // left it while the cursor stayed near the top) it brings back on the next touch of the edge.
+  useEffect(() => {
+    run('compact.setRevealed', { revealed: open, edge: 'toolbar' })
+  }, [open])
   // The toolbar coming back (or the window leaving fullscreen) puts the live page back.
   useEffect(
     () => () => {
@@ -334,6 +339,7 @@ function CompactToolbar({
         uiStore.set({ toolbarHover: false })
         invalidateSnapshot()
       }
+      run('compact.setRevealed', { revealed: false, edge: 'toolbar' })
     },
     []
   )
