@@ -122,6 +122,22 @@ class RulesTest {
     }
 
     @Test
+    fun excludedNonUniqueHostsLeavesLoopbackPrivateAddressesAndSuffixlessNamesAlone() {
+        val r = rule("""{"id":1,"action":{"type":"upgradeScheme"},"condition":{"urlFilter":"|http://","excludedNonUniqueHosts":true}}""")
+        for (url in listOf(
+            "http://localhost:3000/", "http://app.localhost/", "http://127.0.0.1/", "http://[::1]:8080/",
+            "http://10.1.2.3/", "http://172.16.0.9/", "http://192.168.1.1/admin", "http://169.254.169.254/",
+            "http://[fe80::1]/", "http://[fd00::1]/", "http://0.0.0.0/", "http://intranet/",
+            "http://printer.local/", "http://nas.home.arpa/"
+        )) assertFalse(url, r.matches(req(url, ResourceType.MAIN_FRAME, doc = null)))
+        for (url in listOf("http://example.com/", "http://8.8.8.8/", "http://[2606:4700::1111]/"))
+            assertTrue(url, r.matches(req(url, ResourceType.MAIN_FRAME, doc = null)))
+        // Without the flag (and in the shape the core wrote before it) the same hosts match as any other.
+        val plain = rule("""{"id":2,"action":{"type":"upgradeScheme"},"condition":{"urlFilter":"|http://"}}""")
+        assertTrue(plain.matches(req("http://192.168.1.1/admin", ResourceType.MAIN_FRAME, doc = null)))
+    }
+
+    @Test
     fun methodsAndTabIds() {
         val post = rule("""{"id":1,"action":{"type":"block"},"condition":{"requestMethods":["post"]}}""")
         assertTrue(post.matches(req("https://x.example/a", method = "POST")))

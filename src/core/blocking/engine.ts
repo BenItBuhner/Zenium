@@ -13,6 +13,7 @@ import {
   type RuleSetSummary
 } from './rules'
 import { domainOf, hostMatchesDomain, hostnameOf, isThirdParty } from './domain'
+import { isNonUniqueHost } from '../../shared/nonUniqueHost'
 import {
   applyRegexSubstitution,
   compileRegexFilter,
@@ -54,6 +55,7 @@ interface CompiledRule {
   excludedInitiatorDomains: string[] | null
   requestDomains: string[] | null
   excludedRequestDomains: string[] | null
+  excludedNonUniqueHosts: boolean
   resourceTypes: Set<ResourceType> | null
   excludedResourceTypes: Set<ResourceType> | null
   methods: Set<string> | null
@@ -125,6 +127,7 @@ function compileRule(setId: string, setPriority: number, rule: Rule): CompiledRu
     excludedInitiatorDomains: lower(c.excludedInitiatorDomains),
     requestDomains: lower(c.requestDomains),
     excludedRequestDomains: lower(c.excludedRequestDomains),
+    excludedNonUniqueHosts: c.excludedNonUniqueHosts === true,
     resourceTypes: set(c.resourceTypes),
     excludedResourceTypes: set(c.excludedResourceTypes),
     methods: c.requestMethods ? new Set(c.requestMethods.map((m) => m.toLowerCase())) : null,
@@ -163,6 +166,7 @@ function ruleMatches(r: CompiledRule, ctx: RequestContext, f: Facts): boolean {
   if (r.tabIds && (f.tabId === undefined || !r.tabIds.has(f.tabId))) return false
   if (r.excludedTabIds && f.tabId !== undefined && r.excludedTabIds.has(f.tabId)) return false
   if (!matchesDomains(f.host, r.requestDomains, r.excludedRequestDomains)) return false
+  if (r.excludedNonUniqueHosts && isNonUniqueHost(f.host)) return false
   if (r.initiatorDomains || r.excludedInitiatorDomains) {
     if (r.initiatorDomains && !f.initiatorHost) return false
     if (!matchesDomains(f.initiatorHost, r.initiatorDomains, r.excludedInitiatorDomains))
