@@ -16,6 +16,7 @@ import {
   type SessionInit,
   type SessionStore
 } from './http'
+import { TabFrames } from './frames'
 import { RpcError, UNAUTHORIZED } from './jsonrpc'
 import { pageCall, type PageCursorOptions } from './page'
 import {
@@ -78,6 +79,8 @@ export interface AgentSession extends McpSession {
   readonly tabIds: Set<string>
   /** Last cursor position per tab, so the cursor reappears where it was after a navigation. */
   readonly cursors: Map<string, { x: number; y: number }>
+  /** Per tab: which frame each ref came from and the frame tree of the last snapshot. */
+  readonly frames: Map<string, TabFrames>
 }
 
 interface StoredEndpoint {
@@ -371,7 +374,8 @@ export class AgentService implements SessionStore, McpHandlers {
       userAgent: init.userAgent,
       currentTabId: null,
       tabIds: new Set(),
-      cursors: new Map()
+      cursors: new Map(),
+      frames: new Map()
     }
     this.sessions.set(id, session)
     return session
@@ -687,6 +691,7 @@ export class AgentService implements SessionStore, McpHandlers {
   release(s: AgentSession, tabId: string, commit = true): void {
     if (!s.tabIds.delete(tabId)) return
     s.cursors.delete(tabId)
+    s.frames.delete(tabId)
     if (s.currentTabId === tabId) s.currentTabId = firstOf(s.tabIds)
     const view = this.browser.tabs.view(tabId)
     if (view) {
@@ -786,6 +791,16 @@ export class AgentService implements SessionStore, McpHandlers {
     return view.executeIsolatedJavaScript
       ? view.executeIsolatedJavaScript(code)
       : view.executeJavaScript(code)
+  }
+
+  /** What the agent knows about the frames of a tab (see `TabFrames`), created on first use. */
+  frameState(s: AgentSession, tabId: string): TabFrames {
+    let state = s.frames.get(tabId)
+    if (!state) {
+      state = new TabFrames()
+      s.frames.set(tabId, state)
+    }
+    return state
   }
 
   /** Move (or click with) the agent's cursor in the page and remember where it is. */
