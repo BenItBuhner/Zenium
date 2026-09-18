@@ -17,7 +17,7 @@ import {
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const find = { tabId: 't1' }
+const find = { tabId: 't1', text: '' }
 
 beforeEach(() => resetChromeShortcutClaims())
 
@@ -29,8 +29,8 @@ describe('claimChromeShortcut / offerChromeShortcut', () => {
   it('hands the event to a claim that takes it, with the payload', () => {
     const claim = vi.fn(() => true)
     claimChromeShortcut('find.open', claim)
-    expect(offerChromeShortcut('find.open', { tabId: 't1', again: 'next' })).toBe(true)
-    expect(claim).toHaveBeenCalledWith({ tabId: 't1', again: 'next' })
+    expect(offerChromeShortcut('find.open', { tabId: 't1', text: '', again: 'next' })).toBe(true)
+    expect(claim).toHaveBeenCalledWith({ tabId: 't1', text: '', again: 'next' })
   })
 
   it('asks the latest claim first and passes on what it declines', () => {
@@ -65,8 +65,8 @@ describe('claimChromeShortcut / offerChromeShortcut', () => {
 
   it('a claim that only takes its own tab lets another tab’s event through', () => {
     claimChromeShortcut('find.open', (payload) => payload.tabId === 't1')
-    expect(offerChromeShortcut('find.open', { tabId: 't2' })).toBe(false)
-    expect(offerChromeShortcut('find.open', { tabId: 't1' })).toBe(true)
+    expect(offerChromeShortcut('find.open', { tabId: 't2', text: '' })).toBe(false)
+    expect(offerChromeShortcut('find.open', { tabId: 't1', text: '' })).toBe(true)
   })
 })
 
