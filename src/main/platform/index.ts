@@ -1,4 +1,14 @@
-import { app, clipboard, dialog, ipcMain, nativeTheme, net, shell, type Session } from 'electron'
+import {
+  app,
+  clipboard,
+  dialog,
+  ipcMain,
+  nativeTheme,
+  net,
+  session,
+  shell,
+  type Session
+} from 'electron'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { release } from 'node:os'
 import { basename, join } from 'node:path'
@@ -191,7 +201,8 @@ export class ElectronPlatform implements Platform {
         void clipboard
           .writeText(text)
           .catch((error: Error) => console.warn('[zen] clipboard:', error.message)),
-      writeImageFromUrl: (url) => copyImageFromUrl(url)
+      writeImageFromUrl: (url) => copyImageFromUrl(url),
+      readText: () => clipboard.readText().catch(() => '')
     }
     this.shell = {
       openExternal: (url) => void shell.openExternal(url),
@@ -207,12 +218,34 @@ export class ElectronPlatform implements Platform {
           options.timeoutMs && AbortSignal.timeout(options.timeoutMs)
         ]
         const live = signals.filter((s): s is AbortSignal => Boolean(s))
-        const res = await net.fetch(url, {
+        const target = redirectedOrigin(url)
+        const res = await net.fetch(target.url, {
           signal: live.length > 0 ? AbortSignal.any(live) : undefined,
-          headers: options.headers,
+          headers: target.origin
+            ? { ...options.headers, 'x-zen-origin': target.origin }
+            : options.headers,
           cache: 'no-store'
         })
         return { ok: res.ok, status: res.status, text: res.ok ? await res.text() : '' }
+      },
+      resolveHost: async (host, options) => {
+        if (options.signal?.aborted) return false
+        try {
+          const timeout = new Promise<false>((resolve) => {
+            const timer = setTimeout(() => resolve(false), 1500)
+            options.signal?.addEventListener('abort', () => {
+              clearTimeout(timer)
+              resolve(false)
+            })
+          })
+          const resolved = await Promise.race([
+            session.defaultSession.resolveHost(host).then((r) => r.endpoints.length > 0),
+            timeout
+          ])
+          return resolved
+        } catch {
+          return false
+        }
       }
     }
     this.app = {
@@ -383,6 +416,25 @@ export class ElectronPlatform implements Platform {
     ipcMain.on('zen:page', (event, message: PageMessage) => {
       this.views.viewForWebContents(event.sender)?.dispatchPageMessage(message)
     })
+  }
+}
+
+/**
+ * Test hook: `ZEN_NET_ORIGIN=http://127.0.0.1:8788` sends every core fetch (search suggestions,
+ * omnibox answers, Live Folders) to that origin instead, with the intended origin in an
+ * `x-zen-origin` header, so a harness can answer deterministically. Unset in normal runs.
+ */
+function redirectedOrigin(url: string): { url: string; origin: string | null } {
+  const override = process.env['ZEN_NET_ORIGIN']
+  if (!override) return { url, origin: null }
+  try {
+    const original = new URL(url)
+    const target = new URL(override)
+    target.pathname = original.pathname
+    target.search = original.search
+    return { url: target.toString(), origin: original.origin }
+  } catch {
+    return { url, origin: null }
   }
 }
 

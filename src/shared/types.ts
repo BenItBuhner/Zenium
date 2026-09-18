@@ -901,6 +901,8 @@ export type ShortcutAction =
   | 'nav.stop'
   | 'urlbar.focus'
   | 'urlbar.search'
+  | 'urlbar.pasteAndGo'
+  | 'urlbar.pasteAndSearch'
   | 'find.open'
   | 'find.next'
   | 'find.prev'
@@ -1610,8 +1612,22 @@ export interface FindResult {
 // URL bar suggestions
 // ---------------------------------------------------------------------------
 
+/**
+ * `answer`: a calculator, unit, currency, weather, time or dictionary row (the answer is the
+ * title, the question the subtitle). `entity`: a Wikipedia summary row (name, description,
+ * thumbnail). Both open their `url` on Enter, never inline-complete.
+ */
 export type SuggestionKind =
-  'url' | 'search' | 'history' | 'bookmark' | 'tab' | 'space' | 'command' | 'engine'
+  | 'url'
+  | 'search'
+  | 'history'
+  | 'bookmark'
+  | 'tab'
+  | 'space'
+  | 'command'
+  | 'engine'
+  | 'answer'
+  | 'entity'
 
 export interface Suggestion {
   id: string
@@ -1625,6 +1641,14 @@ export interface Suggestion {
   targetId: string | null
   /** Text to place in the input when the suggestion is highlighted (for inline completion). */
   fill: string
+  /**
+   * Set on the first row when it is the default match to complete inline: `fill` starts with
+   * what was typed and the row outranks the verbatim query (Chrome's rule), so the field shows
+   * the remainder selected and Enter accepts it.
+   */
+  inline?: boolean
+  /** Chromium-style relevance the rows were ordered by (1300 is the verbatim query). */
+  relevance?: number
 }
 
 export interface CommandDescriptor {
@@ -1875,6 +1899,13 @@ export interface Commands {
     result: void
   }
   'urlbar.runCommand': { args: { action: string }; result: void }
+  /**
+   * Chrome's URL-bar menu items: the clipboard's text goes where typed text would (a URL
+   * navigates, anything else searches), or is always searched with the default engine. Nothing
+   * happens when the clipboard holds no text or the host cannot read it.
+   */
+  'urlbar.pasteAndGo': { args: { tabId: string | null }; result: void }
+  'urlbar.pasteAndSearch': { args: { tabId: string | null }; result: void }
 
   'overlay.snapshot': { args: { tabId: string }; result: string | null }
 

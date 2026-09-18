@@ -1,7 +1,26 @@
 import type { JSX, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowRight, Bookmark, Clock, Globe, Layers, Search, Terminal, X } from 'lucide-react'
-import type { PhoneBarLayout, PhoneBarPosition, Rect, Suggestion, UIState } from '@shared/types'
+import {
+  ArrowRight,
+  Bookmark,
+  Calculator,
+  Clock,
+  Globe,
+  Info,
+  Layers,
+  Search,
+  Terminal,
+  X
+} from 'lucide-react'
+import type {
+  PhoneBarLayout,
+  PhoneBarPosition,
+  Rect,
+  Suggestion,
+  SuggestionKind,
+  Tab,
+  UIState
+} from '@shared/types'
 import {
   BAR_BUTTON,
   BAR_GAP,
@@ -9,6 +28,7 @@ import {
   phoneBarForHost,
   phoneBarOffered
 } from '@shared/phoneBar'
+import { SEARCH_SCOPES, completeWwwCom, matchKeyword } from '@shared/search'
 import { ERROR_URL_PREFIX, BLANK_URL } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
@@ -31,14 +51,10 @@ interface Props {
 
 /** Zen remembers what you typed until you navigate away. */
 const drafts = new Map<string, string>()
+let keywordSeq = 0
 
-function initialTextFor(state: UIState, urlbar: UrlbarState): string {
-  if (urlbar.initialText !== undefined) return urlbar.initialText
-  if (urlbar.mode !== 'edit' || !urlbar.tabId) return drafts.get('new') ?? ''
-  const tab = state.tabs[urlbar.tabId]
-  if (!tab) return ''
-  const draft = drafts.get(`${tab.id}|${tab.url}`)
-  if (draft !== undefined) return draft
+/** The text the field holds for a page: its address, or the address an error page stands in for. */
+function pageTextFor(tab: Tab): string {
   if (tab.url === BLANK_URL) return ''
   if (tab.url.startsWith(ERROR_URL_PREFIX)) {
     try {
@@ -50,6 +66,26 @@ function initialTextFor(state: UIState, urlbar: UrlbarState): string {
   return tab.url
 }
 
+function initialTextFor(state: UIState, urlbar: UrlbarState): string {
+  if (urlbar.initialText !== undefined) return urlbar.initialText
+  if (urlbar.mode !== 'edit' || !urlbar.tabId) return drafts.get('new') ?? ''
+  const tab = state.tabs[urlbar.tabId]
+  if (!tab) return ''
+  const draft = drafts.get(`${tab.id}|${tab.url}`)
+  if (draft !== undefined) return draft
+  return pageTextFor(tab)
+}
+
+/** The completion tail is selected: the caret's selection runs from inside the text to its end. */
+function hasCompletionTail(el: HTMLInputElement): boolean {
+  return (
+    el.selectionStart !== null &&
+    el.selectionEnd !== null &&
+    el.selectionStart < el.selectionEnd &&
+    el.selectionEnd === el.value.length
+  )
+}
+
 export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   const [text, setText] = useState(() => initialTextFor(state, urlbar))
   const [results, setResults] = useState<Suggestion[]>([])
@@ -57,11 +93,26 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   const inputRef = useRef<HTMLInputElement>(null)
   const fadeResults = useFadeEdges<HTMLUListElement>({ axis: 'y' })
   const requestSeq = useRef(0)
+  /** What the user typed, without any inline completion the field shows after it. */
   const lastTyped = useRef(text)
-  const engine =
-    state.searchEngines.find((e) => e.id === state.settings.searchEngineId) ??
-    state.searchEngines[0]
+  /** An IME composition is under way: nothing is completed inline until it is committed. */
+  const composing = useRef(false)
+  const engines = state.searchEngines
+  const defaultEngine = engines.find((e) => e.id === state.settings.searchEngineId) ?? engines[0]
   const tab = urlbar.tabId ? state.tabs[urlbar.tabId] : null
+
+  // Keyword mode (`@ddg cats`, `@bookmarks foo`): the chip names where the search goes.
+  const keyword = useMemo(() => matchKeyword(text.trimStart(), engines), [text, engines])
+  const engine = keyword?.kind === 'engine' ? keyword.engine : defaultEngine
+  const scopeLabel =
+    keyword?.kind === 'scope'
+      ? (SEARCH_SCOPES.find((s) => s.scope === keyword.scope)?.label ?? keyword.scope)
+      : null
+  const chipLabel = keyword
+    ? keyword.kind === 'engine'
+      ? `Search ${keyword.engine.name}`
+      : `Search ${scopeLabel}`
+    : null
 
   useEffect(() => {
     const el = inputRef.current
@@ -82,21 +133,31 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
       )
       if (seq !== requestSeq.current) return
       setResults(list)
-      setSelected(-1)
       const first = list[0]
       const el = inputRef.current
+      // Inline completion of the default match (Chrome's rule, decided in the core: the top row
+      // outranks the verbatim query and extends what was typed): what was typed stays as typed,
+      // the remainder is appended selected, so typing on replaces it and Backspace removes it.
+      // Only while the field still shows the text the request was for, with the caret at its
+      // end and no IME composition under way.
       if (
         autofill &&
-        first &&
-        first.kind === 'url' &&
+        first?.inline &&
         el &&
-        first.fill.toLowerCase().startsWith(query.toLowerCase()) &&
-        first.fill.length > query.length
+        !composing.current &&
+        el.value === query &&
+        el.selectionStart === query.length &&
+        el.selectionEnd === query.length &&
+        first.fill.length > query.length &&
+        first.fill.toLowerCase().startsWith(query.toLowerCase())
       ) {
-        // Inline completion: keep what was typed, select the completed remainder.
-        el.value = first.fill
-        setText(first.fill)
-        el.setSelectionRange(query.length, first.fill.length)
+        const fill = query + first.fill.slice(query.length)
+        el.value = fill
+        setText(fill)
+        el.setSelectionRange(query.length, fill.length)
+        setSelected(0)
+      } else {
+        setSelected(-1)
       }
     },
     [urlbar.tabId]
@@ -110,26 +171,55 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   const onChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
     const value = e.target.value
     const grew = value.length > lastTyped.current.length && value.startsWith(lastTyped.current)
+    const caretAtEnd = e.target.selectionStart === value.length
     lastTyped.current = value
     setText(value)
-    void fetchSuggestions(value, grew && !/\s/.test(value))
+    setSelected(-1)
+    // A deletion, an edit in the middle or a composition in progress never re-inlines.
+    const native = e.nativeEvent as Event & { isComposing?: boolean }
+    void fetchSuggestions(value, grew && caretAtEnd && !composing.current && !native.isComposing)
+  }
+
+  /** Put `value` in the field with the caret at its end, as the text the user now "typed". */
+  const setTyped = (value: string, refetch: boolean): void => {
+    lastTyped.current = value
+    setText(value)
+    const el = inputRef.current
+    if (el) {
+      el.value = value
+      el.setSelectionRange(value.length, value.length)
+    }
+    if (refetch) void fetchSuggestions(value, false)
   }
 
   const clear = (): void => {
-    lastTyped.current = ''
-    setText('')
-    void fetchSuggestions('', false)
+    setTyped('', true)
     inputRef.current?.focus()
   }
 
+  // A picked keyword row (`@d` → `@ddg `) becomes the typed text once the pick has rendered: the
+  // row's click handler itself stays clear of the field's refs.
+  const [keywordFill, setKeywordFill] = useState<{ fill: string; seq: number } | null>(null)
+  useEffect(() => {
+    if (!keywordFill) return
+    const { fill } = keywordFill
+    lastTyped.current = fill
+    const el = inputRef.current
+    if (el) {
+      el.value = fill
+      el.setSelectionRange(fill.length, fill.length)
+    }
+    void fetchSuggestions(fill, false)
+  }, [keywordFill, fetchSuggestions])
+
+  const draftKey = tab ? `${tab.id}|${tab.url}` : 'new'
   const close = useCallback(
     (keepDraft: boolean) => {
-      const key = tab ? `${tab.id}|${tab.url}` : 'new'
-      if (keepDraft && text.trim() && text !== tab?.url) drafts.set(key, text)
-      else drafts.delete(key)
+      if (keepDraft && text.trim() && text !== tab?.url) drafts.set(draftKey, text)
+      else drafts.delete(draftKey)
       closeUrlbar()
     },
-    [tab, text]
+    [draftKey, tab, text]
   )
 
   // The system back gesture lifts the bar away like a sheet off the top edge, fading as it goes;
@@ -160,10 +250,17 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
 
   const submit = (
     item: Suggestion | null,
-    opts: { newTab?: boolean; background?: boolean } = {}
+    opts: { newTab?: boolean; background?: boolean; input?: string } = {}
   ): void => {
-    const value = text.trim()
+    const value = (opts.input ?? text).trim()
     const newTab = opts.newTab || urlbar.mode === 'new-tab' || !tab
+    const navigate = (input: string): void =>
+      run('urlbar.submit', {
+        input,
+        newTab,
+        tabId: tab?.id ?? null,
+        background: opts.background
+      })
     if (item) {
       switch (item.kind) {
         case 'tab':
@@ -175,90 +272,133 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
         case 'command':
           if (item.targetId) run('urlbar.runCommand', { action: item.targetId })
           break
+        case 'engine':
+          // A keyword to complete (`@d` → `@ddg `): the field enters keyword mode and stays open.
+          setText(item.fill)
+          setKeywordFill({ fill: item.fill, seq: ++keywordSeq })
+          return
         case 'bookmark':
           // Through the bookmark so its "last used" date is recorded.
           if (item.targetId && !opts.background) {
             run('bookmark.open', { id: item.targetId, newTab, tabId: tab?.id ?? null })
             break
           }
-          if (item.url)
-            run('urlbar.submit', {
-              input: item.url,
-              newTab,
-              tabId: tab?.id ?? null,
-              background: opts.background
-            })
+          if (item.url) navigate(item.url)
+          break
+        case 'search':
+          // `@bookmarks foo` / `@history foo`: the typed text carries the scope the core acts on.
+          if (item.id === 'scope') navigate(value)
+          else if (item.url) navigate(item.url)
           break
         default:
-          if (item.url)
-            run('urlbar.submit', {
-              input: item.url,
-              newTab,
-              tabId: tab?.id ?? null,
-              background: opts.background
-            })
+          if (item.url) navigate(item.url)
       }
     } else {
       if (!value) return
-      run('urlbar.submit', {
-        input: value,
-        newTab,
-        tabId: tab?.id ?? null,
-        background: opts.background
-      })
+      navigate(value)
     }
-    drafts.delete(tab ? `${tab.id}|${tab.url}` : 'new')
+    drafts.delete(draftKey)
     drafts.delete('new')
     closeUrlbar()
   }
 
+  const removeHistoryRow = (index: number): boolean => {
+    const row = results[index]
+    if (!row || row.kind !== 'history' || !row.url) return false
+    run('history.delete', { url: row.url })
+    setResults((r) => r.filter((_, i) => i !== index))
+    setSelected(-1)
+    setTyped(lastTyped.current, false)
+    return true
+  }
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    const el = inputRef.current
+    if (e.nativeEvent.isComposing) return
     switch (e.key) {
-      case 'Escape':
+      case 'Escape': {
         e.preventDefault()
-        close(true)
-        return
-      case 'ArrowDown':
-      case 'ArrowUp':
-      case 'Tab': {
-        if (results.length === 0) return
-        e.preventDefault()
-        const dir = e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1
-        const next = selected + dir
-        const wrapped = next < -1 ? results.length - 1 : next >= results.length ? -1 : next
-        setSelected(wrapped)
-        const el = inputRef.current
-        if (el) {
-          const fill =
-            wrapped === -1
-              ? lastTyped.current
-              : results[wrapped].fill || results[wrapped].url || lastTyped.current
-          el.value = fill
-          setText(fill)
-          requestAnimationFrame(() => el.setSelectionRange(fill.length, fill.length))
+        const pageText = tab && urlbar.mode === 'edit' ? pageTextFor(tab) : null
+        if (pageText !== null && text !== pageText) {
+          // Esc restores the page's address (selected, read from the start) and closes the popup;
+          // a second Esc closes the bar. The draft is gone with the edit.
+          requestSeq.current++
+          drafts.delete(draftKey)
+          lastTyped.current = pageText
+          setText(pageText)
+          setResults([])
+          setSelected(-1)
+          if (el) {
+            el.value = pageText
+            el.setSelectionRange(0, pageText.length, 'backward')
+            el.scrollLeft = 0
+          }
+          return
         }
+        close(pageText === null)
         return
       }
-      case 'Enter':
+      case 'Tab': {
+        // Tab accepts the inline completion (design language v2 §9.22); otherwise it moves the
+        // selection like the arrows.
+        if (el && hasCompletionTail(el) && !e.shiftKey) {
+          e.preventDefault()
+          setTyped(el.value, true)
+          return
+        }
+        if (results.length === 0) return
         e.preventDefault()
+        moveSelection(e.shiftKey ? -1 : 1)
+        return
+      }
+      case 'ArrowDown':
+      case 'ArrowUp':
+        if (results.length === 0) return
+        e.preventDefault()
+        moveSelection(e.key === 'ArrowUp' ? -1 : 1)
+        return
+      case 'ArrowRight':
+      case 'End':
+        // The caret collapses to the end natively; the completion is now what was typed.
+        if (el && hasCompletionTail(el) && !e.shiftKey) lastTyped.current = el.value
+        return
+      case 'Enter': {
+        e.preventDefault()
+        if (e.ctrlKey || e.metaKey) {
+          // Ctrl+Enter: `www.` and `.com` around what was typed, never the completion.
+          const typed = el && hasCompletionTail(el) ? lastTyped.current : text
+          submit(null, { input: completeWwwCom(typed), newTab: e.altKey })
+          return
+        }
         submit(selected >= 0 ? results[selected] : null, {
           newTab: e.altKey,
           background: e.altKey && e.shiftKey
         })
         return
+      }
       case 'Delete':
-        if (selected >= 0 && results[selected]?.kind === 'history' && results[selected].url) {
-          e.preventDefault()
-          run('history.delete', { url: results[selected].url! })
-          setResults((r) => r.filter((_, i) => i !== selected))
-          setSelected(-1)
-        }
+        // Shift+Delete removes the highlighted history row (Chrome); plain Delete does too when a
+        // row is highlighted, since the field's caret then has nothing to delete.
+        if (selected >= 0 && removeHistoryRow(selected)) e.preventDefault()
         return
     }
   }
 
+  const moveSelection = (dir: 1 | -1): void => {
+    const next = selected + dir
+    const wrapped = next < -1 ? results.length - 1 : next >= results.length ? -1 : next
+    setSelected(wrapped)
+    const el = inputRef.current
+    if (!el) return
+    const row = wrapped >= 0 ? results[wrapped] : null
+    const fill = row ? row.fill || row.url || lastTyped.current : lastTyped.current
+    el.value = fill
+    setText(fill)
+    requestAnimationFrame(() => el.setSelectionRange(fill.length, fill.length))
+  }
+
   const floating = !urlbar.attached
-  const width = Math.min(680, (area?.width ?? 0) - 32)
+  const width = Math.min(907, (area?.width ?? 0) - 32)
   const style = useMemo(() => {
     if (!area) return undefined
     const top = floating ? Math.max(24, area.height * 0.16) : 8
@@ -272,19 +412,21 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   }, [floating, area, width])
 
   const placeholder =
-    urlbar.mode === 'search' ? `Search with ${engine.name}` : 'Search or enter address'
+    keyword || urlbar.mode === 'search' ? `Search with ${engine.name}` : 'Search or enter address'
 
   const rows = (sheet: boolean): JSX.Element[] =>
     results.map((item, i) => (
       <SuggestionRow
         key={item.id}
+        id={`zen-omnibox-row-${i}`}
         item={item}
         selected={i === selected}
         sheet={sheet}
-        onHover={() => setSelected(i)}
         onPick={(e) => submit(item, { newTab: e.altKey || e.button === 1 })}
       />
     ))
+
+  const activeRow = selected >= 0 ? `zen-omnibox-row-${selected}` : undefined
 
   if (phoneEdge) {
     return (
@@ -314,6 +456,8 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
               value={text}
               onChange={onChange}
               onKeyDown={onKeyDown}
+              onCompositionStart={() => (composing.current = true)}
+              onCompositionEnd={() => (composing.current = false)}
               placeholder={placeholder}
               spellCheck={false}
               autoComplete="off"
@@ -340,60 +484,77 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     )
   }
 
+  /*
+    The desktop bar on design language v2 §6 "Floating URL bar": a neutral opaque surface at radius
+    12 with the URL bar shadow (anchored under the pill it is a popover, §9.20: radius 8, hairline,
+    panel shadow), a 62 px field with a hairline under it, 50 px rows with a 16 px favicon, the
+    title then ` — ` then the host at 69%. Page tokens only (§9.29).
+  */
   return (
     <div className="absolute inset-0 z-30" onMouseDown={() => close(true)}>
       <div
         ref={panelRef}
-        className={cn(
-          'zen-panel zen-animate-in absolute flex flex-col overflow-hidden',
-          floating ? 'rounded-2xl' : 'rounded-xl'
-        )}
+        className="zen-omnibox zen-animate-in absolute flex flex-col overflow-hidden"
+        data-surface="page"
+        data-attached={!floating}
         style={style}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="flex h-12 shrink-0 items-center gap-3 px-4">
-          <span
-            className="flex h-6 w-6 items-center justify-center rounded-md bg-[var(--zen-element-bg)] text-[11px] font-semibold"
-            title={`Search engine: ${engine.name}`}
-          >
-            {engine.glyph}
-          </span>
+        <div className="zen-omnibox-input-row flex shrink-0 items-center">
+          {chipLabel ? (
+            <span className="zen-omnibox-badge" data-keyword-chip title={chipLabel}>
+              {chipLabel}
+            </span>
+          ) : (
+            <span className="zen-omnibox-engine" title={`Search engine: ${engine.name}`}>
+              {engine.glyph}
+            </span>
+          )}
           <input
             ref={inputRef}
             value={text}
             onChange={onChange}
             onKeyDown={onKeyDown}
+            onCompositionStart={() => (composing.current = true)}
+            onCompositionEnd={() => (composing.current = false)}
             placeholder={placeholder}
             spellCheck={false}
             autoComplete="off"
-            className="h-full min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-[var(--zen-muted)]"
+            role="combobox"
+            aria-label="Search or enter address"
+            aria-autocomplete="both"
+            aria-expanded={results.length > 0}
+            aria-controls="zen-omnibox-results"
+            aria-activedescendant={activeRow}
+            className="zen-omnibox-input h-full min-w-0 flex-1 bg-transparent outline-none"
           />
-          {tab && urlbar.mode === 'edit' && (
-            <span className="rounded-md bg-[var(--zen-element-bg)] px-1.5 py-0.5 text-[10.5px] uppercase tracking-wide text-[var(--zen-muted)]">
-              Current tab
-            </span>
-          )}
+          {tab && urlbar.mode === 'edit' && <span className="zen-omnibox-badge">Current tab</span>}
         </div>
         {results.length > 0 && (
           <ul
             ref={fadeResults}
-            className="min-h-0 max-h-[420px] flex-1 overflow-y-auto border-t border-[var(--zen-border)] p-1.5"
+            id="zen-omnibox-results"
+            role="listbox"
+            className="zen-omnibox-results min-h-0 max-h-[520px] flex-1 overflow-y-auto"
           >
             {rows(false)}
           </ul>
         )}
-        <div className="zen-kbd-hint flex h-7 shrink-0 items-center gap-3 border-t border-[var(--zen-border)] px-4 text-[10.5px] text-[var(--zen-muted)]">
+        <div className="zen-omnibox-footer zen-kbd-hint flex shrink-0 items-center">
           <span>
-            <kbd className="zen-kbd">↵</kbd> Open
+            <kbd className="zen-omnibox-kbd">↵</kbd> Open
           </span>
           <span>
-            <kbd className="zen-kbd">Alt ↵</kbd> New tab
+            <kbd className="zen-omnibox-kbd">Alt ↵</kbd> New tab
           </span>
           <span>
-            <kbd className="zen-kbd font-mono">` ␣</kbd> Spaces
+            <kbd className="zen-omnibox-kbd">Ctrl ↵</kbd> www.com
           </span>
           <span>
-            <kbd className="zen-kbd">@ddg</kbd> Engine
+            <kbd className="zen-omnibox-kbd">Tab</kbd> Complete
+          </span>
+          <span>
+            <kbd className="zen-omnibox-kbd">@</kbd> Engines, bookmarks, history, tabs
           </span>
           <span className="flex-1" />
           <span>Type a command like “compact mode”</span>
@@ -507,76 +668,98 @@ function fieldGrowFrom(layout: PhoneBarLayout): React.CSSProperties {
   } as React.CSSProperties
 }
 
+const ROW_ICONS: Record<SuggestionKind, typeof Globe> = {
+  url: Globe,
+  search: Search,
+  history: Clock,
+  bookmark: Bookmark,
+  tab: Globe,
+  space: Layers,
+  command: Terminal,
+  engine: Search,
+  answer: Calculator,
+  entity: Info
+}
+
 function SuggestionRow({
+  id,
   item,
   selected,
   sheet,
-  onHover,
   onPick
 }: {
+  id: string
   item: Suggestion
+  /** The keyboard's highlight; hovering a row never moves it (Chrome), only a click picks. */
   selected: boolean
-  /** A row of the phone sheet: touch height (44), the desktop list keeps 36. */
+  /** A row of the phone sheet: touch height (44), the desktop list keeps v2's 50. */
   sheet: boolean
-  onHover: () => void
   onPick: (e: React.MouseEvent) => void
 }): JSX.Element {
   const touch = useRef(false)
-  const Icon =
-    item.kind === 'search'
-      ? Search
-      : item.kind === 'history'
-        ? Clock
-        : item.kind === 'bookmark'
-          ? Bookmark
-          : item.kind === 'command'
-            ? Terminal
-            : item.kind === 'space'
-              ? Layers
-              : Globe
+  const Icon = ROW_ICONS[item.kind]
+  const pointerProps = {
+    onPointerDown: (e: React.PointerEvent) => {
+      // Keep the input focused (no blur → no keyboard flicker on phones). A mouse picks on
+      // press like Firefox; a finger picks on tap so the list can still be scrolled.
+      e.preventDefault()
+      if (e.pointerType === 'mouse') onPick(e)
+      else touch.current = true
+    },
+    onClick: (e: React.MouseEvent) => {
+      if (!touch.current) return
+      touch.current = false
+      onPick(e)
+    }
+  }
+  const icon = item.favicon ? (
+    <img src={item.favicon} alt="" className="h-4 w-4 rounded-[3px]" referrerPolicy="no-referrer" />
+  ) : (
+    <Icon className="h-4 w-4 shrink-0 opacity-60" />
+  )
+  if (sheet) {
+    return (
+      <li
+        id={id}
+        role="option"
+        aria-selected={selected}
+        className="zen-suggestion zen-suggestion-sheet flex h-11 shrink-0 cursor-default items-center gap-3 px-2.5"
+        data-selected={selected}
+        {...pointerProps}
+      >
+        {icon}
+        <span className="min-w-0 flex-1 truncate text-[14px]">{item.title}</span>
+        <span className="max-w-[45%] truncate text-[13px] text-[var(--zen-muted)]">
+          {item.subtitle}
+        </span>
+        {item.kind === 'tab' && <ArrowRight className="h-3.5 w-3.5 opacity-50" />}
+      </li>
+    )
+  }
   return (
     <li
-      className={cn(
-        'zen-suggestion flex shrink-0 cursor-default items-center gap-3 px-2.5',
-        sheet ? 'zen-suggestion-sheet h-11' : 'h-9'
-      )}
+      id={id}
+      role="option"
+      aria-selected={selected}
+      className="zen-omnibox-row flex shrink-0 cursor-default items-center"
       data-selected={selected}
-      onMouseEnter={onHover}
-      onPointerDown={(e) => {
-        // Keep the input focused (no blur → no keyboard flicker on phones). A mouse picks on
-        // press like Firefox; a finger picks on tap so the list can still be scrolled.
-        e.preventDefault()
-        if (e.pointerType === 'mouse') onPick(e)
-        else touch.current = true
-      }}
-      onClick={(e) => {
-        if (!touch.current) return
-        touch.current = false
-        onPick(e)
-      }}
+      data-kind={item.kind}
+      {...pointerProps}
     >
-      {item.favicon ? (
-        <img
-          src={item.favicon}
-          alt=""
-          className="h-4 w-4 rounded-[3px]"
-          referrerPolicy="no-referrer"
-        />
-      ) : (
-        <Icon className="h-4 w-4 shrink-0 opacity-60" />
+      <span className="zen-omnibox-row-icon flex shrink-0 items-center justify-center">{icon}</span>
+      <span className="zen-omnibox-row-title">{item.title}</span>
+      {item.subtitle && (
+        <span className="zen-omnibox-row-host">
+          <span aria-hidden="true"> — </span>
+          {item.subtitle}
+        </span>
       )}
-      <span className={cn('min-w-0 flex-1 truncate', sheet ? 'text-[14px]' : 'text-[13.5px]')}>
-        {item.title}
-      </span>
-      <span
-        className={cn(
-          'max-w-[45%] truncate text-[var(--zen-muted)]',
-          sheet ? 'text-[13px]' : 'text-[12px]'
-        )}
-      >
-        {item.subtitle}
-      </span>
-      {item.kind === 'tab' && <ArrowRight className="h-3.5 w-3.5 opacity-50" />}
+      {item.kind === 'tab' && (
+        <span className="zen-omnibox-row-hint">
+          Switch to tab
+          <ArrowRight className="h-3.5 w-3.5" />
+        </span>
+      )}
     </li>
   )
 }
