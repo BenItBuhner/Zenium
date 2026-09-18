@@ -60,8 +60,11 @@ export interface NamespaceSpec {
   /**
    * Chrome hides permission-gated namespaces: this one exists only for extensions whose
    * manifest lists one of these permissions, required or optional (the engine's own namespace,
-   * when it made one, is patched regardless). An optional permission not granted yet leaves the
-   * namespace in place; the host refuses the calls until `permissions.request` grants it.
+   * when it made one, is patched regardless). Declaring is what counts, not the grant: Chrome
+   * leaves an optional namespace undefined until `permissions.request` grants it and defines it
+   * then; the shim has no synchronous view of the granted set at start-up, so a declared optional
+   * namespace exists (and answers) from the first statement. Extensions written for Chrome test
+   * `chrome.tabGroups ?` before asking, and get the working namespace either way.
    */
   permissions?: readonly string[]
   /**
