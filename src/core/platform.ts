@@ -19,6 +19,8 @@ import type {
   HostCapabilities,
   KeyBinding,
   NavigationSnapshot,
+  NewTabPageAction,
+  NewTabPageState,
   PageDialogResponse,
   PageRules,
   PermissionPrompt,
@@ -373,6 +375,8 @@ export interface TabViewEvents {
    * or the close the host is carrying out. Resolves true when the user leaves anyway.
    */
   onLeaveSite(reload: boolean): Promise<boolean>
+  /** `zen://newtab` asked for something (hosts route the page's dedicated channel here). */
+  onNewTabAction(action: NewTabPageAction): void
 }
 
 /**
@@ -536,6 +540,10 @@ export interface TabView {
    * while the chrome itself is dark; pages that declare `color-scheme: dark` are left alone.
    */
   setDarkening?(on: boolean): void
+
+  // The new tab page (optional – hosts without `capabilities.newTabPage` leave it out).
+  /** Push fresh state into a `zen://newtab` page (theme, settings, shortcuts, most visited). */
+  sendNewTabState?(state: NewTabPageState): void
 }
 
 export type { PageRules } from '../shared/types'
@@ -543,10 +551,28 @@ export type { PageRules } from '../shared/types'
 export interface TabViewHost {
   /** Create the live page for `tab`, attached to `host`'s window. */
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView
+  /**
+   * A view created for one tab id now belongs to another (a new tab page preloaded under a
+   * placeholder id becomes a real tab); hosts that map their web contents to tabs update the map.
+   */
+  retargetView?(view: TabView, tabId: string): void
   /** Shortcut table changed – hosts that pre-filter native key events refresh their copy. */
   setShortcuts?(bindings: KeyBinding[]): void
   /** Page controls changed – hosts that decide per navigation refresh their copy of the rules. */
   setPageRules?(rules: PageRules): void
+}
+
+/**
+ * The custom background image of the new tab page. The host owns the bytes (a copy of the picked
+ * file in its profile directory, served to the page under `zen://newtab-background`); the core
+ * only ever sees the address it hands the page.
+ */
+export interface NewTabBackgroundHost {
+  /** Address of the current image, or null when none is set. */
+  current(): string | null
+  /** Let the user pick an image file; resolves with its new address, or null when cancelled. */
+  pick(win: ZenWindow): Promise<string | null>
+  clear(): Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -1360,6 +1386,8 @@ export interface Platform {
    * DNS) and the Safe Browsing snapshot it ships; hosts without it get none of those.
    */
   readonly privacy?: PrivacyHost
+  /** The new tab page's custom background image; hosts without it offer no "Image" option. */
+  readonly newTabBackground?: NewTabBackgroundHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Offline page translation; hosts without it report the feature as unavailable. */

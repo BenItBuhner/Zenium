@@ -38,6 +38,7 @@ import {
   errorPageUrl,
   httpsOnlyPageUrl,
   interstitialKindOf,
+  isEmptyTabUrl,
   isNavigableUrl,
   safeBrowsingPageUrl,
   titleForUrl
@@ -604,7 +605,8 @@ export class TabManager {
         const leave = await this.browser.pageDialogs.confirmLeave(tabId, reload)
         if (!leave) this.stayedOnPage(tabId)
         return leave
-      }
+      },
+      onNewTabAction: (action) => this.browser.newTab.handleAction(tabId, action)
     }
   }
 
@@ -1036,6 +1038,31 @@ export class TabManager {
   }
 
   /**
+   * Give a tab without a page a live view that already exists (a new tab page preloaded off
+   * screen under a placeholder id). The view already hangs in `win`; from now on its host events
+   * must reach the returned sink. Undefined when the tab is unknown or already has a page.
+   */
+  attachView(view: TabView, tabId: string, win: ZenWindow): TabViewEvents | undefined {
+    const tab = this.tab(tabId)
+    if (!tab || this.view(tabId) || view.isDestroyed()) return undefined
+    this.browser.platform.views.retargetView?.(view, tabId)
+    view.attachTo(win.host)
+    view.setBackgroundColor(this.backgroundFor(tab.url))
+    view.setVisible(false)
+    this.views.set(tabId, view)
+    this.owners.set(tabId, win)
+    this.browser.governor.onViewCreated(tabId, view)
+    tab.discarded = false
+    tab.frozen = false
+    tab.cpuThrottle = 1
+    tab.loading = false
+    tab.title = view.getTitle() || titleForUrl(tab.url)
+    if (tab.muted) view.setMuted(true)
+    if (tab.zoom !== 1) view.setZoom(tab.zoom)
+    return this.eventsFor(tabId)
+  }
+
+  /**
    * The page went away underneath its tab – a popup called `window.close()`, or the host tore
    * the view down on its own. The dead view is dropped without being touched again and the tab
    * closes as if the user had closed it. Views the core destroys itself are already forgotten
@@ -1374,7 +1401,7 @@ export class TabManager {
 
   /**
    * What "Recently Closed" remembers about a tab that is going away. Private tabs and tabs that
-   * never left the blank page are not worth keeping (Firefox skips those too).
+   * never left the blank page or the new tab page are not worth keeping (Firefox skips those too).
    */
   private captureClosed(tab: Tab, index: number, closedAt: number): ClosedTabEntry | null {
     if (this.isPrivate(tab)) return null
@@ -1382,8 +1409,8 @@ export class TabManager {
     const navigation = view
       ? view.navigationEntries()
       : (this.pendingNavigation.get(tab.id) ?? null)
-    const visited = navigation?.entries.some((e) => e.url !== BLANK_URL && e.url !== '') ?? false
-    if (tab.url === BLANK_URL && !visited) return null
+    const visited = navigation?.entries.some((e) => !isEmptyTabUrl(e.url)) ?? false
+    if (isEmptyTabUrl(tab.url) && !visited) return null
     return closedTabEntry(
       tab,
       { spaceId: tab.spaceId, folderId: tab.folderId, index, windowId: tab.windowId },

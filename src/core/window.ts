@@ -99,6 +99,8 @@ export class ZenWindow {
   private savedBounds: Rect | null
   private savedDisplayId: number | null
   private lastLayout: LayoutReport | null = null
+  /** Where the content area last put a page (the size a page preloaded off screen lays out at). */
+  private lastContentRect: Rect | null = null
   private pendingContentFocus = false
   private closing = false
   private chromeReadyOnce = false
@@ -350,6 +352,7 @@ export class ZenWindow {
     if (!report.contentHidden) {
       for (const p of report.placements) wanted.set(p.tabId, { rect: p.rect, radius: p.radius })
     }
+    if (report.placements.length === 1) this.lastContentRect = roundRect(report.placements[0].rect)
     const glance = report.glance
     // Whether a page that was showing goes away under this report (chrome UI covers it), and
     // whether one of those pages held the keyboard as it went.
@@ -461,6 +464,11 @@ export class ZenWindow {
   /** Whether the chrome currently covers the content (used by hosts for input routing). */
   get contentHidden(): boolean {
     return this.lastLayout?.contentHidden ?? false
+  }
+
+  /** Where a single page last sat in this window (null before the first layout). */
+  contentRect(): Rect | null {
+    return this.lastContentRect
   }
 
   /**

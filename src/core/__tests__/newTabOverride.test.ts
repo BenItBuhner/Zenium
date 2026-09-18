@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
+import { NEW_TAB_URL } from '../../shared/url'
 import { Browser } from '../browser'
 import { NoExtensions } from '../hostDefaults'
 import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
@@ -33,11 +34,16 @@ interface Fixture {
   override: { url: string | null }
 }
 
-function fixture(): Fixture {
+function fixture(opts: { newTabPage?: boolean } = {}): Fixture {
   const loads: string[] = []
   const sent: Fixture['sent'] = []
   const override = { url: null as string | null }
-  const capabilities = stub<HostCapabilities>({ windows: true, updates: false, agents: false })
+  const capabilities = stub<HostCapabilities>({
+    windows: true,
+    updates: false,
+    agents: false,
+    newTabPage: opts.newTabPage ?? true
+  })
   const platform: Platform = {
     info: { os: 'linux' as PlatformOs, version: '0.0.0' },
     capabilities,
@@ -98,14 +104,33 @@ function fixture(): Fixture {
 }
 
 describe('opening a new tab with a chrome_url_overrides.newtab extension', () => {
-  it('opens the URL bar in new-tab mode when no extension holds the override', () => {
+  it('opens the new tab page when no extension holds the override', () => {
     const f = fixture()
+    const win = f.browser.focusedWindow()
+    const tabsBefore = Object.keys(f.browser.state.model.tabs).length
+    f.browser.handleCommand(win, 'tab.new', undefined)
+    expect(f.sent.filter((e) => e.name === 'urlbar.toggle')).toEqual([])
+    expect(Object.keys(f.browser.state.model.tabs)).toHaveLength(tabsBefore + 1)
+    expect(f.browser.tabs.activeTabFor(win)?.url).toBe(NEW_TAB_URL)
+  })
+
+  it('opens the URL bar in new-tab mode without the page (host without it, or turned off)', () => {
+    const f = fixture({ newTabPage: false })
     const tabsBefore = Object.keys(f.browser.state.model.tabs).length
     f.browser.handleCommand(f.browser.focusedWindow(), 'tab.new', undefined)
     expect(f.sent.filter((e) => e.name === 'urlbar.toggle')).toEqual([
       { name: 'urlbar.toggle', payload: { mode: 'new-tab' } }
     ])
     expect(Object.keys(f.browser.state.model.tabs)).toHaveLength(tabsBefore)
+
+    const g = fixture()
+    g.browser.state.settings.newTab = { ...g.browser.state.settings.newTab, enabled: false }
+    const before = Object.keys(g.browser.state.model.tabs).length
+    g.browser.handleCommand(g.browser.focusedWindow(), 'tab.new', undefined)
+    expect(g.sent.filter((e) => e.name === 'urlbar.toggle')).toEqual([
+      { name: 'urlbar.toggle', payload: { mode: 'new-tab' } }
+    ])
+    expect(Object.keys(g.browser.state.model.tabs)).toHaveLength(before)
   })
 
   it("opens the extension's page as the new active tab when one does", () => {
@@ -119,14 +144,25 @@ describe('opening a new tab with a chrome_url_overrides.newtab extension', () =>
     expect(f.loads).toEqual([OVERRIDE])
   })
 
-  it('keeps private windows on the URL bar: extensions do not run there', () => {
+  it('keeps private windows off the override: extensions do not run there', () => {
+    // With the page: the private window's new tab is the (private) new tab page.
     const f = fixture()
     f.override.url = OVERRIDE
     const priv = f.browser.openWindow('private')
     if (!priv) throw new Error('no private window')
     f.sent.length = 0
     f.browser.openNewTab(priv)
-    expect(f.sent.map((e) => e.name)).toContain('urlbar.toggle')
+    expect(f.browser.tabs.activeTabFor(priv)?.url).toBe(NEW_TAB_URL)
     expect(f.loads).not.toContain(OVERRIDE)
+
+    // Without it: the URL bar, as before the page existed.
+    const g = fixture({ newTabPage: false })
+    g.override.url = OVERRIDE
+    const gPriv = g.browser.openWindow('private')
+    if (!gPriv) throw new Error('no private window')
+    g.sent.length = 0
+    g.browser.openNewTab(gPriv)
+    expect(g.sent.map((e) => e.name)).toContain('urlbar.toggle')
+    expect(g.loads).not.toContain(OVERRIDE)
   })
 })
