@@ -245,6 +245,35 @@ export function availableSections(
   )
 }
 
+/** Sections a hairline precedes on the phone landing: Zen's two nav separators (v2 §10.2). */
+export const SETTINGS_LANDING_BREAKS: readonly string[] = ['sync', 'about']
+
+/**
+ * The landing's category rows in runs a hairline separates: one break before Sync and one before
+ * About, in the page's nav order. A break is a position in that order rather than a row, so a
+ * host without Sync still separates what follows it (Updates) from Zen's features above, and a
+ * run nothing falls into is dropped.
+ */
+export function landingRuns(
+  page: InternalPageDefinition,
+  sections: readonly InternalPageSection[],
+  breaks: readonly string[] = SETTINGS_LANDING_BREAKS
+): InternalPageSection[][] {
+  const order = page.sections.map((s) => s.id)
+  const thresholds = breaks
+    .map((id) => order.indexOf(id))
+    .filter((i) => i >= 0)
+    .sort((a, b) => a - b)
+  const runs: InternalPageSection[][] = thresholds.map(() => [])
+  runs.push([])
+  for (const section of sections) {
+    const at = order.indexOf(section.id)
+    const run = thresholds.filter((t) => at >= t).length
+    runs[run].push(section)
+  }
+  return runs.filter((run) => run.length > 0)
+}
+
 /**
  * Filter sections by a search query: the label and keywords, any word order, case-insensitive.
  * An empty query returns every section. Row-level search inside a section is the renderer's

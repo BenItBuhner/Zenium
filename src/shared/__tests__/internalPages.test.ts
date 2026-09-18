@@ -9,6 +9,7 @@ import {
   internalPageTitle,
   internalPageUrl,
   isInternalPageUrl,
+  landingRuns,
   matchSections,
   matchesQuery,
   parseInternalPageUrl,
@@ -152,6 +153,37 @@ describe('the section model', () => {
     expect(ids).not.toContain('resources')
     expect(ids).not.toContain('accessibility')
     expect(ids).not.toContain('privacy')
+  })
+})
+
+describe('the landing list', () => {
+  const page = INTERNAL_PAGES.settings
+
+  it('separates Zen features from Sync and Updates, and those from About (v2 §10.2)', () => {
+    const runs = landingRuns(page, availableSections(page, ALL, 'phone')).map((run) =>
+      run.map((s) => s.id)
+    )
+    expect(runs).toHaveLength(3)
+    expect(runs[0][0]).toBe('look')
+    expect(runs[0]).not.toContain('sync')
+    expect(runs[1]).toEqual(['sync', 'updates'])
+    expect(runs[2]).toEqual(['about'])
+  })
+
+  it('keeps a break when the section it precedes is missing and drops a run left empty', () => {
+    const noSync = new Proxy({} as HostCapabilities, { get: (_t, key) => key !== 'sync' })
+    const runs = landingRuns(page, availableSections(page, noSync, 'phone')).map((run) =>
+      run.map((s) => s.id)
+    )
+    expect(runs[1]).toEqual(['updates'])
+    expect(runs[2]).toEqual(['about'])
+    const bare = landingRuns(page, availableSections(page, NONE, 'phone')).map((run) =>
+      run.map((s) => s.id)
+    )
+    expect(bare).toEqual([
+      ['look', 'tabs', 'search', 'spaces', 'containers', 'boosts', 'mods'],
+      ['about']
+    ])
   })
 })
 

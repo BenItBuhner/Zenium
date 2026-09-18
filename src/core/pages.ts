@@ -24,7 +24,7 @@ import {
 } from '../shared/internalPages'
 import type { OverlayKind, PageBackOutcome, Tab } from '../shared/types'
 import { titleForUrl } from '../shared/url'
-import { orderedTabsForSpace } from './model'
+import { orderedTabsForSpace, tabVisibleIn } from './model'
 
 /** The section addresses a page tab visited, and which one it shows. */
 interface PageHistory {
@@ -64,10 +64,12 @@ export class PageService {
   }
 
   /**
-   * Open a page. With page tabs: a tab of the same page already in the window's space is focused
-   * (and moved to `section` when one is given – `undefined` keeps it where it is, `null` is the
-   * landing page); otherwise a new tab opens next to its opener, which it remembers for back.
-   * Without page tabs the page's overlay opens. Returns the tab id, or null for an overlay.
+   * Open a page. With page tabs: the window's tab of the same page is focused – one per window,
+   * as Firefox's `switchToTabHavingURI` keeps one about:preferences (v2 §10.1), switching space
+   * when it lives in another – and moved to `section` when one is given (`undefined` keeps it
+   * where it is, `null` is the landing page); otherwise a new tab opens next to its opener, which
+   * it remembers for back. Without page tabs the page's overlay opens. Returns the tab id, or
+   * null for an overlay.
    */
   open(
     id: InternalPageId,
@@ -84,7 +86,7 @@ export class PageService {
       return null
     }
     const tabs = this.browser.tabs
-    const existing = this.findInSpace(id, win)
+    const existing = this.findInWindow(id, win)
     if (existing) {
       if (section !== undefined) this.navigate(existing.id, section)
       tabs.activateTab(existing.id, win)
@@ -206,10 +208,24 @@ export class PageService {
     }
   }
 
-  /** The page tab of `id` in the window's current space, if one is open. */
-  findInSpace(id: InternalPageId, win: ZenWindow): Tab | undefined {
+  /**
+   * The page tab of `id` this window can show, if one is open: the current space's when it has
+   * one, else the one in any other space of the window (a blank or private window only has its
+   * own tabs to look through).
+   */
+  findInWindow(id: InternalPageId, win: ZenWindow): Tab | undefined {
     const url = internalPageUrl({ id, section: null })
-    return this.tabsInSpace(win).find((t) => sameInternalPage(t.url, url))
+    const isPage = (t: Tab): boolean => sameInternalPage(t.url, url)
+    const inSpace = this.tabsInSpace(win).find(isPage)
+    if (inSpace || win.localSpace) return inSpace
+    const m = this.browser.state.model
+    return Object.values(m.tabs).find(
+      (t) =>
+        isPage(t) &&
+        tabVisibleIn(t, win.id) &&
+        t.spaceId !== null &&
+        m.spaces.some((s) => s.id === t.spaceId)
+    )
   }
 
   private tabsInSpace(win: ZenWindow): Tab[] {

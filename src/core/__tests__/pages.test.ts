@@ -190,17 +190,23 @@ describe('opening Settings as a tab', () => {
     expect(activeTab(f)?.url).toBe('zen://settings')
   })
 
-  it('opens a second Settings tab in another space rather than jumping spaces', () => {
+  it('keeps one Settings tab per window: opening from another space switches to it (v2 §10.1)', () => {
     const f = fixture()
+    const home = f.win.activeSpaceId
     openSite(f, 'https://a.test/')
     const first = openPage(f)
     const other = createSpace('Other', '')
     f.browser.state.model.spaces.push(other)
     f.browser.tabs.switchSpace(other.id, f.win)
-    const second = openPage(f)
-    expect(second).not.toBe(first)
-    expect(f.win.activeSpaceId).toBe(other.id)
-    expect(spaceUrls(f)).toEqual(['zen://settings'])
+    openSite(f, 'https://b.test/')
+    const again = openPage(f, 'privacy')
+    expect(again).toBe(first)
+    expect(f.win.activeSpaceId).toBe(home)
+    expect(activeTab(f)?.id).toBe(first)
+    expect(activeTab(f)?.url).toBe('zen://settings/privacy')
+    expect(
+      Object.values(f.browser.state.model.tabs).filter((t) => t.url.startsWith('zen://settings'))
+    ).toHaveLength(1)
   })
 
   it('falls back to the settings overlay on a host without page tabs (the desktop)', () => {
