@@ -258,6 +258,11 @@ export interface UiState {
    * (a frame dialog; the page gives way to its picture while it is open).
    */
   newTabShortcutDialog: { tabId: string; id: string | null; title: string; url: string } | null
+  /**
+   * The site-information confirmation on a mouse ("Clear site data?", "Clear cookies?"): a frame
+   * dialog over the page in `tabId`, opened from the popover, which closes when it does (§9.20).
+   */
+  siteDataConfirm: { tabId: string; kind: 'cookies' | 'data'; site: string; count: number } | null
   /** A folder panel of the bookmarks bar hangs over the page. */
   barMenuOpen: boolean
   /** A permission prompt ("Allow example.com to use your camera?") is up over the page. */
@@ -343,6 +348,7 @@ export const uiStore = createStore<UiState>(
     bookmarkEdit: null,
     bookmarkAllTabs: null,
     newTabShortcutDialog: null,
+    siteDataConfirm: null,
     barMenuOpen: false,
     permissionPromptOpen: false,
     selectedTabIds: [],
@@ -645,6 +651,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.stageActive &&
     !ui.zoomBubble &&
     !ui.newTabShortcutDialog &&
+    !ui.siteDataConfirm &&
     !bookmarkChromeOpen(ui)
   )
 }
@@ -681,6 +688,7 @@ export function invalidateSnapshot(): void {
     !ui.zoomBubble &&
     ui.hoverCard.tabId === null &&
     !ui.newTabShortcutDialog &&
+    !ui.siteDataConfirm &&
     !bookmarkChromeOpen(ui)
   ) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
@@ -1026,6 +1034,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.zoomBubble !== null ||
     ui.hoverCard.tabId !== null ||
     ui.newTabShortcutDialog !== null ||
+    ui.siteDataConfirm !== null ||
     // The star bubble and the bookmark editor are sheets over the page (design review of #38, item 1).
     bookmarkChromeOpen(ui)
   )
@@ -1088,6 +1097,30 @@ export async function openNewTabShortcutDialog(
 export function closeNewTabShortcutDialog(): void {
   if (!uiStore.get().newTabShortcutDialog) return
   uiStore.set({ newTabShortcutDialog: null })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
+// The site-information confirmation over the page (desktop)
+// ---------------------------------------------------------------------------
+
+/**
+ * "Clear site data?" or "Clear cookies?" from the site-information popover: a frame dialog
+ * (design language v2 §9.23, §9.5). The page is captured first and gives way to its picture
+ * under the frame's scrim; the popover it came from closes as the dialog opens (§9.20).
+ */
+export async function openSiteDataConfirm(
+  request: NonNullable<UiState['siteDataConfirm']>
+): Promise<void> {
+  await captureActiveTab(request.tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ siteDataConfirm: request })
+}
+
+export function closeSiteDataConfirm(): void {
+  if (!uiStore.get().siteDataConfirm) return
+  uiStore.set({ siteDataConfirm: null })
   invalidateSnapshot()
   returnFocusToPage()
 }
