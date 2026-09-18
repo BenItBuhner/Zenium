@@ -209,17 +209,17 @@ class HistoryBookmarksDemo :
         finding("visits recorded today after browsing ${PAGES.size} pages: $today")
 
         openMenuItem(MENU_HISTORY)
-        if (waitFor(HISTORY_SEARCH, 10_000) != null) {
+        if (awaitPanel(HISTORY_SEARCH)) {
             SystemClock.sleep(1_500)
             back()
-            waitGone(HISTORY_SEARCH)
+            awaitPanelGone(HISTORY_SEARCH)
         }
         SystemClock.sleep(1_200)
         openMenuItem(MENU_BOOKMARKS, MENU_BOOKMARKS_PANEL)
-        if (waitFor(BOOKMARKS_SEARCH, 10_000) != null) {
+        if (awaitPanel(BOOKMARKS_SEARCH)) {
             SystemClock.sleep(1_500)
             back()
-            waitGone(BOOKMARKS_SEARCH)
+            awaitPanelGone(BOOKMARKS_SEARCH)
         }
         SystemClock.sleep(1_500)
         Log.i(tag, "warm-up done")
@@ -230,7 +230,7 @@ class HistoryBookmarksDemo :
 
         // 1. History, grouped by day: Today (the real visits), Yesterday, a weekday, a date.
         openMenuItem(MENU_HISTORY)
-        await(HISTORY_SEARCH)
+        awaitPanel(HISTORY_SEARCH)
         SystemClock.sleep(2_000)
         shot("01-history-grouped")
         val weekday = SimpleDateFormat("EEEE", Locale.US).format(at(3, 12, 0))
@@ -320,20 +320,22 @@ class HistoryBookmarksDemo :
             finding("\nClear history: row not found ${verdict(false)}")
         }
         click("Close")
-        waitGone(HISTORY_SEARCH)
+        awaitPanelGone(HISTORY_SEARCH)
         SystemClock.sleep(1_200)
 
         // 5. Bookmarks: the mobile folder with its subfolders, a row's menu, the edit sheet.
         openMenuItem(MENU_BOOKMARKS, MENU_BOOKMARKS_PANEL)
-        await(BOOKMARKS_SEARCH)
+        awaitPanel(BOOKMARKS_SEARCH)
         SystemClock.sleep(2_000)
         shot("09-bookmarks-list")
+        val rowMenuExposed = present("More options for Hacker News")
+        if (!rowMenuExposed) dumpTree("a11y-bookmarks-list")
         finding(
             "\nbookmarks: header 'Mobile bookmarks' ${verdict(present("Mobile bookmarks"))}, " +
                 "folder rows ${verdict(row("Reading, folder") != null && row("Work, folder") != null)}, " +
-                "row menus ${verdict(present("More options for Hacker News"))}"
+                "a row's 3-dot button in the accessibility tree (TalkBack reaches it) ${verdict(rowMenuExposed)}"
         )
-        if (click("More options for Hacker News")) {
+        if (openRowMenu("Hacker News")) {
             await(MENU_HANDLE_LABEL)
             SystemClock.sleep(1_200)
             shot("10-bookmarks-row-menu")
@@ -392,22 +394,24 @@ class HistoryBookmarksDemo :
             SystemClock.sleep(1_800)
             finding(
                 "\nfolder: pushed into Reading ${verdict(inside)}, back climbs out to Mobile bookmarks " +
-                    "${verdict(present("Mobile bookmarks") && present(BOOKMARKS_SEARCH))}"
+                    "${verdict(present("Mobile bookmarks") && panelOpen(BOOKMARKS_SEARCH))}"
             )
         }
 
         // 8. Back closes what is on top and nothing more: the row menu, then an editor, then the panel.
-        if (click("More options for Hacker News daily")) {
+        //    On the row as it is named now (the rename above, if it went through).
+        val hn = bookmarkTitle("b_hn") ?: "Hacker News"
+        if (openRowMenu(hn)) {
             await(MENU_HANDLE_LABEL)
             SystemClock.sleep(1_200)
             back()
             SystemClock.sleep(1_500)
             shot("16-back-closed-menu")
             finding(
-                "\nback on a row menu: menu gone ${verdict(!present(MENU_HANDLE_LABEL))}, panel stays ${verdict(present(BOOKMARKS_SEARCH))}"
+                "\nback on a row menu: menu gone ${verdict(!present(MENU_HANDLE_LABEL))}, panel stays ${verdict(panelOpen(BOOKMARKS_SEARCH))}"
             )
         }
-        if (click("More options for Hacker News daily")) {
+        if (openRowMenu(hn)) {
             await(MENU_HANDLE_LABEL)
             SystemClock.sleep(1_000)
             click("Edit…")
@@ -416,13 +420,13 @@ class HistoryBookmarksDemo :
             back()
             SystemClock.sleep(1_500)
             shot("17-back-closed-editor")
-            finding("back on the editor: editor gone ${verdict(!present("Save"))}, panel stays ${verdict(present(BOOKMARKS_SEARCH))}")
+            finding("back on the editor: editor gone ${verdict(!present("Save"))}, panel stays ${verdict(panelOpen(BOOKMARKS_SEARCH))}")
         }
         back()
-        waitGone(BOOKMARKS_SEARCH)
+        awaitPanelGone(BOOKMARKS_SEARCH)
         SystemClock.sleep(1_500)
         shot("18-back-closed-panel")
-        finding("back on the panel: panel gone ${verdict(!present(BOOKMARKS_SEARCH))}, the page's bar is back ${verdict(findByLabelPrefix(PILL_LABEL) != null)}")
+        finding("back on the panel: panel gone ${verdict(!panelOpen(BOOKMARKS_SEARCH))}, the page's bar is back ${verdict(findByLabelPrefix(PILL_LABEL) != null)}")
 
         // 9. The star saves the page; the toast offers Edit, which opens the editor on the new node.
         val before = bookmarkCount()
@@ -475,6 +479,70 @@ class HistoryBookmarksDemo :
     private fun row(prefix: String): Rect? =
         findByLabelPrefix(prefix).also { if (it == null) Log.w(tag, "no row starting with '$prefix'") }
 
+    /**
+     * A panel's search field. The WebView reports an input's label as the EditText's hint (its
+     * text is the value), so the label lookups above never see it.
+     */
+    private fun searchField(label: String): Rect? =
+        findNodeWhere { node ->
+            node.className == "android.widget.EditText" &&
+                listOfNotNull(node.hintText, node.text, node.contentDescription).any { it.toString().contains(label) }
+        }?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+
+    /** The panel whose search field says `search` is on screen. */
+    private fun panelOpen(search: String): Boolean = searchField(search) != null
+
+    private fun awaitPanel(search: String, timeoutMs: Long = 10_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (panelOpen(search)) return true
+            SystemClock.sleep(200)
+        }
+        Log.w(tag, "the panel with '$search' never showed up")
+        return false
+    }
+
+    private fun awaitPanelGone(search: String, timeoutMs: Long = 6_000) {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (panelOpen(search) && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(200)
+    }
+
+    /**
+     * Open a bookmark row's 3-dot menu: through its button's label, or – should the tree not
+     * expose the button – with a finger on it (the 44 box 12 past the row's text, 9.18).
+     */
+    private fun openRowMenu(title: String): Boolean {
+        if (click("More options for $title")) return true
+        val main = row(title) ?: return false
+        Finger().tap(main.right + 34 * density, main.exactCenterY())
+        finding("row menu for '$title': no button in the accessibility tree, tapped where it is drawn")
+        return true
+    }
+
+    /** The active window's accessibility tree, for a look at what a lookup could not find. */
+    private fun dumpTree(name: String) {
+        val lines = ArrayList<String>()
+        fun walk(node: AccessibilityNodeInfo?, depth: Int) {
+            if (node == null || lines.size > 600) return
+            val bounds = Rect().also { node.getBoundsInScreen(it) }
+            val flags = listOfNotNull(
+                "clickable".takeIf { node.isClickable },
+                "focusable".takeIf { node.isFocusable },
+                "checkable".takeIf { node.isCheckable },
+                "disabled".takeIf { !node.isEnabled }
+            )
+            lines += "  ".repeat(depth) + (node.className?.toString()?.substringAfterLast('.') ?: "?") +
+                (node.text?.let { " text='$it'" } ?: "") +
+                (node.contentDescription?.let { " desc='$it'" } ?: "") +
+                (node.hintText?.let { " hint='$it'" } ?: "") +
+                (if (flags.isEmpty()) "" else " [${flags.joinToString(" ")}]") +
+                " ${bounds.toShortString()}"
+            for (i in 0 until node.childCount) walk(node.getChild(i), depth + 1)
+        }
+        walk(ui.rootInActiveWindow, 0)
+        File(out, "history-bookmarks-$name.txt").writeText(lines.joinToString("\n") + "\n")
+    }
+
     /** The editor's name field while it holds `value`. */
     private fun nameField(value: String): Rect? =
         findNodeWhere { it.className == "android.widget.EditText" && it.text?.startsWith(value) == true }
@@ -513,11 +581,6 @@ class HistoryBookmarksDemo :
 
     private fun await(label: String) {
         waitFor(label, 10_000) ?: Log.w(tag, "'$label' never showed up")
-    }
-
-    private fun waitGone(label: String, timeoutMs: Long = 6_000) {
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (findByLabel(label) != null && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(200)
     }
 
     private fun present(label: String): Boolean = findByLabel(label) != null
