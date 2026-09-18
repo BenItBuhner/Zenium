@@ -51,6 +51,8 @@ import { DeclarativeNetRequestHostApi } from './declarativeNetRequest'
 import { DownloadsApi, type DownloadBridge } from './downloads'
 import { ExtensionApi } from './extension'
 import { HistoryApi } from './history'
+import { IdentityApi } from './identity'
+import { electronAuthWindowHost } from './identityBridge'
 import { ManagementApi } from './management'
 import { ApiModel, type ModelSnapshot } from './model'
 import { NotificationsApi } from './notifications'
@@ -157,6 +159,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly topSites: TopSitesApi
   readonly tabGroups: TabGroupsApi
   readonly sidePanel: SidePanelApi
+  readonly identity: IdentityApi
 
   private readonly namespaces: Record<string, NamespaceHandlers>
   private readonly extensions = new Map<string, LoadedExtension>()
@@ -217,6 +220,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.recentlyClosed = new SessionsApi(this)
     this.topSites = new TopSitesApi(this)
     this.tabGroups = new TabGroupsApi(this)
+    this.identity = new IdentityApi(electronAuthWindowHost(this.model))
     this.namespaces = {
       tabs: { ...this.tabs.handlers, ...this.tabGroups.tabHandlers },
       windows: this.windows.handlers,
@@ -239,7 +243,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       sessions: this.recentlyClosed.handlers,
       topSites: this.topSites.handlers,
       tabGroups: this.tabGroups.handlers,
-      sidePanel: this.sidePanel.handlers
+      sidePanel: this.sidePanel.handlers,
+      identity: this.identity.handlers
     }
     // A tab's outermost document changed: `activeTab` grants for another origin end and the
     // declarativeNetRequest action counts start over.
@@ -394,6 +399,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.permissions.unload(ext.id)
     this.commands.unload(ext.id)
     this.sidePanel.unload(ext.id)
+    this.identity.unload(ext.id)
     this.declarativeNetRequest.unload(ext.id)
     this.contextMenus.forget(ext.id)
     this.notifications.forget(ext.id)

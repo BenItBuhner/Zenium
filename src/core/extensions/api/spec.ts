@@ -612,6 +612,22 @@ export const API_SPEC: ApiSpec = {
     methods: { get: { params: [] } },
     events: {}
   },
+  // Only the web-auth flow has anything to stand on: there is no signed-in browser account.
+  identity: {
+    methods: {
+      getRedirectURL: { params: [{ name: 'details', type: ['object', 'string'], optional: true }] },
+      launchWebAuthFlow: { params: [object('details')] },
+      getProfileUserInfo: { params: [object('details', true)] },
+      getAuthToken: { params: [object('details', true)] },
+      removeCachedAuthToken: { params: [object('details')] },
+      clearAllCachedAuthTokens: { params: [] },
+      getAccounts: { params: [] }
+    },
+    events: { onSignInChanged: {} },
+    constants: {
+      AccountStatus: { SYNC: 'SYNC', ANY: 'ANY' }
+    }
+  },
   // The panel is Zenium's own view beside the page; the options follow Chrome's default-plus-per-tab rules.
   sidePanel: {
     methods: {
