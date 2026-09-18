@@ -4213,13 +4213,17 @@
  * (§9.3: the phone's 44 box, 20 glyph, radius 8, disabled at .4), given the phone's stroke here;
  * the focusable controls carry a `zen-v2-` class for the shared focus ring.
  *
- * Heights (§9.16, §9.21, §9.23): the header is a bar header – a row holding the close control,
- * never a title block – at 48 on a phone, the 44 px control at 2 px margins, its title 17/600
- * on a 22 px line centred on it. Every other row is its base height (44) or its control plus 4
- * above and below, whichever is more: the 4 is the row's own padding, not a list gap, so the
- * rows touch and the stepper's 40 px slider makes a 48 row, as Reset does. Gutter (§9.25): the
- * sheet has no side padding; text and the Reset button sit 16 from its edge, the icon buttons
- * at 2 so their glyph boxes fall on the same line (the chassis header's placement).
+ * Heights (§9.16, §9.21, §9.23, §9.32): the header is a bar header – a row holding the close
+ * control, never a title block – at 48 on a phone, the 44 px control at 2 px margins, its title
+ * start-aligned at 15/600 on a 20 px line (§9.32: docked panels are bars, not sheets; the live
+ * value trails it in tabular numerals) centred on the row. Every other row is its base height
+ * (44) or its tallest control plus 4 above and below, whichever is more: the 4 is the row's own
+ * padding, not a list gap, so the rows touch – the stepper's 44 px icon buttons make it a 52
+ * row, the 40 px Reset a 48 row. Gutter (§9.25): the sheet has no side padding; text and the
+ * Reset button sit 16 from its edge, the icon buttons at 2 so their glyph boxes fall on the same
+ * line (the chassis header's placement). The slider row is §10.4's: 44 px minus and plus at the
+ * row's ends, the 4 px track at radius 2 in --v2-fill with the run and the 20 px thumb in
+ * --v2-accent, no shadow on the thumb, a 28 px touch target around it.
  *
  * Motion (§11.3, §9.33): `will-change` only while the sheet moves (`data-moving`); the
  * reduced-motion fade is written per frame by the component, not a transition.
@@ -4247,11 +4251,13 @@
   padding-top: 4px;
   padding-bottom: 4px;
 }
+/* A docked panel's title (§9.32): start-aligned, 15/600 – a bar's label, not a sheet's 17/600 title. */
 .zen-zoom-title {
-  font-size: var(--v2-font-heading);
+  font-size: var(--v2-font-body);
   font-weight: var(--v2-weight-heading);
-  line-height: 22px;
+  line-height: var(--v2-line-body);
 }
+/* The live percent (§4, §9.32): tabular numerals, so 100% → 150% moves nothing beside it. */
 .zen-zoom-value {
   font-weight: var(--v2-weight-heading);
   font-variant-numeric: tabular-nums;
@@ -4259,22 +4265,44 @@
 .zen-zoom-note {
   color: var(--v2-text-deemphasized);
 }
-/* The stepper's slider: a hairline track in the text's alpha, the run and the thumb in the accent. */
+/*
+ * The stepper's slider, §10.4's slider row: the 4 px track at radius 2 in --v2-fill, the filled
+ * part and the 20 px thumb in --v2-accent (a 2 px --v2-panel ring parts the thumb from the
+ * track), no shadow on the thumb – the shared Slider's drop shadow goes, and with it its
+ * box-shadow focus ring, so the thumb takes the v2 outline ring (§9.6) here, the shared Slider
+ * carrying no zen-v2- class – and a 28 px touch target around the 20 px disc (the whole 40 px
+ * row moves it as well, Radix taking the press anywhere on the root).
+ */
 .zen-zoom-slider {
   height: var(--v2-control);
 }
 .zen-zoom-slider > span:first-child {
   height: 4px;
+  border-radius: 2px;
   background: var(--v2-fill);
 }
 .zen-zoom-slider > span:first-child > span {
   background: var(--v2-accent);
 }
 .zen-zoom-slider [role='slider'] {
+  position: relative;
   width: var(--v2-icon);
   height: var(--v2-icon);
   border: 2px solid var(--v2-panel);
   background: var(--v2-accent);
+  box-shadow: none;
+}
+.zen-zoom-slider [role='slider']::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+}
+.zen-zoom-slider [role='slider']:focus-visible {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: 0;
+}
+:root[data-theme='dark'] .zen-zoom-slider [role='slider']:focus-visible {
+  outline-offset: -2px;
 }
 /* Disabled (§9.30): the whole control at .4 – track, run and thumb together – laid out at full size. */
 .zen-zoom-slider[data-disabled] {
