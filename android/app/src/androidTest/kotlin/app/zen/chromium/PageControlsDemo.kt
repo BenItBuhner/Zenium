@@ -115,7 +115,7 @@ open class PageControlsDemo(
 
         // 2. App menu -> Desktop Site: the user agent switches and the page is asked again from
         //    the URL the tab was opened with, so the desktop site answers.
-        if (!openMenuItem("Desktop Site", "menu-desktop-site")) return
+        if (!pickMenuItem("Desktop Site", "menu-desktop-site")) return
         if (awaitWikipedia("desktop", 40_000)) SystemClock.sleep(2_500) else Log.w(tag, "no desktop Wikipedia in time")
         probe("wikipedia desktop")
         snap("wikipedia-desktop")
@@ -180,7 +180,7 @@ open class PageControlsDemo(
 
         // 5. App menu -> Dark Theme for This Site off: the page's own light look, and the
         //    exception listed under Look and Feel > Site exceptions (by the site it is for).
-        if (!openMenuItem("Dark Theme for This Site", "menu-dark-theme-for-site")) return
+        if (!pickMenuItem("Dark Theme for This Site", "menu-dark-theme-for-site")) return
         SystemClock.sleep(2_000)
         snap("light-page-not-darkened")
         beat()
@@ -366,10 +366,14 @@ open class PageControlsDemo(
     )
 
     /**
-     * Open the app menu, scroll `label` into view, take `shotName` if asked, and pick the item.
-     * False (menu closed again) when the menu or the item never showed up.
+     * Open the app menu, scroll `label` into view, take `shotName` if asked, and pick the item
+     * through the tree. False (menu closed again) when the menu or the item never showed up.
+     *
+     * Not `openMenuItem`: the harness has `openMenuItem(vararg path: String)` (a finger down a
+     * submenu path), and with two strings Kotlin resolves to that one over a `(String, String?)`
+     * of this name – it would tap the item and then hunt the menu for the screenshot's name.
      */
-    protected fun openMenuItem(label: String, shotName: String?): Boolean {
+    protected fun pickMenuItem(label: String, shotName: String?): Boolean {
         if (!openMenu()) return false
         if (reveal(label) == null) {
             Log.w(tag, "no $label in the app menu")
@@ -388,7 +392,7 @@ open class PageControlsDemo(
 
     /** Settings from the app menu, then the section with that tab label. */
     protected fun openSettings(section: String): Boolean {
-        if (!openMenuItem("Settings", null)) return false
+        if (!pickMenuItem("Settings", null)) return false
         if (waitFor(section, 6_000) == null || !clickByLabel(section)) {
             Log.w(tag, "no $section section in Settings")
             return false

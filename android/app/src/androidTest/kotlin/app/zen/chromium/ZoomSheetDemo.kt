@@ -81,7 +81,7 @@ class ZoomSheetDemo : PageControlsDemo("zoom-demo-state.json", "zoom", "zoom-dem
 
         // 2. App menu -> Zoom…: the sheet docks under the page, which shrinks by its height and
         //    stays live.
-        if (!openMenuItem(ZOOM_ITEM, "menu-zoom")) return
+        if (!pickMenuItem(ZOOM_ITEM, "menu-zoom")) return
         if (!awaitSheet()) return
         snap("zoom-sheet-default")
         beat()
@@ -144,7 +144,7 @@ class ZoomSheetDemo : PageControlsDemo("zoom-demo-state.json", "zoom", "zoom-dem
         }
 
         // 8. Zoom… again: the sheet reads 125 and "Remembered for 127.0.0.1"; Reset, then Close.
-        if (!openMenuItem(ZOOM_ITEM, null)) return
+        if (!pickMenuItem(ZOOM_ITEM, null)) return
         if (!awaitSheet()) return
         Log.i(tag, "sheet reads ${sheetValue()}, remembered: ${findByLabel(REMEMBERED_NOTE) != null}")
         snap("zoom-sheet-remembered")

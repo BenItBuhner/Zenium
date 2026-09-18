@@ -233,9 +233,15 @@ done
 if [ "${#parts[@]}" -eq 1 ]; then
   mv "${parts[0]}" "$out/$video"
 elif [ "${#parts[@]}" -gt 1 ]; then
+  # The runner image has no ffmpeg; a recording in parts is the one thing here that needs it.
+  if ! command -v ffmpeg > /dev/null 2>&1 && command -v apt-get > /dev/null 2>&1; then
+    sudo -n apt-get install -y -qq --no-install-recommends ffmpeg > /dev/null 2>&1 \
+      || { sudo -n apt-get update -qq > /dev/null 2>&1 && sudo -n apt-get install -y -qq --no-install-recommends ffmpeg > /dev/null 2>&1; } \
+      || true
+  fi
   : > "$out/parts.txt"
   for p in "${parts[@]}"; do echo "file '$(realpath "$p")'" >> "$out/parts.txt"; done
-  if ffmpeg -loglevel error -f concat -safe 0 -i "$out/parts.txt" -c copy "$out/$video"; then
+  if command -v ffmpeg > /dev/null 2>&1 && ffmpeg -loglevel error -f concat -safe 0 -i "$out/parts.txt" -c copy "$out/$video"; then
     rm -f "${parts[@]}" "$out/parts.txt"
   else
     echo "::warning::the recording's parts could not be joined; they are in the artifact as they are"
