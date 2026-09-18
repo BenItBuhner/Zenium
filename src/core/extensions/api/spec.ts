@@ -59,8 +59,9 @@ export interface NamespaceSpec {
   shape?: true
   /**
    * Chrome hides permission-gated namespaces: this one exists only for extensions whose
-   * manifest lists one of these permissions (the engine's own namespace, when it made one, is
-   * patched regardless).
+   * manifest lists one of these permissions, required or optional (the engine's own namespace,
+   * when it made one, is patched regardless). An optional permission not granted yet leaves the
+   * namespace in place; the host refuses the calls until `permissions.request` grants it.
    */
   permissions?: readonly string[]
   /**
@@ -531,7 +532,8 @@ export const API_SPEC: ApiSpec = {
         MOBILE: 'mobile',
         MANAGED: 'managed'
       }
-    }
+    },
+    permissions: ['bookmarks']
   },
   history: {
     methods: {
@@ -557,7 +559,8 @@ export const API_SPEC: ApiSpec = {
         KEYWORD: 'keyword',
         KEYWORD_GENERATED: 'keyword_generated'
       }
-    }
+    },
+    permissions: ['history']
   },
   downloads: {
     methods: {
@@ -635,7 +638,8 @@ export const API_SPEC: ApiSpec = {
         USER_SHUTDOWN: 'USER_SHUTDOWN',
         CRASH: 'CRASH'
       }
-    }
+    },
+    permissions: ['downloads']
   },
   sessions: {
     methods: {
@@ -644,11 +648,13 @@ export const API_SPEC: ApiSpec = {
       restore: { params: [string('sessionId', true)] }
     },
     events: { onChanged: {} },
-    constants: { MAX_SESSION_RESULTS: 25 }
+    constants: { MAX_SESSION_RESULTS: 25 },
+    permissions: ['sessions']
   },
   topSites: {
     methods: { get: { params: [] } },
-    events: {}
+    events: {},
+    permissions: ['topSites']
   },
   // The keyword comes from the manifest; the URL bar asks through `onInputChanged(text, suggest)`.
   omnibox: {
@@ -685,7 +691,8 @@ export const API_SPEC: ApiSpec = {
     events: { onSignInChanged: {} },
     constants: {
       AccountStatus: { SYNC: 'SYNC', ANY: 'ANY' }
-    }
+    },
+    permissions: ['identity']
   },
   // The panel is Zenium's own view beside the page; the options follow Chrome's default-plus-per-tab rules.
   sidePanel: {
@@ -696,7 +703,8 @@ export const API_SPEC: ApiSpec = {
       getPanelBehavior: { params: [] },
       open: { params: [object('options')] }
     },
-    events: {}
+    events: {},
+    permissions: ['sidePanel']
   },
   // Electron has the binding, but the session's own `webRequest` hook (the blocking engine's)
   // switches the engine's extension path off, so the events never fire. The emulation runs the
@@ -820,7 +828,8 @@ export const API_SPEC: ApiSpec = {
       removeServiceWorkers: { params: [object('options')] },
       removeWebSQL: { params: [object('options')] }
     },
-    events: {}
+    events: {},
+    permissions: ['browsingData']
   },
   // Speech through a hidden page's `speechSynthesis`; `speak`'s `onEvent` is relayed by the shim.
   tts: {
@@ -847,7 +856,8 @@ export const API_SPEC: ApiSpec = {
         RESUME: 'resume'
       },
       VoiceGender: { MALE: 'male', FEMALE: 'female' }
-    }
+    },
+    permissions: ['tts']
   },
   // Zenium's folders are the groups; `tabs.group` / `tabs.ungroup` are declared on `tabs`.
   tabGroups: {
@@ -871,7 +881,8 @@ export const API_SPEC: ApiSpec = {
         CYAN: 'cyan',
         ORANGE: 'orange'
       }
-    }
+    },
+    permissions: ['tabGroups']
   }
 }
 

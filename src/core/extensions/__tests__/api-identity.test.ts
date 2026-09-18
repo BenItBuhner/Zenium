@@ -232,7 +232,12 @@ describe('the shim answers getRedirectURL synchronously', () => {
 
   beforeEach(() => {
     calls.length = 0
-    const manifest = { manifest_version: 3, name: 'Probe', version: '1.0' }
+    const manifest = {
+      manifest_version: 3,
+      name: 'Probe',
+      version: '1.0',
+      permissions: ['identity']
+    }
     const chrome: Any = {
       runtime: {
         id: EXT,

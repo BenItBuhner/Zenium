@@ -66,6 +66,7 @@ interface ManifestShape {
   manifest_version?: unknown
   background?: unknown
   permissions?: unknown
+  optional_permissions?: unknown
 }
 
 /** A native `chrome.Event` the shim keeps registering listeners on (documents' storage events). */
@@ -136,6 +137,12 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   const permissions: string[] = Array.isArray(manifest.permissions)
     ? manifest.permissions.filter((p): p is string => typeof p === 'string')
     : []
+  /** Required and optional permissions alike: an optional one may be granted at run time. */
+  const declaredPermissions: string[] = permissions.concat(
+    Array.isArray(manifest.optional_permissions)
+      ? manifest.optional_permissions.filter((p): p is string => typeof p === 'string')
+      : []
+  )
   const extensionUrl: string =
     safely(() => String(chrome.runtime.getURL(''))) ??
     (typeof g.location === 'object' && g.location
@@ -921,10 +928,10 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   // Generic namespaces from the table
   // ---------------------------------------------------------------------------
 
-  /** Permission-gated namespaces exist for extensions holding one (or when the engine made one). */
+  /** Permission-gated namespaces exist for extensions declaring one (or when the engine made one). */
   function namespaceAllowed(namespace: string, nsSpec: NamespaceSpec): boolean {
     if (!nsSpec.permissions) return true
-    if (nsSpec.permissions.some((p) => permissions.includes(p))) return true
+    if (nsSpec.permissions.some((p) => declaredPermissions.includes(p))) return true
     return isObject(safely(() => roots[0][namespace]))
   }
 
@@ -1060,7 +1067,7 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   // tts: `speak`'s `onEvent` stays on this side, keyed by a token the host echoes back
   // ---------------------------------------------------------------------------
 
-  if (spec.tts) {
+  if (spec.tts && namespaceAllowed('tts', spec.tts)) {
     const ttsHandlers = new Map<string, Listener>()
     const ttsPrefix = Math.random().toString(36).slice(2)
     let ttsTokens = 0
@@ -1116,7 +1123,7 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   // into an authorization URL), so it is computed here from the extension's own id
   // ---------------------------------------------------------------------------
 
-  if (spec.identity) {
+  if (spec.identity && namespaceAllowed('identity', spec.identity)) {
     const ownId: string =
       safely(() => String(chrome.runtime.id)) ??
       /^chrome-extension:\/\/([^/]+)\//.exec(extensionUrl)?.[1] ??

@@ -353,7 +353,7 @@ describe('the shim relays speak options.onEvent', () => {
   beforeEach(() => {
     calls.length = 0
     notifications.length = 0
-    const manifest = { manifest_version: 3, name: 'Probe', version: '1.0' }
+    const manifest = { manifest_version: 3, name: 'Probe', version: '1.0', permissions: ['tts'] }
     const chrome: Any = {
       runtime: {
         id: 'abcdefghijklmnopabcdefghijklmnop',
