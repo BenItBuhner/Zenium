@@ -90,6 +90,7 @@ export function FindBar({
       role="search"
       aria-label="Find in page"
       data-surface={phone ? undefined : 'page'}
+      data-testid="find-bar"
     >
       <div
         className={
@@ -104,6 +105,7 @@ export function FindBar({
           value={text}
           placeholder="Find in page"
           aria-label="Find in page"
+          data-testid="find-input"
           inputMode="search"
           enterKeyHint="search"
           autoCapitalize="none"
