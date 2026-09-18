@@ -76,19 +76,10 @@ jobs:
         # Exercises the electron-builder configuration without producing installers;
         # the release workflow builds the real packages for every platform.
         run: npx electron-builder --linux --dir --publish never
-      - name: Display tools (Xvfb; ffmpeg grabs the screenshots)
+      - name: Display tools (Xvfb; ffmpeg grabs the screenshots; xdotool drives the sign-in smoke's gesture)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends xvfb ffmpeg x11-utils
-      - name: Sign-in fidelity smoke test
-        # Boots the packaged build under Xvfb on its own (no automation flags, so the check on
-        # navigator.webdriver is honest) and checks what a site sees: navigator.webdriver false,
-        # Chrome's window.chrome members (Google's sign-in refuses a Chrome without chrome.app),
-        # the reduced user agent, client hints and Accept-Language on the document request, FedCM
-        # off, and a window.open pop-up that keeps its opener and runs the page preload.
-        run: >
-          xvfb-run -a -s '-screen 0 1600x1000x24'
-          node .github/scripts/desktop-signin-smoke.mjs dist/linux-unpacked/zenium
+          sudo apt-get install -y -qq --no-install-recommends xvfb ffmpeg x11-utils xdotool
       - name: Boot the unpacked build under Xvfb and walk through it
         # Playwright for Electron drives dist/linux-unpacked/zenium (the devDependency ships no
         # browsers; nothing to download). --no-sandbox: the unpacked build's chrome-sandbox helper
@@ -104,6 +95,20 @@ jobs:
       - name: Verdict (log and step summary)
         if: always()
         run: node .github/smoke/verdict.mjs --out "$SMOKE_OUT" --expect unpacked --title linux-x64
+      - name: Sign-in fidelity smoke test
+        # After the boot smoke and its verdict, so a failure here never hides the boot results.
+        # Boots the packaged build under Xvfb on its own (no automation flags, so the check on
+        # navigator.webdriver is honest) and checks what a site sees: navigator.webdriver false,
+        # Chrome's window.chrome members (Google's sign-in refuses a Chrome without chrome.app),
+        # the reduced user agent, client hints and Accept-Language on the document request, FedCM
+        # off, and a window.open pop-up – opened by a real gesture once the page is on screen
+        # (sendInputEvent at the button, xdotool through X as the fallback) – that keeps its
+        # opener and runs the page preload. Its log and, on failure, a screenshot of the display
+        # go to smoke-out/signin, into the artifact below.
+        run: >
+          xvfb-run -a -s '-screen 0 1600x1000x24'
+          node .github/scripts/desktop-signin-smoke.mjs dist/linux-unpacked/zenium
+          --out "$SMOKE_OUT/signin"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
