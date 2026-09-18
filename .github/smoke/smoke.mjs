@@ -4,7 +4,8 @@
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
 //        [--scenarios boot,restore,walkthrough,crash,scale,dark] [--extra-args=--no-sandbox]
-//        [--allowlist known-failures.json] [--render-budget-ms 10000] [--quit-budget-ms 5000]
+//        [--allowlist known-failures.json] [--render-budget-ms 10000]
+//        [--first-launch-render-budget-ms 20000] [--quit-budget-ms 15000]
 //        [--step-timeout-ms 60000] [--evaluate-timeout-ms 30000] [--watchdog-min 15]
 //
 // Scenarios (each one launch of the executable, on profiles under one temporary root):
@@ -49,6 +50,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
 import { buttonScreenPoint, startPopupFixture } from './popup-fixture.mjs'
+import { exitWithin, mainProcessState, unlessTargetClosed } from './quit.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const IS_WIN = process.platform === 'win32'
@@ -73,9 +75,25 @@ const scenarios = String(opts.scenarios ?? 'boot,restore')
 const EXTRA_ARGS =
   typeof opts['extra-args'] === 'string' ? opts['extra-args'].split(' ').filter(Boolean) : []
 const RENDER_BUDGET_MS = Number(opts['render-budget-ms'] ?? 10000)
-const QUIT_BUDGET_MS = Number(opts['quit-budget-ms'] ?? 5000)
+// The first time this run launches the executable is a cold launch: the build was packaged (or
+// installed) moments ago and nothing has mapped its pages yet. On macos-15-intel that first
+// paint took 10.4 s and 12.5 s (#165's first run, main at 36e0ae1) against 1.5–6 s for every
+// launch after it, so the first launch has its own bound. The warm one stays at 10 s: a
+// regression in what the chrome does before its first paint still shows on every later launch.
+const FIRST_LAUNCH_RENDER_BUDGET_MS = Number(opts['first-launch-render-budget-ms'] ?? 20000)
+// The longest a launch waits for the chrome page at all; past it the launch step fails outright.
+const RENDER_WAIT_MS = Math.max(RENDER_BUDGET_MS, FIRST_LAUNCH_RENDER_BUDGET_MS) * 3
+// From the quit chord (or the Quit button) to the process's exit event. The app itself quits
+// within a second; the rest is Electron's teardown after the last window closes, which took 6 s
+// on windows-11-arm (#148, #157) against the 5 s this used to be. Only a process still alive
+// when the budget runs out is a failure.
+const QUIT_BUDGET_MS = Number(opts['quit-budget-ms'] ?? 15000)
 const STEP_TIMEOUT_MS = Number(opts['step-timeout-ms'] ?? 60000)
 const EVALUATE_TIMEOUT_MS = Number(opts['evaluate-timeout-ms'] ?? 30000)
+// Budget for a click on a button the chrome has just painted for the first time (onboarding,
+// the crash-restore bar). Playwright waits for the button to be actionable; on a busy runner
+// that took 5.1 s on one green run and 8 s on a red one, so 5 s is a margin, not a check.
+const FIRST_PAINT_CLICK_MS = Number(opts['first-paint-click-ms'] ?? 15000)
 const WATCHDOG_MS = Number(opts['watchdog-min'] ?? 15) * 60 * 1000
 const allowlistFile = path.resolve(opts.allowlist ?? path.join(here, 'known-failures.json'))
 
@@ -99,7 +117,11 @@ const result = {
   arch: process.arch,
   osRelease: os.release(),
   startedAt: new Date().toISOString(),
-  budgets: { renderMs: RENDER_BUDGET_MS, quitMs: QUIT_BUDGET_MS },
+  budgets: {
+    renderMs: RENDER_BUDGET_MS,
+    firstLaunchRenderMs: FIRST_LAUNCH_RENDER_BUDGET_MS,
+    quitMs: QUIT_BUDGET_MS
+  },
   scenarios: {},
   screenshots: [],
   failures: [],
@@ -110,6 +132,7 @@ fs.writeFileSync(logFile, '')
 let currentSession = null
 let shotIndex = 0
 let displaySize = null
+let launchesSoFar = 0
 
 // ---------------------------------------------------------------------------------------------
 // Small utilities
@@ -638,6 +661,10 @@ class Session {
 
   async launch() {
     const t0 = Date.now()
+    // The run's first launch is the cold one (FIRST_LAUNCH_RENDER_BUDGET_MS); the counter moves
+    // whatever becomes of it, since the launch after a failed first one is a warm launch too.
+    this.renderBudgetMs = launchesSoFar === 0 ? FIRST_LAUNCH_RENDER_BUDGET_MS : RENDER_BUDGET_MS
+    launchesSoFar++
     log(`launching ${opts.exe} ${this.launchArgs().join(' ')} (${this.scenario})`)
     this.app = await electron.launch({
       executablePath: opts.exe,
@@ -667,10 +694,10 @@ class Session {
     for (const p of this.app.windows()) this.attachPage(p)
     this.hookResult = await this.app.evaluate(hookMain, { eventsFile: this.eventsFile })
     this.timings.launchMs = Date.now() - t0
-    this.chrome = await this.waitForChromePage(RENDER_BUDGET_MS * 3)
+    this.chrome = await this.waitForChromePage(RENDER_WAIT_MS)
     await this.chrome.locator('[data-testid="chrome-root"]').waitFor({
       state: 'attached',
-      timeout: RENDER_BUDGET_MS * 3
+      timeout: RENDER_WAIT_MS
     })
     this.timings.chromeRenderedMs = Date.now() - t0
     this.mainWindowId = await this.app.evaluate(({ BrowserWindow }) => {
@@ -905,14 +932,6 @@ class Session {
     return shot(`${this.scenario}-${name}`, this)
   }
 
-  /** Is the main process event loop free? A modal native dialog blocks it. */
-  async mainResponsive(timeoutMs = 4000) {
-    return Promise.race([
-      this.app.evaluate(() => 'ok').catch((e) => `error: ${e.message}`),
-      delay(timeoutMs).then(() => 'blocked')
-    ])
-  }
-
   /** The webContents holding the keyboard, as the main process sees it (null: none). */
   focusedWebContentsId() {
     return this.app.evaluate(({ webContents }) => {
@@ -1077,13 +1096,23 @@ class Session {
    * first asks "Quit Zenium?" (the "warn before closing a window with multiple tabs" setting is
    * on by default): the question must show exactly then, name the tab count, and its Quit button
    * ends the run. The app has to exit with code 0 within the budget either way.
+   *
+   * The exit is the process's exit event and nothing else. From the moment the app quits,
+   * Playwright's connections to it are gone – before the process is, by seconds on a slow runner
+   * – so a call still in flight then ("Target page, context or browser has been closed") is the
+   * quit happening, and an evaluate can neither confirm the exit nor tell a slow teardown from a
+   * hang (#148, #157). Callers read state.json only after this returns: the write a graceful
+   * quit ends with is the run's last one (#150), complete once the process has exited.
    */
   async quitGracefully(budgetMs = QUIT_BUDGET_MS) {
     const tabs = await this.sidebarTabCount().catch(() => 0)
     const expectPrompt = tabs > 1
     this.quitStartedAt = Date.now()
-    await Promise.race([this.press(QUIT_COMBO), delay(3000)])
+    // The chord's evaluate may lose its target: the quit it triggers can take the main-process
+    // session down before the reply arrives. The exit event says what happened then.
+    await Promise.race([unlessTargetClosed(this.press(QUIT_COMBO)), delay(3000)])
     const prompt = this.chrome.locator('[data-window-prompt="quit"]').first()
+    // The wait ends early when the chrome page closes under it: the app quitting without asking.
     const first = await Promise.race([
       this.exitPromise.then(() => 'exit'),
       prompt
@@ -1100,20 +1129,31 @@ class Session {
           `quit question reads "${asked.heading}" / "${asked.text}" with ${tabs} tabs open`
         )
       }
-      await prompt.getByRole('button', { name: 'Quit', exact: true }).click({ timeout: 5000 })
+      // Quit closes the window the button is in; the click's reply may not make it back.
+      await unlessTargetClosed(
+        prompt.getByRole('button', { name: 'Quit', exact: true }).click({ timeout: 5000 })
+      )
       this.quitStartedAt = Date.now()
     }
-    const exit = await Promise.race([this.exitPromise, delay(budgetMs).then(() => null)])
+    // One budget from the chord (or from Quit): the time the question took to show counts.
+    const exit = await exitWithin(this.exitPromise, budgetMs, this.quitStartedAt)
     const ms = Date.now() - this.quitStartedAt
     if (!exit) {
-      const responsive = await this.mainResponsive(3000)
-      const late = await this.windowPrompt().catch(() => null)
+      // Still alive past the bound. Whether the main process answers tells a quit that never
+      // started (responsive: the chord went nowhere; a prompt may be up) from a blocked one (a
+      // native dialog) from one gone from Playwright's view (windows and debugger closed, the
+      // process not ending: a teardown slower than the bound, or stuck).
+      const main = await mainProcessState(
+        this.app.evaluate(() => 'ok'),
+        3000
+      )
+      const late = main === 'responsive' ? await this.windowPrompt().catch(() => null) : null
       log(
-        `app did not exit after ${QUIT_COMBO} within ${budgetMs} ms (main ${responsive}); closing`
+        `app did not exit within ${budgetMs} ms after ${QUIT_COMBO} (main process ${main}); closing`
       )
       await this.forceClose()
       throw new Error(
-        `app did not exit within ${budgetMs} ms after ${QUIT_COMBO}${asked ? ' and Quit' : ''} (main process ${responsive}; prompt ${JSON.stringify(late)}; exit ${JSON.stringify(this.exit)})`
+        `app did not exit within ${budgetMs} ms after ${QUIT_COMBO}${asked ? ' and Quit' : ''} (main process ${main}; prompt ${JSON.stringify(late)}; exit after forceClose ${JSON.stringify(this.exit)})`
       )
     }
     if (exit.code !== 0)
@@ -1269,14 +1309,14 @@ async function runScenario(name, userData, sessionOptions, body) {
         if (!realPath(facts.userData).startsWith(realPath(profileRoot))) {
           throw new Error(`profile not isolated: userData is ${facts.userData}`)
         }
-        if (s.timings.chromeRenderedMs > RENDER_BUDGET_MS) {
+        if (s.timings.chromeRenderedMs > s.renderBudgetMs) {
           throw new Error(
-            `chrome rendered after ${s.timings.chromeRenderedMs} ms (budget ${RENDER_BUDGET_MS} ms)`
+            `chrome rendered after ${s.timings.chromeRenderedMs} ms (budget ${s.renderBudgetMs} ms${s.renderBudgetMs === RENDER_BUDGET_MS ? '' : ' for the first launch of the run'})`
           )
         }
-        return { ...s.timings, ...facts }
+        return { ...s.timings, renderBudgetMs: s.renderBudgetMs, ...facts }
       },
-      { timeoutMs: RENDER_BUDGET_MS * 3 + 90000, fatal: true }
+      { timeoutMs: RENDER_WAIT_MS + 90000, fatal: true }
     )
     await body(s, out)
   } catch (e) {
@@ -1418,8 +1458,12 @@ async function scenarioBoot() {
       const onboarding = s.chrome.locator('[data-testid="onboarding"]')
       await onboarding.waitFor({ state: 'visible', timeout: 10000 })
       await s.shot('01-first-launch')
-      await s.chrome.getByRole('button', { name: 'Continue' }).click({ timeout: 5000 })
-      await s.chrome.getByRole('button', { name: 'Skip tour' }).click({ timeout: 5000 })
+      await s.chrome
+        .getByRole('button', { name: 'Continue' })
+        .click({ timeout: FIRST_PAINT_CLICK_MS })
+      await s.chrome
+        .getByRole('button', { name: 'Skip tour' })
+        .click({ timeout: FIRST_PAINT_CLICK_MS })
       await onboarding.waitFor({ state: 'detached', timeout: 10000 })
       await s.shot('02-after-onboarding')
       return 'completed'
@@ -2086,7 +2130,9 @@ async function scenarioCrash() {
     })
     await s.step('restore', async () => {
       const bar = s.chrome.locator('[data-crash-restore]').first()
-      await bar.getByRole('button', { name: 'Restore', exact: true }).click({ timeout: 5000 })
+      await bar
+        .getByRole('button', { name: 'Restore', exact: true })
+        .click({ timeout: FIRST_PAINT_CLICK_MS })
       const tab = await s.waitForTab(EXAMPLE_URL, 45000)
       await bar.waitFor({ state: 'hidden', timeout: 8000 })
       await s.shot('02-restored-after-crash')

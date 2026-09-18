@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { HINT_PALETTE } from '@shared/fullscreenHint'
@@ -49,6 +50,31 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {'],
   // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
   ['.zen-message {', '.zen-suggestion {']
+]
+
+/**
+ * Files outside main.css built on v2 (a surface's own stylesheet, a component with inline values),
+ * as paths under src/renderer/src. Add a file here when its surface is moved to v2 on purpose; any
+ * other renderer file reading a v2 token fails the last test.
+ */
+const V2_FILES: ReadonlyArray<string> = [
+  // The phone history and bookmarks panels, their sheets and the bookmark editor.
+  'components/phone/phonePanels.css',
+  // The extensions UI's own stylesheet, imported by main.css (components/extensions/*, #68):
+  // management page and details, toolbar actions and the puzzle panel, popup frame, prompts.
+  'assets/extensions.css',
+  // The desktop bookmark manager's selection count pill (components/bookmarks/*, #90).
+  'components/bookmarks/BookmarkManager.tsx',
+  // The window prompts' checkbox accent (§9.5 modals, #129).
+  'components/dialogs/WindowPromptDialog.tsx',
+  // The extension details page's error line in the danger ink (#68).
+  'components/extensions/ExtensionDetails.tsx',
+  // The new tab page's shortcut dialog: its validation line in the danger ink (#148).
+  'components/newtab/NewTabShortcutDialog.tsx',
+  // The external-protocol sheet on the v2 sheet chassis (#140): its deemphasised host line.
+  'components/protocol/ExternalProtocolSheet.tsx',
+  // The sidebar's tab count badge, drawn in its surface's family through the §9.29 control roles.
+  'components/sidebar/SpacePanel.tsx'
 ]
 
 /** The text of the first `selector {` block found after `from`. */
@@ -208,6 +234,21 @@ describe('design language v2 tokens', () => {
     expect(to).toBeGreaterThan(from)
     // Every tone comes from the block (or Zen's accent and status inks); no literal colours.
     expect(css.slice(from, to)).not.toMatch(/#[0-9a-f]{3,8}\b/i)
+  })
+
+  it('is read outside main.css only by the files deliberately moved to v2', () => {
+    const root = fileURLToPath(new URL('../../', import.meta.url))
+    const files = readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .map((f) => f.split('\\').join('/'))
+      .filter((f) => /\.(css|tsx?)$/.test(f) && !f.includes('__tests__'))
+      .filter((f) => f !== 'assets/main.css')
+    for (const file of V2_FILES) expect(files, `v2 file "${file}"`).toContain(file)
+    for (const file of files) {
+      const reads = readFileSync(join(root, file), 'utf8').match(/var\(--v2-/g) ?? []
+      if (V2_FILES.includes(file))
+        expect(reads.length, `${file} reads v2 tokens`).toBeGreaterThan(0)
+      else expect(reads, `${file} reads v2 tokens but is not listed in V2_FILES`).toHaveLength(0)
+    }
   })
 })
 
