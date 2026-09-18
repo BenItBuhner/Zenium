@@ -322,7 +322,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   /** The tabs of the last state snapshot and whether each is private (a closed tab is still one). */
   private knownTabs = new Map<string, boolean>()
   private readonly debug: boolean
-  private readonly now: () => number
+  readonly now: () => number
   private readonly timers: {
     setTimeout: (fn: () => void, ms: number) => unknown
     clearTimeout: (handle: unknown) => void
@@ -898,6 +898,21 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
 
   hostsGranted(id: string, hosts: string[]): void {
     this.bridge.send('ext.hosts', { id, hosts })
+  }
+
+  /**
+   * The tab view's on-screen pixels through the same `view.capture` the agent's screenshots
+   * use (a PixelCopy of the activity window, so a sheet over the page, its own window, is not in
+   * it), at Chrome's default JPEG quality unless the extension asked for another.
+   */
+  async captureTab(tabId: string, format: 'jpeg' | 'png', quality: number): Promise<string | null> {
+    const shot = await this.bridge.call<{ data?: unknown; mimeType?: unknown } | null>(
+      'view.capture',
+      { tabId, mode: 'viewport', region: null, format, quality }
+    )
+    if (!shot || typeof shot.data !== 'string' || shot.data.length === 0) return null
+    const mimeType = typeof shot.mimeType === 'string' ? shot.mimeType : `image/${format}`
+    return `data:${mimeType};base64,${shot.data}`
   }
 
   openPopup(id: string): void {

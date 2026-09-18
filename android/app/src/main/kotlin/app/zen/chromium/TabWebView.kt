@@ -920,16 +920,17 @@ class TabWebView(
     }
 
     /**
-     * Agent screenshot: `mode` is `viewport`, `fullPage` or `region` (with `region` in CSS page
-     * px), `format` `jpeg` or `png`. Answers `{ data, mimeType, width, height }` or null.
+     * Agent screenshot (and `chrome.tabs.captureVisibleTab`): `mode` is `viewport`, `fullPage` or
+     * `region` (with `region` in CSS page px), `format` `jpeg` or `png`, `quality` the JPEG quality
+     * 0..100 (anything else: the default). Answers `{ data, mimeType, width, height }` or null.
      */
-    fun capture(mode: String, region: JSONObject?, format: String, callback: (JSONObject?) -> Unit) {
+    fun capture(mode: String, region: JSONObject?, format: String, quality: Int, callback: (JSONObject?) -> Unit) {
         val radius = radiusPx
         val square = { on: Boolean ->
             radiusPx = if (on) 0f else radius
             invalidateOutline()
         }
-        PageCapture(this, host.activity.window, encoder, square, ::evaluate).run(mode, PageCapture.parseRegion(region), format, callback)
+        PageCapture(this, host.activity.window, encoder, square, ::evaluate).run(mode, PageCapture.parseRegion(region), format, quality, callback)
     }
 
     fun navState(): JSONObject = json(

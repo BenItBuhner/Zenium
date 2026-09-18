@@ -3,6 +3,13 @@ import type { Tab } from '@shared/types'
 import type { Browser } from '@core/browser'
 import type { MenuItemTemplate, PageContextParams } from '@core/platform'
 import type { ZenWindow } from '@core/window'
+import {
+  CAPTURE_QUOTA_ERROR,
+  CaptureQuota,
+  captureDenial,
+  coversAllUrls,
+  normalizeCaptureOptions
+} from '@core/extensions/api/capture'
 import type { EngineContextKind } from '@core/extensions/api/engine'
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
@@ -62,6 +69,8 @@ export interface ApiHost {
   readonly router: MessageRouter
   /** `chrome.identity`: the web-auth flows (`extensionIdentity.ts`). */
   readonly identity: AndroidIdentity
+  /** The runtime's clock (tests drive it). */
+  now(): number
   window(): ZenWindow
   attached(id: string): AttachedExtension | undefined
   allAttached(): AttachedExtension[]
@@ -87,6 +96,11 @@ export interface ApiHost {
   writeCookie(containerId: string, url: string, setCookie: string): Promise<boolean>
   /** The optional host permissions an extension holds right now (`permissions.request` / `remove`); Kotlin's CORS proxy reads them. */
   hostsGranted(id: string, hosts: string[]): void
+  /**
+   * `tabs.captureVisibleTab`: the tab's on-screen pixels as a `data:` URL, or null when the view
+   * cannot be captured (hidden, not painted yet).
+   */
+  captureTab(tabId: string, format: 'jpeg' | 'png', quality: number): Promise<string | null>
   openPopup(id: string): void
   openOptions(id: string): void
   /** `runtime.reload()` and `management.uninstallSelf()`: the store re-reads or removes the extension. */
@@ -248,6 +262,8 @@ export class ExtensionApi {
   private readonly actions = new Map<string, ActionState>()
   /** Optional host permissions granted this session, per extension (Chrome persists them; W2-3 may). */
   private readonly grantedHosts = new Map<string, Set<string>>()
+  /** Chrome's two `captureVisibleTab` calls per second, per extension. */
+  private readonly captureQuota = new CaptureQuota()
 
   constructor(private readonly host: ApiHost) {
     this.tabs = new TabIds(host.browser, () => host.window())
@@ -283,6 +299,7 @@ export class ExtensionApi {
     this.contextMenus.forget(id)
     this.activeTab.forget(id)
     this.grantedHosts.delete(id)
+    this.captureQuota.forget(id)
   }
 
   /** The host patterns the extension may fetch across origins: its `host_permissions` plus what it was granted. */
@@ -533,8 +550,48 @@ export class ExtensionApi {
           asRecord(detailsArg)
         )
       }
+      case 'captureVisibleTab':
+        return this.captureVisibleTab(ext, args[0], args[1])
     }
     throw new Error(`chrome.tabs.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  /**
+   * Chrome's checks in order: the options, the quota, some host access at all, then what the
+   * page is (`captureDenial`); a page that cannot be copied is "view is invisible". The one
+   * window is the current one (`WINDOW_ID_CURRENT` or 1); the picture is the active tab's, which
+   * the phone shows whole (a popup sheet is its own window and never in the copy).
+   */
+  private async captureVisibleTab(
+    ext: AttachedExtension,
+    windowId: unknown,
+    options: unknown
+  ): Promise<string> {
+    const o = normalizeCaptureOptions(options)
+    if (!this.captureQuota.take(ext.record.id, this.host.now()))
+      throw new Error(CAPTURE_QUOTA_ERROR)
+    if (windowId !== undefined && windowId !== null && windowId !== -2 && windowId !== 1) {
+      if (asNumber(windowId) === null || !Number.isInteger(windowId))
+        throw new Error('Invalid window id')
+      throw new Error(`No window with id: ${windowId}.`)
+    }
+    const tab = this.tabs.activeTabFor(ext)
+    if (!tab || tab.discarded) throw new Error('Failed to capture tab: view is invisible')
+    const denial = captureDenial(tab.url, {
+      allUrls: coversAllUrls(this.hostPatterns(ext)),
+      activeTab: this.activeTab.allowsUrl(ext.record.id, tab.url),
+      fileAccess: ext.record.allowFileAccess === true,
+      extensionId: ext.record.id
+    })
+    if (denial) throw new Error(denial)
+    let image: string | null
+    try {
+      image = await this.host.captureTab(tab.id, o.format, o.quality)
+    } catch {
+      throw new Error('Failed to capture tab: unknown error')
+    }
+    if (!image) throw new Error('Failed to capture tab: view is invisible')
+    return image
   }
 
   /**

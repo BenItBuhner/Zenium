@@ -39,6 +39,13 @@ export class FakeKotlin implements RuntimeBridge {
   readonly jars = new Map<string, FakeJar>()
   /** Whether the fake WebView lists cookies with attributes (`GET_COOKIE_INFO`). */
   detailedCookies = true
+  /** What `view.capture` answers: the encoded pixels, or null for a view that cannot be copied. */
+  capture: ((args: Record<string, unknown>) => Record<string, unknown> | null) | null = (args) => ({
+    data: 'AAAA',
+    mimeType: `image/${String(args.format)}`,
+    width: 2,
+    height: 2
+  })
 
   jar(container = 'default'): FakeJar {
     let jar = this.jars.get(container)
@@ -140,6 +147,8 @@ export class FakeKotlin implements RuntimeBridge {
         return this.jar(String(args.container)).set(String(args.url), String(args.cookie))
       case 'ext.exec':
         return { ran: true }
+      case 'view.capture':
+        return this.capture ? this.capture(args) : null
       default:
         throw new Error(`no such bridge method ${method}`)
     }
