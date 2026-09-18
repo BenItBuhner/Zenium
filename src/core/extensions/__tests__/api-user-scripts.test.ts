@@ -92,12 +92,18 @@ describe('userScripts.register validation', () => {
       /exactly one of 'code' or 'file'/
     )
     bad([{ id: 'a', matches: ['<all_urls>'], js: [{ code: '' }], runAt: 'now' }], /invalid 'runAt'/)
-    bad([{ id: 'a', matches: ['<all_urls>'], js: [{ code: '' }], world: 'PAGE' }], /invalid 'world'/)
+    bad(
+      [{ id: 'a', matches: ['<all_urls>'], js: [{ code: '' }], world: 'PAGE' }],
+      /invalid 'world'/
+    )
     bad(
       [{ id: 'a', matches: ['<all_urls>'], js: [{ code: '' }], world: 'MAIN', worldId: 'w' }],
       /specifies a world ID, but is not in the USER_SCRIPT world/
     )
-    bad([{ id: 'a', matches: ['<all_urls>'], js: [{ code: '' }], worldId: '' }], /must be non-empty/)
+    bad(
+      [{ id: 'a', matches: ['<all_urls>'], js: [{ code: '' }], worldId: '' }],
+      /must be non-empty/
+    )
     bad([{ id: 'a', matches: ['<all_urls>'], js: [{ code: '' }], worldId: '_r' }], /reserved/)
     bad(
       [{ id: 'a', matches: ['<all_urls>'], js: [{ code: '' }], excludeMatches: ['x'] }],
@@ -127,7 +133,9 @@ describe('userScripts.update', () => {
     const existing = [registered({ id: 'a' })]
     expect(() => applyUpdates(existing, [{ id: 'zz' }])).toThrow(/Nonexistent script ID 'zz'/)
     expect(() => applyUpdates(existing, [{ id: 'a' }, { id: 'a' }])).toThrow(/Duplicate/)
-    expect(() => applyUpdates(existing, [{ id: 'a', matches: [] }])).toThrow(/must specify 'matches'/)
+    expect(() => applyUpdates(existing, [{ id: 'a', matches: [] }])).toThrow(
+      /must specify 'matches'/
+    )
     expect(() => applyUpdates(existing, [{ id: 'a', js: [] }])).toThrow(/at least one js source/)
     expect(() => applyUpdates(existing, [{ id: 'a', world: 'MAIN', worldId: 'w' }])).toThrow(
       /not in the USER_SCRIPT world/
@@ -162,7 +170,9 @@ describe('getScripts / unregister filters', () => {
 describe('world configurations', () => {
   it('normalises configureWorld properties', () => {
     expect(normalizeWorldConfig({})).toEqual({ messaging: false })
-    expect(normalizeWorldConfig({ csp: "script-src 'self'", messaging: true, worldId: 'w' })).toEqual({
+    expect(
+      normalizeWorldConfig({ csp: "script-src 'self'", messaging: true, worldId: 'w' })
+    ).toEqual({
       csp: "script-src 'self'",
       messaging: true,
       worldId: 'w'
@@ -184,7 +194,9 @@ describe('world configurations', () => {
     ])
     expect(worldConfigFor(worlds, 'w')).toEqual({ worldId: 'w', csp: 'x', messaging: false })
     expect(worldConfigFor(worlds, 'other')).toEqual({ messaging: false })
-    expect(resetWorldConfig(worlds, undefined)).toEqual([{ worldId: 'w', csp: 'x', messaging: false }])
+    expect(resetWorldConfig(worlds, undefined)).toEqual([
+      { worldId: 'w', csp: 'x', messaging: false }
+    ])
     expect(resetWorldConfig(worlds, 'w')).toEqual([{ messaging: false, csp: 'y' }])
     expect(() => resetWorldConfig(worlds, 3)).toThrow(/expected string/)
     expect(() => resetWorldConfig(worlds, '_w')).toThrow(/reserved/)
@@ -214,7 +226,13 @@ describe('planUserScripts', () => {
         messaging: false,
         scripts: [{ id: 'init', runAt: 'document_start', js: [{ code: '1' }] }]
       },
-      { world: 'MAIN', worldId: null, csp: null, messaging: false, scripts: [{ id: 'main', runAt: 'document_idle', js: [{ code: '1' }] }] },
+      {
+        world: 'MAIN',
+        worldId: null,
+        csp: null,
+        messaging: false,
+        scripts: [{ id: 'main', runAt: 'document_idle', js: [{ code: '1' }] }]
+      },
       {
         world: 'USER_SCRIPT',
         worldId: 'w1',
@@ -228,8 +246,17 @@ describe('planUserScripts', () => {
   it('injects nothing while the toggle is off, without host access, or on other schemes', () => {
     expect(planUserScripts(state, false, top, allow)).toEqual([])
     expect(planUserScripts(state, true, top, { ...allow, hostAccess: () => false })).toEqual([])
-    expect(planUserScripts(state, true, { url: 'chrome-extension://abc/x.html', isTopFrame: true }, allow)).toEqual([])
-    expect(planUserScripts(state, true, { url: 'about:blank', isTopFrame: true }, allow)).toEqual([])
+    expect(
+      planUserScripts(
+        state,
+        true,
+        { url: 'chrome-extension://abc/x.html', isTopFrame: true },
+        allow
+      )
+    ).toEqual([])
+    expect(planUserScripts(state, true, { url: 'about:blank', isTopFrame: true }, allow)).toEqual(
+      []
+    )
     expect(planUserScripts(emptyUserScriptsState(), true, top, allow)).toEqual([])
   })
 
@@ -276,11 +303,23 @@ describe('userScripts.execute validation', () => {
     bad({ js: [{ code: '' }] }, /'target.tabId' must be an integer/)
     bad({ js: [], target: { tabId: 1 } }, /at least one js source/)
     bad({ js: [{ code: '' }], target: { tabId: 1 }, world: 'X' }, /Invalid 'world'/)
-    bad({ js: [{ code: '' }], target: { tabId: 1 }, world: 'MAIN', worldId: 'w' }, /only be specified for the USER_SCRIPT world/)
+    bad(
+      { js: [{ code: '' }], target: { tabId: 1 }, world: 'MAIN', worldId: 'w' },
+      /only be specified for the USER_SCRIPT world/
+    )
     bad({ js: [{ code: '' }], target: { tabId: 1, frameIds: ['a'] } }, /must be integers/)
-    bad({ js: [{ code: '' }], target: { tabId: 1, frameIds: [1], allFrames: true } }, /Cannot specify 'allFrames' if 'frameIds'/)
-    bad({ js: [{ code: '' }], target: { tabId: 1, frameIds: [1], documentIds: ['d'] } }, /both 'frameIds' and 'documentIds'/)
-    bad({ js: [{ code: '' }], target: { tabId: 1, documentIds: ['d'], allFrames: true } }, /Cannot specify 'allFrames' if 'documentIds'/)
+    bad(
+      { js: [{ code: '' }], target: { tabId: 1, frameIds: [1], allFrames: true } },
+      /Cannot specify 'allFrames' if 'frameIds'/
+    )
+    bad(
+      { js: [{ code: '' }], target: { tabId: 1, frameIds: [1], documentIds: ['d'] } },
+      /both 'frameIds' and 'documentIds'/
+    )
+    bad(
+      { js: [{ code: '' }], target: { tabId: 1, documentIds: ['d'], allFrames: true } },
+      /Cannot specify 'allFrames' if 'documentIds'/
+    )
   })
 })
 
@@ -294,7 +333,9 @@ describe('persistence', () => {
     expect(parseUserScriptsState('not json')).toEqual(emptyUserScriptsState())
     expect(parseUserScriptsState('{"version":2}')).toEqual(emptyUserScriptsState())
     expect(
-      parseUserScriptsState(JSON.stringify({ version: 1, scripts: [{ id: 'bad' }], worlds: [3, { messaging: true }] }))
+      parseUserScriptsState(
+        JSON.stringify({ version: 1, scripts: [{ id: 'bad' }], worlds: [3, { messaging: true }] })
+      )
     ).toEqual({ scripts: [], worlds: [{ messaging: true }] })
   })
 })
