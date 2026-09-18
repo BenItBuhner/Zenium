@@ -293,6 +293,34 @@ function drag(x: number, y: number): void {
 const letGo = (x: number, y: number): void => pointer('pointerup', grid(), x, y)
 const interrupt = (x: number, y: number): void => pointer('pointercancel', grid(), x, y)
 
+/**
+ * The finger moves through `points`, `stepMs` apart, and the chrome hears of it late: every
+ * event is dispatched `lagMs` after the last of them was made, as a busy main thread hands the
+ * touch's events over – their timestamps the touch's own, well behind `performance.now()`.
+ */
+function dragLate(points: Array<{ x: number; y: number }>, stepMs: number, lagMs: number): void {
+  const events = points.map((p, i) => {
+    if (i > 0) elapse(stepMs)
+    return new PointerEvent('pointermove', {
+      pointerId: POINTER,
+      clientX: p.x,
+      clientY: p.y,
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+      pointerType: 'touch',
+      isPrimary: true
+    })
+  })
+  elapse(lagMs)
+  events.forEach((e, i) => {
+    if (i > 0) elapse(stepMs)
+    act(() => {
+      grid().dispatchEvent(e)
+    })
+  })
+}
+
 /** A native touchmove as the browser sends it to the node the touch started on. */
 function touchmoveOn(target: EventTarget): Event {
   const e = new Event('touchmove', { bubbles: true, cancelable: true })
@@ -406,6 +434,44 @@ describe('a card dragged out of its group', () => {
     )
     expect(liftStore.get()).toMatchObject({ phase: 'idle', tabId: null, target: null, slot: null })
     expect(groupAround('m1')).toBeNull()
+  })
+
+  it('a finger on its way takes no slot, however late its events come; the slot it settles on is its own through a reflow', () => {
+    render(grouped())
+    pickUp('m1')
+    // Down the left edge of a – the slot before it all the way – at 250 px/s, the events
+    // reaching the chrome half a second late. A finger on its way commits nothing: read against
+    // `performance.now()` its speed would be nought (no sample within the tracker's window) and
+    // the slot would take hold in passing, moving the grid under a finger still travelling.
+    const way = Array.from({ length: 11 }, (_, i) => ({ x: 8, y: 190 + 10 * i }))
+    dragLate(way, 40, 100)
+    expect(liftStore.get()).toMatchObject({ phase: 'dragging', target: null, slot: null })
+    expect(groupAround('m1')).toBe(`group:${GROUP}`)
+    // It stops: the slot takes hold after the dwell, and the finger has settled there.
+    act(() => elapse(SLOT_DWELL_MS))
+    expect(liftStore.get().slot).toEqual({ folderId: null, index: 0 })
+    expect(groupAround('m1')).toBeNull()
+
+    // The grid reflows under the still finger (the group lost its row): b is laid out where
+    // the finger rests, whose left edge would read as the slot after a. The slot belongs to the
+    // finger (v2 §11.4): a tremor within the slop changes nothing…
+    place('b', 0, 180)
+    place('a', 110, 180)
+    place(NEW_TAB_CELL, 110, 320)
+    render(grouped())
+    drag(10, 292)
+    expect(liftStore.get()).toMatchObject({ target: null, slot: { folderId: null, index: 0 } })
+    // …and the release lands the card in the held slot, not the one the reflow put under it.
+    letGo(10, 292)
+    expect(liftStore.get()).toMatchObject({
+      phase: 'dropping',
+      target: null,
+      slot: { folderId: null, index: 0 }
+    })
+    expect(commands()).toEqual([
+      ['tab.move', { tabId: 'm1', spaceId: SPACE, section: 'regular', index: 1 }],
+      ['tab.moveToFolder', { tabId: 'm1', folderId: null }]
+    ])
   })
 
   it('flung out before the gap opens still lands where the finger let go', () => {

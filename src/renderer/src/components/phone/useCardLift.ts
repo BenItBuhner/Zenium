@@ -277,6 +277,8 @@ class DragSession {
   private autoscroll: number | null = null
   private dwell: ReturnType<typeof setTimeout> | null = null
   private ended = false
+  /** The last pointer event's own time, and the time it was dispatched (see `hover`). */
+  private lastEvent = { at: performance.now(), seen: performance.now() }
 
   constructor(
     readonly pointerId: number,
@@ -336,7 +338,7 @@ class DragSession {
     }
     if (liftStore.get().phase !== 'dragging') return
     this.follow()
-    this.hover(performance.now(), true)
+    this.hover(e.timeStamp, true)
     this.scrollNearEdges()
   }
 
@@ -359,16 +361,30 @@ class DragSession {
   /**
    * Ask the grid what the finger is over and run the drop-target machine on the answer – which
    * counts only once the finger has moved past the slop from where it settled (v2 §11.4).
+   *
+   * The finger's speed is read at `eventTime`, on the events' own clock: the samples carry the
+   * touch's timestamps, and on a busy main thread the events are dispatched well after them –
+   * further than the tracker's window on a slow device, where a speed read against
+   * `performance.now()` would find no recent sample and call a moving finger still, so that a
+   * slot took hold under it in passing and the grid reflowed under a finger on its way. The dwell
+   * and the pause are kept on `performance.now()`: how long nothing new has been heard.
    */
-  private hover(now: number, mirror: boolean): void {
+  private hover(eventTime: number, mirror: boolean): void {
+    const now = performance.now()
+    this.lastEvent = { at: eventTime, seen: now }
     const { tab, onHover } = this.handlers
     const current: LiftHover = { target: this.drop.target, slot: this.drop.slot }
     const next = onHover(tab, this.x, this.y, current)
-    const { vx, vy } = this.velocity.velocity(now)
+    const { vx, vy } = this.velocity.velocity(eventTime)
     const pointer: DragPointer = { x: this.x, y: this.y, now, speed: Math.hypot(vx, vy) }
     // Off the grid: nothing is targeted, nothing waits to open.
     this.drop = next === null ? leaveDrag(this.drop, pointer) : hoverDrag(this.drop, next, pointer)
     if (mirror) this.mirror()
+  }
+
+  /** Now, on the events' clock: the last event's time plus what has passed since it came. */
+  private eventNow(): number {
+    return this.lastEvent.at + (performance.now() - this.lastEvent.seen)
   }
 
   /** Show the machine's state: the target ring and the ghost's tuck at once, the slot's gap. */
@@ -421,7 +437,7 @@ class DragSession {
       if (el.scrollTop === before) return
       // The slots moved under the finger – at the finger's own asking.
       this.drop = scrollDrag(this.drop, 0, el.scrollTop - before)
-      this.hover(performance.now(), true)
+      this.hover(this.eventNow(), true)
       this.autoscroll = requestAnimationFrame(tick)
     }
     this.autoscroll = requestAnimationFrame(tick)
@@ -450,7 +466,7 @@ class DragSession {
     // The card lands where the finger let go: one last look under the release point.
     this.x = e.clientX
     this.y = e.clientY
-    this.hover(performance.now(), false)
+    this.hover(e.timeStamp, false)
     const { outcome } = releaseDrag(this.drop, 'drop')
     this.drop = DROP_IDLE
     // The target ring goes out now; the stand-in keeps its slot until the browser shows the
