@@ -419,6 +419,14 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
      * software-rendered emulator trails the screen by seconds after each transition.
      */
     private fun settingsTour() {
+        // The checkout's field still holds the keyboard: put it away first, or the overlay opens
+        // squeezed above it and the rows below the fold are tapped through the keys (the run at
+        // 69f15f10 landed in the URL bar that way).
+        page("document.activeElement && document.activeElement.blur()")
+        if (imeShown()) {
+            back()
+            note("keyboard put away before Settings: ${if (awaitIme(false)) "down" else "still up"}")
+        }
         zen("autofill.manage")
         if (!awaitText("Offer to save passwords", 15_000)) {
             note("Settings > Autofill did not show its rows; skipping the tour")
@@ -427,6 +435,7 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         }
         SystemClock.sleep(1_500)
         snap("settings-passwords")
+        reveal("Clear copied passwords")
         if (tapText("Clear copied passwords") && awaitText("After 30 seconds", 6_000)) {
             SystemClock.sleep(1_200)
             snap("settings-clipboard-menu")
