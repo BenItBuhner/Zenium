@@ -1,6 +1,7 @@
 package app.zen.chromium
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.UiAutomation
 import android.content.Context
 import android.content.Intent
@@ -13,6 +14,7 @@ import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
 import android.webkit.WebView
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -21,7 +23,9 @@ import androidx.webkit.WebViewCompat
 import app.zen.chromium.blocking.Request
 import app.zen.chromium.blocking.ResourceType
 import app.zen.chromium.ext.ExtensionFiles
+import app.zen.chromium.ext.ExtensionNotifications
 import app.zen.chromium.ext.ExtensionWebView
+import app.zen.chromium.ext.NavigationReports
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Test
@@ -43,7 +47,12 @@ import java.util.concurrent.TimeUnit
  *  - content script (ran, at the right `run_at`, without throwing),
  *  - messaging and storage (round trips through the shim, the bridge and the background host),
  *  - popup (the bottom sheet loaded the extension's page and its scripts ran),
- *  - core function (the page went dark, link hints appeared, ad requests were blocked, …).
+ *  - core function (the page went dark, link hints appeared, ad requests were blocked, …),
+ *  - the W2-2 surfaces on the probe: the popup sheet at the extension's own size, the options
+ *    sheet, its `contextMenus` items in a link's long-press menu, a notification on the shade,
+ *    an `identity.launchWebAuthFlow` in the auth sheet; then the CORS proxy (Dark Reader's
+ *    Google image fetch is the acceptance case), `cookies`, `captureVisibleTab` and the
+ *    `webNavigation` events of the run.
  *
  * The visible part runs while the workflow records the screen (same `record` / `recording` /
  * `done` handshake as the gesture demo); measurements without a picture come after. Everything
@@ -191,6 +200,10 @@ class ExtensionDemo {
     }
 
     private fun launch() {
+        // Windows other than the app's (the notification shade) are only listed with this flag.
+        runCatching {
+            ui.serviceInfo = ui.serviceInfo.apply { flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS }
+        }
         // The launcher entry is an icon alias that hands over to MainActivity and finishes at
         // once; the demo needs the browser's own activity, so it starts that directly.
         val intent = Intent(app, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
@@ -361,6 +374,7 @@ class ExtensionDemo {
             results.put("probePopup", report)
             val steps = report.optJSONObject("steps") ?: JSONObject()
             stage(PROBE_ID, "popup", if (steps.has("activeTab") && steps.optJSONObject("background") != null) "PASS" else "PARTIAL", steps.toString().take(600))
+            popupSheetSize(view)
         }
         if (!probePopupReady) stage(PROBE_ID, "popup", "FAIL", "popup never reported ready")
 
@@ -422,7 +436,15 @@ class ExtensionDemo {
         }
         if (!stylusPopup) stage(STYLUS, "popup", "FAIL", "popup document stayed empty")
 
-        // 7. Return YouTube Dislike on a real watch page (network permitting). m.youtube.com
+        // 7-10. W2-2 surfaces on the probe: its options sheet, its items in the long-press menu of
+        // a link, a notification on the shade, and an identity flow in the auth sheet.
+        showTab(probeTab)
+        optionsSheet()
+        contextMenu(probeView)
+        notification()
+        authSheet()
+
+        // 11. Return YouTube Dislike on a real watch page (network permitting). m.youtube.com
         // renders the like/dislike bar the extension decorates well after `load`, from its
         // scripts, and the software-rendered emulator spends its CPU on decoding the video in the
         // meantime (measured: the bar was there 10 s after load while the video was blocked, not
@@ -443,7 +465,7 @@ class ExtensionDemo {
             }
         }
         SystemClock.sleep(1_500)
-        shot("08-ryd-youtube")
+        shot("11-ryd-youtube")
         val ryd = json(tabEval(ytView, RYD_REPORT))
         // On a WebView with worlds the extension's bootstrap statistics live in its world.
         val rydWorld = if (worlds) worldEval(ytView, RYD, WORLD_REPORT)?.let(::json) else null
@@ -657,6 +679,10 @@ class ExtensionDemo {
         lateInjection()
         privateTabs()
         frames()
+        corsProxy()
+        cookies()
+        captureVisibleTab()
+        webNavigation()
 
         // Background pages: console output and errors of every extension.
         val backgrounds = JSONObject()
@@ -881,6 +907,519 @@ class ExtensionDemo {
         stage(PROBE_ID, "frames", verdict, report.toString().take(600) + if (verdict == "N/A") " (no frame injection below Chromium 146: the main frame alone is reachable)" else "")
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(tab)},"force":true}""")
         SystemClock.sleep(800)
+    }
+
+    // --- W2-2: sheets, menus, notifications, identity, proxy, cookies, capture, navigation ---------
+
+    /**
+     * The popup sheet gives the extension's document its own size: the probe popup's body is 320
+     * CSS px wide plus 20 px of padding a side (360), so on a 411 dp phone the surface is narrower
+     * than the sheet and centred in it, and its height follows the document rather than the
+     * sheet's maximum (the v2 sheet rules: grip, 48 dp header, the body the content's).
+     */
+    private fun popupSheetSize(view: WebView) {
+        val report = JSONObject()
+        instrumentation.runOnMainSync {
+            val density = view.resources.displayMetrics.density
+            val parent = view.parent as? View
+            report.put("widthDp", (view.width / density).toInt())
+            report.put("heightDp", (view.height / density).toInt())
+            report.put("frameWidthDp", ((parent?.width ?: 0) / density).toInt())
+            report.put("screenWidthDp", (view.resources.displayMetrics.widthPixels / density).toInt())
+            report.put("screenHeightDp", (view.resources.displayMetrics.heightPixels / density).toInt())
+        }
+        report.put(
+            "document",
+            json(tabEval(view, "JSON.stringify({scrollWidth: document.documentElement.scrollWidth, scrollHeight: document.documentElement.scrollHeight, bodyWidth: document.body.getBoundingClientRect().width, bodyHeight: document.body.getBoundingClientRect().height, innerWidth: innerWidth, innerHeight: innerHeight})"))
+        )
+        results.put("popupSheet", report)
+        val widthDp = report.optInt("widthDp")
+        val heightDp = report.optInt("heightDp")
+        val ownWidth = widthDp in 330..390 && widthDp < report.optInt("frameWidthDp") - 2
+        val ownHeight = heightDp in 80..600 && heightDp < report.optInt("screenHeightDp") * 0.85
+        stage(
+            PROBE_ID, "popupSheet",
+            when {
+                ownWidth && ownHeight -> "PASS"
+                ownWidth || ownHeight -> "PARTIAL"
+                else -> "FAIL"
+            },
+            "surface ${widthDp}x${heightDp} dp in a ${report.optInt("frameWidthDp")} dp sheet on a ${report.optInt("screenWidthDp")}x${report.optInt("screenHeightDp")} dp screen; document ${report.optJSONObject("document")}"
+        )
+    }
+
+    /**
+     * The options page (`options_ui` without `open_in_tab`) in the same sheet chassis at the
+     * sheet's full width: it loads, binds its form to `storage.local`, and a change it saves is
+     * what the background reads back.
+     */
+    private fun optionsSheet() {
+        val report = JSONObject()
+        chromeInvoke("extension.openOptions", """{"id":${JSONObject.quote(PROBE_ID)}}""")
+        val view = waitFor(20_000, 400) {
+            val v = popupView()
+            if (v != null && tabEval(v, "document.title") == "probe-options-ready") v else null
+        }
+        SystemClock.sleep(1_000)
+        var saved = false
+        if (view != null) {
+            tabEval(view, "(function(){var g=document.getElementById('greeting');g.value='hello from the demo';g.dispatchEvent(new Event('input'));return 'ok'})()")
+            saved = waitFor(8_000, 200) { if (tabEval(view, "document.body.getAttribute('data-saved')") == "1") true else null } == true
+            SystemClock.sleep(600)
+        }
+        shot("07-probe-options-sheet")
+        if (view != null) {
+            report.put("options", json(tabEval(view, "JSON.stringify(window.__optionsReport || null)")))
+            report.put("url", tabEval(view, "location.href"))
+            instrumentation.runOnMainSync {
+                val density = view.resources.displayMetrics.density
+                report.put("widthDp", (view.width / density).toInt()).put("heightDp", (view.height / density).toInt())
+            }
+        }
+        chromeInvoke("extension.closePopup", null)
+        SystemClock.sleep(900)
+        val bg = backgroundView(PROBE_ID)
+        if (bg != null) {
+            tabEval(bg, "(function(){window.__opt=null;chrome.storage.local.get(['greeting'],function(i){window.__opt=JSON.stringify(i||{})})})()")
+            val raw = waitFor(8_000, 200) { val v = tabEval(bg, "window.__opt"); if (v == "null") null else v }
+            report.put("storageFromBackground", raw?.let(::json) ?: JSONObject.NULL)
+        }
+        val stored = report.optJSONObject("storageFromBackground")?.optString("greeting") == "hello from the demo"
+        results.put("optionsSheet", report)
+        stage(
+            PROBE_ID, "options",
+            when {
+                view != null && saved && stored -> "PASS"
+                view != null -> "PARTIAL"
+                else -> "FAIL"
+            },
+            if (view == null) "options page never reported ready" else report.toString().take(500)
+        )
+    }
+
+    /**
+     * `chrome.contextMenus` in the long-press menu: a long press on a link of the probe page opens
+     * Zenium's link menu (the chrome's sheet) with the probe's items after the browser's own, and
+     * tapping one raises `onClicked` in the background with the link and the tab. Should the press
+     * not open the menu (it became a text selection), the view's own `contextMenu` event is sent
+     * for the same link, which is noted in the verdict.
+     */
+    private fun contextMenu(probeView: TabWebView) {
+        val report = JSONObject()
+        val bg = backgroundView(PROBE_ID)
+        report.put("registered", bg?.let { json(tabEval(it, "JSON.stringify({items: report.menuItems, clicks: report.menuClicks})")) } ?: JSONObject.NULL)
+        val clicksBefore = report.optJSONObject("registered")?.optJSONArray("clicks")?.length() ?: 0
+        val link = json(
+            tabEval(
+                probeView,
+                "JSON.stringify((function(a){if(!a)return null;var r=a.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2,w:r.width,h:r.height}})(document.querySelector('a[href=\"https://example.com/\"]')))"
+            )
+        )
+        val point = screenPoint(probeView, link)
+        report.put("linkPoint", point?.let { JSONObject().put("x", it.first).put("y", it.second) } ?: JSONObject.NULL)
+        var via = "none"
+        if (point != null) {
+            longPress(point.first, point.second)
+            via = "long-press"
+        }
+        var item = waitFor(8_000, 300) { menuItemPoint(MENU_LINK_LABEL) }
+        if (item == null) {
+            instrumentation.runOnMainSync {
+                host.viewEvent(
+                    probeTab, "contextMenu",
+                    JSONObject().put("linkURL", "https://example.com/").put("srcURL", "").put("mediaType", "none").put("x", 100).put("y", 300)
+                )
+            }
+            via = if (point != null) "synthetic event after a long-press without a menu" else "synthetic event"
+            item = waitFor(8_000, 300) { menuItemPoint(MENU_LINK_LABEL) }
+        }
+        report.put("menuVia", via)
+        report.put("itemShown", item != null)
+        report.put("menuLabels", menuLabels())
+        SystemClock.sleep(800)
+        shot("08-context-menu")
+        var clicked: JSONObject? = null
+        if (item != null && bg != null) {
+            tap(item.first, item.second)
+            clicked = waitFor(6_000, 250) { menuClick(bg, clicksBefore) }
+            if (clicked == null) {
+                pickMenuItem(MENU_LINK_LABEL)
+                report.put("pickedInDocument", true)
+                clicked = waitFor(6_000, 250) { menuClick(bg, clicksBefore) }
+            }
+        }
+        if (menuLabels().length() > 0) {
+            ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+            SystemClock.sleep(800)
+        }
+        report.put("click", clicked ?: JSONObject.NULL)
+        results.put("contextMenu", report)
+        val right = clicked != null && clicked.optString("menuItemId") == "probe-link" && clicked.optString("linkUrl") == "https://example.com/"
+        stage(
+            PROBE_ID, "contextMenus",
+            when {
+                item != null && right && via == "long-press" && !report.has("pickedInDocument") -> "PASS"
+                item != null && right -> "PARTIAL"
+                item != null -> "PARTIAL"
+                else -> "FAIL"
+            },
+            report.toString().take(700)
+        )
+        SystemClock.sleep(600)
+    }
+
+    /**
+     * `chrome.notifications`: the probe posts a card on the system shade (its own channel under
+     * the Extensions group); the shade opens for the picture, the card is tapped and the
+     * background's `onClicked` (and the `onClosed` that follows) arrives through MainActivity. If
+     * the driver cannot find the card in the shade, the card is cleared instead, which raises
+     * `onClosed`, and the stage says so.
+     */
+    private fun notification() {
+        val report = JSONObject()
+        val created = w22("notify", """{"id":"probe-note","title":"Zenium probe","message":"Tap me: the probe extension is listening."}""")
+        report.put("created", created)
+        SystemClock.sleep(1_500)
+        val dump = shell("dumpsys notification --noredact")
+        report.put("posted", dump.contains("pkg=${app.packageName}"))
+        report.put("channel", dump.contains(ExtensionNotifications.channelId(PROBE_ID)))
+        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
+        val card = waitFor(6_000, 400) { findInWindows("Zenium probe") }
+        SystemClock.sleep(1_200)
+        shot("09-notification-shade")
+        report.put("cardFound", card != null)
+        var via = "none"
+        if (card != null) {
+            tap(card.exactCenterX(), card.exactCenterY())
+            via = "tap on the shade"
+        } else {
+            ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE)
+            SystemClock.sleep(800)
+        }
+        val bg = backgroundView(PROBE_ID)
+        var events = waitFor(8_000, 300) {
+            val list = bg?.let { json(tabEval(it, "JSON.stringify({list: report.notificationEvents})")) }?.optJSONArray("list")
+            if (list != null && list.length() > 0) list else null
+        }
+        if (events == null) {
+            val cleared = w22("notifyClear", """{"id":"probe-note"}""")
+            report.put("cleared", cleared)
+            via = if (card != null) "tap without an event, then clear" else "clear"
+            events = cleared.optJSONArray("events")
+        }
+        val seen = events ?: JSONArray()
+        report.put("via", via)
+        report.put("events", seen)
+        // The shade must be gone for the rest of the recording, whatever happened above.
+        if (ui.rootInActiveWindow?.packageName?.toString()?.contains("systemui") == true) {
+            ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE)
+            SystemClock.sleep(800)
+        }
+        results.put("notification", report)
+        val okCreate = created.optString("id") == "probe-note" && created.isNull("error")
+        val kinds = (0 until seen.length()).map { seen.getJSONObject(it).optString("event") }
+        stage(
+            PROBE_ID, "notifications",
+            when {
+                okCreate && "clicked" in kinds -> "PASS"
+                okCreate -> "PARTIAL"
+                else -> "FAIL"
+            },
+            report.toString().take(700)
+        )
+        SystemClock.sleep(600)
+    }
+
+    /**
+     * `identity.launchWebAuthFlow` in the auth sheet: the runner's stand-in provider loads in the
+     * sheet (a WebView on the regular profile), the driver taps its sign-in button, the page goes
+     * to `https://<id>.chromiumapp.org/cb?code=…`, which the sheet cancels and hands to the flow;
+     * the promise resolves with that URL and the sheet closes. Then a silent flow whose page
+     * redirects by itself: it resolves without the sheet ever showing.
+     */
+    private fun authSheet() {
+        val report = JSONObject()
+        val bg = backgroundView(PROBE_ID)
+        if (bg == null) {
+            stage(PROBE_ID, "identity", "FAIL", "no probe background")
+            return
+        }
+        tabEval(bg, "window.__w22('auth', {url: ${JSONObject.quote("$BASE/auth.html")}})")
+        val view = waitFor(15_000, 300) { authView() }
+        val shown = view != null && waitFor(15_000, 300) {
+            var attached = false
+            instrumentation.runOnMainSync { attached = view.isAttachedToWindow && view.isShown }
+            if (attached && tabEval(view, "String(document.readyState === 'complete' && !!document.getElementById('signin'))") == "true") true else null
+        } == true
+        report.put("sheetShown", shown)
+        SystemClock.sleep(1_500)
+        shot("10-auth-sheet")
+        var via = "none"
+        if (view != null && shown) {
+            report.put("sheetUrl", tabEval(view, "location.href"))
+            val button = json(tabEval(view, "JSON.stringify((function(b){var r=b.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})(document.getElementById('signin')))"))
+            val point = screenPoint(view, button)
+            if (point != null) {
+                tap(point.first, point.second)
+                via = "tap"
+            }
+        }
+        var result = waitFor(10_000, 250) { w22Result(bg) }
+        if (result == null && view != null) {
+            tabEval(view, "document.getElementById('signin').click()")
+            via = "$via, then a click in the document"
+            result = waitFor(10_000, 250) { w22Result(bg) }
+        }
+        report.put("via", via)
+        report.put("interactive", result ?: JSONObject().put("error", "never settled"))
+        SystemClock.sleep(800)
+        report.put("sheetClosed", authView() == null)
+        val silent = w22("auth", """{"url":${JSONObject.quote("$BASE/auth.html")},"auto":1,"interactive":false}""", 25_000)
+        report.put("silent", silent)
+        report.put("sheetAfterSilent", authView() != null)
+        results.put("identity", report)
+        val interactiveUrl = result?.optString("responseUrl") ?: ""
+        val redirect = result?.optString("redirect") ?: ""
+        val interactiveOk = redirect.isNotEmpty() && interactiveUrl.startsWith(redirect) && interactiveUrl.contains("code=probe-ok")
+        val silentOk = silent.optString("responseUrl").contains("code=probe-ok")
+        stage(
+            PROBE_ID, "identity",
+            when {
+                shown && interactiveOk && silentOk && via == "tap" && report.optBoolean("sheetClosed") -> "PASS"
+                interactiveOk -> "PARTIAL"
+                else -> "FAIL"
+            },
+            report.toString().take(800)
+        )
+    }
+
+    /**
+     * The CORS proxy: a `fetch` and an XHR from the probe's background (origin
+     * `https://<id>.ext.zenium.invalid`) to the runner's page server, which sends no CORS headers,
+     * so the responses are readable only because Kotlin re-served them; a POST with a body goes
+     * the same way (the server answers it 501, which is readable for the same reason). The
+     * acceptance case is Dark Reader's: its content script on the probe page asks its background
+     * to fetch the page's cross-origin Google logo for analysis, and the proxy's log has it.
+     */
+    private fun corsProxy() {
+        val url = "$BASE/data.json?cors=1"
+        val probe = w22("cors", """{"url":${JSONObject.quote(url)}}""")
+        var log: List<String> = emptyList()
+        instrumentation.runOnMainSync { log = synchronized(host.extensions.proxied) { host.extensions.proxied.toList() } }
+        val report = JSONObject().put("probe", probe).put("proxied", JSONArray(log.takeLast(40)))
+        val probeOk = probe.optInt("status") == 200 && probe.optString("body").contains("{") && probe.optInt("xhrStatus") == 200
+        val postSeen = probe.has("postStatus")
+        stage(
+            PROBE_ID, "corsProxy",
+            when {
+                probeOk && postSeen -> "PASS"
+                probeOk || probe.optInt("status") == 200 -> "PARTIAL"
+                else -> "FAIL"
+            },
+            "fetch=${probe.optInt("status")} acao=${probe.optString("allowOrigin")} xhr=${probe.optInt("xhrStatus")} post=${probe.opt("postStatus") ?: probe.optString("postError")} body=${probe.optString("body").take(60)}"
+        )
+        val google = log.filter { it.contains("googlelogo") }
+        report.put("darkReaderGoogleFetch", JSONArray(google))
+        // The page's side: Dark Reader swaps an analysed background image for its own rendering.
+        showTab(probeTab)
+        val probeView = waitForView(probeTab)
+        report.put("logoBackgroundImage", tabEval(probeView, "(function(e){return e ? getComputedStyle(e).backgroundImage.slice(0, 80) : 'no element'})(document.querySelector('.logo'))"))
+        results.put("corsProxy", report)
+        val darkStatus = google.mapNotNull { it.split(' ').getOrNull(2)?.toIntOrNull() }
+        stage(
+            DARK_READER, "corsProxy",
+            when {
+                darkStatus.any { it == 200 } -> "PASS"
+                google.isNotEmpty() -> "PARTIAL"
+                else -> "FAIL"
+            },
+            if (google.isEmpty()) "no proxied request for the probe page's Google logo (Dark Reader did not ask its background to fetch it, or the request never reached the proxy); log tail=${log.takeLast(5)}"
+            else "proxied: ${google.joinToString()}; page shows ${report.optString("logoBackgroundImage").take(50)}"
+        )
+    }
+
+    /**
+     * `chrome.cookies` against the probe page's origin: `set` lands in the WebView's jar (the page
+     * reads it from `document.cookie`), `get` / `getAll` read it back, `remove` takes it out again
+     * (the page no longer sees it), `onChanged` reports the write and the removal.
+     */
+    private fun cookies() {
+        val url = "$BASE/probe.html"
+        showTab(probeTab)
+        val probeView = waitForView(probeTab)
+        val report = JSONObject()
+        report.put("detailed", androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.GET_COOKIE_INFO))
+        report.put("pageBefore", tabEval(probeView, "document.cookie"))
+        val set = w22("cookies", """{"url":${JSONObject.quote(url)}}""")
+        report.put("set", set)
+        SystemClock.sleep(500)
+        report.put("pageAfterSet", tabEval(probeView, "document.cookie"))
+        val removed = w22("cookieRemove", """{"url":${JSONObject.quote(url)}}""")
+        report.put("remove", removed)
+        SystemClock.sleep(500)
+        report.put("pageAfterRemove", tabEval(probeView, "document.cookie"))
+        results.put("cookies", report)
+        val value = set.optJSONObject("set")?.optString("value") ?: ""
+        val apiSet = value.startsWith("w22-") && set.optJSONObject("get")?.optString("value") == value && set.optJSONArray("getAll")?.toString()?.contains("zenProbe=$value") == true
+        val pageSaw = report.optString("pageAfterSet").contains("zenProbe=$value")
+        val apiRemoved = removed.isNull("after") && removed.optJSONObject("removed")?.optString("name") == "zenProbe"
+        val pageForgot = !report.optString("pageAfterRemove").contains("zenProbe=")
+        val changes = (set.optJSONArray("changes")?.length() ?: 0) + (removed.optJSONArray("changes")?.length() ?: 0)
+        stage(
+            PROBE_ID, "cookies",
+            when {
+                apiSet && pageSaw && apiRemoved && pageForgot && changes >= 2 -> "PASS"
+                apiSet && apiRemoved -> "PARTIAL"
+                else -> "FAIL"
+            },
+            "set/get/getAll=$apiSet page saw=$pageSaw removed=$apiRemoved page forgot=$pageForgot onChanged=$changes stores=${set.optJSONArray("stores")} detailed(GET_COOKIE_INFO)=${report.optBoolean("detailed")}" +
+                (set.optString("error").takeIf { it.isNotEmpty() }?.let { " error=$it" } ?: "")
+        )
+    }
+
+    /**
+     * `tabs.captureVisibleTab` from the probe's background: a PNG data URL of the active (probe)
+     * tab's on-screen pixels that decodes to a real image, saved next to the screenshots; then a
+     * JPEG at a chosen quality.
+     */
+    private fun captureVisibleTab() {
+        showTab(probeTab)
+        val png = w22("capture", """{"format":"png"}""", 25_000)
+        val dataUrl = png.optString("dataUrl")
+        if (dataUrl.startsWith("data:image/png;base64,")) {
+            runCatching {
+                val bytes = android.util.Base64.decode(dataUrl.substringAfter("base64,"), android.util.Base64.DEFAULT)
+                File(out, "ext-android-runtime-12-capture-visible-tab.png").writeBytes(bytes)
+            }
+        }
+        png.remove("dataUrl")
+        val jpeg = w22("capture", """{"format":"jpeg","quality":50}""", 25_000)
+        jpeg.remove("dataUrl")
+        val report = JSONObject().put("png", png).put("jpeg", jpeg)
+        results.put("captureVisibleTab", report)
+        val pngOk = png.optString("prefix").startsWith("data:image/png") && png.optInt("width") > 0 && png.optInt("height") > 0
+        val jpegOk = jpeg.optString("prefix").startsWith("data:image/jpeg") && jpeg.optInt("width") > 0
+        stage(
+            PROBE_ID, "captureVisibleTab",
+            when {
+                pngOk && jpegOk -> "PASS"
+                pngOk || jpegOk -> "PARTIAL"
+                else -> "FAIL"
+            },
+            "png ${png.optInt("width")}x${png.optInt("height")} (${png.optInt("length")} chars) jpeg q50 ${jpeg.optInt("width")}x${jpeg.optInt("height")} (${jpeg.optInt("length")} chars)" +
+                (png.optString("error").takeIf { it.isNotEmpty() }?.let { " error=$it" } ?: "")
+        )
+    }
+
+    /**
+     * `chrome.webNavigation` as the probe's background saw the run, derived from the WebView's
+     * navigation listener where the WebView has one (`NAVIGATION_LISTENER`, Chromium 137+) and
+     * inferred from the client callbacks otherwise: the four phases of a probe page load in order,
+     * a fragment change and a `pushState` as same-document events, and the filtered `onCommitted`
+     * listener (`hostEquals`, `pathSuffix`) hearing about probe pages only.
+     */
+    private fun webNavigation() {
+        showTab(probeTab)
+        val probeView = waitForView(probeTab)
+        val before = w22("navigation").optInt("count")
+        tabEval(probeView, "location.hash = '#w22'")
+        SystemClock.sleep(1_200)
+        tabEval(probeView, "history.pushState({}, '', location.pathname + '?w22=1')")
+        SystemClock.sleep(1_200)
+        val all = w22("navigation").optJSONArray("list") ?: JSONArray()
+        val entries = (0 until all.length()).map { all.getJSONObject(it) }
+        val report = JSONObject()
+        report.put("navigationListener", NavigationReports.supported)
+        report.put("count", entries.size)
+        report.put("tail", JSONArray(entries.takeLast(24)))
+        val sameDocument = entries.drop(before)
+        val fragment = sameDocument.any { it.optString("event") == "onReferenceFragmentUpdated" && it.optString("url").endsWith("#w22") }
+        val pushed = sameDocument.any { it.optString("event") == "onHistoryStateUpdated" && it.optString("url").contains("w22=1") }
+        // The phases of one probe page load, in order, for the same tab.
+        val probeLoads = entries.filter { it.optString("url").startsWith("$BASE/probe.html") && it.optInt("frameId", -1) == 0 }
+        val phases = listOf("onBeforeNavigate", "onCommitted", "onDOMContentLoaded", "onCompleted")
+        val orderedLoad = probeLoads.map { it.optString("event") }.windowed(4).any { it == phases }
+        val filtered = entries.filter { it.optString("event") == "onCommitted:filtered" }
+        val filterRight = filtered.isNotEmpty() && filtered.all { it.optString("url").startsWith("$BASE/probe.html") }
+        val transitions = probeLoads.filter { it.optString("event") == "onCommitted" }.map { it.optString("transitionType") }.distinct()
+        report.put("orderedLoad", orderedLoad).put("fragment", fragment).put("pushState", pushed).put("filteredCount", filtered.size).put("filterRight", filterRight).put("transitions", JSONArray(transitions))
+        results.put("webNavigation", report)
+        stage(
+            PROBE_ID, "webNavigation",
+            when {
+                orderedLoad && fragment && pushed && filterRight -> "PASS"
+                orderedLoad -> "PARTIAL"
+                else -> "FAIL"
+            },
+            "listener=${report.optBoolean("navigationListener")} events=${entries.size} ordered load=$orderedLoad fragment=$fragment pushState=$pushed filtered=${filtered.size}/$filterRight transitions=$transitions"
+        )
+    }
+
+    /** Run a W2-2 stage in the probe's background (`window.__w22`) and wait for its JSON result. */
+    private fun w22(name: String, args: String = "{}", timeoutMs: Long = 20_000): JSONObject {
+        val bg = backgroundView(PROBE_ID) ?: return JSONObject().put("error", "no probe background")
+        tabEval(bg, "window.__w22(${JSONObject.quote(name)}, $args)")
+        return waitFor(timeoutMs, 250) { w22Result(bg) } ?: JSONObject().put("error", "never settled")
+    }
+
+    private fun w22Result(bg: WebView): JSONObject? {
+        val raw = tabEval(bg, "window.__w22Result")
+        return if (raw == "null") null else json(raw)
+    }
+
+    private fun authView(): WebView? {
+        var v: WebView? = null
+        instrumentation.runOnMainSync { v = host.extensions.authSheetView(PROBE_ID) }
+        return v
+    }
+
+    /** A CSS-px point in a WebView's document (`{x, y}`) as screen coordinates, or null without one. */
+    private fun screenPoint(view: WebView, css: JSONObject): Pair<Float, Float>? {
+        if (!css.has("x") || !css.has("y")) return null
+        var result: Pair<Float, Float>? = null
+        instrumentation.runOnMainSync {
+            val location = IntArray(2)
+            view.getLocationOnScreen(location)
+            @Suppress("DEPRECATION")
+            val scale = view.scale.takeIf { it > 0f } ?: view.resources.displayMetrics.density
+            result = (location[0] + css.getDouble("x").toFloat() * scale) to (location[1] + css.getDouble("y").toFloat() * scale)
+        }
+        return result
+    }
+
+    /** The centre of the chrome's menu row labelled `label`, scrolled into view, on screen; null without such a row. */
+    private fun menuItemPoint(label: String): Pair<Float, Float>? {
+        var chrome: WebView? = null
+        instrumentation.runOnMainSync { chrome = host.chrome }
+        val view = chrome ?: return null
+        val raw = tabEval(
+            view,
+            "JSON.stringify((function(){var b=Array.prototype.find.call(document.querySelectorAll('button.zen-sheet-item'),function(el){return el.textContent.trim()===${JSONObject.quote(label)}});" +
+                "if(!b)return null;b.scrollIntoView({block:'center'});var r=b.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})())"
+        )
+        if (raw == "null") return null
+        return screenPoint(view, json(raw))
+    }
+
+    private fun menuLabels(): JSONArray {
+        var chrome: WebView? = null
+        instrumentation.runOnMainSync { chrome = host.chrome }
+        val view = chrome ?: return JSONArray()
+        val raw = tabEval(view, "JSON.stringify(Array.prototype.map.call(document.querySelectorAll('button.zen-sheet-item'),function(el){return el.textContent.trim()}))")
+        return runCatching { JSONArray(raw) }.getOrDefault(JSONArray())
+    }
+
+    private fun pickMenuItem(label: String) {
+        var chrome: WebView? = null
+        instrumentation.runOnMainSync { chrome = host.chrome }
+        val view = chrome ?: return
+        tabEval(view, "(function(){var b=Array.prototype.find.call(document.querySelectorAll('button.zen-sheet-item'),function(el){return el.textContent.trim()===${JSONObject.quote(label)}});if(b)b.click();return String(!!b)})()")
+    }
+
+    /** The next `contextMenus.onClicked` the background recorded after `before`, or null. */
+    private fun menuClick(bg: WebView, before: Int): JSONObject? {
+        val raw = tabEval(bg, "JSON.stringify(report.menuClicks[$before] || null)")
+        return if (raw == "null") null else json(raw)
     }
 
     /** How many tabs with exactly `url` the extension's background sees through `tabs.query({})`; -1 when the call failed. */
@@ -1282,6 +1821,14 @@ class ExtensionDemo {
         inject(MotionEvent.ACTION_UP, down, SystemClock.uptimeMillis(), x, y)
     }
 
+    /** A finger held still well past the long-press timeout (500 ms), then lifted. */
+    private fun longPress(x: Float, y: Float) {
+        val down = SystemClock.uptimeMillis()
+        inject(MotionEvent.ACTION_DOWN, down, down, x, y)
+        SystemClock.sleep(1_100)
+        inject(MotionEvent.ACTION_UP, down, SystemClock.uptimeMillis(), x, y)
+    }
+
     private fun inject(action: Int, downTime: Long, eventTime: Long, x: Float, y: Float) {
         val properties = MotionEvent.PointerProperties().apply { id = 0; toolType = MotionEvent.TOOL_TYPE_FINGER }
         val coords = MotionEvent.PointerCoords().apply { this.x = x; this.y = y; pressure = 1f; size = 1f }
@@ -1301,6 +1848,23 @@ class ExtensionDemo {
 
     private fun findByLabel(label: String): Rect? {
         val root = ui.rootInActiveWindow ?: return null
+        return findIn(root, label)
+    }
+
+    /**
+     * `label` in any window on screen (the notification shade is the system UI's, not the
+     * app's): the first node whose text or description equals it, as screen bounds.
+     */
+    private fun findInWindows(label: String): Rect? {
+        val windows = runCatching { ui.windows }.getOrNull() ?: emptyList()
+        for (window in windows) {
+            val root = window.root ?: continue
+            findIn(root, label)?.let { return it }
+        }
+        return findByLabel(label)
+    }
+
+    private fun findIn(root: AccessibilityNodeInfo, label: String): Rect? {
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)
         var visited = 0
@@ -1310,7 +1874,6 @@ class ExtensionDemo {
             if (node.contentDescription?.toString() == label || node.text?.toString() == label) return Rect().also { node.getBoundsInScreen(it) }
             for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
         }
-        if (visited == 0) ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
         return null
     }
 
@@ -1324,6 +1887,8 @@ class ExtensionDemo {
         const val STYLUS = "clngdbkpkpeebahjckkjfobafhncgmne"
         const val UBOL = "ddkjiahejlhfcafbddmgiahcphecmpfh"
 
+        /** The probe background's `contextMenus.create` title for links (see its background.js). */
+        private const val MENU_LINK_LABEL = "Probe: report this link"
         /** Polled from the first moments of a document, before it has a root element. */
         private const val PROBE_DONE = "String(!!document.documentElement && document.documentElement.getAttribute('data-zen-probe-done') === '1')"
         /** The probe's `probe.css` on the document (`injected`), whichever world its scripts run in; empty without it. */

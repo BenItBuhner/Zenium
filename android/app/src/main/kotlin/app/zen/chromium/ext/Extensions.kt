@@ -200,7 +200,7 @@ class Extensions(private val host: Host) {
     ) { userAgent }
     /** Last request decisions ("allow|block|… type micros url"), kept while `debug` for instrumentation. */
     val decisions = ArrayDeque<String>()
-    /** While `debug`: the CORS proxy's last answers ("METHOD status url"), for instrumentation. */
+    /** While `debug`: the CORS proxy's last answers ("<ext> METHOD status url"), for instrumentation. */
     val proxied = ArrayDeque<String>()
     /**
      * While `debug`: `"<ext> <ns>.<method>"` → `[calls, failed replies, unanswered]` over the
@@ -582,10 +582,10 @@ class Extensions(private val host: Host) {
         if (!ok) gone(listOf(ep))
     }
 
-    private fun recordProxy(request: CorsProxy.Request, status: Int) {
+    private fun recordProxy(extensionId: String, request: CorsProxy.Request, status: Int) {
         synchronized(proxied) {
             if (proxied.size >= 200) proxied.removeFirst()
-            proxied.addLast("${request.method} $status ${request.url}")
+            proxied.addLast("$extensionId ${request.method} $status ${request.url}")
         }
     }
 
@@ -1054,7 +1054,7 @@ class Extensions(private val host: Host) {
                     val reply = corsProxy.handle(proxied, id, corsOrigin)
                     // A 3xx the proxy could not follow cannot be a WebResourceResponse; the WebView tries itself.
                     if (reply != null && reply.status !in 300..399) {
-                        if (debug) recordProxy(proxied, reply.status)
+                        if (debug) recordProxy(id, proxied, reply.status)
                         return WebResourceResponse(reply.mime, reply.charset, reply.status, reply.reason, reply.headers, reply.body)
                     }
                 }
@@ -1217,6 +1217,12 @@ class Extensions(private val host: Host) {
 
     /** The WebView of the open popup / options sheet, if any. */
     fun popupView(): ExtensionWebView? = popup?.webView
+
+    /** The WebView of an extension's open `identity.launchWebAuthFlow` sheet, if any (instrumentation). */
+    fun authSheetView(extensionId: String): WebView? = authSheets.values.firstOrNull { it.extensionId == extensionId }?.webView
+
+    /** Whether the CORS proxy's log (`proxied`) has an answer for a URL containing `fragment`, as "METHOD status url" lines. */
+    fun proxiedMatching(fragment: String): List<String> = synchronized(proxied) { proxied.filter { it.contains(fragment) } }
 
     // ---------------------------------------------------------------------------------------------
     // Background pages and popups

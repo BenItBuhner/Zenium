@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Probe sign-in</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 28px 20px;
+        background: #ffffff;
+        color: #111827;
+        font:
+          17px/1.5 system-ui,
+          -apple-system,
+          sans-serif;
+      }
+      h1 {
+        font-size: 24px;
+        margin: 0 0 8px;
+      }
+      p {
+        margin: 0 0 20px;
+        color: #4b5563;
+      }
+      code {
+        word-break: break-all;
+        font-size: 13px;
+      }
+      button {
+        display: block;
+        width: 100%;
+        padding: 14px;
+        font: inherit;
+        font-weight: 600;
+        color: #fff;
+        background: #2563eb;
+        border: 0;
+        border-radius: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Probe identity provider</h1>
+    <p>
+      A stand-in for an OAuth provider: the button sends the browser back to the extension's
+      redirect URL with an authorization code.
+    </p>
+    <p><code id="redirect"></code></p>
+    <button id="signin" type="button">Sign in as probe</button>
+    <script>
+      ;(function () {
+        var params = new URLSearchParams(location.search)
+        var redirect = params.get('redirect') || ''
+        document.getElementById('redirect').textContent = redirect
+        function go() {
+          location.href = redirect + (redirect.indexOf('?') >= 0 ? '&' : '?') + 'code=probe-ok&state=w22'
+        }
+        document.getElementById('signin').addEventListener('click', go)
+        if (params.get('auto') === '1') setTimeout(go, 300)
+      })()
+    </script>
+  </body>
+</html>
