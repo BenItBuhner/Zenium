@@ -74,7 +74,10 @@ export function placePopup({
     width: Math.round(clamp(size.width, POPUP_MIN.width, POPUP_MAX.width)) + 2 * padding,
     height: Math.round(clamp(size.height, POPUP_MIN.height, POPUP_MAX.height)) + 2 * padding
   }
-  const box = placeUnder(anchor, { measured: asked.width }, asked.height, viewport, alignment)
+  // The manifest popup is §9.20's named exemption from the 60% cap: only the window minus 16.
+  const box = placeUnder(anchor, { measured: asked.width }, asked.height, viewport, alignment, {
+    capHeight: false
+  })
   // A window too small for the document shrinks the frame (§9.20's window minus 16); the view
   // still gets Chrome's least size, which only a window under 41px tall could not hold.
   const width = Math.max(POPUP_MIN.width + 2 * padding, Math.round(box.width))

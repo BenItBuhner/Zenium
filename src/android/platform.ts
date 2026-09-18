@@ -5,6 +5,7 @@ import type {
   HapticKind,
   HostCapabilities,
   PageEnvironment,
+  Platform as PlatformOs,
   ShareAction
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
@@ -244,6 +245,12 @@ export function statusFrom(raw: unknown): SystemAutofillStatus {
 /** Everything Kotlin hands over synchronously before the chrome renders. */
 export interface BootInfo {
   version: string
+  /**
+   * The OS the chrome reports as its platform. The Kotlin host never sets it (Android); the
+   * preview host may name a desktop OS so a desktop-form-factor capture shows the desktop's
+   * platform-bound rows (`?platform=linux`).
+   */
+  os?: PlatformOs
   /** `Build.VERSION.SDK_INT` of the device (the newest release the preview host stands in for). */
   sdkInt: number
   /** Hex SHA-256 of the certificate this APK is signed with (null in the preview host). */
@@ -740,7 +747,7 @@ export class AndroidPlatform implements Platform {
     private readonly bridge: Bridge,
     boot: BootInfo
   ) {
-    this.info = { os: 'android', version: boot.version }
+    this.info = { os: boot.os ?? 'android', version: boot.version }
     this.extensionsRoot = boot.extensionsRoot || null
     this.capabilities = androidCapabilities({
       sdkInt: boot.sdkInt,
