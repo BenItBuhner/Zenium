@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BookmarkNode } from '../../../shared/types'
 import { DEFAULT_FAVICON_SVG, DEFAULT_FAVICON_TYPE } from '../../../core/extensions/favicon'
 import {
@@ -189,8 +189,12 @@ describe('the _favicon/ route of the served origin', () => {
 
 describe('faviconRequestHandler', () => {
   const origin = new ExtensionResourceOrigin((id) => extensions[id], { token: TOKEN })
-  const granted = new Set([ID])
-  const handler = faviconRequestHandler(origin, (id) => granted.has(id))
+  let granted = new Set([ID])
+  let handler = faviconRequestHandler(origin, (id) => granted.has(id))
+  beforeEach(() => {
+    granted = new Set([ID])
+    handler = faviconRequestHandler(origin, (id) => granted.has(id))
+  })
   const request = {} as HostRequest
   const details = (url: string): BeforeRequestDetails =>
     ({ url, method: 'GET' }) as BeforeRequestDetails
@@ -229,6 +233,52 @@ describe('faviconRequestHandler', () => {
         details(faviconRequest('dcdefghijklmnopabcdefghijklmnopa'))
       )
     ).toEqual({ cancel: true })
+  })
+
+  const documentRequest = (type: string): HostRequest => ({ ctx: { type } }) as HostRequest
+  const headersOf = (url: string, csp: string[], type = 'main_frame'): Record<string, string[]> => {
+    const headers: Record<string, string[]> = {
+      'Content-Type': ['text/html'],
+      'Content-Security-Policy': csp
+    }
+    handler.onHeadersReceived?.(documentRequest(type), headers, {
+      url
+    } as Electron.OnHeadersReceivedListenerDetails)
+    return headers
+  }
+  const ORIGIN = `${EXTENSION_RESOURCE_SCHEME}://${ID}.${TOKEN}`
+
+  it("lets the served origin through a granted extension's page CSP as an image source", () => {
+    const oneTab =
+      "script-src 'self'; object-src 'self'; img-src 'self' data: https://t2.gstatic.com;"
+    expect(headersOf(`chrome-extension://${ID}/onetab.html`, [oneTab])).toEqual({
+      'Content-Type': ['text/html'],
+      'Content-Security-Policy': [
+        `script-src 'self'; object-src 'self'; img-src 'self' data: https://t2.gstatic.com ${ORIGIN}`
+      ]
+    })
+    // Every policy of the response, and subframes too.
+    expect(
+      headersOf(
+        `chrome-extension://${ID}/frame.html`,
+        ["default-src 'self'", 'img-src data:'],
+        'sub_frame'
+      )['Content-Security-Policy']
+    ).toEqual([`default-src 'self'; img-src 'self' ${ORIGIN}`, `img-src data: ${ORIGIN}`])
+  })
+
+  it('touches no other document: without the grant, of a web page, or a subresource', () => {
+    const csp = "img-src 'self'"
+    expect(
+      headersOf(`chrome-extension://${PLAIN}/page.html`, [csp])['Content-Security-Policy']
+    ).toEqual([csp])
+    expect(
+      headersOf(`chrome-extension://${OPTIONAL}/page.html`, [csp])['Content-Security-Policy']
+    ).toEqual([csp])
+    expect(headersOf('https://news.example/', [csp])['Content-Security-Policy']).toEqual([csp])
+    expect(
+      headersOf(`chrome-extension://${ID}/app.js`, [csp], 'script')['Content-Security-Policy']
+    ).toEqual([csp])
   })
 
   it('fails a malformed favicon request and leaves every other request alone', () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_FAVICON_SIZE,
+  allowImageSource,
   DEFAULT_FAVICON_SVG,
   MAX_FAVICON_SIZE,
   decodeDataUrl,
@@ -80,6 +81,43 @@ describe('decodeDataUrl', () => {
     expect(decodeDataUrl('data:image/png;base64,')).toBeUndefined()
     expect(decodeDataUrl('data:image/png;base64,%%%')).toBeUndefined()
     expect(decodeDataUrl('https://a.test/favicon.ico')).toBeUndefined()
+  })
+})
+
+describe('allowImageSource', () => {
+  const ORIGIN = `zen-extension://${ID}.0123456789abcdef0123456789abcdef`
+
+  it('appends the origin to an img-src, once, and replaces a lone none', () => {
+    // OneTab's policy, trailing semicolon included.
+    expect(
+      allowImageSource(
+        "script-src 'self'; object-src 'self'; img-src 'self' data: https://t2.gstatic.com;",
+        ORIGIN
+      )
+    ).toBe(
+      `script-src 'self'; object-src 'self'; img-src 'self' data: https://t2.gstatic.com ${ORIGIN}`
+    )
+    // A wildcard matches web schemes only: the origin is still needed.
+    expect(allowImageSource("default-src 'none'; img-src * data:; connect-src *", ORIGIN)).toBe(
+      `default-src 'none'; img-src * data: ${ORIGIN}; connect-src *`
+    )
+    expect(allowImageSource(`img-src ${ORIGIN} data:`, ORIGIN)).toBe(`img-src ${ORIGIN} data:`)
+    expect(allowImageSource("IMG-SRC 'none'", ORIGIN)).toBe(`IMG-SRC ${ORIGIN}`)
+  })
+
+  it('derives an img-src from default-src when only that restricts images', () => {
+    expect(allowImageSource("default-src 'self'; frame-src 'self' https://a.test", ORIGIN)).toBe(
+      `default-src 'self'; frame-src 'self' https://a.test; img-src 'self' ${ORIGIN}`
+    )
+    expect(allowImageSource("default-src 'none'; script-src 'self'", ORIGIN)).toBe(
+      `default-src 'none'; script-src 'self'; img-src ${ORIGIN}`
+    )
+  })
+
+  it('leaves a policy that does not restrict images alone', () => {
+    const chromeDefault = "script-src 'self'; object-src 'self'"
+    expect(allowImageSource(chromeDefault, ORIGIN)).toBe(chromeDefault)
+    expect(allowImageSource('', ORIGIN)).toBe('')
   })
 })
 
