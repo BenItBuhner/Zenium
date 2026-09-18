@@ -47,8 +47,8 @@ interface PageHost {
      */
     val pullToRefresh: Boolean get() = false
     /**
-     * The extension emulation layer (prototype), when the host runs one: the browser window does;
-     * a custom tab has no core to run the backgrounds against, so its pages get no content scripts.
+     * The extension runtime's Kotlin half, when the host runs one: the browser window does; a
+     * custom tab has no core to run the backgrounds against, so its pages get no content scripts.
      */
     val extensions: Extensions? get() = null
 

@@ -328,10 +328,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "translate.cancel" -> { translate.cancel(args.str("token")); reply(null) }
             "translate.delete" -> translate.delete(args.arr("names"), reply)
 
-            // --- extension runtime (ext/Extensions.kt; the contract is src/android/extensionRuntime.ts):
-            //     every `ext.*` method runs the installed extensions the store hands over. ----------------
+            // The extension runtime's methods (ext/Extensions.kt; the contract is src/android/extensionRuntime.ts).
             else -> if (method.startsWith("ext.")) extensions.handle(method, args, reply) else throw IllegalArgumentException("Unknown method: $method")
-            // --- end of the extension runtime block -----------------------------------------------------
         }
     }
 
