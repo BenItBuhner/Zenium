@@ -548,8 +548,30 @@ export class TabManager {
       },
       onPageMessage: (message) => this.browser.handlePageMessage(tabId, message),
       onDialog: (request) => this.browser.pageDialogs.ask(tabId, request),
-      onLeaveSite: (reload) => this.browser.pageDialogs.confirmLeave(tabId, reload)
+      onLeaveSite: async (reload) => {
+        const leave = await this.browser.pageDialogs.confirmLeave(tabId, reload)
+        if (!leave) this.stayedOnPage(tabId)
+        return leave
+      }
     }
+  }
+
+  /**
+   * The user chose to stay on a page that objected to leaving. `navigate` writes the destination
+   * into the tab as soon as it is asked for (the pill shows where the tab is going, as Chrome's
+   * omnibox does); with the navigation refused, the tab goes back to the page that is still
+   * there.
+   */
+  private stayedOnPage(tabId: string): void {
+    const tab = this.tab(tabId)
+    const view = this.view(tabId)
+    if (!tab || !view || view.isDestroyed()) return
+    const url = view.getURL()
+    this.pendingTransition.delete(tabId)
+    if (!url || tab.url === url) return
+    tab.url = url
+    tab.title = view.getTitle() || titleForUrl(url)
+    this.browser.state.commit()
   }
 
   isPrivate(tab: Tab): boolean {

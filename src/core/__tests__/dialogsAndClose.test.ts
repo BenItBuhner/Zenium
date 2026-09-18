@@ -50,6 +50,8 @@ interface FakeView {
   /** How the page answers `confirmUnload`: leave (true), stay (false), or no handler (closes). */
   unload: 'leave' | 'stay' | 'none'
   unloadChecks: number
+  /** While true the page's `beforeunload` holds every navigation: `loadURL` leaves it in place. */
+  objects: boolean
 }
 
 function fakeView(tab: Tab, events: TabViewEvents): FakeView {
@@ -60,6 +62,7 @@ function fakeView(tab: Tab, events: TabViewEvents): FakeView {
     destroyed: false,
     unload: 'none',
     unloadChecks: 0,
+    objects: false,
     view: undefined as unknown as TabView
   }
   const snapshot: NavigationSnapshot = { entries: [], index: -1 }
@@ -69,10 +72,10 @@ function fakeView(tab: Tab, events: TabViewEvents): FakeView {
       fake.destroyed = true
     },
     loadURL: (u) => {
-      url = u
+      if (!fake.objects) url = u
     },
     getURL: () => url,
-    getTitle: () => '',
+    getTitle: () => (url ? 'Page title' : ''),
     hasDocument: () => url !== '',
     canGoBack: () => false,
     canGoForward: () => false,
@@ -288,6 +291,32 @@ describe('page dialogs', () => {
     expect(again.message).toBe('reload')
     f.browser.pageDialogs.respond(again.id, { accepted: true, value: null })
     await expect(reload).resolves.toBe(true)
+  })
+
+  it('Stay after an address-bar navigation puts the page that stayed back into the tab', async () => {
+    const f = fixture()
+    const win = firstWindow(f)
+    const tab = f.browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    const fake = f.viewOf(tab.id)
+    fake.objects = true
+    // The pill shows the destination as soon as it is typed…
+    f.browser.tabs.navigate(tab.id, 'https://example.org/next')
+    expect(f.browser.tabs.tab(tab.id)?.url).toBe('https://example.org/next')
+    // …the page objects, the host asks, the user stays.
+    const leave = fake.events.onLeaveSite(false)
+    const [dialog] = f.browser.pageDialogs.list()
+    f.browser.pageDialogs.respond(dialog.id, { accepted: false, value: null })
+    await expect(leave).resolves.toBe(false)
+    expect(f.browser.tabs.tab(tab.id)).toMatchObject({
+      url: 'https://example.com/',
+      title: 'Page title'
+    })
+    // Leaving changes nothing here: the navigation that follows writes the new page itself.
+    f.browser.tabs.navigate(tab.id, 'https://example.org/next')
+    const go = fake.events.onLeaveSite(false)
+    f.browser.pageDialogs.respond(f.browser.pageDialogs.list()[0].id, { accepted: true, value: null })
+    await expect(go).resolves.toBe(true)
+    expect(f.browser.tabs.tab(tab.id)?.url).toBe('https://example.org/next')
   })
 })
 
