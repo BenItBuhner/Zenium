@@ -1,10 +1,12 @@
 name: Android history and bookmarks demo
 
 # Records the phone history and bookmarks panels on a hardware-accelerated Android emulator and
-# uploads the video and screenshots: history grouped by day, a visit swiped away and undone,
-# long-press selection with its actions, Clear history undone, the bookmarks list with a row's
-# menu, the edit sheet renaming a bookmark, bookmark selection with an undone delete, a folder
-# entered and left with the back gesture, and the star's toast whose Edit opens the editor.
+# uploads the video, screenshots and findings: history grouped by day (today's visits are real,
+# browsed on a loopback server during the warm-up), a visit swiped away and undone, long-press
+# selection with its menu and an undone delete, the Clear history question and the empty state,
+# the bookmarks list with a row's menu, the edit sheet renaming a bookmark, bookmark selection
+# with an undone delete, a folder entered and left with the back gesture, back closing a row menu
+# and an editor without the panel, and the star's toast whose Edit opens the editor.
 # Dispatch-only, like the other demos: it takes about ten minutes and says nothing about a change
 # being correct. Same caveats as the gesture demo about the software GPU's frame rate. The build,
 # the emulator and the Gradle cache live in android-emulator-demo.yml; this file picks the driver.
