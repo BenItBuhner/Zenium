@@ -304,6 +304,33 @@ describe('moving between sections', () => {
     expect(f.browser.tabs.tab(id)?.url).toBe('zen://settings')
     expect(f.browser.tabs.tab(id)?.canGoBack).toBe(false)
   })
+
+  it('replaces the entry shown instead of pushing one when asked (the two-pane nav, v2 §10.5)', () => {
+    const f = fixture()
+    openSite(f, 'https://a.test/')
+    const id = openPage(f, 'look') ?? ''
+    const tab = (): Tab | undefined => f.browser.tabs.tab(id)
+    // A deep link keeps the landing beneath the section; the sidebar's picks swap the section.
+    expect(tab()?.canGoBack).toBe(true)
+    f.browser.handleCommand(f.win, 'page.navigate', {
+      tabId: id,
+      section: 'privacy',
+      replace: true
+    })
+    f.browser.handleCommand(f.win, 'page.navigate', { tabId: id, section: 'about', replace: true })
+    expect(tab()?.url).toBe('zen://settings/about')
+    expect(tab()?.title).toBe('Settings')
+    expect(tab()?.canGoForward).toBe(false)
+    f.browser.tabs.goBack(id)
+    expect(tab()?.url).toBe('zen://settings')
+    expect(tab()?.canGoBack).toBe(false)
+    // Replacing from the middle of a history keeps the entries after it.
+    f.browser.handleCommand(f.win, 'page.navigate', { tabId: id, section: 'tabs', replace: true })
+    expect(tab()?.url).toBe('zen://settings/tabs')
+    expect(tab()?.canGoForward).toBe(true)
+    f.browser.tabs.goForward(id)
+    expect(tab()?.url).toBe('zen://settings/about')
+  })
 })
 
 describe('system back inside Settings', () => {
