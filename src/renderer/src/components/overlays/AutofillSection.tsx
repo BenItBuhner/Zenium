@@ -262,7 +262,7 @@ function MenulistRow({
         <button
           ref={trigger}
           type="button"
-          className="zen-v2-af-srow zen-v2-af-vrow"
+          className="zen-v2-af-srow"
           aria-haspopup="dialog"
           aria-expanded={open}
           onClick={() => setOpen(true)}

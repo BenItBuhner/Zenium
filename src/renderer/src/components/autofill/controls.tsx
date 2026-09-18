@@ -1,8 +1,9 @@
-/* eslint-disable react-refresh/only-export-components -- the autofill surfaces' control kit: the controls ship with the two keyboard helpers (`useEscape`, `wrapTab`), the scroll-shadow hook every surface pairs them with and the sheet context the menulist reads */
+/* eslint-disable react-refresh/only-export-components -- the autofill surfaces' control kit: the controls ship with the keyboard helpers they pair with (`useEscape`, and `wrapTab` / `useScrolled` re-exported from the bookmark popovers) and the sheet context the footer and the menulist read */
 import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
   JSX,
+  KeyboardEvent as ReactKeyboardEvent,
   ReactNode,
   Ref,
   RefObject,
@@ -11,21 +12,32 @@ import type {
 import { createContext, useContext, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, CircleAlert, type LucideIcon } from 'lucide-react'
-import { Select as SelectPrimitive } from 'radix-ui'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
+import {
+  ChromePortal,
+  placePopover,
+  popoverStyle,
+  toRect,
+  useLightDismiss,
+  viewportSize,
+  type PopoverBox
+} from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import '@renderer/assets/autofill.css'
 
+export { useScrolled, wrapTab } from '../bookmarks/popover'
+
 /**
- * The autofill surfaces' controls in the v2 vocabulary: the shared classes main.css and the
- * Settings sections define (`zen-v2-button`, `zen-v2-field`, `zen-v2-icon-button`, `zen-v2-check`,
- * `zen-v2-radio`) wrapped for React, and the surfaces' own layout classes (`zen-v2-af-*` in
- * autofill.css) for title blocks, sheet headers, rows, footers and the menulist. Sizes come from
- * the `--v2-*` density tokens the root sets per form factor, so nothing here asks what it is
- * running on except the menulist, whose popup is a popover on a mouse and a sheet on a phone
- * (§9.13).
+ * The autofill surfaces' controls in the v2 vocabulary: the shared classes main.css and #115
+ * define (`zen-v2-button`, `zen-v2-field`, `zen-v2-icon-button`, `zen-v2-check`, `zen-v2-radio`)
+ * wrapped for React, the sheet chassis' own header, title block and footer (`zen-sheet-title`,
+ * `zen-sheet-title-block`, `zen-sheet-footer` in main.css) and the surfaces' own layout classes
+ * (`zen-v2-af-*` in autofill.css) for desktop title blocks, rows, footers and the menulist. Sizes
+ * come from the `--v2-*` density tokens the root sets per form factor, so nothing here asks what
+ * it is running on except the menulist, whose popup is a popover on a mouse and a sheet on a
+ * phone (§9.13).
  */
 
 type Variant = 'primary' | 'secondary' | 'danger' | 'quiet'
@@ -152,15 +164,31 @@ export function Labelled({
   )
 }
 
+/** The title block's glyph: a Lucide icon, or any node such as the site's favicon in its place. */
+function Glyph({
+  icon: Icon,
+  glyph
+}: {
+  icon?: LucideIcon
+  glyph?: ReactNode
+}): JSX.Element | null {
+  if (!glyph && !Icon) return null
+  return (
+    <span className="zen-v2-af-title-glyph" aria-hidden>
+      {glyph ?? (Icon && <Icon />)}
+    </span>
+  )
+}
+
 /**
- * A title block (§9.23): the 17/600 title on 22 with an optional 16 px glyph 8 px before it –
- * a Lucide icon, or any node such as the site's favicon – and a 15/69% description 4 px under;
- * sticky over the body it heads, with the §9.7 hairline once that body has scrolled
- * (`scrolled`).
+ * A desktop title block (§9.23) for a popover or a frame dialog: the 17/600 title on 22 with an
+ * optional 16 px glyph 8 px before it – a Lucide icon, or any node such as the site's favicon –
+ * and a 15/69% description 4 px under; sticky over the body it heads, with the §9.7 hairline
+ * once that body has scrolled (`scrolled`). A sheet's is `SheetTitleBlock`.
  */
 export function TitleBlock({
   id,
-  icon: Icon,
+  icon,
   glyph,
   title,
   description,
@@ -177,17 +205,7 @@ export function TitleBlock({
   return (
     <div className="zen-v2-af-title-block" data-scrolled={scrolled || undefined}>
       <div className="zen-v2-af-title-row">
-        {glyph ? (
-          <span className="zen-v2-af-title-glyph" aria-hidden>
-            {glyph}
-          </span>
-        ) : (
-          Icon && (
-            <span className="zen-v2-af-title-glyph" aria-hidden>
-              <Icon />
-            </span>
-          )
-        )}
+        <Glyph icon={icon} glyph={glyph} />
         <h2 id={id} className="zen-v2-af-title">
           {title}
         </h2>
@@ -197,23 +215,57 @@ export function TitleBlock({
   )
 }
 
-/** A phone sheet's 48 header after the grip strip (§9.16): the title, centred. */
-export function SheetHeader({ id, title }: { id?: string; title: string }): JSX.Element {
+/**
+ * A prompt sheet's title block (§9.23) on the chassis' own class (`.zen-sheet-title-block`,
+ * main.css): first in the sheet's body after the grip strip, in place of the 48 header – the
+ * glyph (20 on a phone) on the title's first line, the description 4 below.
+ */
+export function SheetTitleBlock({
+  id,
+  icon,
+  glyph,
+  title,
+  description
+}: {
+  id?: string
+  icon?: LucideIcon
+  glyph?: ReactNode
+  title: string
+  description?: ReactNode
+}): JSX.Element {
   return (
-    <div className="zen-v2-af-sheet-header">
-      <h2 id={id} className="zen-v2-af-title">
-        {title}
+    <div className="zen-sheet-title-block">
+      <h2 id={id}>
+        <Glyph icon={icon} glyph={glyph} />
+        <span className="zen-v2-af-title">{title}</span>
       </h2>
+      {description && <p>{description}</p>}
     </div>
   )
 }
 
-/** A sheet's body copy under its header: 15/20 in the text colour, the sheet's 16 sides. */
+/**
+ * A form sheet's 48 header after the grip strip (§9.16): the title, centred, on the chassis'
+ * class; hand it to `BottomSheet`'s `header`, which wraps it in `.zen-sheet-header`.
+ */
+export function SheetHeader({ id, title }: { id?: string; title: string }): JSX.Element {
+  return (
+    <h2 id={id} className="zen-sheet-title">
+      {title}
+    </h2>
+  )
+}
+
+/** A sheet's body copy under its 48 header: 15/20 in the text colour, the sheet's 16 sides. */
 export function SheetCopy({ children }: { children: ReactNode }): JSX.Element {
   return <p className="zen-v2-af-copy">{children}</p>
 }
 
-/** The footer's actions: hugging on desktop; in a phone sheet full width, stacked past two (§9.11). */
+/**
+ * The footer's actions (§9.11): on desktop they hug and right-align, primary last; in a sheet
+ * (`InSheet`) the chassis' `.zen-sheet-footer` splits the width between two peers, and three or
+ * more stack full-width, the primary first (`data-stack`).
+ */
 export function Footer({
   children,
   count,
@@ -224,33 +276,23 @@ export function Footer({
   count: number
   className?: string
 }): JSX.Element {
+  const sheet = useContext(InSheet)
   return (
-    <div className={cn('zen-v2-af-footer', className)} data-stack={count >= 3 || undefined}>
+    <div
+      className={cn(sheet ? 'zen-sheet-footer' : 'zen-v2-af-footer', className)}
+      data-stack={count >= 3 || undefined}
+    >
       {children}
     </div>
   )
 }
 
 /**
- * True inside a sheet's body. A menulist opening its own sheet from there marks it stacked, so
- * the chassis draws no second scrim over the sheet already up (v2 sheets keep `--v2-scrim` on
- * their own scrim element and draw none over a chassis sheet).
+ * True inside a sheet's body: the footer takes the chassis' sheet footer. (A menulist opening
+ * its own sheet from there needs no flag: `BottomSheet` keeps the stack itself – §9.24, the
+ * sheet beneath recedes, goes inert and keeps the one scrim.)
  */
 export const InSheet = createContext(false)
-
-/** Whether `ref`'s scroller has moved off its top: drives a sticky header's hairline (§9.7). */
-export function useScrolled(ref: RefObject<HTMLElement | null>): boolean {
-  const [scrolled, setScrolled] = useState(false)
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const onScroll = (): void => setScrolled(el.scrollTop > 0)
-    onScroll()
-    el.addEventListener('scroll', onScroll, { passive: true })
-    return () => el.removeEventListener('scroll', onScroll)
-  }, [ref])
-  return scrolled
-}
 
 /**
  * Whether `ref`'s content goes on below its visible end: a footer pinned under a scrolling body
@@ -310,26 +352,6 @@ function onEscapeKey(e: KeyboardEvent): void {
   top.current()
 }
 
-/** Tab and Shift+Tab stay inside `root` (§9.22): the last focusable wraps to the first. */
-export function wrapTab(e: React.KeyboardEvent, root: HTMLElement | null): void {
-  if (e.key !== 'Tab' || !root) return
-  const focusable = [
-    ...root.querySelectorAll<HTMLElement>(
-      'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
-    )
-  ].filter((el) => el.offsetParent !== null || el === document.activeElement)
-  if (focusable.length === 0) return
-  const first = focusable[0]
-  const last = focusable[focusable.length - 1]
-  if (e.shiftKey && document.activeElement === first) {
-    e.preventDefault()
-    last.focus()
-  } else if (!e.shiftKey && document.activeElement === last) {
-    e.preventDefault()
-    first.focus()
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Menulist
 // ---------------------------------------------------------------------------
@@ -341,10 +363,11 @@ export interface MenuOption<T extends string> {
 
 /**
  * A rectangular menulist (§9.13). On a mouse the trigger is a field with a chevron and the menu
- * a panel anchored under it – radius 12, padding 6, 28 px rows, the current option checked. On a
- * phone the trigger opens a sheet of 44 px radio rows (`MenuSheet`); picking one closes it.
- * Never a native `<select>` popup. A `value` no option carries (a required choice not made yet,
- * `''`) shows `placeholder` at 69% and checks nothing.
+ * a panel hung under it through the chrome layer – radius 12, padding 6, 28 px rows, the current
+ * option checked – placed by `placePopover` at the trigger's width and put away by the layer's
+ * light dismiss. On a phone the trigger opens a sheet of 44 px radio rows (`MenuSheet`); picking
+ * one closes it. Never a native `<select>` popup. A `value` no option carries (a required choice
+ * not made yet, `''`) shows `placeholder` at 69% and checks nothing.
  */
 export function Menulist<T extends string>({
   value,
@@ -392,6 +415,10 @@ export function Menulist<T extends string>({
   )
 }
 
+/** The popup's height before it is on screen: 6 px padding around 28 px rows (§9.13). */
+const MENU_ROW = 28
+const MENU_PADDING = 6
+
 function PopoverMenulist<T extends string>({
   value,
   options,
@@ -411,52 +438,137 @@ function PopoverMenulist<T extends string>({
   placeholder?: string
   className?: string
 }): JSX.Element {
-  const [open, setOpen] = useState(false)
-  const surface = `autofill-menu-${useId()}`
-  useBackSurface(open ? { name: surface, onCommit: () => setOpen(false) } : null)
-  // Radix shows the placeholder for '' and never lists it: an unmade choice is exactly that.
-  const chosen = options.some((o) => o.value === value) ? value : ''
+  const [box, setBox] = useState<PopoverBox | null>(null)
+  const open = box !== null
+  const trigger = useRef<HTMLButtonElement>(null)
+  const list = useRef<HTMLDivElement>(null)
+  const listId = useId()
+  const current = options.find((o) => o.value === value)
+
+  // Hung from the trigger at its width (§9.13: a panel under the trigger), as tall as its rows,
+  // flipped above when the window ends before they do.
+  const openList = (): void => {
+    const el = trigger.current
+    if (!el) return
+    const anchor = toRect(el.getBoundingClientRect())
+    const height = MENU_PADDING * 2 + options.length * MENU_ROW
+    setBox(placePopover(anchor, anchor, viewportSize(), { measured: anchor.width }, height))
+  }
+  const close = (focusTrigger: boolean): void => {
+    setBox(null)
+    if (focusTrigger) trigger.current?.focus({ preventScroll: true })
+  }
+  const pick = (v: T): void => {
+    close(true)
+    if (v !== value) onChange(v)
+  }
+
+  // The current option takes the keyboard as the list opens (a long list opens scrolled to it).
+  useEffect(() => {
+    if (!open) return
+    const rows = list.current?.querySelectorAll<HTMLElement>('[role="option"]')
+    const chosen = list.current?.querySelector<HTMLElement>('[aria-selected="true"]')
+    const target = chosen ?? rows?.[0]
+    target?.focus({ preventScroll: true })
+    target?.scrollIntoView({ block: 'nearest' })
+  }, [open])
+
+  // The chrome layer's light dismiss puts the list away – a press anywhere else, a scroll, a
+  // resize – with the focus back on the menulist, unless what closed it was another popover or
+  // a dialog opening, which has the focus now.
+  useLightDismiss(list, (reason) => close(reason !== 'replaced' && reason !== 'all'), {
+    anchor: trigger,
+    disabled: !open
+  })
+  useEscape(() => close(true), open)
+  useBackSurface(open ? { name: `autofill-menu-${listId}`, onCommit: () => close(false) } : null)
+
+  const onListKeyDown = (e: ReactKeyboardEvent): void => {
+    const rows = [...(list.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])]
+    const at = rows.indexOf(document.activeElement as HTMLElement)
+    switch (e.key) {
+      case 'ArrowDown':
+        rows[(at + 1) % rows.length]?.focus()
+        break
+      case 'ArrowUp':
+        rows[(at - 1 + rows.length) % rows.length]?.focus()
+        break
+      case 'Home':
+        rows[0]?.focus()
+        break
+      case 'End':
+        rows[rows.length - 1]?.focus()
+        break
+      case 'Tab':
+        close(true)
+        break
+      default:
+        return
+    }
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
   return (
-    <SelectPrimitive.Root
-      value={chosen}
-      open={open}
-      onOpenChange={setOpen}
-      onValueChange={(v) => onChange(v as T)}
-      disabled={disabled}
-    >
-      <SelectPrimitive.Trigger
+    <>
+      <button
+        ref={trigger}
         id={id}
+        type="button"
+        // The select-only combobox pattern: the trigger names the choice, the list is its popup.
+        role="combobox"
         aria-label={label}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        disabled={disabled}
+        data-placeholder={current ? undefined : ''}
         className={cn('zen-v2-af-menulist', className)}
+        onClick={() => (open ? close(false) : openList())}
+        onKeyDown={(e) => {
+          if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !open) {
+            e.preventDefault()
+            openList()
+          }
+        }}
       >
-        <SelectPrimitive.Value placeholder={placeholder} />
-        <SelectPrimitive.Icon asChild>
-          <ChevronDown aria-hidden />
-        </SelectPrimitive.Icon>
-      </SelectPrimitive.Trigger>
-      <SelectPrimitive.Portal>
-        <SelectPrimitive.Content
-          position="popper"
-          side="bottom"
-          align="start"
-          sideOffset={0}
-          collisionPadding={8}
-          className="zen-v2-af zen-v2-af-menu zen-animate-pop"
-          data-surface="page"
-        >
-          <SelectPrimitive.Viewport>
+        <span>{current?.label ?? placeholder ?? ''}</span>
+        <ChevronDown aria-hidden />
+      </button>
+      {box && (
+        <ChromePortal>
+          <div
+            ref={list}
+            id={listId}
+            role="listbox"
+            aria-label={label}
+            className="zen-v2-af zen-v2-af-menu zen-animate-pop fixed z-[90]"
+            data-surface="page"
+            style={popoverStyle(box)}
+            onKeyDown={onListKeyDown}
+          >
             {options.map((o) => (
-              <SelectPrimitive.Item key={o.value} value={o.value} className="zen-v2-af-menu-item">
-                <SelectPrimitive.ItemText>{o.label}</SelectPrimitive.ItemText>
-                <SelectPrimitive.ItemIndicator>
-                  <Check aria-hidden />
-                </SelectPrimitive.ItemIndicator>
-              </SelectPrimitive.Item>
+              <button
+                key={o.value}
+                type="button"
+                role="option"
+                aria-selected={o.value === value}
+                className="zen-v2-af-menu-item"
+                // One highlight: the pointer moves the focus the way the arrow keys do.
+                onPointerMove={(e) => {
+                  if (document.activeElement !== e.currentTarget)
+                    e.currentTarget.focus({ preventScroll: true })
+                }}
+                onClick={() => pick(o.value)}
+              >
+                <span className="min-w-0 flex-1 truncate">{o.label}</span>
+                {o.value === value && <Check aria-hidden />}
+              </button>
             ))}
-          </SelectPrimitive.Viewport>
-        </SelectPrimitive.Content>
-      </SelectPrimitive.Portal>
-    </SelectPrimitive.Root>
+          </div>
+        </ChromePortal>
+      )}
+    </>
   )
 }
 
@@ -519,9 +631,9 @@ function SheetMenulist<T extends string>({
  * A phone's menulist popup (§9.13): a sheet with the 48 header naming the choice and one §9.14
  * radio row of 44 per option; picking one changes the value and dismisses the sheet. Opened by
  * the menulist's own trigger or by a Settings value row (§10.4), whose explanatory text comes
- * along as a `description`: the sheet then opens with a §9.23 title block in place of the 48
- * header. Inside another sheet it is stacked: its scrim is transparent and the sheet below keeps
- * the one it has.
+ * along as a `description`: the sheet then opens on a §9.23 title block in place of the 48
+ * header. Inside another sheet it stacks (§9.24, the chassis' own registry): the sheet below
+ * recedes under it, inert, and keeps the one scrim.
  */
 export function MenuSheet<T extends string>({
   title,
@@ -539,7 +651,6 @@ export function MenuSheet<T extends string>({
   onClose: () => void
 }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
-  const stacked = useContext(InSheet)
   const name = useId()
   const titleId = useId()
   useBackSurface({
@@ -549,31 +660,26 @@ export function MenuSheet<T extends string>({
     onCancel: () => sheet.current?.cancelBack()
   })
   useEscape(() => sheet.current?.dismiss())
-  // A long list (countries) opens on the current option, the way a menulist's popup does.
+  // The current option takes the focus (§9.22) and a long list (countries) opens on it, the way
+  // a menulist's popup does.
   const list = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    list.current
-      ?.querySelector<HTMLInputElement>('input:checked')
-      ?.closest('label')
-      ?.scrollIntoView({ block: 'center' })
+    const checked = list.current?.querySelector<HTMLInputElement>('input:checked')
+    checked?.focus({ preventScroll: true })
+    checked?.closest('label')?.scrollIntoView({ block: 'center' })
   }, [])
   // In the body like every sheet: a layer inside another sheet's transformed box would not be
-  // fixed to the viewport, and the stacked recede reads the layers as siblings (main.css).
+  // fixed to the viewport.
   return createPortal(
     <BottomSheet
       ref={sheet}
       onDismissed={onClose}
       handleLabel="Dismiss"
-      className={cn('zen-v2-af zen-v2-af-sheet', stacked && 'zen-v2-af-sheet-stacked')}
-      header={
-        description ? (
-          <TitleBlock id={titleId} title={title} description={description} />
-        ) : (
-          <SheetHeader id={titleId} title={title} />
-        )
-      }
+      className="zen-v2-af zen-v2-af-sheet"
+      header={description ? undefined : <SheetHeader id={titleId} title={title} />}
     >
       <div className="zen-v2-af zen-v2-af-choices" data-surface="page">
+        {description && <SheetTitleBlock id={titleId} title={title} description={description} />}
         <div ref={list} role="radiogroup" aria-labelledby={titleId} className="zen-v2-af-list">
           {options.map((o) => (
             <label key={o.value} className="zen-v2-af-row">

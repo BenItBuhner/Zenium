@@ -19,8 +19,10 @@ import {
   POPOVER_MARGIN,
   POPOVER_WIDTH,
   placePopover,
+  popoverStyle,
   toRect,
   useFrameDialog,
+  useLightDismiss,
   viewportSize
 } from '@renderer/lib/portals'
 import {
@@ -41,6 +43,7 @@ import {
   Footer,
   InSheet,
   Labelled,
+  SheetTitleBlock,
   TitleBlock,
   useEscape,
   useScrolled,
@@ -451,9 +454,12 @@ function PromptPopover({
   const copy = copyFor(prompt)
   const { chip, pill } = useChipRects()
 
-  // Escape and a press outside put the prompt away behind its chip, which takes the focus back
-  // (§9.22); the chip's own press toggles it. With no chip on screen (compact mode has no pill)
-  // there would be no way back, so the prompt is dismissed instead ("not now").
+  // Escape puts the prompt away behind its chip, which takes the focus back (§9.22); so does
+  // the chrome layer's light dismiss – a press outside (the focus stays where it landed), the
+  // chip's own press (the layer hands it the focus and consumes the press, so the chip does not
+  // reopen it), a scroll, a resize, another popover or a frame dialog opening. With no chip on
+  // screen (compact mode has no pill) there would be no way back, so the prompt is dismissed
+  // instead ("not now").
   const collapse = (toChip: boolean): void => {
     const chipEl = document.querySelector<HTMLElement>(CHIP_SELECTOR)
     if (!chipEl) {
@@ -465,16 +471,9 @@ function PromptPopover({
   }
   useEscape(() => collapse(true))
   useBackSurface({ name: 'autofill-prompt', onCommit: () => collapse(false) })
-  useEffect(() => {
-    const onDown = (e: PointerEvent): void => {
-      const target = e.target as Element | null
-      if (!target || panelRef.current?.contains(target) || target.closest(CHIP_SELECTOR)) return
-      collapse(false)
-    }
-    window.addEventListener('pointerdown', onDown, true)
-    return () => window.removeEventListener('pointerdown', onDown, true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- collapse only reads the prompt's id and the stable respond
-  }, [prompt.id])
+  useLightDismiss(panelRef, () => collapse(false), {
+    anchor: () => document.querySelector(CHIP_SELECTOR)
+  })
 
   const act = (action: Action): void => {
     if (action.collapse) collapse(true)
@@ -548,7 +547,7 @@ function PromptPopover({
         aria-labelledby={titleId}
         className="zen-v2-af zen-v2-af-popover zen-animate-pop fixed z-[70]"
         data-surface="page"
-        style={{ left: box.left, top: box.top, width: box.width, maxHeight: box.maxHeight }}
+        style={popoverStyle(box)}
         onKeyDown={(e) => wrapTab(e, panelRef.current)}
       >
         <TitleBlock
@@ -623,9 +622,10 @@ function PromptDialog({
 // ---------------------------------------------------------------------------
 
 /**
- * A prompt sheet: the title block (its glyph the site's favicon for the login prompts, the
- * description 15 at 69%) is the sheet's header after the grip strip, the body and footer scroll
- * under it (§9.23, §9.24).
+ * A prompt sheet (§9.23): no 48 header – the grip strip, then the chassis' title block first in
+ * the body (its glyph the site's favicon for the login prompts, 20 px on the phone; the
+ * description 15 at 69% 4 under the title), the body, the §9.11 footer whose peers share the
+ * width.
  */
 function PromptSheet({
   prompt,
@@ -715,18 +715,17 @@ function PromptSheet({
       onDismissed={() => respond(answer.current)}
       handleLabel="Dismiss"
       className="zen-v2-af zen-v2-af-sheet"
-      header={
-        <TitleBlock
-          id={titleId}
-          icon={copy.icon}
-          glyph={titleGlyph(copy, favicon)}
-          title={copy.title}
-          description={copy.description}
-        />
-      }
+      fitContent
     >
       <InSheet.Provider value>
         <div className="zen-v2-af" data-surface="page" aria-labelledby={titleId}>
+          <SheetTitleBlock
+            id={titleId}
+            icon={copy.icon}
+            glyph={titleGlyph(copy, favicon)}
+            title={copy.title}
+            description={copy.description}
+          />
           {content}
         </div>
       </InSheet.Provider>

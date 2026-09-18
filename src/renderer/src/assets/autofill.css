@@ -286,35 +286,14 @@ textarea.zen-v2-field {
   box-shadow: var(--v2-shadow-sheet);
 }
 /*
- * A phone sheet on the shared BottomSheet chassis (§6 sheets, §9.25): neutral, opaque, a
- * hairline edge, radius 12, no side padding of its own – its content sets the one 16 gutter –
- * and `--v2-scrim` on the chassis' scrim, which is the sheet's previous sibling (§9.28).
+ * A phone sheet is the shared BottomSheet chassis as it comes (`.zen-sheet` in main.css: the
+ * panel face, one hairline, radius 12, the sheet shadow, the chassis scrim – which is `--v2-scrim`
+ * through the `--zen-scrim` alias – no side padding of its own, §6, §9.25, §9.28). The class
+ * marks the sheet for the rules below that place this surface's own content in it; it restates
+ * nothing of the chassis.
  */
 .zen-v2-af-sheet {
-  padding-left: 0;
-  padding-right: 0;
-  border: 1px solid var(--v2-border);
-  border-bottom: 0;
-  border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
-  background: var(--v2-panel);
-  backdrop-filter: none;
-  box-shadow: var(--v2-shadow-sheet);
-  color: var(--v2-text);
   font-size: var(--v2-font-body);
-}
-:root[data-theme='dark'] .zen-v2-af-sheet {
-  box-shadow: var(--v2-shadow-sheet);
-}
-.zen-sheet-scrim:has(+ .zen-v2-af-sheet) {
-  background: var(--v2-scrim);
-}
-.zen-v2-af-sheet .zen-sheet-handle {
-  width: 32px;
-  height: 4px;
-  background: rgb(var(--v2-text-rgb) / 0.25);
-}
-.zen-v2-af-sheet[data-dragging='true'] .zen-sheet-handle {
-  background: rgb(var(--v2-text-rgb) / 0.4);
 }
 /*
  * The picker strip on hosts without a popup surface: docked at the bottom of the content frame,
@@ -391,20 +370,21 @@ textarea.zen-v2-field {
   overflow-wrap: anywhere;
 }
 /*
- * A prompt sheet's title block sits after the grip strip in the header's place (§9.23: no 48
- * header, the glyph 20 on the phone through `--v2-icon`), its description on a 22 line there.
+ * A prompt sheet's title block is the chassis' (`.zen-sheet-title-block`, main.css: padding 16,
+ * the 17/600 title on 22, the description 4 under it at 69%) first in the body after the grip
+ * strip, in the 48 header's place (§9.23). The glyph – 20 on the phone through `--v2-icon` – sits
+ * on the title's first line, so a title that wraps keeps it at its start rather than centred on
+ * the block; the title's own span takes the heading type from the h2.
  */
-.zen-v2-af-sheet .zen-v2-af-description {
-  line-height: 22px;
+.zen-sheet-title-block h2:has(> .zen-v2-af-title-glyph) {
+  align-items: flex-start;
 }
-/* A form sheet's 48 header after the grip strip: its 17/600 title at line-height 22, centred (§9.16). */
-.zen-v2-af-sheet-header {
-  display: flex;
-  min-height: 48px;
-  align-items: center;
-  justify-content: center;
-  padding: 0 16px;
-  text-align: center;
+.zen-sheet-title-block .zen-v2-af-title-glyph {
+  margin-top: calc((22px - var(--v2-icon)) / 2);
+}
+.zen-sheet-title-block .zen-v2-af-title {
+  font: inherit;
+  line-height: inherit;
 }
 
 /* ------------------------------------------------------------------------------------------ */
@@ -653,9 +633,11 @@ textarea.zen-v2-field {
 /* ------------------------------------------------------------------------------------------ */
 
 /*
- * Footers (§9.11): on desktop the actions hug and right-align at 32 with an 8 px gap, primary
- * last; in a phone sheet two peers split the width, three or more stack full-width, primary
- * first (`data-stack`), each 40 tall; 16 to the sheet's edges and above the bottom inset.
+ * Footers (§9.11). On desktop the actions hug and right-align at 32 with an 8 px gap, primary
+ * last. In a sheet the footer is the chassis' (`.zen-sheet-footer`, main.css: two peers split the
+ * width at an 8 gap, 16 to the sheet's edges and above the bottom inset); three or more stack
+ * full-width, the primary first (`data-stack`), each 40 tall. Inside a form the footer sits on
+ * the form's own 16 gutter, 4 under the last field.
  */
 .zen-v2-af-footer {
   display: flex;
@@ -669,21 +651,29 @@ textarea.zen-v2-field {
   margin-top: 4px;
   padding: 0;
 }
-.zen-v2-af-sheet .zen-v2-af-footer > .zen-v2-button {
-  flex: 1 1 0;
+.zen-v2-af-form > .zen-sheet-footer {
+  margin-top: 4px;
+  padding: 0;
 }
-.zen-v2-af-sheet .zen-v2-af-footer[data-stack='true'] {
+/* The actions come primary last, as on desktop; stacked they read primary first. */
+.zen-sheet-footer[data-stack='true'] {
   flex-direction: column-reverse;
   align-items: stretch;
 }
-.zen-v2-af-sheet .zen-v2-af-footer[data-stack='true'] > .zen-v2-button {
+.zen-sheet-footer[data-stack='true'] > * {
   flex: 0 0 auto;
   width: 100%;
 }
+/* The strip's notices on a phone (the unlock step, the setup notice): §9.11's full width there too. */
+.zen-v2-af-strip .zen-v2-af-footer > .zen-v2-button {
+  flex: 1 1 0;
+  min-width: 0;
+}
 /*
  * A rectangular menulist (§9.13): the trigger is a field with a chevron; its menu a `--v2-panel`
- * popover under it at radius 12, padding 6, 28 px rows at radius 6, the current option marked
- * with a trailing 16 px check.
+ * popover hung under the trigger through the chrome layer (`ChromePortal`, `placePopover` at the
+ * trigger's width) at radius 12, padding 6, 28 px rows at radius 6, the current option marked
+ * with a trailing 16 px check; one highlight follows the pointer and the keyboard.
  */
 .zen-v2-af-menulist {
   display: inline-flex;
@@ -720,37 +710,44 @@ textarea.zen-v2-field {
   color: var(--v2-text-deemphasized);
 }
 .zen-v2-af-menu {
-  z-index: 100;
-  min-width: var(--radix-select-trigger-width);
-  max-height: min(320px, var(--radix-select-content-available-height));
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
   padding: 6px;
   border: 1px solid var(--v2-border);
   border-radius: var(--v2-radius-sheet);
+  corner-shape: var(--zen-corner);
   background: var(--v2-panel);
   box-shadow: var(--v2-shadow-panel);
   color: var(--v2-text);
+  overflow-y: auto;
 }
 .zen-v2-af-menu-item {
   display: flex;
+  flex-shrink: 0;
+  width: 100%;
   height: 28px;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   padding: 0 8px;
   border-radius: var(--v2-radius-inner);
+  color: var(--v2-text);
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
-  outline: none;
+  text-align: left;
   cursor: default;
   user-select: none;
 }
-.zen-v2-af-menu-item[data-highlighted] {
+/* One highlight, the focus: the pointer moves it as the keyboard does (native-menu style), no ring besides. */
+.zen-v2-af-menu-item:focus {
   background: var(--v2-fill);
 }
-.zen-v2-af-menu-item[data-disabled] {
-  opacity: 0.4;
+.zen-v2-af-menu-item:focus-visible {
+  outline: none;
 }
 .zen-v2-af-menu-item svg {
+  flex-shrink: 0;
   width: 16px;
   height: 16px;
 }
