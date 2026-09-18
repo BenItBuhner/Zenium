@@ -27,7 +27,8 @@ export function Toolbar({
   showWindowControls?: boolean
 }): JSX.Element {
   return (
-    <div className={cn(floating && 'zen-panel zen-animate-in')}>
+    // A window surface (design language v2 §9.29): its chips draw in the window token family.
+    <div className={cn(floating && 'zen-panel zen-animate-in')} data-surface="window">
       <div
         className="zen-drag flex h-10 items-center gap-1 px-1"
         style={{

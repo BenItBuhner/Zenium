@@ -123,7 +123,9 @@ export function createTabRecord(
     errorCode: null,
     bookmarked: init.bookmarked ?? false,
     readerable: false,
-    blockedCount: 0
+    blockedCount: 0,
+    openerTabId: init.openerTabId ?? null,
+    fromIntent: init.fromIntent ?? false
   }
 }
 

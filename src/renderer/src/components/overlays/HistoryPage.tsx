@@ -14,6 +14,7 @@ import type { ClosedEntrySummary, HistoryDayGroup, HistoryVisit, UIState } from 
 import { getHost } from '@shared/url'
 import { dayLabel } from '@shared/dayKey'
 import { cmd, onEvent, run } from '@renderer/lib/api'
+import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab } from '@renderer/lib/selectors'
 import { closeOverlay, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -35,6 +36,8 @@ export function HistoryPage({ state }: { state: UIState }): JSX.Element {
   const [text, setText] = useState('')
   const [closed, setClosed] = useState<ClosedEntrySummary[]>([])
   const [hasVisits, setHasVisits] = useState(true)
+  // On a phone the keyboard would cover half the list and take the first back for itself.
+  const phone = useViewport().formFactor === 'phone'
 
   useEffect(() => {
     const timer = setTimeout(() => setText(query.trim()), SEARCH_DEBOUNCE_MS)
@@ -88,7 +91,7 @@ export function HistoryPage({ state }: { state: UIState }): JSX.Element {
               aria-hidden
             />
             <input
-              autoFocus
+              autoFocus={!phone}
               className="zen-history-input"
               placeholder="Search history"
               aria-label="Search history"

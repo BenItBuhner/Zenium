@@ -657,6 +657,8 @@ export class BrowserState {
           audible: false,
           errorCode: null,
           blockedCount: 0,
+          // Restored by us, not sent by an app that is long gone (Chrome: FROM_RESTORE).
+          fromIntent: false,
           url: t.url.startsWith('zen://error') ? (safeOriginalUrl(t.url) ?? BLANK_URL) : t.url
         })),
       essentialTabIds: m.essentialTabIds,

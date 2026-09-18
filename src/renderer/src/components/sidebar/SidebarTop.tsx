@@ -49,7 +49,11 @@ export function SidebarTop({ state, tab, compact, showToolbar }: Props): JSX.Ele
   const showControls = state.capabilities.windowControls && !overlay && !isMac && !fullscreen
   const reserveTitleRow = showControls || isMac || overlay
   return (
-    <div className={cn('zen-drag flex flex-col gap-1 px-2', reserveTitleRow ? 'pt-1.5' : 'pt-2')}>
+    // A window surface (design language v2 §9.29): the pill and its chips draw in the window family.
+    <div
+      className={cn('zen-drag flex flex-col gap-1 px-2', reserveTitleRow ? 'pt-1.5' : 'pt-2')}
+      data-surface="window"
+    >
       {reserveTitleRow && (
         <div className={cn('flex h-8 items-center justify-end', isMac && 'pl-16')}>
           {showControls && !compact && <WindowControls />}

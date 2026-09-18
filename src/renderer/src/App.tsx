@@ -196,7 +196,11 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
         {showBar && <BookmarksBar state={state} tab={tab} />}
         <div className="relative min-h-0 flex-1">
           <ContentArea state={state} ui={ui} />
-          {/* Bookmark dialogs dim only this frame; the star bubble portals to the window. */}
+          {/*
+           * Modal dialogs render in the content frame through FrameDialogHost (its scrim dims
+           * this box only); popovers such as the star bubble render through ChromePortal, over
+           * the window (lib/portals.tsx).
+           */}
           <TabDialogs state={state} />
         </div>
       </main>

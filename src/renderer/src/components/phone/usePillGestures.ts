@@ -1,6 +1,7 @@
 import { useRef, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import type { PhoneBarPosition } from '@shared/types'
 import { beginDock, catchDock, dockAlong, dragDock, releaseDock } from '@renderer/lib/gestures/dock'
+import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
 import {
   beginOverviewDrag,
   beginTabSwitch,
@@ -110,6 +111,13 @@ export function usePillGestures({ edge, onTap }: PillGestureOptions): PillGestur
     t.longPress = null
   }
 
+  /** Move the surface the touch drives to a finger displacement of (dx, dy) from its origin. */
+  const drag = (t: Touch, dx: number, dy: number): void => {
+    if (t.mode === 'tabs') dragTabSwitch(-dx)
+    else if (t.mode === 'overview') dragOverview(dy * inward)
+    else if (t.mode === 'dock') dragDock(dx, dy, t.dockStart)
+  }
+
   const onPointerDown = (e: ReactPointerEvent<HTMLElement>): void => {
     if (e.button !== 0 || touch.current) return
     const state = browserStore.get().state
@@ -149,7 +157,7 @@ export function usePillGestures({ edge, onTap }: PillGestureOptions): PillGestur
     }
     touch.current = t
     const target = e.currentTarget
-    target.setPointerCapture(e.pointerId)
+    capturePointer(target, e.pointerId)
     if (mode === 'pending' && !overviewIsOpen()) {
       // The pill only relocates from a stationary press: any swipe cancels this first.
       t.longPress = setTimeout(() => {
@@ -197,9 +205,7 @@ export function usePillGestures({ edge, onTap }: PillGestureOptions): PillGestur
       dx = 0
       dy = 0
     }
-    if (t.mode === 'tabs') dragTabSwitch(-dx)
-    else if (t.mode === 'overview') dragOverview(dy * inward)
-    else if (t.mode === 'dock') dragDock(dx, dy, t.dockStart)
+    drag(t, dx, dy)
   }
 
   const finish = (e: ReactPointerEvent<HTMLElement>, cancelled: boolean): void => {
@@ -213,6 +219,14 @@ export function usePillGestures({ edge, onTap }: PillGestureOptions): PillGestur
       return
     }
     swallowClick.current = true
+    if (!cancelled) {
+      // The lift is the last sample of the finger's path. Without it a main thread that was busy
+      // during the swipe (the thumbnail capture, layout) delivers the last moves late and the
+      // release reads as a finger that had stopped short of the threshold: velocity 0 at a
+      // position the moves never reached, and a swipe across half the screen snapped back.
+      track(t.tracker, e)
+      drag(t, e.clientX - t.x0, e.clientY - t.y0)
+    }
     const { vx, vy } = cancelled ? { vx: 0, vy: 0 } : t.tracker.velocity(e.timeStamp)
     if (t.mode === 'tabs') releaseTabSwitch(-vx)
     else if (t.mode === 'overview') releaseOverview(vy * inward)
@@ -264,6 +278,10 @@ export function useOverviewHandle({ edge }: { edge: PhoneBarPosition }): Overvie
     touch.current = null
     t.release()
     if (!t.dragging) return
+    if (!cancelled) {
+      track(t.tracker, e)
+      dragOverview((e.clientY - t.y0) * inward)
+    }
     const { vy } = cancelled ? { vy: 0 } : t.tracker.velocity(e.timeStamp)
     releaseOverview(vy * inward)
   }
@@ -288,7 +306,7 @@ export function useOverviewHandle({ edge }: { edge: PhoneBarPosition }): Overvie
         tracker,
         release: claimTouchMoves(e.currentTarget)
       }
-      if (dragging) e.currentTarget.setPointerCapture(e.pointerId)
+      if (dragging) capturePointer(e.currentTarget, e.pointerId)
     },
     onPointerMove: (e) => {
       const t = touch.current
@@ -306,7 +324,7 @@ export function useOverviewHandle({ edge }: { edge: PhoneBarPosition }): Overvie
         }
         t.dragging = true
         t.y0 = e.clientY
-        e.currentTarget.setPointerCapture(e.pointerId)
+        capturePointer(e.currentTarget, e.pointerId)
       }
       dragOverview((e.clientY - t.y0) * inward)
     },

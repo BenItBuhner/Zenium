@@ -61,7 +61,9 @@ function tab(id: string): UIState['tabs'][string] {
     errorCode: null,
     bookmarked: false,
     readerable: false,
-    blockedCount: 0
+    blockedCount: 0,
+    openerTabId: null,
+    fromIntent: false
   }
 }
 

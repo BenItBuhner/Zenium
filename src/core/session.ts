@@ -40,7 +40,15 @@ export function closedTabEntry(
     kind: 'tab',
     id: newId('closed'),
     closedAt,
-    tab: { ...tab, splitGroupId: null, discarded: true, loading: false, audible: false },
+    tab: {
+      ...tab,
+      splitGroupId: null,
+      discarded: true,
+      loading: false,
+      audible: false,
+      // Reopened by the user later, not by the app that once sent the URL.
+      fromIntent: false
+    },
     spaceId: placement.spaceId,
     folderId: placement.folderId,
     index: placement.index,

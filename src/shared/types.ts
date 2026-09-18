@@ -227,6 +227,13 @@ export interface Tab {
   readerable: boolean
   /** Requests the blocking engine stopped for the current document (resets on navigation). */
   blockedCount: number
+  /**
+   * Tab whose page opened this one (a link into a new tab, `window.open`). Mobile system back at
+   * the tab's first page closes it and returns there, as Chrome does for a child tab.
+   */
+  openerTabId: string | null
+  /** Opened by another app's intent or share; system back at its first page returns to that app. */
+  fromIntent: boolean
 }
 
 /** Colours a tab group (folder) can wear; the phone chrome paints group cards with them. */

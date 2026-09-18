@@ -661,8 +661,9 @@ describe('AndroidExtensions: installing from files', () => {
     const h = harness()
     h.kt.sideloads.push(h.kt.hold('sample.crx', crx1))
     await h.ext.start()
-    // start() collects the queue without waiting for the installs; let them run.
-    await settle()
+    // start() collects the queue without waiting for the installs (the prompt must not hold up
+    // the boot); the host says when they are done.
+    await h.ext.whenPendingInstalled()
     expect(h.kt.calledWith('extStore.takeSideloads')).toHaveLength(1)
     expect(h.kt.sideloads).toEqual([])
     expect(h.ext.record(ID)?.source).toBe('crx')
@@ -674,6 +675,47 @@ describe('AndroidExtensions: installing from files', () => {
     expect(h.prompts).toHaveLength(2)
     expect(h.prompts[1].kind).toBe('update')
     expect(h.ext.records()).toHaveLength(1)
+  })
+
+  it('installs sideloads one batch at a time: a package sent while a prompt is up waits for the answer', async () => {
+    const h = harness()
+    const shown: Array<() => void> = []
+    const answers: Array<(ok: boolean) => void> = []
+    /** Resolves once the next prompt is on screen. */
+    const nextPrompt = (): Promise<void> => new Promise((resolve) => shown.push(resolve))
+    h.ext.confirmInstall = (request) => {
+      h.prompts.push(request)
+      shown.shift()?.()
+      return new Promise<boolean>((resolve) => answers.push(resolve))
+    }
+
+    h.kt.sideloads.push(h.kt.hold('sample.crx', crx1))
+    let prompt = nextPrompt()
+    const first = h.ext.installPending()
+    await prompt
+
+    // A second package arrives while the first prompt is up: its batch stays queued in Kotlin.
+    h.kt.sideloads.push(h.kt.hold('sample-again.crx', crx1))
+    prompt = nextPrompt()
+    const second = h.ext.installPending()
+    await settle()
+    expect(h.kt.calledWith('extStore.takeSideloads')).toHaveLength(1)
+    expect(h.prompts).toHaveLength(1)
+    expect(h.kt.sideloads).toHaveLength(1)
+
+    // The answer lets the first install finish and the second batch begin, as an update prompt.
+    answers[0](true)
+    await first
+    expect(h.ext.record(ID)?.version).toBe('1.0.0')
+    await prompt
+    expect(h.kt.calledWith('extStore.takeSideloads')).toHaveLength(2)
+    expect(h.kt.sideloads).toEqual([])
+    expect(h.prompts[1].kind).toBe('update')
+    answers[1](false)
+    await second
+    await h.ext.whenPendingInstalled()
+    expect(h.ext.records()).toHaveLength(1)
+    expect(h.kt.packages.size).toBe(0)
   })
 })
 
