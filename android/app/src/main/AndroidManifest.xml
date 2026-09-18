@@ -122,6 +122,15 @@
                 <action android:name="android.intent.action.WEB_SEARCH" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <!-- Zenium's own pages: a `zenium://settings/privacy` deep link (from a notification, a
+                 shortcut, `adb shell am start`) opens the page's tab in the browser window – see
+                 src/shared/internalPages.ts. The browser's task is the only place it can land. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="zenium" />
+            </intent-filter>
             <!-- Share target: text and links open or search; an image opens as a page (Share.kt). -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
