@@ -22,6 +22,22 @@ name: Android emulator demo
 # main's CI and demos saved and never publishes entries of its own. The AVD is not cached: in PR #34
 # restoring the 2.8 GB snapshot took 28 to 33 s against the 28 s it saved on boot, a miss cost about
 # 2 min more, and one entry is 28 percent of the 10 GB cache quota.
+#
+# The GPU. The hosted runners have none, so the emulator renders in software, and which renderer
+# is its own input (emulator-gpu) rather than a word inside emulator-options, so that every caller
+# inherits the one measured to hold: `swangle`, ANGLE over SwiftShader Vulkan. Under the previous
+# default, `swiftshader_indirect` (the legacy SwiftShader GL translator), qemu itself exited on a
+# fatal signal the moment the phone chrome painted Settings: every guest process stopped logging
+# at once, adb reported the device offline, the guest kernel console (-show-kernel) had nothing to
+# say. On the emulator 37.1.11 image that took seven of the nine boots of the site controls demo
+# in runs 35355397692 to 35368888730 (the two that finished were second boots; the last run lost
+# both), and the page controls demo's three deaths a minute into its recording (runs 35231597428,
+# 35239580150, 35244924856) carry the same signature. `swangle` recorded the whole site controls
+# demo, Settings painted three times over, on its first boot in run 35370429565. A `-gpu` a caller
+# still carries in emulator-options gives way to emulator-gpu, so the default reaches it unchanged:
+# in run 35373404276 the site controls demo on the plain defaults and the page controls demo handing
+# in its old `-gpu swiftshader_indirect` string both came up with gles_mode_selected:swangle and ran
+# to the end.
 on:
   workflow_call:
     inputs:
@@ -82,11 +98,20 @@ on:
         required: false
         type: number
         default: 45
-      emulator-options:
-        description: Command line of the emulator (a caller may add -show-kernel to see the guest kernel's console in the log)
+      emulator-gpu:
+        description: >-
+          Renderer behind the emulator's -gpu flag (see the header): swangle, or swiftshader_indirect
+          to reproduce the old behaviour; any -gpu inside emulator-options is replaced by this
         required: false
         type: string
-        default: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+        default: swangle
+      emulator-options:
+        description: >-
+          The rest of the emulator's command line, -gpu excluded (a caller may add -show-kernel to see
+          the guest kernel's console in the log)
+        required: false
+        type: string
+        default: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
     outputs:
       emulator-died:
         description: >-
@@ -157,6 +182,28 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
           ls -la /dev/kvm
+      - name: Compose the emulator's command line
+        # -gpu comes from emulator-gpu alone; one a caller still carries in emulator-options is dropped.
+        id: cmdline
+        env:
+          EMULATOR_GPU: ${{ inputs.emulator-gpu }}
+          EMULATOR_OPTIONS: ${{ inputs.emulator-options }}
+        run: |
+          if [ -z "$EMULATOR_GPU" ]; then
+            echo "::error::emulator-gpu must name a renderer (swangle, swiftshader_indirect, ...)"
+            exit 1
+          fi
+          read -ra given <<< "$EMULATOR_OPTIONS"
+          kept=()
+          skip=false
+          for word in "${given[@]}"; do
+            if [ "$skip" = true ]; then skip=false; continue; fi
+            if [ "$word" = "-gpu" ]; then skip=true; continue; fi
+            kept+=("$word")
+          done
+          options="-gpu $EMULATOR_GPU ${kept[*]}"
+          echo "emulator command line: $options"
+          echo "options=$options" >> "$GITHUB_OUTPUT"
       - name: Boot the emulator and run the driver
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -167,7 +214,7 @@ jobs:
           cores: 3
           ram-size: 4096M
           heap-size: 512M
-          emulator-options: ${{ inputs.emulator-options }}
+          emulator-options: ${{ steps.cmdline.outputs.options }}
           disable-animations: ${{ inputs.disable-animations }}
           script: bash ${{ inputs.script }}
       - name: Tell an emulator death from a driver failure

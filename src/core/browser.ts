@@ -101,6 +101,14 @@ import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizePrivacySettings } from '../shared/privacy'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
+import { JsonStore } from './store/JsonStore'
+
+/**
+ * How long a quit waits for the profile's final writes to land. Nothing of the profile is at
+ * stake past it: the final documents were written synchronously; a host whose storage stalls
+ * must not hold the quit up for good.
+ */
+const QUIT_SETTLE_TIMEOUT_MS = 3_000
 
 type CommandHandlers = {
   [K in CommandName]: (
@@ -547,8 +555,30 @@ export class Browser {
     // Every request that waited on the same check quits once.
     if (this.quitting) return true
     this.shutdown()
+    await this.settled()
     this.platform.app.quit()
     return true
+  }
+
+  /** Whether a document of the profile is still being written (`settled` waits for it). */
+  get writing(): boolean {
+    return JsonStore.busy
+  }
+
+  /**
+   * Resolves once the profile's final writes have landed – `shutdown` wrote synchronously, but a
+   * debounced write that had already started lands after it and is followed by a repeat of the
+   * final document (`JsonStore.flushSync`); the process must not go away before that repeat has.
+   * Bounded, so a stalled disk cannot keep the app from quitting.
+   */
+  settled(): Promise<void> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, QUIT_SETTLE_TIMEOUT_MS)
+      void JsonStore.idle().then(() => {
+        clearTimeout(timer)
+        resolve()
+      })
+    })
   }
 
   private async confirmQuit(from?: ZenWindow): Promise<boolean> {
