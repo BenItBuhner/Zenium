@@ -347,24 +347,22 @@ function cardBody(prompt: SaveCardPrompt): { body: ReactNode; actions: Action[] 
 }
 
 /**
- * The passkey chooser's rows: one per account. In the dialog the first (most recently used) is
- * active and takes the focus as the chooser opens (§9.22); in the sheet no row is lit until a
- * finger lands on one, as in the picker strip.
+ * The passkey chooser's rows: one per account. The first (most recently used) is active and takes
+ * the focus as the chooser opens, in the dialog and in the sheet alike (§9.22: a panel of rows
+ * focuses its first row; phone sheets behave the same).
  */
 function PasskeyRows({
   prompt,
-  respond,
-  highlightFirst = true
+  respond
 }: {
   prompt: PasskeyAccountPrompt
   respond: Respond
-  highlightFirst?: boolean
 }): JSX.Element {
-  const [active, setActive] = useState(highlightFirst ? 0 : -1)
+  const [active, setActive] = useState(0)
   const first = useRef<HTMLButtonElement>(null)
   useEffect(() => {
-    if (highlightFirst) first.current?.focus()
-  }, [highlightFirst])
+    first.current?.focus({ preventScroll: true })
+  }, [])
   const onKeyDown = (e: React.KeyboardEvent): void => {
     const count = prompt.accounts.length
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -493,6 +491,14 @@ function PromptPopover({
     else respond(action.response)
   }
 
+  // Focus on open (§9.22): the login prompts focus their username field (`LoginBody`); the
+  // address and card prompts are a title and a notice with actions and no field, so the panel
+  // itself takes the focus (`tabIndex -1`, named by its title) and Tab reaches its buttons.
+  const notice = prompt.kind === 'save-address' || prompt.kind === 'save-card'
+  useEffect(() => {
+    if (notice) panelRef.current?.focus({ preventScroll: true })
+  }, [notice])
+
   // With no pill on screen (compact mode) the prompt stands in the window's top trailing corner.
   const viewport = viewportSize()
   const anchor = chip ?? {
@@ -558,6 +564,7 @@ function PromptPopover({
         ref={panelRef}
         role="dialog"
         aria-labelledby={titleId}
+        tabIndex={notice ? -1 : undefined}
         className="zen-v2-af zen-v2-af-popover zen-animate-pop fixed z-[70]"
         data-surface="page"
         style={popoverStyle(box)}
@@ -715,7 +722,7 @@ function PromptSheet({
     case 'passkey-account':
       content = (
         <>
-          <PasskeyRows prompt={prompt} respond={(r) => leave(r)} highlightFirst={false} />
+          <PasskeyRows prompt={prompt} respond={(r) => leave(r)} />
           <div className="zen-v2-af-form">{footer([{ label: 'Cancel', response: null }])}</div>
         </>
       )

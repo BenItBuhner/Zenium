@@ -63,6 +63,8 @@ export function PickerPanel({
   const [busy, setBusy] = useState(false)
   const [setup, setSetup] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
+  /** Back was pressed while an attempt ran: its refusal must not bring the step back. */
+  const leftStep = useRef(false)
   const count = picker.items.length + 1
   const Glyph = GROUP_GLYPH[picker.group]
 
@@ -70,6 +72,7 @@ export function PickerPanel({
 
   const pick = async (itemId: string, passphrase?: string): Promise<void> => {
     setBusy(true)
+    leftStep.current = false
     let result: ReauthOutcome<null>
     try {
       result = await cmd('autofill.pick', { id: picker.id, itemId, passphrase })
@@ -77,6 +80,7 @@ export function PickerPanel({
       result = { status: 'denied' }
     }
     setBusy(false)
+    if (leftStep.current && result.status !== 'ok') return
     switch (result.status) {
       case 'ok':
         // The core closes the picker with the fill.
@@ -160,7 +164,10 @@ export function PickerPanel({
         item={item ?? null}
         error={asking.error}
         busy={busy}
-        onBack={() => setAsking(null)}
+        onBack={() => {
+          leftStep.current = true
+          setAsking(null)
+        }}
         onSubmit={(passphrase) => void pick(asking.itemId, passphrase)}
       />
     )
@@ -282,8 +289,9 @@ function PassphraseStep({
   const [value, setValue] = useState('')
   const id = useId()
   const field = useRef<HTMLInputElement>(null)
-  // The field takes the focus as the step comes up and again when a refused attempt hands it
-  // back (the disabled field lost it while the attempt ran); an attempt clears it as it leaves.
+  // The field takes the focus as the step comes up and again after a refused attempt; an attempt
+  // clears it as it leaves and holds it read-only – nothing dims while the vault works (§9.30:
+  // busy is the spinner on Unlock at full opacity, and Back stays live).
   useEffect(() => {
     if (!busy) field.current?.focus()
   }, [busy])
@@ -308,17 +316,16 @@ function PassphraseStep({
             ref={field}
             id={id}
             type="password"
+            secret
             value={value}
             autoComplete="current-password"
             onChange={(e) => setValue(e.target.value)}
-            disabled={busy}
+            readOnly={busy}
           />
         </Labelled>
         <Footer count={2}>
-          <Btn onClick={onBack} disabled={busy}>
-            Back
-          </Btn>
-          <Btn type="submit" variant="primary" busy={busy} disabled={!value}>
+          <Btn onClick={onBack}>Back</Btn>
+          <Btn type="submit" variant="primary" busy={busy} disabled={!value && !busy}>
             Unlock
           </Btn>
         </Footer>

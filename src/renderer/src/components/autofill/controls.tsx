@@ -26,6 +26,8 @@ import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import '@renderer/assets/autofill.css'
 
+import { wrapTab } from '../bookmarks/popover'
+
 export { useScrolled, wrapTab } from '../bookmarks/popover'
 
 /**
@@ -423,14 +425,19 @@ function PopoverMenulist<T extends string>({
   const listId = useId()
   const current = options.find((o) => o.value === value)
 
-  // Hung from the trigger at its width (§9.13: a panel under the trigger), as tall as its rows,
-  // flipped above when the window ends before they do.
+  // Hung from the trigger at its width (§9.13: a panel under the trigger), as tall as its rows up
+  // to 60% of the window (§9.20's cap, which `placePopover` leaves to the caller when it is handed
+  // a height), flipped above when the window ends before they do; a longer list scrolls.
   const openList = (): void => {
     const el = trigger.current
     if (!el) return
     const anchor = toRect(el.getBoundingClientRect())
-    const height = MENU_PADDING * 2 + options.length * MENU_ROW
-    setBox(placePopover(anchor, anchor, viewportSize(), { measured: anchor.width }, height))
+    const viewport = viewportSize()
+    const height = Math.min(
+      MENU_PADDING * 2 + options.length * MENU_ROW,
+      Math.floor(viewport.height * 0.6)
+    )
+    setBox(placePopover(anchor, anchor, viewport, { measured: anchor.width }, height))
   }
   const close = (focusTrigger: boolean): void => {
     setBox(null)
@@ -478,8 +485,10 @@ function PopoverMenulist<T extends string>({
         rows[rows.length - 1]?.focus()
         break
       case 'Tab':
-        close(true)
-        break
+        // Tab stays inside the open list and wraps at its ends (§9.22); Escape is the way out.
+        wrapTab(e, list.current)
+        e.stopPropagation()
+        return
       default:
         return
     }

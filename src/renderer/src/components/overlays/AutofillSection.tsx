@@ -1,4 +1,4 @@
-import type { JSX, ReactNode } from 'react'
+import type { JSX, ReactNode, RefObject } from 'react'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import {
   Copy,
@@ -82,10 +82,12 @@ function serviceName(component: string | null): string | null {
  * Settings > Autofill (design-language-v2-draft §1–§3, §6, §9): how passwords reach pages – the
  * rows Settings > Passwords hosts once the password manager's section lands (offer to save,
  * automatic sign-in, who fills on Android, the clipboard clear) – then the vault's addresses,
- * payment methods and passkeys, each a 15/600 group with its manager in a card (§9.27). Adding
- * and editing an address or a card opens the editor dialog (`AutofillEditor`, a sheet on
- * phones); the lists re-fetch on every change the core announces (`autofill.revision`) and once
- * the vault unlocks. The 22 title is desktop's (§9.26); the phone's chip strip names the pane.
+ * payment methods and passkeys, each a 15/600 group with its manager in a card on a desktop
+ * (§9.27) and as rows under the heading on a phone (§9.17, §10.3: no card, checkboxes become
+ * §10.4's switch rows, the add button an action row). Adding and editing an address or a card
+ * opens the editor dialog (`AutofillEditor`, a sheet on phones); the lists re-fetch on every
+ * change the core announces (`autofill.revision`) and once the vault unlocks. The 22 title is
+ * desktop's (§9.26); the phone's chip strip names the pane.
  */
 export function AutofillSection({
   state,
@@ -97,7 +99,7 @@ export function AutofillSection({
   const locked = state.passwords.locked
   return (
     <div className="zen-v2-af zen-v2-af-pane" data-surface="page">
-      <div>
+      <div className="zen-v2-af-pane-head">
         <h2 className="zen-v2-af-pane-title">Autofill</h2>
         <p className="zen-v2-af-muted zen-v2-af-pane-intro">
           Zenium saves the passwords, addresses and cards you type into pages and fills them back
@@ -180,6 +182,31 @@ export function PasswordFillRows({
 // Building blocks (v2 §6, §9.2–9.3, §9.27)
 // ---------------------------------------------------------------------------
 
+function usePhone(): boolean {
+  return useViewport().formFactor === 'phone'
+}
+
+/**
+ * Whether a row's text block runs to a third line (a wrapped description), which moves the
+ * row's trailing control from the row's centre to the label's line (§9.18). Two 20 px lines are
+ * the row's own; anything taller is a wrapped description.
+ */
+function useWrapped<T extends HTMLElement>(): [ref: RefObject<T | null>, wrapped: boolean] {
+  const ref = useRef<T>(null)
+  const [wrapped, setWrapped] = useState(false)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const measure = (): void => setWrapped(el.getBoundingClientRect().height > 50)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+  return [ref, wrapped]
+}
+
 /** A group: the 15/600 heading, its description 4 under it, the first row or card 8 below. */
 function Section({
   heading,
@@ -201,7 +228,22 @@ function Section({
   )
 }
 
-/** A row that is one checkbox (§9.2): the whole row toggles it; its text dims with a disabled box. */
+/**
+ * A manager's list: on a desktop the card (§6, §9.27) that carries the group's own actions – its
+ * rows at the card's 16 inset – and on a phone plain rows under the heading, edge to edge, since
+ * a phone page draws no card, border or fill (§9.17, §10.3).
+ */
+function List({ children }: { children: ReactNode }): JSX.Element {
+  const phone = usePhone()
+  return <div className={phone ? 'zen-v2-af-rows' : 'zen-v2-af-card'}>{children}</div>
+}
+
+/**
+ * A boolean row. On a desktop one checkbox (§9.2, §6): the 16 px box on the first text line and
+ * the whole row its label; its text dims with a disabled box. On a phone §10.4's switch row: the
+ * whole row is the control (`role="switch"`), the 36 × 20 switch trailing and centred on the row
+ * – on the label's line once the description wraps (§9.18) – and disabled dims the row at .4.
+ */
 function CheckRow({
   label,
   description,
@@ -215,6 +257,27 @@ function CheckRow({
   disabled?: boolean
   onChange: (checked: boolean) => void
 }): JSX.Element {
+  const phone = usePhone()
+  const [text, wrapped] = useWrapped<HTMLSpanElement>()
+  if (phone) {
+    return (
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        className="zen-v2-af-srow zen-v2-af-tap-row zen-v2-af-switch-row"
+        data-wrapped={wrapped || undefined}
+        disabled={disabled}
+        onClick={() => onChange(!checked)}
+      >
+        <span ref={text} className="zen-v2-af-srow-text">
+          <span className="zen-v2-af-srow-label">{label}</span>
+          {description && <span className="zen-v2-af-srow-desc">{description}</span>}
+        </span>
+        <span className="zen-v2-af-switch" aria-hidden />
+      </button>
+    )
+  }
   return (
     <label className="zen-v2-af-srow">
       <input
@@ -252,7 +315,7 @@ function MenulistRow({
   onChange: (value: string) => void
 }): JSX.Element {
   const id = useId()
-  const phone = useViewport().formFactor === 'phone'
+  const phone = usePhone()
   const [open, setOpen] = useState(false)
   const trigger = useRef<HTMLButtonElement>(null)
   const current = options.find((o) => o.value === value)?.label ?? ''
@@ -262,7 +325,7 @@ function MenulistRow({
         <button
           ref={trigger}
           type="button"
-          className="zen-v2-af-srow"
+          className="zen-v2-af-srow zen-v2-af-tap-row"
           aria-haspopup="dialog"
           aria-expanded={open}
           onClick={() => setOpen(true)}
@@ -317,19 +380,7 @@ function EntryRow({
   description: string
   children: ReactNode
 }): JSX.Element {
-  const text = useRef<HTMLDivElement>(null)
-  const [wrapped, setWrapped] = useState(false)
-  useLayoutEffect(() => {
-    const el = text.current
-    if (!el) return
-    // Two 20 px lines are the row's own; anything taller is a wrapped description.
-    const measure = (): void => setWrapped(el.getBoundingClientRect().height > 50)
-    measure()
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(measure)
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [])
+  const [text, wrapped] = useWrapped<HTMLDivElement>()
   return (
     <div className="zen-v2-af-srow" data-wrapped={wrapped || undefined}>
       <span className="zen-v2-af-row-icon">
@@ -344,13 +395,34 @@ function EntryRow({
   )
 }
 
-/** Empty state inside a card (§9.17): one plain row, the sentence at 69% where a label would be. */
-function EmptyRow({ children }: { children: ReactNode }): JSX.Element {
+/** Empty state in a card or a phone group (§9.17): one plain row, one sentence at 69% where a label would be, no full stop. */
+function EmptyRow({ children }: { children: string }): JSX.Element {
   return <div className="zen-v2-af-srow-empty">{children}</div>
 }
 
-/** The card's add row (§9.21): the secondary button with its glyph, 4 above and below. */
+/**
+ * The list's add action: on a desktop the card's add row (§9.21), the secondary button with its
+ * glyph 4 above and below; on a phone §10.4's action row – the whole 44 row is the button, its
+ * glyph in the entries' leading slot so the labels share one edge, the press fill on the row.
+ */
 function AddRow({ label, onClick }: { label: string; onClick: () => void }): JSX.Element {
+  const phone = usePhone()
+  if (phone) {
+    return (
+      <button
+        type="button"
+        className="zen-v2-af-srow zen-v2-af-tap-row zen-v2-af-action-row"
+        onClick={onClick}
+      >
+        <span className="zen-v2-af-row-icon">
+          <Plus aria-hidden />
+        </span>
+        <span className="zen-v2-af-srow-text">
+          <span className="zen-v2-af-srow-label">{label}</span>
+        </span>
+      </button>
+    )
+  }
   return (
     <div className="zen-v2-af-add">
       <div className="zen-v2-af-add-controls">
@@ -373,7 +445,9 @@ type GateStep = 'idle' | 'passphrase' | 'setup'
  * Addresses, cards and passkeys live in the vault: while it is locked one card (§9.27) offers
  * to unlock it – the device's own check where it has one, the passphrase in a §9.12 field where
  * the vault has one, or creating one where the device cannot verify the user and no vault
- * exists yet.
+ * exists yet. The card's name is inside it (its 17/600 title with the lock glyph, 16 padding,
+ * nothing above it); on a phone there is no card, so the title is the group's 15/600 heading,
+ * Unlock a §10.4 action row and the passphrase form a field at the gutter (§9.17, §10.3).
  */
 function VaultGate({ state }: { state: UIState }): JSX.Element {
   const [step, setStep] = useState<GateStep>('idle')
@@ -382,6 +456,7 @@ function VaultGate({ state }: { state: UIState }): JSX.Element {
   const [busy, setBusy] = useState(false)
   const status = state.passwords
   const id = useId()
+  const phone = usePhone()
   const field = useRef<HTMLInputElement>(null)
   useEffect(() => {
     if (step !== 'idle' && !busy) field.current?.focus()
@@ -427,71 +502,96 @@ function VaultGate({ state }: { state: UIState }): JSX.Element {
       : step === 'passphrase'
         ? 'Enter the vault passphrase to see and edit saved addresses, cards and passkeys.'
         : 'Unlock to see and edit saved addresses, cards and passkeys.'
-  return (
-    <Section heading="Addresses, payment methods and passkeys">
-      <div className="zen-v2-af-card">
-        <div className="zen-v2-af-gate">
-          <div className="zen-v2-af-gate-head">
-            <Lock aria-hidden />
-            <div className="min-w-0 flex-1">
-              <div className="zen-v2-af-card-title">{title}</div>
-              <div className="zen-v2-af-muted">{description}</div>
-            </div>
-          </div>
-          {step === 'idle' ? (
-            <div className="zen-v2-af-gate-actions">
-              <Btn
-                variant="primary"
-                busy={busy}
-                disabled={Boolean(status.error)}
-                onClick={() => void unlock()}
-              >
-                Unlock
-              </Btn>
-            </div>
-          ) : (
-            <form
-              className="zen-v2-af-gate-form"
-              onSubmit={(e) => {
-                e.preventDefault()
-                if (passphrase && !busy) void unlock(passphrase)
+  const cancel = (): void => {
+    setStep('idle')
+    setPassphrase('')
+    setError(null)
+  }
+  // Busy is the spinner at full opacity (§9.30): the field holds read-only, Cancel stays live.
+  const form = (
+    <form
+      className="zen-v2-af-gate-form"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (passphrase && !busy) void unlock(passphrase)
+      }}
+    >
+      <Labelled
+        label={step === 'setup' ? 'New vault passphrase' : 'Vault passphrase'}
+        htmlFor={id}
+        error={error}
+      >
+        <Field
+          ref={field}
+          id={id}
+          type="password"
+          secret
+          value={passphrase}
+          autoComplete={step === 'setup' ? 'new-password' : 'current-password'}
+          readOnly={busy}
+          onChange={(e) => setPassphrase(e.target.value)}
+        />
+      </Labelled>
+      <div className="zen-v2-af-gate-actions">
+        <Btn onClick={cancel}>Cancel</Btn>
+        <Btn type="submit" variant="primary" busy={busy} disabled={!passphrase && !busy}>
+          {step === 'setup' ? 'Create' : 'Unlock'}
+        </Btn>
+      </div>
+    </form>
+  )
+  if (phone) {
+    return (
+      <Section heading={title} description={description}>
+        {step === 'idle' ? (
+          <div className="zen-v2-af-rows">
+            <button
+              type="button"
+              className="zen-v2-af-srow zen-v2-af-tap-row zen-v2-af-action-row"
+              aria-busy={busy || undefined}
+              disabled={Boolean(status.error)}
+              onClick={() => {
+                if (!busy) void unlock()
               }}
             >
-              <Labelled
-                label={step === 'setup' ? 'New vault passphrase' : 'Vault passphrase'}
-                htmlFor={id}
-                error={error}
-              >
-                <Field
-                  ref={field}
-                  id={id}
-                  type="password"
-                  value={passphrase}
-                  autoComplete={step === 'setup' ? 'new-password' : 'current-password'}
-                  disabled={busy}
-                  onChange={(e) => setPassphrase(e.target.value)}
-                />
-              </Labelled>
-              <div className="zen-v2-af-gate-actions">
-                <Btn type="submit" variant="primary" busy={busy} disabled={!passphrase}>
-                  {step === 'setup' ? 'Create' : 'Unlock'}
-                </Btn>
-                <Btn
-                  disabled={busy}
-                  onClick={() => {
-                    setStep('idle')
-                    setPassphrase('')
-                    setError(null)
-                  }}
-                >
-                  Cancel
-                </Btn>
-              </div>
-            </form>
-          )}
+              <span className="zen-v2-af-srow-text">
+                <span className="zen-v2-af-srow-label">Unlock</span>
+              </span>
+              {busy && <span className="zen-v2-af-row-spinner" aria-hidden />}
+            </button>
+          </div>
+        ) : (
+          form
+        )}
+      </Section>
+    )
+  }
+  return (
+    <section className="zen-v2-af-section">
+      <div className="zen-v2-af-card zen-v2-af-gate">
+        <div className="zen-v2-af-gate-head">
+          <Lock aria-hidden />
+          <div className="min-w-0 flex-1">
+            <div className="zen-v2-af-card-title">{title}</div>
+            <div className="zen-v2-af-muted">{description}</div>
+          </div>
         </div>
+        {step === 'idle' ? (
+          <div className="zen-v2-af-gate-actions">
+            <Btn
+              variant="primary"
+              busy={busy}
+              disabled={Boolean(status.error)}
+              onClick={() => void unlock()}
+            >
+              Unlock
+            </Btn>
+          </div>
+        ) : (
+          form
+        )}
       </div>
-    </Section>
+    </section>
   )
 }
 
@@ -541,7 +641,7 @@ function AddressesGroup({
           onChange={(v) => set({ autofill: { ...a, addresses: v } })}
         />
       </div>
-      <div className="zen-v2-af-card">
+      <List>
         {addresses?.map((address) => (
           <EntryRow
             key={address.id}
@@ -563,16 +663,12 @@ function AddressesGroup({
             </IconBtn>
           </EntryRow>
         ))}
-        {addresses && addresses.length === 0 && (
-          <EmptyRow>
-            No addresses saved yet. Zenium offers to save one when you fill in a form.
-          </EmptyRow>
-        )}
+        {addresses && addresses.length === 0 && <EmptyRow>No addresses saved yet</EmptyRow>}
         <AddRow
           label="Add address"
           onClick={() => openAutofillEdit({ kind: 'address', id: null })}
         />
-      </div>
+      </List>
     </Section>
   )
 }
@@ -634,7 +730,7 @@ function CardsGroup({
           onChange={(v) => set({ autofill: { ...a, cards: v } })}
         />
       </div>
-      <div className="zen-v2-af-card">
+      <List>
         {cards?.map((card) => (
           <EntryRow
             key={card.id}
@@ -659,11 +755,9 @@ function CardsGroup({
             </IconBtn>
           </EntryRow>
         ))}
-        {cards && cards.length === 0 && (
-          <EmptyRow>No cards saved yet. Zenium offers to save one after a checkout.</EmptyRow>
-        )}
+        {cards && cards.length === 0 && <EmptyRow>No cards saved yet</EmptyRow>}
         <AddRow label="Add card" onClick={() => openAutofillEdit({ kind: 'card', id: null })} />
-      </div>
+      </List>
     </Section>
   )
 }
@@ -678,7 +772,7 @@ function PasskeysGroup({ state }: { state: UIState }): JSX.Element {
       heading="Passkeys"
       description="Passkeys created in Zenium. The keys themselves stay with your device's authenticator (Windows Hello, Touch ID, Google Password Manager); this is where they exist and when they were last used."
     >
-      <div className="zen-v2-af-card">
+      <List>
         {passkeys?.map((passkey) => (
           <EntryRow
             key={passkey.id}
@@ -704,10 +798,8 @@ function PasskeysGroup({ state }: { state: UIState }): JSX.Element {
             </IconBtn>
           </EntryRow>
         ))}
-        {passkeys && passkeys.length === 0 && (
-          <EmptyRow>No passkeys yet. Sites offer to create one where they support them.</EmptyRow>
-        )}
-      </div>
+        {passkeys && passkeys.length === 0 && <EmptyRow>No passkeys yet</EmptyRow>}
+      </List>
     </Section>
   )
 }
