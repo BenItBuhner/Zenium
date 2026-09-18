@@ -4063,7 +4063,7 @@
   padding: 16px 16px 12px;
   font-size: var(--v2-font-title);
   font-weight: var(--v2-weight-heading);
-  line-height: 28px;
+  line-height: var(--v2-line-title);
   letter-spacing: -0.01em;
 }
 .zen-settings-search {
@@ -4190,7 +4190,7 @@
   white-space: nowrap;
   font-size: var(--v2-font-heading);
   font-weight: var(--v2-weight-heading);
-  line-height: 22px;
+  line-height: var(--v2-line-heading);
 }
 
 /*
