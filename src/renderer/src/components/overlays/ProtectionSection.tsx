@@ -126,7 +126,7 @@ function SafeBrowsingGroup({ state, setP }: { state: UIState; setP: SetPrivacy }
     <>
       <BoolRow
         label="Warn about dangerous sites"
-        description="A deceptive site or one that spreads malware is stopped before it loads. You can still go on from the warning."
+        description="Deceptive and malware sites are stopped before they load. You can still go on from the warning."
         checked={on}
         onChange={(safeBrowsingEnabled) => setP({ safeBrowsingEnabled })}
       />

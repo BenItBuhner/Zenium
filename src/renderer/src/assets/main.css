@@ -7254,6 +7254,11 @@
 .zen-protection-sheet-row:active {
   background: var(--v2-fill);
 }
+/* A choice is read in full before it is taken: the sheet's descriptions wrap without the clamp. */
+.zen-protection-sheet-row .zen-privacy-row-desc {
+  display: block;
+  -webkit-line-clamp: unset;
+}
 /*
  * The menulist (§6, §9.13): 32 tall at radius 4 with a hairline, the 10% fill, 15/500 and a
  * 16 px chevron; lit while its list is open, .4 when disabled. A row holding one grows to the
