@@ -19,9 +19,9 @@ const DEAD_CUT_AT = 256 * 1024
 // The navigation response, the downloader's first attempt and MAX_AUTO_RESUMES (5) resumes.
 const DEAD_FAILURES = 7
 let deadResponses = 0
-// 3 MiB at this rate runs about twelve seconds: long enough for the panel to open on the
+// 3 MiB at this rate runs about sixteen seconds: long enough for the panel to open on the
 // transfer, the recorder to catch it moving and Pause to have bytes to hold.
-const SLOW_RATE = 256 * 1024
+const SLOW_RATE = 192 * 1024
 const dataText = Buffer.from('Hello from a Zenium data: link\n').toString('base64')
 const page = `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Zenium download test</title>

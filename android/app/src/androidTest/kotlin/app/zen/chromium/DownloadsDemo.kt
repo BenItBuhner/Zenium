@@ -31,10 +31,11 @@ import org.junit.runner.RunWith
  * formula as [expectedByte], so a resumed file is checked byte for byte.
  *
  * The panel on screen is the shared downloads page (`DownloadRow`): each row is one focusable
- * node labelled `<name>. <status>` on the accessibility tree, so the driver reads a row's state
- * from that label ([rowReads]) and presses its controls through the tree when they are exposed,
- * else through the engine command the control runs ([press]); the engine's own list is checked
- * over `app.getState()` either way.
+ * node labelled `<name>. <status>` on the accessibility tree with its controls as children, so
+ * the driver reads a row's state from that label once the row holds still ([rowReads]; the
+ * software-rendered emulator seldom serves the panel's subtree while a row moves) and presses
+ * its controls through the tree when they are there, else through the engine command the
+ * control runs ([press]); the engine's own list is checked over `app.getState()` either way.
  *
  * Run from the dispatch-only workflow `.github/workflows/android-downloads-demo.yml`, a caller of
  * the shared `android-emulator-demo.yml` that starts the server from `setup-script` and hands the
@@ -61,24 +62,27 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
 
     override fun demo() {
         // 1. A throttled download: the panel opens on the transfer, Pause holds the bytes, Resume
-        //    completes the file. The running row reads "<speed> · <received> of 3.0 MB · <left>".
+        //    completes the file. While the row moves (four times a second) the emulator's
+        //    accessibility tree seldom settles enough to be read, so the running row is the
+        //    engine's word plus the screenshot and the recording; the tree is read once the row
+        //    holds still ("slow.bin. Paused · <received> of 3.0 MB").
         click(LINK_SLOW)
         val slowId = awaitRow("slow.bin", 15_000) { it.optString("state") == "progressing" }?.optString("id").orEmpty()
-        if (waitForRow(15_000) { rowReads(it, "slow.bin") && it.contains(" of ") } == null) {
-            fail("the downloads panel with a running transfer never showed")
-        }
-        logTree("the panel with a running transfer")
-        SystemClock.sleep(2_000)
+        check(slowId.isNotEmpty(), "slow.bin never started downloading")
+        SystemClock.sleep(3_500)
         shot("01-in-progress")
-        press("Pause", "download.pause", slowId)
-        if (waitForRow(8_000) { rowReads(it, "slow.bin", "Paused") } == null) fail("pause did not take")
+        press("Pause", "download.pause", "slow.bin", slowId) { it.optString("state") == "paused" }
+        if (waitForRow(15_000) { rowReads(it, "slow.bin", "Paused") } == null) {
+            fail("the panel did not show the paused row (\"slow.bin. Paused · … of 3.0 MB\")")
+        }
+        logTree("the panel with the paused transfer")
         val atPause = pendingSize("slow.bin")
         SystemClock.sleep(2_500)
         val later = pendingSize("slow.bin")
         check(atPause > 0 && later == atPause, "a paused transfer kept moving ($atPause -> $later bytes)")
         Log.i(tag, "paused at $atPause bytes")
         shot("02-paused")
-        press("Resume", "download.resume", slowId)
+        press("Resume", "download.resume", "slow.bin", slowId) { it.optString("state") != "paused" }
         val slow = awaitPublished("slow.bin", SLOW_SIZE, 60_000)
         check(slow != null && intact(slow, SLOW_SIZE), "slow.bin did not complete intact after pause and resume")
         SystemClock.sleep(1_500)
@@ -125,7 +129,7 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
         )
         if (waitForRow(8_000) { rowReads(it, "dead.bin", FAILED_NETWORK) } == null) fail("no row reads \"$FAILED_NETWORK\"")
         shot("07-failed-network")
-        press("Retry", "download.retry", failed?.optString("id").orEmpty())
+        press("Retry", "download.retry", "dead.bin", failed?.optString("id").orEmpty()) { it.optString("state") != "interrupted" }
         val dead = awaitPublished("dead.bin", DEAD_SIZE, 60_000)
         check(dead != null && intact(dead, DEAD_SIZE), "dead.bin did not complete intact on Retry")
         val retried = awaitRow("dead.bin", 10_000) { it.optString("state") == "completed" }
@@ -185,17 +189,22 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
 
     /**
      * Press a row's control (Pause, Resume, Retry) through the accessibility tree when the tree
-     * carries it; a row is one focusable node labelled `<name>. <status>`, and Chromium on
-     * Android may fold such a node's children into it, in which case the control is not there
-     * to press and the engine command the control runs (`download.pause`, ...) stands in for it.
+     * serves it just then; while a row moves the emulator's tree often does not, and the engine
+     * command the control runs (`download.pause`, ...) stands in for the press, which the log says.
+     * Either way the engine's row for `name` must satisfy `took` within five seconds, else the
+     * command runs outright (a press on a churning tree can land on nothing).
      */
-    private fun press(label: String, command: String, id: String) {
+    private fun press(label: String, command: String, name: String, id: String, took: (JSONObject) -> Boolean) {
         if (clickByLabel(label)) {
             Log.i(tag, "$label: pressed the row's control")
-            return
+        } else {
+            Log.i(tag, "$label: not on the accessibility tree; running $command for the row instead")
+            downloadCommand(command, id)
         }
-        Log.i(tag, "$label: not on the accessibility tree; running $command for the row instead")
-        downloadCommand(command, id)
+        if (awaitRow(name, 5_000, took) == null) {
+            Log.i(tag, "$label did not take; running $command for the row")
+            downloadCommand(command, id)
+        }
     }
 
     /** Whether an accessibility label is the row for `name` reading `status` (a row is labelled `<name>. <status>`). */
