@@ -171,17 +171,24 @@ class SiteInfoDemo {
             shot("03-cookies")
             expandSheet(f)
             SystemClock.sleep(1_200)
-            scrollSheet(f)
-            SystemClock.sleep(1_200)
+            // Scroll only when the row to reach is below the fold: a level that fits has nothing
+            // to scroll, and the pan would drag the sheet instead.
+            if (findByLabel("Clear cookies") == null) {
+                scrollSheet(f)
+                SystemClock.sleep(1_200)
+            }
             shot("04-cookies-scrolled")
             if (tapUntil(f, "Clear cookies", "Confirm clear cookies")) {
                 SystemClock.sleep(1_200)
                 shot("05-clear-cookies-confirm")
                 tapLabel(f, "Confirm clear cookies")
-                // The jar is cleared and read again through Kotlin: the emulator takes its time.
-                SystemClock.sleep(6_000)
+                // The jar is cleared and read again through Kotlin: wait for the empty state
+                // (the danger row leaves with the last cookie, §9.11) rather than a fixed time.
+                awaitGone("Clear cookies", 15_000)
+                SystemClock.sleep(800)
                 shot("06-cookies-cleared")
             }
+            awaitRest()
             tapLabel(f, BACK_LABEL)
             SystemClock.sleep(1_200)
         }
@@ -289,6 +296,16 @@ class SiteInfoDemo {
             last = now
         }
         Log.w(TAG, "sheet still moving after 6 s")
+    }
+
+    /** Wait until no node is labelled `label` any more, up to `timeoutMs`. */
+    private fun awaitGone(label: String, timeoutMs: Long) {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (findByLabel(label) == null) return
+            SystemClock.sleep(300)
+        }
+        Log.w(TAG, "'$label' still there after $timeoutMs ms")
     }
 
     private fun tapLabel(f: Finger, label: String): Boolean {
