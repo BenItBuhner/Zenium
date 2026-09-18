@@ -11,7 +11,13 @@ import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { resolveDownloadSettings } from '@shared/downloads'
 import { newId } from '@shared/ids'
 import type { SharedIntent } from '@shared/shareTarget'
-import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '@shared/updates'
+import {
+  isDebugApplicationId,
+  type UpdateAsset,
+  type UpdateProgress,
+  type UpdateRelease,
+  type UpdateTarget
+} from '@shared/updates'
 import { Browser } from '@core/browser'
 import type { HostExternalRequest } from '@core/externalProtocols'
 import { NoExtensions } from '@core/hostDefaults'
@@ -274,8 +280,13 @@ class AndroidUpdateHost implements UpdateHost {
     private readonly installedPackage: string | null
   ) {}
 
+  /** A debug build is a development build: it never looks for releases by itself (see `isDebugApplicationId`). */
   target(): UpdateTarget {
-    return { os: 'android', arch: 'universal', kind: 'apk' }
+    return {
+      os: 'android',
+      arch: 'universal',
+      kind: isDebugApplicationId(this.installedPackage) ? 'dev' : 'apk'
+    }
   }
 
   publicKeys(): string[] {

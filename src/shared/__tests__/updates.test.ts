@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ANDROID_DEBUG_ID_SUFFIX,
   compareVersions,
   effectiveChannel,
+  isDebugApplicationId,
   isNewerVersion,
   manifestSource,
   parseUpdateManifest,
@@ -207,7 +209,9 @@ describe('asset selection', () => {
     [{ os: 'linux', arch: 'x64', kind: 'deb' }, 'z.deb'],
     [{ os: 'linux', arch: 'arm64', kind: 'appimage' }, null],
     [{ os: 'linux', arch: 'x64', kind: 'dev' }, 'z.AppImage'],
-    [{ os: 'android', arch: 'universal', kind: 'apk' }, 'z.apk']
+    [{ os: 'android', arch: 'universal', kind: 'apk' }, 'z.apk'],
+    // A debug build still names the APK a person would download; it just never installs it.
+    [{ os: 'android', arch: 'universal', kind: 'dev' }, 'z.apk']
   ]
   for (const [target, expected] of cases) {
     it(`${target.os}/${target.arch}/${target.kind} → ${expected}`, () => {
@@ -224,6 +228,27 @@ describe('asset selection', () => {
     expect(updateModeFor('apk')).toBe('installer')
     expect(updateModeFor('portable')).toBe('manual')
     expect(updateModeFor('unpacked')).toBe('manual')
+    expect(updateModeFor('dev')).toBe('manual')
+  })
+})
+
+describe('the Android debug-id gate', () => {
+  it('recognises the debug build type by its applicationIdSuffix', () => {
+    expect(ANDROID_DEBUG_ID_SUFFIX).toBe('.debug')
+    expect(isDebugApplicationId('app.zen.chromium.debug')).toBe(true)
+    expect(isDebugApplicationId(`org.example.zenium${ANDROID_DEBUG_ID_SUFFIX}`)).toBe(true)
+  })
+
+  it('leaves release ids, look-alikes and the preview host (no id) alone', () => {
+    expect(isDebugApplicationId('app.zen.chromium')).toBe(false)
+    expect(isDebugApplicationId('app.zen.chromium.debugger')).toBe(false)
+    expect(isDebugApplicationId('app.zen.debug.chromium')).toBe(false)
+    expect(isDebugApplicationId('')).toBe(false)
+    expect(isDebugApplicationId(null)).toBe(false)
+  })
+
+  it('gives a debug build the dev target: a manual-mode kind the service never auto-checks for', () => {
+    // UpdateService.schedule() returns before arming a timer for kind 'dev' (see core/updates.ts).
     expect(updateModeFor('dev')).toBe('manual')
   })
 })
