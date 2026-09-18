@@ -55,7 +55,10 @@ const ANDROID: HostCapabilities = {
   passwords: true,
   defaultBrowser: true,
   requestBlocking: true,
+  reducedExtensionIsolation: false,
   pageControls: true,
+  privateTabs: true,
+  secureDns: false,
   pageTabs: true
 }
 
@@ -278,6 +281,38 @@ describe('the section model', () => {
       kind: 'info',
       label: 'Default browser'
     })
+  })
+
+  it('carries #129’s session rows where the desktop panel has them: Tabs, on a windowed host only', () => {
+    const phone = section('tabs')
+    expect(findRow(phone.groups, 'crash-restore')).toBeNull()
+    expect(findRow(phone.groups, 'warn-close-window')).toBeNull()
+
+    const c = context(state({ platform: 'linux', capabilities: { ...ANDROID, windows: true } }))
+    const tabs = buildSection(
+      PAGE.sections.find((x) => x.id === 'tabs')!,
+      c.ctx
+    )
+    const ids = tabs.groups.find((g) => g.id === 'tabs')?.rows.map((r) => r.id) ?? []
+    expect(ids.slice(ids.indexOf('restore-session'))).toEqual([
+      'restore-session',
+      'crash-restore',
+      'warn-close-window',
+      'ask-where-to-save'
+    ])
+    const crash = row(tabs, 'crash-restore')
+    if (crash.kind !== 'value') throw new Error('not a value row')
+    expect(crash.value).toBe(DEFAULT_SETTINGS.crashRestore)
+    expect(crash.options.map((o) => o.label)).toEqual(['Ask first', 'Restore them', 'Start fresh'])
+    crash.onChange('never')
+    const warn = row(tabs, 'warn-close-window')
+    if (warn.kind !== 'switch') throw new Error('not a switch')
+    expect(warn.checked).toBe(DEFAULT_SETTINGS.warnOnCloseWindow)
+    warn.onChange(!warn.checked)
+    expect(c.patches).toEqual([
+      { crashRestore: 'never' },
+      { warnOnCloseWindow: !DEFAULT_SETTINGS.warnOnCloseWindow }
+    ])
   })
 
   it('leaves out what the host cannot do: no Sites group or Accessibility without page controls', () => {

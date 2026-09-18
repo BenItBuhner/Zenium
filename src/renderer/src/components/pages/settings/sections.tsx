@@ -5,6 +5,7 @@ import type {
   ColorScheme,
   ContainerColor,
   ContainerIcon as ContainerIconName,
+  CrashRestoreMode,
   DesktopSiteDefault,
   GlanceTrigger,
   NewTabPosition,
@@ -421,6 +422,33 @@ function accessibilitySection({ state, set }: SectionContext): RowGroup[] {
 
 function tabsSection({ state, set }: SectionContext): RowGroup[] {
   const s = state.settings
+  const windows = state.capabilities.windows
+  // #129's session rows follow the desktop panel: a crash offer and a "Close N tabs?" question
+  // are a windowed host's (Android's runs end by the process going, its pages just come back).
+  const sessionRows: SettingsRow[] = windows
+    ? [
+        choice<CrashRestoreMode>({
+          id: 'crash-restore',
+          label: 'Restore pages after a crash',
+          description: 'What happens to the open pages when Zenium did not shut down correctly.',
+          value: s.crashRestore,
+          options: [
+            { value: 'ask', label: 'Ask first' },
+            { value: 'always', label: 'Restore them' },
+            { value: 'never', label: 'Start fresh' }
+          ],
+          onChange: (v) => set({ crashRestore: v })
+        }),
+        {
+          kind: 'switch',
+          id: 'warn-close-window',
+          label: 'Warn before closing a window with multiple tabs',
+          description: 'Also asks before quitting with more than one tab open.',
+          checked: s.warnOnCloseWindow,
+          onChange: (v) => set({ warnOnCloseWindow: v })
+        }
+      ]
+    : []
   const groups: RowGroup[] = [
     {
       id: 'tabs',
@@ -457,6 +485,7 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
           checked: s.restoreSession,
           onChange: (v) => set({ restoreSession: v })
         },
+        ...sessionRows,
         {
           kind: 'switch',
           id: 'ask-where-to-save',

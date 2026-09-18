@@ -740,8 +740,7 @@ export class Menus {
         this.fullUrlsItem(win),
         {
           label: 'Manage Search Engines…',
-          click: () =>
-            this.browser.emit('overlay.open', { kind: 'settings', section: 'search' }, win)
+          click: () => void this.browser.pages.open('settings', 'search', win)
         }
       ])
       this.popup(joinGroups(groups), win, 'urlbar')

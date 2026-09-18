@@ -1094,6 +1094,22 @@ describe('the chrome context menus', () => {
     expect(item(h.shown(), 'Copy').action).toBe('tab.copyUrl')
   })
 
+  it('routes Manage Search Engines… through page.open: a Settings tab where the host has page tabs, the overlay elsewhere', async () => {
+    const phone = pageHarness(ANDROID)
+    await show(phone, chromeParams({ target: 'urlpill', tabId: phone.tabId }))
+    phone.click('Manage Search Engines…')
+    const active = phone.browser.tabs.activeTabFor(phone.win)
+    expect(active?.url).toBe('zen://settings/search')
+    expect(phone.sent).not.toContain('overlay.open')
+
+    const desktop = pageHarness(DESKTOP)
+    await show(desktop, chromeParams({ target: 'urlpill', tabId: desktop.tabId }))
+    desktop.sent.length = 0
+    desktop.click('Manage Search Engines…')
+    expect(desktop.sent).toContain('overlay.open')
+    expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe(PAGE_URL)
+  })
+
   it('toggles Always Show Full URLs from the pill and the field', async () => {
     const h = pageHarness()
     const settings: Settings = h.browser.state.settings
