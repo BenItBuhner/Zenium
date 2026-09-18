@@ -174,9 +174,13 @@ class SnapshotSwapDemo : DemoHarness("snapshot-demo-state.json", "snapshot", "sn
         // The core writes its state compact (`"phoneBarPosition":"bottom"`); the seed is indented.
         val json = state.readText()
         val bottom = Regex("\"phoneBarPosition\"\\s*:\\s*\"bottom\"")
-        val flipped = if (bottom.containsMatchIn(json)) bottom.replace(json, "\"phoneBarPosition\":\"top\"")
+        var flipped = if (bottom.containsMatchIn(json)) bottom.replace(json, "\"phoneBarPosition\":\"top\"")
         else json.replace(Regex("\"settings\"\\s*:\\s*\\{"), "\"settings\":{\"phoneBarPosition\":\"top\",")
         if (flipped == json) return false
+        // The session ended on the light tab; the pass at the top is the heavy page's.
+        flipped = flipped
+            .replace(Regex("\"activeTabId\"\\s*:\\s*\"tab_light\""), "\"activeTabId\":\"tab_heavy\"")
+            .replace(Regex("\"space_main\"\\s*:\\s*\"tab_light\""), "\"space_main\":\"tab_heavy\"")
         state.writeText(flipped)
         launch()
         // The harness measures the pill at the bottom; up here it has to be found again.
