@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { ServiceWorkerMain, Session, WebContents, WebFrameMain } from 'electron'
 import type { EventDelivery, ExtensionView } from '../../../core/extensions/api/shim'
 import { matchesAnyUrlFilter, type UrlFilter } from '../../../core/extensions/api/urlFilter'
@@ -13,6 +14,10 @@ export type ListenerFilters = Map<string, Map<number, UrlFilter[]>>
 export interface FrameContext {
   key: string
   extensionId: string
+  /** Chrome's `runtime.ExtensionContext.contextId`, one per document. */
+  contextId: string
+  /** Chrome's document id (the same document across `webNavigation` and `runtime.getContexts`). */
+  documentId: string
   frame: WebFrameMain
   webContents: WebContents
   session: Session
@@ -32,6 +37,7 @@ export interface FrameContext {
 export interface WorkerContext {
   key: string
   extensionId: string
+  contextId: string
   versionId: number
   worker: ServiceWorkerMain
   session: Session
@@ -154,6 +160,8 @@ export class ContextRegistry {
     const context: FrameContext = {
       key,
       extensionId,
+      contextId: randomUUID(),
+      documentId: randomUUID().replace(/-/g, '').toUpperCase(),
       frame,
       webContents,
       session: webContents.session,
@@ -178,6 +186,7 @@ export class ContextRegistry {
     const context: WorkerContext = {
       key,
       extensionId,
+      contextId: randomUUID(),
       versionId: worker.versionId,
       worker,
       session,

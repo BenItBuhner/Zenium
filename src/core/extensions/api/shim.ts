@@ -176,7 +176,11 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     return typeof value === 'string' || (typeof value === 'number' && Number.isInteger(value))
   }
 
-  function define(target: Any, key: string, value: unknown): void {
+  function isNativeEvent(value: unknown): value is NativeEvent {
+    return isObject(value) && isFunction(value.addListener) && isFunction(value.removeListener)
+  }
+
+  function define(target: object, key: string, value: unknown): void {
     try {
       Object.defineProperty(target, key, {
         value,
@@ -186,14 +190,14 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       })
     } catch {
       try {
-        target[key] = value
+        ;(target as Record<string, unknown>)[key] = value
       } catch {
         /* frozen */
       }
     }
   }
 
-  function defineGetter(target: Any, key: string, get: () => unknown): void {
+  function defineGetter(target: object, key: string, get: () => unknown): void {
     try {
       Object.defineProperty(target, key, { get, configurable: true, enumerable: true })
     } catch {
@@ -273,9 +277,9 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   // that never reads it gets Chrome's "Unchecked runtime.lastError" console line.
   let lastErrorDepth = 0
   function withLastError(qualified: string, message: string, fn: () => void): void {
-    const targets: Any[] = []
+    const targets: object[] = []
     for (const root of roots) {
-      const runtime = safely(() => root.runtime)
+      const runtime: unknown = safely(() => root.runtime)
       if (runtime && typeof runtime === 'object') targets.push(runtime)
     }
     const error = { message }
@@ -302,7 +306,7 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       if (lastErrorDepth === 0) {
         for (const runtime of targets) {
           try {
-            delete runtime.lastError
+            Reflect.deleteProperty(runtime, 'lastError')
           } catch {
             /* not configurable */
           }
@@ -1057,7 +1061,7 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     }
   }
 
-  function hostArea(storage: Any, areaName: string): Record<string, unknown> {
+  function hostArea(storage: object, areaName: string): Record<string, unknown> {
     const area: Record<string, unknown> = {}
     const qualifiedFor = (name: string): string => `storage.${areaName}.${name}`
     const routed = (name: string, params: ParamSpec[]): void => {
@@ -1086,11 +1090,11 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     return area
   }
 
-  function wrapNativeArea(area: Any, areaName: string): void {
-    const nativeSet: unknown = safely(() => area.set)
-    const nativeGet: unknown = safely(() => area.get)
-    const nativeRemove: unknown = safely(() => area.remove)
-    const nativeClear: unknown = safely(() => area.clear)
+  function wrapNativeArea(area: Record<string, unknown>, areaName: string): void {
+    const nativeSet = safely(() => area.set)
+    const nativeGet = safely(() => area.get)
+    const nativeRemove = safely(() => area.remove)
+    const nativeClear = safely(() => area.clear)
     if (!isFunction(nativeSet) || !isFunction(nativeGet)) return
     const read = async (keys: unknown): Promise<StorageItems> => {
       const items = await callNativeArea(area, nativeGet, [keys])
@@ -1157,13 +1161,17 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
         return settle(`storage.${areaName}.clear`, work, callback)
       })
     }
-    const nativeEvent: NativeEvent | undefined = safely(() => area.onChanged)
+    const onChanged = safely(() => area.onChanged)
     define(
       area,
       'onChanged',
-      createEvent(`storage.${areaName}.onChanged`, nativeEvent, {
-        nativeDelivers: host.kind === 'frame'
-      })
+      createEvent(
+        `storage.${areaName}.onChanged`,
+        isNativeEvent(onChanged) ? onChanged : undefined,
+        {
+          nativeDelivers: host.kind === 'frame'
+        }
+      )
     )
   }
 
