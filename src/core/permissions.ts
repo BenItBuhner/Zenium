@@ -5,6 +5,7 @@ import {
   MEDIA_ROWS,
   allowOnceFor,
   builtInDefault,
+  contentSettingId,
   promptLabelFor,
   type ContentDefault
 } from '../shared/contentSettings'
@@ -294,7 +295,7 @@ export class PermissionService {
       id: newId('perm'),
       tabId: details.tabId ?? null,
       origin,
-      permission,
+      permission: contentSettingId(permission),
       message: copy.message,
       detail: copy.detail,
       allowLabel: copy.okLabel,
@@ -419,13 +420,17 @@ export class PermissionService {
     this.update(`${origin}|${permission}`, decision, { permission, origin })
   }
 
-  /** A permission's default for origins without a decision of their own (`undefined`: none set). */
+  /**
+   * A permission's default for origins without a decision of their own (`undefined`: none set).
+   * Defaults are kept per catalogue row: a qualified or aliased name reads its row's.
+   */
   defaultFor(permission: string): Decision | undefined {
-    return this.decisions[`${DEFAULT_ORIGIN}|${permission}`]
+    return this.decisions[`${DEFAULT_ORIGIN}|${contentSettingId(permission)}`]
   }
 
   setDefault(permission: string, decision: Decision | null): void {
-    this.update(`${DEFAULT_ORIGIN}|${permission}`, decision, { permission, origin: null })
+    const row = contentSettingId(permission)
+    this.update(`${DEFAULT_ORIGIN}|${row}`, decision, { permission: row, origin: null })
   }
 
   /** The default sites without a decision get: the user's, else the catalogue's. */
@@ -568,7 +573,8 @@ export function qualifiedPermission(
   // Viewing the folders a site is handed and editing what it is handed are separate answers.
   if (permission === 'fileSystem' && details?.fileAccessType === 'readable')
     return 'fileSystem:read'
-  return permission
+  // Engine variants of a row (approximate location, periodic background sync) share its answer.
+  return permission.includes(':') ? permission : contentSettingId(permission)
 }
 
 /** The words of a permission prompt, shared by every host so the copy matches everywhere. */

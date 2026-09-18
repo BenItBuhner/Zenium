@@ -84,7 +84,16 @@ export interface PageFlags {
 
 /** Messages the page script sends back to the browser. */
 export interface PageMessage {
-  type: 'glance' | 'open-tab' | 'navigate' | 'media' | 'zap' | 'activation' | 'popup-blocked'
+  type:
+    | 'glance'
+    | 'open-tab'
+    | 'navigate'
+    | 'media'
+    | 'zap'
+    | 'activation'
+    | 'popup-blocked'
+    /** The page called `window.focus()` with a gesture (a notification was clicked): show its tab. */
+    | 'focus'
   url?: string
   x?: number
   y?: number

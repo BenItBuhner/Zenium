@@ -1,4 +1,12 @@
-import type { BlockedPopup, PermissionRule, SecurityPrompt, Tab, UIState } from '@shared/types'
+import type {
+  BlockedPopup,
+  PermissionPrompt,
+  PermissionPromptAnswer,
+  PermissionRule,
+  SecurityPrompt,
+  Tab,
+  UIState
+} from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { activeTab } from '@renderer/lib/selectors'
 import { captureActiveTab, invalidateSnapshot, returnFocusToPage, uiStore } from '@renderer/lib/ui'
@@ -102,4 +110,36 @@ export function closeSecurityPrompt(): void {
 export function currentSecurityPrompt(state: UIState): SecurityPrompt | null {
   const tabId = activeTab(state)?.id ?? null
   return state.securityPrompts.find((p) => p.tabId === null || p.tabId === tabId) ?? null
+}
+
+/**
+ * The permission prompt this window should show now: the oldest one of its active tab (or one
+ * the host could not tie to a tab). Prompts of other tabs wait until their tab is active, and
+ * a security prompt on the same tab goes first: its request is what the page is stuck on.
+ */
+export function currentPermissionPrompt(state: UIState): PermissionPrompt | null {
+  if (currentSecurityPrompt(state)) return null
+  const tabId = activeTab(state)?.id ?? null
+  return state.permissionPrompts.find((p) => p.tabId === null || p.tabId === tabId) ?? null
+}
+
+/** A permission prompt is about to show over `tabId`: same page-snapshot dance as the security ones. */
+export async function openPermissionPrompt(tabId: string | null): Promise<void> {
+  await Promise.race([
+    captureActiveTab(tabId),
+    new Promise<void>((resolve) => setTimeout(resolve, SNAPSHOT_WAIT_MS))
+  ])
+  run('focus.chrome', undefined)
+  uiStore.set({ permissionPromptOpen: true })
+}
+
+export function closePermissionPrompt(): void {
+  if (uiStore.get().permissionPromptOpen) uiStore.set({ permissionPromptOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/** Answer a permission prompt; the core remembers what needs remembering and resumes the page. */
+export function answerPermissionPrompt(id: string, answer: PermissionPromptAnswer): void {
+  run('permissions.respond', { id, answer })
 }

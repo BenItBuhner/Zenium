@@ -251,7 +251,15 @@ export interface HostEventPayloads {
   }
   /** Pause / Resume / Cancel pressed on the download's system notification. */
   'download.action': { id: string; op: 'pause' | 'resume' | 'cancel' }
-  'permission.request': { requestId: string; permission: string; url: string }
+  'permission.request': {
+    requestId: string
+    permission: string
+    url: string
+    /** The page's tab: the prompt queues under it and goes away when it navigates. */
+    tabId?: string
+    /** `media`: which capture devices the page asked for. */
+    mediaTypes?: Array<'video' | 'audio'>
+  }
   /** A server asked for HTTP credentials; answered with `auth.respond`. */
   'auth.request': { requestId: string; tabId: string; host: string; realm: string; url: string }
   'view.adopt': { viewId: string; parentTabId: string | null; active: boolean }
@@ -967,7 +975,7 @@ export class AndroidPlatform implements Platform {
       case 'permission.request': {
         const p = payload as HostEventPayloads['permission.request']
         void browser.permissions
-          .decide(p.permission, p.url)
+          .decide(p.permission, p.url, { tabId: p.tabId, mediaTypes: p.mediaTypes })
           .then((allow) =>
             this.bridge.send('permission.respond', { requestId: p.requestId, allow })
           )

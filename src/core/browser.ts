@@ -973,6 +973,19 @@ export class Browser {
   }
 
   /**
+   * Bring a tab in front of the user: its window comes forward and shows it (a page's
+   * `window.focus()` with a gesture in hand – the click on one of its notifications – lands here,
+   * as it does in Chrome).
+   */
+  revealTab(tabId: string): void {
+    if (!this.tabs.tab(tabId)) return
+    const win = this.tabs.windowFor(tabId)
+    this.tabs.activateTab(tabId, win)
+    win.host.show()
+    win.host.focus()
+  }
+
+  /**
    * Open a URL from outside the browser (command line, Android intent, share sheet, a page of
    * ours such as the release notes). `fromIntent` marks a tab another app sent (Android's view
    * and share intents): mobile system back at its first page returns to that app; it is not set
@@ -1274,6 +1287,10 @@ export class Browser {
     }
     if (message.type === 'popup-blocked') {
       if (typeof message.url === 'string') this.popups.record(tabId, message.url)
+      return
+    }
+    if (message.type === 'focus') {
+      this.revealTab(tabId)
       return
     }
     if (message.type === 'media') {

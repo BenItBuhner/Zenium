@@ -259,6 +259,17 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     allowOnce: false,
     support: { desktop: 'enforced', android: 'n-a' }
   },
+  {
+    id: 'local-network-access',
+    label: 'Local network access',
+    description: 'Sites can ask to look for and connect to devices on your local network',
+    group: 'permissions',
+    builtInDefault: 'ask',
+    choices: ['ask', 'deny'],
+    promptLabel: 'look for and connect to devices on your local network',
+    allowOnce: true,
+    support: { desktop: 'enforced', android: 'n-a' }
+  },
   // ---- Content ---------------------------------------------------------------------------
   {
     id: 'images',
@@ -499,20 +510,52 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
 const BY_ID = new Map(CONTENT_SETTINGS.map((setting) => [setting.id, setting]))
 
 /**
+ * Engine permission names that are a row under another name: Chromium's finer-grained
+ * variants share their row's decision (approximate location is location, periodic background
+ * sync is background sync, VR, AR and hand tracking are the one XR row).
+ */
+const ALIASES: Record<string, string> = {
+  'geolocation-approximate': 'geolocation',
+  'periodic-background-sync': 'background-sync',
+  'background-fetch': 'background-sync',
+  vr: 'xr',
+  ar: 'xr',
+  'hand-tracking': 'xr',
+  'local-network': 'local-network-access',
+  'loopback-network': 'local-network-access'
+}
+
+/**
+ * Engine permission names Chrome answers without a setting of its own: granted as a matter of
+ * course (a video page keeping the screen awake, a site asking for durable storage) and never
+ * listed. Everything else without a row is refused, as Chrome refuses what it has no setting for.
+ */
+const SILENT_DEFAULTS: Record<string, ContentDefault> = {
+  'screen-wake-lock': 'allow',
+  'persistent-storage': 'allow'
+}
+
+/** The row's id a request name stands for (aliases and `openExternal:zoommtg` qualifiers resolved). */
+export function contentSettingId(permission: string): string {
+  const colon = permission.indexOf(':')
+  const base = colon === -1 ? permission : permission.slice(0, colon)
+  return ALIASES[base] ?? base
+}
+
+/**
  * The permission a request name comes down to: `media` is the camera and microphone rows
  * together, and qualified names (`openExternal:zoommtg`) resolve to their base row.
  */
 export function contentSetting(permission: string): ContentSetting | undefined {
-  const colon = permission.indexOf(':')
-  return BY_ID.get(colon === -1 ? permission : permission.slice(0, colon))
+  return BY_ID.get(contentSettingId(permission))
 }
 
 /** What a site gets for `permission` before any decision is stored. */
 export function builtInDefault(permission: string): ContentDefault {
   if (permission === 'media') return 'ask'
   const setting = contentSetting(permission)
-  // Permission names no row knows are refused, as Chrome refuses what it has no setting for.
-  return setting ? setting.builtInDefault : 'deny'
+  if (setting) return setting.builtInDefault
+  return SILENT_DEFAULTS[permission] ?? 'deny'
 }
 
 /**
