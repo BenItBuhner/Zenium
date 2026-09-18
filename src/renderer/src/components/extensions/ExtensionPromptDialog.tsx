@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ExtensionPromptRequest } from '@shared/types'
+import { useEscape } from '@renderer/hooks/useEscape'
 import { usePopover } from '@renderer/hooks/usePopover'
 import { answerExtensionPrompt } from '@renderer/lib/extensions/popup'
 import { fromSource } from '@renderer/lib/extensions/storeInput'
@@ -183,6 +184,8 @@ function SheetPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
     answered.current = true
     sheet.current?.dismiss(() => answerExtensionPrompt(prompt, accept))
   }
+  // Escape answers no – and, over another sheet, closes this one only (§9.24).
+  useEscape(() => answer(false))
   const copy = copyFor(prompt)
   // The phone's glyph size (§9.23: 20 on a phone, 16 on desktop).
   const glyph = <ExtensionIcon icon={prompt.icon} size={20} box={20} />
