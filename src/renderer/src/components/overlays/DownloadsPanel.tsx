@@ -1,155 +1,176 @@
 import type { JSX } from 'react'
-import { useState } from 'react'
-import { Download, Search } from 'lucide-react'
-import type { DownloadItem, UIState } from '@shared/types'
-import { displayName, isActiveDownload } from '@shared/downloadsShell'
+import { useEffect, useRef, useState } from 'react'
+import { Search } from 'lucide-react'
+import type { UIState } from '@shared/types'
+import { isActiveDownload } from '@shared/downloadsShell'
 import { displayUrl } from '@shared/url'
-import { downloadsEngine, showsDangerDecision } from '@renderer/lib/downloadsEngine'
-import {
-  filterDownloads,
-  groupDownloadsByDay,
-  hasClearable,
-  isOnDisk
-} from '@renderer/lib/downloadsView'
-import { cn } from '@renderer/lib/utils'
-import {
-  DangerActions,
-  DlButton,
-  DownloadActions,
-  DownloadProgressBar,
-  FileTypeGlyph,
-  StatusLine
-} from '../downloads/DownloadParts'
+import { downloadsEngine } from '@renderer/lib/downloadsEngine'
+import { filterDownloads, groupDownloadsByDay, hasClearable } from '@renderer/lib/downloadsView'
+import { FrameDialogHost, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
+import { useEscapeTrap } from '../bookmarks/escape'
+import { wrapTab } from '../bookmarks/popover'
+import { DlButton, DownloadRow } from '../downloads/DownloadParts'
 import { OverlayShell } from './OverlayShell'
 
 /**
- * `zen://downloads`: every download the browser remembers, grouped by day, with search and the
- * same per-row actions as the bubble. Finished files can be dragged out to the OS; the folder
- * they land in opens from here. Desktop hosts manage the files; single-window hosts show the
- * list only.
+ * `zen://downloads` (Ctrl+J; shown to users as `zenium://downloads`): every download the
+ * browser remembers, grouped by day, with search and the same rows as the bubble. Finished
+ * files can be dragged out to the OS; the folder they land in opens from here; Clear all asks
+ * first. Desktop hosts manage the files; single-window hosts show the list only.
  */
 export function DownloadsPanel({ state }: { state: UIState }): JSX.Element {
   const [query, setQuery] = useState('')
+  /** "Clear all" asks first: how many rows go, while the question is up. */
+  const [clearing, setClearing] = useState<number | null>(null)
   const items = downloadsEngine.list(state)
   const groups = groupDownloadsByDay(filterDownloads(items, query))
   const files = state.platform !== 'android'
+  const clearable = items.filter((i) => !isActiveDownload(i)).length
   return (
-    <OverlayShell title="Downloads" variant="full" className="zen-dl-surface zen-dl-page">
-      <div className="mx-auto flex w-full max-w-[664px] flex-col gap-6 px-8 pb-8 pt-6">
-        <div className="flex items-center gap-3">
-          <label className="zen-dl-field relative flex min-w-0 flex-1 items-center">
-            <Search
-              className="zen-dl-deemph pointer-events-none absolute left-2.5 h-4 w-4"
-              strokeWidth={1.5}
-              aria-hidden
-            />
-            <input
-              autoFocus
-              type="search"
-              aria-label="Search downloads"
-              placeholder="Search downloads"
-              data-zen-downloads-search
-              className="zen-dl-input h-8 w-full pl-9 pr-3 text-[15px] outline-none"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          </label>
-          {files && (
-            <DlButton onClick={() => downloadsEngine.openFolder()}>Open downloads folder</DlButton>
-          )}
-          {hasClearable(items) && (
-            <DlButton onClick={() => downloadsEngine.removeCompleted()}>Clear all</DlButton>
+    <>
+      <OverlayShell title="Downloads" variant="full" className="zen-dl-surface zen-dl-page">
+        <div className="zen-dl-page-body">
+          <div className="zen-dl-page-tools">
+            <label className="zen-dl-field relative flex min-w-0 flex-1 items-center">
+              <Search
+                className="zen-dl-deemph pointer-events-none absolute left-2.5 h-4 w-4"
+                strokeWidth={1.5}
+                aria-hidden
+              />
+              <input
+                autoFocus
+                type="search"
+                aria-label="Search downloads"
+                placeholder="Search downloads"
+                data-zen-downloads-search
+                className="zen-dl-input h-8 w-full pl-9 pr-3 outline-none"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape' && query) {
+                    e.stopPropagation()
+                    setQuery('')
+                  }
+                }}
+              />
+            </label>
+            {files && (
+              <DlButton
+                data-zen-dl-action="open-folder"
+                onClick={() => downloadsEngine.openFolder()}
+              >
+                Open downloads folder
+              </DlButton>
+            )}
+            <DlButton
+              data-zen-dl-action="clear-all"
+              disabled={!hasClearable(items)}
+              onClick={() => setClearing(clearable)}
+            >
+              Clear all
+            </DlButton>
+          </div>
+          {groups.length === 0 ? (
+            <p className="zen-dl-empty zen-dl-page-empty">
+              {query ? 'No downloads match your search' : 'Files you download appear here'}
+            </p>
+          ) : (
+            groups.map((group) => (
+              <section key={group.day} className="zen-dl-day">
+                <h3 className="zen-dl-day-title">{group.label}</h3>
+                <ul className="zen-dl-list">
+                  {group.items.map((item) => (
+                    <DownloadRow
+                      key={item.id}
+                      item={item}
+                      source={displayUrl(item.referrer || item.url) || undefined}
+                      draggable={files}
+                    />
+                  ))}
+                </ul>
+              </section>
+            ))
           )}
         </div>
-        {groups.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 px-4 py-16 text-center">
-            <Download className="zen-dl-deemph h-4 w-4" strokeWidth={1.5} aria-hidden />
-            <p className="zen-dl-deemph text-[15px] leading-5">
-              {query ? 'No downloads match' : 'Files you download appear here'}
-            </p>
-          </div>
-        ) : (
-          groups.map((group) => (
-            <section key={group.day} className="flex flex-col gap-2">
-              <h3 className="px-2 text-[15px] font-semibold leading-5">{group.label}</h3>
-              <ul className="-mx-2">
-                {group.items.map((item) => (
-                  <PageRow key={item.id} item={item} files={files} />
-                ))}
-              </ul>
-            </section>
-          ))
+      </OverlayShell>
+      {/* The page's own question, over it in the frame's box, on its own host. */}
+      <FrameDialogHost>
+        {clearing !== null && (
+          <ClearAllDialog
+            count={clearing}
+            onCancel={() => setClearing(null)}
+            onConfirm={() => {
+              setClearing(null)
+              downloadsEngine.removeCompleted()
+            }}
+          />
         )}
-      </div>
-    </OverlayShell>
+      </FrameDialogHost>
+    </>
   )
 }
 
-function PageRow({ item, files }: { item: DownloadItem; files: boolean }): JSX.Element {
-  const active = isActiveDownload(item)
-  const openable = isOnDisk(item)
-  const name = displayName(item)
-  const source = displayUrl(item.referrer || item.url)
-  const open = (): void => {
-    if (openable) downloadsEngine.open(item.id)
-  }
+/**
+ * "Clear all" asks before it empties the list, saying what goes and that the files stay (the
+ * engine's `removeCompleted` leaves transfers still running alone). A v2 dialog (draft §9.23)
+ * on a `FrameDialogHost` whose scrim dims the page: Escape, the scrim and Cancel keep the list,
+ * Enter and the primary clear it; focus starts on Cancel so a stray Enter does no harm.
+ */
+function ClearAllDialog({
+  count,
+  onCancel,
+  onConfirm
+}: {
+  count: number
+  onCancel: () => void
+  onConfirm: () => void
+}): JSX.Element {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const cancelRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    cancelRef.current?.focus()
+  }, [])
+  useEscapeTrap(true, onCancel)
+  useFrameDialog({ onScrimPress: onCancel })
+  const rows = count === 1 ? '1 download' : `${count} downloads`
   return (
-    <li
-      className="zen-dl-row group/row flex min-h-[52px] items-start gap-3 px-2 py-[6px]"
-      data-state={item.state}
-      data-download-id={item.id}
-      draggable={openable && files}
-      onDragStart={(e) => {
-        // The OS drag is the host's: hand the file over and drop the HTML5 one.
-        e.preventDefault()
-        downloadsEngine.dragOut(item.id)
-      }}
-      onDoubleClick={open}
-      onKeyDown={(e) => {
-        if (openable && e.key === 'Enter' && e.target === e.currentTarget) {
-          e.preventDefault()
-          open()
-        }
-      }}
-      tabIndex={0}
-      aria-label={`${name}. ${item.state}`}
+    <div
+      ref={dialogRef}
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="zen-dl-clear-title"
+      aria-describedby="zen-dl-clear-desc"
+      data-zen-downloads-clear-dialog
+      className="zen-animate-pop zen-bm-dialog zen-dl-surface flex max-w-[calc(100%-24px)] flex-col"
+      style={{ width: POPOVER_WIDTH.form }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => wrapTab(e, dialogRef.current)}
     >
-      <FileTypeGlyph item={item} />
-      <div className="min-w-0 flex-1">
-        {openable ? (
-          <button
-            type="button"
-            className="zen-dl-name block max-w-full truncate text-left text-[15px] leading-5"
-            title={item.savePath || item.url}
-            onClick={open}
-          >
-            {name}
-          </button>
-        ) : (
-          <div
-            className={cn(
-              'zen-dl-name truncate text-[15px] leading-5',
-              item.state === 'cancelled' && 'zen-dl-deemph'
-            )}
-            title={item.savePath || item.url}
-          >
-            {name}
-          </div>
-        )}
-        <StatusLine item={item} suffix={source || undefined} />
-        {active && (
-          <div className="mt-1.5 pb-0.5">
-            <DownloadProgressBar item={item} />
-          </div>
-        )}
+      <div className="zen-bm-title-block">
+        <h2 id="zen-dl-clear-title" className="zen-bm-title">
+          Clear all downloads?
+        </h2>
+        <p id="zen-dl-clear-desc" className="zen-bm-title-desc">
+          {rows} will be removed from the list. The files stay where they were saved, and downloads
+          still running are not touched.
+        </p>
       </div>
-      {showsDangerDecision(item) ? (
-        <DangerActions item={item} />
-      ) : (
-        <div className="zen-dl-actions -mr-1 flex shrink-0 items-center">
-          <DownloadActions item={item} />
+      <form
+        className="zen-bm-form"
+        onSubmit={(e) => {
+          e.preventDefault()
+          onConfirm()
+        }}
+      >
+        <div className="zen-bm-footer justify-end">
+          <button ref={cancelRef} type="button" className="zen-button" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="submit" className="zen-button" data-variant="primary">
+            Clear all
+          </button>
         </div>
-      )}
-    </li>
+      </form>
+    </div>
   )
 }
