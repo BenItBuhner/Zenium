@@ -101,15 +101,6 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   useEffect(() => {
     if (!sidebarHidden && ui.compactHover) uiStore.set({ compactHover: false })
   }, [sidebarHidden, ui.compactHover])
-  // Any click in the chrome dismisses an open extension popup (its document lives outside the
-  // DOM; the frame around it and the button that opened it stop the event themselves).
-  useEffect(() => {
-    const onDown = (): void => {
-      if (uiStore.get().extensionPopup) closeExtensionPopup()
-    }
-    window.addEventListener('mousedown', onDown)
-    return () => window.removeEventListener('mousedown', onDown)
-  }, [])
   // Main tracks the real cursor (works over the page view and the frameless resize border).
   useEffect(() => {
     const onReveal = (e: Event): void => {

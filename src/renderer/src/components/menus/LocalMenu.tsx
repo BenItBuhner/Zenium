@@ -101,10 +101,12 @@ function PopoverMenu({
   })
   useArrowKeys(ref, '.zen-v2-menu-item')
   const withIcons = items.some((item) => !isSeparator(item) && item.icon)
+  // The layer is the light dismiss (§9.20): a press outside the menu closes it on pointerdown
+  // and goes no further, so the control under the press is not pressed.
   return (
     <div
       className="fixed inset-0 z-[90]"
-      onMouseDown={(e) => {
+      onPointerDown={(e) => {
         e.stopPropagation()
         onClose()
       }}

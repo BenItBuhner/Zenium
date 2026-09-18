@@ -74,11 +74,9 @@ export function ToolbarActions({
         aria-haspopup="dialog"
         aria-expanded={panelAnchor !== null}
         data-active={panelAnchor !== null || undefined}
-        onMouseDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          closeExtensionPopup()
-          setPanelAnchor(panelAnchor ? null : anchorOf(e.currentTarget))
-        }}
+        // An open popup's layer takes the press before it reaches this button (§9.20); the
+        // panel's claim on the popover slot closes one still pending its capture.
+        onClick={(e) => setPanelAnchor(panelAnchor ? null : anchorOf(e.currentTarget))}
       >
         <Puzzle className="h-4 w-4" />
       </button>
@@ -99,12 +97,13 @@ export function ToolbarActions({
 // One pinned action
 // ---------------------------------------------------------------------------
 
+/**
+ * While its popup is up the button sits under the popup's dismiss layer (§9.20): a press on it
+ * closes the popup and does not reopen it, and never reaches this handler.
+ */
 function ActionButton({ ext }: { ext: ExtensionInfo }): JSX.Element {
   const ref = useRef<HTMLButtonElement>(null)
   const open = uiStore.use((s) => s.extensionPopup?.id === ext.id)
-  // A click on the button whose popup is up closes it (main's blur handler closes it too, but
-  // the click would otherwise reopen it straight away).
-  const closing = useRef(false)
   const badge = ext.action ? badgeLabel(ext.action.badgeText) : ''
   const badgeColours = ext.action ? badgeStyle(ext.action) : null
   // Off for this tab (`chrome.action.disable`): the button stays, dimmed (§9.3), a click does
@@ -122,17 +121,7 @@ function ActionButton({ ext }: { ext: ExtensionInfo }): JSX.Element {
         aria-expanded={ext.popup ? open : undefined}
         aria-disabled={off || undefined}
         data-active={open || undefined}
-        onMouseDown={(e) => {
-          closing.current = uiStore.get().extensionPopup?.id === ext.id
-          // Keep the app-wide "mousedown closes the popup" from racing this button's own click.
-          if (closing.current) e.stopPropagation()
-        }}
         onClick={() => {
-          if (closing.current) {
-            closing.current = false
-            closeExtensionPopup()
-            return
-          }
           if (off) return
           const r = ref.current
           if (r) openExtensionPopup(ext.id, anchorOf(r), Boolean(ext.action?.popup ?? ext.popup))
@@ -209,10 +198,12 @@ function ExtensionsPanel({
     openExtensionPopup(ext.id, anchor, Boolean(ext.action?.popup ?? ext.popup))
   }
   if (!ready) return null
+  // The layer under the panel is the light dismiss (§9.20): a press anywhere outside it – the
+  // page, the bar, another anchor – closes the panel on pointerdown and goes no further.
   return createPortal(
     <div
       className="fixed inset-0 z-[90]"
-      onMouseDown={(e) => {
+      onPointerDown={(e) => {
         e.stopPropagation()
         onClose()
       }}
@@ -228,7 +219,7 @@ function ExtensionsPanel({
           visibility: pos ? 'visible' : 'hidden',
           transformOrigin: pos?.side === 'right' ? '100% 0' : '0 0'
         }}
-        onMouseDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
       >
         <V2TitleBlock id="zen-ext-panel-title" title="Extensions" scrolled={scrolled} />
         <div

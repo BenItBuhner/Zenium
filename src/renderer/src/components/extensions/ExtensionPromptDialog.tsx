@@ -124,21 +124,23 @@ function PanelPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
   const ref = useRef<HTMLDivElement>(null)
   const [scrolled, setScrolled] = useState(false)
   // Focus lands on the accepting button, as Firefox's install prompt has it; Tab wraps inside;
-  // nothing in the chrome opened it, so there is no control to return focus to (§9.22).
+  // nothing in the chrome opened it, so there is no control to return focus to (§9.22). It is
+  // centred, not anchored: a resize re-centres it rather than closing it.
   usePopover(ref, {
     onClose: () => answer(false),
+    anchored: false,
     initial: (root) => root.querySelector<HTMLElement>('[data-accept]'),
     returnTo: null
   })
   const copy = copyFor(prompt)
   // The dialog is centred on the content frame; the transparent layer over the whole window
-  // keeps the sidebar and toolbar inert until the prompt is answered, and any click outside the
-  // dialog answers no.
+  // keeps the sidebar and toolbar inert until the prompt is answered, and a press outside the
+  // dialog answers no on pointerdown and goes no further (§9.20).
   const frame = area ?? { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }
   return (
     <div
       className="zen-v2 fixed inset-0 z-[95]"
-      onMouseDown={(e) => {
+      onPointerDown={(e) => {
         e.stopPropagation()
         answer(false)
       }}
@@ -153,7 +155,7 @@ function PanelPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
           aria-modal="true"
           aria-labelledby="zen-ext-dialog-title"
           className="zen-v2-dialog zen-ext-dialog zen-animate-pop"
-          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
         >
           <V2TitleBlock
             id="zen-ext-dialog-title"

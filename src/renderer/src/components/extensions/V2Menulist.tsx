@@ -113,10 +113,12 @@ function MenulistPopover<T extends string>({
   })
   useArrowKeys(ref, '.zen-v2-menulist-option')
   if (!ready) return null
+  // The layer is the light dismiss (§9.20): a press outside the list closes it on pointerdown
+  // and goes no further – the control's own press included, which does not reopen it.
   return createPortal(
     <div
       className="fixed inset-0 z-[90]"
-      onMouseDown={(e) => {
+      onPointerDown={(e) => {
         e.stopPropagation()
         onClose()
       }}

@@ -6,24 +6,31 @@ type Initial = 'first' | 'container' | ((root: HTMLElement) => HTMLElement | nul
 
 /**
  * What every renderer-owned popover, menu and dialog does the same way (v2 draft §9.20, §9.22):
- * it is the one popover open (claiming the slot closes whatever held it); Escape closes it; once
- * it is painted (`active`) focus moves into it – its first focusable, the container itself
- * (`tabIndex -1`, for a menu opened by pointer or a title-and-notice panel), or an element of
- * the caller's choosing; Tab wraps inside it; and when it goes while focus is still inside,
- * focus returns to the control that opened it (what had focus when it mounted). A close by an
- * outside click leaves focus where the click landed, since the click moved it first.
+ * it is the one popover open (claiming the slot closes whatever held it); Escape closes it; an
+ * anchored one closes when the window resizes or anything outside it scrolls, since its anchor
+ * moves; once it is painted (`active`) focus moves into it – its first focusable, the container
+ * itself (`tabIndex -1`, for a menu opened by pointer or a title-and-notice panel), or an
+ * element of the caller's choosing; Tab wraps inside it; and when it goes while focus is still
+ * inside, focus returns to the control that opened it (what had focus when it mounted). A close
+ * by an outside press leaves focus where the press landed, since the press moved it first.
  */
 export function usePopover(
   ref: RefObject<HTMLElement | null>,
   {
     onClose,
     active = true,
+    anchored = true,
     initial = 'first',
     returnTo
   }: {
     onClose: () => void
     /** False while the popover holds its first paint (the content capture is not in place yet). */
     active?: boolean
+    /**
+     * Hangs from a control (§9.20): the frame's scroll and a window resize close it. A centred
+     * dialog passes false and stays through both.
+     */
+    anchored?: boolean
     initial?: Initial
     /**
      * Where focus goes back to – the anchor, as an element or a ref to one; defaults to the
@@ -38,6 +45,26 @@ export function usePopover(
   })
   useEscape(onClose)
   useEffect(() => claimPopover(() => latestClose.current()), [])
+
+  useEffect(() => {
+    if (!anchored) return
+    const close = (): void => latestClose.current()
+    // A scroll or wheel inside the popover is its own body scrolling; anywhere else it is the
+    // frame's, and the popover goes rather than drift from its anchor.
+    const outside = (e: Event): void => {
+      const root = ref.current
+      if (root && e.target instanceof Node && root.contains(e.target)) return
+      close()
+    }
+    window.addEventListener('resize', close)
+    window.addEventListener('scroll', outside, true)
+    window.addEventListener('wheel', outside, { capture: true, passive: true })
+    return () => {
+      window.removeEventListener('resize', close)
+      window.removeEventListener('scroll', outside, true)
+      window.removeEventListener('wheel', outside, { capture: true })
+    }
+  }, [anchored, ref])
 
   const [opener] = useState<HTMLElement | null>(() =>
     document.activeElement instanceof HTMLElement ? document.activeElement : null

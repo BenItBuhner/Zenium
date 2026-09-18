@@ -14,19 +14,42 @@ const POP_MS = 180
  * around it flush under the toolbar's bar (§9.20), pops it in, and then tells main where the view goes
  * (`extension.resizePopup`). When the document asks for a new size, the frame and the view move
  * together, at once.
+ *
+ * Under the frame, while the popup is up, a layer over the whole chrome is its light dismiss
+ * (§9.20): a press anywhere in the chrome – the page's capture, the bar, another action's button,
+ * the button that opened it – closes the popup on pointerdown and goes no further, so the
+ * control under the press is not pressed. The document itself is main's view above the chrome
+ * and keeps its own input. A wheel over the chrome (the frame's scroll) and a window resize,
+ * which moves the button the frame hangs from, close it too.
  */
 export function PopupFrame(): JSX.Element | null {
   const popup = uiStore.use((s) => s.extensionPopup)
   const open = popup !== null
-  // A window resize moves the button the frame hangs from; the popup closes rather than drift.
   useEffect(() => {
     if (!open) return
-    const onResize = (): void => closeExtensionPopup()
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
+    const close = (): void => closeExtensionPopup()
+    window.addEventListener('resize', close)
+    window.addEventListener('scroll', close, true)
+    return () => {
+      window.removeEventListener('resize', close)
+      window.removeEventListener('scroll', close, true)
+    }
   }, [open])
-  if (!popup || !popup.shown) return null
-  return <Frame key={popup.id} anchor={popup.anchor} content={popup.content} />
+  if (!popup) return null
+  return (
+    <div
+      className="fixed inset-0 z-[80]"
+      role="presentation"
+      onPointerDown={(e) => {
+        e.stopPropagation()
+        closeExtensionPopup()
+      }}
+      onWheel={() => closeExtensionPopup()}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {popup.shown && <Frame key={popup.id} anchor={popup.anchor} content={popup.content} />}
+    </div>
+  )
 }
 
 function Frame({
@@ -67,7 +90,8 @@ function Frame({
         height: frame.height,
         transformOrigin: `${originX}px 0`
       }}
-      onMouseDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onWheel={(e) => e.stopPropagation()}
     >
       <div className="zen-ext-popup-well" style={{ inset: padding, borderRadius: innerRadius }} />
     </div>
