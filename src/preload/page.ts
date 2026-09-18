@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import type { PageMessage } from '../core/platform'
 import type { PageHint } from '../shared/fullscreenHint'
 import {
@@ -16,6 +16,8 @@ import {
 import { installLeaveSite, installPageDialogs } from './pageDialogs'
 import { installFormsScript } from '../shared/formsScript'
 import type { FormsCommand } from '../shared/forms'
+import { USER_SCRIPTS_CHANNELS } from '../shared/userScripts'
+import { installUserScripts } from './userScripts'
 
 /**
  * Runs inside every web page (isolated world). The behaviours – Glance, pinned-tab link rules,
@@ -29,7 +31,8 @@ import type { FormsCommand } from '../shared/forms'
  * gets: the privacy signals – an embedded third party reads `navigator.globalPrivacyControl`
  * too, so the signals the user switched on are defined in the main world of each document, at
  * document start, from a synchronous ask of the main process (a couple of booleans) – and the
- * dialogs, since Chrome shows an embedded page's dialogs too.
+ * dialogs, since Chrome shows an embedded page's dialogs too. Extensions' user scripts
+ * (`chrome.userScripts`) run in every frame as well, from a second synchronous ask.
  */
 const signals = ipcRenderer.sendSync(PRIVACY_SIGNALS_CHANNEL) as PrivacySignals | undefined
 if (signals && (signals.gpc || signals.dnt))
@@ -38,6 +41,22 @@ if (signals && (signals.gpc || signals.dnt))
     args: [signals.gpc, signals.dnt]
   })
 installPageDialogs()
+installUserScripts({
+  plan: (request) => ipcRenderer.sendSync(USER_SCRIPTS_CHANNELS.plan, request),
+  message: (message) => ipcRenderer.invoke(USER_SCRIPTS_CHANNELS.message, message),
+  port: (wire) => ipcRenderer.send(USER_SCRIPTS_CHANNELS.port, wire),
+  answer: (answer) => ipcRenderer.send(USER_SCRIPTS_CHANNELS.answer, answer),
+  onPort: (listener) =>
+    ipcRenderer.on(USER_SCRIPTS_CHANNELS.port, (_event, wire) => listener(wire)),
+  onDeliver: (listener) =>
+    ipcRenderer.on(USER_SCRIPTS_CHANNELS.deliver, (_event, delivery) => listener(delivery)),
+  onExecute: (listener) =>
+    ipcRenderer.on(USER_SCRIPTS_CHANNELS.execute, (_event, execution) => listener(execution)),
+  executeInMainWorld: (code) => webFrame.executeJavaScript(code),
+  executeInIsolatedWorld: (worldId, code) =>
+    webFrame.executeJavaScriptInIsolatedWorld(worldId, [{ code }]),
+  setIsolatedWorldInfo: (worldId, info) => webFrame.setIsolatedWorldInfo(worldId, info)
+})
 
 if (process.isMainFrame) {
   const send = (message: PageScriptMessage | PageMessage): void =>
