@@ -9,9 +9,11 @@ name: Android overview demo
 # run fails when a first tap is lost); `swipe-reorder` – a card swiped part-way and let go, a
 # card swiped off to close it, a card closed with its X, a card dragged to a new slot, a card
 # dropped on another, and a group closed from its sheet; `motion` – the grid's choreography and
-# drop-target state: the New Tab card's neighbour closed and a card dropped into a group (the
-# New Tab card glides with the rest), a card dragged back out of the group, a drag over the
-# group cancelled, a card flung out of the group, and a close in the dark scheme, with a
+# drop-target state (v2 draft §11.4): the New Tab card's neighbour closed and a card dropped into
+# a group (the New Tab card glides with the rest), a card dragged back out of the group under a
+# finger the grid reflows under, a drag over the group cancelled, a card flung out of the group,
+# the group's last card dragged out (the group dissolves), a group made by dropping a card on
+# another, and a close in the dark scheme – the group sequences measured frame by frame, with a
 # findings text of what the grid showed after every release. Dispatch-only, like the gesture demo: it
 # takes about ten minutes and says nothing about a change being correct. Same caveats as the
 # gesture demo about frame rate and the software GPU (springs advance at most 64 ms per frame,
