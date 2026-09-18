@@ -4,7 +4,7 @@
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
 //        [--scenarios boot,restore,walkthrough,crash,scale,dark] [--extra-args=--no-sandbox]
-//        [--allowlist known-failures.json] [--render-budget-ms 10000] [--quit-budget-ms 5000]
+//        [--allowlist known-failures.json] [--render-budget-ms 10000] [--quit-budget-ms 15000]
 //        [--step-timeout-ms 60000] [--evaluate-timeout-ms 30000] [--watchdog-min 15]
 //
 // Scenarios (each one launch of the executable, on profiles under one temporary root):
@@ -49,6 +49,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
 import { buttonScreenPoint, startPopupFixture } from './popup-fixture.mjs'
+import { exitWithin, mainProcessState, unlessTargetClosed } from './quit.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const IS_WIN = process.platform === 'win32'
@@ -73,7 +74,11 @@ const scenarios = String(opts.scenarios ?? 'boot,restore')
 const EXTRA_ARGS =
   typeof opts['extra-args'] === 'string' ? opts['extra-args'].split(' ').filter(Boolean) : []
 const RENDER_BUDGET_MS = Number(opts['render-budget-ms'] ?? 10000)
-const QUIT_BUDGET_MS = Number(opts['quit-budget-ms'] ?? 5000)
+// From the quit chord (or the Quit button) to the process's exit event. The app itself quits
+// within a second; the rest is Electron's teardown after the last window closes, which took 6 s
+// on windows-11-arm (#148, #157) against the 5 s this used to be. Only a process still alive
+// when the budget runs out is a failure.
+const QUIT_BUDGET_MS = Number(opts['quit-budget-ms'] ?? 15000)
 const STEP_TIMEOUT_MS = Number(opts['step-timeout-ms'] ?? 60000)
 const EVALUATE_TIMEOUT_MS = Number(opts['evaluate-timeout-ms'] ?? 30000)
 // Budget for a click on a button the chrome has just painted for the first time (onboarding,
@@ -909,14 +914,6 @@ class Session {
     return shot(`${this.scenario}-${name}`, this)
   }
 
-  /** Is the main process event loop free? A modal native dialog blocks it. */
-  async mainResponsive(timeoutMs = 4000) {
-    return Promise.race([
-      this.app.evaluate(() => 'ok').catch((e) => `error: ${e.message}`),
-      delay(timeoutMs).then(() => 'blocked')
-    ])
-  }
-
   /** The webContents holding the keyboard, as the main process sees it (null: none). */
   focusedWebContentsId() {
     return this.app.evaluate(({ webContents }) => {
@@ -1081,13 +1078,23 @@ class Session {
    * first asks "Quit Zenium?" (the "warn before closing a window with multiple tabs" setting is
    * on by default): the question must show exactly then, name the tab count, and its Quit button
    * ends the run. The app has to exit with code 0 within the budget either way.
+   *
+   * The exit is the process's exit event and nothing else. From the moment the app quits,
+   * Playwright's connections to it are gone – before the process is, by seconds on a slow runner
+   * – so a call still in flight then ("Target page, context or browser has been closed") is the
+   * quit happening, and an evaluate can neither confirm the exit nor tell a slow teardown from a
+   * hang (#148, #157). Callers read state.json only after this returns: the write a graceful
+   * quit ends with is the run's last one (#150), complete once the process has exited.
    */
   async quitGracefully(budgetMs = QUIT_BUDGET_MS) {
     const tabs = await this.sidebarTabCount().catch(() => 0)
     const expectPrompt = tabs > 1
     this.quitStartedAt = Date.now()
-    await Promise.race([this.press(QUIT_COMBO), delay(3000)])
+    // The chord's evaluate may lose its target: the quit it triggers can take the main-process
+    // session down before the reply arrives. The exit event says what happened then.
+    await Promise.race([unlessTargetClosed(this.press(QUIT_COMBO)), delay(3000)])
     const prompt = this.chrome.locator('[data-window-prompt="quit"]').first()
+    // The wait ends early when the chrome page closes under it: the app quitting without asking.
     const first = await Promise.race([
       this.exitPromise.then(() => 'exit'),
       prompt
@@ -1104,20 +1111,31 @@ class Session {
           `quit question reads "${asked.heading}" / "${asked.text}" with ${tabs} tabs open`
         )
       }
-      await prompt.getByRole('button', { name: 'Quit', exact: true }).click({ timeout: 5000 })
+      // Quit closes the window the button is in; the click's reply may not make it back.
+      await unlessTargetClosed(
+        prompt.getByRole('button', { name: 'Quit', exact: true }).click({ timeout: 5000 })
+      )
       this.quitStartedAt = Date.now()
     }
-    const exit = await Promise.race([this.exitPromise, delay(budgetMs).then(() => null)])
+    // One budget from the chord (or from Quit): the time the question took to show counts.
+    const exit = await exitWithin(this.exitPromise, budgetMs, this.quitStartedAt)
     const ms = Date.now() - this.quitStartedAt
     if (!exit) {
-      const responsive = await this.mainResponsive(3000)
-      const late = await this.windowPrompt().catch(() => null)
+      // Still alive past the bound. Whether the main process answers tells a quit that never
+      // started (responsive: the chord went nowhere; a prompt may be up) from a blocked one (a
+      // native dialog) from one gone from Playwright's view (windows and debugger closed, the
+      // process not ending: a teardown slower than the bound, or stuck).
+      const main = await mainProcessState(
+        this.app.evaluate(() => 'ok'),
+        3000
+      )
+      const late = main === 'responsive' ? await this.windowPrompt().catch(() => null) : null
       log(
-        `app did not exit after ${QUIT_COMBO} within ${budgetMs} ms (main ${responsive}); closing`
+        `app did not exit within ${budgetMs} ms after ${QUIT_COMBO} (main process ${main}); closing`
       )
       await this.forceClose()
       throw new Error(
-        `app did not exit within ${budgetMs} ms after ${QUIT_COMBO}${asked ? ' and Quit' : ''} (main process ${responsive}; prompt ${JSON.stringify(late)}; exit ${JSON.stringify(this.exit)})`
+        `app did not exit within ${budgetMs} ms after ${QUIT_COMBO}${asked ? ' and Quit' : ''} (main process ${main}; prompt ${JSON.stringify(late)}; exit after forceClose ${JSON.stringify(this.exit)})`
       )
     }
     if (exit.code !== 0)
