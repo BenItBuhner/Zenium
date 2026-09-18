@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type {
   HostCapabilities,
   NavigationSnapshot,
@@ -123,7 +123,7 @@ interface Fixture {
   viewOf(tabId: string): FakeView
 }
 
-function fixture(): Fixture {
+function fixture(io: StoreIO = memoryIo()): Fixture {
   const views: FakeView[] = []
   const closes = new Map<string, number>()
   const f: Fixture = {
@@ -143,7 +143,7 @@ function fixture(): Fixture {
   const platform: Platform = {
     info: { os: 'linux' as PlatformOs, version: '0.0.0' },
     capabilities,
-    io: memoryIo(),
+    io,
     windows: {
       create: (win) =>
         stub<WindowHost>({
@@ -557,6 +557,53 @@ describe('quitting', () => {
     f.browser.windowPrompts.respond(win.prompt!.id, true)
     await expect(Promise.all([one, two])).resolves.toEqual([true, true])
     expect(f.quits).toBe(1)
+  })
+
+  it('hands the quit to the host only once the final write of the profile has landed', async () => {
+    // A host whose asynchronous writes land when the test says so (a slow disk).
+    const gates: Array<() => void> = []
+    const landed: string[] = []
+    const files: Record<string, string> = {}
+    const io: StoreIO = {
+      readSync: (name) => files[name] ?? null,
+      write: async (name, text) => {
+        await new Promise<void>((resolve) => gates.push(resolve))
+        files[name] = text
+        landed.push(name)
+      },
+      writeSync: (name, text) => {
+        files[name] = text
+        landed.push(name)
+      }
+    }
+    vi.useFakeTimers()
+    try {
+      const f = fixture(io)
+      const win = firstWindow(f)
+      f.browser.tabs.createTab({ url: 'https://a.test/', active: true }, win)
+      // The debounced write of that tab has started and waits on the disk when the user quits.
+      await vi.advanceTimersByTimeAsync(400)
+      expect(f.browser.writing).toBe(true)
+
+      const quitting = f.browser.requestQuit(win)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(f.browser.quitting).toBe(true)
+      expect(f.quits).toBe(0)
+
+      for (const open of gates.splice(0)) open()
+      await vi.advanceTimersByTimeAsync(0)
+      await expect(quitting).resolves.toBe(true)
+      expect(f.quits).toBe(1)
+      expect(f.browser.writing).toBe(false)
+      // The document the quit ended with is the one on disk: the in-flight write landed before it.
+      const stateWrites = landed.filter((name) => name === 'state.json')
+      expect(stateWrites.length).toBeGreaterThanOrEqual(3)
+      const state = files['state.json']
+      if (!state) throw new Error('state.json was not written')
+      expect((JSON.parse(state) as { cleanExit?: boolean }).cleanExit).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
