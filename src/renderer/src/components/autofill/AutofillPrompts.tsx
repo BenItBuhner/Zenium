@@ -33,6 +33,7 @@ import {
   cardTitle,
   closeAutofillPrompt,
   currentAutofillPrompt,
+  enterAutofillPrompt,
   expiryLabel,
   openAutofillPrompt,
   type AutofillPromptSurface
@@ -58,24 +59,8 @@ const PAGE_WAIT_MS = 1500
 const SUBMIT_GRACE_MS = 400
 /** The chip in the URL pill a desktop prompt hangs from (`NavRow`). */
 export const CHIP_SELECTOR = '[data-af-chip]'
-/** The desktop prompt's panel, for the chip's Tab to step into. */
-const PROMPT_SELECTOR = '[data-af-prompt]'
 /** The prompt popover's pop, in and out (§9.20; `zen-animate-pop`'s 180). */
 const PROMPT_POP_MS = 180
-
-/**
- * Move the keyboard into the open desktop prompt (§9.22): its field when it has one (the login
- * prompts' username), else the panel itself, a title-and-notice container named by its title.
- * The chip's Tab steps in here, since a prompt the page raised took no focus on open.
- */
-export function enterAutofillPrompt(
-  panel = document.querySelector<HTMLElement>(PROMPT_SELECTOR)
-): boolean {
-  if (!panel || panel.dataset.closing) return false
-  const target = panel.querySelector<HTMLElement>('input, textarea') ?? panel
-  target.focus({ preventScroll: true })
-  return true
-}
 
 /**
  * The prompts of `UIState.autofill.prompts`, one at a time, for the active tab: save / update a

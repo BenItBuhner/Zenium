@@ -1,10 +1,9 @@
 import type { JSX, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { CreditCard, KeyRound, MapPin } from 'lucide-react'
 import type { AutofillPrompt, Tab, UIState } from '@shared/types'
-import { chipPrompt, toggleAutofillPrompt } from '@renderer/lib/autofill'
+import { chipPrompt, enterAutofillPrompt, toggleAutofillPrompt } from '@renderer/lib/autofill'
 import { uiStore } from '@renderer/lib/ui'
 import { PillChip } from '../urlbar/PillChip'
-import { enterAutofillPrompt } from './AutofillPrompts'
 
 /** What the chip stands for, in its name and tooltip. */
 function chipLabel(prompt: Exclude<AutofillPrompt, { kind: 'passkey-account' }>): string {
