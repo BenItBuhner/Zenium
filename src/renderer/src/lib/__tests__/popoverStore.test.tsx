@@ -307,6 +307,25 @@ describe('useLightDismiss: scroll, resize, one at a time', () => {
     expect(onDismiss).toHaveBeenLastCalledWith('scroll')
   })
 
+  it('leaves the popover alone on a Ctrl+wheel (a zoom, not a scroll)', () => {
+    const onDismiss = vi.fn()
+    render(
+      <Chrome onClick={vi.fn()}>
+        <Popover name="zoom" onDismiss={onDismiss} />
+      </Chrome>
+    )
+    // A browser's WheelEvent is a MouseEvent (with the modifier keys); happy-dom's is not.
+    act(() => {
+      q('[data-page]').dispatchEvent(new MouseEvent('wheel', { bubbles: true, ctrlKey: true }))
+    })
+    expect(onDismiss).not.toHaveBeenCalled()
+    expect(openPopoverCount()).toBe(1)
+    act(() => {
+      q('[data-page]').dispatchEvent(new MouseEvent('wheel', { bubbles: true }))
+    })
+    expect(onDismiss).toHaveBeenCalledWith('scroll')
+  })
+
   it('closes on a window resize', () => {
     const onDismiss = vi.fn()
     render(

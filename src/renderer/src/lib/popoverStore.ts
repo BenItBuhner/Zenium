@@ -14,7 +14,8 @@ import { useEffect, useLayoutEffect, useRef } from 'react'
  *     closes its popover without reopening it. Nothing beneath a popover ever receives the press
  *     that dismissed it.
  *   - A scroll anywhere outside the popovers – a wheel turned over the frame or a bar, a chrome
- *     list scrolling – and a window resize close them.
+ *     list scrolling – and a window resize close them. A Ctrl+wheel is a zoom, not a scroll,
+ *     and leaves them be.
  *   - Opening a popover closes every other open one, except the popovers it sits in: a popover
  *     whose anchor is inside an open popover (a menulist's list inside the star bubble) is that
  *     popover's child, and a press inside the child keeps the parent open.
@@ -216,6 +217,8 @@ function onSwallowed(e: Event): void {
 
 function onScroll(e: Event): void {
   if (!entries.length) return
+  // A wheel turned with Ctrl held is a zoom, not a scroll: the zoom bubble goes on zooming.
+  if (e.type === 'wheel' && 'ctrlKey' in e && e.ctrlKey === true) return
   const target = e.target
   if (target instanceof Node && entries.some((entry) => contains(entry, target))) return
   closeAllPopovers('scroll')
