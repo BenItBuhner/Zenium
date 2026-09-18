@@ -99,6 +99,8 @@ class TabWebView(
         private set
     /** True while `onPageStarted` has fired and `onPageFinished` has not. */
     private var pageStarted = false
+    /** The `domReady` view event, once per document (see `DomReadyGate`). */
+    private val domReady = DomReadyGate()
 
     init {
         Profiles.apply(this, containerId)
@@ -260,23 +262,17 @@ class TabWebView(
     }
 
     private fun onPageMessage(message: WebMessageCompat, proxy: JavaScriptReplyProxy?) {
-        val data = message.data ?: return
-        val obj = runCatching { JSONObject(data) }.getOrNull() ?: return
-        if (obj.str("token") != host.pageToken) return
-        when (obj.str("type")) {
-            "hello" -> {
+        when (val route = routePageMessage(message.data, host.pageToken)) {
+            PageMessageRoute.Ignore -> return
+            PageMessageRoute.Hello -> {
                 replyProxy = proxy
                 sendFlags()
-                return
             }
-            "evalResult" -> {
-                // The settled value of a Promise an evaluate() script returned (see evaluate()).
-                pendingEvals.remove(obj.optInt("id"))?.invoke(obj.strOrNull("value"))
-                return
-            }
+            // The settled value of a Promise an evaluate() script returned (see evaluate()).
+            is PageMessageRoute.EvalResult -> pendingEvals.remove(route.id)?.invoke(route.value)
+            PageMessageRoute.DomReady -> if (domReady.scriptReady()) host.viewEvent(tabId, "domReady", null)
+            is PageMessageRoute.Forward -> host.viewEvent(tabId, "pageMessage", route.message)
         }
-        obj.remove("token")
-        host.viewEvent(tabId, "pageMessage", obj)
     }
 
     // --- script evaluation for the core (async-aware) --------------------------------------------
@@ -842,6 +838,7 @@ class TabWebView(
             currentDocument = url
             pageStarted = true
             loading = true
+            domReady.documentStarted()
             failPendingEvals("the page navigated away before the script finished")
             host.viewEvent(tabId, "startLoading", null)
             host.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", false))
@@ -870,6 +867,9 @@ class TabWebView(
                 evaluateJavascript(host.pageScript, null)
             }
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.FINISHED)
+            // A document the page script never reported ready (it did not run there, or it only
+            // runs at page finished) is ready now, before it has stopped loading, as in Electron.
+            if (domReady.pageFinished()) host.viewEvent(tabId, "domReady", null)
             host.viewEvent(tabId, "stopLoading", navState())
             if (muted) setMuted(true)
             host.backChanged()

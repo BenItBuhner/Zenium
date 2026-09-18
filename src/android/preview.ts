@@ -81,6 +81,8 @@ export function createPreviewBridge(): NativeBridge {
           /* cross-origin */
         }
         frame.dataset.title = title
+        // The frame's document is complete: its DOM is ready, then it has finished loading.
+        viewEvent(String(tabId), 'domReady', null)
         viewEvent(String(tabId), 'stopLoading', { ...navState(frame), title })
         if (title) viewEvent(String(tabId), 'title', { title })
       })
