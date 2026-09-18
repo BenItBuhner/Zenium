@@ -1,5 +1,5 @@
 // Downloads Chrome Web Store extensions as CRX3 packages and unpacks them, for the extension
-// prototype workflow to sideload onto the emulator. Run from the repository root:
+// runtime demo workflow to sideload onto the emulator. Run from the repository root:
 //
 //   node .github/scripts/fetch-crx.mjs <output dir> <extension id>...
 //

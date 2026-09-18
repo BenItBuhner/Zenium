@@ -4,9 +4,9 @@
 #   1. EngineProbe – what the system WebView is (provider version, androidx.webkit feature flags,
 #      reflection dump, chrome-extension:// behaviour, an https origin served only through
 #      shouldInterceptRequest). Writes files/ext-probe/engine-probe.json.
-#   2. ExtensionDemo – sideloaded demo extensions on the emulation layer, recorded. The runner
-#      serves the local probe pages (reachable from the emulator as 10.0.2.2) and the driver
-#      writes files/ext-demo/results.json plus screenshots.
+#   2. ExtensionDemo – the demo extensions laid out as store installs, run on the runtime and
+#      recorded. The runner serves the local probe pages (reachable from the emulator as
+#      10.0.2.2) and the driver writes files/ext-demo/results.json plus screenshots.
 #
 # Handshake with the demo driver, through files in the app's private storage (via run-as):
 #   files/ext-demo/record     – written by the driver once the extensions are configured
@@ -16,8 +16,8 @@ set -euo pipefail
 
 app_id=io.github.benitbuhner.zenium.debug
 runner=io.github.benitbuhner.zenium.debug.test/androidx.test.runner.AndroidJUnitRunner
-out=artifacts/android-ext-prototype
-video=ext-android-prototype-demo.mp4
+out=artifacts/android-ext-runtime-demo
+video=ext-android-runtime-demo.mp4
 ext_dir=${EXT_DIR:-artifacts/ext}
 pages=.github/scripts/ext-demo-pages
 mkdir -p "$out"

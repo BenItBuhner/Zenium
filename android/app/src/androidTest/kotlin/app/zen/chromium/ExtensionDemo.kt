@@ -33,7 +33,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * Drives the extension runtime on an emulator for the `android-ext-prototype` workflow: the
+ * Drives the extension runtime on an emulator for the `android-ext-runtime-demo` workflow: the
  * workflow pushes the unpacked demo extensions into `files/zen/extensions/`, this driver lays them
  * out as store installs with a registry (see [seed]), adds the probe extension from its assets,
  * seeds a one-tab profile on the local probe page, launches the app and then records, per
@@ -47,7 +47,7 @@ import java.util.concurrent.TimeUnit
  *
  * The visible part runs while the workflow records the screen (same `record` / `recording` /
  * `done` handshake as the gesture demo); measurements without a picture come after. Everything
- * lands in `files/ext-demo/results.json` and `ext-android-prototype-*.png`.
+ * lands in `files/ext-demo/results.json` and `ext-android-runtime-*.png`.
  */
 @RunWith(AndroidJUnit4::class)
 class ExtensionDemo {
@@ -1239,7 +1239,7 @@ class ExtensionDemo {
 
     private fun shot(name: String) {
         val bitmap = ui.takeScreenshot() ?: return
-        File(out, "ext-android-prototype-$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        File(out, "ext-android-runtime-$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         bitmap.recycle()
     }
 

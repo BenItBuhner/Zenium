@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Empirical record of what the system WebView is and is not, written to `files/ext-probe/engine-probe.json`
- * for the `android-ext-prototype` workflow to collect:
+ * for the `android-ext-runtime-demo` workflow to collect:
  *
  *  - the WebView provider package and version (the Chromium build the app runs on);
  *  - every androidx.webkit feature flag and whether this provider supports it;
