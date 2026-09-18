@@ -512,9 +512,22 @@ textarea.zen-v2-field {
   padding-right: 8px;
   border-radius: var(--v2-radius-control);
 }
+/*
+ * The selected row (§9.6): the option the keyboard or the pointer has brought forward, which
+ * Enter or a tap takes – the accent at 12% in light and 16% in dark (until a `--v2-selected`
+ * token lands), never `--v2-selection`, which is text selection, and never `--v2-fill`, which
+ * stays the press fill below. The menulist's current option is different: it is marked with a
+ * check and takes only the focus fill, as the chassis' §9.13 popup does.
+ */
+.zen-v2-af {
+  --zen-af-selected: color-mix(in srgb, var(--v2-accent) 12%, transparent);
+}
+:root[data-theme='dark'] .zen-v2-af {
+  --zen-af-selected: color-mix(in srgb, var(--v2-accent) 16%, transparent);
+}
 .zen-v2-af-row[data-active='true'],
 .zen-v2-af-row[aria-selected='true'] {
-  background: var(--v2-fill);
+  background: var(--zen-af-selected);
 }
 /* A row that is a radio's label (the menulist sheet, §9.13): the press fill, 120 ms. */
 .zen-v2-af-row:active {
