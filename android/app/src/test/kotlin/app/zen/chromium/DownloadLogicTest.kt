@@ -272,8 +272,18 @@ class DownloadLogicTest {
         assertNull(R.fromWire(null))
         assertTrue(R.NETWORK_TIMEOUT.isNetwork)
         assertFalse(R.SERVER_FAILED.isNetwork)
+        // Word for word the core's `interruptMessage` table (src/shared/downloads.ts): the
+        // notification and the row must not disagree about the same failure.
         assertEquals("Check internet connection", R.NETWORK_FAILED.message)
+        assertEquals("Site wasn’t available", R.NETWORK_SERVER_DOWN.message)
+        assertEquals("File wasn’t available on site", R.SERVER_FORBIDDEN.message)
+        assertEquals("Something went wrong", R.SERVER_NO_RANGE.message)
+        assertEquals("Needs permission to download", R.FILE_ACCESS_DENIED.message)
         assertEquals("Out of storage space", R.FILE_NO_SPACE.message)
+        assertEquals("File name or location is too long", R.FILE_NAME_TOO_LONG.message)
+        assertEquals("File is too big for this device", R.FILE_TOO_LARGE.message)
+        assertEquals("Virus scan failed", R.FILE_SECURITY_CHECK_FAILED.message)
+        assertEquals("Already downloaded", R.FILE_SAME_AS_SOURCE.message)
         assertEquals("Couldn’t finish download", R.USER_SHUTDOWN.message)
         assertEquals("Check internet connection", DownloadNotifications.describe("network-timeout"))
         assertEquals("Something went wrong", DownloadNotifications.describe("nonsense"))
