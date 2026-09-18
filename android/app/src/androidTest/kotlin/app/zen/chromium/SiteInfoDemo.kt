@@ -157,7 +157,7 @@ class SiteInfoDemo {
         shot("01-sheet")
 
         // 2. The connection level pushes in; the header's back control pops it.
-        if (tapLabel(f, "Connection")) {
+        if (tapUntil(f, "Connection", BACK_LABEL)) {
             SystemClock.sleep(1_800)
             shot("02-connection")
             tapLabel(f, BACK_LABEL)
@@ -166,7 +166,7 @@ class SiteInfoDemo {
 
         // 3. Cookies and site data: expand the sheet, scroll the list, then clear the cookies
         //    through the confirmation sheet that stacks on top.
-        if (tapLabel(f, "Cookies and site data")) {
+        if (tapUntil(f, "Cookies and site data", BACK_LABEL)) {
             SystemClock.sleep(1_800)
             shot("03-cookies")
             expandSheet(f)
@@ -194,7 +194,7 @@ class SiteInfoDemo {
         }
 
         // 4. Permissions: reset the remembered Location grant with the row's control.
-        if (tapLabel(f, "Permissions")) {
+        if (tapUntil(f, "Permissions", BACK_LABEL)) {
             SystemClock.sleep(1_800)
             shot("07-permissions")
             if (tapLabel(f, "Reset Location permission")) {
@@ -289,10 +289,12 @@ class SiteInfoDemo {
     private fun awaitRest() {
         val deadline = SystemClock.uptimeMillis() + 6_000
         var last = grabber()
+        var steady = 0
         while (SystemClock.uptimeMillis() < deadline) {
-            SystemClock.sleep(300)
+            SystemClock.sleep(250)
             val now = grabber()
-            if (now == last) return
+            steady = if (now == last) steady + 1 else 0
+            if (steady >= 2) return
             last = now
         }
         Log.w(TAG, "sheet still moving after 6 s")
