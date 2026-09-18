@@ -1,5 +1,5 @@
 import {
-  ERROR_INCOGNITO_SCOPE,
+  ERROR_INCOGNITO_ACCESS,
   PrivacyError,
   normalizeGetDetails,
   parseSetting,
@@ -16,7 +16,9 @@ const ERROR_NO_PERMISSION = "The extension does not have the 'privacy' permissio
  * `chrome.privacy`: every `privacy.<section>.<setting>` answers `get` with what Zenium has (the
  * search-suggestion and password-saving switches; Chromium defaults for the rest; off for the
  * Google services and the Privacy Sandbox), always `not_controllable`. `set` and `clear` are
- * refused with a message naming the setting: extensions do not change Zenium's settings.
+ * refused with a message naming the setting: extensions do not change Zenium's settings. The
+ * incognito side (`get({ incognito: true })`, an `incognito_*` scope) needs incognito access,
+ * which no extension has here, so it fails with Chrome's message for that.
  */
 export class PrivacyApi {
   constructor(private readonly host: ApiHost) {}
@@ -44,15 +46,19 @@ export class PrivacyApi {
   private get(ctx: ApiContext, rawSetting: unknown, rawDetails: unknown): ChromeSettingDetails {
     this.requirePermission(ctx)
     const { name } = checked(() => parseSetting(rawSetting))
-    checked(() => normalizeGetDetails(rawDetails))
+    const { incognito } = checked(() => normalizeGetDetails(rawDetails))
+    if (incognito) throw new ApiError(ERROR_INCOGNITO_ACCESS)
     return settingDetails(name, this.sources())
   }
 
   private set(ctx: ApiContext, rawSetting: unknown, rawDetails: unknown): never {
     this.requirePermission(ctx)
     const { section, name } = checked(() => parseSetting(rawSetting))
-    if (isRecord(rawDetails) && rawDetails.scope === 'incognito_persistent') {
-      throw new ApiError(ERROR_INCOGNITO_SCOPE)
+    if (
+      isRecord(rawDetails) &&
+      (rawDetails.scope === 'incognito_persistent' || rawDetails.scope === 'incognito_session_only')
+    ) {
+      throw new ApiError(ERROR_INCOGNITO_ACCESS)
     }
     throw new ApiError(settingNotControllable(`privacy.${section}.${name}`))
   }

@@ -56,7 +56,11 @@ export interface PrivacySources {
 
 export const ERROR_INVALID_SETTING = 'Invalid privacy setting'
 export const ERROR_INVALID_DETAILS = 'Invalid details'
-export const ERROR_INCOGNITO_SCOPE = "Zenium's private windows have no settings of their own."
+/**
+ * Chrome's message when an extension without incognito access reads or writes an incognito
+ * preference. Extensions never run in Zenium's private windows, so none has that access.
+ */
+export const ERROR_INCOGNITO_ACCESS = 'You do not have permission to access incognito preferences.'
 
 export class PrivacyError extends Error {}
 
@@ -85,7 +89,7 @@ function isSection(value: string): value is PrivacySection {
   return value === 'network' || value === 'services' || value === 'websites'
 }
 
-/** `get({ incognito? })`: only the shape is checked; private windows share the regular values. */
+/** `get({ incognito? })`: the shape, and whether the incognito value was asked for. */
 export function normalizeGetDetails(raw: unknown): { incognito: boolean } {
   if (raw === undefined || raw === null) return { incognito: false }
   if (!isRecord(raw)) throw new PrivacyError(ERROR_INVALID_DETAILS)

@@ -68,11 +68,12 @@ export function normalizeSuggestResults(raw: unknown): SuggestResult[] {
 
 /**
  * Chrome's description markup (`<url>`, `<match>`, `<dim>`, nested at will, with XML entities)
- * as plain text: the URL bar shows rows without styling.
+ * as plain text: the URL bar shows rows without styling. Chrome parses the description as XML and
+ * walks into elements it does not know, keeping their text, so every tag goes and the text stays.
  */
 export function plainDescription(markup: string): string {
   return markup
-    .replace(/<\/?(url|match|dim)\s*>/gi, '')
+    .replace(/<\/?[a-z_][^<>]*>/gi, '')
     .replace(
       /&(lt|gt|amp|quot|apos|#(\d+)|#x([0-9a-f]+));/gi,
       (whole, name: string, dec?: string, hex?: string) => {

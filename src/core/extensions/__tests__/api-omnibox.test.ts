@@ -31,6 +31,10 @@ describe('omnibox pure parts', () => {
       'a <b> & "c" \'d\' AB'
     )
     expect(plainDescription('<dim><match>nested</match></dim>')).toBe('nested')
+    // Chrome walks into elements it does not know and keeps their text.
+    expect(plainDescription('x <bogus>y</bogus> <b class="k">z</b>  w')).toBe('x y z w')
+    // Not a tag: a comparison stays as typed, as does an entity nobody defined.
+    expect(plainDescription('1 < 2 &nbsp;')).toBe('1 < 2 &nbsp;')
   })
 
   it('matches a keyword only with whitespace after it', () => {

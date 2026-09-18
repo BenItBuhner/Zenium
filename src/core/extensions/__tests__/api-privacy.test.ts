@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
-  ERROR_INCOGNITO_SCOPE,
+  ERROR_INCOGNITO_ACCESS,
   ERROR_INVALID_DETAILS,
   ERROR_INVALID_SETTING,
   PRIVACY_SETTINGS,
@@ -38,7 +38,7 @@ describe('chrome.privacy, the pure part', () => {
     expect(() => parseSetting(42)).toThrow(ERROR_INVALID_SETTING)
   })
 
-  it('checks the shape of get details and ignores incognito', () => {
+  it('checks the shape of get details and reads the incognito flag', () => {
     expect(normalizeGetDetails(undefined)).toEqual({ incognito: false })
     expect(normalizeGetDetails({})).toEqual({ incognito: false })
     expect(normalizeGetDetails({ incognito: true })).toEqual({ incognito: true })
@@ -100,10 +100,13 @@ describe('PrivacyApi', () => {
     expect(h.api.handlers.get(ctx, 'services.searchSuggestEnabled', undefined)).toMatchObject({
       value: true
     })
-    expect(h.api.handlers.get(ctx, 'services.passwordSavingEnabled', { incognito: true })).toEqual({
-      value: true,
-      levelOfControl: 'not_controllable'
-    })
+    expect(h.api.handlers.get(ctx, 'services.passwordSavingEnabled', { incognito: false })).toEqual(
+      { value: true, levelOfControl: 'not_controllable' }
+    )
+    // No extension has incognito access: Chrome's message for the incognito value.
+    expect(() =>
+      h.api.handlers.get(ctx, 'services.passwordSavingEnabled', { incognito: true })
+    ).toThrow(ERROR_INCOGNITO_ACCESS)
     expect(() => h.api.handlers.get(ctx, 'network.nope', {})).toThrow(ERROR_INVALID_SETTING)
     expect(() => h.api.handlers.get(ctx, 'network.networkPredictionEnabled', 'x')).toThrow(
       ERROR_INVALID_DETAILS
@@ -124,7 +127,10 @@ describe('PrivacyApi', () => {
         value: 'disable_non_proxied_udp',
         scope: 'incognito_persistent'
       })
-    ).toThrow(ERROR_INCOGNITO_SCOPE)
+    ).toThrow(ERROR_INCOGNITO_ACCESS)
+    expect(() =>
+      h.api.handlers.clear(ctx, 'websites.doNotTrackEnabled', { scope: 'incognito_session_only' })
+    ).toThrow(ERROR_INCOGNITO_ACCESS)
     expect(() => h.api.handlers.set(ctx, 'bogus', { value: true })).toThrow(ERROR_INVALID_SETTING)
   })
 })
