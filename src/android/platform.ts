@@ -73,12 +73,19 @@ export interface AndroidCapabilityInputs {
   sdkInt: number
   /** Kotlin named the extension install root: the store and the registry are there to use. */
   extensions: boolean
+  /**
+   * The WebView keeps separate profiles (Chrome 111+): containers and the private session have
+   * cookies, storage and cache of their own. Without it a "private" tab would browse on the
+   * default profile, so none is offered. Absent from an older boot payload: taken as supported.
+   */
+  profiles?: boolean
 }
 
 /** What the Android host can do for the chrome; a few points depend on the OS release. */
 export function androidCapabilities({
   sdkInt,
-  extensions
+  extensions,
+  profiles = true
 }: AndroidCapabilityInputs): HostCapabilities {
   return {
     windowControls: false,
@@ -106,7 +113,7 @@ export function androidCapabilities({
     requestBlocking: true,
     pageControls: true,
     // One window: private browsing is a tab in it, on a throwaway WebView profile.
-    privateTabs: true
+    privateTabs: profiles
   }
 }
 
@@ -176,6 +183,8 @@ export interface BootInfo {
   signer: string | null
   /** The applicationId this APK was installed under (null in the preview host). */
   packageName: string | null
+  /** Whether the WebView supports multiple profiles (see `AndroidCapabilityInputs.profiles`). */
+  profiles?: boolean
   /** The launcher icon colour whose alias is enabled right now (the core re-applies its own). */
   appIcon?: string
   /** Persisted JSON documents by name (state.json, history.json, …). */
@@ -666,7 +675,8 @@ export class AndroidPlatform implements Platform {
     this.extensionsRoot = boot.extensionsRoot || null
     this.capabilities = androidCapabilities({
       sdkInt: boot.sdkInt,
-      extensions: this.extensionsRoot !== null
+      extensions: this.extensionsRoot !== null,
+      profiles: boot.profiles
     })
     this.bootEnvironment = boot.environment ?? null
     this.io = new AndroidStoreIO(bridge, boot.files)

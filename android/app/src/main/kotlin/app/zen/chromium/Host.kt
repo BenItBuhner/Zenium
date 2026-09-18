@@ -133,6 +133,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "signer" to Updates.signerSha256(activity),
             // The applicationId; a release whose APK carries another one installs as a new app.
             "packageName" to activity.packageName,
+            // Multi-profile WebView: what makes a private tab private (and containers separate).
+            "profiles" to Profiles.supported,
             "appIcon" to launcherIcon.current(),
             "files" to storage.readAll(),
             "downloadsDir" to (Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)?.absolutePath ?: ""),
