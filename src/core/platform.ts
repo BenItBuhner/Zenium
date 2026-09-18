@@ -108,11 +108,16 @@ export interface PageMessage {
 }
 
 export interface PageContextParams {
+  /** Click position in the view's coordinates (DIP), as the host's `context-menu` event gives it. */
   x: number
   y: number
   linkURL: string
+  /** Text of the clicked link (Edge's "Copy link text"); empty for image links. */
+  linkText?: string
   srcURL: string
   mediaType: 'none' | 'image' | 'audio' | 'video' | 'canvas' | 'file' | 'plugin'
+  /** State of the clicked `<video>` / `<audio>`; hosts that cannot tell leave it out. */
+  mediaFlags?: MediaContextFlags
   selectionText: string
   isEditable: boolean
   misspelledWord: string
@@ -132,6 +137,47 @@ export interface PageContextParams {
     canDelete: boolean
     canSelectAll: boolean
   }
+}
+
+/** Chromium's media flags of a clicked media element (the subset the menus read). */
+export interface MediaContextFlags {
+  inError: boolean
+  isPaused: boolean
+  isMuted: boolean
+  hasAudio: boolean
+  isLooping: boolean
+  isControlsVisible: boolean
+  canToggleControls: boolean
+  canSave: boolean
+  canShowPictureInPicture: boolean
+  isShowingPictureInPicture: boolean
+  canLoop: boolean
+}
+
+/**
+ * Chrome elements with a context menu of their own, marked `data-zen-menu` in the renderer: the
+ * URL bar's field and pill, the reload button.
+ */
+export type ChromeMenuTarget = 'urlbar' | 'urlpill' | 'reload'
+
+export const CHROME_MENU_TARGETS: readonly ChromeMenuTarget[] = ['urlbar', 'urlpill', 'reload']
+
+/**
+ * A right-click inside the chrome document (URL bar, toolbar, overlays): what the host's own
+ * `context-menu` event says about the spot, plus which marked chrome element it landed on
+ * (`data-zen-menu` in the renderer; null when none).
+ */
+export interface ChromeContextParams {
+  /** Click position in chrome CSS pixels. */
+  x: number
+  y: number
+  /** `data-zen-menu` of the innermost marked element under the pointer, or null. */
+  target: ChromeMenuTarget | null
+  /** Tab the marked element acts on (`data-zen-menu-tab`); null for a new-tab URL bar. */
+  tabId: string | null
+  isEditable: boolean
+  selectionText: string
+  editFlags: PageContextParams['editFlags']
 }
 
 export interface FindResultInfo {
@@ -291,7 +337,12 @@ export interface TabView {
   getZoom(): number
   findInPage(text: string, forward: boolean, newSession: boolean): void
   stopFind(action: 'clearSelection' | 'keepSelection'): void
-  executeJavaScript(code: string): Promise<unknown>
+  /**
+   * Run `code` in the page's main frame, or in the sub-frame `frameId`
+   * (`PageContextParams.frameId`) on hosts that can address frames; others run it in the main
+   * frame.
+   */
+  executeJavaScript(code: string, frameId?: number): Promise<unknown>
   /** Inject a stylesheet; resolves with a key for `removeInsertedCSS`. */
   insertCSS(css: string): Promise<string>
   removeInsertedCSS(key: string): Promise<void>
@@ -321,7 +372,21 @@ export interface TabView {
 
   // Page operations.
   openDevTools(mode: 'toggle' | 'inspect' | 'console'): void
-  downloadURL(url: string): void
+  /**
+   * Open the developer tools on the element at (`x`, `y`) in the view's coordinates (the
+   * "Inspect Element" of the context menu). Hosts without an inspector leave it out.
+   */
+  inspectElementAt?(x: number, y: number): void
+  /**
+   * Start a download of `url`. `saveAs` asks where to save first, whatever the download setting
+   * says (Chrome's "Save link / image / video as…" always ask); hosts without a picker save to
+   * the downloads folder.
+   */
+  downloadURL(url: string, options?: { saveAs?: boolean }): void
+  /** Reload one sub-frame of the page (`PageContextParams.frameId`); hosts without frames leave it out. */
+  reloadFrame?(frameId: number): void
+  /** Drop the HTTP cache of the page's session ("Empty Cache and Hard Reload"); optional. */
+  clearCache?(): Promise<void>
   print(): void
   /** Save the page (host decides where / whether to ask); resolves with the saved path or null. */
   savePage(suggestedName: string): Promise<string | null>
@@ -410,6 +475,11 @@ export interface WindowHost {
   haptic?(kind: HapticKind): void
   /** Recolour the native caption buttons drawn over the chrome (hosts with an overlay). */
   setCaptionColors?(colors: CaptionColors): void
+  /**
+   * The marked chrome element (`data-zen-menu`) under a point of the chrome document, for the
+   * chrome's own context menus; hosts whose chrome draws its menus itself leave it out.
+   */
+  menuTargetAt?(x: number, y: number): Promise<{ target: string; tabId: string | null } | null>
 }
 
 export interface WindowCreateInit {
@@ -489,7 +559,16 @@ export interface MenuItemTemplate {
 }
 
 export type MenuSource =
-  'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app' | 'bookmark' | 'history'
+  | 'page'
+  | 'tab'
+  | 'selection'
+  | 'space'
+  | 'folder'
+  | 'newtab'
+  | 'app'
+  | 'bookmark'
+  | 'history'
+  | 'urlbar'
 
 export interface MenuPopupOptions {
   source: MenuSource
@@ -733,6 +812,11 @@ export interface AppHost {
    * Unsupported hosts resolve null without doing anything.
    */
   requestDefaultBrowser(): Promise<boolean | null>
+  /**
+   * The OS emoji picker for the focused text field (Chrome's "Emoji" in editable menus); present
+   * only where the system has one (Windows, macOS).
+   */
+  showEmojiPanel?(): void
 }
 
 /**
