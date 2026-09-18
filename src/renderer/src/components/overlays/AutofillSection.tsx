@@ -282,7 +282,7 @@ function CheckRow({
     <label className="zen-v2-af-srow">
       <input
         type="checkbox"
-        className="zen-v2-check"
+        className="zen-v2-checkbox"
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
@@ -557,7 +557,7 @@ function VaultGate({ state }: { state: UIState }): JSX.Element {
               <span className="zen-v2-af-srow-text">
                 <span className="zen-v2-af-srow-label">Unlock</span>
               </span>
-              {busy && <span className="zen-v2-af-row-spinner" aria-hidden />}
+              {busy && <span className="zen-v2-spinner" aria-hidden />}
             </button>
           </div>
         ) : (

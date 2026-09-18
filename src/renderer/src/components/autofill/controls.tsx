@@ -31,14 +31,14 @@ import { wrapTab } from '../bookmarks/popover'
 export { useScrolled, wrapTab } from '../bookmarks/popover'
 
 /**
- * The autofill surfaces' controls in the v2 vocabulary: the shared classes main.css and #115
- * define (`zen-v2-button`, `zen-v2-field`, `zen-v2-icon-button`, `zen-v2-check`, `zen-v2-radio`)
- * wrapped for React, the sheet chassis' own header, title block and footer (`zen-sheet-title`,
- * `zen-sheet-title-block`, `zen-sheet-footer` in main.css) and the surfaces' own layout classes
- * (`zen-v2-af-*` in autofill.css) for desktop title blocks, rows, footers and the menulist. Sizes
- * come from the `--v2-*` density tokens the root sets per form factor, so nothing here asks what
- * it is running on except the menulist, whose popup is a popover on a mouse and a sheet on a
- * phone (§9.13).
+ * The autofill surfaces' controls in the v2 vocabulary: the chassis' shared classes (main.css
+ * and extensions.css: `zen-v2-button`, `zen-v2-field`, `zen-v2-icon-button`, `zen-v2-checkbox`,
+ * the `zen-v2-radio` glyph) wrapped for React, the sheet chassis' own header, title block and
+ * footer (`zen-sheet-title`, `zen-sheet-title-block`, `zen-sheet-footer` in main.css) and the
+ * surfaces' own layout classes (`zen-v2-af-*` in autofill.css) for desktop title blocks, rows,
+ * footers and the menulist. Sizes come from the `--v2-*` density tokens the root sets per form
+ * factor, so nothing here asks what it is running on except the menulist, whose popup is a
+ * popover on a mouse and a sheet on a phone (§9.13).
  */
 
 type Variant = 'primary' | 'secondary' | 'danger' | 'quiet'
@@ -46,15 +46,17 @@ type Variant = 'primary' | 'secondary' | 'danger' | 'quiet'
 /**
  * The v2 button (§6): 32 / 40 tall at radius 4 / 6, 15/500, the text at 10% as the secondary;
  * `primary` is the one accent button of a view (`data-primary`), `danger` the secondary in the
- * danger ink, `quiet` a text button with no fill at rest. `busy` keeps the button's size and
- * opacity, hides its label and turns the 16 px spinner (§9.30, `aria-busy`); it is not disabled,
- * but it takes no presses while it turns.
+ * danger ink, `quiet` a text button with no fill at rest. `busy` is the chassis' §9.30 form: the
+ * button keeps its size, its fill and its opacity, the label stays in the flow at opacity 0 (it
+ * still sizes and names the button) under the 16 px `zen-v2-spinner`, `aria-busy` is set, and
+ * the button is not disabled but takes no presses while it turns.
  */
 export function Btn({
   variant = 'secondary',
   busy = false,
   className,
   type = 'button',
+  onClick,
   children,
   ref,
   ...rest
@@ -71,9 +73,17 @@ export function Btn({
       data-variant={variant === 'danger' || variant === 'quiet' ? variant : undefined}
       aria-busy={busy || undefined}
       className={cn('zen-v2-button', className)}
+      onClick={busy ? undefined : onClick}
       {...rest}
     >
-      {children}
+      {busy ? (
+        <>
+          <span className="zen-v2-button-label">{children}</span>
+          <span className="zen-v2-spinner" aria-hidden />
+        </>
+      ) : (
+        children
+      )}
     </button>
   )
 }
@@ -425,19 +435,15 @@ function PopoverMenulist<T extends string>({
   const listId = useId()
   const current = options.find((o) => o.value === value)
 
-  // Hung from the trigger at its width (§9.13: a panel under the trigger), as tall as its rows up
-  // to 60% of the window (§9.20's cap, which `placePopover` leaves to the caller when it is handed
-  // a height), flipped above when the window ends before they do; a longer list scrolls.
+  // Hung from the trigger at its width (§9.13: a panel under the trigger), as tall as its rows –
+  // `placePopover` holds every chassis popover to 60% of the window (§9.20), so a longer list
+  // scrolls – and flipped above when the window ends before they do.
   const openList = (): void => {
     const el = trigger.current
     if (!el) return
     const anchor = toRect(el.getBoundingClientRect())
-    const viewport = viewportSize()
-    const height = Math.min(
-      MENU_PADDING * 2 + options.length * MENU_ROW,
-      Math.floor(viewport.height * 0.6)
-    )
-    setBox(placePopover(anchor, anchor, viewport, { measured: anchor.width }, height))
+    const height = MENU_PADDING * 2 + options.length * MENU_ROW
+    setBox(placePopover(anchor, anchor, viewportSize(), { measured: anchor.width }, height))
   }
   const close = (focusTrigger: boolean): void => {
     setBox(null)
@@ -651,10 +657,27 @@ export function MenuSheet<T extends string>({
   // a menulist's popup does.
   const list = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    const checked = list.current?.querySelector<HTMLInputElement>('input:checked')
+    const checked = list.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')
     checked?.focus({ preventScroll: true })
-    checked?.closest('label')?.scrollIntoView({ block: 'center' })
+    checked?.scrollIntoView({ block: 'center' })
   }, [])
+  // The rows are buttons in the radio role around the chassis' radio glyph, so the arrow keys
+  // walk them as a radio group would, wrapping at the ends.
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    const rows = Array.from(
+      list.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? []
+    )
+    if (rows.length === 0) return
+    e.preventDefault()
+    const at = rows.findIndex((row) => row === document.activeElement)
+    const step = e.key === 'ArrowDown' ? 1 : -1
+    rows[(at + step + rows.length) % rows.length]?.focus()
+  }
+  const pick = (v: T): void => {
+    if (v !== value) onChange(v)
+    sheet.current?.dismiss()
+  }
   // In the body like every sheet: a layer inside another sheet's transformed box would not be
   // fixed to the viewport.
   return createPortal(
@@ -667,28 +690,31 @@ export function MenuSheet<T extends string>({
     >
       <div className="zen-v2-af zen-v2-af-choices" data-surface="page">
         {description && <SheetTitleBlock id={titleId} title={title} description={description} />}
-        <div ref={list} role="radiogroup" aria-labelledby={titleId} className="zen-v2-af-list">
+        <div
+          ref={list}
+          role="radiogroup"
+          aria-labelledby={titleId}
+          className="zen-v2-af-list"
+          onKeyDown={onKeyDown}
+        >
           {options.map((o) => (
-            <label key={o.value} className="zen-v2-af-row">
-              <input
-                type="radio"
+            <button
+              key={o.value}
+              type="button"
+              role="radio"
+              aria-checked={o.value === value}
+              className="zen-v2-af-row"
+              onClick={() => pick(o.value)}
+            >
+              <span
                 className="zen-v2-radio"
-                name={name}
-                value={o.value}
-                checked={o.value === value}
-                onChange={() => {
-                  onChange(o.value)
-                  sheet.current?.dismiss()
-                }}
-                // A radio that is checked already fires no change: the tap still leaves.
-                onClick={() => {
-                  if (o.value === value) sheet.current?.dismiss()
-                }}
+                data-checked={o.value === value || undefined}
+                aria-hidden
               />
               <span className="zen-v2-af-row-text">
                 <span className="zen-v2-af-row-title">{o.label}</span>
               </span>
-            </label>
+            </button>
           ))}
         </div>
       </div>
