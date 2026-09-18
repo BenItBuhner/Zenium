@@ -279,6 +279,9 @@ function useGlobalKeys(state: UIState): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
+      // A popover that closed itself on this Escape (a Settings menulist, a Radix layer) has
+      // claimed the key: it returns focus to its anchor and the overlay under it stays open.
+      if (e.defaultPrevented) return
       const ui = uiStore.get()
       if (ui.urlbar.open) return // handled by the URL bar input
       if (ui.menu) return // handled by the menu layer
