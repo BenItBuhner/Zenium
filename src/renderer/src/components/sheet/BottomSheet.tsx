@@ -3,6 +3,11 @@ import { useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
 import {
+  registerRecedeLayer,
+  type RecedeHandle,
+  type RecedeLayerFrame
+} from '@renderer/lib/motion/recede'
+import {
   computeDetents,
   detentForField,
   fieldOverflow,
@@ -10,9 +15,10 @@ import {
   type SheetDetents
 } from '@renderer/lib/motion/sheet'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
+import type { Hold } from '@renderer/lib/pageView'
 import { isTextField, sheetInitialFocus, wrapTab } from '@renderer/lib/popover'
 import { holdChromeInert } from '@renderer/lib/portals'
-import { uiStore } from '@renderer/lib/ui'
+import { activePageCovered, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 
 /**
@@ -68,26 +74,6 @@ interface Props {
 type Zone = 'grip' | 'body' | 'scrim'
 type Mode = 'pending' | 'sheet' | 'none'
 
-/**
- * Sheets stack two deep (v2 draft §9.24, §11.2). The page holds the one scrim share the lowest
- * sheet put over it and recedes no further; a sheet that opens over a sheet recedes the sheet
- * under it exactly as the page recedes under a single sheet – scale .97 about its bottom centre
- * and 6 px more corner radius, driven by the upper sheet's progress – with the lower sheet's
- * content inert, and on the same progress the lower sheet's scrim fades out while the upper's
- * fades in, so the stack's one scrim is the top sheet's, above the page and the lower sheet
- * alike, and the lower sheet reads as receded and dimmed under it (the design lead's ruling on
- * #134: §9.24's "the top sheet's scrim sits above the lower sheet too"). Should the lower sheet
- * leave first, the one above takes over whatever is under it: the page's recede and the scrim.
- */
-interface StackedSheet {
-  /** Recede by `progress` under the sheet above, the own scrim giving way on the same value. */
-  recede(progress: number): void
-  setInert(on: boolean): void
-  /** The sheet beneath this one changed (it left): recede `next`, or the page when there is none. */
-  under(next: StackedSheet | null): void
-}
-const stack: StackedSheet[] = []
-
 interface Touch {
   id: number
   x0: number
@@ -123,10 +109,16 @@ function track(tracker: VelocityTracker, e: ReactPointerEvent<HTMLElement>): voi
  * below the peek it slides down whole. The motion writes to the DOM straight from its frames;
  * React only renders the content.
  *
+ * The sheet is on the recede chassis (`lib/motion/recede.ts`, v2 draft §11): the page behind
+ * recedes and the bottom bar fades on the sheet's own progress, reversibly, and a sheet mounted
+ * over another recedes the lower one and makes it inert – nothing to opt into. Where the chrome
+ * lies under the pages it comes up only once the live page has given way to its picture
+ * (`activePageCovered`), so the recede never starts on a page that is about to be swapped.
+ *
  * The body scrolls natively only while the sheet rests expanded; pulling down on a body that
  * sits at its top drags the sheet instead. Everything else (Escape, system back, a picked item)
  * goes through `dismiss`, and the `back*` methods let a predictive back gesture drive the same
- * motion.
+ * motion. A press on the scrim dismisses on `pointerdown` (§9.20).
  *
  * The keyboard (v2 draft §9.22, §9.24) is the chassis's too, so every sheet has it: as the sheet
  * opens, focus moves into it – the checked option, else the first row or control that is not a
@@ -167,45 +159,51 @@ export function BottomSheet({
   const resizedWhileUp = useRef(false)
   const latest = useRef({ onDismissed })
   const insets = uiStore.use((s) => s.insets)
-  /** The sheet this one opened over, if any (§9.24): it takes the recede in place of the page. */
-  const lower = useRef<StackedSheet | null>(null)
-  /** This sheet is the lowest of its stack: the page's recede is its to write and to release. */
-  const ownsPage = useRef(false)
-  /** This sheet's place on the stack, once it has one. */
-  const entry = useRef<StackedSheet | null>(null)
-  /** No sheet above this one: it holds the focus and answers the keyboard (§9.24). */
-  const onTop = (): boolean => entry.current !== null && stack.at(-1) === entry.current
+  /** This sheet's layer on the recede stack, for as long as it is mounted. */
+  const recede = useRef<RecedeHandle | null>(null)
+  /** What the stack says about this sheet: how far it recedes under a sheet above, its scrim's share. */
+  const layerFrame = useRef<RecedeLayerFrame>({ recede: 0, scrim: 0, inert: false })
+  /** No sheet above this one on the stack: it holds the focus and answers the keyboard (§9.24). */
+  const onTop = (): boolean => recede.current?.onTop() ?? false
+  /** The wait for the live page to give way to its picture before the sheet comes up. */
+  const hold = useRef<Hold | null>(null)
 
   // The motion lives in a ref and is only ever touched from effects and event handlers.
   const motionRef = useRef<SheetMotion | null>(null)
-  /** Writes the motion's frame to the DOM: the sheet's box, then the scrim or the recede beneath. */
+
+  /**
+   * Write the frame: the motion's geometry and the stack's recede together. Position and recede
+   * share `transform`; the scale is the chassis rule in main.css (`--zen-layer-scale`), fed the
+   * upper sheet's progress through `--zen-layer-recede`, which also grows the top corners.
+   */
   const paint = (): void => {
     const sheet = sheetRef.current
     const scrim = scrimRef.current
     const m = motionRef.current
     if (!sheet || !scrim || !m) return
     const frame = m.frame()
+    const layer = layerFrame.current
     sheet.style.height = `${frame.height}px`
-    sheet.style.transform = `translate3d(0, ${frame.translateY}px, 0)`
-    const progress = frame.scrim.toFixed(4)
-    if (lower.current) {
-      // Over another sheet (§9.24, §11.2): this scrim comes in on the sheet's progress while the
-      // sheet beneath recedes and its scrim goes out on the same value – the page keeps the one
-      // share it had, and the lower sheet ends up receded and dimmed under this one.
-      scrim.style.opacity = progress
-      lower.current.recede(frame.scrim)
-    } else {
-      // The scrim's colour and full opacity are the `--zen-scrim` token's; only its share moves.
-      scrim.style.opacity = progress
-      // The page behind recedes and the bottom bar fades with the same progress (main.css).
-      document.documentElement.style.setProperty('--zen-recede', progress)
-    }
+    sheet.style.transform = `translate3d(0, ${frame.translateY}px, 0) scale(var(--zen-layer-scale, 1))`
+    sheet.style.setProperty('--zen-layer-recede', layer.recede.toFixed(4))
+    // Under another sheet the content takes no input (§9.24); the sheet above owns the gesture.
+    // The sheet is promoted only while it stands recessed (main.css `data-recessed`).
+    sheet.toggleAttribute('inert', layer.inert)
+    sheet.toggleAttribute('data-recessed', layer.inert)
+    // The scrim's colour and full opacity are the token's; its share is the sheet's progress,
+    // fading out as a sheet above fades its own in, so the stack shows one scrim.
+    scrim.style.opacity = (frame.scrim * (1 - layer.recede)).toFixed(4)
     syncLock()
   }
   const motion = (): SheetMotion =>
     (motionRef.current ??= new SheetMotion({
       detents: () => detents.current,
-      onChange: paint,
+      onChange: () => {
+        // The page behind recedes and the bottom bar fades with the same progress, through the
+        // chassis (`--zen-recede`, main.css); a sheet above recedes this one by its own.
+        recede.current?.progress(motionRef.current!.frame().scrim)
+        paint()
+      },
       onClosed: () => {
         const then = afterDismiss.current
         afterDismiss.current = null
@@ -218,6 +216,26 @@ export function BottomSheet({
   const syncLock = (): void => {
     const locked = !motion().restingExpanded || touch.current?.mode === 'sheet'
     sheetRef.current?.setAttribute('data-locked', String(locked))
+  }
+
+  /**
+   * Bring the sheet up once the live page is off the screen (at once where nothing has to be
+   * waited for). Until then the sheet is laid out but invisible, so that a sheet never recedes
+   * a page that is about to be replaced by its picture – the swap would show. Escape, back or a
+   * dismissal during the wait take the sheet down without a slide.
+   */
+  const present = (): void => {
+    if (hold.current) return
+    const h = activePageCovered()
+    hold.current = h
+    void h.promise.then(() => {
+      if (hold.current !== h) return
+      hold.current = null
+      const m = motion()
+      if (m.isOpen) return
+      m.present()
+      if (sheetRef.current) sheetRef.current.style.visibility = 'visible'
+    })
   }
 
   const measure = (): void => {
@@ -237,8 +255,7 @@ export function BottomSheet({
     )
     const m = motion()
     if (m.isOpen) m.refresh()
-    else m.present()
-    sheet.style.visibility = 'visible'
+    else present()
   }
 
   /**
@@ -281,77 +298,36 @@ export function BottomSheet({
     latest.current = { onDismissed }
   })
 
-  // Take a place on the stack before the first frame, so it knows whether it draws the scrim and
-  // recedes the page (the content frame is promoted while it is up, and released – with the
-  // recede – after) or recedes the sheet beneath. While this sheet is up the chrome behind the
-  // scrim is inert (one hold per sheet; they nest) and so is the lower sheet; when it goes the
-  // chrome or the lower sheet comes back first, and then focus – still in this sheet, or dropped
-  // to nothing by a scrim tap or the inert beneath – returns to the control that opened it
-  // (§9.22, §9.24), which for a stacked sheet is a row of the sheet beneath.
+  // On the recede stack from mount to unmount: every sheet, whatever it holds (v2 draft §11.1).
+  // Before the measure below, so the first frame the motion writes already reaches the page.
+  // While this sheet is up the chrome behind the scrim is inert (`holdChromeInert`; one hold per
+  // sheet, they nest) and so is the sheet beneath, from the stack. When it goes the chrome and
+  // the lower sheet come back first, and then focus – still in this sheet, or dropped to nothing
+  // by a scrim tap or the inert beneath – returns to the control that opened it (§9.22, §9.24),
+  // which for a stacked sheet is a row of the sheet beneath; a sheet leaving from under another
+  // leaves focus to that one.
   useLayoutEffect(() => {
     const sheet = sheetRef.current
-    if (!sheet) return
-    const root = document.documentElement
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const releaseChrome = holdChromeInert()
-    const takePage = (): void => {
-      if (ownsPage.current) return
-      ownsPage.current = true
-      root.dataset.receding = 'true'
-    }
-    const releasePage = (): void => {
-      if (!ownsPage.current) return
-      ownsPage.current = false
-      delete root.dataset.receding
-      root.style.removeProperty('--zen-recede')
+    const handle = registerRecedeLayer((frame) => {
+      layerFrame.current = frame
+      paint()
+    })
+    recede.current = handle
+    return () => {
+      const above = !handle.onTop()
+      recede.current = null
+      handle.release()
+      releaseChrome()
       // The layout reporter measures the content frame on resize; a measurement taken while the
       // frame stood receded is 3 % small, so have it look again now that the frame is back.
       if (resizedWhileUp.current) window.dispatchEvent(new Event('resize'))
-    }
-    const place: StackedSheet = {
-      recede: (progress) => {
-        sheet.style.setProperty('--zen-sheet-recede', progress.toFixed(4))
-        sheet.style.scale = progress > 0 ? (1 - 0.03 * progress).toFixed(4) : ''
-        // The own scrim gives way to the upper sheet's (§11.2): its resting share times 1 - q.
-        const scrim = scrimRef.current
-        const m = motionRef.current
-        if (scrim && m) scrim.style.opacity = (m.frame().scrim * (1 - progress)).toFixed(4)
-      },
-      setInert: (on) => {
-        sheet.inert = on
-        if (on) sheet.dataset.recessed = 'true'
-        else delete sheet.dataset.recessed
-      },
-      under: (next) => {
-        lower.current = next
-        if (next) next.setInert(true)
-        else takePage()
-        paint()
-      }
-    }
-    entry.current = place
-    lower.current = stack.at(-1) ?? null
-    stack.push(place)
-    if (lower.current) lower.current.setInert(true)
-    else takePage()
-    return () => {
-      const at = stack.indexOf(place)
-      const above = at === -1 ? undefined : stack[at + 1]
-      if (at !== -1) stack.splice(at, 1)
-      entry.current = null
-      const beneath = lower.current
-      lower.current = null
-      beneath?.recede(0)
-      beneath?.setInert(false)
-      releasePage()
-      releaseChrome()
-      // Left from under another sheet: that one now sits on whatever this one sat on.
-      above?.under(beneath)
       const active = document.activeElement
-      if (!above && (!active || active === document.body || sheet.contains(active)))
+      if (!above && (!active || active === document.body || sheet?.contains(active)))
         opener?.focus({ preventScroll: true })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- registered once per mount
   }, [])
 
   // Focus moves into the sheet as it opens (§9.22) – after the layout effects above have shown
@@ -455,6 +431,8 @@ export function BottomSheet({
   // Unmounted mid-motion (the host hid the menu): stop the spring without reporting a close.
   useEffect(
     () => () => {
+      hold.current?.cancel()
+      hold.current = null
       const m = motionRef.current
       if (!m) return
       afterDismiss.current = null
@@ -464,7 +442,22 @@ export function BottomSheet({
     []
   )
 
+  /**
+   * Dismissed while still waiting for the page to be covered: nothing is on screen to slide
+   * away, so the sheet is simply gone. True when that was the case.
+   */
+  const dropHold = (then?: () => void): boolean => {
+    const h = hold.current
+    if (!h) return false
+    h.cancel()
+    hold.current = null
+    then?.()
+    latest.current.onDismissed()
+    return true
+  }
+
   const dismiss = (then?: () => void): void => {
+    if (dropHold(then)) return
     const m = motion()
     if (!m.isOpen) return
     if (then) afterDismiss.current = then
@@ -478,7 +471,9 @@ export function BottomSheet({
       backProgress: (progress) => {
         if (!touch.current) motion().backProgress(progress)
       },
-      commitBack: () => motion().backCommit(),
+      commitBack: () => {
+        if (!dropHold()) motion().backCommit()
+      },
       cancelBack: () => motion().backCancel()
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the handle only reaches through refs
@@ -511,7 +506,8 @@ export function BottomSheet({
     swallowClick.current = false
     const moving = motion().current.phase === 'settling'
     // A press on a resting sheet's scrim is the dismissal itself (v2 draft §9.20, consumed on
-    // `pointerdown`): the click that follows it reaches nothing.
+    // `pointerdown`): the click that follows it reaches nothing. A press on the scrim while the
+    // sheet moves catches the sheet instead.
     if (!moving && zone === 'scrim') {
       e.preventDefault()
       swallowClick.current = true
@@ -593,6 +589,7 @@ export function BottomSheet({
       ref={layerRef}
       className={hosted ? 'absolute inset-0' : 'fixed inset-0 z-[90]'}
       data-surface="page"
+      data-sheet-layer="true"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={(e) => finish(e, false)}

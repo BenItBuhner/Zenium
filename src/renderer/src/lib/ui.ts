@@ -15,6 +15,8 @@ import type { Anchor } from './anchor'
 import type { PopoverAlignment } from './portals'
 import { cmd, onEvent, run } from './api'
 import { afterKeyRelease } from './keyRelease'
+import { pageCovered, pageOffScreen, pageViewStore, type Hold } from './pageView'
+import { activeTab } from './selectors'
 import { createStore } from './store'
 import { rememberThumbnail, thumbnailOf } from './thumbnails'
 
@@ -694,7 +696,15 @@ export function returnFocusToPage(): void {
   if (!chromeNeedsKeyboard()) run('focus.content', undefined)
 }
 
-/** Drop the cached snapshot once nothing needs it, so the next overlay gets a fresh capture. */
+/** A snapshot nothing needs any more, kept only until the host draws the page back. */
+let snapshotStale = false
+
+/**
+ * Drop the cached snapshot once nothing needs it, so the next overlay gets a fresh capture.
+ * Where the chrome lies under the pages the picture stays a little longer: until the host has
+ * drawn the live page back in its place (`lib/pageView.ts`), so the frame between shows the
+ * page's picture and not the window behind it; the drop then follows on its own.
+ */
 export function invalidateSnapshot(): void {
   const ui = uiStore.get()
   if (
@@ -726,8 +736,33 @@ export function invalidateSnapshot(): void {
     !ui.siteDataConfirm &&
     !bookmarkChromeOpen(ui)
   ) {
+    if (ui.snapshotTabId && pageOffScreen(pageViewStore.get(), ui.snapshotTabId)) {
+      snapshotStale = true
+      return
+    }
+    snapshotStale = false
     uiStore.set({ snapshot: null, snapshotTabId: null })
   }
+}
+
+/**
+ * Wait for the active page's live view to be off the screen before a sheet comes up over its
+ * picture (`pageCovered`): resolves at once when no chrome surface is covering the page – then
+ * nothing is going to take the view down – or where the swap needs no timing.
+ */
+export function activePageCovered(): Hold {
+  const state = browserStore.get().state
+  const ui = uiStore.get()
+  if (!state || !overlayCoversContent(ui)) return { promise: Promise.resolve(), cancel: () => {} }
+  return pageCovered(activeTab(state)?.id ?? null, state.platform)
+}
+
+const snapshotFlags = globalThis as unknown as { __zenSnapshotWired?: boolean }
+if (!snapshotFlags.__zenSnapshotWired) {
+  snapshotFlags.__zenSnapshotWired = true
+  pageViewStore.subscribe(() => {
+    if (snapshotStale) invalidateSnapshot()
+  })
 }
 
 // ---------------------------------------------------------------------------

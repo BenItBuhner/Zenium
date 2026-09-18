@@ -950,6 +950,46 @@
   .zen-frame-dialogs[data-open] .zen-frame-dialogs-slot > * {
     pointer-events: auto;
   }
+  /*
+   * On a phone the host's dialogs are sheets, and the host is on the sheet chassis (v2 draft
+   * §11.1, §11.5, `useSheetChassis` in lib/portals.tsx): its scrim is the sheet scrim at the
+   * sheet's progress and the slot rises in and fades on the sheet spring, both written per
+   * frame with the page's recede; the panels' own pop does not run on top of the rise. Under
+   * another sheet the slot recedes about its bottom centre like any lower sheet (§11.2), on the
+   * same rule as `.zen-sheet`. The host carries `data-sheet-up` while anything of the sheet
+   * shows: it takes the pointer that long, so a press on the way down lands on the scrim and not
+   * on the page under it; at progress 0 (the wait for the page's cover) the dialogs take none –
+   * except a sheet on the chassis already (`[data-sheet-layer]`, `BottomSheet` placed `hosted`),
+   * which runs its own progress and keeps the host's chassis down.
+   */
+  .zen-frame-dialogs[data-sheet] .zen-frame-scrim {
+    background: var(--zen-scrim);
+    animation: none;
+    will-change: opacity;
+  }
+  .zen-frame-dialogs[data-sheet-up] {
+    pointer-events: auto;
+  }
+  .zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot {
+    --zen-layer-scale: calc(1 - 0.03 * var(--zen-layer-recede, 0) * var(--zen-recede-gain, 1));
+    transform-origin: 50% 100%;
+    will-change: transform, opacity;
+  }
+  .zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot > * {
+    animation: none;
+  }
+  .zen-frame-dialogs[data-sheet]:not([data-sheet-up])
+    .zen-frame-dialogs-slot
+    > :not([data-sheet-layer]) {
+    pointer-events: none;
+  }
+  /* Reduced motion (§11.3): the spring jumps, and the jump becomes a 120 ms fade in place. */
+  @media (prefers-reduced-motion: reduce) {
+    .zen-frame-dialogs[data-sheet] .zen-frame-scrim,
+    .zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot {
+      transition: opacity 120ms var(--zen-ease);
+    }
+  }
   .zen-chrome-layer {
     position: fixed;
     inset: 0;
@@ -1877,16 +1917,23 @@
    * The phone sheet chassis (design language v2 §6 sheets, §3, §9.16, §9.25): a neutral, opaque
    * dialog surface with a hairline edge and the sheet shadow, radius 12 on top, no side padding
    * of its own – rows run edge to edge and carry the 16 px gutter themselves. Dark adds nothing:
-   * the border is the edge. Under a sheet stacked on it (§11.2) it recedes as a page does, on
-   * `--zen-sheet-recede` (0…1, written per frame by the sheet above): scaled about its bottom
-   * edge so it does not lift off it, its top corners 12 → 18.
+   * the border is the edge.
+   *
+   * Under a sheet stacked on it (v2 draft §11.2) it recedes as the page does, on
+   * `--zen-layer-recede` (0…1, written by the chassis from the upper sheet's progress): scaled
+   * about its bottom centre so it does not lift off the edge it rests on, its top corners
+   * 12 → 18; the sheet's own radius stays in `--zen-sheet-radius` so a surface at another
+   * radius keeps it.
    */
   .zen-sheet {
+    --zen-sheet-radius: var(--v2-radius-sheet);
+    --zen-layer-scale: calc(1 - 0.03 * var(--zen-layer-recede, 0) * var(--zen-recede-gain, 1));
+    --zen-layer-radius: calc(
+      var(--zen-sheet-radius) + 6px * var(--zen-layer-recede, 0) * var(--zen-recede-gain, 1)
+    );
     border: 1px solid var(--v2-border);
     border-bottom: 0;
-    /* Under a second sheet the corner grows by 6 with the recede (v2 §9.24), as the page's does. */
-    border-radius: calc(var(--v2-radius-sheet) + 6px * var(--zen-sheet-recede, 0))
-      calc(var(--v2-radius-sheet) + 6px * var(--zen-sheet-recede, 0)) 0 0;
+    border-radius: var(--zen-layer-radius) var(--zen-layer-radius) 0 0;
     background: var(--v2-panel);
     color: var(--v2-text);
     box-shadow: var(--v2-shadow-sheet);
@@ -4162,13 +4209,26 @@
 
 /*
  * A sheet coming up pushes the page back: the content frame recedes (scale 1 → .97, its corner
- * 14 → 20) and the bottom bar fades out, both from the sheet's own progress – `--zen-recede`,
- * 0…1, written per frame by the sheet along with its scrim. The frame is promoted only while a
- * sheet is up (`data-receding`).
+ * +6 px) and the bottom bar fades out, both from the sheet's own progress – `--zen-recede`,
+ * 0…1, written per frame by the sheet chassis (`lib/motion/recede.ts`) along with its scrim;
+ * every sheet on the chassis drives it, and a second sheet over the first pushes the page no
+ * further (design language v2 draft §11.1, §11.2). The frame is promoted only while a sheet is
+ * up (`data-receding`). Under `prefers-reduced-motion` the value is still written but the gain
+ * is 0: the page does not recede and the bar does not fade (§11.3); the sheet's spring jumps.
  */
+:root {
+  --zen-recede-gain: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --zen-recede-gain: 0;
+  }
+}
 :root[data-form-factor='phone'] .zen-content-frame {
-  transform: scale(calc(1 - 0.03 * var(--zen-recede, 0)));
-  border-radius: calc(var(--zen-content-radius) + 6px * var(--zen-recede, 0));
+  transform: scale(calc(1 - 0.03 * var(--zen-recede, 0) * var(--zen-recede-gain, 1)));
+  border-radius: calc(
+    var(--zen-content-radius) + 6px * var(--zen-recede, 0) * var(--zen-recede-gain, 1)
+  );
 }
 /* The load bar and the messages sit on the frame's edges: they recede with it. */
 :root[data-form-factor='phone'] .zen-load-progress-layer,
@@ -4219,7 +4279,7 @@
   will-change: transform;
 }
 :root[data-form-factor='phone'] .zen-phone-bar {
-  opacity: calc(1 - var(--zen-recede, 0));
+  opacity: calc(1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1));
 }
 
 /* Mobile hosts: keep the chrome out of the status bar, cutouts, gesture bar and keyboard. */
