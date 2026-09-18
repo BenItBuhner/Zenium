@@ -104,11 +104,10 @@ function Editor({ edit, phone }: { edit: AutofillEdit; phone: boolean }): JSX.El
         register={(fn) => (submit.current = fn)}
       />
     )
+  // Cancel stays live while Save works (§9.30: busy dims nothing; the save completes on its own).
   const footer = (
     <Footer count={2}>
-      <Btn onClick={closeAutofillEdit} disabled={busy}>
-        Cancel
-      </Btn>
+      <Btn onClick={closeAutofillEdit}>Cancel</Btn>
       <Btn type="submit" variant="primary" busy={busy}>
         Save
       </Btn>
