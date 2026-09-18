@@ -379,7 +379,8 @@ function ExtensionCard({
           )}
         </span>
       </button>
-      <div className="zen-ext-card-controls">
+      {/* The controls are the ⋯'s bar (§9.20): its menu end-aligns with it, flush under the row. */}
+      <div className="zen-ext-card-controls" data-bar="">
         {/* Working, the button stays at its size with a spinner for its label (§9.30 busy). */}
         {(ext.updateState === 'available' || ext.updateState === 'updating') && (
           <V2Button

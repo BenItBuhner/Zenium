@@ -911,8 +911,13 @@
     flex-shrink: 0;
     align-items: center;
     gap: 4px;
-    /* Centred on the 22px name line. */
-    height: 22px;
+    /*
+     * The row is the ⋯'s bar (§9.20: its menu hangs flush under the row's bottom edge and, as
+     * the trailing control's, end-aligns with it): the icon button's own height, drawn centred
+     * on the 22px name line, so the card's layout is the 22 it was.
+     */
+    height: var(--v2-icon-button);
+    margin-block: calc((22px - var(--v2-icon-button)) / 2);
   }
   .zen-ext-list {
     display: flex;
