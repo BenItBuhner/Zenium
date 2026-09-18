@@ -277,7 +277,9 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
             }
             SystemClock.sleep(2_000)
         }
-        if (reveal("Image") != null && tapLabel(Finger(), "Image", 4_000)) {
+        val imageRow = revealRow("Image")
+        if (imageRow != null) {
+            Finger().tap(imageRow.exactCenterX(), imageRow.exactCenterY())
             SystemClock.sleep(2_200)
             shot("08-wallpaper-image")
             finding("  Image source: ${newTabSettings()} ${verdict(newTabSetting("wallpaper") == "image")}")
@@ -326,6 +328,25 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
             it.isClickable &&
                 (it.contentDescription?.toString() == site.caption || it.text?.toString() == site.caption)
         }?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+
+    /**
+     * A sheet row with a description under its label (the Image wallpaper source) is one radio
+     * button whose name runs the two together ("Image A picture from this device"), so the label
+     * alone never matches: find the row by its label as a prefix, scroll it into view and return
+     * where it is then; null when the sheet has no such row.
+     */
+    private fun revealRow(label: String): Rect? {
+        val named: (String?) -> Boolean = { name ->
+            name != null && name.startsWith(label) && (name.length == label.length || !name[label.length].isLetterOrDigit())
+        }
+        val find = {
+            findNodeWhere { it.isClickable && (named(it.contentDescription?.toString()) || named(it.text?.toString())) }
+        }
+        val row = find() ?: return null
+        row.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+        SystemClock.sleep(1_500)
+        return find()?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+    }
 
     private fun awaitTile(site: Site, timeoutMs: Long): Rect? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
