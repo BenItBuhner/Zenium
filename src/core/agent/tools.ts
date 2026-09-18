@@ -18,6 +18,7 @@ import { pageCall, type PageLocation } from './page'
 import type { JsonSchema, ToolDefinition, ToolResult } from './protocol'
 import type { AgentService, AgentSession } from './service'
 import { looksLikeStatements, sleep, textError } from './util'
+import type { ZenWindow } from '../window'
 
 export { looksLikeStatements }
 
@@ -380,17 +381,96 @@ async function settle(ctx: ToolContext, tabId: string): Promise<void> {
 }
 
 /**
- * Trusted OS-level input when the tab is actually on screen (foreground), synthetic in-page
- * input otherwise. Trusted events carry `isTrusted` and drive complex widgets, but Chromium only
- * hit-tests a painted, visible view; a hidden background tab is driven through the page runtime,
- * whose native `.click()` still performs default actions.
+ * How long a foreground tool waits for the page to come on screen before it degrades: long
+ * enough for a cold start's first layout report to place the view (the sign-in smoke of #151
+ * saw it arrive late on a busy runner), short enough not to stall an agent on a tab the user
+ * keeps covered.
+ */
+export const ON_SCREEN_WAIT_MS = 2000
+let onScreenWaitMs = ON_SCREEN_WAIT_MS
+
+/** Test seam: the degraded path without a real two-second wait. */
+export function setOnScreenWaitMsForTests(ms: number): void {
+  onScreenWaitMs = ms
+}
+
+/**
+ * Whether the tab's page is painted where the user sees it: its view is shown, the chrome's
+ * last layout report placed it, and no chrome covers the content area (the URL bar, a menu, a
+ * dialog – anything the report flags as `contentHidden`). Only such a view hit-tests real input.
+ */
+function isOnScreen(win: ZenWindow, view: TabView, tabId: string): boolean {
+  return view.isVisible() && !win.contentHidden && win.viewRect(tabId) !== null
+}
+
+async function waitOnScreen(ctx: ToolContext, tabId: string, view: TabView): Promise<boolean> {
+  const win = ctx.browser.tabs.windowFor(tabId)
+  const deadline = Date.now() + onScreenWaitMs
+  for (;;) {
+    if (isOnScreen(win, view, tabId)) return true
+    if (Date.now() >= deadline) return false
+    await sleep(Math.min(60, Math.max(1, deadline - Date.now())))
+  }
+}
+
+/** The way a tool delivers input, decided before it acts (see `routeInput`). */
+export interface InputRouting {
+  /** Real, trusted input through the host; false is the synthetic in-page path. */
+  trusted: boolean
+  /** The warning the tool result carries when the input was synthetic, else null. */
+  note: string | null
+}
+
+export function syntheticInputNote(cause: string): string {
+  return `input: synthetic – ${cause}, so the event was dispatched as a scripted DOM event instead of real input. It is untrusted (isTrusted: false) and armed no user gesture: a pop-up, download or permission prompt it would have opened did not fire. Real input needs the tab on screen: foreground mode, with no URL bar or other chrome overlay covering the page.`
+}
+
+/**
+ * Real input – a trusted OS-level event Chromium routes to the frame under the point, cross-origin
+ * iframes included, that counts as a user gesture – only works on a painted, on-screen view. This
+ * decides the path once per tool call and never degrades silently: background mode is synthetic
+ * by design (the agent asked to keep the tab off screen); in the foreground the tool waits up to
+ * `ON_SCREEN_WAIT_MS` for the chrome to place the view and drop any overlay, and if the page is
+ * still not on screen – or another element covers the point, where a real click would hit that
+ * element instead – it takes the synthetic path and says so in the result.
  *
  * Both paths reach into cross-origin iframes: trusted input is sent at top-viewport coordinates
  * and the host routes it to the frame under the point; synthetic input runs the page runtime
  * inside the frame the element belongs to (`Located.frameId`).
  */
-function wantTrustedInput(view: TabView, loc?: PageLocation): boolean {
-  return Boolean(view.sendInput) && view.isVisible() && (!loc || !loc.covered)
+export async function routeInput(
+  ctx: ToolContext,
+  tabId: string,
+  view: TabView,
+  loc?: PageLocation
+): Promise<InputRouting> {
+  if (!view.sendInput)
+    return { trusted: false, note: syntheticInputNote('this browser cannot send real input') }
+  if (ctx.session.mode === 'background')
+    return {
+      trusted: false,
+      note: syntheticInputNote('you are in background mode and the tab is kept off screen')
+    }
+  if (!(await waitOnScreen(ctx, tabId, view)))
+    return {
+      trusted: false,
+      note: syntheticInputNote(
+        `the tab did not come on screen within ${Math.round(onScreenWaitMs / 1000)} s (chrome such as the URL bar covers the page, or another tab is in front)`
+      )
+    }
+  if (loc?.covered)
+    return {
+      trusted: false,
+      note: syntheticInputNote(
+        'another element covers this point, so real input would have hit that element'
+      )
+    }
+  return { trusted: true, note: null }
+}
+
+/** The tool's headline plus the synthetic-input warning line when the input was not real. */
+function withInputNote(headline: string, routing: InputRouting): string {
+  return routing.trusted || !routing.note ? headline : `${headline}\n${routing.note}`
 }
 
 async function clickAt(
@@ -398,10 +478,11 @@ async function clickAt(
   view: TabView,
   loc: Located,
   target: string,
-  opts: { button: 'left' | 'right' | 'middle'; count: number; modifiers: InputModifier[] }
+  opts: { button: 'left' | 'right' | 'middle'; count: number; modifiers: InputModifier[] },
+  trusted: boolean
 ): Promise<'trusted' | 'synthetic'> {
-  if (wantTrustedInput(view, loc)) {
-    await view.sendInput!({
+  if (trusted && view.sendInput) {
+    await view.sendInput({
       type: 'click',
       x: loc.x,
       y: loc.y,
@@ -420,14 +501,15 @@ async function clickAt(
   return 'synthetic'
 }
 
-/** Move the pointer over an element: trusted when the page is on screen, synthetic otherwise. */
+/** Move the pointer over an element: real input when routed so, synthetic in-page events otherwise. */
 async function hoverAt(
   page: FramePage,
   view: TabView,
   loc: Located,
-  target: string | null
+  target: string | null,
+  trusted: boolean
 ): Promise<'trusted' | 'synthetic'> {
-  if (wantTrustedInput(view, loc) && view.sendInput) {
+  if (trusted && view.sendInput) {
     await view.sendInput({ type: 'mouseMove', x: loc.x, y: loc.y })
     return 'trusted'
   }
@@ -450,10 +532,11 @@ async function pressKey(
   page: FramePage,
   view: TabView,
   key: string,
-  mods: InputModifier[]
+  mods: InputModifier[],
+  trusted: boolean
 ): Promise<void> {
-  if (wantTrustedInput(view)) {
-    await view.sendInput!({ type: 'key', key, modifiers: mods })
+  if (trusted && view.sendInput) {
+    await view.sendInput({ type: 'key', key, modifiers: mods })
     return
   }
   const r = await frameAction(page, focusedFrame(page), pageCall('keyJs', key, mods))
@@ -1065,24 +1148,29 @@ const browserClick: AgentTool = {
     const { loc, target } = await locateArg(page, args, 'browser_click')
     if (loc.disabled)
       return textError(`${describeElement(loc)} is disabled, so it cannot be clicked`)
+    const routing = await routeInput(ctx, tab.id, view, loc)
     await ctx.agents.cursor(ctx.session, tab.id, view, loc.x, loc.y, 'move')
     await sleep(ctx.agents.settings.showCursor ? 260 : 30)
     const button =
       (str(args, 'button')?.toLowerCase() as 'left' | 'right' | 'middle' | undefined) ?? 'left'
-    const how = await clickAt(page, view, loc, target ?? loc.ref ?? '', {
-      button,
-      count: bool(args, 'doubleClick') ? 2 : 1,
-      modifiers: modifiers(args)
-    })
+    await clickAt(
+      page,
+      view,
+      loc,
+      target ?? loc.ref ?? '',
+      { button, count: bool(args, 'doubleClick') ? 2 : 1, modifiers: modifiers(args) },
+      routing.trusted
+    )
     await ctx.agents.cursor(ctx.session, tab.id, view, loc.x, loc.y, 'click')
     await settle(ctx, tab.id)
     const current = ctx.browser.tabs.view(tab.id) ?? view
-    const note =
-      how === 'synthetic' && loc.covered
-        ? ' (another element covered it, so the click was dispatched to it directly)'
-        : ''
     const where = target ? '' : ` at (${loc.x}, ${loc.y})`
-    return pageResult(ctx, tab, current, `Clicked ${describeElement(loc)}${where}${note}.`)
+    return pageResult(
+      ctx,
+      tab,
+      current,
+      withInputNote(`Clicked ${describeElement(loc)}${where}.`, routing)
+    )
   }
 }
 
@@ -1102,15 +1190,16 @@ const browserHover: AgentTool = {
   async run(ctx, args) {
     const { tab, view, page } = await actOn(ctx, args)
     const { loc, target } = await locateArg(page, args, 'browser_hover')
+    const routing = await routeInput(ctx, tab.id, view, loc)
     await ctx.agents.cursor(ctx.session, tab.id, view, loc.x, loc.y, 'move')
-    const how = await hoverAt(page, view, loc, target)
+    await hoverAt(page, view, loc, target, routing.trusted)
     await sleep(350)
     const where = target ? '' : ` at (${loc.x}, ${loc.y})`
     return pageResult(
       ctx,
       tab,
       view,
-      `Hovering ${describeElement(loc)}${where}${how === 'synthetic' ? ' (the tab is not on screen, so hover events were dispatched to the page directly)' : ''}.`
+      withInputNote(`Hovering ${describeElement(loc)}${where}.`, routing)
     )
   }
 }
@@ -1148,10 +1237,18 @@ const browserType: AgentTool = {
         `${describeElement(loc)} is not an editable field${loc.role === 'combobox' ? ' – use browser_select_option to choose an option' : loc.role === 'checkbox' || loc.role === 'radio' ? ' – use browser_click to toggle it' : ''}`
       )
     if (loc.disabled) return textError(`${describeElement(loc)} is disabled`)
+    const routing = await routeInput(ctx, tab.id, view, loc)
     await ctx.agents.cursor(ctx.session, tab.id, view, loc.x, loc.y, 'move')
     await sleep(ctx.agents.settings.showCursor ? 220 : 20)
     // Focus the way a person would, so focus handlers and autocomplete popups behave.
-    await clickAt(page, view, loc, target, { button: 'left', count: 1, modifiers: [] })
+    await clickAt(
+      page,
+      view,
+      loc,
+      target,
+      { button: 'left', count: 1, modifiers: [] },
+      routing.trusted
+    )
     await ctx.agents.cursor(ctx.session, tab.id, view, loc.x, loc.y, 'click')
     await sleep(60)
     // The field's own frame runs the fill: that is where the ref (and the element) lives.
@@ -1164,13 +1261,18 @@ const browserType: AgentTool = {
     let headline = `Typed ${JSON.stringify(value)} into ${describeElement(loc)}`
     if (bool(args, 'submit')) {
       await sleep(80)
-      if (wantTrustedInput(view))
-        await view.sendInput!({ type: 'key', key: 'Enter', modifiers: [] })
+      if (routing.trusted && view.sendInput)
+        await view.sendInput({ type: 'key', key: 'Enter', modifiers: [] })
       else await frameAction(page, loc.frameId, pageCall('submit', ctx.session.id, target))
       headline += ' and pressed Enter'
     }
     await settle(ctx, tab.id)
-    return pageResult(ctx, tab, ctx.browser.tabs.view(tab.id) ?? view, `${headline}.`)
+    return pageResult(
+      ctx,
+      tab,
+      ctx.browser.tabs.view(tab.id) ?? view,
+      withInputNote(`${headline}.`, routing)
+    )
   }
 }
 
@@ -1196,13 +1298,14 @@ const browserPressKey: AgentTool = {
   async run(ctx, args) {
     const key = normalizeKey(need(args, 'key', 'e.g. "Enter", "Escape", "ArrowDown", "a"'))
     const { tab, view, page } = await actOn(ctx, args)
-    await pressKey(page, view, key, modifiers(args))
+    const routing = await routeInput(ctx, tab.id, view)
+    await pressKey(page, view, key, modifiers(args), routing.trusted)
     await settle(ctx, tab.id)
     return pageResult(
       ctx,
       tab,
       ctx.browser.tabs.view(tab.id) ?? view,
-      `Pressed ${key === ' ' ? 'Space' : key}.`
+      withInputNote(`Pressed ${key === ' ' ? 'Space' : key}.`, routing)
     )
   }
 }
@@ -1680,7 +1783,7 @@ export function agentInstructions(mode: AgentMode, allowScripts: boolean): strin
     '- browser_snapshot returns the page as an accessibility tree whose elements carry [ref=eN] handles; pass the eN as target to browser_click, browser_type, browser_hover, browser_select_option and browser_take_screenshot. target also takes a CSS selector or text=Visible label, and browser_click / browser_hover take x,y viewport coordinates instead. Every action returns a fresh snapshot.',
     '- Navigation: browser_navigate (also changes the URL of an existing tab via tabId), browser_navigate_back, browser_navigate_forward, browser_reload. Tabs: browser_tabs list / new / select / close / move (reorder) / group (folder) / ungroup.',
     '- browser_read_page is the cheap way to read an article; browser_take_screenshot (viewport, fullPage: true, or target for one element) only when the layout or an image matters.',
-    `- You start in ${mode.toUpperCase()} mode. Foreground: your tab is brought in front of the user before each action and a cursor with your name shows what you do. Background: you work in your tabs without changing what the user sees. Switch with zen_mode.`,
+    `- You start in ${mode.toUpperCase()} mode. Foreground: your tab is brought in front of the user before each action, a cursor with your name shows what you do, and clicks, hovers and keys are real input (trusted user gestures: pop-ups and downloads open). Background: you work in your tabs without changing what the user sees, and input is synthetic – the result says "input: synthetic" whenever that happened, also in foreground when the page could not be brought on screen. Switch with zen_mode.`,
     '- browser_navigate accepts URLs or search words. Use zen_spaces to keep your work in its own space when it is more than a quick lookup.',
     allowScripts
       ? '- browser_evaluate runs JavaScript in the page (an expression or an arrow function) when nothing else does the job, e.g. to read attributes.'
