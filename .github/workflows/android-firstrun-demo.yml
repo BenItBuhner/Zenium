@@ -10,6 +10,9 @@ name: Android first run demo
 # cache live in android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
+  # TEMPORARY (W1-6): one recording of the v2 surfaces on this branch; removed before the report.
+  push:
+    branches: [cursor/android-first-run-v2-746b]
 
 permissions:
   contents: read
