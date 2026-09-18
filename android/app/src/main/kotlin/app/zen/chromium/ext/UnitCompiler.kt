@@ -1,5 +1,6 @@
 package app.zen.chromium.ext
 
+import app.zen.chromium.strOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -59,7 +60,8 @@ class UnitCompiler(private val bootstrap: () -> String) {
             keysNow.add(key)
             val origins = u.optJSONArray("origins").let { a -> if (a == null) emptyList() else List(a.length()) { k -> a.optString(k, "*") } }
                 .toSet().ifEmpty { setOf("*") }.toList()
-            val world = u.optString("world", "").takeIf { it.isNotEmpty() }
+            // A main-world unit comes with `world: null`, which `optString` would read as "null".
+            val world = u.strOrNull("world")?.takeIf { it.isNotEmpty() }
             val config = u.optString("config", "{}")
             val groupsJson = u.optJSONArray("groups") ?: JSONArray()
             val cssJson = u.optJSONArray("css") ?: JSONArray()

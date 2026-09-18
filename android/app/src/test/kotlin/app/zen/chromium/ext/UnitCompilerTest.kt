@@ -132,6 +132,15 @@ class UnitCompilerTest {
     }
 
     @Test
+    fun `a main-world unit (world null on the wire) has no world`() {
+        val compiler = UnitCompiler { "/*boot*/" }
+        val unit = org.json.JSONObject().put("key", "k").put("origins", JSONArray().put("https://userstyles.org"))
+            .put("world", org.json.JSONObject.NULL).put("config", "{}")
+        val compiled = compiler.compile(id, "1.0.0", JSONArray().put(unit), false, read)
+        assertNull(compiled[0].world)
+    }
+
+    @Test
     fun `empty origins fall back to every origin`() {
         val compiler = UnitCompiler { "/*boot*/" }
         val unit = org.json.JSONObject().put("key", "k").put("origins", JSONArray()).put("config", "{}")

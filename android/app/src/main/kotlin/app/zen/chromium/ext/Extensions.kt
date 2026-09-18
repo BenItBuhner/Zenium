@@ -301,8 +301,14 @@ class Extensions(private val host: Host) {
             main.post {
                 // The extension's worlds take slots of the fixed pool first; the core keeps within
                 // the budget `ext.env` told it, so a refusal here is a bug on one side or the other.
-                if (!worldSlots.assign(id, unitsNow.mapNotNull { it.world }.toSet())) {
-                    reply(Host.Rejection("No isolated world slot is free for the extension (${worldSlots.size} in use)"))
+                val wantedWorlds = unitsNow.mapNotNull { it.world }.toSet()
+                if (!worldSlots.assign(id, wantedWorlds)) {
+                    reply(
+                        Host.Rejection(
+                            "No isolated world slot for the extension's ${wantedWorlds.size} world(s): " +
+                                "${worldSlots.size - worldSlots.free()} of ${worldSlots.size} in use"
+                        )
+                    )
                     return@post
                 }
                 this.debug = debug
