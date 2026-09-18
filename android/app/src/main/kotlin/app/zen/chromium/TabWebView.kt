@@ -1192,9 +1192,9 @@ class TabWebView(
         }
 
         /**
-         * Network thread. The extension layer answers first: it serves the extension origins and,
-         * until W2-3 moves declarativeNetRequest onto the request engine, decides its rules; anything
-         * it leaves alone goes to the request engine.
+         * Network thread. The extension layer answers first: it serves the extension origins and
+         * the CORS proxy of extension pages; anything it leaves alone goes to the request engine,
+         * whose rule sets include the extensions' declarativeNetRequest rules.
          */
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
             host.extensions?.intercept(request, this@TabWebView, null) ?: host.blocking.intercept(this@TabWebView, request)

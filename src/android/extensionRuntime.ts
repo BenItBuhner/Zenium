@@ -1,6 +1,6 @@
-import type { ExtensionInfo } from '@shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID, type ExtensionInfo } from '@shared/types'
 import type { Browser } from '@core/browser'
-import type { MenuItemTemplate, PageContextParams } from '@core/platform'
+import type { MenuItemTemplate, PageContextParams, StoreIO } from '@core/platform'
 import type { ZenWindow } from '@core/window'
 import { JsonStore } from '@core/store/JsonStore'
 import type { EngineContextKind } from '@core/extensions/api/engine'
@@ -44,7 +44,8 @@ import {
   type ExtensionBoot,
   type IsolationMode
 } from '@core/extensions/runtime/boot'
-import type { NetRule } from '@core/extensions/runtime/dnr'
+import { createDnrSink } from '@core/extensions/dnr/engineSink'
+import type { EngineDecisionAction } from '@core/extensions/dnr/sink'
 import { parseRuntimeManifest } from '@core/extensions/runtime/manifest'
 import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
 import { MessageRouter, type Endpoint } from '@core/extensions/runtime/router'
@@ -55,10 +56,15 @@ import {
   asStringArray,
   type ApiHost,
   type AttachedExtension,
-  type ExecRequest,
-  type ExtensionRules
+  type ExecRequest
 } from './extensionApi'
 import type { JarReading } from './extensionCookies'
+import {
+  AndroidDeclarativeNetRequest,
+  UNKNOWN_TAB_ID,
+  usesDeclarativeNetRequest,
+  type DnrHost
+} from './extensionDnr'
 import { notificationEvent, type ShownNotification } from './extensionNotifications'
 import { AndroidWebNavigation, navigationReport, type DerivedEvent } from './extensionWebNavigation'
 import { AndroidExtensions, type AndroidExtensionsOptions } from './extensionHost'
@@ -80,6 +86,12 @@ import type { ViewEventPayloads } from './views'
  * idle out and wake on demand, `runtime/background.ts`), and the tab, navigation and request
  * events extensions listen for.
  *
+ * `declarativeNetRequest` takes no Kotlin protocol of its own: the rule states
+ * (`extensionDnr.ts`) feed the core's request-blocking engine, whose store persists every set
+ * to `blocking/index.json`; the Kotlin engine (`blocking/Blocking.kt`) compiles that file and
+ * decides every request of every tab from it, and reports the decisions that named a rule
+ * (`ext.request`) back here for `getMatchedRules`, the badges and `onRuleMatchedDebug`.
+ *
  * Kotlin protocol (runtime → Kotlin), every call keyed by extension id:
  *  ext.env                                  → { token, uiLanguage, isolatedWorlds, worldSlots, navigationListener }
  *  ext.open { id, path }                    → { manifest, locales: { <locale>: <messages.json> } }
@@ -89,7 +101,7 @@ import type { ViewEventPayloads } from './views'
  *  ext.background.start / stop { id }, ext.popup.open { id, url, context, title }, ext.popup.close,
  *  ext.hosts { id, hosts } (optional host permissions granted at runtime)
  *  ext.send { ep, message }, ext.exec {…}, ext.readFile { id, path }, ext.cookies.read / write
- *  ext.setRules { extensions: [{ ext, allowPrivate, paths, dynamic }] }, ext.observeRequests { on }
+ *  ext.observeRequests { on }               every engine decision is reported, not just the rules' matches
  *  ext.auth.open { viewId, id, url, title } / show { viewId } / close { viewId }   identity.launchWebAuthFlow's sheet
  *  ext.notifications.show { id, notification } / hide { id, notificationId } / forget { id } / allowed
  *  view.capture { tabId, mode: 'viewport', format, quality }   tabs.captureVisibleTab
@@ -129,17 +141,6 @@ export interface ConfigureStats {
   ms: number
 }
 
-/** One declarativeNetRequest extension's share of an `ext.setRules`. */
-export interface RulesOfExtension {
-  ext: string
-  /** Whether its rules apply to requests of private tabs too. */
-  allowPrivate: boolean
-  /** Enabled static rulesets, as paths in the record's directory (Kotlin reads and caches them). */
-  paths: string[]
-  /** Dynamic and session rules, normalised. */
-  dynamic: NetRule[]
-}
-
 export interface ExtMessageEvent {
   ep: string
   tabId: string | null
@@ -148,15 +149,30 @@ export interface ExtMessageEvent {
   message: Record<string, unknown>
 }
 
+/**
+ * The engine's decision on one request of a tab, as Kotlin's `DecisionObserver` reports it
+ * (`ext.request`): every decision that named a rule, and – while `ext.observeRequests` is on –
+ * every decision at all, for the observational `webRequest` events.
+ */
 export interface ExtRequestEvent {
   tabId: string | null
+  requestId: string
   url: string
+  /** `chrome.declarativeNetRequest.ResourceType` name. */
   type: string
   method: string
   initiator: string | null
-  decision: string
+  mainFrame: boolean
+  /** `allow` | `block` | `redirect` | `upgrade`. */
+  action: string
+  /** The rule set and rule that decided, when one did (`ext:<id>:…` for an extension's). */
+  matchedSet: string | null
+  matchedRule: number | null
+  /** What `EngineSnapshot.decide` took. */
   micros: number
 }
+
+const ENGINE_ACTIONS: readonly EngineDecisionAction[] = ['allow', 'block', 'redirect', 'upgrade']
 
 /** Runtime state that outlives the session (`extensions-runtime.json`). */
 interface RuntimeData {
@@ -167,8 +183,6 @@ interface RuntimeData {
   /** id → `userScripts.configureWorld({ messaging })`. */
   userScriptMessaging: Record<string, boolean>
   alarms: Record<string, Alarm[]>
-  dynamicRules: Record<string, NetRule[]>
-  enabledRulesets: Record<string, string[]>
   /** id → `chrome.<ns>.<event>` names the background listened for: what wakes a stopped worker. */
   listeners: Record<string, string[]>
 }
@@ -239,12 +253,14 @@ function emptyData(): RuntimeData {
     registered: {},
     userScriptMessaging: {},
     alarms: {},
-    dynamicRules: {},
-    enabledRulesets: {},
     listeners: {}
   }
 }
 
+/**
+ * The persisted runtime data; the prototype's `dynamicRules` / `enabledRulesets` tables (W2-1's
+ * rule state, superseded by `extension-dnr/<id>.json`) are dropped on read.
+ */
 function readData(saved: Partial<RuntimeData> | null): RuntimeData {
   const data = emptyData()
   if (!saved || saved.version !== 1) return data
@@ -252,8 +268,6 @@ function readData(saved: Partial<RuntimeData> | null): RuntimeData {
   data.registered = saved.registered ?? {}
   data.userScriptMessaging = saved.userScriptMessaging ?? {}
   data.alarms = saved.alarms ?? {}
-  data.dynamicRules = saved.dynamicRules ?? {}
-  data.enabledRulesets = saved.enabledRulesets ?? {}
   data.listeners = saved.listeners ?? {}
   return data
 }
@@ -280,10 +294,12 @@ export function pickMessages(
   return null
 }
 
-export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
+export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, DnrHost {
   readonly router: MessageRouter
   readonly api: ExtensionApi
   readonly identity: AndroidIdentity
+  /** `chrome.declarativeNetRequest`: the rule states over the core's blocking engine. */
+  readonly dnr: AndroidDeclarativeNetRequest
   readonly background: BackgroundLifecycle
   /** The store, once it has been constructed around this runtime. */
   store: RuntimeStoreLink | null = null
@@ -309,10 +325,6 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   private readonly frameIds = new Map<string, number>()
   private nextFrameId = 1
   private readonly alarmTimers = new Map<string, unknown>()
-  private readonly sessionRules = new Map<string, NetRule[]>()
-  /** The `ext.setRules` in flight, and whether another is owed after it (see `pushRules`). */
-  private rulesPush: Promise<void> | null = null
-  private rulesDirty = false
   /**
    * Relayed `MessagePort`s of the emulated service-worker platform (`extensionServiceWorker.ts`):
    * port id → the client page it belongs to; the other end is always the extension's worker.
@@ -324,6 +336,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   private activeTabId: string | null = null
   /** The tabs of the last state snapshot and whether each is private (a closed tab is still one). */
   private knownTabs = new Map<string, boolean>()
+  /** The container ids of the last snapshot: a change re-scopes every extension's rule sets. */
+  private knownContainers = ''
   private readonly debug: boolean
   readonly now: () => number
   private readonly timers: {
@@ -355,6 +369,14 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       tabIdFromChrome: (chromeTabId) => this.api.tabs.coreIdFor(chromeTabId)
     })
     this.identity = new AndroidIdentity(this, this.timers)
+    // Extensions' rule sets go straight into the request-blocking engine, each scoped to the
+    // containers the extension runs in (never the private one unless the user allowed it there).
+    this.dnr = new AndroidDeclarativeNetRequest(
+      this,
+      createDnrSink(browser.blocking.engine, undefined, {
+        partitionsOf: (id) => this.partitionsOf(id)
+      })
+    )
     this.api = new ExtensionApi(this)
     this.background = new BackgroundLifecycle(
       {
@@ -376,19 +398,23 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   // Lifecycle
   // ---------------------------------------------------------------------------
 
-  /** Reads the environment from Kotlin and drops runtime data of extensions the store no longer has. */
+  /**
+   * Reads the environment from Kotlin and drops runtime data of extensions the store no longer
+   * has – including their rule sets in the engine, which persist across runs in the blocking
+   * store: an extension uninstalled or disabled since (an uninstall this runtime never saw
+   * finish) must not filter anything before its state, if any, is loaded again.
+   */
   async start(): Promise<void> {
     await this.ensureEnv()
     if (this.store) {
-      const known = new Set(this.store.records().map((r) => r.id))
+      const records = this.store.records()
+      const known = new Set(records.map((r) => r.id))
       let pruned = false
       for (const table of [
         this.data.installed,
         this.data.registered,
         this.data.userScriptMessaging,
         this.data.alarms,
-        this.data.dynamicRules,
-        this.data.enabledRulesets,
         this.data.listeners
       ] as Record<string, unknown>[]) {
         for (const id of Object.keys(table)) {
@@ -398,6 +424,13 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
         }
       }
       if (pruned) this.save()
+      const enabled = new Set(records.filter((r) => r.enabled).map((r) => r.id))
+      const removed = this.dnr.prune(
+        (id) => enabled.has(id),
+        this.browser.blocking.engine.listRuleSets().map((summary) => summary.id)
+      )
+      if (removed.length > 0)
+        console.info(`[zen] declarativeNetRequest: ${removed.length} stale rule set(s) removed`)
     }
   }
 
@@ -436,8 +469,16 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     if (this.subscribed) return
     this.subscribed = true
     this.knownTabs = this.snapshotTabs()
+    this.knownContainers = this.containerKey()
     this.activeTabId = this.browser.tabs.activeTabFor(this.windowOf())?.id ?? null
     this.browser.state.subscribe(() => this.onStateChanged())
+  }
+
+  private containerKey(): string {
+    return this.browser.state.model.containers
+      .map((c) => c.id)
+      .sort()
+      .join('\u0000')
   }
 
   // ---------------------------------------------------------------------------
@@ -476,7 +517,10 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       this.data.listeners[record.id] ?? []
     )
     await this.configure(ext)
-    if (manifest.permissions.includes('declarativeNetRequest')) await this.pushRules()
+    // After the configure: the state reads its rulesets from the served directory. A re-attach
+    // (an update, a reload) starts the rule state over from the new manifest.
+    if (previous) this.dnr.unload(record.id)
+    this.dnr.load(ext)
     const installedVersion = this.data.installed[record.id]
     if (installedVersion !== manifest.version) {
       this.data.installed[record.id] = manifest.version
@@ -508,8 +552,9 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       if (owner.extensionId === id) this.swPorts.delete(port)
     if (this.popupOpen === id) this.closePopup()
     this.updateObserving()
+    // Its rule sets leave the engine with it (the store persists the removal).
+    this.dnr.unload(id)
     await this.bridge.call('ext.detach', { id })
-    if (ext.manifest.permissions.includes('declarativeNetRequest')) await this.pushRules()
     this.browser.state.commitVolatile()
   }
 
@@ -520,24 +565,18 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     ext.record = record
     await this.configure(ext)
     // Its rules apply in private tabs only while it is allowed there.
-    if (
-      privateBefore !== (record.allowPrivate === true) &&
-      ext.manifest.permissions.includes('declarativeNetRequest')
-    )
-      await this.pushRules()
+    if (privateBefore !== (record.allowPrivate === true)) this.dnr.sessionsChanged(record.id)
   }
 
   /** The extension was uninstalled: its persisted runtime state and `chrome.storage` go too. */
   async forget(id: string): Promise<void> {
     await this.detach(id)
+    await this.dnr.uninstalled(id)
     delete this.data.installed[id]
     delete this.data.registered[id]
     delete this.data.userScriptMessaging[id]
     delete this.data.alarms[id]
-    delete this.data.dynamicRules[id]
-    delete this.data.enabledRulesets[id]
     delete this.data.listeners[id]
-    this.sessionRules.delete(id)
     this.startupFired.delete(id)
     this.save()
     // Settle the debounced document first so no pending write brings it back after the remove.
@@ -621,52 +660,6 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     return held.size + wanted.size <= budget
   }
 
-  /**
-   * Static rulesets (enabled ones, read by Kotlin) plus the normalised dynamic and session
-   * rules. Every attach and detach of a declarativeNetRequest extension asks for a push, and
-   * Kotlin rebuilds the whole set each time: pushes arriving while one is in flight coalesce
-   * into a single one after it, and each caller's promise settles once its rules are in place.
-   */
-  private pushRules(): Promise<void> {
-    this.rulesDirty = true
-    if (!this.rulesPush) {
-      this.rulesPush = (async () => {
-        try {
-          while (this.rulesDirty) {
-            this.rulesDirty = false
-            await this.bridge.call('ext.setRules', this.rulesPayload())
-          }
-        } finally {
-          this.rulesPush = null
-        }
-      })()
-    }
-    return this.rulesPush
-  }
-
-  /**
-   * Per declarativeNetRequest extension: its enabled static rulesets (paths Kotlin reads), its
-   * dynamic and session rules, and whether its rules apply to private tabs' requests.
-   */
-  private rulesPayload(): { extensions: RulesOfExtension[] } {
-    const extensions: RulesOfExtension[] = []
-    for (const ext of this.extensions.values()) {
-      const manifest = ext.manifest
-      if (!manifest.permissions.includes('declarativeNetRequest')) continue
-      const rules = this.rules(ext.record.id)
-      const enabled = new Set(
-        rules.enabledRulesets ?? manifest.rulesets.filter((r) => r.enabled).map((r) => r.id)
-      )
-      extensions.push({
-        ext: ext.record.id,
-        allowPrivate: ext.record.allowPrivate === true,
-        paths: manifest.rulesets.filter((r) => enabled.has(r.id)).map((r) => r.path),
-        dynamic: [...rules.dynamic, ...rules.session]
-      })
-    }
-    return { extensions }
-  }
-
   private save(): void {
     this.dataStore.write(this.data)
   }
@@ -716,23 +709,53 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     if (ext) await this.configure(ext)
   }
 
-  rules(id: string): ExtensionRules {
-    return {
-      dynamic: this.data.dynamicRules[id] ?? [],
-      session: this.sessionRules.get(id) ?? [],
-      enabledRulesets: this.data.enabledRulesets[id] ?? null
-    }
+  // --- DnrHost ---------------------------------------------------------------
+
+  get io(): StoreIO {
+    return this.browser.platform.io
   }
 
-  async setRules(id: string, rules: ExtensionRules): Promise<void> {
-    if (rules.dynamic.length > 0) this.data.dynamicRules[id] = rules.dynamic
-    else delete this.data.dynamicRules[id]
-    if (rules.enabledRulesets) this.data.enabledRulesets[id] = rules.enabledRulesets
-    else delete this.data.enabledRulesets[id]
-    if (rules.session.length > 0) this.sessionRules.set(id, rules.session)
-    else this.sessionRules.delete(id)
-    this.save()
-    await this.pushRules()
+  /**
+   * The session partitions an extension's rules apply to: every persistent container (the
+   * extension's content scripts run in all of them), plus the private one while the user allows
+   * the extension there. A private tab's requests never meet an extension's rules otherwise.
+   */
+  partitionsOf(extensionId: string): readonly string[] {
+    const ext = this.extensions.get(extensionId)
+    if (!ext) return []
+    const partitions = [DEFAULT_CONTAINER_ID]
+    for (const container of this.browser.state.model.containers) {
+      if (container.id === PRIVATE_CONTAINER_ID || partitions.includes(container.id)) continue
+      partitions.push(container.id)
+    }
+    if (ext.record.allowPrivate === true) partitions.push(PRIVATE_CONTAINER_ID)
+    return partitions
+  }
+
+  isValidTabId(chromeTabId: number): boolean {
+    const tabId = this.api.tabs.coreIdFor(chromeTabId)
+    return tabId !== null && this.browser.tabs.tab(tabId) !== undefined
+  }
+
+  hasActiveTabAccess(extensionId: string, chromeTabId: number): boolean {
+    const tabId = this.api.tabs.coreIdFor(chromeTabId)
+    return tabId !== null && this.api.activeTab.has(extensionId, tabId)
+  }
+
+  setBadgeText(extensionId: string, chromeTabId: number, text: string): void {
+    this.api.setBadgeTextFor(extensionId, chromeTabId, text)
+  }
+
+  /** Extensions using the API, most recently installed first (Chrome ranks newer ones' rules higher). */
+  installOrder(): string[] {
+    return [...this.extensions.values()]
+      .filter((ext) => usesDeclarativeNetRequest(ext))
+      .sort((a, b) => b.record.installedAt - a.record.installedAt)
+      .map((ext) => ext.record.id)
+  }
+
+  warn(message: string): void {
+    console.warn(`[zen] ${message}`)
   }
 
   /**
@@ -957,11 +980,13 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   openPopup(id: string): void {
     const ext = this.extensions.get(id)
     if (!ext) return
-    const action = this.api.actionFor(id)
     // A toolbar click is the user gesture `activeTab` waits for. A private tab the extension may
     // not see is no tab (Chrome hides the action there).
     const tab = this.api.tabs.activeTabFor(ext)
     if (tab) this.api.activeTab.grant(id, tab)
+    // The tab's own popup when `action.setPopup` named one for it, else the global one.
+    const action = this.api.actionStateFor(id, tab ? this.api.tabs.chromeIdFor(tab.id) : undefined)
+    if (!action.enabled) return
     if (!action.popup) {
       const ns = ext.manifest.manifestVersion === 3 ? 'action' : 'browserAction'
       this.emit(id, ns, 'onClicked', [tab ? this.api.tabs.chromeTab(tab) : null])
@@ -1003,7 +1028,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   /** The popup path `action.setPopup` left (null when clicks fire `onClicked`); undefined when not attached. */
   popupFor(id: string): string | null | undefined {
     if (!this.extensions.has(id)) return undefined
-    return this.api.actionFor(id).popup
+    return this.api.actionFor(id).popup || null
   }
 
   async reload(id: string): Promise<void> {
@@ -1311,24 +1336,44 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     if (event) this.identity.onSheetEvent(event)
   }
 
-  /** Observational `webRequest` from `shouldInterceptRequest` (only while someone listens). */
+  /**
+   * A decision of the Kotlin engine (`ext.request`): one an extension's rule took goes into that
+   * extension's matched-rule log, action count and `onRuleMatchedDebug`; while an extension
+   * listens for `webRequest`, every decision is reported and becomes the observational events
+   * (`onBeforeRequest`, `onErrorOccurred` for a blocked request).
+   */
   onRequest(event: ExtRequestEvent): void {
-    const tabId = event.tabId ? this.api.tabs.chromeIdFor(event.tabId) : -1
-    const now = this.now()
+    const tabId = event.tabId ? this.api.tabs.chromeIdFor(event.tabId) : UNKNOWN_TAB_ID
+    const action = ENGINE_ACTIONS.find((a) => a === event.action)
+    if (action && event.matchedSet && typeof event.matchedRule === 'number') {
+      this.dnr.decided({
+        tabId,
+        requestId: event.requestId,
+        url: event.url,
+        method: event.method,
+        type: event.type,
+        initiator: event.initiator ?? undefined,
+        mainFrame: event.mainFrame,
+        action,
+        matchedSet: event.matchedSet,
+        matchedRule: event.matchedRule
+      })
+    }
+    if (!this.observing) return
     const details = {
-      requestId: String(now),
+      requestId: event.requestId,
       url: event.url,
       method: event.method,
       frameId: 0,
       parentFrameId: -1,
       tabId,
       type: event.type,
-      timeStamp: now,
+      timeStamp: this.now(),
       initiator: event.initiator ?? undefined
     }
     const tab = event.tabId ?? null
     this.emitForTab(tab, 'webRequest', 'onBeforeRequest', [details])
-    if (event.decision === 'block')
+    if (event.action === 'block')
       this.emitForTab(tab, 'webRequest', 'onErrorOccurred', [
         { ...details, error: 'net::ERR_BLOCKED_BY_CLIENT', fromCache: false }
       ])
@@ -1377,7 +1422,11 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
         // Kotlin owns endpoint liveness and reports the old document through `ext.gone` (the
         // first hello of a new document, onPageStarted for a document without units, a dead
         // reply proxy).
-        if (!p.inPage) this.api.activeTab.navigated(tabId, p.url)
+        if (!p.inPage) {
+          this.api.activeTab.navigated(tabId, p.url)
+          // A new document: the tab's matched rules belong to no tab now, its action count restarts.
+          this.dnr.tabNavigated(chromeTabId)
+        }
         updated({ status: 'loading', url: p.url })
         return
       }
@@ -1440,15 +1489,24 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     for (const id of this.knownTabs.keys()) {
       if (now.has(id)) continue
       // Every tab has an id in Chrome, seen by the extension or not; a closed one keeps its number.
+      const chromeTabId = this.api.tabs.chromeIdFor(id)
       this.emitForTab(id, 'tabs', 'onRemoved', [
-        this.api.tabs.chromeIdFor(id),
+        chromeTabId,
         { windowId: 1, isWindowClosing: false }
       ])
       this.router.unregisterTab(id)
       this.api.activeTab.tabRemoved(id)
+      this.api.tabRemoved(chromeTabId)
+      this.dnr.tabRemoved(chromeTabId)
       this.webNavigation.tabRemoved(id)
     }
     this.knownTabs = now
+    // A container created or deleted: every extension's sets follow (private is not a container here).
+    const containers = this.containerKey()
+    if (containers !== this.knownContainers) {
+      this.knownContainers = containers
+      for (const id of this.dnr.extensionIds()) this.dnr.sessionsChanged(id)
+    }
     if (active !== this.activeTabId) {
       this.activeTabId = active
       if (active)
@@ -1728,10 +1786,13 @@ export class AndroidExtensionsWithRuntime extends AndroidExtensions {
     await super.start()
   }
 
+  /** Running extensions carry their `chrome.action` state for the active tab (badge, title, popup). */
   override list(): ExtensionInfo[] {
     return super.list().map((info) => {
       const popup = this.runtime.popupFor(info.id)
-      return popup === undefined ? info : { ...info, popup }
+      if (popup === undefined) return info
+      const action = this.runtime.api.toolbarAction(info.id)
+      return action ? { ...info, popup, action } : { ...info, popup }
     })
   }
 

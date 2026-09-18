@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pickMessages } from '../extensionRuntime'
+import { pickMessages, type ExtRequestEvent } from '../extensionRuntime'
 import {
   type FakeAuthSheet,
   type Harness,
@@ -108,7 +108,7 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     )
   })
 
-  it('coalesces rule pushes: one ext.setRules in flight, one more for everything that arrived meanwhile', async () => {
+  it('a record toggle alone re-sends the configuration; the private toggle re-scopes the rule sets', async () => {
     const h = harness()
     const dnr = manifest({
       permissions: ['declarativeNetRequest'],
@@ -116,52 +116,28 @@ describe('AndroidExtensionRuntime: attaching records', () => {
         rule_resources: [{ id: 'r1', enabled: true, path: 'rules.json' }]
       }
     })
-    h.kt.holdRules = true
-    const attaching = h.runtime.attach(record(h, {}, dnr))
-    await until(() => h.kt.heldRules.length === 1)
-    expect(h.kt.calledWith('ext.setRules')).toHaveLength(1)
-    // Three rule changes while the push is out: they wait for one push after it.
-    const changes = [
-      h.runtime.setRules(ID, { dynamic: [], session: [], enabledRulesets: ['r1'] }),
-      h.runtime.setRules(ID, { dynamic: [], session: [], enabledRulesets: [] }),
-      h.runtime.setRules(ID, { dynamic: [], session: [], enabledRulesets: ['r1'] })
-    ]
-    expect(h.kt.calledWith('ext.setRules')).toHaveLength(1)
-    h.kt.releaseRules()
-    await until(() => h.kt.heldRules.length === 1)
-    expect(h.kt.calledWith('ext.setRules')).toHaveLength(2)
-    // The second push carries the state as it is now, not as it was when a change asked.
-    expect(h.kt.calledWith('ext.setRules')[1].extensions).toEqual([
-      { ext: ID, allowPrivate: false, paths: ['rules.json'], dynamic: [] }
-    ])
-    h.kt.releaseRules()
-    await Promise.all([attaching, ...changes])
-    expect(h.kt.calledWith('ext.setRules')).toHaveLength(2)
-    // The line is clear: the next change pushes at once.
-    h.kt.holdRules = false
-    await h.runtime.setRules(ID, { dynamic: [], session: [], enabledRulesets: [] })
-    expect(h.kt.calledWith('ext.setRules')).toHaveLength(3)
-    expect(h.kt.calledWith('ext.setRules')[2].extensions).toEqual([
-      { ext: ID, allowPrivate: false, paths: [], dynamic: [] }
-    ])
-  })
-
-  it('a record toggle alone re-sends the configuration; the private toggle re-pushes a rule set', async () => {
-    const h = harness()
-    const dnr = manifest({
-      permissions: ['declarativeNetRequest'],
-      declarative_net_request: {
-        rule_resources: [{ id: 'r1', enabled: true, path: 'rules.json' }]
-      }
-    })
+    h.kt.files.set(
+      `${ID}/rules.json`,
+      JSON.stringify([
+        { id: 1, action: { type: 'block' }, condition: { urlFilter: '||ads.example^' } }
+      ])
+    )
     const rec = record(h, {}, dnr)
     await h.runtime.attach(rec)
+    await h.runtime.dnr.whenSynced(ID)
     expect(h.kt.calledWith('ext.configure')).toHaveLength(1)
     expect(h.kt.calledWith('ext.configure')[0]).toMatchObject({
       allowFileAccess: false,
       allowPrivate: false
     })
-    expect(h.kt.calledWith('ext.setRules')).toHaveLength(1)
+    // The manifest's enabled ruleset is in the engine, scoped to the default container only.
+    const setId = `ext:${ID}:static:r1`
+    expect(h.engine.summary(setId)).toMatchObject({
+      source: 'dnr',
+      enabled: true,
+      ruleCount: 1,
+      partitions: ['default']
+    })
     // The same record again: nothing changed, nothing sent.
     await h.runtime.reconfigure({ ...rec })
     expect(h.kt.calledWith('ext.configure')).toHaveLength(1)
@@ -169,15 +145,19 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     await h.runtime.reconfigure({ ...rec, allowFileAccess: true })
     expect(h.kt.calledWith('ext.configure')).toHaveLength(2)
     expect(h.kt.calledWith('ext.configure')[1]).toMatchObject({ allowFileAccess: true })
-    expect(h.kt.calledWith('ext.setRules')).toHaveLength(1)
-    // Private tabs: the toggle travels and the rules are pushed again with it.
+    expect(h.engine.summary(setId)?.partitions).toEqual(['default'])
+    // Private tabs: the toggle travels and the sets now apply to the private partition too.
     await h.runtime.reconfigure({ ...rec, allowFileAccess: true, allowPrivate: true })
     expect(h.kt.calledWith('ext.configure')).toHaveLength(3)
     expect(h.kt.calledWith('ext.configure')[2]).toMatchObject({ allowPrivate: true })
-    expect(h.kt.calledWith('ext.setRules')).toHaveLength(2)
-    expect(h.kt.calledWith('ext.setRules')[1].extensions).toEqual([
-      { ext: ID, allowPrivate: true, paths: ['rules.json'], dynamic: [] }
-    ])
+    expect(h.engine.summary(setId)?.partitions).toEqual(['default', 'private'])
+    // A container of the user's: the sets follow it; the private one stays while allowed.
+    h.containers.push({ id: 'work', name: 'Work', color: 'blue', icon: 'briefcase' })
+    h.notifyState()
+    expect(h.engine.summary(setId)?.partitions).toEqual(['default', 'work', 'private'])
+    // Detached: the set leaves the engine.
+    await h.runtime.detach(ID)
+    expect(h.engine.has(setId)).toBe(false)
   })
 
   it('does not send a plan that changed nothing, and re-plans when registered scripts change', async () => {
@@ -611,11 +591,15 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
     expect(events(h, 'bg1', 'tabs.onUpdated')).toHaveLength(0)
     h.runtime.onRequest({
       tabId: 'p1',
+      requestId: '7',
       url: 'https://secret.example/asset.js',
       type: 'script',
       method: 'GET',
       initiator: 'https://secret.example',
-      decision: 'allow',
+      mainFrame: false,
+      action: 'allow',
+      matchedSet: null,
+      matchedRule: null,
       micros: 1
     })
     expect(events(h, 'bg1', 'webRequest.onBeforeRequest')).toHaveLength(0)
@@ -652,6 +636,108 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
     delete h.tabs.p2
     h.notifyState()
     expect(events(h, 'bg1', 'tabs.onRemoved')).toHaveLength(1)
+  })
+
+  it("routes the engine's decisions: an extension's rule feeds its badge and matched rules; webRequest hears every one while listened for", async () => {
+    const h = harness()
+    const dnr = manifest({
+      permissions: ['declarativeNetRequest', 'declarativeNetRequestFeedback', 'webRequest'],
+      declarative_net_request: {
+        rule_resources: [{ id: 'r1', enabled: true, path: 'rules.json' }]
+      }
+    })
+    h.kt.files.set(
+      `${ID}/rules.json`,
+      JSON.stringify([
+        { id: 1, action: { type: 'block' }, condition: { urlFilter: '||ads.example^' } }
+      ])
+    )
+    await h.runtime.attach(record(h, {}, dnr))
+    await h.runtime.dnr.whenSynced(ID)
+    backgroundUp(h, 'bg1')
+    const badge = await call(h, 'bg1', 'declarativeNetRequest', 'setExtensionActionOptions', [
+      { displayActionCountAsBadgeText: true }
+    ])
+    expect(badge.error).toBeUndefined()
+    const chromeTab = h.runtime.api.tabs.chromeIdFor('t1')
+    const request = (over: Partial<ExtRequestEvent>): ExtRequestEvent => ({
+      tabId: 't1',
+      requestId: '1',
+      url: 'https://ads.example/a.js',
+      type: 'script',
+      method: 'GET',
+      initiator: 'https://example.com',
+      mainFrame: false,
+      action: 'block',
+      matchedSet: `ext:${ID}:static:r1`,
+      matchedRule: 1,
+      micros: 12,
+      ...over
+    })
+    // No webRequest listener yet: Kotlin only reports the decisions an extension's rule took.
+    expect(h.kt.calledWith('ext.observeRequests')).toEqual([])
+    h.runtime.onRequest(request({}))
+    h.runtime.onRequest(request({ requestId: '2', url: 'https://ads.example/b.js' }))
+    expect(events(h, 'bg1', 'webRequest.onBeforeRequest')).toHaveLength(0)
+    // The action count is the tab's badge, on the toolbar action of the active tab.
+    expect(h.runtime.api.toolbarAction(ID)?.badgeText).toBe('2')
+    const matched = await call(h, 'bg1', 'declarativeNetRequest', 'getMatchedRules', [
+      { tabId: chromeTab }
+    ])
+    expect(
+      (matched.result as { rulesMatchedInfo: Array<Record<string, unknown>> }).rulesMatchedInfo
+    ).toMatchObject([
+      { rule: { ruleId: 1, rulesetId: 'r1' }, tabId: chromeTab },
+      { rule: { ruleId: 1, rulesetId: 'r1' }, tabId: chromeTab }
+    ])
+    // Another set's decision (a filter list) is nobody's match and nobody's badge.
+    h.runtime.onRequest(request({ requestId: '3', matchedSet: 'filter-text', matchedRule: 0 }))
+    expect(h.runtime.api.toolbarAction(ID)?.badgeText).toBe('2')
+    // A new document in the tab restarts the count.
+    h.runtime.onViewEvent('t1', 'navigated', {
+      url: 'https://example.com/next',
+      title: '',
+      inPage: false,
+      canGoBack: true,
+      canGoForward: false
+    })
+    expect(h.runtime.api.toolbarAction(ID)?.badgeText).toBe('')
+    // A webRequest listener turns the observation on: every decision becomes the events.
+    message(h, 'bg1', { t: 'listen', event: 'webRequest.onBeforeRequest', on: true })
+    message(h, 'bg1', { t: 'listen', event: 'webRequest.onErrorOccurred', on: true })
+    expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }])
+    h.runtime.onRequest(
+      request({
+        requestId: '4',
+        url: 'https://example.com/ok.js',
+        action: 'allow',
+        matchedSet: null,
+        matchedRule: null
+      })
+    )
+    h.runtime.onRequest(request({ requestId: '5' }))
+    const before = events(h, 'bg1', 'webRequest.onBeforeRequest')
+    expect(before).toHaveLength(2)
+    expect((before[0].args as Array<Record<string, unknown>>)[0]).toMatchObject({
+      requestId: '4',
+      url: 'https://example.com/ok.js',
+      method: 'GET',
+      frameId: 0,
+      parentFrameId: -1,
+      tabId: chromeTab,
+      type: 'script',
+      initiator: 'https://example.com'
+    })
+    const errors = events(h, 'bg1', 'webRequest.onErrorOccurred')
+    expect(errors).toHaveLength(1)
+    expect((errors[0].args as Array<Record<string, unknown>>)[0]).toMatchObject({
+      requestId: '5',
+      error: 'net::ERR_BLOCKED_BY_CLIENT'
+    })
+    expect(h.runtime.api.toolbarAction(ID)?.badgeText).toBe('1')
+    message(h, 'bg1', { t: 'listen', event: 'webRequest.onBeforeRequest', on: false })
+    message(h, 'bg1', { t: 'listen', event: 'webRequest.onErrorOccurred', on: false })
+    expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }, { on: false }])
   })
 
   it('a navigation event landing after the new document said hello leaves its endpoints answering; Kotlin says which are gone', async () => {

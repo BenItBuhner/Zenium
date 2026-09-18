@@ -402,8 +402,8 @@ class ExtensionDemo {
         results.put("decisions", JSONArray(all.takeLast(80)))
         results.put("decisionMicros", decisionMicros(all))
         instrumentation.runOnMainSync {
-            val counts = host.extensions.ruleCounts()
-            results.put("ruleCounts", JSONObject().put("rules", counts[0]).put("loose", counts[1]))
+            results.put("ruleSets", host.extensions.ruleSetStats())
+            results.put("engine", host.blocking.stats())
         }
         // uBOL's rules answer these with `redirect` to a neutered script in its web-accessible
         // resources (Chrome does the same, and the page's onload still fires), so the verdict comes

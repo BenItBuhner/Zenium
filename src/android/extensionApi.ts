@@ -1,5 +1,5 @@
 import type { BookmarkTreeNode } from '@shared/bookmarks'
-import type { Tab } from '@shared/types'
+import type { ExtensionAction, Tab } from '@shared/types'
 import type { Browser } from '@core/browser'
 import type { MenuItemTemplate, PageContextParams } from '@core/platform'
 import type { ZenWindow } from '@core/window'
@@ -14,13 +14,13 @@ import type { EngineContextKind } from '@core/extensions/api/engine'
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
 import type { ExtensionRecord } from '@core/extensions/registry'
-import { normalizeRuleset, type NetRule } from '@core/extensions/runtime/dnr'
 import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
 import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
 import type { Endpoint, MessageRouter } from '@core/extensions/runtime/router'
 import { ActiveTabGrants } from './extensionActiveTab'
 import { AndroidContextMenus } from './extensionContextMenus'
 import { AndroidCookies, type JarReading } from './extensionCookies'
+import type { AndroidDeclarativeNetRequest } from './extensionDnr'
 import type { AndroidIdentity } from './extensionIdentity'
 import { AndroidNotifications, type ShownNotification } from './extensionNotifications'
 
@@ -31,10 +31,11 @@ import { AndroidNotifications, type ShownNotification } from './extensionNotific
  * per namespace, reached through the `ApiHost` seam so it can be driven in tests without Kotlin.
  *
  * Wave 2-1 carries the prototype's coverage: tabs, windows, action, scripting, userScripts,
- * runtime, declarativeNetRequest (the rule state; the matcher is Kotlin's until W2-3),
- * notifications, contextMenus, webNavigation, cookies, history, bookmarks, permissions,
+ * runtime, notifications, contextMenus, webNavigation, cookies, history, bookmarks, permissions,
  * management, commands, idle, offscreen, downloads. W2-2 maps tabs, windows, action, popups,
- * webNavigation, contextMenus, cookies and notifications onto the shared core properly.
+ * webNavigation, contextMenus, cookies and notifications onto the shared core properly; W2-3
+ * routes declarativeNetRequest to `extensionDnr.ts` (the shared translator over the Kotlin
+ * blocking engine).
  */
 
 /** An extension the runtime is running: its record, parsed manifest and the locale it uses. */
@@ -42,14 +43,6 @@ export interface AttachedExtension {
   record: ExtensionRecord
   manifest: RuntimeManifest
   messages: LocaleMessages | null
-}
-
-/** `declarativeNetRequest` state of one extension. */
-export interface ExtensionRules {
-  dynamic: NetRule[]
-  session: NetRule[]
-  /** Static ruleset ids after `updateEnabledRulesets`, or null for the manifest's defaults. */
-  enabledRulesets: string[] | null
 }
 
 /** `scripting.executeScript` / `insertCSS` / `tabs.executeScript`, as the host evaluates them. */
@@ -70,6 +63,8 @@ export interface ApiHost {
   readonly router: MessageRouter
   /** `chrome.identity`: the web-auth flows (`extensionIdentity.ts`). */
   readonly identity: AndroidIdentity
+  /** `chrome.declarativeNetRequest`: the rule states over the blocking engine (`extensionDnr.ts`). */
+  readonly dnr: AndroidDeclarativeNetRequest
   /** The runtime's clock (tests drive it). */
   now(): number
   window(): ZenWindow
@@ -81,8 +76,6 @@ export interface ApiHost {
   /** `userScripts.configureWorld`: whether the user-script world gets `runtime.sendMessage`. */
   userScriptMessaging(id: string): boolean
   setUserScriptMessaging(id: string, messaging: boolean): Promise<void>
-  rules(id: string): ExtensionRules
-  setRules(id: string, rules: ExtensionRules): Promise<void>
   /** Raise `chrome.<ns>.<name>` in every endpoint of one extension that listens for it. */
   emit(extensionId: string, ns: string, name: string, args: unknown[]): void
   /** Deliver `chrome.<ns>.<name>` to one endpoint, listener or not (a `contextMenus` `onclick` holder). */
@@ -118,14 +111,31 @@ export interface ApiHost {
   isEnabled(id: string): boolean
 }
 
+/**
+ * `chrome.action` values; the global ones fall back to the manifest, a tab's to the global ones.
+ * An empty string is a value the extension set (no popup, no badge, the name as title); only an
+ * omitted value resets to the level below (the desktop's `ActionApi` semantics).
+ */
 export interface ActionState {
-  title: string | null
-  popup: string | null
+  /** Empty: the toolbar shows the extension's name. */
+  title: string
+  /** Extension-relative popup path; empty for "no popup" (`onClicked` fires instead). */
+  popup: string
   badgeText: string
   badgeBackgroundColor: string
   badgeTextColor: string
   enabled: boolean
 }
+
+/** One extension's action: the manifest's values, the global state and the per-tab overrides (`details.tabId`). */
+interface ActionRecord {
+  defaults: ActionState
+  global: ActionState
+  perTab: Map<number, Partial<ActionState>>
+}
+
+const DEFAULT_BADGE_BACKGROUND = '#5f6368'
+const DEFAULT_BADGE_TEXT_COLOR = '#ffffff'
 
 const NOT_IMPLEMENTED = 'is not implemented on Zenium for Android'
 
@@ -269,7 +279,7 @@ export class ExtensionApi {
   readonly activeTab: ActiveTabGrants
   readonly cookies: AndroidCookies
   readonly notifications: AndroidNotifications
-  private readonly actions = new Map<string, ActionState>()
+  private readonly actions = new Map<string, ActionRecord>()
   /** Optional host permissions granted this session, per extension (Chrome persists them; W2-3 may). */
   private readonly grantedHosts = new Map<string, Set<string>>()
   /** Chrome's two `captureVisibleTab` calls per second, per extension. */
@@ -349,21 +359,90 @@ export class ExtensionApi {
     return this.contextMenus.actionMenuItems(id, ext ? this.tabs.activeTabFor(ext) : undefined)
   }
 
+  /** The extension's global `chrome.action` state (what a call without `tabId` reads and writes). */
   actionFor(id: string): ActionState {
-    let state = this.actions.get(id)
-    if (!state) {
+    return this.actionRecord(id).global
+  }
+
+  private actionRecord(id: string): ActionRecord {
+    let record = this.actions.get(id)
+    if (!record) {
       const action = this.host.attached(id)?.manifest.action
-      state = {
-        title: action?.title ?? null,
-        popup: action?.popup ?? null,
+      const defaults: ActionState = {
+        title: action?.title ?? '',
+        popup: (action?.popup ?? '').replace(/^\/+/, ''),
         badgeText: '',
-        badgeBackgroundColor: '#5f6368',
-        badgeTextColor: '#ffffff',
+        badgeBackgroundColor: DEFAULT_BADGE_BACKGROUND,
+        badgeTextColor: DEFAULT_BADGE_TEXT_COLOR,
         enabled: true
       }
-      this.actions.set(id, state)
+      record = { defaults, global: { ...defaults }, perTab: new Map() }
+      this.actions.set(id, record)
     }
-    return state
+    return record
+  }
+
+  /** The state a tab sees: its own overrides over the global values (Chrome's `details.tabId`). */
+  actionStateFor(id: string, chromeTabId: number | undefined): ActionState {
+    const record = this.actionRecord(id)
+    const tab = chromeTabId === undefined ? undefined : record.perTab.get(chromeTabId)
+    return tab ? { ...record.global, ...tab } : record.global
+  }
+
+  private writeAction<K extends keyof ActionState>(
+    id: string,
+    chromeTabId: number | undefined,
+    key: K,
+    value: ActionState[K] | null
+  ): void {
+    const record = this.actionRecord(id)
+    if (chromeTabId === undefined) {
+      // A cleared global value falls back to the manifest's.
+      record.global[key] = value === null ? record.defaults[key] : value
+    } else {
+      const tab = record.perTab.get(chromeTabId) ?? {}
+      if (value === null) delete tab[key]
+      else tab[key] = value
+      if (Object.keys(tab).length === 0) record.perTab.delete(chromeTabId)
+      else record.perTab.set(chromeTabId, tab)
+    }
+    this.host.browser.state.commitVolatile()
+  }
+
+  /**
+   * The declarativeNetRequest action count of a tab (`displayActionCountAsBadgeText`): the badge
+   * of that tab shows it; an empty text clears the override and the global badge shows again.
+   */
+  setBadgeTextFor(id: string, chromeTabId: number, text: string): void {
+    if (!this.host.attached(id)) return
+    this.writeAction(id, chromeTabId, 'badgeText', text || null)
+  }
+
+  /** What the toolbar should show for an extension right now: its state for the active tab. */
+  toolbarAction(id: string): ExtensionAction | null {
+    const ext = this.host.attached(id)
+    if (!ext) return null
+    const active = this.host.browser.tabs.activeTabFor(this.host.window())
+    const state = this.actionStateFor(id, active ? this.tabs.chromeIdFor(active.id) : undefined)
+    return {
+      badgeText: state.badgeText,
+      badgeBackgroundColor:
+        state.badgeBackgroundColor === DEFAULT_BADGE_BACKGROUND ? null : state.badgeBackgroundColor,
+      badgeTextColor:
+        state.badgeTextColor === DEFAULT_BADGE_TEXT_COLOR ? null : state.badgeTextColor,
+      title: state.title || ext.manifest.name,
+      icon: null,
+      popup: state.popup ? extensionUrl(id, state.popup) : null,
+      enabled: state.enabled
+    }
+  }
+
+  /** A tab closed: the overrides extensions set for it go. */
+  tabRemoved(chromeTabId: number): void {
+    let changed = false
+    for (const record of this.actions.values())
+      changed = record.perTab.delete(chromeTabId) || changed
+    if (changed) this.host.browser.state.commitVolatile()
   }
 
   async call(
@@ -390,7 +469,7 @@ export class ExtensionApi {
       case 'runtime':
         return this.runtimeCall(ext, method)
       case 'declarativeNetRequest':
-        return this.dnrCall(ext, method, args)
+        return this.host.dnr.call(ext, method, args)
       case 'notifications':
         return this.notifications.call(ext, method, args)
       case 'contextMenus':
@@ -728,49 +807,82 @@ export class ExtensionApi {
 
   // --- action / browserAction ------------------------------------------------
 
+  /**
+   * `chrome.action` / `browserAction`: a call with `details.tabId` reads or writes that tab's
+   * override, one without the global value (Chrome's semantics); `enable` / `disable` take the
+   * tab id as their argument. A tab id that names no tab the extension may see is an error.
+   */
   private actionCall(ext: AttachedExtension, method: string, args: unknown[]): unknown {
     const id = ext.record.id
-    const state = this.actionFor(id)
     const details = asRecord(args[0])
-    const refresh = (): void => this.host.browser.state.commitVolatile()
+    const tabIdOf = (value: unknown): number | undefined => {
+      if (value === undefined || value === null) return undefined
+      if (!Number.isInteger(value)) throw new Error('Invalid tab id')
+      this.tabs.tabFor(ext, value)
+      return value as number
+    }
+    const tabId = tabIdOf(details.tabId)
+    const state = this.actionStateFor(id, tabId)
+    // An omitted value resets the level (a tab's override goes, the global falls back to the
+    // manifest); anything else must parse.
+    const write = <K extends keyof ActionState>(
+      key: K,
+      field: string,
+      parse: (raw: unknown) => ActionState[K] | null
+    ): void => {
+      const raw = details[field]
+      if (raw === undefined || raw === null) {
+        this.writeAction(id, tabId, key, null)
+        return
+      }
+      const value = parse(raw)
+      if (value === null) throw new Error(`Invalid value for ${field}.`)
+      this.writeAction(id, tabId, key, value)
+    }
+    const string = (raw: unknown): string | null => (typeof raw === 'string' ? raw : null)
     switch (method) {
       case 'setTitle':
-        state.title = typeof details.title === 'string' ? details.title : null
+        write('title', 'title', string)
         return undefined
       case 'getTitle':
-        return state.title ?? ext.manifest.name
+        return state.title || ext.manifest.name
       case 'setIcon':
         // Toolbar icons stay the manifest's; per-tab imageData / path variants are not drawn yet.
         return undefined
-      case 'setPopup':
-        state.popup =
-          typeof details.popup === 'string' && details.popup !== '' ? details.popup : null
-        refresh()
+      case 'setPopup': {
+        // Chrome takes the extension's own absolute URL or a relative path; '' means no popup.
+        if (typeof details.popup !== 'string') throw new Error('Invalid value for popup.')
+        const own = extensionUrl(id, '')
+        const popup = details.popup.startsWith(own)
+          ? details.popup.slice(own.length)
+          : details.popup.replace(/^\/+/, '')
+        this.writeAction(id, tabId, 'popup', popup)
         return undefined
+      }
       case 'getPopup':
         return state.popup ? extensionUrl(id, state.popup) : ''
       case 'setBadgeText':
-        state.badgeText = typeof details.text === 'string' ? details.text : ''
+        write('badgeText', 'text', string)
         return undefined
       case 'getBadgeText':
         return state.badgeText
       case 'setBadgeBackgroundColor':
-        state.badgeBackgroundColor = colorString(details.color) ?? state.badgeBackgroundColor
+        write('badgeBackgroundColor', 'color', colorString)
         return undefined
       case 'getBadgeBackgroundColor':
         return colorArray(state.badgeBackgroundColor)
       case 'setBadgeTextColor':
-        state.badgeTextColor = colorString(details.color) ?? state.badgeTextColor
+        write('badgeTextColor', 'color', colorString)
         return undefined
       case 'getBadgeTextColor':
         return colorArray(state.badgeTextColor)
       case 'enable':
       case 'show':
-        state.enabled = true
+        this.writeAction(id, tabIdOf(args[0]), 'enabled', true)
         return undefined
       case 'disable':
       case 'hide':
-        state.enabled = false
+        this.writeAction(id, tabIdOf(args[0]), 'enabled', false)
         return undefined
       case 'isEnabled':
         return state.enabled
@@ -1011,61 +1123,6 @@ export class ExtensionApi {
         }))
     }
     throw new Error(`chrome.runtime.${method} ${NOT_IMPLEMENTED}`)
-  }
-
-  // --- declarativeNetRequest ---------------------------------------------------
-
-  private async dnrCall(ext: AttachedExtension, method: string, args: unknown[]): Promise<unknown> {
-    const id = ext.record.id
-    const manifest = ext.manifest
-    const origin = extensionUrl(id, '').replace(/\/$/, '')
-    const options = asRecord(args[0])
-    const rules = this.host.rules(id)
-    const defaults = (): string[] => manifest.rulesets.filter((r) => r.enabled).map((r) => r.id)
-    switch (method) {
-      case 'updateDynamicRules':
-      case 'updateSessionRules': {
-        const dynamic = method === 'updateDynamicRules'
-        const current = dynamic ? rules.dynamic : rules.session
-        const removeIds = new Set(
-          (Array.isArray(options.removeRuleIds) ? options.removeRuleIds : []).map(Number)
-        )
-        const added = normalizeRuleset(options.addRules ?? [], origin)
-        const next = [...current.filter((r) => !removeIds.has(r.id)), ...added]
-        await this.host.setRules(
-          id,
-          dynamic ? { ...rules, dynamic: next } : { ...rules, session: next }
-        )
-        return undefined
-      }
-      case 'getDynamicRules':
-        return rules.dynamic.map(ruleToChrome)
-      case 'getSessionRules':
-        return rules.session.map(ruleToChrome)
-      case 'updateEnabledRulesets': {
-        const enabled = new Set(rules.enabledRulesets ?? defaults())
-        for (const rid of asStringArray(options.disableRulesetIds)) enabled.delete(rid)
-        for (const rid of asStringArray(options.enableRulesetIds)) enabled.add(rid)
-        await this.host.setRules(id, { ...rules, enabledRulesets: [...enabled] })
-        return undefined
-      }
-      case 'getEnabledRulesets':
-        return rules.enabledRulesets ?? defaults()
-      case 'updateStaticRules':
-        // Per-rule disabling inside a static ruleset: accepted, not applied until W2-3's engine.
-        return undefined
-      case 'getDisabledRuleIds':
-        return []
-      case 'getMatchedRules':
-        return { rulesMatchedInfo: [] }
-      case 'getAvailableStaticRuleCount':
-        return 30000
-      case 'isRegexSupported':
-        return { isSupported: true }
-      case 'setExtensionActionOptions':
-        return undefined
-    }
-    throw new Error(`chrome.declarativeNetRequest.${method} ${NOT_IMPLEMENTED}`)
   }
 
   // --- notifications / contextMenus / webNavigation ----------------------------
@@ -1424,28 +1481,4 @@ export function registeredToChrome(script: RegisteredContentScript): Record<stri
     world: script.world,
     persistAcrossSessions: script.persistAcrossSessions
   }
-}
-
-/** The normalised rule back in Chrome's shape (what `getDynamicRules` returns). */
-export function ruleToChrome(rule: NetRule): Record<string, unknown> {
-  const condition: Record<string, unknown> = {}
-  if (rule.urlFilter !== null) condition.urlFilter = rule.urlFilter
-  if (rule.regexFilter !== null) condition.regexFilter = rule.regexFilter
-  if (rule.caseSensitive) condition.isUrlFilterCaseSensitive = true
-  if (rule.requestDomains.length) condition.requestDomains = rule.requestDomains
-  if (rule.excludedRequestDomains.length)
-    condition.excludedRequestDomains = rule.excludedRequestDomains
-  if (rule.initiatorDomains.length) condition.initiatorDomains = rule.initiatorDomains
-  if (rule.excludedInitiatorDomains.length)
-    condition.excludedInitiatorDomains = rule.excludedInitiatorDomains
-  if (rule.resourceTypes.length) condition.resourceTypes = rule.resourceTypes
-  if (rule.excludedResourceTypes.length)
-    condition.excludedResourceTypes = rule.excludedResourceTypes
-  if (rule.requestMethods.length) condition.requestMethods = rule.requestMethods
-  if (rule.excludedRequestMethods.length)
-    condition.excludedRequestMethods = rule.excludedRequestMethods
-  if (rule.domainType) condition.domainType = rule.domainType
-  const action: Record<string, unknown> = { type: rule.action }
-  if (rule.action === 'redirect' && rule.redirectUrl) action.redirect = { url: rule.redirectUrl }
-  return { id: rule.id, priority: rule.priority, action, condition }
 }
