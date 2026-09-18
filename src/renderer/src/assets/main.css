@@ -3576,4 +3576,8 @@
     content: none;
     animation: none;
   }
+  /* Its appearance and departure stay an opacity fade, at v2 §11.3's 120 ms, not a cut. */
+  .zen-load-progress {
+    transition-duration: 120ms !important;
+  }
 }

@@ -7,9 +7,17 @@ import {
   type Axis,
   type DismissDirections
 } from '@renderer/lib/gestures/dismiss'
-import { SPRING_GENTLE, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
+import {
+  reducedMotion,
+  SPRING_GENTLE,
+  SPRING_SNAPPY,
+  SpringAnimation
+} from '@renderer/lib/motion/spring'
 import { MESSAGE_INSET } from './stack'
 import { useSwipeDismiss, type SwipeDismissHandlers } from './useSwipeDismiss'
+
+/** v2 §11.3: with motion reduced, an appearance or departure is a fade in place this long. */
+const REDUCED_FADE_MS = 120
 
 export interface MessageMotionOptions {
   /** The edge the card lives at: `1` the bottom (it comes up from below), `-1` the top. */
@@ -37,7 +45,9 @@ type Phase = 'entering' | 'resting' | 'dragging' | 'leaving'
  * when let go past the threshold, flung, timed out or dismissed. Two springs, one per axis, own
  * the transform, and a finger can catch either. The layer clips the cards to the content frame,
  * so arriving and leaving cards emerge from and vanish at its edge; opacity only follows a
- * finger, thinning the card as it is pulled towards the way out.
+ * finger, thinning the card as it is pulled towards the way out. With motion reduced (v2 §11.3)
+ * nothing travels: the card appears in its slot and leaves from it on a 120 ms opacity fade, a
+ * finger still drags it 1:1 and a release jumps to its outcome.
  */
 export function useMessageMotion(options: MessageMotionOptions): {
   ref: RefObject<HTMLDivElement | null>
@@ -54,6 +64,40 @@ export function useMessageMotion(options: MessageMotionOptions): {
   const exitAxis = useRef<Axis | null>(null)
   const dragAxis = useRef<Axis | null>(null)
   const springs = useRef<{ x: SpringAnimation; y: SpringAnimation } | null>(null)
+  const fadeFrame = useRef<number | null>(null)
+
+  const cancelFade = (): void => {
+    if (fadeFrame.current !== null) cancelAnimationFrame(fadeFrame.current)
+    fadeFrame.current = null
+  }
+
+  /**
+   * The reduced-motion fade (§11.3), written per frame: the reduced-motion stylesheet cuts
+   * every CSS transition to nothing, so a transition could not carry it. Runs from the card's
+   * present opacity so a card thinned by a finger does not brighten first.
+   */
+  const fade = (to: 0 | 1, done: () => void): void => {
+    cancelFade()
+    const el = ref.current
+    if (!el) {
+      done()
+      return
+    }
+    const from = to === 1 ? 0 : Number.parseFloat(el.style.opacity) || 1
+    const startedAt = performance.now()
+    el.style.opacity = from.toFixed(3)
+    const step = (now: number): void => {
+      const t = Math.min(1, (now - startedAt) / REDUCED_FADE_MS)
+      el.style.opacity = (from + (to - from) * t).toFixed(3)
+      if (t < 1) {
+        fadeFrame.current = requestAnimationFrame(step)
+        return
+      }
+      fadeFrame.current = null
+      done()
+    }
+    fadeFrame.current = requestAnimationFrame(step)
+  }
 
   /** Distance along `axis` at which the card is out of sight: its own extent (plus the inset). */
   const reach = (axis: Axis): number =>
@@ -119,11 +163,22 @@ export function useMessageMotion(options: MessageMotionOptions): {
     return springs.current
   }
 
-  /** Send the card off along `axis` towards `sign`, from where it is at `velocity` px/s. */
-  const leave = (axis: Axis, sign: -1 | 1, velocity: number): void => {
+  /**
+   * Send the card off along `axis` towards `sign`, from where it is at `velocity` px/s. With
+   * motion reduced it does not travel: a `jump` (a release's outcome) is gone at once, anything
+   * else fades in place.
+   */
+  const leave = (axis: Axis, sign: -1 | 1, velocity: number, jump = false): void => {
     const s = ensureSprings()
     exitAxis.current = axis
     setPhase('leaving')
+    if (reducedMotion()) {
+      s.x.stop()
+      s.y.stop()
+      if (jump) latest.current.onGone()
+      else fade(0, () => latest.current.onGone())
+      return
+    }
     if (axis === 'x') {
       s.y.stop()
       s.x.start(pos.current.x, velocity, sign * reach('x'), SPRING_SNAPPY)
@@ -141,11 +196,22 @@ export function useMessageMotion(options: MessageMotionOptions): {
     size.current = { width: el.offsetWidth, height: el.offsetHeight }
     const { home, slot } = latest.current
     const s = ensureSprings()
-    pos.current = { x: 0, y: slot + home * reach('y') }
-    paint()
     setPhase('entering')
-    s.y.start(pos.current.y, 0, slot, SPRING_GENTLE)
+    if (reducedMotion()) {
+      // §11.3: in its slot from the first frame, fading in.
+      pos.current = { x: 0, y: slot }
+      paint()
+      fade(1, () => {
+        el.style.opacity = ''
+        if (phase.current === 'entering' && !s.y.running) setPhase('resting')
+      })
+    } else {
+      pos.current = { x: 0, y: slot + home * reach('y') }
+      paint()
+      s.y.start(pos.current.y, 0, slot, SPRING_GENTLE)
+    }
     return () => {
+      cancelFade()
       s.x.stop()
       s.y.stop()
     }
@@ -179,6 +245,7 @@ export function useMessageMotion(options: MessageMotionOptions): {
       const s = ensureSprings()
       s.x.stop()
       s.y.stop()
+      cancelFade()
       dragAxis.current = axis
       setPhase('dragging')
     },
@@ -196,8 +263,8 @@ export function useMessageMotion(options: MessageMotionOptions): {
       const offset = axis === 'x' ? pos.current.x : pos.current.y - slot
       const sign = dismissSign(offset, velocity, reach(axis), axis, dirs)
       if (sign !== 0) {
-        leave(axis, sign, velocity)
         latest.current.onSwipe()
+        leave(axis, sign, velocity, true)
         return
       }
       if (leaving) {
