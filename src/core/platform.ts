@@ -46,6 +46,8 @@ import type {
   EngineTransport
 } from '../shared/translateEngine'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '../shared/updates'
+import type { InterstitialAction } from '../shared/interstitial'
+import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
@@ -98,6 +100,7 @@ export interface PageMessage {
     | 'popup-blocked'
     /** The page called `window.focus()` with a gesture (a notification was clicked): show its tab. */
     | 'focus'
+    | 'interstitial'
   url?: string
   x?: number
   y?: number
@@ -106,6 +109,8 @@ export interface PageMessage {
   playing?: boolean
   /** `zap`: CSS selector of the element the user picked in Boost zap mode. */
   selector?: string
+  /** `interstitial`: the button pressed on a Zenium warning page (see `shared/zenPages`). */
+  action?: InterstitialAction
 }
 
 export interface PageContextParams {
@@ -254,6 +259,16 @@ export interface TabViewEvents {
   onFaviconUpdated(favicons: string[]): void
   /** Main-frame load failure (Chromium `net::` error code; hosts map their own codes). */
   onFailLoad(code: number, description: string, url: string): void
+  /**
+   * The host's request engine upgraded a main-frame navigation from `from` (http) to `to`
+   * (HTTPS-only mode's rule); if `to` then fails, the tab offers `from`.
+   */
+  onUpgraded(from: string, to: string): void
+  /**
+   * The host's request engine refused a main-frame navigation to `url` on Safe Browsing's word
+   * (Android, whose guard reads the tables itself); `onFailLoad` follows with the same URL.
+   */
+  onUnsafeNavigation(url: string, hit: SafeBrowsingHit): void
   onCrashed(reason: CrashReason): void
   onAudioStateChanged(audible: boolean): void
   onMediaStateChanged(playing: boolean): void
@@ -687,6 +702,22 @@ export interface ExternalProtocolHost {
   respond(requestId: string, allow: boolean): void
 }
 
+/**
+ * What the host does with the privacy settings the core cannot enforce from inside the request
+ * engine's rule sets: the third-party cookie policy, the `Sec-GPC` / `DNT` headers and their
+ * `navigator` flags, the plaintext exemptions of HTTPS-only mode (applied at once, before the
+ * rule set catches up on hosts that compile it asynchronously) and, on desktop, secure DNS.
+ * `apply` runs once the browser is up and again after every change; the host keeps the copy.
+ */
+export interface PrivacyHost {
+  apply(flags: PrivacyFlags): void
+  /**
+   * The Safe Browsing feed table this build ships for `id` (the JSON document
+   * `SafeBrowsingService` persists, as text), or null when the build has no snapshot of it.
+   */
+  bundledSafeBrowsingFeed?(id: string): Promise<string | null>
+}
+
 export interface NetHost {
   fetchText(
     url: string,
@@ -696,7 +727,13 @@ export interface NetHost {
       /** Overall time limit; hosts default to a few seconds (suggestions, Live Folders). */
       timeoutMs?: number
     }
-  ): Promise<{ ok: boolean; status: number; text: string }>
+  ): Promise<{
+    ok: boolean
+    status: number
+    text: string
+    /** Response headers the caller may condition a later fetch on (`etag`, `last-modified`), lowercase names. */
+    headers?: Record<string, string>
+  }>
   /**
    * Whether `host` resolves in DNS (Chrome's intranet probe behind "Did you mean to go to
    * http://host/?"). Resolves false on any failure; hosts without a resolver leave it out and
@@ -1197,6 +1234,11 @@ export interface Platform {
   readonly passwords?: PasswordsHost
   /** Bundled filter-list snapshots; hosts without it start unprotected until the lists download. */
   readonly blocking?: BlockingHost
+  /**
+   * The privacy policy the host enforces itself (cookies, GPC / DNT, HTTPS-only exemptions, secure
+   * DNS) and the Safe Browsing snapshot it ships; hosts without it get none of those.
+   */
+  readonly privacy?: PrivacyHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Offline page translation; hosts without it report the feature as unavailable. */

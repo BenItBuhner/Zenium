@@ -229,6 +229,45 @@ export function errorPageUrl(code: number, description: string, url: string): st
   return `${ERROR_URL_PREFIX}?${params.toString()}`
 }
 
+/**
+ * The interstitials Zenium puts in front of a page: Safe Browsing's warning and HTTPS-only
+ * mode's plaintext question. Both are error pages (`zen://error` with a `kind`), so the URL bar,
+ * reload and copy treat them like any other page that stands in for `url`.
+ */
+export type InterstitialKind = 'safebrowsing' | 'https-only'
+
+export function safeBrowsingPageUrl(url: string, threat: string): string {
+  const params = new URLSearchParams({
+    code: String(-20),
+    description: 'ERR_BLOCKED_BY_CLIENT',
+    url,
+    kind: 'safebrowsing',
+    threat
+  })
+  return `${ERROR_URL_PREFIX}?${params.toString()}`
+}
+
+export function httpsOnlyPageUrl(httpUrl: string, code: number): string {
+  const params = new URLSearchParams({
+    code: String(code),
+    description: 'HTTPS_ONLY_FALLBACK',
+    url: httpUrl,
+    kind: 'https-only'
+  })
+  return `${ERROR_URL_PREFIX}?${params.toString()}`
+}
+
+/** Which interstitial an error-page URL is, or null for a plain error page (or any other URL). */
+export function interstitialKindOf(url: string): InterstitialKind | null {
+  if (!url.startsWith(ERROR_URL_PREFIX)) return null
+  try {
+    const kind = new URL(url).searchParams.get('kind')
+    return kind === 'safebrowsing' || kind === 'https-only' ? kind : null
+  } catch {
+    return null
+  }
+}
+
 /** Prevent navigation to schemes that would be dangerous or meaningless in a tab. */
 export function isNavigableUrl(url: string): boolean {
   if (!url) return false

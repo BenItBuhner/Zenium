@@ -79,6 +79,16 @@ describe('RuleEngine conditions', () => {
     expect(e.decide(req('https://a/tabbed')).action).toBe('allow')
     expect(e.decide(req('https://a/untabbed', { tabId: 'tab-7' })).action).toBe('allow')
     expect(e.decide(req('https://a/untabbed', { tabId: 'tab-9' })).action).toBe('block')
+    // The Chrome tab id (the WebContents id on desktop) wins over the host's own tab id.
+    expect(e.decide(req('https://a/tabbed', { tabId: 'tab-c9f1a2', chromeTabId: 7 })).action).toBe(
+      'block'
+    )
+    expect(e.decide(req('https://a/tabbed', { tabId: 'tab-7', chromeTabId: 8 })).action).toBe(
+      'allow'
+    )
+    expect(e.decide(req('https://a/untabbed', { tabId: 'tab-9', chromeTabId: 7 })).action).toBe(
+      'allow'
+    )
 
     e.setRuleSet(
       set('initiators', [

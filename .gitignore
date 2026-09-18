@@ -10,6 +10,7 @@ android/app/src/main/assets/page.js
 android/app/src/main/assets/ext.js
 android/app/src/main/assets/ext-janitor.js
 android/app/src/main/assets/blocking
+android/app/src/main/assets/safebrowsing
 android/.gradle
 android/build
 android/app/build

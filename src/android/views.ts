@@ -1,4 +1,5 @@
 import type { KeyBinding, NavigationSnapshot, PageRules, Rect, Tab } from '@shared/types'
+import type { SafeBrowsingHit } from '@shared/privacy'
 import type { SiteCertificate } from '@shared/siteInfo'
 import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@shared/zenPages'
 import type {
@@ -39,6 +40,10 @@ export interface ViewEventPayloads {
   title: { title: string }
   favicon: { url: string }
   failLoad: { code: number; description: string; url: string }
+  /** HTTPS-only mode's rule sent the navigation to `to` instead of `from` (before it loads). */
+  upgraded: { from: string; to: string }
+  /** The Safe Browsing guard refused the navigation (a `failLoad` of the URL follows). */
+  unsafe: { url: string; hit: SafeBrowsingHit }
   crashed: { reason: string }
   audio: { audible: boolean }
   /** The Kotlin request engine blocked `count` more requests of the page. */
@@ -111,6 +116,17 @@ export class AndroidTabView implements TabView {
       case 'failLoad': {
         const p = payload as ViewEventPayloads['failLoad']
         ev.onFailLoad(p.code, p.description, p.url)
+        return
+      }
+      case 'upgraded': {
+        const p = payload as ViewEventPayloads['upgraded']
+        if (typeof p.from === 'string' && typeof p.to === 'string') ev.onUpgraded(p.from, p.to)
+        return
+      }
+      case 'unsafe': {
+        const p = payload as ViewEventPayloads['unsafe']
+        if (typeof p.url === 'string' && p.hit && typeof p.hit === 'object')
+          ev.onUnsafeNavigation(p.url, p.hit)
         return
       }
       case 'crashed':

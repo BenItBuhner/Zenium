@@ -35,6 +35,7 @@ import androidx.webkit.WebViewFeature
 import app.zen.chromium.ext.Extensions
 import app.zen.chromium.blocking.Blocking
 import app.zen.chromium.ext.ExtensionStore
+import app.zen.chromium.privacy.Privacy
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.json.JSONObject
 import java.io.File
@@ -51,6 +52,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val storage = Storage(activity)
     /** The process's request engine, built from the rule sets the core persists, before any tab exists. */
     override val blocking = Blocking.shared(activity)
+    /** The process's privacy host: the policy the core pushes, the Safe Browsing tables it writes. */
+    override val privacy = Privacy.shared(activity)
     override val keys = Keys()
     override val permissions = Permissions(this)
     override val security = Security(this)
@@ -171,6 +174,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "blocking.bundled" -> reply(blocking.bundledLists())
             "blocking.install" -> blocking.installBundled(args.obj("set"), args.str("file")) { main.post { reply(it) } }
             "blocking.stats" -> reply(blocking.stats())
+
+            // --- privacy (the PrivacyHost contract) ----------------------------------------------
+            "privacy.apply" -> {
+                privacy.apply(args.obj("flags"))
+                for (view in tabs.all()) view.applyPrivacy()
+                reply(null)
+            }
+            "privacy.bundledFeed" -> reply(privacy.bundledFeed(args.str("id")))
 
             // --- views -----------------------------------------------------------------------
             "view.create" -> { tabs.create(args.str("tabId"), args.str("containerId", Profiles.DEFAULT_CONTAINER)); reply(null) }
@@ -632,7 +643,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 val status = conn.responseCode
                 val ok = status in 200..299
                 val text = if (ok) conn.inputStream.bufferedReader().use { it.readText() } else ""
-                json("ok" to ok, "status" to status, "text" to text)
+                // The validators a later conditional fetch sends back (`If-None-Match`, `If-Modified-Since`).
+                val responseHeaders = JSONObject()
+                conn.getHeaderField("ETag")?.let { responseHeaders.put("etag", it) }
+                conn.getHeaderField("Last-Modified")?.let { responseHeaders.put("last-modified", it) }
+                json("ok" to ok, "status" to status, "text" to text, "headers" to responseHeaders)
             }.getOrElse { json("ok" to false, "status" to 0, "text" to "") }
             main.post { reply(result) }
         }

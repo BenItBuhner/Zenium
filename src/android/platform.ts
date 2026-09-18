@@ -42,6 +42,7 @@ import type {
   PickedTextFile,
   Platform,
   PlatformInfo,
+  PrivacyHost,
   ReauthHost,
   SessionHost,
   ShellHost,
@@ -55,6 +56,7 @@ import { PBKDF2_PARAMS, deriveWithWebCrypto } from '@core/credentials/kdf'
 import { fromBase64, toBase64 } from '@core/credentials/crypto'
 import type { RuleSet } from '@core/blocking/rules'
 import { INDEX_FILE } from '@core/blocking/store'
+import type { PrivacyFlags } from '@shared/privacy'
 import readabilityJs from '@mozilla/readability/Readability.js?raw'
 import readabilityReaderableJs from '@mozilla/readability/Readability-readerable.js?raw'
 import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
@@ -126,7 +128,8 @@ export function androidCapabilities({
     pageControls: true,
     reducedExtensionIsolation: extensions && !isolatedWorlds,
     // One window: private browsing is a tab in it, on a throwaway WebView profile.
-    privateTabs: profiles
+    privateTabs: profiles,
+    secureDns: false
   }
 }
 
@@ -644,6 +647,26 @@ class AndroidBlockingHost implements BlockingHost {
   }
 }
 
+/**
+ * The privacy policy goes to Kotlin as one document (`privacy/Privacy.kt` keeps the latest):
+ * the Safe Browsing guard's switch and bypasses, the cookie mode for `CookieManager`, the GPC
+ * and DNT headers and their `navigator` script, HTTPS-only mode's allowed sites. Secure DNS is
+ * the system's business on Android (`secureDns: false`). The bundled Safe Browsing snapshot is
+ * in the APK's assets (`assets/safebrowsing/<id>.json`), read through Kotlin.
+ */
+class AndroidPrivacyHost implements PrivacyHost {
+  constructor(private readonly bridge: Bridge) {}
+
+  apply(flags: PrivacyFlags): void {
+    this.bridge.send('privacy.apply', { flags })
+  }
+
+  async bundledSafeBrowsingFeed(id: string): Promise<string | null> {
+    const raw = await this.bridge.call<unknown>('privacy.bundledFeed', { id })
+    return typeof raw === 'string' && raw ? raw : null
+  }
+}
+
 /** Kotlin's description of a bundled list, checked field by field. */
 export function bundledListFrom(raw: unknown): BundledFilterList | null {
   if (!raw || typeof raw !== 'object') return null
@@ -686,6 +709,7 @@ export class AndroidPlatform implements Platform {
   readonly externalProtocols: ExternalProtocolHost
   readonly passwords: PasswordsHost
   readonly blocking: BlockingHost
+  readonly privacy: PrivacyHost
   readonly translate: AndroidTranslateHost
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
@@ -719,6 +743,7 @@ export class AndroidPlatform implements Platform {
     this.views = new AndroidTabViewHost(bridge)
     this.siteData = new AndroidSiteData(bridge)
     this.blocking = new AndroidBlockingHost(bridge)
+    this.privacy = new AndroidPrivacyHost(bridge)
     this.translate = new AndroidTranslateHost(bridge)
     this.menus = new RendererMenuHost()
     this.windows = {
@@ -755,12 +780,19 @@ export class AndroidPlatform implements Platform {
     }
     this.net = {
       fetchText: async (url, options) => {
-        const result = await bridge.call<{ ok: boolean; status?: number; text: string }>(
-          'net.fetch',
-          { url, headers: options.headers ?? {}, timeoutMs: options.timeoutMs ?? 0 }
-        )
+        const result = await bridge.call<{
+          ok: boolean
+          status?: number
+          text: string
+          headers?: Record<string, string>
+        }>('net.fetch', { url, headers: options.headers ?? {}, timeoutMs: options.timeoutMs ?? 0 })
         if (options.signal?.aborted) throw new Error('aborted')
-        return { ok: result.ok, status: result.status ?? (result.ok ? 200 : 0), text: result.text }
+        return {
+          ok: result.ok,
+          status: result.status ?? (result.ok ? 200 : 0),
+          text: result.text,
+          headers: result.headers ?? {}
+        }
       }
     }
     // Kotlin owns the transfers (`Downloads.kt`); records and decisions stay in the core.

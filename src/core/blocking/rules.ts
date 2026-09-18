@@ -119,7 +119,10 @@ export interface RuleCondition {
   requestMethods?: string[]
   excludedRequestMethods?: string[]
   domainType?: DomainType
-  /** Numeric tab ids compared against the decimal part of the host's tab id. */
+  /**
+   * Numeric tab ids, compared against `RequestContext.chromeTabId` where the host sets it (the
+   * Chrome tab id extensions see), else against the decimal part of the host's own tab id.
+   */
   tabIds?: number[]
   excludedTabIds?: number[]
 }
@@ -202,6 +205,13 @@ export interface RequestContext {
   /** Precomputed by the host when it knows; otherwise derived from `url` vs `initiator`. */
   isThirdParty?: boolean
   tabId?: string
+  /**
+   * The engine-level id of the page the request belongs to: Electron's `webContents.id`, which
+   * is also the Chrome tab id the extension platform hands out, so `tabIds` / `excludedTabIds`
+   * conditions of declarativeNetRequest rules match it. The Android host has no separate id and
+   * leaves it unset; hosts and handlers may key their own bookkeeping on it too.
+   */
+  chromeTabId?: number
   frameId?: number
   /** Session partition / container id the request runs in. */
   partition?: string
@@ -268,7 +278,14 @@ export const BUILTIN_RULE_SETS = {
   /** An `allow` on everything while blocking is off. */
   globalOff: 'builtin:global-off',
   /** `allowAllRequests` for every site the user excepted. */
-  siteExceptions: 'builtin:site-exceptions'
+  siteExceptions: 'builtin:site-exceptions',
+  /**
+   * HTTPS-only mode's `upgradeScheme` rule (`src/core/protection`), the sites the user allowed
+   * over plaintext as its `excludedRequestDomains`. The same sites travel in `PrivacyFlags`
+   * (`httpsOnlyAllowed`) for a host whose engine reloads the store with a delay (Android), so
+   * an answer given on the warning page holds on the very next request either way.
+   */
+  httpsOnly: 'builtin:https-only'
 } as const
 
 /**
@@ -287,6 +304,11 @@ export const RULE_SET_PRIORITY = {
   siteExceptions: 900,
   /** The global off switch. */
   globalOff: 1000,
+  /**
+   * HTTPS-only mode. Above the blocking switch and the per-site blocking exceptions on purpose:
+   * turning ad blocking off, or excepting a site from it, says nothing about plaintext.
+   */
+  httpsOnly: 1500,
   /**
    * Rule sets translated from extensions' declarativeNetRequest rules
    * (`src/core/extensions/dnr/translate.ts`): `dnr + slot` with the most recently installed

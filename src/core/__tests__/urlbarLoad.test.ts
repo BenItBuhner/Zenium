@@ -124,6 +124,7 @@ describe('submitting a URL from the URL bar', () => {
 
   it('upgrades a bare host to https once and still falls back to http on a connection failure', () => {
     const f = fixture()
+    f.browser.state.settings.privacy.httpsOnly = 'off'
     submit(f.browser, 'example.com')
     const view = f.views[0]
     expect(view.loads).toEqual(['https://example.com'])
@@ -131,6 +132,20 @@ describe('submitting a URL from the URL bar', () => {
     // recorded the original host so the fallback can retry over http.
     view.events.onFailLoad(-105, 'net::ERR_NAME_NOT_RESOLVED', 'https://example.com')
     expect(view.loads).toEqual(['https://example.com', 'http://example.com'])
+  })
+
+  it('asks before the http fallback while HTTPS-only mode is on (the default)', () => {
+    const f = fixture()
+    expect(f.browser.state.settings.privacy.httpsOnly).toBe('ask')
+    submit(f.browser, 'example.com')
+    const view = f.views[0]
+    view.events.onFailLoad(-105, 'net::ERR_NAME_NOT_RESOLVED', 'https://example.com')
+    expect(view.loads).toHaveLength(2)
+    const warning = new URL(view.loads[1])
+    expect(warning.protocol).toBe('zen:')
+    expect(warning.searchParams.get('kind')).toBe('https-only')
+    expect(warning.searchParams.get('url')).toBe('http://example.com')
+    expect(warning.searchParams.get('code')).toBe('-105')
   })
 
   it('navigates an existing tab in place without creating a second view', () => {
