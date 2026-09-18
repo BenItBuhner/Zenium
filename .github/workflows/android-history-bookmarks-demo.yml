@@ -1,0 +1,35 @@
+name: Android history and bookmarks demo
+
+# Records the phone history and bookmarks panels on a hardware-accelerated Android emulator and
+# uploads the video, screenshots and findings: history grouped by day (today's visits are real,
+# browsed on a loopback server during the warm-up), a visit swiped away and undone, long-press
+# selection with its menu and an undone delete, the Clear history question and the empty state,
+# the bookmarks list with a row's menu, the edit sheet renaming a bookmark, bookmark selection
+# with an undone delete, a folder entered and left with the back gesture, back closing a row menu
+# and an editor without the panel, and the star's toast whose Edit opens the editor.
+# Dispatch-only, like the other demos: it takes about ten minutes and says nothing about a change
+# being correct. Same caveats as the gesture demo about the software GPU's frame rate. The build,
+# the emulator and the Gradle cache live in android-emulator-demo.yml; this file picks the driver.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-history-bookmarks-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: history and bookmarks demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.HistoryBookmarksDemo
+        DEMO_DIR=history-bookmarks-demo
+        DEMO_OUT=artifacts/android-history-bookmarks-demo
+        DEMO_VIDEO=android-history-bookmarks-demo.mp4
+      artifact-name: android-history-bookmarks-demo
+      artifact-path: artifacts/android-history-bookmarks-demo/

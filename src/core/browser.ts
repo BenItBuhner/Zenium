@@ -1957,9 +1957,10 @@ export class Browser {
       'session.restoreClosed': ({ id }, win) => this.session.restoreClosed(id, win),
       'session.clearRecentlyClosed': () => this.session.clearRecentlyClosed(),
 
-      'clipboard.writeText': ({ text, sensitive }) => {
+      'clipboard.writeText': ({ text, sensitive, confirmation }, win) => {
         if (sensitive)
           this.passwords.clipboard.copy(text, state.settings.passwords.clipboardClearSeconds)
+        else if (confirmation) this.copyText(text, confirmation, win)
         else platform.clipboard.writeText(text)
       },
 
