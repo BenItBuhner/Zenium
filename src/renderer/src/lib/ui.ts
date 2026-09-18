@@ -279,6 +279,11 @@ export interface UiState {
   autofillPrompt: 'popover' | 'sheet' | 'dialog' | null
   /** The id of a save prompt put away behind the key chip in the pill; the chip brings it back. */
   autofillPromptCollapsed: string | null
+  /**
+   * The id of a save prompt the chip brought back by hand: that one takes the focus as any
+   * popover the user opened, where the prompt the page raised takes none (v2 §9.22's notice rule).
+   */
+  autofillPromptByHand: string | null
   /** Settings > Autofill is editing an address or a card (`id: null` adds one). */
   autofillEdit: { kind: 'address' | 'card'; id: string | null } | null
   /**
@@ -398,6 +403,7 @@ export const uiStore = createStore<UiState>(
     permissionPromptOpen: false,
     autofillPrompt: null,
     autofillPromptCollapsed: null,
+    autofillPromptByHand: null,
     autofillEdit: null,
     autofillPassphrase: null,
     selectedTabIds: [],

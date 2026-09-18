@@ -99,9 +99,28 @@ textarea.zen-v2-field {
   background: var(--v2-panel);
   box-shadow: var(--v2-shadow-panel);
 }
-/* A notice panel holds the focus itself on open (§9.22, `tabIndex -1`); the panel draws no ring for it. */
+/* The panel itself takes the focus when it is entered or holds a notice (§9.22, `tabIndex -1`); it draws no ring for it. */
 .zen-v2-af-popover:focus {
   outline: none;
+}
+/*
+ * The prompt collapses into its chip (§9.20): the chassis' pop reversed – scale .94 with the
+ * opacity – towards the origin the script sets at the chip, 180 ms, holding its last frame
+ * until it is gone; nothing in it takes a press meanwhile.
+ */
+.zen-v2-af-pop-out {
+  pointer-events: none;
+  animation: zen-v2-af-pop-out 180ms var(--zen-ease) forwards;
+}
+@keyframes zen-v2-af-pop-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.94);
+  }
 }
 /*
  * The picker's document (`?surface=autofill`): a transparent page whose one panel sits inside
@@ -381,6 +400,14 @@ textarea.zen-v2-field {
 .zen-v2-af-row[aria-selected='true'] {
   background: var(--v2-selected);
 }
+/*
+ * The picker's footer row (§9.20, the list panel's footer: a hairline then one 32 navigation
+ * row) opens the manager and is no option: under the pointer or the arrow keys it takes the
+ * hover fill, never `--v2-selected`.
+ */
+.zen-v2-af-row[data-nav][data-active='true'] {
+  background: var(--v2-fill);
+}
 /* A row in the radio role (the menulist sheet, §9.13): the press fill, 120 ms. */
 .zen-v2-af-row:active {
   background: var(--v2-fill);
@@ -419,17 +446,16 @@ textarea.zen-v2-field {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* The description wraps to two lines then ellipsis (§9.2); the row grows to 72 with it. */
+/* In an anchored picker or menu the description clamps to one line with an ellipsis (§9.13). */
 .zen-v2-af-row-desc {
-  display: -webkit-box;
+  display: block;
   overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
   color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-small);
   font-variant-numeric: tabular-nums;
   line-height: var(--v2-line-body);
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* A trailing glyph in a list row (§9.18) centres on the row. */
 .zen-v2-af-row-trailing {
