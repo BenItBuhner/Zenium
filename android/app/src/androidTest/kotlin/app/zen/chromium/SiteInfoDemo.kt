@@ -174,8 +174,8 @@ class SiteInfoDemo {
             scrollSheet(f)
             SystemClock.sleep(1_200)
             shot("04-cookies-scrolled")
-            if (tapLabel(f, "Clear cookies")) {
-                SystemClock.sleep(1_800)
+            if (tapUntil(f, "Clear cookies", "Confirm clear cookies")) {
+                SystemClock.sleep(1_200)
                 shot("05-clear-cookies-confirm")
                 tapLabel(f, "Confirm clear cookies")
                 SystemClock.sleep(3_000)
@@ -247,6 +247,29 @@ class SiteInfoDemo {
             Log.w(TAG, "site icon not in the accessibility tree; tapping the start of the pill")
             f.tap(pill.left + 22 * density, pill.exactCenterY())
         }
+    }
+
+    /**
+     * Tap `label` and wait for `expected` to appear; a tap the WebView let pass as a scroll or a
+     * settling sheet swallowed is tried again, a little higher in the row, up to three times.
+     */
+    private fun tapUntil(f: Finger, label: String, expected: String): Boolean {
+        repeat(3) { attempt ->
+            val target = findByLabel(label) ?: run {
+                Log.w(TAG, "no node labelled '$label'")
+                return false
+            }
+            val y = target.top + target.height() * (0.5f - 0.15f * attempt)
+            Log.i(TAG, "tap '$label' (attempt ${attempt + 1}) at ${target.exactCenterX()},$y")
+            f.tap(target.exactCenterX(), y)
+            val deadline = SystemClock.uptimeMillis() + 3_000
+            while (SystemClock.uptimeMillis() < deadline) {
+                if (findByLabel(expected) != null) return true
+                SystemClock.sleep(250)
+            }
+        }
+        Log.w(TAG, "'$expected' never appeared after tapping '$label'")
+        return false
     }
 
     private fun tapLabel(f: Finger, label: String): Boolean {
