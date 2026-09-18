@@ -3389,6 +3389,11 @@
  * read the token block and nothing else.
  */
 @layer components {
+  /* The frame's strips ("Make Zenium your default browser", "Restore pages?") stay in layout but
+     vanish under an open overlay: `visibility` inherits through the `display: contents` wrapper. */
+  .zen-frame-strips[data-under-overlay] {
+    visibility: hidden;
+  }
   .zen-default-browser-card {
     color: var(--v2-text);
     background: var(--v2-card);

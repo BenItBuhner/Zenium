@@ -453,9 +453,10 @@ function useGlobalKeys(state: UIState): void {
 }
 
 /**
- * The "New Tab" button and empty state ask the core for a new tab: Zen's floating URL bar in
- * new-tab mode (it comes back as `urlbar.toggle`), or the page an extension overrides new tabs
- * with. Closing the bar first keeps the toggle from swallowing the request while it is open.
+ * The "New Tab" button and empty state ask the core for a new tab: the `zen://newtab` page (it
+ * comes back as `newtab.opened` with the URL bar over it), Zen's floating URL bar in new-tab mode
+ * when the page is off (`urlbar.toggle`), or the page an extension overrides new tabs with.
+ * Closing the bar first keeps the toggle from swallowing the request while it is open.
  */
 function useNewTabEvent(): void {
   useEffect(() => {

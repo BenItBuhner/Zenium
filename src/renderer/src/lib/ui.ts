@@ -44,9 +44,17 @@ export function startBrowserSync(): void {
 export interface UrlbarState {
   open: boolean
   mode: UrlbarOpenMode
-  /** Tab the URL bar edits (null → a new tab will be created on submit). */
+  /**
+   * Tab the URL bar edits (null → a new tab will be created on submit). In `new-tab` mode it is
+   * the new tab page the bar floats over: what is typed navigates that tab.
+   */
   tabId: string | null
   initialText: string | undefined
+  /**
+   * `initialText` was typed by the user (into the new tab page before the bar was up): the caret
+   * goes after it instead of selecting it, so the next keystroke carries on rather than replaces.
+   */
+  typed?: boolean
   /** Anchor the bar to the top instead of floating when the user clicked the address pill. */
   attached: boolean
 }
@@ -233,6 +241,11 @@ export interface UiState {
   bookmarkEdit: { id: string | null; parentId: string; type: BookmarkNodeType } | null
   /** "Bookmark all tabs": the pages to file and the folder name Chrome would suggest. */
   bookmarkAllTabs: { tabIds: string[]; defaultTitle: string } | null
+  /**
+   * The new tab page's add (`id` null) or edit shortcut dialog, up over the page in `tabId`
+   * (a frame dialog; the page gives way to its picture while it is open).
+   */
+  newTabShortcutDialog: { tabId: string; id: string | null; title: string; url: string } | null
   /** A folder panel of the bookmarks bar hangs over the page. */
   barMenuOpen: boolean
   /** A permission prompt ("Allow example.com to use your camera?") is up over the page. */
@@ -315,6 +328,7 @@ export const uiStore = createStore<UiState>(
     zoomBubble: null,
     bookmarkEdit: null,
     bookmarkAllTabs: null,
+    newTabShortcutDialog: null,
     barMenuOpen: false,
     permissionPromptOpen: false,
     selectedTabIds: [],
@@ -613,6 +627,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.windowPromptOpen &&
     !ui.stageActive &&
     !ui.zoomBubble &&
+    !ui.newTabShortcutDialog &&
     !bookmarkChromeOpen(ui)
   )
 }
@@ -647,6 +662,7 @@ export function invalidateSnapshot(): void {
     !ui.stageActive &&
     !ui.zoomBubble &&
     ui.hoverCard.tabId === null &&
+    !ui.newTabShortcutDialog &&
     !bookmarkChromeOpen(ui)
   ) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
@@ -721,7 +737,54 @@ export async function openUrlbar(
   })
 }
 
+/**
+ * Keys typed into the new tab page while its URL bar is still on its way up (the snapshot of the
+ * page is taken first). They are appended here and land in the field as its initial text, so
+ * nothing typed between Ctrl+T and the first paint of the bar is lost.
+ */
+let typeahead: { tabId: string; text: string } | null = null
+
+/**
+ * The URL bar over a new tab page: `new-tab` mode bound to that tab, so what is typed navigates
+ * it instead of creating another. `text` is what the page's search box already received.
+ */
+export function openNewTabPageUrlbar(
+  tabId: string,
+  text: string | undefined,
+  attached: boolean
+): void {
+  const ui = uiStore.get()
+  if (ui.overlay === 'onboarding') return
+  if (ui.urlbar.open && ui.urlbar.mode === 'new-tab' && ui.urlbar.tabId === tabId) {
+    if (text) window.dispatchEvent(new CustomEvent<string>('zen-urlbar-type', { detail: text }))
+    return
+  }
+  if (typeahead && typeahead.tabId === tabId) {
+    typeahead.text += text ?? ''
+    return
+  }
+  const mine = { tabId, text: text ?? '' }
+  typeahead = mine
+  void captureActiveTab(tabId).then(() => {
+    if (typeahead !== mine) return
+    typeahead = null
+    run('focus.chrome', undefined)
+    uiStore.set({
+      urlbar: {
+        open: true,
+        mode: 'new-tab',
+        tabId,
+        initialText: mine.text || undefined,
+        typed: Boolean(mine.text),
+        attached
+      },
+      drawerOpen: false
+    })
+  })
+}
+
 export function closeUrlbar(): void {
+  typeahead = null
   if (!uiStore.get().urlbar.open) return
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   invalidateSnapshot()
@@ -867,6 +930,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.stageActive ||
     ui.zoomBubble !== null ||
     ui.hoverCard.tabId !== null ||
+    ui.newTabShortcutDialog !== null ||
     bookmarkChromeOpen(ui)
   )
 }
@@ -905,6 +969,31 @@ export function holdFloatingChrome(
       if (pageHadFocus) returnFocusToPage()
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// The new tab page's shortcut dialog over the page
+// ---------------------------------------------------------------------------
+
+/**
+ * `newtab.shortcutDialog`: the page in `tabId` asked for its add or edit shortcut dialog. Like
+ * every chrome dialog over a page, the page is captured first and then gives way to its picture
+ * under the frame's scrim; the chrome takes the keyboard for the dialog's fields.
+ */
+export async function openNewTabShortcutDialog(
+  request: NonNullable<UiState['newTabShortcutDialog']>
+): Promise<void> {
+  if (uiStore.get().overlay === 'onboarding') return
+  await captureActiveTab(request.tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ newTabShortcutDialog: request })
+}
+
+export function closeNewTabShortcutDialog(): void {
+  if (!uiStore.get().newTabShortcutDialog) return
+  uiStore.set({ newTabShortcutDialog: null })
+  invalidateSnapshot()
+  returnFocusToPage()
 }
 
 // ---------------------------------------------------------------------------

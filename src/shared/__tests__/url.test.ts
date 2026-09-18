@@ -3,6 +3,9 @@ import type { CertificateDetails } from '../types'
 import {
   BLANK_URL,
   BOOKMARKS_URL,
+  HISTORY_URL,
+  NEW_TAB_URL,
+  SETTINGS_URL,
   addressParts,
   certificateDetailsFrom,
   displayHost,
@@ -12,6 +15,7 @@ import {
   fullUrl,
   getDomain,
   inputToUrl,
+  isEmptyTabUrl,
   isNavigableUrl,
   isNewTabUrl,
   isProbablyUrl,
@@ -43,10 +47,59 @@ describe('isProbablyUrl / inputToUrl', () => {
     expect(inputToUrl('localhost:3000/app')).toBe('http://localhost:3000/app')
     expect(inputToUrl('192.168.1.1')).toBe('http://192.168.1.1')
     expect(inputToUrl('devbox:8080')).toBe('http://devbox:8080')
-    expect(inputToUrl('about:newtab')).toBe(BLANK_URL)
-    expect(inputToUrl('about:preferences')).toBe('zen://settings')
+    expect(inputToUrl('about:blank')).toBe(BLANK_URL)
+    expect(inputToUrl('about:newtab')).toBe(NEW_TAB_URL)
+    expect(inputToUrl('about:home')).toBe(NEW_TAB_URL)
+    expect(inputToUrl('about:preferences')).toBe(SETTINGS_URL)
+    expect(inputToUrl('about:Settings')).toBe(SETTINGS_URL)
     expect(inputToUrl('about:bookmarks')).toBe(BOOKMARKS_URL)
     expect(inputToUrl('search terms')).toBeNull()
+  })
+})
+
+describe('new tab and settings pages', () => {
+  it('recognises the new tab page with and without Chromium’s trailing slash', () => {
+    expect(isNewTabUrl(NEW_TAB_URL)).toBe(true)
+    expect(isNewTabUrl(`${NEW_TAB_URL}/`)).toBe(true)
+    expect(isNewTabUrl('zen://newtabs')).toBe(false)
+    expect(isNewTabUrl('https://example.com/zen://newtab')).toBe(false)
+  })
+
+  it('treats blank and new tab pages as empty tabs', () => {
+    expect(isEmptyTabUrl('')).toBe(true)
+    expect(isEmptyTabUrl(BLANK_URL)).toBe(true)
+    expect(isEmptyTabUrl(NEW_TAB_URL)).toBe(true)
+    expect(isEmptyTabUrl('https://example.com/')).toBe(false)
+    expect(isEmptyTabUrl(SETTINGS_URL)).toBe(false)
+  })
+
+  it('maps the about: aliases of Settings to zen://settings (a chrome surface, see zenPages)', () => {
+    expect(inputToUrl('about:preferences')).toBe(SETTINGS_URL)
+    expect(inputToUrl('about:settings')).toBe(SETTINGS_URL)
+    expect(inputToUrl('ABOUT:Preferences')).toBe(SETTINGS_URL)
+  })
+
+  it('resolves the zenium:// name users see and Chrome’s chrome:// pages to zen://', () => {
+    expect(inputToUrl('zenium://newtab')).toBe(NEW_TAB_URL)
+    expect(inputToUrl('zenium://settings')).toBe(SETTINGS_URL)
+    expect(inputToUrl('zenium://settings/privacy')).toBe(SETTINGS_URL)
+    expect(inputToUrl('ZENIUM://Newtab/')).toBe(NEW_TAB_URL)
+    expect(inputToUrl('zenium://reader/?id=1')).toBe('zen://reader/?id=1')
+    expect(inputToUrl('chrome://settings')).toBe(SETTINGS_URL)
+    expect(inputToUrl('chrome://settings/')).toBe(SETTINGS_URL)
+    expect(inputToUrl('chrome://newtab')).toBe(NEW_TAB_URL)
+    expect(inputToUrl('chrome://history')).toBe(HISTORY_URL)
+    // A chrome:// page Zenium has no page for stays as typed (Chromium answers it).
+    expect(inputToUrl('chrome://gpu')).toBe('chrome://gpu')
+  })
+
+  it('shows an empty address and the New Tab title for the new tab page', () => {
+    expect(displayUrl(NEW_TAB_URL)).toBe('')
+    expect(displayUrl(`${NEW_TAB_URL}/`)).toBe('')
+    // Chrome: the omnibox is empty on the new tab page even with "Always show full URLs".
+    expect(fullUrl(NEW_TAB_URL)).toBe('')
+    expect(fullUrl(`${NEW_TAB_URL}/`)).toBe('')
+    expect(titleForUrl(NEW_TAB_URL)).toBe('New Tab')
   })
 })
 
@@ -214,15 +267,19 @@ describe('errorPageUrl: the refused certificate', () => {
   })
 })
 
-describe('isNewTabUrl', () => {
-  it('recognises the empty tab, a future zen://newtab and no tab at all', () => {
-    expect(isNewTabUrl(BLANK_URL)).toBe(true)
+describe('isEmptyTabUrl (where the bookmarks bar shows in its new-tab-only mode)', () => {
+  it('recognises the empty tab, the new tab page and no tab at all', () => {
+    expect(isEmptyTabUrl(BLANK_URL)).toBe(true)
     // What the loaded blank page reports itself as.
-    expect(isNewTabUrl(`${BLANK_URL}/`)).toBe(true)
-    expect(isNewTabUrl('zen://newtab')).toBe(true)
-    expect(isNewTabUrl(null)).toBe(true)
-    expect(isNewTabUrl('')).toBe(true)
-    expect(isNewTabUrl('https://example.com/')).toBe(false)
-    expect(isNewTabUrl(BOOKMARKS_URL)).toBe(false)
+    expect(isEmptyTabUrl(`${BLANK_URL}/`)).toBe(true)
+    expect(isEmptyTabUrl('zen://newtab')).toBe(true)
+    expect(isEmptyTabUrl('zen://newtab/')).toBe(true)
+    expect(isEmptyTabUrl(null)).toBe(true)
+    expect(isEmptyTabUrl(undefined)).toBe(true)
+    expect(isEmptyTabUrl('')).toBe(true)
+    expect(isEmptyTabUrl('https://example.com/')).toBe(false)
+    expect(isEmptyTabUrl(BOOKMARKS_URL)).toBe(false)
+    // The new tab page itself is only `zen://newtab`.
+    expect(isNewTabUrl(BLANK_URL)).toBe(false)
   })
 })

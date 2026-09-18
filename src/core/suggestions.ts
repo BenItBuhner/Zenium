@@ -12,7 +12,14 @@ import {
 import { localAnswer } from '../shared/answers'
 import { searchCommands } from '../shared/commands'
 import { spaceLabel } from '../shared/defaults'
-import { BOOKMARKS_URL, HISTORY_URL, displayUrl, inputToUrl, isProbablyUrl } from '../shared/url'
+import {
+  BOOKMARKS_URL,
+  HISTORY_URL,
+  displayUrl,
+  inputToUrl,
+  isEmptyTabUrl,
+  isProbablyUrl
+} from '../shared/url'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import { orderedTabsForSpace, tabVisibleIn } from './model'
@@ -419,6 +426,8 @@ export class SuggestionService {
     const out: Ranked[] = []
     for (const tab of openTabs) {
       if (tab.id === currentTabId || out.length >= limit) continue
+      // An empty tab (the blank page, the new tab page) is nothing to switch to.
+      if (isEmptyTabUrl(tab.url)) continue
       const title = (tab.customTitle ?? tab.title).toLowerCase()
       const shown = displayUrl(tab.url).toLowerCase()
       const hay = `${title} ${tab.url.toLowerCase()}`
