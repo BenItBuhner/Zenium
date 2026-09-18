@@ -526,7 +526,9 @@ class ExtensionDemo {
         val cspTab = createTab("$BASE/csp.html")
         val cspView = waitForView(cspTab)
         waitFor(30_000) { if (tabEval(cspView, PROBE_DONE) == "true") true else null }
-        results.put("cspPage", json(tabEval(cspView, PROBE_REPORT)))
+        val csp = json(tabEval(cspView, PROBE_REPORT))
+        if (worlds) mergeWorldReports(cspView, csp)
+        results.put("cspPage", csp)
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(cspTab)},"force":true}""")
         instrumentation.runOnMainSync { results.put("lateOnPageStarted", host.extensions.lateOnPageStarted) }
         lateInjection()
@@ -613,7 +615,19 @@ class ExtensionDemo {
             val view = waitForView(tab)
             waitFor(30_000) { if (tabEval(view, "document.readyState") == "complete") true else null }
             SystemClock.sleep(800)
-            list.put(json(tabEval(view, NAV_TIMING)))
+            val entry = json(tabEval(view, NAV_TIMING))
+            // With worlds the bootstrap's statistics live in each extension's world: the probe's
+            // stand for the run (boot and match cost of one unit), and the groups of all are counted.
+            if (worlds) {
+                var applied = 0
+                for (id in listOf(PROBE_ID, DARK_READER, VIMIUM, RYD, STYLUS, UBOL)) {
+                    val report = worldEval(view, id, WORLD_REPORT)?.let(::json)?.optJSONObject("stats") ?: continue
+                    applied += report.optJSONArray("groups")?.length() ?: 0
+                    if (id == PROBE_ID) entry.put("bootMs", report.optDouble("bootMs", 0.0)).put("matchMs", report.optDouble("matchMs", 0.0))
+                }
+                entry.put("applied", applied)
+            }
+            list.put(entry)
         }
         return list
     }
