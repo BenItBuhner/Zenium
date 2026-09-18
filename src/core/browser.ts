@@ -1537,9 +1537,10 @@ export class Browser {
       }
       if (tabId && !newTab && this.pages.routeNavigation(tabId, url)) return
     }
-    const overlay = overlayForUrl(url)
+    // `zen://history` opens its chrome surface; no tab is spent on it. A registered document
+    // page is the registry's, never the overlay table's, and loads as a document below.
+    const overlay = pageRef ? null : overlayForUrl(url)
     if (overlay) {
-      // `zen://history` opens its chrome surface; no tab is spent on it.
       this.emit('overlay.open', { kind: overlay }, win)
       return
     }

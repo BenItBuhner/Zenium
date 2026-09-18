@@ -152,7 +152,12 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
   {
     id: 'tabs',
     label: 'Tab Management',
-    keywords: ['tabs', 'pinned', 'essentials', 'unload', 'session', 'downloads', 'window']
+    keywords: ['tabs', 'pinned', 'essentials', 'unload', 'session', 'window']
+  },
+  {
+    id: 'downloads',
+    label: 'Downloads',
+    keywords: ['save', 'folder', 'files', 'notification', 'open automatically']
   },
   {
     id: 'resources',

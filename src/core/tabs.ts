@@ -1507,9 +1507,11 @@ export class TabManager {
     // hosts without page tabs, and the document in this tab stays where it is; a document page
     // the window already shows is focused instead. Otherwise the URL loads here like any other.
     if (this.browser.pages.routeNavigation(tabId, url)) return
-    const overlay = overlayForUrl(url)
+    // `zen://history` and friends are chrome surfaces: open them over the page instead. The
+    // registry is the one route for internal pages, so an address it holds as a document page
+    // (Downloads, once the desktop registers it) loads here and is not an overlay's any more.
+    const overlay = this.browser.pages.parse(url) ? null : overlayForUrl(url)
     if (overlay) {
-      // `zen://history` and friends are chrome surfaces: open them over the page instead.
       this.browser.emit('overlay.open', { kind: overlay }, this.windowFor(tabId))
       return
     }

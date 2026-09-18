@@ -33,6 +33,7 @@ describe('the page registry', () => {
       'compact',
       'newtab',
       'tabs',
+      'downloads',
       'resources',
       'search',
       'privacy',
@@ -166,6 +167,7 @@ describe('the section model', () => {
     expect(phone).toEqual([
       'look',
       'tabs',
+      'downloads',
       'search',
       'spaces',
       'containers',
@@ -221,7 +223,7 @@ describe('the landing list', () => {
       run.map((s) => s.id)
     )
     expect(bare).toEqual([
-      ['look', 'tabs', 'search', 'spaces', 'containers', 'boosts', 'mods'],
+      ['look', 'tabs', 'downloads', 'search', 'spaces', 'containers', 'boosts', 'mods'],
       ['about']
     ])
   })

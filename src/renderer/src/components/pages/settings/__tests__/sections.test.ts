@@ -223,6 +223,7 @@ describe('the section model', () => {
     expect(models.map((m) => m.section.id)).toEqual([
       'look',
       'tabs',
+      'downloads',
       'search',
       'privacy',
       'spaces',
@@ -305,8 +306,7 @@ describe('the section model', () => {
     expect(ids.slice(ids.indexOf('restore-session'))).toEqual([
       'restore-session',
       'crash-restore',
-      'warn-close-window',
-      'ask-where-to-save'
+      'warn-close-window'
     ])
     const crash = row(tabs, 'crash-restore')
     if (crash.kind !== 'value') throw new Error('not a value row')
@@ -320,6 +320,78 @@ describe('the section model', () => {
     expect(c.patches).toEqual([
       { crashRestore: 'never' },
       { warnOnCloseWindow: !DEFAULT_SETTINGS.warnOnCloseWindow }
+    ])
+  })
+
+  it('carries #161’s Downloads rows: the folder, ask where to save, auto-open types, the notification; the bubble’s switches on a windowed host only', async () => {
+    const c = context(state())
+    const downloads = buildSection(
+      PAGE.sections.find((x) => x.id === 'downloads')!,
+      c.ctx
+    )
+    expect(downloads.groups.map((g) => g.id)).toEqual(['saving', 'download-notifications'])
+    expect(downloads.groups.every(groupShows)).toBe(true)
+    // The folder row names the system folder until one is picked; a dismissed picker keeps it.
+    const folder = row(downloads, 'download-directory')
+    expect(folder.description).toBe('The system Downloads folder')
+    expect(row(downloads, 'download-directory-default').disabled).toBe(true)
+    if (folder.kind !== 'action') throw new Error('not an action')
+    invoke.mockResolvedValueOnce(null)
+    folder.onPress?.()
+    await Promise.resolve()
+    expect(invoke).toHaveBeenCalledWith('download.chooseDirectory', undefined)
+    expect(c.patches).toEqual([])
+    invoke.mockResolvedValueOnce('/sdcard/Zenium' as never)
+    folder.onPress?.()
+    await new Promise((r) => setTimeout(r, 0))
+    // The one-key patch goes inside `downloads`; `askWhereToSave` stays at the top level.
+    expect(c.patches).toEqual([{ downloads: { directory: '/sdcard/Zenium' } }])
+    const ask = row(downloads, 'ask-where-to-save')
+    if (ask.kind !== 'switch') throw new Error('not a switch')
+    expect(ask.checked).toBe(DEFAULT_SETTINGS.askWhereToSave)
+    ask.onChange(true)
+    const notify = row(downloads, 'download-notify')
+    if (notify.kind !== 'switch') throw new Error('not a switch')
+    notify.onChange(true)
+    expect(c.patches.slice(1)).toEqual([
+      { askWhereToSave: true },
+      { downloads: { notifyOnComplete: true } }
+    ])
+    // No row for the auto-open list while it is empty; the row clears it after a confirmation.
+    expect(findRow(downloads.groups, 'download-auto-open')).toBeNull()
+    const typed = context(
+      state({}, { downloads: { ...DEFAULT_SETTINGS.downloads, autoOpenTypes: ['pdf', 'png'] } })
+    )
+    const withTypes = buildSection(
+      PAGE.sections.find((x) => x.id === 'downloads')!,
+      typed.ctx
+    )
+    const auto = row(withTypes, 'download-auto-open')
+    expect(auto.description).toBe('.pdf, .png')
+    if (auto.kind !== 'action') throw new Error('not an action')
+    expect(auto.confirm?.action).toBe('Stop')
+    auto.onPress?.()
+    expect(typed.patches).toEqual([{ downloads: { autoOpenTypes: [] } }])
+    // The Tabs group no longer carries the ask-where-to-save row (#161 moved it on the desktop).
+    expect(findRow(section('tabs').groups, 'ask-where-to-save')).toBeNull()
+
+    // The downloads bubble and its toolbar button are the desktop chrome's.
+    const windowed = context(
+      state({ platform: 'linux', capabilities: { ...ANDROID, windows: true } })
+    )
+    const desktop = buildSection(
+      PAGE.sections.find((x) => x.id === 'downloads')!,
+      windowed.ctx
+    )
+    expect(desktop.groups.map((g) => g.id)).toEqual([
+      'saving',
+      'downloads-panel',
+      'download-notifications'
+    ])
+    expect(desktop.groups.find((g) => g.id === 'downloads-panel')?.rows.map((r) => r.id)).toEqual([
+      'download-open-on-complete',
+      'download-open-on-start',
+      'download-always-show-button'
     ])
   })
 

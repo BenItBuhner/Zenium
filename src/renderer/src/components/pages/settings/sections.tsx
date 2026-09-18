@@ -7,6 +7,7 @@ import type {
   ContainerIcon as ContainerIconName,
   CrashRestoreMode,
   DesktopSiteDefault,
+  DownloadSettings,
   GlanceTrigger,
   NewTabBackgroundKind,
   NewTabPosition,
@@ -29,10 +30,12 @@ import {
   MAX_NEW_TAB_SHORTCUTS,
   spaceLabel
 } from '@shared/defaults'
+import { resolveDownloadSettings } from '@shared/downloads'
 import { formatZoom } from '@shared/pageControls'
 import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
+import { downloadsEngine } from '@renderer/lib/downloadsEngine'
 import { describePermissionRule } from '@renderer/lib/security'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
@@ -98,6 +101,7 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   accessibility: accessibilitySection,
   newtab: newTabSection,
   tabs: tabsSection,
+  downloads: downloadsSection,
   privacy: privacySection,
   search: searchSection,
   spaces: spaceRoutingSection,
@@ -694,14 +698,7 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
           checked: s.restoreSession,
           onChange: (v) => set({ restoreSession: v })
         },
-        ...sessionRows,
-        {
-          kind: 'switch',
-          id: 'ask-where-to-save',
-          label: 'Always ask where to save downloads',
-          checked: s.askWhereToSave,
-          onChange: (v) => set({ askWhereToSave: v })
-        }
+        ...sessionRows
       ]
     }
   ]
@@ -849,6 +846,117 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
       ]
     }
   )
+  return groups
+}
+
+// ---------------------------------------------------------------------------
+// Downloads
+// ---------------------------------------------------------------------------
+
+/**
+ * Settings › Downloads (#161's desktop section row for row, on the engine's `Settings.downloads`):
+ * the folder through the host's own picker, whether to ask where to save, the file types that
+ * open by themselves once they are on disk, and the completion notification (Android's
+ * downloader posts it, the desktop shell its own). The downloads bubble and the toolbar button
+ * are the desktop chrome's – a single-window host shows its downloads panel as a transfer
+ * starts (`Browser.onDownloadStarted`) – so their switches show where the chrome has windows.
+ */
+function downloadsSection({ state, set }: SectionContext): RowGroup[] {
+  const d = resolveDownloadSettings(state.settings)
+  const patch = (p: Partial<DownloadSettings>): void => set({ downloads: p })
+  const types = d.autoOpenTypes.map((t) => `.${t}`).join(', ')
+  const saving: SettingsRow[] = [
+    {
+      kind: 'action',
+      id: 'download-directory',
+      label: 'Save files to',
+      description: d.directory ?? 'The system Downloads folder',
+      keywords: ['folder', 'location', 'directory'],
+      onPress: () => {
+        // A dismissed picker keeps the folder as it is.
+        void downloadsEngine.chooseDirectory().then((dir) => {
+          if (dir !== null) patch({ directory: dir })
+        })
+      }
+    },
+    {
+      kind: 'action',
+      id: 'download-directory-default',
+      label: 'Use the default folder',
+      disabled: d.directory === null,
+      onPress: () => patch({ directory: null })
+    },
+    {
+      kind: 'switch',
+      id: 'ask-where-to-save',
+      label: 'Always ask where to save files',
+      checked: d.askWhereToSave,
+      onChange: (v) => set({ askWhereToSave: v })
+    }
+  ]
+  if (d.autoOpenTypes.length > 0) {
+    saving.push({
+      kind: 'action',
+      id: 'download-auto-open',
+      label: 'Open certain file types automatically',
+      description: types,
+      keywords: ['auto open', 'always open'],
+      confirm: {
+        title: 'Stop opening these files automatically?',
+        description: `Files of these types are saved without opening: ${types}.`,
+        action: 'Stop'
+      },
+      onPress: () => patch({ autoOpenTypes: [] })
+    })
+  }
+  const groups: RowGroup[] = [{ id: 'saving', heading: 'Saving', rows: saving }]
+  if (state.capabilities.windows) {
+    groups.push({
+      id: 'downloads-panel',
+      heading: 'Downloads panel',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'download-open-on-complete',
+          label: 'Show the downloads when a download finishes',
+          description:
+            'The bubble opens by itself once the last download in progress is done and leaves again after five seconds.',
+          checked: d.openPanelOnComplete,
+          onChange: (v) => patch({ openPanelOnComplete: v })
+        },
+        {
+          kind: 'switch',
+          id: 'download-open-on-start',
+          label: 'Show the downloads when a download starts',
+          description: 'Off, the toolbar button animates instead.',
+          checked: d.openPanelOnStart,
+          onChange: (v) => patch({ openPanelOnStart: v })
+        },
+        {
+          kind: 'switch',
+          id: 'download-always-show-button',
+          label: 'Always show the downloads button',
+          description: 'Keep the button in the toolbar when nothing is downloading.',
+          checked: d.alwaysShowButton,
+          onChange: (v) => patch({ alwaysShowButton: v })
+        }
+      ]
+    })
+  }
+  groups.push({
+    id: 'download-notifications',
+    heading: 'Notifications',
+    rows: [
+      {
+        kind: 'switch',
+        id: 'download-notify',
+        label: 'Notify when a download finishes',
+        description: 'A system notification once the file is saved; opening it shows the file.',
+        checked: d.notifyOnComplete,
+        onChange: (v) => patch({ notifyOnComplete: v })
+      }
+    ]
+  })
   return groups
 }
 

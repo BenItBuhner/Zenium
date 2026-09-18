@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   Accessibility,
   Bot,
+  CircleFadingArrowUp,
   Container,
   Download,
   Eye,
@@ -32,6 +33,7 @@ export const SECTION_GLYPHS: Readonly<Record<string, LucideIcon>> = {
   compact: PanelLeft,
   newtab: LayoutGrid,
   tabs: Layers,
+  downloads: Download,
   privacy: Shield,
   resources: Gauge,
   search: Search,
@@ -43,7 +45,7 @@ export const SECTION_GLYPHS: Readonly<Record<string, LucideIcon>> = {
   agents: Bot,
   sync: RefreshCw,
   shortcuts: Keyboard,
-  updates: Download,
+  updates: CircleFadingArrowUp,
   about: Info
 }
 
