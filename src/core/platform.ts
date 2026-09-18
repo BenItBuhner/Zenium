@@ -293,6 +293,24 @@ export type AgentInputEvent =
   | { type: 'text'; text: string }
 
 /**
+ * One frame of a page's frame tree, for agents that reach into iframes. Ids are Chrome's frame
+ * ids (`PageContextParams.frameId`): `0` for the top frame, the frame tree node id – stable for
+ * the frame's lifetime, across its navigations – for every other frame.
+ */
+export interface AgentFrame {
+  id: number
+  /** `null` for the top frame. */
+  parentId: number | null
+  url: string
+  /** The serialised origin; `"null"` for opaque origins (sandboxed frames, `data:` documents). */
+  origin: string
+  /** The frame's `window.name`. */
+  name: string
+  /** Whether this frame holds the page's keyboard focus. */
+  focused: boolean
+}
+
+/**
  * What an agent wants captured: the visible viewport, the whole scrollable page, or a region
  * given in CSS pixels relative to the document (viewport position plus scroll offset).
  */
@@ -441,8 +459,8 @@ export interface TabView {
   stopFind(action: 'clearSelection' | 'keepSelection'): void
   /**
    * Run `code` in the page's main frame, or in the sub-frame `frameId`
-   * (`PageContextParams.frameId`) on hosts that can address frames; others run it in the main
-   * frame.
+   * (`PageContextParams.frameId`) on hosts that can address frames – rejecting when that frame
+   * is gone; hosts without frames run it in the main frame.
    */
   executeJavaScript(code: string, frameId?: number): Promise<unknown>
   /** Inject a stylesheet; resolves with a key for `removeInsertedCSS`. */
@@ -525,10 +543,20 @@ export interface TabView {
   addWordToDictionary(word: string): void
 
   // AI agents (optional – the core falls back to in-page JavaScript when missing).
-  /** Deliver trusted input to the page. */
+  /**
+   * Deliver trusted input to the page, at top-viewport CSS coordinates. The host routes it to
+   * the frame under the point (content inside cross-origin iframes included), so it behaves as
+   * a person's input would: `isTrusted`, user activation, pop-ups and autoplay allowed.
+   */
   sendInput?(event: AgentInputEvent): Promise<void>
   /** Run script in a world the page cannot observe (Electron's isolated world). */
   executeIsolatedJavaScript?(code: string): Promise<unknown>
+  /**
+   * The page's frame tree (the top frame first, then every sub-frame, parents before children).
+   * Hosts that cannot address frames leave it out; agents then only see the top document plus
+   * the same-origin frames its script can enter.
+   */
+  frames?(): AgentFrame[]
   /** Let a hidden page keep running at full speed while an agent drives it. */
   setBackgroundThrottling?(allowed: boolean): void
   /**
