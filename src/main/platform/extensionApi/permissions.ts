@@ -2,6 +2,7 @@ import {
   type ManifestPermissionSets,
   type PermissionSet,
   addPermissionSets,
+  availablePermissions,
   manifestPermissionSets,
   missingPermissions,
   normalizePermissionSet,
@@ -39,14 +40,24 @@ export class PermissionsApi {
     remove: (ctx, permissions) => this.remove(ctx, permissions)
   }
 
-  /** An extension loaded: its granted set is what was stored plus whatever the manifest requires. */
+  /**
+   * An extension loaded: its granted set is what was stored plus whatever the manifest requires,
+   * less what Chrome refuses to its manifest version (a grant stored before that rule, or before
+   * an update changed the version, goes too).
+   */
   load(ext: LoadedExtension): void {
     const sets = manifestPermissionSets(ext.manifest)
     this.manifests.set(ext.id, sets)
     const stored = this.host.store.grants(ext.id)
-    const grants = stored ? addPermissionSets(stored, sets.required) : { ...sets.required }
+    const merged = stored ? addPermissionSets(stored, sets.required) : { ...sets.required }
+    const manifestVersion: 2 | 3 = ext.manifest.manifest_version === 2 ? 2 : 3
+    const grants: PermissionSet = {
+      permissions: availablePermissions(merged.permissions, manifestVersion),
+      origins: merged.origins
+    }
     this.granted.set(ext.id, grants)
-    if (!stored) this.host.store.setGrants(ext.id, grants)
+    if (!stored || grants.permissions.length !== merged.permissions.length)
+      this.host.store.setGrants(ext.id, grants)
   }
 
   unload(extensionId: string): void {

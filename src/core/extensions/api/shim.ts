@@ -150,13 +150,24 @@ export function installExtensionApi(
   const manifest: ManifestShape = safely(() => chrome.runtime.getManifest()) ?? {}
   const manifestVersion: 2 | 3 = manifest.manifest_version === 2 ? 2 : 3
   const background = isObject(manifest.background) ? manifest.background : null
+  /**
+   * Chrome grants a permission only to the manifest versions its feature allows (the same table
+   * as `permissionVersionWarning` in `core/extensions/manifest.ts`, inlined since this function
+   * has no imports): `webRequestBlocking` ends with MV2, the MV3 APIs never existed in MV2.
+   */
+  const availableHere = (p: string): boolean =>
+    manifestVersion === 2
+      ? !['scripting', 'offscreen', 'sidePanel', 'userScripts'].includes(p)
+      : p !== 'webRequestBlocking'
   const permissions: string[] = Array.isArray(manifest.permissions)
-    ? manifest.permissions.filter((p): p is string => typeof p === 'string')
+    ? manifest.permissions.filter((p): p is string => typeof p === 'string').filter(availableHere)
     : []
   /** Required and optional permissions alike: an optional one may be granted at run time. */
   const declaredPermissions: string[] = permissions.concat(
     Array.isArray(manifest.optional_permissions)
-      ? manifest.optional_permissions.filter((p): p is string => typeof p === 'string')
+      ? manifest.optional_permissions
+          .filter((p): p is string => typeof p === 'string')
+          .filter(availableHere)
       : []
   )
   const extensionUrl: string =
