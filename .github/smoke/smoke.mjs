@@ -3,9 +3,31 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,scale,dark] [--extra-args=--no-sandbox]
+//        [--scenarios boot,restore,walkthrough,crash,scale,dark] [--extra-args=--no-sandbox]
 //        [--allowlist known-failures.json] [--render-budget-ms 10000] [--quit-budget-ms 5000]
 //        [--step-timeout-ms 60000] [--evaluate-timeout-ms 30000] [--watchdog-min 15]
+//
+// Scenarios (each one launch of the executable, on profiles under one temporary root):
+//   boot         first launch: onboarding, one visible window titled Zenium, a tab on example.com
+//                opened through the URL bar, a graceful quit (the preset's chord, "Quit Zenium?"
+//                answered when several tabs are open) that leaves `cleanExit: true` in the profile
+//   restore      the profile from `boot` comes back with its tab loaded, no onboarding and no
+//                "Restore pages?" bar
+//   walkthrough  the Chrome-preset shortcuts (#126) on a fresh profile past onboarding: Ctrl+T,
+//                Ctrl+F (the field takes the keyboard, Escape closes the bar and hands it back to
+//                the page), Ctrl+plus/minus/0 with the zoom bubble, F11, Ctrl+N, Ctrl+Shift+N,
+//                Ctrl+H, Ctrl+Shift+O, Settings from the toolbar menu, the page context menu, a
+//                second instance handing its URL over, Ctrl+Shift+W's "Close N tabs?" cancelled,
+//                Ctrl+W, then "Quit Zenium?" (#129); Escape between steps (Linux job)
+//   crash        the profile from `boot`, killed while it runs (`cleanExit: false` stays behind);
+//                the next launch lists the tabs unloaded and offers "Restore pages?", Restore
+//                loads example.com, the run quits cleanly (Linux job; two launches: crash and
+//                crash-restore)
+//   scale        --force-device-scale-factor=1.5 renders at devicePixelRatio 1.5
+//   dark         OS dark mode (or nativeTheme where the OS has no switch) reaches the chrome
+//
+// Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
+// restore); the walkthrough and the crash pair run on Linux under Xvfb only.
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
@@ -28,6 +50,10 @@ const IS_WIN = process.platform === 'win32'
 const IS_MAC = process.platform === 'darwin'
 const IS_LINUX = process.platform === 'linux'
 const ACCEL = IS_MAC ? 'Meta' : 'Control'
+// The Chrome shortcut preset is the default (#126): Chrome's chords on every platform.
+const QUIT_COMBO = IS_MAC ? 'Meta+q' : 'Control+Shift+q'
+const PRIVATE_WINDOW_COMBO = `${ACCEL}+Shift+n`
+const FULLSCREEN_COMBO = IS_MAC ? 'Control+Meta+f' : 'F11'
 
 const opts = parseArgs(process.argv.slice(2))
 if (!opts.exe || !opts.label || !opts.out) {
@@ -530,6 +556,7 @@ class Session {
     this.timings = {}
     this.exit = null
     this.quitStartedAt = null
+    this.killedAt = null
     this.mainWindowId = null
   }
 
@@ -607,7 +634,9 @@ class Session {
         message: String(err && (err.stack || err.message || err)).slice(0, 4000)
       })
     )
-    page.on('crash', () =>
+    page.on('crash', () => {
+      // A renderer going with the process the harness itself killed is no crash.
+      if (this.killedAt) return
       this.pageErrors.push({
         kind: 'process-gone',
         scenario: this.scenario,
@@ -615,7 +644,7 @@ class Session {
         url: page.url(),
         message: 'chrome page crashed (Playwright crash event)'
       })
-    )
+    })
   }
 
   chromePages() {
@@ -814,22 +843,131 @@ class Session {
     ])
   }
 
-  async quitWithShortcut(budgetMs = QUIT_BUDGET_MS) {
+  /** The webContents holding the keyboard, as the main process sees it (null: none). */
+  focusedWebContentsId() {
+    return this.app.evaluate(({ webContents }) => {
+      const wc = webContents.getFocusedWebContents()
+      return wc && !wc.isDestroyed() ? wc.id : null
+    })
+  }
+
+  /** The main window's chrome webContents id (the page the sidebar, URL bar and dialogs live in). */
+  chromeWebContentsId(windowId = this.mainWindowId) {
+    return this.app.evaluate(({ BrowserWindow }, wid) => {
+      const w = (wid && BrowserWindow.fromId(wid)) || BrowserWindow.getAllWindows()[0]
+      return w && !w.isDestroyed() ? w.webContents.id : null
+    }, windowId)
+  }
+
+  /**
+   * Where the keyboard is, for the steps that assert it: `chrome` (the window's chrome page, with
+   * the focused element's test id when it has one), `tab:<id>` (a page) or `none`.
+   */
+  async keyboardOwner() {
+    const [focused, chrome] = await Promise.all([
+      this.focusedWebContentsId(),
+      this.chromeWebContentsId()
+    ])
+    if (focused === null) return 'none'
+    if (focused !== chrome) return `tab:${focused}`
+    const active = await this.chrome
+      .evaluate(() => {
+        const el = document.activeElement
+        return el && el !== document.body ? el.getAttribute('data-testid') || el.tagName : null
+      })
+      .catch(() => null)
+    return active ? `chrome:${active}` : 'chrome'
+  }
+
+  /** Rows in the sidebar's tab list (the active space). */
+  sidebarTabCount(page = this.chrome) {
+    return page.locator('[data-testid="tab"]').count()
+  }
+
+  /**
+   * The chrome's window-modal question ("Close N tabs?" before a window with several tabs
+   * closes, "Quit Zenium?" before quitting with several tabs; #129), read from the page: its
+   * kind, heading and text, or null while none is up.
+   */
+  async windowPrompt(page = this.chrome) {
+    const prompt = page.locator('[data-window-prompt]').first()
+    if (!(await prompt.isVisible().catch(() => false))) return null
+    const heading = await prompt.getByRole('heading').first().textContent()
+    const text = await prompt.textContent()
+    return {
+      kind: await prompt.getAttribute('data-window-prompt'),
+      heading: (heading ?? '').trim(),
+      text: (text ?? '').replace(/\s+/g, ' ').trim()
+    }
+  }
+
+  /** Nothing chrome-side may stay open between steps: Escape, then two frames. */
+  async reset() {
+    await this.press('Escape')
+    await this.settle()
+  }
+
+  /**
+   * Quit the way a user does, with the preset's quit chord. With more than one tab open the chrome
+   * first asks "Quit Zenium?" (the "warn before closing a window with multiple tabs" setting is
+   * on by default): the question must show exactly then, name the tab count, and its Quit button
+   * ends the run. The app has to exit with code 0 within the budget either way.
+   */
+  async quitGracefully(budgetMs = QUIT_BUDGET_MS) {
+    const tabs = await this.sidebarTabCount().catch(() => 0)
+    const expectPrompt = tabs > 1
     this.quitStartedAt = Date.now()
-    await Promise.race([this.press(`${ACCEL}+q`), delay(3000)])
+    await Promise.race([this.press(QUIT_COMBO), delay(3000)])
+    const prompt = this.chrome.locator('[data-window-prompt="quit"]').first()
+    const first = await Promise.race([
+      this.exitPromise.then(() => 'exit'),
+      prompt
+        .waitFor({ state: 'visible', timeout: budgetMs })
+        .then(() => 'prompt')
+        .catch(() => 'no-prompt')
+    ])
+    let asked = null
+    if (first === 'prompt') {
+      asked = await this.windowPrompt()
+      await shot(`${this.scenario}-quit-prompt`, this)
+      if (asked.heading !== 'Quit Zenium?' || !asked.text.includes(`${tabs} tabs`)) {
+        throw new Error(
+          `quit question reads "${asked.heading}" / "${asked.text}" with ${tabs} tabs open`
+        )
+      }
+      await prompt.getByRole('button', { name: 'Quit', exact: true }).click({ timeout: 5000 })
+      this.quitStartedAt = Date.now()
+    }
     const exit = await Promise.race([this.exitPromise, delay(budgetMs).then(() => null)])
     const ms = Date.now() - this.quitStartedAt
     if (!exit) {
       const responsive = await this.mainResponsive(3000)
-      log(`app did not exit after ${ACCEL}+Q within ${budgetMs} ms (main ${responsive}); closing`)
+      const late = await this.windowPrompt().catch(() => null)
+      log(
+        `app did not exit after ${QUIT_COMBO} within ${budgetMs} ms (main ${responsive}); closing`
+      )
       await this.forceClose()
       throw new Error(
-        `app did not exit within ${budgetMs} ms after ${ACCEL}+Q (main process ${responsive}; exit ${JSON.stringify(this.exit)})`
+        `app did not exit within ${budgetMs} ms after ${QUIT_COMBO}${asked ? ' and Quit' : ''} (main process ${responsive}; prompt ${JSON.stringify(late)}; exit ${JSON.stringify(this.exit)})`
       )
     }
     if (exit.code !== 0)
       throw new Error(`app exited with code ${exit.code} signal ${exit.signal} after ${ms} ms`)
-    return { ms, exit }
+    if (expectPrompt && !asked)
+      throw new Error(`quit went ahead without "Quit Zenium?" although ${tabs} tabs were open`)
+    if (!expectPrompt && asked)
+      throw new Error(`"Quit Zenium?" asked with ${tabs} tab open: ${JSON.stringify(asked)}`)
+    return { ms, exit, prompt: asked }
+  }
+
+  /** End the process the way a crash does: no quit path, no clean-exit marker. */
+  async kill() {
+    this.killedAt = Date.now()
+    if (IS_WIN) sh('taskkill', ['/F', '/PID', String(this.pid)], 20000)
+    else process.kill(this.pid, 'SIGKILL')
+    const exit = await Promise.race([this.exitPromise, delay(10000).then(() => null)])
+    if (!exit) throw new Error(`process ${this.pid} still alive 10 s after SIGKILL`)
+    return exit
   }
 
   /** Playwright's close() needs a live main-process event loop, so fall back to killing the tree. */
@@ -892,8 +1030,13 @@ class Session {
 // ---------------------------------------------------------------------------------------------
 
 // Automatic updates stay off in every smoke profile: left on, the app could find a newer release
-// within seconds of launching and replace the binary under test on quit.
-const HARNESS_SETTINGS = { updates: { autoCheck: false, autoDownload: false, channel: 'stable' } }
+// within seconds of launching and replace the binary under test on quit. The shortcut preset is
+// written out because a state file without one reads as a profile from before the setting and
+// gets the one-time "shortcuts now follow Chrome" toast (#126); a first run has the default.
+const HARNESS_SETTINGS = {
+  updates: { autoCheck: false, autoDownload: false, channel: 'stable' },
+  shortcutPreset: 'chrome'
+}
 
 function freshProfile(name, { onboardingDone = false } = {}) {
   const dir = path.join(profileRoot, name)
@@ -905,6 +1048,11 @@ function freshProfile(name, { onboardingDone = false } = {}) {
   return dir
 }
 
+/**
+ * The profile's state file as the smoke reads it. `cleanExit` is #129's marker: false from the
+ * first write of a run, true from the write a graceful quit ends with, absent from a profile no
+ * run has written yet.
+ */
 function readState(userData) {
   try {
     const s = JSON.parse(fs.readFileSync(path.join(userData, 'zen', 'state.json'), 'utf8'))
@@ -912,11 +1060,24 @@ function readState(userData) {
       version: s.version,
       windows: (s.windows || []).length,
       tabs: (s.tabs || []).map((t) => ({ url: t.url, title: t.title })),
-      onboardingDone: s.settings && s.settings.onboardingDone
+      onboardingDone: s.settings && s.settings.onboardingDone,
+      cleanExit: s.cleanExit
     }
   } catch (e) {
     return { error: String(e.message) }
   }
+}
+
+/** The state after a graceful quit: the marker set, and (when asked) a tab on `url`. */
+function assertCleanState(userData, url) {
+  const state = readState(userData)
+  if (state.cleanExit !== true) {
+    throw new Error(`state.json lacks cleanExit: true after the quit: ${JSON.stringify(state)}`)
+  }
+  if (url && !state.tabs?.some((t) => t.url.startsWith(url))) {
+    throw new Error(`state.json has no ${url} tab: ${JSON.stringify(state)}`)
+  }
+  return state
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -965,6 +1126,10 @@ async function runScenario(name, userData, sessionOptions, body) {
   return out
 }
 
+/**
+ * Accel+T, the URL typed into the bar that comes up, Enter: a new tab row in the sidebar and the
+ * page loaded. Returns the tab (as the main process sees it) and the sidebar row count.
+ */
 async function openUrlInNewTab(s, url) {
   const input = s.chrome.locator('[data-testid="urlbar-input"]')
   // A blank first tab already shows the URL bar; Accel+T would toggle it away. Close it first.
@@ -977,11 +1142,21 @@ async function openUrlInNewTab(s, url) {
     await s.press('Escape')
     await input.first().waitFor({ state: 'hidden', timeout: 5000 })
   }
+  const rowsBefore = await s.sidebarTabCount()
   await s.press(`${ACCEL}+t`)
   await input.first().waitFor({ state: 'visible', timeout: 8000 })
   await input.first().fill(url)
   await s.press('Enter')
-  return s.waitForTab(url, 45000)
+  const tab = await s.waitForTab(url, 45000)
+  const rows = await waitFor(
+    async () => {
+      const n = await s.sidebarTabCount()
+      return n > rowsBefore ? n : null
+    },
+    10000,
+    `a new sidebar row for ${url} (${rowsBefore} before)`
+  )
+  return { tab, sidebarTabs: rows }
 }
 
 async function closeExtraWindows(s) {
@@ -996,7 +1171,31 @@ async function closeExtraWindows(s) {
 // ---------------------------------------------------------------------------------------------
 
 const EXAMPLE_TITLE = 'Example Domain'
+const EXAMPLE_URL = 'https://example.com'
+// A second page for the multi-tab steps (IANA's, like example.com; also titled "Example Domain").
+const SECOND_URL = 'https://example.net'
 
+/** The window a user sees: one of them, titled with the product name, its chrome on screen. */
+async function assertMainWindow(s) {
+  const windows = await s.windowCount()
+  if (windows !== 1) throw new Error(`${windows} windows open, expected 1`)
+  const win = await s.window()
+  if (!win || !win.visible) throw new Error(`main window not visible: ${JSON.stringify(win)}`)
+  if (!/Zenium/.test(win.title)) throw new Error(`window title "${win.title}" lacks "Zenium"`)
+  const chromeRoot = s.chrome.locator('[data-testid="chrome-root"]')
+  if (!(await chromeRoot.isVisible())) throw new Error('chrome root not visible')
+  return {
+    windows,
+    title: win.title,
+    bounds: win.bounds,
+    kind: await chromeRoot.getAttribute('data-window-kind')
+  }
+}
+
+/**
+ * Every platform's first launch: onboarding, one window titled Zenium, a tab on example.com and
+ * a graceful quit that marks the profile cleanly exited (JS errors and dialogs gate on their own).
+ */
 async function scenarioBoot() {
   const userData = freshProfile('profile')
   return runScenario('boot', userData, {}, async (s, out) => {
@@ -1011,80 +1210,167 @@ async function scenarioBoot() {
       return 'completed'
     })
 
+    await s.step('window', () => assertMainWindow(s))
+
     await s.step('new-tab-example-com', async () => {
-      const tab = await openUrlInNewTab(s, 'https://example.com')
+      const { tab, sidebarTabs } = await openUrlInNewTab(s, EXAMPLE_URL)
       await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
       out.exampleTab = tab
       await s.shot('03-example-com')
+      return { url: tab.url, title: tab.title, sidebarTabs }
+    })
+
+    await s.step('quit', async () => {
+      const r = await s.quitGracefully()
+      out.stateAfterQuit = assertCleanState(userData, EXAMPLE_URL)
+      return { ...r, state: out.stateAfterQuit }
+    })
+  })
+}
+
+/**
+ * The profile from `boot` comes back after its graceful quit: the example.com tab, no onboarding
+ * and no "Restore pages?" bar (the clean-exit marker was written, #129).
+ */
+async function scenarioRestore() {
+  const userData = path.join(profileRoot, 'profile')
+  return runScenario('restore', userData, {}, async (s, out) => {
+    out.stateBefore = readState(userData)
+    await s.step('restored-tab', async () => {
+      if (out.stateBefore.cleanExit !== true) {
+        throw new Error(`profile not marked cleanly exited: ${JSON.stringify(out.stateBefore)}`)
+      }
+      await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
+      const onboarding = await s.chrome.locator('[data-testid="onboarding"]').count()
+      if (onboarding) throw new Error('onboarding shown again on the second launch')
+      // The page is loaded, not merely listed (after a crash it would be held back).
+      const tab = await s.waitForTab(EXAMPLE_URL, 30000)
+      await s.settle()
+      const restoreBar = await s.chrome.locator('[data-crash-restore]').count()
+      if (restoreBar) throw new Error('"Restore pages?" offered after a graceful quit')
+      await s.shot('01-restored')
       return {
-        url: tab.url,
-        title: tab.title,
-        sidebarTabs: await s.chrome.locator('[data-testid="tab"]').count()
+        sidebarTabs: await s.sidebarTabCount(),
+        exampleTitles: await s.sidebarTab(EXAMPLE_TITLE).count(),
+        liveTabs: (await s.tabs()).map((t) => t.url),
+        loaded: tab.url,
+        persisted: out.stateBefore.tabs
+      }
+    })
+    await s.step('window', () => assertMainWindow(s))
+    await s.step('quit', async () => {
+      const r = await s.quitGracefully()
+      return { ...r, state: assertCleanState(userData, EXAMPLE_URL) }
+    })
+  })
+}
+
+/**
+ * The Linux job's walkthrough of the Chrome-preset shortcuts (#126) and the window questions
+ * (#129) on a fresh profile past onboarding. Escape between steps: nothing chrome-side may carry
+ * over from one to the next.
+ */
+async function scenarioWalkthrough() {
+  const userData = freshProfile('profile-walkthrough', { onboardingDone: true })
+  return runScenario('walkthrough', userData, {}, async (s, out) => {
+    await s.step('new-tab', async () => {
+      // The fresh window's blank tab takes the first URL; the second Ctrl+T must add a row. The
+      // example.com tab comes last so it is the active one the following steps act on.
+      const first = await openUrlInNewTab(s, SECOND_URL)
+      const second = await openUrlInNewTab(s, EXAMPLE_URL)
+      await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
+      if (second.sidebarTabs !== first.sidebarTabs + 1) {
+        throw new Error(
+          `${second.sidebarTabs} sidebar rows after the second Ctrl+T, ${first.sidebarTabs} after the first`
+        )
+      }
+      out.exampleTab = second.tab
+      await s.shot('01-two-tabs')
+      return {
+        first: { url: first.tab.url, title: first.tab.title, sidebarTabs: first.sidebarTabs },
+        second: { url: second.tab.url, title: second.tab.title, sidebarTabs: second.sidebarTabs }
       }
     })
 
     await s.step('find-bar', async () => {
+      await s.reset()
+      const tab = out.exampleTab
+      if (!tab) throw new Error('no example.com tab to find in')
       await s.press(`${ACCEL}+f`)
       const bar = s.chrome.locator('[data-testid="find-bar"]')
       await bar.first().waitFor({ state: 'visible', timeout: 8000 })
       const input = s.chrome.locator('[data-testid="find-input"]')
       await input.first().waitFor({ state: 'visible', timeout: 5000 })
+      const opened = await waitFor(
+        async () => {
+          const owner = await s.keyboardOwner()
+          return owner === 'chrome:find-input' ? owner : null
+        },
+        5000,
+        'keyboard in the find field'
+      )
       await input.first().fill('Example')
-      await s.shot('04-find-bar')
+      await s.shot('02-find-bar')
       await s.press('Escape')
       await bar.first().waitFor({ state: 'hidden', timeout: 8000 })
-      return 'opened and closed'
+      // Escape hands the keyboard back to the page (closeFindBar → returnFocusToPage).
+      const closed = await waitFor(
+        async () => {
+          const owner = await s.keyboardOwner()
+          return owner === `tab:${tab.id}` ? owner : null
+        },
+        5000,
+        `keyboard back on the page (tab ${tab.id})`
+      )
+      return { opened, closed }
     })
 
     await s.step('zoom', async () => {
+      await s.reset()
       const zoom = async () =>
-        (await s.tabs()).find((t) => t.url.startsWith('https://example.com'))?.zoomFactor
+        (await s.tabs()).find((t) => t.url.startsWith(EXAMPLE_URL))?.zoomFactor
+      const bubble = s.chrome.locator('[data-zoom-bubble]')
+      const level = bubble.locator('#zen-zoom-level')
+      /** The bubble is up and says `percent`; the page's factor agrees. */
+      const expectZoom = async (factor, what) => {
+        const percent = `${Math.round(factor * 100)}%`
+        await waitFor(
+          async () => {
+            const z = await zoom()
+            return z !== undefined && Math.abs(z - factor) < 0.01 ? z : null
+          },
+          8000,
+          `${what}: page zoom ${factor}`
+        )
+        await level.waitFor({ state: 'visible', timeout: 5000 })
+        const text = ((await level.textContent()) ?? '').trim()
+        if (text !== percent)
+          throw new Error(`${what}: zoom bubble says "${text}", page is at ${percent}`)
+        return text
+      }
       const z0 = await zoom()
+      if (Math.abs(z0 - 1) > 0.01) throw new Error(`page starts at zoom ${z0}, expected 1`)
+      if (await bubble.count()) throw new Error('zoom bubble up before any zoom step')
       await s.press(`${ACCEL}+=`)
-      const z1 = await waitFor(
-        async () => {
-          const z = await zoom()
-          return z > z0 + 0.01 ? z : null
-        },
-        8000,
-        'zoom in'
-      )
+      const z1 = await expectZoom(1.1, 'Ctrl+plus')
       await s.press(`${ACCEL}+=`)
-      const z2 = await waitFor(
-        async () => {
-          const z = await zoom()
-          return z > z1 + 0.01 ? z : null
-        },
-        8000,
-        'zoom in again'
-      )
-      await s.shot('05-zoomed-in')
+      const z2 = await expectZoom(1.25, 'Ctrl+plus again')
+      await s.shot('03-zoom-bubble')
       await s.press(`${ACCEL}+-`)
-      const z3 = await waitFor(
-        async () => {
-          const z = await zoom()
-          return z < z2 - 0.01 ? z : null
-        },
-        8000,
-        'zoom out'
-      )
+      const z3 = await expectZoom(1.1, 'Ctrl+minus')
       await s.press(`${ACCEL}+0`)
-      const z4 = await waitFor(
-        async () => {
-          const z = await zoom()
-          return Math.abs(z - 1) < 0.01 ? z : null
-        },
-        8000,
-        'zoom reset'
-      )
-      return { z0, z1, z2, z3, z4 }
+      const z4 = await expectZoom(1, 'Ctrl+0')
+      // Left alone the bubble goes on its own (1.5 s; up to 5 s once its buttons were used).
+      await bubble.first().waitFor({ state: 'hidden', timeout: 8000 })
+      return { z0, z1, z2, z3, z4, bubbleGone: true }
     })
 
     await s.step('fullscreen', async () => {
-      const combo = IS_MAC ? 'Control+Meta+f' : 'F11'
+      await s.reset()
+      const combo = FULLSCREEN_COMBO
       await s.press(combo)
       await waitFor(async () => (await s.window())?.fullScreen, 10000, 'window fullscreen', 200)
-      await s.shot('06-fullscreen')
+      await s.shot('04-fullscreen')
       await s.press(combo)
       await waitFor(
         async () => !(await s.window())?.fullScreen,
@@ -1096,6 +1382,7 @@ async function scenarioBoot() {
     })
 
     await s.step('new-window', async () => {
+      await s.reset()
       const before = await s.windowCount()
       await s.press(`${ACCEL}+n`)
       await waitFor(async () => (await s.windowCount()) >= before + 1, 10000, 'second window')
@@ -1112,7 +1399,7 @@ async function scenarioBoot() {
 
     await s.step('private-window', async () => {
       const before = await s.windowCount()
-      await s.press(`${ACCEL}+Shift+p`)
+      await s.press(PRIVATE_WINDOW_COMBO)
       await waitFor(async () => (await s.windowCount()) >= before + 1, 10000, 'private window')
       await waitFor(
         async () => {
@@ -1128,22 +1415,56 @@ async function scenarioBoot() {
         10000,
         'a chrome page with data-window-kind=private'
       )
-      await s.shot('07-three-windows')
+      await s.shot('05-three-windows')
       await closeExtraWindows(s)
       return { windows: await s.windowCount() }
     })
 
+    await s.step('history', async () => {
+      await s.reset()
+      const page = s.chrome.locator('[data-testid="history-page"]')
+      await s.press(`${ACCEL}+h`)
+      await page.first().waitFor({ state: 'visible', timeout: 8000 })
+      const heading = await page.getByRole('heading', { name: 'History' }).first().textContent()
+      if ((heading ?? '').trim() !== 'History')
+        throw new Error(`history heading reads "${heading}"`)
+      await s.shot('06-history')
+      await s.press('Escape')
+      await page.first().waitFor({ state: 'hidden', timeout: 8000 })
+      return { heading: heading.trim() }
+    })
+
+    await s.step('bookmarks-manager', async () => {
+      await s.reset()
+      const page = s.chrome.locator('[data-testid="bookmarks-manager"]')
+      await s.press(`${ACCEL}+Shift+o`)
+      await page.first().waitFor({ state: 'visible', timeout: 8000 })
+      const heading = await page.getByRole('heading', { name: 'Bookmarks' }).first().textContent()
+      if ((heading ?? '').trim() !== 'Bookmarks') {
+        throw new Error(`bookmarks manager heading reads "${heading}"`)
+      }
+      await s.shot('07-bookmarks-manager')
+      await s.press('Escape')
+      await page.first().waitFor({ state: 'hidden', timeout: 8000 })
+      return { heading: heading.trim() }
+    })
+
     await s.step('settings', async () => {
+      await s.reset()
       const panel = s.chrome.locator('[data-testid="settings-panel"]')
       if (IS_MAC) {
         await s.press('Meta+,')
       } else {
-        // No default Settings shortcut outside macOS: the toolbar "Menu" button pops up the native
-        // application menu; the hook picks its "Settings" item.
+        // No default Settings shortcut outside macOS: the toolbar "Menu" button (its title carries
+        // the shortcut hint, "Menu (Alt+F)") pops up the native application menu; the hook picks
+        // its "Settings" item.
         await s.app.evaluate(() => {
           globalThis.__smoke.autoPickMenuItem = 'Settings'
         })
-        await s.chrome.locator('button[title="Menu"]').first().click({ timeout: 5000 })
+        await s.chrome
+          .locator('button[aria-haspopup="menu"][title^="Menu"]')
+          .first()
+          .click({ timeout: 5000 })
       }
       await panel.first().waitFor({ state: 'visible', timeout: 10000 })
       await s.shot('08-settings')
@@ -1153,7 +1474,8 @@ async function scenarioBoot() {
     })
 
     await s.step('context-menu', async () => {
-      const tab = (await s.tabs()).find((t) => t.url.startsWith('https://example.com'))
+      await s.reset()
+      const tab = (await s.tabs()).find((t) => t.url.startsWith(EXAMPLE_URL))
       if (!tab) throw new Error('example.com tab missing')
       const menusBefore = await s.app.evaluate(() => globalThis.__smoke.menus.length)
       await s.app.evaluate(() => {
@@ -1188,6 +1510,8 @@ async function scenarioBoot() {
     })
 
     await s.step('second-instance', async () => {
+      await s.reset()
+      const rowsBefore = await s.sidebarTabCount()
       const t = Date.now()
       const child = spawn(opts.exe, [...s.launchArgs(), 'https://example.org'], {
         stdio: 'ignore',
@@ -1198,7 +1522,11 @@ async function scenarioBoot() {
       )
       child.on('error', (e) => log(`second instance spawn error: ${e.message}`))
       const tab = await s.waitForTab('https://example.org', 30000)
-      await s.sidebarTab(EXAMPLE_TITLE).nth(1).waitFor({ state: 'visible', timeout: 15000 })
+      await waitFor(
+        async () => (await s.sidebarTabCount()) === rowsBefore + 1,
+        15000,
+        `a sidebar row for the handed-over URL (${rowsBefore} rows before)`
+      )
       const exit = await Promise.race([childExit, delay(15000).then(() => null)])
       if (!exit) {
         child.kill()
@@ -1209,35 +1537,130 @@ async function scenarioBoot() {
       return { tab: tab.url, secondInstance: exit, windows: await s.windowCount() }
     })
 
-    await s.step('quit', async () => {
-      const r = await s.quitWithShortcut()
-      out.stateAfterQuit = readState(userData)
-      if (!out.stateAfterQuit.tabs?.some((t) => t.url.startsWith('https://example.com'))) {
-        throw new Error(`state.json has no example.com tab: ${JSON.stringify(out.stateAfterQuit)}`)
+    await s.step('close-window-question', async () => {
+      await s.reset()
+      const tabs = await s.sidebarTabCount()
+      if (tabs < 2) throw new Error(`${tabs} tab open; the question needs several`)
+      const prompt = s.chrome.locator('[data-window-prompt="close-tabs"]').first()
+      await s.press(`${ACCEL}+Shift+w`)
+      await prompt.waitFor({ state: 'visible', timeout: 8000 })
+      const asked = await s.windowPrompt()
+      await s.shot('11-close-tabs-question')
+      if (asked.heading !== `Close ${tabs} tabs?`) {
+        throw new Error(`question reads "${asked.heading}" with ${tabs} tabs open`)
       }
+      const owner = await s.keyboardOwner()
+      await prompt.getByRole('button', { name: 'Cancel', exact: true }).click({ timeout: 5000 })
+      await prompt.waitFor({ state: 'hidden', timeout: 8000 })
+      await delay(500)
+      const windows = await s.windowCount()
+      if (windows !== 1) throw new Error(`${windows} windows after Cancel, expected 1`)
+      const after = await s.sidebarTabCount()
+      if (after !== tabs) throw new Error(`${after} tabs after Cancel, ${tabs} before`)
+      return { ...asked, keyboard: owner, windows, tabs: after }
+    })
+
+    await s.step('close-tab', async () => {
+      await s.reset()
+      const before = await s.sidebarTabCount()
+      const liveBefore = (await s.tabs()).map((t) => t.url)
+      await s.press(`${ACCEL}+w`)
+      const after = await waitFor(
+        async () => {
+          const n = await s.sidebarTabCount()
+          return n === before - 1 ? n : null
+        },
+        8000,
+        `sidebar rows ${before} → ${before - 1} after Ctrl+W`
+      )
+      await s.settle()
+      const windows = await s.windowCount()
+      if (windows !== 1) throw new Error(`${windows} windows after Ctrl+W, expected 1`)
+      return { before, after, liveBefore, liveAfter: (await s.tabs()).map((t) => t.url) }
+    })
+
+    await s.step('quit', async () => {
+      await s.reset()
+      const r = await s.quitGracefully()
+      out.stateAfterQuit = assertCleanState(userData, EXAMPLE_URL)
       return { ...r, state: out.stateAfterQuit }
     })
   })
 }
 
-async function scenarioRestore() {
+/**
+ * The run that does not end well (#129): the profile from `boot` is killed while it runs, which
+ * leaves the state file with `cleanExit: false`. The next launch lists the tabs but loads no
+ * page, offers "Restore pages?", Restore brings example.com back, and a graceful quit marks the
+ * profile clean again.
+ */
+async function scenarioCrash() {
   const userData = path.join(profileRoot, 'profile')
-  return runScenario('restore', userData, {}, async (s, out) => {
+  const killed = await runScenario('crash', userData, {}, async (s, out) => {
     out.stateBefore = readState(userData)
-    await s.step('restored-tab', async () => {
+    await s.step('running-marker', async () => {
       await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
-      const onboarding = await s.chrome.locator('[data-testid="onboarding"]').count()
-      if (onboarding) throw new Error('onboarding shown again on the second launch')
-      const tabs = await s.tabs()
-      await s.shot('01-restored')
-      return {
-        sidebarTabs: await s.chrome.locator('[data-testid="tab"]').count(),
-        exampleTitles: await s.sidebarTab(EXAMPLE_TITLE).count(),
-        liveTabs: tabs.map((t) => t.url),
-        persisted: out.stateBefore.tabs
-      }
+      await s.waitForTab(EXAMPLE_URL, 30000)
+      // The first write of the run carries the marker (the startup commit is debounced).
+      const state = await waitFor(
+        () => {
+          const st = readState(userData)
+          return st.cleanExit === false ? st : null
+        },
+        15000,
+        'state.json with cleanExit: false while the app runs',
+        250
+      )
+      return { before: out.stateBefore.cleanExit, running: state.cleanExit, tabs: state.tabs }
     })
-    await s.step('quit', async () => s.quitWithShortcut())
+    await s.step('kill', async () => {
+      const exit = await s.kill()
+      out.stateAfterKill = readState(userData)
+      if (out.stateAfterKill.cleanExit !== false) {
+        throw new Error(`killed run left cleanExit ${JSON.stringify(out.stateAfterKill.cleanExit)}`)
+      }
+      return { exit, state: out.stateAfterKill }
+    })
+  })
+  if (killed.fatal) return killed
+
+  return runScenario('crash-restore', userData, {}, async (s, out) => {
+    out.stateBefore = readState(userData)
+    await s.step('restore-offer', async () => {
+      const bar = s.chrome.locator('[data-crash-restore]').first()
+      await bar.waitFor({ state: 'visible', timeout: 15000 })
+      await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
+      await s.settle()
+      const text = ((await bar.textContent()) ?? '').replace(/\s+/g, ' ').trim()
+      const m = /Restore (\d+) pages?/.exec(text)
+      if (!m) throw new Error(`restore bar reads "${text}"`)
+      const offered = Number(m[1])
+      const persisted = out.stateBefore.tabs?.length ?? 0
+      if (offered !== persisted) {
+        throw new Error(
+          `bar offers ${offered} pages, state.json lists ${persisted} tabs: "${text}"`
+        )
+      }
+      // Held back: the tabs are listed, no page of theirs is loaded yet.
+      const loaded = (await s.tabs()).filter((t) => t.url.startsWith('https://'))
+      if (loaded.length) {
+        throw new Error(`pages loaded before the answer: ${loaded.map((t) => t.url).join(', ')}`)
+      }
+      await s.shot('01-restore-offer')
+      return { text, offered, persisted }
+    })
+    await s.step('restore', async () => {
+      const bar = s.chrome.locator('[data-crash-restore]').first()
+      await bar.getByRole('button', { name: 'Restore', exact: true }).click({ timeout: 5000 })
+      const tab = await s.waitForTab(EXAMPLE_URL, 45000)
+      await bar.waitFor({ state: 'hidden', timeout: 8000 })
+      await s.shot('02-restored-after-crash')
+      return { url: tab.url, title: tab.title, sidebarTabs: await s.sidebarTabCount() }
+    })
+    await s.step('quit', async () => {
+      const r = await s.quitGracefully()
+      return { ...r, state: assertCleanState(userData, EXAMPLE_URL) }
+    })
   })
 }
 
@@ -1260,7 +1683,7 @@ async function scenarioScale() {
         await s.shot('01-scale-150')
         return { ...dpr, window: await s.window() }
       })
-      await s.step('quit', async () => s.quitWithShortcut())
+      await s.step('quit', async () => s.quitGracefully())
     }
   )
 }
@@ -1351,7 +1774,7 @@ async function scenarioDark() {
         await s.shot('01-dark-mode')
         return { source, ...facts }
       })
-      await s.step('quit', async () => s.quitWithShortcut())
+      await s.step('quit', async () => s.quitGracefully())
     })
   } finally {
     if (osSwitch.ok) log(`OS dark mode reset: ${JSON.stringify(setOsDarkMode(false))}`)
@@ -1447,6 +1870,8 @@ async function main() {
     const run = {
       boot: scenarioBoot,
       restore: scenarioRestore,
+      walkthrough: scenarioWalkthrough,
+      crash: scenarioCrash,
       scale: scenarioScale,
       dark: scenarioDark
     }[name]
