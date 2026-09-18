@@ -78,6 +78,16 @@ export class AndroidWebNavigation {
   private readonly documents = new Map<string, string>()
   /** The main frame's URL after its last commit or same-document navigation, per tab. */
   private readonly urls = new Map<string, string>()
+  /**
+   * Tabs whose main frame shows an error page for a failed load. Chrome closes the failed
+   * navigation with `onErrorOccurred` and hides the `chrome-error://` document that takes its
+   * place; here two documents follow the failure and neither is the extension's business:
+   * WebView's own error page, which commits and finishes *under the failed URL* (so the URL
+   * alone cannot tell its `load` from the page's), then the core's `zen://error` page, whose
+   * hash and `pushState` navigations report under a `data:` URL. Everything about the tab is
+   * dropped until another document commits.
+   */
+  private readonly hidden = new Set<string>()
 
   constructor(private readonly now: () => number) {}
 
@@ -85,6 +95,7 @@ export class AndroidWebNavigation {
     this.inFlight.delete(tabId)
     this.documents.delete(tabId)
     this.urls.delete(tabId)
+    this.hidden.delete(tabId)
   }
 
   // ---------------------------------------------------------------------------
@@ -95,7 +106,10 @@ export class AndroidWebNavigation {
     if (r.url.startsWith(ERROR_PAGE_PREFIX)) return []
     switch (r.phase) {
       case 'started': {
-        if (r.sameDocument) return this.sameDocument(tabId, tab, r.url)
+        if (r.sameDocument) {
+          if (this.hidden.has(tabId)) return []
+          return this.sameDocument(tabId, tab, r.url)
+        }
         this.inFlight.set(tabId, {
           url: r.url,
           serverRedirect: false,
@@ -120,6 +134,7 @@ export class AndroidWebNavigation {
         if (!r.committed || r.errorPage) {
           // Cancelled, failed before anything committed, or WebView's own error page took the
           // place of the document: Chrome reports the error and hides the error page's commit.
+          if (r.committed) this.hidden.add(tabId)
           return [
             this.error(
               tab,
@@ -129,6 +144,7 @@ export class AndroidWebNavigation {
             )
           ]
         }
+        this.hidden.delete(tabId)
         const doc = documentId()
         this.documents.set(tabId, doc)
         this.urls.set(tabId, r.url)
@@ -145,8 +161,10 @@ export class AndroidWebNavigation {
         return out
       }
       case 'dom':
+        if (this.hidden.has(tabId)) return []
         return [this.event('onDOMContentLoaded', tab, r.url, this.documents.get(tabId))]
       case 'load':
+        if (this.hidden.has(tabId)) return []
         return [this.event('onCompleted', tab, r.url, this.documents.get(tabId))]
     }
     return []
@@ -158,8 +176,15 @@ export class AndroidWebNavigation {
 
   /** `doUpdateVisitedHistory`: a document committed (or an in-page navigation happened). */
   inferredCommit(tabId: string, tab: TabFacts, url: string, inPage: boolean): DerivedEvent[] {
-    if (url.startsWith(ERROR_PAGE_PREFIX)) return []
-    if (inPage) return this.sameDocument(tabId, tab, url)
+    if (url.startsWith(ERROR_PAGE_PREFIX)) {
+      this.hidden.add(tabId)
+      return []
+    }
+    if (inPage) {
+      if (this.hidden.has(tabId)) return []
+      return this.sameDocument(tabId, tab, url)
+    }
+    this.hidden.delete(tabId)
     const doc = documentId()
     this.documents.set(tabId, doc)
     this.urls.set(tabId, url)
@@ -174,9 +199,13 @@ export class AndroidWebNavigation {
     ]
   }
 
-  /** `onPageFinished`: the document is done loading. */
+  /**
+   * `onPageFinished`: the document is done loading. After a failure the finish is WebView's own
+   * error page's, under the failed URL, and stays hidden (a document of the page's commits first
+   * when the tab moves on).
+   */
   inferredFinish(tabId: string, tab: TabFacts, url: string): DerivedEvent[] {
-    if (url.startsWith(ERROR_PAGE_PREFIX)) return []
+    if (url.startsWith(ERROR_PAGE_PREFIX) || this.hidden.has(tabId)) return []
     const doc = this.documents.get(tabId)
     return [
       this.event('onDOMContentLoaded', tab, url, doc),
@@ -184,8 +213,9 @@ export class AndroidWebNavigation {
     ]
   }
 
-  /** `onReceivedError` for the main frame. */
+  /** `onReceivedError` for the main frame: the navigation ends here, the error pages that follow are hidden. */
   inferredFailure(tabId: string, tab: TabFacts, url: string, error: string): DerivedEvent[] {
+    this.hidden.add(tabId)
     return [this.error(tab, url, error, this.documents.get(tabId))]
   }
 

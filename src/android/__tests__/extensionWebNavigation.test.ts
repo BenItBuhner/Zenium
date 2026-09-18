@@ -111,6 +111,10 @@ describe('AndroidWebNavigation: the navigation listener path', () => {
       url: 'https://down.test/',
       error: 'net::ERR_NAME_NOT_RESOLVED'
     })
+    // WebView's own error page finishes under the failed URL: Chrome ended the navigation at the
+    // error, so its DOMContentLoaded and load say nothing.
+    expect(nav.report('t1', TAB, { phase: 'dom', url: 'https://down.test/' })).toEqual([])
+    expect(nav.report('t1', TAB, { phase: 'load', url: 'https://down.test/' })).toEqual([])
     // The core's error page is the chrome's navigation: nothing of it reaches extensions.
     expect(
       nav.report('t1', TAB, { phase: 'started', url: 'zen://error?url=https%3A%2F%2Fdown.test%2F' })
@@ -118,7 +122,22 @@ describe('AndroidWebNavigation: the navigation listener path', () => {
     expect(
       nav.report('t1', TAB, { phase: 'completed', url: 'zen://error?x', committed: true })
     ).toEqual([])
-    // A navigation that never committed (cancelled) is an aborted one.
+    expect(
+      nav.report('t1', TAB, {
+        phase: 'started',
+        url: 'https://down.test/#retry',
+        sameDocument: true
+      })
+    ).toEqual([])
+    // The next document of the page's own brings the family back.
+    nav.report('t1', TAB, { phase: 'started', url: 'https://up.test/' })
+    expect(
+      names(nav.report('t1', TAB, { phase: 'completed', url: 'https://up.test/', committed: true }))
+    ).toEqual(['onCommitted'])
+    expect(names(nav.report('t1', TAB, { phase: 'load', url: 'https://up.test/' }))).toEqual([
+      'onCompleted'
+    ])
+    // A navigation that never committed (cancelled) is an aborted one; the document stays.
     nav.report('t1', TAB, { phase: 'started', url: 'https://slow.test/' })
     const aborted = nav.report('t1', TAB, {
       phase: 'completed',
@@ -126,6 +145,11 @@ describe('AndroidWebNavigation: the navigation listener path', () => {
       committed: false
     })
     expect(aborted[0].details).toMatchObject({ error: 'net::ERR_ABORTED' })
+    expect(
+      names(
+        nav.report('t1', TAB, { phase: 'started', url: 'https://up.test/#a', sameDocument: true })
+      )
+    ).toEqual(['onReferenceFragmentUpdated'])
   })
 
   it('tells fragment navigations from history state updates by the URL it last saw', () => {
@@ -170,7 +194,31 @@ describe('AndroidWebNavigation: the navigation listener path', () => {
     ])
     const failed = nav.inferredFailure('t1', TAB, 'https://b.test/', 'net::ERR_CONNECTION_REFUSED')
     expect(names(failed)).toEqual(['onErrorOccurred'])
+    // As measured on WebView 113 after a failed load: WebView's own error page finishes under
+    // the failed URL (its commit never reaches the runtime), the core's `zen://error` page
+    // commits and finishes, and a `pushState` on it reports under a `data:` URL. None of it is
+    // the extension's business (Chrome hides `chrome-error://`); the next document of the
+    // page's own is.
+    expect(nav.inferredFinish('t1', TAB, 'https://b.test/')).toEqual([])
     expect(nav.inferredCommit('t1', TAB, 'zen://error?u', false)).toEqual([])
+    expect(nav.inferredFinish('t1', TAB, 'zen://error?u')).toEqual([])
+    expect(nav.inferredCommit('t1', TAB, 'data:text/html;charset=utf-8;base64,', true)).toEqual([])
+    expect(names(nav.inferredCommit('t1', TAB, 'https://c.test/', false))).toEqual([
+      'onBeforeNavigate',
+      'onCommitted'
+    ])
+    expect(names(nav.inferredFinish('t1', TAB, 'https://c.test/'))).toEqual([
+      'onDOMContentLoaded',
+      'onCompleted'
+    ])
+    // A tab that fails, then loads the same URL fine (the server came back) is not hidden for good.
+    nav.inferredFailure('t2', TAB, 'https://flaky.test/', 'net::ERR_CONNECTION_RESET')
+    expect(nav.inferredFinish('t2', TAB, 'https://flaky.test/')).toEqual([])
+    nav.inferredCommit('t2', TAB, 'https://flaky.test/', false)
+    expect(names(nav.inferredFinish('t2', TAB, 'https://flaky.test/'))).toEqual([
+      'onDOMContentLoaded',
+      'onCompleted'
+    ])
   })
 
   it('checks the view event payload', () => {
