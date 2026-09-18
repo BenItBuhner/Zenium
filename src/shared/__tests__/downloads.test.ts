@@ -19,6 +19,17 @@ describe('download settings', () => {
     expect(resolveDownloadSettings({ downloads: { directory: '' } }).directory).toBeNull()
   })
 
+  it("follows Chrome's defaults: the bubble opens on completion and is the notice", () => {
+    const d = resolveDownloadSettings(undefined)
+    expect(d.openPanelOnComplete).toBe(true)
+    expect(d.openPanelOnStart).toBe(false)
+    expect(d.notifyOnComplete).toBe(false)
+    // Edge's OS notification is the switch's other position.
+    expect(
+      resolveDownloadSettings({ downloads: { notifyOnComplete: true } }).notifyOnComplete
+    ).toBe(true)
+  })
+
   it('mirrors the older top-level ask-where-to-save switch', () => {
     expect(resolveDownloadSettings({ askWhereToSave: true }).askWhereToSave).toBe(true)
     expect(resolveDownloadSettings({ askWhereToSave: false }).askWhereToSave).toBe(false)
@@ -34,7 +45,7 @@ describe('download settings', () => {
       }
     })
     expect(settings.autoOpenTypes).toEqual(['pdf', 'torrent'])
-    expect(settings.notifyOnComplete).toBe(true)
+    expect(settings.notifyOnComplete).toBe(DEFAULT_DOWNLOAD_SETTINGS.notifyOnComplete)
     expect(settings.openPanelOnStart).toBe(false)
     expect(settings.openPanelOnComplete).toBe(false)
   })

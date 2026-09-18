@@ -6,6 +6,7 @@ import type {
   Settings
 } from '../../shared/types'
 import { searchCommands, type CommandContext } from '../../shared/commands'
+import { resolveDownloadSettings } from '../../shared/downloads'
 import { buildSearchUrl } from '../../shared/search'
 import { Browser } from '../browser'
 import type {
@@ -1199,6 +1200,185 @@ describe('menu helpers', () => {
     expect(isDownloadable('blob:https://example.com/id')).toBe(true)
     expect(isDownloadable('zen://settings')).toBe(false)
     expect(isDownloadable('mailto:a@b.c')).toBe(false)
+  })
+})
+
+describe('the download row menu', () => {
+  const start = (h: Harness, url = 'https://example.com/report.pdf'): string =>
+    h.browser.downloads.begin({
+      url,
+      filename: 'report.pdf',
+      totalBytes: 100,
+      mimeType: 'application/pdf'
+    }).id
+
+  const menu = (h: Harness, id: string): string[] => {
+    h.browser.handleCommand(h.win, 'download.contextMenu', { id })
+    return labels(h.shown())
+  }
+
+  const enabled = (h: Harness, label: string): boolean | undefined =>
+    h.shown().find((item) => item.label === label)?.enabled
+
+  const checked = (h: Harness, label: string): boolean | undefined =>
+    h.shown().find((item) => item.label === label)?.checked
+
+  it('offers Open when done, Pause and Cancel while the transfer runs', () => {
+    const h = harness(DESKTOP)
+    const id = start(h)
+    expect(menu(h, id)).toEqual([
+      'Open When Done',
+      'Always Open Files of This Type',
+      'Show in Folder',
+      '-',
+      'Copy Download Link',
+      '-',
+      'Pause',
+      'Cancel',
+      '-',
+      'Remove from List'
+    ])
+    expect(checked(h, 'Open When Done')).toBe(false)
+    expect(enabled(h, 'Show in Folder')).toBe(false)
+    expect(enabled(h, 'Remove from List')).toBe(false)
+  })
+
+  it('Open when done is a toggle on the row (Chrome applies it when the transfer finishes)', () => {
+    const h = harness(DESKTOP)
+    const id = start(h)
+    menu(h, id)
+    h.shown()
+      .find((item) => item.label === 'Open When Done')
+      ?.click?.()
+    expect(h.browser.downloads.item(id)?.openWhenDone).toBe(true)
+    expect(checked(h, 'Open When Done')).toBe(false)
+    menu(h, id)
+    expect(checked(h, 'Open When Done')).toBe(true)
+    h.shown()
+      .find((item) => item.label === 'Open When Done')
+      ?.click?.()
+    expect(h.browser.downloads.item(id)?.openWhenDone).toBe(false)
+  })
+
+  it('Always open files of this type toggles the extension in the engine setting', () => {
+    const h = harness(DESKTOP)
+    const id = start(h)
+    menu(h, id)
+    expect(checked(h, 'Always Open Files of This Type')).toBe(false)
+    h.shown()
+      .find((item) => item.label === 'Always Open Files of This Type')
+      ?.click?.()
+    expect(resolveDownloadSettings(h.browser.state.settings).autoOpenTypes).toEqual(['pdf'])
+    menu(h, id)
+    expect(checked(h, 'Always Open Files of This Type')).toBe(true)
+    h.shown()
+      .find((item) => item.label === 'Always Open Files of This Type')
+      ?.click?.()
+    expect(resolveDownloadSettings(h.browser.state.settings).autoOpenTypes).toEqual([])
+  })
+
+  it('never offers Always open for a type Chromium keeps from opening by itself, or for no type', () => {
+    const h = harness(DESKTOP)
+    // `.crx` is ALLOW_ON_USER_GESTURE on every platform (`.exe` only on Windows).
+    const flagged = h.browser.downloads.begin({
+      url: 'https://example.com/extension.crx',
+      filename: 'extension.crx',
+      totalBytes: 100,
+      mimeType: 'application/x-chrome-extension'
+    }).id
+    expect(menu(h, flagged)).not.toContain('Always Open Files of This Type')
+    const bare = h.browser.downloads.begin({
+      url: 'https://example.com/README',
+      filename: 'README',
+      totalBytes: 100,
+      mimeType: 'text/plain'
+    }).id
+    expect(menu(h, bare)).not.toContain('Always Open Files of This Type')
+  })
+
+  it('swaps Pause for Resume once paused', () => {
+    const h = harness(DESKTOP)
+    const id = start(h)
+    h.browser.downloads.progress(id, { state: 'paused' })
+    expect(menu(h, id)).toContain('Resume')
+    expect(menu(h, id)).not.toContain('Pause')
+    expect(menu(h, id)).toContain('Cancel')
+  })
+
+  it('offers Retry for a failed or cancelled transfer and Remove from List', () => {
+    const h = harness(DESKTOP)
+    const failed = start(h)
+    h.browser.downloads.finish(failed, 'interrupted')
+    expect(menu(h, failed)).toEqual([
+      'Open',
+      'Always Open Files of This Type',
+      'Show in Folder',
+      '-',
+      'Copy Download Link',
+      '-',
+      'Retry',
+      '-',
+      'Remove from List'
+    ])
+    expect(enabled(h, 'Open')).toBe(false)
+    expect(enabled(h, 'Remove from List')).toBe(true)
+    const cancelled = start(h)
+    h.browser.downloads.finish(cancelled, 'cancelled')
+    expect(menu(h, cancelled)).toContain('Retry')
+  })
+
+  it('prefers Resume over Retry when the failed transfer can continue', () => {
+    const h = harness(DESKTOP)
+    const id = start(h)
+    h.browser.downloads.progress(id, { state: 'interrupted', canResume: true })
+    const shown = menu(h, id)
+    expect(shown).toContain('Resume')
+    expect(shown).not.toContain('Retry')
+  })
+
+  it('has no Retry for a blob: download – the page object is gone', () => {
+    const h = harness(DESKTOP)
+    const id = start(h, 'blob:https://example.com/0b1')
+    h.browser.downloads.finish(id, 'cancelled')
+    expect(menu(h, id)).toEqual([
+      'Open',
+      'Always Open Files of This Type',
+      'Show in Folder',
+      '-',
+      'Copy Download Link',
+      '-',
+      'Remove from List'
+    ])
+  })
+
+  it('opens and reveals a finished file, and copies its link', async () => {
+    const h = harness(DESKTOP)
+    const id = h.browser.downloads.addCompleted('/tmp/shot.png', 'image/png').id
+    expect(menu(h, id)).toEqual([
+      'Open',
+      'Always Open Files of This Type',
+      'Show in Folder',
+      '-',
+      'Copy Download Link',
+      '-',
+      'Remove from List'
+    ])
+    expect(enabled(h, 'Open')).toBe(true)
+    expect(enabled(h, 'Show in Folder')).toBe(true)
+    let copied = ''
+    h.browser.platform.clipboard.writeText = (text: string) => void (copied = text)
+    h.shown()
+      .find((item) => item.label === 'Copy Download Link')
+      ?.click?.()
+    await settle()
+    expect(copied).toBe('file:///tmp/shot.png')
+  })
+
+  it('shows nothing for an unknown record', () => {
+    const h = harness(DESKTOP)
+    const before = h.popups()
+    h.browser.handleCommand(h.win, 'download.contextMenu', { id: 'dl-missing' })
+    expect(h.popups()).toBe(before)
   })
 })
 
