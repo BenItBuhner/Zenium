@@ -43,6 +43,7 @@ const ext = (over: Partial<ExtensionInfo>): ExtensionInfo => ({
   availableVersion: null,
   updateError: null,
   updateCheckedAt: null,
+  errors: [],
   ...over
 })
 
