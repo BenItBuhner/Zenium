@@ -1,5 +1,6 @@
 import type { ExtensionInfo } from '@shared/types'
 import type { Browser } from '@core/browser'
+import type { MenuItemTemplate, PageContextParams } from '@core/platform'
 import type { ZenWindow } from '@core/window'
 import { JsonStore } from '@core/store/JsonStore'
 import type { EngineContextKind } from '@core/extensions/api/engine'
@@ -743,6 +744,21 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   }
 
   /**
+   * One event to one endpoint whether it listens or not: the context that created a
+   * `contextMenus` item with `onclick` runs the handler off `onClicked` without ever adding a
+   * listener. Skipped when the endpoint listens (it got the event from `emit`).
+   */
+  emitTo(endpointId: string, ns: string, name: string, args: unknown[]): void {
+    if (!this.router.endpoint(endpointId)) return
+    if (this.listening.get(endpointId)?.has(`${ns}.${name}`)) return
+    this.sendTo(endpointId, { t: 'event', ns, name, args })
+  }
+
+  icon(id: string): string | null {
+    return this.browser.extensions.list().find((info) => info.id === id)?.icon ?? null
+  }
+
+  /**
    * An event about one tab: to the extensions that may see the tab. Chrome keeps an incognito
    * tab from an extension the user did not allow in incognito: no `tabs.*` or `webNavigation`
    * event about it, no `webRequest` details of its requests. A tab the model no longer has (an
@@ -816,9 +832,11 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     const ext = this.extensions.get(id)
     if (!ext) return
     const action = this.api.actionFor(id)
+    // A toolbar click is the user gesture `activeTab` waits for. A private tab the extension may
+    // not see is no tab (Chrome hides the action there).
+    const tab = this.api.tabs.activeTabFor(ext)
+    if (tab) this.api.activeTab.grant(id, tab)
     if (!action.popup) {
-      // A private tab the extension may not see is no tab (Chrome hides the action there).
-      const tab = this.api.tabs.activeTabFor(ext)
       const ns = ext.manifest.manifestVersion === 3 ? 'action' : 'browserAction'
       this.emit(id, ns, 'onClicked', [tab ? this.api.tabs.chromeTab(tab) : null])
       return
@@ -1119,6 +1137,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       const endpoint = this.router.endpoint(ep)
       this.router.unregister(ep)
       this.listening.delete(ep)
+      this.api.endpointGone(ep)
       if (endpoint) this.closeServiceWorkerPorts(endpoint)
       if (
         endpoint?.context === 'background' &&
@@ -1212,6 +1231,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
           // reply proxy).
           nav('onBeforeNavigate', p.url)
           nav('onCommitted', p.url, { transitionType: 'link', transitionQualifiers: [] })
+          this.api.activeTab.navigated(tabId, p.url)
         }
         updated({ status: 'loading', url: p.url })
         return
@@ -1265,6 +1285,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       ])
       this.router.unregisterTab(id)
       this.identity.onTabRemoved(id)
+      this.api.activeTab.tabRemoved(id)
     }
     this.knownTabs = now
     if (active !== this.activeTabId) {
@@ -1563,6 +1584,16 @@ export class AndroidExtensionsWithRuntime extends AndroidExtensions {
 
   override closePopup(): void {
     this.runtime.closePopup()
+  }
+
+  /** `chrome.contextMenus` items for the long-press menu of a tab (a link or image under the finger). */
+  override pageContextMenuItems(tabId: string, params: PageContextParams): MenuItemTemplate[] {
+    const tab = this.browser.tabs.tab(tabId)
+    return tab ? this.runtime.api.pageContextMenuItems(tab, params) : []
+  }
+
+  override actionContextMenuItems(id: string): MenuItemTemplate[] {
+    return this.runtime.api.actionContextMenuItems(id)
   }
 
   override flushSync(): void {

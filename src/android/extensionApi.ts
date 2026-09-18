@@ -1,6 +1,7 @@
 import type { BookmarkTreeNode } from '@shared/bookmarks'
 import type { Tab } from '@shared/types'
 import type { Browser } from '@core/browser'
+import type { MenuItemTemplate, PageContextParams } from '@core/platform'
 import type { ZenWindow } from '@core/window'
 import type { EngineContextKind } from '@core/extensions/api/engine'
 import type { LocaleMessages } from '@core/extensions/api/i18n'
@@ -10,6 +11,8 @@ import { normalizeRuleset, type NetRule } from '@core/extensions/runtime/dnr'
 import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
 import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
 import type { Endpoint, MessageRouter } from '@core/extensions/runtime/router'
+import { ActiveTabGrants } from './extensionActiveTab'
+import { AndroidContextMenus } from './extensionContextMenus'
 import type { AndroidIdentity } from './extensionIdentity'
 
 /**
@@ -71,6 +74,10 @@ export interface ApiHost {
   setRules(id: string, rules: ExtensionRules): Promise<void>
   /** Raise `chrome.<ns>.<name>` in every endpoint of one extension that listens for it. */
   emit(extensionId: string, ns: string, name: string, args: unknown[]): void
+  /** Deliver `chrome.<ns>.<name>` to one endpoint, listener or not (a `contextMenus` `onclick` holder). */
+  emitTo(endpointId: string, ns: string, name: string, args: unknown[]): void
+  /** The extension's toolbar icon as a `data:` URL, when the store has read it. */
+  icon(id: string): string | null
   readFile(id: string, path: string): Promise<string | null>
   exec(request: ExecRequest): Promise<unknown>
   cookieHeader(url: string): Promise<string | null>
@@ -230,17 +237,49 @@ export class TabIds {
 
 export class ExtensionApi {
   readonly tabs: TabIds
+  readonly contextMenus: AndroidContextMenus
+  readonly activeTab: ActiveTabGrants
   private readonly actions = new Map<string, ActionState>()
-  private readonly contextMenus = new Map<string, Map<string, Record<string, unknown>>>()
 
   constructor(private readonly host: ApiHost) {
     this.tabs = new TabIds(host.browser, () => host.window())
+    this.activeTab = new ActiveTabGrants(
+      (id) => host.attached(id)?.manifest.permissions.includes('activeTab') === true
+    )
+    this.contextMenus = new AndroidContextMenus({
+      attached: (id) => host.attached(id),
+      allAttached: () => host.allAttached(),
+      emit: (id, ns, name, args) => host.emit(id, ns, name, args),
+      emitTo: (ep, ns, name, args) => host.emitTo(ep, ns, name, args),
+      hasEndpoint: (ep) => host.router.endpoint(ep) !== undefined,
+      chromeTab: (tab) => this.tabs.chromeTab(tab),
+      visibleTo: (ext, tab) => this.tabs.visibleTo(ext, tab),
+      icon: (id) => host.icon(id),
+      grantActiveTab: (id, tab) => this.activeTab.grant(id, tab)
+    })
   }
 
   /** The extension is going away: drop what this layer remembers about it. */
   forget(id: string): void {
     this.actions.delete(id)
-    this.contextMenus.delete(id)
+    this.contextMenus.forget(id)
+    this.activeTab.forget(id)
+  }
+
+  /** An endpoint reported gone: `onclick` handlers it held go with it. */
+  endpointGone(endpointId: string): void {
+    this.contextMenus.endpointGone(endpointId)
+  }
+
+  /** The extension section of a tab's long-press menu. */
+  pageContextMenuItems(tab: Tab, params: PageContextParams): MenuItemTemplate[] {
+    return this.contextMenus.pageMenuItems(tab, params)
+  }
+
+  /** The items an extension adds to its toolbar button's menu. */
+  actionContextMenuItems(id: string): MenuItemTemplate[] {
+    const ext = this.host.attached(id)
+    return this.contextMenus.actionMenuItems(id, ext ? this.tabs.activeTabFor(ext) : undefined)
   }
 
   actionFor(id: string): ActionState {
@@ -288,7 +327,7 @@ export class ExtensionApi {
       case 'notifications':
         return this.notificationsCall(method, args)
       case 'contextMenus':
-        return this.contextMenusCall(id, method, args)
+        return this.contextMenus.call(ext, endpoint.id, method, args)
       case 'webNavigation':
         return this.webNavigationCall(id, method, args)
       case 'cookies':
@@ -941,37 +980,6 @@ export class ExtensionApi {
         return {}
     }
     throw new Error(`chrome.notifications.${method} ${NOT_IMPLEMENTED}`)
-  }
-
-  private contextMenusCall(id: string, method: string, args: unknown[]): unknown {
-    let menus = this.contextMenus.get(id)
-    if (!menus) {
-      menus = new Map()
-      this.contextMenus.set(id, menus)
-    }
-    switch (method) {
-      case 'create': {
-        // The shim sends `[properties, id]`, the id it already answered synchronously.
-        const props = asRecord(args[0])
-        const menuId = String(args[1] ?? props.id ?? menus.size + 1)
-        menus.set(menuId, props)
-        return menuId
-      }
-      case 'update': {
-        const menuId = String(args[0])
-        const existing = menus.get(menuId)
-        if (!existing) throw new Error(`Cannot find menu item with id ${menuId}`)
-        menus.set(menuId, { ...existing, ...asRecord(args[1]) })
-        return undefined
-      }
-      case 'remove':
-        menus.delete(String(args[0]))
-        return undefined
-      case 'removeAll':
-        menus.clear()
-        return undefined
-    }
-    throw new Error(`chrome.contextMenus.${method} ${NOT_IMPLEMENTED}`)
   }
 
   private webNavigationCall(id: string, method: string, args: unknown[]): unknown {
