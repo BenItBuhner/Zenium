@@ -23,7 +23,6 @@ import android.view.PixelCopy
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.webkit.ClientCertRequest
-import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
 import android.webkit.HttpAuthHandler
 import android.webkit.JavascriptInterface
@@ -160,7 +159,8 @@ class TabWebView(
         // Dark theme for sites: only ever while the app itself is dark (WebView ties algorithmic
         // darkening to the theme), and never for pages that bring a dark scheme of their own.
         setDarkening(host.pageRules.darkenDefault)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+        // The jar of this tab's container: a WebView on another profile is not the default jar's.
+        Profiles.cookieManager(containerId).setAcceptThirdPartyCookies(this, true)
         setBackgroundColor(Color.WHITE)
         clipToOutline = true
         outlineProvider = object : ViewOutlineProvider() {

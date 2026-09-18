@@ -19,21 +19,30 @@ class Permissions(private val host: PageHost) {
         pending.remove(requestId)?.invoke(allow)
     }
 
-    private fun ask(permission: String, url: String, then: (Boolean) -> Unit) {
+    private fun ask(
+        permission: String,
+        url: String,
+        tabId: String,
+        mediaTypes: List<String> = emptyList(),
+        then: (Boolean) -> Unit
+    ) {
         val id = "perm_${++seq}"
         pending[id] = then
-        host.hostEvent("permission.request", json("requestId" to id, "permission" to permission, "url" to url))
+        val payload = json("requestId" to id, "permission" to permission, "url" to url, "tabId" to tabId)
+        if (mediaTypes.isNotEmpty()) payload.put("mediaTypes", org.json.JSONArray(mediaTypes))
+        host.hostEvent("permission.request", payload)
     }
 
     fun onPermissionRequest(view: TabWebView, request: PermissionRequest) {
         val resources = request.resources
         val wanted = ArrayList<String>()
         val runtime = ArrayList<String>()
+        val mediaTypes = ArrayList<String>()
         var permissionName = "media"
         for (r in resources) {
             when (r) {
-                PermissionRequest.RESOURCE_VIDEO_CAPTURE -> { wanted += r; runtime += Manifest.permission.CAMERA }
-                PermissionRequest.RESOURCE_AUDIO_CAPTURE -> { wanted += r; runtime += Manifest.permission.RECORD_AUDIO }
+                PermissionRequest.RESOURCE_VIDEO_CAPTURE -> { wanted += r; runtime += Manifest.permission.CAMERA; mediaTypes += "video" }
+                PermissionRequest.RESOURCE_AUDIO_CAPTURE -> { wanted += r; runtime += Manifest.permission.RECORD_AUDIO; mediaTypes += "audio" }
                 PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID -> { wanted += r; permissionName = "mediaKeySystem" }
                 PermissionRequest.RESOURCE_MIDI_SYSEX -> { /* denied, like the desktop */ }
             }
@@ -45,7 +54,7 @@ class Permissions(private val host: PageHost) {
         if (wanted.size == 1 && wanted[0] == PermissionRequest.RESOURCE_VIDEO_CAPTURE) permissionName = "camera"
         if (wanted.size == 1 && wanted[0] == PermissionRequest.RESOURCE_AUDIO_CAPTURE) permissionName = "microphone"
         val url = request.origin.toString().ifEmpty { view.url ?: "" }
-        ask(permissionName, url) { allow ->
+        ask(permissionName, url, view.tabId, if (permissionName == "mediaKeySystem") emptyList() else mediaTypes) { allow ->
             if (!allow) {
                 request.deny()
                 return@ask
@@ -57,7 +66,7 @@ class Permissions(private val host: PageHost) {
     }
 
     fun onGeolocation(view: TabWebView, origin: String, callback: GeolocationPermissions.Callback) {
-        ask("geolocation", origin) { allow ->
+        ask("geolocation", origin, view.tabId) { allow ->
             if (!allow) {
                 callback.invoke(origin, false, false)
                 return@ask
