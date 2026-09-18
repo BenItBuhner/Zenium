@@ -82,6 +82,7 @@ function Frame({
     <div
       className="zen-ext-popup-frame zen-animate-pop"
       role="presentation"
+      data-surface="page"
       data-side={side}
       style={{
         left: frame.x,

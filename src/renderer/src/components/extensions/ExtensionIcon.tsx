@@ -4,8 +4,10 @@ import { cn } from '@renderer/lib/utils'
 
 /**
  * An extension's icon at `size` inside a `box` (32 in the management cards, 16 in the toolbar).
- * The manifest icon when there is one, otherwise the puzzle glyph in the deemphasised ink; the
- * image's corners are on the v2 scale (6 for an inner box, 4 for a control-sized one).
+ * The manifest icon when there is one, otherwise the puzzle glyph in the deemphasised ink of
+ * the surface it sits on – the theme's foreground at 69% in the toolbar, `--v2-text-deemphasized`
+ * on a page, read from the surface root's `data-surface` (v2 §9.29); the image's corners are on
+ * the v2 scale (6 for an inner box, 4 for a control-sized one).
  */
 export function ExtensionIcon({
   icon,
@@ -36,7 +38,7 @@ export function ExtensionIcon({
         />
       ) : (
         <Puzzle
-          className={cn('text-[var(--v2-text-deemphasized)]', glyphClassName)}
+          className={cn('zen-ext-icon-glyph', glyphClassName)}
           style={{ width: size, height: size }}
         />
       )}

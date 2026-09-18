@@ -141,6 +141,7 @@ function PanelPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
   return (
     <div
       className="zen-v2 fixed inset-0 z-[95]"
+      data-surface="page"
       onPointerDown={(e) => {
         e.stopPropagation()
         answer(false)
@@ -198,12 +199,13 @@ function SheetPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
         copy.subtitle ? (
           <V2TitleBlock
             className="zen-v2"
+            surface="page"
             title={copy.title}
             description={copy.subtitle}
             glyph={glyph}
           />
         ) : (
-          <div className="zen-v2 zen-v2-sheet-title">
+          <div className="zen-v2 zen-v2-sheet-title" data-surface="page">
             {glyph}
             <span className="min-w-0">{copy.title}</span>
           </div>
@@ -217,7 +219,7 @@ function SheetPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
         }
       }}
     >
-      <div className="zen-v2 zen-ext-dialog">
+      <div className="zen-v2 zen-ext-dialog" data-surface="page">
         <PromptBody prompt={prompt} onAnswer={answer} />
       </div>
     </BottomSheet>

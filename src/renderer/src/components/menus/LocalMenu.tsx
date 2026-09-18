@@ -120,6 +120,7 @@ function PopoverMenu({
         role="menu"
         tabIndex={-1}
         className="zen-v2 zen-v2-panel zen-v2-menu zen-animate-pop fixed select-none"
+        data-surface="page"
         data-context={context || undefined}
         style={{
           left: pos?.left ?? anchor.x,
@@ -171,9 +172,15 @@ function SheetMenu({ items, title, onClose }: Props): JSX.Element {
       className="zen-v2-sheet"
       onDismissed={onClose}
       handleLabel="Resize menu"
-      header={title ? <div className="zen-v2 zen-v2-sheet-title">{title}</div> : undefined}
+      header={
+        title ? (
+          <div className="zen-v2 zen-v2-sheet-title" data-surface="page">
+            {title}
+          </div>
+        ) : undefined
+      }
     >
-      <div className="zen-v2 flex flex-col pb-2">
+      <div className="zen-v2 flex flex-col pb-2" data-surface="page">
         {items.map((entry) =>
           isSeparator(entry) ? (
             <div key={entry.id} className="zen-v2-sheet-separator" role="separator" />

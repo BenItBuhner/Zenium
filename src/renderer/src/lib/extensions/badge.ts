@@ -131,15 +131,17 @@ export interface BadgeStyle {
 }
 
 /**
- * The badge's colours as CSS values. Without a colour from the extension the badge is the v2
- * accent with its on-accent ink; with one, the extension's colour and whichever ink reads on it
- * (or the extension's own text colour when it set one).
+ * The badge's colours as CSS values when the extension chose them: its colour and whichever ink
+ * reads on it (or the extension's own text colour when it set one). Without a colour from the
+ * extension this is null and the badge draws in the accent of the surface it sits on – the
+ * theme's `--zen-accent` in the toolbar, `--v2-accent` on a page – which the stylesheet reads
+ * from the surface root's `data-surface` (v2 §9.29), not from here.
  */
 export function badgeStyle(
   action: Pick<ExtensionAction, 'badgeBackgroundColor' | 'badgeTextColor'>
-): BadgeStyle {
+): BadgeStyle | null {
   const bg = parseCssColor(action.badgeBackgroundColor)
-  if (!bg || bg.a === 0) return { background: 'var(--v2-accent)', color: 'var(--v2-on-accent)' }
+  if (!bg || bg.a === 0) return null
   const background = `rgb(${bg.r} ${bg.g} ${bg.b}${bg.a < 1 ? ` / ${bg.a.toFixed(2)}` : ''})`
   const text = parseCssColor(action.badgeTextColor)
   if (text && text.a > 0) return { background, color: `rgb(${text.r} ${text.g} ${text.b})` }

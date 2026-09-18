@@ -97,6 +97,9 @@ export function NavRow({
       className={cn('zen-no-drag flex items-center gap-0.5', compact && 'flex-col', className)}
       // The bar the extension popovers hang from (v2 §9.20): flush under it, aligned by half.
       data-bar={compact ? undefined : ''}
+      // A window surface (v2 §9.29): what sits in it – the extension actions and their badges –
+      // draws in the theme's foreground and accent, never in a page token.
+      data-surface="window"
     >
       <NavigationButton
         tab={tab}

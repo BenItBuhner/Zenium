@@ -128,6 +128,7 @@ function MenulistPopover<T extends string>({
         role="listbox"
         aria-label={label}
         className="zen-v2 zen-v2-panel zen-v2-menulist-popup zen-animate-pop fixed select-none"
+        data-surface="page"
         style={{
           left: pos?.left ?? anchor.x,
           top: pos?.top ?? anchor.y + anchor.height,
@@ -176,9 +177,18 @@ function MenulistSheet<T extends string>({
       className="zen-v2-sheet"
       onDismissed={onClose}
       handleLabel="Resize"
-      header={<div className="zen-v2 zen-v2-sheet-title">{label}</div>}
+      header={
+        <div className="zen-v2 zen-v2-sheet-title" data-surface="page">
+          {label}
+        </div>
+      }
     >
-      <div className="zen-v2 flex flex-col pb-2" role="listbox" aria-label={label}>
+      <div
+        className="zen-v2 flex flex-col pb-2"
+        role="listbox"
+        aria-label={label}
+        data-surface="page"
+      >
         {options.map((option) => {
           const selected = option.value === value
           return (

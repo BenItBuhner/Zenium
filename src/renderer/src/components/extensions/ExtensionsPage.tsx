@@ -83,6 +83,7 @@ export function ExtensionsPage({
   return (
     <div
       className={cn('zen-v2 relative flex min-w-0 flex-1 flex-col', !embedded && 'zen-v2-page')}
+      data-surface="page"
       data-embedded={embedded || undefined}
       data-dropping={dropping || undefined}
       onDragEnter={onDragEnter}

@@ -105,6 +105,8 @@ function ActionButton({ ext }: { ext: ExtensionInfo }): JSX.Element {
   const ref = useRef<HTMLButtonElement>(null)
   const open = uiStore.use((s) => s.extensionPopup?.id === ext.id)
   const badge = ext.action ? badgeLabel(ext.action.badgeText) : ''
+  // The extension's own colours when it set them; otherwise none inline, and the badge takes the
+  // accent of the surface it sits on – here the toolbar's `--zen-accent` (§9.29).
   const badgeColours = ext.action ? badgeStyle(ext.action) : null
   // Off for this tab (`chrome.action.disable`): the button stays, dimmed (§9.3), a click does
   // nothing, the context menu still opens – so `aria-disabled` rather than `disabled`.
@@ -134,10 +136,14 @@ function ActionButton({ ext }: { ext: ExtensionInfo }): JSX.Element {
         }}
       >
         <ExtensionIcon icon={actionIcon(ext)} size={16} box={16} />
-        {badge && badgeColours && (
+        {badge && (
           <span
             className="zen-ext-badge"
-            style={{ background: badgeColours.background, color: badgeColours.color }}
+            style={
+              badgeColours
+                ? { background: badgeColours.background, color: badgeColours.color }
+                : undefined
+            }
             aria-label={`Badge ${badge}`}
           >
             {badge}
@@ -213,6 +219,7 @@ function ExtensionsPanel({
         role="dialog"
         aria-labelledby="zen-ext-panel-title"
         className="zen-v2 zen-v2-panel zen-ext-panel zen-animate-pop"
+        data-surface="page"
         style={{
           left: pos?.left ?? anchor.x,
           top: pos?.top ?? anchor.y + anchor.height,

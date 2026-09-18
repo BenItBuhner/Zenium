@@ -950,6 +950,23 @@
   /* --- Extensions: toolbar, panel, popup, dialog ------------------------------------------ */
 
   /*
+   * Two token families, never mixed (§9.29). The toolbar is a window surface – its row carries
+   * `data-surface="window"` – and what this PR puts in it (the action buttons, their badges, a
+   * missing icon's puzzle glyph) draws in the theme's foreground and accent: ink
+   * `rgb(var(--zen-fg-rgb))`, fills `--v2-window-fill` / `--v2-window-fill-hover`, accent
+   * `--zen-accent`. The page, the puzzle panel, the menus, the menulist popup, the dialog, the
+   * sheets and the popup frame are page surfaces (`data-surface="page"` on their roots) in the
+   * `--v2-text` / `--v2-fill` / `--v2-accent` family. A component that sits on both (the icon's
+   * fallback glyph, the badge) reads the family from its nearest surface root, not from a prop.
+   */
+  [data-surface='window'] .zen-ext-icon-glyph {
+    color: rgb(var(--zen-fg-rgb) / 0.69);
+  }
+  [data-surface='page'] .zen-ext-icon-glyph {
+    color: var(--v2-text-deemphasized);
+  }
+
+  /*
    * An action the extension turned off for this tab (`chrome.action.disable`) keeps its button
    * and dims to the v2 disabled treatment (§9.3) instead of vanishing and returning per tab. It
    * is `aria-disabled`, not `disabled`, so its context menu still opens; a click does nothing.
@@ -964,18 +981,31 @@
   .zen-ext-panel-row [aria-disabled='true'] {
     opacity: 0.4;
   }
-  /* The anchor keeps its pressed fill while its popover is open (§9.20), as Zen's menu button. */
-  .zen-toolbar-button.zen-ext-action[data-active],
-  .zen-toolbar-button.zen-ext-puzzle[data-active] {
-    background: var(--zen-element-bg);
+  /*
+   * The anchor keeps its pressed fill while its popover is open (§9.20), as Zen's menu button:
+   * the window family's pressed fill, the one main's star chip holds while its bubble is open.
+   */
+  [data-surface='window'] .zen-toolbar-button.zen-ext-action[data-active],
+  [data-surface='window'] .zen-toolbar-button.zen-ext-puzzle[data-active] {
+    background: var(--v2-window-fill-hover);
     opacity: 1;
   }
 
   /*
    * The toolbar badge (`chrome.action.setBadgeText`): a 10/600 pill (the pill's one use, §2)
-   * over the button's corner, in the extension's colour when it set one, else the accent. No
-   * knockout ring, as Chrome: one in a fixed colour would halo over a themed sidebar.
+   * over the button's corner, in the extension's colour when it set one (inline), else the
+   * accent of the surface it sits on (§9.29): the theme's `--zen-accent` with its ink in the
+   * toolbar, `--v2-accent` on a page. No knockout ring, as Chrome: one in a fixed colour would
+   * halo over a themed sidebar.
    */
+  [data-surface='window'] .zen-ext-badge {
+    background: var(--zen-accent);
+    color: var(--zen-on-accent);
+  }
+  [data-surface='page'] .zen-ext-badge {
+    background: var(--v2-accent);
+    color: var(--v2-on-accent);
+  }
   .zen-ext-badge {
     position: absolute;
     right: -2px;

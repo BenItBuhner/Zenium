@@ -71,15 +71,11 @@ describe('badgeLabel', () => {
 })
 
 describe('badgeStyle', () => {
-  it('falls back to the accent tokens without a colour', () => {
-    expect(badgeStyle({ badgeBackgroundColor: null, badgeTextColor: null })).toEqual({
-      background: 'var(--v2-accent)',
-      color: 'var(--v2-on-accent)'
-    })
-    expect(badgeStyle({ badgeBackgroundColor: 'transparent', badgeTextColor: null })).toEqual({
-      background: 'var(--v2-accent)',
-      color: 'var(--v2-on-accent)'
-    })
+  it('leaves the colours to the surface without one from the extension (§9.29)', () => {
+    expect(badgeStyle({ badgeBackgroundColor: null, badgeTextColor: null })).toBeNull()
+    expect(badgeStyle({ badgeBackgroundColor: 'transparent', badgeTextColor: null })).toBeNull()
+    // A text colour alone does not make a badge style: the surface's accent and its ink pair up.
+    expect(badgeStyle({ badgeBackgroundColor: null, badgeTextColor: '#ff0' })).toBeNull()
   })
 
   it('uses the extension colour and a readable ink', () => {
@@ -94,14 +90,14 @@ describe('badgeStyle', () => {
   })
 
   it('honours the extension text colour when it set one', () => {
-    expect(badgeStyle({ badgeBackgroundColor: '#1a73e8', badgeTextColor: '#ff0' }).color).toBe(
+    expect(badgeStyle({ badgeBackgroundColor: '#1a73e8', badgeTextColor: '#ff0' })?.color).toBe(
       'rgb(255 255 0)'
     )
   })
 
   it('carries the extension alpha', () => {
     expect(
-      badgeStyle({ badgeBackgroundColor: 'rgba(0,0,0,0.5)', badgeTextColor: null }).background
+      badgeStyle({ badgeBackgroundColor: 'rgba(0,0,0,0.5)', badgeTextColor: null })?.background
     ).toBe('rgb(0 0 0 / 0.50)')
   })
 })
