@@ -46,6 +46,7 @@ import type {
 import type { TranslateUIState } from '../shared/translate'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { sanitizeAppIcon } from '../shared/appIcon'
+import { isInternalPageUrl } from '../shared/internalPages'
 import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
@@ -475,7 +476,10 @@ export class BrowserState {
           ? raw.containerId
           : DEFAULT_CONTAINER_ID,
         // Everything starts unloaded; the active tab is loaded by the TabManager on startup.
-        discarded: true
+        // An internal page (Settings) holds no page to unload: it never reads as pending.
+        discarded: !isInternalPageUrl(typeof raw.url === 'string' ? raw.url : ''),
+        // Opener relationships are a session's own (Chrome forgets them too).
+        openerTabId: null
       })
       tab.splitGroupId = raw.splitGroupId ?? null
       tab.loading = false

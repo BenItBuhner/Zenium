@@ -132,7 +132,8 @@ export class Actions {
         void this.browser.governor.trim()
         return
       case 'resources.open':
-        return this.browser.emit('overlay.open', { kind: 'settings', section: 'resources' }, win)
+        this.browser.pages.open('settings', 'resources', win)
+        return
 
       // --- navigation ---
       case 'nav.back':
@@ -258,7 +259,8 @@ export class Actions {
       case 'downloads.open':
         return this.browser.emit('overlay.open', { kind: 'downloads' }, win)
       case 'settings.open':
-        return this.browser.emit('overlay.open', { kind: 'settings' }, win)
+        this.browser.pages.open('settings', undefined, win)
+        return
       case 'addons.open':
         return this.browser.emit('overlay.open', { kind: 'addons' }, win)
       case 'boost.new':

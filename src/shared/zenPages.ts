@@ -659,12 +659,15 @@ export function parseZenUrl(rawUrl: string): URL | null {
   }
 }
 
-/** `zen://` addresses that are chrome surfaces rather than documents, and the overlay each opens. */
+/**
+ * `zen://` addresses that are chrome surfaces rather than documents, and the overlay each opens.
+ * Settings is not one of them any more: it is an internal page that opens as a tab
+ * (`shared/internalPages.ts`, `core/pages.ts`), or as its overlay on hosts without page tabs.
+ */
 const OVERLAY_PAGES: Record<string, OverlayKind> = {
   bookmarks: 'bookmarks',
   downloads: 'downloads',
-  history: 'history',
-  settings: 'settings'
+  history: 'history'
 }
 
 /**

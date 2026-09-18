@@ -120,7 +120,9 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   privateTabs: false,
   secureDns: true,
   // `zen://newtab` is served by the zen protocol and bridged by the page preload.
-  newTabPage: true
+  newTabPage: true,
+  // Settings stays an overlay on the desktop until its program adopts the page-tab model.
+  pageTabs: false
 }
 
 /**

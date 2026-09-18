@@ -49,6 +49,7 @@ import type { ZenWindow } from './window'
 import { describeNetError, HTTP_FALLBACK_CODES, overlayForUrl } from '../shared/zenPages'
 import { isCertificateError } from '../shared/siteInfo'
 import type { InterstitialAction } from '../shared/interstitial'
+import { parseInternalPageUrl } from '../shared/internalPages'
 import { closedTabEntry, closedWindowEntry } from './session'
 import { newId } from '../shared/ids'
 import { clampZoom, stepZoom } from '../shared/pageControls'
@@ -191,6 +192,11 @@ export class TabManager {
     if (!tab) return undefined
     const existing = this.view(tabId)
     if (existing) return existing
+    if (this.browser.pages.isPageTab(tab)) {
+      // An internal page is drawn by the chrome: there is nothing to load and never a view.
+      tab.discarded = false
+      return undefined
+    }
     if (opts.background) {
       return this.browser.governor.requestLoad(tabId, win?.id) ? this.view(tabId) : undefined
     }
@@ -204,6 +210,10 @@ export class TabManager {
     if (!tab) return undefined
     const existing = this.view(tabId)
     if (existing) return existing
+    if (this.browser.pages.isPageTab(tab)) {
+      tab.discarded = false
+      return undefined
+    }
     const view = this.createView(tab, win ?? this.windowFor(tabId))
     this.browser.governor.trackLoad(tabId)
     tab.discarded = false
@@ -893,7 +903,8 @@ export class TabManager {
   /** Unload a tab's page while keeping it in the sidebar (Zen's "pending" tabs). */
   discard(tabId: string): void {
     const tab = this.tab(tabId)
-    if (!tab) return
+    // A page tab holds no page: there is nothing to unload and it never reads as pending.
+    if (!tab || this.browser.pages.isPageTab(tab)) return
     // What the page held, for the sleeping row's "memory saved" line; read while it still runs.
     const saved = this.view(tabId) ? this.browser.governor.memoryOf?.(tabId) : null
     if (saved !== null && saved !== undefined && saved > 0) tab.sleepSavedMb = Math.round(saved)
@@ -1367,6 +1378,7 @@ export class TabManager {
     this.browser.state.tabNavigation.delete(tabId)
     this.destroyView(tabId)
     this.browser.governor.onTabRemoved(tabId)
+    this.browser.pages.onTabRemoved(tabId)
     this.browser.agents.onTabRemoved(tabId)
     this.browser.find.forget(tabId)
     this.browser.liveFolders.onTabLeftFolder(tabId, tab.folderId)
@@ -1491,6 +1503,13 @@ export class TabManager {
   ): void {
     const tab = this.tab(tabId)
     if (!tab || !isNavigableUrl(url)) return
+    const page = parseInternalPageUrl(url)
+    if (page) {
+      // An internal page (Settings) lives in a tab of its own, or in its overlay on hosts
+      // without page tabs; the document in this tab stays where it is.
+      this.browser.pages.navigateTabTo(tabId, page)
+      return
+    }
     const overlay = overlayForUrl(url)
     if (overlay) {
       // `zen://history` and friends are chrome surfaces: open them over the page instead.
@@ -1515,6 +1534,10 @@ export class TabManager {
   }
 
   goBack(tabId: string): void {
+    if (this.browser.pages.isPageTab(this.tab(tabId))) {
+      this.browser.pages.popSection(tabId)
+      return
+    }
     const view = this.view(tabId)
     if (!view?.canGoBack()) return
     this.thawForNavigation(tabId)
@@ -1522,6 +1545,10 @@ export class TabManager {
   }
 
   goForward(tabId: string): void {
+    if (this.browser.pages.isPageTab(this.tab(tabId))) {
+      this.browser.pages.forward(tabId)
+      return
+    }
     const view = this.view(tabId)
     if (!view?.canGoForward()) return
     this.thawForNavigation(tabId)
@@ -2237,6 +2264,8 @@ export class TabManager {
       const t = this.tab(id)
       return (
         t &&
+        // Internal pages fill the content area themselves; they do not share it in a split.
+        !this.browser.pages.isPageTab(t) &&
         tabVisibleIn(t, win.id) &&
         (!t.spaceId || !m.localSpaces[t.spaceId] || t.spaceId === space.id)
       )

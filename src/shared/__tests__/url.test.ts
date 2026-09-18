@@ -180,11 +180,37 @@ describe('displayHost', () => {
     ).toBe('en.wikipedia.org')
   })
 
+  it('names an internal page as Chrome names its own pages', () => {
+    expect(displayHost('zen://settings')).toBe('Settings')
+    expect(displayHost('zen://settings/privacy')).toBe('Privacy and Security')
+  })
+
   it('falls back to the display form where there is no site', () => {
     expect(displayHost(BLANK_URL)).toBe('')
     expect(displayHost('')).toBe('')
-    expect(displayHost('zen://settings')).toBe('zen://settings')
+    expect(displayHost('zen://history')).toBe('zen://history')
     expect(displayHost('file:///home/me/notes.html')).toBe('file:///home/me/notes.html')
+  })
+})
+
+describe('internal pages', () => {
+  it('accepts the zenium:// alias from typed input and stores the zen:// form', () => {
+    expect(inputToUrl('zenium://settings')).toBe('zen://settings')
+    expect(inputToUrl('zenium://settings/privacy')).toBe('zen://settings/privacy')
+    expect(inputToUrl('zen://settings/look')).toBe('zen://settings/look')
+    expect(inputToUrl('ZENIUM://Settings/Look')).toBe('zen://settings/look')
+    // An alias address that names no page opens nothing, like an unknown about: page.
+    expect(inputToUrl('zenium://nothing-here')).toBe(BLANK_URL)
+    expect(isProbablyUrl('zenium://settings')).toBe(true)
+  })
+
+  it('shows the alias in the address bar and the title on the tab', () => {
+    expect(displayUrl('zen://settings')).toBe('zenium://settings')
+    expect(displayUrl('zen://settings/look')).toBe('zenium://settings/look')
+    expect(displayUrl('zen://history')).toBe('zen://history')
+    expect(titleForUrl('zen://settings')).toBe('Settings')
+    expect(titleForUrl('zen://settings/privacy')).toBe('Privacy and Security')
+    expect(titleForUrl('zen://settings/unknown')).toBe('Settings')
   })
 })
 

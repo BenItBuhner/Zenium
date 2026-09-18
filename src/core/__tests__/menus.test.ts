@@ -64,7 +64,8 @@ const DESKTOP: HostCapabilities = {
   pageControls: false,
   privateTabs: false,
   secureDns: false,
-  newTabPage: true
+  newTabPage: true,
+  pageTabs: false
 }
 
 /**
@@ -101,7 +102,8 @@ const ANDROID: HostCapabilities = {
   pageControls: true,
   privateTabs: true,
   secureDns: false,
-  newTabPage: false
+  newTabPage: false,
+  pageTabs: true
 }
 
 function memoryIo(): StoreIO {

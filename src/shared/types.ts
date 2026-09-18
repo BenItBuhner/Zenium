@@ -9,6 +9,7 @@ import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 import type { PrivacySettings, PrivacyStatus } from './privacy'
+import type { InternalPageId } from './internalPages'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -106,6 +107,12 @@ export interface HostCapabilities {
    * Without it new tabs stay blank and the URL bar alone stands in for a new tab page.
    */
   newTabPage: boolean
+  /**
+   * Internal pages (Settings) open as tabs of their own, drawn by the chrome inside the content
+   * area, rather than as an overlay above the current tab (`shared/internalPages.ts`). Android
+   * has this; the desktop keeps its overlay until its program adopts the page model.
+   */
+  pageTabs: boolean
 }
 
 export interface Rect {
@@ -269,8 +276,9 @@ export interface Tab {
   /** Requests the blocking engine stopped for the current document (resets on navigation). */
   blockedCount: number
   /**
-   * Tab whose page opened this one (a link into a new tab, `window.open`). Mobile system back at
-   * the tab's first page closes it and returns there, as Chrome does for a child tab.
+   * Tab whose page opened this one (a link into a new tab, `window.open`; the tab an internal
+   * page such as Settings was opened from). Mobile system back at the tab's first page closes it
+   * and returns there, as Chrome does for a child tab. A session's own: not persisted.
    */
   openerTabId: string | null
   /** Opened by another app's intent or share; system back at its first page returns to that app. */
@@ -2013,6 +2021,9 @@ export interface GlanceState {
   originY: number
 }
 
+/** What `page.back` did: see the command. */
+export type PageBackOutcome = 'popped' | 'closed' | 'switched' | 'none'
+
 export type OverlayKind =
   | 'none'
   | 'urlbar'
@@ -3049,6 +3060,26 @@ export interface Commands {
   /** Blank windows: move every local tab back into one of the real spaces. */
   'window.moveTabsToSpace': { args: { spaceId: string }; result: void }
 
+  /**
+   * Open an internal page (`shared/internalPages.ts`). On hosts with `capabilities.pageTabs` a
+   * page tab already open in the window's space is focused and, when `section` is given, moved
+   * to that section; otherwise a new tab opens after `openerTabId` (default: the active tab) and
+   * remembers it as its opener. `section: null` is the landing page; leaving it out keeps the
+   * section a reused tab is on. Without page tabs the page's overlay opens instead. Resolves
+   * with the tab id, or null when an overlay was opened.
+   */
+  'page.open': {
+    args: { id: InternalPageId; section?: string | null; openerTabId?: string | null }
+    result: string | null
+  }
+  /** Move a page tab to a section of its page (a history entry; `null` is the landing page). */
+  'page.navigate': { args: { tabId: string; section: string | null }; result: void }
+  /**
+   * System back inside a page tab: steps back through the page's own history first; at its
+   * start, returns to the tab's opener (closing the page tab, as Chrome does) or, without one,
+   * to the most recently used other tab. `none` means there was nothing to go back to.
+   */
+  'page.back': { args: { tabId: string }; result: PageBackOutcome }
   'page.screenshot': { args: { tabId: string }; result: void }
   'page.print': { args: { tabId: string }; result: void }
   'page.savePage': { args: { tabId: string }; result: void }

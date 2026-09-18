@@ -84,6 +84,7 @@ import {
 import { BLANK_URL, getDomain, inputToUrl, isEmptyTabUrl } from '../shared/url'
 import { overlayForUrl } from '../shared/zenPages'
 import { openAllPrompt, sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
+import { PageService } from './pages'
 import { buildSearchUrl, matchKeyword } from '../shared/search'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
@@ -177,6 +178,8 @@ export class Browser {
   readonly tabs: TabManager
   /** A sidebar tab drag in flight, followed across windows (drops into them, tear-offs). */
   readonly tabDrag: TabDragController
+  /** Internal pages (Settings) as tabs of their own, or as overlays where the host has no page tabs. */
+  readonly pages: PageService
   /** Recently closed tabs and windows (Ctrl+Shift+T, the app menu's submenu, the history page). */
   readonly session: SessionService
   readonly actions: Actions
@@ -284,6 +287,7 @@ export class Browser {
     this.windowPrompts = new WindowPrompts(this)
     this.pageControls = new PageControls(this)
     this.fullscreen = new FullscreenService(this)
+    this.pages = new PageService(this)
     this.tabs = new TabManager(this)
     this.tabDrag = new TabDragController(this)
     this.session = new SessionService(this)
@@ -1271,12 +1275,16 @@ export class Browser {
     win: ZenWindow = this.ensureWindow(),
     opts: { fromIntent?: boolean } = {}
   ): void {
-    const routed = win.localSpace ? null : this.routeSpaceFor(url)
-    const tab = this.tabs.createTab(
-      { url, active: true, spaceId: routed ?? undefined, fromIntent: Boolean(opts.fromIntent) },
-      win
-    )
-    if (routed && routed !== win.activeSpaceId) this.tabs.switchSpace(routed, win, tab.id)
+    // A `zenium://settings/privacy` deep link opens (or reuses) the page's tab, no opener;
+    // `fromIntent` travels with it, so back at its landing returns to the app that sent it.
+    if (!this.pages.openUrl(url, win, null, { fromIntent: opts.fromIntent })) {
+      const routed = win.localSpace ? null : this.routeSpaceFor(url)
+      const tab = this.tabs.createTab(
+        { url, active: true, spaceId: routed ?? undefined, fromIntent: Boolean(opts.fromIntent) },
+        win
+      )
+      if (routed && routed !== win.activeSpaceId) this.tabs.switchSpace(routed, win, tab.id)
+    }
     win.host.show()
     win.host.focus()
   }
@@ -1502,9 +1510,11 @@ export class Browser {
       }
     }
     if (!url) return
+    // `zenium://settings/…` opens (or reuses) the page's tab, with the current tab as opener.
+    if (this.pages.openUrl(url, win, tabId)) return
     const overlay = overlayForUrl(url)
     if (overlay) {
-      // `zen://history` / `zen://settings` open their chrome surface; no tab is spent on them.
+      // `zen://history` opens its chrome surface; no tab is spent on it.
       this.emit('overlay.open', { kind: overlay }, win)
       return
     }
@@ -1949,6 +1959,12 @@ export class Browser {
       'history.deleteDay': ({ dayKey }) => this.history.deleteDay(dayKey),
       'history.deleteRange': ({ fromMs, toMs }) => this.history.deleteRange(fromMs, toMs),
       'history.open': (_a, win) => this.emit('overlay.open', { kind: 'history' }, win),
+
+      'page.open': ({ id, section, openerTabId }, win) =>
+        this.pages.open(id, section, win, openerTabId),
+      'page.navigate': ({ tabId, section }) => this.pages.navigate(tabId, section),
+      'page.back': ({ tabId }, win) => this.pages.back(tabId, win),
+
       'history.contextMenu': ({ visitId, url }, win) =>
         this.menus.showHistoryContextMenu(visitId, url, win),
       'history.dayMenu': ({ dayKey, count }, win) =>
