@@ -8,6 +8,10 @@ name: Android site info demo
 # live in android-emulator-demo.yml; this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
+  # Temporary, while the sheet rebuilt on the v2 chassis is being recorded (worker tokens cannot
+  # dispatch workflows); removed before the PR is marked ready.
+  push:
+    branches: [cursor/siteinfo-sheet-visual-rebuild-7993]
 
 permissions:
   contents: read
@@ -18,15 +22,21 @@ concurrency:
 
 jobs:
   record:
-    name: Site info demo
+    name: Site info demo (${{ matrix.theme }})
+    strategy:
+      fail-fast: false
+      matrix:
+        theme: [light, dark]
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
-      # The shared driver chooses the demo from its environment (see the script's header).
+      # The shared driver chooses the demo from its environment (see the script's header); the
+      # theme reaches the driver as its `theme` argument and seeds the profile's colour scheme.
       script-env: |
         DEMO_CLASS=app.zen.chromium.SiteInfoDemo
         DEMO_DIR=siteinfo-demo
         DEMO_OUT=artifacts/android-siteinfo-demo
-        DEMO_VIDEO=siteinfo-demo.mp4
-      artifact-name: android-siteinfo-demo
+        DEMO_VIDEO=siteinfo-demo-${{ matrix.theme }}.mp4
+        DEMO_THEME=${{ matrix.theme }}
+      artifact-name: android-siteinfo-demo-${{ matrix.theme }}
       artifact-path: artifacts/android-siteinfo-demo/

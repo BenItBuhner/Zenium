@@ -26,9 +26,12 @@ import kotlin.math.max
  * Drives the site-information sheet of the phone chrome so the `android-siteinfo-demo` workflow
  * can record it on an emulator: seeds a profile with two real sites (Google active, Bing next)
  * and a couple of remembered permission decisions, launches the app, lets the page settle, then
- * opens the sheet from the site icon in the address pill, clears the site's cookies (the count
- * drops), revokes a permission, drags the sheet away by its grip, and does it once more on the
- * second site. Only asserts that it could run; what the chrome does is what the recording shows.
+ * opens the sheet from the site icon in the address pill, pushes each level – the connection, the
+ * cookies (expanded and scrolled, then cleared through the confirmation sheet stacked on top) and
+ * the permissions, where the Location grant is reset – pops back with the system back gesture,
+ * drags the sheet away by its grabber, and finishes on the tab overview and Settings so the sheet
+ * can be compared with its neighbours in the same colour scheme (`-e theme light|dark`). Only
+ * asserts that it could run; what the chrome does is what the recording shows.
  *
  * Handshake with the workflow (files under the app's `files/siteinfo-demo/`), as in GestureDemo:
  * `record` once the warm-up is done, wait for `recording`, `done` when the sequence is over.
@@ -67,13 +70,16 @@ class SiteInfoDemo {
 
     // --- setup -----------------------------------------------------------------------------------
 
+    /** `-e theme dark` records the same sequence in the dark colour scheme. */
+    private val theme: String = InstrumentationRegistry.getArguments().getString("theme") ?: "light"
+
     private fun seedProfile() {
         val zen = File(app.filesDir, "zen").apply { mkdirs() }
         zen.listFiles()?.forEach { it.delete() }
         for ((asset, name) in listOf("siteinfo-demo-state.json" to "state.json", "siteinfo-demo-permissions.json" to "permissions.json")) {
-            instrumentation.context.assets.open(asset).use { input ->
-                File(zen, name).outputStream().use { input.copyTo(it) }
-            }
+            val text = instrumentation.context.assets.open(asset).use { it.readBytes().toString(Charsets.UTF_8) }
+            val seeded = if (name == "state.json") text.replace("\"colorScheme\": \"light\"", "\"colorScheme\": \"$theme\"") else text
+            File(zen, name).writeText(seeded)
         }
         out.deleteRecursively()
         out.mkdirs()
@@ -144,52 +150,92 @@ class SiteInfoDemo {
     private fun demo() {
         val f = Finger()
 
-        // 1. Open the sheet from the site icon at the start of the pill.
+        // 1. Open the sheet from the site icon at the start of the pill: four rows at content height.
         tapSiteIcon(f)
-        SystemClock.sleep(3_500)
-        shot("01-sheet-google")
+        awaitSheet()
+        SystemClock.sleep(2_000)
+        shot("01-sheet")
 
-        // 2. Clear the site's cookies: the action asks once, inline, then the count drops.
-        if (tapLabel(f, "Clear cookies")) {
+        // 2. The connection level pushes in; the header's back control pops it.
+        if (tapLabel(f, "Connection")) {
             SystemClock.sleep(1_800)
-            shot("02-clear-cookies-confirm")
-            tapLabel(f, "Confirm clear cookies")
-            SystemClock.sleep(3_000)
-            shot("03-cookies-cleared")
-        } else {
-            Log.w(TAG, "no cookies to clear on the first site")
+            shot("02-connection")
+            tapLabel(f, BACK_LABEL)
+            SystemClock.sleep(1_200)
         }
 
-        // 3. Revoke the remembered Location permission (the page reloads without it).
-        if (tapLabel(f, "Reset Location permission")) {
-            SystemClock.sleep(4_500)
-            shot("04-permission-revoked")
+        // 3. Cookies and site data: expand the sheet, scroll the list, then clear the cookies
+        //    through the confirmation sheet that stacks on top.
+        if (tapLabel(f, "Cookies and site data")) {
+            SystemClock.sleep(1_800)
+            shot("03-cookies")
+            expandSheet(f)
+            SystemClock.sleep(1_200)
+            scrollSheet(f)
+            SystemClock.sleep(1_200)
+            shot("04-cookies-scrolled")
+            if (tapLabel(f, "Clear cookies")) {
+                SystemClock.sleep(1_800)
+                shot("05-clear-cookies-confirm")
+                tapLabel(f, "Confirm clear cookies")
+                SystemClock.sleep(3_000)
+                shot("06-cookies-cleared")
+            }
+            tapLabel(f, BACK_LABEL)
+            SystemClock.sleep(1_200)
         }
 
-        // 4. Drag the sheet away by its grip: peek it down, hold, then let it go.
-        dragSheetAway(f)
-        SystemClock.sleep(4_000)
+        // 4. Permissions: reset the remembered Location grant with the row's control.
+        if (tapLabel(f, "Permissions")) {
+            SystemClock.sleep(1_800)
+            shot("07-permissions")
+            if (tapLabel(f, "Reset Location permission")) {
+                SystemClock.sleep(3_500)
+                shot("08-permission-reset")
+            }
+            // The system back gesture pops the level before it dismisses the sheet.
+            ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+            SystemClock.sleep(1_500)
+        }
 
-        // 5. Swipe the pill to the next tab (slowly, the way GestureDemo does: the first touch
-        //    snapshots the page before the cards can move), then the same sheet on the second site.
-        f.down(pill.right - 10f, pill.exactCenterY())
-        f.moveBy(-NUDGE, 0f, 60)
-        f.hold(STAGE_WAIT)
-        f.moveBy(-0.60f * width + NUDGE, 0f, 700)
-        f.hold(250)
-        f.up()
-        SystemClock.sleep(10_000)
-        tapSiteIcon(f)
-        SystemClock.sleep(3_500)
-        shot("05-sheet-bing")
-        scrollSheet(f)
-        SystemClock.sleep(1_500)
-        shot("06-sheet-bing-scrolled")
+        // 5. Drag the sheet away by its grabber: peek it down, hold, then let it go.
         dragSheetAway(f)
-        SystemClock.sleep(2_500)
+        SystemClock.sleep(3_000)
+
+        // 6. The neighbours, for comparison: the tab overview, then Settings.
+        if (tapLabel(f, "Tabs (2)")) {
+            SystemClock.sleep(2_500)
+            shot("09-overview")
+            ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+            SystemClock.sleep(2_000)
+        }
+        if (tapLabel(f, "Menu")) {
+            SystemClock.sleep(1_800)
+            // Settings sits low in the menu: pull the sheet up to its full detent, then scroll.
+            repeat(2) {
+                f.down(width / 2f, height * 0.8f)
+                f.moveBy(0f, -0.45f * height, 500)
+                f.hold(150)
+                f.up()
+                SystemClock.sleep(1_200)
+            }
+            if (tapLabel(f, "Settings")) {
+                SystemClock.sleep(2_500)
+                shot("10-settings")
+                ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                SystemClock.sleep(1_500)
+            }
+        }
 
         File(out, "done").writeText("done\n")
-        SystemClock.sleep(4_000)
+        SystemClock.sleep(3_000)
+    }
+
+    /** The sheet reads the site before it shows; give a slow page time before the first shot. */
+    private fun awaitSheet() {
+        val deadline = SystemClock.uptimeMillis() + 10_000
+        while (findByLabel(GRIP_LABEL) == null && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(250)
+        Log.i(TAG, if (findByLabel(GRIP_LABEL) != null) "sheet is up" else "sheet never appeared")
     }
 
     /** The site icon sits at the start of the pill; the accessibility tree knows it by its label. */
@@ -212,17 +258,29 @@ class SiteInfoDemo {
         return true
     }
 
-    /** The open sheet is the dialog labelled like the icon; the grip is its top edge. */
-    private fun sheetBounds(): Rect? =
-        findAllByLabel(SITE_ICON_LABEL).filter { it.width() > width * 0.8 }.maxByOrNull { it.height() }
+    /**
+     * The sheet's top edge and its grabber: the chassis names the handle `Dismiss`, 8 px inside
+     * the sheet's top; the sheet runs from there to the bottom edge of the screen.
+     */
+    private fun grabber(): Rect? = findByLabel(GRIP_LABEL)
+
+    private fun sheetTop(): Float = grabber()?.let { it.top - 8 * density } ?: (height * 0.45f)
+
+    /** Pull the sheet up to its expanded detent so its body scrolls (the chassis locks it at the peek). */
+    private fun expandSheet(f: Finger) {
+        val from = sheetTop() + 120 * density
+        f.down(width / 2f, from)
+        f.moveBy(0f, -0.4f * height, 600)
+        f.hold(200)
+        f.up()
+    }
 
     private fun dragSheetAway(f: Finger) {
-        val sheet = sheetBounds()
-        val grip = findByLabel(GRIP_LABEL)
-        Log.i(TAG, "sheet $sheet grip $grip")
+        val grip = grabber()
+        Log.i(TAG, "grabber $grip")
         val x = width / 2f
-        val y = grip?.exactCenterY() ?: ((sheet?.top ?: (height * 0.35f).toInt()) + 24 * density)
-        val travel = (sheet?.height() ?: (height * 0.6f).toInt()).toFloat()
+        val y = grip?.exactCenterY() ?: (sheetTop() + 24 * density)
+        val travel = height - bottomInset - sheetTop()
         f.down(x, y)
         f.moveBy(0f, 0.18f * travel, 500)
         f.hold(500)
@@ -233,20 +291,20 @@ class SiteInfoDemo {
         f.up()
     }
 
-    /** Scroll the sheet's body up a little so the lower sections show. */
+    /** Scroll the open level's list up so its lower groups show. */
     private fun scrollSheet(f: Finger) {
-        val sheet = sheetBounds() ?: return
+        val top = sheetTop()
+        val span = height - bottomInset - top
         val x = width / 2f
-        val from = sheet.bottom - 0.25f * sheet.height()
-        f.down(x, from)
-        f.moveBy(0f, -0.35f * sheet.height(), 500)
+        f.down(x, top + 0.7f * span)
+        f.moveBy(0f, -0.4f * span, 600)
         f.hold(200)
         f.up()
     }
 
     private fun shot(name: String) {
         val bitmap = ui.takeScreenshot() ?: return
-        File(out, "siteinfo-$name.png").outputStream().use {
+        File(out, "siteinfo-$theme-$name.png").outputStream().use {
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
         }
         bitmap.recycle()
@@ -254,22 +312,31 @@ class SiteInfoDemo {
 
     private fun findByLabel(label: String): Rect? = findAllByLabel(label).firstOrNull()
 
-    /** Breadth-first search of the active window for nodes labelled `label` (aria-label or text). */
+    /**
+     * Breadth-first search of the active window for nodes labelled `label` (aria-label or text).
+     * A row's name is its label and value together ("Connection Secure"), so a node that merely
+     * starts with the label counts when nothing matches it exactly.
+     */
     private fun findAllByLabel(label: String): List<Rect> {
         val root = ui.rootInActiveWindow ?: return emptyList()
         val queue = ArrayDeque<AccessibilityNodeInfo>()
-        val found = ArrayList<Rect>()
+        val exact = ArrayList<Rect>()
+        val prefixed = ArrayList<Rect>()
         queue.add(root)
         var visited = 0
         while (queue.isNotEmpty() && visited < 8_000) {
             val node = queue.removeFirst()
             visited++
-            if (node.contentDescription?.toString() == label || node.text?.toString() == label) {
-                found += Rect().also { node.getBoundsInScreen(it) }
+            val names = listOfNotNull(node.contentDescription?.toString(), node.text?.toString())
+                .map { it.replace(Regex("\\s+"), " ").trim() }
+            if (names.any { it == label }) {
+                exact += Rect().also { node.getBoundsInScreen(it) }
+            } else if (node.isClickable && names.any { it.startsWith(label) }) {
+                prefixed += Rect().also { node.getBoundsInScreen(it) }
             }
             for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
         }
-        return found
+        return if (exact.isNotEmpty()) exact else prefixed
     }
 
     /** One finger; moves are interpolated and injected in real time (see GestureDemo). */
@@ -340,7 +407,8 @@ class SiteInfoDemo {
         private const val TAG = "SiteInfoDemo"
         private const val PILL_LABEL = "Address"
         private const val SITE_ICON_LABEL = "Site information"
-        private const val GRIP_LABEL = "Drag to dismiss"
+        private const val GRIP_LABEL = "Dismiss"
+        private const val BACK_LABEL = "Back to site information"
         private const val STEP_MS = 8L
         /** Past the 8 CSS px slop at any plausible density, hardly visible on the track. */
         private const val NUDGE = 30f
