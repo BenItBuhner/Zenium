@@ -47,7 +47,6 @@ import type {
   ReauthHost,
   SessionHost,
   ShellHost,
-  StoreIO,
   SystemAutofillStatus,
   UpdateHost,
   WindowHost,
@@ -57,7 +56,6 @@ import { KeyWrapError, type KeyWrapFailure } from '@core/platform'
 import { PBKDF2_PARAMS, deriveWithWebCrypto } from '@core/credentials/kdf'
 import { fromBase64, toBase64 } from '@core/credentials/crypto'
 import type { RuleSet } from '@core/blocking/rules'
-import { INDEX_FILE } from '@core/blocking/store'
 import type { PrivacyFlags } from '@shared/privacy'
 import readabilityJs from '@mozilla/readability/Readability.js?raw'
 import readabilityReaderableJs from '@mozilla/readability/Readability-readerable.js?raw'
@@ -72,6 +70,7 @@ import {
 } from './extensionRuntime'
 import { AndroidExtensionStoreIo } from './extensionStoreIo'
 import { AndroidSiteData } from './siteData'
+import { AndroidStoreIO } from './storeIo'
 import { AndroidTranslateHost, type TranslateProgressEvent } from './translate'
 import { AndroidTabViewHost, type ViewEventPayloads } from './views'
 
@@ -131,7 +130,9 @@ export function androidCapabilities({
     reducedExtensionIsolation: extensions && !isolatedWorlds,
     // One window: private browsing is a tab in it, on a throwaway WebView profile.
     privateTabs: profiles,
-    secureDns: false
+    secureDns: false,
+    // The WebView has no preload bridge for `zen://newtab` yet; new tabs stay URL-bar-only.
+    newTabPage: false
   }
 }
 
@@ -633,49 +634,6 @@ export class AndroidWindowHost implements WindowHost {
 
   normalBounds(): null {
     return null
-  }
-}
-
-/**
- * The root documents (and the small rule-set index) arrive with the boot payload and are
- * mirrored in memory; documents in a folder – the filter lists' text under `blocking/`, megabytes
- * each – stay on disk and are read through the bridge when asked for.
- */
-export class AndroidStoreIO implements StoreIO {
-  constructor(
-    private readonly bridge: Bridge,
-    private readonly files: Record<string, string>
-  ) {}
-
-  private mirrored(name: string): boolean {
-    return !name.includes('/') || name === INDEX_FILE || name in this.files
-  }
-
-  readSync(name: string): string | null {
-    const cached = this.files[name]
-    if (cached !== undefined) return cached
-    if (!name.includes('/')) return null
-    return this.bridge.callSync<string | null | undefined>('storage.read', { name }) ?? null
-  }
-
-  exists(name: string): boolean {
-    if (name in this.files) return true
-    return this.bridge.callSync<boolean | undefined>('storage.exists', { name }) === true
-  }
-
-  async write(name: string, text: string): Promise<void> {
-    if (this.mirrored(name)) this.files[name] = text
-    await this.bridge.call('storage.write', { name, text })
-  }
-
-  writeSync(name: string, text: string): void {
-    if (this.mirrored(name)) this.files[name] = text
-    this.bridge.callSync('storage.writeSync', { name, text })
-  }
-
-  async remove(name: string): Promise<void> {
-    delete this.files[name]
-    await this.bridge.call('storage.remove', { name })
   }
 }
 

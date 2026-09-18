@@ -11,3 +11,12 @@ interface ImportMetaEnv {
   /** `"true"` when the macOS app was code-signed by the release pipeline (Squirrel.Mac can swap it in place). */
   readonly VITE_ZEN_MAC_SIGNED?: string
 }
+
+/**
+ * Vite's `?raw` import of a stylesheet as text, for the node build (main, preload, core): the
+ * renderer gets it from `vite/client`. `newTabPage.ts` reads main.css's token blocks this way.
+ */
+declare module '*.css?raw' {
+  const css: string
+  export default css
+}

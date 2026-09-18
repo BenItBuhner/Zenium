@@ -10,9 +10,20 @@ import {
   decideHidden
 } from '@renderer/lib/cover'
 import { useViewport } from '@renderer/lib/formFactor'
-import { glanceRect, placementsFor, SPLIT_GAP, SPLIT_GAP_TOUCH } from '@renderer/lib/layout'
+import {
+  glanceRect,
+  placementsFor,
+  SPLIT_GAP,
+  SPLIT_GAP_TOUCH,
+  viewCover
+} from '@renderer/lib/layout'
 import { activeTab, visibleTabIds } from '@renderer/lib/selectors'
-import { contentAreaStore, overlayCoversContent, type UiState } from '@renderer/lib/ui'
+import {
+  contentAreaStore,
+  coverBandStore,
+  overlayCoversContent,
+  type UiState
+} from '@renderer/lib/ui'
 
 export interface LayoutInfo {
   /** Viewport rect in window coordinates (null before first measure). */
@@ -105,6 +116,8 @@ export function useLayoutReporter(
   }, [sidePanelRef, panelOpen, formFactor, state.settings.sidebarSide])
 
   const contentHidden = overlayCoversContent(ui) || ui.compactHover || ui.toolbarHover
+  // The strips the chrome's message cards cover at the frame's edges (see `coverBandStore`).
+  const band = coverBandStore.use()
   // Where the chrome lies under the pages – the Android chassis, whatever its form factor – the
   // live page is swapped for its cover, so the hide follows the cover's paint. The desktop hosts
   // report the hide the moment it is wanted, as they always have.
@@ -166,7 +179,10 @@ export function useLayoutReporter(
           parseFloat(
             getComputedStyle(document.documentElement).getPropertyValue('--zen-content-radius')
           ) || 0
-        let placements = placementsFor(area, visibleTabIds(state), group, radius, gap)
+        let placements = placementsFor(area, visibleTabIds(state), group, radius, gap).map((p) => {
+          const c = viewCover(area, p.rect, band)
+          return c ? { ...p, cover: c } : p
+        })
         // The phone draws its new tab page in the chrome (`NewTabPage`); the blank page's view
         // would only cover it.
         if (formFactor === 'phone')
@@ -180,8 +196,11 @@ export function useLayoutReporter(
               (p) =>
                 p.tabId !== state.glance!.parentTabId && !(group && group.tabIds.includes(p.tabId))
             )
-            if (ui.glanceReady)
-              glance = { tabId: state.glance.tabId, rect: glanceRect(area), radius: 12 }
+            if (ui.glanceReady) {
+              const rect = glanceRect(area)
+              const c = viewCover(area, rect, band)
+              glance = { tabId: state.glance.tabId, rect, radius: 12, ...(c ? { cover: c } : {}) }
+            }
           }
         }
         report = {
@@ -211,6 +230,7 @@ export function useLayoutReporter(
     glanceActive,
     contentHidden,
     gap,
+    band,
     followsCover,
     formFactor
   ])

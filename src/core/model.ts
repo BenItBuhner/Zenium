@@ -109,6 +109,7 @@ export function createTabRecord(
     windowId: init.windowId ?? null,
     folderId: init.folderId ?? null,
     loading: false,
+    progress: 0,
     canGoBack: false,
     canGoForward: false,
     audible: false,
@@ -127,6 +128,19 @@ export function createTabRecord(
     openerTabId: init.openerTabId ?? null,
     fromIntent: init.fromIntent ?? false
   }
+}
+
+/**
+ * The tab's load progress after the host reported `reported` (0…1): a load only ever moves
+ * forward within one load, a report outside a load (a late one from the page that just
+ * finished) changes nothing, and nonsense is ignored.
+ */
+export function loadProgressAfter(
+  tab: Pick<Tab, 'loading' | 'progress'>,
+  reported: number
+): number {
+  if (!tab.loading || !Number.isFinite(reported)) return tab.progress
+  return Math.min(1, Math.max(tab.progress, reported))
 }
 
 export function getSpace(model: Model, spaceId: string | null | undefined): Space | undefined {

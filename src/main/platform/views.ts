@@ -19,6 +19,8 @@ import type {
   CertificateDetails,
   NavigationSnapshot,
   NavigationSnapshotEntry,
+  NewTabPageCommand,
+  NewTabPageState,
   PageDialogResponse,
   Rect,
   Tab
@@ -630,6 +632,16 @@ export class ElectronTabView implements TabView {
     if (!this.wc.isDestroyed()) this.wc.send('zen:page-hint', hint)
   }
 
+  /** Fresh `NewTabPageState` for a `zen://newtab` page (its preload listens on this channel). */
+  sendNewTabState(state: NewTabPageState): void {
+    if (!this.wc.isDestroyed()) this.wc.send('zen:newtab-state', state)
+  }
+
+  /** What a `zen://newtab` page's tile menu picked, for the page to carry out. */
+  sendNewTabCommand(command: NewTabPageCommand): void {
+    if (!this.wc.isDestroyed()) this.wc.send('zen:newtab-command', command)
+  }
+
   setBackgroundColor(color: string): void {
     this.view.setBackgroundColor(color)
   }
@@ -1143,6 +1155,20 @@ export class ElectronTabViewHost implements TabViewHost {
     this.byTabId.set(tabId, view)
     this.tabIds.set(view.webContentsId, tabId)
     for (const listener of this.viewListeners) listener(view)
+  }
+
+  /**
+   * A preloaded new tab page became a real tab: its messages (and the extension API's view of
+   * it) now route to that tab instead of the placeholder it loaded under.
+   */
+  retargetView(view: TabView, tabId: string): void {
+    const target = view as ElectronTabView
+    if (this.byWebContentsId.get(target.webContentsId) !== target) return
+    const previous = this.tabIds.get(target.webContentsId)
+    if (previous !== undefined && this.byTabId.get(previous) === target)
+      this.byTabId.delete(previous)
+    this.tabIds.set(target.webContentsId, tabId)
+    this.byTabId.set(tabId, target)
   }
 
   tabIdForWebContents(wc: WebContents): string | undefined {

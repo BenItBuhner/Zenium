@@ -18,7 +18,11 @@
 //                the page), Ctrl+plus/minus/0 with the zoom bubble, F11, Ctrl+N, Ctrl+Shift+N,
 //                Ctrl+H, Ctrl+Shift+O, Settings from the toolbar menu, the page context menu, a
 //                second instance handing its URL over, Ctrl+Shift+W's "Close N tabs?" cancelled,
-//                Ctrl+W, then "Quit Zenium?" (#129); Escape between steps (Linux job)
+//                Ctrl+W, a pop-up opened by a real click on a button inside a cross-origin iframe
+//                (a local fixture: the frame's gesture reaches the pop-up blocker, the pop-up is
+//                a toolbar-only window that keeps its opener, its page runs the page preload –
+//                Chrome's `chrome.app`, Zenium's tab-modal `alert` – and closes itself; #142),
+//                then "Quit Zenium?" (#129); Escape between steps (Linux job)
 //   crash        the profile from `boot`, killed while it runs (`cleanExit: false` stays behind);
 //                the next launch lists the tabs unloaded and offers "Restore pages?", Restore
 //                loads example.com, the run quits cleanly (Linux job; two launches: crash and
@@ -44,6 +48,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
+import { buttonScreenPoint, startPopupFixture } from './popup-fixture.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const IS_WIN = process.platform === 'win32'
@@ -364,9 +369,72 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog }, options) {
         message: clip((err && (err.stack || err.message)) || err)
       })
     )
+    // The page script's gesture reports and blocked pop-ups, timed: what the pop-up step reads
+    // when a window.open was refused (did the frame's gesture reach the app, and before the ask?).
+    wc.on('ipc-message', (event, channel, message) => {
+      const kind = message && typeof message === 'object' ? message.type : undefined
+      if (channel !== 'zen:page' || (kind !== 'activation' && kind !== 'popup-blocked')) return
+      emit({
+        type: 'page-message',
+        wc: wc.id,
+        frame: safe(() => event.senderFrame && event.senderFrame.url, null),
+        message: kind,
+        url: kind === 'popup-blocked' ? clip(message.url, 500) : undefined
+      })
+    })
   }
   webContents.getAllWebContents().forEach(hook)
   app.on('web-contents-created', (_e, wc) => hook(wc))
+  // Every window.open the app's handler answers from now on (pages wired after the hook), with
+  // its verdict: read alongside the page-message events when the pop-up step fails.
+  const proto = Object.getPrototypeOf(webContents.getAllWebContents()[0] || {})
+  if (proto && typeof proto.setWindowOpenHandler === 'function' && !proto.__smokeWrapped) {
+    const origSetHandler = proto.setWindowOpenHandler
+    proto.setWindowOpenHandler = function (handler) {
+      return origSetHandler.call(this, (details) => {
+        const verdict = handler(details)
+        emit({
+          type: 'window-open',
+          wc: this.id,
+          url: clip(details && details.url, 500),
+          disposition: details && details.disposition,
+          action: verdict && verdict.action
+        })
+        // The app's `createWindow` (the adopted guest goes into a Zenium window): whether it ran
+        // and what it made of the guest, or the exception that stopped it.
+        if (verdict && typeof verdict.createWindow === 'function') {
+          const create = verdict.createWindow
+          verdict.createWindow = (options) => {
+            const guest = options && options.webContents
+            try {
+              const made = create(options)
+              emit({
+                type: 'create-window',
+                wc: this.id,
+                guest: guest ? guest.id : null,
+                made: made ? made.id : null,
+                windows: BrowserWindow.getAllWindows().length
+              })
+              return made
+            } catch (err) {
+              emit({
+                type: 'create-window',
+                wc: this.id,
+                guest: guest ? guest.id : null,
+                error: clip((err && err.stack) || err)
+              })
+              throw err
+            }
+          }
+        }
+        return verdict
+      })
+    }
+    proto.__smokeWrapped = true
+  }
+  app.on('browser-window-created', (_e, w) =>
+    emit({ type: 'window-created', window: w.id, windows: BrowserWindow.getAllWindows().length })
+  )
   app.on('child-process-gone', (_e, details) => emit({ type: 'child-process-gone', ...details }))
   app.on('before-quit', () => {
     smoke.quitting = true
@@ -675,6 +743,8 @@ class Session {
       if (detail !== undefined) entry.detail = detail
     } catch (e) {
       entry.error = String(e && (e.stack || e.message || e)).slice(0, 4000)
+      // What the step had gathered before it failed (an error thrown with a `detail`).
+      if (e && typeof e === 'object' && e.detail !== undefined) entry.detail = e.detail
       log(`step ${name} FAILED: ${entry.error.split('\n')[0]}`)
     }
     entry.ms = Date.now() - t
@@ -882,6 +952,101 @@ class Session {
   /** Rows in the sidebar's tab list (the active space). */
   sidebarTabCount(page = this.chrome) {
     return page.locator('[data-testid="tab"]').count()
+  }
+
+  /** The ids of every window but the main one. */
+  otherWindowIds() {
+    return this.app.evaluate(
+      ({ BrowserWindow }, main) =>
+        BrowserWindow.getAllWindows()
+          .filter((w) => w.id !== main)
+          .map((w) => w.id),
+      this.mainWindowId
+    )
+  }
+
+  /** `code` run in the top document of tab `tabId` (its main world; a promise it returns is awaited). */
+  tabEval(tabId, code) {
+    return this.app.evaluate(
+      ({ webContents }, { tabId, code }) => {
+        const wc = webContents.fromId(tabId)
+        if (!wc || wc.isDestroyed()) throw new Error(`tab webContents ${tabId} is gone`)
+        return wc.executeJavaScript(code)
+      },
+      { tabId, code }
+    )
+  }
+
+  /**
+   * The child frame of tab `tabId` whose document is on `origin`, as the main process sees it:
+   * its URL and whether it runs in a process of its own (null while there is no such frame).
+   */
+  frameIn(tabId, origin) {
+    return this.app.evaluate(
+      ({ webContents }, { tabId, origin }) => {
+        const wc = webContents.fromId(tabId)
+        if (!wc || wc.isDestroyed()) return null
+        const top = wc.mainFrame
+        const frame = top.frames.find((f) => f.url.startsWith(origin))
+        if (!frame) return null
+        return {
+          url: frame.url,
+          outOfProcess: frame.processId !== top.processId,
+          processId: frame.processId,
+          topProcessId: top.processId
+        }
+      },
+      { tabId, origin }
+    )
+  }
+
+  /** `code` run inside that child frame (its own main world). */
+  frameEval(tabId, origin, code) {
+    return this.app.evaluate(
+      ({ webContents }, { tabId, origin, code }) => {
+        const wc = webContents.fromId(tabId)
+        const frame =
+          wc && !wc.isDestroyed() ? wc.mainFrame.frames.find((f) => f.url.startsWith(origin)) : null
+        if (!frame) throw new Error(`no frame on ${origin} in tab ${tabId}`)
+        return frame.executeJavaScript(code)
+      },
+      { tabId, origin, code }
+    )
+  }
+
+  /**
+   * Where the view of tab `tabId` is on the screen: the window's content origin plus the view's
+   * bounds within it (DIPs), with the display's scale factor for tools that count device pixels.
+   */
+  tabViewScreenRect(tabId, windowId = this.mainWindowId) {
+    return this.app.evaluate(
+      ({ BrowserWindow, screen }, { tabId, windowId }) => {
+        const w = BrowserWindow.fromId(windowId)
+        if (!w || w.isDestroyed()) return null
+        const find = (parent, ox, oy) => {
+          for (const v of parent.children || []) {
+            const b = v.getBounds()
+            if (v.webContents && v.webContents.id === tabId) {
+              return { x: ox + b.x, y: oy + b.y, width: b.width, height: b.height }
+            }
+            const inner = find(v, ox + b.x, oy + b.y)
+            if (inner) return inner
+          }
+          return null
+        }
+        const local = find(w.contentView, 0, 0)
+        if (!local) return null
+        const content = w.getContentBounds()
+        return {
+          x: content.x + local.x,
+          y: content.y + local.y,
+          width: local.width,
+          height: local.height,
+          scale: screen.getDisplayMatching(content).scaleFactor
+        }
+      },
+      { tabId, windowId }
+    )
   }
 
   /**
@@ -1164,6 +1329,56 @@ async function closeExtraWindows(s) {
     for (const w of BrowserWindow.getAllWindows()) if (w.id !== keep) w.close()
   }, s.mainWindowId)
   await waitFor(async () => (await s.windowCount()) === 1, 10000, 'extra windows closed')
+}
+
+/** The chrome page of the window whose chrome is `chrome` (`full`, `popup`), once it renders. */
+function chromePageWithChrome(s, chrome, timeoutMs) {
+  return waitFor(
+    async () => {
+      for (const p of s.chromePages()) {
+        const value = await p
+          .locator('[data-testid="chrome-root"]')
+          .getAttribute('data-window-chrome', { timeout: 1000 })
+          .catch(() => null)
+        if (value === chrome) return p
+      }
+      return null
+    },
+    timeoutMs,
+    `a chrome page with data-window-chrome=${chrome}`
+  )
+}
+
+/**
+ * A real click at device pixel (x, y) of the X display: xdotool's XTEST events take the path a
+ * mouse's do (X server, Chromium's platform window, its input router), which is what a gesture
+ * inside an out-of-process iframe needs – `webContents.sendInputEvent` reaches the top document's
+ * widget only, and a DOM `click()` is no user gesture at all. The move is not `--sync`ed (that
+ * waits for a motion event, which never comes when the pointer already rests on the point; X
+ * delivers the move before the press anyway), and the press is held for a moment like a
+ * person's: the frame reports the gesture on mousedown, the page opens its window on click.
+ */
+function xdotoolClick(x, y) {
+  const r = sh(
+    'xdotool',
+    [
+      'mousemove',
+      String(x),
+      String(y),
+      'sleep',
+      '0.25',
+      'mousedown',
+      '1',
+      'sleep',
+      '0.08',
+      'mouseup',
+      '1'
+    ],
+    15000
+  )
+  if (r.status !== 0) {
+    throw new Error(`xdotool click at ${x},${y} failed: ${r.error || r.stderr || r.stdout}`)
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1580,6 +1795,218 @@ async function scenarioWalkthrough() {
       const windows = await s.windowCount()
       if (windows !== 1) throw new Error(`${windows} windows after Ctrl+W, expected 1`)
       return { before, after, liveBefore, liveAfter: (await s.tabs()).map((t) => t.url) }
+    })
+
+    // The two pop-up regressions #142 fixed, on a local fixture shaped like "Sign in with
+    // Google": a button inside a cross-origin (out-of-process) iframe opens `window.open(…,
+    // 'width=500,height=600')` on a real click. The frame's gesture has to reach the pop-up
+    // blocker (Electron reports input for the top document's widget only), and the pop-up's page
+    // has to run the page preload (the adopted guest once came without its webPreferences).
+    await s.step('popup-from-iframe', async () => {
+      await s.reset()
+      const fixture = await startPopupFixture()
+      const detail = {
+        fixture: { top: fixture.topUrl, frame: fixture.frameUrl, popup: fixture.popupUrl }
+      }
+      try {
+        const rowsBefore = await s.sidebarTabCount()
+        const windowsBefore = await s.windowCount()
+        const { tab } = await openUrlInNewTab(s, fixture.topUrl)
+        const frame = await waitFor(
+          () => s.frameIn(tab.id, fixture.frameOrigin),
+          15000,
+          `the ${fixture.frameOrigin} frame in the fixture tab`
+        )
+        if (!frame.outOfProcess) {
+          throw new Error(
+            `the ${fixture.frameOrigin} frame shares the top document's process; the fixture is not out of process: ${JSON.stringify(frame)}`
+          )
+        }
+        await waitFor(
+          () =>
+            s.frameEval(tab.id, fixture.frameOrigin, 'Boolean(window.__smoke)').catch(() => false),
+          10000,
+          "the frame's script"
+        )
+        detail.frame = frame
+
+        // The button's place on the screen: the tab view in the window, the iframe in the page,
+        // the button in the frame.
+        const view = await s.tabViewScreenRect(tab.id)
+        if (!view) throw new Error(`no view for tab ${tab.id} in window ${s.mainWindowId}`)
+        const rectOf = (selector) =>
+          `(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height } })()`
+        const frameRect = await s.tabEval(tab.id, rectOf('#frame'))
+        const buttonRect = await s.frameEval(tab.id, fixture.frameOrigin, rectOf('#open'))
+        const zoom = (await s.tabs()).find((t) => t.id === tab.id)?.zoomFactor ?? 1
+        const point = buttonScreenPoint({
+          view,
+          frame: frameRect,
+          button: buttonRect,
+          zoom,
+          scale: view.scale
+        })
+        detail.geometry = { view, frameRect, buttonRect, zoom, point }
+        if (!point.inside) {
+          throw new Error(
+            `the frame's button is outside the tab view: ${JSON.stringify(detail.geometry)}`
+          )
+        }
+
+        await s.bringToFront()
+        await s.settle()
+        xdotoolClick(point.x, point.y)
+        // The frame saw the click (else the point was off, a harness matter, not a pop-up one)
+        // and its handler ran to the end: `opened` is a boolean once window.open() has returned.
+        // (It is null while the call is in its synchronous ask of the browser, during which the
+        // frame still answers executeJavaScript – a read at that moment would say "no handle".)
+        const clicked = await waitFor(
+          async () => {
+            const st = await s.frameEval(tab.id, fixture.frameOrigin, 'window.__smoke')
+            return st.clicks > 0 && typeof st.opened === 'boolean' ? st : null
+          },
+          8000,
+          `the frame's button clicked at ${point.x},${point.y} and its window.open() returned`
+        )
+        detail.frameAfterClick = clicked
+        // (2) Inside the frame, window.open() returned a handle.
+        if (clicked.opened !== true) {
+          detail.windowsAfterClick = await s.windowCount()
+          throw new Error(
+            `window.open() from the cross-origin frame returned null on a real click (trusted: ${clicked.trusted}, windows: ${detail.windowsAfterClick}): the frame's gesture did not reach the pop-up blocker`
+          )
+        }
+
+        // (1) A second window, its chrome the toolbar-only pop-up kind: no sidebar rows.
+        await waitFor(
+          async () => (await s.windowCount()) === windowsBefore + 1,
+          10000,
+          'the pop-up window'
+        )
+        const popupPage = await chromePageWithChrome(s, 'popup', 10000)
+        const [popupWindowId] = await s.otherWindowIds()
+        const popupWindow = await s.window(popupWindowId)
+        await popupPage
+          .locator('[data-testid="toolbar"]')
+          .first()
+          .waitFor({ state: 'visible', timeout: 5000 })
+        const popupSidebarRows = await popupPage.locator('[data-testid="tab"]').count()
+        if (popupSidebarRows) {
+          throw new Error(`the pop-up window's chrome shows ${popupSidebarRows} sidebar tab rows`)
+        }
+        detail.popupWindow = { ...popupWindow, sidebarRows: popupSidebarRows, chrome: 'popup' }
+
+        // (3) The pop-up's page kept its opener and its postMessage round trip resolves;
+        // (4) the page preload ran there: Chrome's `chrome.app` / `chrome.csi` are in place.
+        const popupTab = await s.waitForTab(fixture.popupUrl, 15000)
+        const report = await s.tabEval(
+          popupTab.id,
+          `Promise.race([window.__roundTrip, new Promise((r) => setTimeout(() => r(null), 8000))])
+            .then((pong) => ({
+              ...window.__smoke,
+              pong,
+              chromeApp: typeof (window.chrome && window.chrome.app),
+              chromeCsi: typeof (window.chrome && window.chrome.csi),
+              chromeLoadTimes: typeof (window.chrome && window.chrome.loadTimes)
+            }))`
+        )
+        detail.popupPage = report
+        if (report.opener !== true) {
+          throw new Error(`window.opener is null in the pop-up: ${JSON.stringify(report)}`)
+        }
+        if (!report.pong || report.pong.from !== fixture.frameOrigin) {
+          throw new Error(
+            `the pop-up's postMessage round trip to its opener did not resolve: ${JSON.stringify(report)}`
+          )
+        }
+        if (report.chromeApp !== 'object' || report.chromeCsi !== 'function') {
+          throw new Error(
+            `the pop-up's page lacks the page preload's chrome members (chrome.app ${report.chromeApp}, chrome.csi ${report.chromeCsi}): the pop-up runs without the preload`
+          )
+        }
+        await s.bringToFront(popupWindowId)
+        await s.settle(popupPage)
+        await shot(`${s.scenario}-12-popup-window`)
+
+        // alert() from the pop-up's page: Zenium's tab-modal dialog in the pop-up window's chrome,
+        // not the engine's native box. The page blocks in its synchronous ask until the dialog is
+        // answered, so the call is not awaited; Escape in the pop-up's chrome dismisses it.
+        await s.app.evaluate(({ webContents }, id) => {
+          const wc = webContents.fromId(id)
+          if (!wc || wc.isDestroyed()) throw new Error(`pop-up webContents ${id} is gone`)
+          wc.executeJavaScript("alert('smoke')").catch(() => undefined)
+          return true
+        }, popupTab.id)
+        const dialog = popupPage.locator('[data-page-dialog="alert"]').first()
+        await dialog.waitFor({ state: 'visible', timeout: 10000 })
+        const role = await dialog.getAttribute('role')
+        const title = ((await dialog.getByRole('heading').first().textContent()) ?? '').trim()
+        const text = ((await dialog.textContent()) ?? '').replace(/\s+/g, ' ').trim()
+        if (role !== 'alertdialog' && role !== 'dialog') {
+          throw new Error(`the pop-up's alert has role "${role}"`)
+        }
+        if (!title.endsWith(' says')) throw new Error(`the pop-up's alert is titled "${title}"`)
+        if (!text.includes('smoke')) throw new Error(`the pop-up's alert reads "${text}"`)
+        // The dialog belongs to the pop-up's tab: the main window's chrome shows none.
+        const mainWindowDialogs = await s.chrome.locator('[data-page-dialog]').count()
+        if (mainWindowDialogs) {
+          throw new Error(`${mainWindowDialogs} page dialogs in the main window's chrome`)
+        }
+        detail.alert = { role, title, text }
+        await shot(`${s.scenario}-13-popup-alert`)
+        await s.press('Escape', popupWindowId)
+        await dialog.waitFor({ state: 'hidden', timeout: 8000 })
+        // Answered: the page's alert() returned and the page runs again.
+        await withTimeout(
+          s.tabEval(popupTab.id, '1 + 1'),
+          8000,
+          "the pop-up's page after the alert"
+        )
+
+        // (5) window.close() from the pop-up's page closes the pop-up window.
+        await s.app.evaluate(({ webContents }, id) => {
+          const wc = webContents.fromId(id)
+          if (wc && !wc.isDestroyed()) wc.executeJavaScript('window.close()').catch(() => undefined)
+          return true
+        }, popupTab.id)
+        await waitFor(
+          async () => (await s.windowCount()) === windowsBefore,
+          10000,
+          'the pop-up window closed by window.close()'
+        )
+        const handleClosed = await waitFor(
+          () =>
+            s.frameEval(
+              tab.id,
+              fixture.frameOrigin,
+              'window.__popup ? window.__popup.closed : null'
+            ),
+          5000,
+          "the frame's handle reporting the pop-up closed"
+        )
+        detail.afterClose = { windows: await s.windowCount(), handleClosed }
+
+        // The fixture tab goes too: the tabs are as they were before the step.
+        await s.press(`${ACCEL}+w`)
+        await waitFor(
+          async () => (await s.sidebarTabCount()) === rowsBefore,
+          8000,
+          `sidebar rows back to ${rowsBefore} after closing the fixture tab`
+        )
+        detail.requests = fixture.requests
+        return detail
+      } catch (e) {
+        // The failure keeps what was gathered up to it (geometry, the frame's state, the window).
+        detail.windowsAtFailure = await s.windowCount().catch(() => null)
+        detail.requests = fixture.requests
+        if (e && typeof e === 'object') e.detail = detail
+        throw e
+      } finally {
+        if ((await s.windowCount().catch(() => 1)) > 1) {
+          await closeExtraWindows(s).catch(() => undefined)
+        }
+        await fixture.close()
+      }
     })
 
     await s.step('quit', async () => {

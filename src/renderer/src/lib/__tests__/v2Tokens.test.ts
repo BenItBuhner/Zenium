@@ -43,6 +43,8 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // Settings → Default Browser and the default-browser strip (components/overlays/
   // DefaultBrowserSection.tsx, content/DefaultBrowserBanner.tsx): the flat card and its inks.
   ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {'],
+  // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
+  ['.zen-message {', '.zen-suggestion {'],
   // The zen-v2-* controls inside the chassis: headings and sections, rows, the switch row
   // (components/sheet/SwitchRow.tsx), radio, image radio card, the presets grid
   // (components/newtab/CustomizeSheet.tsx).

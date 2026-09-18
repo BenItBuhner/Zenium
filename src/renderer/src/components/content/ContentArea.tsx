@@ -21,6 +21,7 @@ import { CrashRestoreBanner } from './CrashRestoreBanner'
 import { DefaultBrowserBanner } from './DefaultBrowserBanner'
 import { FindBar } from './FindBar'
 import { GlanceFrame } from './GlanceFrame'
+import { LoadProgress } from './LoadProgress'
 import { PullIndicator } from './PullIndicator'
 import { SplitChrome } from './SplitChrome'
 import { useLayoutReporter } from './useLayoutReporter'
@@ -94,6 +95,10 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
     !(phone && ui.urlbar.open) &&
     !newTabPage
   const dropKey = dropStore.use((s) => s.key)
+
+  // The load bar is the phone's (and Android's at any width); the desktop program has not adopted
+  // it yet, so Electron's wide layout renders the frame alone as it did.
+  const loadBar = phone || state.platform === 'android'
 
   // Overlays are hosted beside the frame, not inside it: on phones the frame recedes (scales to
   // .97) under a sheet, and a sheet mounted within it would shrink with the page – its 44 px
@@ -173,6 +178,8 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
           <FindBar state={state} tabId={ui.findTabId} ui={ui} docked="content" />
         )}
       </div>
+      {/* The bar is the frame's edge: it recedes with the frame, and overlays cover both. */}
+      {loadBar && <LoadProgress tab={tab} hidden={contentHidden || glanceActive || foreign} />}
       {ui.overlay !== 'none' && <OverlayHost state={state} ui={ui} />}
     </div>
   )

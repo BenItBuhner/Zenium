@@ -446,11 +446,13 @@ function useGlobalKeys(state: UIState): void {
 }
 
 /**
- * The "New Tab" button and empty state ask the core for a new tab: Zen's floating URL bar in
- * new-tab mode (it comes back as `urlbar.toggle`), or the page an extension overrides new tabs
- * with. Closing the bar first keeps the toggle from swallowing the request while it is open.
- * The phone opens a new tab page instead – grown out of the control that asked for it when the
- * event says where that was (`detail.origin`, window coordinates).
+ * The "New Tab" button and empty state ask the core for a new tab: the `zen://newtab` page (it
+ * comes back as `newtab.opened` with the URL bar over it), Zen's floating URL bar in new-tab mode
+ * when the page is off (`urlbar.toggle`), or the page an extension overrides new tabs with.
+ * Closing the bar first keeps the toggle from swallowing the request while it is open.
+ * The phone opens its own new tab page instead (the WebView has no `zen://newtab` yet) – grown
+ * out of the control that asked for it when the event says where that was (`detail.origin`,
+ * window coordinates).
  */
 function useNewTabEvent(): void {
   useEffect(() => {

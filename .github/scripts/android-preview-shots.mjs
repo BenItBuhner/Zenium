@@ -17,8 +17,10 @@
 //   --states <list>    comma-separated `label:state` pairs; a state is `idle`, `overlay=<kind>`
 //                      (history, bookmarks, downloads, settings, addons, …; `&section=<id>` picks
 //                      a Settings section, `&show=<text>` scrolls a row into view), `menu=app`
-//                      (`&show=<text>` scrolls an item into view), `find=<text>`, `pull=<n>` or
-//                      `error=<code>&url=<failed url>` (the zen://error page; see `previewSpec.ts`).
+//                      (`&show=<text>` scrolls an item into view), `find=<text>`, `pull=<n>`,
+//                      `error=<code>&url=<failed url>` (the zen://error page; see `previewSpec.ts`)
+//                      or the messages and the load bar: `toast=<text>&action=<label>`
+//                      (`&kind=error`), `banners=<n>`, `progress=<0…1>`, in any combination.
 //                      The label defaults to the state with punctuation turned into dashes.
 //                      Default: history:overlay=history,bookmarks:overlay=bookmarks,
 //                               downloads:overlay=downloads,find:find=coffee

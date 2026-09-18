@@ -912,6 +912,38 @@
   }
 
   /*
+   * The page-load bar: 2 px of accent hugging the top edge of the content frame, over its
+   * hairline and clear of its rounded corners (the live page covers everything inside the
+   * frame). Per frame only the fill's scaleX moves; the bar as a whole only ever fades. No sweep
+   * or shimmer (v2 §9.33): the creep is the sign of life, and a looping highlight would be the
+   * one perpetual animation on the chrome.
+   */
+  .zen-load-progress {
+    position: absolute;
+    top: -2px;
+    left: var(--zen-content-radius);
+    right: var(--zen-content-radius);
+    height: 2px;
+    opacity: 0;
+    transition: opacity 200ms var(--zen-ease);
+  }
+  .zen-load-progress[data-shown] {
+    opacity: 1;
+  }
+  .zen-load-progress[data-hidden] {
+    opacity: 0;
+  }
+  .zen-load-progress-fill {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    border-radius: 1px;
+    background: var(--zen-accent-fill);
+    transform: scaleX(0);
+    transform-origin: 0 50%;
+  }
+
+  /*
    * Pull-to-refresh: the disc that comes down under the frame's top edge as the page is pulled
    * (touch hosts move the page WebView itself; see `lib/pull.ts`). A v2 panel – neutral, opaque,
    * its hairline border the edge – round because it is an indicator, not a control. Position,
@@ -1031,6 +1063,263 @@
   }
   .zen-toast {
     animation: zen-toast-in 180ms var(--zen-ease);
+  }
+
+  /*
+   * Messages (v2 draft §1–§3, §6, read through the shared `--v2-*` tokens): a toast at the
+   * content frame's bottom edge, banners stacked from its top edge. A panel: neutral, hairline
+   * border, radius 8, the panel shadow. The one action is a secondary button (the control height,
+   * 32 or 40 on a phone, radius 4 or 6, text at 10 % for a fill). Motion is the card's transform,
+   * written per frame by `useMessageMotion`; nothing here moves on its own. `data-moving`
+   * promotes a card only while a spring or a finger drives it. The phone and Android show these;
+   * the desktop sidebar's `.zen-toast` above is untouched until the desktop program adopts them.
+   */
+  /*
+   * A card is a row (v2 §9.2, §9.21): at least the row's height, grown around a control to the
+   * control plus 8 – the 4 above and below it is the row's own padding, its hairline counted –
+   * and its text sits at the row's padding, (row − line) / 2 from the edge (12 on a phone, 6
+   * on desktop), so a toast with nothing but its text is exactly a row tall.
+   */
+  .zen-message {
+    --zen-message-text-inset: calc((var(--v2-row) - var(--v2-line-body)) / 2 - 4px);
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: var(--v2-row);
+    padding: 3px 6px 3px 14px;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-card);
+    background: var(--v2-panel);
+    color: var(--v2-text);
+    box-shadow: var(--v2-shadow-panel);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    font-weight: var(--v2-weight-body);
+    pointer-events: auto;
+    touch-action: none;
+    user-select: none;
+    cursor: default;
+  }
+  .zen-message[data-action] {
+    min-height: calc(var(--v2-control) + 8px);
+  }
+  .zen-message[data-moving] {
+    will-change: transform, opacity;
+  }
+  .zen-message-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: var(--zen-message-text-inset) 0;
+    overflow-wrap: anywhere;
+  }
+  .zen-message-toast:not([data-action]) {
+    padding-right: 14px;
+  }
+  .zen-message-toast[data-kind='error'] .zen-message-text {
+    color: var(--v2-danger);
+  }
+  /* The desktop sidebar's toast: the small type, a 28 button, in the sidebar's own column. */
+  .zen-message-compact {
+    --zen-message-text-inset: calc((var(--v2-row) - var(--v2-line-small)) / 2 - 4px);
+    padding: 3px 4px 3px 10px;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+  }
+  .zen-message-compact[data-action] {
+    min-height: 36px;
+  }
+  .zen-message-compact.zen-message-toast:not([data-action]) {
+    padding-right: 10px;
+  }
+  .zen-message-compact .zen-message-button {
+    height: 28px;
+    padding: 0 10px;
+  }
+  /*
+   * The card's controls draw in the family of the surface they sit on (§9.29): the card root
+   * carries `data-surface="page"`, so the control roles resolve to the page ink, fills and
+   * accent. Disabled is §9.30's one number, .4 on the whole control, with no fill on hover or
+   * press; busy does not arise (an action is picked once and the card leaves).
+   */
+  .zen-message-button {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: var(--v2-control);
+    padding: 0 12px;
+    border-radius: var(--v2-radius-control);
+    background: var(--v2-control-fill);
+    color: var(--v2-control-accent);
+    font-size: inherit;
+    font-weight: var(--v2-weight-button);
+    white-space: nowrap;
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  .zen-message-button:hover:not(:disabled) {
+    background: var(--v2-control-fill-hover);
+  }
+  .zen-message-button:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+  .zen-message-button:disabled,
+  .zen-message-close:disabled {
+    opacity: 0.4;
+  }
+  .zen-message-button:focus-visible,
+  .zen-message-close:focus-visible {
+    outline: 2px solid var(--v2-ring);
+    outline-offset: 0;
+  }
+  .zen-message-glyph {
+    flex: none;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    stroke-width: var(--v2-icon-stroke);
+    color: var(--v2-accent);
+  }
+  /* A banner always trails its close, an icon button at 2 px margins: the row is control + 8 (§9.16, §9.21). */
+  .zen-banner {
+    min-height: calc(var(--v2-control) + 8px);
+    padding-left: 12px;
+  }
+  /* A title with a detail line is a two-line row (§9.2). */
+  .zen-banner[data-detail] {
+    min-height: var(--v2-row-two-line);
+  }
+  /*
+   * Stacked banners touch (§9.21), so the stack reads as one card: only its top and bottom
+   * corners round, the seams between rows keep one shared hairline.
+   */
+  .zen-message-stack > .zen-banner {
+    transition: border-radius 120ms var(--zen-ease);
+  }
+  .zen-message-stack > .zen-banner:not([data-stack-top]) {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+  .zen-message-stack > .zen-banner:not([data-stack-bottom]) {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  /*
+   * A banner on its way out of the stack – under a finger, springing back from one, or leaving –
+   * carries `data-uncover` and the stack carries its travel in `--zen-uncover` (0 in the slot, 1
+   * gone), written per frame by the layer. The corners it uncovers round on that one value (v2
+   * §9.33, §11's one value per motion: no transition, no timer): its own seam corners, the top
+   * corners of the card beneath it and the bottom corners of the card above it, so the stack
+   * never shows a square corner and a spring-back un-rounds them along the same path.
+   */
+  .zen-message-stack > .zen-banner[data-uncover],
+  .zen-message-stack > .zen-banner[data-uncover] + .zen-banner,
+  .zen-message-stack > .zen-banner:has(+ .zen-banner[data-uncover]) {
+    --zen-uncover-radius: calc(var(--v2-radius-card) * var(--zen-uncover, 0));
+    transition: none;
+  }
+  .zen-message-stack > .zen-banner[data-uncover]:not([data-stack-top]),
+  .zen-message-stack > .zen-banner[data-uncover] + .zen-banner {
+    border-top-left-radius: var(--zen-uncover-radius);
+    border-top-right-radius: var(--zen-uncover-radius);
+  }
+  .zen-message-stack > .zen-banner[data-uncover]:not([data-stack-bottom]),
+  .zen-message-stack > .zen-banner:has(+ .zen-banner[data-uncover]) {
+    border-bottom-left-radius: var(--zen-uncover-radius);
+    border-bottom-right-radius: var(--zen-uncover-radius);
+  }
+  /* The text fills the card's height and centres its lines in it. */
+  .zen-banner .zen-message-text {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-self: stretch;
+  }
+  /* The title's row: the glyph sits on its first line (§9.2), a longer title wraps beside it. */
+  .zen-banner-title {
+    display: flex;
+    gap: 8px;
+    font-weight: var(--v2-weight-heading);
+  }
+  .zen-banner-title > span {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .zen-banner-title .zen-message-glyph {
+    align-self: flex-start;
+    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+  }
+  /* A description wraps to at most two lines, then ellipsis (§9.2). */
+  .zen-banner-detail {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+  }
+  /* Under the title's text, not under the glyph. */
+  .zen-banner[data-glyph] .zen-banner-detail {
+    padding-left: calc(var(--v2-icon) + 8px);
+  }
+  /*
+   * What trails the text (the action, the close) centres on the card's height (§9.18) – unless
+   * the text runs past two lines: then `BannerCard` marks the card and the slot takes the
+   * title's height and place, so they centre on the title instead.
+   */
+  .zen-message-trailing {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .zen-banner[data-wrapped] .zen-message-trailing {
+    align-self: flex-start;
+    height: var(--zen-banner-title-height);
+    margin-top: var(--zen-message-text-inset);
+  }
+  /*
+   * The close is a §9.3 icon button of the page family: the box is the hit area and the fill
+   * (44 on a phone, 28 at a mouse, 40 under a finger on a tablet), the glyph a row glyph, the
+   * fill's radius the control radius plus 2 (8 / 6, §9.3). In the phone's 48 row it sits at 2 px
+   * margins, as a sheet header's trailing control does (§9.16).
+   */
+  .zen-message-close {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--v2-icon-button);
+    height: var(--v2-icon-button);
+    border-radius: calc(var(--v2-radius-control) + 2px);
+    color: var(--v2-control-text-deemphasized);
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  .zen-message-close:hover:not(:disabled) {
+    background: var(--v2-control-fill);
+  }
+  .zen-message-close:active:not(:disabled) {
+    background: var(--v2-control-fill-hover);
+    transform: scale(0.96);
+  }
+  .zen-message-close svg {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    stroke-width: var(--v2-icon-stroke);
+  }
+
+  /* The sidebar of Android's wide layouts: the toast's row, clipped so the card slides in from below it. */
+  .zen-message-well {
+    display: grid;
+    clip-path: inset(-12px -12px 0 -12px);
+  }
+  .zen-message-well > * {
+    grid-area: 1 / 1;
   }
 
   .zen-suggestion {
@@ -2941,6 +3230,51 @@
   transform: scale(calc(1 - 0.03 * var(--zen-recede, 0)));
   border-radius: calc(var(--zen-content-radius) + 6px * var(--zen-recede, 0));
 }
+/* The load bar and the messages sit on the frame's edges: they recede with it. */
+:root[data-form-factor='phone'] .zen-load-progress-layer,
+:root[data-form-factor='phone'] .zen-message-frame {
+  transform: scale(calc(1 - 0.03 * var(--zen-recede, 0)));
+}
+
+/*
+ * The phone's message layer is the content frame's box and clips to it: cards arrive from and
+ * leave by its edges. Banners hang from the top edge, each on its slot by transform, touching
+ * (§9.21); the toast sits at the bottom edge, a leaving one and its successor in the same cell.
+ * The inset is from a card to the frame's edge; `messages/stack.ts` mirrors it.
+ */
+:root {
+  --zen-message-inset: 8px;
+}
+.zen-message-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: var(--zen-content-radius);
+  pointer-events: none;
+}
+.zen-message-stack {
+  position: absolute;
+  top: var(--zen-message-inset);
+  left: var(--zen-message-inset);
+  right: var(--zen-message-inset);
+}
+.zen-message-stack > .zen-message {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: auto;
+}
+.zen-message-toasts {
+  position: absolute;
+  bottom: var(--zen-message-inset);
+  left: var(--zen-message-inset);
+  right: var(--zen-message-inset);
+  display: grid;
+}
+.zen-message-toasts > * {
+  grid-area: 1 / 1;
+}
 :root[data-form-factor='phone'][data-receding] .zen-content-frame {
   will-change: transform;
 }
@@ -3667,5 +4001,9 @@
   * {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+  /* The load bar's appearance and departure stay an opacity fade, at v2 §11.3's 120 ms, not a cut. */
+  .zen-load-progress {
+    transition-duration: 120ms !important;
   }
 }

@@ -15,12 +15,14 @@ import java.net.Socket
  * Everything is `Cache-Control: no-store`, so a reload fetches again. `address` is the loopback
  * address to listen on – 127.0.0.1 unless a demo needs several sites, which are told apart by
  * host: any 127.x.y.z is the loopback too, so one server per address on one port gives each
- * site its own host.
+ * site its own host. A path in `delays` answers that many milliseconds late: a slow script or
+ * image, for a page that takes its time to load.
  */
 class DemoServer(
     private val port: Int,
     private val routes: Map<String, Pair<String, ByteArray>>,
-    private val address: String = "127.0.0.1"
+    private val address: String = "127.0.0.1",
+    private val delays: Map<String, Long> = emptyMap()
 ) : Thread("demo-server-$address-$port") {
     // Android's InetAddress.getLoopbackAddress() is ::1; a socket bound to it alone refuses the
     // 127.0.0.1 the pages' URLs name, so bind the IPv4 loopback explicitly.
@@ -70,6 +72,7 @@ class DemoServer(
                 if (header.isNullOrEmpty()) break
             }
             val path = line.split(' ').getOrNull(1)?.substringBefore('?') ?: "/"
+            delays[path]?.let { Thread.sleep(it) }
             val route = routes[path]
             val status = if (route != null) "200 OK" else "404 Not Found"
             val (type, body) = route ?: ("text/plain; charset=utf-8" to "no such page: $path\n".toByteArray())

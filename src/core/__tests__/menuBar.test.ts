@@ -76,7 +76,9 @@ function harness(os: PlatformOs = 'darwin', menuBar = true): Harness {
     devtools: true,
     print: true,
     updates: false,
-    agents: false
+    agents: false,
+    // Without the new tab page, New Tab is the URL bar alone (newtab.test.ts covers the page).
+    newTabPage: false
   })
   const platform: Platform = {
     info: { os, version: '1.2.3' },

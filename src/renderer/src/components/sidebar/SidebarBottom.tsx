@@ -1,4 +1,5 @@
 import type { JSX } from 'react'
+import { useEffect } from 'react'
 import { Bot, Palette, Pause, Play, Plus, Volume2, VolumeX } from 'lucide-react'
 import type { MediaState, Space, UIState } from '@shared/types'
 import { resolveTheme, rgbToHex } from '@shared/theme'
@@ -6,8 +7,9 @@ import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { dropStore } from '@renderer/lib/drag'
 import { activeTab, isLocalWindow, tabTitle } from '@renderer/lib/selectors'
-import { openOverlay, uiStore } from '@renderer/lib/ui'
+import { claimMessageCards, openOverlay, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { ToastCard } from '../messages/ToastCard'
 import { SpaceGlyph } from '../SpaceGlyph'
 import { Favicon } from './Favicon'
 
@@ -31,13 +33,26 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
   // The space row scrolls sideways when expanded and downwards when the sidebar is compact.
   const fadeSpaces = useFadeEdges<HTMLDivElement>({ axis: 'auto', size: 20 })
 
+  // Android's wide layouts show toasts on the message card (`components/messages`); the desktop
+  // sidebar keeps its plain toasts until the desktop program adopts the card.
+  const cards = state.platform === 'android'
+  useEffect(() => (cards ? claimMessageCards() : undefined), [cards])
+
   return (
     <div className="flex flex-col gap-1 px-2 pb-2 pt-1">
       {agents.length > 0 && <AgentPill agents={agents} compact={compact} />}
       {media.map((m) => (
         <MediaPlayer key={m.tabId} state={state} media={m} compact={compact} />
       ))}
-      {toasts.length > 0 && (
+      {toasts.length > 0 && cards && (
+        // The well clips the card's slide in from below (and out again) to its own row.
+        <div className="zen-message-well">
+          {toasts.map((t) => (
+            <ToastCard key={t.id} toast={t} compact />
+          ))}
+        </div>
+      )}
+      {toasts.length > 0 && !cards && (
         <div className="flex flex-col gap-1">
           {toasts.map((t) => (
             <div

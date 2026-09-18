@@ -6,6 +6,7 @@ import type {
   CheckupState,
   Container,
   FolderColor,
+  NewTabSettings,
   PasswordSettings,
   PasswordsStatus,
   ResourceSettings,
@@ -168,6 +169,47 @@ export const DEFAULT_RESOURCE_SETTINGS: ResourceSettings = {
   }
 }
 
+/**
+ * The new tab page's grid is four columns by two rows (design language v2 §9.29): eight most
+ * visited sites, or eight of the user's own shortcuts – the same shape as the phone's page.
+ */
+export const MAX_NEW_TAB_SHORTCUTS = 8
+
+/** The new tab page opens with the most-visited grid over the space gradient; no greeting. */
+export const DEFAULT_NEW_TAB_SETTINGS: NewTabSettings = {
+  enabled: true,
+  shortcuts: 'most-visited',
+  background: 'space',
+  greeting: false
+}
+
+const NEW_TAB_SHORTCUT_MODES = new Set<NewTabSettings['shortcuts']>([
+  'most-visited',
+  'custom',
+  'hidden'
+])
+const NEW_TAB_BACKGROUNDS = new Set<NewTabSettings['background']>(['space', 'solid', 'image'])
+
+/** Fill in missing keys and drop unknown values (older profiles, settings synced from elsewhere). */
+export function sanitizeNewTabSettings(raw: unknown): NewTabSettings {
+  const input = (raw && typeof raw === 'object' ? raw : {}) as Partial<
+    Record<keyof NewTabSettings, unknown>
+  >
+  const shortcuts = input.shortcuts as NewTabSettings['shortcuts']
+  const background = input.background as NewTabSettings['background']
+  return {
+    enabled: typeof input.enabled === 'boolean' ? input.enabled : DEFAULT_NEW_TAB_SETTINGS.enabled,
+    shortcuts: NEW_TAB_SHORTCUT_MODES.has(shortcuts)
+      ? shortcuts
+      : DEFAULT_NEW_TAB_SETTINGS.shortcuts,
+    background: NEW_TAB_BACKGROUNDS.has(background)
+      ? background
+      : DEFAULT_NEW_TAB_SETTINGS.background,
+    greeting:
+      typeof input.greeting === 'boolean' ? input.greeting : DEFAULT_NEW_TAB_SETTINGS.greeting
+  }
+}
+
 export function emptyResourceSnapshot(): ResourceSnapshot {
   const gauge = { used: 0, budget: 0, configured: 0 }
   return {
@@ -245,6 +287,7 @@ export const DEFAULT_SETTINGS: Settings = {
   bookmarksBar: 'newtab',
   shortcutPreset: 'chrome',
   privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
+  newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS),
   newTabPhone: structuredClone(DEFAULT_NEW_TAB_PHONE_SETTINGS)
 }
 

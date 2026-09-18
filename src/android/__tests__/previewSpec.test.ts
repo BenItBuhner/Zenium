@@ -52,6 +52,26 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('menu=context')).toEqual({ kind: 'idle' })
   })
 
+  it('puts up messages and the load bar together', () => {
+    expect(parsePreviewSpec('toast=Tab%20closed&action=Undo&banners=2&progress=0.6')).toEqual({
+      kind: 'messages',
+      toast: { message: 'Tab closed', action: 'Undo', error: false },
+      banners: 2,
+      progress: 0.6
+    })
+    expect(parsePreviewSpec('toast=Failed&kind=error')).toEqual({
+      kind: 'messages',
+      toast: { message: 'Failed', action: null, error: true },
+      banners: 0,
+      progress: null
+    })
+    // Counts and fractions are clamped; junk reads as none.
+    expect(parsePreviewSpec('banners=9&progress=7')).toMatchObject({ banners: 3, progress: 1 })
+    expect(parsePreviewSpec('banners=x&progress=y')).toMatchObject({ banners: 0, progress: null })
+    // Find wins over the messages.
+    expect(parsePreviewSpec('find=x&toast=y')).toEqual({ kind: 'find', text: 'x' })
+  })
+
   it('treats idle, an unknown overlay and junk as idle', () => {
     expect(parsePreviewSpec('idle')).toEqual({ kind: 'idle' })
     expect(parsePreviewSpec('')).toEqual({ kind: 'idle' })
