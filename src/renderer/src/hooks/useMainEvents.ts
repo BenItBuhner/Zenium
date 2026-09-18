@@ -215,6 +215,15 @@ export function useMainEvents(): void {
       }),
       onEvent('webapp.banner', (banner) => presentInstallBanner(banner)),
       onEvent('webapp.bannerHide', ({ tabId }) => retireInstallBanner(tabId)),
+      // NOT-20, with Chrome's "Open" (v2 §9.33: one action): the tab goes to the shortcut's URL.
+      onEvent('webapp.pinned', ({ tabId, name, url }) =>
+        pushToast(`Added ${name} to Home screen`, 'info', {
+          action:
+            tabId && url
+              ? { label: 'Open', onPick: () => run('tab.navigate', { tabId, input: url }) }
+              : undefined
+        })
+      ),
       onEvent('insets', (insets) => {
         uiStore.set({ insets })
         const root = document.documentElement.style

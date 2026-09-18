@@ -77,7 +77,7 @@ function apply(spec: string): void {
     closeMenu()
     closeUrlbar()
     dismissOverview()
-    uiStore.set({ findOpen: false, findTabId: null, zoomTabId: null, install: null, installBanner: null })
+    uiStore.set({ findOpen: false, findTabId: null, zoomTabId: null, install: null })
     abortPull()
     const state = browserStore.get().state
     const tab = state ? activeTab(state) : null

@@ -1,6 +1,7 @@
 import type { Tab, WebAppBanner, WebAppInstallPrompt } from '../shared/types'
 import { resolveTheme, rgbToHex } from '../shared/theme'
 import {
+  BANNER_TIMEOUT_MS,
   displayIcon,
   fallbackShortcutTitle,
   isInstallable,
@@ -38,8 +39,6 @@ const MAX_ENGAGEMENT = 200
  * event synchronously; its `deferred` message needs one round trip to arrive.
  */
 const DEFER_GRACE_MS = 1200
-/** The ambient banner leaves on its own after this long (an ignored prompt is not a dismissal). */
-export const BANNER_TIMEOUT_MS = 12_000
 /** Fetching a manifest the page could not (CSP) goes through the host with this budget. */
 const MANIFEST_FETCH_TIMEOUT_MS = 8000
 const MAX_MANIFEST_BYTES = 256 * 1024
@@ -384,7 +383,10 @@ export class WebAppService {
     this.settleSitePrompt(tabId, 'dismissed')
   }
 
-  /** The launcher confirmed the shortcut (NOT-20): toast, register the app, tell the page. */
+  /**
+   * The launcher confirmed the shortcut (NOT-20): register the app, tell the page, and have the
+   * chrome toast "Added <name> to Home screen" with an Open action for the shortcut's URL.
+   */
   onPinned(id: string): void {
     const pending = this.pendingPins.get(id)
     this.pendingPins.delete(id)
@@ -403,7 +405,11 @@ export class WebAppService {
       })
       this.save()
     }
-    this.browser.toast(`Added ${title} to Home screen`, 'info', win)
+    this.browser.emit(
+      'webapp.pinned',
+      { tabId: pending?.tabId ?? null, name: title, url: pending?.url ?? info?.startUrl ?? null },
+      win
+    )
     if (pending) {
       this.hideBanner(pending.tabId)
       this.settleSitePrompt(pending.tabId, 'accepted')

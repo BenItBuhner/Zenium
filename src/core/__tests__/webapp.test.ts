@@ -190,7 +190,11 @@ describe('WebAppService', () => {
     await h.service.pin(h.tab.id, 'Sketch', h.win)
     expect(h.pins).toHaveLength(1)
     h.service.onPinned(h.pins[0].id)
-    expect(h.toasts).toEqual(['Added Sketch to Home screen'])
+    // The chrome toasts it with an Open action (NOT-20); the core raises no plain toast.
+    expect(h.toasts).toEqual([])
+    expect(h.events.filter((e) => e.name === 'webapp.pinned').map((e) => e.payload)).toEqual([
+      { tabId: 't1', name: 'Sketch', url: DOCUMENT_URL }
+    ])
     vi.advanceTimersByTime(5000)
     expect(bannerEvents(h)).toEqual([])
     expect(h.service.pinnedFor(DOCUMENT_URL)?.name).toBe('Sketch')

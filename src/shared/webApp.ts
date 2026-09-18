@@ -401,6 +401,11 @@ export const PROMPT_AFTER_VISITS = 2
 export const DISMISS_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000
 /** Ignoring the prompt (letting it time out) keeps it away for a day. */
 export const PROMPT_INTERVAL_MS = 24 * 60 * 60 * 1000
+/**
+ * The ambient banner leaves on its own after this long (an ignored prompt is not a dismissal).
+ * The core's clock and the chrome's banner card both run on it.
+ */
+export const BANNER_TIMEOUT_MS = 12_000
 
 /** Count a page load as a visit when it is far enough from the previous one. */
 export function recordVisit(record: EngagementRecord | undefined, now: number): EngagementRecord {

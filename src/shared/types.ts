@@ -3560,6 +3560,11 @@ export interface Events {
   'webapp.banner': WebAppBanner
   /** Take the banner down (navigation left the app, or it was pinned another way). */
   'webapp.bannerHide': { tabId: string }
+  /**
+   * The launcher confirmed a Home screen shortcut (NOT-20): the chrome toasts "Added <name> to
+   * Home screen" with an Open action that takes `tabId` to `url`, the shortcut's own.
+   */
+  'webapp.pinned': { tabId: string | null; name: string; url: string | null }
 }
 
 export type EventName = keyof Events

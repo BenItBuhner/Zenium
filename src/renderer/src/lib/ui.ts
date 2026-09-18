@@ -9,7 +9,6 @@ import type {
   Rect,
   UIState,
   UrlbarOpenMode,
-  WebAppBanner,
   WebAppInstallPrompt
 } from '@shared/types'
 import type { Anchor } from './anchor'
@@ -298,8 +297,6 @@ export interface UiState {
   defaultBrowserPrompt: boolean
   /** "Add to Home screen": the install sheet (manifest) or the name-edit sheet, when open. */
   install: WebAppInstallPrompt | null
-  /** The ambient "Add <app> to Home screen" banner over the page, when shown. */
-  installBanner: WebAppBanner | null
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
   /**
@@ -376,7 +373,6 @@ export const uiStore = createStore<UiState>(
     downloadsOpen: false,
     defaultBrowserPrompt: false,
     install: null,
-    installBanner: null,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false,
     hoverCard: HOVER_CARD_HIDDEN,
