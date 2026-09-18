@@ -11,6 +11,8 @@ name: Android errors demo
 # file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
+  push:
+    branches: [cursor/android-error-pages-fixes-50fb]
 
 permissions:
   contents: read
