@@ -39,14 +39,29 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {']
 ]
 
-/** Custom-property names declared inside the first `selector {` block found after `from`. */
-function declared(selector: string, from = 0): Set<string> {
+/** The text of the first `selector {` block found after `from`. */
+function block(selector: string, from = 0): string {
   const start = css.indexOf(`${selector} {`, from)
   expect(start, `block "${selector}"`).toBeGreaterThanOrEqual(0)
-  const end = css.indexOf('\n}', start)
-  const names = css.slice(start, end).match(/--v2-[a-z0-9-]+(?=:)/g) ?? []
-  return new Set(names)
+  return css.slice(start, css.indexOf('\n}', start))
 }
+
+/** Custom-property names declared inside the first `selector {` block found after `from`. */
+function declared(selector: string, from = 0): Set<string> {
+  return new Set(block(selector, from).match(/--v2-[a-z0-9-]+(?=:)/g) ?? [])
+}
+
+/**
+ * The two §9.29 token families, as the blocks that resolve the shared control roles for a
+ * surface root carrying `data-surface="page"` or `"window"` (lib/portals.tsx puts "page" on the
+ * frame dialog host and the chrome layer; the window chrome roots carry "window").
+ */
+const FAMILIES = ["[data-surface='page']", "[data-surface='window']"] as const
+
+/** The control roles a chip, badge or icon button reads to draw in its surface's family. */
+const CONTROL_ROLES = ['text', 'text-deemphasized', 'fill', 'fill-hover', 'accent'].map(
+  (n) => `--v2-control-${n}`
+)
 
 // The light block is the first `:root {` that declares a v2 token.
 const lightStart = css.indexOf('--v2-page:')
@@ -163,9 +178,50 @@ describe('design language v2 tokens', () => {
     }
     expect(outside.match(/var\(--v2-/g) ?? []).toHaveLength(0)
     const inside = css.slice(lightBlockStart, blockEnd)
-    // Inside: the ring and selection derive from the accent, and the shared focus-ring rule reads the ring.
-    expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(3)
+    // Inside: the ring and selection derive from the accent, the shared focus-ring rule reads the
+    // ring, and the two §9.29 family blocks map the tokens onto the control roles.
+    const familyReads = FAMILIES.map((f) => block(f).match(/var\(--v2-/g)?.length ?? 0)
+    expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(
+      3 + familyReads.reduce((a, b) => a + b, 0)
+    )
     expect(inside).toMatch(/\[class\^='zen-v2-'\]:focus-visible/)
+  })
+})
+
+describe('token families (§9.29)', () => {
+  const pageFamily = block(FAMILIES[0])
+  const windowFamily = block(FAMILIES[1])
+  const reads = (body: string): string[] => body.match(/var\(--[a-z0-9-]+\)/g) ?? []
+
+  it('resolve the same control roles for a page surface and a window surface, inside the token block', () => {
+    for (const family of FAMILIES) {
+      expect(declared(family)).toEqual(new Set(CONTROL_ROLES))
+      const at = css.indexOf(`${family} {`)
+      expect(at).toBeGreaterThan(lightBlockStart)
+      expect(at).toBeLessThan(css.indexOf("/* Zen clamps its primary colour's lightness"))
+    }
+  })
+
+  it('never mixes them: page roles read the page tokens only, window roles the theme foreground and window fills only', () => {
+    expect(reads(pageFamily)).toEqual([
+      'var(--v2-text)',
+      'var(--v2-text-deemphasized)',
+      'var(--v2-fill)',
+      'var(--v2-fill-hover)',
+      'var(--v2-accent)'
+    ])
+    expect(pageFamily).not.toMatch(/--zen-|--v2-window-/)
+    // Window ink is the theme's foreground, deemphasised at 69% of it.
+    expect(reads(windowFamily)).toEqual([
+      'var(--zen-fg)',
+      'var(--zen-fg-rgb)',
+      'var(--v2-window-fill)',
+      'var(--v2-window-fill-hover)',
+      'var(--zen-accent)'
+    ])
+    expect(windowFamily).toMatch(
+      /--v2-control-text-deemphasized: rgb\(var\(--zen-fg-rgb\) \/ 0\.69\)/
+    )
   })
 })
 

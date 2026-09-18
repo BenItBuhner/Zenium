@@ -17,7 +17,8 @@ import {
 /*
  * Where chrome surfaces render (lib/portals.tsx): modal dialogs in the content frame through
  * FrameDialogHost, whose scrim dims the frame only; popovers, menus and toasts through
- * ChromePortal, in the window-wide chrome layer; §9.20 geometry from placePopover.
+ * ChromePortal, in the window-wide chrome layer; §9.20 geometry from placePopover. Both layers
+ * are page surfaces (§9.29): their roots carry `data-surface="page"`.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -199,6 +200,29 @@ describe('ChromePortal', () => {
     rerender(<div />)
     expect(document.getElementById('zen-chrome-layer')).toBe(layer)
     expect(layer.childElementCount).toBe(0)
+  })
+})
+
+describe('token families (§9.29)', () => {
+  it('marks both layers as page surfaces: a dialog’s or popover’s nearest surface root is "page"', () => {
+    render(
+      <div data-surface="window">
+        <FrameDialogHost>
+          <Dialog name="edit" />
+        </FrameDialogHost>
+        <ChromePortal>
+          <div data-popover="a" />
+        </ChromePortal>
+      </div>
+    )
+    expect(host().getAttribute('data-surface')).toBe('page')
+    const layer = document.getElementById('zen-chrome-layer')!
+    expect(layer.getAttribute('data-surface')).toBe('page')
+    // A control inside either reads the page family, whatever window chrome the host sits in.
+    const panel = mount!.querySelector<HTMLElement>('[data-dialog="edit"]')!
+    expect(panel.closest('[data-surface]')).toBe(host())
+    const popover = layer.querySelector<HTMLElement>('[data-popover="a"]')!
+    expect(popover.closest('[data-surface]')).toBe(layer)
   })
 })
 

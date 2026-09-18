@@ -420,11 +420,13 @@ export function BookmarksBar({
   )
 
   return (
+    // A window surface (design language v2 §9.29): its chips draw in the window token family.
     <div
       ref={barRef}
       role="toolbar"
       aria-label="Bookmarks bar"
       className={cn('zen-bm-bar zen-no-drag', className)}
+      data-surface="window"
       onContextMenu={(e) => contextMenu(e, null)}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}

@@ -226,6 +226,30 @@
   --v2-icon-button: 40px;
   --v2-icon: 20px;
 }
+/*
+ * Two token families, never mixed (§9.29). A window surface – toolbars, the URL pill and its
+ * chips, the sidebar and tab strip, the bookmarks bar – draws in the theme's foreground with the
+ * window fills and the theme's accent; a page surface – pages, panels, popovers, menus, dialogs,
+ * cards – draws in the page ink, fills and accent. A chip, badge or icon button used on both kinds
+ * reads the control roles below, which the `data-surface` on its nearest surface root resolves
+ * (lib/portals.tsx puts "page" on the frame dialog host and the chrome layer; Toolbar, SidebarTop,
+ * Sidebar and BookmarksBar carry "window"). No page token on the window, no window token or
+ * `--zen-fg` on a page; status ink (`--v2-ok` / `--v2-warn` / `--v2-danger`) is shared.
+ */
+[data-surface='page'] {
+  --v2-control-text: var(--v2-text);
+  --v2-control-text-deemphasized: var(--v2-text-deemphasized);
+  --v2-control-fill: var(--v2-fill);
+  --v2-control-fill-hover: var(--v2-fill-hover);
+  --v2-control-accent: var(--v2-accent);
+}
+[data-surface='window'] {
+  --v2-control-text: var(--zen-fg);
+  --v2-control-text-deemphasized: rgb(var(--zen-fg-rgb) / 0.69);
+  --v2-control-fill: var(--v2-window-fill);
+  --v2-control-fill-hover: var(--v2-window-fill-hover);
+  --v2-control-accent: var(--zen-accent);
+}
 
 /*
  * One focus ring for every v2 control (§1, §9.6): 2px accent, offset 0 in light and -2 in dark, on

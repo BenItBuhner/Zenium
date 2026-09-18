@@ -16,6 +16,22 @@ import type { Rect } from '@shared/types'
  * lands offset inside the frame and a viewport-sized scrim gets clipped to it. Dialogs want the
  * frame's box (design-language-v2-draft §9.5: the sidebar and toolbar stay undimmed and inert);
  * popovers want the window (§9.20: no scrim, aligned to an anchor in the pill, bar or toolbar).
+ *
+ * And what they draw in – two token families, never mixed (§9.29):
+ *
+ *   Window surfaces (toolbars, the URL pill and its chips, the sidebar and tab strip, the
+ *   bookmarks bar) draw in the theme's foreground with `--v2-window-fill` /
+ *   `--v2-window-fill-hover` / `--zen-accent`. Page surfaces (pages, panels, popovers, menus,
+ *   dialogs, cards) draw in `--v2-text` / `--v2-fill` / `--v2-accent`. A chip, badge or icon
+ *   button takes the family of the surface it sits on through `data-surface="window" | "page"`
+ *   on its nearest surface root, never from props.
+ *
+ * Both layers here are page surfaces: the host's root and `#zen-chrome-layer` carry
+ * `data-surface="page"`; the window chrome roots (Toolbar, SidebarTop, Sidebar, BookmarksBar)
+ * carry `data-surface="window"`. `[data-surface]` in main.css maps each family onto the shared
+ * control roles – `--v2-control-text`, `--v2-control-text-deemphasized`, `--v2-control-fill`,
+ * `--v2-control-fill-hover`, `--v2-control-accent` – so a control that reads those draws in its
+ * surface's family wherever it is placed.
  */
 
 // ---------------------------------------------------------------------------
@@ -41,7 +57,8 @@ const FrameDialogHostContext = createContext<FrameDialogHostApi | null>(null)
  *
  * Dialogs placed through it call `useFrameDialog` and render their panel as a child of the host,
  * in flow – never `fixed`, never with a scrim of their own. A phone sheet aligns itself with
- * `self-end justify-self-stretch`.
+ * `self-end justify-self-stretch`. A page surface: its root carries `data-surface="page"`, so
+ * the dialogs' controls draw in the page family (§9.29).
  *
  * Modal dialogs render in the content frame through FrameDialogHost (scrim dims the frame only).
  * Popovers, menus, toasts and anything anchored to chrome outside the frame render through
@@ -61,7 +78,11 @@ export function FrameDialogHost({ children }: { children?: ReactNode }): JSX.Ele
   const top = dialogs[dialogs.length - 1]
   return (
     <FrameDialogHostContext.Provider value={api}>
-      <div className="zen-frame-dialogs absolute inset-0 z-50" data-open={top ? 'true' : undefined}>
+      <div
+        className="zen-frame-dialogs absolute inset-0 z-50"
+        data-surface="page"
+        data-open={top ? 'true' : undefined}
+      >
         {top && (
           <div
             className="zen-frame-scrim zen-animate-in absolute inset-0"
@@ -108,7 +129,8 @@ const CHROME_LAYER_ID = 'zen-chrome-layer'
 /**
  * The one element popovers portal into: appended to `document.body` on first use, `fixed;
  * inset: 0` over the whole window and above everything in it (`.zen-chrome-layer` in main.css),
- * catching no pointer events of its own – each portal's subtree turns them back on.
+ * catching no pointer events of its own – each portal's subtree turns them back on. A page
+ * surface (`data-surface="page"`): popovers and menus draw in the page family (§9.29).
  */
 export function chromeLayer(): HTMLElement {
   let layer = document.getElementById(CHROME_LAYER_ID)
@@ -116,6 +138,7 @@ export function chromeLayer(): HTMLElement {
     layer = document.createElement('div')
     layer.id = CHROME_LAYER_ID
     layer.className = 'zen-chrome-layer'
+    layer.setAttribute('data-surface', 'page')
     document.body.appendChild(layer)
   }
   return layer
