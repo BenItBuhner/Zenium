@@ -80,8 +80,9 @@ const FrameDialogHostContext = createContext<FrameDialogHostApi | null>(null)
 
 /*
  * The frame's own host – the one TabDialogs mounts over the content frame (the shell on
- * phones) – published for `FrameDialogPortal`, which a dialog whose state lives outside every
- * host's subtree (a page's sheets, the new tab page's customise sheet) reaches from anywhere.
+ * phones) – published for `FrameDialogPortal`, which a dialog whose state lives inside the
+ * frame (a page's or panel's sheets, the new tab page's customise sheet) reaches from outside
+ * every host's subtree.
  */
 let frameHost: FrameDialogHostApi | null = null
 const frameHostListeners = new Set<() => void>()
@@ -164,12 +165,12 @@ export function chromeInertHeld(): boolean {
  * positioned itself; between the dialogs the slot lets the pointer through to the scrim, whose
  * press – consumed on `pointerdown` (§9.20 amended) – goes to the dialog on top. While a dialog
  * is open the window chrome outside the frame is inert (`holdChromeInert`, §9.5) and every open
- * popover closes; Escape and the dialog's own controls stay live. A dialog that draws the
- * stack's one scrim itself (`ownScrim`: a sheet, whose scrim fades with its motion) gets none
- * from the host while it is on top.
+ * popover closes; Escape and the dialog's own controls stay live.
  *
+ * A dialog that draws the stack's one scrim itself – a phone sheet, whose scrim fades with its
+ * motion (§9.24, §9.28) – registers with `ownScrim`, and the host draws none while it is on top.
  * `frame` marks the frame's host (TabDialogs'): `FrameDialogPortal` reaches it from anywhere in
- * the tree, for a dialog whose state lives outside the host's subtree.
+ * the tree, for a dialog whose state lives inside the content frame.
  *
  * Modal dialogs render in the content frame through FrameDialogHost (scrim dims the frame only).
  * Popovers, menus, toasts and anything anchored to chrome outside the frame render through
@@ -243,7 +244,7 @@ export function FrameDialogHost({
  * for a prompt the page waits on, which only its buttons and Escape answer). Renders nothing
  * itself: the dialog returns its panel, which the host centres above the scrim. `ownScrim` is
  * for a sheet that draws the stack's one scrim itself, fading with its motion: the host then
- * draws none while that sheet is on top.
+ * draws none while that sheet is on top, and the sheet's scrim takes the press.
  *
  * Modal dialogs render in the content frame through FrameDialogHost (scrim dims the frame only).
  * Popovers, menus, toasts and anything anchored to chrome outside the frame render through
@@ -268,10 +269,11 @@ export function useFrameDialog({
 /**
  * Render a dialog into a `FrameDialogHost` from anywhere in the tree: the nearest host when
  * there is one above, else the frame's (`FrameDialogHost frame`, which TabDialogs mounts). For
- * a dialog whose state lives outside the host's subtree – a page's sheets, opened by its rows –
- * which must still mount in the host, over the frame, not inside the frame's transform. The
- * children are the host's for `useFrameDialog` too, so they register with the host they render
- * in. Renders nothing until the host has mounted.
+ * a dialog whose state lives inside the content frame – a page's or a panel's sheets, opened by
+ * its rows – which must still mount in the host, over the frame, not inside the frame's
+ * transform. It portals into the host's slot, above the scrim, and the children are the host's
+ * for `useFrameDialog` too, so they register with the host they render in. Renders nothing
+ * until the host has mounted.
  *
  * Modal dialogs render in the content frame through FrameDialogHost (scrim dims the frame only).
  * Popovers, menus, toasts and anything anchored to chrome outside the frame render through

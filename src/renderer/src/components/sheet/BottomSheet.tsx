@@ -42,12 +42,14 @@ interface Props {
    * under its header instead (`data-scrolled` on the sheet) turns this off.
    */
   fadeEdges?: boolean
+  /** The id of the element that names the dialog (its title), for `aria-labelledby`. */
+  labelledBy?: string
+  className?: string
   /**
    * Rendered inside a `FrameDialogHost` (lib/portals.tsx): the layer fills the host's box
    * (`absolute`) instead of the viewport (`fixed`), and the host orders the stack.
    */
   hosted?: boolean
-  className?: string
 }
 
 type Zone = 'grip' | 'body' | 'scrim'
@@ -117,8 +119,9 @@ export function BottomSheet({
   contentKey,
   handleLabel = 'Resize sheet',
   fadeEdges = true,
-  hosted = false,
-  className
+  labelledBy,
+  className,
+  hosted = false
 }: Props): JSX.Element {
   const layerRef = useRef<HTMLDivElement>(null)
   const sheetRef = useRef<HTMLDivElement>(null)
@@ -394,8 +397,8 @@ export function BottomSheet({
     // A drag produces no click to swallow; a new touch must start with a clean slate.
     swallowClick.current = false
     const moving = motion().current.phase === 'settling'
-    // A press on a resting sheet's scrim is the dismissal itself (v2 §9.20), consumed here: the
-    // click that follows it reaches nothing.
+    // A press on a resting sheet's scrim is the dismissal itself (v2 draft §9.20, consumed on
+    // `pointerdown`): the click that follows it reaches nothing.
     if (!moving && zone === 'scrim') {
       e.preventDefault()
       swallowClick.current = true
@@ -489,9 +492,13 @@ export function BottomSheet({
       }}
     >
       <div ref={scrimRef} className="zen-sheet-scrim absolute inset-0" style={{ opacity: 0 }} />
+      {/* Focusable itself (tabIndex -1), so a sheet whose first control must not take the focus
+          on open – a form's text field on a phone – can still move the focus into the dialog. */}
       <div
         ref={sheetRef}
         role="dialog"
+        aria-labelledby={labelledBy}
+        tabIndex={-1}
         className={cn(
           'zen-sheet zen-sheet-detents absolute inset-x-0 bottom-0 mx-auto flex w-full max-w-[520px] flex-col',
           className

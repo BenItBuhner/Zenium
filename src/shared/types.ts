@@ -2433,6 +2433,8 @@ export interface MenuItemDescriptor {
   /** A favicon (`data:` or remote URL) the renderer may show before the label. */
   icon?: string | null
   submenu: MenuItemDescriptor[] | null
+  /** A destructive row ("Delete"), drawn in the danger ink. */
+  danger?: boolean
 }
 
 export interface MenuDescriptor {
@@ -2451,6 +2453,8 @@ export interface MenuDescriptor {
     | 'history'
     | 'download'
     | 'urlbar'
+  /** What the phone sheet calls the menu (a bookmark's name, "3 selected"); the source's generic name when absent. */
+  title?: string
   /** Anchor in chrome CSS pixels, when known. */
   x: number | null
   y: number | null
@@ -2508,7 +2512,6 @@ export interface Commands {
     args: { requestId: string; allow: boolean; always: boolean }
     result: void
   }
-
   'layout.report': { args: LayoutReport; result: void }
 
   /**
@@ -2827,8 +2830,13 @@ export interface Commands {
   /**
    * Copy arbitrary text (history rows, menus) through the host clipboard. `sensitive` marks a
    * secret (a generated password): hidden from clipboard previews and cleared after the timeout.
+   * With a `confirmation` the core also says so where the chrome is the one to
+   * (`Browser.copyText`: a toast, or nothing on Android 13+ where the OS shows its clipboard chip).
    */
-  'clipboard.writeText': { args: { text: string; sensitive?: boolean }; result: void }
+  'clipboard.writeText': {
+    args: { text: string; sensitive?: boolean; confirmation?: string }
+    result: void
+  }
 
   /**
    * Ctrl+T, the sidebar's New Tab button, double-click on the sidebar: a tab at `zen://newtab`

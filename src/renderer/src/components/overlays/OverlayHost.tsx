@@ -1,7 +1,10 @@
 import type { JSX } from 'react'
 import type { UIState } from '@shared/types'
+import { useViewport } from '@renderer/lib/formFactor'
 import type { UiState } from '@renderer/lib/ui'
 import { BookmarkManager } from '../bookmarks/BookmarkManager'
+import { PhoneBookmarksPanel } from '../phone/PhoneBookmarksPanel'
+import { PhoneHistoryPanel } from '../phone/PhoneHistoryPanel'
 import { AddonsPanel } from './AddonsPanel'
 import { BoostPanel } from './BoostPanel'
 import { DownloadsPanel } from './DownloadsPanel'
@@ -13,6 +16,9 @@ import { ThemePicker } from './ThemePicker'
 
 /** Renders whichever chrome overlay is open over the content area. */
 export function OverlayHost({ state, ui }: { state: UIState; ui: UiState }): JSX.Element | null {
+  // History and bookmarks are lists a phone reads and touches differently (rows, swipes, a
+  // selection header); desktop and tablet keep their panels.
+  const phone = useViewport().formFactor === 'phone'
   switch (ui.overlay) {
     case 'settings':
       return <SettingsPanel state={state} />
@@ -21,9 +27,9 @@ export function OverlayHost({ state, ui }: { state: UIState; ui: UiState }): JSX
     case 'sync':
       return <SettingsPanel state={state} initialSection="sync" />
     case 'history':
-      return <HistoryPage state={state} />
+      return phone ? <PhoneHistoryPanel state={state} /> : <HistoryPage state={state} />
     case 'bookmarks':
-      return <BookmarkManager state={state} />
+      return phone ? <PhoneBookmarksPanel state={state} /> : <BookmarkManager state={state} />
     case 'downloads':
       return <DownloadsPanel state={state} />
     case 'theme':

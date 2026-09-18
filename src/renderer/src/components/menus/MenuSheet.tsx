@@ -56,7 +56,7 @@ interface MenuNav {
 function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const [nav, setNav] = useState<MenuNav>({ path: [], direction: 0 })
   const { path } = nav
-  const title = path.length ? path[path.length - 1].label : sourceTitle(menu.source)
+  const title = path.length ? path[path.length - 1].label : (menu.title ?? sourceTitle(menu.source))
   const groups = useMemo(
     () => groupItems(path.length ? (path[path.length - 1].submenu ?? []) : menu.items),
     [path, menu.items]
@@ -112,7 +112,7 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
                 <button
                   type="button"
                   disabled={!item.enabled}
-                  className="zen-sheet-item"
+                  className={cn('zen-sheet-item', item.danger && 'text-[var(--zen-danger)]')}
                   onClick={() => {
                     if (item.submenu) setNav((n) => ({ path: [...n.path, item], direction: 1 }))
                     else sheet.current?.dismiss(() => pickMenuItem(item.id))
@@ -275,7 +275,8 @@ function MenuList({
               className={cn(
                 'flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[12.5px]',
                 'hover:bg-[var(--zen-element-bg-hover)] disabled:opacity-40',
-                isOpen && 'bg-[var(--zen-element-bg-hover)]'
+                isOpen && 'bg-[var(--zen-element-bg-hover)]',
+                item.danger && 'text-[var(--zen-danger)]'
               )}
               onPointerEnter={() => setOpen(item.submenu ? item.id : null)}
               onClick={() => {

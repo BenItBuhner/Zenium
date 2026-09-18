@@ -1,0 +1,379 @@
+/*
+ * The phone history and bookmarks panels and their sheets (the bookmark editor, the
+ * clear-history prompt), built against the design-language v2 draft (sections 1 to 6 and 9)
+ * on the shared `--v2-*` tokens: neutral panel surfaces with a hairline border, rows of 44
+ * that grow with their content and run edge to edge with their text at the 16 gutter,
+ * rectangular 40 px fields, 44 icon buttons with 20 px glyphs, colour only as ink. Motion stays
+ * v1 section 7 / v2 section 11. The sheets themselves are the chassis's (`.zen-sheet*`,
+ * `.zen-v2-button` in main.css) and this file adds nothing to them but the form's layout; the
+ * toasts are the frame's message cards (components/messages). Every value is a token so the
+ * surfaces re-tune with the block in main.css. The focusable pieces that are not `zen-v2-`
+ * controls already (the field's clear) carry a `zen-v2-*` alias class, which is how main.css's
+ * one shared focus ring reaches them on coarse pointers; the field draws its own ring on
+ * :focus-within and a row draws it around itself from its accessible row's focus.
+ */
+@layer components {
+  /* A panel that takes the content card's place: the neutral panel with a hairline edge, no blur. */
+  .zen-phone-panel {
+    background: var(--v2-panel);
+    backdrop-filter: none;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-sheet);
+    box-shadow: var(--v2-shadow-panel);
+    color: var(--v2-text);
+  }
+  /* The 56 panel header's title (9.16): hierarchy by size, weights 400 and 600 only. */
+  .zen-phone-title {
+    font-size: var(--v2-font-heading);
+    font-weight: var(--v2-weight-heading);
+    line-height: 22px;
+    color: var(--v2-text);
+  }
+  /*
+   * What stays put above a scrolling list (the search field). No line at rest; once the list has
+   * scrolled under it a 1 px hairline appears at its bottom edge (9.7). Painted above the list.
+   */
+  .zen-phone-top {
+    position: relative;
+    z-index: 1;
+    transition: box-shadow 120ms var(--zen-ease);
+  }
+  .zen-phone-top[data-scrolled='true'] {
+    box-shadow: 0 1px 0 var(--v2-border);
+  }
+  /* The list itself: the sheets' rule, no classic scrollbar (Android's is an overlay that hides). */
+  .zen-phone-list {
+    scrollbar-width: none;
+  }
+  .zen-phone-list::-webkit-scrollbar {
+    display: none;
+  }
+  /*
+   * An empty state (9.17): one sentence at 15/400 and 69%, centred in a 32 gutter, its first
+   * line 48 below what stays put above the list (the 8 under the field and 40 here); anchored
+   * to the top, never to the middle of the free height. The optional follow-up is a secondary
+   * button 16 beneath it, hugging its label with an 88 minimum at the 40 control height.
+   */
+  .zen-phone-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 32px 24px;
+    text-align: center;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-phone-empty-action {
+    min-width: 88px;
+    margin-top: 16px;
+  }
+
+  /*
+   * Rows (9.2, 9.18, 9.21, 9.25): a minimum height that grows with the content, never a clamp;
+   * 44 for one line, 64 for a label with a description, the 12 above and below being the row's
+   * own padding (20 + 24 = 44, 20 + 20 + 24 = 64: the two line boxes touch). They run edge to
+   * edge, the press fill bleeding to the panel's border and their text inset 16 – the one
+   * gutter, shared with the header's title, the search field and the headings. Whatever trails
+   * the text centres on the
+   * row's height; only the leading box takes the first text line. The title and the description
+   * each keep to one line here, so the three-line case (a trailing control on the label line)
+   * does not arise. The rows hold no 40 px control, only 44 icon buttons whose 20 px glyph is
+   * the row's glyph, so they stay at the base heights and the list has no gap between them.
+   */
+  .zen-list-row {
+    position: relative;
+    display: flex;
+    width: 100%;
+    min-height: var(--v2-row);
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    color: var(--v2-text);
+    text-align: left;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-list-row[data-two-line='true'] {
+    min-height: var(--v2-row-two-line);
+  }
+  .zen-list-row:active {
+    background: var(--v2-fill);
+  }
+  /*
+   * A picked row (9.6): the accent at 12% in light and 16% in dark, with the accent-filled
+   * checkbox – never `--v2-selection` (text selection, too strong for a row) and never
+   * `--v2-fill`, which is the press. The expression stands in for a `--v2-selected` token.
+   */
+  .zen-list-row[data-selected='true'],
+  .zen-list-row[data-selected='true']:active {
+    background: color-mix(in srgb, var(--v2-accent) 12%, transparent);
+  }
+  :root[data-theme='dark'] .zen-list-row[data-selected='true'],
+  :root[data-theme='dark'] .zen-list-row[data-selected='true']:active {
+    background: color-mix(in srgb, var(--v2-accent) 16%, transparent);
+  }
+  /* A destructive action row (10.4): label and glyph in the danger ink, the fill as any row's. */
+  .zen-list-row[data-danger] {
+    color: var(--v2-danger);
+  }
+  /*
+   * The accessible row (a button, or a checkbox while picking): the leading box and the text,
+   * laid out as the row's own flex line so nothing moves; a trailing control is its sibling.
+   * It takes the focus, and the ring – the shared 2 px accent (main.css, section 1) – is drawn
+   * around the whole row from it, not around the text alone. The ring sits inside the row in
+   * both schemes: rows run edge to edge and a swiped row lives in a clipping frame, so an
+   * outside ring would be cut, which is section 1's own reason for the inset ring on fields.
+   */
+  .zen-list-main {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    gap: 12px;
+    outline: none;
+  }
+  .zen-list-row:has(> .zen-list-main:focus-visible) {
+    outline: 2px solid var(--v2-ring);
+    outline-offset: -2px;
+  }
+  /*
+   * The leading box: a glyph or favicon, or the row's checkbox while rows are being picked. It
+   * sits on the first text line (9.2): its top (line − box) / 2 below the line's top, an
+   * expression rather than a number – 0 for a 20 box on the 20 line here, 2 for a 16 box.
+   */
+  .zen-list-lead {
+    display: flex;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    flex-shrink: 0;
+    align-self: flex-start;
+    align-items: center;
+    justify-content: center;
+    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+  }
+  .zen-list-lead[data-checkbox='true'] {
+    width: var(--v2-checkbox);
+    height: var(--v2-checkbox);
+    margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
+  }
+  .zen-list-favicon {
+    width: 100%;
+    height: 100%;
+    border-radius: var(--v2-radius-checkbox);
+  }
+  /* A 20 square checkbox at radius 2: bordered when off, the accent with a white check when on. */
+  .zen-list-checkbox {
+    width: var(--v2-checkbox);
+    height: var(--v2-checkbox);
+    border: 1px solid color-mix(in srgb, var(--v2-text) 41%, transparent);
+    border-radius: var(--v2-radius-checkbox);
+    background: var(--v2-page);
+    color: transparent;
+    transition:
+      background 120ms var(--zen-ease),
+      border-color 120ms var(--zen-ease);
+  }
+  .zen-list-checkbox[data-checked='true'] {
+    border-color: var(--v2-accent);
+    background: var(--v2-accent);
+    color: var(--v2-on-accent);
+  }
+  .zen-list-checkbox[data-checked='true'] > svg {
+    animation: zen-pop 180ms var(--zen-ease);
+  }
+  .zen-list-text {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+  }
+  .zen-list-title {
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-list-subtitle {
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+  }
+  /* A trailing value (a folder's count); trailing controls are the 44 icon buttons. */
+  .zen-list-value {
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+    font-variant-numeric: tabular-nums;
+  }
+  /*
+   * Trailing content, centred by the row (9.18). A 44 icon button reaches into the row's 12
+   * padding above and below and 12 of its 16 at the end, so a 44 row holds it whole and its
+   * glyph lands 16 from the panel's edge, the same 16 the leading glyph keeps.
+   */
+  .zen-list-trailing {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    margin: -12px -12px -12px 0;
+  }
+  /*
+   * A group's heading (a day, "Recently closed"): a 15/600 sub-heading, sentence case, 20 above
+   * and 8 to its first row's box (9.27); the first sits 8 under what stays put above the list,
+   * which the field's own 8 supplies.
+   */
+  .zen-list-heading {
+    padding: 20px 16px 8px;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+    color: var(--v2-text);
+  }
+  .zen-list-heading:first-child {
+    padding-top: 0;
+  }
+
+  /* A row being swiped away slides over the quiet fill carrying the trash glyph in the danger ink. */
+  .zen-swipe {
+    position: relative;
+    overflow: hidden;
+  }
+  .zen-swipe-under {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    background: var(--v2-fill);
+    color: var(--v2-danger);
+    opacity: 0;
+  }
+  .zen-swipe-under[data-side='left'] {
+    justify-content: flex-start;
+  }
+  .zen-swipe-under[data-side='right'] {
+    justify-content: flex-end;
+  }
+  .zen-swipe-content {
+    position: relative;
+    background: var(--v2-panel);
+  }
+  .zen-swipe[data-moving='true'] .zen-swipe-content {
+    will-change: transform;
+  }
+  .zen-swipe[data-moving='true'] .zen-list-row:active {
+    background: transparent;
+  }
+
+  /*
+   * A field (section 6, 9.12): 40 tall, rectangular, a hairline border; focus is the 2 px accent
+   * ring. Its own class, apart from main.css's `.zen-field` (a bare desktop input), because it
+   * wraps the input with a glyph or a clear button.
+   */
+  .zen-phone-field {
+    display: flex;
+    height: var(--v2-control);
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px 0 12px;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-control);
+    background: var(--v2-page);
+    color: var(--v2-text);
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-phone-field:focus-within {
+    outline: 2px solid var(--v2-ring);
+    outline-offset: 0;
+  }
+  /* Like the shared `zen-v2-*` ring (main.css): the offset turns inward in dark. */
+  :root[data-theme='dark'] .zen-phone-field:focus-within {
+    outline-offset: -2px;
+  }
+  /* Disabled is .4 on the whole control, glyph, text, fill and border together (9.30). */
+  .zen-phone-field:has(> input:disabled) {
+    opacity: 0.4;
+  }
+  .zen-phone-field > input {
+    min-width: 0;
+    flex: 1;
+    height: 100%;
+    border: 0;
+    background: transparent;
+    outline: none;
+    font-size: var(--v2-font-body);
+    color: var(--v2-text);
+  }
+  .zen-phone-field > input::placeholder {
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-phone-field > input::-webkit-search-cancel-button {
+    display: none;
+  }
+  .zen-phone-field-icon {
+    flex-shrink: 0;
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-phone-field-clear {
+    display: flex;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--v2-radius-control);
+    color: var(--v2-text-deemphasized);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-phone-field-clear:active {
+    background: var(--v2-fill);
+  }
+
+  /*
+   * The editor's form (9.12, 9.25): in the sheet's one 16 gutter, 16 under the header, each
+   * field under its 15/400 label with 4 between them and 16 to the next; the chassis footer
+   * (`.zen-sheet-footer`) closes it with the actions splitting the width (9.11).
+   */
+  .zen-phone-form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding-top: 16px;
+  }
+  .zen-phone-form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 0 16px;
+  }
+  .zen-phone-form > .zen-sheet-footer {
+    padding-top: 0;
+  }
+  .zen-phone-field-label {
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
+    color: var(--v2-text);
+  }
+}
+
+/*
+ * Icon buttons of the panels (9.3, 9.29, 9.30): the 44 box with a 20 glyph, radius 8, drawn in
+ * the page family – the panel's own ink at full opacity, the text fill under a press, .4 when
+ * disabled. Unlayered like the chrome's own coarse-pointer rule, which would otherwise size
+ * them at 32 in the window's ink; folds into the shared `zen-toolbar-button` once it reads
+ * `data-surface` and its three sizes land.
+ */
+:root[data-pointer='coarse'] .zen-phone-panel .zen-toolbar-button {
+  width: var(--v2-icon-button);
+  height: var(--v2-icon-button);
+  border-radius: var(--v2-radius-card);
+  color: var(--v2-text);
+  opacity: 1;
+}
+:root[data-pointer='coarse'] .zen-phone-panel .zen-toolbar-button:hover:not(:disabled),
+:root[data-pointer='coarse'] .zen-phone-panel .zen-toolbar-button:active:not(:disabled) {
+  background: var(--v2-fill);
+}
+:root[data-pointer='coarse'] .zen-phone-panel .zen-toolbar-button:disabled {
+  opacity: 0.4;
+}

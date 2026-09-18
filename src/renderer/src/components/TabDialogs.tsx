@@ -4,6 +4,7 @@ import type { Tab, UIState } from '@shared/types'
 import { SPACE_ICONS } from '@shared/defaults'
 import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
+import { useViewport } from '@renderer/lib/formFactor'
 import { FrameDialogHost, useFrameDialog } from '@renderer/lib/portals'
 import { activeTab, tabTitle } from '@renderer/lib/selectors'
 import { uiStore, type UiState } from '@renderer/lib/ui'
@@ -19,6 +20,7 @@ import { BookmarkAllTabsDialog } from './bookmarks/BookmarkAllTabsDialog'
 import { EditBookmarkDialog } from './bookmarks/EditBookmarkDialog'
 import { StarDialog } from './bookmarks/StarDialog'
 import { NewTabShortcutDialog } from './newtab/NewTabShortcutDialog'
+import { BookmarkEditSheet } from './phone/BookmarkEditSheet'
 import { ZoomBubble } from './zoom/ZoomBubble'
 
 const TAB_ICONS = [
@@ -46,11 +48,11 @@ const TAB_ICONS = [
  * or Zenium quits, the new tab page's add / edit shortcut dialog, and the extension install and
  * permission prompts. The modal ones render through the `FrameDialogHost` this mounts, so they
  * centre in the box it is placed in – the content frame on desktop, the shell on phones – over
- * a scrim that dims only that box
- * (lib/portals.tsx). The star bubble is a popover: on desktop it portals to the chrome layer,
- * anchored under the star; on phones it is a sheet in the host. The zoom bubble is a desktop
- * popover too, under the pill's zoom chip. This is the frame's host: a dialog whose state lives
- * outside it (the new tab page's customise sheet) reaches it through `FrameDialogPortal`.
+ * a scrim that dims only that box (lib/portals.tsx). The star bubble is a popover: on desktop
+ * it portals to the chrome layer, anchored under the star; on phones it is a sheet in the host.
+ * The zoom bubble is a desktop popover too, under the pill's zoom chip. This is the frame's
+ * host: a dialog whose state lives inside the frame (a phone panel's sheets, the new tab page's
+ * customise sheet) reaches it through `FrameDialogPortal`.
  */
 export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const pinnedTabId = uiStore.use((s) => s.editingPinnedUrlTabId)
@@ -61,6 +63,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const edit = uiStore.use((s) => s.bookmarkEdit)
   const shortcut = uiStore.use((s) => s.newTabShortcutDialog)
   const managerOpen = uiStore.use((s) => s.overlay === 'bookmarks')
+  const phone = useViewport().formFactor === 'phone'
   const pinnedTab = pinnedTabId ? state.tabs[pinnedTabId] : undefined
   const iconTab = iconTabId ? state.tabs[iconTabId] : undefined
   return (
@@ -71,6 +74,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
         allTabs={allTabs}
         edit={edit}
         managerOpen={managerOpen}
+        phone={phone}
         pinnedTab={pinnedTab}
         iconTab={iconTab}
       />
@@ -93,6 +97,7 @@ function BookmarkDialog({
   allTabs,
   edit,
   managerOpen,
+  phone,
   pinnedTab,
   iconTab
 }: {
@@ -101,11 +106,17 @@ function BookmarkDialog({
   allTabs: UiState['bookmarkAllTabs']
   edit: UiState['bookmarkEdit']
   managerOpen: boolean
+  phone: boolean
   pinnedTab: Tab | undefined
   iconTab: Tab | undefined
 }): JSX.Element | null {
   if (star) return <StarDialog key={star.nodeId} state={state} star={star} />
   if (allTabs) return <BookmarkAllTabsDialog state={state} request={allTabs} />
+  // On a phone every edit – from the star's toast, a panel row's menu, the core's menus – is the
+  // one sheet, over the panel too (the phone panel hosts no editor of its own).
+  if (edit && phone) {
+    return <BookmarkEditSheet key={`${edit.id ?? 'new'}:${edit.type}`} state={state} edit={edit} />
+  }
   if (edit && !managerOpen) {
     // "Add page…" on the bar starts from the page on screen, like Chrome.
     const tab = edit.id === null && edit.type === 'url' ? activeTab(state) : null

@@ -1899,12 +1899,21 @@ export class Menus {
         {
           label: 'Bookmarks',
           submenu: [
-            {
-              label: active?.bookmarked ? 'Remove Bookmark' : 'Bookmark This Page',
-              action: 'bookmark.add',
-              enabled: Boolean(active && !active.url.startsWith('zen://')),
-              click: () => active && this.browser.toggleBookmark(active.id, win)
-            },
+            // The phone has its star flow (a toast with Edit, the editor for a page that is
+            // bookmarked already); desktop keeps the toggle, whose star bubble names and files it.
+            phone
+              ? {
+                  label: active?.bookmarked ? 'Edit Bookmark' : 'Bookmark This Page',
+                  action: 'bookmark.add',
+                  enabled: Boolean(active && !active.url.startsWith('zen://')),
+                  click: () => active && this.browser.starTab(active.id, win)
+                }
+              : {
+                  label: active?.bookmarked ? 'Remove Bookmark' : 'Bookmark This Page',
+                  action: 'bookmark.add',
+                  enabled: Boolean(active && !active.url.startsWith('zen://')),
+                  click: () => active && this.browser.toggleBookmark(active.id, win)
+                },
             {
               label: 'Bookmark All Tabs…',
               action: 'bookmark.allTabs',

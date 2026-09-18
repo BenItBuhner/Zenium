@@ -328,6 +328,7 @@
 .zen-v2-button[data-primary]:active:not(:disabled) {
   background: color-mix(in srgb, var(--v2-on-accent) 30%, var(--v2-accent));
 }
+/* `data-danger`: the secondary in the danger ink (§6) – a sheet's Delete beside its Save. */
 .zen-v2-button[data-danger] {
   color: var(--v2-danger);
 }
@@ -1035,6 +1036,19 @@
     transform: none;
   }
 }
+@keyframes zen-glyph-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.18);
+  }
+  100% {
+    transform: none;
+  }
+}
 @keyframes zen-progress {
   from {
     transform: translateX(-100%);
@@ -1182,6 +1196,10 @@
     height: var(--v2-icon);
     stroke-width: var(--v2-icon-stroke);
     color: var(--v2-accent);
+  }
+  /* The glyph that reports a change just made (the star that filled) pops in with the card (v1 §7). */
+  .zen-message-glyph-pop {
+    animation: zen-glyph-pop 260ms var(--zen-ease);
   }
   /* A banner always trails its close, an icon button at 2 px margins: the row is control + 8 (§9.16, §9.21). */
   .zen-banner {
