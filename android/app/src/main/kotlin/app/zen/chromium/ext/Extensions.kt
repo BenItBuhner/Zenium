@@ -231,7 +231,8 @@ class Extensions(private val host: Host) {
                         "token" to token,
                         "uiLanguage" to Locale.getDefault().toLanguageTag(),
                         "isolatedWorlds" to isolatedWorlds,
-                        "worldSlots" to worldSlots.size
+                        "worldSlots" to worldSlots.size,
+                        "navigationListener" to NavigationReports.supported
                     )
                 )
             }

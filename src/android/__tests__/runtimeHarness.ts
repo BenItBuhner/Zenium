@@ -21,6 +21,8 @@ export interface Sent {
 export class FakeKotlin implements RuntimeBridge {
   isolatedWorlds = true
   worldSlots = 16
+  /** The fake WebView has the navigation listener (`navigation` view events carry webNavigation). */
+  navigationListener = false
   /** Pending `ext.setRules` replies while `holdRules` is on (to observe coalescing). */
   holdRules = false
   readonly heldRules: Array<() => void> = []
@@ -86,7 +88,8 @@ export class FakeKotlin implements RuntimeBridge {
           token: 'tok',
           uiLanguage: 'en-US',
           isolatedWorlds: this.isolatedWorlds,
-          worldSlots: this.isolatedWorlds ? this.worldSlots : 0
+          worldSlots: this.isolatedWorlds ? this.worldSlots : 0,
+          navigationListener: this.navigationListener
         }
       case 'ext.open': {
         const manifest = this.manifests.get(String(args.path))
@@ -278,11 +281,17 @@ export function makeTab(id: string, url: string, containerId = 'default'): Tab {
 }
 
 export function harness(
-  options: { isolatedWorlds?: boolean; worldSlots?: number; files?: Map<string, string> } = {}
+  options: {
+    isolatedWorlds?: boolean
+    worldSlots?: number
+    files?: Map<string, string>
+    navigationListener?: boolean
+  } = {}
 ): Harness {
   const kt = new FakeKotlin()
   kt.isolatedWorlds = options.isolatedWorlds ?? true
   kt.worldSlots = options.worldSlots ?? 16
+  kt.navigationListener = options.navigationListener ?? false
   const files = options.files ?? new Map<string, string>()
   const io: StoreIO = {
     readSync: (name) => files.get(name) ?? null,

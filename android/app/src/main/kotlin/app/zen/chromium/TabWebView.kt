@@ -47,6 +47,7 @@ import androidx.webkit.WebViewFeature
 import app.zen.chromium.blocking.BlockingTab
 import app.zen.chromium.blocking.Decision
 import app.zen.chromium.blocking.SafeBrowsingHit
+import app.zen.chromium.ext.NavigationReports
 import app.zen.chromium.privacy.PrivacyFlags
 import org.json.JSONArray
 import org.json.JSONObject
@@ -150,6 +151,8 @@ class TabWebView(
     private var interstitialUrl: String? = null
     /** A certificate `onReceivedSslError` refused; the request's own failure follows and is the same news. */
     private var refusedCertificateUrl: String? = null
+    /** What [NavigationReports.attach] registered, to unregister at [destroy]. */
+    private var navigationListener: androidx.webkit.NavigationListener? = null
 
     init {
         Profiles.apply(this, containerId)
@@ -216,10 +219,15 @@ class TabWebView(
         setOnContextClickListener { onLongPress() }
         installPageScript()
         host.extensions?.attach(this)
+        // The navigation listener's reports carry `chrome.webNavigation` on a WebView that has
+        // it; the extension runtime infers the family from the client callbacks otherwise.
+        if (host.extensions != null) navigationListener = NavigationReports.attach(this) { host.viewEvent(tabId, "navigation", it) }
         applyPrivacy()
     }
 
     override fun destroy() {
+        NavigationReports.detach(this, navigationListener)
+        navigationListener = null
         host.extensions?.detach(this)
         super.destroy()
     }

@@ -361,7 +361,7 @@ export class ExtensionApi {
       case 'contextMenus':
         return this.contextMenus.call(ext, endpoint.id, method, args)
       case 'webNavigation':
-        return this.webNavigationCall(id, method, args)
+        return this.webNavigationCall(ext, method, args)
       case 'cookies': {
         const tabId = endpoint.context === 'content' ? endpoint.tabId : null
         const tab = tabId ? (this.host.browser.tabs.tab(tabId) ?? null) : null
@@ -1017,30 +1017,58 @@ export class ExtensionApi {
     throw new Error(`chrome.notifications.${method} ${NOT_IMPLEMENTED}`)
   }
 
-  private webNavigationCall(id: string, method: string, args: unknown[]): unknown {
+  /**
+   * `getFrame` / `getAllFrames`: the main frame from the tab (frame 0, its URL), the sub-frames
+   * from the content endpoints the extension has in the tab (the only frames the host can see).
+   * A tab the extension may not see (private, not allowed) is no tab, as in Chrome.
+   */
+  private webNavigationCall(ext: AttachedExtension, method: string, args: unknown[]): unknown {
     const details = asRecord(args[0])
-    const frames = (tabId: number): Array<Record<string, unknown>> => {
-      const coreId = this.tabs.coreIdFor(tabId)
-      return this.host.router
-        .of(id, 'content')
-        .filter((e) => e.tabId === coreId)
-        .map((e) => ({
+    const id = ext.record.id
+    const frames = (tabIdArg: unknown): Array<Record<string, unknown>> | null => {
+      const chromeTabId = asNumber(tabIdArg)
+      if (chromeTabId === null) throw new Error('Invalid tabId')
+      const coreId = this.tabs.coreIdFor(chromeTabId)
+      const tab = coreId ? this.host.browser.tabs.tab(coreId) : undefined
+      if (!tab || !this.tabs.visibleTo(ext, tab)) return null
+      const out: Array<Record<string, unknown>> = [
+        {
+          tabId: chromeTabId,
+          frameId: 0,
+          parentFrameId: -1,
+          processId: -1,
+          url: tab.url,
+          documentId: `tab-${chromeTabId}`,
+          frameType: 'outermost_frame',
+          documentLifecycle: 'active',
+          errorOccurred: false
+        }
+      ]
+      for (const e of this.host.router.of(id, 'content')) {
+        if (e.tabId !== coreId || e.frameId === 0) continue
+        if (out.some((f) => f.frameId === e.frameId)) continue
+        out.push({
+          tabId: chromeTabId,
           frameId: e.frameId,
-          parentFrameId: e.frameId === 0 ? -1 : 0,
+          parentFrameId: 0,
+          processId: -1,
           url: e.url,
-          documentId: e.id,
-          errorOccurred: false,
-          processId: 0
-        }))
+          documentId: e.id.split('.')[0] ?? e.id,
+          frameType: 'sub_frame',
+          documentLifecycle: 'active',
+          errorOccurred: false
+        })
+      }
+      return out
     }
     switch (method) {
-      case 'getFrame':
-        return (
-          frames(Number(details.tabId)).find((f) => f.frameId === Number(details.frameId ?? 0)) ??
-          null
-        )
+      case 'getFrame': {
+        const list = frames(details.tabId)
+        const frameId = asNumber(details.frameId) ?? 0
+        return list?.find((f) => f.frameId === frameId) ?? null
+      }
       case 'getAllFrames':
-        return frames(Number(details.tabId))
+        return frames(details.tabId)
     }
     throw new Error(`chrome.webNavigation.${method} ${NOT_IMPLEMENTED}`)
   }

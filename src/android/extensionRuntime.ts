@@ -4,7 +4,14 @@ import type { MenuItemTemplate, PageContextParams } from '@core/platform'
 import type { ZenWindow } from '@core/window'
 import { JsonStore } from '@core/store/JsonStore'
 import type { EngineContextKind } from '@core/extensions/api/engine'
+import type { EventDelivery } from '@core/extensions/api/shim'
 import { localeCandidates, type LocaleMessages } from '@core/extensions/api/i18n'
+import {
+  matchesAnyUrlFilter,
+  normalizeEventFilters,
+  type UrlFilter
+} from '@core/extensions/api/urlFilter'
+import { netErrorName } from '@core/extensions/api/webNavigation'
 import {
   msUntilNext,
   rescheduleAlarm,
@@ -52,6 +59,7 @@ import {
   type ExtensionRules
 } from './extensionApi'
 import type { JarReading } from './extensionCookies'
+import { AndroidWebNavigation, navigationReport, type DerivedEvent } from './extensionWebNavigation'
 import { AndroidExtensions, type AndroidExtensionsOptions } from './extensionHost'
 import { AndroidIdentity } from './extensionIdentity'
 import type { ExtensionRuntimeHooks } from './extensionRuntimeHooks'
@@ -72,7 +80,7 @@ import type { ViewEventPayloads } from './views'
  * events extensions listen for.
  *
  * Kotlin protocol (runtime → Kotlin), every call keyed by extension id:
- *  ext.env                                  → { token, uiLanguage, isolatedWorlds, worldSlots }
+ *  ext.env                                  → { token, uiLanguage, isolatedWorlds, worldSlots, navigationListener }
  *  ext.open { id, path }                    → { manifest, locales: { <locale>: <messages.json> } }
  *  ext.configure { id, version, path, allowFileAccess, allowPrivate, units, served, debug }
  *                                           → { units: [{ key, chars, cached }], ms }
@@ -103,6 +111,8 @@ interface RuntimeEnv {
    * hold), so an extension beyond the budget runs under the emulation proxy instead.
    */
   worldSlots: number
+  /** Tab views report navigations through the WebView's navigation listener (`navigation` view events). */
+  navigationListener: boolean
 }
 
 interface OpenedExtension {
@@ -281,8 +291,12 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   private readonly dataStore: JsonStore<RuntimeData>
   private readonly data: RuntimeData
   private readonly storage = new Map<string, StorageEntry>()
-  /** Endpoint id → `ns.event` names it listens to. */
+  /** Endpoint id → `ns.event` names it listens to (unfiltered listeners). */
   private readonly listening = new Map<string, Set<string>>()
+  /** Endpoint id → `ns.event` → filter id → the `UrlFilter`s of one filtered listener (`webNavigation`). */
+  private readonly filtered = new Map<string, Map<string, Map<number, UrlFilter[]>>>()
+  /** The `webNavigation` event family, derived from what the tab views report. */
+  private readonly webNavigation = new AndroidWebNavigation(() => this.now())
   /** Extension id → the endpoint of its background's main frame. */
   private readonly backgroundEps = new Map<string, string>()
   /** Extensions whose `runtime.onInstalled` waits for the first background ready: previous version or null. */
@@ -398,7 +412,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
             ? typeof env.worldSlots === 'number' && env.worldSlots >= 0
               ? env.worldSlots
               : Number.POSITIVE_INFINITY
-            : 0
+            : 0,
+          navigationListener: env.navigationListener === true
         }
         return this.env
       })
@@ -727,15 +742,19 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     ns: string,
     name: string,
     args: unknown[],
-    only: (endpoint: Endpoint) => boolean = () => true
+    only: (endpoint: Endpoint) => boolean = () => true,
+    url?: string
   ): void {
     const key = `${ns}.${name}`
-    const message = { t: 'event', ns, name, args }
     const sendTo = (filter: (endpoint: Endpoint) => boolean): void => {
       for (const endpoint of this.router.of(extensionId)) {
-        if (!filter(endpoint) || !only(endpoint) || !this.listening.get(endpoint.id)?.has(key))
-          continue
-        this.sendTo(endpoint.id, message)
+        if (!filter(endpoint) || !only(endpoint)) continue
+        const delivery = this.deliveryFor(endpoint.id, key, url)
+        if (delivery === null) continue
+        this.sendTo(
+          endpoint.id,
+          delivery ? { t: 'event', ns, name, args, delivery } : { t: 'event', ns, name, args }
+        )
       }
     }
     sendTo((endpoint) => endpoint.context !== 'background')
@@ -746,13 +765,40 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   }
 
   /**
+   * What an endpoint should get of `key` for an event about `url`: `undefined` for every listener
+   * (an unfiltered event, or the endpoint has no filtered listener), `{ unfiltered, matched }`
+   * naming the filtered listeners whose `UrlFilter`s match, null when nothing there wants it.
+   */
+  private deliveryFor(
+    endpointId: string,
+    key: string,
+    url: string | undefined
+  ): EventDelivery | null | undefined {
+    const unfiltered = this.listening.get(endpointId)?.has(key) === true
+    const filters = this.filtered.get(endpointId)?.get(key)
+    if (!filters || filters.size === 0 || url === undefined) return unfiltered ? undefined : null
+    const matched: number[] = []
+    for (const [id, list] of filters) if (matchesAnyUrlFilter(url, list)) matched.push(id)
+    if (!unfiltered && matched.length === 0) return null
+    return { unfiltered, matched }
+  }
+
+  /** Whether the endpoint registered any listener (filtered or not) for `key`. */
+  private listens(endpointId: string, key: string): boolean {
+    return (
+      this.listening.get(endpointId)?.has(key) === true ||
+      (this.filtered.get(endpointId)?.get(key)?.size ?? 0) > 0
+    )
+  }
+
+  /**
    * One event to one endpoint whether it listens or not: the context that created a
    * `contextMenus` item with `onclick` runs the handler off `onClicked` without ever adding a
    * listener. Skipped when the endpoint listens (it got the event from `emit`).
    */
   emitTo(endpointId: string, ns: string, name: string, args: unknown[]): void {
     if (!this.router.endpoint(endpointId)) return
-    if (this.listening.get(endpointId)?.has(`${ns}.${name}`)) return
+    if (this.listens(endpointId, `${ns}.${name}`)) return
     this.sendTo(endpointId, { t: 'event', ns, name, args })
   }
 
@@ -766,9 +812,15 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
    * event about it, no `webRequest` details of its requests. A tab the model no longer has (an
    * `onRemoved`) is judged by what it was in the last snapshot.
    */
-  private emitForTab(tabId: string | null, ns: string, name: string, args: unknown[]): void {
+  private emitForTab(
+    tabId: string | null,
+    ns: string,
+    name: string,
+    args: unknown[],
+    url?: string
+  ): void {
     for (const [id, ext] of this.extensions) {
-      if (tabId === null || this.sees(ext, tabId)) this.emit(id, ns, name, args)
+      if (tabId === null || this.sees(ext, tabId)) this.emit(id, ns, name, args, undefined, url)
     }
   }
 
@@ -968,15 +1020,32 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       }
       case 'listen': {
         const key = String(message.event)
-        let set = this.listening.get(ep)
-        if (!set) {
-          set = new Set()
-          this.listening.set(ep, set)
+        if (typeof message.filterId === 'number') {
+          // One filtered listener (`addListener(fn, { url: [...] })`): kept by its id.
+          let byEvent = this.filtered.get(ep)
+          if (!byEvent) {
+            byEvent = new Map()
+            this.filtered.set(ep, byEvent)
+          }
+          let byId = byEvent.get(key)
+          if (!byId) {
+            byId = new Map()
+            byEvent.set(key, byId)
+          }
+          if (message.on) byId.set(message.filterId, eventFilters(message.filters))
+          else byId.delete(message.filterId)
+          if (byId.size === 0) byEvent.delete(key)
+        } else {
+          let set = this.listening.get(ep)
+          if (!set) {
+            set = new Set()
+            this.listening.set(ep, set)
+          }
+          if (message.on) set.add(key)
+          else set.delete(key)
         }
-        if (message.on) set.add(key)
-        else set.delete(key)
         if (endpoint.context === 'background') {
-          this.background.listen(id, key, message.on === true)
+          this.background.listen(id, key, this.listens(ep, key))
           this.data.listeners[id] = this.background.persistedListeners(id)
           this.save()
         }
@@ -1153,6 +1222,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
         // The page reloaded itself (or Kotlin replaced it) before the old endpoint reported gone.
         this.router.unregister(previous)
         this.listening.delete(previous)
+        this.filtered.delete(previous)
       }
       this.backgroundEps.set(extensionId, ep)
     }
@@ -1163,6 +1233,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       const endpoint = this.router.endpoint(ep)
       this.router.unregister(ep)
       this.listening.delete(ep)
+      this.filtered.delete(ep)
       this.api.endpointGone(ep)
       if (endpoint) this.closeServiceWorkerPorts(endpoint)
       if (
@@ -1218,17 +1289,10 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     this.identity.onViewEvent(tabId, name, payload)
     const tab = this.browser.tabs.tab(tabId)
     const chromeTabId = this.api.tabs.chromeIdFor(tabId)
-    const nav = (event: string, url: string, extra: Record<string, unknown> = {}): void =>
-      this.emitForTab(tabId, 'webNavigation', event, [
-        {
-          tabId: chromeTabId,
-          url,
-          frameId: 0,
-          parentFrameId: -1,
-          timeStamp: this.now(),
-          ...extra
-        }
-      ])
+    const facts = { chromeTabId, committedUrl: tab?.url ?? '' }
+    // With the WebView's navigation listener the `navigation` reports carry the family; without
+    // it, the client callbacks (commit, finish, failure) are what there is to infer from.
+    const derived = this.env?.navigationListener === true
     const updated = (change: Record<string, unknown>): void => {
       if (tab)
         this.emitForTab(tabId, 'tabs', 'onUpdated', [
@@ -1238,34 +1302,35 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
         ])
     }
     switch (name) {
+      case 'navigation': {
+        if (!derived) return
+        const report = navigationReport(payload)
+        if (report) this.webNavigationEvents(tabId, this.webNavigation.report(tabId, facts, report))
+        return
+      }
       case 'navigated': {
         const p = payload as ViewEventPayloads['navigated']
-        if (p.inPage) {
-          const previous = tab?.url ?? ''
-          const fragmentOnly = previous.split('#')[0] === p.url.split('#')[0]
-          nav(fragmentOnly ? 'onReferenceFragmentUpdated' : 'onHistoryStateUpdated', p.url, {
-            transitionType: 'link',
-            transitionQualifiers: []
-          })
-        } else {
-          // The previous document's endpoints are not dropped here: this event is posted from
-          // Kotlin at commit and lands after the new document's bootstraps have said hello often
-          // enough (measured on the emulator) that dropping the tab's endpoints now would take the
-          // new document's with them, and every call they make afterwards would go unanswered.
-          // Kotlin owns endpoint liveness and reports the old document through `ext.gone` (the
-          // first hello of a new document, onPageStarted for a document without units, a dead
-          // reply proxy).
-          nav('onBeforeNavigate', p.url)
-          nav('onCommitted', p.url, { transitionType: 'link', transitionQualifiers: [] })
-          this.api.activeTab.navigated(tabId, p.url)
+        if (!derived) {
+          this.webNavigationEvents(
+            tabId,
+            this.webNavigation.inferredCommit(tabId, facts, p.url, p.inPage)
+          )
         }
+        // The previous document's endpoints are not dropped here: this event is posted from
+        // Kotlin at commit and lands after the new document's bootstraps have said hello often
+        // enough (measured on the emulator) that dropping the tab's endpoints now would take the
+        // new document's with them, and every call they make afterwards would go unanswered.
+        // Kotlin owns endpoint liveness and reports the old document through `ext.gone` (the
+        // first hello of a new document, onPageStarted for a document without units, a dead
+        // reply proxy).
+        if (!p.inPage) this.api.activeTab.navigated(tabId, p.url)
         updated({ status: 'loading', url: p.url })
         return
       }
       case 'stopLoading': {
         const url = (payload as ViewEventPayloads['stopLoading']).url
-        nav('onDOMContentLoaded', url)
-        nav('onCompleted', url)
+        if (!derived)
+          this.webNavigationEvents(tabId, this.webNavigation.inferredFinish(tabId, facts, url))
         updated({ status: 'complete' })
         return
       }
@@ -1280,15 +1345,31 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
         return
       case 'failLoad': {
         const p = payload as ViewEventPayloads['failLoad']
-        nav('onErrorOccurred', p.url, { error: p.description })
+        if (!derived)
+          this.webNavigationEvents(
+            tabId,
+            this.webNavigation.inferredFailure(
+              tabId,
+              facts,
+              p.url,
+              netErrorName(p.code, p.description)
+            )
+          )
         return
       }
       case 'destroyed':
         this.router.unregisterTab(tabId)
+        this.webNavigation.tabRemoved(tabId)
         return
       default:
         return
     }
+  }
+
+  /** Raise derived `webNavigation` events about one tab, each addressed by its URL for filtered listeners. */
+  private webNavigationEvents(tabId: string, events: DerivedEvent[]): void {
+    for (const { event, details } of events)
+      this.emitForTab(tabId, 'webNavigation', event, [details], details.url)
   }
 
   /** The core's state snapshot changed: diff tabs for onCreated / onRemoved / onActivated. */
@@ -1312,6 +1393,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       this.router.unregisterTab(id)
       this.identity.onTabRemoved(id)
       this.api.activeTab.tabRemoved(id)
+      this.webNavigation.tabRemoved(id)
     }
     this.knownTabs = now
     if (active !== this.activeTabId) {
@@ -1342,6 +1424,9 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     let wanted = false
     for (const set of this.listening.values()) {
       for (const key of set) if (key.startsWith('webRequest.')) wanted = true
+    }
+    for (const byEvent of this.filtered.values()) {
+      for (const key of byEvent.keys()) if (key.startsWith('webRequest.')) wanted = true
     }
     if (wanted !== this.observing) {
       this.observing = wanted
@@ -1556,6 +1641,15 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     const timer = this.alarmTimers.get(id)
     if (timer !== undefined) this.timers.clearTimeout(timer)
     this.alarmTimers.delete(id)
+  }
+}
+
+/** The `UrlFilter`s of a filtered listener; a malformed list matches nothing but is not fatal. */
+function eventFilters(raw: unknown): UrlFilter[] {
+  try {
+    return normalizeEventFilters({ url: raw }) ?? []
+  } catch {
+    return [{ urlEquals: '\u0000' }]
   }
 }
 

@@ -16,20 +16,26 @@
  *  portAccept     { portId, accept }                              answer to portConnect
  *  portMsg        { portId, data }
  *  portDisconnect { portId }
- *  listen         { event, on }                                   first/last listener of an event
+ *  listen         { event, on, filterId?, filters? }             first/last unfiltered listener of an event, or one filtered listener (its UrlFilters)
  *  ready          {}                                              extension page finished loading
  *  popupSize      { width, height }                               popup document size changed
  *  closePopup     {}
  *  proxyBody      { ticket, body }                                body (base64) of a ticketed CORS-proxied fetch (Android)
  *
  * Host → context: reply { id, ok, result | error }, deliver { id, data, sender, userScript? },
- * event { ns, name, args }, portConnect { portId, name, sender, userScript? }, portAccept
+ * event { ns, name, args, delivery? } (`delivery` addresses filtered listeners), portConnect { portId, name, sender, userScript? }, portAccept
  * { portId, accept, error? }, portMsg { portId, data }, portDisconnect { portId, error? }.
  */
 import { ENGINE_NOOPS, ENGINE_STUB_RESULTS, engineApiSpec, namespaceGranted } from './engineSpec'
 import { getMessage, normalizeSubstitutions, type LocaleMessages } from './i18n'
 import { redirectUrl } from './identity'
-import { installExtensionApi, type InvokeResult, type ShimDiagnostics, type ShimHost } from './shim'
+import {
+  installExtensionApi,
+  type EventDelivery,
+  type InvokeResult,
+  type ShimDiagnostics,
+  type ShimHost
+} from './shim'
 
 /**
  * Where a context runs. `userScript` is the `USER_SCRIPT` world of `chrome.userScripts`: it
@@ -170,6 +176,17 @@ interface HostMessage {
   portId?: string
   accept?: boolean
   userScript?: boolean
+  delivery?: unknown
+}
+
+/** The host's `{ unfiltered, matched }` for an event some listeners filtered by URL, or nothing. */
+function eventDelivery(raw: unknown): EventDelivery | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const d = raw as { unfiltered?: unknown; matched?: unknown }
+  return {
+    unfiltered: d.unfiltered !== false,
+    matched: Array.isArray(d.matched) ? d.matched.filter((m) => typeof m === 'number') : []
+  }
 }
 
 const EXTENSION_ID = /^[a-p]{32}$/
@@ -572,7 +589,9 @@ export function createEmulatedEngine(
 
   // --- the shim over the engine ------------------------------------------------------------------
 
-  const hostEventListeners: Array<(namespace: string, event: string, args: unknown[]) => void> = []
+  const hostEventListeners: Array<
+    (namespace: string, event: string, args: unknown[], delivery?: EventDelivery) => void
+  > = []
   const warned = new Set<string>()
 
   const shimHost: ShimHost = {
@@ -599,8 +618,18 @@ export function createEmulatedEngine(
       // `hello` went out from the engine before the shim ran; storage areas are host-backed, so
       // `storage-changed` never happens here. Listener bookkeeping is what the host wants.
       if (kind !== 'listen' && kind !== 'unlisten') return
-      const event = (payload as { event?: unknown } | null)?.event
-      if (typeof event === 'string') post({ t: 'listen', event, on: kind === 'listen' })
+      const p = (payload ?? {}) as { event?: unknown; filterId?: unknown; filters?: unknown }
+      if (typeof p.event !== 'string') return
+      const message: Record<string, unknown> = {
+        t: 'listen',
+        event: p.event,
+        on: kind === 'listen'
+      }
+      if (typeof p.filterId === 'number') {
+        message.filterId = p.filterId
+        if (kind === 'listen') message.filters = Array.isArray(p.filters) ? p.filters : []
+      }
+      post(message)
     },
     onEvent: (listener) => {
       hostEventListeners.push(listener)
@@ -697,7 +726,8 @@ export function createEmulatedEngine(
         const ns = String(message.ns)
         const name = String(message.name)
         const args = Array.isArray(message.args) ? message.args : []
-        for (const listener of hostEventListeners) listener(ns, name, args)
+        const delivery = eventDelivery(message.delivery)
+        for (const listener of hostEventListeners) listener(ns, name, args, delivery)
         if (ns === 'storage' && name === 'onChanged') {
           // `storage.<area>.onChanged(changes)` mirrors the area-level event.
           const [changes, area] = args

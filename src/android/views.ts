@@ -1,6 +1,7 @@
 import type { KeyBinding, NavigationSnapshot, PageRules, Rect, Tab } from '@shared/types'
 import type { SafeBrowsingHit } from '@shared/privacy'
 import type { SiteCertificate } from '@shared/siteInfo'
+import type { NavigationReport } from './extensionWebNavigation'
 import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@shared/zenPages'
 import type {
   AgentCapture,
@@ -40,6 +41,11 @@ export interface ViewEventPayloads {
   title: { title: string }
   favicon: { url: string }
   failLoad: { code: number; description: string; url: string }
+  /**
+   * The WebView's navigation listener reported a phase of a main-frame navigation (only on a
+   * WebView with `NAVIGATION_LISTENER`); the extension runtime derives `webNavigation` from it.
+   */
+  navigation: NavigationReport
   /** HTTPS-only mode's rule sent the navigation to `to` instead of `from` (before it loads). */
   upgraded: { from: string; to: string }
   /** The Safe Browsing guard refused the navigation (a `failLoad` of the URL follows). */
