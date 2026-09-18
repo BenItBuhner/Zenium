@@ -27,6 +27,7 @@ import type { SafeBrowsingHit } from '../../shared/privacy'
 import { isCertificateError, type SiteCertificate } from '../../shared/siteInfo'
 import { inPlaceErrorPageScript } from '../../shared/zenPages'
 import { certificateSiteOf } from '../../core/security'
+import type { PageHint } from '../../shared/fullscreenHint'
 import {
   DISMISSED_ANSWER,
   LEAVE_SITE_CHANNEL,
@@ -623,6 +624,10 @@ export class ElectronTabView implements TabView {
 
   setZapMode(on: boolean): void {
     this.wc.send('zen:zap', on)
+  }
+
+  showHint(hint: PageHint | null): void {
+    if (!this.wc.isDestroyed()) this.wc.send('zen:page-hint', hint)
   }
 
   setBackgroundColor(color: string): void {

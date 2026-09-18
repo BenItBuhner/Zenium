@@ -21,7 +21,7 @@ import {
   type ShortcutAction,
   type Tab
 } from '../shared/types'
-import { siteKey } from '../shared/pageControls'
+import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageControls'
 import { spaceLabel } from '../shared/defaults'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { applicationMenu, menuSignature, runFromMenuBar } from './menuBar'
@@ -1682,6 +1682,16 @@ export class Menus {
     const anchor = options.anchor
       ? { x: options.anchor.x, y: options.anchor.y + options.anchor.height }
       : undefined
+    const { pageControls } = this.browser
+    /** Where Reset Zoom goes: the default zoom for a web page, 100 percent for any other page. */
+    const defaultZoom =
+      active && pageControls.remembersZoom(active) ? pageControls.settings.zoom : 1
+    /** The factor the user set (before the system font size), so Reset compares like with like. */
+    const zoomSet = active
+      ? pageControls.remembersZoom(active)
+        ? pageControls.siteZoomOf(active)
+        : active.zoom
+      : 1
     this.popup(
       [
         { label: 'New Tab', action: 'tab.new', click: () => this.browser.openNewTab(win) },
@@ -1773,26 +1783,29 @@ export class Menus {
           label: 'Change Theme…',
           click: () => this.browser.emit('theme.open', { spaceId: win.activeSpaceId }, win)
         }),
+        // Chrome's zoom row (- / percentage / +): a native menu has no inline controls, so the
+        // row is a submenu whose label carries the live percentage and whose Reset says where
+        // it goes; the Fullscreen item below is the row's fullscreen glyph.
         {
-          label: 'Zoom',
+          label: active ? `Zoom (${formatZoom(active.zoom)})` : 'Zoom',
           submenu: [
             {
               label: 'Zoom In',
               action: 'zoom.in',
-              enabled: Boolean(active),
+              enabled: Boolean(active) && zoomSet < ZOOM_CEILING - 0.005,
               click: () => active && tabs.adjustZoom(active.id, 1)
             },
             {
               label: 'Zoom Out',
               action: 'zoom.out',
-              enabled: Boolean(active),
+              enabled: Boolean(active) && zoomSet > ZOOM_FLOOR + 0.005,
               click: () => active && tabs.adjustZoom(active.id, -1)
             },
             {
-              label: 'Reset Zoom',
+              label: active ? `Reset Zoom (${formatZoom(defaultZoom)})` : 'Reset Zoom',
               action: 'zoom.reset',
-              enabled: Boolean(active),
-              click: () => active && tabs.setZoom(active.id, 1)
+              enabled: Boolean(active) && Math.abs(zoomSet - defaultZoom) >= 0.005,
+              click: () => active && tabs.resetZoom(active.id)
             }
           ]
         },

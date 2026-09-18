@@ -2389,8 +2389,9 @@ export interface Commands {
   'tab.goToIndex': { args: { tabId: string; index: number }; result: void }
   /** The back/forward list as a menu (long press / right click on the back and forward buttons). */
   'tab.navigationMenu': { args: { tabId: string }; result: void }
+  /** Zoom in (`delta` 1) or out (-1) one step, or back to the default zoom (`delta` null). */
   'tab.setZoom': { args: { tabId: string; delta: number | null }; result: void }
-  /** Set the tab's site to an exact zoom factor (remembered per site). */
+  /** Set the tab's site to an exact zoom factor (remembered per site; other pages zoom per tab). */
   'tab.setZoomFactor': { args: { tabId: string; factor: number }; result: void }
   /** "Desktop site" for the tab's site (remembered per site; null clears the exception). */
   'tab.setDesktopSite': { args: { tabId: string; on: boolean | null }; result: void }
@@ -2490,7 +2491,8 @@ export interface Commands {
   'glance.split': { args: void; result: void }
 
   'compact.toggle': { args: void; result: void }
-  'compact.setRevealed': { args: { revealed: boolean }; result: void }
+  /** The chrome's word on a hidden piece it shows or put away (the sidebar unless `edge` says). */
+  'compact.setRevealed': { args: { revealed: boolean; edge?: 'sidebar' | 'toolbar' }; result: void }
   'compact.toggleSidebarPersistent': { args: void; result: void }
   'compact.setOptions': {
     args: Partial<Pick<CompactModeSettings, 'hideSidebar' | 'hideToolbar'>>
@@ -2521,7 +2523,13 @@ export interface Commands {
   /** Delete on a row its owner marked `deletable` (`omnibox.onDeleteSuggestion`). */
   'urlbar.deleteSuggestion': { args: { input: string }; result: void }
 
-  'overlay.snapshot': { args: { tabId: string }; result: string | null }
+  /**
+   * A picture of the tab's page for the chrome to stand in for it under an overlay. Only a page
+   * that is showing has one, unless `fresh` asks for the page as it is now though hidden under
+   * the chrome (it changed there: a zoom step behind the zoom bubble); hosts that cannot
+   * capture a hidden page answer null.
+   */
+  'overlay.snapshot': { args: { tabId: string; fresh?: boolean }; result: string | null }
 
   /** Connection, cookies, storage and permissions of the tab's site (null for an unknown tab). */
   'site.info': { args: { tabId: string }; result: SiteInfo | null }
@@ -3061,6 +3069,12 @@ export interface Events {
    */
   'menu.app': void
   /**
+   * The user zoomed a page (keyboard, Ctrl+wheel, the menu, the bubble's own controls): the
+   * chrome shows the zoom bubble for the tab. `factor` is the page's effective zoom; `siteKey`
+   * the site the factor is remembered for, null for a page that zooms on its own.
+   */
+  'zoom.changed': { tabId: string; factor: number; siteKey: string | null }
+  /**
    * A download row changed. `progress` is throttled to 4 Hz per item, state changes arrive at
    * once; `done` covers completed, cancelled and interrupted (read `item.state`). Private items
    * only reach private windows. The full list also rides in `state.downloads`.
@@ -3072,7 +3086,11 @@ export interface Events {
   /** Link hover status text (Firefox shows this in the bottom corner). */
   status: { text: string }
   'sidebar.toggle': void
-  'compact.reveal': { revealed: boolean }
+  /**
+   * The cursor reached (or left) the edge of a hidden piece of chrome: the sidebar's side in
+   * compact mode, the top edge for the toolbar; both while the window is fullscreen.
+   */
+  'compact.reveal': { revealed: boolean; edge: 'sidebar' | 'toolbar' }
   'theme.open': { spaceId: string }
   'space.new': void
   'tab.startRename': { tabId: string }

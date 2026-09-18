@@ -78,8 +78,8 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   const foreign = isForeignTab(state, tab?.id)
   // The "Make Zenium your default browser" and "Restore pages?" strips sit above the page,
   // inside the frame, so the layout reporter's viewport (and the tab view under it) shrink by
-  // their height.
-  const banner = !phone && wantsDefaultBrowserBanner(state)
+  // their height. A fullscreen window shows the page alone (Chrome hides its infobars there too).
+  const banner = !phone && !state.window.fullscreen && wantsDefaultBrowserBanner(state)
   const crashRestore = !phone ? state.crashRestore : null
 
   // Overlays are hosted beside the frame, not inside it: on phones the frame recedes (scales to

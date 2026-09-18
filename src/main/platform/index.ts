@@ -470,6 +470,9 @@ export class ElectronPlatform implements Platform {
         void external.request(tabId, request.externalUrl).then(callback)
         return
       }
+      // A page locking the keyboard keeps Esc: the fullscreen hint says to hold it instead.
+      if (permission === 'keyboardLock' && tabId)
+        this.browser.fullscreen.keyboardLockRequested(tabId)
       void permissions.decide(permission, url, request).then(callback)
     })
     ses.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) =>

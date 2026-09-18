@@ -229,7 +229,7 @@ export class Actions {
         if (target) tabs.adjustZoom(target.id, -1)
         return
       case 'zoom.reset':
-        if (target) tabs.setZoom(target.id, 1)
+        if (target) tabs.resetZoom(target.id)
         return
 
       // --- history & bookmarks ---

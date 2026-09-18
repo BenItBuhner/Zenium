@@ -38,6 +38,7 @@ import type {
 } from '../shared/types'
 import type { AppIconId } from '../shared/appIcon'
 import type { FormsCommand, FormsEvent } from '../shared/forms'
+import type { PageHint } from '../shared/fullscreenHint'
 import type { CaptionColors } from '../shared/theme'
 import type { KeyInput } from '../shared/shortcuts'
 import type { SiteCertificate, SiteCookie } from '../shared/siteInfo'
@@ -448,6 +449,13 @@ export interface TabView {
   setZapMode(on: boolean): void
   /** Autofill: fill values into the page's form, or reconfigure the forms script. */
   sendFormsCommand?(command: FormsCommand): void
+
+  /**
+   * Draw a fullscreen hint over the page (null takes it down): a page in fullscreen covers the
+   * chrome, so the hint is the page script's. Hosts whose chrome stands over such a page leave
+   * this out and draw their own.
+   */
+  showHint?(hint: PageHint | null): void
   setBackgroundColor(color: string): void
   focus(): void
   /** Whether this page holds the keyboard right now. Hosts that cannot tell leave it out. */
