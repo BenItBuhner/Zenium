@@ -45,6 +45,7 @@ import { newId } from '../shared/ids'
 import { defer, type PageFlags, type TabView, type TabViewEvents } from './platform'
 import { safeOrigin } from './permissions'
 import { openedWindowKind, planWindowOpen } from './windowOpen'
+import { parseDropKey } from './tabDrag'
 
 export type { PageFlags } from './platform'
 
@@ -1421,19 +1422,18 @@ export class TabManager {
   dropTab(tabId: string, key: string, win: ZenWindow = this.windowFor(tabId)): boolean {
     const m = this.model
     const tab = this.tab(tabId)
-    if (!tab) return false
-    const parts = key.split(':')
-    switch (parts[0]) {
+    const drop = parseDropKey(key)
+    if (!tab || !drop) return false
+    switch (drop.kind) {
       case 'tab': {
-        const [, targetId, position] = parts
-        const target = this.tab(targetId)
+        const target = this.tab(drop.tabId)
         if (!target || target.id === tabId) return false
         const section: TabSection = target.essential
           ? 'essential'
           : target.pinned
             ? 'pinned'
             : 'regular'
-        const index = this.indexRelativeTo(target, position === 'after', tabId)
+        const index = this.indexRelativeTo(target, drop.after, tabId)
         this.moveTab(
           tabId,
           {
@@ -1448,8 +1448,9 @@ export class TabManager {
         return true
       }
       case 'section': {
-        const [, section, spaceId] = parts
+        const { section, spaceId } = drop
         if (!isTabSection(section)) return false
+        if (spaceId && !getSpace(m, spaceId)) return false
         this.moveTab(
           tabId,
           { spaceId: spaceId || undefined, section, index: Number.MAX_SAFE_INTEGER },
@@ -1459,7 +1460,7 @@ export class TabManager {
         return true
       }
       case 'folder': {
-        const folder = m.folders[parts[1]]
+        const folder = m.folders[drop.folderId]
         if (!folder) return false
         if (tab.spaceId !== folder.spaceId || tab.pinned || tab.essential) {
           this.moveTab(
@@ -1472,11 +1473,11 @@ export class TabManager {
         return true
       }
       case 'space': {
-        if (tab.essential || !getSpace(m, parts[1])) return false
+        if (tab.essential || !getSpace(m, drop.spaceId)) return false
         this.moveTab(
           tabId,
           {
-            spaceId: parts[1],
+            spaceId: drop.spaceId,
             section: tab.pinned ? 'pinned' : 'regular',
             index: Number.MAX_SAFE_INTEGER
           },
@@ -1487,7 +1488,7 @@ export class TabManager {
       case 'split': {
         const active = this.activeTabFor(win)
         if (!active || active.id === tabId) return false
-        const side = parts[1]
+        const { side } = drop
         const layout: SplitLayout = side === 'left' || side === 'right' ? 'vertical' : 'horizontal'
         if (active.splitGroupId) this.addToSplit(active.splitGroupId, tabId)
         else
@@ -1500,10 +1501,9 @@ export class TabManager {
       }
       case 'bookmark': {
         if (!tab.url || tab.url.startsWith('zen://')) return false
-        const [, parentId, index] = parts
         this.browser.bookmarks.create({
-          parentId,
-          index: index === '' ? undefined : Number(index),
+          parentId: drop.folderId,
+          index: drop.index ?? undefined,
           title: tab.customTitle ?? tab.title,
           url: tab.url,
           favicon: tab.favicon,
@@ -1512,7 +1512,6 @@ export class TabManager {
         return true
       }
     }
-    return false
   }
 
   /** Index within the target's section once the dragged tab is taken out of that list. */
@@ -1668,10 +1667,7 @@ export class TabManager {
     const leaving = this.leaving(tab, source)
     const from = getSpace(this.model, tab.spaceId)
     const ownsAlone =
-      !tab.pinned &&
-      !tab.essential &&
-      !source.localSpace &&
-      this.settings.windowSync === 'pinned'
+      !tab.pinned && !tab.essential && !source.localSpace && this.settings.windowSync === 'pinned'
     const kind: WindowKind = source.isPrivate ? 'private' : ownsAlone ? 'synced' : 'unsynced'
     const size = source.bounds ?? source.host.normalBounds()
     const bounds =

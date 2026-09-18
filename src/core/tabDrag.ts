@@ -63,13 +63,7 @@ export class TabDragController {
     session.targetKey = key
   }
 
-  end(
-    tabId: string,
-    x: number,
-    y: number,
-    outcome: 'release' | 'cancel',
-    source: ZenWindow
-  ): void {
+  end(tabId: string, x: number, y: number, outcome: 'release' | 'cancel', source: ZenWindow): void {
     const session = this.session
     if (!session || session.tabId !== tabId || session.source !== source) return
     this.session = null
@@ -135,6 +129,59 @@ export class TabDragController {
         .sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0] ?? null
     )
   }
+}
+
+/** A sidebar drop target, as the chrome names it in a `data-drop` attribute. */
+export type DropKey =
+  | { kind: 'tab'; tabId: string; after: boolean }
+  | { kind: 'section'; section: string; spaceId: string }
+  | { kind: 'folder'; folderId: string }
+  | { kind: 'space'; spaceId: string }
+  | { kind: 'split'; side: string }
+  | { kind: 'bookmark'; folderId: string; index: number | null }
+
+/**
+ * Parse a drop key. Ids may contain colons (a blank window's local space is `win:<windowId>`),
+ * so only the kind and the fixed trailing part are split off; the id is whatever lies between.
+ */
+export function parseDropKey(key: string): DropKey | null {
+  const at = key.indexOf(':')
+  if (at === -1) return null
+  const kind = key.slice(0, at)
+  const rest = key.slice(at + 1)
+  switch (kind) {
+    case 'tab': {
+      const last = rest.lastIndexOf(':')
+      if (last === -1) return null
+      const position = rest.slice(last + 1)
+      if (position !== 'before' && position !== 'after') return null
+      const tabId = rest.slice(0, last)
+      return tabId ? { kind, tabId, after: position === 'after' } : null
+    }
+    case 'section': {
+      const next = rest.indexOf(':')
+      if (next === -1) return null
+      const section = rest.slice(0, next)
+      return section ? { kind, section, spaceId: rest.slice(next + 1) } : null
+    }
+    case 'folder':
+      return rest ? { kind, folderId: rest } : null
+    case 'space':
+      return rest ? { kind, spaceId: rest } : null
+    case 'split':
+      return rest ? { kind, side: rest } : null
+    case 'bookmark': {
+      const last = rest.lastIndexOf(':')
+      if (last === -1) return null
+      const folderId = rest.slice(0, last)
+      const index = rest.slice(last + 1)
+      if (!folderId) return null
+      if (index === '') return { kind, folderId, index: null }
+      const n = Number(index)
+      return Number.isInteger(n) && n >= 0 ? { kind, folderId, index: n } : null
+    }
+  }
+  return null
 }
 
 export function contains(rect: Rect, point: Point): boolean {

@@ -1992,7 +1992,10 @@ export interface Commands {
    * past its edges while the pointer is outside it); `inSidebar` is true while the pointer is
    * over this window's own sidebar, where no other window can be the target.
    */
-  'tab.dragMove': { args: { tabId: string; x: number; y: number; inSidebar: boolean }; result: void }
+  'tab.dragMove': {
+    args: { tabId: string; x: number; y: number; inSidebar: boolean }
+    result: void
+  }
   /** The window a drag from another window hovers reports the drop target under the pointer. */
   'tab.dragTarget': { args: { tabId: string; key: string | null }; result: void }
   /**
