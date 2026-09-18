@@ -71,6 +71,8 @@ export class TabManager {
   private readonly httpsUpgraded = new Map<string, string>()
   /** Back/forward stacks to replay when a reopened tab's page is created. */
   private readonly pendingNavigation = new Map<string, NavigationSnapshot>()
+  /** Tabs under a window's or the app's unload check: a page that goes is unloaded, not closed. */
+  private readonly unloadChecks = new Set<string>()
   /** How the next committed navigation of a tab came about (for the history record). */
   private readonly pendingTransition = new Map<string, HistoryTransition>()
 
@@ -544,7 +546,9 @@ export class TabManager {
           }
         }
       },
-      onPageMessage: (message) => this.browser.handlePageMessage(tabId, message)
+      onPageMessage: (message) => this.browser.handlePageMessage(tabId, message),
+      onDialog: (request) => this.browser.pageDialogs.ask(tabId, request),
+      onLeaveSite: (reload) => this.browser.pageDialogs.confirmLeave(tabId, reload)
     }
   }
 
@@ -678,6 +682,7 @@ export class TabManager {
     this.browser.security.cancelForTab(tabId)
     this.browser.permissionPrompts.cancelForTab(tabId)
     this.browser.permissions.onTabGone(tabId)
+    this.browser.pageDialogs.cancelForTab(tabId)
     if (this.owners.has(tabId)) view.detach()
     this.owners.delete(tabId)
     if (!view.isDestroyed()) {
@@ -711,8 +716,12 @@ export class TabManager {
     this.browser.state.commit()
   }
 
-  /** A frozen page cannot navigate; wake it before touching its history or URL. */
+  /**
+   * A frozen page cannot navigate; wake it before touching its history or URL. A page waiting in
+   * one of its own dialogs cannot either: like Chrome, the navigation dismisses the dialog.
+   */
   private thawForNavigation(tabId: string): void {
+    this.browser.pageDialogs.cancelForTab(tabId)
     const tab = this.tab(tabId)
     if (!tab || !this.view(tabId) || !tab.frozen) return
     void this.browser.governor.thaw(tabId)
@@ -860,16 +869,112 @@ export class TabManager {
     this.browser.externalProtocols.cancelForTab(tabId)
     this.browser.popups.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
+    this.browser.pageDialogs.cancelForTab(tabId)
     this.browser.governor.onViewDestroyed(tabId, view)
     this.browser.state.devtoolsOpenFor.delete(tabId)
     const tab = this.tab(tabId)
     if (!tab) return
-    if (tab.pinned || tab.essential) {
-      // Pinned tabs survive their page: they simply show as unloaded until clicked again.
+    if (tab.pinned || tab.essential || this.unloadChecks.has(tabId)) {
+      // Pinned tabs survive their page: they simply show as unloaded until clicked again. So does
+      // a tab whose page went under a window's or the app's unload check – the window may yet stay
+      // open (another page's "Stay"), and the tab is then simply unloaded, its stack kept.
       this.discard(tabId)
       return
     }
     this.closeTab(tabId, true, owner)
+  }
+
+  // ---------------------------------------------------------------------------
+  // beforeunload
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Whether the page of `tabId` may be unloaded: its `beforeunload` handlers run and, when one
+   * objects, the chrome asks "Leave site?". Resolves true when the page may go – or is gone by
+   * then: a page that does not object is closed by the check itself, and its tab with it (with
+   * `keepTab`, the tab stays and shows as unloaded, for checks that may not end in a close).
+   * Its back/forward stack is kept for a reload or "Recently closed" either way.
+   */
+  async confirmUnload(tabId: string, keepTab = false): Promise<boolean> {
+    const view = this.view(tabId)
+    const tab = this.tab(tabId)
+    if (!view || !tab || !view.confirmUnload || view.isDestroyed()) return true
+    // A page waiting in one of its own dialogs cannot run its handlers; the close dismisses it.
+    this.browser.pageDialogs.cancelForTab(tabId)
+    this.pendingNavigation.set(tabId, view.navigationEntries())
+    if (keepTab) this.unloadChecks.add(tabId)
+    try {
+      // A frozen page cannot run its handlers.
+      if (tab.frozen) {
+        await this.browser.governor.thaw(tabId, true)
+        tab.frozen = false
+      }
+      // Only an explicit "stay" keeps the page (a host that answers nothing does not object).
+      const leave = (await view.confirmUnload()) !== false
+      if (!leave && this.view(tabId) === view) this.pendingNavigation.delete(tabId)
+      return leave
+    } finally {
+      this.unloadChecks.delete(tabId)
+    }
+  }
+
+  /**
+   * Close a tab the way the user asks for it (Ctrl+W, the tab's X, the menu): a page whose
+   * `beforeunload` handler objects gets to ask "Leave site?" first, and the tab stays when the
+   * user says so. Resolves true once the tab is closed.
+   */
+  async requestClose(tabId: string, force = false, win?: ZenWindow): Promise<boolean> {
+    if (!(await this.confirmUnload(tabId))) return false
+    this.closeTab(tabId, force, win)
+    return true
+  }
+
+  /**
+   * Pages destroyed when `win` closes: those of its own tabs, and every page it holds when no
+   * other synced window remains to take them (`releaseWindow`).
+   */
+  viewsClosingWith(win: ZenWindow): string[] {
+    const others = this.browser
+      .allWindows()
+      .filter((w) => w !== win && w.kind === 'synced' && w.alive)
+    const out: string[] = []
+    for (const [tabId, view] of this.viewsOwnedBy(win)) {
+      if (view.isDestroyed()) continue
+      const tab = this.tab(tabId)
+      if (!tab || tab.windowId === win.id || others.length === 0) out.push(tabId)
+    }
+    return out
+  }
+
+  /**
+   * How many tabs close with `win`, as the user sees it: the tabs of a blank or private window,
+   * a synced window's own tabs, or every tab when it is the last synced window (they come back
+   * with the next session, but the window they are in closes).
+   */
+  closingTabCount(win: ZenWindow): number {
+    const m = this.model
+    const glance = win.glance?.tabId
+    if (win.localSpace) return win.localSpace.tabIds.filter((id) => m.tabs[id]).length
+    const others = this.browser
+      .allWindows()
+      .filter((w) => w !== win && w.kind === 'synced' && w.alive)
+    let n = 0
+    for (const tab of Object.values(m.tabs)) {
+      if (tab.id === glance || (tab.spaceId && m.localSpaces[tab.spaceId])) continue
+      if (others.length === 0 || tab.windowId === win.id) n += 1
+    }
+    return n
+  }
+
+  /** How many tabs close when the app quits: every tab of every window (Glance previews aside). */
+  openTabCount(): number {
+    const glances = new Set(
+      this.browser
+        .allWindows()
+        .map((w) => w.glance?.tabId)
+        .filter((id): id is string => Boolean(id))
+    )
+    return Object.keys(this.model.tabs).filter((id) => !glances.has(id)).length
   }
 
   /** Which window a tab belongs to under the current window-sync mode (null = shared). */

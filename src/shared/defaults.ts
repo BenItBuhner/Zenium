@@ -179,6 +179,8 @@ export const DEFAULT_SETTINGS: Settings = {
   essentialsMax: 12,
   newTabPosition: 'end',
   restoreSession: true,
+  warnOnCloseWindow: true,
+  crashRestore: 'ask',
   askWhereToSave: false,
   onboardingDone: false,
   showTabSeparator: true,

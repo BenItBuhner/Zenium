@@ -1096,6 +1096,10 @@ export interface Settings {
   essentialsMax: number
   newTabPosition: NewTabPosition
   restoreSession: boolean
+  /** Ask before a window with more than one tab closes (Firefox's warning; Edge has the setting). */
+  warnOnCloseWindow: boolean
+  /** After an unclean exit: offer the last session's pages, bring them back, or start fresh. */
+  crashRestore: CrashRestoreMode
   /** Firefox's "Always ask you where to save files"; off saves straight into the Downloads folder. */
   askWhereToSave: boolean
   /**
@@ -1523,6 +1527,8 @@ export interface WindowState {
   focused: boolean
   /** Tab id currently in HTML (element) fullscreen – its view covers the whole window. */
   htmlFullscreenTabId: string | null
+  /** A window-modal question waiting for an answer ("Close N tabs?"), if any. */
+  prompt: WindowPrompt | null
 }
 
 export interface MediaState {
@@ -1712,6 +1718,56 @@ export type SecurityPromptResponse =
   | { kind: 'client-certificate'; index: number }
 
 // ---------------------------------------------------------------------------
+// Page dialogs: alert / confirm / prompt and "Leave site?"
+// ---------------------------------------------------------------------------
+
+export type PageDialogKind = 'alert' | 'confirm' | 'prompt' | 'beforeunload'
+
+/**
+ * A dialog a page opened (`alert`, `confirm`, `prompt`) or the "Leave site?" question its
+ * `beforeunload` handler raised. The chrome shows it tab-modal, as Chrome does; the page waits
+ * for the answer.
+ */
+export interface PageDialog {
+  id: string
+  kind: PageDialogKind
+  tabId: string
+  /** The site that opened it, the way Chrome titles the dialog ("example.com says"); '' when unknown. */
+  site: string
+  /** A frame of another site opened it ("An embedded page at example.com says"). */
+  embedded: boolean
+  message: string
+  /** `prompt`: the field's initial text. */
+  defaultValue: string
+}
+
+/** The user's answer; `value` carries the prompt's text when accepted. */
+export interface PageDialogResponse {
+  accepted: boolean
+  value: string | null
+}
+
+/**
+ * A question the chrome asks about a window as a whole (window-modal): whether to close the
+ * window with its tabs, or to quit Zenium with every open tab.
+ */
+export interface WindowPrompt {
+  id: string
+  kind: 'close-tabs' | 'quit'
+  /** How many tabs close. */
+  count: number
+}
+
+/** The last run ended without a clean shutdown; the chrome offers to bring its pages back. */
+export interface CrashRestoreOffer {
+  tabCount: number
+  windowCount: number
+}
+
+/** What Zenium does with the previous session's pages after an unclean exit. */
+export type CrashRestoreMode = 'ask' | 'always' | 'never'
+
+// ---------------------------------------------------------------------------
 // The full UI state snapshot broadcast to the renderer
 // ---------------------------------------------------------------------------
 
@@ -1784,6 +1840,10 @@ export interface UIState {
   permissionPrompts: PermissionPrompt[]
   /** Pending HTTP authentication and client-certificate prompts, oldest first. */
   securityPrompts: SecurityPrompt[]
+  /** Pending `alert` / `confirm` / `prompt` and "Leave site?" dialogs of pages, oldest first. */
+  pageDialogs: PageDialog[]
+  /** The pages of an unclean exit the chrome should offer to restore; null when there are none. */
+  crashRestore: CrashRestoreOffer | null
   /** Ad and tracker blocking: lists, their freshness and the session counter. */
   blocking: BlockingStatus
   /** Safe Browsing feeds, HTTPS-only exceptions and the resolver's secure DNS state. */
@@ -2587,6 +2647,12 @@ export interface Commands {
     args: { id: string; response: SecurityPromptResponse | null }
     result: void
   }
+  /** Answer a page's `alert` / `confirm` / `prompt` or "Leave site?" dialog. */
+  'pageDialog.respond': { args: { id: string; response: PageDialogResponse }; result: void }
+  /** Answer the window-modal question the window is showing ("Close N tabs?"). */
+  'window.respondPrompt': { args: { id: string; accepted: boolean }; result: void }
+  /** After an unclean exit: bring the last session's pages back, or start without them. */
+  'session.crashRestore': { args: { restore: boolean }; result: void }
   /** Drop the credentials and certificate choices remembered for this session. */
   'security.forgetSession': { args: void; result: void }
   /** Refresh one filter list (or every enabled one) from its canonical URL now. */

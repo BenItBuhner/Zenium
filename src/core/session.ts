@@ -3,6 +3,7 @@ import type {
   ClosedEntrySummary,
   ClosedTabEntry,
   ClosedWindowEntry,
+  CrashRestoreOffer,
   NavigationSnapshot,
   Rect,
   Tab,
@@ -163,7 +164,69 @@ function isSnapshot(value: unknown): value is NavigationSnapshot {
  * it back where it was, with its back/forward stack, and a window comes back whole.
  */
 export class SessionService {
+  private crashOffer: CrashRestoreOffer | null = null
+  /** The last session's pages wait for the user's answer: windows do not load them on their own. */
+  private holdingPages = false
+
   constructor(private readonly browser: Browser) {}
+
+  // ---------------------------------------------------------------------------
+  // After an unclean exit
+  // ---------------------------------------------------------------------------
+
+  /** The offer the chrome shows ("Restore pages?"), or null. */
+  crashRestoreOffer(): CrashRestoreOffer | null {
+    return this.crashOffer
+  }
+
+  /** While true, windows load nothing on their own (at startup, on focus) – the user decides. */
+  holdsPages(): boolean {
+    return this.holdingPages
+  }
+
+  /**
+   * Startup after a run that did not shut down cleanly – the tabs are back in the sidebar, none
+   * of their pages loaded yet. The setting decides: "ask" holds the pages and has the chrome offer
+   * them (Chrome's "Restore pages?" bubble), "always" restores as after a clean exit, "never"
+   * starts on a fresh tab with the last session's tabs kept unloaded (a page that took the
+   * browser down does not come back on its own either way).
+   */
+  onUncleanStart(): void {
+    const mode = this.browser.state.settings.crashRestore
+    if (mode === 'always') return
+    this.holdingPages = true
+    if (mode === 'never') {
+      this.startFresh()
+      return
+    }
+    this.crashOffer = {
+      tabCount: this.browser.tabs.openTabCount(),
+      windowCount: this.browser.allWindows().length
+    }
+  }
+
+  /** The user answered the offer: Restore loads the pages that were showing, Dismiss starts fresh. */
+  crashRestore(restore: boolean): void {
+    if (!this.crashOffer && !this.holdingPages) return
+    this.crashOffer = null
+    this.holdingPages = false
+    if (restore) {
+      for (const win of this.browser.allWindows()) this.browser.tabs.claimVisible(win)
+    } else {
+      this.startFresh()
+    }
+    this.browser.state.commitVolatile()
+  }
+
+  private startFresh(): void {
+    this.holdingPages = false
+    const win = this.browser.allWindows()[0]
+    if (win) this.browser.openFreshTab(win)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Recently closed
+  // ---------------------------------------------------------------------------
 
   recentlyClosed(): ClosedEntry[] {
     return this.browser.state.recentlyClosed

@@ -1056,10 +1056,10 @@ export class Menus {
       {
         label: tab.pinned || tab.essential ? 'Close Tab (keep pinned)' : 'Close Tab',
         ...key('tab.close'),
-        click: () => tabs.closeTab(tabId, false, win)
+        click: () => void tabs.requestClose(tabId, false, win)
       },
       ...(tab.pinned || tab.essential
-        ? [{ label: 'Remove Tab', click: () => tabs.closeTab(tabId, true, win) }]
+        ? [{ label: 'Remove Tab', click: () => void tabs.requestClose(tabId, true, win) }]
         : [])
     ]
     this.popup(template, win, 'tab')

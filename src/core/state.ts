@@ -8,6 +8,7 @@ import type {
   Boost,
   ClosedEntry,
   Container,
+  CrashRestoreOffer,
   DefaultBrowserStatus,
   DownloadItem,
   DownloadsProgress,
@@ -18,6 +19,7 @@ import type {
   LiveFolderConfig,
   MediaState,
   Mod,
+  PageDialog,
   PasswordsStatus,
   PageEnvironment,
   PermissionPrompt,
@@ -93,6 +95,8 @@ const BOOKMARKS_BAR_MODES: ReadonlyArray<Settings['bookmarksBar']> = ['always', 
 export interface PersistedWindow {
   id: string
   bounds: Rect | null
+  /** The display `bounds` were on (the host's id), so the window goes back to it when it is still there. */
+  displayId?: number | null
   maximized: boolean
   activeSpaceId: string
   /** Per-space selected tab. */
@@ -122,6 +126,12 @@ interface Persisted {
   windows?: PersistedWindow[]
   /** v3: recently closed tabs and windows (newest first, 25 deep). */
   recentlyClosed?: ClosedEntry[]
+  /**
+   * The clean-exit marker: false from the first write of a run, true only in the write a
+   * graceful shutdown makes. A profile that starts with it false was left by a crash, a kill or
+   * a power cut; the chrome then offers the pages instead of loading them (`crashRestore`).
+   */
+  cleanExit?: boolean
 }
 
 export type StateListener = () => void
@@ -144,6 +154,8 @@ export interface StateExtras {
   permissionRules: PermissionRule[]
   permissionPrompts: PermissionPrompt[]
   securityPrompts: SecurityPrompt[]
+  pageDialogs: PageDialog[]
+  crashRestore: CrashRestoreOffer | null
   blocking: BlockingStatus
   privacy: PrivacyStatus
   translate: TranslateUIState
@@ -256,6 +268,8 @@ export class BrowserState {
     permissionRules: [],
     permissionPrompts: [],
     securityPrompts: [],
+    pageDialogs: [],
+    crashRestore: null,
     blocking: emptyBlockingStatus(),
     privacy: emptyPrivacyStatus(),
     translate: emptyTranslateState()
@@ -275,6 +289,10 @@ export class BrowserState {
   private lastWindows: PersistedWindow[] = []
   /** After shutdown nothing may be written any more (windows closing would shrink the list). */
   private frozen = false
+  /** The run is ending gracefully: what is written from now on carries the clean-exit marker. */
+  private exiting = false
+  /** The previous run did not end with a graceful shutdown (its profile lacks the marker). */
+  uncleanExit = false
 
   constructor(
     io: StoreIO,
@@ -283,7 +301,7 @@ export class BrowserState {
     version: string
   ) {
     this.version = version
-    this.store = new JsonStore<Persisted>(io, 'state.json')
+    this.store = new JsonStore<Persisted>(io, 'state.json', { backup: true })
     this.model = emptyModel(structuredClone(DEFAULT_CONTAINERS))
   }
 
@@ -292,8 +310,15 @@ export class BrowserState {
     const data = this.store.readSync()
     if (data && (data.version === 1 || data.version === 2 || data.version === 3)) {
       this.applyPersisted(data)
+      // Profiles from before the marker count as clean; only an explicit false is a crash.
+      this.uncleanExit = data.cleanExit === false
     }
     this.ensureValid()
+  }
+
+  /** The app is shutting down gracefully: the next write marks the profile as cleanly exited. */
+  markExiting(): void {
+    this.exiting = true
   }
 
   /**
@@ -711,7 +736,8 @@ export class BrowserState {
       shortcutOverrides: this.shortcutOverrides,
       bookmarkTree: { schemaVersion: BOOKMARK_SCHEMA_VERSION, nodes: this.bookmarks },
       windows: persistedWindows,
-      recentlyClosed: this.recentlyClosed
+      recentlyClosed: this.recentlyClosed,
+      cleanExit: this.exiting
     }
   }
 
