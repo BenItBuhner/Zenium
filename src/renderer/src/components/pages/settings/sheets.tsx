@@ -1,5 +1,5 @@
 import type { JSX, ReactNode, RefObject } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useBackSurface } from '@renderer/lib/back'
 import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
@@ -19,9 +19,11 @@ import { SheetDismissContext, useSheetDismiss } from './sheetContext'
  *
  * Sheets are modal dialogs, so they mount through the frame's `FrameDialogHost` (lib/portals.tsx,
  * reached with `FrameDialogPortal`): over the content frame, which recedes under a sheet and
- * would shrink a sheet inside it. Each sheet draws the stack's one scrim itself (`ownScrim`),
- * fading with its motion; a stacked sheet's is clear, so the page never darkens twice (§9.24),
- * and the sheet beneath recedes on the stacked one's progress with its content `inert`.
+ * would shrink a sheet inside it. Each sheet draws its scrim itself (`ownScrim`), fading with
+ * its motion; under a stacked sheet the lower one's scrim fades out on the stacked one's
+ * progress, so the stack has one scrim – the top sheet's, above the page and the lower sheet
+ * alike – and the page never darkens twice (§9.24); the sheet beneath recedes on the same
+ * progress with its content `inert`.
  */
 
 /** Every open sheet, lowest first; each resolves its row in `groups`. */
@@ -115,6 +117,16 @@ function fits(request: SheetRequest, row: SettingsRow): boolean {
 // The sheet chassis
 // ---------------------------------------------------------------------------
 
+/**
+ * What takes the focus as the sheet opens (§9.22: focus moves into a dialog on open):
+ *  - `checked`: the current option of a picker, the first row when none is;
+ *  - `first`: the first row or button of the body (an item's rows, a prompt's Cancel);
+ *  - `dialog`: the sheet itself, for a form – its field is first in the order but a text field
+ *    never takes the focus on its own on a phone (the keyboard would come up with the sheet), so
+ *    the dialog does, named by its title.
+ */
+export type SheetFocus = 'checked' | 'first' | 'dialog'
+
 interface SheetProps {
   /** For the back registry's logs. */
   name: string
@@ -126,6 +138,7 @@ interface SheetProps {
   stacked: boolean
   /** Another sheet is open over this one: its content is inert until that one leaves. */
   under: boolean
+  focus: SheetFocus
   onClose(): void
   children: ReactNode
   /** Change it when the body is swapped, so the detents are measured again. */
@@ -134,10 +147,11 @@ interface SheetProps {
 }
 
 /**
- * One v2 sheet on the shared `BottomSheet`, placed in the frame's dialog host: neutral panel at
- * radius 12 with a hairline edge, no side padding of its own (§9.25: rows run edge to edge, text
- * inset 16), the system back and Escape dismiss it, the header takes §9.7's hairline once the
- * body has scrolled under it, and when it leaves, focus returns to the row that opened it (§9.24).
+ * One v2 sheet on the shared `BottomSheet`, placed in the frame's dialog host: the chassis's
+ * neutral panel at radius 12 with a hairline edge, no side padding of its own (§9.25: rows run
+ * edge to edge, text inset 16), the system back and Escape dismiss it, the header takes §9.7's
+ * hairline once the body has scrolled under it, focus moves into it as it opens (§9.22) and,
+ * when it leaves, returns to the row that opened it (§9.24).
  */
 export function SettingsSheet(props: SheetProps): JSX.Element {
   return (
@@ -155,6 +169,7 @@ function HostedSheet({
   prompt = false,
   stacked,
   under,
+  focus,
   onClose,
   children,
   contentKey,
@@ -164,6 +179,7 @@ function HostedSheet({
   const own = useRef<BottomSheetHandle>(null)
   const sheet = sheetRef ?? own
   const body = useRef<HTMLDivElement>(null)
+  const titleId = useId()
   const dismiss = (): void => sheet.current?.dismiss()
   useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
   useBackSurface({
@@ -173,6 +189,7 @@ function HostedSheet({
     onCancel: () => sheet.current?.cancelBack()
   })
   useReturnFocus()
+  useFocusOnOpen(body, focus)
   useEffect(() => {
     if (under) return
     const onKey = (e: KeyboardEvent): void => {
@@ -184,17 +201,6 @@ function HostedSheet({
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [under, sheet])
-  useEffect(() => {
-    const scroller = body.current?.closest<HTMLElement>('.zen-sheet-scroll')
-    const sheetEl = scroller?.closest<HTMLElement>('.zen-sheet')
-    if (!scroller || !sheetEl) return
-    const sync = (): void => {
-      sheetEl.dataset.scrolled = String(scroller.scrollTop > 0)
-    }
-    sync()
-    scroller.addEventListener('scroll', sync, { passive: true })
-    return () => scroller.removeEventListener('scroll', sync)
-  }, [])
   return (
     <div
       className="zen-settings-sheet-layer absolute inset-0"
@@ -209,19 +215,22 @@ function HostedSheet({
         stacked={stacked}
         contentKey={contentKey}
         handleLabel="Resize sheet"
+        labelledBy={titleId}
         className={cn('zen-settings-sheet', titled && 'zen-settings-sheet-titled')}
         header={
           titled ? undefined : (
-            <div className="zen-settings-sheet-header">
-              <h2 className="zen-settings-sheet-title">{title}</h2>
-            </div>
+            <h2 id={titleId} className="zen-sheet-title">
+              {title}
+            </h2>
           )
         }
       >
         <div ref={body} className="zen-settings-sheet-body">
           {titled && (
             <div className="zen-settings-title-block">
-              <h2 className="zen-settings-sheet-title">{title}</h2>
+              <h2 id={titleId} className="zen-settings-sheet-title">
+                {title}
+              </h2>
               {description && <p className="zen-settings-title-description">{description}</p>}
             </div>
           )}
@@ -252,11 +261,46 @@ function useReturnFocus(): void {
   }, [])
 }
 
+/**
+ * Focus moves into the sheet as it opens (§9.22), after {@link useReturnFocus} has noted the
+ * opener: the chosen element per {@link SheetFocus}, without scrolling anything to reach it
+ * (the sheet is still on its way up).
+ */
+function useFocusOnOpen(body: RefObject<HTMLElement | null>, focus: SheetFocus): void {
+  useEffect(() => {
+    const target = focusTarget(body.current, focus)
+    target?.focus({ preventScroll: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- on open only
+  }, [])
+}
+
+/** A row or a button: what `first` reaches for (a form's field is `dialog`'s case). */
+const FOCUSABLE = 'button:not(:disabled), a[href]'
+
+/** The element {@link SheetFocus} names inside the sheet's body, or null when there is none. */
+function focusTarget(body: HTMLElement | null, focus: SheetFocus): HTMLElement | null {
+  if (!body) return null
+  switch (focus) {
+    case 'checked':
+      return (
+        body.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]') ??
+        body.querySelector<HTMLElement>(FOCUSABLE)
+      )
+    case 'first':
+      return body.querySelector<HTMLElement>(FOCUSABLE)
+    case 'dialog':
+      return body.closest<HTMLElement>('[role="dialog"]')
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The five sheets
 // ---------------------------------------------------------------------------
 
-/** §9.13 on a phone: the options as 44 px radio rows, the current one marked; a pick closes it. */
+/**
+ * §9.13 on a phone: the options as 44 px radio rows, the current one marked and focused as the
+ * sheet opens; a pick closes it.
+ */
 function OptionsSheet({
   row,
   stacked,
@@ -276,6 +320,7 @@ function OptionsSheet({
       description={row.sheetDescription}
       stacked={stacked}
       under={under}
+      focus="checked"
       onClose={close}
       sheetRef={sheet}
     >
@@ -327,6 +372,7 @@ function FieldSheet({
       title={row.label}
       stacked={stacked}
       under={under}
+      focus="dialog"
       onClose={close}
       sheetRef={sheet}
     >
@@ -361,7 +407,10 @@ function FieldSheet({
   )
 }
 
-/** A prompt (§9.23): the question as a title block, the destructive action trailing (§9.11). */
+/**
+ * A prompt (§9.23): the question as a title block, the destructive action trailing (§9.11);
+ * Cancel, the first button, takes the focus as the sheet opens.
+ */
 function ConfirmSheet({
   row,
   stacked,
@@ -383,6 +432,7 @@ function ConfirmSheet({
       prompt
       stacked={stacked}
       under={under}
+      focus="first"
       onClose={close}
       sheetRef={sheet}
     >
@@ -416,6 +466,7 @@ function FormSheet({
       description={form.description}
       stacked={stacked}
       under={under}
+      focus="dialog"
       onClose={close}
     >
       <FormBody render={form.render} />
@@ -429,7 +480,10 @@ function FormBody({ render }: { render: (close: () => void) => ReactNode }): JSX
   return <>{render(dismiss)}</>
 }
 
-/** One thing of a list and the rows that act on it; its value rows open the second sheet. */
+/**
+ * One thing of a list and the rows that act on it, the first row focused as the sheet opens;
+ * its value rows open the second sheet.
+ */
 function ItemSheet({
   row,
   stacked,
@@ -450,6 +504,7 @@ function ItemSheet({
       description={row.sheet.description}
       stacked={stacked}
       under={under}
+      focus="first"
       onClose={close}
       contentKey={String(row.sheet.groups.reduce((n, g) => n + g.rows.length, 0))}
     >

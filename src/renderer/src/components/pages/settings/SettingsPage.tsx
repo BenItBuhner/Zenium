@@ -47,7 +47,7 @@ interface Props {
 }
 
 export function SettingsPage({ state, tab }: Props): JSX.Element {
-  const { width, formFactor } = useViewport()
+  const { width, formFactor, hover } = useViewport()
   const page = INTERNAL_PAGES.settings
   const sections = availableSections(page, state.capabilities, formFactor)
   const ref = parseInternalPageUrl(tab.url)
@@ -55,7 +55,16 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
   if (width >= TWO_PANE_MIN_WIDTH) {
     return <TwoPane state={state} tab={tab} current={current} />
   }
-  return <PhoneSettings state={state} tab={tab} page={page} sections={sections} current={current} />
+  return (
+    <PhoneSettings
+      state={state}
+      tab={tab}
+      page={page}
+      sections={sections}
+      current={current}
+      pointer={hover}
+    />
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -67,11 +76,14 @@ function PhoneSettings({
   tab,
   page,
   sections,
-  current
+  current,
+  pointer
 }: Props & {
   page: InternalPageDefinition
   sections: InternalPageSection[]
   current: InternalPageSection | null
+  /** The host's primary pointer hovers (a mouse): rows may describe mouse gestures. */
+  pointer: boolean
 }): JSX.Element {
   const sheets = useSheetStack()
   const [query, setQuery] = useState('')
@@ -88,6 +100,7 @@ function PhoneSettings({
   const ctx: SectionContext = {
     state,
     tab,
+    pointer,
     set: (patch) => run('settings.update', patch),
     navigate: (section) => run('page.navigate', { tabId: tab.id, section }),
     openBarEditor: () => void openBarEditor(tab.id),

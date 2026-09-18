@@ -26,14 +26,15 @@ describe('the page registry', () => {
   it('registers Settings with stable section ids in nav order', () => {
     expect(Object.keys(INTERNAL_PAGES)).toEqual(['settings'])
     expect(INTERNAL_PAGES.settings.title).toBe('Settings')
+    // Zen's features, Privacy and Security after Search, then the browser-wide group past the
+    // first hairline: Sync, Accessibility, Keyboard Shortcuts, Updates; About past the second.
     expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual([
       'look',
-      'accessibility',
       'compact',
       'tabs',
-      'privacy',
       'resources',
       'search',
+      'privacy',
       'spaces',
       'containers',
       'boosts',
@@ -41,6 +42,7 @@ describe('the page registry', () => {
       'extensions',
       'agents',
       'sync',
+      'accessibility',
       'shortcuts',
       'updates',
       'about'
@@ -199,7 +201,8 @@ describe('the landing list', () => {
     expect(runs).toHaveLength(3)
     expect(runs[0][0]).toBe('look')
     expect(runs[0]).not.toContain('sync')
-    expect(runs[1]).toEqual(['sync', 'updates'])
+    expect(runs[0]).not.toContain('accessibility')
+    expect(runs[1]).toEqual(['sync', 'accessibility', 'updates'])
     expect(runs[2]).toEqual(['about'])
   })
 
@@ -208,7 +211,7 @@ describe('the landing list', () => {
     const runs = landingRuns(page, availableSections(page, noSync, 'phone')).map((run) =>
       run.map((s) => s.id)
     )
-    expect(runs[1]).toEqual(['updates'])
+    expect(runs[1]).toEqual(['accessibility', 'updates'])
     expect(runs[2]).toEqual(['about'])
     const bare = landingRuns(page, availableSections(page, NONE, 'phone')).map((run) =>
       run.map((s) => s.id)

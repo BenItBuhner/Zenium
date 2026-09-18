@@ -55,6 +55,11 @@ export interface SectionContext {
   state: UIState
   /** The Settings tab the page lives in; its opener is the site an action may be about. */
   tab: Tab
+  /**
+   * The host has a pointer that hovers (a mouse or trackpad): the rows that describe a mouse
+   * gesture – double-click, Alt + Click – keep it; a touch host reads its own gesture instead.
+   */
+  pointer: boolean
   set(patch: Partial<Settings>): void
   /** Move the page to another category (About › Check for updates lands on Updates). */
   navigate(section: string): void
@@ -126,7 +131,11 @@ function item(
 // Look and Feel
 // ---------------------------------------------------------------------------
 
-function lookSection({ state, set, openBarEditor }: SectionContext): RowGroup[] {
+/**
+ * Groups in the order the design lead set for the tab: identity (Appearance, App icon), then the
+ * chrome (URL bar, Pages), then page behaviour (Sites, Site exceptions), Glance last.
+ */
+function lookSection({ state, set, pointer, openBarEditor }: SectionContext): RowGroup[] {
   const s = state.settings
   const caps = state.capabilities
   const pc = s.pageControls
@@ -172,8 +181,10 @@ function lookSection({ state, set, openBarEditor }: SectionContext): RowGroup[] 
           kind: 'switch',
           id: 'sidebar-expanded',
           label: 'Expanded sidebar',
-          description:
-            'Show tab titles next to their icons. Double-click the sidebar edge to toggle.',
+          // The double-click is a mouse gesture: only a pointer host is told about it.
+          description: pointer
+            ? 'Show tab titles next to their icons. Double-click the sidebar edge to toggle.'
+            : 'Show tab titles next to their icons.',
           checked: s.sidebarExpanded,
           onChange: (v) => set({ sidebarExpanded: v })
         },
@@ -188,68 +199,6 @@ function lookSection({ state, set, openBarEditor }: SectionContext): RowGroup[] 
       ]
     }
   ]
-  if (caps.pageControls) {
-    groups.push({
-      id: 'sites',
-      heading: 'Sites',
-      rows: [
-        choice<DesktopSiteDefault>({
-          id: 'desktop-site',
-          label: 'Desktop site',
-          keywords: ['mobile', 'layout', 'viewport'],
-          value: pc.desktopSite,
-          sheetDescription:
-            'Automatic asks sites for their desktop layout on large screens, or when a keyboard and mouse are attached.',
-          options: [
-            { value: 'auto', label: 'Automatic' },
-            { value: 'on', label: 'Always' },
-            { value: 'off', label: 'Never' }
-          ],
-          onChange: (v) => patchControls({ desktopSite: v })
-        }),
-        {
-          kind: 'switch',
-          id: 'darken-sites',
-          label: 'Apply dark theme to sites',
-          description: 'Sites without a dark theme get one while Zenium is dark.',
-          checked: pc.darkenSites,
-          onChange: (v) => patchControls({ darkenSites: v })
-        }
-      ]
-    })
-    const exceptions: SettingsRow[] = [
-      ...sorted(pc.desktopSites).map(([domain, on]) =>
-        item(`desktop-site:${domain}`, domain, on ? 'Desktop site on' : 'Desktop site off', [
-          {
-            kind: 'action',
-            id: `desktop-site:${domain}:forget`,
-            label: 'Remove exception',
-            description: 'The site follows the Desktop site setting again.',
-            onPress: () => run('pageControls.forgetSite', { kind: 'desktop', domain })
-          }
-        ])
-      ),
-      ...sorted(pc.darkenSiteExceptions).map(([domain, on]) =>
-        item(`darken:${domain}`, domain, on ? 'Dark theme on' : 'Dark theme off', [
-          {
-            kind: 'action',
-            id: `darken:${domain}:forget`,
-            label: 'Remove exception',
-            description: 'The site follows the dark theme setting again.',
-            onPress: () => run('pageControls.forgetSite', { kind: 'darken', domain })
-          }
-        ])
-      )
-    ]
-    groups.push({
-      id: 'site-exceptions',
-      heading: 'Site exceptions',
-      description:
-        'Desktop Site and Dark Theme for This Site in the menu remember a site’s choice here.',
-      rows: exceptions,
-      empty: 'No exceptions yet'
-    })
-  }
   groups.push({
     id: 'app-icon',
     heading: 'App icon',
@@ -317,6 +266,68 @@ function lookSection({ state, set, openBarEditor }: SectionContext): RowGroup[] 
       ]
     })
   }
+  if (caps.pageControls) {
+    groups.push({
+      id: 'sites',
+      heading: 'Sites',
+      rows: [
+        choice<DesktopSiteDefault>({
+          id: 'desktop-site',
+          label: 'Desktop site',
+          keywords: ['mobile', 'layout', 'viewport'],
+          value: pc.desktopSite,
+          sheetDescription:
+            'Automatic asks sites for their desktop layout on large screens, or when a keyboard and mouse are attached.',
+          options: [
+            { value: 'auto', label: 'Automatic' },
+            { value: 'on', label: 'Always' },
+            { value: 'off', label: 'Never' }
+          ],
+          onChange: (v) => patchControls({ desktopSite: v })
+        }),
+        {
+          kind: 'switch',
+          id: 'darken-sites',
+          label: 'Apply dark theme to sites',
+          description: 'Sites without a dark theme get one while Zenium is dark.',
+          checked: pc.darkenSites,
+          onChange: (v) => patchControls({ darkenSites: v })
+        }
+      ]
+    })
+    const exceptions: SettingsRow[] = [
+      ...sorted(pc.desktopSites).map(([domain, on]) =>
+        item(`desktop-site:${domain}`, domain, on ? 'Desktop site on' : 'Desktop site off', [
+          {
+            kind: 'action',
+            id: `desktop-site:${domain}:forget`,
+            label: 'Remove exception',
+            description: 'The site follows the Desktop site setting again.',
+            onPress: () => run('pageControls.forgetSite', { kind: 'desktop', domain })
+          }
+        ])
+      ),
+      ...sorted(pc.darkenSiteExceptions).map(([domain, on]) =>
+        item(`darken:${domain}`, domain, on ? 'Dark theme on' : 'Dark theme off', [
+          {
+            kind: 'action',
+            id: `darken:${domain}:forget`,
+            label: 'Remove exception',
+            description: 'The site follows the dark theme setting again.',
+            onPress: () => run('pageControls.forgetSite', { kind: 'darken', domain })
+          }
+        ])
+      )
+    ]
+    groups.push({
+      id: 'site-exceptions',
+      heading: 'Site exceptions',
+      description:
+        'Desktop Site and Dark Theme for This Site in the menu remember a site’s choice here.',
+      rows: exceptions,
+      empty: 'No exceptions yet'
+    })
+  }
   groups.push({
     id: 'glance',
     heading: 'Glance',
@@ -329,18 +340,29 @@ function lookSection({ state, set, openBarEditor }: SectionContext): RowGroup[] 
         checked: s.glanceEnabled,
         onChange: (v) => set({ glanceEnabled: v })
       },
-      choice<GlanceTrigger>({
-        id: 'glance-trigger',
-        label: 'Trigger',
-        value: s.glanceTrigger,
-        disabled: !s.glanceEnabled,
-        options: [
-          { value: 'alt', label: 'Alt + Click' },
-          { value: 'ctrl', label: 'Ctrl + Click' },
-          { value: 'shift', label: 'Shift + Click' }
-        ],
-        onChange: (v) => set({ glanceTrigger: v })
-      })
+      // The modifier-click trigger is a pointer's; a touch host opens Glance from the link's
+      // long-press menu (menus.ts, "Open Link in Glance"), so its row says that and picks nothing.
+      pointer
+        ? choice<GlanceTrigger>({
+            id: 'glance-trigger',
+            label: 'Trigger',
+            value: s.glanceTrigger,
+            disabled: !s.glanceEnabled,
+            options: [
+              { value: 'alt', label: 'Alt + Click' },
+              { value: 'ctrl', label: 'Ctrl + Click' },
+              { value: 'shift', label: 'Shift + Click' }
+            ],
+            onChange: (v) => set({ glanceTrigger: v })
+          })
+        : {
+            kind: 'info',
+            id: 'glance-trigger',
+            label: 'Trigger',
+            description: 'Hold a link and choose Open Link in Glance.',
+            keywords: ['long press', 'link menu'],
+            disabled: !s.glanceEnabled
+          }
     ]
   })
   return groups

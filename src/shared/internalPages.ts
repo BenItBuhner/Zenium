@@ -109,7 +109,10 @@ export interface InternalPageDefinition {
 export type InternalPageRegistry = Readonly<Record<string, InternalPageDefinition>>
 
 /**
- * Settings sections in nav order (Zen's `about:preferences` order, the desktop panel's). Ids are
+ * Settings sections in nav order (Zen's `about:preferences` order, the desktop panel's): Zen's
+ * own features first, Privacy and Security after Search as Firefox has it, then – past the
+ * landing's first hairline (v2 §10.2) – the browser-wide categories, Sync, Accessibility,
+ * Keyboard Shortcuts and Updates, whichever the host has, and About past the second. Ids are
  * stable: they are deep-link targets (`zenium://settings/privacy`) and what
  * `overlay.open { section }` callers already pass. Sections other PRs add (Downloads, Languages,
  * Passwords, Security) register here and drop into the landing list and the search in one line
@@ -135,12 +138,6 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     ]
   },
   {
-    id: 'accessibility',
-    label: 'Accessibility',
-    keywords: ['zoom', 'font size', 'text size', 'pinch'],
-    requires: 'pageControls'
-  },
-  {
     id: 'compact',
     label: 'Compact Mode',
     keywords: ['sidebar', 'toolbar', 'hide'],
@@ -152,12 +149,6 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     keywords: ['tabs', 'pinned', 'essentials', 'unload', 'session', 'downloads', 'window']
   },
   {
-    id: 'privacy',
-    label: 'Privacy and Security',
-    keywords: ['ads', 'trackers', 'blocking', 'filter', 'permissions', 'site', 'exceptions'],
-    requires: 'requestBlocking'
-  },
-  {
     id: 'resources',
     label: 'Resources',
     keywords: ['memory', 'cpu', 'budget', 'freeze', 'process'],
@@ -167,6 +158,12 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     id: 'search',
     label: 'Search',
     keywords: ['engine', 'suggestions', 'keyword']
+  },
+  {
+    id: 'privacy',
+    label: 'Privacy and Security',
+    keywords: ['ads', 'trackers', 'blocking', 'filter', 'permissions', 'site', 'exceptions'],
+    requires: 'requestBlocking'
   },
   {
     id: 'spaces',
@@ -205,6 +202,12 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     label: 'Sync',
     keywords: ['devices', 'folder', 'passphrase'],
     requires: 'sync'
+  },
+  {
+    id: 'accessibility',
+    label: 'Accessibility',
+    keywords: ['zoom', 'font size', 'text size', 'pinch'],
+    requires: 'pageControls'
   },
   {
     id: 'shortcuts',

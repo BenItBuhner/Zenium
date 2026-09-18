@@ -154,8 +154,11 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
   } as unknown as UIState
 }
 
-/** A context that records what the rows ask of the page. */
-function context(s: UIState = state()): {
+/** A context that records what the rows ask of the page; a touch host unless `pointer` says so. */
+function context(
+  s: UIState = state(),
+  pointer = false
+): {
   ctx: Parameters<typeof buildSection>[1]
   patches: Partial<Settings>[]
   navigated: string[]
@@ -167,6 +170,7 @@ function context(s: UIState = state()): {
   const ctx: Parameters<typeof buildSection>[1] = {
     state: s,
     tab: s.tabs.settings ?? SETTINGS,
+    pointer,
     set: (patch) => record.patches.push(patch),
     navigate: (section) => record.navigated.push(section),
     openBarEditor: () => {
@@ -214,15 +218,15 @@ describe('the section model', () => {
     const models = phoneSections()
     expect(models.map((m) => m.section.id)).toEqual([
       'look',
-      'accessibility',
       'tabs',
-      'privacy',
       'search',
+      'privacy',
       'spaces',
       'containers',
       'boosts',
       'mods',
       'agents',
+      'accessibility',
       'updates',
       'about'
     ])
@@ -312,6 +316,41 @@ describe('the section model', () => {
     expect(c.patches).toEqual([
       { crashRestore: 'never' },
       { warnOnCloseWindow: !DEFAULT_SETTINGS.warnOnCloseWindow }
+    ])
+  })
+
+  it('orders Look and Feel identity, chrome, page behaviour, Glance (design lead, #134)', () => {
+    expect(section('look').groups.map((g) => g.id)).toEqual([
+      'appearance',
+      'app-icon',
+      'url-bar',
+      'pages',
+      'sites',
+      'site-exceptions',
+      'glance'
+    ])
+  })
+
+  it('tells a touch host its own gestures: no double-click, Glance from the link menu', () => {
+    const touch = section('look')
+    expect(row(touch, 'sidebar-expanded').description).toBe('Show tab titles next to their icons.')
+    expect(row(touch, 'glance-trigger')).toMatchObject({
+      kind: 'info',
+      label: 'Trigger',
+      description: 'Hold a link and choose Open Link in Glance.',
+      disabled: false
+    })
+    const off = buildSection(PAGE.sections[0], context(state({}, { glanceEnabled: false })).ctx)
+    expect(row(off, 'glance-trigger').disabled).toBe(true)
+
+    const mouse = buildSection(PAGE.sections[0], context(state(), true).ctx)
+    expect(row(mouse, 'sidebar-expanded').description).toContain('Double-click the sidebar edge')
+    const trigger = row(mouse, 'glance-trigger')
+    if (trigger.kind !== 'value') throw new Error('not a value row')
+    expect(trigger.options.map((o) => o.label)).toEqual([
+      'Alt + Click',
+      'Ctrl + Click',
+      'Shift + Click'
     ])
   })
 

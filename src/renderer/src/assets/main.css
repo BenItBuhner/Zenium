@@ -1827,6 +1827,10 @@
     transform-origin: 50% 100%;
     will-change: transform;
   }
+  /* The dialog takes the focus itself when its first control must not (BottomSheet); no ring. */
+  .zen-sheet:focus {
+    outline: none;
+  }
   /*
    * The header after the grip strip: 48 tall, the title 17/600 at line-height 22 centred over
    * the whole width, with room for a 44 px control at 2 px margins on either side so a leading
@@ -1898,10 +1902,6 @@
     background: var(--zen-scrim);
     touch-action: none;
     will-change: opacity;
-  }
-  /* A sheet over a sheet draws no scrim of its own (v2 §9.24); the lower sheet's stays. */
-  .zen-sheet-scrim[data-clear] {
-    background: transparent;
   }
   .zen-sheet-detents {
     height: 0;
@@ -4085,15 +4085,12 @@
   padding-left: calc(12px + var(--v2-icon) + 8px);
   padding-right: var(--v2-icon-button);
 }
+/* The clear button is a v2 icon button (§9.3): 44 box, the 20 px glyph, right-aligned to the field. */
 .zen-settings-search-clear {
   position: absolute;
   right: 0;
   top: 50%;
   transform: translateY(-50%);
-}
-.zen-settings-search-clear > svg {
-  width: 16px;
-  height: 16px;
 }
 /* Category rows: 44, the glyph at 16, no description, no chevron; Zen's two hairlines between runs. */
 .zen-settings-categories {
@@ -4123,14 +4120,17 @@
   background: var(--v2-border);
 }
 
-/* Search results: matching rows from every category, a 13/69 % "Category › Group" caption above each. */
+/*
+ * Search results: matching rows from every category, a 13/69 % "Category › Group" caption above
+ * each on its own 20 px line box and nothing more (§5: box to box), so a result row is a row
+ * plus one line – 64 / 84 / 104.
+ */
 .zen-settings-results {
   display: flex;
   flex-direction: column;
 }
 .zen-settings-caption {
   display: block;
-  margin-bottom: 2px;
   color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-small);
   line-height: var(--v2-line-body);
@@ -4187,7 +4187,10 @@
   line-height: 22px;
 }
 
-/* Groups (§10.3): a 15/600 heading with 20 above and 4 below; the first sits 8 under the bar. */
+/*
+ * Groups (§10.3): a 15/600 heading with 20 above and 4 below; the first sits 8 under the bar. A
+ * heading block that carries a description ends 8 above its first row instead (§9.27).
+ */
 .zen-settings-groups {
   display: flex;
   flex-direction: column;
@@ -4207,7 +4210,7 @@
   margin-top: 8px;
 }
 .zen-settings-group-description {
-  margin: 0 0 4px;
+  margin: 0 0 8px;
   padding: 0 16px;
   color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-body);
@@ -4464,15 +4467,24 @@
   font-size: var(--v2-font-small);
   font-variant-numeric: tabular-nums;
 }
+/*
+ * The stepper (§10.3): the slider spans the row between its two 44 px step buttons. It is the
+ * §10.4 slider row, drawn by the page zoom sheet's rules (`.zen-zoom-slider`, below with that
+ * sheet): the 4 px track in --v2-fill, the travelled part and the 20 px thumb in --v2-accent,
+ * on the page's tokens (§9.29). The sample under it is body text scaled whole, its 15/20 line
+ * box with it (§4: a fixed line-height, here the body's times the sample's factor).
+ */
 .zen-settings-zoom-stepper {
   margin-top: 8px;
+  gap: 8px;
+}
+.zen-settings-zoom-stepper .zen-zoom-slider [role='slider'] {
+  border-color: var(--v2-page);
 }
 .zen-settings-zoom-preview {
   margin: 8px 0 0;
-  padding: 12px;
-  border: 1px solid var(--v2-border);
-  border-radius: var(--v2-radius-inner);
-  line-height: 1.35;
+  font-size: calc(var(--v2-font-body) * var(--zen-settings-zoom-sample, 1));
+  line-height: calc(var(--v2-line-body) * var(--zen-settings-zoom-sample, 1));
 }
 .zen-settings-update-status {
   display: flex;
@@ -4515,7 +4527,19 @@
   min-width: 88px;
   padding: 0 12px;
 }
-/* Secret strings and snippets: the platform monospace, one colour (§4). */
+/*
+ * A copy row's value: one selectable 13/69 % line. A secret (the connection token) is the one
+ * thing set in the platform monospace (§4); an endpoint is body text like any other value.
+ */
+.zen-settings-copy-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-body);
+  user-select: text;
+}
 .zen-settings-mono,
 .zen-settings-pre {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
@@ -4523,12 +4547,6 @@
   font-size: var(--v2-font-small);
   line-height: var(--v2-line-body);
   user-select: text;
-}
-.zen-settings-mono {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--v2-text-deemphasized);
 }
 .zen-settings-code {
   display: flex;
@@ -4612,12 +4630,11 @@
 }
 
 /*
- * The sheets a row opens (§9.13, §9.16, §9.23–9.25): the neutral dialog surface at radius 12 with
- * a hairline edge in place of the tinted chassis sheet; no side padding of its own, so rows run
- * edge to edge and everything else sits at 16; a 48 header with the title 17/600 centred, or a
- * title block when the sheet has a description; §9.7's hairline under the header once the body
- * has scrolled; the black v2 scrim on its own scrim element. The layer lives in the frame's
- * dialog host, outside the page host, so it states the page's type and row padding itself.
+ * The sheets a row opens (§9.13, §9.16, §9.23–9.25) on the phone chassis (`.zen-sheet` above:
+ * the neutral surface, radius 12, the 48 header, §9.7's hairline once the body has scrolled, the
+ * one black scrim): a title block in place of the header when the sheet has a description. The
+ * layer lives in the frame's dialog host, outside the page host, so it states the page's type
+ * and row padding itself.
  */
 .zen-settings-sheet-layer {
   --zen-settings-pad: calc((var(--v2-row) - var(--v2-line-body)) / 2);
@@ -4625,14 +4642,12 @@
   line-height: var(--v2-line-body);
   user-select: none;
 }
-.zen-settings-sheet-layer .zen-sheet-scrim {
-  background: var(--v2-scrim);
-}
 /*
  * The sheet beneath a stacked sheet recedes (§9.24) on the stacked one's progress, written per
  * frame to `--zen-stack-recede`: the same 3 % and 6 px of corner the page gives up under a sheet,
  * anchored at the bottom edge so the panel stays seated; `scale` composes with the motion's own
- * transform.
+ * transform. Its scrim fades out on the same progress (BottomSheet writes the share), so the
+ * stack's one scrim is the top sheet's, above the page and the lower sheet alike.
  */
 .zen-settings-sheet-layer[data-under] .zen-sheet.zen-settings-sheet {
   scale: calc(1 - 0.03 * var(--zen-stack-recede, 0));
@@ -4640,35 +4655,24 @@
   border-radius: calc(var(--v2-radius-sheet) + 6px * var(--zen-stack-recede, 0))
     calc(var(--v2-radius-sheet) + 6px * var(--zen-stack-recede, 0)) 0 0;
 }
+/*
+ * The edge takes no layout (§9.25: 16 from the sheet's outer edge, border included, to every
+ * text and control edge): the chassis border goes and a pseudo-element draws the same hairline
+ * on the top and sides, following the radius, so a row's 16 gutter is 16 from the outer edge.
+ */
 .zen-sheet.zen-settings-sheet {
-  padding-left: 0;
-  padding-right: 0;
+  border: 0;
+}
+.zen-sheet.zen-settings-sheet::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   border: 1px solid var(--v2-border);
   border-bottom: 0;
-  border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
-  background: var(--v2-panel);
-  color: var(--v2-text);
-  backdrop-filter: none;
-  box-shadow: var(--v2-shadow-sheet);
-}
-:root[data-theme='dark'] .zen-sheet.zen-settings-sheet {
-  box-shadow: var(--v2-shadow-sheet);
-}
-.zen-settings-sheet .zen-sheet-handle {
-  background: rgb(var(--v2-text-rgb) / 0.25);
-}
-.zen-settings-sheet .zen-sheet-grip {
-  transition: box-shadow 120ms var(--zen-ease);
-}
-.zen-settings-sheet[data-scrolled='true'] .zen-sheet-grip {
-  box-shadow: 0 1px 0 var(--v2-border);
-}
-.zen-settings-sheet-header {
-  display: flex;
-  height: 48px;
-  align-items: center;
-  justify-content: center;
-  padding: 0 var(--v2-icon-button);
+  border-radius: inherit;
+  corner-shape: inherit;
+  pointer-events: none;
 }
 .zen-settings-sheet-title {
   margin: 0;
@@ -5329,7 +5333,9 @@
  * track), no shadow on the thumb – the shared Slider's drop shadow goes, and with it its
  * box-shadow focus ring, so the thumb takes the v2 outline ring (§9.6) here, the shared Slider
  * carrying no zen-v2- class – and a 28 px touch target around the 20 px disc (the whole 40 px
- * row moves it as well, Radix taking the press anywhere on the root).
+ * row moves it as well, Radix taking the press anywhere on the root). The Settings tab's Default
+ * zoom row (`.zen-settings-zoom-stepper`, pages/settings/blocks.tsx) is the same slider row and
+ * shares these rules, its ring in the page's tone since it sits on --v2-page.
  */
 .zen-zoom-slider {
   height: var(--v2-control);

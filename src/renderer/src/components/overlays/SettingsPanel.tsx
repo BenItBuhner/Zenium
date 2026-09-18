@@ -200,12 +200,7 @@ export function SettingsBody({
       <div ref={fadeContent} className="min-w-0 flex-1 overflow-y-auto p-6">
         <div className="mx-auto flex max-w-2xl flex-col gap-6">
           {section === 'look' && (
-            <LookSection
-              s={s}
-              set={set}
-              platform={state.platform}
-              caps={state.capabilities}
-            />
+            <LookSection s={s} set={set} platform={state.platform} caps={state.capabilities} />
           )}
           {section === 'accessibility' && <AccessibilitySection state={state} set={set} />}
           {section === 'compact' && <CompactSection s={s} set={set} />}
