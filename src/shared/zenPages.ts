@@ -13,9 +13,11 @@
 // a copy of any value; `v2Tokens.test.ts` lists the page among the v2 surfaces.
 import chromeStylesheet from '../renderer/src/assets/main.css?raw'
 import { PHONE_MAX_WIDTH } from './formFactor'
-import type { OverlayKind } from './types'
+import type { CertificateDetails, OverlayKind } from './types'
 import { SAFE_BROWSING_THREAT_LABELS, type SafeBrowsingThreat } from './privacy'
 import { INTERSTITIAL_MESSAGE_KEY, type InterstitialAction } from './interstitial'
+import { isCertificateError } from './siteInfo'
+import { errorPageCertificate } from './url'
 
 export const ZEN_SCHEME = 'zen'
 
@@ -213,6 +215,84 @@ export interface ErrorPageContent {
   code: string
   /** The failed URL the Reload control goes back to ('' when there is none). */
   target: string
+  /**
+   * The certificate interstitial's part, for an `ERR_CERT_*` failure of an https address: the
+   * page then offers Back to safety and Advanced, which reveals this and the proceed control, as
+   * Chrome's does. Null for every other failure, which keeps the Reload control.
+   */
+  interstitial: CertificateInterstitial | null
+}
+
+export interface CertificateInterstitial {
+  /** Chrome's explanation of what is wrong with the certificate (the Advanced block's paragraph). */
+  explanation: string
+  /** The refused certificate's fields, label and value; empty when the host could not describe it. */
+  details: Array<{ label: string; value: string }>
+  /**
+   * The proceed control's label, `Proceed to <host> (unsafe)`; null when the host could not
+   * fingerprint the certificate, since an exception is remembered by that and none could be.
+   */
+  proceed: string | null
+}
+
+/** Chrome's Advanced-block sentence per certificate error; the default covers the rest of the family. */
+const CERTIFICATE_EXPLANATIONS: Record<
+  number,
+  (site: string, cert: CertificateDetails | null) => string
+> = {
+  [-200]: (site, cert) =>
+    `This server could not prove that it is ${site}; its security certificate is ${
+      cert?.subjectName ? `from ${cert.subjectName}` : 'for another site'
+    }. This may be caused by a misconfiguration or an attacker intercepting your connection.`,
+  [-201]: (site) =>
+    `This server could not prove that it is ${site}; its security certificate has expired or is not yet valid. This may be caused by a misconfiguration, an attacker intercepting your connection, or a wrong clock on this device.`,
+  [-202]: (site) =>
+    `This server could not prove that it is ${site}; its security certificate is not trusted by this device's operating system. This may be caused by a misconfiguration or an attacker intercepting your connection.`
+}
+
+/** A certificate date for the details list; ISO when the runtime has no locale formatting. */
+function certificateDate(ms: number): string {
+  const date = new Date(ms)
+  try {
+    return date.toLocaleDateString(undefined, { dateStyle: 'medium' })
+  } catch {
+    return date.toISOString().slice(0, 10)
+  }
+}
+
+/**
+ * The interstitial's part of the page for an `ERR_CERT_*` failure of an https address (`target`);
+ * null for any other failure or address, so an http or `file:` failure never offers to proceed.
+ */
+export function certificateInterstitial(
+  code: number,
+  target: string,
+  certificate: CertificateDetails | null
+): CertificateInterstitial | null {
+  if (!isCertificateError(code) || !/^https:\/\//i.test(target)) return null
+  const site = siteOf(target)
+  if (!site) return null
+  const explain =
+    CERTIFICATE_EXPLANATIONS[code] ??
+    ((s: string) =>
+      `This server could not prove that it is ${s}; its security certificate is not valid. This may be caused by a misconfiguration or an attacker intercepting your connection.`)
+  const details: Array<{ label: string; value: string }> = []
+  if (certificate) {
+    if (certificate.subjectName)
+      details.push({ label: 'Issued to', value: certificate.subjectName })
+    if (certificate.issuerName) details.push({ label: 'Issued by', value: certificate.issuerName })
+    if (certificate.validStart)
+      details.push({ label: 'Valid from', value: certificateDate(certificate.validStart) })
+    if (certificate.validExpiry)
+      details.push({ label: 'Valid until', value: certificateDate(certificate.validExpiry) })
+    if (certificate.fingerprint)
+      details.push({ label: 'Fingerprint', value: certificate.fingerprint })
+  }
+  return {
+    explanation: explain(site, certificate),
+    details,
+    proceed: certificate?.fingerprint ? `Proceed to ${site} (unsafe)` : null
+  }
 }
 
 /** The `net::ERR_…` name in a host description like `net::ERR_NAME_NOT_RESOLVED`, or null. */
@@ -233,7 +313,8 @@ function siteOf(url: string): string {
 export function errorPageContent(
   code: number,
   description: string,
-  target: string
+  target: string,
+  certificate: CertificateDetails | null = null
 ): ErrorPageContent {
   const site = siteOf(target)
   if (code === CRASH_CODE) {
@@ -242,7 +323,8 @@ export function errorPageContent(
       site,
       reason: 'Something went wrong while displaying this page.',
       code: description,
-      target
+      target,
+      interstitial: null
     }
   }
   const copy = NET_ERRORS[code]
@@ -250,12 +332,15 @@ export function errorPageContent(
   // without a table entry keeps whatever prose the host sent as its reason.
   const name = errorNameIn(description) ?? copy?.name ?? ''
   const fallback = (!name && description) || 'The page could not be loaded.'
+  const interstitial = certificateInterstitial(code, target, certificate)
   return {
-    title: copy?.title ?? UNREACHABLE,
+    // Every certificate failure is Chrome's "not private" page, named in the table or not.
+    title: copy?.title ?? (interstitial ? NOT_PRIVATE : UNREACHABLE),
     site,
-    reason: copy?.reason(site) ?? fallback,
+    reason: copy?.reason(site) ?? (interstitial ? NET_ERRORS[-207].reason(site) : fallback),
     code: name,
-    target
+    target,
+    interstitial
   }
 }
 
@@ -352,6 +437,52 @@ function emphasiseSite(reason: string, site: string): string {
 /** `net::ERR_BLOCKED_BY_CLIENT`: the request engine stopped the navigation itself. */
 export const BLOCKED_BY_CLIENT_CODE = -20
 
+/** Toggles the Advanced block open and closed (the page's own script; nothing crosses to the browser). */
+const ADVANCED_TOGGLE_SCRIPT =
+  "var a=document.getElementById('zen-error-advanced'),open=a.hidden;a.hidden=!open;" +
+  "this.setAttribute('aria-expanded',String(open));this.textContent=open?'Hide advanced':'Advanced'"
+
+/**
+ * The certificate interstitial's controls, in Chrome's order of prominence: Back to safety as
+ * the one primary button, Advanced revealing the explanation, the certificate and the proceed
+ * control, which reads as text so nobody presses it in passing. Back and Proceed post the
+ * interstitial message the other warning pages post (`postAction`), which the page script relays.
+ */
+function interstitialHtml(interstitial: CertificateInterstitial, target: string): string {
+  const rows = interstitial.details
+    .map((d) => `\n      <div><dt>${escapeHtml(d.label)}</dt><dd>${escapeHtml(d.value)}</dd></div>`)
+    .join('')
+  const details = rows ? `\n    <dl class="zen-error-certificate">${rows}\n    </dl>` : ''
+  const proceed = interstitial.proceed
+    ? `\n    <button type="button" class="zen-error-proceed" onclick="${escapeHtml(postAction('proceed', target))}">${escapeHtml(interstitial.proceed)}</button>`
+    : ''
+  return `
+  <div class="zen-error-actions">
+    <button type="button" class="zen-v2-button" data-primary onclick="${escapeHtml(postAction('back', target))}">Back to safety</button>
+    <button type="button" class="zen-v2-button" aria-expanded="false" aria-controls="zen-error-advanced" onclick="${escapeHtml(ADVANCED_TOGGLE_SCRIPT)}">Advanced</button>
+  </div>
+  <section id="zen-error-advanced" class="zen-error-advanced" hidden>
+    <p>${escapeHtml(interstitial.explanation)}</p>${details}${proceed}
+  </section>`
+}
+
+/**
+ * The script that puts the `zen://error` page `url` in place of the empty document Chromium
+ * commits for a failed load (`TabView.showErrorPage`): the document's own root stays, so the
+ * page script's listeners and the entry the failure committed stay with it, and the root
+ * attributes the page's inline script would set are set here (markup written this way runs no
+ * scripts). Only an error document is touched; a page that did load meanwhile is left alone.
+ */
+export function inPlaceErrorPageScript(url: URL): string {
+  const html = JSON.stringify(errorPageHtml(url))
+  return (
+    "(function(html){if(location.protocol!=='chrome-error:')return false;" +
+    "var doc=new DOMParser().parseFromString(html,'text/html'),root=document.documentElement;" +
+    'root.className=doc.documentElement.className;root.innerHTML=doc.documentElement.innerHTML;' +
+    `${ERROR_PAGE_ATTRIBUTES_SCRIPT};return true})(${html})`
+  )
+}
+
 /** `zen://error?code=…&description=…&url=…`: Chrome's error page, in the tab, for the failed URL. */
 export function errorPageHtml(url: URL): string {
   const code = Number(url.searchParams.get('code') ?? 0)
@@ -361,15 +492,22 @@ export function errorPageHtml(url: URL): string {
     return safeBrowsingPageHtml(target, threatOf(url.searchParams.get('threat')))
   if (kind === 'https-only') return httpsOnlyPageHtml(target, code)
   if (code === BLOCKED_BY_CLIENT_CODE) return blockedPageHtml(target)
-  const content = errorPageContent(code, url.searchParams.get('description') ?? '', target)
-  const reload = content.target
-    ? `\n  <button type="button" class="zen-v2-button" onclick="location.replace(${escapeHtml(JSON.stringify(content.target))})">Reload</button>`
-    : ''
+  const content = errorPageContent(
+    code,
+    url.searchParams.get('description') ?? '',
+    target,
+    errorPageCertificate(url.searchParams)
+  )
+  const controls = content.interstitial
+    ? interstitialHtml(content.interstitial, content.target)
+    : content.target
+      ? `\n  <button type="button" class="zen-v2-button" onclick="location.replace(${escapeHtml(JSON.stringify(content.target))})">Reload</button>`
+      : ''
   const name = content.code ? `\n  <p class="zen-error-code">${escapeHtml(content.code)}</p>` : ''
   return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(content.site || 'Problem loading page')}</title><script>${ERROR_PAGE_ATTRIBUTES_SCRIPT}</script><style>${ERROR_STYLE}</style></head>
 <body class="zen-error-page"><main>
   <h1>${escapeHtml(content.title)}</h1>
-  <p>${emphasiseSite(content.reason, content.site)}</p>${name}${reload}
+  <p>${emphasiseSite(content.reason, content.site)}</p>${name}${controls}
 </main></body></html>`
 }
 

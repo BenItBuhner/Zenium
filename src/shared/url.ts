@@ -1,6 +1,7 @@
 /**
  * URL helpers shared by main and renderer. No Electron / DOM dependencies.
  */
+import type { CertificateDetails } from './types'
 
 export const BLANK_URL = 'zen://blank'
 export const ERROR_URL_PREFIX = 'zen://error'
@@ -224,8 +225,18 @@ export function titleForUrl(url: string): string {
   return host ? host.replace(/^www\./, '') : url
 }
 
-export function errorPageUrl(code: number, description: string, url: string): string {
+/**
+ * The `zen://error` page for a failed load of `url`; a certificate failure carries the refused
+ * certificate along, so the page can show it and offer to proceed (`errorPageCertificate`).
+ */
+export function errorPageUrl(
+  code: number,
+  description: string,
+  url: string,
+  certificate?: CertificateDetails | null
+): string {
   const params = new URLSearchParams({ code: String(code), description, url })
+  if (certificate) params.set('certificate', JSON.stringify(certificate))
   return `${ERROR_URL_PREFIX}?${params.toString()}`
 }
 
@@ -265,6 +276,36 @@ export function interstitialKindOf(url: string): InterstitialKind | null {
     return kind === 'safebrowsing' || kind === 'https-only' ? kind : null
   } catch {
     return null
+  }
+}
+
+/** The certificate an error page URL carries (`errorPageUrl`), or null when it has none or it is malformed. */
+export function errorPageCertificate(params: URLSearchParams): CertificateDetails | null {
+  const raw = params.get('certificate')
+  if (!raw) return null
+  try {
+    return certificateDetailsFrom(JSON.parse(raw))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * A host's (or an error page URL's) description of a refused certificate, checked field by field:
+ * missing or mistyped fields read as unknown ('' and 0), so a certificate the host could only
+ * partly describe still shows; null when `value` is no object at all.
+ */
+export function certificateDetailsFrom(value: unknown): CertificateDetails | null {
+  if (!value || typeof value !== 'object') return null
+  const c = value as Record<string, unknown>
+  const text = (v: unknown): string => (typeof v === 'string' ? v : '')
+  const time = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  return {
+    subjectName: text(c.subjectName),
+    issuerName: text(c.issuerName),
+    validStart: time(c.validStart),
+    validExpiry: time(c.validExpiry),
+    fingerprint: text(c.fingerprint)
   }
 }
 

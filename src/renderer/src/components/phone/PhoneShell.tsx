@@ -302,7 +302,9 @@ export function PillContent({
   const shown = (underFinger && state.tabs[underFinger]) || tab
   // The site alone, as Chrome's omnibox shows it at rest: the path would only push it off the pill.
   const url = shown ? displayHost(shown.url) : ''
-  const secure = shown?.url.startsWith('https://')
+  // No lock over a certificate that failed verification (the interstitial, or the page the user
+  // proceeded to): the connection is not secure, as site information says.
+  const secure = shown?.url.startsWith('https://') && !shown.certificateError
   const Control = interactive ? 'button' : 'span'
   const controlProps = interactive ? { type: 'button' as const } : {}
   return (
