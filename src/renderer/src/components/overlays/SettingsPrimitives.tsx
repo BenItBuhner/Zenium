@@ -1,7 +1,15 @@
-import type { JSX, ReactNode } from 'react'
+import type { CSSProperties, JSX, ReactNode } from 'react'
+import { cn } from '@renderer/lib/utils'
+import { useViewport } from '@renderer/lib/formFactor'
+import { ROW_CONTROL_PADDING, rowMinHeight } from '@renderer/lib/rows'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 
 /** Building blocks shared by the Settings sections. */
+
+/** Height of the menulist `Choice` renders (the select trigger's `h-8`). */
+export const MENULIST_HEIGHT = 32
+/** Height of the `Switch` control. */
+export const SWITCH_HEIGHT = 20
 
 export function Group({ title, children }: { title: string; children: ReactNode }): JSX.Element {
   return (
@@ -17,14 +25,37 @@ export function Group({ title, children }: { title: string; children: ReactNode 
 export function Row({
   label,
   hint,
+  control,
   children
 }: {
   label: string
   hint?: string
+  /**
+   * Height in px of the trailing control. A row that names it grows around the control (design
+   * language §9.21, `lib/rows.ts`): a 32 px menulist makes a 40 px row on a desktop, with 4 px
+   * of the row's own padding above and below rather than a list gap, so rows still touch. Rows
+   * that leave it out keep the surface's current size.
+   */
+  control?: number
   children: ReactNode
 }): JSX.Element {
+  const phone = useViewport().formFactor === 'phone'
+  const sized: CSSProperties | undefined =
+    control === undefined
+      ? undefined
+      : {
+          minHeight: rowMinHeight(control, phone),
+          paddingTop: ROW_CONTROL_PADDING,
+          paddingBottom: ROW_CONTROL_PADDING
+        }
   return (
-    <div className="flex min-h-12 items-center gap-4 border-b border-[var(--zen-border)] px-4 py-2 last:border-b-0">
+    <div
+      className={cn(
+        'flex items-center gap-4 border-b border-[var(--zen-border)] px-4 last:border-b-0',
+        control === undefined && 'min-h-12 py-2'
+      )}
+      style={sized}
+    >
       <div className="min-w-0 flex-1">
         <div className="text-[13px]">{label}</div>
         {hint && <div className="text-[11.5px] text-[var(--zen-muted)]">{hint}</div>}

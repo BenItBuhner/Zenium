@@ -38,7 +38,7 @@ import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { OverlayShell } from './OverlayShell'
 import { AccessibilitySection, SitesGroups } from './PageControlsSettings'
 import { ResourcesSection } from './ResourcesSection'
-import { Choice, Group, Row, Segmented } from './SettingsPrimitives'
+import { Choice, Group, MENULIST_HEIGHT, Row, SWITCH_HEIGHT, Segmented } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
 import { SyncSection } from './SyncSection'
 import { UpdatesSection } from './UpdatesSection'
@@ -217,7 +217,7 @@ function LookSection({
   return (
     <>
       <Group title="Appearance">
-        <Row label="Colour scheme">
+        <Row label="Colour scheme" control={MENULIST_HEIGHT}>
           <Choice<ColorScheme>
             value={s.colorScheme}
             onChange={(v) => set({ colorScheme: v })}
@@ -264,6 +264,7 @@ function LookSection({
           <Row
             label="Use Windows transparency effects"
             hint="Let the desktop show through the window frame (Mica). Applies to new windows."
+            control={SWITCH_HEIGHT}
           >
             <Switch
               checked={s.windowMaterial === 'mica'}
