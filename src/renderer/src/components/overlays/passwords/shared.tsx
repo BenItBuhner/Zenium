@@ -27,7 +27,7 @@ import {
 } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../../sheet/BottomSheet'
-import { useEscape, useFocusReach, useOverPage, usePhone } from './lib'
+import { focusBack, useEscape, useFocusReach, useOverPage, usePhone } from './lib'
 
 /**
  * The password manager's controls in the v2 vocabulary (`.zen-v2-pw-*` in passwords.css): Firefox
@@ -185,20 +185,12 @@ export function Menulist<T extends string>({
   /** Closed by a key or a gesture: the trigger takes the focus back (§9.22). */
   const closeToTrigger = (): void => {
     setOpen(false)
-    trigger.current?.focus({ preventScroll: true })
+    focusBack(trigger.current)
   }
   const current = options.find((o) => o.value === value)
-  const list = {
-    id: listId,
-    label,
-    surface,
-    options,
-    value,
-    onPick: (next: T) => {
-      onChange(next)
-      closeToTrigger()
-    }
-  }
+  // A pick applies at once; how the list then leaves is the list's own – the popover is gone on
+  // the spot, the sheet plays its leave first (§9.24) – and either hands the focus back after.
+  const list = { id: listId, label, surface, options, value, onPick: onChange }
   return (
     <>
       <button
@@ -241,6 +233,7 @@ interface OpenList<T extends string> {
   surface: string
   options: Array<MenulistOption<T>>
   value: T
+  /** Apply a pick; the list closes itself after and hands the focus back through `onClose`. */
   onPick: (value: T) => void
 }
 
@@ -265,6 +258,9 @@ function MenulistPopover<T extends string>({
   const ref = useRef<HTMLDivElement>(null)
   const items = useRef<Array<HTMLDivElement | null>>([])
   const anchorRect = useAnchorRect(anchor)
+  // A menulist's list sizes to its rows (§9.20): its height is measured once, laid out but not
+  // yet shown, so `placePopover` keeps a list that fits below the trigger there.
+  const [height, setHeight] = useState<number | null>(null)
   const [active, setActive] = useState(() =>
     Math.max(
       0,
@@ -273,10 +269,26 @@ function MenulistPopover<T extends string>({
   )
   useBackSurface({ name: surface, onCommit: onClose })
   useEscape(surface, onClose)
-  // The keyboard lands on the current option as the list opens (§9.22), then follows `active`.
   useLayoutEffect(() => {
-    items.current[active]?.focus({ preventScroll: true })
-  }, [active])
+    if (height === null && ref.current) setHeight(ref.current.offsetHeight)
+  }, [height])
+  // The fixed 320 of §9.20: a list without trailing controls, never fitted.
+  const width: PopoverExtent = POPOVER_WIDTH.list
+  const box =
+    anchorRect && height !== null
+      ? placePopover(
+          anchorRect,
+          menulistBar(anchor.current, anchorRect),
+          viewportSize(),
+          width,
+          height
+        )
+      : null
+  const placed = box !== null
+  // The keyboard lands on the current option once the list shows (§9.22), then follows `active`.
+  useLayoutEffect(() => {
+    if (placed) items.current[active]?.focus({ preventScroll: true })
+  }, [active, placed])
   useLightDismiss(
     ref,
     () => {
@@ -288,14 +300,14 @@ function MenulistPopover<T extends string>({
     },
     { anchor }
   )
-  // The fixed 320 of §9.20: a list without trailing controls, never fitted.
-  const width: PopoverExtent = POPOVER_WIDTH.list
-  const box = anchorRect
-    ? placePopover(anchorRect, menulistBar(anchor.current, anchorRect), viewportSize(), width)
-    : null
   const move = (index: number): void => {
     const next = (index + options.length) % options.length
     setActive(next)
+  }
+  /** A pick applies and closes the list; the trigger takes the focus back. */
+  const pick = (next: T): void => {
+    onPick(next)
+    onClose()
   }
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
     switch (e.key) {
@@ -314,7 +326,7 @@ function MenulistPopover<T extends string>({
       case 'Enter':
       case ' ': {
         const option = options[active]
-        if (option) onPick(option.value)
+        if (option) pick(option.value)
         break
       }
       case 'Tab':
@@ -336,8 +348,8 @@ function MenulistPopover<T extends string>({
         tabIndex={-1}
         className="zen-v2-pw-menu zen-animate-pop fixed"
         data-side={box?.side}
-        // Until the anchor has been measured it is laid out but not shown.
-        style={box ? popoverStyle(box) : { visibility: 'hidden' }}
+        // Until its rows and the anchor have been measured it is laid out but not shown.
+        style={box ? popoverStyle(box) : { visibility: 'hidden', width }}
         onKeyDown={onKeyDown}
       >
         {options.map((o, i) => (
@@ -352,7 +364,7 @@ function MenulistPopover<T extends string>({
             data-highlighted={i === active || undefined}
             className="zen-v2-pw-menu-item"
             onPointerMove={() => i !== active && setActive(i)}
-            onClick={() => onPick(o.value)}
+            onClick={() => pick(o.value)}
           >
             <span>{o.value === value && <Check className="size-4" strokeWidth={2} />}</span>
             <span className="min-w-0 flex-1 truncate">{o.label}</span>
@@ -373,7 +385,22 @@ function MenulistPopover<T extends string>({
  * the sheet, the scrim and the page's recede together, and a drag, a fling, the scrim, Escape or
  * the back gesture close it and nothing else. A pick applies at once and lets the sheet leave.
  */
-function MenulistSheet<T extends string>({
+function MenulistSheet<T extends string>(
+  props: OpenList<T> & {
+    /** The sheet has left the screen, whichever way: the trigger takes the focus back. */
+    onClose: () => void
+  }
+): JSX.Element {
+  // The sheet registers with the host it renders in (`useFrameDialog` reads the portal's
+  // context), so the host takes the pointer for it and the manager's overlay under it does not.
+  return (
+    <FrameDialogPortal>
+      <PickerSheet {...props} />
+    </FrameDialogPortal>
+  )
+}
+
+function PickerSheet<T extends string>({
   id,
   label,
   surface,
@@ -381,10 +408,7 @@ function MenulistSheet<T extends string>({
   value,
   onPick,
   onClose
-}: OpenList<T> & {
-  /** The sheet has left the screen, whichever way: the trigger takes the focus back. */
-  onClose: () => void
-}): JSX.Element {
+}: OpenList<T> & { onClose: () => void }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   const rows = useRef<HTMLDivElement>(null)
   const titleId = useId()
@@ -406,48 +430,46 @@ function MenulistSheet<T extends string>({
   }, [])
   useFocusReach(rows)
   return (
-    <FrameDialogPortal>
-      <div className="zen-v2-pw zen-v2-pw-sheet-layer absolute inset-0" data-surface="page">
-        <BottomSheet
-          ref={sheet}
-          hosted
-          labelledBy={titleId}
-          className="zen-v2-pw-sheet"
-          handleLabel="Dismiss"
-          header={
-            <h2 id={titleId} className="zen-sheet-title">
-              {label}
-            </h2>
-          }
-          onDismissed={onClose}
+    <div className="zen-v2-pw zen-v2-pw-sheet-layer absolute inset-0" data-surface="page">
+      <BottomSheet
+        ref={sheet}
+        hosted
+        labelledBy={titleId}
+        className="zen-v2-pw-sheet"
+        handleLabel="Dismiss"
+        header={
+          <h2 id={titleId} className="zen-sheet-title">
+            {label}
+          </h2>
+        }
+        onDismissed={onClose}
+      >
+        <div
+          ref={rows}
+          id={id}
+          role="radiogroup"
+          aria-labelledby={titleId}
+          className="zen-v2-pw-sheet-rows"
         >
-          <div
-            ref={rows}
-            id={id}
-            role="radiogroup"
-            aria-labelledby={titleId}
-            className="zen-v2-pw-sheet-rows"
-          >
-            {options.map((o) => (
-              <button
-                key={o.value}
-                type="button"
-                role="radio"
-                aria-checked={o.value === value}
-                className="zen-sheet-item"
-                onClick={() => {
-                  onPick(o.value)
-                  dismiss()
-                }}
-              >
-                <span className="zen-v2-pw-radio" data-checked={o.value === value} aria-hidden />
-                <span className="min-w-0 flex-1 truncate">{o.label}</span>
-              </button>
-            ))}
-          </div>
-        </BottomSheet>
-      </div>
-    </FrameDialogPortal>
+          {options.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              role="radio"
+              aria-checked={o.value === value}
+              className="zen-sheet-item"
+              onClick={() => {
+                onPick(o.value)
+                dismiss()
+              }}
+            >
+              <span className="zen-v2-pw-radio" data-checked={o.value === value} aria-hidden />
+              <span className="min-w-0 flex-1 truncate">{o.label}</span>
+            </button>
+          ))}
+        </div>
+      </BottomSheet>
+    </div>
   )
 }
 

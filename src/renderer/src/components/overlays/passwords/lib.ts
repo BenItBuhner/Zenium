@@ -84,6 +84,21 @@ export function useEscape(name: string, close: () => void): void {
 }
 
 /**
+ * Hand the focus back to `el` – the control that opened a layer – now, or on the next frame when
+ * it cannot take it yet: the page it sits on stays inert until the layer's unmount has committed
+ * (`useUnderLayer`), one render after the layer told it to close.
+ */
+export function focusBack(el: HTMLElement | null | undefined): void {
+  if (!el) return
+  el.focus({ preventScroll: true })
+  if (document.activeElement === el) return
+  requestAnimationFrame(() => {
+    const active = document.activeElement
+    if (el.isConnected && (!active || active === document.body)) el.focus({ preventScroll: true })
+  })
+}
+
+/**
  * Keyboard reach into a dialog or sheet (v2 §9.22). The dialog is the nearest `role="dialog"`
  * around `ref` (the desktop prompt's own box, the shared `BottomSheet` on a phone with its
  * grabber first in the order). On open, focus moves into it – the first field, else the first
@@ -125,7 +140,7 @@ export function useFocusReach(ref: RefObject<HTMLElement | null>): void {
       document.removeEventListener('keydown', onKey, true)
       const active = document.activeElement
       const lost = !active || active === document.body || root.contains(active)
-      if (lost && anchor?.isConnected) anchor.focus({ preventScroll: true })
+      if (lost && anchor?.isConnected) focusBack(anchor)
     }
   }, [ref, anchor])
 }
