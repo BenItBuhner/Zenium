@@ -11,10 +11,6 @@ name: Android extension runtime demo
 # sideloads.
 on:
   workflow_dispatch:
-  # TEMPORARY (W2-2 verification): removed before the branch is handed back.
-  push:
-    branches:
-      - cursor/android-ext-runtime-surfaces-f955
 
 permissions:
   contents: read
