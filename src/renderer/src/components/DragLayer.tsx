@@ -1,26 +1,62 @@
 import type { JSX } from 'react'
+import { Globe } from 'lucide-react'
 import type { UIState } from '@shared/types'
+import { dropStore, registerCaret, registerGhost } from '@renderer/lib/drag'
 import { tabTitle } from '@renderer/lib/selectors'
 import type { DragState } from '@renderer/lib/ui'
 import { Favicon } from './sidebar/Favicon'
 
-/** Follows the pointer while a tab is being dragged. */
-export function DragGhost({
-  state,
-  drag
-}: {
-  state: UIState
-  drag: DragState
-}): JSX.Element | null {
+/**
+ * What a tab drag draws over the window: the ghost in the hand – the lifted row, thinned out
+ * over a drop-into target, or the tear-off card past the sidebar – and the insertion caret in
+ * the gap the rows opened. Both are positioned by lib/drag.ts through the registered elements,
+ * so the pointer never waits for a render.
+ */
+export function DragLayer({ state, drag }: { state: UIState; drag: DragState }): JSX.Element {
+  const ghost = dropStore.use((s) => s.ghost)
   const tab = state.tabs[drag.tabId]
-  if (!tab) return null
+  const title = tab ? tabTitle(tab) : drag.title
+  const icon = tab ? (
+    <Favicon tab={tab} />
+  ) : drag.favicon ? (
+    <img src={drag.favicon} width={16} height={16} alt="" className="shrink-0 rounded-[4px]" />
+  ) : (
+    <Globe className="h-4 w-4 shrink-0 opacity-60" />
+  )
   return (
-    <div
-      className="zen-panel pointer-events-none fixed z-[100] flex h-8 max-w-[240px] items-center gap-2 px-2.5 text-[13px]"
-      style={{ left: drag.x + 12, top: drag.y + 10 }}
-    >
-      <Favicon tab={tab} />
-      <span className="truncate">{tabTitle(tab)}</span>
-    </div>
+    <>
+      <div ref={registerCaret} className="zen-tab-caret" aria-hidden />
+      <div
+        ref={registerGhost}
+        className="zen-tab-ghost"
+        data-into={ghost === 'into' || undefined}
+        aria-hidden
+      >
+        {ghost === 'tearoff' ? (
+          <div className="zen-tab-tearoff" style={{ width: Math.max(200, drag.width) }}>
+            <div className="zen-tab-tearoff-bar">
+              {icon}
+              <span className="min-w-0 flex-1 truncate">{title}</span>
+            </div>
+            <div className="zen-tab-tearoff-page">New window</div>
+          </div>
+        ) : drag.tile ? (
+          <div
+            className="zen-essential zen-tab-ghost-row"
+            style={{ width: drag.width, height: drag.height }}
+          >
+            {tab ? <Favicon tab={tab} size={20} /> : icon}
+          </div>
+        ) : (
+          <div
+            className="zen-tab zen-tab-ghost-row"
+            style={{ width: drag.width, height: drag.height }}
+          >
+            {icon}
+            <span className="zen-tab-title min-w-0 flex-1 truncate">{title}</span>
+          </div>
+        )}
+      </div>
+    </>
   )
 }

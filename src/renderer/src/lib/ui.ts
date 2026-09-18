@@ -51,10 +51,20 @@ export interface Toast {
   kind: 'info' | 'error'
 }
 
+/** A sidebar tab in the hand (see lib/drag.ts); the ghost and caret are placed imperatively. */
 export interface DragState {
   tabId: string
-  x: number
-  y: number
+  /** The drag began in another window (the core relays it); the tab may not be in this list. */
+  remote: boolean
+  title: string
+  favicon: string | null
+  /** The lifted row's size; the ghost is drawn at it. */
+  width: number
+  height: number
+  /** An Essentials tile was lifted (the ghost is a tile, not a row). */
+  tile: boolean
+  /** The pointer let go: the ghost is settling into its slot or dissolving. */
+  settling: boolean
 }
 
 export interface Insets {

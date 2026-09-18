@@ -32,6 +32,9 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The zen://error page (shared/zenPages.ts cuts this block, the token block and the v2 button
   // out of the stylesheet's text and writes them into the page, which cannot link main.css).
   ['.zen-error-document {', '@layer base {'],
+  // The sidebar tab drag – drop-into targets, the audio indicator, ghost, caret and tear-off card
+  // (lib/drag.ts, components/DragLayer.tsx, components/sidebar/TabItem.tsx).
+  ['[data-drop-into] {', '.zen-panel {'],
   // The bookmark chrome: bar, panels, star bubble, dialogs, manager (components/bookmarks/*).
   ['.zen-bm-bar {', '/*\n * Fading scroll edges'],
   // Settings → Default Browser and the default-browser strip (components/overlays/
