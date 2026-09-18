@@ -3,6 +3,7 @@ package app.zen.chromium
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.webkit.WebStorage
 import android.webkit.WebView
 import androidx.webkit.WebStorageCompat
@@ -66,6 +67,10 @@ object BrowsingData {
      * Clear `kinds` for every container in `containerIds`; `done` runs on the main thread once
      * every asynchronous WebView call answered. `webViewFor` yields a WebView on a container's
      * profile for the cache, which only a WebView can clear (a live tab, or a throwaway one).
+     *
+     * A container's stores are those of its own profile ([Profiles.ownStores]); a container that
+     * has none on this WebView – every one but the default on a WebView without profiles – is
+     * left out rather than have the default profile's data go in its name.
      */
     fun clear(
         context: Context,
@@ -83,21 +88,26 @@ object BrowsingData {
         val finish = { if (--pending == 0) done() }
         val await = { pending++; { main.post(finish) } }
         for (containerId in containerIds.toSet()) {
+            val stores = Profiles.ownStores(containerId)
+            if (stores == null) {
+                Log.w(TAG, "container $containerId has no profile of its own on this WebView: its data is the default profile's, left as it is")
+                continue
+            }
             for (step in steps) {
                 when (step) {
                     Step.COOKIES -> {
-                        val jar = Profiles.cookieManager(containerId)
+                        val jar = stores.cookies
                         val settle = await()
                         jar.removeAllCookies { settle() }
                         jar.flush()
                     }
-                    Step.STORAGE -> Profiles.webStorage(containerId).deleteAllData()
+                    Step.STORAGE -> stores.storage.deleteAllData()
                     Step.ALL_SITE_DATA -> {
-                        val storage = Profiles.webStorage(containerId)
+                        val storage = stores.storage
                         val settle = await()
                         val started = runCatching { WebStorageCompat.deleteBrowsingData(storage) { settle() } }
                         if (started.isFailure) {
-                            Profiles.cookieManager(containerId).removeAllCookies(null)
+                            stores.cookies.removeAllCookies(null)
                             storage.deleteAllData()
                             settle()
                         }
@@ -158,4 +168,6 @@ object BrowsingData {
     }
 
     fun strings(array: JSONArray): List<String> = (0 until array.length()).mapNotNull { array.optString(it).takeIf(String::isNotEmpty) }
+
+    private const val TAG = "ZenBrowsingData"
 }

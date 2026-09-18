@@ -16,6 +16,7 @@ import type {
   EventName,
   Events,
   ExtensionInfo,
+  ExtensionUpdateCheck,
   HapticKind,
   HostCapabilities,
   KeyBinding,
@@ -1093,9 +1094,15 @@ export interface ExtensionHost {
     store: 'chrome-web-store' | 'edge-add-ons' | null,
     win?: ZenWindow
   ): Promise<void>
+  /** Paths dropped on the management page: packages install, folders load unpacked after a prompt. */
+  installFromDrop(paths: string[], win: ZenWindow): Promise<void>
   remove(id: string): Promise<void>
   setEnabled(id: string, enabled: boolean, win?: ZenWindow): Promise<void>
+  /** Pin to a version: left out of update checks. */
   setPinned(id: string, pinned: boolean): void
+  /** Show as a toolbar button. */
+  setToolbarPinned(id: string, pinned: boolean): void
+  setAllowFileAccess(id: string, allow: boolean): Promise<void>
   /** Lets this extension's `chrome_url_overrides.newtab` page open new tabs (one at most), or stops it. */
   setNewTabOverride(id: string, enabled: boolean): void
   /** The page new tabs open with while an enabled extension holds the override, else null. */
@@ -1107,8 +1114,13 @@ export interface ExtensionHost {
   reload(id: string): Promise<void>
   checkForUpdates(win?: ZenWindow): Promise<void>
   update(id: string, win?: ZenWindow): Promise<void>
+  /** The last update check across all extensions, for the management page's caption. */
+  updateCheck(): ExtensionUpdateCheck
   openOptions(id: string, win: ZenWindow): void
-  openPopup(id: string, anchor: Rect, win: ZenWindow): void
+  /** `frame` is where the renderer's popup panel wants the view (see `extension.openPopup`). */
+  openPopup(id: string, anchor: Rect, win: ZenWindow, frame?: PopupFrame): void
+  /** Move the open popup view (and show it once the renderer's frame has popped in). */
+  resizePopup(bounds: Rect, visible: boolean): void
   closePopup(): void
   /** The `chrome.sidePanel` a window shows beside its page right now (for `UIState.sidePanel`). */
   sidePanel(win: ZenWindow): SidePanelInfo | null
@@ -1140,7 +1152,15 @@ export interface ExtensionHost {
    * the host dispatched it (`commands.onCommand`, or the toolbar action for `_execute_action`).
    */
   handleKey(input: KeyEventInput, win: ZenWindow): boolean
+  /** The user answered an install or permission prompt the host raised. */
+  respondPrompt(requestId: string, accept: boolean): void
   flushSync(): void
+}
+
+/** Where the renderer's popup frame puts the popup view: exact bounds and the inner corner. */
+export interface PopupFrame {
+  bounds: Rect
+  radius: number
 }
 
 /** Cross-device sync through a shared folder; Electron only for now. */

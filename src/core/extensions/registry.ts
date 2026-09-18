@@ -27,6 +27,11 @@ export interface ExtensionRecord {
   enabled: boolean
   /** Pinned extensions are skipped by update checks. */
   pinned: boolean
+  /**
+   * Shown as a toolbar button; the rest live in the puzzle-piece panel. Off by default like
+   * Chrome's `pinned_extensions` (the install toast offers to pin).
+   */
+  toolbarPinned: boolean
   /** Chrome's "Allow access to file URLs" toggle; off by default like Chrome. */
   allowFileAccess: boolean
   /**
@@ -195,6 +200,7 @@ export function newRecord(options: NewRecordOptions): ExtensionRecord {
     updatedAt: options.now,
     enabled: options.enabled ?? true,
     pinned: false,
+    toolbarPinned: false,
     allowFileAccess: options.allowFileAccess ?? false,
     allowPrivate: options.allowPrivate ?? false,
     allowUserScripts: options.allowUserScripts ?? false,
@@ -327,6 +333,7 @@ function sanitizeRecord(entry: unknown, now: number): ExtensionRecord | null {
     updatedAt: typeof r.updatedAt === 'number' ? r.updatedAt : installedAt,
     enabled: r.enabled !== false,
     pinned: r.pinned === true,
+    toolbarPinned: r.toolbarPinned === true,
     allowFileAccess: r.allowFileAccess === true,
     allowPrivate: r.allowPrivate === true,
     allowUserScripts: r.allowUserScripts === true,
