@@ -351,8 +351,10 @@ export class ZenWindow {
       for (const p of report.placements) wanted.set(p.tabId, { rect: p.rect, radius: p.radius })
     }
     const glance = report.glance
-    // Whether a page that was showing goes away under this report (chrome UI covers it).
+    // Whether a page that was showing goes away under this report (chrome UI covers it), and
+    // whether one of those pages held the keyboard as it went.
     let covered = false
+    let coveredTyping = false
     for (const [tabId, view] of owned) {
       if (view.isDestroyed()) continue
       const placement = wanted.get(tabId)
@@ -363,6 +365,7 @@ export class ZenWindow {
         view.setBorderRadius(Math.round(placement.radius))
         if (!view.isVisible()) view.setVisible(true)
       } else if (view.isVisible()) {
+        if (view.isFocused?.()) coveredTyping = true
         view.setVisible(false)
         covered = true
       }
@@ -384,8 +387,15 @@ export class ZenWindow {
       // Chrome UI covers the page: the keyboard goes with it, but only when a page that was
       // showing loses its place under this report (one that hides nothing new leaves the
       // keyboard where it is) and never while a document of another surface holds it – an
-      // extension popup's view, focused while still hidden, would blur and close.
-      if (covered && !this.keyboardHeldElsewhere(owned)) this.focusChrome()
+      // extension popup's view, focused while still hidden, would blur and close. A page the
+      // user was typing in gets the keyboard back with the layout that shows it again, so
+      // chrome that only rests over the page for a while (the tab hover card, the compact
+      // sidebar's reveal) leaves no lost keyboard behind; chrome that asks for the page's focus
+      // itself as it closes asks for the same thing.
+      if (covered && !this.keyboardHeldElsewhere(owned)) {
+        if (coveredTyping) this.pendingContentFocus = true
+        this.focusChrome()
+      }
     } else if (!showsOwnPage && !glance) {
       this.focusChrome()
     }
@@ -420,6 +430,9 @@ export class ZenWindow {
       return
     }
     this.pendingContentFocus = false
+    // Focusing a page focuses its window as well (Electron, on Linux and macOS): when the user
+    // has gone to another window meanwhile, the keyboard stays there.
+    if (!this.host.isFocused()) return
     const view = this.browser.tabs.view(active.id)
     const ownsView = this.browser.tabs.ownerOf(active.id) === this
     // A view without a committed document has no renderer to deliver shortcuts through.

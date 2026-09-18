@@ -10,7 +10,12 @@ export default defineConfig({
     }
   },
   test: {
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'scripts/**/*.test.ts'],
+    include: [
+      'src/**/*.test.ts',
+      'src/**/*.test.tsx',
+      'scripts/**/*.test.ts',
+      '.github/smoke/**/*.test.mjs'
+    ],
     environment: 'node',
     // Vitest empties every `.css` import, query or not; the chrome's stylesheet imported as text
     // (`main.css?raw` in shared/zenPages.ts, the error page's source of the v2 rules) must come

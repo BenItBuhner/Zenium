@@ -104,6 +104,24 @@ export interface FindRequest {
   again: 'next' | 'prev' | null
 }
 
+/** The tab hover card (see lib/hoverCard.ts): the row it is up for, and where that row is. */
+export interface HoverCardState {
+  tabId: string | null
+  /** The row's box, viewport coordinates: the card is start-aligned with it. */
+  anchor: Rect | null
+  /** The sidebar's box: the card sits flush against its edge (gap 0). */
+  sidebar: Rect | null
+  /** What put it up: the pointer resting on the row, or keyboard focus landing on it. */
+  by: 'pointer' | 'focus' | null
+}
+
+export const HOVER_CARD_HIDDEN: HoverCardState = {
+  tabId: null,
+  anchor: null,
+  sidebar: null,
+  by: null
+}
+
 export interface UiState {
   overlay: OverlayKind
   overlaySpaceId: string | null
@@ -194,6 +212,8 @@ export interface UiState {
    * page, which must be hidden underneath it.
    */
   stageActive: boolean
+  /** The tab hover card, up beside the sidebar over the page (hidden: `tabId` null). */
+  hoverCard: HoverCardState
   /** The open extension popup's frame, or null. */
   extensionPopup: ExtensionPopupState | null
   /** Install and permission prompts waiting for an answer, oldest first; the first is shown. */
@@ -256,6 +276,7 @@ export const uiStore = createStore<UiState>(
     tabsMenu: null,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false,
+    hoverCard: HOVER_CARD_HIDDEN,
     extensionPopup: null,
     extensionPrompts: [],
     floatingChrome: 0
@@ -394,6 +415,7 @@ export function invalidateSnapshot(): void {
     !ui.windowPromptOpen &&
     !ui.stageActive &&
     !ui.zoomBubble &&
+    ui.hoverCard.tabId === null &&
     !bookmarkChromeOpen(ui)
   ) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
@@ -613,6 +635,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.windowPromptOpen ||
     ui.stageActive ||
     ui.zoomBubble !== null ||
+    ui.hoverCard.tabId !== null ||
     bookmarkChromeOpen(ui)
   )
 }
@@ -693,14 +716,23 @@ export function closeTabsMenu(): void {
 }
 
 /**
- * Only anchored panels are up: a bar panel, the star bubble, the zoom bubble. The page behind
- * them is captured all the same (they overlap the live view), but panels draw no scrim, so the
- * capture shows undimmed; dialogs dim it.
+ * Only anchored panels are up: a bar panel, the star bubble, the zoom bubble, the tab hover
+ * card. The page behind them is captured all the same (they overlap the live view), but panels
+ * draw no scrim, so the capture shows undimmed; dialogs dim it.
  */
 export function panelAloneOverContent(ui: UiState): boolean {
   return (
-    (ui.barMenuOpen || ui.starDialog !== null || ui.zoomBubble !== null) &&
-    !overlayCoversContent({ ...ui, barMenuOpen: false, starDialog: null, zoomBubble: null })
+    (ui.barMenuOpen ||
+      ui.starDialog !== null ||
+      ui.zoomBubble !== null ||
+      ui.hoverCard.tabId !== null) &&
+    !overlayCoversContent({
+      ...ui,
+      barMenuOpen: false,
+      starDialog: null,
+      zoomBubble: null,
+      hoverCard: HOVER_CARD_HIDDEN
+    })
   )
 }
 
