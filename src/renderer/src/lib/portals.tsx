@@ -84,8 +84,15 @@ export function FrameDialogHost({ children }: { children?: ReactNode }): JSX.Ele
         data-open={top ? 'true' : undefined}
       >
         {top && (
+          /*
+           * A grid item stretched over the cell, not `absolute`: a positioned scrim would paint
+           * above the panels (static grid items paint first, positioned ones after, whatever the
+           * order in the tree) and take their clicks once their entrance animation – the
+           * stacking context that lifted them for 180 ms – is over. In flow, tree order rules:
+           * the scrim first, the dialogs on top of it.
+           */
           <div
-            className="zen-frame-scrim zen-animate-in absolute inset-0"
+            className="zen-frame-scrim zen-animate-in place-self-stretch"
             onMouseDown={() => top.onScrimPress()}
           />
         )}
