@@ -249,24 +249,46 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
      * only sent while the host reports a surface (without one it would navigate the page, or
      * leave the app); a handle the accessibility tree still shows after that is the tree lagging.
      * Should back not take, the sheet's scrim and the overlay's close button are tapped instead.
+     *
+     * The host is asked after the tree (a tree read can take most of a second) and again right
+     * before each back, and a back is then waited out on the host's own word rather than a fixed
+     * pause: the first recording lost its second half when Settings, closing under a colour
+     * scheme change on the software GPU, reported its surface down 1.7 s after the back – past
+     * the pause – and the next back went to the system, which put the app away.
      */
     private fun ensureChromeClear(): Boolean {
         for (attempt in 1..4) {
-            val surface = chromeSurfaceUp()
             val handle = findByLabel(HANDLE_LABEL)
+            val surface = chromeSurfaceUp()
             if (!surface && handle == null) return true
             Log.i(tag, "chrome surface up (host=$surface, handle=${handle != null}); clearing, attempt $attempt")
             when {
-                surface && attempt <= 2 -> back()
+                surface && attempt <= 2 -> backWhileSurfaceUp()
                 surface && handle != null -> Finger().tap(width / 2f, max(handle.top - 40 * density, 60 * density))
-                surface -> if (!clickByLabel(CLOSE_OVERLAY_LABEL)) back()
+                surface -> if (!clickByLabel(CLOSE_OVERLAY_LABEL)) backWhileSurfaceUp()
                 else -> Unit // The tree is behind the host; give it a moment.
             }
-            SystemClock.sleep(1_500)
+            if (surface && !awaitSurface(up = false, timeoutMs = 6_000)) Log.w(tag, "the chrome surface did not go in 6 s")
+            SystemClock.sleep(600)
         }
         val clear = !chromeSurfaceUp()
         if (!clear) Log.w(tag, "a chrome surface stayed up")
         return clear
+    }
+
+    /** Back, unless the host has meanwhile dropped its surface (the back would then leave the app). */
+    private fun backWhileSurfaceUp() {
+        if (chromeSurfaceUp()) back() else Log.i(tag, "the chrome surface went on its own; no back")
+    }
+
+    /** Poll the host until the chrome reports a surface up or not (`up`); false when it does not in time. */
+    private fun awaitSurface(up: Boolean, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (chromeSurfaceUp() == up) return true
+            SystemClock.sleep(150)
+        }
+        return false
     }
 
     /** Open the app menu from a clear chrome; true once the host and the tree both show it. */
