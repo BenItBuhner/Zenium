@@ -226,6 +226,30 @@
   --v2-icon-button: 40px;
   --v2-icon: 20px;
 }
+/*
+ * Two token families, never mixed (§9.29). A window surface – toolbars, the URL pill and its
+ * chips, the sidebar and tab strip, the bookmarks bar – draws in the theme's foreground with the
+ * window fills and the theme's accent; a page surface – pages, panels, popovers, menus, dialogs,
+ * cards – draws in the page ink, fills and accent. A chip, badge or icon button used on both kinds
+ * reads the control roles below, which the `data-surface` on its nearest surface root resolves
+ * (lib/portals.tsx puts "page" on the frame dialog host and the chrome layer; Toolbar, SidebarTop,
+ * Sidebar and BookmarksBar carry "window"). No page token on the window, no window token or
+ * `--zen-fg` on a page; status ink (`--v2-ok` / `--v2-warn` / `--v2-danger`) is shared.
+ */
+[data-surface='page'] {
+  --v2-control-text: var(--v2-text);
+  --v2-control-text-deemphasized: var(--v2-text-deemphasized);
+  --v2-control-fill: var(--v2-fill);
+  --v2-control-fill-hover: var(--v2-fill-hover);
+  --v2-control-accent: var(--v2-accent);
+}
+[data-surface='window'] {
+  --v2-control-text: var(--zen-fg);
+  --v2-control-text-deemphasized: rgb(var(--zen-fg-rgb) / 0.69);
+  --v2-control-fill: var(--v2-window-fill);
+  --v2-control-fill-hover: var(--v2-window-fill-hover);
+  --v2-control-accent: var(--zen-accent);
+}
 
 /*
  * One focus ring for every v2 control (§1, §9.6): 2px accent, offset 0 in light and -2 in dark, on
@@ -638,6 +662,38 @@
     background: var(--zen-bg-solid);
     border-radius: var(--zen-content-radius);
     box-shadow: var(--zen-frame-shadow);
+  }
+
+  /*
+   * Where dialogs and popovers render (lib/portals.tsx). The frame dialog host lies over the
+   * content frame's box (the whole shell on phones): one grid cell, so dialogs open at once stack
+   * centred rather than sit side by side, and a phone sheet aligns itself to the bottom edge. It
+   * is inert until a dialog registers; then its scrim dims only the frame (§9.5). The chrome
+   * layer is the window-wide home of popovers, menus and toasts: above everything, catching no
+   * pointer of its own (each portal turns pointer events back on for its subtree).
+   */
+  .zen-frame-dialogs {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    place-items: center;
+    isolation: isolate;
+    pointer-events: none;
+  }
+  .zen-frame-dialogs[data-open] {
+    pointer-events: auto;
+  }
+  .zen-frame-dialogs > * {
+    grid-area: 1 / 1;
+  }
+  .zen-frame-scrim {
+    background: var(--v2-scrim-modal);
+  }
+  .zen-chrome-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    pointer-events: none;
   }
 
   /*
@@ -1734,10 +1790,7 @@
     opacity: 1;
   }
 
-  /* The dialogs sit over a scrim that dims only the content frame (§9.5); the manager is a page. */
-  .zen-bm-scrim {
-    background: var(--v2-scrim-modal);
-  }
+  /* The dialogs sit in the frame dialog host, over its scrim (§9.5); the manager is a page. */
   .zen-bm-dialog {
     border-radius: 12px;
     corner-shape: var(--zen-corner);

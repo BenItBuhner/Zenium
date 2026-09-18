@@ -1,6 +1,7 @@
 import type { JSX, PointerEvent as ReactPointerEvent, ReactNode, Ref } from 'react'
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
+import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
 import { computeDetents, SheetMotion, type SheetDetents } from '@renderer/lib/motion/sheet'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import { uiStore } from '@renderer/lib/ui'
@@ -256,7 +257,7 @@ export function BottomSheet({
     motion().beginDrag()
     // Captured only now: a capture from pointerdown on would retarget the click of a plain tap
     // away from the row that was tapped.
-    e.currentTarget.setPointerCapture(e.pointerId)
+    capturePointer(e.currentTarget, e.pointerId)
     sheetRef.current?.setAttribute('data-dragging', 'true')
     syncLock()
   }

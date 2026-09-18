@@ -42,6 +42,23 @@ describe('VelocityTracker', () => {
     expect(vx).toBeCloseTo(400, 0)
   })
 
+  it('a lift delivered late after a stall measures the last stretch, not a stopped finger', () => {
+    const tracker = new VelocityTracker(100)
+    tracker.add(0, 0, 0)
+    tracker.add(40, 30, 0)
+    // The main thread stalled for the rest of the swipe: no moves for 260 ms, then the finger
+    // lifts 185 px from where it started.
+    expect(tracker.velocity(300).vx).toBe(0)
+    tracker.add(300, 185, 0)
+    expect(tracker.velocity(300).vx).toBeCloseTo((185 - 30) / 0.26, 0)
+    // A finger that really paused before lifting still reads as still.
+    const paused = new VelocityTracker(100)
+    paused.add(0, 0, 0)
+    paused.add(40, 30, 0)
+    paused.add(300, 30, 0)
+    expect(paused.velocity(300).vx).toBe(0)
+  })
+
   it('smooths out one jittery sample', () => {
     const tracker = new VelocityTracker()
     for (let i = 0; i <= 8; i++) tracker.add(i * 16, i * 5, 0)

@@ -1,13 +1,13 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import type { BookmarkNode, Rect } from '@shared/types'
 import { BOOKMARKS_BAR_ID, type BookmarkTree } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
 import { SPRING_SNAPPY, SpringAnimation, reducedMotion } from '@renderer/lib/motion/spring'
+import { ChromePortal, POPOVER_WIDTH, placePopover, viewportSize } from '@renderer/lib/portals'
 import { BookmarkIcon } from './BookmarkRow'
-import { POPOVER_WIDTH, placePopover, useScrolled } from './popover'
+import { useScrolled } from './popover'
 import { nodeLabel } from './tree'
 import type { BarDropTarget } from './useBarDrag'
 
@@ -110,7 +110,7 @@ export function BarMenu({
     })
   }, [levelId, path, root, rootKey, tree])
 
-  const box = placePopover(anchor, bar, WIDTH)
+  const box = placePopover(anchor, bar, viewportSize(), WIDTH)
   const bodyRef = useRef<HTMLDivElement>(null)
   const scrolled = useScrolled(bodyRef)
 
@@ -338,34 +338,35 @@ export function BarMenu({
     </>
   )
 
-  return createPortal(
-    <div
-      ref={panelRef}
-      role="menu"
-      aria-label={
-        root.kind === 'folder' ? (tree.get(root.id)?.title ?? 'Folder') : 'More bookmarks'
-      }
-      tabIndex={-1}
-      data-bar-panel
-      data-append-target={dropTarget?.kind === 'append' && dropTarget.parentId === folderId}
-      className="zen-bm-popover zen-animate-pop fixed z-[80] flex flex-col outline-none"
-      style={{ left: box.left, top: box.top, width: box.width, maxHeight: box.maxHeight }}
-      onKeyDown={onKeyDown}
-    >
-      <div ref={enteringRef} className="zen-bm-menu-level flex min-h-0 flex-col">
-        {renderLevel(items, title, true)}
-      </div>
-      {leaving && (
-        <div
-          ref={leavingRef}
-          aria-hidden
-          className="zen-bm-menu-level pointer-events-none absolute inset-0 flex flex-col"
-        >
-          {renderLevel(leaving.items, leaving.title, false)}
+  return (
+    <ChromePortal>
+      <div
+        ref={panelRef}
+        role="menu"
+        aria-label={
+          root.kind === 'folder' ? (tree.get(root.id)?.title ?? 'Folder') : 'More bookmarks'
+        }
+        tabIndex={-1}
+        data-bar-panel
+        data-append-target={dropTarget?.kind === 'append' && dropTarget.parentId === folderId}
+        className="zen-bm-popover zen-animate-pop fixed z-[80] flex flex-col outline-none"
+        style={{ left: box.left, top: box.top, width: box.width, maxHeight: box.maxHeight }}
+        onKeyDown={onKeyDown}
+      >
+        <div ref={enteringRef} className="zen-bm-menu-level flex min-h-0 flex-col">
+          {renderLevel(items, title, true)}
         </div>
-      )}
-    </div>,
-    document.body
+        {leaving && (
+          <div
+            ref={leavingRef}
+            aria-hidden
+            className="zen-bm-menu-level pointer-events-none absolute inset-0 flex flex-col"
+          >
+            {renderLevel(leaving.items, leaving.title, false)}
+          </div>
+        )}
+      </div>
+    </ChromePortal>
   )
 }
 

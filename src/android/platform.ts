@@ -836,6 +836,9 @@ export class AndroidPlatform implements Platform {
         const { focused } = payload as HostEventPayloads['focus']
         // The Activity resumed or paused: the extension update schedule runs only while it is up.
         this.extensions?.setForeground(focused)
+        // The activity resumed: a gesture cut short by whatever was in front (a pointer that
+        // never lifted for the chrome) is ended by whoever holds it (`zen-resume`).
+        if (focused) window.dispatchEvent(new Event('zen-resume'))
         if (!this.windowHost) return
         this.windowHost.focused = focused
         if (focused) this.window.onFocused()
@@ -850,7 +853,9 @@ export class AndroidPlatform implements Platform {
         return
       }
       case 'openUrl':
-        browser.openExternalUrl((payload as HostEventPayloads['openUrl']).url, this.window)
+        browser.openExternalUrl((payload as HostEventPayloads['openUrl']).url, this.window, {
+          fromIntent: true
+        })
         return
       case 'intent':
         browser.openSharedIntent(payload as HostEventPayloads['intent'], this.window)

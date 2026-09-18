@@ -203,6 +203,11 @@ export class AndroidExtensions implements ExtensionHost {
   /** Ids with an install or update in flight. */
   private readonly busy = new Set<string>()
   private checking: Promise<void> | null = null
+  /**
+   * The sideload installs in flight: the batch `start()` collected and every `installPending`
+   * since, one after another.
+   */
+  private pendingInstalls: Promise<void> = Promise.resolve()
   private updateTimer: unknown = null
   private foreground = true
   /** A check the interval skipped while the app was in the background. */
@@ -266,12 +271,29 @@ export class AndroidExtensions implements ExtensionHost {
     }
     this.browser.state.commitVolatile()
     this.scheduleUpdateChecks()
-    // A package another app handed over while the chrome was still booting.
+    // A package another app handed over while the chrome was still booting. Not awaited: the
+    // install waits for the user's answer to the prompt, which must not hold up the boot;
+    // `whenPendingInstalled` waits for it.
     void this.installPending()
   }
 
-  /** Installs the packages other apps sent to Zenium that Kotlin holds (see `takeSideloads`). */
-  async installPending(win?: ZenWindow): Promise<void> {
+  /**
+   * Installs the packages other apps sent to Zenium that Kotlin holds (see `takeSideloads`), after
+   * the batch already being installed: one prompt at a time, in the order the packages arrived.
+   */
+  installPending(win?: ZenWindow): Promise<void> {
+    const run = this.pendingInstalls.then(() => this.installSideloads(win))
+    // The chain has to outlive a rejection, or no later batch would run.
+    this.pendingInstalls = run.catch(() => undefined)
+    return run
+  }
+
+  /** Resolves once every sideload install in flight is done (`start()` does not wait for them). */
+  whenPendingInstalled(): Promise<void> {
+    return this.pendingInstalls
+  }
+
+  private async installSideloads(win?: ZenWindow): Promise<void> {
     let handles: PackageHandle[]
     try {
       handles = await this.io.takeSideloads()
