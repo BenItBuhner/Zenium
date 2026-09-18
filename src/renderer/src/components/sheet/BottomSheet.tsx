@@ -171,6 +171,12 @@ export function BottomSheet({
   const onTop = (): boolean => recede.current?.onTop() ?? false
   /** The wait for the live page to give way to its picture before the sheet comes up. */
   const hold = useRef<Hold | null>(null)
+  /**
+   * Under reduced motion a departure is a 120 ms fade in place (§11.3): the sheet and its scrim
+   * go to 0 on main.css's transition, and the spring's jump off the screen follows the fade.
+   * Cleared by a finger catching the sheet before the jump, or by the unmount.
+   */
+  const fade = useRef<number | null>(null)
 
   // The motion lives in a ref and is only ever touched from effects and event handlers.
   const motionRef = useRef<SheetMotion | null>(null)
@@ -197,7 +203,9 @@ export function BottomSheet({
     // The scrim's colour and full opacity are the token's; its share is the sheet's progress as
     // the stack hands it out – given up to a sheet above as that fades its own in, so the stack
     // shows one scrim (the registry reports it from the presence the motion gave it above).
-    scrim.style.opacity = layer.scrim.toFixed(4)
+    // While a reduced-motion departure fades the scrim out, a frame from the stack (another
+    // sheet moving) leaves that fade alone.
+    if (fade.current === null) scrim.style.opacity = layer.scrim.toFixed(4)
     syncLock()
   }
   const motion = (): SheetMotion =>
@@ -469,12 +477,7 @@ export function BottomSheet({
     return true
   }
 
-  /**
-   * Under reduced motion a departure is a 120 ms fade in place (§11.3): the sheet and its scrim
-   * go to 0 on main.css's transition, and the spring's jump off the screen follows the fade.
-   * Cleared by a finger catching the sheet before the jump, or by the unmount.
-   */
-  const fade = useRef<number | null>(null)
+  /** A finger caught the sheet during a reduced-motion departure: the fade is off, the sheet back. */
   const dropFade = (): void => {
     if (fade.current === null) return
     window.clearTimeout(fade.current)
