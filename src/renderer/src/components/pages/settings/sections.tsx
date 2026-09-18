@@ -1458,7 +1458,7 @@ function updatesSection({ state, set }: SectionContext): RowGroup[] {
               kind: 'action',
               id: 'update-check',
               label: 'Check now',
-              disabled: busy,
+              busy,
               onPress: () => run('updates.check', undefined)
             }
   const statusRows: SettingsRow[] = [

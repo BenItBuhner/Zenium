@@ -59,6 +59,11 @@ export interface ActionRow extends RowBase {
   onPress?(): void
   /** A trailing 16 px glyph, only when the action leaves the page (§10.4). */
   leaves?: 'external' | 'chevron'
+  /**
+   * The action is running (§9.30): the row keeps its ink, trails a 16 px spinner in place of
+   * its glyph, is `aria-busy` and takes no press – busy is not disabled.
+   */
+  busy?: boolean
   destructive?: boolean
   /** The confirmation sheet a destructive action shows first; `onPress` runs on its button. */
   confirm?: { title: string; description?: string; action: string }

@@ -4003,6 +4003,11 @@
 .zen-v2-field[aria-invalid='true'] {
   border-color: var(--v2-danger);
 }
+/* Disabled is one number on the whole control (§9.30), as `.zen-v2-button:disabled` above. */
+.zen-v2-field:disabled,
+.zen-v2-icon-button:disabled {
+  opacity: 0.4;
+}
 
 /* The shared v2 icon button (§9.3): the box, its glyph and its stroke are the density tokens. */
 .zen-v2-icon-button {
@@ -4338,6 +4343,20 @@
   height: 16px;
   stroke-width: var(--v2-icon-stroke);
 }
+/*
+ * Three text lines (§9.18): the control leaves the row's centre for the label's line. The row
+ * measures where that line starts in its text block (`rows.tsx`); the control's box is then the
+ * label's line box, so its content centres on it – (line − control) / 2 without stating either.
+ */
+.zen-settings-row[data-lines='3'] > .zen-settings-trailing {
+  align-self: flex-start;
+  min-height: var(--v2-line-body);
+  margin-top: var(--zen-settings-label-top, 0px);
+}
+/* Busy (§9.30): a 16 px spinner where the action's glyph would be; the row keeps its ink. */
+.zen-settings-spinner {
+  animation: zen-spin 900ms linear infinite;
+}
 .zen-settings-ok {
   color: var(--v2-ok);
 }
@@ -4593,11 +4612,17 @@
   margin-top: 2px;
   stroke-width: var(--v2-icon-stroke);
 }
-/* Footer actions (§9.11): two peers split the width, 8 apart, the primary trailing. */
+/*
+ * Footer actions (§9.11): two peers split the width, 8 apart, the primary trailing. In a form
+ * the form's 16 gap and gutter place them; straight in a sheet's body (a prompt, §9.23) they
+ * sit at the sheet's 16 (§9.25), 16 under the title block's own padding.
+ */
 .zen-settings-sheet-actions {
   display: flex;
   gap: 8px;
-  padding-top: 8px;
+}
+.zen-settings-sheet-body > .zen-settings-sheet-actions {
+  padding: 0 16px;
 }
 .zen-settings-sheet-actions > * {
   flex: 1 1 0;
@@ -4626,12 +4651,15 @@
 }
 /*
  * The sheet beneath a stacked sheet recedes (§9.24) on the stacked one's progress, written per
- * frame to `--zen-stack-recede`: the same 3 % the page gives up under a sheet, anchored at the
- * bottom edge so the panel stays seated; `scale` composes with the motion's own transform.
+ * frame to `--zen-stack-recede`: the same 3 % and 6 px of corner the page gives up under a sheet,
+ * anchored at the bottom edge so the panel stays seated; `scale` composes with the motion's own
+ * transform.
  */
-.zen-settings-sheet-layer[data-under] .zen-sheet {
+.zen-settings-sheet-layer[data-under] .zen-sheet.zen-settings-sheet {
   scale: calc(1 - 0.03 * var(--zen-stack-recede, 0));
   transform-origin: 50% 100%;
+  border-radius: calc(var(--v2-radius-sheet) + 6px * var(--zen-stack-recede, 0))
+    calc(var(--v2-radius-sheet) + 6px * var(--zen-stack-recede, 0)) 0 0;
 }
 .zen-sheet.zen-settings-sheet {
   padding-left: 0;

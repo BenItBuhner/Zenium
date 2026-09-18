@@ -121,6 +121,8 @@ interface SheetProps {
   title: string
   /** With a description the sheet opens on a §9.23 title block instead of the 48 px header. */
   description?: string
+  /** A prompt (title, at most one paragraph, actions) opens on a title block either way (§9.23). */
+  prompt?: boolean
   stacked: boolean
   /** Another sheet is open over this one: its content is inert until that one leaves. */
   under: boolean
@@ -150,6 +152,7 @@ function HostedSheet({
   name,
   title,
   description,
+  prompt = false,
   stacked,
   under,
   onClose,
@@ -157,6 +160,7 @@ function HostedSheet({
   contentKey,
   sheetRef
 }: SheetProps): JSX.Element {
+  const titled = prompt || description !== undefined
   const own = useRef<BottomSheetHandle>(null)
   const sheet = sheetRef ?? own
   const body = useRef<HTMLDivElement>(null)
@@ -205,9 +209,9 @@ function HostedSheet({
         stacked={stacked}
         contentKey={contentKey}
         handleLabel="Resize sheet"
-        className={cn('zen-settings-sheet', description && 'zen-settings-sheet-titled')}
+        className={cn('zen-settings-sheet', titled && 'zen-settings-sheet-titled')}
         header={
-          description ? undefined : (
+          titled ? undefined : (
             <div className="zen-settings-sheet-header">
               <h2 className="zen-settings-sheet-title">{title}</h2>
             </div>
@@ -215,10 +219,10 @@ function HostedSheet({
         }
       >
         <div ref={body} className="zen-settings-sheet-body">
-          {description && (
+          {titled && (
             <div className="zen-settings-title-block">
               <h2 className="zen-settings-sheet-title">{title}</h2>
-              <p className="zen-settings-title-description">{description}</p>
+              {description && <p className="zen-settings-title-description">{description}</p>}
             </div>
           )}
           <SheetDismissContext.Provider value={dismiss}>{children}</SheetDismissContext.Provider>
@@ -376,6 +380,7 @@ function ConfirmSheet({
       name={`settings-confirm:${row.id}`}
       title={confirm.title}
       description={confirm.description ?? row.description}
+      prompt
       stacked={stacked}
       under={under}
       onClose={close}

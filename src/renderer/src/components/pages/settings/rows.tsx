@@ -1,5 +1,5 @@
-import type { JSX, ReactNode } from 'react'
-import { ChevronRight, ExternalLink } from 'lucide-react'
+import type { JSX, ReactNode, RefCallback } from 'react'
+import { ChevronRight, ExternalLink, Loader2 } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 import {
   currentOptionLabel,
@@ -14,7 +14,48 @@ import {
  * 44 tall with one line and 64 with a description, text inset 16, no card, no divider, no
  * background at rest. A row that opens a sheet asks the page for it through `open`; the page
  * owns the sheet stack (`sheets.tsx`) and resolves the row again by id when it draws the sheet.
+ *
+ * Whatever trails the text centres on the row (§9.18) – until the text runs to three lines (a
+ * description wrapped, or a search result's caption above the label), when the control centres
+ * on the label's line instead. The row measures its own text block for that: `data-lines="3"`
+ * and `--zen-settings-label-top` (the label line's offset in the block) go on the row.
  */
+
+/** The row's text block as laid out: three lines or more, and where the label line starts. */
+function measureLines(row: HTMLElement): void {
+  const text = row.querySelector<HTMLElement>('.zen-settings-row-text')
+  const label = text?.querySelector<HTMLElement>('.zen-settings-label')
+  if (!text || !label) return
+  const line = parseFloat(getComputedStyle(label).lineHeight) || 20
+  const block = text.getBoundingClientRect()
+  const three = block.height > line * 2.5
+  if (three) {
+    row.dataset.lines = '3'
+    row.style.setProperty(
+      '--zen-settings-label-top',
+      `${(label.getBoundingClientRect().top - block.top).toFixed(2)}px`
+    )
+  } else {
+    delete row.dataset.lines
+    row.style.removeProperty('--zen-settings-label-top')
+  }
+}
+
+/**
+ * Keep a row's line count current: measured once it is on screen and again whenever its text
+ * block changes size (the label wraps at a new width, the description changes). Only rows with
+ * something trailing the text need it.
+ */
+const attachLineCount: RefCallback<HTMLElement> = (row) => {
+  if (!row) return
+  measureLines(row)
+  if (typeof ResizeObserver !== 'function') return
+  const text = row.querySelector('.zen-settings-row-text')
+  if (!text) return
+  const observer = new ResizeObserver(() => measureLines(row))
+  observer.observe(text)
+  return () => observer.disconnect()
+}
 
 /** What a row asks the page to open over it. */
 export type SheetRequest =
@@ -101,8 +142,9 @@ export function RowView({
           caption={caption}
           description={row.description}
           destructive={row.destructive}
+          busy={row.busy}
           haspopup={row.confirm || row.form ? 'dialog' : undefined}
-          trailing={<ActionGlyph row={row} />}
+          trailing={actionGlyph(row)}
           onPress={() => {
             if (row.confirm) ctx.open({ kind: 'confirm', rowId: row.id })
             else if (row.form) ctx.open({ kind: 'form', rowId: row.id })
@@ -133,7 +175,10 @@ export function RowView({
       )
     case 'info':
       return (
-        <div className={cn('zen-settings-row', row.disabled && 'zen-settings-row-disabled')}>
+        <div
+          ref={row.trailing ? attachLineCount : undefined}
+          className={cn('zen-settings-row', row.disabled && 'zen-settings-row-disabled')}
+        >
           <RowText label={row.label} description={row.description} caption={caption} />
           {row.trailing && <span className="zen-settings-trailing">{row.trailing}</span>}
         </div>
@@ -151,15 +196,17 @@ export function RowView({
   }
 }
 
-function ActionGlyph({ row }: { row: ActionRow }): JSX.Element | null {
+/** The 16 px glyph that says an action leaves the page (§10.4); nothing for one that stays. */
+function actionGlyph(row: ActionRow): JSX.Element | undefined {
   if (row.leaves === 'external') return <ExternalLink aria-hidden="true" />
   if (row.leaves === 'chevron') return <ChevronRight aria-hidden="true" />
-  return null
+  return undefined
 }
 
 /**
  * The pressable row: the whole row is the target (§10.4), `role="switch"` for a boolean, a
- * dependent row whose parent is off stays laid out at 40 % and takes no press.
+ * dependent row whose parent is off stays laid out at 40 % and takes no press; a busy action
+ * keeps its ink, trails a spinner and takes no press either (§9.30).
  */
 function PressableRow({
   row,
@@ -171,6 +218,7 @@ function PressableRow({
   checked,
   haspopup,
   destructive = false,
+  busy = false,
   onPress
 }: {
   row: SettingsRow
@@ -182,16 +230,20 @@ function PressableRow({
   checked?: boolean
   haspopup?: 'dialog'
   destructive?: boolean
+  busy?: boolean
   onPress: () => void
 }): JSX.Element {
   const disabled = row.disabled === true
+  const trail = busy ? <Loader2 className="zen-settings-spinner" aria-hidden="true" /> : trailing
   return (
     <button
+      ref={trail ? attachLineCount : undefined}
       type="button"
       role={role}
       aria-checked={role === 'switch' ? checked : undefined}
       aria-haspopup={haspopup}
       aria-disabled={disabled || undefined}
+      aria-busy={busy || undefined}
       data-row={row.id}
       className={cn(
         'zen-settings-row zen-settings-row-pressable zen-v2-row',
@@ -199,7 +251,7 @@ function PressableRow({
         disabled && 'zen-settings-row-disabled'
       )}
       onClick={() => {
-        if (!disabled) onPress()
+        if (!disabled && !busy) onPress()
       }}
     >
       {leading && (
@@ -208,7 +260,7 @@ function PressableRow({
         </span>
       )}
       <RowText label={row.label} description={description} caption={caption} />
-      {trailing && <span className="zen-settings-trailing">{trailing}</span>}
+      {trail && <span className="zen-settings-trailing">{trail}</span>}
     </button>
   )
 }
