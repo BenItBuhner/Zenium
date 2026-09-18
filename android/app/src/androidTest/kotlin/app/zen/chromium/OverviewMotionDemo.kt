@@ -581,11 +581,10 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
 
     /** How many separate glides `name` made: runs of moving frames, two or more still frames apart. */
     private fun glides(frames: List<Frame>, name: String): Int {
-        val moves = movesOf(frames, name)
         var count = 0
-        var last = Int.MIN_VALUE
-        for (i in moves) {
-            if (i - last > 2) count++
+        var last: Int? = null
+        for (i in movesOf(frames, name)) {
+            if (last == null || i - last > 2) count++
             last = i
         }
         return count
