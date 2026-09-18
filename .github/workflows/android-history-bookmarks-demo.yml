@@ -12,11 +12,6 @@ name: Android history and bookmarks demo
 # the emulator and the Gradle cache live in android-emulator-demo.yml; this file picks the driver.
 on:
   workflow_dispatch:
-  # Temporary, removed before the PR is marked ready: worker tokens cannot dispatch, so a run is
-  # asked for by pushing the branch head to this name (never by an ordinary push to the PR branch).
-  push:
-    branches:
-      - cursor/android-history-bookmarks-ui-b41b-demo
 
 permissions:
   contents: read
