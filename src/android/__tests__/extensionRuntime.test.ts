@@ -607,10 +607,12 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
       method: 'GET',
       initiator: 'https://secret.example',
       mainFrame: false,
+      document: 1,
       action: 'allow',
       matchedSet: null,
       matchedRule: null,
-      micros: 1
+      micros: 1,
+      cpuMicros: null
     })
     expect(events(h, 'bg1', 'webRequest.onBeforeRequest')).toHaveLength(0)
     // The tabs API: the query does not list it, get does not know it, the window has one tab.
@@ -678,10 +680,12 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
       method: 'GET',
       initiator: 'https://example.com',
       mainFrame: false,
+      document: 1,
       action: 'block',
       matchedSet: `ext:${ID}:static:r1`,
       matchedRule: 1,
       micros: 12,
+      cpuMicros: 9,
       ...over
     })
     // No webRequest listener yet: Kotlin only reports the decisions an extension's rule took.
@@ -703,13 +707,37 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
     // Another set's decision (a filter list) is nobody's match and nobody's badge.
     h.runtime.onRequest(request({ requestId: '3', matchedSet: 'filter-text', matchedRule: 0 }))
     expect(h.runtime.api.toolbarAction(ID)?.badgeText).toBe('2')
-    // A new document in the tab restarts the count.
+    // A new document in the tab restarts the count. Its first decisions, stamped with the next
+    // generation, arrive ahead of its commit: they count for the new page, and the late
+    // `navigated` of the same generation does not wipe them.
+    h.runtime.onRequest(
+      request({ requestId: '10', document: 2, mainFrame: true, url: 'https://ads.example/next' })
+    )
+    h.runtime.onRequest(request({ requestId: '11', document: 2 }))
+    expect(h.runtime.api.toolbarAction(ID)?.badgeText).toBe('2')
     h.runtime.onViewEvent('t1', 'navigated', {
       url: 'https://example.com/next',
       title: '',
       inPage: false,
       canGoBack: true,
-      canGoForward: false
+      canGoForward: false,
+      document: 2
+    })
+    expect(h.runtime.api.toolbarAction(ID)?.badgeText).toBe('2')
+    const next = await call(h, 'bg1', 'declarativeNetRequest', 'getMatchedRules', [{}])
+    expect(
+      (next.result as { rulesMatchedInfo: Array<{ tabId: number }> }).rulesMatchedInfo.map(
+        (m) => m.tabId
+      )
+    ).toEqual([-1, -1, chromeTab, chromeTab])
+    // A commit the engine saw no request for (an extension page) comes with its own generation.
+    h.runtime.onViewEvent('t1', 'navigated', {
+      url: 'https://example.com/settings',
+      title: '',
+      inPage: false,
+      canGoBack: true,
+      canGoForward: false,
+      document: 3
     })
     expect(h.runtime.api.toolbarAction(ID)?.badgeText).toBe('')
     // A webRequest listener turns the observation on: every decision becomes the events.
@@ -720,12 +748,13 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
       request({
         requestId: '4',
         url: 'https://example.com/ok.js',
+        document: 3,
         action: 'allow',
         matchedSet: null,
         matchedRule: null
       })
     )
-    h.runtime.onRequest(request({ requestId: '5' }))
+    h.runtime.onRequest(request({ requestId: '5', document: 3 }))
     const before = events(h, 'bg1', 'webRequest.onBeforeRequest')
     expect(before).toHaveLength(2)
     expect((before[0].args as Array<Record<string, unknown>>)[0]).toMatchObject({

@@ -52,7 +52,9 @@ import type { AttachedExtension } from './extensionApi'
  *
  * Decisions come back through `decided`: the Kotlin engine reports every decision that named an
  * extension's rule (`ext.request`), and the record feeds `getMatchedRules`, the action count of
- * the tab (the badge, through `DnrHost.setBadgeText`) and `onRuleMatchedDebug`.
+ * the tab (the badge, through `DnrHost.setBadgeText`) and `onRuleMatchedDebug`. Which document
+ * of the tab a decision belongs to is told by the generation Kotlin stamps it with (`document`),
+ * not by the order the tab's `navigated` event arrives in.
  */
 
 interface Entry {
@@ -151,6 +153,8 @@ export class AndroidDeclarativeNetRequest {
   private readonly pool = createGlobalStaticRulePool()
   /** One sync at a time per extension, in order. */
   private readonly syncing = new Map<string, Promise<void>>()
+  /** Per tab, the document generation its record belongs to (see `document`). */
+  private readonly documents = new Map<number, number>()
 
   constructor(
     private readonly host: DnrHost,
@@ -308,7 +312,24 @@ export class AndroidDeclarativeNetRequest {
     for (const entry of this.entries.values()) entry.state.onTabNavigated(tabId)
   }
 
+  /**
+   * A decision or a commit of the tab named the document generation it belonged to (Kotlin's
+   * `BlockingTab.documentGeneration`: a main-frame request opens the next one on the IO thread
+   * that took it, the commit reports it). A higher one than the tab's last is a new document,
+   * and the tab's record turns over (`tabNavigated`) before whatever brought the news is
+   * recorded – so the first decisions of a page, which the engine takes before the commit has
+   * reached the UI thread, count for that page and not for the one before it.
+   */
+  document(tabId: number, generation: number): void {
+    if (tabId === UNKNOWN_TAB_ID) return
+    const known = this.documents.get(tabId)
+    if (known !== undefined && generation <= known) return
+    this.documents.set(tabId, generation)
+    if (known !== undefined) this.tabNavigated(tabId)
+  }
+
   tabRemoved(tabId: number): void {
+    this.documents.delete(tabId)
     for (const entry of this.entries.values()) entry.state.onTabRemoved(tabId)
   }
 

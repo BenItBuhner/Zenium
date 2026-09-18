@@ -165,7 +165,11 @@ class BlockingTest {
     @Test
     fun `the observer hears every decision with the matcher's latency, the partition is the tab's`() {
         val heard = ArrayList<Triple<String, Decision, Long>>()
-        val observer = DecisionObserver { _, request, decision, nanos -> heard.add(Triple("${request.partition}:${request.url}", decision, nanos)) }
+        val cpu = ArrayList<Long>()
+        val observer = DecisionObserver { _, request, decision, nanos, cpuNanos ->
+            heard.add(Triple("${request.partition}:${request.url}", decision, nanos))
+            cpu.add(cpuNanos)
+        }
         val tab = FakeTab(containerId = "work")
         Blocking.evaluate(snapshot, tab, "https://tracker.net/t.js", false, "*/*", "GET", observer = observer)
         Blocking.evaluate(snapshot, tab, "https://cdn.example/app.js", false, null, "GET", observer = observer)
@@ -178,11 +182,36 @@ class BlockingTest {
         assertEquals(Decision.Action.ALLOW, heard[1].second.action)
         assertNull(heard[1].second.matchedSet)
         assertTrue(heard.all { it.third >= 0 })
+        // On the JVM `android.os.Debug` is a stub: the CPU figure is the "cannot tell" one, never a garbage number.
+        assertTrue(cpu.all { it == -1L })
         // With an observer even the empty snapshot reports (the allow the request got), so the
         // observational webRequest events of the extension platform see every request.
         Blocking.evaluate(EngineSnapshot.EMPTY, tab, "https://tracker.net/t.js", false, null, "GET", observer = observer)
         assertEquals(3, heard.size)
         assertEquals(Decision.Action.ALLOW, heard[2].second.action)
+    }
+
+    @Test
+    fun `a main-frame request opens the tab's next document generation, its subresources carry it`() {
+        val generations = ArrayList<Pair<String, Long>>()
+        val observer = DecisionObserver { _, request, _, _, _ -> generations.add(request.url to request.documentGeneration) }
+        val tab = object : BlockingTab by FakeTab() {
+            var generation = 4L
+            override fun documentGeneration(newDocument: Boolean): Long = if (newDocument) ++generation else generation
+        }
+        Blocking.evaluate(snapshot, tab, "https://cdn.example/old.js", false, null, "GET", observer = observer)
+        Blocking.evaluate(snapshot, tab, "https://news.example/next", true, "text/html", "GET", observer = observer)
+        Blocking.evaluate(snapshot, tab, "https://cdn.example/new.js", false, null, "GET", observer = observer)
+        // A non-http request is no document and no decision.
+        Blocking.evaluate(snapshot, tab, "about:blank", true, "text/html", "GET", observer = observer)
+        assertEquals(
+            listOf("https://cdn.example/old.js" to 4L, "https://news.example/next" to 5L, "https://cdn.example/new.js" to 5L),
+            generations
+        )
+        // A tab that keeps no count stamps 0.
+        generations.clear()
+        Blocking.evaluate(snapshot, FakeTab(), "https://news.example/next", true, "text/html", "GET", observer = observer)
+        assertEquals(listOf("https://news.example/next" to 0L), generations)
     }
 
     @Test

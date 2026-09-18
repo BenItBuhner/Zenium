@@ -26,7 +26,9 @@ class Request(
      * id, `private` for a private tab). A set scoped to partitions (`RuleSet.partitions`) takes
      * part only when this names one of them; null takes part in unscoped sets only.
      */
-    val partition: String? = null
+    val partition: String? = null,
+    /** The tab's document generation at the time of the request (`BlockingTab.documentGeneration`). */
+    val documentGeneration: Long = 0L
 ) {
     val urlLower: String = url.lowercase()
     /** Index in `url` where the host begins (after the scheme and any user info). */
@@ -76,4 +78,22 @@ class Request(
     /** Token hashes of the lowercased URL, computed on first use. */
     val tokens: IntArray
         get() = tokenCache ?: Tokens.tokenize(urlLower).also { tokenCache = it }
+
+    private var hostSuffixCache: Array<String>? = null
+    private var documentSuffixCache: Array<String>? = null
+
+    /**
+     * The host and each of its parent domains (`a.b.example`, `b.example`, `example`), computed
+     * once: a domain condition of any of a thousand rules is then a set lookup per label instead
+     * of a substring per label per rule.
+     */
+    val hostSuffixes: Array<String>
+        get() = hostSuffixCache ?: Domains.suffixesOf(host).also { hostSuffixCache = it }
+
+    /** [hostSuffixes] of the document's host. */
+    val documentHostSuffixes: Array<String>
+        get() = documentSuffixCache ?: Domains.suffixesOf(documentHost).also { documentSuffixCache = it }
+
+    /** The digits of a `tab_<n>` / `<n>` tab id, for `tabIds` conditions; null without a tab. */
+    val tabNumber: String? = tabId?.trimStart { !it.isDigit() }
 }

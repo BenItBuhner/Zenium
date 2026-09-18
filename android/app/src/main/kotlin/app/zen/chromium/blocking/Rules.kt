@@ -30,14 +30,16 @@ class DnrRule(
     private val regexSubstitution: String?,
     /** The `urlFilter` / `regexFilter`; null when the rule has neither. Read by [RuleIndex]. */
     val pattern: UrlPattern?,
-    private val initiatorDomains: Set<String>?,
+    /** `initiatorDomains`, lowercased; the document host must be one or a subdomain of one. Read by [RuleIndex]. */
+    val initiatorDomains: Set<String>?,
     private val excludedInitiatorDomains: Set<String>?,
     /** `requestDomains`, lowercased; a request host matches when it is one or a subdomain of one. Read by [RuleIndex]. */
     val requestDomains: Set<String>?,
     private val excludedRequestDomains: Set<String>?,
     /** Zenium's addition to the shape: never match a non-unique host (`excludedNonUniqueHosts` in `rules.ts`). */
     private val excludedNonUniqueHosts: Boolean,
-    private val typeMask: Int,
+    /** `resourceTypes` as [ResourceType] bits; 0 for any type. Read by [RuleIndex]. */
+    val typeMask: Int,
     private val excludedTypeMask: Int,
     private val methods: Set<String>?,
     private val excludedMethods: Set<String>?,
@@ -58,13 +60,18 @@ class DnrRule(
         if (excludedMethods != null && req.methodLower in excludedMethods) return false
         if (domainType == 2 && !req.isThirdParty) return false
         if (domainType == 1 && req.isThirdParty) return false
-        val tab = req.tabId?.trimStart { !it.isDigit() }
-        if (tabIds != null && (tab == null || tab !in tabIds)) return false
-        if (excludedTabIds != null && tab != null && tab in excludedTabIds) return false
-        if (!matchesDomains(req.host, requestDomains, excludedRequestDomains)) return false
+        if (tabIds != null || excludedTabIds != null) {
+            val tab = req.tabNumber
+            if (tabIds != null && (tab == null || tab !in tabIds)) return false
+            if (excludedTabIds != null && tab != null && tab in excludedTabIds) return false
+        }
+        if (requestDomains != null || excludedRequestDomains != null) {
+            if (!matchesDomains(req.hostSuffixes, requestDomains, excludedRequestDomains)) return false
+        }
         if (excludedNonUniqueHosts && NonUniqueHost.isNonUnique(req.host)) return false
         if (initiatorDomains != null || excludedInitiatorDomains != null) {
-            val initiator = if (req.type == ResourceType.MAIN_FRAME) "" else req.documentHost
+            // A navigation has no initiator: `initiatorDomains` never matches it, `excludedInitiatorDomains` never excludes it.
+            val initiator = if (req.type == ResourceType.MAIN_FRAME) EMPTY_SUFFIXES else req.documentHostSuffixes
             if (initiatorDomains != null && initiator.isEmpty()) return false
             if (!matchesDomains(initiator, initiatorDomains, excludedInitiatorDomains)) return false
         }
@@ -91,29 +98,27 @@ class DnrRule(
             return setPriority.toLong() * (RULE_PRIORITY_MAX + 1) + rp
         }
 
-        private fun matchesDomains(host: String, include: Set<String>?, exclude: Set<String>?): Boolean {
-            if (exclude != null && hasDomainOf(host, exclude)) return false
-            if (include != null) return hasDomainOf(host, include)
+        private val EMPTY_SUFFIXES = emptyArray<String>()
+
+        private fun matchesDomains(suffixes: Array<String>, include: Set<String>?, exclude: Set<String>?): Boolean {
+            if (exclude != null && hasDomainOf(suffixes, exclude)) return false
+            if (include != null) return hasDomainOf(suffixes, include)
             return true
         }
 
         /**
-         * Whether `host` or one of its parent domains is in `domains`: the host's label suffixes
-         * are looked up in turn, so a list of tens of thousands of domains (uBlock Origin Lite
-         * folds whole hosts files into one rule's `requestDomains`) costs as many lookups as the
-         * host has labels, not one comparison per domain.
+         * Whether the host or one of its parent domains is in `domains`: the host's label
+         * suffixes (`Request.hostSuffixes`) are looked up in turn, so a list of tens of thousands
+         * of domains (uBlock Origin Lite folds whole hosts files into one rule's `requestDomains`)
+         * costs as many lookups as the host has labels, not one comparison per domain.
          */
-        fun hasDomainOf(host: String, domains: Set<String>): Boolean {
-            if (host.isEmpty()) return false
-            var start = 0
-            while (true) {
-                val key = if (start == 0) host else host.substring(start)
-                if (key in domains) return true
-                val dot = host.indexOf('.', start)
-                if (dot == -1) return false
-                start = dot + 1
-            }
+        fun hasDomainOf(suffixes: Array<String>, domains: Set<String>): Boolean {
+            for (key in suffixes) if (key in domains) return true
+            return false
         }
+
+        /** [hasDomainOf] for a host given as a string (tests and one-off callers). */
+        fun hasDomainOf(host: String, domains: Set<String>): Boolean = hasDomainOf(Domains.suffixesOf(host), domains)
 
         private fun strings(o: JSONObject, key: String): Set<String>? {
             val arr = o.optJSONArray(key) ?: return null

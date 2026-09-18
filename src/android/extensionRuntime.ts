@@ -163,13 +163,21 @@ export interface ExtRequestEvent {
   method: string
   initiator: string | null
   mainFrame: boolean
+  /**
+   * The tab's document generation the request belonged to (Kotlin's
+   * `BlockingTab.documentGeneration`: a main-frame request opens the next one, its subresources
+   * carry it); 0 from a tab that keeps no count.
+   */
+  document: number
   /** `allow` | `block` | `redirect` | `upgrade`. */
   action: string
   /** The rule set and rule that decided, when one did (`ext:<id>:…` for an extension's). */
   matchedSet: string | null
   matchedRule: number | null
-  /** What `EngineSnapshot.decide` took. */
+  /** What `EngineSnapshot.decide` took, wall-clock. */
   micros: number
+  /** The CPU time the thread spent in it; null where the platform cannot tell. */
+  cpuMicros: number | null
 }
 
 const ENGINE_ACTIONS: readonly EngineDecisionAction[] = ['allow', 'block', 'redirect', 'upgrade']
@@ -1347,6 +1355,9 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    */
   onRequest(event: ExtRequestEvent): void {
     const tabId = event.tabId ? this.api.tabs.chromeIdFor(event.tabId) : UNKNOWN_TAB_ID
+    // The decision may be the first word of a new document (its `navigated` is posted at commit
+    // and often lands after the page's first decisions): the tab's record turns over first.
+    if (event.document > 0) this.dnr.document(tabId, event.document)
     const action = ENGINE_ACTIONS.find((a) => a === event.action)
     if (action && event.matchedSet && typeof event.matchedRule === 'number') {
       this.dnr.decided({
@@ -1427,8 +1438,12 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         // reply proxy).
         if (!p.inPage) {
           this.api.activeTab.navigated(tabId, p.url)
-          // A new document: the tab's matched rules belong to no tab now, its action count restarts.
-          this.dnr.tabNavigated(chromeTabId)
+          // A new document: the tab's matched rules belong to no tab now, its action count
+          // restarts – unless the document's first decisions, stamped with its generation,
+          // turned the record over already.
+          if (typeof p.document === 'number' && p.document > 0)
+            this.dnr.document(chromeTabId, p.document)
+          else this.dnr.tabNavigated(chromeTabId)
         }
         updated({ status: 'loading', url: p.url })
         return

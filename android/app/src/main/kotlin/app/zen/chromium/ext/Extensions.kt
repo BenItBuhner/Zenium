@@ -224,7 +224,8 @@ class Extensions(private val host: Host) {
     ) { userAgent }
     /**
      * The engine's last decisions on the tabs' requests ("allow|block|redirect|upgrade type
-     * <micros>us url", the micros being what `EngineSnapshot.decide` took), kept while `debug`
+     * <micros>us <cpuMicros>cpu url": the wall-clock time `EngineSnapshot.decide` took and the
+     * CPU time the thread spent in it, `?cpu` where the platform cannot tell), kept while `debug`
      * for instrumentation (the demo's latency figures).
      */
     val decisions = ArrayDeque<String>()
@@ -255,7 +256,7 @@ class Extensions(private val host: Host) {
     val origin = ORIGIN_SUFFIX
 
     /** The engine's extension seams, this runtime's (see the class comment). */
-    private val observer = DecisionObserver { tab, request, decision, elapsedNanos -> onDecision(tab, request, decision, elapsedNanos) }
+    private val observer = DecisionObserver { tab, request, decision, elapsedNanos, cpuNanos -> onDecision(tab, request, decision, elapsedNanos, cpuNanos) }
     private val redirector = RedirectExecutor { tab, request, target, type -> redirect(target, request, type, tab) }
 
     init {
@@ -1004,9 +1005,15 @@ class Extensions(private val host: Host) {
      * extension's matched rule, action count and `onRuleMatchedDebug` event; while an extension
      * listens for `webRequest`, every decision does, as the material of the observational events.
      * The rest is only counted here while `debug`.
+     *
+     * Every event carries the tab's document generation the request belonged to
+     * (`BlockingTab.documentGeneration`): the core tells one document's matches from the
+     * next's by it, since the tab's `navigated` event, posted at commit, often lands after the
+     * new page's first decisions.
      */
-    private fun onDecision(tab: BlockingTab, request: Request, decision: Decision, elapsedNanos: Long) {
+    private fun onDecision(tab: BlockingTab, request: Request, decision: Decision, elapsedNanos: Long, cpuNanos: Long) {
         val micros = elapsedNanos / 1_000
+        val cpuMicros = if (cpuNanos < 0) null else cpuNanos / 1_000
         val action = when (decision.action) {
             Decision.Action.ALLOW -> "allow"
             Decision.Action.BLOCK -> "block"
@@ -1016,7 +1023,7 @@ class Extensions(private val host: Host) {
         val type = request.type.dnrName
         if (debug) synchronized(decisions) {
             if (decisions.size >= 400) decisions.removeFirst()
-            decisions.addLast("$action $type ${micros}us ${request.url}")
+            decisions.addLast("$action $type ${micros}us ${cpuMicros ?: "?"}cpu ${request.url}")
         }
         val extensionRule = decision.matchedSet?.startsWith(EXT_SET_PREFIX) == true
         if (!extensionRule && !observeRequests) return
@@ -1029,10 +1036,12 @@ class Extensions(private val host: Host) {
             // Chrome's `initiator` is the requesting document's origin, none for a navigation.
             "initiator" to request.documentUrl?.let { Domains.originOf(it) },
             "mainFrame" to (request.type == ResourceType.MAIN_FRAME),
+            "document" to request.documentGeneration,
             "action" to action,
             "matchedSet" to (decision.matchedSet?.takeIf { extensionRule }),
             "matchedRule" to (if (extensionRule) decision.matchedRule else null),
-            "micros" to micros
+            "micros" to micros,
+            "cpuMicros" to cpuMicros
         )
         main.post { host.chrome.hostEvent("ext.request", payload) }
     }

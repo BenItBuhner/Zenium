@@ -106,7 +106,15 @@ class RuleIndex(rules: List<DnrRule>) {
      * resolution does not mind.
      */
     fun forEachCandidate(req: Request, visit: (DnrRule) -> Unit) {
-        if (req.host.isNotEmpty() && hosts.isNotEmpty()) walkHost(req.host, visit)
+        if (hosts.isNotEmpty()) {
+            // The request's suffixes are computed once and shared with the rules' domain conditions.
+            for (key in req.hostSuffixes) {
+                when (val hit = hosts[key]) {
+                    is DnrRule -> visit(hit)
+                    is Array<*> -> for (item in hit) visit(item as DnrRule)
+                }
+            }
+        }
         if (buckets.isNotEmpty()) {
             for (t in req.tokens) {
                 val bucket = buckets[t] ?: continue
@@ -114,19 +122,5 @@ class RuleIndex(rules: List<DnrRule>) {
             }
         }
         for (rule in wildcard) visit(rule)
-    }
-
-    private fun walkHost(host: String, visit: (DnrRule) -> Unit) {
-        var start = 0
-        while (true) {
-            val key = if (start == 0) host else host.substring(start)
-            when (val hit = hosts[key]) {
-                is DnrRule -> visit(hit)
-                is Array<*> -> for (item in hit) visit(item as DnrRule)
-            }
-            val dot = host.indexOf('.', start)
-            if (dot == -1) return
-            start = dot + 1
-        }
     }
 }

@@ -419,15 +419,23 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                     return Verdict.Empty(403, "Forbidden")
                 }
             }
+            // A navigation opens the tab's next document: its own decision and every subresource
+            // decision after it carry the new generation (see BlockingTab.documentGeneration).
+            val generation = tab.documentGeneration(isMainFrame)
             if (snap === EngineSnapshot.EMPTY && observer == null) return Verdict.Pass
             val req = Request(
                 url, type, if (isMainFrame) null else tab.documentUrl, method,
                 tabId = tab.tabId, typeMask = known?.bit ?: ResourceType.AMBIGUOUS_MASK,
-                partition = tab.containerId
+                partition = tab.containerId, documentGeneration = generation
             )
+            val cpuBefore = if (observer != null) ThreadCpu.nanos() else -1L
             val started = System.nanoTime()
             val decision = if (snap === EngineSnapshot.EMPTY) Decision.ALLOW else snap.decide(req)
-            observer?.onDecision(tab, req, decision, System.nanoTime() - started)
+            if (observer != null) {
+                val elapsed = System.nanoTime() - started
+                val cpuAfter = if (cpuBefore < 0) -1L else ThreadCpu.nanos()
+                observer.onDecision(tab, req, decision, elapsed, if (cpuAfter < 0) -1L else cpuAfter - cpuBefore)
+            }
             return when (decision.action) {
                 Decision.Action.ALLOW -> Verdict.Pass
                 Decision.Action.BLOCK -> {
@@ -589,8 +597,29 @@ sealed class Verdict {
 
 /** Hears every decision the engine takes on a page's request; see [Blocking.observer]. */
 fun interface DecisionObserver {
-    /** `elapsedNanos` is the time `EngineSnapshot.decide` took (the matcher's latency). */
-    fun onDecision(tab: BlockingTab, request: Request, decision: Decision, elapsedNanos: Long)
+    /**
+     * `elapsedNanos` is the wall-clock time `EngineSnapshot.decide` took (the latency the IO
+     * thread paid), `cpuNanos` the CPU time the same thread spent in it (the matcher's own cost,
+     * without the scheduling and collection pauses of a loaded device), or -1 where the platform
+     * cannot tell.
+     */
+    fun onDecision(tab: BlockingTab, request: Request, decision: Decision, elapsedNanos: Long, cpuNanos: Long)
+}
+
+/** The calling thread's CPU clock; -1 where there is none (the JVM's `android.jar` stubs throw). */
+internal object ThreadCpu {
+    @Volatile
+    private var available = true
+
+    fun nanos(): Long {
+        if (!available) return -1L
+        return try {
+            android.os.Debug.threadCpuTimeNanos()
+        } catch (e: RuntimeException) {
+            available = false
+            -1L
+        }
+    }
 }
 
 /** Substitutes the response of a redirected subresource; see [Blocking.redirector]. */
@@ -608,6 +637,16 @@ interface BlockingTab {
 
     /** The URL of the document the tab shows; read from any thread. */
     val documentUrl: String?
+
+    /**
+     * The generation of the document the tab is loading or showing, as a counter the engine
+     * advances: it asks for the next one with every main-frame request it decides
+     * (`newDocument`, on the IO thread that took the request) and reads the current one with
+     * every other decision, so the extension runtime can tell one document's decisions from the
+     * next's before the commit has reached the UI thread – the subresources of a new page are
+     * often decided ahead of its `navigated` event. 0 for a tab that keeps no count.
+     */
+    fun documentGeneration(newDocument: Boolean): Long = 0L
 
     /** `count` more subresources of the current document were blocked (IO thread). */
     fun onRequestsBlocked(count: Int)

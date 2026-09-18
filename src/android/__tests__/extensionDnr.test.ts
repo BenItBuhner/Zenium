@@ -453,6 +453,47 @@ describe('AndroidDeclarativeNetRequest: decisions of the engine', () => {
     expect(dnr.stateOf(ID)?.actionCount(2)).toBe(0)
   })
 
+  it("a higher document generation turns the tab's record over; the same or a lower one does not", async () => {
+    const { host, dnr } = setUp('memory')
+    const ext = attached(host)
+    dnr.load(ext)
+    await dnr.whenSynced(ID)
+    await dnr.call(ext, 'setExtensionActionOptions', [{ displayActionCountAsBadgeText: true }])
+    // The first generation seen is only remembered: nothing of the tab's is on record yet.
+    dnr.document(1, 3)
+    dnr.decided(decision())
+    dnr.decided(decision({ requestId: '8' }))
+    expect(dnr.stateOf(ID)?.actionCount(1)).toBe(2)
+    // The commit of the same document (its `navigated`, late) changes nothing.
+    dnr.document(1, 3)
+    expect(dnr.stateOf(ID)?.actionCount(1)).toBe(2)
+    // A straggler of the old document, decided on another IO thread, neither.
+    dnr.document(1, 2)
+    expect(dnr.stateOf(ID)?.actionCount(1)).toBe(2)
+    // The next document: the count restarts and the matches belong to no tab.
+    dnr.document(1, 4)
+    expect(dnr.stateOf(ID)?.actionCount(1)).toBe(0)
+    expect(host.badges.at(-1)).toEqual({ id: ID, tabId: 1, text: '' })
+    const matched = (await dnr.call(ext, 'getMatchedRules', [{ tabId: 1 }])) as {
+      rulesMatchedInfo: unknown[]
+    }
+    expect(matched.rulesMatchedInfo).toEqual([])
+    const all = (await dnr.call(ext, 'getMatchedRules', [{}])) as {
+      rulesMatchedInfo: Array<{ tabId: number }>
+    }
+    expect(all.rulesMatchedInfo.map((m) => m.tabId)).toEqual([-1, -1])
+    // Tabs keep their own generations; a closed tab forgets its.
+    dnr.document(2, 1)
+    dnr.decided(decision({ tabId: 2 }))
+    expect(dnr.stateOf(ID)?.actionCount(2)).toBe(1)
+    dnr.tabRemoved(2)
+    dnr.document(2, 1)
+    expect(dnr.stateOf(ID)?.actionCount(2)).toBe(0)
+    // No tab, no generation.
+    dnr.document(-1, 9)
+    expect(dnr.stateOf(ID)?.actionCount(1)).toBe(0)
+  })
+
   it('ignores decisions of other sets, of unknown extensions, and without a rule', async () => {
     const { host, dnr } = setUp('memory')
     dnr.load(attached(host))

@@ -475,6 +475,10 @@ class ExtensionDemo {
         // an 18–54 ms p90 on the same page; the engine-level target is single-digit milliseconds.
         val micros = results.optJSONObject("decisionMicros") ?: JSONObject()
         val p90Us = micros.optLong("p90Us", -1)
+        // The wall-clock figure on an emulator's IO thread includes its scheduling and collection
+        // pauses; the CPU figure is the matcher's own cost.
+        val cpu = micros.optJSONObject("cpu")
+        val cpuNote = if (cpu == null) "" else " cpu: median=${cpu.optLong("medianUs")}us p90=${cpu.optLong("p90Us")}us max=${cpu.optLong("maxUs")}us"
         stage(
             UBOL, "decisionLatency",
             when {
@@ -483,7 +487,7 @@ class ExtensionDemo {
                 p90Us < 18_000 -> "PARTIAL"
                 else -> "FAIL"
             },
-            "n=${micros.optInt("count")} median=${micros.optLong("medianUs")}us p90=${p90Us}us max=${micros.optLong("maxUs")}us (provisional matcher p90: 18–54 ms)"
+            "n=${micros.optInt("count")} median=${micros.optLong("medianUs")}us p90=${p90Us}us max=${micros.optLong("maxUs")}us$cpuNote (provisional matcher p90: 18–54 ms)"
         )
         val ubolPopup = popupDemo(UBOL, "06-ubol-popup", 45_000, { view -> tabEval(view, "String(document.body && document.body.innerText.length > 20)") == "true" }) { view ->
             stage(UBOL, "popup", "PASS", tabEval(view, "document.body.innerText.slice(0, 200)").take(120))
@@ -1944,16 +1948,32 @@ class ExtensionDemo {
         return list
     }
 
-    /** Matcher latency from the decision log ("verdict type <micros>us url"): count, median, p90, max. */
+    /**
+     * Matcher latency from the decision log ("verdict type <micros>us <cpuMicros>cpu url"):
+     * count, median, p90, max of the wall-clock figure, and the same of the CPU figure under
+     * `cpu` where the platform reports one.
+     */
     private fun decisionMicros(all: List<String>): JSONObject {
         val micros = all.mapNotNull { line -> line.split(' ').getOrNull(2)?.removeSuffix("us")?.toLongOrNull() }.sorted()
         if (micros.isEmpty()) return JSONObject().put("count", 0)
-        return JSONObject()
+        val out = JSONObject()
             .put("count", micros.size)
             .put("medianUs", micros[micros.size / 2])
             .put("p90Us", micros[(micros.size * 9) / 10])
             .put("maxUs", micros.last())
             .put("firstUs", all.firstOrNull()?.split(' ')?.getOrNull(2))
+        val cpu = all.mapNotNull { line -> line.split(' ').getOrNull(3)?.removeSuffix("cpu")?.toLongOrNull() }.sorted()
+        if (cpu.isNotEmpty()) {
+            out.put(
+                "cpu",
+                JSONObject()
+                    .put("count", cpu.size)
+                    .put("medianUs", cpu[cpu.size / 2])
+                    .put("p90Us", cpu[(cpu.size * 9) / 10])
+                    .put("maxUs", cpu.last())
+            )
+        }
+        return out
     }
 
     /**
