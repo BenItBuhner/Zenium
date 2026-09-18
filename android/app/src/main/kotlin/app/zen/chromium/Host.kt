@@ -321,6 +321,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "app.setIcon" -> { launcherIcon.apply(args.str("id"), activity); reply(null) }
             "app.share" -> share.share(args, reply)
             "app.openAppLinkSettings" -> { openAppLinkSettings(); reply(null) }
+            "app.openPrivateDnsSettings" -> { openPrivateDnsSettings(); reply(null) }
             "externalProtocol.respond" -> { externalProtocols.respond(args.str("requestId"), args.bool("allow")); reply(null) }
             "app.isDefaultBrowser" -> reply(DefaultBrowser.isDefault(activity))
             "app.requestDefaultBrowser" -> activity.requestDefaultBrowser(reply)
@@ -546,6 +547,22 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         for (screen in screens) {
             try {
                 activity.startActivity(screen)
+                return
+            } catch (e: ActivityNotFoundException) {
+                // The next screen down is on every device.
+            }
+        }
+    }
+
+    /**
+     * Android's Private DNS setting (encrypted DNS for every app, Android 9+) lives in the
+     * Network & internet screen; there is no intent for the row itself. The main Settings screen
+     * is the fallback on devices that lack even that action.
+     */
+    private fun openPrivateDnsSettings() {
+        for (action in listOf(Settings.ACTION_WIRELESS_SETTINGS, Settings.ACTION_SETTINGS)) {
+            try {
+                activity.startActivity(Intent(action))
                 return
             } catch (e: ActivityNotFoundException) {
                 // The next screen down is on every device.
