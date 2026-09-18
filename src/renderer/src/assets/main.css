@@ -7181,81 +7181,12 @@
   justify-content: center;
 }
 /*
- * The picker sheet (§9.13, §10.4; `PickerSheet`): the chassis `BottomSheet` as a v2 sheet – the
- * dialog surface with a hairline edge at radius 12 in place of the tinted sheet, `--v2-scrim`
- * on its own scrim element (§9.28) – with a 48 header (§9.16) or a title block (§9.23) after
- * the grip strip, then radio rows 44 / 64 tall edge to edge, their text inset 16 (§9.25), the
- * press fill bleeding to the border.
+ * The picker sheet (§9.13, §10.4; `PickerSheet`) is the chassis `BottomSheet` as it comes –
+ * surface, scrim, grip, header, title block and rows (§9.16, §9.23, §9.25, §9.28) – with the
+ * pane's radio in its rows. Only the rows' descriptions are its own: a choice is read in full
+ * before it is taken, so they wrap without the pane's two-line clamp.
  */
-.zen-protection-sheet-layer .zen-sheet-scrim {
-  background: var(--v2-scrim);
-}
-.zen-sheet.zen-protection-sheet {
-  padding-left: 0;
-  padding-right: 0;
-  border: 1px solid var(--v2-border);
-  border-bottom: 0;
-  border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
-  background: var(--v2-panel);
-  color: var(--v2-text);
-  backdrop-filter: none;
-  box-shadow: var(--v2-shadow-sheet);
-}
-:root[data-theme='dark'] .zen-sheet.zen-protection-sheet {
-  box-shadow: var(--v2-shadow-sheet);
-}
-.zen-protection-sheet .zen-sheet-handle {
-  background: rgb(var(--v2-text-rgb) / 0.25);
-}
-.zen-protection-sheet-header {
-  display: flex;
-  height: 48px;
-  align-items: center;
-  justify-content: center;
-  padding: 0 16px;
-}
-.zen-protection-sheet-header > h2,
-.zen-protection-sheet-title > h2 {
-  margin: 0;
-  overflow: hidden;
-  font-size: var(--v2-font-heading);
-  font-weight: var(--v2-weight-heading);
-  line-height: 22px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.zen-protection-sheet-title {
-  padding: 16px;
-}
-.zen-protection-sheet-title > h2 {
-  overflow: visible;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-.zen-protection-sheet-title > p {
-  margin: 4px 0 0;
-  color: var(--v2-text-deemphasized);
-  line-height: 22px;
-  overflow-wrap: anywhere;
-}
-.zen-protection-sheet-rows {
-  display: flex;
-  flex-direction: column;
-  padding-bottom: 8px;
-}
-.zen-protection-sheet-row {
-  display: flex;
-  min-height: var(--v2-row);
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  transition: background 120ms var(--zen-ease);
-}
-.zen-protection-sheet-row:active {
-  background: var(--v2-fill);
-}
-/* A choice is read in full before it is taken: the sheet's descriptions wrap without the clamp. */
-.zen-protection-sheet-row .zen-privacy-row-desc {
+.zen-protection-sheet .zen-sheet-item .zen-privacy-row-desc {
   display: block;
   -webkit-line-clamp: unset;
 }
@@ -7310,12 +7241,9 @@
 /*
  * Its list (§9.13, §9.20): a `--v2-panel` popover flush under the control at radius 12 and
  * padding 6, 28 px rows at radius 6 in the body face, the current option with a trailing 16 px
- * check; the panel shadow, no scrim. The layer under it takes the press that dismisses it.
+ * check; the panel shadow, no scrim and no layer of its own: the chrome layer's light dismiss
+ * takes the press that closes it (§9.20 amended).
  */
-.zen-protection-menulist-layer {
-  position: fixed;
-  inset: 0;
-}
 .zen-protection-menulist-popup {
   position: fixed;
   display: flex;

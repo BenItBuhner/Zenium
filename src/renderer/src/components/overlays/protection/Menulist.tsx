@@ -1,11 +1,13 @@
-import type { CSSProperties, JSX } from 'react'
+import type { JSX } from 'react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { Check, ChevronDown } from 'lucide-react'
 import {
   ChromePortal,
   placePopover,
   POPOVER_WIDTH,
+  popoverStyle,
   toRect,
+  useLightDismiss,
   viewportSize
 } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
@@ -20,9 +22,11 @@ export interface MenulistOption<V extends string> {
  * radius 4 with a hairline and a chevron, opening a `--v2-panel` popover flush under itself at
  * radius 12 with 6 px padding and 28 px rows at radius 6, the current option marked with a
  * trailing check. The popover is §9.20's list width, placed by `placePopover` through the chrome
- * layer (`ChromePortal`), end-aligned when the control sits in the trailing half of its row.
- * Arrow keys move, Enter picks, Escape closes and hands focus back; a press outside closes and
- * is consumed (§9.22). Never a native `<select>`; on a phone the caller shows radios instead.
+ * layer (`ChromePortal`), end-aligned when the control sits in the trailing half of its row, and
+ * flipped above the control when the rows do not fit below. Arrow keys move, Enter picks, Escape
+ * closes and hands focus back; the layer's light dismiss (`useLightDismiss`) closes it on a
+ * press outside, a scroll, a resize or another popover opening, the press consumed (§9.20,
+ * §9.22). Never a native `<select>`; on a phone the caller shows radios instead.
  */
 export function Menulist<V extends string>({
   value,
@@ -97,18 +101,17 @@ function MenulistPopup<V extends string>({
   onClose: (byKey: boolean) => void
 }): JSX.Element {
   // Flush under the control, aligned with it, 8 px inside the window (§9.13, §9.20); the row the
-  // control sits in is its bar, so a control on the row's trailing side end-aligns the list.
+  // control sits in is its bar, so a control on the row's trailing side end-aligns the list, and
+  // the list's own height (the rows, the padding, the hairline) decides whether it flips above.
   const rect = toRect(anchor.getBoundingClientRect())
   const bar = toRect((anchor.closest('.zen-privacy-row') ?? anchor).getBoundingClientRect())
-  const viewport = viewportSize()
   const box = placePopover(
     rect,
     { ...bar, y: rect.y, height: rect.height },
-    viewport,
-    POPOVER_WIDTH.list
+    viewportSize(),
+    POPOVER_WIDTH.list,
+    options.length * ROW + PADDING * 2 + 2
   )
-  const height = options.length * ROW + PADDING * 2 + 2
-  const opensUp = box.maxHeight < height && rect.y > viewport.height - (rect.y + rect.height)
   const list = useRef<HTMLUListElement>(null)
   const idBase = useId()
   const [active, setActive] = useState(
@@ -120,6 +123,11 @@ function MenulistPopup<V extends string>({
   useEffect(() => {
     list.current?.focus()
   }, [])
+  // The layer's light dismiss closes it, the control taking the focus back – unless another
+  // popover or a dialog opening closed it, which has the focus now.
+  useLightDismiss(list, (reason) => onClose(reason !== 'replaced' && reason !== 'all'), {
+    anchor: () => anchor
+  })
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
@@ -146,50 +154,33 @@ function MenulistPopup<V extends string>({
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [active, options, onPick, onClose])
-  useEffect(() => {
-    const close = (): void => onClose(false)
-    window.addEventListener('resize', close)
-    return () => window.removeEventListener('resize', close)
-  }, [onClose])
 
-  const style: CSSProperties = opensUp
-    ? { left: box.left, bottom: viewport.height - rect.y, maxHeight: rect.y - 8 }
-    : { left: box.left, top: box.top, maxHeight: box.maxHeight }
   return (
     <ChromePortal>
-      <div
-        className="zen-protection-menulist-layer"
-        onPointerDown={(e) => {
-          e.stopPropagation()
-          onClose(false)
-        }}
+      <ul
+        ref={list}
+        role="listbox"
+        aria-label={label}
+        aria-activedescendant={`${idBase}-${active}`}
+        tabIndex={-1}
+        className="zen-protection-menulist-popup zen-animate-pop"
+        style={popoverStyle(box)}
       >
-        <ul
-          ref={list}
-          role="listbox"
-          aria-label={label}
-          aria-activedescendant={`${idBase}-${active}`}
-          tabIndex={-1}
-          className="zen-protection-menulist-popup zen-animate-pop"
-          style={style}
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          {options.map((option, i) => (
-            <li
-              key={option.value}
-              id={`${idBase}-${i}`}
-              role="option"
-              aria-selected={option.value === value}
-              className={cn('zen-protection-menulist-option', i === active && 'is-active')}
-              onPointerMove={() => i !== active && setActive(i)}
-              onClick={() => onPick(option.value)}
-            >
-              <span>{option.label}</span>
-              {option.value === value && <Check aria-hidden />}
-            </li>
-          ))}
-        </ul>
-      </div>
+        {options.map((option, i) => (
+          <li
+            key={option.value}
+            id={`${idBase}-${i}`}
+            role="option"
+            aria-selected={option.value === value}
+            className={cn('zen-protection-menulist-option', i === active && 'is-active')}
+            onPointerMove={() => i !== active && setActive(i)}
+            onClick={() => onPick(option.value)}
+          >
+            <span>{option.label}</span>
+            {option.value === value && <Check aria-hidden />}
+          </li>
+        ))}
+      </ul>
     </ChromePortal>
   )
 }
