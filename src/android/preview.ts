@@ -1,6 +1,7 @@
 import type { ContentCover, Rect } from '@shared/types'
 import type { NativeBridge, NativeCall } from './bridge'
 import type { BootInfo } from './platform'
+import type { Platform } from '@shared/types'
 
 interface HostGlobal {
   resolve(id: number, json: string | null): void
@@ -81,12 +82,23 @@ export function createPreviewBridge(): NativeBridge {
     frame.src = PAGE_ROUTE + id
   }
 
+  const params = new URLSearchParams(location.search)
   // `?sdk=32` stands in for an older release (below 33 the chrome confirms copies itself).
-  const sdkInt = Number(new URLSearchParams(location.search).get('sdk')) || 34
+  const sdkInt = Number(params.get('sdk')) || 34
+  // `?platform=linux|win32|darwin` makes the chrome report a desktop OS, so a capture taken at
+  // the desktop form factor shows the desktop's platform-bound rows (the Default Browser
+  // section, file URLs, the engine's name) rather than Android's. Capabilities stay the
+  // preview's own; a real desktop capture comes from the Electron build.
+  const platformParam = params.get('platform')
+  const os: Platform =
+    platformParam === 'linux' || platformParam === 'win32' || platformParam === 'darwin'
+      ? platformParam
+      : 'android'
 
   const handlers: Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>> = {
     boot: (): BootInfo => ({
       version: 'preview',
+      os,
       sdkInt,
       signer: null,
       packageName: null,
