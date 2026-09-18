@@ -19,14 +19,20 @@ const css = readFileSync(fileURLToPath(new URL('../../assets/main.css', import.m
 const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The frame dialog host's scrim (lib/portals.tsx), which dims only the content frame (§9.5).
   ['.zen-frame-dialogs {', '.zen-chrome-layer {'],
+  // Site information (components/siteinfo/SiteInfoSheet.tsx, #39): the sheet's row values, glyphs,
+  // headings, empty state and level track after the chassis rows, then the desktop popover's own
+  // rows, header and footer. Cut out before the chassis, whose span encloses them.
+  ['.zen-sheet-item-value {', '/*\n   * Bookmarks, built to the v2 draft'],
   // The phone sheet chassis (components/sheet/BottomSheet.tsx): surface, header, grabber, rows
   // and separators shared by every phone sheet (v2 §6, §9.16, §9.25) – the shell pass.
   ['.zen-sheet {', '/*\n   * Bookmarks, built to the v2 draft'],
   // The pull-to-refresh disc (components/content/PullIndicator.tsx).
   ['.zen-ptr-disc {', '.zen-space-strip {'],
+  // The v2 badge (§9.19): site information's Private badge (components/siteinfo/SiteInfoSheet.tsx).
+  ['.zen-v2-badge {', '/* Safe-area insets pushed by mobile hosts'],
   // The v2 button, shared by every v2 surface (today the Settings > Look and Feel > Navigation bar
   // button, components/overlays/SettingsPanel.tsx); its layering is pinned by the tests below.
-  ['.zen-v2-button {', '/* Safe-area insets pushed by mobile hosts'],
+  ['.zen-v2-button {', '/*\n * The v2 badge (§9.19)'],
   // The Tabs button's hold menu (components/phone/TabsQuickMenu.tsx).
   ['.zen-quick-menu {', '/* The chassis sheet is the v2 surface (§6)'],
   // The navigation bar's editor (components/phone/BarEditorSheet.tsx, BarPreview.tsx).
@@ -74,7 +80,9 @@ const V2_FILES: ReadonlyArray<string> = [
   // The external-protocol sheet on the v2 sheet chassis (#140): its deemphasised host line.
   'components/protocol/ExternalProtocolSheet.tsx',
   // The sidebar's tab count badge, drawn in its surface's family through the §9.29 control roles.
-  'components/sidebar/SpacePanel.tsx'
+  'components/sidebar/SpacePanel.tsx',
+  // Site information (#39): the connection state's ok / warn / danger ink on its glyphs and values.
+  'components/siteinfo/SiteInfoSheet.tsx'
 ]
 
 /** The text of the first `selector {` block found after `from`. */
