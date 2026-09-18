@@ -334,3 +334,36 @@ describe('keyboard focus on layout reports', () => {
     expect(page.focused).toBe(true)
   })
 })
+
+/**
+ * A surface beside the page that held the keyboard goes away (an extension's side panel closes,
+ * a Glance card, a popup frame): its host asks the window for the keyboard with `focusContent()`,
+ * and the window decides between its page and its chrome. Under chrome that covers the page the
+ * request waits for the layout that shows it again (the overlay case above).
+ */
+describe('keyboard focus when a surface beside the page goes away', () => {
+  it('hands the keyboard to the active page when the window shows one', () => {
+    const f = fixture()
+    const page = f.openPage('https://example.com')
+    // The panel's document had the keyboard, the page did not.
+    f.keyboard.document = 'other'
+    page.focused = false
+    const chrome = f.chromeFocusCalls()
+    const focused = page.focusCalls
+    f.win.focusContent()
+    expect(page.focusCalls).toBe(focused + 1)
+    expect(page.focused).toBe(true)
+    expect(f.chromeFocusCalls()).toBe(chrome)
+  })
+
+  it('hands the keyboard to the chrome when the window shows no page', () => {
+    const f = fixture()
+    f.win.applyLayout(shown([]))
+    f.keyboard.document = 'other'
+    const chrome = f.chromeFocusCalls()
+    f.win.focusContent()
+    expect(f.chromeFocusCalls()).toBe(chrome + 1)
+    expect(f.keyboard.document).toBe('chrome')
+    expect(f.views.every((v) => !v.focused)).toBe(true)
+  })
+})
