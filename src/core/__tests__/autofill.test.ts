@@ -372,6 +372,33 @@ describe('AutofillService: the account picker', () => {
     expect(w.autofill.uiState().picker?.items).toHaveLength(2)
   })
 
+  it('falls back to the picker when the automatic sign-in cannot be authorized', async () => {
+    const w = setup()
+    w.browser.state.settings.passwords.autoSignIn = true
+    await w.passwords.unlock()
+    w.passwords.add({ url: 'https://example.com/login', username: 'ada', password: 'hunter2' })
+    await w.passwords.setPassphrase('open sesame please', undefined)
+    w.browser.state.settings.passwords.reauthGraceSeconds = 0
+    const view = w.addTab('t1', 'https://example.com/login')
+    // The page moved on while the gate was pending: no picker for a field that is gone.
+    w.event('t1', focusLogin())
+    w.autofill.onNavigated('t1')
+    await w.settle()
+    expect(w.autofill.uiState().picker).toBeNull()
+    expect(view.fills()).toEqual([])
+
+    w.event('t1', focusLogin())
+    await w.settle()
+    expect(view.fills()).toEqual([])
+    const picker = w.autofill.uiState().picker!
+    expect(picker.items.map((i) => i.needsPassphrase)).toEqual([true])
+    expect(await w.autofill.pick(picker.id, picker.items[0].id, 'open sesame please')).toEqual({
+      status: 'ok',
+      value: null
+    })
+    expect(view.fills()).toHaveLength(1)
+  })
+
   it('offers addresses and cards for their fields, honouring the autofill settings', async () => {
     const w = setup()
     w.reauth.enabled = true
@@ -594,6 +621,51 @@ describe('AutofillService: saving logins', () => {
       expect.anything()
     )
     expect(again.store.list()[0]?.password).toBe('new')
+    expect(w.autofill.uiState().prompts).toEqual([])
+  })
+
+  it('shows native prompts one at a time and skips those answered while they waited', async () => {
+    const w = setup()
+    await w.passwords.unlock()
+    w.autofill.nativePrompts = true
+    let release: (ok: boolean) => void = () => undefined
+    w.confirm.mockImplementationOnce(() => new Promise<boolean>((resolve) => (release = resolve)))
+    w.addTab('t1', 'https://shop.example/checkout')
+    // A checkout submits its card and its address together.
+    w.event('t1', {
+      type: 'submit',
+      group: 'card',
+      formId: 'f1',
+      values: { 'cc-number': '4111 1111 1111 1111', 'cc-exp': '12/2031', 'cc-name': 'Ada' }
+    })
+    w.event('t1', {
+      type: 'submit',
+      group: 'address',
+      formId: 'f1',
+      values: {
+        name: 'Ada Lovelace',
+        'address-line1': '1600 Amphitheatre Pkwy',
+        'address-level2': 'Mountain View',
+        'address-level1': 'CA',
+        'postal-code': '94043',
+        country: 'US'
+      }
+    })
+    await w.settle()
+    expect(w.autofill.uiState().prompts.map((p) => p.kind)).toEqual(['save-card', 'save-address'])
+    expect(w.confirm).toHaveBeenCalledTimes(1)
+    expect(w.confirm).toHaveBeenLastCalledWith(
+      expect.objectContaining({ message: 'Save card?' }),
+      expect.anything()
+    )
+    // The chrome answers the waiting address prompt itself: no second dialog for it.
+    const address = w.autofill.uiState().prompts[1]
+    w.autofill.respond(address.id, null)
+    release(true)
+    await w.settle()
+    expect(w.confirm).toHaveBeenCalledTimes(1)
+    expect(w.autofill.listCards()).toHaveLength(1)
+    expect(w.autofill.listAddresses()).toHaveLength(0)
     expect(w.autofill.uiState().prompts).toEqual([])
   })
 })

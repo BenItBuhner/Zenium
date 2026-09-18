@@ -121,6 +121,7 @@ export class AutofillService {
   private fillAuthorized = false
   /** Engine surface: prompts open as host dialogs. The chrome sets this false once it renders the queue. */
   nativePrompts = true
+  private nativeQueue: Promise<void> = Promise.resolve()
 
   constructor(private readonly browser: Browser) {}
 
@@ -292,7 +293,14 @@ export class AutofillService {
     ) {
       this.autoFilled.add(formKey)
       this.closePicker()
-      void this.fillEntry(context, entries[0], undefined, this.browser.tabs.windowFor(tabId))
+      void this.fillEntry(context, entries[0], undefined, this.browser.tabs.windowFor(tabId)).then(
+        (result) => {
+          // Not authorized (a dismissed prompt, a passphrase to ask for): the picker takes over so
+          // the chrome can ask, as long as the field is still the focused one.
+          if (result.status !== 'ok' && this.focus.get(tabId) === context)
+            this.openPicker(context, entries)
+        }
+      )
       return
     }
     this.openPicker(context, entries)
@@ -760,12 +768,16 @@ export class AutofillService {
     return new Promise((resolve) => {
       this.pending.push({ prompt, resolve })
       this.browser.state.commitVolatile()
-      if (this.nativePrompts) void this.showNative(prompt, win)
+      // One host dialog at a time: a checkout submits its card and its address together.
+      if (this.nativePrompts)
+        this.nativeQueue = this.nativeQueue.then(() => this.showNative(prompt, win))
     })
   }
 
   /** The engine's own rendering: the host's confirm dialog, two buttons, until the chrome takes over. */
   private async showNative(prompt: AutofillPrompt, win?: ZenWindow): Promise<void> {
+    // Answered while it waited (the chrome took over, the tab went away): nothing left to show.
+    if (!this.pending.some((p) => p.prompt.id === prompt.id)) return
     let options: ConfirmOptions
     let onOk: AutofillPromptResponse
     switch (prompt.kind) {
