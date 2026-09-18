@@ -48,7 +48,9 @@ import { ElectronWindowFactory, type ElectronWindow } from './window'
 import { ExtensionService } from './extensions'
 import { WebstoreBridge } from './webstoreBridge'
 import { ExtensionApiHost } from './extensionApi'
+import { electronDownloadBridge } from './extensionApi/downloadsBridge'
 import { createDnrSink } from './extensionApi/dnrSink'
+import { ExtensionFavicons, faviconRequestHandler } from './extensionApi/favicons'
 import { ExtensionResourceOrigin } from './extensionApi/resourceOrigin'
 import { edgeStoreUserAgent, webstoreClientHints } from './requestHeaders'
 import { ResourceGovernor } from './resources/governor'
@@ -334,9 +336,12 @@ export class ElectronPlatform implements Platform {
       return tabId ? browser.tabs.ownerOf(tabId) : undefined
     })
     webstore.install()
-    // Extensions' `use_dynamic_url` resources are served from a per-run origin of Zenium's (the
-    // lookup runs once the API host below exists).
-    const extensionResources = new ExtensionResourceOrigin((id) => extensionApi.loaded(id))
+    // Extensions' `use_dynamic_url` resources and Chrome's `_favicon/` resource are served from
+    // a per-run origin of Zenium's (the lookup runs once the API host below exists); the icons
+    // come from the history and bookmarks models.
+    const extensionResources = new ExtensionResourceOrigin((id) => extensionApi.loaded(id), {
+      favicons: new ExtensionFavicons({ history: browser.history, bookmarks: browser.bookmarks })
+    })
     const extensionApi = new ExtensionApiHost(
       browser,
       this.sessions,
@@ -348,7 +353,8 @@ export class ElectronPlatform implements Platform {
       // window's unless the user allowed the extension there).
       createDnrSink(browser.blocking.engine, extensionResources, {
         partitionsOf: (id) => extensionApi.partitionsOf(id)
-      })
+      }),
+      electronDownloadBridge(this.downloads)
     )
     extensionApi.install()
     const extensionService = browser.extensions as ExtensionService
@@ -360,6 +366,13 @@ export class ElectronPlatform implements Platform {
     // so do the request-side effects of chrome.privacy (pings, Referer, DNT).
     extensionApi.webRequest.attach(this.requestBlocking)
     extensionApi.privacy.attach(this.requestBlocking)
+    // `chrome-extension://<id>/_favicon/` requests go to the served origin's route (Electron's
+    // loader would leave them hanging), for extensions granted the `favicon` permission.
+    this.requestBlocking.multiplexer.register(
+      faviconRequestHandler(extensionResources, (id) =>
+        extensionApi.grants(id).permissions.includes('favicon')
+      )
+    )
     // Decisions the engine took by an extension's rule feed getMatchedRules, the action badge
     // count and onRuleMatchedDebug.
     this.requestBlocking.onDecision((request, decision) =>

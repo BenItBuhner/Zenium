@@ -30,6 +30,7 @@ import type {
   SecurityPrompt,
   Settings,
   Shortcut,
+  SidePanelInfo,
   Space,
   SplitGroup,
   SyncStatus,
@@ -127,6 +128,7 @@ export interface StateExtras {
   extensions: ExtensionInfo[]
   /** Extensions UI (W1-D): reconcile with the store PR on rebase. */
   extensionUpdates: ExtensionUpdateCheck
+  sidePanel: SidePanelInfo | null
   mods: Mod[]
   sync: SyncStatus
   agents: AgentInfo[]
@@ -201,12 +203,13 @@ export class BrowserState {
   /** Live windows, registered by the Browser so persistence can capture them. */
   liveWindows: () => ZenWindow[] = () => []
   /** Provided by the Browser once its feature services exist. */
-  extras: () => StateExtras = () => ({
+  extras: (win: ZenWindow) => StateExtras = () => ({
     boosts: [],
     zappingTabId: null,
     liveFolders: {},
     extensions: [],
     extensionUpdates: { lastCheckedAt: null, checking: false },
+    sidePanel: null,
     mods: [],
     sync: {
       enabled: false,
@@ -589,7 +592,7 @@ export class BrowserState {
       devtoolsOpenFor: [...this.devtoolsOpenFor],
       foreignTabIds: win.foreignTabIds(),
       windowCount: this.liveWindows().length,
-      ...this.extras(),
+      ...this.extras(win),
       resources: this.resources,
       pageEnvironment: this.pageEnvironment
     }

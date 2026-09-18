@@ -59,8 +59,12 @@ export interface NamespaceSpec {
   shape?: true
   /**
    * Chrome hides permission-gated namespaces: this one exists only for extensions whose
-   * manifest lists one of these permissions (the engine's own namespace, when it made one, is
-   * patched regardless).
+   * manifest lists one of these permissions, required or optional (the engine's own namespace,
+   * when it made one, is patched regardless). Declaring is what counts, not the grant: Chrome
+   * leaves an optional namespace undefined until `permissions.request` grants it and defines it
+   * then; the shim has no synchronous view of the granted set at start-up, so a declared optional
+   * namespace exists (and answers) from the first statement. Extensions written for Chrome test
+   * `chrome.tabGroups ?` before asking, and get the working namespace either way.
    */
   permissions?: readonly string[]
   /**
@@ -132,7 +136,9 @@ export const API_SPEC: ApiSpec = {
         keepNative: true
       },
       getAllInWindow: { params: [integer('windowId', true)] },
-      getSelected: { params: [integer('windowId', true)] }
+      getSelected: { params: [integer('windowId', true)] },
+      group: { params: [object('options')] },
+      ungroup: { params: [{ name: 'tabIds', type: ['integer', 'array'] }] }
     },
     events: {
       onCreated: {},
@@ -492,6 +498,217 @@ export const API_SPEC: ApiSpec = {
       }
     }
   },
+
+  // Browser layer part 3: bridges onto Zenium's own models. Every member routes to the host,
+  // which reads and writes the model through its service and fires the events from a diff of
+  // the model's commits.
+  bookmarks: {
+    methods: {
+      get: { params: [{ name: 'idOrIdList', type: ['string', 'array'] }] },
+      getChildren: { params: [string('id')] },
+      getRecent: { params: [integer('numberOfItems')] },
+      getTree: { params: [] },
+      getSubTree: { params: [string('id')] },
+      search: { params: [{ name: 'query', type: ['string', 'object'] }] },
+      create: { params: [object('bookmark')] },
+      move: { params: [string('id'), object('destination')] },
+      update: { params: [string('id'), object('changes')] },
+      remove: { params: [string('id')] },
+      removeTree: { params: [string('id')] }
+    },
+    events: {
+      onCreated: {},
+      onRemoved: {},
+      onChanged: {},
+      onMoved: {},
+      onChildrenReordered: {},
+      onImportBegan: {},
+      onImportEnded: {}
+    },
+    constants: {
+      MAX_WRITE_OPERATIONS_PER_HOUR: 1000000,
+      MAX_SUSTAINED_WRITE_OPERATIONS_PER_MINUTE: 1000000,
+      BookmarkTreeNodeUnmodifiable: { MANAGED: 'managed' },
+      FolderType: {
+        BOOKMARKS_BAR: 'bookmarks-bar',
+        OTHER: 'other',
+        MOBILE: 'mobile',
+        MANAGED: 'managed'
+      }
+    },
+    permissions: ['bookmarks']
+  },
+  history: {
+    methods: {
+      search: { params: [object('query')] },
+      getVisits: { params: [object('details')] },
+      addUrl: { params: [object('details')] },
+      deleteUrl: { params: [object('details')] },
+      deleteRange: { params: [object('range')] },
+      deleteAll: { params: [] }
+    },
+    events: { onVisited: {}, onVisitRemoved: {} },
+    constants: {
+      TransitionType: {
+        LINK: 'link',
+        TYPED: 'typed',
+        AUTO_BOOKMARK: 'auto_bookmark',
+        AUTO_SUBFRAME: 'auto_subframe',
+        MANUAL_SUBFRAME: 'manual_subframe',
+        GENERATED: 'generated',
+        AUTO_TOPLEVEL: 'auto_toplevel',
+        FORM_SUBMIT: 'form_submit',
+        RELOAD: 'reload',
+        KEYWORD: 'keyword',
+        KEYWORD_GENERATED: 'keyword_generated'
+      }
+    },
+    permissions: ['history']
+  },
+  downloads: {
+    methods: {
+      download: { params: [object('options')] },
+      search: { params: [object('query')] },
+      pause: { params: [integer('downloadId')] },
+      resume: { params: [integer('downloadId')] },
+      cancel: { params: [integer('downloadId')] },
+      getFileIcon: { params: [integer('downloadId'), object('options', true)] },
+      open: { params: [integer('downloadId')] },
+      show: { params: [integer('downloadId')] },
+      showDefaultFolder: { params: [] },
+      erase: { params: [object('query')] },
+      removeFile: { params: [integer('downloadId')] },
+      acceptDanger: { params: [integer('downloadId')] },
+      setUiOptions: { params: [object('options')] },
+      setShelfEnabled: { params: [boolean('enabled')] }
+    },
+    events: { onCreated: {}, onErased: {}, onChanged: {}, onDeterminingFilename: {} },
+    constants: {
+      FilenameConflictAction: { UNIQUIFY: 'uniquify', OVERWRITE: 'overwrite', PROMPT: 'prompt' },
+      State: { IN_PROGRESS: 'in_progress', INTERRUPTED: 'interrupted', COMPLETE: 'complete' },
+      DangerType: {
+        FILE: 'file',
+        URL: 'url',
+        CONTENT: 'content',
+        UNCOMMON: 'uncommon',
+        HOST: 'host',
+        UNWANTED: 'unwanted',
+        SAFE: 'safe',
+        ACCEPTED: 'accepted',
+        ALLOWLISTED_BY_POLICY: 'allowlistedByPolicy',
+        ASYNC_SCANNING: 'asyncScanning',
+        ASYNC_LOCAL_PASSWORD_SCANNING: 'asyncLocalPasswordScanning',
+        PASSWORD_PROTECTED: 'passwordProtected',
+        BLOCKED_TOO_LARGE: 'blockedTooLarge',
+        SENSITIVE_CONTENT_WARNING: 'sensitiveContentWarning',
+        SENSITIVE_CONTENT_BLOCK: 'sensitiveContentBlock',
+        DEEP_SCANNED_FAILED: 'deepScannedFailed',
+        DEEP_SCANNED_SAFE: 'deepScannedSafe',
+        DEEP_SCANNED_OPENED_DANGEROUS: 'deepScannedOpenedDangerous',
+        PROMPT_FOR_SCANNING: 'promptForScanning',
+        PROMPT_FOR_LOCAL_PASSWORD_SCANNING: 'promptForLocalPasswordScanning',
+        ACCOUNT_COMPROMISE: 'accountCompromise',
+        BLOCKED_SCAN_FAILED: 'blockedScanFailed'
+      },
+      InterruptReason: {
+        FILE_FAILED: 'FILE_FAILED',
+        FILE_ACCESS_DENIED: 'FILE_ACCESS_DENIED',
+        FILE_NO_SPACE: 'FILE_NO_SPACE',
+        FILE_NAME_TOO_LONG: 'FILE_NAME_TOO_LONG',
+        FILE_TOO_LARGE: 'FILE_TOO_LARGE',
+        FILE_VIRUS_INFECTED: 'FILE_VIRUS_INFECTED',
+        FILE_TRANSIENT_ERROR: 'FILE_TRANSIENT_ERROR',
+        FILE_BLOCKED: 'FILE_BLOCKED',
+        FILE_SECURITY_CHECK_FAILED: 'FILE_SECURITY_CHECK_FAILED',
+        FILE_TOO_SHORT: 'FILE_TOO_SHORT',
+        FILE_HASH_MISMATCH: 'FILE_HASH_MISMATCH',
+        FILE_SAME_AS_SOURCE: 'FILE_SAME_AS_SOURCE',
+        NETWORK_FAILED: 'NETWORK_FAILED',
+        NETWORK_TIMEOUT: 'NETWORK_TIMEOUT',
+        NETWORK_DISCONNECTED: 'NETWORK_DISCONNECTED',
+        NETWORK_SERVER_DOWN: 'NETWORK_SERVER_DOWN',
+        NETWORK_INVALID_REQUEST: 'NETWORK_INVALID_REQUEST',
+        SERVER_FAILED: 'SERVER_FAILED',
+        SERVER_NO_RANGE: 'SERVER_NO_RANGE',
+        SERVER_BAD_CONTENT: 'SERVER_BAD_CONTENT',
+        SERVER_UNAUTHORIZED: 'SERVER_UNAUTHORIZED',
+        SERVER_CERT_PROBLEM: 'SERVER_CERT_PROBLEM',
+        SERVER_FORBIDDEN: 'SERVER_FORBIDDEN',
+        SERVER_UNREACHABLE: 'SERVER_UNREACHABLE',
+        SERVER_CONTENT_LENGTH_MISMATCH: 'SERVER_CONTENT_LENGTH_MISMATCH',
+        SERVER_CROSS_ORIGIN_REDIRECT: 'SERVER_CROSS_ORIGIN_REDIRECT',
+        USER_CANCELED: 'USER_CANCELED',
+        USER_SHUTDOWN: 'USER_SHUTDOWN',
+        CRASH: 'CRASH'
+      }
+    },
+    permissions: ['downloads']
+  },
+  sessions: {
+    methods: {
+      getRecentlyClosed: { params: [object('filter', true)] },
+      getDevices: { params: [object('filter', true)] },
+      restore: { params: [string('sessionId', true)] }
+    },
+    events: { onChanged: {} },
+    constants: { MAX_SESSION_RESULTS: 25 },
+    permissions: ['sessions']
+  },
+  topSites: {
+    methods: { get: { params: [] } },
+    events: {},
+    permissions: ['topSites']
+  },
+  // The keyword comes from the manifest; the URL bar asks through `onInputChanged(text, suggest)`.
+  omnibox: {
+    methods: {
+      setDefaultSuggestion: { params: [object('suggestion')] }
+    },
+    events: {
+      onInputStarted: {},
+      onInputChanged: {},
+      onInputEntered: {},
+      onInputCancelled: {},
+      onDeleteSuggestion: {}
+    },
+    constants: {
+      DescriptionStyleType: { URL: 'url', MATCH: 'match', DIM: 'dim' },
+      OnInputEnteredDisposition: {
+        CURRENT_TAB: 'currentTab',
+        NEW_FOREGROUND_TAB: 'newForegroundTab',
+        NEW_BACKGROUND_TAB: 'newBackgroundTab'
+      }
+    }
+  },
+  // Only the web-auth flow has anything to stand on: there is no signed-in browser account.
+  identity: {
+    methods: {
+      getRedirectURL: { params: [{ name: 'details', type: ['object', 'string'], optional: true }] },
+      launchWebAuthFlow: { params: [object('details')] },
+      getProfileUserInfo: { params: [object('details', true)] },
+      getAuthToken: { params: [object('details', true)] },
+      removeCachedAuthToken: { params: [object('details')] },
+      clearAllCachedAuthTokens: { params: [] },
+      getAccounts: { params: [] }
+    },
+    events: { onSignInChanged: {} },
+    constants: {
+      AccountStatus: { SYNC: 'SYNC', ANY: 'ANY' }
+    },
+    permissions: ['identity']
+  },
+  // The panel is Zenium's own view beside the page; the options follow Chrome's default-plus-per-tab rules.
+  sidePanel: {
+    methods: {
+      setOptions: { params: [object('options')] },
+      getOptions: { params: [object('options', true)] },
+      setPanelBehavior: { params: [object('behavior')] },
+      getPanelBehavior: { params: [] },
+      open: { params: [object('options')] }
+    },
+    events: {},
+    permissions: ['sidePanel']
+  },
   // Electron has the binding, but the session's own `webRequest` hook (the blocking engine's)
   // switches the engine's extension path off, so the events never fire. The emulation runs the
   // listeners over the same hook (`main/platform/webRequest.ts`): registrations go to the host
@@ -593,6 +810,82 @@ export const API_SPEC: ApiSpec = {
     },
     permissions: ['privacy'],
     settings: PRIVACY_SETTING_NAMES
+  },
+  // Site storage and the cache through the engine's sessions, history and downloads through the models.
+  browsingData: {
+    methods: {
+      settings: { params: [] },
+      remove: { params: [object('options'), object('dataToRemove')] },
+      removeAppcache: { params: [object('options')] },
+      removeCache: { params: [object('options')] },
+      removeCacheStorage: { params: [object('options')] },
+      removeCookies: { params: [object('options')] },
+      removeDownloads: { params: [object('options')] },
+      removeFileSystems: { params: [object('options')] },
+      removeFormData: { params: [object('options')] },
+      removeHistory: { params: [object('options')] },
+      removeIndexedDB: { params: [object('options')] },
+      removeLocalStorage: { params: [object('options')] },
+      removePasswords: { params: [object('options')] },
+      removePluginData: { params: [object('options')] },
+      removeServiceWorkers: { params: [object('options')] },
+      removeWebSQL: { params: [object('options')] }
+    },
+    events: {},
+    permissions: ['browsingData']
+  },
+  // Speech through a hidden page's `speechSynthesis`; `speak`'s `onEvent` is relayed by the shim.
+  tts: {
+    methods: {
+      speak: { params: [string('utterance'), object('options', true)] },
+      stop: { params: [] },
+      pause: { params: [] },
+      resume: { params: [] },
+      isSpeaking: { params: [] },
+      getVoices: { params: [] }
+    },
+    events: { onVoicesChanged: {} },
+    constants: {
+      EventType: {
+        START: 'start',
+        END: 'end',
+        WORD: 'word',
+        SENTENCE: 'sentence',
+        MARKER: 'marker',
+        INTERRUPTED: 'interrupted',
+        CANCELLED: 'cancelled',
+        ERROR: 'error',
+        PAUSE: 'pause',
+        RESUME: 'resume'
+      },
+      VoiceGender: { MALE: 'male', FEMALE: 'female' }
+    },
+    permissions: ['tts']
+  },
+  // Zenium's folders are the groups; `tabs.group` / `tabs.ungroup` are declared on `tabs`.
+  tabGroups: {
+    methods: {
+      get: { params: [integer('groupId')] },
+      query: { params: [object('queryInfo')] },
+      update: { params: [integer('groupId'), object('updateProperties')] },
+      move: { params: [integer('groupId'), object('moveProperties')] }
+    },
+    events: { onCreated: {}, onUpdated: {}, onMoved: {}, onRemoved: {} },
+    constants: {
+      TAB_GROUP_ID_NONE: -1,
+      Color: {
+        GREY: 'grey',
+        BLUE: 'blue',
+        RED: 'red',
+        YELLOW: 'yellow',
+        GREEN: 'green',
+        PINK: 'pink',
+        PURPLE: 'purple',
+        CYAN: 'cyan',
+        ORANGE: 'orange'
+      }
+    },
+    permissions: ['tabGroups']
   }
 }
 

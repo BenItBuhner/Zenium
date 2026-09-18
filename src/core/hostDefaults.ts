@@ -4,6 +4,8 @@ import type {
   ExtensionUpdateCheck,
   Rect,
   ResourceSnapshot,
+  SidePanelInfo,
+  Suggestion,
   SyncScope,
   SyncStatus
 } from '../shared/types'
@@ -120,6 +122,10 @@ export class NoExtensions implements ExtensionHost {
   setPinned(): void {}
   setToolbarPinned(): void {}
   async setAllowFileAccess(): Promise<void> {}
+  setNewTabOverride(): void {}
+  newTabUrl(): string | null {
+    return null
+  }
   setAllowPrivate(): void {}
   async reload(): Promise<void> {}
   async checkForUpdates(): Promise<void> {}
@@ -135,6 +141,22 @@ export class NoExtensions implements ExtensionHost {
   }
   resizePopup(): void {}
   closePopup(): void {}
+  sidePanel(): SidePanelInfo | null {
+    return null
+  }
+  toggleSidePanel(_id: string, win: ZenWindow): void {
+    this.unavailable(win)
+  }
+  closeSidePanel(): void {}
+  placeSidePanel(): void {}
+  async omniboxSuggest(): Promise<Suggestion[] | null> {
+    return null
+  }
+  omniboxSubmit(): boolean {
+    return false
+  }
+  omniboxCancel(): void {}
+  omniboxDeleteSuggestion(): void {}
   pageContextMenuItems(): MenuItemTemplate[] {
     return []
   }

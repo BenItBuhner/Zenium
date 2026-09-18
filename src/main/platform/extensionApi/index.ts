@@ -17,7 +17,10 @@ import {
   PRIVATE_CONTAINER_ID,
   type ExtensionAction,
   type ExtensionCommandInfo,
-  type ExtensionInfo
+  type ExtensionInfo,
+  type Rect,
+  type SidePanelInfo,
+  type Suggestion
 } from '../../../shared/types'
 import type { StoreIO } from '../../../core/platform'
 import type { Browser } from '../../../core/browser'
@@ -40,6 +43,8 @@ import type { ElectronTabViewHost } from '../views'
 import { ActionApi } from './action'
 import { ActiveTabGrants } from './activeTab'
 import { AlarmsApi } from './alarms'
+import { BookmarksApi } from './bookmarks'
+import { BrowsingDataApi, electronDataClearer } from './browsingData'
 import { CommandsApi } from './commands'
 import { ContextMenusApi } from './contextMenus'
 import {
@@ -53,16 +58,28 @@ import {
 import { CookiesApi } from './cookies'
 import { DeclarativeNetRequestHostApi } from './declarativeNetRequest'
 import type { ScopedRuleSink } from './dnrSink'
+import { DownloadsApi, type DownloadBridge } from './downloads'
 import { ExtensionApi } from './extension'
+import { HistoryApi } from './history'
+import { IdentityApi } from './identity'
+import { electronAuthWindowHost } from './identityBridge'
 import { ManagementApi } from './management'
 import { ApiModel, type ModelSnapshot } from './model'
 import { NotificationsApi } from './notifications'
+import { OmniboxApi } from './omnibox'
 import { PermissionsApi } from './permissions'
 import { PrivacyApi } from './privacy'
 import { RuntimeApi } from './runtime'
+import { SessionsApi } from './sessions'
+import { SidePanelApi } from './sidePanel'
+import { electronPanelViewHost } from './sidePanelBridge'
 import { ApiStore } from './store'
 import { StorageApi } from './storage'
+import { TabGroupsApi } from './tabGroups'
 import { TabsApi } from './tabs'
+import { TopSitesApi } from './topSites'
+import { TtsApi } from './tts'
+import { electronSpeechEngine } from './ttsBridge'
 import {
   ApiError,
   extensionIdFromUrl,
@@ -112,6 +129,16 @@ export interface ExtensionApiHooks {
   actionContextMenuItems(extensionId: string, win: ZenWindow): MenuItemTemplate[]
   /** A key press no Zenium shortcut claimed; true when an extension command took it. */
   handleKey(input: KeyEventInput, win: ZenWindow): boolean
+  /** The `chrome.sidePanel` a window shows beside its page (see `ExtensionHost.sidePanel`). */
+  sidePanelInfo(win: ZenWindow): SidePanelInfo | null
+  toggleSidePanel(extensionId: string, win: ZenWindow): void
+  closeSidePanel(win: ZenWindow): void
+  placeSidePanel(win: ZenWindow, rect: Rect | null): void
+  /** `chrome.omnibox` (see `ExtensionHost.omnibox*`). */
+  omniboxSuggest(input: string, win: ZenWindow): Promise<Suggestion[] | null>
+  omniboxSubmit(input: string, newTab: boolean, background: boolean, win: ZenWindow): boolean
+  omniboxCancel(win: ZenWindow): void
+  omniboxDeleteSuggestion(input: string): void
 }
 
 type FrameSender = Extract<Sender, { kind: 'frame' }>
@@ -146,6 +173,18 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly declarativeNetRequest: DeclarativeNetRequestHostApi
   readonly webRequest: WebRequestApi
   readonly privacy: PrivacyApi
+  readonly bookmarks: BookmarksApi
+  readonly history: HistoryApi
+  readonly downloads: DownloadsApi
+  /** `chrome.sessions` (recently closed); `sessions` is taken by the engine's session manager. */
+  readonly recentlyClosed: SessionsApi
+  readonly topSites: TopSitesApi
+  readonly tabGroups: TabGroupsApi
+  readonly sidePanel: SidePanelApi
+  readonly identity: IdentityApi
+  readonly omnibox: OmniboxApi
+  readonly browsingData: BrowsingDataApi
+  readonly tts: TtsApi
 
   private readonly namespaces: Record<string, NamespaceHandlers>
   private readonly extensions = new Map<string, LoadedExtension>()
@@ -170,7 +209,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     io: StoreIO,
     userDataDir: string,
     /** Where `declarativeNetRequest` rule sets go: the request-blocking engine. */
-    ruleSink: ScopedRuleSink
+    ruleSink: ScopedRuleSink,
+    /** The platform's download host, for `downloads.download` and the file-name step. */
+    downloadBridge: DownloadBridge
   ) {
     this.model = new ApiModel(browser, views)
     this.store = new ApiStore(io, userDataDir)
@@ -191,7 +232,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.activeTab = new ActiveTabGrants(this)
     this.webNavigation = new WebNavigationApi(this)
     this.contextMenus = new ContextMenusApi(this, this.activeTab)
-    this.commands = new CommandsApi(this, this.action, this.activeTab)
+    this.sidePanel = new SidePanelApi(this, electronPanelViewHost(this.model))
+    this.commands = new CommandsApi(this, this.action, this.activeTab, this.sidePanel)
     this.notifications = new NotificationsApi(this)
     this.cookies = new CookiesApi(this)
     this.declarativeNetRequest = new DeclarativeNetRequestHostApi(
@@ -203,8 +245,18 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     )
     this.webRequest = new WebRequestApi(this)
     this.privacy = new PrivacyApi(this)
+    this.bookmarks = new BookmarksApi(this)
+    this.history = new HistoryApi(this)
+    this.downloads = new DownloadsApi(this, downloadBridge)
+    this.recentlyClosed = new SessionsApi(this)
+    this.topSites = new TopSitesApi(this)
+    this.tabGroups = new TabGroupsApi(this)
+    this.identity = new IdentityApi(electronAuthWindowHost(this.model))
+    this.omnibox = new OmniboxApi(this)
+    this.browsingData = new BrowsingDataApi(this, electronDataClearer)
+    this.tts = new TtsApi(this, electronSpeechEngine())
     this.namespaces = {
-      tabs: this.tabs.handlers,
+      tabs: { ...this.tabs.handlers, ...this.tabGroups.tabHandlers },
       windows: this.windows.handlers,
       runtime: this.runtime.handlers,
       action: this.action.handlers,
@@ -220,7 +272,18 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       cookies: this.cookies.handlers,
       declarativeNetRequest: this.declarativeNetRequest.handlers,
       webRequest: this.webRequest.handlers,
-      privacy: this.privacy.handlers
+      privacy: this.privacy.handlers,
+      bookmarks: this.bookmarks.handlers,
+      history: this.history.handlers,
+      downloads: this.downloads.handlers,
+      sessions: this.recentlyClosed.handlers,
+      topSites: this.topSites.handlers,
+      tabGroups: this.tabGroups.handlers,
+      sidePanel: this.sidePanel.handlers,
+      identity: this.identity.handlers,
+      omnibox: this.omnibox.handlers,
+      browsingData: this.browsingData.handlers,
+      tts: this.tts.handlers
     }
     // A tab's outermost document changed: `activeTab` grants for another origin end and the
     // declarativeNetRequest action counts start over.
@@ -249,6 +312,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       this.webNavigation.attach(view)
       this.privacy.pageCreated(view.webContents, this.isPrivateView(view.webContents))
     })
+    this.history.attach()
+    this.downloads.attach()
     app.on('before-quit', () => this.flushSync())
   }
 
@@ -373,11 +438,19 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.permissions.load(loaded)
     this.alarms.load(ext.id)
     this.commands.load(loaded)
+    this.sidePanel.load(loaded)
+    this.omnibox.load(loaded)
     // After the permissions: the state exists only for extensions holding the permission.
     this.declarativeNetRequest.load(loaded)
     this.privacy.load(ext.id)
-    // Existing tabs are the baseline, not a burst of `tabs.onCreated`.
-    if (!this.snapshot) this.snapshot = this.model.snapshot()
+    // Existing tabs, bookmarks, downloads and folders are the baseline, not a burst of `onCreated`.
+    if (!this.snapshot) {
+      this.snapshot = this.model.snapshot()
+      this.bookmarks.tick()
+      this.downloads.tick()
+      this.recentlyClosed.tick()
+      this.tabGroups.tick(null, this.snapshot)
+    }
     const firstEver = this.store.installedVersion(ext.id) === undefined
     this.runtime.lifecycle(ext.id, ext.version, !this.seen.has(ext.id) && !firstEver)
     this.seen.add(ext.id)
@@ -396,6 +469,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.alarms.unload(ext.id)
     this.permissions.unload(ext.id)
     this.commands.unload(ext.id)
+    this.sidePanel.unload(ext.id)
+    this.identity.unload(ext.id)
+    this.omnibox.unload(ext.id)
+    this.tts.unload(ext.id)
     this.declarativeNetRequest.unload(ext.id)
     this.webRequest.unload(ext.id)
     this.privacy.unload(ext.id)
@@ -532,6 +609,12 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       case 'storage-changed':
         this.storage.changed(ctx, payload)
         return
+      case 'downloads-determined':
+        this.downloads.determined(ctx, payload)
+        return
+      case 'omnibox-suggest':
+        this.omnibox.suggested(ctx, payload)
+        return
       case 'webRequest-answer':
         this.webRequest.answer(ctx, payload)
         return
@@ -546,6 +629,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     const wc = sender.webContents
     if (this.views.tabIdForWebContents(wc) || this.model.popupForTabId(wc.id)) return 'tab'
     if (wc.getType() === 'backgroundPage') return 'background'
+    if (this.sidePanel.hosts(wc)) return 'other'
     const popup = this.action.clickState(ctx.extensionId, ctx.window ?? this.lastWindow()).popup
     if (popup && hello.url.split('#')[0] === extensionUrl(ctx.extensionId, popup)) return 'popup'
     return ctx.window ? 'popup' : 'other'
@@ -682,9 +766,46 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     if (!enabled) return null
     const active = this.browser.tabs.activeTabFor(win)
     if (active) this.activeTab.grant(extensionId, active)
+    // `sidePanel.setPanelBehavior({ openPanelOnActionClick: true })`: the click toggles the panel.
+    if (this.sidePanel.opensOnActionClick(extensionId, win)) {
+      this.sidePanel.toggle(extensionId, win)
+      return null
+    }
     if (popup) return popup
     this.action.clicked(extensionId, win)
     return null
+  }
+
+  sidePanelInfo(win: ZenWindow): SidePanelInfo | null {
+    return this.sidePanel.info(win)
+  }
+
+  toggleSidePanel(extensionId: string, win: ZenWindow): void {
+    this.sidePanel.toggle(extensionId, win)
+  }
+
+  closeSidePanel(win: ZenWindow): void {
+    this.sidePanel.close(win)
+  }
+
+  placeSidePanel(win: ZenWindow, rect: Rect | null): void {
+    this.sidePanel.place(win, rect)
+  }
+
+  omniboxSuggest(input: string, win: ZenWindow): Promise<Suggestion[] | null> {
+    return this.omnibox.suggest(input, win)
+  }
+
+  omniboxSubmit(input: string, newTab: boolean, background: boolean, win: ZenWindow): boolean {
+    return this.omnibox.submit(input, newTab, background, win)
+  }
+
+  omniboxCancel(win: ZenWindow): void {
+    this.omnibox.cancel(win)
+  }
+
+  omniboxDeleteSuggestion(input: string): void {
+    this.omnibox.deleteSuggestion(input)
   }
 
   pageContextMenuItems(tabId: string, params: PageContextParams): MenuItemTemplate[] {
@@ -708,9 +829,16 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   private tick(): void {
     if (this.extensions.size === 0) {
       this.snapshot = null
+      this.bookmarks.reset()
+      this.downloads.reset()
+      this.recentlyClosed.reset()
+      this.tabGroups.reset()
       return
     }
     this.watchWindows()
+    this.bookmarks.tick()
+    this.downloads.tick()
+    this.recentlyClosed.tick()
     const { shortcuts } = this.browser.state
     if (shortcuts !== this.shortcutsSeen) {
       // The user rebound a Zenium shortcut: commands are resolved against the new table.
@@ -721,15 +849,19 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     const next = this.model.snapshot()
     const prev = this.snapshot
     this.snapshot = next
+    this.tabGroups.tick(prev, next)
     if (!prev) return
     for (const [zenId, before] of prev.tabs) {
       if (next.tabs.has(zenId)) continue
       this.action.tabRemoved(before.chrome.id)
       this.activeTab.tabRemoved(before.chrome.id)
       this.declarativeNetRequest.tabRemoved(before.chrome.id)
+      this.sidePanel.tabRemoved(before.chrome.id)
     }
     this.tabs.diff(prev, next)
     this.windows.diff(prev, next)
+    // The active tab may have changed: an open panel follows it to the page for that tab.
+    this.sidePanel.refresh()
   }
 
   /** Bounds changes never commit state; follow the windows themselves for `onBoundsChanged`. */

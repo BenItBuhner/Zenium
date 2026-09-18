@@ -17,6 +17,8 @@ interface PersistedApi {
   uninstallUrls: Record<string, string>
   /** Events an extension's worker listened to, so it can be woken for them after a restart. */
   workerEvents: Record<string, string[]>
+  /** `sidePanel.setPanelBehavior`: extensions whose toolbar click opens their side panel. */
+  sidePanelOnActionClick?: Record<string, boolean>
   /** `chrome.privacy` values per extension, by `category.setting`, then scope. */
   privacy?: Record<string, Record<string, ScopedValues>>
 }
@@ -29,6 +31,7 @@ function emptyPersisted(): PersistedApi {
     grants: {},
     uninstallUrls: {},
     workerEvents: {},
+    sidePanelOnActionClick: {},
     privacy: {}
   }
 }
@@ -108,6 +111,17 @@ export class ApiStore {
     this.save()
   }
 
+  sidePanelOnActionClick(extensionId: string): boolean {
+    return this.data.sidePanelOnActionClick?.[extensionId] === true
+  }
+
+  setSidePanelOnActionClick(extensionId: string, enabled: boolean): void {
+    const table = (this.data.sidePanelOnActionClick ??= {})
+    if (enabled) table[extensionId] = true
+    else delete table[extensionId]
+    this.save()
+  }
+
   privacyValues(extensionId: string): Record<string, ScopedValues> {
     return this.data.privacy?.[extensionId] ?? {}
   }
@@ -126,6 +140,7 @@ export class ApiStore {
     delete this.data.grants[extensionId]
     delete this.data.uninstallUrls[extensionId]
     delete this.data.workerEvents[extensionId]
+    delete this.data.sidePanelOnActionClick?.[extensionId]
     delete this.data.privacy?.[extensionId]
     this.save()
     this.syncStores.get(extensionId)?.store.write({})
