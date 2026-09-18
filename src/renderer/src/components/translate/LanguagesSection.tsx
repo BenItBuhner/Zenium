@@ -7,16 +7,18 @@ import { languageName } from '@shared/languageNames'
 import { cmd, run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { languageOptions, pairLabel, type LanguageOption } from '@renderer/lib/translate'
-import { formatBytes } from '@renderer/lib/utils'
+import { cn, formatBytes } from '@renderer/lib/utils'
 import { Checkbox, IconButton, Menulist } from './controls'
 
 /**
  * Settings > Languages: whether Zenium offers to translate, the languages the user reads (the
  * first is what pages are translated into), the always and never lists, the sites that are
- * never offered, and the translation models on the device. Laid out on the v2 draft: 17/600
- * group headings over 15 deemphasised descriptions, a bordered card for every group that has
- * its own actions, 16 px checkboxes, bordered menulists and 32 px rows; on phones the menulists
- * that add to a list are action rows opening a sheet (§9.13, §10.4).
+ * never offered, and the translation models on the device. Laid out on the v2 draft: on the
+ * desktop the pane opens on its 22/600 "Translation" section title (§9.26) and every list is
+ * named by a 15/600 sub-heading over a 15 deemphasised description and a bordered card (§9.27:
+ * a title above a card is a sub-heading, never 17), with 16 px checkboxes, bordered menulists
+ * and 32 px rows; on phones 15/600 group headings throughout (§10.3) and the menulists that add
+ * to a list are action rows opening a sheet (§9.13, §10.4).
  */
 export function LanguagesSection({ state }: { state: UIState }): JSX.Element {
   const { translate } = state
@@ -31,6 +33,7 @@ export function LanguagesSection({ state }: { state: UIState }): JSX.Element {
         <Group
           title="Translation"
           description="This build of Zenium does not include the translation engine."
+          section
         />
       </div>
     )
@@ -41,6 +44,7 @@ export function LanguagesSection({ state }: { state: UIState }): JSX.Element {
       <Group
         title="Translation"
         description="Pages in other languages are translated on this device, with models Zenium downloads the first time a language pair is used. Nothing leaves the device."
+        section
       >
         <Checkbox checked={prefs.autoOffer} onChange={(autoOffer) => set({ autoOffer })}>
           Offer to translate pages in other languages
@@ -118,24 +122,43 @@ export function LanguagesSection({ state }: { state: UIState }): JSX.Element {
 // Building blocks
 // ---------------------------------------------------------------------------
 
-/** A heading and its description, over content that is boxed in a card when the group has actions. */
+/**
+ * A heading, its description and the content they introduce, boxed in a card when the group has
+ * its own actions. The pane's opening group carries the 22/600 section title on the desktop
+ * (§9.26: line-height 28, 16 below it); every other group – and every group on a phone, where
+ * there is no 22 below the bar that names the page (§10.3) – is named by a 15/600 sub-heading
+ * with its description 4 under it and 16 to the first row or the card's edge (§9.27). One name
+ * per card: the card itself has none inside.
+ */
 function Group({
   title,
   description,
+  section,
   card,
   children
 }: {
   title: string
   description?: string
+  /** The pane's section title (desktop) rather than a sub-heading. */
+  section?: boolean
   card?: boolean
   children?: ReactNode
 }): JSX.Element {
+  const phone = useViewport().formFactor === 'phone'
+  const Heading = section && !phone ? 'h2' : 'h3'
   return (
     <section className="zen-translate-group">
-      <h3 className="zen-translate-group-title">{title}</h3>
+      <Heading
+        className={section && !phone ? 'zen-translate-section-title' : 'zen-translate-group-title'}
+      >
+        {title}
+      </Heading>
       {description && <p className="zen-translate-description">{description}</p>}
-      {children !== undefined &&
-        (card ? <div className="zen-translate-card">{children}</div> : children)}
+      {children !== undefined && (
+        <div className={cn('zen-translate-group-body', card && 'zen-translate-card')}>
+          {children}
+        </div>
+      )}
     </section>
   )
 }

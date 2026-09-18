@@ -149,7 +149,11 @@
   height: 16px;
   stroke-width: 1.5;
 }
-/* The sheet: 44 px rows in the sheet's list style, the current option carrying a radio glyph. */
+/*
+ * The sheet: 44 px rows in the sheet's list style, the current option carrying a radio glyph.
+ * The rows run edge to edge with their press fill bleeding to the sheet's border and their text
+ * and radio inset 16 (§9.25).
+ */
 .zen-translate-menulist-rows {
   display: flex;
   flex-direction: column;
@@ -159,7 +163,8 @@
 }
 .zen-translate-menulist-sheet .zen-sheet-item {
   height: var(--v2-row);
-  border-radius: var(--v2-radius-inner);
+  padding: 0 16px;
+  border-radius: 0;
   font-size: var(--v2-font-body);
 }
 .zen-translate-menulist-sheet .zen-sheet-item:active:not(:disabled) {
@@ -435,11 +440,17 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-/* The phone sheet on the v2 dialog surface (§6 sheets): radius 12, a hairline, the black scrim. */
+/*
+ * The phone sheet on the v2 dialog surface (§6 sheets): radius 12, a hairline, the black scrim.
+ * One gutter of 16 runs from the sheet's outer edge to every text and control edge inside it
+ * (§9.25): the sheet carries no side padding of its own, and its hairline is painted over the
+ * edge (an `::after` box) rather than laid out inside it, so rows run edge to edge under it with
+ * their text inset 16 and nothing nests a second padding.
+ */
 .zen-sheet.zen-translate-sheet {
-  border: 1px solid var(--v2-border);
-  border-bottom: 0;
-  border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
+  --zen-sheet-radius: var(--v2-radius-sheet);
+  padding-right: 0;
+  padding-left: 0;
   background: var(--v2-panel);
   color: var(--v2-text);
   font-size: var(--v2-font-body);
@@ -447,8 +458,24 @@
   box-shadow: var(--v2-shadow-sheet);
   backdrop-filter: none;
 }
+.zen-sheet.zen-translate-sheet::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: 1px solid var(--v2-border);
+  border-bottom: 0;
+  border-radius: inherit;
+}
 div:has(> .zen-sheet.zen-translate-sheet) > .zen-sheet-scrim {
   background: var(--v2-scrim);
+}
+/* The body: text, the languages row and the footer at the 16 gutter, 12 apart. */
+.zen-translate-sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 16px;
 }
 /*
  * A phone sheet's header (§9.16): after the 20 px grip strip, 48 tall with the title 17/600 at
@@ -492,23 +519,42 @@ div:has(> .zen-sheet.zen-translate-sheet) > .zen-sheet-scrim {
 .zen-translate-group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
+/*
+ * The pane's section title (§9.26): 22/600 at line-height 28 with 16 below it; the 32 above any
+ * section but the first is the settings' own gap between groups.
+ */
+.zen-translate-section-title {
+  margin: 0 0 16px;
+  font-size: var(--v2-font-title);
+  font-weight: var(--v2-weight-heading);
+  line-height: 28px;
+}
+/*
+ * A sub-heading (§9.27): 15/600 on the body line, above rows or a card – never 17 above a card –
+ * with its description 4 under it and 16 to the body it introduces (the first row, or the card's
+ * edge). On phones this is the group heading (§10.3).
+ */
 .zen-translate-group-title {
   margin: 0;
-  font-size: var(--v2-font-heading);
+  font-size: var(--v2-font-body);
   font-weight: var(--v2-weight-heading);
-  line-height: 24px;
+  line-height: var(--v2-line-body);
 }
 .zen-translate-description {
   margin: 0;
   color: var(--v2-text-deemphasized);
 }
+.zen-translate-group-title + .zen-translate-description {
+  margin-top: 4px;
+}
+.zen-translate-group-body {
+  margin-top: 16px;
+}
 /* A card only where a group has its own actions: flat, hairline border, 16 px side padding. */
 .zen-translate-card {
   display: flex;
   flex-direction: column;
-  margin-top: 4px;
   padding: 4px var(--v2-card-padding);
   border: 1px solid var(--v2-card-border);
   border-radius: var(--v2-radius-card);
