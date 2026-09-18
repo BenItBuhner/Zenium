@@ -106,6 +106,7 @@ describe('compileRule', () => {
           tabIds: [1],
           excludedRequestDomains: ['a'],
           excludedTopDomains: ['a'],
+          responseHeaders: [{ header: 'content-type', values: ['text/*'] }],
           excludedNonUniqueHosts: true
         }
       })
@@ -113,6 +114,7 @@ describe('compileRule', () => {
       expect.stringMatching(/tabIds/),
       expect.stringMatching(/excludedRequestDomains/),
       expect.stringMatching(/topDomains/),
+      expect.stringMatching(/response header conditions/),
       expect.stringMatching(/excludedNonUniqueHosts/)
     ])
     expect(
