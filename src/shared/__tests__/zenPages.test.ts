@@ -72,6 +72,7 @@ describe('overlayForUrl', () => {
     expect(overlayForUrl('zen://history')).toBe('history')
     expect(overlayForUrl('zen://History/?q=x')).toBe('history')
     expect(overlayForUrl('zen://settings#privacy')).toBe('settings')
+    expect(overlayForUrl('zen://downloads')).toBe('downloads')
   })
 
   it('is null for documents and for other schemes', () => {
