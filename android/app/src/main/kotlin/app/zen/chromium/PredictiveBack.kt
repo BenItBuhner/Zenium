@@ -51,7 +51,11 @@ import kotlin.math.sqrt
  *  3. Zenium's own fullscreen (Menu > Fullscreen, the system bars hidden) is left;
  *  4. the page WebView can go back: [PageBackTransition] slides the live page out over a snapshot
  *     of the previous history entry, natively, and only navigates once the slide has committed;
- *  5. nothing – then no callback is registered at all, so the system's own back-to-home
+ *  5. the tab is at its first page and the chrome has a back for that (`root` in `back.update`:
+ *     a child tab closes back to its opener, a page gives way to a new tab, …): the commit goes
+ *     to the chrome, which says whether the app should leave after all (a tab another app opened
+ *     closes and hands the user back to it);
+ *  6. nothing – then no callback is registered at all, so the system's own back-to-home
  *     animation runs untouched (before API 33 the callback stays and backgrounds the task, as the
  *     system would otherwise finish the activity).
  *
@@ -72,9 +76,10 @@ class PredictiveBack(
     private val alwaysHandle: Boolean = false,
     private val dismissOverlay: () -> Boolean = { false }
 ) {
-    enum class Target { NONE, FULLSCREEN, CHROME, PAGE }
+    enum class Target { NONE, FULLSCREEN, CHROME, PAGE, ROOT }
 
     private var chromeHandles = false
+    private var rootHandles = false
     private var pageTabId: String? = null
     private var target = Target.NONE
     private var inFlight = false
@@ -107,10 +112,14 @@ class PredictiveBack(
         refresh()
     }
 
-    /** The chrome's view of things: does it have a surface to dismiss, and which tab is active. */
-    fun update(chrome: Boolean, tabId: String?) {
-        Log.v(TAG, "chrome: surface=$chrome tab=$tabId")
+    /**
+     * The chrome's view of things: does it have a surface to dismiss, which tab is active, and
+     * does it have a back for that tab's first page (a host without a chrome has none).
+     */
+    fun update(chrome: Boolean, tabId: String?, root: Boolean = false) {
+        Log.v(TAG, "chrome: surface=$chrome tab=$tabId root=$root")
         chromeHandles = chrome
+        rootHandles = root
         pageTabId = tabId
         refresh()
     }
@@ -135,13 +144,13 @@ class PredictiveBack(
         refresh()
     }
 
-    private fun currentTarget(): Target = when {
-        host.fullscreenTab != null -> Target.FULLSCREEN
-        chromeHandles -> Target.CHROME
-        host.immersive -> Target.FULLSCREEN
-        pageTab()?.canGoBack() == true -> Target.PAGE
-        else -> Target.NONE
-    }
+    private fun currentTarget(): Target = decideTarget(
+        fullscreen = host.fullscreenTab != null,
+        chrome = chromeHandles,
+        immersive = host.immersive,
+        pageCanGoBack = pageTab()?.canGoBack() == true,
+        root = rootHandles
+    )
 
     private fun pageTab(): TabWebView? = pageTabId?.let { host.tabs.get(it) }
 
@@ -163,7 +172,7 @@ class PredictiveBack(
         when (target) {
             Target.CHROME -> chrome()?.backEvent("start", json("edge" to edgeName(edge)))
             Target.PAGE -> page = pageTab()?.let { tab -> PageBackTransition.begin(tab, host, edge) }
-            Target.FULLSCREEN, Target.NONE -> Unit
+            Target.FULLSCREEN, Target.ROOT, Target.NONE -> Unit
         }
     }
 
@@ -172,7 +181,7 @@ class PredictiveBack(
         when (target) {
             Target.CHROME -> chrome()?.backEvent("progress", json("progress" to fraction.toDouble()))
             Target.PAGE -> page?.progress(fraction)
-            Target.FULLSCREEN, Target.NONE -> Unit
+            Target.FULLSCREEN, Target.ROOT, Target.NONE -> Unit
         }
     }
 
@@ -187,7 +196,9 @@ class PredictiveBack(
                 val tab = host.fullscreenTab
                 if (tab != null) host.exitFullscreen(tab) else host.leaveImmersive()
             }
-            Target.CHROME -> {
+            // The chrome answers whether it did something; a "no" at a tab's first page is its
+            // decision that the app should leave (the last tab, a tab another app opened).
+            Target.CHROME, Target.ROOT -> {
                 val view = chrome()
                 if (view != null) view.backCommit { handled -> if (!handled) nothingLeft() }
                 else if (!dismissOverlay()) nothingLeft()
@@ -212,7 +223,7 @@ class PredictiveBack(
                 page?.cancel()
                 page = null
             }
-            Target.FULLSCREEN, Target.NONE -> Unit
+            Target.FULLSCREEN, Target.ROOT, Target.NONE -> Unit
         }
         target = Target.NONE
         refresh()
@@ -230,6 +241,21 @@ class PredictiveBack(
         const val EDGE_RIGHT = 1
 
         fun edgeName(edge: Int): String = if (edge == EDGE_RIGHT) "right" else "left"
+
+        /**
+         * What the next back does, in the order the class comment gives: a page's fullscreen ends
+         * first, a chrome surface closes next, then the app's own fullscreen is left, the page goes
+         * back while it can, then the chrome's back at the tab's first page, and only with none of
+         * these does the system take over.
+         */
+        fun decideTarget(fullscreen: Boolean, chrome: Boolean, immersive: Boolean, pageCanGoBack: Boolean, root: Boolean): Target = when {
+            fullscreen -> Target.FULLSCREEN
+            chrome -> Target.CHROME
+            immersive -> Target.FULLSCREEN
+            pageCanGoBack -> Target.PAGE
+            root -> Target.ROOT
+            else -> Target.NONE
+        }
     }
 }
 

@@ -19,6 +19,21 @@ export const SWIPE_THRESHOLDS: SwipeThresholds = {
   projectionSeconds: 0.12
 }
 
+/** Finger travel (px) after which a swipe along the tab track commits – Chrome's toolbar swipe. */
+export const TAB_COMMIT_DISTANCE = 90
+
+/**
+ * Thresholds for the tab track. Chrome commits its toolbar swipe after `min(90 dp, width / 3)`
+ * of travel; a page-fraction rule tuned for the overview sheet (45 % of a page, and a page is a
+ * card plus its gap) made a swipe across nearly half the screen snap back whenever the release
+ * velocity was not measured. `advance` is the distance between neighbouring cards.
+ */
+export function tabSwipeThresholds(width: number, advance: number): SwipeThresholds {
+  if (!(advance > 0)) return SWIPE_THRESHOLDS
+  const distance = Math.min(TAB_COMMIT_DISTANCE, Math.max(0, width) / 3)
+  return { ...SWIPE_THRESHOLDS, commitFraction: distance / advance }
+}
+
 export interface SettleInput {
   /** Current position on the track, in pages. */
   position: number

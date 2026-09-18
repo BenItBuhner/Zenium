@@ -85,7 +85,8 @@ export class Menus {
                 url: params.linkURL,
                 active: false,
                 afterTabId: tab.essential ? undefined : tab.id,
-                containerId: tab.containerId
+                containerId: tab.containerId,
+                openerTabId: tab.id
               },
               win
             )
@@ -144,7 +145,8 @@ export class Menus {
                 url: params.srcURL,
                 active: false,
                 afterTabId: tab.id,
-                containerId: tab.containerId
+                containerId: tab.containerId,
+                openerTabId: tab.id
               },
               win
             )

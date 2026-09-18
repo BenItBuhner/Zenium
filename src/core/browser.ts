@@ -945,10 +945,22 @@ export class Browser {
     this.toast(`${domain} now opens in ${space.name}`, 'info', this.tabs.windowFor(tabId))
   }
 
-  /** Open a URL from outside the browser (command line, Android intent, share sheet). */
-  openExternalUrl(url: string, win: ZenWindow = this.ensureWindow()): void {
+  /**
+   * Open a URL from outside the browser (command line, Android intent, share sheet, a page of
+   * ours such as the release notes). `fromIntent` marks a tab another app sent (Android's view
+   * and share intents): mobile system back at its first page returns to that app; it is not set
+   * for URLs the browser opens on its own behalf.
+   */
+  openExternalUrl(
+    url: string,
+    win: ZenWindow = this.ensureWindow(),
+    opts: { fromIntent?: boolean } = {}
+  ): void {
     const routed = win.localSpace ? null : this.routeSpaceFor(url)
-    const tab = this.tabs.createTab({ url, active: true, spaceId: routed ?? undefined }, win)
+    const tab = this.tabs.createTab(
+      { url, active: true, spaceId: routed ?? undefined, fromIntent: Boolean(opts.fromIntent) },
+      win
+    )
     if (routed && routed !== win.activeSpaceId) this.tabs.switchSpace(routed, win, tab.id)
     win.host.show()
     win.host.focus()
@@ -966,18 +978,19 @@ export class Browser {
    */
   openSharedIntent(intent: SharedIntent, win: ZenWindow = this.ensureWindow()): void {
     const route = routeSharedIntent(intent)
+    const sent = { fromIntent: true }
     switch (route.kind) {
       case 'url':
-        this.openExternalUrl(route.url, win)
+        this.openExternalUrl(route.url, win, sent)
         return
       case 'search':
-        this.openExternalUrl(buildSearchUrl(this.defaultSearchEngine(), route.query), win)
+        this.openExternalUrl(buildSearchUrl(this.defaultSearchEngine(), route.query), win, sent)
         return
       case 'image': {
         // The bytes stay in memory and the tab keeps a short address, not megabytes of data URL.
         const id = newId('image')
         this.sharedImages.set(id, route.dataUrl)
-        this.openExternalUrl(`${IMAGE_URL_PREFIX}?id=${id}`, win)
+        this.openExternalUrl(`${IMAGE_URL_PREFIX}?id=${id}`, win, sent)
         return
       }
       case 'none':

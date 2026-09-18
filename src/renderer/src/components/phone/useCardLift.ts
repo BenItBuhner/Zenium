@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import type { Rect, Tab } from '@shared/types'
+import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
 import { SpringAnimation, type SpringConfig } from '@renderer/lib/motion/spring'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import { createStore } from '@renderer/lib/store'
@@ -424,7 +425,7 @@ export function useCardLift({
     // Every event of this touch comes here, wherever the finger wanders; a native scroll still
     // takes over (with a pointercancel) when it moves vertically before the hold is up.
     try {
-      el.setPointerCapture(e.pointerId)
+      capturePointer(el, e.pointerId)
     } catch {
       /* the pointer is gone */
     }

@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Input and back</title>
+<style>
+  body { margin: 0; font-family: sans-serif; color: #15141a; }
+  section { height: 118px; display: flex; align-items: center; justify-content: center; font-size: 24px; text-align: center; padding: 0 16px; }
+  a { color: #1b4332; }
+  #link { background: #d8f3dc; }
+  #blank { background: #fff3b0; }
+  #text { background: #edf2fb; font-size: 22px; }
+  #field { background: #e2e2e2; }
+  #tail { background: #f4f4f7; font-size: 18px; }
+  input { font-size: 22px; height: 56px; width: 80%; box-sizing: border-box; }
+</style>
+</head>
+<body>
+<section id="link"><a href="/second.html">A link to a second page</a></section>
+<section id="blank"><a href="/child.html" target="_blank" rel="opener">Opens in a new tab</a></section>
+<section id="text">Some <span id="word">selectable</span> text to long press for the selection handles and the action bar.</section>
+<section id="field"><input id="input" placeholder="A text field in the page"></section>
+<section id="tail">Nothing below this line.</section>
+</body>
+</html>
