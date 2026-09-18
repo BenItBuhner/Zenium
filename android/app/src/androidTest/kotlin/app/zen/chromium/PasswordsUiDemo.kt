@@ -375,7 +375,10 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
 
     /**
      * Open the menulist reading `reading` and choose `label`; `applied` says whether the choice
-     * took. Two attempts, each ending with the menu closed again if it stayed open.
+     * took. Two attempts, each ending with the menu closed again if it stayed open. On a phone
+     * the list is a picker sheet that springs up from the bottom edge: its rows are in the tree
+     * before they are at rest, so the option is tapped where it has stopped, not where it was
+     * first seen (a touch on a moving sheet catches the sheet instead of picking).
      */
     private fun pickOption(
         f: Finger,
@@ -390,12 +393,15 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
                 dumpNames("the view")
                 continue
             }
-            val option = waitForOption(label, 4_000)
-            if (option == null) {
+            if (waitForOption(label, 4_000) == null) {
                 step("the menu did not open (attempt $attempt)")
                 continue
             }
-            SystemClock.sleep(500)
+            val option = awaitOptionAtRest(label)
+            if (option == null) {
+                step("the option '$label' left the tree before it came to rest (attempt $attempt)")
+                continue
+            }
             if (snapMenu != null && attempt == 1) snap(snapMenu)
             f.tap(option.exactCenterX(), option.exactCenterY())
             if (applied()) return true
@@ -422,6 +428,26 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
             SystemClock.sleep(200)
         }
         return null
+    }
+
+    /**
+     * The option's bounds once they have stopped moving – three readings 150 ms apart agreeing –
+     * or the last reading when the sheet is still in motion after 3 s; null once the option has
+     * gone from the tree.
+     */
+    private fun awaitOptionAtRest(label: String): Rect? {
+        val deadline = SystemClock.uptimeMillis() + 3_000
+        var last: Rect? = null
+        var agreed = 0
+        while (SystemClock.uptimeMillis() < deadline) {
+            val now = optionNode(label)?.let { Rect().also(it::getBoundsInScreen) } ?: return null
+            agreed = if (now == last) agreed + 1 else 0
+            last = now
+            if (agreed >= 2) return now
+            SystemClock.sleep(150)
+        }
+        step("the option '$label' was still moving after 3 s; tapping it where it is")
+        return last
     }
 
     private fun clickOption(label: String): Boolean =
