@@ -677,12 +677,19 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
    * Pages, popups and content scripts get it now; the background gets it now when it runs, held
    * while it starts, and is woken for it when it is stopped but persisted a listener.
    */
-  emit(extensionId: string, ns: string, name: string, args: unknown[]): void {
+  emit(
+    extensionId: string,
+    ns: string,
+    name: string,
+    args: unknown[],
+    only: (endpoint: Endpoint) => boolean = () => true
+  ): void {
     const key = `${ns}.${name}`
     const message = { t: 'event', ns, name, args }
     const sendTo = (filter: (endpoint: Endpoint) => boolean): void => {
       for (const endpoint of this.router.of(extensionId)) {
-        if (!filter(endpoint) || !this.listening.get(endpoint.id)?.has(key)) continue
+        if (!filter(endpoint) || !only(endpoint) || !this.listening.get(endpoint.id)?.has(key))
+          continue
         this.sendTo(endpoint.id, message)
       }
     }
@@ -1257,7 +1264,13 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       else if (area === 'sync') entry.doc.sync = next
       else entry.session = next
       if (area === 'local' || area === 'sync') entry.store.write(entry.doc)
-      if (Object.keys(changes).length > 0) this.emit(id, 'storage', 'onChanged', [changes, area])
+      // Session changes stay with the trusted contexts until the extension opens the area up.
+      const hears = (e: Endpoint): boolean =>
+        area !== 'session' ||
+        entry.sessionUntrusted ||
+        (e.context !== 'content' && e.context !== 'userScript')
+      if (Object.keys(changes).length > 0)
+        this.emit(id, 'storage', 'onChanged', [changes, area], hears)
     }
     const readOnly = (): never => {
       throw new Error('This is a read-only store.')

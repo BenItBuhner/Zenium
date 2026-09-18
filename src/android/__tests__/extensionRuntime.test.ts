@@ -747,11 +747,15 @@ describe('AndroidExtensionRuntime: chrome.storage on the shared helpers', () => 
     await h.runtime.attach(record(h))
     backgroundUp(h, 'bg1')
     hello(h, 'doc1.n.abcdefgh', 'content')
+    message(h, 'doc1.n.abcdefgh', { t: 'listen', event: 'storage.onChanged', on: true })
     const big = await call(h, 'bg1', 'storage', 'set', ['sync', { k: 'x'.repeat(9000) }])
     expect(big.ok).toBe(false)
     expect(String(big.error)).toContain('QUOTA_BYTES_PER_ITEM')
     const denied = await call(h, 'doc1.n.abcdefgh', 'storage', 'get', ['session', null])
     expect(denied.ok).toBe(false)
+    // A session change is not announced to the content script while the area is closed to it.
+    await call(h, 'bg1', 'storage', 'set', ['session', { early: true }])
+    expect(events(h, 'doc1.n.abcdefgh', 'storage.onChanged')).toHaveLength(0)
     const level = await call(h, 'bg1', 'storage', 'setAccessLevel', [
       'session',
       { accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' }
@@ -759,7 +763,10 @@ describe('AndroidExtensionRuntime: chrome.storage on the shared helpers', () => 
     expect(level.ok).toBe(true)
     await call(h, 'bg1', 'storage', 'set', ['session', { s: 1 }])
     const allowed = await call(h, 'doc1.n.abcdefgh', 'storage', 'get', ['session', null])
-    expect(allowed.result).toEqual({ s: 1 })
+    expect(allowed.result).toEqual({ early: true, s: 1 })
+    const heard = events(h, 'doc1.n.abcdefgh', 'storage.onChanged')
+    expect(heard).toHaveLength(1)
+    expect(heard[0].args).toEqual([{ s: { newValue: 1 } }, 'session'])
     // Session items never touch the disk.
     h.runtime.flushSync()
     expect(h.files.has(`ext-storage-${ID}.json`)).toBe(false)
