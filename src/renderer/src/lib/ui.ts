@@ -322,12 +322,22 @@ export async function captureActiveTab(tabId: string | null): Promise<void> {
     uiStore.set({ snapshot: null, snapshotTabId: null })
     return
   }
-  if (uiStore.get().snapshotTabId === tabId && uiStore.get().snapshot) return
+  if (snapshotHeld(tabId)) return
   const data = await cmd('overlay.snapshot', { tabId }).catch(() => null)
   if (data) rememberThumbnail(tabId, data)
   // A page that is already hidden (behind the gesture stage) cannot be captured: show what it
   // looked like the last time it was.
   uiStore.set({ snapshot: data ?? thumbnailOf(tabId), snapshotTabId: tabId })
+}
+
+/**
+ * `tabId`'s capture is already in place, held by whatever chrome is over the content:
+ * `captureActiveTab` would return at once, and a surface that opens out of that chrome can go
+ * up in the same turn, before the chrome's release looks for something still needing it.
+ */
+export function snapshotHeld(tabId: string | null): boolean {
+  const ui = uiStore.get()
+  return tabId !== null && ui.snapshotTabId === tabId && ui.snapshot !== null
 }
 
 export async function openOverlay(

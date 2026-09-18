@@ -8,6 +8,7 @@ import {
   captureActiveTab,
   invalidateSnapshot,
   returnFocusToPage,
+  snapshotHeld,
   uiStore
 } from '../ui'
 import { placePopup, type PopupPlacement } from './popupPlacement'
@@ -77,7 +78,8 @@ export function openExtensionPopup(id: string, anchor: Anchor, hasPopup: boolean
   const mine: PendingPopup = { id, size: null }
   pending = mine
   const state = browserStore.get().state
-  void captureActiveTab(state ? (activeTab(state)?.id ?? null) : null).then(() => {
+  const tabId = state ? (activeTab(state)?.id ?? null) : null
+  const show = (): void => {
     if (pending !== mine) return
     pending = null
     uiStore.set({
@@ -89,7 +91,13 @@ export function openExtensionPopup(id: string, anchor: Anchor, hasPopup: boolean
       if (popup && popup.id === id && !popup.shown)
         uiStore.set({ extensionPopup: { ...popup, shown: true } })
     }, POPUP_SIZE_WAIT_MS)
-  })
+  }
+  // Opened from the puzzle panel, the page is captured already – the panel holds it – and the
+  // frame takes it over in this same turn: the panel's release (React's flush of its close, a
+  // microtask away) finds the popup over the content and keeps the capture, where one more
+  // `then` would come after it and find the capture dropped, the frame over a blank page.
+  if (snapshotHeld(tabId)) show()
+  else void captureActiveTab(tabId).then(show)
 }
 
 /** Close the open popup; `notifyMain` is false when main already closed the view itself. */
