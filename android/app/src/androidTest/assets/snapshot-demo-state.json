@@ -1,0 +1,97 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_main",
+  "spaces": [
+    {
+      "id": "space_main",
+      "name": "Browse",
+      "icon": "🧭",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          {
+            "c": [
+              70,
+              120,
+              220
+            ],
+            "x": 0.3,
+            "y": 0.3,
+            "isPrimary": true
+          },
+          {
+            "c": [
+              200,
+              110,
+              170
+            ],
+            "x": 0.7,
+            "y": 0.7
+          }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 30
+      },
+      "tabIds": [
+        "tab_heavy",
+        "tab_light"
+      ],
+      "activeTabId": "tab_heavy",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [],
+  "tabs": [
+    {
+      "id": "tab_heavy",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://en.wikipedia.org/wiki/Android_(operating_system)",
+      "title": "Android (operating system) - Wikipedia",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_light",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://example.com/",
+      "title": "Example Domain",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "phoneBarPosition": "bottom",
+    "updates": {
+      "autoCheck": false,
+      "autoDownload": false,
+      "channel": "stable"
+    }
+  },
+  "shortcutOverrides": {},
+  "bookmarks": [],
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_main",
+      "selection": {
+        "space_main": "tab_heavy"
+      },
+      "compact": false
+    }
+  ]
+}

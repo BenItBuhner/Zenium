@@ -1,5 +1,6 @@
-import { app, clipboard, dialog, ipcMain, net, shell, type Session } from 'electron'
+import { app, clipboard, dialog, ipcMain, nativeTheme, net, shell, type Session } from 'electron'
 import { readFileSync, writeFileSync } from 'node:fs'
+import { release } from 'node:os'
 import { basename, join } from 'node:path'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { Browser } from '../../core/browser'
@@ -14,7 +15,8 @@ import type {
   PickedTextFile,
   Platform,
   PlatformInfo,
-  ShellHost
+  ShellHost,
+  ThemeHost
 } from '../../core/platform'
 import type { ZenWindow } from '../../core/window'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
@@ -39,6 +41,7 @@ import { ElectronSiteData } from './siteData'
 import { ElectronTranslateHost, focusedChromeWebContents } from './translate'
 import { ElectronUpdateHost } from './updates'
 import { applyAppIcon } from './appIcon'
+import { ElectronDefaultBrowser } from './defaultBrowser'
 import { createPasswordsHost } from './passwords'
 import {
   attachSecurityHandlers,
@@ -46,9 +49,12 @@ import {
   permissionRequestDetails
 } from './security'
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
+import { supportsWindowMaterial } from './appShell'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
+  windowControlsOverlay: process.platform === 'win32',
+  windowMaterial: supportsWindowMaterial(process.platform, release()),
   nativeMenus: true,
   windowDrag: true,
   devtools: true,
@@ -67,8 +73,9 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   appLinkSettings: false,
   pullToRefresh: false,
   passwords: true,
-  // The OS owns default-app choices on desktop; the desktop program decides if Zenium ever asks.
-  defaultBrowser: false,
+  // Status from the OS (shell association, LaunchServices, xdg-settings); the request opens
+  // Windows Settings, the macOS prompt or runs xdg-settings (platform/defaultBrowser.ts).
+  defaultBrowser: true,
   requestBlocking: true,
   reducedExtensionIsolation: false,
   pageControls: false
@@ -92,12 +99,15 @@ export class ElectronPlatform implements Platform {
   readonly shell: ShellHost
   readonly net: NetHost
   readonly app: AppHost
+  readonly theme: ThemeHost
   readonly siteData: ElectronSiteData
   readonly passwords: PasswordsHost
   readonly blocking: ElectronBundledLists
   /** The webRequest multiplexer and text matcher; created with the browser in `start`. */
   requestBlocking!: ElectronBlocking
   readonly translate: ElectronTranslateHost
+  /** Default-browser status and registration on Windows, macOS and Linux. */
+  readonly defaultBrowser = new ElectronDefaultBrowser()
   browser!: Browser
   private readonly profileDir: string
 
@@ -223,8 +233,15 @@ export class ElectronPlatform implements Platform {
             .map((win) => browserWindowOf(win))
             .filter((bw): bw is Electron.BrowserWindow => bw !== undefined)
         ),
-      isDefaultBrowser: async () => null,
-      requestDefaultBrowser: async () => null
+      isDefaultBrowser: () => this.defaultBrowser.isDefault(),
+      requestDefaultBrowser: () => this.defaultBrowser.request()
+    }
+    this.theme = {
+      systemDark: () => nativeTheme.shouldUseDarkColors,
+      onChanged: (listener) => void nativeTheme.on('updated', listener),
+      setSource: (scheme) => {
+        nativeTheme.themeSource = scheme
+      }
     }
   }
 

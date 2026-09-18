@@ -3,6 +3,7 @@ import type { SplitGroup } from '@shared/types'
 import {
   SPLIT_GAP,
   SPLIT_HEADER,
+  captionBandInMain,
   glanceRect,
   gutterRects,
   overviewColumns,
@@ -69,5 +70,34 @@ describe('phone overview grid', () => {
     expect(overviewColumns(799)).toBe(3)
     expect(overviewColumns(800)).toBe(4)
     expect(overviewColumns(915)).toBe(4)
+  })
+})
+
+describe('caption overlay band', () => {
+  it('is never needed without an overlay', () => {
+    expect(captionBandInMain({ overlayWidth: 0, sidebarSide: 'left', sidebarWidth: 240 })).toBe(
+      false
+    )
+    expect(captionBandInMain({ overlayWidth: 0, sidebarSide: 'right', sidebarWidth: null })).toBe(
+      false
+    )
+  })
+
+  it('keeps the band above the page when the buttons land on the content column', () => {
+    expect(captionBandInMain({ overlayWidth: 138, sidebarSide: 'left', sidebarWidth: 240 })).toBe(
+      true
+    )
+    expect(captionBandInMain({ overlayWidth: 138, sidebarSide: 'right', sidebarWidth: null })).toBe(
+      true
+    )
+    expect(captionBandInMain({ overlayWidth: 138, sidebarSide: 'right', sidebarWidth: 56 })).toBe(
+      true
+    )
+  })
+
+  it('lets a right sidebar wider than the buttons host them in its title row', () => {
+    expect(captionBandInMain({ overlayWidth: 138, sidebarSide: 'right', sidebarWidth: 240 })).toBe(
+      false
+    )
   })
 })

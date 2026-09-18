@@ -60,7 +60,7 @@ export function tabTitle(tab: Tab): string {
 export function isDarkScheme(state: UIState): boolean {
   if (state.settings.colorScheme === 'dark') return true
   if (state.settings.colorScheme === 'light') return false
-  return window.matchMedia('(prefers-color-scheme: dark)').matches
+  return state.systemDark ?? window.matchMedia('(prefers-color-scheme: dark)').matches
 }
 
 export function containerOf(state: UIState, id: string): Container | undefined {

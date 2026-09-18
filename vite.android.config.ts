@@ -1,7 +1,53 @@
 import { resolve } from 'path'
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+
+/** Where the preview host's `view.loadHtml` documents are kept and served (see `src/android/preview.ts`). */
+const PREVIEW_PAGE_ROUTE = '/__zen/page/'
+/** Documents kept; the oldest goes when a new one arrives. */
+const PREVIEW_PAGE_LIMIT = 32
+
+/**
+ * `PUT /__zen/page/<id>` keeps a document the preview host was handed for a tab's frame and
+ * `GET /__zen/page/<id>` serves it, so the frame shows it as a document of its own, the way the
+ * WebView's `loadDataWithBaseURL` does. As `srcdoc` the document would inherit the chrome's
+ * Content Security Policy (`script-src 'self'`), which blocks the inline script and handlers a
+ * zen:// page runs; a document the dev server serves carries no policy, like the WebView's.
+ */
+function previewPages(): Plugin {
+  const pages = new Map<string, string>()
+  return {
+    name: 'zen-preview-pages',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use(PREVIEW_PAGE_ROUTE, (req, res, next) => {
+        // Mounted: `req.url` is what follows the route.
+        const id = req.url?.slice(1) ?? ''
+        if (!/^\d+$/.test(id)) return next()
+        if (req.method === 'PUT') {
+          const chunks: Buffer[] = []
+          req.on('data', (chunk: Buffer) => chunks.push(chunk))
+          req.on('end', () => {
+            pages.set(id, Buffer.concat(chunks).toString('utf8'))
+            for (const key of pages.keys()) {
+              if (pages.size <= PREVIEW_PAGE_LIMIT) break
+              pages.delete(key)
+            }
+            res.statusCode = 204
+            res.end()
+          })
+          return
+        }
+        const html = req.method === 'GET' ? pages.get(id) : undefined
+        if (html === undefined) return next()
+        res.setHeader('content-type', 'text/html; charset=utf-8')
+        res.setHeader('cache-control', 'no-store')
+        res.end(html)
+      })
+    }
+  }
+}
 
 /**
  * Builds the Android chrome: the React renderer plus the browser core, bundled for the chrome
@@ -64,7 +110,7 @@ export default defineConfig(({ mode }) => {
     root: resolve('src/android'),
     base: './',
     resolve: { alias: aliases },
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), previewPages()],
     build: {
       outDir: resolve('android/app/src/main/assets/www'),
       emptyOutDir: true,

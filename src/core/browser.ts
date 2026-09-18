@@ -10,13 +10,14 @@ import type {
   FolderColor,
   KeyBinding,
   MediaState,
-  SearchEngine,
   Rect,
+  SearchEngine,
   Settings,
   ShareAction,
   SharePayload,
   Space,
   Tab,
+  WindowChrome,
   WindowKind
 } from '../shared/types'
 import { BrowserState, type PersistedWindow } from './state'
@@ -65,6 +66,7 @@ import {
 } from './model'
 import { getDomain, inputToUrl } from '../shared/url'
 import { overlayForUrl } from '../shared/zenPages'
+import { openAllPrompt, sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
 import { buildSearchUrl, matchEngineKeyword } from '../shared/search'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
@@ -72,7 +74,7 @@ import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { ONBOARDING_ESSENTIALS, sanitizePasswordSettings, spaceLabel } from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
-import { PRIVATE_THEME, resolveTheme, rgbToHex } from '../shared/theme'
+import { PRIVATE_THEME, captionColors, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
@@ -171,6 +173,17 @@ export class Browser {
     )
     this.state.liveWindows = () => this.allWindows()
     this.state.load()
+    if (platform.theme) {
+      const theme = platform.theme
+      theme.setSource(this.state.settings.colorScheme)
+      this.state.systemDark = theme.systemDark()
+      theme.onChanged(() => {
+        const dark = theme.systemDark()
+        if (dark === this.state.systemDark) return
+        this.state.systemDark = dark
+        this.state.commitVolatile()
+      })
+    }
     this.history = new HistoryService(platform.io)
     this.bookmarks = new BookmarkService(this.state)
     this.downloads = new DownloadService(
@@ -286,9 +299,17 @@ export class Browser {
     kind: WindowKind
     from?: ZenWindow
     persisted?: PersistedWindow
-    /** Where to place the window (a reopened window comes back where it was). */
+    /** Toolbar-only chrome for a page's sized popup (default: the full sidebar chrome). */
+    chrome?: WindowChrome
+    /**
+     * Where to place the window: where a popup asked to be, or where a reopened window was; full
+     * windows without bounds cascade from `from`.
+     */
     bounds?: Rect | null
-    /** Start without the starter tab of blank / private windows (the caller adds the tabs). */
+    /**
+     * Start without the starter tab of blank / private windows (the caller adds the tabs, or
+     * adopts a page right away).
+     */
     empty?: boolean
   }): ZenWindow {
     const m = this.state.model
@@ -314,26 +335,38 @@ export class Browser {
       m.localSpaces[localSpace.id] = localSpace
       activeSpaceId = localSpace.id
     }
+    const chrome = opts.chrome ?? 'full'
     const win = new ZenWindow(this, {
       id,
       kind: opts.kind,
+      chrome,
+      material: this.state.capabilities.windowMaterial
+        ? this.state.settings.windowMaterial
+        : 'none',
       bounds: opts.persisted?.bounds ?? opts.bounds ?? null,
       maximized: opts.persisted?.maximized ?? false,
       activeSpaceId,
       selection: opts.persisted?.selection ?? {},
       compact:
-        opts.persisted?.compact ?? from?.compactEnabled ?? this.state.settings.compactMode.enabled,
+        chrome === 'popup'
+          ? false
+          : (opts.persisted?.compact ??
+            from?.compactEnabled ??
+            this.state.settings.compactMode.enabled),
       localSpace,
-      cascadeFrom: from
+      cascadeFrom: opts.bounds ? undefined : from
     })
     this.windows.set(id, win)
-    const theme = resolveTheme(win.activeSpace().theme, this.state.settings.colorScheme === 'dark')
+    const theme = resolveTheme(win.activeSpace().theme, this.darkScheme())
     win.host = this.platform.windows.create(win, {
       bounds: win.initialBounds,
       maximized: win.initialMaximized,
       cascadeFrom: win.cascadeFrom,
       title: win.isPrivate ? 'Zenium (Private Browsing)' : 'Zenium',
-      backgroundColor: rgbToHex(theme.averageColor)
+      chrome,
+      material: win.material,
+      backgroundColor: rgbToHex(theme.averageColor),
+      captionColors: captionColors(theme)
     })
     this.governor.watchWindow(win)
     if (localSpace && !opts.empty) {
@@ -344,6 +377,22 @@ export class Browser {
     }
     this.state.commit()
     return win
+  }
+
+  /** Native caption buttons follow the theme of the space each window shows. */
+  private syncCaptionColors(): void {
+    const dark = this.darkScheme()
+    for (const win of this.allWindows()) {
+      if (!win.host.setCaptionColors) continue
+      win.host.setCaptionColors(captionColors(resolveTheme(win.activeSpace().theme, dark)))
+    }
+  }
+
+  /** Whether the chrome renders dark: the Appearance setting, or the OS scheme when it follows it. */
+  darkScheme(): boolean {
+    const scheme = this.state.settings.colorScheme
+    if (scheme === 'system') return this.state.systemDark ?? false
+    return scheme === 'dark'
   }
 
   /** The chrome of `win` finished loading for the first time. */
@@ -418,6 +467,7 @@ export class Browser {
         win.send('state', this.state.snapshot(win))
         win.updateTitle()
       }
+      this.syncCaptionColors()
     })
     // Rule sets load synchronously so the first page is protected.
     this.blocking.start()
@@ -584,7 +634,10 @@ export class Browser {
     this.state.afterBroadcast(() => this.emit('bookmark.star', payload, win))
   }
 
-  /** "Bookmark all tabs": the window's current space (or the given tabs) into one new folder. */
+  /**
+   * "Bookmark all tabs": Chrome asks for the new folder's name and place first. The dialog comes
+   * back through `createBookmarksFromTabs`. The window's current space, or the given tabs.
+   */
   bookmarkTabs(win: ZenWindow, tabIds?: readonly string[]): void {
     const space = win.activeSpace()
     const list = tabIds
@@ -595,11 +648,31 @@ export class Browser {
           this.state.settings.containerSpecificEssentials,
           win.id
         )
-    const title = tabIds ? `${list.length} tabs` : spaceLabel(space)
-    const folder = this.bookmarks.bookmarkTabs(list, title)
-    if (!folder) {
+    const pages = list.filter((t) => t.url && !t.url.startsWith('zen://'))
+    if (pages.length === 0) {
       this.toast('There are no pages to bookmark.', 'info', win)
       return
+    }
+    // A whole space is offered under the space's name (the engine's default); picked tabs count.
+    const defaultTitle = tabIds ? `${pages.length} tabs` : spaceLabel(space)
+    this.emit('bookmark.allTabs', { tabIds: pages.map((t) => t.id), defaultTitle }, win)
+  }
+
+  createBookmarksFromTabs(
+    tabIds: readonly string[],
+    title: string,
+    parentId: string,
+    win: ZenWindow
+  ): BookmarkNode | null {
+    const list = tabIds.map((id) => this.tabs.tab(id)).filter((t): t is Tab => Boolean(t))
+    const folder = this.bookmarks.bookmarkTabs(
+      list,
+      title.trim() || `${list.length} tabs`,
+      parentId
+    )
+    if (!folder) {
+      this.toast('There are no pages to bookmark.', 'info', win)
+      return null
     }
     const count = this.bookmarks.getChildren(folder.id).length
     this.toast(
@@ -607,8 +680,71 @@ export class Browser {
       'info',
       win
     )
-    const folderId = folder.id
-    this.state.afterBroadcast(() => this.emit('overlay.open', { kind: 'bookmarks', folderId }, win))
+    return folder
+  }
+
+  /** Ctrl+Shift+B, the bar's own menu, the app menu: show the bar for good or hide it for good. */
+  toggleBookmarksBar(win: ZenWindow): void {
+    const tab = this.tabs.activeTabFor(win)
+    const mode = toggledBookmarksBarMode(this.state.settings.bookmarksBar, tab?.url ?? null)
+    this.setBookmarksBarMode(mode, win)
+  }
+
+  setBookmarksBarMode(mode: Settings['bookmarksBar'], win: ZenWindow): void {
+    this.updateSettings({ bookmarksBar: mode }, win)
+  }
+
+  /**
+   * Cut or copy bookmarks: the app's clipboard takes the nodes, the host clipboard the pages'
+   * addresses as text (Chrome), one per line, so they paste into any text field.
+   */
+  clipBookmarks(ids: readonly string[], mode: 'cut' | 'copy'): void {
+    if (mode === 'cut') this.bookmarks.cut(ids)
+    else this.bookmarks.copy(ids)
+    const urls = ids
+      .map((id) => this.bookmarks.get(id))
+      .filter((n): n is BookmarkNode => n?.type === 'url' && Boolean(n.url))
+      .map((n) => n.url ?? '')
+    if (urls.length) this.platform.clipboard.writeText(urls.join('\n'))
+  }
+
+  /** The bar folder menu's "Sort by name": folders first, then bookmarks, A to Z, in one move. */
+  sortBookmarkFolder(folderId: string): boolean {
+    const order = sortedByNameOrder(this.bookmarks.tree, folderId)
+    return order ? this.bookmarks.move(order, folderId, 0) : false
+  }
+
+  /** Open the bookmarks below the given nodes in a new window (private when asked). */
+  async openBookmarksInWindow(
+    ids: readonly string[],
+    isPrivate: boolean,
+    win: ZenWindow
+  ): Promise<void> {
+    const urls = await this.bookmarkUrlsToOpen(ids, win)
+    if (urls.length === 0) return
+    const target = this.openWindow(isPrivate ? 'private' : 'synced', win)
+    if (!target) return
+    urls.forEach((url, i) => this.tabs.createTab({ url, active: i === 0 }, target))
+  }
+
+  /**
+   * The pages below the given nodes, each once; 15 or more ask first (Chrome), and only pages
+   * that do open count as used.
+   */
+  private async bookmarkUrlsToOpen(ids: readonly string[], win: ZenWindow): Promise<string[]> {
+    const seen = new Set<string>()
+    const nodes: BookmarkNode[] = []
+    for (const id of ids) {
+      for (const node of this.bookmarks.tree.urlsUnder(id)) {
+        if (!node.url || seen.has(node.id)) continue
+        seen.add(node.id)
+        nodes.push(node)
+      }
+    }
+    const prompt = openAllPrompt(nodes.length)
+    if (prompt && !(await this.platform.dialogs.confirm(prompt, win))) return []
+    nodes.forEach((node) => this.bookmarks.touch(node.id))
+    return nodes.map((node) => node.url ?? '')
   }
 
   /** Open a bookmark in the given tab (or a new one) and remember that it was used. */
@@ -621,17 +757,8 @@ export class Browser {
   }
 
   /** Open every bookmark below the given nodes in new tabs (the first one becomes active). */
-  openBookmarks(ids: readonly string[], win: ZenWindow): void {
-    const seen = new Set<string>()
-    const urls: string[] = []
-    for (const id of ids) {
-      for (const node of this.bookmarks.tree.urlsUnder(id)) {
-        if (!node.url || seen.has(node.id)) continue
-        seen.add(node.id)
-        urls.push(node.url)
-        this.bookmarks.touch(node.id)
-      }
-    }
+  async openBookmarks(ids: readonly string[], win: ZenWindow): Promise<void> {
+    const urls = await this.bookmarkUrlsToOpen(ids, win)
     urls.forEach((url, i) => this.tabs.createTab({ url, active: i === 0 }, win))
   }
 
@@ -1353,20 +1480,25 @@ export class Browser {
 
       'bookmark.toggle': ({ tabId }, win) => this.toggleBookmark(tabId, win),
       'bookmark.star': ({ tabId }, win) => this.starTab(tabId, win),
-      'bookmark.create': ({ parentId, index, title, url, type }) =>
-        this.bookmarks.create({ parentId, index, title, url, type }),
+      'bookmark.create': ({ parentId, index, title, url, type, favicon }) =>
+        this.bookmarks.create({ parentId, index, title, url, type, favicon }),
       'bookmark.update': ({ id, title, url }) => void this.bookmarks.update(id, { title, url }),
       'bookmark.move': ({ ids, parentId, index }) => void this.bookmarks.move(ids, parentId, index),
       'bookmark.remove': ({ ids }) => void this.bookmarks.removeMany(ids),
       'bookmark.open': ({ id, newTab, tabId }, win) => this.openBookmark(id, newTab, tabId, win),
       'bookmark.openAll': ({ ids }, win) => this.openBookmarks(ids, win),
+      'bookmark.openInWindow': ({ ids, private: isPrivate }, win) =>
+        this.openBookmarksInWindow(ids, isPrivate, win),
       'bookmark.allTabs': (_a, win) => this.bookmarkTabs(win),
-      'bookmark.contextMenu': ({ ids, folderId, x, y }, win) =>
-        this.menus.showBookmarkContextMenu(ids, folderId, { x, y }, win),
+      'bookmark.createFromTabs': ({ tabIds, title, parentId }, win) =>
+        this.createBookmarksFromTabs(tabIds, title, parentId, win),
+      'bookmark.contextMenu': ({ ids, folderId, x, y, surface }, win) =>
+        this.menus.showBookmarkContextMenu(ids, folderId, { x, y }, win, surface ?? 'manager'),
       'bookmark.menu': ({ x, y }, win) => this.menus.showBookmarksMenu({ x, y }, win),
-      'bookmark.cut': ({ ids }) => this.bookmarks.cut(ids),
-      'bookmark.copy': ({ ids }) => this.bookmarks.copy(ids),
-      'bookmark.paste': ({ folderId, index }) => void this.bookmarks.paste(folderId, index),
+      'bookmark.toggleBar': (_a, win) => this.toggleBookmarksBar(win),
+      'bookmark.cut': ({ ids }) => this.clipBookmarks(ids, 'cut'),
+      'bookmark.copy': ({ ids }) => this.clipBookmarks(ids, 'copy'),
+      'bookmark.paste': ({ folderId, index }) => this.bookmarks.paste(folderId, index),
       'bookmark.import': (_a, win) => this.importBookmarks(win),
       'bookmark.export': (_a, win) => this.exportBookmarks(win),
 
@@ -1594,6 +1726,7 @@ export class Browser {
         if (state.searchEngines.some((e) => e.id === searchEngineId))
           state.settings.searchEngineId = searchEngineId
         state.settings.colorScheme = colorScheme
+        this.platform.theme?.setSource(colorScheme)
         state.settings.onboardingDone = true
         for (const url of essentials) {
           const known = ONBOARDING_ESSENTIALS.find((e) => e.url === url)
@@ -1628,6 +1761,7 @@ export class Browser {
       trigger: s.glanceTrigger,
       thirdParty: s.thirdPartyOnPinned,
       appIcon: s.appIcon,
+      colorScheme: s.colorScheme,
       windowSync: s.windowSync,
       resources: JSON.stringify(s.resources),
       unload: `${s.unloadEnabled}:${s.unloadTimeoutMinutes}:${s.unloadExcludedDomains.join(',')}`,
@@ -1691,6 +1825,7 @@ export class Browser {
     ) {
       this.tabs.broadcastPageFlags()
     }
+    if (before.colorScheme !== s.colorScheme) this.platform.theme?.setSource(s.colorScheme)
     if (before.windowSync !== s.windowSync) {
       // Leaving "pinned only" shares every tab again; entering it keeps existing tabs shared.
       if (s.windowSync !== 'pinned')

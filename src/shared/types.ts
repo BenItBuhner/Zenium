@@ -28,6 +28,14 @@ export type FormFactor = 'phone' | 'tablet' | 'desktop'
 export interface HostCapabilities {
   /** Host draws its own window frame – no minimise / maximise / close buttons in the chrome. */
   windowControls: boolean
+  /**
+   * The OS draws native minimise / maximise / close buttons over the chrome's top corner
+   * (Windows 11's Window Controls Overlay, which is what gives the maximise button Snap
+   * Layouts). The chrome keeps that region clear and draws no buttons of its own.
+   */
+  windowControlsOverlay: boolean
+  /** Windows can be backed by a system material (Windows 11 Mica) behind a translucent chrome. */
+  windowMaterial: boolean
   /** Context menus are native popups; when false the renderer renders `menu.show` events. */
   nativeMenus: boolean
   /** The chrome can be dragged by `-webkit-app-region: drag` regions. */
@@ -139,6 +147,13 @@ export const PRIVATE_CONTAINER_ID = 'private'
 export type WindowKind = 'synced' | 'unsynced' | 'private'
 /** Which tabs new synced windows share: everything, pinned/essential only, or nothing. */
 export type WindowSyncMode = 'all' | 'pinned' | 'off'
+/**
+ * What a window's chrome shows: the sidebar with spaces and tabs, or – for the sized windows
+ * pages open with `window.open(url, name, 'width=…')` – a single toolbar row above the page.
+ */
+export type WindowChrome = 'full' | 'popup'
+/** System-drawn material behind a translucent chrome (Windows 11). */
+export type WindowMaterial = 'none' | 'mica'
 
 // ---------------------------------------------------------------------------
 // Themes (Zen's gradient theme picker)
@@ -638,6 +653,12 @@ export interface Bookmark {
 
 export type BookmarkNodeType = 'url' | 'folder'
 
+/** When the bookmarks bar shows above the content frame (Edge's "Show favorites bar"). */
+export type BookmarksBarMode = 'always' | 'newtab' | 'never'
+
+/** Where a bookmark opens: the current tab, a new tab (foreground), a new window or a private window. */
+export type BookmarkOpenTarget = 'current' | 'tab' | 'window' | 'private'
+
 /**
  * One node of the bookmark tree, shaped like `chrome.bookmarks.BookmarkTreeNode`. The three
  * roots (Bookmarks bar, Other bookmarks, Mobile bookmarks) have fixed ids and `parentId: null`;
@@ -897,6 +918,7 @@ export type ShortcutAction =
   | 'bookmark.sidebar'
   | 'bookmark.library'
   | 'bookmark.allTabs'
+  | 'bookmark.toggleBar'
   | 'history.sidebar'
   | 'downloads.open'
   | 'devtools.toggle'
@@ -983,6 +1005,8 @@ export interface Settings {
   sidebarExpandOnHover: boolean
   /** Remove the browser padding / rounded content area. */
   borderless: boolean
+  /** Windows 11: draw new windows on the system's Mica material behind a translucent chrome. */
+  windowMaterial: WindowMaterial
   compactMode: CompactModeSettings
   urlbarBehavior: UrlbarBehavior
   /** Phone layout: where the address bar (and its gestures) live. Long-press the pill to move it. */
@@ -1030,10 +1054,17 @@ export interface Settings {
   passwords: PasswordSettings
   /** Session counter and cooldowns of the "make Zenium your default browser" prompts. */
   defaultBrowserPromo: DefaultBrowserPromoState
+  /**
+   * Desktop: the app version in which the user answered "Not now" to the "Make Zenium your
+   * default browser" strip; it stays away until the next feature release (`major.minor`).
+   */
+  defaultBrowserPromptDismissed: string | null
   /** Ad and tracker blocking (Settings → Privacy and security). */
   blocking: BlockingSettings
   /** How pages are presented: desktop site, dark theme for sites, page zoom (Chrome's page controls). */
   pageControls: PageControlsSettings
+  /** The bookmarks bar above the content frame: always, only on the new tab page, or never. */
+  bookmarksBar: BookmarksBarMode
 }
 
 // ---------------------------------------------------------------------------
@@ -1410,6 +1441,9 @@ export type OverlayKind =
 export interface WindowState {
   id: string
   kind: WindowKind
+  chrome: WindowChrome
+  /** The material this window was created with (windows keep it for their lifetime). */
+  material: WindowMaterial
   maximized: boolean
   fullscreen: boolean
   focused: boolean
@@ -1496,6 +1530,11 @@ export interface UIState {
   platform: Platform
   capabilities: HostCapabilities
   version: string
+  /**
+   * Whether the host resolves the OS colour scheme to dark (the `system` choice); null when the
+   * host has no say and the chrome reads `prefers-color-scheme` itself.
+   */
+  systemDark: boolean | null
   tabs: Record<string, Tab>
   /** Ordered essential tab ids (all containers – the UI filters by container). */
   essentialTabIds: string[]
@@ -1899,6 +1938,8 @@ export interface Commands {
       title: string
       url?: string
       type?: BookmarkNodeType
+      /** Known icon of the page (a tab dropped on the bar brings its own). */
+      favicon?: string | null
     }
     result: BookmarkNode | null
   }
@@ -1914,17 +1955,34 @@ export interface Commands {
   'bookmark.open': { args: { id: string; newTab: boolean; tabId: string | null }; result: void }
   /** Open every bookmark in the given folders / selection in new tabs. */
   'bookmark.openAll': { args: { ids: string[] }; result: void }
-  /** Bookmark every open tab of the current space into a new folder. */
+  /** Open the bookmarks below the given nodes in a new (or private) window. */
+  'bookmark.openInWindow': { args: { ids: string[]; private: boolean }; result: void }
+  /** "Bookmark all tabs": asks for the folder's name and place (`bookmark.allTabs` event). */
   'bookmark.allTabs': { args: void; result: void }
+  /** The dialog's answer: one new folder with a bookmark per tab, in tab order. */
+  'bookmark.createFromTabs': {
+    args: { tabIds: string[]; title: string; parentId: string }
+    result: BookmarkNode | null
+  }
   'bookmark.contextMenu': {
-    args: { ids: string[]; folderId: string; x: number; y: number }
+    args: {
+      ids: string[]
+      folderId: string
+      x: number
+      y: number
+      /** The bar and its folder panels get Chrome's bar menu (open targets, "Show bookmarks bar"). */
+      surface?: 'manager' | 'bar'
+    }
     result: void
   }
   /** The bookmarks surface's overflow menu (bookmark all tabs, import, export) at `x`,`y`. */
   'bookmark.menu': { args: { x: number; y: number }; result: void }
+  /** Ctrl+Shift+B: flips the bar between always shown and never shown. */
+  'bookmark.toggleBar': { args: void; result: void }
   'bookmark.cut': { args: { ids: string[] }; result: void }
   'bookmark.copy': { args: { ids: string[] }; result: void }
-  'bookmark.paste': { args: { folderId: string; index?: number }; result: void }
+  /** Paste the app's bookmark clipboard; false when it is empty (a URL on the host clipboard is the caller's). */
+  'bookmark.paste': { args: { folderId: string; index?: number }; result: boolean }
   /** Netscape bookmark HTML import through the host's file picker. */
   'bookmark.import': { args: void; result: BookmarkImportResult | null }
   /** Netscape bookmark HTML export through the host's save dialog. */
@@ -2252,6 +2310,8 @@ export interface Events {
   'bookmark.star': { tabId: string; nodeId: string; created: boolean }
   /** The bookmark manager should edit a node, or create one (`id: null`) inside `parentId`. */
   'bookmark.edit': { id: string | null; parentId: string; type: BookmarkNodeType }
+  /** Open the "Bookmark all tabs" dialog for these tabs. */
+  'bookmark.allTabs': { tabIds: string[]; defaultTitle: string }
   'space.edit': { spaceId: string }
   'space.switched': { fromIndex: number; toIndex: number }
   /** Hosts without native menus ask the renderer to show one. */

@@ -3,6 +3,7 @@ package app.zen.chromium
 import android.Manifest
 import android.app.DownloadManager
 import android.content.ActivityNotFoundException
+import android.content.ContentUris
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -10,6 +11,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.widget.Toast
@@ -715,9 +717,27 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
     private fun shareUri(savePath: String): Uri? = when {
         savePath.isEmpty() -> null
         savePath.startsWith("content:") -> Uri.parse(savePath)
-        savePath.startsWith("file:") -> Uri.parse(savePath).path?.let { fileProviderUri(File(it)) }
-        else -> fileProviderUri(File(savePath))
+        savePath.startsWith("file:") -> Uri.parse(savePath).path?.let { shareableUri(File(it)) }
+        else -> shareableUri(File(savePath))
     }
+
+    /**
+     * A URI another app may open `file` through: the MediaStore row of a file in the public
+     * Downloads (a screenshot; see `Host.saveToDownloads`), else the app's own FileProvider.
+     */
+    private fun shareableUri(file: File): Uri? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) mediaStoreUri(file)?.let { return it }
+        return fileProviderUri(file)
+    }
+
+    @Suppress("DEPRECATION") // DATA: the one column that names the file on disk
+    private fun mediaStoreUri(file: File): Uri? = runCatching {
+        val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        activity.contentResolver.query(
+            collection, arrayOf(MediaStore.MediaColumns._ID),
+            "${MediaStore.MediaColumns.DATA} = ?", arrayOf(file.absolutePath), null
+        )?.use { c -> if (c.moveToFirst()) ContentUris.withAppendedId(collection, c.getLong(0)) else null }
+    }.getOrNull()
 
     private fun fileProviderUri(file: File): Uri? = runCatching {
         FileProvider.getUriForFile(activity, "${activity.packageName}.files", file)

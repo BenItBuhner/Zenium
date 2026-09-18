@@ -31,7 +31,9 @@ const DESKTOP: HostCapabilities = {
   defaultBrowser: false,
   requestBlocking: true,
   reducedExtensionIsolation: false,
-  pageControls: false
+  pageControls: false,
+  windowControlsOverlay: false,
+  windowMaterial: false
 }
 
 const ANDROID: HostCapabilities = {
