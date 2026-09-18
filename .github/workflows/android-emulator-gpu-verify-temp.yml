@@ -1,0 +1,45 @@
+name: Android emulator GPU default verification (temporary, branch only)
+
+# Removed again before the PR leaves draft. Two callers of the reusable workflow in one run: the
+# site controls demo on the new defaults (no emulator-options at all), and the page controls demo
+# with the exact option string android-pagecontrols-demo.yml passes today, -gpu swiftshader_indirect
+# and -show-kernel included, to see the workflow swap the renderer for swangle.
+on:
+  push:
+    branches: [cursor/services-emulator-gpu-swangle-24d1]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-emulator-gpu-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  site-controls:
+    name: Site controls demo on the default renderer
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SiteControlsDemo
+        DEMO_DIR=site-controls-demo
+        DEMO_OUT=artifacts/android-emulator-gpu-site-controls
+        DEMO_VIDEO=android-emulator-gpu-site-controls.mp4
+      artifact-name: android-emulator-gpu-site-controls
+      artifact-path: artifacts/android-emulator-gpu-site-controls/
+
+  page-controls:
+    name: Page controls demo with the old caller options
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PageControlsDemo
+        DEMO_DIR=pagecontrols-demo
+        DEMO_OUT=artifacts/android-emulator-gpu-page-controls
+        DEMO_VIDEO=android-emulator-gpu-page-controls.mp4
+        DEMO_THEME=dark
+      emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-emulator-gpu-page-controls
+      artifact-path: artifacts/android-emulator-gpu-page-controls/
