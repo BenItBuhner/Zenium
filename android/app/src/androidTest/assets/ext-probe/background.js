@@ -19,6 +19,7 @@ var report = {
   execResult: null,
   libLoaded: false,
   indexedDB: null,
+  frames: [],
   errors: []
 }
 
@@ -73,6 +74,12 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
   }
   if (message && message.t === 'bgReport') {
     sendResponse(report)
+    return false
+  }
+  if (message && message.t === 'frameHello') {
+    // The frame script of frames.html's inner frame: where Chrome says it runs.
+    report.frames.push({ frameId: sender.frameId, url: sender.url || message.url || null })
+    sendResponse(true)
     return false
   }
   if (message && message.t === 'exec') {

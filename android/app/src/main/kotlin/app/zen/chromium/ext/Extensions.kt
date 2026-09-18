@@ -593,12 +593,17 @@ class Extensions(private val host: Host) {
     }
 
     /**
-     * `scripting.executeScript` / `insertCSS` / MV2 `tabs.executeScript` into a tab's main frame.
+     * `scripting.executeScript` / `insertCSS` / MV2 `tabs.executeScript` into a frame of a tab.
      * The code runs through the bootstrap's `__zenExtExec` in the extension's scope: in its
      * isolated world through the world endpoint's reply proxy when the frame has one; else in
      * the main world with `evaluateJavascript`, after a late boot when the document has no scope
      * for the extension yet (a tab that predates the extension, a page none of its declarations
      * matched, or a WebView without worlds). `world: "MAIN"` injections take the main-world path.
+     *
+     * A subframe (`doc`: its document id, see [Endpoint]) is reached through its own endpoint's
+     * reply proxy, the one handle a WebView gives to a frame (`evaluateJavascript` takes none), so
+     * it needs a WebView with `JS_INJECTION_IN_FRAME_AND_WORLD` and a frame the extension has a
+     * script in: the world endpoint for the isolated world, the main-world one for `world: "MAIN"`.
      */
     private fun exec(args: JSONObject, reply: (Any?) -> Unit) {
         val tab = host.tabs.get(args.str("tabId"))
@@ -616,18 +621,27 @@ class Extensions(private val host: Host) {
         val call = ExtensionScripts.guarded(
             ExtensionScripts.exec(token, id, args.str("kind", "js"), payload, args.strOrNull("code"), args.strOrNull("funcSource"), args.optJSONArray("args")?.toString())
         )
-        val mine = endpoints.values.filter { it.view === tab && it.extensionId == id && it.context == "content" && it.isMainFrame }
         val wantMain = payload.optString("world") == "MAIN"
+        val doc = args.strOrNull("doc")
+        if (doc != null) {
+            if (!isolatedWorlds) {
+                reply(Host.Rejection("This WebView cannot run a script in a subframe (Chromium 146 and later can)"))
+                return
+            }
+            val frame = endpoints.values.filter { it.view === tab && it.extensionId == id && it.context == "content" && !it.isMainFrame && it.doc == doc }
+            val endpoint = frame.firstOrNull { it.world == !wantMain }
+            when {
+                frame.isEmpty() -> reply(Host.Rejection("No such frame in the tab (it navigated away, or the extension has no script in it)"))
+                endpoint == null -> reply(Host.Rejection("The extension has no ${if (wantMain) "main-world" else "isolated-world"} script in that frame"))
+                else -> runInFrame(endpoint, call, reply)
+            }
+            return
+        }
+        val mine = endpoints.values.filter { it.view === tab && it.extensionId == id && it.context == "content" && it.isMainFrame }
         if (isolatedWorlds && !wantMain) {
             val world = mine.firstOrNull { it.world }
             if (world != null) {
-                val delivered = runCatching {
-                    world.proxy.executeJavaScript(call, object : androidx.webkit.WebViewOutcomeReceiver<String, androidx.webkit.JavaScriptExecutionException> {
-                        override fun onResult(result: String?) { main.post { reply(unwrap(result)) } }
-                        override fun onError(error: androidx.webkit.JavaScriptExecutionException) { main.post { reply(Host.Rejection(error.message ?: "script failed")) } }
-                    })
-                }.isSuccess
-                if (!delivered) reply(Host.Rejection("The frame's world is gone"))
+                runInFrame(world, call, reply)
                 return
             }
         }
@@ -637,6 +651,17 @@ class Extensions(private val host: Host) {
             ExtensionScripts.lateBoot(bootstrap, ext.lateConfig, debug) + "\n" + call
         }
         tab.evaluateJavascript(script) { result -> reply(unwrap(result)) }
+    }
+
+    /** [ExtensionScripts.guarded] `call`, run in the frame and world of `endpoint` through its reply proxy. */
+    private fun runInFrame(endpoint: Endpoint, call: String, reply: (Any?) -> Unit) {
+        val delivered = runCatching {
+            endpoint.proxy.executeJavaScript(call, object : androidx.webkit.WebViewOutcomeReceiver<String, androidx.webkit.JavaScriptExecutionException> {
+                override fun onResult(result: String?) { main.post { reply(unwrap(result)) } }
+                override fun onError(error: androidx.webkit.JavaScriptExecutionException) { main.post { reply(Host.Rejection(error.message ?: "script failed")) } }
+            })
+        }.isSuccess
+        if (!delivered) reply(Host.Rejection("The frame is gone"))
     }
 
     /** The JSON of a [ExtensionScripts.guarded] evaluation → the value, or a rejection with its error. */
@@ -821,8 +846,9 @@ class Extensions(private val host: Host) {
      * beyond a page's policy (`chrome-extension:` bypasses CSP); the emulated origin is an https
      * origin any `script-src` can refuse. The world reports the refused element; the file, when
      * it is web-accessible, runs in the main world through `evaluateJavascript`, which no page
-     * policy governs, and the world hears back so it can fire the element's `load`. Main frame
-     * only: `evaluateJavascript` takes no frame.
+     * policy governs, and the world hears back so it can fire the element's `load`. In a subframe
+     * (`evaluateJavascript` takes no frame) the file runs through the reply proxy of the frame's
+     * main-world endpoint, when some extension's main-world script gave it one (Chromium 146+).
      */
     private fun mainWorldScript(view: WebView, proxy: JavaScriptReplyProxy, isMainFrame: Boolean, ep: String, message: JSONObject) {
         val id = message.opt("id")
@@ -838,10 +864,13 @@ class Extensions(private val host: Host) {
         val uri = Uri.parse(url)
         val ext = served[extId]
         val path = (uri.path ?: "/").trimStart('/')
+        val doc = endpoints[ep]?.doc ?: ep.substringBefore('.')
+        val frameMain = if (isMainFrame || !isolatedWorlds) null else
+            endpoints.values.firstOrNull { it.view === view && it.context == "content" && !it.isMainFrame && !it.world && it.doc == doc }
         when {
             ext == null -> done("the extension is not attached")
             uri.scheme != "https" || uri.host != "$extId$ORIGIN_SUFFIX" -> done("$url is not on the extension's origin")
-            !isMainFrame -> done("only the main frame's scripts can run in the main world")
+            !isMainFrame && frameMain == null -> done("no main-world script of an extension runs in that frame, and only its bridge could run the file there")
             !ext.webAccessible.any { it.matches(path) } -> done("$path is not a web-accessible resource")
             else -> io.execute {
                 val text = fileIn(ext.dir, path)?.takeIf { it.isFile }?.let { f -> runCatching { f.readText() }.getOrNull() }
@@ -850,7 +879,24 @@ class Extensions(private val host: Host) {
                     return@execute
                 }
                 // `;void 0` keeps the script's last expression out of the result string.
-                main.post { view.evaluateJavascript("$text\n;void 0;\n//# sourceURL=$url") { done(null) } }
+                val script = "$text\n;void 0;\n//# sourceURL=$url"
+                main.post {
+                    if (frameMain == null) {
+                        view.evaluateJavascript(script) { done(null) }
+                        return@post
+                    }
+                    // A script that throws still ran (its element gets `load`, as in Chrome).
+                    val delivered = runCatching {
+                        frameMain.proxy.executeJavaScript(script, object : androidx.webkit.WebViewOutcomeReceiver<String, androidx.webkit.JavaScriptExecutionException> {
+                            override fun onResult(result: String?) = done(null)
+                            override fun onError(error: androidx.webkit.JavaScriptExecutionException) {
+                                if (debug) Log.d(TAG, "$url threw in the frame's main world: ${error.message}")
+                                done(null)
+                            }
+                        })
+                    }.isSuccess
+                    if (!delivered) done("the frame is gone")
+                }
             }
         }
     }
@@ -1044,6 +1090,9 @@ class Extensions(private val host: Host) {
 
     /** The document-start script units currently installed in every tab, across extensions. */
     fun scriptUnits(): List<ScriptUnit> = units.values.flatten()
+
+    /** `[rules, rules without an indexing token]` of the current set, for instrumentation. */
+    fun ruleCounts(): IntArray = rules.let { intArrayOf(it?.rules?.size ?: 0, it?.looseCount ?: 0) }
 
     /** The WebView of the open popup / options sheet, if any. */
     fun popupView(): ExtensionWebView? = popup?.webView

@@ -33,8 +33,14 @@ class FakeKotlin implements RuntimeBridge {
   readonly files = new Map<string, string>()
   /** Background pages Kotlin holds right now, by extension id. */
   readonly backgrounds = new Set<string>()
+  /** When set, `ext.exec` is rejected with the message it returns for the given arguments. */
+  failExec: ((args: Record<string, unknown>) => string | null) | null = null
 
   call<T = void>(method: string, args?: unknown): Promise<T> {
+    if (method === 'ext.exec' && this.failExec) {
+      const rejection = this.failExec((args ?? {}) as Record<string, unknown>)
+      if (rejection !== null) return Promise.reject(new Error(rejection))
+    }
     const result = this.dispatch(method, (args ?? {}) as Record<string, unknown>) as T
     if (method === 'ext.setRules' && this.holdRules) {
       return new Promise<T>((resolve) => this.heldRules.push(() => resolve(result)))
@@ -991,6 +997,73 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
       canGoForward: false
     })
     expect(h.runtime.router.of(ID, 'content')).toHaveLength(0)
+  })
+})
+
+describe('AndroidExtensionRuntime: scripting into frames', () => {
+  it('names a subframe to the host by its document id, and all frames on allFrames', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    hello(h, 'docA.1', 'content')
+    hello(h, 'docB.1', 'content', { top: false, url: 'https://frame.example/inner' })
+    const tabId = h.runtime.api.tabs.chromeIdFor('t1')
+    const frames = await call(h, 'bg1', 'webNavigation', 'getAllFrames', [{ tabId }])
+    expect((frames.result as Array<{ frameId: number }>).map((f) => f.frameId)).toEqual([0, 1])
+    // The main frame alone by default: no document named.
+    const top = await call(h, 'bg1', 'scripting', 'executeScript', [
+      { target: { tabId }, funcSource: '() => 1' }
+    ])
+    expect(top.result).toEqual([{ frameId: 0, documentId: '', result: { ran: true } }])
+    expect(h.kt.calledWith('ext.exec').map((a) => a.doc)).toEqual([null])
+    // One subframe: its document; the result carries its frame id.
+    h.kt.files.set(`${ID}/api.js`, 'self.api = 1')
+    const inner = await call(h, 'bg1', 'scripting', 'executeScript', [
+      { target: { tabId, frameIds: [1] }, files: ['api.js'] }
+    ])
+    expect(inner.error).toBeUndefined()
+    expect(inner.result).toEqual([{ frameId: 1, documentId: '', result: { ran: true } }])
+    expect(h.kt.calledWith('ext.exec').at(-1)).toMatchObject({ doc: 'docB', ext: ID, tabId: 't1' })
+    // Every frame the extension has a script in.
+    const all = await call(h, 'bg1', 'scripting', 'insertCSS', [
+      { target: { tabId, allFrames: true }, css: 'body{margin:0}' }
+    ])
+    expect(all.error).toBeUndefined()
+    expect(
+      h.kt
+        .calledWith('ext.exec')
+        .slice(-2)
+        .map((a) => [a.kind, a.doc])
+    ).toEqual([
+      ['css', null],
+      ['css', 'docB']
+    ])
+    // A frame the tab does not have: Chrome's error, nothing sent to the host.
+    const before = h.kt.calledWith('ext.exec').length
+    const missing = await call(h, 'bg1', 'scripting', 'executeScript', [
+      { target: { tabId, frameIds: [7] }, funcSource: '() => 1' }
+    ])
+    expect(String(missing.error)).toBe(`No frame with id 7 in tab ${tabId}.`)
+    expect(h.kt.calledWith('ext.exec')).toHaveLength(before)
+    // A subframe the host cannot reach is left out under allFrames, and fails a named target.
+    h.kt.failExec = (args) =>
+      args.doc === 'docB' ? 'This WebView cannot run a script in a subframe' : null
+    const swept = await call(h, 'bg1', 'scripting', 'executeScript', [
+      { target: { tabId, allFrames: true }, funcSource: '() => 1' }
+    ])
+    expect(swept.error).toBeUndefined()
+    expect(swept.result).toEqual([{ frameId: 0, documentId: '', result: { ran: true } }])
+    const named = await call(h, 'bg1', 'scripting', 'executeScript', [
+      { target: { tabId, frameIds: [1] }, funcSource: '() => 1' }
+    ])
+    expect(String(named.error)).toContain('cannot run a script in a subframe')
+    h.kt.failExec = null
+    // The frame's document went away with a navigation: the id no longer resolves.
+    h.runtime.onGone(['docB.1'])
+    const gone = await call(h, 'bg1', 'scripting', 'executeScript', [
+      { target: { tabId, frameIds: [1] }, funcSource: '() => 1' }
+    ])
+    expect(String(gone.error)).toContain('No frame with id 1')
   })
 })
 

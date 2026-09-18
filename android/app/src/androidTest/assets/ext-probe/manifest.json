@@ -22,7 +22,13 @@
       "css": ["probe.css"],
       "run_at": "document_start"
     },
-    { "matches": ["<all_urls>"], "js": ["content-idle.js"], "run_at": "document_idle" }
+    { "matches": ["<all_urls>"], "js": ["content-idle.js"], "run_at": "document_idle" },
+    {
+      "matches": ["*://*/frame-inner.html*"],
+      "js": ["content-frame.js"],
+      "all_frames": true,
+      "run_at": "document_start"
+    }
   ],
   "web_accessible_resources": [{ "resources": ["data.json", "page-script.js"], "matches": ["<all_urls>"] }],
   "declarative_net_request": {

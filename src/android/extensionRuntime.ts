@@ -766,9 +766,25 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   }
 
   exec(request: ExecRequest): Promise<unknown> {
+    // A subframe is named to the host by its document id (the first segment of every endpoint
+    // id of that document), which the frame's own bridge endpoint carries; the main frame needs none.
+    let doc: string | null = null
+    if (request.frameId !== 0) {
+      const endpoint = this.router
+        .of(request.extensionId, 'content')
+        .find((e) => e.tabId === request.tabId && e.frameId === request.frameId)
+      if (!endpoint)
+        return Promise.reject(
+          new Error(
+            `No frame with id ${request.frameId} in tab ${this.api.tabs.chromeIdFor(request.tabId)}.`
+          )
+        )
+      doc = endpoint.id.split('.')[0] ?? null
+    }
     return this.bridge.call<unknown>('ext.exec', {
       tabId: request.tabId,
       ext: request.extensionId,
+      doc,
       kind: request.kind,
       payload: request.payload,
       code: request.code,

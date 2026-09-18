@@ -43,6 +43,8 @@ export interface ExtensionRules {
 export interface ExecRequest {
   extensionId: string
   tabId: string
+  /** Chrome's frame id in the tab: 0 for the main frame, else a subframe the extension has scripts in. */
+  frameId: number
   kind: 'js' | 'css'
   payload: Record<string, unknown>
   code: string | null
@@ -456,7 +458,56 @@ export class ExtensionApi {
     throw new Error(`chrome.tabs.${method} ${NOT_IMPLEMENTED}`)
   }
 
-  /** `tabs.executeScript` / `tabs.insertCSS` (MV2): `{ code }` or `{ file }` into the tab's main frame. */
+  /**
+   * The frames an injection targets, as Chrome reads `frameIds` / `allFrames` (MV3 `target`) or
+   * `frameId` / `allFrames` (MV2 details): the main frame alone by default. `allFrames` adds
+   * every subframe of the tab the extension has a content endpoint in (a frame it has no scripts
+   * in is beyond the host's reach, as one Chrome would inject into anyway is not). Explicit ids
+   * are kept as given; the host rejects an id no frame of the tab carries.
+   */
+  private targetFrames(
+    ext: AttachedExtension,
+    tab: Tab,
+    target: Record<string, unknown>
+  ): { frames: number[]; explicit: boolean } {
+    const listed = Array.isArray(target.frameIds)
+      ? target.frameIds
+      : target.frameId !== undefined
+        ? [target.frameId]
+        : null
+    if (listed !== null) {
+      const ids = listed.map((v) => Number(v))
+      if (ids.some((v) => !Number.isInteger(v) || v < 0)) throw new Error('Invalid frame id.')
+      return { frames: [...new Set(ids)], explicit: true }
+    }
+    if (target.allFrames !== true) return { frames: [0], explicit: false }
+    const frames = new Set<number>([0])
+    for (const e of this.host.router.of(ext.record.id, 'content'))
+      if (e.tabId === tab.id) frames.add(e.frameId)
+    return { frames: [...frames].sort((a, b) => a - b), explicit: false }
+  }
+
+  /**
+   * One injection per target frame. A subframe swept in by `allFrames` that the host cannot reach
+   * (gone, or a WebView without frame injection) is left out, as Chrome leaves out the frames it
+   * may not inject into; the main frame and every frame named in `frameIds` fail the call.
+   */
+  private async injectFrames<T>(
+    frames: { frames: number[]; explicit: boolean },
+    one: (frameId: number) => Promise<T>
+  ): Promise<Array<{ frameId: number; value: T }>> {
+    const results: Array<{ frameId: number; value: T }> = []
+    for (const frameId of frames.frames) {
+      try {
+        results.push({ frameId, value: await one(frameId) })
+      } catch (error) {
+        if (frames.explicit || frameId === 0) throw error
+      }
+    }
+    return results
+  }
+
+  /** `tabs.executeScript` / `tabs.insertCSS` (MV2): `{ code }` or `{ file }` into the tab's frames. */
   private async mv2Inject(
     ext: AttachedExtension,
     target: Tab,
@@ -468,28 +519,36 @@ export class ExtensionApi {
       typeof details.code === 'string'
         ? details.code
         : await this.host.readFile(id, String(details.file ?? ''))
+    const frames = this.targetFrames(ext, target, details)
     if (kind === 'js') {
-      const result = await this.host.exec({
+      const results = await this.injectFrames(frames, (frameId) =>
+        this.host.exec({
+          extensionId: id,
+          tabId: target.id,
+          frameId,
+          kind: 'js',
+          payload: { world: 'ISOLATED' },
+          code: code ?? '',
+          funcSource: null,
+          args: null
+        })
+      )
+      return results.map((r) => r.value)
+    }
+    const cssId = typeof details.file === 'string' ? details.file : (code ?? '')
+    await this.injectFrames(frames, (frameId) =>
+      this.host.exec({
         extensionId: id,
         tabId: target.id,
-        kind: 'js',
-        payload: { world: 'ISOLATED' },
-        code: code ?? '',
+        frameId,
+        kind: 'css',
+        payload: { id: cssId, code: code ?? '' },
+        code: null,
         funcSource: null,
         args: null
       })
-      return [result]
-    }
-    const cssId = typeof details.file === 'string' ? details.file : (code ?? '')
-    return this.host.exec({
-      extensionId: id,
-      tabId: target.id,
-      kind: 'css',
-      payload: { id: cssId, code: code ?? '' },
-      code: null,
-      funcSource: null,
-      args: null
-    })
+    )
+    return undefined
   }
 
   private windowsCall(ext: AttachedExtension, method: string, args: unknown[]): unknown {
@@ -589,65 +648,65 @@ export class ExtensionApi {
     switch (method) {
       case 'executeScript': {
         const tab = resolveTab()
+        const frames = this.targetFrames(ext, tab, target)
         const world = injection.world === 'MAIN' ? 'MAIN' : 'ISOLATED'
+        let code: string | null = null
+        let funcSource: string | null = null
+        let funcArgs: unknown[] | null = null
         if (typeof injection.funcSource === 'string') {
-          const result = await this.host.exec({
+          funcSource = injection.funcSource
+          funcArgs = Array.isArray(injection.args) ? injection.args : []
+        } else {
+          const sources: string[] = []
+          for (const file of asStringArray(injection.files)) {
+            const text = await this.host.readFile(id, file)
+            if (text === null) throw new Error(`Could not load file: '${file}'.`)
+            sources.push(text)
+          }
+          code = sources.join('\n;\n')
+        }
+        const results = await this.injectFrames(frames, (frameId) =>
+          this.host.exec({
             extensionId: id,
             tabId: tab.id,
+            frameId,
             kind: 'js',
             payload: { world },
-            code: null,
-            funcSource: injection.funcSource,
-            args: Array.isArray(injection.args) ? injection.args : []
+            code,
+            funcSource,
+            args: funcArgs
           })
-          return [{ frameId: 0, documentId: '', result }]
-        }
-        const sources: string[] = []
-        for (const file of asStringArray(injection.files)) {
-          const text = await this.host.readFile(id, file)
-          if (text === null) throw new Error(`Could not load file: '${file}'.`)
-          sources.push(text)
-        }
-        const result = await this.host.exec({
-          extensionId: id,
-          tabId: tab.id,
-          kind: 'js',
-          payload: { world },
-          code: sources.join('\n;\n'),
-          funcSource: null,
-          args: null
-        })
-        return [{ frameId: 0, documentId: '', result }]
+        )
+        return results.map((r) => ({ frameId: r.frameId, documentId: '', result: r.value }))
       }
       case 'insertCSS':
       case 'removeCSS': {
         const tab = resolveTab()
+        const frames = this.targetFrames(ext, tab, target)
         const remove = method === 'removeCSS'
+        const sheets: Array<{ id: string; code: string }> = []
         if (typeof injection.css === 'string') {
-          await this.host.exec({
-            extensionId: id,
-            tabId: tab.id,
-            kind: 'css',
-            payload: { id: injection.css, code: injection.css, remove },
-            code: null,
-            funcSource: null,
-            args: null
-          })
-          return undefined
+          sheets.push({ id: injection.css, code: injection.css })
+        } else {
+          for (const file of asStringArray(injection.files)) {
+            const text = remove ? '' : await this.host.readFile(id, file)
+            if (!remove && text === null) throw new Error(`Could not load file: '${file}'.`)
+            sheets.push({ id: file, code: text ?? '' })
+          }
         }
-        for (const file of asStringArray(injection.files)) {
-          const text = remove ? '' : await this.host.readFile(id, file)
-          if (!remove && text === null) throw new Error(`Could not load file: '${file}'.`)
-          await this.host.exec({
-            extensionId: id,
-            tabId: tab.id,
-            kind: 'css',
-            payload: { id: file, code: text ?? '', remove },
-            code: null,
-            funcSource: null,
-            args: null
-          })
-        }
+        await this.injectFrames(frames, async (frameId) => {
+          for (const sheet of sheets)
+            await this.host.exec({
+              extensionId: id,
+              tabId: tab.id,
+              frameId,
+              kind: 'css',
+              payload: { id: sheet.id, code: sheet.code, remove },
+              code: null,
+              funcSource: null,
+              args: null
+            })
+        })
         return undefined
       }
       case 'registerContentScripts':

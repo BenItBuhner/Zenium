@@ -25,6 +25,8 @@ import org.json.JSONObject
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -373,6 +375,10 @@ class ExtensionDemo {
         val all = decisions()
         results.put("decisions", JSONArray(all.takeLast(80)))
         results.put("decisionMicros", decisionMicros(all))
+        instrumentation.runOnMainSync {
+            val counts = host.extensions.ruleCounts()
+            results.put("ruleCounts", JSONObject().put("rules", counts[0]).put("loose", counts[1]))
+        }
         // uBOL's rules answer these with `redirect` to a neutered script in its web-accessible
         // resources (Chrome does the same, and the page's onload still fires), so the verdict comes
         // from the layer's own decision log: block or redirect for the four trackers, none for the control.
@@ -424,9 +430,16 @@ class ExtensionDemo {
         val groups = ryd.optInt("groups") + worldGroups
         ryd.put("groups", groups)
         if (rydWorld != null) ryd.put("world", rydWorld)
+        // The extension's content script fetches its API from the page's origin, as in Chrome, so
+        // the answer needs `Access-Control-Allow-Origin`. The same request from the emulator's
+        // own stack tells a network that answers the runner without it (Cloudflare challenging
+        // the runner's address) from a WebView that lost the header.
+        val apiProbe = probeCors("https://returnyoutubedislikeapi.com/configs/selectors", "https://m.youtube.com")
+        ryd.put("apiProbe", apiProbe)
         results.put("returnYouTubeDislike", ryd)
         results.put("youtubeConsole", JSONArray(consoleOf(ytView)))
         val api = ryd.optJSONArray("apiEntries")?.length() ?: 0
+        val apiWithoutCors = apiProbe.has("status") && apiProbe.isNull("allowOrigin")
         // Google answers a runner's address with a CAPTCHA now and then (www.google.com/sorry):
         // no watch page, so nothing of the extension's to grade. The Trusted Types check has a
         // page of the run's own in the measurements (`trustedTypesPage`).
@@ -459,15 +472,25 @@ class ExtensionDemo {
                 else -> "page sink=$pageSink world sink=$worldSink shield=$shield"
             }
         )
+        // The API answered the emulator's own request without a CORS header (a Cloudflare
+        // challenge to the runner's address): the extension's fetch fails in Chrome as well, so
+        // there is no core function to grade until the network lets the runner through.
+        val apiRefused = "network: ${apiProbe.optString("url")} answered the emulator with status ${apiProbe.optInt("status")} and no Access-Control-Allow-Origin" +
+            " (cf-mitigated=${apiProbe.optString("cfMitigated", "null")}, server=${apiProbe.optString("server", "null")})"
         stage(
             RYD, "coreFunction",
             when {
                 !onYouTube -> "N/A"
                 ryd.optInt("elements") > 0 -> "PASS"
+                apiWithoutCors -> "N/A"
                 api > 0 -> "PARTIAL"
                 else -> "FAIL"
             },
-            if (!onYouTube) offSite else "api requests seen by the page=$api, dislike elements=${ryd.optInt("elements")}"
+            when {
+                !onYouTube -> offSite
+                ryd.optInt("elements") == 0 && apiWithoutCors -> apiRefused
+                else -> "api requests seen by the page=$api, dislike elements=${ryd.optInt("elements")}, api probe=${apiProbe.optInt("status")}/${apiProbe.optString("allowOrigin", "null")}"
+            }
         )
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(ytTab)},"force":true}""")
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(adsTab)},"force":true}""")
@@ -585,6 +608,7 @@ class ExtensionDemo {
         instrumentation.runOnMainSync { results.put("lateOnPageStarted", host.extensions.lateOnPageStarted) }
         lateInjection()
         privateTabs()
+        frames()
 
         // Background pages: console output and errors of every extension.
         val backgrounds = JSONObject()
@@ -755,6 +779,58 @@ class ExtensionDemo {
         }
         results.put("privateTabs", report)
         stage(PROBE_ID, "privateTabs", verdict, report.toString().take(500))
+        chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(tab)},"force":true}""")
+        SystemClock.sleep(800)
+    }
+
+    /**
+     * Frame targets: `scripting.executeScript({ target: { frameIds } })` reaches the named subframe
+     * alone and `allFrames` every frame the extension has a script in. A page with one same-origin
+     * iframe opens; the probe's frame script runs in the iframe and nowhere else (its manifest
+     * entry matches the inner document with `all_frames`). The background lists the frames with
+     * `webNavigation.getAllFrames`, marks the subframe by its id, then every frame at once, and
+     * the top document reads both documents' markers. A subframe is reached through its own
+     * bridge endpoint (`JavaScriptReplyProxy.executeJavaScript`, Chromium 146+): without that, the
+     * named target is refused with the host's message and `allFrames` still marks the main frame.
+     */
+    private fun frames() {
+        val report = JSONObject()
+        val tab = createTab("$BASE/frames.html")
+        val view = waitForView(tab)
+        waitFor(30_000) { if (tabEval(view, "document.readyState") == "complete") true else null }
+        waitFor(15_000, 300) {
+            val inner = tabEval(view, "(function(){try{return String(frames[0].document.readyState==='complete')}catch(e){return 'false'}})()")
+            if (inner == "true") true else null
+        }
+        SystemClock.sleep(1_000)
+        var verdict = "FAIL"
+        val bg = backgroundView(PROBE_ID)
+        if (bg == null) {
+            report.put("error", "no probe background")
+        } else {
+            chromeInvoke("tab.activate", """{"tabId":${JSONObject.quote(tab)}}""")
+            SystemClock.sleep(800)
+            tabEval(bg, FRAMES_INJECT)
+            val raw = waitFor(20_000, 300) { val v = tabEval(bg, "window.__frames || null"); if (v == "null") null else v }
+            val result = raw?.let(::json) ?: JSONObject().put("error", "never settled")
+            report.put("result", result)
+            report.put("markers", json(tabEval(view, FRAME_MARKERS)))
+            val markers = report.getJSONObject("markers")
+            val inner = markers.optJSONObject("inner") ?: JSONObject()
+            val listed = result.optJSONArray("frames")?.length() ?: 0
+            val frameScriptWhereDue = inner.optString("script") == "/frame-inner.html" && markers.isNull("topScript")
+            val namedReachedFrame = inner.optString("exec").startsWith("sub") && markers.optString("topExec") == "all"
+            val allReachedBoth = inner.optString("exec") == "sub,all" && markers.optString("topExec") == "all"
+            val unreachable = result.optString("subError").contains("subframe")
+            verdict = when {
+                listed >= 2 && frameScriptWhereDue && allReachedBoth -> "PASS"
+                !worlds && unreachable && frameScriptWhereDue && markers.optString("topExec") == "all" && inner.isNull("exec") -> "N/A"
+                frameScriptWhereDue && namedReachedFrame -> "PARTIAL"
+                else -> "FAIL"
+            }
+        }
+        results.put("frames", report)
+        stage(PROBE_ID, "frames", verdict, report.toString().take(600) + if (verdict == "N/A") " (no frame injection below Chromium 146: the main frame alone is reachable)" else "")
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(tab)},"force":true}""")
         SystemClock.sleep(800)
     }
@@ -1079,6 +1155,35 @@ class ExtensionDemo {
 
     private fun json(text: String): JSONObject = runCatching { JSONObject(text) }.getOrElse { JSONObject().put("raw", text) }
 
+    /**
+     * A GET of `url` with `Origin: origin` from the emulator's own network stack (this thread, not
+     * the WebView's): the status, the `Access-Control-Allow-Origin` it came with (null without
+     * one), Cloudflare's `cf-mitigated` and the `server` header; `error` when nothing answered.
+     * Tells a network that refuses the runner (a challenge page carries no CORS header) from a
+     * WebView-side loss of the header.
+     */
+    private fun probeCors(url: String, origin: String): JSONObject {
+        val out = JSONObject().put("url", url).put("origin", origin)
+        return runCatching {
+            val connection = URL(url).openConnection() as HttpURLConnection
+            try {
+                connection.connectTimeout = 10_000
+                connection.readTimeout = 10_000
+                connection.instanceFollowRedirects = true
+                connection.setRequestProperty("Origin", origin)
+                connection.setRequestProperty("Accept", "application/json, */*")
+                out.put("status", connection.responseCode)
+                out.put("allowOrigin", connection.getHeaderField("Access-Control-Allow-Origin") ?: JSONObject.NULL)
+                out.put("cfMitigated", connection.getHeaderField("cf-mitigated") ?: JSONObject.NULL)
+                out.put("server", connection.getHeaderField("Server") ?: JSONObject.NULL)
+                out.put("contentType", connection.getHeaderField("Content-Type") ?: JSONObject.NULL)
+            } finally {
+                connection.disconnect()
+            }
+            out
+        }.getOrElse { e -> out.put("error", e.toString()) }
+    }
+
     private fun <T> waitFor(timeoutMs: Long, pollMs: Long = 250, probe: () -> T?): T? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
@@ -1151,7 +1256,8 @@ class ExtensionDemo {
         const val STYLUS = "clngdbkpkpeebahjckkjfobafhncgmne"
         const val UBOL = "ddkjiahejlhfcafbddmgiahcphecmpfh"
 
-        private const val PROBE_DONE = "String(document.documentElement.getAttribute('data-zen-probe-done') === '1')"
+        /** Polled from the first moments of a document, before it has a root element. */
+        private const val PROBE_DONE = "String(!!document.documentElement && document.documentElement.getAttribute('data-zen-probe-done') === '1')"
         /** The probe's `probe.css` on the document (`injected`), whichever world its scripts run in; empty without it. */
         private const val PROBE_CSS = "getComputedStyle(document.documentElement).getPropertyValue('--zen-probe-css').trim()"
         private const val PROBE_REPORT =
@@ -1198,6 +1304,24 @@ class ExtensionDemo {
                 "chrome.scripting.executeScript({target:{tabId:t.id},func:function(){return {title:document.title,readyState:document.readyState,chrome:typeof chrome,probeStart:typeof document.__zenProbeStart}}})" +
                 ".then(function(r){return chrome.scripting.insertCSS({target:{tabId:t.id},css:'body{outline:3px dashed rgb(255, 0, 128) !important}'}).then(function(){window.__late=JSON.stringify({exec:r})})})" +
                 ".catch(function(e){window.__late=JSON.stringify({error:String(e&&e.message||e)})})})})()"
+        /**
+         * In the probe's background: list the active tab's frames, mark the first subframe by its
+         * frame id, then every frame with `allFrames`; each marker appends its label to
+         * `data-zen-frame-exec` on the document it ran in and returns the document's path.
+         */
+        private const val FRAMES_INJECT =
+            "(function(){window.__frames=null;chrome.tabs.query({active:true,currentWindow:true},function(tabs){var t=tabs&&tabs[0];" +
+                "if(!t){window.__frames=JSON.stringify({error:'no active tab'});return}var out={tab:t.url};" +
+                "var mark=function(label){var d=document.documentElement;var v=d.getAttribute('data-zen-frame-exec');d.setAttribute('data-zen-frame-exec',v?v+','+label:label);return location.pathname};" +
+                "chrome.webNavigation.getAllFrames({tabId:t.id}).then(function(frames){out.frames=(frames||[]).map(function(f){return {frameId:f.frameId,url:f.url}});" +
+                "var sub=(frames||[]).filter(function(f){return f.frameId!==0});" +
+                "var first=sub.length?chrome.scripting.executeScript({target:{tabId:t.id,frameIds:[sub[0].frameId]},func:mark,args:['sub']}).then(function(r){out.sub=r},function(e){out.subError=String(e&&e.message||e)}):Promise.resolve(out.subError='no subframe listed');" +
+                "return first.then(function(){return chrome.scripting.executeScript({target:{tabId:t.id,allFrames:true},func:mark,args:['all']}).then(function(r){out.all=r},function(e){out.allError=String(e&&e.message||e)})})" +
+                "}).catch(function(e){out.error=String(e&&e.message||e)}).then(function(){window.__frames=JSON.stringify(out)})})})()"
+        /** From the top document of frames.html: the markers on it and on its same-origin inner frame. */
+        private const val FRAME_MARKERS =
+            "(function(){var top=document.documentElement;var inner;try{var d=frames[0].document.documentElement;inner={exec:d.getAttribute('data-zen-frame-exec'),script:d.getAttribute('data-zen-frame-script')}}catch(e){inner={error:String(e)}}" +
+                "return JSON.stringify({topExec:top.getAttribute('data-zen-frame-exec'),topScript:top.getAttribute('data-zen-frame-script'),inner:inner})})()"
         /** A plain string into a script sink: "ok", or the TypeError a Trusted Types CSP raises. */
         private const val TT_SINK_PROBE =
             "(function(){try{var s=document.createElement('script');s.textContent='void 0';return 'ok'}catch(e){return 'refused: '+String(e&&e.message||e).slice(0,120)}})()"
