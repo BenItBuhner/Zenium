@@ -1,5 +1,20 @@
 import { useEffect, useLayoutEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import type { Rect, Tab } from '@shared/types'
+import {
+  beginDrag,
+  DROP_IDLE,
+  dwellDeadline,
+  elapseDrag,
+  hoverDrag,
+  leaveDrag,
+  releaseDrag,
+  sameSlot,
+  type DropHover,
+  type DropOutcome,
+  type DropSlot,
+  type DropTargetKey,
+  type DropTargetState
+} from '@renderer/lib/gestures/dropTarget'
 import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
 import { SpringAnimation, type SpringConfig } from '@renderer/lib/motion/spring'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
@@ -14,10 +29,6 @@ const SLOP = 8
 const AUTOSCROLL_ZONE = 56
 /** How long a released hold waits for its click before opening the actions regardless. */
 const MENU_DELAY_MS = 250
-/** How long the finger rests with a new slot before the gap opens there (see `hover`)… */
-const SLOT_DWELL_MS = 150
-/** …and how slow (px/s) it has to be moving to count as resting. */
-const SLOT_SPEED_PX_S = 120
 const AUTOSCROLL_SPEED = 14
 
 /** The ghost tracks the finger closely but not rigidly: a firm spring with a little give. */
@@ -34,22 +45,16 @@ const SPRING_FOLLOW: SpringConfig = {
  *  - `card:<tabId>`   another tab's card – the two become a group (or the card joins its group)
  *  - `group:<id>`     a group card – the tab joins the group
  */
-export type LiftTarget = string
+export type LiftTarget = DropTargetKey
 
 /**
  * Where a dragged card is going to be put *between* things: a position in a group's members
  * (`folderId`) or in the loose tabs (`null`), counted without the dragged tab itself.
  */
-export interface LiftSlot {
-  folderId: string | null
-  index: number
-}
+export type LiftSlot = DropSlot
 
 /** What is under the finger, as the owner of the grid works it out from its layout. */
-export interface LiftHover {
-  target: LiftTarget | null
-  slot: LiftSlot | null
-}
+export type LiftHover = DropHover
 
 export type LiftPhase = 'idle' | 'lifted' | 'dragging' | 'dropping'
 
@@ -152,6 +157,8 @@ export function settleLift(to: Rect, then?: () => void): void {
 
 /** Drop everything without animation (the overview went away). */
 export function cancelLift(): void {
+  session?.end()
+  clearPendingMenu()
   stopSprings()
   onSettled = null
   if (liftStore.get().phase !== 'idle') liftStore.set(IDLE)
@@ -170,9 +177,254 @@ function blockTouchScroll(e: TouchEvent): void {
   if (e.cancelable) e.preventDefault()
 }
 
-function sameSlot(a: LiftSlot | null, b: LiftSlot | null): boolean {
-  if (!a || !b) return a === b
-  return a.folderId === b.folderId && a.index === b.index
+/**
+ * A hold released in place opens the card's actions – on the click that follows the release
+ * (so the sheet's scrim, appearing under the finger, cannot receive that same click), or after
+ * a moment if no click comes.
+ */
+let pendingMenu: { timer: ReturnType<typeof setTimeout>; open: () => void } | null = null
+
+function scheduleMenu(open: () => void): void {
+  clearPendingMenu()
+  pendingMenu = { timer: setTimeout(firePendingMenu, MENU_DELAY_MS), open }
+}
+
+function firePendingMenu(): void {
+  const menu = pendingMenu
+  if (!menu) return
+  clearTimeout(menu.timer)
+  pendingMenu = null
+  menu.open()
+}
+
+function clearPendingMenu(): void {
+  if (pendingMenu) clearTimeout(pendingMenu.timer)
+  pendingMenu = null
+}
+
+/**
+ * The click that follows a lift belongs to the gesture, whichever element the browser fires it
+ * on: the card may have been re-mounted meanwhile (its stand-in moved to another group), and a
+ * fresh card must not read that click as a tap. Cleared by the next touch, so no tap is lost.
+ */
+let liftedClick = false
+
+/** What the card in the hand calls back into; the card that is mounted for it keeps it current. */
+interface DragHandlers {
+  tab: Tab
+  scroller: () => HTMLElement | null
+  onMenu: (tab: Tab) => void
+  onHover: (tab: Tab, x: number, y: number, current: LiftHover) => LiftHover | null
+  onDrop: (tab: Tab, outcome: DropOutcome) => void
+}
+
+/**
+ * The gesture of a card in the hand, from the lift to the release. It belongs to the module, not
+ * to the card's component: the card's stand-in moves between the grid and the groups as the slot
+ * under the finger changes, and React re-mounts the card each time – a gesture that lived in the
+ * component's hooks died with it, mid-drag, leaving the ghost in the hand and the last target
+ * ringed for good. The session listens on the window, holds the pointer capture on the grid's
+ * scroller (which stays put), and reads the card's callbacks from whichever mount of the card is
+ * current. What the card is over is a `DropTargetState` (`lib/gestures/dropTarget.ts`); every
+ * way the gesture can end – release, cancel, the overview leaving – goes through `end()`.
+ */
+class DragSession {
+  private drop: DropTargetState
+  private x: number
+  private y: number
+  private readonly x0: number
+  private readonly y0: number
+  private autoscroll: number | null = null
+  private dwell: ReturnType<typeof setTimeout> | null = null
+  private ended = false
+
+  constructor(
+    readonly pointerId: number,
+    readonly tabId: string,
+    touch: { x0: number; y0: number; x: number; y: number },
+    private readonly velocity: VelocityTracker,
+    public handlers: DragHandlers
+  ) {
+    this.x0 = touch.x0
+    this.y0 = touch.y0
+    this.x = touch.x
+    this.y = touch.y
+    this.drop = beginDrag(handlers.tab.folderId ?? null)
+    window.addEventListener('pointermove', this.onMove, true)
+    window.addEventListener('pointerup', this.onUp, true)
+    window.addEventListener('pointercancel', this.onCancel, true)
+    document.addEventListener('touchmove', blockTouchScroll, { passive: false })
+    // Every event of this pointer keeps coming, whatever happens to the card's element.
+    const scroller = handlers.scroller()
+    if (scroller) {
+      try {
+        capturePointer(scroller, pointerId)
+      } catch {
+        /* the pointer is gone; the window listeners still see its end */
+      }
+    }
+  }
+
+  /** Stop listening and forget every timer; the store is the caller's to settle. */
+  end(): void {
+    if (this.ended) return
+    this.ended = true
+    window.removeEventListener('pointermove', this.onMove, true)
+    window.removeEventListener('pointerup', this.onUp, true)
+    window.removeEventListener('pointercancel', this.onCancel, true)
+    document.removeEventListener('touchmove', blockTouchScroll)
+    this.stopAutoscroll()
+    this.clearDwell()
+    if (session === this) session = null
+  }
+
+  private readonly onMove = (e: PointerEvent): void => {
+    if (e.pointerId !== this.pointerId) return
+    this.x = e.clientX
+    this.y = e.clientY
+    const coalesced = e.getCoalescedEvents?.() ?? []
+    if (coalesced.length > 0)
+      for (const c of coalesced) this.velocity.add(c.timeStamp, c.clientX, c.clientY)
+    else this.velocity.add(e.timeStamp, e.clientX, e.clientY)
+    const s = liftStore.get()
+    if (s.phase === 'lifted' && Math.hypot(this.x - this.x0, this.y - this.y0) >= SLOP) {
+      liftStore.set({ phase: 'dragging' })
+      retargetScale()
+    }
+    if (liftStore.get().phase !== 'dragging') return
+    this.follow()
+    this.hover(performance.now(), true)
+    this.scrollNearEdges()
+  }
+
+  private readonly onUp = (e: PointerEvent): void => this.finish(e, false)
+  private readonly onCancel = (e: PointerEvent): void => this.finish(e, true)
+
+  private follow(): void {
+    const s = liftStore.get()
+    if (!s.origin) return
+    // The ghost keeps the grip the finger took on it, wherever the grid scrolls underneath.
+    const toX = s.origin.x + (this.x - this.x0)
+    const toY = s.origin.y + (this.y - this.y0)
+    if (xSpring.running) xSpring.retarget(toX)
+    else xSpring.start(s.ghost?.x ?? toX, 0, toX)
+    if (ySpring.running) ySpring.retarget(toY)
+    else ySpring.start(s.ghost?.y ?? toY, 0, toY)
+  }
+
+  /** Ask the grid what the finger is over and run the drop-target machine on the answer. */
+  private hover(now: number, mirror: boolean): void {
+    const { tab, onHover } = this.handlers
+    const current: LiftHover = { target: this.drop.target, slot: this.drop.slot }
+    const next = onHover(tab, this.x, this.y, current)
+    if (next === null) {
+      // Off the grid: nothing is targeted, nothing waits to open.
+      this.drop = leaveDrag(this.drop)
+    } else {
+      const { vx, vy } = this.velocity.velocity(now)
+      this.drop = hoverDrag(this.drop, next, now, Math.hypot(vx, vy))
+    }
+    if (mirror) this.mirror()
+  }
+
+  /** Show the machine's state: the target ring and the ghost's tuck at once, the slot's gap. */
+  private mirror(): void {
+    const s = liftStore.get()
+    if (s.phase !== 'dragging') return
+    if (this.drop.target !== s.target) {
+      liftStore.set({ target: this.drop.target })
+      retargetScale()
+      if (this.drop.target) vibrate(4)
+    }
+    if (!sameSlot(this.drop.slot, s.slot)) liftStore.set({ slot: this.drop.slot })
+    this.scheduleDwell()
+  }
+
+  private scheduleDwell(): void {
+    this.clearDwell()
+    const deadline = dwellDeadline(this.drop)
+    if (deadline === null) return
+    this.dwell = setTimeout(
+      () => {
+        this.dwell = null
+        this.drop = elapseDrag(this.drop, performance.now())
+        this.mirror()
+      },
+      Math.max(0, deadline - performance.now())
+    )
+  }
+
+  private clearDwell(): void {
+    if (this.dwell !== null) clearTimeout(this.dwell)
+    this.dwell = null
+  }
+
+  private scrollNearEdges(): void {
+    this.stopAutoscroll()
+    const el = this.handlers.scroller()
+    if (!el) return
+    const tick = (): void => {
+      this.autoscroll = null
+      const r = el.getBoundingClientRect()
+      let delta = 0
+      if (this.y < r.top + AUTOSCROLL_ZONE)
+        delta = -AUTOSCROLL_SPEED * (1 - (this.y - r.top) / AUTOSCROLL_ZONE)
+      else if (this.y > r.bottom - AUTOSCROLL_ZONE)
+        delta = AUTOSCROLL_SPEED * (1 - (r.bottom - this.y) / AUTOSCROLL_ZONE)
+      if (delta === 0 || liftStore.get().phase !== 'dragging') return
+      const before = el.scrollTop
+      el.scrollTop += delta
+      if (el.scrollTop === before) return
+      // The slots moved under the finger.
+      this.hover(performance.now(), true)
+      this.autoscroll = requestAnimationFrame(tick)
+    }
+    this.autoscroll = requestAnimationFrame(tick)
+  }
+
+  private stopAutoscroll(): void {
+    if (this.autoscroll !== null) cancelAnimationFrame(this.autoscroll)
+    this.autoscroll = null
+  }
+
+  private finish(e: PointerEvent, cancelled: boolean): void {
+    if (e.pointerId !== this.pointerId) return
+    this.end()
+    const s = liftStore.get()
+    if (s.tabId !== this.tabId || (s.phase !== 'lifted' && s.phase !== 'dragging')) return
+    const { tab, onMenu, onDrop } = this.handlers
+    if (s.phase === 'lifted' || cancelled) {
+      // Put it straight back down; the menu comes up for a hold that was released in place.
+      this.drop = releaseDrag(this.drop, 'cancel').state
+      liftStore.set({ phase: 'dropping', target: null, slot: null })
+      if (s.origin) settleLift(s.origin)
+      else cancelLift()
+      if (s.phase === 'lifted' && !cancelled) scheduleMenu(() => onMenu(tab))
+      return
+    }
+    // The card lands where the finger let go: one last look under the release point.
+    this.x = e.clientX
+    this.y = e.clientY
+    this.hover(performance.now(), false)
+    const { outcome } = releaseDrag(this.drop, 'drop')
+    this.drop = DROP_IDLE
+    // The target ring goes out now; the stand-in keeps its slot until the browser shows the
+    // drop, so the grid does not jump back and forth while the command is confirmed.
+    liftStore.set({
+      phase: 'dropping',
+      target: null,
+      slot: outcome.kind === 'slot' ? outcome.slot : s.slot
+    })
+    onDrop(tab, outcome)
+  }
+}
+
+/** The one card in the hand, or null. */
+let session: DragSession | null = null
+
+/** The gesture in flight, for tests and diagnostics: the pointer it follows, or null. */
+export function activeLiftPointer(): number | null {
+  return session?.pointerId ?? null
 }
 
 export interface CardLiftOptions {
@@ -188,15 +440,14 @@ export interface CardLiftOptions {
   /**
    * The finger is at (x, y) with the card in hand: what it is over. Asked on every move; the
    * answer's `slot` moves the card's stand-in (the grid opens the gap), its `target` marks what
-   * the card would merge into.
+   * the card would merge into; null says the finger is off the grid altogether.
    */
-  onHover: (tab: Tab, x: number, y: number, current: LiftHover) => LiftHover
+  onHover: (tab: Tab, x: number, y: number, current: LiftHover) => LiftHover | null
   /**
-   * Dropped. The owner acts on the target (or the slot) and, once the grid shows the card in its
-   * place (its old one when nothing changed), calls `settleLift` with that slot so the ghost
-   * flies there.
+   * Dropped. The owner acts on the outcome and, once the grid shows the card in its place (its
+   * old one when nothing changed), calls `settleLift` with that slot so the ghost flies there.
    */
-  onDrop: (tab: Tab, target: LiftTarget | null, slot: LiftSlot | null) => void
+  onDrop: (tab: Tab, outcome: DropOutcome) => void
   /** Swiped off the grid: close the tab. */
   onSwipeClose: (tab: Tab) => void
 }
@@ -217,7 +468,6 @@ interface Touch {
   x: number
   y: number
   timer: ReturnType<typeof setTimeout> | null
-  lifted: boolean
   /** Finger position that maps to a swipe offset of zero. */
   swipeFrom: number | null
   velocity: VelocityTracker
@@ -228,7 +478,9 @@ interface Touch {
  * in place and released it shows its actions; moved, it follows the finger as a ghost that can be
  * dropped on another card (the two become a group), on a group (it joins) or between cards (it
  * moves there – the gap opens under the finger). A sideways move before the hold is up swipes the
- * card off the grid to close it; a vertical one is a scroll, and never ours.
+ * card off the grid to close it; a vertical one is a scroll, and never ours. The hook owns the
+ * touch until the card is lifted; from there a `DragSession` owns it (see above), and the hook
+ * only keeps the session's callbacks current for as long as this card is the one in the hand.
  */
 export function useCardLift({
   tab,
@@ -242,7 +494,6 @@ export function useCardLift({
 }: CardLiftOptions): CardLiftHandlers {
   const touch = useRef<Touch | null>(null)
   const swallow = useRef(false)
-  const autoscroll = useRef<number | null>(null)
   // One swipe per card for as long as it is on the grid, whatever the tab's record becomes.
   const latest = useRef({ tab, onSwipeClose })
   useLayoutEffect(() => {
@@ -252,34 +503,17 @@ export function useCardLift({
   const swipe = (): CardSwipe =>
     (swipeRef.current ??= new CardSwipe(() => latest.current.onSwipeClose(latest.current.tab)))
 
-  /**
-   * A new slot takes hold only once the finger has stayed with it for a moment: the edge of a
-   * card is on the way to its middle, and the gap must not open (moving that card away) under a
-   * finger that is heading for a merge. Merge targets take hold at once.
-   */
-  const pendingSlot = useRef<{
-    slot: LiftSlot | null
-    timer: ReturnType<typeof setTimeout>
-  } | null>(null)
-  const dropPendingSlot = (): void => {
-    if (pendingSlot.current) clearTimeout(pendingSlot.current.timer)
-    pendingSlot.current = null
-  }
-  const applySlot = (slot: LiftSlot | null): void => {
-    dropPendingSlot()
-    if (liftStore.get().phase === 'dragging') liftStore.set({ slot })
-  }
-  const stopAutoscroll = (): void => {
-    if (autoscroll.current !== null) cancelAnimationFrame(autoscroll.current)
-    autoscroll.current = null
-  }
+  // This card is the one in the hand: the session reads this render's callbacks (they close over
+  // the grid's current layout), also right after a re-mount.
+  useLayoutEffect(() => {
+    if (session && session.tabId === tab.id)
+      session.handlers = { tab, scroller, onMenu, onHover, onDrop }
+  })
 
   const clear = (): void => {
     const t = touch.current
     if (t?.timer) clearTimeout(t.timer)
     touch.current = null
-    stopAutoscroll()
-    dropPendingSlot()
     document.removeEventListener('touchmove', blockTouchScroll)
   }
 
@@ -288,10 +522,8 @@ export function useCardLift({
       const t = touch.current
       if (t?.timer) clearTimeout(t.timer)
       touch.current = null
-      if (autoscroll.current !== null) cancelAnimationFrame(autoscroll.current)
-      if (pendingSlot.current) clearTimeout(pendingSlot.current.timer)
-      pendingSlot.current = null
-      document.removeEventListener('touchmove', blockTouchScroll)
+      // The swipe's scroll block is this card's; a session's is the session's.
+      if (!session) document.removeEventListener('touchmove', blockTouchScroll)
     },
     []
   )
@@ -305,11 +537,11 @@ export function useCardLift({
 
   const lift = (el: HTMLElement, t: Touch): void => {
     t.timer = null
-    if (liftStore.get().phase !== 'idle') return
+    if (liftStore.get().phase !== 'idle' || session) return
     const r = el.getBoundingClientRect()
     const rect = { x: r.left, y: r.top, width: r.width, height: r.height }
-    t.lifted = true
     swallow.current = true
+    liftedClick = true
     stopSprings()
     liftStore.set({
       tabId: tab.id,
@@ -320,67 +552,16 @@ export function useCardLift({
       slot: null
     })
     scaleSpring.start(1, 0, targetScale('lifted', null))
-    document.addEventListener('touchmove', blockTouchScroll, { passive: false })
+    // From here the touch is the session's; this hook hears no more of it.
+    touch.current = null
+    session = new DragSession(t.id, tab.id, t, t.velocity, {
+      tab,
+      scroller,
+      onMenu,
+      onHover,
+      onDrop
+    })
     vibrate(8)
-  }
-
-  const follow = (t: Touch): void => {
-    const s = liftStore.get()
-    if (!s.origin) return
-    // The ghost keeps the grip the finger took on it, wherever the grid scrolls underneath.
-    const toX = s.origin.x + (t.x - t.x0)
-    const toY = s.origin.y + (t.y - t.y0)
-    if (xSpring.running) xSpring.retarget(toX)
-    else xSpring.start(s.ghost?.x ?? toX, 0, toX)
-    if (ySpring.running) ySpring.retarget(toY)
-    else ySpring.start(s.ghost?.y ?? toY, 0, toY)
-  }
-
-  const hover = (t: Touch): void => {
-    const s = liftStore.get()
-    const next = onHover(tab, t.x, t.y, { target: s.target, slot: s.slot })
-    if (next.target !== s.target) {
-      liftStore.set({ target: next.target })
-      retargetScale()
-      if (next.target) vibrate(4)
-    }
-    if (sameSlot(next.slot, s.slot)) {
-      dropPendingSlot()
-      return
-    }
-    // The dwell counts from the moment the finger slows down: a finger still on its way (over the
-    // edge of a card, towards its middle) keeps the timer waiting.
-    const { vx, vy } = t.velocity.velocity(performance.now())
-    const settling = Math.hypot(vx, vy) < SLOT_SPEED_PX_S
-    if (pendingSlot.current && sameSlot(pendingSlot.current.slot, next.slot) && settling) return
-    dropPendingSlot()
-    pendingSlot.current = {
-      slot: next.slot,
-      timer: setTimeout(() => applySlot(next.slot), SLOT_DWELL_MS)
-    }
-  }
-
-  const scrollNearEdges = (t: Touch): void => {
-    stopAutoscroll()
-    const el = scroller()
-    if (!el) return
-    const tick = (): void => {
-      autoscroll.current = null
-      const r = el.getBoundingClientRect()
-      let delta = 0
-      if (t.y < r.top + AUTOSCROLL_ZONE)
-        delta = -AUTOSCROLL_SPEED * (1 - (t.y - r.top) / AUTOSCROLL_ZONE)
-      else if (t.y > r.bottom - AUTOSCROLL_ZONE)
-        delta = AUTOSCROLL_SPEED * (1 - (r.bottom - t.y) / AUTOSCROLL_ZONE)
-      if (delta === 0 || liftStore.get().phase !== 'dragging') return
-      const before = el.scrollTop
-      el.scrollTop += delta
-      if (el.scrollTop === before) return
-      // The slots moved under the finger.
-      hover(t)
-      autoscroll.current = requestAnimationFrame(tick)
-    }
-    autoscroll.current = requestAnimationFrame(tick)
   }
 
   const startSwipe = (el: HTMLElement, t: Touch, from: number): void => {
@@ -394,11 +575,12 @@ export function useCardLift({
 
   const onPointerDown = (e: ReactPointerEvent<HTMLElement>): void => {
     swallow.current = false
+    liftedClick = false
     if (e.button !== 0 || touch.current) return
     if ((e.target as HTMLElement).closest('button')) return
     // A card on its way out is not for touching.
     if (swipe().committed) return
-    if (liftStore.get().phase !== 'idle') return
+    if (liftStore.get().phase !== 'idle' || session) return
     const el = e.currentTarget
     const t: Touch = {
       id: e.pointerId,
@@ -407,7 +589,6 @@ export function useCardLift({
       x: e.clientX,
       y: e.clientY,
       timer: null,
-      lifted: false,
       swipeFrom: null,
       velocity: new VelocityTracker()
     }
@@ -447,68 +628,20 @@ export function useCardLift({
     }
     const dx = t.x - t.x0
     const dy = t.y - t.y0
-    const moved = Math.hypot(dx, dy) >= SLOP
-    if (!t.lifted) {
-      if (!moved) return
-      // Sideways before the hold is over is a swipe; anything else is a scroll – not ours.
-      if (swipeable && Math.abs(dx) > Math.abs(dy)) {
-        startSwipe(e.currentTarget, t, t.x0 + Math.sign(dx) * SLOP)
-        swipe().move(t.x - (t.swipeFrom ?? t.x0))
-      } else clear()
-      return
-    }
-    const s = liftStore.get()
-    if (s.phase === 'lifted' && moved) {
-      liftStore.set({ phase: 'dragging' })
-      retargetScale()
-    }
-    if (liftStore.get().phase !== 'dragging') return
-    follow(t)
-    hover(t)
-    scrollNearEdges(t)
+    if (Math.hypot(dx, dy) < SLOP) return
+    // Sideways before the hold is over is a swipe; anything else is a scroll – not ours.
+    if (swipeable && Math.abs(dx) > Math.abs(dy)) {
+      startSwipe(e.currentTarget, t, t.x0 + Math.sign(dx) * SLOP)
+      swipe().move(t.x - (t.swipeFrom ?? t.x0))
+    } else clear()
   }
-
-  /**
-   * A hold released in place opens the card's actions – on the click that follows the release
-   * (so the sheet's scrim, appearing under the finger, cannot receive that same click), or after
-   * a moment if no click comes.
-   */
-  const menuTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const openMenu = (): void => {
-    if (menuTimer.current) clearTimeout(menuTimer.current)
-    menuTimer.current = null
-    onMenu(tab)
-  }
-  useEffect(
-    () => () => {
-      if (menuTimer.current) clearTimeout(menuTimer.current)
-    },
-    []
-  )
 
   const finish = (e: ReactPointerEvent<HTMLElement>, cancelled: boolean): void => {
     const t = touch.current
     if (!t || t.id !== e.pointerId) return
-    const lifted = t.lifted
     const swiping = t.swipeFrom !== null
     clear()
-    if (swiping) {
-      swipe().release(cancelled ? 0 : t.velocity.velocity(e.timeStamp).vx)
-      return
-    }
-    if (!lifted) return
-    const s = liftStore.get()
-    if (s.phase === 'lifted' || cancelled) {
-      // Put it straight back down; the menu comes up for a hold that was released in place.
-      liftStore.set({ phase: 'dropping', target: null, slot: null })
-      if (s.origin) settleLift(s.origin)
-      else cancelLift()
-      if (s.phase === 'lifted' && !cancelled)
-        menuTimer.current = setTimeout(openMenu, MENU_DELAY_MS)
-      return
-    }
-    liftStore.set({ phase: 'dropping' })
-    onDrop(tab, s.target, s.slot)
+    if (swiping) swipe().release(cancelled ? 0 : t.velocity.velocity(e.timeStamp).vx)
   }
 
   return {
@@ -517,9 +650,10 @@ export function useCardLift({
     onPointerUp: (e) => finish(e, false),
     onPointerCancel: (e) => finish(e, true),
     swallowsClick: () => {
-      const s = swallow.current
+      const s = swallow.current || liftedClick
       swallow.current = false
-      if (menuTimer.current) openMenu()
+      liftedClick = false
+      if (pendingMenu) firePendingMenu()
       return s
     }
   }

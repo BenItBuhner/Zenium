@@ -15,6 +15,7 @@ import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
+import type { DropOutcome } from '@renderer/lib/gestures/dropTarget'
 import {
   closeOverview,
   overviewInteractive,
@@ -42,14 +43,7 @@ import { DEFAULT_FOLDER_ICON, GroupCard } from './GroupCard'
 import { CARD_HEADER, CARD_RADIUS, CardBody, OverviewCard } from './OverviewCard'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
 import { TabPreview } from './TabPreview'
-import {
-  cancelLift,
-  liftStore,
-  settleLift,
-  type LiftHover,
-  type LiftSlot,
-  type LiftTarget
-} from './useCardLift'
+import { cancelLift, liftStore, settleLift, type LiftHover } from './useCardLift'
 import { useFlip } from './useFlip'
 import { useOverviewHandle } from './usePillGestures'
 
@@ -278,12 +272,13 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
    * What the finger is over, from the slots of the last layout (the glide in flight ignored, so
    * cards passing under the finger cannot flip the answer). On another card: its middle merges
    * into it, its edges put the card before or after it; on a group's own chrome: into the group;
-   * past the last card: the end; anywhere else (a gutter, the stand-in): no change.
+   * on the New Tab card or past the last card: the end; anywhere else (a gutter, the stand-in):
+   * no change. Off the grid altogether: null, and nothing is targeted.
    */
-  const hoverAt = (tab: Tab, x: number, y: number, current: LiftHover): LiftHover => {
+  const hoverAt = (tab: Tab, x: number, y: number, current: LiftHover): LiftHover | null => {
     const keep: LiftHover = { target: null, slot: current.slot }
     const grid = scrollRef.current?.getBoundingClientRect()
-    if (!grid || x < grid.left || x > grid.right || y < grid.top || y > grid.bottom) return keep
+    if (!grid || x < grid.left || x > grid.right || y < grid.top || y > grid.bottom) return null
     const inside = (r: DOMRect | null): r is DOMRect =>
       r !== null && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
     // Member cards of an expanded group and the loose cards, as shown right now.
@@ -325,10 +320,11 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   }
 
   /**
-   * A card was dropped: act on the target (or the slot), then let the settle effect above fly the
-   * ghost to the card's slot once the browser shows it there (straight away when nothing changes).
+   * A card was dropped: act on the outcome (a target, a slot, or nothing), then let the settle
+   * effect above fly the ghost to the card's slot once the browser shows it there (straight away
+   * when nothing changes).
    */
-  const dropCard = (tab: Tab, target: LiftTarget | null, slot: LiftSlot | null): void => {
+  const dropCard = (tab: Tab, outcome: DropOutcome): void => {
     const expect = (landed: (s: UIState) => boolean): void => {
       pendingDrop.current = { landed, deadline: performance.now() + DROP_TIMEOUT_MS }
     }
@@ -344,6 +340,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       run('tab.move', { tabId: tab.id, spaceId: space.id, section: 'regular', index })
       if (groupIdOf(tab) !== folderId) run('tab.moveToFolder', { tabId: tab.id, folderId })
     }
+    const target = outcome.kind === 'target' ? outcome.target : null
+    const slot = outcome.kind === 'slot' ? outcome.slot : null
     if (target?.startsWith('group:')) {
       const folderId = target.slice('group:'.length)
       if (!state.folders[folderId] || groupIdOf(tab) === folderId) return unchanged()
