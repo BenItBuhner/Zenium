@@ -118,7 +118,9 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
 
         // 4. The server dies on every dead.bin response until the downloader has used its five
         //    resumes, so the row fails with the reason the engine mapped the failure to and
-        //    Chrome's wording for it; Retry gets the eighth response, which is served whole.
+        //    Chrome's wording for it. The server takes Range and the failure kept the partial
+        //    file, so the row offers Resume (as Chrome's does; Retry is for the rest), which gets
+        //    the eighth response, served whole.
         closePanel()
         click(LINK_DEAD)
         val failed = awaitRow("dead.bin", 120_000) { it.optString("state") == "interrupted" }
@@ -129,11 +131,15 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
         )
         if (waitForRow(8_000) { rowReads(it, "dead.bin", FAILED_NETWORK) } == null) fail("no row reads \"$FAILED_NETWORK\"")
         shot("07-failed-network")
-        press("Retry", "download.retry", "dead.bin", failed?.optString("id").orEmpty()) { it.optString("state") != "interrupted" }
+        val resumable = failed?.optBoolean("canResume") == true
+        press(
+            if (resumable) "Resume" else "Retry", if (resumable) "download.resume" else "download.retry",
+            "dead.bin", failed?.optString("id").orEmpty()
+        ) { it.optString("state") != "interrupted" }
         val dead = awaitPublished("dead.bin", DEAD_SIZE, 60_000)
-        check(dead != null && intact(dead, DEAD_SIZE), "dead.bin did not complete intact on Retry")
+        check(dead != null && intact(dead, DEAD_SIZE), "dead.bin did not complete intact after the failure")
         val retried = awaitRow("dead.bin", 10_000) { it.optString("state") == "completed" }
-        check(retried != null && !retried.has("error") && !retried.has("errorMessage"), "Retry left the failure on the row: $retried")
+        check(retried != null && !retried.has("error") && !retried.has("errorMessage"), "the failure stayed on the completed row: $retried")
         SystemClock.sleep(1_000)
         shot("08-retried")
 
