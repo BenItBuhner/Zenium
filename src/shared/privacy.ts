@@ -322,6 +322,12 @@ export function sanitizePrivacySettings(
  */
 export interface PrivacyFlags {
   safeBrowsing: boolean
+  /**
+   * Origins (`scheme://host[:port]`) the user chose to proceed to past a Safe Browsing warning,
+   * until the browser closes. The desktop host asks the core's service, which knows them; the
+   * Android guard, which answers requests on its own, reads them from here.
+   */
+  safeBrowsingBypassed: string[]
   httpsOnly: HttpsOnlyMode
   /**
    * Sites (hosts, subdomains included) allowed to load over plaintext: the session's answers and

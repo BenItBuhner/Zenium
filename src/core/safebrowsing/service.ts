@@ -32,10 +32,15 @@ import { hostExpressions, PrefixTable, prefixOf } from './prefixes'
 export const SAFE_BROWSING_DIR = 'safebrowsing'
 export const FEED_DOCUMENT_VERSION = 1
 
-/** Persisted table of one feed; also the format of the bundled snapshot. */
+/**
+ * Persisted table of one feed; also the format of the bundled snapshot. A host that reads the
+ * files itself (Android's `privacy/SafeBrowsing.kt`) finds everything a hit needs in them.
+ */
 export interface FeedDocument {
   version: typeof FEED_DOCUMENT_VERSION
   id: string
+  /** What a hit on the feed is reported as. */
+  threat: SafeBrowsingThreat
   /** Hosts in the table. */
   entries: number
   /** When the content was fetched (or, for the snapshot, built). */
@@ -84,9 +89,12 @@ export function parseFeedDocument(text: string | null, id: string): FeedDocument
     const raw = JSON.parse(text) as Partial<FeedDocument>
     if (!raw || raw.version !== FEED_DOCUMENT_VERSION || raw.id !== id) return null
     if (typeof raw.prefixes !== 'string') return null
+    const feed = safeBrowsingFeed(id)
+    if (!feed) return null
     return {
       version: FEED_DOCUMENT_VERSION,
       id,
+      threat: feed.threat,
       entries: typeof raw.entries === 'number' ? raw.entries : 0,
       updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : 0,
       etag: typeof raw.etag === 'string' ? raw.etag : null,
@@ -489,6 +497,7 @@ export class SafeBrowsingService {
       const doc: FeedDocument = {
         version: FEED_DOCUMENT_VERSION,
         id: rt.feed.id,
+        threat: rt.feed.threat,
         entries: table.size,
         updatedAt: Date.now(),
         etag: response.headers?.etag ?? null,
@@ -525,6 +534,7 @@ export class SafeBrowsingService {
     rt.doc = {
       version: FEED_DOCUMENT_VERSION,
       id,
+      threat: feed.threat,
       entries: table.size,
       updatedAt,
       etag: null,

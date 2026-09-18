@@ -49,6 +49,12 @@ object Profiles {
         }
     }
 
+    /** A container's profile (the default one for the default container), or null on a WebView without profiles. */
+    fun profile(containerId: String): Profile? {
+        if (!supported) return null
+        return runCatching { ProfileStore.getInstance().getProfile(nameFor(containerId)) }.getOrNull()
+    }
+
     /** The cookie jar of a container (the default one for the default container and old WebViews). */
     fun cookieManager(containerId: String): CookieManager {
         if (containerId == DEFAULT_CONTAINER || !supported) return CookieManager.getInstance()

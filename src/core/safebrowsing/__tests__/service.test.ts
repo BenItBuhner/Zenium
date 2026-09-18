@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Browser } from '../../browser'
 import type { NetHost, StoreIO } from '../../platform'
 import { DEFAULT_PRIVACY_SETTINGS, type PrivacySettings } from '../../../shared/privacy'
-import { SAFE_BROWSING_FEEDS } from '../feeds'
+import { SAFE_BROWSING_FEEDS, safeBrowsingFeed } from '../feeds'
 import { PrefixTable } from '../prefixes'
 import {
   FEED_DOCUMENT_VERSION,
@@ -69,6 +69,7 @@ function document(id: string, hosts: string[], extra: Partial<FeedDocument> = {}
   return {
     version: FEED_DOCUMENT_VERSION,
     id,
+    threat: safeBrowsingFeed(id)?.threat ?? 'malware',
     entries: table.size,
     updatedAt: 1_700_000_000_000,
     etag: null,

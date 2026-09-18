@@ -53,7 +53,11 @@ export class PrivacyService {
     this.started = true
     this.safeBrowsing.start()
     this.subscriptions.push(
-      this.safeBrowsing.onChange(() => this.browser.state.commitVolatile()),
+      // Tables, bypasses or schedule: the status card, and the bypasses ride in the flags.
+      this.safeBrowsing.onChange(() => {
+        this.refresh()
+        this.browser.state.commitVolatile()
+      }),
       this.browser.downloads.addVerdictProvider(this.safeBrowsing.verdictProvider()),
       this.browser.permissions.subscribe((change) => {
         if (change.permission !== HTTPS_ONLY_PERMISSION) return
@@ -104,6 +108,7 @@ export class PrivacyService {
     const dns = this.secureDns()
     return {
       safeBrowsing: s.safeBrowsingEnabled,
+      safeBrowsingBypassed: this.safeBrowsing.bypasses(),
       httpsOnly: s.httpsOnly,
       httpsOnlyAllowed: this.plaintextSites(),
       thirdPartyCookies: s.thirdPartyCookies,

@@ -13,6 +13,7 @@ const flags = (overrides: Partial<PrivacyFlags> = {}): PrivacyFlags => ({
   dnt: false,
   secureDnsMode: 'automatic',
   secureDnsServers: [],
+  safeBrowsingBypassed: [],
   ...overrides
 })
 

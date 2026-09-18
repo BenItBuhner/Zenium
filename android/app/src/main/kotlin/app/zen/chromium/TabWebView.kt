@@ -45,6 +45,8 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import app.zen.chromium.blocking.BlockingTab
 import app.zen.chromium.blocking.Decision
+import app.zen.chromium.blocking.SafeBrowsingHit
+import app.zen.chromium.privacy.PrivacyFlags
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -96,6 +98,9 @@ class TabWebView(
      * it (null without the feature).
      */
     private var documentScript: ScriptHandler? = null
+    /** The privacy signals' document-start script (`navigator.globalPrivacyControl`, `doNotTrack`) and its registration. */
+    private var signalScript: String? = null
+    private var signalScriptHandler: ScriptHandler? = null
     private var currentFlags: JSONObject = json("glanceEnabled" to true, "glanceTrigger" to "alt", "thirdParty" to null)
     private var pendingFlags = false
     private var zoomFactor = 1.0
@@ -138,6 +143,9 @@ class TabWebView(
 
     init {
         Profiles.apply(this, containerId)
+        // The container's profile carries the GPC / DNT request headers (a new container's profile
+        // was just created; the default one has them from the last policy push).
+        Profiles.profile(containerId)?.let(host.privacy::applySignalHeaders)
         settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -153,8 +161,6 @@ class TabWebView(
             // (setPopupsAllowed); a blocked call is reported by the page script and listed.
             javaScriptCanOpenWindowsAutomatically = false
             mediaPlaybackRequiresUserGesture = true
-            mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-            if (WebViewFeature.isFeatureSupported(WebViewFeature.SAFE_BROWSING_ENABLE)) safeBrowsingEnabled = true
             // Chrome's typographic defaults rather than WebView's: text a page leaves unstyled is
             // serif (Android maps Chrome's "Times New Roman" to it), and small text is not pushed
             // up to 8 px – Chrome has no floor for absolute sizes and 6 px for relative ones.
@@ -168,8 +174,6 @@ class TabWebView(
         // Dark theme for sites: only ever while the app itself is dark (WebView ties algorithmic
         // darkening to the theme), and never for pages that bring a dark scheme of their own.
         setDarkening(host.pageRules.darkenDefault)
-        // The jar of this tab's container: a WebView on another profile is not the default jar's.
-        Profiles.cookieManager(containerId).setAcceptThirdPartyCookies(this, true)
         setBackgroundColor(Color.WHITE)
         clipToOutline = true
         outlineProvider = object : ViewOutlineProvider() {
@@ -202,11 +206,44 @@ class TabWebView(
         setOnContextClickListener { onLongPress() }
         installPageScript()
         host.extensions?.attach(this)
+        applyPrivacy()
     }
 
     override fun destroy() {
         host.extensions?.detach(this)
         super.destroy()
+    }
+
+    // --- privacy (the policy the core pushes; see privacy/Privacy.kt) -----------------------------
+
+    /**
+     * Bring this page in line with the privacy policy: at creation, whenever the core pushes a
+     * new policy (`privacy.apply`), and – for the cookie switch, which depends on the top site –
+     * as the document changes. WebView's own Safe Browsing (Google's lists, its interstitial)
+     * follows the same switch as Zenium's feeds; `always` mode, whose subresource upgrades
+     * WebView cannot perform, blocks plaintext subresources of secure pages instead.
+     */
+    fun applyPrivacy() {
+        val flags = host.privacy.flags
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.SAFE_BROWSING_ENABLE)) settings.safeBrowsingEnabled = flags.safeBrowsing
+        settings.mixedContentMode =
+            if (flags.httpsOnly == "always") WebSettings.MIXED_CONTENT_NEVER_ALLOW else WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        applyCookiePolicy(flags, currentDocument)
+        val script = flags.navigatorScript()
+        if (script != signalScript) {
+            signalScriptHandler?.remove()
+            signalScriptHandler = null
+            signalScript = script
+            if (script != null && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                signalScriptHandler = WebViewCompat.addDocumentStartJavaScript(this, script, setOf("*"))
+            }
+        }
+    }
+
+    /** Third-party cookies for the document at `documentUrl` (the exception list names top sites). */
+    private fun applyCookiePolicy(flags: PrivacyFlags, documentUrl: String?) {
+        // The jar of this tab's container: a WebView on another profile is not the default jar's.
+        Profiles.cookieManager(containerId).setAcceptThirdPartyCookies(this, flags.acceptsThirdPartyCookies(containerId, documentUrl))
     }
 
     // --- placement ------------------------------------------------------------------------------
@@ -679,6 +716,19 @@ class TabWebView(
         rememberCurrentPage()
         if (url.startsWith("http", ignoreCase = true)) currentDocument = url
         switchDesktopModeFor(url)
+        if (url.startsWith("http", ignoreCase = true)) {
+            val flags = host.privacy.flags
+            applyCookiePolicy(flags, url)
+            // A WebView that cannot attach the GPC / DNT headers to every request gets them on
+            // the navigations the browser starts, at least.
+            if (!host.privacy.headersSupported) {
+                val headers = flags.signalHeaders()
+                if (headers.isNotEmpty()) {
+                    super.loadUrl(url, HashMap(headers))
+                    return
+                }
+            }
+        }
         super.loadUrl(url)
     }
 
@@ -904,6 +954,29 @@ class TabWebView(
         Handler(Looper.getMainLooper()).post { loadUrl(url) }
     }
 
+    /**
+     * Safe Browsing stopped a navigation: the core hears why first (`unsafe`), then the failed
+     * load it keys its warning page on, in that order on the one bridge.
+     */
+    override fun onDocumentUnsafe(url: String, hit: SafeBrowsingHit) {
+        Handler(Looper.getMainLooper()).post {
+            loading = false
+            host.viewEvent(tabId, "unsafe", json("url" to url, "hit" to hit.toJson()))
+            host.viewEvent(
+                tabId, "failLoad",
+                json("code" to BLOCKED_BY_CLIENT, "description" to "ERR_BLOCKED_BY_CLIENT", "url" to url)
+            )
+        }
+    }
+
+    /** HTTPS-only mode upgraded a navigation: the core remembers `from` for the fallback, then `to` loads. */
+    override fun onDocumentUpgraded(from: String, to: String) {
+        Handler(Looper.getMainLooper()).post {
+            host.viewEvent(tabId, "upgraded", json("from" to from, "to" to to))
+            loadUrl(to)
+        }
+    }
+
     // --- WebViewClient ------------------------------------------------------------------------
 
     private inner class Client : WebViewClient() {
@@ -945,29 +1018,36 @@ class TabWebView(
 
         /**
          * The engine's word on a main-frame navigation: true when it took the navigation over
-         * (onto the Zenium blocked page, or to the redirect target), false when the page may go.
-         * An extension's web-auth flow running in this tab ends on its way back first: that
-         * navigation is the flow's result and is never loaded.
+         * (onto the Zenium blocked or warning page, or to the redirect target), false when the
+         * page may go. An extension's web-auth flow running in this tab ends on its way back
+         * first: that navigation is the flow's result and is never loaded. Then Safe Browsing
+         * speaks, then the rule sets.
          */
         private fun interceptNavigation(request: WebResourceRequest): Boolean {
             if (!request.isForMainFrame) return false
             val target = request.url.toString()
             if (host.extensions?.interceptNavigation(this@TabWebView, target) == true) return true
+            host.blocking.guardNavigation(target)?.let { hit ->
+                onDocumentUnsafe(target, hit)
+                return true
+            }
             val decision = host.blocking.decideNavigation(this@TabWebView, target)
             when (decision.action) {
                 Decision.Action.BLOCK -> {
                     onDocumentBlocked(target)
                     return true
                 }
-                Decision.Action.REDIRECT, Decision.Action.UPGRADE -> {
+                Decision.Action.REDIRECT -> {
                     decision.redirectUrl?.let { loadUrl(it) }
                     return true
                 }
+                Decision.Action.UPGRADE -> if (host.blocking.applyUpgrade(this@TabWebView, target, decision)) return true
                 Decision.Action.ALLOW -> {}
             }
             // A link (or script) is about to take the page elsewhere: the last moment it is whole
             // on screen, and the best one for its back preview.
             if (!request.isRedirect) rememberCurrentPage()
+            applyCookiePolicy(host.privacy.flags, target)
             currentDocument = target
             return false
         }
@@ -987,6 +1067,9 @@ class TabWebView(
             awaitingCommit = true
             failedUrl = null
             currentDocument = url
+            applyCookiePolicy(host.privacy.flags, url)
+            // Without document-start scripts the signals arrive late, but they arrive.
+            if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) signalScript?.let { evaluateJavascript(it, null) }
             loading = true
             domReady.documentStarted()
             // Whatever the user agent is now, this page was requested with it.

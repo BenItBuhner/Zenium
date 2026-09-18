@@ -16,7 +16,8 @@ export interface PrivacySignals {
  * Put the enabled signals on `Navigator.prototype` of the world this runs in. Self-contained on
  * purpose: the desktop preload serialises the function into the page's main world
  * (`contextBridge.executeInMainWorld`), so nothing in it may refer to anything outside it. The
- * Android host's document-start script (`privacy/Privacy.kt`) carries the same body.
+ * Android host's document-start script (`PrivacyFlags.navigatorScript` in `privacy/PrivacyFlags.kt`)
+ * carries the same body.
  */
 export function installNavigatorSignals(gpc: boolean, dnt: boolean): void {
   const define = (name: string, value: unknown): void => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../../shared/types'
-import type { PrivacyFlags } from '../../../shared/privacy'
+import type { PrivacyFlags, PrivacySettings } from '../../../shared/privacy'
 import { HTTPS_ONLY_PERMISSION } from '../../../shared/privacy'
 import { BLANK_URL } from '../../../shared/url'
 import { Browser } from '../../browser'
@@ -152,6 +152,13 @@ function lastLoad(view: Recorded): URL {
   return new URL(view.loads[view.loads.length - 1])
 }
 
+/** Change the privacy settings the way the settings page does (`settings.update`). */
+function setPrivacy(f: Fixture, patch: Partial<PrivacySettings>): void {
+  f.browser.handleCommand(f.browser.focusedWindow(), 'settings.update', {
+    privacy: { ...f.browser.state.settings.privacy, ...patch }
+  })
+}
+
 function httpsOnlySet(f: Fixture): { enabled: boolean; excluded: string[] } {
   const summary = f.browser.blocking.engine
     .listRuleSets()
@@ -178,22 +185,17 @@ describe('PrivacyService: the policy the hosts get', () => {
       secureDnsServers: []
     })
 
-    f.browser.updateSettings({ privacy: { ...f.browser.state.settings.privacy } })
+    setPrivacy(f, {})
     expect(f.applied).toHaveLength(1)
 
-    f.browser.updateSettings({
-      privacy: { ...f.browser.state.settings.privacy, gpc: true, dnt: true }
-    })
+    setPrivacy(f, { gpc: true, dnt: true })
     expect(f.applied).toHaveLength(2)
     expect(f.applied[1]).toMatchObject({ gpc: true, dnt: true })
   })
 
   it('resolves the secure DNS provider into templates and falls back to automatic without one', () => {
     const f = fixture()
-    const base = f.browser.state.settings.privacy
-    f.browser.updateSettings({
-      privacy: { ...base, secureDnsMode: 'provider', secureDnsProvider: 'quad9' }
-    })
+    setPrivacy(f, { secureDnsMode: 'provider', secureDnsProvider: 'quad9' })
     expect(f.applied[f.applied.length - 1]).toMatchObject({
       secureDnsMode: 'provider',
       secureDnsServers: ['https://dns.quad9.net/dns-query']
@@ -204,13 +206,7 @@ describe('PrivacyService: the policy the hosts get', () => {
       servers: ['https://dns.quad9.net/dns-query']
     })
 
-    f.browser.updateSettings({
-      privacy: {
-        ...f.browser.state.settings.privacy,
-        secureDnsProvider: 'custom',
-        secureDnsCustomUrl: 'not a template'
-      }
-    })
+    setPrivacy(f, { secureDnsProvider: 'custom', secureDnsCustomUrl: 'not a template' })
     expect(f.applied[f.applied.length - 1]).toMatchObject({
       secureDnsMode: 'automatic',
       secureDnsServers: []
@@ -238,9 +234,7 @@ describe('PrivacyService: HTTPS-only mode', () => {
       }).action
     ).toBe('allow')
 
-    f.browser.updateSettings({
-      privacy: { ...f.browser.state.settings.privacy, httpsOnly: 'always' }
-    })
+    setPrivacy(f, { httpsOnly: 'always' })
     expect(
       f.browser.blocking.engine.decide({
         url: 'http://cdn.example.com/a.js',
@@ -250,7 +244,7 @@ describe('PrivacyService: HTTPS-only mode', () => {
       })
     ).toMatchObject({ action: 'upgrade', redirectUrl: 'https://cdn.example.com/a.js' })
 
-    f.browser.updateSettings({ privacy: { ...f.browser.state.settings.privacy, httpsOnly: 'off' } })
+    setPrivacy(f, { httpsOnly: 'off' })
     expect(httpsOnlySet(f).enabled).toBe(false)
     expect(
       f.browser.blocking.engine.decide({
@@ -350,7 +344,7 @@ describe('PrivacyService: HTTPS-only mode', () => {
 
   it('falls back to plaintext silently with the mode off, and shows a plain error otherwise', () => {
     const f = fixture()
-    f.browser.updateSettings({ privacy: { ...f.browser.state.settings.privacy, httpsOnly: 'off' } })
+    setPrivacy(f, { httpsOnly: 'off' })
     const view = open(f, 'https://start.example/')
     view.commit('https://start.example/')
     view.events.onUpgraded('http://old.example/', 'https://old.example/')
@@ -437,6 +431,8 @@ describe('PrivacyService: Safe Browsing interstitial', () => {
     expect(f.browser.privacy.safeBrowsing.isBypassed('http://evil.example/other')).toBe(true)
     expect(f.browser.privacy.safeBrowsing.lookup('http://evil.example/other')).toBeNull()
     expect(view.loads[view.loads.length - 1]).toBe('http://evil.example/payload')
+    // The Android guard learns of the bypass from the flags, pushed before the reload.
+    expect(f.applied[f.applied.length - 1].safeBrowsingBypassed).toEqual(['http://evil.example'])
   })
 
   it('leaves for a blank page when the tab has no history to go back to', () => {
@@ -459,9 +455,7 @@ describe('PrivacyService: Safe Browsing interstitial', () => {
   it('reports Safe Browsing in the state and reflects the switch', () => {
     const f = fixture()
     expect(f.browser.privacy.status().safeBrowsing.enabled).toBe(true)
-    f.browser.updateSettings({
-      privacy: { ...f.browser.state.settings.privacy, safeBrowsingEnabled: false }
-    })
+    setPrivacy(f, { safeBrowsingEnabled: false })
     expect(f.browser.privacy.status().safeBrowsing.enabled).toBe(false)
     expect(f.applied[f.applied.length - 1].safeBrowsing).toBe(false)
     f.browser.privacy.safeBrowsing.setTable('urlhaus', PrefixTable.fromHosts(['evil.example']), 1)

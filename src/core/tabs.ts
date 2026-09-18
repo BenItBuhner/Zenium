@@ -598,7 +598,9 @@ export class TabManager {
 
   /**
    * "Back to safety": leave an error page for the last entry of the tab's history that is not
-   * the failed page itself (nor another error page), or for a blank tab when there is none.
+   * the failed page itself (nor another error page), or for a blank tab when there is none. A
+   * host whose snapshot is the current entry alone (Android) goes back one step when it can:
+   * the refused navigation never committed there, so the step lands on the page before it.
    */
   leaveErrorPage(tabId: string): void {
     const view = this.view(tabId)
@@ -610,6 +612,11 @@ export class TabManager {
       if (!url || url === failed || url.startsWith(ERROR_URL_PREFIX)) continue
       this.thawForNavigation(tabId)
       view.goToIndex(i)
+      return
+    }
+    if (entries.length <= 1 && view.canGoBack()) {
+      this.thawForNavigation(tabId)
+      view.goBack()
       return
     }
     this.navigate(tabId, BLANK_URL)
