@@ -232,6 +232,7 @@ export class ZenWindow {
   /** Maximised / fullscreen / focus flags changed. */
   onWindowStateChanged(): void {
     if (!this.alive) return
+    this.browser.fullscreen.onWindowStateChanged(this)
     this.browser.state.commitVolatile()
   }
 

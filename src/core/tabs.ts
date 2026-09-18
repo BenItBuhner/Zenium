@@ -525,6 +525,7 @@ export class TabManager {
         win.htmlFullscreenTabId = tabId
         state.commitVolatile()
         win.relayout()
+        this.browser.fullscreen.onHtmlFullscreen(tabId, true)
       },
       onLeaveHtmlFullscreen: () => {
         for (const w of this.browser.allWindows()) {
@@ -534,6 +535,7 @@ export class TabManager {
           }
         }
         state.commitVolatile()
+        this.browser.fullscreen.onHtmlFullscreen(tabId, false)
       },
       onDevtoolsOpened: () => {
         state.devtoolsOpenFor.add(tabId)
@@ -861,6 +863,7 @@ export class TabManager {
     this.browser.permissions.onTabGone(tabId)
     this.browser.pageDialogs.cancelForTab(tabId)
     this.browser.autofill.onTabGone(tabId)
+    this.browser.fullscreen.onTabGone(tabId)
     if (this.owners.has(tabId)) view.detach()
     this.owners.delete(tabId)
     if (!view.isDestroyed()) {

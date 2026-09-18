@@ -1,3 +1,5 @@
+import type { PageHint } from './fullscreenHint'
+import { installHint } from './pageHint'
 import { getDomain } from './url'
 import {
   INTERSTITIAL_ACTIONS,
@@ -12,6 +14,7 @@ import {
  *  - Pinned/Essential tabs: plain clicks on third-party links open in their own tab.
  *  - Media: reports play/pause so hosts without native audio events can show the media player.
  *  - Boosts "zap element": pick an element to hide it on this site for good.
+ *  - Fullscreen hints: the browser's "is now full screen" toast, drawn over the page.
  *
  * The transport is injected: Electron's preload uses `ipcRenderer`, Android a `WebMessageListener`.
  * No page-visible globals are created by this module itself.
@@ -49,6 +52,11 @@ export interface PageScriptTransport {
   onFlags(listener: (flags: PageScriptFlags) => void): void
   /** Boost zap mode toggled by the browser. */
   onZap?(listener: (on: boolean) => void): void
+  /**
+   * A fullscreen hint to draw over the page (null takes the current one down). Hosts whose
+   * chrome can stand over a fullscreen page draw it themselves and leave this out.
+   */
+  onHint?(listener: (hint: PageHint | null) => void): void
   /** Hosts without native audio-state events ask for media tracking. */
   trackMedia?: boolean
   /**
@@ -117,6 +125,7 @@ export function installPageScript(transport: PageScriptTransport): void {
   installActivationReporter(transport)
   if (transport.reportBlockedPopups) installPopupObserver(transport)
   installInterstitialRelay(transport)
+  if (transport.onHint) installHint(transport.onHint.bind(transport))
 
   window.addEventListener(
     'click',

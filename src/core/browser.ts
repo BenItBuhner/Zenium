@@ -54,6 +54,7 @@ import { SiteInfoService } from './siteInfo'
 import { TranslateService } from './translate/service'
 import { PageControls } from './pageControls'
 import { FindMemory } from './find'
+import { FullscreenService } from './fullscreen'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
@@ -192,6 +193,8 @@ export class Browser {
   readonly pageControls: PageControls
   /** The last find-in-page query per tab and profile-wide (what the bar reopens with). */
   readonly find = new FindMemory()
+  /** Fullscreen hints (F11, a page's element) and the Esc hold that leaves the window's fullscreen. */
+  readonly fullscreen: FullscreenService
   readonly windows = new Map<string, ZenWindow>()
   /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
@@ -258,6 +261,7 @@ export class Browser {
     this.pageDialogs = new PageDialogService(this)
     this.windowPrompts = new WindowPrompts(this)
     this.pageControls = new PageControls(this)
+    this.fullscreen = new FullscreenService(this)
     this.tabs = new TabManager(this)
     this.tabDrag = new TabDragController(this)
     this.session = new SessionService(this)
@@ -578,6 +582,7 @@ export class Browser {
   onWindowClosed(win: ZenWindow): void {
     this.windows.delete(win.id)
     this.tabDrag.onWindowClosed(win)
+    this.fullscreen.onWindowClosed(win)
     for (const w of this.allWindows()) w.selection.delete(win.localSpace?.id ?? '')
     if (win.isPrivate) this.endPrivateSessionIfOver()
     if (this.allWindows().length === 0) {
@@ -754,6 +759,7 @@ export class Browser {
     this.extensions.closePopup()
     this.translate.onNavigated(tabId)
     this.autofill.onNavigated(tabId)
+    this.fullscreen.onNavigated(tabId)
   }
 
   updateMedia(): void {
