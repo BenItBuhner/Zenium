@@ -1,5 +1,5 @@
 import { run } from '@renderer/lib/api'
-import { dispatchBackEvent } from '@renderer/lib/back'
+import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { dismissOverview, openOverview } from '@renderer/lib/gestures/stage'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
 import { Download, Smartphone, Star } from 'lucide-react'
@@ -26,6 +26,11 @@ import { parsePreviewSpec, type PreviewState, type PreviewStep } from './preview
 
 /** A pause between steps for a sheet to mount, slide in and settle before the next tap. */
 const STEP_SETTLE_MS = 450
+
+/** The back surfaces a page's sheets register (`settings-options:<row>`, `settings-confirm:<row>`, …). */
+const SHEET_SURFACE = /^settings-(options|field|confirm|form|item):/
+/** How long a dismissed sheet may take to leave (its motion) before the reset gives up on it. */
+const SHEET_LEAVE_MS = 1500
 
 /**
  * Chrome states selectable from outside the preview host (`npm run dev:android`), so screenshots
@@ -62,84 +67,112 @@ export function installPreviewStates(): void {
 
 function apply(spec: string): void {
   whenReady(() => {
-    const state = browserStore.get().state
-    const tab = state ? activeTab(state) : null
-    const target = asPageState(parsePreviewSpec(spec))
-
     // Every spec starts from idle so states do not stack: a pull in flight is put back at once
     // (a `cancel` would spring home, and the next pull would catch that spring part-way); the
-    // pill's editor and the overview a previous state's steps opened go too.
+    // pill's editor, the overview and the page's sheets a previous state's steps opened go too.
     closeOverlay()
     closeMenu()
     closeUrlbar()
     dismissOverview()
     uiStore.set({ findOpen: false, findTabId: null, zoomTabId: null })
     abortPull()
+    const state = browserStore.get().state
+    const tab = state ? activeTab(state) : null
     clearMessages(tab?.loading ? tab.id : null)
-
-    if (target.kind === 'page') {
-      // The page tab is the state: reached once the active tab is a page tab, then a frame for the
-      // page (and its drill-in's slide) to settle before the search is typed or a row shown.
-      whenActiveTabIs(isInternalPageUrl, () => {
-        setTimeout(() => {
-          // The landing keeps its query between states unless it is retyped: an empty one clears it.
-          type('input[aria-label="Find in Settings"]', target.search ?? '')
-          requestAnimationFrame(() => {
-            // The page keeps where a previous state scrolled it; every state starts at the top.
-            for (const el of document.querySelectorAll<HTMLElement>('[data-page] *')) {
-              if (el.scrollTop > 0) el.scrollTop = 0
-            }
-            show(target.show)
-            steps(target.then ?? [], () => done(spec))
-          })
-        }, 300)
-      })
-      run('page.open', { id: target.page, section: target.section ?? null })
-    } else if (target.kind === 'overlay') {
-      void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
-        () => {
-          if (target.show) requestAnimationFrame(() => show(target.show))
-          done(spec)
-        }
-      )
-    } else if (target.kind === 'menu') {
-      // The core answers with `menu.show`; the state is reached once the descriptor is in the store.
-      const unsubscribe = uiStore.subscribe(() => {
-        if (!uiStore.get().menu) return
-        unsubscribe()
-        // The sheet mounts on the next render; give it a frame before scrolling an item into view.
-        requestAnimationFrame(() =>
-          requestAnimationFrame(() => {
-            show(target.show)
-            done(spec)
-          })
-        )
-      })
-      run('app.menu', {})
-    } else if (target.kind === 'zoom' && tab) {
-      if (target.factor !== null) run('tab.setZoomFactor', { tabId: tab.id, factor: target.factor })
-      openZoom(tab.id)
-      requestAnimationFrame(() => done(spec))
-    } else if (target.kind === 'find' && tab) {
-      uiStore.set({ findOpen: true, findTabId: tab.id })
-      // The bar mounts on the next render; type into it the way a keyboard would.
-      requestAnimationFrame(() => {
-        if (target.text) type('input[aria-label="Find in page"]', target.text)
-        done(spec)
-      })
-    } else if (target.kind === 'pull' && tab) {
-      pull(tab.id, target.progress, target.released)
-      requestAnimationFrame(() => done(spec))
-    } else if (target.kind === 'error' && tab) {
-      failLoad(tab.id, target.code, target.url ?? tab.url)
-      requestAnimationFrame(() => done(spec))
-    } else if (target.kind === 'messages') {
-      showMessages(target, tab?.id ?? null)
-      done(spec)
-    } else {
-      done(spec)
-    }
+    closeSheets(() => reach(spec))
   })
+}
+
+/**
+ * Dismiss the page's open sheets, top first, the way a back would (a sheet leaves with its
+ * motion and its surface goes with it), then `then`. Bounded: a sheet that will not leave is
+ * not waited on for ever.
+ */
+function closeSheets(then: () => void, deadline = performance.now() + SHEET_LEAVE_MS): void {
+  const top = topBackSurface()
+  if (!top || !SHEET_SURFACE.test(top.name) || performance.now() > deadline) {
+    then()
+    return
+  }
+  dispatchBackEvent('commit')
+  const gone = (): void => {
+    if (topBackSurface() === top && performance.now() <= deadline) {
+      setTimeout(gone, 50)
+      return
+    }
+    closeSheets(then, deadline)
+  }
+  setTimeout(gone, 50)
+}
+
+/** Take the chrome, now idle, to the state `spec` names. */
+function reach(spec: string): void {
+  const state = browserStore.get().state
+  const tab = state ? activeTab(state) : null
+  const target = asPageState(parsePreviewSpec(spec))
+
+  if (target.kind === 'page') {
+    // The page tab is the state: reached once the active tab is a page tab, then a frame for the
+    // page (and its drill-in's slide) to settle before the search is typed or a row shown.
+    whenActiveTabIs(isInternalPageUrl, () => {
+      setTimeout(() => {
+        // The landing keeps its query between states unless it is retyped: an empty one clears it.
+        type('input[aria-label="Find in Settings"]', target.search ?? '')
+        requestAnimationFrame(() => {
+          // The page keeps where a previous state scrolled it; every state starts at the top.
+          for (const el of document.querySelectorAll<HTMLElement>('[data-page] *')) {
+            if (el.scrollTop > 0) el.scrollTop = 0
+          }
+          show(target.show)
+          steps(target.then ?? [], () => done(spec))
+        })
+      }, 300)
+    })
+    run('page.open', { id: target.page, section: target.section ?? null })
+  } else if (target.kind === 'overlay') {
+    void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
+      () => {
+        if (target.show) requestAnimationFrame(() => show(target.show))
+        done(spec)
+      }
+    )
+  } else if (target.kind === 'menu') {
+    // The core answers with `menu.show`; the state is reached once the descriptor is in the store.
+    const unsubscribe = uiStore.subscribe(() => {
+      if (!uiStore.get().menu) return
+      unsubscribe()
+      // The sheet mounts on the next render; give it a frame before scrolling an item into view.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          show(target.show)
+          done(spec)
+        })
+      )
+    })
+    run('app.menu', {})
+  } else if (target.kind === 'zoom' && tab) {
+    if (target.factor !== null) run('tab.setZoomFactor', { tabId: tab.id, factor: target.factor })
+    openZoom(tab.id)
+    requestAnimationFrame(() => done(spec))
+  } else if (target.kind === 'find' && tab) {
+    uiStore.set({ findOpen: true, findTabId: tab.id })
+    // The bar mounts on the next render; type into it the way a keyboard would.
+    requestAnimationFrame(() => {
+      if (target.text) type('input[aria-label="Find in page"]', target.text)
+      done(spec)
+    })
+  } else if (target.kind === 'pull' && tab) {
+    pull(tab.id, target.progress, target.released)
+    requestAnimationFrame(() => done(spec))
+  } else if (target.kind === 'error' && tab) {
+    failLoad(tab.id, target.code, target.url ?? tab.url)
+    requestAnimationFrame(() => done(spec))
+  } else if (target.kind === 'messages') {
+    showMessages(target, tab?.id ?? null)
+    done(spec)
+  } else {
+    done(spec)
+  }
 }
 
 /**
