@@ -3429,8 +3429,9 @@
   /*
    * Type. The wordmark is the one display size in the flow (34/600, tracked in a little), above
    * §4's scale: the welcome step has nothing else to carry. The step title is the page title
-   * 22/600 at 28 (§9.26), a group heading the sub-heading 15/600 at 20 (§9.27), body 15 at 20,
-   * small 13 at 20 (§9.2: `--v2-line-small`, no stand-in); deemphasised is 69% of the ink.
+   * 22/600 on `--v2-line-title` (§9.26), a group heading the sub-heading 15/600 at 20 (§9.27),
+   * body 15 at 20, small 13 at 20 (§9.2: `--v2-line-small`, no stand-in); deemphasised is 69% of
+   * the ink.
    */
   .zen-firstrun-wordmark {
     font-size: 34px;
@@ -3441,7 +3442,7 @@
   .zen-firstrun-title {
     font-size: var(--v2-font-title);
     font-weight: var(--v2-weight-heading);
-    line-height: 28px;
+    line-height: var(--v2-line-title);
   }
   .zen-firstrun-heading {
     font-size: var(--v2-font-body);
