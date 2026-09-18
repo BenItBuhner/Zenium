@@ -1,28 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { ExtensionPromptRequest } from '@shared/types'
-import type { ExtensionPopupState } from '@renderer/lib/ui'
-import { extensionChromeAloneOverContent, type ScrimInput } from '../scrim'
+import { uiStore, type ExtensionPopupState, type UiState } from '@renderer/lib/ui'
+import { extensionChromeAloneOverContent } from '../scrim'
 
-const quiet: ScrimInput = {
-  overlay: 'none',
-  urlbar: { open: false, mode: 'new-tab', tabId: null, initialText: undefined, attached: false },
-  drag: null,
-  drawerOpen: false,
-  menu: null,
-  siteInfoOpen: false,
-  externalProtocol: null,
-  barEditorOpen: false,
-  tabsMenu: null,
-  securityPromptOpen: false,
-  stageActive: false,
-  starDialog: null,
-  bookmarkEdit: null,
-  bookmarkAllTabs: null,
-  barMenuOpen: false,
-  extensionPrompts: [],
-  extensionPopup: null,
-  floatingChrome: 0
-}
+/** The store's resting state: nothing open. */
+const quiet: UiState = uiStore.get()
 
 const prompt: ExtensionPromptRequest = {
   requestId: 'p1',
@@ -63,7 +45,7 @@ describe('extensionChromeAloneOverContent', () => {
   })
 
   it('defers to the shipped overlays when one of them is up as well', () => {
-    const withPanel: ScrimInput = { ...quiet, floatingChrome: 1 }
+    const withPanel: UiState = { ...quiet, floatingChrome: 1 }
     const alone = extensionChromeAloneOverContent
     expect(alone({ ...withPanel, overlay: 'settings' })).toBe(false)
     expect(alone({ ...withPanel, drawerOpen: true })).toBe(false)
@@ -73,6 +55,7 @@ describe('extensionChromeAloneOverContent', () => {
     expect(alone({ ...withPanel, urlbar: { ...quiet.urlbar, open: true } })).toBe(false)
     expect(alone({ ...withPanel, barEditorOpen: true })).toBe(false)
     expect(alone({ ...withPanel, securityPromptOpen: true })).toBe(false)
+    expect(alone({ ...withPanel, permissionPromptOpen: true })).toBe(false)
     expect(alone({ ...withPanel, barMenuOpen: true })).toBe(false)
     expect(alone({ ...withPanel, bookmarkAllTabs: { tabIds: [], defaultTitle: '' } })).toBe(false)
     expect(alone({ ...withPanel, tabsMenu: { x: 0, y: 0, width: 44, height: 44 } })).toBe(false)
