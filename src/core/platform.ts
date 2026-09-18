@@ -649,6 +649,8 @@ export interface ExtensionHost {
   remove(id: string): Promise<void>
   setEnabled(id: string, enabled: boolean, win?: ZenWindow): Promise<void>
   setPinned(id: string, pinned: boolean): void
+  /** Chrome's "Allow in Incognito": whether the extension's request rules reach private windows. */
+  setAllowPrivate(id: string, allowed: boolean): void
   reload(id: string): Promise<void>
   checkForUpdates(win?: ZenWindow): Promise<void>
   update(id: string, win?: ZenWindow): Promise<void>

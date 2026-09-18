@@ -124,6 +124,90 @@ describe('createDnrSink', () => {
     expect(ENGINE_DNR_PRIORITY).toBe(RULE_SET_PRIORITY.dnr)
     expect(ENGINE_DNR_BAND_SIZE).toBe(DNR_BAND_SIZE)
   })
+
+  it('scopes an extension’s sets to its sessions: a private window’s request stays untouched', async () => {
+    const engine = new RuleEngine()
+    // Zenium's own list blocks trackers everywhere, private windows included.
+    engine.setRuleSet({
+      id: 'filter-list:easylist',
+      source: 'filter-list',
+      priority: RULE_SET_PRIORITY.filterList,
+      enabled: true,
+      rules: [{ id: 1, action: { type: 'block' }, condition: { urlFilter: '||tracker.example^' } }]
+    })
+    const partitions = new Map<string, string[]>([[EXTENSION_ID, ['default']]])
+    const sink = createDnrSink(engine, undefined, {
+      partitionsOf: (id) => partitions.get(id) ?? []
+    })
+    const translator = new DnrTranslator(sink)
+    const rules = compileAll([rule(1, { type: 'block' }, { urlFilter: '||ads.example.com^' })])
+    await translator.sync(extension(EXTENSION_ID, rules))
+    const setId = engineSetId(EXTENSION_ID, { kind: 'static', rulesetId: 'ruleset_1' })
+    expect(engine.summary(setId)?.partitions).toEqual(['default'])
+
+    const normal = request('https://ads.example.com/a.js', { partition: 'default' })
+    const secret = request('https://ads.example.com/a.js', {
+      partition: 'private',
+      isPrivate: true
+    })
+    const tracker = request('https://tracker.example/t.js', {
+      partition: 'private',
+      isPrivate: true
+    })
+    expect(engine.decide(normal)).toMatchObject({ action: 'block', matched: { setId } })
+    expect(engine.decide(secret).action).toBe('allow')
+    expect(engine.decide(secret).matched).toBeUndefined()
+    expect(engine.decide(tracker)).toMatchObject({
+      action: 'block',
+      matched: { setId: 'filter-list:easylist' }
+    })
+
+    // The extension got loaded into a second container: rescope follows without a re-sync.
+    partitions.set(EXTENSION_ID, ['default', 'work'])
+    sink.rescope(EXTENSION_ID)
+    expect(engine.summary(setId)?.partitions).toEqual(['default', 'work'])
+    expect(
+      engine.decide(request('https://ads.example.com/a.js', { partition: 'work' })).action
+    ).toBe('block')
+    expect(engine.decide(secret).action).toBe('allow')
+
+    // "Allow in private windows": the private partition joins the scope; the reverse leaves it.
+    partitions.set(EXTENSION_ID, ['default', 'work', 'private'])
+    sink.rescope(EXTENSION_ID)
+    expect(engine.decide(secret)).toMatchObject({ action: 'block', matched: { setId } })
+    partitions.set(EXTENSION_ID, ['default', 'work'])
+    sink.rescope(EXTENSION_ID)
+    expect(engine.decide(secret).action).toBe('allow')
+
+    // Rescoping another extension, or one with no sets, touches nothing.
+    const before = engine.listRuleSets()
+    sink.rescope(OTHER_ID)
+    expect(engine.listRuleSets()).toEqual(before)
+    // A later sync (rules changed) keeps the current scope.
+    const more = compileAll([
+      rule(1, { type: 'block' }, { urlFilter: '||ads.example.com^' }),
+      rule(2, { type: 'block' }, { urlFilter: '||promo.example^' })
+    ])
+    await translator.sync(extension(EXTENSION_ID, more))
+    expect(engine.summary(setId)?.partitions).toEqual(['default', 'work'])
+    expect(engine.summary(setId)?.ruleCount).toBe(2)
+  })
+
+  it('leaves sets unscoped without a scope, as the tests above rely on', async () => {
+    const engine = new RuleEngine()
+    const sink = createDnrSink(engine)
+    const translator = new DnrTranslator(sink)
+    await translator.sync(
+      extension(
+        EXTENSION_ID,
+        compileAll([rule(1, { type: 'block' }, { urlFilter: '||ads.example.com^' })])
+      )
+    )
+    const setId = engineSetId(EXTENSION_ID, { kind: 'static', rulesetId: 'ruleset_1' })
+    expect(engine.summary(setId)?.partitions).toBeUndefined()
+    sink.rescope(EXTENSION_ID)
+    expect(engine.summary(setId)?.partitions).toBeUndefined()
+  })
 })
 
 describe('InMemoryRuleSink', () => {

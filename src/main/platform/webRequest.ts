@@ -183,6 +183,8 @@ export interface WebRequestDetails extends WebRequestBase {
   redirectUrl?: string
   /** `onErrorOccurred`. */
   error?: string
+  /** `onBeforeRequest`: the request body's chunks, as Electron reports them. */
+  uploadData?: readonly Electron.UploadData[]
 }
 
 /** What a blocking listener may answer (Chromium's `BlockingResponse`). */
@@ -376,7 +378,9 @@ export class WebRequestMultiplexer {
         callback({ redirectURL: result.redirectURL })
         return
       }
-      this.dispatch('onBeforeRequest', request, {}, (answers) => {
+      const body: Partial<WebRequestDetails> = {}
+      if (details.uploadData) body.uploadData = details.uploadData
+      this.dispatch('onBeforeRequest', request, body, (answers) => {
         const composed = composeBeforeRequest(details.url, answers, (registrant) =>
           this.conflict('onBeforeRequest', registrant, details.url)
         )
@@ -711,6 +715,7 @@ function detailsFor(
   if (extra.ip !== undefined) details.ip = extra.ip
   if (extra.redirectUrl !== undefined) details.redirectUrl = extra.redirectUrl
   if (extra.error !== undefined) details.error = extra.error
+  if (extra.uploadData !== undefined) details.uploadData = extra.uploadData
   return details
 }
 

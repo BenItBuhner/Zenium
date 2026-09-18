@@ -7,7 +7,7 @@ import {
   type TestMatchRequestDetails
 } from '../../../core/extensions/dnr/api'
 import type { RequestMethod, ResourceType } from '../../../core/extensions/dnr/rules'
-import { routeDecision, type RuleSink } from '../../../core/extensions/dnr/sink'
+import { routeDecision } from '../../../core/extensions/dnr/sink'
 import {
   DnrState,
   createGlobalStaticRulePool,
@@ -27,6 +27,7 @@ import type { WebRequestBase } from '../blocking'
 import type { ActionApi } from './action'
 import type { ActiveTabGrants } from './activeTab'
 import { createDnrFileIO, dnrStateFile } from './dnrIo'
+import type { ScopedRuleSink } from './dnrSink'
 import {
   ApiError,
   isRecord,
@@ -51,7 +52,8 @@ const DNR_PERMISSIONS = ['declarativeNetRequest', 'declarativeNetRequestWithHost
  * `DnrTranslator` keeping the rule sink (the request-blocking engine, see `dnrSink.ts`) in step
  * with every state change; `decided` takes the engine's decisions back into the matched-rule log,
  * the action counts and `onRuleMatchedDebug`. Manifest rulesets marked `enabled` are active from
- * the first load.
+ * the first load. The sink scopes every set to the sessions the extension is loaded into;
+ * `sessionsChanged` keeps that scope current.
  */
 export class DeclarativeNetRequestHostApi {
   private readonly entries = new Map<string, Entry>()
@@ -62,7 +64,7 @@ export class DeclarativeNetRequestHostApi {
 
   constructor(
     private readonly host: ApiHost,
-    readonly sink: RuleSink,
+    readonly sink: ScopedRuleSink,
     private readonly action: ActionApi,
     private readonly activeTab: ActiveTabGrants,
     private readonly stateDir: string
@@ -158,6 +160,15 @@ export class DeclarativeNetRequestHostApi {
   /** The install order changed (Chrome ranks newer extensions' rules above older ones'). */
   installOrderChanged(): void {
     this.translator.setInstallOrder(this.installOrder()).catch(() => undefined)
+  }
+
+  /**
+   * The sessions an extension is loaded into changed (a container came or went, the user
+   * allowed it in private windows): its sets in the engine follow.
+   */
+  sessionsChanged(extensionId: string): void {
+    if (!this.entries.has(extensionId)) return
+    this.sink.rescope(extensionId)
   }
 
   // ---------------------------------------------------------------------------

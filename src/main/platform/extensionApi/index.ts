@@ -8,11 +8,13 @@ import {
   type IpcMainServiceWorkerEvent,
   type IpcMainServiceWorkerInvokeEvent,
   type ServiceWorkerMain,
-  type Session
+  type Session,
+  type WebContents
 } from 'electron'
 import { join } from 'node:path'
 import {
   DEFAULT_CONTAINER_ID,
+  PRIVATE_CONTAINER_ID,
   type ExtensionAction,
   type ExtensionCommandInfo,
   type ExtensionInfo
@@ -23,9 +25,14 @@ import type { ZenWindow } from '../../../core/window'
 import type { ExtensionManifest } from '../../../core/extensions/manifest'
 import type { PermissionSet } from '../../../core/extensions/api/permissions'
 import type { InvokeResult } from '../../../core/extensions/api/shim'
-import { API_SPEC, STORAGE_METHODS, isSpecMethod } from '../../../core/extensions/api/spec'
+import {
+  API_SPEC,
+  PRIVACY_INTERNAL_METHODS,
+  STORAGE_METHODS,
+  WEB_REQUEST_INTERNAL_METHODS,
+  isSpecMethod
+} from '../../../core/extensions/api/spec'
 import { normalizeEventFilters, type UrlFilter } from '../../../core/extensions/api/urlFilter'
-import type { RuleSink } from '../../../core/extensions/dnr/sink'
 import type { KeyEventInput, MenuItemTemplate, PageContextParams } from '../../../core/platform'
 import type { RegistryEvent } from '../extensions'
 import type { SessionManager } from '../sessions'
@@ -45,11 +52,13 @@ import {
 } from './contexts'
 import { CookiesApi } from './cookies'
 import { DeclarativeNetRequestHostApi } from './declarativeNetRequest'
+import type { ScopedRuleSink } from './dnrSink'
 import { ExtensionApi } from './extension'
 import { ManagementApi } from './management'
 import { ApiModel, type ModelSnapshot } from './model'
 import { NotificationsApi } from './notifications'
 import { PermissionsApi } from './permissions'
+import { PrivacyApi } from './privacy'
 import { RuntimeApi } from './runtime'
 import { ApiStore } from './store'
 import { StorageApi } from './storage'
@@ -68,6 +77,7 @@ import {
   type Sender
 } from './types'
 import { WebNavigationApi } from './webNavigation'
+import { WebRequestApi } from './webRequest'
 import { WindowsApi } from './windows'
 
 /** IPC channels between the context-side shim (through its preload) and this router. */
@@ -134,12 +144,18 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly notifications: NotificationsApi
   readonly cookies: CookiesApi
   readonly declarativeNetRequest: DeclarativeNetRequestHostApi
+  readonly webRequest: WebRequestApi
+  readonly privacy: PrivacyApi
 
   private readonly namespaces: Record<string, NamespaceHandlers>
   private readonly extensions = new Map<string, LoadedExtension>()
   /** Loaded at least once in this process: `runtime.onStartup` goes with the first load only. */
   private readonly seen = new Set<string>()
   private readonly attachedSessions = new WeakSet<Session>()
+  /** The container id of every attached (extension-capable) session. */
+  private readonly sessionContainers = new Map<Session, string>()
+  /** Extensions the user allowed in private windows (`ExtensionInfo.allowPrivate`). */
+  private readonly privateAllowed = new Set<string>()
   private readonly wiredWorkers = new WeakSet<ServiceWorkerMain>()
   private readonly watchedWindows = new WeakSet<BrowserWindow>()
   private snapshot: ModelSnapshot | null = null
@@ -154,7 +170,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     io: StoreIO,
     userDataDir: string,
     /** Where `declarativeNetRequest` rule sets go: the request-blocking engine. */
-    ruleSink: RuleSink
+    ruleSink: ScopedRuleSink
   ) {
     this.model = new ApiModel(browser, views)
     this.store = new ApiStore(io, userDataDir)
@@ -185,6 +201,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       this.activeTab,
       join(userDataDir, 'zen', 'extension-dnr')
     )
+    this.webRequest = new WebRequestApi(this)
+    this.privacy = new PrivacyApi(this)
     this.namespaces = {
       tabs: this.tabs.handlers,
       windows: this.windows.handlers,
@@ -200,7 +218,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       commands: this.commands.handlers,
       notifications: this.notifications.handlers,
       cookies: this.cookies.handlers,
-      declarativeNetRequest: this.declarativeNetRequest.handlers
+      declarativeNetRequest: this.declarativeNetRequest.handlers,
+      webRequest: this.webRequest.handlers,
+      privacy: this.privacy.handlers
     }
     // A tab's outermost document changed: `activeTab` grants for another origin end and the
     // declarativeNetRequest action counts start over.
@@ -223,9 +243,20 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       this.notify(frameSender(event), kind, payload)
     )
     this.browser.state.subscribe(() => this.scheduleTick())
-    // Every tab view, the ones alive already included: `webNavigation.*` comes from their events.
-    this.views.onViewCreated((view) => this.webNavigation.attach(view))
+    // Every tab view, the ones alive already included: `webNavigation.*` comes from their
+    // events, and the pages follow `privacy.network.webRTCIPHandlingPolicy`.
+    this.views.onViewCreated((view) => {
+      this.webNavigation.attach(view)
+      this.privacy.pageCreated(view.webContents, this.isPrivateView(view.webContents))
+    })
     app.on('before-quit', () => this.flushSync())
+  }
+
+  /** Whether a tab page belongs to a private window (its tab lives in the private container). */
+  private isPrivateView(wc: WebContents): boolean {
+    const zenTabId = this.views.tabIdForWebContents(wc)
+    const tab = zenTabId ? this.model.tab(zenTabId) : undefined
+    return tab?.containerId === PRIVATE_CONTAINER_ID
   }
 
   /**
@@ -237,8 +268,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       case 'installed':
       case 'updated':
         this.tellOthers('onInstalled', event.id)
-        // A newer install ranks above the older extensions' declarativeNetRequest rules.
+        // A newer install ranks above the older extensions' declarativeNetRequest rules and
+        // privacy values.
         this.declarativeNetRequest.installOrderChanged()
+        this.privacy.installOrderChanged()
         return
       case 'enabled':
         this.tellOthers('onEnabled', event.id)
@@ -246,9 +279,17 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       case 'disabled':
         this.tellOthers('onDisabled', event.id)
         return
+      case 'allowPrivate':
+        if (event.allowed) this.privateAllowed.add(event.id)
+        else this.privateAllowed.delete(event.id)
+        this.declarativeNetRequest.sessionsChanged(event.id)
+        this.privacy.privateAccessChanged()
+        return
       case 'uninstalled':
         this.seen.delete(event.id)
+        this.privateAllowed.delete(event.id)
         this.runtime.openUninstallUrl(event.id)
+        this.privacy.forget(event.id)
         this.store.forget(event.id)
         this.declarativeNetRequest.uninstalled(event.id)
         this.registry.forget(event.id, { keepWorkerEvents: false })
@@ -261,6 +302,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   attachSession(ses: Session, containerId: string): void {
     if (this.attachedSessions.has(ses)) return
     this.attachedSessions.add(ses)
+    this.sessionContainers.set(ses, containerId)
     this.cookies.attachSession(ses, containerId)
     const registered = ses.getPreloadScripts().map((script) => script.id)
     if (!registered.includes(FRAME_PRELOAD_ID)) {
@@ -308,8 +350,11 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   private onLoaded(ext: Extension, ses: Session): void {
     const existing = this.extensions.get(ext.id)
     if (existing) {
-      if (!existing.sessions.includes(ses)) existing.sessions.push(ses)
-      this.orderSessions(existing)
+      if (!existing.sessions.includes(ses)) {
+        existing.sessions.push(ses)
+        this.orderSessions(existing)
+        this.declarativeNetRequest.sessionsChanged(ext.id)
+      }
       return
     }
     const info = this.infoFor(ext)
@@ -322,12 +367,15 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       unpacked: isUnpacked(info)
     }
     this.extensions.set(ext.id, loaded)
+    if (info?.allowPrivate) this.privateAllowed.add(ext.id)
+    else this.privateAllowed.delete(ext.id)
     this.registry.restoreWorkerEvents(ext.id, this.store.workerEvents(ext.id))
     this.permissions.load(loaded)
     this.alarms.load(ext.id)
     this.commands.load(loaded)
     // After the permissions: the state exists only for extensions holding the permission.
     this.declarativeNetRequest.load(loaded)
+    this.privacy.load(ext.id)
     // Existing tabs are the baseline, not a burst of `tabs.onCreated`.
     if (!this.snapshot) this.snapshot = this.model.snapshot()
     const firstEver = this.store.installedVersion(ext.id) === undefined
@@ -340,12 +388,17 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     const loaded = this.extensions.get(ext.id)
     if (!loaded) return
     loaded.sessions = loaded.sessions.filter((s) => s !== ses)
-    if (loaded.sessions.length > 0) return
+    if (loaded.sessions.length > 0) {
+      this.declarativeNetRequest.sessionsChanged(ext.id)
+      return
+    }
     this.extensions.delete(ext.id)
     this.alarms.unload(ext.id)
     this.permissions.unload(ext.id)
     this.commands.unload(ext.id)
     this.declarativeNetRequest.unload(ext.id)
+    this.webRequest.unload(ext.id)
+    this.privacy.unload(ext.id)
     this.contextMenus.forget(ext.id)
     this.notifications.forget(ext.id)
     this.activeTab.forget(ext.id)
@@ -426,7 +479,11 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       const known =
         routed === 'storage'
           ? (STORAGE_METHODS as readonly string[]).includes(method)
-          : isSpecMethod(API_SPEC, namespace, method)
+          : routed === 'webRequest'
+            ? (WEB_REQUEST_INTERNAL_METHODS as readonly string[]).includes(method)
+            : routed === 'privacy'
+              ? (PRIVACY_INTERNAL_METHODS as readonly string[]).includes(method)
+              : isSpecMethod(API_SPEC, namespace, method)
       const handlers = this.namespaces[routed]
       if (!known || !handlers || !Object.prototype.hasOwnProperty.call(handlers, method)) {
         throw new ApiError(`${namespace}.${method} is not available in Zenium.`)
@@ -474,6 +531,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         return
       case 'storage-changed':
         this.storage.changed(ctx, payload)
+        return
+      case 'webRequest-answer':
+        this.webRequest.answer(ctx, payload)
         return
       default:
         return
@@ -559,6 +619,19 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
 
   grants(extensionId: string): PermissionSet {
     return this.permissions.grants(extensionId)
+  }
+
+  partitionsOf(extensionId: string): readonly string[] {
+    const loaded = this.extensions.get(extensionId)
+    if (!loaded) return []
+    const partitions: string[] = []
+    for (const ses of loaded.sessions) {
+      const containerId = this.sessionContainers.get(ses)
+      if (containerId !== undefined && !partitions.includes(containerId))
+        partitions.push(containerId)
+    }
+    if (this.privateAllowed.has(extensionId)) partitions.push(PRIVATE_CONTAINER_ID)
+    return partitions
   }
 
   commitUi(): void {

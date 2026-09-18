@@ -158,6 +158,13 @@ export interface RuleSet {
   /** When the content was last refreshed (ms since epoch). */
   updatedAt?: number
   attribution?: RuleSetAttribution
+  /**
+   * The session partitions (`RequestContext.partition`: container ids) the set applies to;
+   * absent, the set applies to every request. An extension's sets are scoped to the sessions
+   * the extension is loaded into, so a private window, where no extension runs, is never
+   * filtered by one (`ExtensionInfo.allowPrivate` opts an extension in).
+   */
+  partitions?: string[]
 }
 
 /** What `listRuleSets` returns: a set without its payload plus counts. */
@@ -169,6 +176,7 @@ export interface RuleSetSummary {
   version?: string
   updatedAt?: number
   attribution?: RuleSetAttribution
+  partitions?: string[]
   /** Structured rules in the set. */
   ruleCount: number
   /** Network filters in `filterText` (comments and cosmetic filters excluded). */
