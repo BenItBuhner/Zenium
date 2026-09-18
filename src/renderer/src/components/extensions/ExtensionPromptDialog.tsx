@@ -189,6 +189,7 @@ function SheetPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
   return (
     <BottomSheet
       ref={sheet}
+      className="zen-v2-sheet"
       handleLabel="Resize"
       header={
         copy.subtitle ? (

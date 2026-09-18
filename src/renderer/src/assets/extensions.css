@@ -720,6 +720,16 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /*
+   * A v2 sheet (§9.25): one gutter of 16 from the sheet's outer edge to every text and control
+   * edge inside it. The sheet carries no side padding of its own – the shipped `.zen-sheet`'s 12
+   * goes – so its rows run edge to edge with their press fill bleeding to the sheet's edge and
+   * their text inset 16, and the title block, body rows and footer sit at their own 16.
+   */
+  .zen-sheet.zen-v2-sheet {
+    padding-left: 0;
+    padding-right: 0;
+  }
   /* The phone's sheet rows (§6): 44 at 15/400 with 20 glyphs, groups parted by a hairline. */
   .zen-v2-sheet-row {
     display: flex;
@@ -1067,7 +1077,8 @@
   /*
    * The phone sheet variant: the sheet's own header and scroll, so the dialog is plain flow
    * under it. Its footer fills the width (§9.11): the two peers split it equally with the 8
-   * gap, the primary trailing, each 40 tall; the sheet adds the bottom inset.
+   * gap, the primary trailing, each 40 tall, at the sheet's 16 gutter with 16 above the bottom
+   * inset, which the sheet itself adds (§9.25).
    */
   [data-form-factor='phone'] .zen-ext-dialog {
     width: auto;
@@ -1077,9 +1088,6 @@
   }
   [data-form-factor='phone'] .zen-ext-dialog-body {
     overflow: visible;
-  }
-  [data-form-factor='phone'] .zen-ext-dialog-buttons {
-    padding-bottom: 8px;
   }
   [data-form-factor='phone'] .zen-ext-dialog-buttons > .zen-v2-button {
     flex: 1 1 0;

@@ -127,7 +127,7 @@ function PopoverMenu({
           visibility: pos ? 'visible' : 'hidden',
           transformOrigin: pos?.side === 'right' ? '100% 0' : '0 0'
         }}
-        onMouseDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
         onContextMenu={(e) => e.preventDefault()}
       >
         {items.map((entry) =>
@@ -168,6 +168,7 @@ function SheetMenu({ items, title, onClose }: Props): JSX.Element {
   return (
     <BottomSheet
       ref={sheet}
+      className="zen-v2-sheet"
       onDismissed={onClose}
       handleLabel="Resize menu"
       header={title ? <div className="zen-v2 zen-v2-sheet-title">{title}</div> : undefined}

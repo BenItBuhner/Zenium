@@ -135,7 +135,7 @@ function MenulistPopover<T extends string>({
           visibility: pos ? 'visible' : 'hidden',
           transformOrigin: pos?.side === 'right' ? '100% 0' : '0 0'
         }}
-        onMouseDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
       >
         {options.map((option) => {
           const selected = option.value === value
@@ -173,6 +173,7 @@ function MenulistSheet<T extends string>({
   return createPortal(
     <BottomSheet
       ref={sheet}
+      className="zen-v2-sheet"
       onDismissed={onClose}
       handleLabel="Resize"
       header={<div className="zen-v2 zen-v2-sheet-title">{label}</div>}
