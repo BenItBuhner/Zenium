@@ -426,27 +426,25 @@ class ExtensionDemo {
         // renders the like/dislike bar the extension decorates well after `load`, from its
         // scripts, and the software-rendered emulator spends its CPU on decoding the video in the
         // meantime (measured: the bar was there 10 s after load while the video was blocked, not
-        // after 13 s with it playing). The driver pauses the player once it plays, waits for the
-        // bar and then gives the extension 20 s to decorate it; its own elements end the wait.
+        // after 13 s with it playing; pausing the player is no help, m.youtube.com answers a pause
+        // with its "Watch in YouTube app" dialog over the page). The driver waits for the bar
+        // and then gives the extension 30 s to decorate it; its own DOM ends the wait.
         val ytStarted = SystemClock.uptimeMillis()
         val ytTab = createTab("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
         val ytView = waitForView(ytTab)
         var barSeenAt = 0L
-        var videoPaused = false
         waitFor(90_000, 1_000) {
             val report = json(tabEval(ytView, RYD_REPORT))
-            if (!videoPaused && report.optString("video") == "playing") videoPaused = tabEval(ytView, PAUSE_VIDEO) == "paused"
             if (barSeenAt == 0L && report.optString("actionBar").isNotEmpty()) barSeenAt = SystemClock.uptimeMillis()
             when {
-                report.optInt("elements") > 0 -> true
-                barSeenAt != 0L && SystemClock.uptimeMillis() - barSeenAt > 20_000 -> true
+                rydDecorated(report) -> true
+                barSeenAt != 0L && SystemClock.uptimeMillis() - barSeenAt > 30_000 -> true
                 else -> null
             }
         }
         SystemClock.sleep(1_500)
         shot("08-ryd-youtube")
         val ryd = json(tabEval(ytView, RYD_REPORT))
-        ryd.put("videoPausedByDriver", videoPaused)
         // On a WebView with worlds the extension's bootstrap statistics live in its world.
         val rydWorld = if (worlds) worldEval(ytView, RYD, WORLD_REPORT)?.let(::json) else null
         val worldGroups = rydWorld?.optJSONObject("stats")?.optJSONArray("groups")?.length() ?: 0
@@ -465,7 +463,8 @@ class ExtensionDemo {
         val apiVerdict = engineVerdict(apiProbe.optString("url"), ryd.optString("url").ifEmpty { "https://m.youtube.com/watch?v=dQw4w9WgXcQ" })
         ryd.put("apiEngineVerdict", apiVerdict)
         results.put("returnYouTubeDislike", ryd)
-        results.put("youtubeConsole", JSONArray(consoleOf(ytView)))
+        val youtubeConsole = consoleOf(ytView)
+        results.put("youtubeConsole", JSONArray(youtubeConsole))
         val api = ryd.optJSONArray("apiEntries")?.length() ?: 0
         val apiWithoutCors = apiProbe.has("status") && apiProbe.isNull("allowOrigin")
         // Google answers a runner's address with a CAPTCHA now and then (www.google.com/sorry):
@@ -512,14 +511,21 @@ class ExtensionDemo {
         // was exercised. The detail carries the page's state (its own console is in
         // `youtubeConsole`) so a page broken by the runtime would not pass as a slow one.
         val actionBar = ryd.optString("actionBar")
+        val decorated = rydDecorated(ryd)
         val noBar = "YouTube's watch page had not rendered its like/dislike bar ${(SystemClock.uptimeMillis() - ytStarted) / 1000} s after the navigation" +
-            " (readyState=${ryd.optString("readyState")}, title=${JSONObject.quote(ryd.optString("title"))}, video=${ryd.optString("video")}, paused by the driver=$videoPaused);" +
+            " (readyState=${ryd.optString("readyState")}, title=${JSONObject.quote(ryd.optString("title"))}, video=${ryd.optString("video")}, dialogs=${ryd.optInt("dialogs")});" +
             " nothing for the extension to decorate"
+        // In one realm the page's Trusted Types policy applies to the content script: its page-world
+        // helper is a `<script src=chrome.runtime.getURL(...)>` and the `src` assignment throws
+        // (`TrustedScriptURL`), which rejects the promise the script awaits before it looks for the
+        // buttons. The extension's API request before that point goes through; the DOM is never
+        // decorated. In a world the bootstrap's policy takes the assignment (the trustedTypes stage).
+        val oneRealmScriptUrl = !worlds && youtubeConsole.any { it.contains("TrustedScriptURL") }
         stage(
             RYD, "coreFunction",
             when {
                 !onYouTube -> "N/A"
-                ryd.optInt("elements") > 0 -> "PASS"
+                decorated -> "PASS"
                 apiWithoutCors -> "N/A"
                 actionBar.isEmpty() -> "N/A"
                 api > 0 -> "PARTIAL"
@@ -527,9 +533,11 @@ class ExtensionDemo {
             },
             when {
                 !onYouTube -> offSite
-                ryd.optInt("elements") == 0 && apiWithoutCors -> apiRefused
-                ryd.optInt("elements") == 0 && actionBar.isEmpty() -> noBar
-                else -> "api requests seen by the page=$api, dislike elements=${ryd.optInt("elements")}, bar=$actionBar, api probe=${apiProbe.optInt("status")}/${apiProbe.optString("allowOrigin", "null")}, $engineLine"
+                !decorated && apiWithoutCors -> apiRefused
+                !decorated && actionBar.isEmpty() -> noBar
+                else -> "api requests seen by the page=$api, extension elements=${ryd.optInt("elements")}, dislike text=${JSONObject.quote(ryd.optString("dislikeText"))}, bar=$actionBar" +
+                    ", api probe=${apiProbe.optInt("status")}/${apiProbe.optString("allowOrigin", "null")}, $engineLine" +
+                    (if (!decorated && oneRealmScriptUrl) " (one realm below Chromium 146: the page's Trusted Types policy refused the src of the extension's page-world helper script, the content script stopped there)" else "")
             }
         )
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(ytTab)},"force":true}""")
@@ -1354,20 +1362,29 @@ class ExtensionDemo {
                 "normalMode:typeof normalMode==='undefined'?null:(normalMode?{keyMapping:normalMode.keyMapping?Object.keys(normalMode.keyMapping).length:0,passKeys:normalMode.passKeys||null}:'null'),handlers:typeof handlerStack==='undefined'?null:handlerStack.stack.length," +
                 "hud:typeof HUD,linkHints:typeof LinkHints,settingsLoaded:typeof Settings==='undefined'?null:Settings.isLoaded(),session:typeof chrome==='object'&&chrome.storage?typeof chrome.storage.session:null,runtimeId:typeof chrome==='object'&&chrome.runtime?chrome.runtime.id:null})}catch(e){return JSON.stringify({error:String(e&&e.message||e)})}})()"
         /**
-         * The watch page as the main world sees it: the extension's elements (its rate bar wrapper,
-         * tooltip and text containers), its API requests in the resource timeline, the page's own
+         * The watch page as the main world sees it: the extension's elements (its rate bar and
+         * tooltip, the marks it leaves on the buttons), the text it wrote into the dislike button
+         * (YouTube's own mobile dislike button carries an icon and no text; the extension clones the
+         * like count's template into it and writes the count, or "Temporarily Unavailable" when its
+         * API request failed), its API requests in the resource timeline, the page's own
          * like/dislike bar (the first of the mobile layout's selectors present, '' before it
-         * renders), the player's state, and the bootstrap statistics of the main-world groups.
+         * renders), the player's state, the open dialogs (the "Watch in YouTube app" upsell), and
+         * the bootstrap statistics of the main-world groups.
          */
         private const val RYD_REPORT =
-            "JSON.stringify({elements: document.querySelectorAll('[id*=\"return-youtube-dislike\"],[class*=\"ryd-\"],[id^=\"ryd-\"],[data-ryd-ratebar-wrapper]').length, " +
+            "JSON.stringify({elements: document.querySelectorAll('[id*=\"return-youtube-dislike\"],[class*=\"ryd-\"],[id^=\"ryd-\"],[data-ryd-ratebar-wrapper],[data-ryd-video-id],[data-ryd-role]').length, " +
+                "dislikeText: (function(b){return b ? b.innerText.replace(/\\s+/g,' ').trim().slice(0, 40) : ''})(document.querySelector('.slim-video-action-bar-actions [aria-label*=\"islike\"], ytm-slim-video-action-bar-renderer [aria-label*=\"islike\"]')), " +
                 "apiEntries: performance.getEntriesByType('resource').filter(function(e){return e.name.indexOf('returnyoutubedislike')>=0}).map(function(e){return {name:e.name,size:e.transferSize,duration:Math.round(e.duration)}}), " +
                 "actionBar: ['ytm-slim-video-action-bar-renderer','.slim-video-action-bar-actions','segmented-like-dislike-button-view-model','like-button-view-model','ytm-like-button-renderer'].find(function(s){return document.querySelector(s)}) || '', " +
                 "video: (function(v){return v ? (v.paused ? 'paused' : (v.currentTime > 0 ? 'playing' : 'idle')) : 'none'})(document.querySelector('video')), " +
+                "dialogs: document.querySelectorAll('dialog[open], [role=\"dialog\"]').length, " +
                 "groups: (window.__zenExtStats && window.__zenExtStats.groups ? window.__zenExtStats.groups.length : 0), stats: window.__zenExtStats || null, readyState: document.readyState, title: document.title, url: location.href})"
-        /** Pauses the watch page's player (the emulator renders and decodes in software); answers with the player's state. */
-        private const val PAUSE_VIDEO =
-            "(function(){var v=document.querySelector('video');if(!v)return 'none';try{v.pause()}catch(e){}return v.paused?'paused':'playing'})()"
+
+        /** Whether Return YouTube Dislike reached the page's DOM: an element of its own, or text in the dislike button. */
+        private fun rydDecorated(report: JSONObject): Boolean {
+            val text = report.optString("dislikeText")
+            return report.optInt("elements") > 0 || (text.isNotEmpty() && !text.equals("dislike", ignoreCase = true))
+        }
         /** In the probe's background: inject a function and a stylesheet into the active tab, report to `window.__late`. */
         private const val LATE_INJECT =
             "(function(){window.__late=null;chrome.tabs.query({active:true,currentWindow:true},function(tabs){var t=tabs&&tabs[0];" +
