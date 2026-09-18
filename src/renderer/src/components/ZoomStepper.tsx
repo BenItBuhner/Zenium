@@ -15,15 +15,16 @@ import { Slider } from './ui/slider'
  * Minus, a slider and plus along Chrome's zoom table (50 to 300 percent): the zoom sheet's row
  * and the Accessibility default. The slider's stops are the table's levels, so dragging it lands
  * on the same values the steppers walk; a factor between two levels shows at the nearest one.
- * `stepClassName` and `sliderClassName` let a surface style its own instance (the sheet's v2
- * look) without the other instances following.
+ * `stepClassName` is the class of the two step buttons – the Settings instance's toolbar button
+ * unless a surface names its own (the sheet's v2 icon button, §9.3) – and `sliderClassName`
+ * styles that instance's slider, so no other instance follows.
  */
 export function ZoomStepper({
   value,
   onChange,
   disabled = false,
   className,
-  stepClassName,
+  stepClassName = 'zen-toolbar-button',
   sliderClassName
 }: {
   value: number
@@ -38,7 +39,7 @@ export function ZoomStepper({
     <div className={cn('zen-zoom-stepper flex items-center gap-1', className)}>
       <button
         type="button"
-        className={cn('zen-toolbar-button shrink-0', stepClassName)}
+        className={cn(stepClassName, 'shrink-0')}
         aria-label="Zoom out"
         disabled={disabled || value <= ZOOM_MIN}
         onClick={() => onChange(stepZoom(value, -1))}
@@ -61,7 +62,7 @@ export function ZoomStepper({
       />
       <button
         type="button"
-        className={cn('zen-toolbar-button shrink-0', stepClassName)}
+        className={cn(stepClassName, 'shrink-0')}
         aria-label="Zoom in"
         disabled={disabled || value >= ZOOM_MAX}
         onClick={() => onChange(stepZoom(value, 1))}

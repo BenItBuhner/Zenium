@@ -51,14 +51,15 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-bm-bar {', '/*\n * Fading scroll edges'],
   // Find in page, zoom and fullscreen: the docked find bar (components/content/FindBar.tsx).
   ['.zen-find-bar {', '/*\n * Settings → Default Browser and the'],
+  // The phone page zoom sheet, docked under the live page, and its own instance of the stepper
+  // (components/content/ZoomSheet.tsx, components/ZoomStepper.tsx). The last block before the
+  // reduced-motion rules, so it is cut out before the Default Browser range that ends there.
+  ['.zen-zoom-sheet {', '\n@media (prefers-reduced-motion: reduce) {'],
   // Settings → Default Browser and the default-browser strip (components/overlays/
   // DefaultBrowserSection.tsx, content/DefaultBrowserBanner.tsx): the flat card and its inks.
   ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {'],
   // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
-  ['.zen-message {', '.zen-suggestion {'],
-  // The phone page zoom sheet, docked under the live page, and its own instance of the stepper
-  // (components/content/ZoomSheet.tsx, components/ZoomStepper.tsx).
-  ['.zen-zoom-sheet {', '\n@media (prefers-reduced-motion: reduce) {']
+  ['.zen-message {', '.zen-suggestion {']
 ]
 
 /**
