@@ -21,9 +21,9 @@ import {
 import type { AttachedExtension } from './extensionApi'
 
 /**
- * What the WebView's jar answers for one URL: with `GET_COOKIE_INFO` (Chromium 120+) each cookie
- * in `Set-Cookie` syntax, attributes and all; on an older WebView `CookieManager.getCookie`'s
- * `name=value` pairs, which is all it knows.
+ * What the WebView's jar answers for one URL: with `GET_COOKIE_INFO` (androidx.webkit 1.9; present
+ * on WebView 113 and 156 alike, as measured) each cookie in `Set-Cookie` syntax, attributes and
+ * all; on an older WebView `CookieManager.getCookie`'s `name=value` pairs, which is all it knows.
  */
 export interface JarReading {
   cookies: string[]

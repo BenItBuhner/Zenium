@@ -13,8 +13,9 @@ import org.json.JSONObject
 /**
  * The jar half of `chrome.cookies` (`src/android/extensionCookies.ts` does Chrome's part): one
  * `CookieManager` per container ([Profiles.cookieManager]), read by URL. A WebView with
- * `GET_COOKIE_INFO` (Chromium 120+) lists each cookie in `Set-Cookie` syntax, attributes and all;
- * an older one only knows the `name=value` pairs a request would send, and says so (`detailed`).
+ * `GET_COOKIE_INFO` (androidx.webkit 1.9; measured present on WebView 113 and 156 alike) lists
+ * each cookie in `Set-Cookie` syntax, attributes and all; an older one only knows the `name=value`
+ * pairs a request would send, and says so (`detailed`).
  * Writes go through `setCookie` with its callback, which needs a thread with a Looper: the main
  * thread here, as the WebView's own work is.
  */
