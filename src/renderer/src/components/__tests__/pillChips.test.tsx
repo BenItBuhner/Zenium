@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, type ReactElement } from 'react'
+import { act, createElement, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Space, Tab, UIState } from '@shared/types'
 
@@ -17,6 +17,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { NavRow } = await import('../sidebar/SidebarTop')
 const { PillContent } = await import('../phone/PhoneShell')
+const { PillChip } = await import('../urlbar/PillChip')
 const { openUrlbar, uiStore } = await import('@renderer/lib/ui')
 const { closeSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
 
@@ -340,5 +341,18 @@ describe('phone pill (PillContent)', () => {
     // The two chips are plain hidden spans in the pill's row (the favicon tile is inside one).
     const row = el.firstElementChild!
     expect(row.querySelectorAll(':scope > span[aria-hidden]').length).toBe(2)
+  })
+})
+
+describe('PillChip', () => {
+  it('opens something or toggles, never both', () => {
+    // The prop type refuses `popup` together with `pressed`, so no chip can carry
+    // `aria-haspopup` and `aria-pressed` at once; the compiler is the check here.
+    const opens = createElement(PillChip, { label: 'Boost this site', popup: 'dialog' })
+    const toggles = createElement(PillChip, { label: 'Reader View', pressed: true })
+    const acts = createElement(PillChip, { label: 'Copy URL' })
+    // @ts-expect-error a chip opens something or toggles, never both
+    const both = createElement(PillChip, { label: 'x', popup: 'dialog', pressed: true })
+    expect([opens, toggles, acts, both].every((chip) => chip.type === PillChip)).toBe(true)
   })
 })

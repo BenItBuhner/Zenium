@@ -12,27 +12,41 @@ type ChipButtonProps = Omit<
   | 'aria-pressed'
 >
 
-export interface PillChipProps extends ChipButtonProps {
-  /** The chip's accessible name (`aria-label`); a `title` is the desktop tooltip on top of it. */
-  label: string
-  /** What the chip opens: a sheet or popover (`dialog`) or a menu. Action and toggle chips omit it. */
-  popup?: 'dialog' | 'menu'
-  /** The popup is up right now (`aria-expanded`); only read together with `popup`. */
-  expanded?: boolean
-  /** A toggle chip's state (`aria-pressed`), such as Reader View. */
-  pressed?: boolean
-  /**
-   * The chip's own action, for a click as well as Enter and Space. When given, the pill does
-   * not also see the click; when omitted the click bubbles to the pill, whose gesture
-   * recogniser tells taps apart by target (the phone pill, see `PhoneShell`'s `onTap`).
-   */
-  onActivate?: (e: MouseEvent<HTMLButtonElement>) => void
-  /**
-   * Draw the chip without semantics or focus: a span, for the ghost pill carried across the
-   * screen and the bar preview. Neither the tab order nor a screen reader reaches it.
-   */
-  inert?: boolean
-}
+/**
+ * What a chip says about itself: it opens something, or it toggles – never both, so no chip can
+ * carry `aria-haspopup` and `aria-pressed` together. Action chips (Copy URL) state neither.
+ */
+type ChipSemantics =
+  | {
+      /** What the chip opens: a sheet or popover (`dialog`) or a menu. */
+      popup: 'dialog' | 'menu'
+      /** The popup is up right now (`aria-expanded`). */
+      expanded?: boolean
+      pressed?: never
+    }
+  | {
+      popup?: never
+      expanded?: never
+      /** A toggle chip's state (`aria-pressed`), such as Reader View. */
+      pressed?: boolean
+    }
+
+export type PillChipProps = ChipButtonProps &
+  ChipSemantics & {
+    /** The chip's accessible name (`aria-label`); a `title` is the desktop tooltip on top of it. */
+    label: string
+    /**
+     * The chip's own action, for a click as well as Enter and Space. When given, the pill does
+     * not also see the click; when omitted the click bubbles to the pill, whose gesture
+     * recogniser tells taps apart by target (the phone pill, see `PhoneShell`'s `onTap`).
+     */
+    onActivate?: (e: MouseEvent<HTMLButtonElement>) => void
+    /**
+     * Draw the chip without semantics or focus: a span, for the ghost pill carried across the
+     * screen and the bar preview. Neither the tab order nor a screen reader reaches it.
+     */
+    inert?: boolean
+  }
 
 /**
  * A chip inside the URL pill (site information, the lock, Reader View, Boost, Copy URL, a count
