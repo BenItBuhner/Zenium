@@ -3,13 +3,15 @@ name: Android sheet recede demo
 # Records the phone sheets on the recede chassis over one page – the app menu, the
 # site-information sheet, a picker (the tab's context menu, then the icon picker), a stack of
 # two sheets, the menu dragged part of the way down and let go, and the predictive back gesture
-# over a sheet – on a hardware-accelerated Android 15 emulator, and uploads the video, the
-# driver's timed screenshots (as fast as the emulator gives them, with the time since the event
-# in the name), frames cut from the video around every event and the measurements of both: the
-# driver fails the run when a frame shows the window gradient where the page or its picture
-# should be, or when the page's brightness steps the way no spring moves it (the swap between
-# the live page and its picture, or the old close's pop). Dispatch-only, like the snapshot swap
-# demo: it takes about ten minutes. The build, the emulator and the Gradle cache live in
+# over a sheet – on an Android 15 emulator, and uploads the video, the driver's timed
+# screenshots (as fast as the emulator gives them, with the time since the event in the name),
+# frames cut from the video around every event and the measurements of both. The judgement
+# has no clock in it, since the emulator paints only a few frames a second: the driver puts a
+# progress swatch into the chrome (a bar as wide as `--zen-recede`), and every frame of the
+# screenshots and of the video must show the page as dark as that swatch says its sheet is up,
+# and never the window gradient where the page or its picture should be (the old close's stall
+# and pop, the old open's step, the swap seen). Dispatch-only, like the snapshot swap demo: it
+# takes about ten minutes. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml; this file only picks the driver and the colour scheme.
 on:
   workflow_dispatch:

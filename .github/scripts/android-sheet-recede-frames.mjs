@@ -1,32 +1,50 @@
 #!/usr/bin/env node
-// Measures the page in a sheet recede recording (android-sheet-recede-demo.sh) the way the
-// driver (SheetRecedeDemo.kt) measured its own screenshots, but at the recorder's frame rate:
-// around every event in marks.txt it decodes the band of the page that no sheet reaches
-// (geometry.txt, in display pixels, scaled to the video) and judges every frame by the same two
-// rules – a frame in which the band is the window gradient rather than the page or its picture
-// (the swap was seen), and a step in the band's brightness larger than a spring could make over
-// the time since the previous distinct frame, or any movement at all after the page had stood
-// still for a while following a transition (a pop after the sheet had settled). A finger's hold
-// (`held` in marks.txt) is exempt from the plateau clause: letting go is a second transition.
+// Reads a sheet recede recording (android-sheet-recede-demo.sh) the way the driver
+// (SheetRecedeDemo.kt) read its own screenshots, but at the recorder's frame rate: from every
+// event in marks.txt to the next it decodes two regions (geometry.txt, in display pixels,
+// scaled to the video) – the band of the page that no sheet reaches, and the progress swatch
+// the driver put into the chrome, a bar whose width is `--zen-recede` times a known length –
+// and judges every frame by two rules that need no clock, because the emulator paints two to
+// five frames a second and a step's size over time says nothing there:
+//
+//  - the band is the page or its picture, never the window gradient (the swap was seen);
+//  - how far the band has gone dark, against the same band with no sheet up (`p` 0) and under a
+//    sheet fully up (`p` 1) elsewhere in the recording, agrees with the sheet's progress the
+//    swatch shows in the same frame, within TOLERANCE of the way. The page and the sheet are
+//    painted from one value, so a frame in which they disagree is the page popping, stalling
+//    or lagging on its own: the old close (the scrim went with the sheet, then the page popped
+//    bright when its picture did), the old open (dark in one step before the sheet was up).
+//    The recording is not the screen: its encoder can leave one frame between two of the
+//    emulator's that is a mix of both, in which the band is half-way while the swatch's bar
+//    reads as one or the other. So a frame is judged against the span of its own progress and
+//    that of the nearest frames that differ from it either way; a stall or a pop lasts many
+//    frames past both and still fails.
+//
+// The second sheet of a stack is fine by the rule: the page holds its recede and the stack's
+// one scrim while it comes and goes. (Two sheets moving at once would dim the page by their
+// summed presence while the swatch shows the larger; no window of this demo does that.)
 //
 //   node android-sheet-recede-frames.mjs <video.mp4> <marks.txt> <geometry.txt> <findings.txt>
 //
 // The findings carry every frame's numbers; the exit code is 1 when any frame failed. The
-// driver's sequence starts about OFFSET_S into the video (see the shell script), and a window
-// runs from BEFORE_S before an event to AFTER_S after it, cut short at the next event.
+// driver's sequence starts about OFFSET_S into the video (see the shell script).
 import { spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 
 const FPS = 30
 const OFFSET_S = 2.5
-const BEFORE_S = 1.0
-const AFTER_S = 3.4
+/** A window runs from this long before its event to just before the next (or this long after the last). */
+const BEFORE_S = 0.3
+const LAST_S = 6.5
 /** Brightness (0…255) two frames of the same picture differ by, encoder noise included. */
 const NOISE = 2.0
-/** The fastest a sheet spring moves anything driven by it, as a share of the whole way per second. */
-const RATE_PER_S = 10.0
-/** Standing still this long after a change is the sheet having settled. */
-const PLATEAU_MS = 400
+/**
+ * How far apart, as a share of the whole way, the page's darkness and the sheet's progress may
+ * be in one frame: the picture's brightness differs from the live page's by under a hundredth
+ * of the way, the receded frame's content shifts by less, the encoder adds its noise; the old
+ * close and open were half the way or more apart.
+ */
+const TOLERANCE = 0.08
 
 const [video, marksPath, geometryPath, outPath] = process.argv.slice(2)
 if (!video || !marksPath || !geometryPath || !outPath) {
@@ -42,7 +60,7 @@ const geometry = Object.fromEntries(
     .filter(Boolean)
     .map((line) => {
       const [key, ...rest] = line.trim().split(/\s+/)
-      return [key, rest.map(Number)]
+      return [key, rest]
     })
 )
 const marks = readFileSync(marksPath, 'utf8')
@@ -71,17 +89,34 @@ if (!videoWidth || !videoHeight) {
   console.error(`could not read the video's size: ${probe.stderr}`)
   process.exit(2)
 }
-const [displayWidth, displayHeight] = geometry.size
+if (!geometry.swatch) {
+  console.error('geometry.txt has no swatch line: the driver did not place the progress swatch')
+  process.exit(2)
+}
+const [displayWidth, displayHeight] = geometry.size.map(Number)
 const sx = videoWidth / displayWidth
 const sy = videoHeight / displayHeight
+const [bl, bt, br, bb] = geometry.band.map(Number)
+const [swl, swt, sww, swh] = geometry.swatch.slice(0, 4).map(Number)
+const swatchWhite = geometry.swatch[4] === 'white'
+/** One crop holds both regions; each is read inside it. */
 const even = (n) => Math.max(2, Math.floor(n / 2) * 2)
-const [bl, bt, br, bb] = geometry.band
-const band = {
-  x: even(bl * sx),
-  y: even(bt * sy),
-  w: even((br - bl) * sx),
-  h: even((bb - bt) * sy)
+const cropLeft = even(Math.min(bl, swl) * sx)
+const cropTop = even(Math.min(bt, swt) * sy)
+const crop = {
+  x: cropLeft,
+  y: cropTop,
+  w: even(Math.max(br, swl + sww) * sx - cropLeft),
+  h: even(Math.max(bb, swt + swh) * sy - cropTop)
 }
+const inCrop = (l, t, w, h) => ({
+  x: Math.round(l * sx) - crop.x,
+  y: Math.round(t * sy) - crop.y,
+  w: Math.max(1, Math.round(w * sx)),
+  h: Math.max(1, Math.round(h * sy))
+})
+const band = inCrop(bl, bt, br - bl, bb - bt)
+const swatch = inCrop(swl, swt, sww, swh)
 
 const lines = []
 const failures = []
@@ -90,100 +125,64 @@ const say = (line) => {
   console.log(line)
 }
 say(
-  `${video}: ${videoWidth}x${videoHeight} (display ${displayWidth}x${displayHeight}), band ${band.w}x${band.h} at ${band.x},${band.y}, ${FPS} fps`
+  `${video}: ${videoWidth}x${videoHeight} (display ${displayWidth}x${displayHeight}), band ${band.w}x${band.h} at ${bl},${bt}, swatch ${swatch.w}x${swatch.h} at ${swl},${swt} (${swatchWhite ? 'white' : 'black'}), ${FPS} fps`
 )
 
-/** Mean luminance, mean chroma, edge density and the share of page-like pixels of one rgb24 frame. */
-function measure(buf, offset, w, h) {
+const lum = (buf, i) => 0.299 * buf[i] + 0.587 * buf[i + 1] + 0.114 * buf[i + 2]
+
+/** Mean luminance, mean chroma, edge density and the share of page-like pixels of the band in one rgb24 frame. */
+function measureBand(buf, offset) {
   let n = 0
-  let lum = 0
+  let l = 0
   let chroma = 0
   let edges = 0
   let pageLike = 0
-  for (let y = 0; y < h; y += 3) {
-    let i = offset + y * w * 3
-    for (let x = 0; x < w; x += 3, i += 9) {
+  for (let y = band.y; y < band.y + band.h; y += 3) {
+    let i = offset + (y * crop.w + band.x) * 3
+    for (let x = 0; x < band.w; x += 3, i += 9) {
       const r = buf[i]
       const g = buf[i + 1]
       const b = buf[i + 2]
-      const l = 0.299 * r + 0.587 * g + 0.114 * b
+      const li = 0.299 * r + 0.587 * g + 0.114 * b
       const c = Math.max(r, g, b) - Math.min(r, g, b)
-      lum += l
+      l += li
       chroma += c
-      if (l > 90 && c < 24) pageLike++
-      if (x + 3 < w) {
-        const lq = 0.299 * buf[i + 9] + 0.587 * buf[i + 10] + 0.114 * buf[i + 11]
-        if (Math.abs(l - lq) > 40) edges++
-      }
+      if (li > 90 && c < 24) pageLike++
+      if (x + 3 < band.w && Math.abs(li - lum(buf, i + 9)) > 40) edges++
       n++
     }
   }
-  return { luminance: lum / n, chroma: chroma / n, edges: edges / n, pageLike: pageLike / n }
+  return { luminance: l / n, chroma: chroma / n, edges: edges / n, pageLike: pageLike / n }
 }
 
-function judge(name, held, frames) {
-  say(`${name}: ${frames.length} frames`)
-  for (const f of frames) {
-    say(
-      `  ${String(f.at).padStart(6)} ms  lum ${f.band.luminance.toFixed(1).padStart(5)} chroma ${f.band.chroma.toFixed(1).padStart(5)} edges ${f.band.edges.toFixed(4)} page-like ${f.band.pageLike.toFixed(2)}`
-    )
-  }
-  if (frames.length === 0) {
-    failures.push(`${name}: no frame in the window`)
-    return
-  }
-  for (const f of frames) {
-    const b = f.band
-    if (b.chroma > 18 && b.edges < 0.004 && b.pageLike < 0.3) {
-      failures.push(
-        `${name} at ${f.at} ms: the window gradient where the page was (band chroma ${b.chroma.toFixed(1)} edges ${b.edges.toFixed(4)} page-like ${b.pageLike.toFixed(2)})`
-      )
+/**
+ * The sheet's progress the swatch shows: columns of its middle rows that are its colour, in at
+ * least two of three rows, over its full length.
+ */
+function measureProgress(buf, offset) {
+  const mid = swatch.y + Math.floor(swatch.h / 2)
+  const rows = [mid - 1, mid, mid + 1].filter((y) => y >= 0 && y < crop.h)
+  let count = 0
+  for (let x = 0; x < swatch.w; x++) {
+    let hits = 0
+    for (const y of rows) {
+      const li = lum(buf, offset + (y * crop.w + swatch.x + x) * 3)
+      if (swatchWhite ? li > 175 : li < 90) hits++
     }
+    if (hits >= 2) count++
   }
-  const lows = Math.min(...frames.map((f) => f.band.luminance))
-  const highs = Math.max(...frames.map((f) => f.band.luminance))
-  const amplitude = highs - lows
-  if (amplitude < 3 * NOISE) {
-    say("  (the page's brightness never moved: did the surface come up?)")
-    return
-  }
-  let last = frames[0]
-  let moved = false
-  let worst = 0
-  let firstChange = null
-  for (const f of frames.slice(1)) {
-    const d = f.band.luminance - last.band.luminance
-    if (Math.abs(d) <= NOISE) continue
-    const dt = f.at - last.at
-    const share = Math.abs(d) / amplitude
-    const allowed = (RATE_PER_S * dt) / 1000 + NOISE / amplitude
-    worst = Math.max(worst, share)
-    if (share > allowed) {
-      failures.push(
-        `${name} at ${f.at} ms: brightness stepped ${(share * 100).toFixed(0)}% of the way in ${dt} ms (a spring moves at most ${(Math.min(1, allowed) * 100).toFixed(0)}% in that time)`
-      )
-    }
-    // The plateau clause counts stillness that began after the event: the window's lead-in may
-    // hold a finger's swipe and its hold (the commit of a back gesture is the finger letting go).
-    if (!held && moved && dt >= PLATEAU_MS && last.at >= 0) {
-      failures.push(
-        `${name} at ${f.at} ms: the page moved again (${d.toFixed(1)}) after standing still for ${dt} ms – a pop after the sheet had settled`
-      )
-    }
-    if (!moved) firstChange = f.at
-    moved = true
-    last = f
-  }
-  say(
-    `  brightness ${frames[0].band.luminance.toFixed(1)} → ${frames[frames.length - 1].band.luminance.toFixed(1)} (range ${amplitude.toFixed(1)}), biggest step ${(worst * 100).toFixed(0)}% of the range, first change at ${firstChange} ms`
-  )
+  return count / swatch.w
 }
 
+const isGradient = (b) => b.chroma > 18 && b.edges < 0.004 && b.pageLike < 0.3
+
+// Pass one: every window's frames.
+const windows = []
 for (let i = 0; i < marks.length; i++) {
   const mark = marks[i]
   const start = Math.max(0, mark.at - BEFORE_S)
   const next = marks[i + 1]
-  const end = Math.min(mark.at + AFTER_S, next ? next.at - 0.05 : Infinity)
+  const end = next ? next.at - 0.02 : mark.at + LAST_S
   if (end <= start) continue
   const ffmpeg = spawnSync(
     'ffmpeg',
@@ -198,7 +197,7 @@ for (let i = 0; i < marks.length; i++) {
       '-i',
       video,
       '-vf',
-      `fps=${FPS},crop=${band.w}:${band.h}:${band.x}:${band.y}`,
+      `fps=${FPS},crop=${crop.w}:${crop.h}:${crop.x}:${crop.y}`,
       '-f',
       'rawvideo',
       '-pix_fmt',
@@ -212,21 +211,99 @@ for (let i = 0; i < marks.length; i++) {
     failures.push(`${mark.name}: the frames could not be decoded`)
     continue
   }
-  const frameBytes = band.w * band.h * 3
+  const frameBytes = crop.w * crop.h * 3
   const count = Math.floor(ffmpeg.stdout.length / frameBytes)
   const frames = []
   for (let k = 0; k < count; k++) {
     // A frame's time relative to the event, in ms; negative before it.
     const at = Math.round((start - mark.at + k / FPS) * 1000)
-    frames.push({ at, band: measure(ffmpeg.stdout, k * frameBytes, band.w, band.h) })
+    const offset = k * frameBytes
+    frames.push({
+      at,
+      band: measureBand(ffmpeg.stdout, offset),
+      progress: measureProgress(ffmpeg.stdout, offset)
+    })
   }
-  judge(mark.name, mark.held, frames)
+  windows.push({ name: mark.name, frames })
+}
+
+// The band's brightness with no sheet and under one fully up, from the recording itself: the
+// medians over the frames whose swatch says 0 and 1 (the swap between the live page and its
+// picture, and the encoder, move it by less than the noise).
+const median = (values) => {
+  const sorted = values.slice().sort((a, b) => a - b)
+  return sorted.length ? sorted[Math.floor(sorted.length / 2)] : NaN
+}
+const all = windows.flatMap((w) => w.frames).filter((f) => !isGradient(f.band))
+const bright = median(all.filter((f) => f.progress <= 0.01).map((f) => f.band.luminance))
+const dark = median(all.filter((f) => f.progress >= 0.99).map((f) => f.band.luminance))
+const range = bright - dark
+say(
+  `band brightness ${Number.isNaN(bright) ? '?' : bright.toFixed(1)} with no sheet, ${Number.isNaN(dark) ? '?' : dark.toFixed(1)} under a sheet fully up (${all.length} frames)`
+)
+if (!(range > 6 * NOISE)) {
+  failures.push(
+    `the recording does not tell the page dark from bright: ${bright} with no sheet, ${dark} under a sheet fully up (the swatch may not have been read)`
+  )
+}
+const darkness = (l) => (range > 0 ? (bright - l) / range : NaN)
+
+// Pass two: judge.
+for (const { name, frames } of windows) {
+  say(`${name}: ${frames.length} frames`)
+  for (const f of frames) {
+    const d = darkness(f.band.luminance)
+    say(
+      `  ${String(f.at).padStart(6)} ms  p ${f.progress.toFixed(3)} dark ${Number.isNaN(d) ? '    ?' : d.toFixed(3)}  lum ${f.band.luminance.toFixed(1).padStart(5)} chroma ${f.band.chroma.toFixed(1).padStart(5)} edges ${f.band.edges.toFixed(4)} page-like ${f.band.pageLike.toFixed(2)}`
+    )
+  }
+  if (frames.length === 0) {
+    failures.push(`${name}: no frame in the window`)
+    continue
+  }
+  /** The same picture, as far as the recorder is concerned. */
+  const same = (a, b) =>
+    Math.abs(a.progress - b.progress) <= 0.005 &&
+    Math.abs(a.band.luminance - b.band.luminance) <= NOISE
+  /** The progress of the nearest frame before (`step` −1) or after (+1) `k` that differs from it; its own when none does. */
+  const neighbour = (k, step) => {
+    for (let j = k + step; j >= 0 && j < frames.length; j += step) {
+      if (!same(frames[j], frames[k])) return frames[j].progress
+    }
+    return frames[k].progress
+  }
+  let worst = 0
+  let firstMove = null
+  frames.forEach((f, k) => {
+    if (isGradient(f.band)) {
+      failures.push(
+        `${name} at ${f.at} ms: the window gradient where the page was (band chroma ${f.band.chroma.toFixed(1)} edges ${f.band.edges.toFixed(4)} page-like ${f.band.pageLike.toFixed(2)})`
+      )
+      return
+    }
+    if (!(range > 0)) return
+    const d = darkness(f.band.luminance)
+    const span = [f.progress, neighbour(k, -1), neighbour(k, 1)]
+    const gap = Math.max(0, Math.min(...span) - d, d - Math.max(...span))
+    worst = Math.max(worst, gap)
+    if (firstMove === null && Math.abs(f.progress - frames[0].progress) > 0.02) firstMove = f.at
+    if (gap > TOLERANCE + NOISE / range) {
+      failures.push(
+        `${name} at ${f.at} ms: the page is ${(d * 100).toFixed(0)}% of the way dark while the sheet's progress is ${(f.progress * 100).toFixed(0)}% (${(Math.min(...span) * 100).toFixed(0)}–${(Math.max(...span) * 100).toFixed(0)}% with the frames either side)`
+      )
+    }
+  })
+  const first = frames[0]
+  const last = frames[frames.length - 1]
+  say(
+    `  progress ${first.progress.toFixed(2)} → ${last.progress.toFixed(2)}, darkness ${darkness(first.band.luminance).toFixed(2)} → ${darkness(last.band.luminance).toFixed(2)}, largest disagreement ${(worst * 100).toFixed(0)}% of the way, first move at ${firstMove} ms`
+  )
 }
 
 say(
   failures.length
     ? `FAILED:\n${failures.join('\n')}`
-    : 'every frame in every window is the page or its picture, moving only as a spring moves it'
+    : 'every frame is the page or its picture, as dark as its sheet is up'
 )
 writeFileSync(outPath, lines.join('\n') + '\n')
 process.exit(failures.length ? 1 : 0)
