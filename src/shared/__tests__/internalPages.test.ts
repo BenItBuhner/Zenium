@@ -12,7 +12,9 @@ import {
   landingRuns,
   matchSections,
   matchesQuery,
+  namesInternal,
   parseInternalPageUrl,
+  refusedFromDocument,
   sameInternalPage
 } from '../internalPages'
 
@@ -118,6 +120,37 @@ describe('parsing page addresses', () => {
     expect(sameInternalPage('zen://settings/look', 'zenium://settings/about')).toBe(true)
     expect(sameInternalPage('zen://settings', 'zen://history')).toBe(false)
     expect(sameInternalPage('https://a.test/', 'https://a.test/')).toBe(false)
+  })
+
+  it('refuses a web document its own navigation to an internal address, not the browser’s documents theirs', () => {
+    expect(namesInternal('zen://settings')).toBe(true)
+    expect(namesInternal('ZENIUM://settings/privacy')).toBe(true)
+    expect(namesInternal('zen://error?url=x')).toBe(true)
+    expect(namesInternal('https://zen.test/zen://settings')).toBe(false)
+    expect(namesInternal('zeniumx://settings')).toBe(false)
+    expect(namesInternal(null)).toBe(false)
+
+    // Web content, a data: or about:blank document, and no document at all: refused.
+    for (const document of [
+      'https://example.com/',
+      'data:text/html,<a>',
+      'about:blank',
+      '',
+      null
+    ]) {
+      expect(refusedFromDocument(document, 'zen://settings/privacy')).toBe(true)
+      expect(refusedFromDocument(document, 'zenium://settings')).toBe(true)
+      expect(refusedFromDocument(document, 'zen://newtab')).toBe(true)
+    }
+    // The browser's own documents may link to its pages.
+    expect(refusedFromDocument('zen://newtab', 'zenium://settings/look')).toBe(false)
+    expect(refusedFromDocument('zen://error?url=https%3A%2F%2Fa.test', 'zen://settings')).toBe(
+      false
+    )
+    // Anything that is not an internal address is not this rule's business.
+    expect(refusedFromDocument('https://example.com/', 'https://other.test/')).toBe(false)
+    expect(refusedFromDocument('https://example.com/', 'mailto:a@b.c')).toBe(false)
+    expect(refusedFromDocument(null, null)).toBe(false)
   })
 })
 

@@ -314,6 +314,38 @@ export function isInternalPageUrl(
   return parseInternalPageUrl(url, pages) !== null
 }
 
+const SCHEME_RE = /^([a-z][a-z0-9+.-]*):/i
+
+function schemeOf(url: string | null | undefined): string | null {
+  const m = url ? SCHEME_RE.exec(url.trim()) : null
+  return m ? m[1].toLowerCase() : null
+}
+
+/** Whether the address is under either internal scheme (a page or a document, known or not). */
+export function namesInternal(url: string | null | undefined): boolean {
+  const scheme = schemeOf(url)
+  return scheme === INTERNAL_SCHEME || scheme === INTERNAL_ALIAS_SCHEME
+}
+
+/**
+ * Whether a navigation the document at `document` started (a link, a script, a frame) to
+ * `target` is refused: the target is an internal address and the document is not one of the
+ * browser's own `zen://` documents. Internal pages are the user's to open – typed, from a menu,
+ * shared in, sent by another app – and never a web page's, as Chrome refuses web content
+ * `chrome://settings`. A web page, a `data:` or `about:blank` document, and a view with no
+ * document yet are all refused; the browser's own documents (the error page, the new tab page)
+ * may link to its pages. Every host reads this one rule for its renderer-initiated navigations
+ * (`will-navigate` on desktop, `shouldOverrideUrlLoading` on Android, which mirrors it in
+ * `DeepLinks.refusedFromDocument`); `planWindowOpen` refuses `window.open` the same way.
+ */
+export function refusedFromDocument(
+  document: string | null | undefined,
+  target: string | null | undefined
+): boolean {
+  if (!namesInternal(target)) return false
+  return schemeOf(document) !== INTERNAL_SCHEME
+}
+
 /**
  * Whether the address is a page the chrome draws (`render: 'chrome'`): the tab has no page view,
  * so everything that would read one – loading, snapshots, favicons, the WebView's history – asks
