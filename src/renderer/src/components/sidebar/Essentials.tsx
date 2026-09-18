@@ -2,7 +2,7 @@ import type { JSX } from 'react'
 import type { Tab } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { dropStore, startTabDrag } from '@renderer/lib/drag'
-import { activeTab, tabTitle } from '@renderer/lib/selectors'
+import { activeTab, tabTooltip } from '@renderer/lib/selectors'
 import {
   browserStore,
   clearTabSelection,
@@ -30,10 +30,8 @@ export function Essentials({ essentials, activeTabId, compact }: Props): JSX.Ele
 
   return (
     <div
-      className={cn(
-        'relative mx-2 mb-1 rounded-xl p-1 transition-colors',
-        dropKey === 'section:essential:' && 'ring-2 ring-[var(--zen-accent)]/60'
-      )}
+      className="relative mx-2 mb-1 rounded-xl p-1"
+      data-drop-into={dropKey === 'section:essential:' || undefined}
     >
       {showZone && (
         <div data-drop="section:essential:" className="absolute inset-0 z-10 rounded-xl" />
@@ -49,6 +47,7 @@ export function Essentials({ essentials, activeTabId, compact }: Props): JSX.Ele
             key={tab.id}
             tab={tab}
             active={tab.id === activeTabId}
+            lifted={drag?.tabId === tab.id}
             showDropZones={Boolean(drag) && drag?.tabId !== tab.id}
             dropKey={dropKey}
           />
@@ -66,11 +65,14 @@ export function Essentials({ essentials, activeTabId, compact }: Props): JSX.Ele
 function EssentialTile({
   tab,
   active,
+  lifted,
   showDropZones,
   dropKey
 }: {
   tab: Tab
   active: boolean
+  /** The tile is in the hand: its slot stays open under the ghost. */
+  lifted: boolean
   showDropZones: boolean
   dropKey: string | null
 }): JSX.Element {
@@ -83,7 +85,8 @@ function EssentialTile({
       data-discarded={tab.discarded}
       data-tab-id={tab.id}
       data-frozen={tab.frozen}
-      title={`${tabTitle(tab)}${tab.frozen ? ' (frozen)' : ''}`}
+      data-lifted={lifted || undefined}
+      title={tabTooltip(tab)}
       onPointerDown={(e) => {
         if (e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey)
           startTabDrag(tab, e)
@@ -124,10 +127,10 @@ function EssentialTile({
         </>
       )}
       {dropKey === `tab:${tab.id}:before` && (
-        <span className="pointer-events-none absolute -left-1 inset-y-1 w-0.5 rounded bg-[var(--zen-accent)]" />
+        <span className="zen-tab-caret-grid -left-1" aria-hidden />
       )}
       {dropKey === `tab:${tab.id}:after` && (
-        <span className="pointer-events-none absolute -right-1 inset-y-1 w-0.5 rounded bg-[var(--zen-accent)]" />
+        <span className="zen-tab-caret-grid -right-1" aria-hidden />
       )}
       <Favicon tab={tab} size={20} />
       {tab.audible && !tab.muted && (
