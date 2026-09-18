@@ -8,7 +8,12 @@ import { useArrowKeys, usePopover } from '@renderer/hooks/usePopover'
 import { anchorOf, placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { useViewport } from '@renderer/lib/formFactor'
 import { openedFromKeyboard } from '@renderer/lib/popover'
-import { ChromePortal, type PopoverBox } from '@renderer/lib/portals'
+import {
+  ChromePortal,
+  popoverStyle,
+  useLightDismiss,
+  type PopoverBox
+} from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { V2Radio } from './v2'
@@ -33,8 +38,10 @@ interface PopupProps<T extends string> {
  * are a `--v2-panel` popover under the control at radius 12 with 6 padding: 28 rows at radius 6,
  * the current one marked by a trailing 16 check. On a finger they are a bottom sheet of 44 rows
  * with a radio glyph (§9.14) on the current option. Picking one closes the popup. The popover
- * hangs flush under the control (§9.20) and takes focus on its current option; the arrow keys
- * move it, Escape gives it back to the control (§9.22).
+ * hangs flush under the control (§9.20, at its own width and height) and takes focus on its
+ * current option; the arrow keys move it, Escape gives it back to the control (§9.22); the
+ * chrome layer's light dismiss closes it otherwise (§9.20 amended) – the control's own press
+ * included, which does not reopen it.
  */
 export function V2Menulist<T extends string>({
   label,
@@ -98,9 +105,10 @@ function MenulistPopover<T extends string>({
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
-    // The list keeps its intrinsic width (no less than the control's), measured as layout
-    // size, not the client rect, which the pop animation's first frame scales to .94.
-    setBox(placeUnder(anchor, el.offsetWidth))
+    // The list keeps its intrinsic width (no less than the control's) and is as tall as its
+    // options, measured as layout size, not the client rect, which the pop animation's first
+    // frame scales to .94.
+    setBox(placeUnder(anchor, { measured: el.offsetWidth }, el.offsetHeight))
   }, [anchor, options.length, ready])
   usePopover(ref, {
     onClose,
@@ -108,51 +116,38 @@ function MenulistPopover<T extends string>({
     initial: (root) => root.querySelector<HTMLElement>('[aria-selected="true"]')
   })
   useArrowKeys(ref, '.zen-v2-menulist-option')
+  useLightDismiss(ref, onClose, { anchor: () => anchor.element ?? null })
   if (!ready) return null
-  // The layer is the light dismiss (§9.20): a press outside the list closes it on pointerdown
-  // and goes no further – the control's own press included, which does not reopen it. (The
-  // chrome layer supplies no dismiss of its own; this one is kept until it does.)
   return (
     <ChromePortal>
       <div
-        className="fixed inset-0"
-        onPointerDown={(e) => {
-          e.stopPropagation()
-          onClose()
+        ref={ref}
+        role="listbox"
+        aria-label={label}
+        className="zen-v2 zen-v2-panel zen-v2-menulist-popup zen-animate-pop fixed select-none"
+        style={{
+          ...(box ? popoverStyle(box) : { left: anchor.x, top: anchor.y + anchor.height }),
+          minWidth: anchor.width,
+          visibility: box ? 'visible' : 'hidden',
+          transformOrigin: box ? popOrigin(anchor, box) : undefined
         }}
       >
-        <div
-          ref={ref}
-          role="listbox"
-          aria-label={label}
-          className="zen-v2 zen-v2-panel zen-v2-menulist-popup zen-animate-pop fixed select-none"
-          style={{
-            left: box?.left ?? anchor.x,
-            top: box?.top ?? anchor.y + anchor.height,
-            minWidth: anchor.width,
-            maxHeight: box?.maxHeight,
-            visibility: box ? 'visible' : 'hidden',
-            transformOrigin: box ? popOrigin(anchor, box) : undefined
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          {options.map((option) => {
-            const selected = option.value === value
-            return (
-              <button
-                key={option.value}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                className="zen-v2-menulist-option"
-                onClick={() => onPick(option.value)}
-              >
-                <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                {selected && <Check />}
-              </button>
-            )
-          })}
-        </div>
+        {options.map((option) => {
+          const selected = option.value === value
+          return (
+            <button
+              key={option.value}
+              type="button"
+              role="option"
+              aria-selected={selected}
+              className="zen-v2-menulist-option"
+              onClick={() => onPick(option.value)}
+            >
+              <span className="min-w-0 flex-1 truncate">{option.label}</span>
+              {selected && <Check />}
+            </button>
+          )
+        })}
       </div>
     </ChromePortal>
   )
@@ -175,18 +170,9 @@ function MenulistSheet<T extends string>({
       className="zen-v2-sheet"
       onDismissed={onClose}
       handleLabel="Resize"
-      header={
-        <div className="zen-v2 zen-v2-sheet-title" data-surface="page">
-          {label}
-        </div>
-      }
+      header={<div className="zen-v2 zen-v2-sheet-title">{label}</div>}
     >
-      <div
-        className="zen-v2 flex flex-col pb-2"
-        role="listbox"
-        aria-label={label}
-        data-surface="page"
-      >
+      <div className="zen-v2 flex flex-col pb-2" role="listbox" aria-label={label}>
         {options.map((option) => {
           const selected = option.value === value
           return (

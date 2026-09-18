@@ -1,23 +1,7 @@
-/**
- * One popover at a time (v2 draft §9.20): opening another closes the first. Every renderer-owned
- * popover (the extensions panel, a local menu, a menulist's list, an action popup's frame) claims
- * the slot while it is up; whatever held it before is asked to close.
+/*
+ * The keyboard side of the renderer's popovers (v2 draft §9.22). One popover at a time and light
+ * dismiss are the chrome layer's (lib/popoverStore.ts, through `useLightDismiss`).
  */
-let current: (() => void) | null = null
-
-/** Take the slot, closing its holder; returns the release to call when this popover is gone. */
-export function claimPopover(close: () => void): () => void {
-  if (current && current !== close) current()
-  current = close
-  return () => {
-    if (current === close) current = null
-  }
-}
-
-/** Close the open popover without taking the slot: a modal dialog is going up over it. */
-export function closePopover(): void {
-  current?.()
-}
 
 /**
  * Whether the popover about to open was reached with the keyboard: the control that has focus

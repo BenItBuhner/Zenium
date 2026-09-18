@@ -8,7 +8,12 @@ import { useArrowKeys, usePopover } from '@renderer/hooks/usePopover'
 import { placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { useViewport } from '@renderer/lib/formFactor'
 import { openedFromKeyboard } from '@renderer/lib/popover'
-import { ChromePortal, type PopoverBox } from '@renderer/lib/portals'
+import {
+  ChromePortal,
+  popoverStyle,
+  useLightDismiss,
+  type PopoverBox
+} from '@renderer/lib/portals'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
 export interface LocalMenuItem {
@@ -48,9 +53,12 @@ function isSeparator(entry: LocalMenuEntry): entry is LocalMenuSeparator {
 /**
  * A menu the renderer owns (v2 draft §6 menus): on a mouse a bordered panel at radius 8 flush
  * under its control (6 for a context menu, §2; §9.20 for where it hangs, through the chrome
- * layer) with 31 rows, a 16 icon each when any has one, hairline separators and danger rows in
- * the danger ink; on a finger the same rows at 44 in a bottom sheet. Escape and an outside click
- * (or a tap on the scrim) close it; there is no scrim on the desktop (§9.5).
+ * layer, at its own width and height – §5's 232–332, as tall as its rows) with 31 rows, a 16
+ * icon each when any has one, hairline separators and danger rows in the danger ink; on a
+ * finger the same rows at 44 in a bottom sheet. Escape closes it, and on the desktop the chrome
+ * layer's light dismiss (§9.20 amended: a press outside it, consumed; its control's own press;
+ * a scroll, a resize, another popover) – there is no scrim there (§9.5); the sheet's own scrim
+ * takes the tap on a phone.
  *
  * The page's view composites above the chrome, so while the menu is up the content frame shows
  * the page's capture instead (`useFloatingChrome`), as it does for the main-process menus.
@@ -84,10 +92,10 @@ function PopoverMenu({
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
-    // A menu keeps its intrinsic width (§5): measured as layout size, not the client rect –
-    // the pop animation's first frame is scaled to .94, and an end-aligned menu measured
-    // through it would land 6% of its width off.
-    setBox(placeUnder(anchor, el.offsetWidth))
+    // A menu keeps its intrinsic width and is as tall as its rows (§5, §9.20's exemption):
+    // measured as layout size, not the client rect – the pop animation's first frame is scaled
+    // to .94, and an end-aligned menu measured through it would land 6% of its width off.
+    setBox(placeUnder(anchor, { measured: el.offsetWidth }, el.offsetHeight))
   }, [anchor, items.length])
   // Opened by pointer the menu itself takes focus, and the arrow keys start at the first item.
   usePopover(ref, {
@@ -96,65 +104,48 @@ function PopoverMenu({
     initial: fromKeyboard ? 'first' : 'container'
   })
   useArrowKeys(ref, '.zen-v2-menu-item')
+  useLightDismiss(ref, onClose, { anchor: () => anchor.element ?? null })
   const withIcons = items.some((item) => !isSeparator(item) && item.icon)
-  // The layer is the light dismiss (§9.20): a press outside the menu closes it on pointerdown
-  // and goes no further, so the control under the press is not pressed. (The chrome layer
-  // supplies no dismiss of its own; this one is kept until it does.)
   return (
     <div
-      className="fixed inset-0"
-      onPointerDown={(e) => {
-        e.stopPropagation()
-        onClose()
+      ref={ref}
+      role="menu"
+      tabIndex={-1}
+      className="zen-v2 zen-v2-panel zen-v2-menu zen-animate-pop fixed select-none"
+      data-context={context || undefined}
+      style={{
+        ...(box ? popoverStyle(box) : { left: anchor.x, top: anchor.y + anchor.height }),
+        visibility: box ? 'visible' : 'hidden',
+        transformOrigin: box ? popOrigin(anchor, box) : undefined
       }}
-      onContextMenu={(e) => {
-        e.preventDefault()
-        onClose()
-      }}
+      onContextMenu={(e) => e.preventDefault()}
     >
-      <div
-        ref={ref}
-        role="menu"
-        tabIndex={-1}
-        className="zen-v2 zen-v2-panel zen-v2-menu zen-animate-pop fixed select-none"
-        data-context={context || undefined}
-        style={{
-          left: box?.left ?? anchor.x,
-          top: box?.top ?? anchor.y + anchor.height,
-          maxHeight: box?.maxHeight,
-          visibility: box ? 'visible' : 'hidden',
-          transformOrigin: box ? popOrigin(anchor, box) : undefined
-        }}
-        onPointerDown={(e) => e.stopPropagation()}
-        onContextMenu={(e) => e.preventDefault()}
-      >
-        {items.map((entry) =>
-          isSeparator(entry) ? (
-            <div key={entry.id} className="zen-v2-menu-separator" role="separator" />
-          ) : (
-            <button
-              key={entry.id}
-              type="button"
-              role="menuitem"
-              className="zen-v2-menu-item"
-              data-danger={entry.danger || undefined}
-              disabled={entry.disabled}
-              onClick={() => {
-                onClose()
-                entry.onSelect()
-              }}
-            >
-              {withIcons && (
-                <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                  {entry.icon && <entry.icon />}
-                </span>
-              )}
-              <span className="min-w-0 flex-1 truncate">{entry.label}</span>
-              {entry.hint && <span className="zen-v2-menu-hint">{entry.hint}</span>}
-            </button>
-          )
-        )}
-      </div>
+      {items.map((entry) =>
+        isSeparator(entry) ? (
+          <div key={entry.id} className="zen-v2-menu-separator" role="separator" />
+        ) : (
+          <button
+            key={entry.id}
+            type="button"
+            role="menuitem"
+            className="zen-v2-menu-item"
+            data-danger={entry.danger || undefined}
+            disabled={entry.disabled}
+            onClick={() => {
+              onClose()
+              entry.onSelect()
+            }}
+          >
+            {withIcons && (
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                {entry.icon && <entry.icon />}
+              </span>
+            )}
+            <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+            {entry.hint && <span className="zen-v2-menu-hint">{entry.hint}</span>}
+          </button>
+        )
+      )}
     </div>
   )
 }
@@ -169,15 +160,9 @@ function SheetMenu({ items, title, onClose }: Props): JSX.Element {
       className="zen-v2-sheet"
       onDismissed={onClose}
       handleLabel="Resize menu"
-      header={
-        title ? (
-          <div className="zen-v2 zen-v2-sheet-title" data-surface="page">
-            {title}
-          </div>
-        ) : undefined
-      }
+      header={title ? <div className="zen-v2 zen-v2-sheet-title">{title}</div> : undefined}
     >
-      <div className="zen-v2 flex flex-col pb-2" data-surface="page">
+      <div className="zen-v2 flex flex-col pb-2">
         {items.map((entry) =>
           isSeparator(entry) ? (
             <div key={entry.id} className="zen-v2-sheet-separator" role="separator" />

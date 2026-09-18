@@ -58,23 +58,58 @@ describe('placePopup', () => {
     expect(p.frame.x + p.frame.width).toBe(300 + 28)
   })
 
-  it('clamps 8 inside the window rather than flipping its alignment', () => {
-    // Trailing half of a bar at the window's left edge: end-aligning 382 would leave the window.
+  it('flips its alignment when the aligned box would cross the margin (§9.20: flip first)', () => {
+    // Trailing half of a bar at the window's left edge: end-aligning 382 would leave the window,
+    // so the frame start-aligns on the same button instead.
     const p = placePopup({ anchor: button(300), content: { width: 380, height: 300 }, viewport })
-    expect(p.frame.x).toBe(POPOVER_MARGIN)
+    expect(p.frame.x).toBe(300)
+    expect(p.side).toBe('below')
+    // A lone button by the right edge: start-aligned it would leave, so it end-aligns.
     const near = placePopup({
       anchor: button(1200, false),
       content: { width: 380, height: 300 },
       viewport
     })
-    expect(near.frame.x + near.frame.width).toBe(viewport.width - POPOVER_MARGIN)
+    expect(near.frame.x + near.frame.width).toBe(1200 + 28)
+  })
+
+  it('slides the least distance inside the margins when neither alignment fits, then shrinks', () => {
+    // Neither alignment of a 700 frame fits a 720 window from a button at 300: the frame slides
+    // to the margin and still overlaps its button.
+    const slid = placePopup({
+      anchor: button(300),
+      content: { width: 700, height: 300 },
+      viewport: { width: 720, height: 800 }
+    })
+    expect(slid.frame.x).toBe(POPOVER_MARGIN)
+    expect(slid.frame.width).toBe(700 + 2 * POPUP_PADDING)
+    expect(slid.frame.x).toBeLessThan(300 + 28)
+    expect(slid.frame.x + slid.frame.width).toBeGreaterThan(300)
+    // Wider than the window minus 16: shrunk to that and centred, the view inside it narrower
+    // than the manifest asked.
     const wide = placePopup({
       anchor: button(300),
-      content: { width: 2000, height: 300 },
+      content: { width: 800, height: 300 },
       viewport: { width: 600, height: 800 }
     })
     expect(wide.frame.x).toBe(POPOVER_MARGIN)
     expect(wide.frame.x + wide.frame.width).toBe(600 - POPOVER_MARGIN)
+    expect(wide.inner.width).toBe(600 - 2 * POPOVER_MARGIN - 2 * POPUP_PADDING)
+  })
+
+  it('flips above the bar when the room there is greater, ending flush on its top edge', () => {
+    // A bar low in a short window: 300 of document does not fit the 60 below it.
+    const lowBar = { x: 8, y: 700, width: 340, height: 32 }
+    const p = placePopup({
+      anchor: { x: 40, y: 702, width: 28, height: 28, bar: lowBar },
+      content: { width: 380, height: 300 },
+      viewport
+    })
+    expect(p.side).toBe('above')
+    expect(p.frame.y + p.frame.height).toBe(lowBar.y)
+    expect(p.frame.height).toBe(300 + 2 * POPUP_PADDING)
+    expect(p.frame.y).toBeGreaterThanOrEqual(POPOVER_MARGIN)
+    expect(p.inner.y).toBe(p.frame.y + POPUP_PADDING)
   })
 
   it("keeps the manifest's size: Chrome's limits and the window, not §9.20's widths or 60%", () => {
@@ -85,12 +120,19 @@ describe('placePopup', () => {
     const tiny = placePopup({ anchor: button(300), content: { width: 1, height: 1 }, viewport })
     expect(tiny.inner.width).toBe(POPUP_MIN.width)
     expect(tiny.inner.height).toBe(POPUP_MIN.height)
+    // As tall as asked below a bar at the top, not shrunk to a 60% of the window.
+    const tall = placePopup({ anchor: button(300), content: { width: 380, height: 590 }, viewport })
+    expect(tall.inner.height).toBe(590)
+    expect(tall.side).toBe('below')
+    // A window too short for it: the frame shrinks to the room, never past the margin.
     const short = placePopup({
       anchor: button(300),
       content: { width: 380, height: 590 },
       viewport: { width: 1280, height: 400 }
     })
-    expect(short.frame.y + short.frame.height).toBeLessThanOrEqual(400 - POPOVER_MARGIN)
+    expect(short.frame.y + short.frame.height).toBe(400 - POPOVER_MARGIN)
+    expect(short.frame.y).toBe(bar.y + bar.height)
+    expect(short.inner.height).toBe(short.frame.height - 2 * POPUP_PADDING)
   })
 
   it('rounds to whole pixels for the view bounds main sets', () => {

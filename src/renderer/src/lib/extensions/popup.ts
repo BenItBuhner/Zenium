@@ -2,6 +2,7 @@ import type { ExtensionPromptRequest } from '@shared/types'
 import type { Anchor } from '../anchor'
 import { run } from '../api'
 import { activeTab } from '../selectors'
+import { openPopover } from '../portals'
 import {
   browserStore,
   captureActiveTab,
@@ -9,7 +10,6 @@ import {
   returnFocusToPage,
   uiStore
 } from '../ui'
-import { claimPopover } from '../popover'
 import { placePopup, type PopupPlacement } from './popupPlacement'
 
 /** How long the frame waits for the document's size before opening at the default one. */
@@ -24,8 +24,15 @@ interface PendingPopup {
   size: { width: number; height: number } | null
 }
 let pending: PendingPopup | null = null
-/** Gives the popover slot back once the popup is closed. */
+/** Takes the popup out of the chrome layer's popover registry once it is closed. */
 let releasePopover: (() => void) | null = null
+/** The frame's root while `PopupFrame` has it mounted: what a press inside the popup lands on. */
+let frame: HTMLElement | null = null
+
+/** `PopupFrame` binds its root here while it is mounted, and null when it goes. */
+export function bindPopupFrame(el: HTMLElement | null): void {
+  frame = el
+}
 
 /**
  * Open an action popup under its toolbar button. The renderer owns the frame and decides where
@@ -47,8 +54,17 @@ export function openExtensionPopup(id: string, anchor: Anchor, hasPopup: boolean
     run('extension.openPopup', { id, anchor: box })
     return
   }
-  // One popover at a time (§9.20): the frame takes the slot from whatever renderer popover is up.
-  releasePopover = claimPopover(() => closeExtensionPopup())
+  // The chrome layer's registry (lib/popoverStore.ts, §9.20 amended): registering closes
+  // whatever popover is up, and from here on a press outside the frame – the page, the bar,
+  // the button itself, which then does not reopen it – a scroll, a resize or another popover
+  // opening closes the popup. Registered from the press rather than the frame's mount, so a
+  // press while the page is still being captured closes the pending popup too. The document
+  // is main's view above the chrome and keeps its own input.
+  releasePopover = openPopover({
+    element: () => frame,
+    anchor: () => anchor.element ?? null,
+    close: () => closeExtensionPopup()
+  })
   const placement = placementFor(anchor, null)
   run('extension.openPopup', {
     id,

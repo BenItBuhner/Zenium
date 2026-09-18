@@ -9,7 +9,12 @@ import { run } from '@renderer/lib/api'
 import { badgeLabel, badgeStyle } from '@renderer/lib/extensions/badge'
 import { closeExtensionPopup, openExtensionPopup } from '@renderer/lib/extensions/popup'
 import { openedFromKeyboard } from '@renderer/lib/popover'
-import { ChromePortal, POPOVER_WIDTH } from '@renderer/lib/portals'
+import {
+  ChromePortal,
+  POPOVER_WIDTH,
+  popoverStyle,
+  useLightDismiss
+} from '@renderer/lib/portals'
 import {
   actionEnabled,
   actionIcon,
@@ -73,8 +78,9 @@ export function ToolbarActions({
         aria-haspopup="dialog"
         aria-expanded={panelAnchor !== null}
         data-active={panelAnchor !== null || undefined}
-        // An open popup's layer takes the press before it reaches this button (§9.20); the
-        // panel's claim on the popover slot closes one still pending its capture.
+        // While the panel or a popup is up the chrome layer's light dismiss takes the press
+        // before it reaches this button (§9.20 amended); the toggle is for the keyboard, whose
+        // Enter and Space come as a click alone.
         onClick={(e) => setPanelAnchor(panelAnchor ? null : anchorOf(e.currentTarget))}
       >
         <Puzzle className="h-4 w-4" />
@@ -97,8 +103,8 @@ export function ToolbarActions({
 // ---------------------------------------------------------------------------
 
 /**
- * While its popup is up the button sits under the popup's dismiss layer (§9.20): a press on it
- * closes the popup and does not reopen it, and never reaches this handler.
+ * While its popup is up the chrome layer's light dismiss takes a press on the button (§9.20
+ * amended): it closes the popup and does not reopen it, and never reaches this handler.
  */
 function ActionButton({ ext }: { ext: ExtensionInfo }): JSX.Element {
   const ref = useRef<HTMLButtonElement>(null)
@@ -159,10 +165,13 @@ function ActionButton({ ext }: { ext: ExtensionInfo }): JSX.Element {
 
 /**
  * The puzzle-piece popover (§9.20): 400 wide, flush under the toolbar's bar and aligned with
- * the button (`placePopover`, through the chrome layer), a title block (§9.23) over rows of 36
- * – icon, name and a pin button (§9.21) – then Manage Extensions behind a hairline. Past 60% of
- * the window's height the rows scroll under the title. Focus lands on the first row and returns
- * to the button on Escape (§9.22).
+ * the button (`placePopover`, through the chrome layer, which flips it above the bar when there
+ * is more room there), a title block (§9.23) over rows of 36 – icon, name and a pin button
+ * (§9.21) – then Manage Extensions behind a hairline. Past 60% of the window's height the rows
+ * scroll under the title. Focus lands on the first row and returns to the button on Escape
+ * (§9.22). The layer's light dismiss closes it otherwise (§9.20 amended): a press anywhere
+ * outside it, consumed; the button's own press, which hands the button the focus; a scroll, a
+ * resize, another popover opening.
  */
 function ExtensionsPanel({
   state,
@@ -186,6 +195,9 @@ function ExtensionsPanel({
   const ready = useFloatingChrome({ pageHadFocus: !fromKeyboard })
   const [scrolled, setScrolled] = useState(false)
   usePopover(ref, { onClose, active: ready, returnTo: opener })
+  // In the chrome layer's popover registry from the press (the panel holds its first paint
+  // until the page's capture is in place, and a press meanwhile closes it all the same).
+  useLightDismiss(ref, onClose, { anchor: opener })
   const openFromPanel = (ext: ExtensionInfo): void => {
     if (!actionEnabled(ext)) return
     onClose()
@@ -193,75 +205,57 @@ function ExtensionsPanel({
   }
   if (!ready) return null
   const box = placeUnder(anchor, PANEL_WIDTH)
-  // The layer under the panel is the light dismiss (§9.20): a press anywhere outside it – the
-  // page, the bar, another anchor – closes the panel on pointerdown and goes no further. (The
-  // chrome layer supplies no dismiss of its own; this one is kept until it does.)
   return (
     <ChromePortal>
       <div
-        className="fixed inset-0"
-        onPointerDown={(e) => {
-          e.stopPropagation()
-          onClose()
-        }}
+        ref={ref}
+        role="dialog"
+        aria-labelledby="zen-ext-panel-title"
+        className="zen-v2 zen-v2-panel zen-ext-panel zen-animate-pop"
+        style={{ ...popoverStyle(box), transformOrigin: popOrigin(anchor, box) }}
       >
+        <V2TitleBlock id="zen-ext-panel-title" title="Extensions" scrolled={scrolled} />
         <div
-          ref={ref}
-          role="dialog"
-          aria-labelledby="zen-ext-panel-title"
-          className="zen-v2 zen-v2-panel zen-ext-panel zen-animate-pop"
-          style={{
-            left: box.left,
-            top: box.top,
-            width: box.width,
-            maxHeight: box.maxHeight,
-            transformOrigin: popOrigin(anchor, box)
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
+          className="zen-ext-panel-body"
+          onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
         >
-          <V2TitleBlock id="zen-ext-panel-title" title="Extensions" scrolled={scrolled} />
-          <div
-            className="zen-ext-panel-body"
-            onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
+          <ul className="flex flex-col">
+            {extensions.map((ext) => (
+              <li key={ext.id} className="zen-ext-panel-row">
+                <button
+                  type="button"
+                  className="flex h-full min-w-0 flex-1 items-center gap-2 text-left"
+                  title={actionTitle(ext)}
+                  aria-disabled={!actionEnabled(ext) || undefined}
+                  onClick={() => openFromPanel(ext)}
+                >
+                  <ExtensionIcon icon={actionIcon(ext)} size={16} box={16} />
+                  <span className="min-w-0 flex-1 truncate">{ext.name}</span>
+                </button>
+                <V2IconButton
+                  icon={ext.toolbarPinned ? PinOff : Pin}
+                  label={ext.toolbarPinned ? `Unpin ${ext.name}` : `Pin ${ext.name} to toolbar`}
+                  title={ext.toolbarPinned ? 'Unpin from toolbar' : 'Pin to toolbar'}
+                  aria-pressed={ext.toolbarPinned}
+                  onClick={() =>
+                    run('extension.setToolbarPinned', { id: ext.id, pinned: !ext.toolbarPinned })
+                  }
+                />
+              </li>
+            ))}
+          </ul>
+          <div className="zen-v2-menu-separator" role="separator" />
+          <button
+            type="button"
+            className="zen-ext-panel-row"
+            onClick={() => {
+              onClose()
+              void openOverlay('addons', activeTab(state)?.id ?? null)
+            }}
           >
-            <ul className="flex flex-col">
-              {extensions.map((ext) => (
-                <li key={ext.id} className="zen-ext-panel-row">
-                  <button
-                    type="button"
-                    className="flex h-full min-w-0 flex-1 items-center gap-2 text-left"
-                    title={actionTitle(ext)}
-                    aria-disabled={!actionEnabled(ext) || undefined}
-                    onClick={() => openFromPanel(ext)}
-                  >
-                    <ExtensionIcon icon={actionIcon(ext)} size={16} box={16} />
-                    <span className="min-w-0 flex-1 truncate">{ext.name}</span>
-                  </button>
-                  <V2IconButton
-                    icon={ext.toolbarPinned ? PinOff : Pin}
-                    label={ext.toolbarPinned ? `Unpin ${ext.name}` : `Pin ${ext.name} to toolbar`}
-                    title={ext.toolbarPinned ? 'Unpin from toolbar' : 'Pin to toolbar'}
-                    aria-pressed={ext.toolbarPinned}
-                    onClick={() =>
-                      run('extension.setToolbarPinned', { id: ext.id, pinned: !ext.toolbarPinned })
-                    }
-                  />
-                </li>
-              ))}
-            </ul>
-            <div className="zen-v2-menu-separator" role="separator" />
-            <button
-              type="button"
-              className="zen-ext-panel-row"
-              onClick={() => {
-                onClose()
-                void openOverlay('addons', activeTab(state)?.id ?? null)
-              }}
-            >
-              <SlidersHorizontal className="zen-v2-deemphasized" />
-              <span className="min-w-0 flex-1 truncate">Manage Extensions</span>
-            </button>
-          </div>
+            <SlidersHorizontal className="zen-v2-deemphasized" />
+            <span className="min-w-0 flex-1 truncate">Manage Extensions</span>
+          </button>
         </div>
       </div>
     </ChromePortal>
