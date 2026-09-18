@@ -13,6 +13,7 @@ import {
 import { join } from 'node:path'
 import {
   DEFAULT_CONTAINER_ID,
+  PRIVATE_CONTAINER_ID,
   type ExtensionAction,
   type ExtensionCommandInfo,
   type ExtensionInfo
@@ -30,7 +31,6 @@ import {
   isSpecMethod
 } from '../../../core/extensions/api/spec'
 import { normalizeEventFilters, type UrlFilter } from '../../../core/extensions/api/urlFilter'
-import type { RuleSink } from '../../../core/extensions/dnr/sink'
 import type { KeyEventInput, MenuItemTemplate, PageContextParams } from '../../../core/platform'
 import type { RegistryEvent } from '../extensions'
 import type { SessionManager } from '../sessions'
@@ -50,6 +50,7 @@ import {
 } from './contexts'
 import { CookiesApi } from './cookies'
 import { DeclarativeNetRequestHostApi } from './declarativeNetRequest'
+import type { ScopedRuleSink } from './dnrSink'
 import { ExtensionApi } from './extension'
 import { ManagementApi } from './management'
 import { ApiModel, type ModelSnapshot } from './model'
@@ -147,6 +148,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   /** Loaded at least once in this process: `runtime.onStartup` goes with the first load only. */
   private readonly seen = new Set<string>()
   private readonly attachedSessions = new WeakSet<Session>()
+  /** The container id of every attached (extension-capable) session. */
+  private readonly sessionContainers = new Map<Session, string>()
+  /** Extensions the user allowed in private windows (`ExtensionInfo.allowPrivate`). */
+  private readonly privateAllowed = new Set<string>()
   private readonly wiredWorkers = new WeakSet<ServiceWorkerMain>()
   private readonly watchedWindows = new WeakSet<BrowserWindow>()
   private snapshot: ModelSnapshot | null = null
@@ -161,7 +166,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     io: StoreIO,
     userDataDir: string,
     /** Where `declarativeNetRequest` rule sets go: the request-blocking engine. */
-    ruleSink: RuleSink
+    ruleSink: ScopedRuleSink
   ) {
     this.model = new ApiModel(browser, views)
     this.store = new ApiStore(io, userDataDir)
@@ -255,8 +260,14 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       case 'disabled':
         this.tellOthers('onDisabled', event.id)
         return
+      case 'allowPrivate':
+        if (event.allowed) this.privateAllowed.add(event.id)
+        else this.privateAllowed.delete(event.id)
+        this.declarativeNetRequest.sessionsChanged(event.id)
+        return
       case 'uninstalled':
         this.seen.delete(event.id)
+        this.privateAllowed.delete(event.id)
         this.runtime.openUninstallUrl(event.id)
         this.store.forget(event.id)
         this.declarativeNetRequest.uninstalled(event.id)
@@ -270,6 +281,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   attachSession(ses: Session, containerId: string): void {
     if (this.attachedSessions.has(ses)) return
     this.attachedSessions.add(ses)
+    this.sessionContainers.set(ses, containerId)
     this.cookies.attachSession(ses, containerId)
     const registered = ses.getPreloadScripts().map((script) => script.id)
     if (!registered.includes(FRAME_PRELOAD_ID)) {
@@ -317,8 +329,11 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   private onLoaded(ext: Extension, ses: Session): void {
     const existing = this.extensions.get(ext.id)
     if (existing) {
-      if (!existing.sessions.includes(ses)) existing.sessions.push(ses)
-      this.orderSessions(existing)
+      if (!existing.sessions.includes(ses)) {
+        existing.sessions.push(ses)
+        this.orderSessions(existing)
+        this.declarativeNetRequest.sessionsChanged(ext.id)
+      }
       return
     }
     const info = this.infoFor(ext)
@@ -331,6 +346,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       unpacked: isUnpacked(info)
     }
     this.extensions.set(ext.id, loaded)
+    if (info?.allowPrivate) this.privateAllowed.add(ext.id)
+    else this.privateAllowed.delete(ext.id)
     this.registry.restoreWorkerEvents(ext.id, this.store.workerEvents(ext.id))
     this.permissions.load(loaded)
     this.alarms.load(ext.id)
@@ -349,7 +366,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     const loaded = this.extensions.get(ext.id)
     if (!loaded) return
     loaded.sessions = loaded.sessions.filter((s) => s !== ses)
-    if (loaded.sessions.length > 0) return
+    if (loaded.sessions.length > 0) {
+      this.declarativeNetRequest.sessionsChanged(ext.id)
+      return
+    }
     this.extensions.delete(ext.id)
     this.alarms.unload(ext.id)
     this.permissions.unload(ext.id)
@@ -574,6 +594,19 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
 
   grants(extensionId: string): PermissionSet {
     return this.permissions.grants(extensionId)
+  }
+
+  partitionsOf(extensionId: string): readonly string[] {
+    const loaded = this.extensions.get(extensionId)
+    if (!loaded) return []
+    const partitions: string[] = []
+    for (const ses of loaded.sessions) {
+      const containerId = this.sessionContainers.get(ses)
+      if (containerId !== undefined && !partitions.includes(containerId))
+        partitions.push(containerId)
+    }
+    if (this.privateAllowed.has(extensionId)) partitions.push(PRIVATE_CONTAINER_ID)
+    return partitions
   }
 
   commitUi(): void {

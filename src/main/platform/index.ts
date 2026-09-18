@@ -282,8 +282,12 @@ export class ElectronPlatform implements Platform {
       this.views,
       this.io,
       this.userDataDir,
-      // Extensions' declarativeNetRequest rule sets go straight into the request-blocking engine.
-      createDnrSink(browser.blocking.engine, extensionResources)
+      // Extensions' declarativeNetRequest rule sets go straight into the request-blocking
+      // engine, each scoped to the sessions its extension is loaded into (never the private
+      // window's unless the user allowed the extension there).
+      createDnrSink(browser.blocking.engine, extensionResources, {
+        partitionsOf: (id) => extensionApi.partitionsOf(id)
+      })
     )
     extensionApi.install()
     const extensionService = browser.extensions as ExtensionService

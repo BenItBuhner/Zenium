@@ -80,6 +80,12 @@ export interface ApiHost {
   canSeeTab(extension: LoadedExtension, url: string): boolean
   /** Whether the extension has host access to `url`: a granted host permission or `activeTab`. */
   hostAccess(extensionId: string, url: string): boolean
+  /**
+   * The session partitions (container ids) the extension's request rules and listeners apply
+   * to: the sessions it is loaded into, plus the private partition when the user allowed it
+   * there (`ExtensionInfo.allowPrivate`). Empty for an extension that is not loaded.
+   */
+  partitionsOf(extensionId: string): readonly string[]
   /** The extension's currently granted permissions. */
   grants(extensionId: string): PermissionSet
   /** Ask the renderer to re-render (extension state shown in the UI changed). */

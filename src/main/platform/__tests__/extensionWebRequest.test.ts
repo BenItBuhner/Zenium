@@ -95,12 +95,19 @@ interface World {
   ctx(context: FrameContext | WorkerContext): ApiContext
   loaded: Set<string>
   access: (extensionId: string, url: string) => boolean
+  /** The partitions each extension's rules apply to (`ApiHost.partitionsOf`). */
+  partitions: Map<string, string[]>
 }
 
 function world(options: { timeoutMs?: number; attach?: boolean } = {}): World {
   const sent: Sent[] = []
   const contexts = new Map<string, FrameContext | WorkerContext>()
   const loaded = new Set([MV2, MV3, NO_PERMISSION])
+  const partitions = new Map<string, string[]>([
+    [MV2, ['default']],
+    [MV3, ['default']],
+    [NO_PERMISSION, ['default']]
+  ])
   const tabs = new Map<string, Tab>([
     ['tab-1', { id: 'tab-1', url: 'https://page.example/' } as Tab],
     ['tab-2', { id: 'tab-2', url: 'https://other.example/' } as Tab]
@@ -112,6 +119,7 @@ function world(options: { timeoutMs?: number; attach?: boolean } = {}): World {
     sent,
     contexts,
     loaded,
+    partitions,
     access: (extensionId, url) =>
       extensionId === MV2
         ? true
@@ -163,6 +171,7 @@ function world(options: { timeoutMs?: number; attach?: boolean } = {}): World {
     }),
     loaded: (extensionId: string) => (loaded.has(extensionId) ? { id: extensionId } : undefined),
     hostAccess: (extensionId: string, url: string) => state.access(extensionId, url),
+    partitionsOf: (extensionId: string) => partitions.get(extensionId) ?? [],
     registry: {
       frameFor: (frame: unknown) =>
         [...contexts.values()].find((c) => 'frame' in c && c.frame === frame),
@@ -427,6 +436,35 @@ describe('WebRequestApi dispatch', () => {
     w.loaded.delete(MV3)
     w.pipeline.fire('onBeforeRequest', {})
     expect(w.sent).toEqual([])
+  })
+
+  it('leaves a private window’s requests alone unless the extension is allowed there', async () => {
+    const w = world()
+    const mv2 = w.frame(MV2)
+    add(w, mv2, 'onBeforeRequest', { urls: [] }, ['blocking'], 1)
+    // A normal window's request reaches the blocking listener and its answer cancels it.
+    const normal = w.pipeline.fire('onBeforeRequest', { partition: 'default' })
+    expect(w.sent).toHaveLength(1)
+    const token = w.sent[0].args[1]
+    w.api.answer(w.ctx(mv2), { token, response: { cancel: true } })
+    expect(await normal[0]).toEqual({ cancel: true })
+    // The same request from the private partition, where the extension is not loaded, is not
+    // delivered: the listener cannot block it, and nothing waits for an answer.
+    expect(w.pipeline.fire('onBeforeRequest', { partition: 'private', tabId: 'tab-2' })).toEqual([
+      undefined
+    ])
+    expect(w.sent).toHaveLength(1)
+    expect(w.api.pendingAnswers).toBe(0)
+    // A container the extension is loaded into counts; one it is not does not.
+    w.partitions.set(MV2, ['default', 'work'])
+    w.pipeline.fire('onBeforeRequest', { partition: 'work' })
+    w.pipeline.fire('onBeforeRequest', { partition: 'school' })
+    expect(w.sent).toHaveLength(2)
+    // The user allowed the extension in private windows: the private partition joins its scope.
+    w.partitions.set(MV2, ['default', 'private'])
+    w.pipeline.fire('onBeforeRequest', { partition: 'private' })
+    expect(w.sent).toHaveLength(3)
+    expect(w.sent[2].args[0]).toMatchObject({ url: 'https://cdn.example/a.js' })
   })
 })
 

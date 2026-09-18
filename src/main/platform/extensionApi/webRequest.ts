@@ -78,9 +78,12 @@ const PERMISSIONS = ['webRequest', 'webRequestBlocking']
  * pipeline (`WebRequestListenerHost`), registered under the extension's id so the pipeline
  * orders and composes the results as Chromium does across extensions (newer installs first).
  *
- * A request reaches a listener when the extension has host access to it (the URL, and for
- * anything but a navigation the initiator too), the registration's `RequestFilter` matches,
- * and the context that registered is still alive. The delivery carries Chrome's details for
+ * A request reaches a listener when it runs in a session the extension is loaded into (the
+ * multiplexer hooks every session, the private window's included, where no extension runs
+ * unless the user allowed it there: `ApiHost.partitionsOf`), the extension has host access to
+ * it (the URL, and for anything but a navigation the initiator too), the registration's
+ * `RequestFilter` matches, and the context that registered is still alive. The delivery
+ * carries Chrome's details for
  * the event with the headers the `extraInfoSpec` asked for, addressed to the listener's id.
  * A `blocking` listener's delivery also carries a token; the shim answers with the listener's
  * return value, which the pipeline applies (`cancel`, `redirectUrl`, `requestHeaders`,
@@ -286,6 +289,7 @@ export class WebRequestApi {
       return undefined
     }
     if (!this.host.loaded(extensionId)) return undefined
+    if (!this.host.partitionsOf(extensionId).includes(details.partition)) return undefined
     const request = { url: details.url, type: details.resourceType, initiator: details.initiator }
     if (!canAccessRequest((url) => this.host.hostAccess(extensionId, url), request, extensionId)) {
       return undefined
