@@ -19,6 +19,7 @@ import type {
   CertificateDetails,
   NavigationSnapshot,
   NavigationSnapshotEntry,
+  NewTabPageCommand,
   NewTabPageState,
   PageDialogResponse,
   Rect,
@@ -634,6 +635,11 @@ export class ElectronTabView implements TabView {
   /** Fresh `NewTabPageState` for a `zen://newtab` page (its preload listens on this channel). */
   sendNewTabState(state: NewTabPageState): void {
     if (!this.wc.isDestroyed()) this.wc.send('zen:newtab-state', state)
+  }
+
+  /** What a `zen://newtab` page's tile menu picked, for the page to carry out. */
+  sendNewTabCommand(command: NewTabPageCommand): void {
+    if (!this.wc.isDestroyed()) this.wc.send('zen:newtab-command', command)
   }
 
   setBackgroundColor(color: string): void {

@@ -20,6 +20,7 @@ import type {
   KeyBinding,
   NavigationSnapshot,
   NewTabPageAction,
+  NewTabPageCommand,
   NewTabPageState,
   PageDialogResponse,
   PageRules,
@@ -544,6 +545,8 @@ export interface TabView {
   // The new tab page (optional – hosts without `capabilities.newTabPage` leave it out).
   /** Push fresh state into a `zen://newtab` page (theme, settings, shortcuts, most visited). */
   sendNewTabState?(state: NewTabPageState): void
+  /** Tell a `zen://newtab` page to carry out what its tile menu picked (remove, with Undo). */
+  sendNewTabCommand?(command: NewTabPageCommand): void
 }
 
 export type { PageRules } from '../shared/types'

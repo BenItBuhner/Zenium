@@ -19,7 +19,7 @@ import { installFormsScript } from '../shared/formsScript'
 import type { FormsCommand } from '../shared/forms'
 import { completeChromeObject } from '../shared/chromeObject'
 import { installNewTabPage } from '../shared/newTabPageScript'
-import type { NewTabPageState } from '../shared/types'
+import type { NewTabPageCommand, NewTabPageState } from '../shared/types'
 import { isNewTabUrl } from '../shared/url'
 
 /**
@@ -103,6 +103,10 @@ if (process.isMainFrame) {
       },
       onState: (listener) =>
         ipcRenderer.on('zen:newtab-state', (_event, state: NewTabPageState) => listener(state)),
+      onCommand: (listener) =>
+        ipcRenderer.on('zen:newtab-command', (_event, command: NewTabPageCommand) =>
+          listener(command)
+        ),
       send: (action) => ipcRenderer.send('zen:newtab', action)
     })
   }

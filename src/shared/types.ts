@@ -1382,6 +1382,8 @@ export interface NewTabPageState {
 /**
  * Actions the new tab page asks the browser for (one-way; the browser answers with state).
  * Tiles are plain links, so opening one needs no action: the page navigates like any page.
+ * The page draws no popover or dialog of its own: a tile's menu, the add / edit dialog and the
+ * Customize surface are the chrome's (design language v2 §9.20–9.23), asked for here.
  */
 export type NewTabPageAction =
   | { type: 'ready' }
@@ -1395,11 +1397,29 @@ export type NewTabPageAction =
   /** "Most visited": remove a site's tile (its host goes on a local block list) and undo that. */
   | { type: 'hide-site'; url: string }
   | { type: 'unhide-site'; url: string }
-  | { type: 'set-shortcuts-mode'; mode: NewTabShortcutsMode }
-  | { type: 'set-background'; background: NewTabBackgroundKind }
-  | { type: 'set-greeting'; greeting: boolean }
-  | { type: 'pick-background-image' }
-  | { type: 'clear-background-image' }
+  /** Open the chrome's add (`id` null) or edit shortcut dialog over the page. */
+  | { type: 'edit-shortcut'; id: string | null }
+  /**
+   * A tile's menu (right-click, its ⋮ button, Shift+F10): the host's context menu at `x`, `y`
+   * in the page's CSS pixels; `keyboard` starts it with the first item selected.
+   */
+  | {
+      type: 'tile-menu'
+      id: string
+      url: string
+      title: string
+      x: number
+      y: number
+      keyboard: boolean
+    }
+  /** The Customize button: Settings opens on its New Tab section. */
+  | { type: 'customize' }
+
+/**
+ * What the browser tells a new tab page besides its state: a menu item picked in the chrome
+ * that the page carries out itself, so its Undo toast works the same as for the Delete key.
+ */
+export type NewTabPageCommand = { type: 'remove-tile'; id: string }
 
 export interface Settings {
   colorScheme: ColorScheme
@@ -3167,6 +3187,11 @@ export interface Events {
    * appear in its state, lets it paint, then opens the URL bar in new-tab mode over it.
    */
   'newtab.opened': { tabId: string; text?: string }
+  /**
+   * The new tab page in `tabId` asked for its add (`id` null) or edit shortcut dialog: the
+   * chrome shows it over the page, prefilled with `title` and `url`.
+   */
+  'newtab.shortcutDialog': { tabId: string; id: string | null; title: string; url: string }
   'overlay.open': { kind: OverlayKind; folderId?: string; section?: string }
   /**
    * Show the find bar for a tab with `text` in its field (the tab's last query, else the
