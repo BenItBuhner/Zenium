@@ -159,9 +159,10 @@ class Extensions(private val host: Host) {
     /** Last request decisions ("allow|block|… type micros url"), kept while `debug` for instrumentation. */
     val decisions = ArrayDeque<String>()
     /**
-     * While `debug`: `"<ext> <ns>.<method>"` → `[calls, failed replies]` over the bridge, so the
-     * demo can grade messaging and storage per real extension (`msg` counts as
+     * While `debug`: `"<ext> <ns>.<method>"` → `[calls, failed replies, unanswered]` over the
+     * bridge, so the demo can grade messaging and storage per real extension (`msg` counts as
      * `runtime.sendMessage`, `connect` as `runtime.connect`, `portMsg` as `port.postMessage`).
+     * Unanswered: the two `runtime.lastError` outcomes of a normal Chrome run (`UNANSWERED`).
      */
     val callStats = HashMap<String, IntArray>()
     private val pendingCalls = HashMap<String, String>()
@@ -465,7 +466,7 @@ class Extensions(private val host: Host) {
             else -> return
         }
         synchronized(callStats) {
-            callStats.getOrPut(key) { IntArray(2) }[0]++
+            callStats.getOrPut(key) { IntArray(3) }[0]++
             if (message.has("id")) pendingCalls["$ep:${message.opt("id")}"] = key
             if (pendingCalls.size > 4000) pendingCalls.clear()
         }
@@ -477,7 +478,13 @@ class Extensions(private val host: Host) {
         if (reply.optString("t") != "reply") return
         synchronized(callStats) {
             val key = pendingCalls.remove("$ep:${reply.opt("id")}") ?: return
-            if (!reply.optBoolean("ok", true)) callStats.getOrPut(key) { IntArray(2) }[1]++
+            if (!reply.optBoolean("ok", true)) {
+                val counts = callStats.getOrPut(key) { IntArray(3) }
+                // The two outcomes Chrome itself reports through runtime.lastError in normal
+                // operation (a tab without a listener, a listener that never answered) are not
+                // failures of the layer; they are counted apart so a grader can tell them.
+                if (reply.optString("error") in UNANSWERED) counts[2]++ else counts[1]++
+            }
         }
     }
 
@@ -1032,6 +1039,11 @@ class Extensions(private val host: Host) {
         const val WORLD_SLOTS = 16
         /** Bridge trace lines kept for instrumentation (one line per message, all extensions together). */
         const val TRACE_LINES = 2400
+        /** Reply errors Chrome raises in normal operation: a message to a tab without a listener, a listener that never answered. */
+        val UNANSWERED = setOf(
+            "Could not establish connection. Receiving end does not exist.",
+            "The message port closed before a response was received."
+        )
         const val ORIGIN_SUFFIX = ".ext.zenium.invalid"
         const val GENERATED_BACKGROUND = "_generated_background_page.html"
         val VALID_ID = Regex("^[a-p]{32}$")

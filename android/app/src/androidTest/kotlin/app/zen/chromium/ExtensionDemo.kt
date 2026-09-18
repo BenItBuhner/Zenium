@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Rect
+import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
@@ -426,7 +427,14 @@ class ExtensionDemo {
         results.put("returnYouTubeDislike", ryd)
         results.put("youtubeConsole", JSONArray(consoleOf(ytView)))
         val api = ryd.optJSONArray("apiEntries")?.length() ?: 0
-        stage(RYD, "contentScript", if (groups > 0) "PASS" else "FAIL", "groups=$groups readyState=${ryd.optString("readyState")} url=${ryd.optString("url")}")
+        // Google answers a runner's address with a CAPTCHA now and then (www.google.com/sorry):
+        // no watch page, so nothing of the extension's to grade. The Trusted Types check has a
+        // page of the run's own in the measurements (`trustedTypesPage`).
+        val ytUrl = ryd.optString("url")
+        val ytHost = runCatching { Uri.parse(ytUrl).host ?: "" }.getOrDefault("")
+        val onYouTube = ytHost == "youtube.com" || ytHost.endsWith(".youtube.com")
+        val offSite = "network: the tab landed on $ytHost, not a watch page (Google served the runner a CAPTCHA)"
+        stage(RYD, "contentScript", if (!onYouTube) "N/A" else if (groups > 0) "PASS" else "FAIL", if (!onYouTube) offSite else "groups=$groups readyState=${ryd.optString("readyState")} url=$ytUrl")
         // A phone WebView lands on m.youtube.com, whose CSP requires Trusted Types for script
         // sinks: the page's own realm refuses a plain `script.textContent`, the extension's
         // isolated world accepts it through the bootstrap's pass-through policy (the shield).
@@ -435,26 +443,31 @@ class ExtensionDemo {
         val shield = rydWorld?.optJSONObject("stats")?.optJSONObject("trustedTypes")
         results.put(
             "trustedTypes",
-            JSONObject().put("url", ryd.optString("url")).put("pageSink", pageSink).put("worldSink", worldSink ?: JSONObject.NULL).put("shield", shield ?: JSONObject.NULL)
+            JSONObject().put("url", ytUrl).put("pageSink", pageSink).put("worldSink", worldSink ?: JSONObject.NULL).put("shield", shield ?: JSONObject.NULL)
         )
         stage(
             RYD, "trustedTypes",
             when {
-                !worlds -> "N/A"
+                !worlds || !onYouTube -> "N/A"
                 shield?.optBoolean("policy") == true && worldSink == "ok" -> "PASS"
                 shield != null -> "PARTIAL"
                 else -> "FAIL"
             },
-            "page sink=$pageSink world sink=$worldSink shield=$shield" + if (!worlds) " (one realm: the page's Trusted Types policy applies to content scripts too)" else ""
+            when {
+                !onYouTube -> offSite
+                !worlds -> "page sink=$pageSink (one realm: the page's Trusted Types policy applies to content scripts too)"
+                else -> "page sink=$pageSink world sink=$worldSink shield=$shield"
+            }
         )
         stage(
             RYD, "coreFunction",
             when {
+                !onYouTube -> "N/A"
                 ryd.optInt("elements") > 0 -> "PASS"
                 api > 0 -> "PARTIAL"
                 else -> "FAIL"
             },
-            "api requests seen by the page=$api, dislike elements=${ryd.optInt("elements")}"
+            if (!onYouTube) offSite else "api requests seen by the page=$api, dislike elements=${ryd.optInt("elements")}"
         )
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(ytTab)},"force":true}""")
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(adsTab)},"force":true}""")
@@ -485,7 +498,7 @@ class ExtensionDemo {
         var stats: Map<String, IntArray> = emptyMap()
         instrumentation.runOnMainSync { stats = host.extensions.callStatsSnapshot() }
         val table = JSONObject()
-        for ((key, counts) in stats.toSortedMap()) table.put(key, JSONArray().put(counts[0]).put(counts[1]))
+        for ((key, counts) in stats.toSortedMap()) table.put(key, JSONArray().put(counts[0]).put(counts[1]).put(counts[2]))
         results.put("callStats", table)
         val messaging = listOf("runtime.sendMessage", "runtime.connect", "port.postMessage", "tabs.sendMessage", "tabs.connect")
         val storage = listOf("storage.get", "storage.set", "storage.remove", "storage.clear", "storage.getBytesInUse")
@@ -493,8 +506,12 @@ class ExtensionDemo {
             for ((stage, members) in listOf("messaging" to messaging, "storage" to storage)) {
                 val rows = stats.filterKeys { k -> k.startsWith("$id ") && members.any { k.endsWith(" $it") } }
                 val calls = rows.values.sumOf { it[0] }
+                // A message nobody answered (a tab without the extension's listener, a listener
+                // that returned nothing) is Chrome's runtime.lastError in a normal run, not a failure.
                 val failures = rows.values.sumOf { it[1] }
-                val detail = rows.entries.sortedBy { it.key }.joinToString(", ") { "${it.key.substringAfter(' ')}=${it.value[0]} calls/${it.value[1]} failed" }
+                val detail = rows.entries.sortedBy { it.key }.joinToString(", ") {
+                    "${it.key.substringAfter(' ')}=${it.value[0]} calls/${it.value[1]} failed" + if (it.value[2] > 0) "/${it.value[2]} unanswered" else ""
+                }
                 stage(
                     id, stage,
                     when {
@@ -550,6 +567,7 @@ class ExtensionDemo {
         if (worlds) mergeWorldReports(cspView, csp)
         results.put("cspPage", csp)
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(cspTab)},"force":true}""")
+        trustedTypesPage()
         instrumentation.runOnMainSync { results.put("lateOnPageStarted", host.extensions.lateOnPageStarted) }
         lateInjection()
 
@@ -577,6 +595,40 @@ class ExtensionDemo {
         results.put("pageTiming", JSONObject().put("withExtensions", timingWith).put("withoutExtensions", timingWithout))
         for (id in ids) chromeInvoke("extension.setEnabled", """{"id":${JSONObject.quote(id)},"enabled":true}""")
         SystemClock.sleep(3_000)
+    }
+
+    /**
+     * Trusted Types on a page the run controls (`require-trusted-types-for 'script'`, the
+     * directive m.youtube.com sends): the page's realm refuses a string into a script sink; in
+     * a WebView isolated world the probe's content scripts take it through the bootstrap's
+     * pass-through policy (the shield), as Chrome's own worlds do under the extension's CSP.
+     * Without worlds the page's policy applies to the scripts too (one realm): N/A.
+     */
+    private fun trustedTypesPage() {
+        val tab = createTab("$BASE/trusted-types.html")
+        val view = waitForView(tab)
+        waitFor(30_000) { if (tabEval(view, "document.readyState") == "complete") true else null }
+        waitFor(10_000) { if (tabEval(view, PROBE_DONE) == "true") true else null }
+        val pageSink = tabEval(view, "String((window.__page || {}).sink)")
+        val worldSink = if (worlds) worldEval(view, PROBE_ID, TT_SINK_PROBE) else null
+        val world = if (worlds) worldEval(view, PROBE_ID, WORLD_REPORT)?.let(::json) else null
+        val shield = world?.optJSONObject("stats")?.optJSONObject("trustedTypes")
+        results.put(
+            "trustedTypesPage",
+            JSONObject().put("pageSink", pageSink).put("worldSink", worldSink ?: JSONObject.NULL).put("shield", shield ?: JSONObject.NULL)
+                .put("probeIdleRan", world?.opt("idle") != null || tabEval(view, PROBE_DONE) == "true")
+        )
+        stage(
+            PROBE_ID, "trustedTypes",
+            when {
+                !worlds -> "N/A"
+                pageSink.startsWith("refused") && worldSink == "ok" && shield?.optBoolean("policy") == true -> "PASS"
+                worldSink == "ok" -> "PARTIAL"
+                else -> "FAIL"
+            },
+            "page sink=$pageSink world sink=$worldSink shield=$shield" + if (!worlds) " (one realm: the page's policy applies to content scripts too)" else ""
+        )
+        chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(tab)},"force":true}""")
     }
 
     /**

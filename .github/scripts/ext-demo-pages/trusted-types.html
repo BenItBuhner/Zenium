@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      // The page's own realm under its policy: a plain string into a script sink is refused.
+      window.__page = { t0: performance.now(), sink: 'unknown' }
+      try {
+        var s = document.createElement('script')
+        s.textContent = 'void 0'
+        window.__page.sink = 'ok'
+      } catch (e) {
+        window.__page.sink = 'refused: ' + String((e && e.message) || e).slice(0, 120)
+      }
+    </script>
+    <title>Zenium probe page requiring Trusted Types</title>
+    <link rel="stylesheet" href="probe-page.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Trusted Types required</h1>
+      <p>
+        <code>require-trusted-types-for 'script'</code>, as m.youtube.com sends it: the page's
+        realm refuses a string into <code>script.textContent</code>, <code>innerHTML</code> and the
+        other script sinks. In Chrome an extension's isolated world follows the extension's CSP
+        instead; the emulation layer's pass-through policy (the shield) gives content scripts the
+        same freedom in a WebView isolated world.
+      </p>
+    </main>
+  </body>
+</html>
