@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { Rect, UIState } from '@shared/types'
 import { onEvent, run } from '@renderer/lib/api'
+import { starredOnPhone } from '@renderer/lib/bookmarkEdit'
 import { remoteDragOver } from '@renderer/lib/drag'
 import { startDownloadsUi } from '@renderer/lib/downloads'
 import { isPhone } from '@renderer/lib/formFactor'
@@ -117,6 +118,11 @@ export function useMainEvents(): void {
       onEvent('tab.pickIcon', ({ tabId }) => uiStore.set({ iconPickerTabId: tabId })),
       onEvent('bookmark.star', (star) => {
         closeUrlbar()
+        // The phone's save flow (HB-19): a toast with Edit, or the editor sheet straight away.
+        if (isPhone()) {
+          starredOnPhone(star)
+          return
+        }
         // The bubble hangs from the pill's bottom edge, end-aligned with the star in it (v2
         // draft §9.20); both are measured as the request arrives.
         const chip = document.querySelector('[data-bm-star]')
