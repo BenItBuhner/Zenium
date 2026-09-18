@@ -76,6 +76,10 @@ const RENDER_BUDGET_MS = Number(opts['render-budget-ms'] ?? 10000)
 const QUIT_BUDGET_MS = Number(opts['quit-budget-ms'] ?? 5000)
 const STEP_TIMEOUT_MS = Number(opts['step-timeout-ms'] ?? 60000)
 const EVALUATE_TIMEOUT_MS = Number(opts['evaluate-timeout-ms'] ?? 30000)
+// Budget for a click on a button the chrome has just painted for the first time (onboarding,
+// the crash-restore bar). Playwright waits for the button to be actionable; on a busy runner
+// that took 5.1 s on one green run and 8 s on a red one, so 5 s is a margin, not a check.
+const FIRST_PAINT_CLICK_MS = Number(opts['first-paint-click-ms'] ?? 15000)
 const WATCHDOG_MS = Number(opts['watchdog-min'] ?? 15) * 60 * 1000
 const allowlistFile = path.resolve(opts.allowlist ?? path.join(here, 'known-failures.json'))
 
@@ -1418,8 +1422,8 @@ async function scenarioBoot() {
       const onboarding = s.chrome.locator('[data-testid="onboarding"]')
       await onboarding.waitFor({ state: 'visible', timeout: 10000 })
       await s.shot('01-first-launch')
-      await s.chrome.getByRole('button', { name: 'Continue' }).click({ timeout: 5000 })
-      await s.chrome.getByRole('button', { name: 'Skip tour' }).click({ timeout: 5000 })
+      await s.chrome.getByRole('button', { name: 'Continue' }).click({ timeout: FIRST_PAINT_CLICK_MS })
+      await s.chrome.getByRole('button', { name: 'Skip tour' }).click({ timeout: FIRST_PAINT_CLICK_MS })
       await onboarding.waitFor({ state: 'detached', timeout: 10000 })
       await s.shot('02-after-onboarding')
       return 'completed'
@@ -2086,7 +2090,7 @@ async function scenarioCrash() {
     })
     await s.step('restore', async () => {
       const bar = s.chrome.locator('[data-crash-restore]').first()
-      await bar.getByRole('button', { name: 'Restore', exact: true }).click({ timeout: 5000 })
+      await bar.getByRole('button', { name: 'Restore', exact: true }).click({ timeout: FIRST_PAINT_CLICK_MS })
       const tab = await s.waitForTab(EXAMPLE_URL, 45000)
       await bar.waitFor({ state: 'hidden', timeout: 8000 })
       await s.shot('02-restored-after-crash')
