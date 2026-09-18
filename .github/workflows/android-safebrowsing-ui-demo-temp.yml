@@ -1,0 +1,23 @@
+name: Android privacy UI demo (temporary, branch only)
+
+# Temporary caller for one emulator recording of the privacy demo driver (SafeBrowsingDemo.kt),
+# grown with the Settings > Privacy and Security steps; removed before the PR leaves draft.
+on:
+  push:
+    branches: [cursor/services-safebrowsing-https-ui-24d1]
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SafeBrowsingDemo
+        DEMO_DIR=safebrowsing-demo
+        DEMO_OUT=artifacts/android-safebrowsing-demo
+        DEMO_VIDEO=services-safebrowsing-android-demo.mp4
+      artifact-name: android-safebrowsing-ui-demo
+      artifact-path: artifacts/android-safebrowsing-demo/
