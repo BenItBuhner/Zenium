@@ -20,7 +20,16 @@ import org.json.JSONObject
  */
 object NavigationReports {
     val supported: Boolean
-        get() = WebViewFeature.isFeatureSupported(WebViewFeature.NAVIGATION_LISTENER)
+        get() = featureSupported(WebViewFeature.NAVIGATION_LISTENER)
+
+    /**
+     * `WebViewFeature.isFeatureSupported` throws `RuntimeException("Unknown feature …")` for a
+     * public constant the library's internal feature table does not carry (androidx.webkit 1.17.0
+     * declares `PAGE_GET_URL` and has no entry for it; measured as a crash of the app on WebView
+     * 156 the first time a page reached DOMContentLoaded). Every feature read goes through here.
+     */
+    private fun featureSupported(feature: String): Boolean =
+        runCatching { WebViewFeature.isFeatureSupported(feature) }.getOrDefault(false)
 
     /** Attach to `view`; every report goes to `post`. Returns what to pass to [detach], or null when unsupported. */
     fun attach(view: WebView, post: (JSONObject) -> Unit): NavigationListener? {
@@ -58,7 +67,7 @@ object NavigationReports {
             val status = runCatching { navigation.statusCode }.getOrDefault(0)
             if (status > 0) o.put("statusCode", status)
             if (!committed || errorPage) {
-                val error = if (WebViewFeature.isFeatureSupported(WebViewFeature.NAVIGATION_GET_WEB_RESOURCE_ERROR)) {
+                val error = if (featureSupported(WebViewFeature.NAVIGATION_GET_WEB_RESOURCE_ERROR)) {
                     runCatching { navigation.webResourceError }.getOrNull()
                 } else null
                 errorName(error?.errorCode, error?.description?.toString(), status)?.let { o.put("error", it) }
@@ -82,10 +91,11 @@ object NavigationReports {
         return null
     }
 
-    private fun pageUrl(page: Page, view: WebView): String {
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.PAGE_GET_URL)) {
-            runCatching { page.url }.getOrNull()?.let { return it }
-        }
-        return view.url ?: ""
-    }
+    /**
+     * The page's own URL when the WebView answers `Page.getUrl` (the library forwards the call to
+     * the WebView unguarded; an older WebView throws `UnsupportedOperationException`), else the
+     * view's current URL, which is the page's for the main frame the listener reports on.
+     */
+    private fun pageUrl(page: Page, view: WebView): String =
+        runCatching { page.url }.getOrNull() ?: view.url ?: ""
 }
