@@ -7,7 +7,6 @@ import {
   type ShimOptions
 } from '../core/extensions/api/shim'
 import { API_SPEC } from '../core/extensions/api/spec'
-import { USER_SCRIPTS_CHANNELS } from '../shared/userScripts'
 
 /**
  * The Zenium `chrome.*` / `browser.*` layer for extension contexts. Registered on every
@@ -23,6 +22,10 @@ import { USER_SCRIPTS_CHANNELS } from '../shared/userScripts'
 const CALL = 'zen-ext:call'
 const NOTIFY = 'zen-ext:notify'
 const EVENT = 'zen-ext:event'
+// `USER_SCRIPTS_CHANNELS.toggles` of `shared/userScripts.ts`, spelled out: that module is in the
+// page preload's bundle too, and a module two preload entries share becomes a chunk neither
+// sandboxed preload can load (the build refuses one; `electron.vite.config.ts`).
+const TOGGLES = 'zen-ext:toggles'
 
 /**
  * Transport for the context-side shim: `invoke` and `notify` cross into the main process over
@@ -71,7 +74,7 @@ function eventDelivery(raw: unknown): EventDelivery | undefined {
 function togglesFromHost(): Record<string, boolean> {
   const toggles: Record<string, boolean> = { userScripts: false }
   try {
-    const raw: unknown = ipcRenderer.sendSync(USER_SCRIPTS_CHANNELS.toggles)
+    const raw: unknown = ipcRenderer.sendSync(TOGGLES)
     if (raw !== null && typeof raw === 'object') {
       for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
         if (typeof value === 'boolean') toggles[key] = value
