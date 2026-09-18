@@ -42,7 +42,9 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-find-bar {', '/*\n * Settings → Default Browser and the'],
   // Settings → Default Browser and the default-browser strip (components/overlays/
   // DefaultBrowserSection.tsx, content/DefaultBrowserBanner.tsx): the flat card and its inks.
-  ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {']
+  ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {'],
+  // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
+  ['.zen-message {', '.zen-suggestion {']
 ]
 
 /** The text of the first `selector {` block found after `from`. */

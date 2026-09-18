@@ -1,4 +1,4 @@
-import type { Rect, SplitGroup, SplitLayout, ViewPlacement } from '@shared/types'
+import type { ContentCover, Rect, SplitGroup, SplitLayout, ViewPlacement } from '@shared/types'
 
 export const SPLIT_GAP = 6
 /** Wider gap on touch screens: the gutter between panes is the only place a finger can grab. */
@@ -92,6 +92,18 @@ export function placementsFor(
     return splitPaneRects(area, group, gap).map((p) => ({ tabId: p.tabId, rect: p.rect, radius }))
   }
   return tabIds.slice(0, 1).map((tabId) => ({ tabId, rect: area, radius }))
+}
+
+/**
+ * How much of the content area's message strips (`cover`, from the area's top and bottom edges)
+ * falls on a view at `rect`: a split pane in the lower half is clear of the banner strip, one in
+ * the upper half clear of the toast strip. Undefined when neither strip touches the view.
+ */
+export function viewCover(area: Rect, rect: Rect, cover: ContentCover): ContentCover | undefined {
+  const clamp = (v: number): number => Math.min(rect.height, Math.max(0, v))
+  const top = clamp(area.y + cover.top - rect.y)
+  const bottom = clamp(rect.y + rect.height - (area.y + area.height - cover.bottom))
+  return top > 0 || bottom > 0 ? { top, bottom } : undefined
 }
 
 /** Rect of the glance card inside the content area. */
