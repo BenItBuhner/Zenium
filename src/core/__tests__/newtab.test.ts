@@ -393,7 +393,7 @@ describe('NewTabService: state for the page', () => {
     expect(view.pushes.length).toBe(n + 2)
   })
 
-  it('private windows: private flag, no most visited', async () => {
+  it('private windows: private flag, no tiles – neither most visited nor custom shortcuts', async () => {
     const f = fixture()
     f.browser.history.visit('https://news.example/a', 'News', null)
     const priv = f.browser.openWindow('private')!
@@ -407,6 +407,25 @@ describe('NewTabService: state for the page', () => {
     f.browser.handleCommand(main, 'newtab.open', undefined)
     const normal = f.browser.newTab.stateFor(activeTab(f)!.id)!
     expect(normal.topSites.map((s) => s.url)).toEqual(['https://news.example/a'])
+    // The explainer stands where the grid would: a private page carries no shortcuts either.
+    f.browser.newTab.addShortcut('Docs', 'docs.example')
+    f.browser.updateSettings(
+      { newTab: { ...f.browser.state.settings.newTab, shortcuts: 'custom' } },
+      main
+    )
+    expect(f.browser.newTab.stateFor(tab.id)!.shortcuts).toEqual([])
+    expect(f.browser.newTab.stateFor(activeTab(f)!.id)!.shortcuts.map((s) => s.url)).toEqual([
+      'https://docs.example/'
+    ])
+  })
+
+  it('the grid is four by two: eight most-visited sites and eight shortcuts', () => {
+    expect(MAX_NEW_TAB_SHORTCUTS).toBe(8)
+    const f = fixture()
+    for (let i = 0; i < 12; i++) f.browser.history.visit(`https://s${i}.example/`, `S${i}`, null)
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    expect(f.browser.newTab.stateFor(activeTab(f)!.id)!.topSites).toHaveLength(8)
   })
 
   it('a search typed into the page opens the URL bar over that tab with the text', async () => {

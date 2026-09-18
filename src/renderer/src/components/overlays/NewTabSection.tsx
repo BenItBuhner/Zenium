@@ -8,6 +8,7 @@ import type {
   Settings,
   UIState
 } from '@shared/types'
+import { MAX_NEW_TAB_SHORTCUTS } from '@shared/defaults'
 import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { Button } from '../ui/button'
@@ -15,13 +16,10 @@ import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
 import { Choice, Group, Row } from './SettingsPrimitives'
 
-/** The grid holds ten tiles at most (`MAX_NEW_TAB_SHORTCUTS` in the core). */
-const MAX_SHORTCUTS = 10
-
 /**
- * Settings → New Tab. The same choices as the page's own Customize panel (shortcuts source,
- * background, greeting) plus the switch that turns the page off, and a list editor for the
- * "My shortcuts" tiles for those who prefer forms to the grid.
+ * Settings → New Tab, what the page's Customize control opens: the shortcuts source, background
+ * and greeting, the switch that turns the page off, and a list editor for the "My shortcuts"
+ * tiles for those who prefer forms to the grid.
  */
 export function NewTabSection({
   state,
@@ -201,15 +199,15 @@ function ShortcutsGroup({ shortcuts }: { shortcuts: NewTabShortcut[] }): JSX.Ele
           <Button
             variant="secondary"
             size="sm"
-            disabled={shortcuts.length >= MAX_SHORTCUTS}
+            disabled={shortcuts.length >= MAX_NEW_TAB_SHORTCUTS}
             onClick={() => setEditing('new')}
           >
             <Plus className="h-4 w-4" />
             Add shortcut
           </Button>
-          {shortcuts.length >= MAX_SHORTCUTS && (
+          {shortcuts.length >= MAX_NEW_TAB_SHORTCUTS && (
             <span className="ml-3 text-[11.5px] text-[var(--zen-muted)]">
-              The grid holds {MAX_SHORTCUTS} shortcuts.
+              The grid holds {MAX_NEW_TAB_SHORTCUTS} shortcuts.
             </span>
           )}
         </div>

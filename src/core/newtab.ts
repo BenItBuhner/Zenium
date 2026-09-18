@@ -28,6 +28,7 @@ import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { NEW_TAB_URL, getHost, inputToUrl, isNewTabUrl } from '../shared/url'
 import { resolveTheme, themeCssVariables } from '../shared/theme'
 import { newId } from '../shared/ids'
+import { MAX_NEW_TAB_SHORTCUTS } from '../shared/defaults'
 import { createTabRecord, getSpace } from './model'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
@@ -37,8 +38,8 @@ function normalizeHost(host: string): string {
   return host.toLowerCase().replace(/^www\./, '')
 }
 
-/** The grid shows at most this many tiles, whichever source fills it. */
-export const MAX_NEW_TAB_SHORTCUTS = 10
+/** The grid shows at most this many tiles, whichever source fills it (shared with the chrome). */
+export { MAX_NEW_TAB_SHORTCUTS }
 
 /** Placeholder tab ids of pages preloaded off screen (never part of the model). */
 const PRELOAD_ID_PREFIX = 'newtab_preload'
@@ -290,9 +291,10 @@ export class NewTabService {
       shortcutsMode: settings.shortcuts,
       background: settings.background,
       greeting: settings.greeting,
-      shortcuts: settings.shortcuts === 'custom' ? this.shortcuts(isPrivate) : [],
-      // Private windows never show what was browsed elsewhere.
-      topSites: isPrivate || settings.shortcuts !== 'most-visited' ? [] : this.topSites(),
+      // A private window's page has no tiles: neither what was browsed elsewhere nor the user's
+      // own shortcuts – its explainer stands where the grid would (design language v2 §9.29).
+      shortcuts: !isPrivate && settings.shortcuts === 'custom' ? this.shortcuts() : [],
+      topSites: !isPrivate && settings.shortcuts === 'most-visited' ? this.topSites() : [],
       backgroundImage: background?.current() ?? null,
       canPickImage: Boolean(background)
     }
@@ -312,17 +314,16 @@ export class NewTabService {
     return sites
   }
 
-  /** The custom tiles with the favicons history knows (none in private windows). */
-  private shortcuts(isPrivate: boolean): NewTabPageShortcut[] {
+  /** The custom tiles with the favicons history knows. */
+  private shortcuts(): NewTabPageShortcut[] {
     const list = this.browser.state.newTabShortcuts.slice(0, MAX_NEW_TAB_SHORTCUTS)
-    const key = `${this.historyVersion}|${isPrivate}|${list.map((s) => s.url).join('\n')}`
+    const key = `${this.historyVersion}|${list.map((s) => s.url).join('\n')}`
     if (this.shortcutsCache?.key === key) {
       const favicons = this.shortcutsCache.favicons
       return list.map((s) => ({ ...s, favicon: favicons.get(s.url) ?? null }))
     }
     const favicons = new Map<string, string | null>()
-    for (const s of list)
-      favicons.set(s.url, isPrivate ? null : this.browser.history.siteFaviconFor(s.url))
+    for (const s of list) favicons.set(s.url, this.browser.history.siteFaviconFor(s.url))
     this.shortcutsCache = { key, favicons }
     return list.map((s) => ({ ...s, favicon: favicons.get(s.url) ?? null }))
   }

@@ -168,6 +168,12 @@ export const DEFAULT_RESOURCE_SETTINGS: ResourceSettings = {
   }
 }
 
+/**
+ * The new tab page's grid is four columns by two rows (design language v2 §9.29): eight most
+ * visited sites, or eight of the user's own shortcuts – the same shape as the phone's page.
+ */
+export const MAX_NEW_TAB_SHORTCUTS = 8
+
 /** The new tab page opens with the most-visited grid over the space gradient; no greeting. */
 export const DEFAULT_NEW_TAB_SETTINGS: NewTabSettings = {
   enabled: true,
