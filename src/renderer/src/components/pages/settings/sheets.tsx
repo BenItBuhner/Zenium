@@ -20,10 +20,10 @@ import { SheetDismissContext, useSheetDismiss } from './sheetContext'
  * Sheets are modal dialogs, so they mount through the frame's `FrameDialogHost` (lib/portals.tsx,
  * reached with `FrameDialogPortal`): over the content frame, which recedes under a sheet and
  * would shrink a sheet inside it. Each sheet draws its scrim itself (`ownScrim`), fading with
- * its motion; under a stacked sheet the lower one's scrim fades out on the stacked one's
- * progress, so the stack has one scrim – the top sheet's, above the page and the lower sheet
- * alike – and the page never darkens twice (§9.24); the sheet beneath recedes on the same
- * progress with its content `inert`.
+ * its motion. The stack is the chassis's (`BottomSheet`, §9.24, §11.2): a sheet that opens over
+ * a sheet recedes the one beneath and makes it `inert`, the lower scrim fades out as the upper
+ * comes in – one scrim, the top sheet's, above the page and the lower sheet alike – and when the
+ * upper leaves, focus returns to the row of the lower sheet that opened it.
  */
 
 /** Every open sheet, lowest first; each resolves its row in `groups`. */
@@ -49,7 +49,6 @@ export function SheetStack({
             key={`${request.kind}:${request.rowId}`}
             request={request}
             row={row}
-            stacked={index > 0}
             under={!top}
             ctx={ctx}
             close={closeTop}
@@ -63,14 +62,12 @@ export function SheetStack({
 function RowSheet({
   request,
   row,
-  stacked,
   under,
   ctx,
   close
 }: {
   request: SheetRequest
   row: SettingsRow | null
-  stacked: boolean
   under: boolean
   ctx: RowContext
   close(): void
@@ -84,17 +81,15 @@ function RowSheet({
   if (orphan) return null
   switch (request.kind) {
     case 'options':
-      return <OptionsSheet row={row as ValueRow} stacked={stacked} under={under} close={close} />
+      return <OptionsSheet row={row as ValueRow} under={under} close={close} />
     case 'field':
-      return <FieldSheet row={row as FieldRow} stacked={stacked} under={under} close={close} />
+      return <FieldSheet row={row as FieldRow} under={under} close={close} />
     case 'confirm':
-      return <ConfirmSheet row={row as ActionRow} stacked={stacked} under={under} close={close} />
+      return <ConfirmSheet row={row as ActionRow} under={under} close={close} />
     case 'form':
-      return <FormSheet row={row as ActionRow} stacked={stacked} under={under} close={close} />
+      return <FormSheet row={row as ActionRow} under={under} close={close} />
     case 'item':
-      return (
-        <ItemSheet row={row as ItemRow} stacked={stacked} under={under} ctx={ctx} close={close} />
-      )
+      return <ItemSheet row={row as ItemRow} under={under} ctx={ctx} close={close} />
   }
 }
 
@@ -135,8 +130,7 @@ interface SheetProps {
   description?: string
   /** A prompt (title, at most one paragraph, actions) opens on a title block either way (§9.23). */
   prompt?: boolean
-  stacked: boolean
-  /** Another sheet is open over this one: its content is inert until that one leaves. */
+  /** Another sheet is open over this one: Escape is that sheet's until it leaves. */
   under: boolean
   focus: SheetFocus
   onClose(): void
@@ -151,7 +145,7 @@ interface SheetProps {
  * neutral panel at radius 12 with a hairline edge, no side padding of its own (§9.25: rows run
  * edge to edge, text inset 16), the system back and Escape dismiss it, the header takes §9.7's
  * hairline once the body has scrolled under it, focus moves into it as it opens (§9.22) and,
- * when it leaves, returns to the row that opened it (§9.24).
+ * when it leaves, the chassis returns it to the row that opened it (§9.24).
  */
 export function SettingsSheet(props: SheetProps): JSX.Element {
   return (
@@ -167,7 +161,6 @@ function HostedSheet({
   title,
   description,
   prompt = false,
-  stacked,
   under,
   focus,
   onClose,
@@ -188,7 +181,6 @@ function HostedSheet({
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
-  useReturnFocus()
   useFocusOnOpen(body, focus)
   useEffect(() => {
     if (under) return
@@ -202,17 +194,11 @@ function HostedSheet({
     return () => window.removeEventListener('keydown', onKey, true)
   }, [under, sheet])
   return (
-    <div
-      className="zen-settings-sheet-layer absolute inset-0"
-      data-surface="page"
-      data-under={under || undefined}
-      inert={under || undefined}
-    >
+    <div className="zen-settings-sheet-layer absolute inset-0" data-surface="page">
       <BottomSheet
         ref={sheet}
         hosted
         onDismissed={onClose}
-        stacked={stacked}
         contentKey={contentKey}
         handleLabel="Resize sheet"
         labelledBy={titleId}
@@ -242,28 +228,8 @@ function HostedSheet({
 }
 
 /**
- * Focus returns to the row that opened the sheet once the sheet is gone (§9.24): the row is
- * what had focus as the sheet mounted. Restored after the commit that removes the sheet, so a
- * row inside the sheet beneath – `inert` until then – can take it; not restored when focus has
- * since gone somewhere else that is still on screen.
- */
-function useReturnFocus(): void {
-  useEffect(() => {
-    const opener = document.activeElement
-    return () => {
-      queueMicrotask(() => {
-        if (!(opener instanceof HTMLElement) || !opener.isConnected) return
-        const now = document.activeElement
-        if (now && now !== document.body && now.isConnected) return
-        opener.focus()
-      })
-    }
-  }, [])
-}
-
-/**
- * Focus moves into the sheet as it opens (§9.22), after {@link useReturnFocus} has noted the
- * opener: the chosen element per {@link SheetFocus}, without scrolling anything to reach it
+ * Focus moves into the sheet as it opens (§9.22), after the chassis has noted the opener it
+ * returns the focus to: the chosen element per {@link SheetFocus}, without scrolling anything to reach it
  * (the sheet is still on its way up).
  */
 function useFocusOnOpen(body: RefObject<HTMLElement | null>, focus: SheetFocus): void {
@@ -303,12 +269,10 @@ function focusTarget(body: HTMLElement | null, focus: SheetFocus): HTMLElement |
  */
 function OptionsSheet({
   row,
-  stacked,
   under,
   close
 }: {
   row: ValueRow
-  stacked: boolean
   under: boolean
   close(): void
 }): JSX.Element {
@@ -318,7 +282,7 @@ function OptionsSheet({
       name={`settings-options:${row.id}`}
       title={row.label}
       description={row.sheetDescription}
-      stacked={stacked}
+
       under={under}
       focus="checked"
       onClose={close}
@@ -345,12 +309,10 @@ function OptionsSheet({
 /** A desktop input as a sheet: the one field (§9.12), its validation message, Cancel and Save. */
 function FieldSheet({
   row,
-  stacked,
   under,
   close
 }: {
   row: FieldRow
-  stacked: boolean
   under: boolean
   close(): void
 }): JSX.Element {
@@ -370,7 +332,7 @@ function FieldSheet({
     <SettingsSheet
       name={`settings-field:${row.id}`}
       title={row.label}
-      stacked={stacked}
+
       under={under}
       focus="dialog"
       onClose={close}
@@ -413,12 +375,10 @@ function FieldSheet({
  */
 function ConfirmSheet({
   row,
-  stacked,
   under,
   close
 }: {
   row: ActionRow
-  stacked: boolean
   under: boolean
   close(): void
 }): JSX.Element {
@@ -430,7 +390,7 @@ function ConfirmSheet({
       title={confirm.title}
       description={confirm.description ?? row.description}
       prompt
-      stacked={stacked}
+
       under={under}
       focus="first"
       onClose={close}
@@ -449,12 +409,10 @@ function ConfirmSheet({
 /** A small form (add a route, create a container): the form draws its own footer. */
 function FormSheet({
   row,
-  stacked,
   under,
   close
 }: {
   row: ActionRow
-  stacked: boolean
   under: boolean
   close(): void
 }): JSX.Element {
@@ -464,7 +422,7 @@ function FormSheet({
       name={`settings-form:${row.id}`}
       title={form.title}
       description={form.description}
-      stacked={stacked}
+
       under={under}
       focus="dialog"
       onClose={close}
@@ -486,13 +444,11 @@ function FormBody({ render }: { render: (close: () => void) => ReactNode }): JSX
  */
 function ItemSheet({
   row,
-  stacked,
   under,
   ctx,
   close
 }: {
   row: ItemRow
-  stacked: boolean
   under: boolean
   ctx: RowContext
   close(): void
@@ -502,7 +458,7 @@ function ItemSheet({
       name={`settings-item:${row.id}`}
       title={row.sheet.title}
       description={row.sheet.description}
-      stacked={stacked}
+
       under={under}
       focus="first"
       onClose={close}

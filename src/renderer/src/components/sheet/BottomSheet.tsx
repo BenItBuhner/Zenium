@@ -59,14 +59,18 @@ type Zone = 'grip' | 'body' | 'scrim'
 type Mode = 'pending' | 'sheet' | 'none'
 
 /**
- * Sheets stack two deep (v2 draft §9.24). The stack has one scrim, the lowest sheet's, which
- * stays; a sheet that opens over a sheet draws none of its own and instead recedes the sheet
+ * Sheets stack two deep (v2 draft §9.24, §11.2). The page holds the one scrim share the lowest
+ * sheet put over it and recedes no further; a sheet that opens over a sheet recedes the sheet
  * under it exactly as the page recedes under a single sheet – scale .97 about its bottom centre
  * and 6 px more corner radius, driven by the upper sheet's progress – with the lower sheet's
- * content inert. The page keeps the recede it already has. Should the lower sheet leave first,
- * the one above takes over whatever is under it: the page's recede and the scrim.
+ * content inert, and on the same progress the lower sheet's scrim fades out while the upper's
+ * fades in, so the stack's one scrim is the top sheet's, above the page and the lower sheet
+ * alike, and the lower sheet reads as receded and dimmed under it (the design lead's ruling on
+ * #134: §9.24's "the top sheet's scrim sits above the lower sheet too"). Should the lower sheet
+ * leave first, the one above takes over whatever is under it: the page's recede and the scrim.
  */
 interface StackedSheet {
+  /** Recede by `progress` under the sheet above, the own scrim giving way on the same value. */
   recede(progress: number): void
   setInert(on: boolean): void
   /** The sheet beneath this one changed (it left): recede `next`, or the page when there is none. */
@@ -173,7 +177,10 @@ export function BottomSheet({
     sheet.style.transform = `translate3d(0, ${frame.translateY}px, 0)`
     const progress = frame.scrim.toFixed(4)
     if (lower.current) {
-      // Over another sheet: no scrim of its own; the sheet beneath recedes instead (§9.24).
+      // Over another sheet (§9.24, §11.2): this scrim comes in on the sheet's progress while the
+      // sheet beneath recedes and its scrim goes out on the same value – the page keeps the one
+      // share it had, and the lower sheet ends up receded and dimmed under this one.
+      scrim.style.opacity = progress
       lower.current.recede(frame.scrim)
     } else {
       // The scrim's colour and full opacity are the `--zen-scrim` token's; only its share moves.
@@ -293,6 +300,10 @@ export function BottomSheet({
       recede: (progress) => {
         sheet.style.setProperty('--zen-sheet-recede', progress.toFixed(4))
         sheet.style.scale = progress > 0 ? (1 - 0.03 * progress).toFixed(4) : ''
+        // The own scrim gives way to the upper sheet's (§11.2): its resting share times 1 - q.
+        const scrim = scrimRef.current
+        const m = motionRef.current
+        if (scrim && m) scrim.style.opacity = (m.frame().scrim * (1 - progress)).toFixed(4)
       },
       setInert: (on) => {
         sheet.inert = on

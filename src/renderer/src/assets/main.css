@@ -4650,19 +4650,6 @@
   user-select: none;
 }
 /*
- * The sheet beneath a stacked sheet recedes (§9.24) on the stacked one's progress, written per
- * frame to `--zen-stack-recede`: the same 3 % and 6 px of corner the page gives up under a sheet,
- * anchored at the bottom edge so the panel stays seated; `scale` composes with the motion's own
- * transform. Its scrim fades out on the same progress (BottomSheet writes the share), so the
- * stack's one scrim is the top sheet's, above the page and the lower sheet alike.
- */
-.zen-settings-sheet-layer[data-under] .zen-sheet.zen-settings-sheet {
-  scale: calc(1 - 0.03 * var(--zen-stack-recede, 0));
-  transform-origin: 50% 100%;
-  border-radius: calc(var(--v2-radius-sheet) + 6px * var(--zen-stack-recede, 0))
-    calc(var(--v2-radius-sheet) + 6px * var(--zen-stack-recede, 0)) 0 0;
-}
-/*
  * The edge takes no layout (§9.25: 16 from the sheet's outer edge, border included, to every
  * text and control edge): the chassis border goes and a pseudo-element draws the same hairline
  * on the top and sides, following the radius, so a row's 16 gutter is 16 from the outer edge.
