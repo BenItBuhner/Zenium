@@ -1,7 +1,7 @@
 import type { JSX, ReactNode } from 'react'
 import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { CircleAlert, ExternalLink, LoaderCircle } from 'lucide-react'
-import { useViewport } from '@renderer/lib/formFactor'
+import { usePhone } from '@renderer/lib/formFactor'
 import { cn } from '@renderer/lib/utils'
 import { PickerSheet } from './PickerSheet'
 
@@ -21,11 +21,6 @@ import { PickerSheet } from './PickerSheet'
  * booleans are switch rows, a choice is a value row that opens a picker sheet, an action is a
  * row, and no card is drawn (§10.4).
  */
-
-/** The pane is on a phone: the §10 rows rather than Zen's desktop controls. */
-export function usePhone(): boolean {
-  return useViewport().formFactor === 'phone'
-}
 
 /**
  * A 22/600 section of the pane (§9.26): its title on the 28 px line, an optional description 15

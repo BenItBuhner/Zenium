@@ -90,7 +90,8 @@ export function feedDetail(
 ): string {
   const parts = [`${count(feed.entries)} sites`]
   if (feed.updating) parts.push('Updating…')
-  else if (feed.updatedAt === null) parts.push(feed.bundled ? 'Built into the app' : 'Not fetched yet')
+  else if (feed.updatedAt === null)
+    parts.push(feed.bundled ? 'Built into the app' : 'Not fetched yet')
   else parts.push(`${feed.bundled ? 'Built in, ' : ''}${ago(feed.updatedAt, relativeTime)}`)
   if (feed.lastError) parts.push(`Last update failed: ${feed.lastError}`)
   return parts.join(' · ')
@@ -168,7 +169,10 @@ export function resolverPatch(value: string): Partial<PrivacySettings> {
 }
 
 /** The secure DNS row's description: what the resolver is doing with the settings as they stand. */
-export function secureDnsText(settings: PrivacySettings, status: PrivacyStatus['secureDns']): string {
+export function secureDnsText(
+  settings: PrivacySettings,
+  status: PrivacyStatus['secureDns']
+): string {
   if (settings.secureDnsMode === 'off') return 'Lookups go to the system resolver in plaintext.'
   if (settings.secureDnsMode === 'automatic')
     return 'The system resolver is used over an encrypted connection when it offers one, plaintext otherwise.'
