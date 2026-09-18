@@ -1,0 +1,31 @@
+name: Android certificate interstitial demo (temporary)
+
+# TEMPORARY caller for the services-cert-interstitial verification: records the certificate
+# interstitial on the phone (expired, self-signed and wrong-host badssl.com pages; Advanced,
+# Back to safety, Proceed, the page loaded over the broken certificate and its site information)
+# on the emulator and uploads the video and screenshots. Removed before the PR is marked ready.
+on:
+  push:
+    branches: [cursor/services-cert-interstitial-24d1]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-cert-interstitial-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Certificate interstitial demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.CertInterstitialDemo
+        DEMO_DIR=cert-interstitial-demo
+        DEMO_OUT=artifacts/android-cert-interstitial-demo
+        DEMO_VIDEO=services-cert-interstitial-android-demo.mp4
+      artifact-name: android-cert-interstitial-demo
+      artifact-path: artifacts/android-cert-interstitial-demo/
