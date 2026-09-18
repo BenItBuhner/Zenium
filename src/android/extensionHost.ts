@@ -346,6 +346,7 @@ export class AndroidExtensions implements ExtensionHost {
         updatedAt: record.updatedAt,
         pinned: record.pinned,
         allowFileAccess: record.allowFileAccess,
+        allowPrivate: record.allowPrivate,
         manifestVersion: record.manifestVersion,
         permissions: record.permissions,
         hostPermissions: record.hostPermissions,
@@ -688,6 +689,15 @@ export class AndroidExtensions implements ExtensionHost {
     const record = this.record(id)
     if (!record || record.pinned === pinned) return
     record.pinned = pinned
+    this.persist()
+    void this.reconfigure(record)
+    this.browser.state.commitVolatile()
+  }
+
+  setAllowPrivate(id: string, allowed: boolean): void {
+    const record = this.record(id)
+    if (!record || record.allowPrivate === allowed) return
+    record.allowPrivate = allowed
     this.persist()
     void this.reconfigure(record)
     this.browser.state.commitVolatile()

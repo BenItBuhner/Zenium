@@ -107,6 +107,8 @@ export type RegistryEvent =
   | { type: 'uninstalled'; id: string }
   | { type: 'enabled'; id: string }
   | { type: 'disabled'; id: string }
+  /** The user allowed (or stopped allowing) the extension in private windows. */
+  | { type: 'allowPrivate'; id: string; allowed: boolean }
 
 interface UpdateInfo {
   state: ExtensionUpdateState
@@ -325,6 +327,7 @@ export class ExtensionService implements ExtensionHost {
         updatedAt: record.updatedAt,
         pinned: record.pinned,
         allowFileAccess: record.allowFileAccess,
+        allowPrivate: record.allowPrivate,
         manifestVersion: record.manifestVersion,
         permissions: record.permissions,
         hostPermissions: record.hostPermissions,
@@ -667,6 +670,20 @@ export class ExtensionService implements ExtensionHost {
     if (!record || record.pinned === pinned) return
     record.pinned = pinned
     this.persist()
+    this.browser.state.commitVolatile()
+  }
+
+  /**
+   * Chrome's "Allow in Incognito": lets the extension's request rules and listeners reach the
+   * private window's session. The private session loads no extension, so this is the only
+   * effect for now.
+   */
+  setAllowPrivate(id: string, allowed: boolean): void {
+    const record = this.record(id)
+    if (!record || record.allowPrivate === allowed) return
+    record.allowPrivate = allowed
+    this.persist()
+    this.emit({ type: 'allowPrivate', id: record.id, allowed })
     this.browser.state.commitVolatile()
   }
 

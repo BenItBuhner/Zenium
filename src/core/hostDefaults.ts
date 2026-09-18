@@ -107,6 +107,7 @@ export class NoExtensions implements ExtensionHost {
   async remove(): Promise<void> {}
   async setEnabled(): Promise<void> {}
   setPinned(): void {}
+  setAllowPrivate(): void {}
   async reload(): Promise<void> {}
   async checkForUpdates(): Promise<void> {}
   async update(): Promise<void> {}

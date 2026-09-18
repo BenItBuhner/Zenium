@@ -1502,6 +1502,8 @@ export class Browser {
       'extension.setEnabled': ({ id, enabled }, win) =>
         this.extensions.setEnabled(id, enabled, win),
       'extension.setPinned': ({ id, pinned }) => this.extensions.setPinned(id, pinned),
+      'extension.setAllowPrivate': ({ id, allowed }) =>
+        this.extensions.setAllowPrivate(id, allowed),
       'extension.reload': ({ id }) => this.extensions.reload(id),
       'extension.checkForUpdates': (_a, win) => this.extensions.checkForUpdates(win),
       'extension.update': ({ id }, win) => this.extensions.update(id, win),
