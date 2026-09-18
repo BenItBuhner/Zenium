@@ -34,7 +34,7 @@ import type {
 } from '../../core/platform'
 import type { SessionManager } from './sessions'
 import { downloadDir } from './downloads'
-import { frameIdOf } from './extensionApi/frames'
+import { frameById, frameIdOf } from './extensionApi/frames'
 import type { ElectronWindow } from './window'
 
 const pagePreload = join(__dirname, '../preload/page.js')
@@ -183,6 +183,7 @@ export class ElectronTabView implements TabView {
       // the clicked sub-frame's URL (empty for the top document) and its frame id.
       const frame = params.frame ?? null
       const frameId = frame ? frameIdOf(frame) : 0
+      // `linkText` and `mediaFlags` ride along in the spread for the link and media menus.
       ev.onContextMenu({
         ...params,
         pageURL: params.pageURL || wc.getURL(),
@@ -394,7 +395,11 @@ export class ElectronTabView implements TabView {
     this.wc.stopFindInPage(action)
   }
 
-  executeJavaScript(code: string): Promise<unknown> {
+  executeJavaScript(code: string, frameId?: number): Promise<unknown> {
+    if (frameId) {
+      const frame = frameById(this.wc, frameId)
+      if (frame && !frame.detached) return frame.executeJavaScript(code, true)
+    }
     return this.wc.executeJavaScript(code, true)
   }
 
@@ -489,8 +494,28 @@ export class ElectronTabView implements TabView {
     if (mode === 'inspect') wc.inspectElement(0, 0)
   }
 
-  downloadURL(url: string): void {
+  /**
+   * Chrome's "Inspect": the inspector opens (detached, like every tab view's) on the node under
+   * the click. `inspectElement` takes the `context-menu` event's own coordinates.
+   */
+  inspectElementAt(x: number, y: number): void {
+    const wc = this.wc
+    if (!wc.isDevToolsOpened()) wc.openDevTools({ mode: 'detach', activate: true })
+    wc.inspectElement(x, y)
+  }
+
+  downloadURL(url: string, options?: { saveAs?: boolean }): void {
+    if (options?.saveAs) this.owner.downloads?.expectSaveAs(url)
     this.wc.downloadURL(url)
+  }
+
+  reloadFrame(frameId: number): void {
+    const frame = frameById(this.wc, frameId)
+    if (frame && !frame.detached) frame.reload()
+  }
+
+  clearCache(): Promise<void> {
+    return this.wc.session.clearCache()
   }
 
   print(): void {
@@ -820,13 +845,21 @@ function electronKeyCode(key: string): string {
   }
 }
 
+/** The downloads host's side of "Save … As…": the next transfer of the URL asks where to save. */
+export interface SaveAsDownloads {
+  expectSaveAs(url: string): void
+}
+
 /** Creates `WebContentsView`s and maps their web contents back to tabs. */
 export class ElectronTabViewHost implements TabViewHost {
   private readonly byWebContentsId = new Map<number, ElectronTabView>()
   private readonly tabIds = new Map<number, string>()
   private readonly viewListeners = new Set<(view: ElectronTabView) => void>()
 
-  constructor(private readonly sessions: SessionManager) {}
+  constructor(
+    private readonly sessions: SessionManager,
+    readonly downloads: SaveAsDownloads | null = null
+  ) {}
 
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView {
     const view = new ElectronTabView(

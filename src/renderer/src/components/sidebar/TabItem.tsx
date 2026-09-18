@@ -1,8 +1,9 @@
 import type { JSX } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Bot,
   MonitorSmartphone,
+  Moon,
   RotateCcw,
   Snowflake,
   Turtle,
@@ -14,8 +15,8 @@ import type { AgentInfo, Tab } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
-import { dropStore, startTabDrag } from '@renderer/lib/drag'
-import { activeTab, containerOf, tabTitle } from '@renderer/lib/selectors'
+import { startTabDrag } from '@renderer/lib/drag'
+import { activeTab, containerOf, tabTitle, tabTooltip } from '@renderer/lib/selectors'
 import {
   browserStore,
   clearTabSelection,
@@ -25,6 +26,7 @@ import {
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from './Favicon'
+import { useListMotion } from './listMotion'
 
 interface Props {
   tab: Tab
@@ -36,7 +38,14 @@ interface Props {
 export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
   const dragging = uiStore.use((s) => s.drag)
   const renaming = uiStore.use((s) => s.renamingTabId === tab.id)
-  const dropKey = dropStore.use((s) => s.key)
+  const motion = useListMotion()
+  const attach = useCallback(
+    (el: HTMLDivElement | null) => {
+      motion?.attach(tab.id, el)
+      return () => motion?.attach(tab.id, null)
+    },
+    [motion, tab.id]
+  )
   const foreign = browserStore.use((s) => s.state?.foreignTabIds.includes(tab.id) ?? false)
   const agent = browserStore.use(
     (s) => s.state?.agents.find((a) => a.tabIds.includes(tab.id)) ?? null
@@ -124,24 +133,17 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
 
   return (
     <div
-      className={cn(
-        'zen-tab group',
-        compact && 'justify-center px-0',
-        indent && 'ml-5',
-        isDragSource && 'opacity-40'
-      )}
+      ref={attach}
+      className={cn('zen-tab group', compact && 'justify-center px-0', indent && 'ml-5')}
       data-active={active}
       data-selected={selected || undefined}
       data-discarded={tab.discarded}
       data-frozen={tab.frozen}
       data-agent={agent ? true : undefined}
+      data-lifted={isDragSource || undefined}
       data-tab-id={tab.id}
       style={agent ? { boxShadow: `inset 0 0 0 1.5px ${agent.color}80` } : undefined}
-      title={
-        compact
-          ? `${title}${agent ? ` — ${agent.name}` : ''}${tab.frozen ? ' (frozen)' : ''}`
-          : undefined
-      }
+      title={renaming ? undefined : tabTooltip(tab, agent?.name ?? null)}
       onPointerDown={onPointerDown}
       onClick={onClick}
       onAuxClick={onAuxClick}
@@ -156,8 +158,6 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
           />
         </>
       )}
-      {dropKey === `tab:${tab.id}:before` && <DropLine position="top" />}
-      {dropKey === `tab:${tab.id}:after` && <DropLine position="bottom" />}
       {containerColor && (
         <span
           className="pointer-events-none absolute inset-y-2 left-0 w-0.5 rounded-full"
@@ -171,6 +171,13 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
           className="pointer-events-none absolute right-0.5 top-0.5 h-2 w-2 rounded-full ring-1 ring-white/70"
           style={{ background: agent.color }}
           aria-hidden
+        />
+      )}
+      {compact && (tab.audible || tab.muted) && (
+        <span
+          className="zen-tab-audio-dot"
+          data-muted={tab.muted || undefined}
+          aria-label={tab.muted ? 'Muted' : 'Playing audio'}
         />
       )}
       <Favicon tab={tab} />
@@ -187,6 +194,20 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
               className="h-3.5 w-3.5 shrink-0 opacity-60"
               aria-label="Shown in another window"
             />
+          )}
+          {tab.discarded && !renaming && (
+            <button
+              type="button"
+              className="zen-toolbar-button zen-tab-sleeping h-6 w-6 shrink-0"
+              title={tabTooltip(tab)}
+              aria-label="Sleeping - click to wake"
+              onClick={(e) => {
+                e.stopPropagation()
+                run('tab.activate', { tabId: tab.id })
+              }}
+            >
+              <Moon className="h-3.5 w-3.5" />
+            </button>
           )}
           {tab.frozen && !renaming && (
             <button
@@ -214,12 +235,17 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
               <Turtle className="h-3.5 w-3.5" />
             </button>
           )}
-          {(tab.audible || tab.muted) && (
+          {(tab.audible || tab.muted) && !renaming && (
             <button
               type="button"
-              className="zen-toolbar-button h-6 w-6 shrink-0"
+              className="zen-toolbar-button zen-tab-audio h-6 w-6 shrink-0"
+              data-muted={tab.muted || undefined}
               title={tab.muted ? 'Unmute tab' : 'Mute tab'}
-              onClick={() => run('tab.toggleMute', { tabId: tab.id })}
+              aria-pressed={tab.muted}
+              onClick={(e) => {
+                e.stopPropagation()
+                run('tab.toggleMute', { tabId: tab.id })
+              }}
             >
               {tab.muted ? (
                 <VolumeX className="h-3.5 w-3.5" />
@@ -274,17 +300,6 @@ function AgentBadge({ agent, tabId }: { agent: AgentInfo; tabId: string }): JSX.
     >
       <Bot className="h-3 w-3" />
     </button>
-  )
-}
-
-function DropLine({ position }: { position: 'top' | 'bottom' }): JSX.Element {
-  return (
-    <div
-      className={cn(
-        'pointer-events-none absolute inset-x-2 z-20 h-0.5 rounded-full bg-[var(--zen-accent)]',
-        position === 'top' ? '-top-px' : '-bottom-px'
-      )}
-    />
   )
 }
 

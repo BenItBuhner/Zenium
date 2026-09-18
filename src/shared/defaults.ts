@@ -170,6 +170,7 @@ export const DEFAULT_SETTINGS: Settings = {
   unloadEnabled: true,
   unloadTimeoutMinutes: 20,
   unloadExcludedDomains: [],
+  mutedHosts: [],
   searchEngineId: 'google',
   searchSuggestions: true,
   showFullUrls: false,
@@ -192,7 +193,8 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultBrowserPromptDismissed: null,
   blocking: structuredClone(DEFAULT_BLOCKING_SETTINGS),
   pageControls: structuredClone(DEFAULT_PAGE_CONTROLS),
-  bookmarksBar: 'newtab'
+  bookmarksBar: 'newtab',
+  shortcutPreset: 'chrome'
 }
 
 /** Firefox's four default containers plus "No Container". */

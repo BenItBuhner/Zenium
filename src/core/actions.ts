@@ -1,4 +1,5 @@
 import type { ShortcutAction } from '../shared/types'
+import { pathToFileUrl } from '../shared/launchArgs'
 import { BLANK_URL } from '../shared/url'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
@@ -12,6 +13,8 @@ export type AnyAction =
   | 'downloads.open'
   | 'tab.freezeOthers'
   | 'tab.wakeAll'
+  | 'tab.moveToNewWindow'
+  | 'page.toggleMuteSite'
   | 'resources.trim'
   | 'resources.open'
 
@@ -108,6 +111,9 @@ export class Actions {
       case 'tab.copyUrlMarkdown':
         if (target) tabs.copyUrl(target.id, true)
         return
+      case 'tab.search':
+        // Reserved for Chrome's tab search (the chord is taken so it never runs something else).
+        return
       case 'glance.expand':
         return tabs.expandGlance(win)
 
@@ -165,10 +171,22 @@ export class Actions {
       case 'find.prev':
         if (target) this.browser.emit('find.open', { tabId: target.id, again: 'prev' }, win)
         return
+      case 'find.useSelection':
+        if (target) void this.findSelection(target.id, win)
+        return
 
       // --- page operations ---
       case 'page.savePage':
         if (target) void this.savePage(target.id, win)
+        return
+      case 'page.openFile':
+        void this.openFile(target?.id ?? null, win)
+        return
+      case 'page.emailLink':
+        if (target && /^https?:/.test(target.url))
+          this.browser.platform.shell.openExternal(
+            `mailto:?subject=${encodeURIComponent(target.title || target.url)}&body=${encodeURIComponent(target.url)}`
+          )
         return
       case 'page.print':
         if (target) tabs.view(target.id)?.print()
@@ -193,6 +211,12 @@ export class Actions {
         return
       case 'page.toggleMute':
         if (target) tabs.toggleMute(target.id)
+        return
+      case 'page.toggleMuteSite':
+        if (target) tabs.toggleMuteSite(target.id)
+        return
+      case 'tab.moveToNewWindow':
+        if (active) tabs.moveTabToNewWindow(active.id, null, win)
         return
       case 'zoom.in':
         if (target) tabs.adjustZoom(target.id, 1)
@@ -260,6 +284,13 @@ export class Actions {
       case 'window.close':
         win.host.close()
         return
+      case 'window.minimize':
+        win.host.minimize()
+        return
+      case 'menu.app':
+        // The renderer opens the menu from its button so Escape leaves the keyboard there.
+        this.browser.emit('menu.app', undefined, win)
+        return
       case 'app.quit':
         this.browser.platform.app.quit()
         return
@@ -297,6 +328,35 @@ export class Actions {
     } catch (error) {
       this.browser.toast(`Could not save page: ${(error as Error).message}`, 'error', win)
     }
+  }
+
+  /** Chrome's "Use Selection for Find" (Cmd+E): the find bar opens on what the page has selected. */
+  private async findSelection(tabId: string, win: ZenWindow): Promise<void> {
+    const view = this.browser.tabs.view(tabId)
+    if (!view) return
+    let text = ''
+    try {
+      const selected = await view.executeJavaScript(`String(window.getSelection() ?? '')`)
+      if (typeof selected === 'string') text = selected
+    } catch {
+      text = ''
+    }
+    // One line, like Chrome: a selection spanning paragraphs searches for its first line.
+    text = text.split('\n')[0].trim().slice(0, 1000)
+    this.browser.emit('find.open', { tabId, text }, win)
+  }
+
+  /** Chrome's Ctrl+O: a local file opens in the current tab (a new one where there is none). */
+  private async openFile(tabId: string | null, win: ZenWindow): Promise<void> {
+    const pick = this.browser.platform.dialogs.pickFiles
+    if (!pick) return
+    const paths = await pick({ title: 'Open File' }, win)
+    if (paths.length === 0) return
+    const [first, ...rest] = paths.map((path) => pathToFileUrl(path))
+    const tab = tabId ? this.browser.tabs.tab(tabId) : undefined
+    if (tab && !tab.pinned && !tab.essential) this.browser.tabs.navigate(tab.id, first)
+    else this.browser.tabs.createTab({ url: first, active: true }, win)
+    for (const url of rest) this.browser.tabs.createTab({ url, active: false }, win)
   }
 
   private async screenshot(tabId: string, win: ZenWindow): Promise<void> {

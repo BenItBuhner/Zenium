@@ -22,6 +22,7 @@ const { PillContent } = await import('../phone/PhoneShell')
 const { PillChip } = await import('../urlbar/PillChip')
 const { openUrlbar, uiStore } = await import('@renderer/lib/ui')
 const { closeSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
+const { defaultShortcuts } = await import('@shared/shortcuts')
 
 function tab(url: string, patch: Partial<Tab> = {}): Tab {
   return {
@@ -80,7 +81,9 @@ function state(t: Tab | null, bookmarks: BookmarkNode[] = []): UIState {
     window: { kind: 'normal', fullscreen: false, htmlFullscreenTabId: null },
     boosts: [],
     extensions: [],
-    bookmarks
+    bookmarks,
+    // Tooltips quote the chord from the active key table (the default Chrome set here).
+    shortcuts: defaultShortcuts('linux', 'chrome')
   } as unknown as UIState
 }
 

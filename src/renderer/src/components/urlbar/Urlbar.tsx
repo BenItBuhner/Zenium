@@ -433,6 +433,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
 
   const placeholder =
     keyword || urlbar.mode === 'search' ? `Search with ${engine.name}` : 'Search or enter address'
+  // The field's native context menu ("Paste and Go") acts on the tab a submit would: the current
+  // one while editing, a new one from the new-tab bar (`data-zen-menu`, read by the main process).
+  const menuTabId = urlbar.mode === 'new-tab' || !tab ? undefined : tab.id
 
   const rows = (sheet: boolean): JSX.Element[] =>
     results.map((item, i) => (
@@ -484,6 +487,8 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
               autoCapitalize="off"
               autoCorrect="off"
               enterKeyHint="go"
+              data-zen-menu="urlbar"
+              data-zen-menu-tab={menuTabId}
               className="h-full min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-[var(--zen-muted)]"
             />
             {text && (
@@ -546,6 +551,8 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
             aria-expanded={results.length > 0}
             aria-controls="zen-omnibox-results"
             aria-activedescendant={activeRow}
+            data-zen-menu="urlbar"
+            data-zen-menu-tab={menuTabId}
             className="zen-omnibox-input h-full min-w-0 flex-1 bg-transparent outline-none"
           />
           {tab && urlbar.mode === 'edit' && <span className="zen-omnibox-badge">Current tab</span>}

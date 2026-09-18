@@ -177,6 +177,8 @@ function sourceTitle(source: MenuDescriptor['source']): string {
       return 'Bookmark'
     case 'history':
       return 'History'
+    case 'urlbar':
+      return 'Address'
   }
 }
 

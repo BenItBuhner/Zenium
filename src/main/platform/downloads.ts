@@ -115,6 +115,11 @@ export class ElectronDownloads implements DownloadHost {
   private readonly pendingRetries: DownloadItem[] = []
   /** Save dialogs still open; a transfer that finishes meanwhile is placed once they close. */
   private readonly pendingDialogs = new Map<string, Promise<void>>()
+  /**
+   * URLs whose next transfer asks where to save whatever the setting says: the context menu's
+   * "Save Link / Image / Video As…", which always ask in Chrome. Each entry serves one download.
+   */
+  private readonly saveAsUrls: string[] = []
   private readonly sessions = new Map<string, Session>()
   private service: DownloadService | null = null
   /** Set by `park`: Chromium's teardown of the live items is not to be reported as cancels. */
@@ -140,6 +145,28 @@ export class ElectronDownloads implements DownloadHost {
     this.service = service
     this.tabIdFor = hooks.tabIdFor
     this.parentWindow = hooks.parentWindow
+  }
+
+  /** The next download of `url` (started right after this call) goes through the save dialog. */
+  expectSaveAs(url: string): void {
+    this.saveAsUrls.push(url)
+    // A download the engine never started (blocked, offline) must not make a later plain
+    // download of the same URL ask.
+    setTimeout(() => this.takeSaveAs(url), 30_000)
+  }
+
+  private takeSaveAs(url: string): boolean {
+    const index = this.saveAsUrls.indexOf(url)
+    if (index === -1) return false
+    this.saveAsUrls.splice(index, 1)
+    return true
+  }
+
+  /** Whether `item` is a "Save As…" transfer (matched on any URL of its redirect chain). */
+  private isSaveAs(item: ElectronDownloadItem): boolean {
+    if (this.saveAsUrls.length === 0) return false
+    const urls = [item.getURL(), ...item.getURLChain()]
+    return urls.some((url) => this.takeSaveAs(url))
   }
 
   attach(ses: Session, containerId: string, onStarted: (sourceTabId: string | null) => void): void {
@@ -188,6 +215,8 @@ export class ElectronDownloads implements DownloadHost {
     const started = retried ? null : this.takePendingStart(item)
     const filename = stripPartial(item.getFilename() || retried?.filename || 'download')
     const referrer = retried?.referrer ?? referrerOf(source, item.getURL())
+    // Taken here, once per transfer: a "Save As…" expectation is consumed by the item it was for.
+    const saveAs = this.isSaveAs(item)
 
     // The partial file is reserved up front so simultaneous downloads never share a name; with
     // "ask where to save" it waits in the Downloads folder until the dialog decides.
@@ -220,9 +249,14 @@ export class ElectronDownloads implements DownloadHost {
     started?.resolve(record)
 
     if (!retried) {
-      const placed = this.place(item, record, sourceTabId, candidate, started?.request).finally(
-        () => this.pendingDialogs.delete(record.id)
-      )
+      const placed = this.place(
+        item,
+        record,
+        sourceTabId,
+        candidate,
+        started?.request,
+        saveAs
+      ).finally(() => this.pendingDialogs.delete(record.id))
       this.pendingDialogs.set(record.id, placed)
     }
     return Boolean(retried)
@@ -231,18 +265,20 @@ export class ElectronDownloads implements DownloadHost {
   /**
    * Settle where a new transfer's file goes: the caller's own name (`download({filename})`),
    * then the determiner's (extensions' `onDeterminingFilename`), then the save dialog when the
-   * setting, the caller or a `prompt` conflict action asks for it. The transfer runs into its
-   * partial file meanwhile; `release` waits for this before placing it.
+   * setting, the caller, a "Save As…" menu item (`saveAs`) or a `prompt` conflict action asks
+   * for it. The transfer runs into its partial file meanwhile; `release` waits for this before
+   * placing it.
    */
   private async place(
     item: ElectronDownloadItem,
     record: DownloadItem,
     sourceTabId: string | null,
     candidate: string,
-    request: ProgrammaticDownload | undefined
+    request: ProgrammaticDownload | undefined,
+    saveAs: boolean
   ): Promise<void> {
     let suggestion = request?.suggestion ?? null
-    let prompt = this.settings().askWhereToSave || Boolean(request?.saveAs)
+    let prompt = this.settings().askWhereToSave || Boolean(request?.saveAs) || saveAs
     if (this.determiner) {
       const determined = await this.determiner(record, suggestion?.filename ?? basename(candidate))
       // Removed or cancelled while the determiner was asked: nothing left to place. A transfer
@@ -332,7 +368,10 @@ export class ElectronDownloads implements DownloadHost {
     })
   }
 
-  /** "Always ask where to save": our own dialog, so the partial file stays under our control. */
+  /**
+   * "Always ask where to save" and the menu's "Save … As…": our own dialog, so the partial file
+   * stays under our control.
+   */
   private async askDestination(
     item: ElectronDownloadItem,
     record: DownloadItem,
@@ -341,7 +380,7 @@ export class ElectronDownloads implements DownloadHost {
   ): Promise<void> {
     const parent = this.parentWindow(sourceTabId)
     const options = {
-      title: 'Save as',
+      title: 'Save As',
       defaultPath: candidate,
       properties: ['createDirectory', 'showOverwriteConfirmation'] as Array<
         'createDirectory' | 'showOverwriteConfirmation'

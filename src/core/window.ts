@@ -17,7 +17,13 @@ import type { Browser } from './browser'
 import type { PersistedWindow } from './state'
 import { getSpace, tabVisibleIn } from './model'
 import { formatWindowTitle } from '../shared/windowTitle'
-import type { TabView, WindowHost } from './platform'
+import {
+  CHROME_MENU_TARGETS,
+  type ChromeContextParams,
+  type ChromeMenuTarget,
+  type TabView,
+  type WindowHost
+} from './platform'
 
 export interface WindowInit {
   id: string
@@ -65,6 +71,11 @@ export class ZenWindow {
    * until the chrome says otherwise. The app menu and the command list are built for it.
    */
   formFactor: FormFactor = 'desktop'
+  /**
+   * The Settings recorder in this window's chrome is listening for a chord: key presses from the
+   * chrome are its to capture, and no shortcut runs off them until it stops.
+   */
+  recordingShortcut = false
   lastFocusedAt = 0
   readonly initialBounds: Rect | null
   readonly initialMaximized: boolean
@@ -222,6 +233,26 @@ export class ZenWindow {
     if (this.chromeReadyOnce) return
     this.chromeReadyOnce = true
     this.browser.onChromeReady(this)
+  }
+
+  /**
+   * A right-click in the chrome document that the chrome itself did not handle (its sidebar,
+   * tab and bookmark rows show their menus through commands): the URL bar's field and pill and
+   * plain text fields get Chrome's menus for them.
+   */
+  onContextMenu(params: Omit<ChromeContextParams, 'target' | 'tabId'>): void {
+    if (!this.alive) return
+    const lookup = this.host.menuTargetAt?.(params.x, params.y) ?? Promise.resolve(null)
+    void lookup
+      .catch(() => null)
+      .then((hit) => {
+        if (!this.alive) return
+        const target = CHROME_MENU_TARGETS.find((t): t is ChromeMenuTarget => t === hit?.target)
+        return this.browser.menus.showChromeContextMenu(
+          { ...params, target: target ?? null, tabId: hit?.tabId ?? null },
+          this
+        )
+      })
   }
 
   // ---------------------------------------------------------------------------

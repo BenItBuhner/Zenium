@@ -1,4 +1,4 @@
-import { app, Menu } from 'electron'
+import { app, Menu, systemPreferences } from 'electron'
 import { join } from 'node:path'
 import { optimizer } from '@electron-toolkit/utils'
 import { registerZenScheme } from './platform/protocol'
@@ -53,8 +53,12 @@ function main(): void {
   applyResourceSwitches(app.getPath('userData'))
 
   // Shortcuts are handled by Zenium's own table, not by menu accelerators. macOS still needs an
-  // application menu for the standard Edit roles (Cmd+C/V/X/A only work through them there).
+  // application menu for the standard Edit roles (Cmd+C/V/X/A only work through them there);
+  // this minimal one stands until the browser starts and hands the host the full menu bar.
   if (process.platform === 'darwin') {
+    // AppKit appends its own "Enter Full Screen" to any menu titled View unless told otherwise;
+    // the View menu already carries Zenium's, with the chord from the key table.
+    systemPreferences.setUserDefault('NSFullScreenMenuItemEverywhere', 'boolean', false)
     Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }]))
   } else {
     Menu.setApplicationMenu(null)
