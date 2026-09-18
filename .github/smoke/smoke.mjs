@@ -1422,8 +1422,12 @@ async function scenarioBoot() {
       const onboarding = s.chrome.locator('[data-testid="onboarding"]')
       await onboarding.waitFor({ state: 'visible', timeout: 10000 })
       await s.shot('01-first-launch')
-      await s.chrome.getByRole('button', { name: 'Continue' }).click({ timeout: FIRST_PAINT_CLICK_MS })
-      await s.chrome.getByRole('button', { name: 'Skip tour' }).click({ timeout: FIRST_PAINT_CLICK_MS })
+      await s.chrome
+        .getByRole('button', { name: 'Continue' })
+        .click({ timeout: FIRST_PAINT_CLICK_MS })
+      await s.chrome
+        .getByRole('button', { name: 'Skip tour' })
+        .click({ timeout: FIRST_PAINT_CLICK_MS })
       await onboarding.waitFor({ state: 'detached', timeout: 10000 })
       await s.shot('02-after-onboarding')
       return 'completed'
@@ -2090,7 +2094,9 @@ async function scenarioCrash() {
     })
     await s.step('restore', async () => {
       const bar = s.chrome.locator('[data-crash-restore]').first()
-      await bar.getByRole('button', { name: 'Restore', exact: true }).click({ timeout: FIRST_PAINT_CLICK_MS })
+      await bar
+        .getByRole('button', { name: 'Restore', exact: true })
+        .click({ timeout: FIRST_PAINT_CLICK_MS })
       const tab = await s.waitForTab(EXAMPLE_URL, 45000)
       await bar.waitFor({ state: 'hidden', timeout: 8000 })
       await s.shot('02-restored-after-crash')
