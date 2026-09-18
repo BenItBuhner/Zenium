@@ -30,19 +30,79 @@ out=${DEMO_OUT:-artifacts/android-gesture-demo}
 video=${DEMO_VIDEO:-android-gestures-device-demo.mp4}
 mkdir -p "$out"
 
+# The hosted runners' nested emulator dies silently now and then, a minute or two into a demo
+# (every guest process stops logging at once, adb reports the device offline, the qemu process
+# exits a minute later with nothing in the host kernel log; seen across programs' demos). A
+# marker tells such a death from a driver failure, so the workflow can boot once more for the
+# former and never for the latter.
+#
+# The death has a shape: the emulator process first hangs (no CPU, no output; adb no longer
+# answers, the guest's own logging stops), then goes away without a word some forty seconds
+# later. A crash inside it would look just like that – Crashpad writes a minidump and re-raises
+# the signal, and a background job of a non-interactive shell dies silently – so the hang is
+# caught while it lasts (every thread's state and kernel stack, gdb's user-space stacks where the
+# runner has gdb) and the crash-dump directory and the host kernel's log are read after the
+# process is gone. All of it lands in the artifact next to the host monitor.
+dump_dir=$HOME/.android/breakpad
+emulator_pid() { pgrep -f qemu-system-x86_64 | head -n 1; }
+
+dump_emulator_stacks() {
+  pid=$(emulator_pid)
+  [ -n "$pid" ] || return 0
+  [ -f "$out/qemu-threads.txt" ] && return 0
+  {
+    date +%T
+    sudo cat "/proc/$pid/status" 2> /dev/null | grep -E '^(State|Threads|VmRSS|VmSwap):' || true
+    for task in "/proc/$pid"/task/*; do
+      tid=$(basename "$task")
+      printf '%s %-24s %s %s\n' "$tid" "$(sudo cat "$task/comm" 2> /dev/null)" \
+        "$(sudo cut -d' ' -f3 "$task/stat" 2> /dev/null)" "$(sudo cat "$task/wchan" 2> /dev/null)"
+      sudo cat "$task/stack" 2> /dev/null | sed 's/^/    /' || true
+    done
+  } > "$out/qemu-threads.txt" 2>&1 || true
+  if command -v gdb > /dev/null; then
+    sudo gdb -p "$pid" -batch -ex 'set pagination off' -ex 'thread apply all bt 30' \
+      > "$out/qemu-stacks.txt" 2>&1 || true
+  fi
+}
+
+note_emulator_death() {
+  if [ "$(adb get-state 2> /dev/null || true)" != "device" ]; then
+    echo "adb lost the device before the driver was done" > "$out/emulator-died"
+    dump_emulator_stacks
+    # Give the process the minute it takes to go, so the log and the dumps are of the death.
+    for _ in $(seq 1 60); do
+      [ -n "$(emulator_pid)" ] || break
+      sleep 1
+    done
+    {
+      echo "== $(date +%T) emulator process: $(emulator_pid || true)"
+      echo "== host kernel log"
+      sudo dmesg 2> /dev/null | tail -n 60 || true
+      echo "== crash dumps under $dump_dir"
+      ls -laR "$dump_dir" 2>&1 || true
+    } >> "$out/emulator-died"
+    find "$dump_dir" -name '*.dmp' -exec cp {} "$out/" \; 2> /dev/null || true
+  fi
+}
+trap note_emulator_death EXIT
+
 adb wait-for-device
 nproc
 free -m
 df -h / /tmp
 
-# Host watchdog: memory every few seconds, and the kernel log the moment the emulator process
-# disappears (a silent death is most likely the OOM killer or a renderer crash).
+# Host watchdog: memory and the emulator's CPU seconds every few seconds, a thread dump the
+# second time in a row adb gets no answer from a living emulator (the hang above, caught while
+# it lasts), and the kernel log the moment the emulator process disappears (a silent death is
+# most likely the OOM killer or a renderer crash).
 (
+  stalls=0
   while true; do
     {
       date +%T
       free -m | sed -n '2p'
-      ps -o pid=,rss=,pcpu=,comm= -C qemu-system-x86_64 || true
+      ps -o pid=,rss=,pcpu=,cputimes=,comm= -C qemu-system-x86_64 || true
     } >> "$out/host-monitor.txt"
     if ! pgrep -f qemu-system-x86_64 > /dev/null; then
       {
@@ -51,6 +111,13 @@ df -h / /tmp
         ls -laR /tmp/android-runner 2>&1 || true
       } >> "$out/host-monitor.txt"
       break
+    fi
+    if timeout 4 adb shell true > /dev/null 2>&1; then
+      stalls=0
+    else
+      stalls=$((stalls + 1))
+      echo "adb got no answer from the emulator ($stalls in a row)" >> "$out/host-monitor.txt"
+      [ "$stalls" -ge 2 ] && dump_emulator_stacks
     fi
     sleep 5
   done
@@ -148,9 +215,10 @@ sleep 2
 kill "$logcat_pid" "$monitor_pid" 2> /dev/null || true
 
 adb pull "/sdcard/$video" "$out/$video"
+# Screenshots, and whatever else a driver writes down next to them (an accessibility tree dump).
 for name in $(adb shell run-as "$app_id" ls "files/$demo_dir" | tr -d '\r'); do
   case "$name" in
-    *.png) adb exec-out run-as "$app_id" cat "files/$demo_dir/$name" > "$out/$name" ;;
+    *.png | *.txt) adb exec-out run-as "$app_id" cat "files/$demo_dir/$name" > "$out/$name" ;;
   esac
 done
 

@@ -40,6 +40,7 @@ import android.webkit.WebViewClient
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.ScriptHandler
 import androidx.webkit.WebMessageCompat
+import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import app.zen.chromium.blocking.BlockingTab
@@ -90,15 +91,29 @@ class TabWebView(
     private var replyProxy: JavaScriptReplyProxy? = null
     /** Whether the bridge object the page script posts through is registered on this view. */
     private var bridgeInstalled = false
-    /** The document-start registration of the current host's script (null without the feature). */
+    /**
+     * The document-start registration of the current host's script, page-controls rules ahead of
+     * it (null without the feature).
+     */
     private var documentScript: ScriptHandler? = null
     private var currentFlags: JSONObject = json("glanceEnabled" to true, "glanceTrigger" to "alt", "thirdParty" to null)
     private var pendingFlags = false
     private var zoomFactor = 1.0
+    /** The WebView's own user agent, the truth both the mobile and the desktop shape derive from. */
+    private val defaultUserAgent: String = settings.userAgentString
+    /** Desktop site: the user agent and client hints this tab currently presents. */
+    var desktopMode = false
+        private set
+    /** The user agent changed after the current page was requested (see `reload`). */
+    private var userAgentStale = false
+    private var darkening = false
+    private var lastDeviceWidth = 0
     var muted = false
         private set
     /** True while `onPageStarted` has fired and `onPageFinished` has not. */
     private var pageStarted = false
+    /** The `domReady` view event, once per document (see `DomReadyGate`). */
+    private val domReady = DomReadyGate()
 
     init {
         Profiles.apply(this, containerId)
@@ -127,8 +142,11 @@ class TabWebView(
             minimumLogicalFontSize = 6
         }
         // Present as the browser it is, not as an app's embedded view (see UserAgent).
-        UserAgent.apply(settings, BuildConfig.VERSION_NAME)
+        UserAgent.apply(settings, BuildConfig.VERSION_NAME, desktopMode, defaultUserAgent)
         applyTextZoom()
+        // Dark theme for sites: only ever while the app itself is dark (WebView ties algorithmic
+        // darkening to the theme), and never for pages that bring a dark scheme of their own.
+        setDarkening(host.pageRules.darkenDefault)
         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
         setBackgroundColor(Color.WHITE)
         clipToOutline = true
@@ -225,9 +243,8 @@ class TabWebView(
      */
     internal fun installPageScript() {
         if (bridgeInstalled || documentScript != null) uninstallPageScript()
-        val script = host.pageScript
         // A host without the core (a custom tab) has nothing to talk to the page about.
-        if (script.isEmpty()) return
+        if (host.pageScript.isEmpty()) return
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             WebViewCompat.addWebMessageListener(this, PAGE_BRIDGE, setOf("*")) { _, message, _, isMainFrame, proxy ->
                 if (!isMainFrame) return@addWebMessageListener
@@ -238,7 +255,7 @@ class TabWebView(
         }
         bridgeInstalled = true
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-            documentScript = WebViewCompat.addDocumentStartJavaScript(this, script, setOf("*"))
+            registerStartScript()
         } else {
             pendingFlags = true // inject on page finished instead (see Client)
         }
@@ -259,24 +276,56 @@ class TabWebView(
         failPendingEvals("the page changed hosts")
     }
 
+    /**
+     * The document-start script: the page-controls rules this tab lays pages out by (viewport
+     * rewriting for zoom, desktop layout and force-zoom happens in the page, from the same rules
+     * the core and this host share) followed by the page script itself. Re-registered whenever
+     * the rules or the view's width change; the live page is told over the message channel too.
+     */
+    private fun startScriptSource(): String =
+        "window.__zenPageRules=" + host.pageRulesJson.toString() + ";window.__zenDeviceWidth=" + deviceWidth() + ";" + host.pageScript
+
+    private fun registerStartScript() {
+        documentScript?.remove()
+        documentScript = WebViewCompat.addDocumentStartJavaScript(this, startScriptSource(), setOf("*"))
+    }
+
+    /** The view's width in CSS px at scale 1 – what `width=device-width` means to a page in it. */
+    private fun deviceWidth(): Int {
+        val d = resources.displayMetrics.density
+        return if (width > 0) (width / d).roundToInt() else 0
+    }
+
+    /** The core's page-controls policy changed (or the view was resized): pages follow at once. */
+    fun onPageRulesChanged() {
+        // A host without a page script (a custom tab) has no rules to lay pages out by either.
+        if (host.pageScript.isEmpty()) return
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) registerStartScript()
+        postToPage(json("type" to "pageRules", "rules" to host.pageRulesJson, "deviceWidth" to deviceWidth()).toString())
+        setDarkening(host.pageRules.darken(url ?: ""))
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        val css = deviceWidth()
+        if (css != lastDeviceWidth) {
+            lastDeviceWidth = css
+            onPageRulesChanged()
+        }
+    }
+
     private fun onPageMessage(message: WebMessageCompat, proxy: JavaScriptReplyProxy?) {
-        val data = message.data ?: return
-        val obj = runCatching { JSONObject(data) }.getOrNull() ?: return
-        if (obj.str("token") != host.pageToken) return
-        when (obj.str("type")) {
-            "hello" -> {
+        when (val route = routePageMessage(message.data, host.pageToken)) {
+            PageMessageRoute.Ignore -> return
+            PageMessageRoute.Hello -> {
                 replyProxy = proxy
                 sendFlags()
-                return
             }
-            "evalResult" -> {
-                // The settled value of a Promise an evaluate() script returned (see evaluate()).
-                pendingEvals.remove(obj.optInt("id"))?.invoke(obj.strOrNull("value"))
-                return
-            }
+            // The settled value of a Promise an evaluate() script returned (see evaluate()).
+            is PageMessageRoute.EvalResult -> pendingEvals.remove(route.id)?.invoke(route.value)
+            PageMessageRoute.DomReady -> if (domReady.scriptReady()) host.viewEvent(tabId, "domReady", null)
+            is PageMessageRoute.Forward -> host.viewEvent(tabId, "pageMessage", route.message)
         }
-        obj.remove("token")
-        host.viewEvent(tabId, "pageMessage", obj)
     }
 
     // --- script evaluation for the core (async-aware) --------------------------------------------
@@ -598,19 +647,33 @@ class TabWebView(
         loadDataWithBaseURL(url, html, "text/html", "utf-8", url)
     }
 
+    // A load the core asked for: the user agent follows the rules for the URL before it leaves.
     override fun loadUrl(url: String) {
         rememberCurrentPage()
         if (url.startsWith("http", ignoreCase = true)) currentDocument = url
+        switchDesktopModeFor(url)
         super.loadUrl(url)
     }
 
     override fun loadUrl(url: String, additionalHttpHeaders: MutableMap<String, String>) {
         rememberCurrentPage()
+        switchDesktopModeFor(url)
         super.loadUrl(url, additionalHttpHeaders)
     }
 
     override fun reload() {
         rememberCurrentPage()
+        url?.let(::switchDesktopModeFor)
+        if (userAgentStale) {
+            // Like Chrome, a reload under a changed user agent asks again from the URL the entry
+            // was requested with rather than the one it ended on: a site that sent the mobile
+            // browser to its m. domain gets to answer the desktop one from the top (and back).
+            val original: String? = copyBackForwardList().currentItem?.originalUrl
+            if (original != null && original != url && PageRules.isWebPage(original)) {
+                super.loadUrl(original)
+                return
+            }
+        }
         super.reload()
     }
 
@@ -633,19 +696,55 @@ class TabWebView(
         )
     }
 
-    /** Zenium's per-tab zoom; WebView has no page zoom, so it scales the text. */
+    /**
+     * The core's effective zoom for this tab's page. The page script lays the page out by the same
+     * rules (see `startScriptSource`), so this is only remembered; nothing here scales text.
+     */
     fun setZoom(factor: Double) {
         zoomFactor = factor
-        applyTextZoom()
     }
 
     /**
-     * Text at the size the page asked for, times Zenium's zoom. WebView would start every tab at the
-     * system font scale (a phone set to large text got every page 130% larger), which Chrome does
-     * not do: its pages ignore the system font size and offer page zoom instead, as Zenium does.
+     * Text at the size the page asked for. WebView would start every tab at the system font scale
+     * (a phone set to large text got every page 130% larger), which Chrome does not do: its pages
+     * ignore the system font size and offer page zoom instead. Zenium's page zoom reflows the
+     * layout from the page script; when the user wants the system font size in it, the core
+     * multiplies it into the default zoom ("Include the system font size" in Accessibility).
      */
     private fun applyTextZoom() {
-        settings.textZoom = (zoomFactor * 100).roundToInt().coerceIn(25, 500)
+        settings.textZoom = 100
+    }
+
+    /**
+     * Desktop site: Chrome-on-Linux user agent and client hints from the next load on; the page
+     * script lays the page out at the desktop width. The core reloads the tab when the user asks.
+     */
+    fun setDesktopMode(on: Boolean) {
+        if (desktopMode == on) return
+        desktopMode = on
+        userAgentStale = true
+        UserAgent.apply(settings, BuildConfig.VERSION_NAME, on, defaultUserAgent)
+    }
+
+    /** Switch the user agent to what the rules say for `url`; true when it changed. */
+    private fun switchDesktopModeFor(url: String): Boolean {
+        if (!PageRules.isWebPage(url)) return false
+        val wanted = host.pageRules.desktop(url)
+        if (wanted == desktopMode) return false
+        setDesktopMode(wanted)
+        return true
+    }
+
+    /**
+     * Dark theme for sites: WebView's algorithmic darkening, which only acts while the app's
+     * theme is dark (Zenium's own colour scheme sets the night mode, see `Host.applyTheme`) and
+     * leaves pages that declare `color-scheme: dark` to their own dark style. Before the feature
+     * existed (older WebViews) there is nothing safe to do; force-dark is a no-op at this target.
+     */
+    fun setDarkening(on: Boolean) {
+        darkening = on
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) return
+        runCatching { WebSettingsCompat.setAlgorithmicDarkeningAllowed(settings, on) }
     }
 
     fun find(text: String, forward: Boolean, newSession: Boolean) {
@@ -784,7 +883,15 @@ class TabWebView(
                 "http", "https" -> {
                     if (interceptNavigation(request)) return true
                     // A tap on another site whose app is installed may open the app instead.
-                    host.externalProtocols.appLink(this@TabWebView, request)
+                    if (host.externalProtocols.appLink(this@TabWebView, request)) return true
+                    // A link into a site with the other desktop-site setting: switch the user
+                    // agent first and issue the load again, so the site's first request already
+                    // carries it (the core's own decision would arrive a round trip too late).
+                    if (request.isForMainFrame && !request.isRedirect && switchDesktopModeFor(url.toString())) {
+                        view.loadUrl(url.toString())
+                        return true
+                    }
+                    false
                 }
                 "about", "data", "blob", "javascript" -> {
                     if (interceptNavigation(request)) return true
@@ -842,6 +949,11 @@ class TabWebView(
             currentDocument = url
             pageStarted = true
             loading = true
+            domReady.documentStarted()
+            // Whatever the user agent is now, this page was requested with it.
+            userAgentStale = false
+            // Darkening for the page that is coming, before its first paint; the core confirms.
+            if (PageRules.isWebPage(url)) setDarkening(host.pageRules.darken(url))
             failPendingEvals("the page navigated away before the script finished")
             host.viewEvent(tabId, "startLoading", null)
             host.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", false))
@@ -867,9 +979,12 @@ class TabWebView(
             loading = false
             pageStarted = false
             if (pendingFlags && host.pageScript.isNotEmpty()) {
-                evaluateJavascript(host.pageScript, null)
+                evaluateJavascript(startScriptSource(), null)
             }
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.FINISHED)
+            // A document the page script never reported ready (it did not run there, or it only
+            // runs at page finished) is ready now, before it has stopped loading, as in Electron.
+            if (domReady.pageFinished()) host.viewEvent(tabId, "domReady", null)
             host.viewEvent(tabId, "stopLoading", navState())
             if (muted) setMuted(true)
             host.backChanged()

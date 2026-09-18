@@ -1,0 +1,34 @@
+name: Android pill chips accessibility demo
+
+# Records what a screen reader finds in the phone chrome's address pill (design language v2
+# §9.22): the field and each chip as a button with its own label, the accessibility focus going
+# field, site icon, lock, next bar button, and the site-information sheet opening from a chip that
+# then reports it expanded. TalkBack is switched on for the run when the system image has it; the
+# driver (PillChipsA11yDemo) writes the tree it read next to the recording. Dispatch-only, like the
+# other demos: it takes about ten minutes and the accessibility tree dump, not the video, is what
+# says whether the chips are right. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file only picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-a11y-pill-chips-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Pill chips accessibility demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PillChipsA11yDemo
+        DEMO_DIR=a11y-pill-chips-demo
+        DEMO_OUT=artifacts/android-a11y-pill-chips-demo
+        DEMO_VIDEO=android-a11y-pill-chips-demo.mp4
+      artifact-name: android-a11y-pill-chips-demo
+      artifact-path: artifacts/android-a11y-pill-chips-demo/
