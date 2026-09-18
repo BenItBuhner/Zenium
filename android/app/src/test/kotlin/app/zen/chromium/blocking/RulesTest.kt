@@ -62,6 +62,25 @@ class RulesTest {
         assertTrue(allAmbiguous.matches(req("https://ads.example/x", ResourceType.IMAGE)))
     }
 
+    /** The structured twin of `*$ping,third-party` (what the translator makes of it): see NetworkFilterTest. */
+    @Test
+    fun anUnscopedResourceTypesRuleTakesAnUnknownRequestForAFetch() {
+        val unknownFetch = req("https://api.example/votes?v=1", ResourceType.XMLHTTPREQUEST, typeMask = ResourceType.AMBIGUOUS_MASK)
+        val beacons = rule("""{"id":1,"action":{"type":"block"},"condition":{"resourceTypes":["ping"],"domainType":"thirdParty"}}""")
+        assertFalse(beacons.matches(unknownFetch))
+        assertTrue(beacons.matches(req("https://api.example/collect", ResourceType.PING)))
+        assertTrue(rule("""{"id":2,"action":{"type":"block"},"condition":{"resourceTypes":["ping","xmlhttprequest"]}}""").matches(unknownFetch))
+        // Scoped by a URL, a request host or a site, an unknown request may be the type named.
+        assertTrue(rule("""{"id":3,"action":{"type":"block"},"condition":{"urlFilter":"||api.example^","resourceTypes":["ping"]}}""").matches(unknownFetch))
+        assertTrue(rule("""{"id":4,"action":{"type":"block"},"condition":{"requestDomains":["api.example"],"resourceTypes":["ping"]}}""").matches(unknownFetch))
+        assertTrue(rule("""{"id":5,"action":{"type":"block"},"condition":{"initiatorDomains":["news.example"],"resourceTypes":["ping"]}}""").matches(unknownFetch))
+        // Excluded domains do not scope the rule.
+        assertFalse(rule("""{"id":6,"action":{"type":"block"},"condition":{"excludedInitiatorDomains":["other.example"],"resourceTypes":["ping"]}}""").matches(unknownFetch))
+        // An unscoped rule that excludes fetches leaves the unknown request alone; one that excludes beacons blocks it.
+        assertFalse(rule("""{"id":7,"action":{"type":"block"},"condition":{"excludedResourceTypes":["xmlhttprequest"]}}""").matches(unknownFetch))
+        assertTrue(rule("""{"id":8,"action":{"type":"block"},"condition":{"excludedResourceTypes":["ping"]}}""").matches(unknownFetch))
+    }
+
     @Test
     fun caseSensitivityAndRegexFilters() {
         // A slash-delimited urlFilter is a plain substring in declarativeNetRequest, never a regular expression.

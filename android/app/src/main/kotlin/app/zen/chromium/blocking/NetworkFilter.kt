@@ -30,13 +30,16 @@ class NetworkFilter private constructor(
      */
     val whitelistsDocument: Boolean = isException && (typeMask and ResourceType.MAIN_FRAME.bit) != 0
 
+    /** No URL pattern, request host or site: the type (and party) options alone select requests. */
+    private val unscoped: Boolean = pattern.matchesEveryUrl && requestDomains == null && initiatorDomains == null
+
     /** Does the filter apply to `req` (pattern and every option)? */
     fun matches(req: Request): Boolean =
         matchesOptions(req) && pattern.matches(req.url, req.urlLower, req.host, req.hostStart)
 
     /** The options alone – the caller has already matched the pattern (host-map lookups). */
     fun matchesOptions(req: Request): Boolean {
-        if ((typeMask and req.typeMask) == 0) return false
+        if ((typeMask and ResourceType.candidateMask(req.typeMask, unscoped)) == 0) return false
         if (party == 1 && req.isThirdParty) return false
         if (party == 2 && !req.isThirdParty) return false
         if (methods != null && !methods.any { it == req.methodLower }) return false

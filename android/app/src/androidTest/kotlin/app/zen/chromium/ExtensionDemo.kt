@@ -18,6 +18,8 @@ import android.webkit.WebView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewCompat
+import app.zen.chromium.blocking.Request
+import app.zen.chromium.blocking.ResourceType
 import app.zen.chromium.ext.ExtensionFiles
 import app.zen.chromium.ext.ExtensionWebView
 import org.json.JSONArray
@@ -436,6 +438,11 @@ class ExtensionDemo {
         // the runner's address) from a WebView that lost the header.
         val apiProbe = probeCors("https://returnyoutubedislikeapi.com/configs/selectors", "https://m.youtube.com")
         ryd.put("apiProbe", apiProbe)
+        // What the request engine itself makes of that fetch from the watch page (a `fetch` of
+        // unknown type, as WebView hands it over): a blocked answer has no CORS header either,
+        // and looked, from the page's console alone, exactly like a network refusing the runner.
+        val apiVerdict = engineVerdict(apiProbe.optString("url"), ryd.optString("url").ifEmpty { "https://m.youtube.com/watch?v=dQw4w9WgXcQ" })
+        ryd.put("apiEngineVerdict", apiVerdict)
         results.put("returnYouTubeDislike", ryd)
         results.put("youtubeConsole", JSONArray(consoleOf(ytView)))
         val api = ryd.optJSONArray("apiEntries")?.length() ?: 0
@@ -477,6 +484,9 @@ class ExtensionDemo {
         // there is no core function to grade until the network lets the runner through.
         val apiRefused = "network: ${apiProbe.optString("url")} answered the emulator with status ${apiProbe.optInt("status")} and no Access-Control-Allow-Origin" +
             " (cf-mitigated=${apiProbe.optString("cfMitigated", "null")}, server=${apiProbe.optString("server", "null")})"
+        val engineLine = "engine=${apiVerdict.optString("action")}" +
+            (apiVerdict.optString("filter").takeIf { it.isNotEmpty() }?.let { " by $it" } ?: "") +
+            (apiVerdict.optString("set").takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: "")
         stage(
             RYD, "coreFunction",
             when {
@@ -489,7 +499,7 @@ class ExtensionDemo {
             when {
                 !onYouTube -> offSite
                 ryd.optInt("elements") == 0 && apiWithoutCors -> apiRefused
-                else -> "api requests seen by the page=$api, dislike elements=${ryd.optInt("elements")}, api probe=${apiProbe.optInt("status")}/${apiProbe.optString("allowOrigin", "null")}"
+                else -> "api requests seen by the page=$api, dislike elements=${ryd.optInt("elements")}, api probe=${apiProbe.optInt("status")}/${apiProbe.optString("allowOrigin", "null")}, $engineLine"
             }
         )
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(ytTab)},"force":true}""")
@@ -1162,6 +1172,26 @@ class ExtensionDemo {
      * Tells a network that refuses the runner (a challenge page carries no CORS header) from a
      * WebView-side loss of the header.
      */
+    /**
+     * The request engine's decision for a subresource `url` of `documentUrl` whose type WebView
+     * did not reveal (a `fetch`: the wildcard `Accept`, no telling extension), read from the
+     * current snapshot without the side effects of an intercepted request.
+     */
+    private fun engineVerdict(url: String, documentUrl: String): JSONObject {
+        val snapshot = host.blocking.snapshot
+        val decision = snapshot.decide(
+            Request(url, ResourceType.XMLHTTPREQUEST, documentUrl, "GET", typeMask = ResourceType.AMBIGUOUS_MASK)
+        )
+        return JSONObject()
+            .put("url", url)
+            .put("action", decision.action.name)
+            .put("filter", decision.matchedFilter ?: JSONObject.NULL)
+            .put("set", decision.matchedSet ?: JSONObject.NULL)
+            .put("rule", decision.matchedRule)
+            .put("filters", snapshot.filterCount)
+            .put("sets", snapshot.setCount)
+    }
+
     private fun probeCors(url: String, origin: String): JSONObject {
         val out = JSONObject().put("url", url).put("origin", origin)
         return runCatching {

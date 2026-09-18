@@ -41,10 +41,14 @@ class DnrRule(
     private val tabIds: Set<String>?,
     private val excludedTabIds: Set<String>?
 ) {
+    /** No `urlFilter`, `requestDomains` or `initiatorDomains`: the type conditions alone select requests. */
+    private val unscoped: Boolean = pattern == null && requestDomains == null && initiatorDomains == null
+
     fun matches(req: Request): Boolean {
-        if (typeMask != 0 && (typeMask and req.typeMask) == 0) return false
+        val candidates = ResourceType.candidateMask(req.typeMask, unscoped)
+        if (typeMask != 0 && (typeMask and candidates) == 0) return false
         // An excluded type only rules the request out when every type it might be is excluded.
-        if (excludedTypeMask != 0 && (req.typeMask and excludedTypeMask.inv()) == 0) return false
+        if (excludedTypeMask != 0 && (candidates and excludedTypeMask.inv()) == 0) return false
         if (methods != null && req.methodLower !in methods) return false
         if (excludedMethods != null && req.methodLower in excludedMethods) return false
         if (domainType == 2 && !req.isThirdParty) return false
