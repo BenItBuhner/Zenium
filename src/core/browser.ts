@@ -1466,8 +1466,7 @@ export class Browser {
       'tab.dragMove': ({ tabId, x, y, inSidebar }, win) =>
         this.tabDrag.move(tabId, x, y, inSidebar, win),
       'tab.dragTarget': ({ tabId, key }, win) => this.tabDrag.setTarget(tabId, key, win),
-      'tab.dragEnd': ({ tabId, x, y, outcome }, win) =>
-        this.tabDrag.end(tabId, x, y, outcome, win),
+      'tab.dragEnd': ({ tabId, x, y, outcome }, win) => this.tabDrag.end(tabId, x, y, outcome, win),
       'tab.moveToNewWindow': ({ tabId }, win) => void tabs.moveTabToNewWindow(tabId, null, win),
       'tab.reopenClosed': (_a, win) => this.session.reopenClosed(win),
       'tab.navigationEntries': ({ tabId }) => tabs.navigationEntries(tabId),
