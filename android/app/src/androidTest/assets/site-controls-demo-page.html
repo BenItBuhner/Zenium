@@ -28,14 +28,14 @@
 <script>
   // The driver reads the outcome through the tab's title: `SC|cookie:yes|storage:no|geo:granted`.
   var params = new URLSearchParams(location.search);
-  var status = { cookie: '-', storage: '-', geo: '-' };
+  var report = { cookie: '-', storage: '-', geo: '-' };
   function show(id, value, cls) {
     var el = document.getElementById(id);
     el.textContent = value;
     el.className = 'v ' + cls;
   }
   function publish() {
-    document.title = 'SC|cookie:' + status.cookie + '|storage:' + status.storage + '|geo:' + status.geo;
+    document.title = 'SC|cookie:' + report.cookie + '|storage:' + report.storage + '|geo:' + report.geo;
   }
   if (params.get('set') === '1') {
     document.cookie = 'zenium_demo=1; path=/; max-age=86400';
@@ -44,8 +44,8 @@
   var hasCookie = /(^|; )zenium_demo=1/.test(document.cookie);
   var hasStorage = false;
   try { hasStorage = localStorage.getItem('zenium_demo') === '1'; } catch (e) {}
-  status.cookie = hasCookie ? 'yes' : 'no';
-  status.storage = hasStorage ? 'yes' : 'no';
+  report.cookie = hasCookie ? 'yes' : 'no';
+  report.storage = hasStorage ? 'yes' : 'no';
   show('cookie', hasCookie ? 'present' : 'none', hasCookie ? 'yes' : 'no');
   show('storage', hasStorage ? 'present' : 'none', hasStorage ? 'yes' : 'no');
   document.getElementById('mode').textContent =
@@ -54,14 +54,14 @@
   publish();
   if (params.get('ask') === '1') {
     show('geo', 'asking…', 'wait');
-    status.geo = 'asking';
+    report.geo = 'asking';
     publish();
     navigator.geolocation.getCurrentPosition(
-      function () { status.geo = 'granted'; show('geo', 'granted', 'yes'); publish(); },
+      function () { report.geo = 'granted'; show('geo', 'granted', 'yes'); publish(); },
       function (err) {
         // 1 is PERMISSION_DENIED; 2 and 3 (unavailable, timeout) mean the permission was granted
         // and the emulator had no fix to give.
-        status.geo = err.code === 1 ? 'denied' : 'granted-nofix' + err.code;
+        report.geo = err.code === 1 ? 'denied' : 'granted-nofix' + err.code;
         show('geo', err.code === 1 ? 'denied' : 'granted (no fix)', err.code === 1 ? 'no' : 'yes');
         publish();
       },
