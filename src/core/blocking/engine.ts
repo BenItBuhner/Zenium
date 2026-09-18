@@ -55,6 +55,8 @@ interface CompiledRule {
   excludedInitiatorDomains: string[] | null
   requestDomains: string[] | null
   excludedRequestDomains: string[] | null
+  topDomains: string[] | null
+  excludedTopDomains: string[] | null
   excludedNonUniqueHosts: boolean
   resourceTypes: Set<ResourceType> | null
   excludedResourceTypes: Set<ResourceType> | null
@@ -127,6 +129,8 @@ function compileRule(setId: string, setPriority: number, rule: Rule): CompiledRu
     excludedInitiatorDomains: lower(c.excludedInitiatorDomains),
     requestDomains: lower(c.requestDomains),
     excludedRequestDomains: lower(c.excludedRequestDomains),
+    topDomains: lower(c.topDomains),
+    excludedTopDomains: lower(c.excludedTopDomains),
     excludedNonUniqueHosts: c.excludedNonUniqueHosts === true,
     resourceTypes: set(c.resourceTypes),
     excludedResourceTypes: set(c.excludedResourceTypes),
@@ -145,6 +149,8 @@ interface Facts {
   url: string
   host: string
   initiatorHost: string
+  /** Host of the top-level document, else of the initiator (Chrome's fallback); '' when unknown. */
+  topHost: string
   method: string
   thirdParty: boolean
   tabId: string | undefined
@@ -172,6 +178,10 @@ function ruleMatches(r: CompiledRule, ctx: RequestContext, f: Facts): boolean {
     if (!matchesDomains(f.initiatorHost, r.initiatorDomains, r.excludedInitiatorDomains))
       return false
   }
+  if (r.topDomains || r.excludedTopDomains) {
+    if (r.topDomains && !f.topHost) return false
+    if (!matchesDomains(f.topHost, r.topDomains, r.excludedTopDomains)) return false
+  }
   if (r.regex) return r.regex.test(f.url)
   if (r.url) return r.url(f.url)
   return true
@@ -179,10 +189,12 @@ function ruleMatches(r: CompiledRule, ctx: RequestContext, f: Facts): boolean {
 
 function factsFor(ctx: RequestContext): Facts {
   const initiator = ctx.initiator ?? ctx.documentUrl
+  const top = ctx.documentUrl ?? ctx.initiator
   return {
     url: ctx.url,
     host: hostnameOf(ctx.url) ?? '',
     initiatorHost: initiator ? (hostnameOf(initiator) ?? '') : '',
+    topHost: top ? (hostnameOf(top) ?? '') : '',
     method: (ctx.method || 'GET').toLowerCase(),
     thirdParty: ctx.isThirdParty ?? isThirdParty(ctx.url, initiator),
     tabId: tabIdFact(ctx)

@@ -168,12 +168,27 @@ describe('translateRule', () => {
   })
 
   test('rules the engine cannot evaluate are reported, not emitted', () => {
-    const [headers, top] = compileAll([
-      rule(1, { type: 'block' }, { urlFilter: 'x', responseHeaders: [{ header: 'x-ads' }] }),
-      rule(2, { type: 'block' }, { urlFilter: 'x', topDomains: ['news.test'] })
+    const [headers] = compileAll([
+      rule(1, { type: 'block' }, { urlFilter: 'x', responseHeaders: [{ header: 'x-ads' }] })
     ])
     expect(translateRule(headers!)).toEqual({ ruleId: 1, reason: 'responseHeaderCondition' })
-    expect(translateRule(top!)).toEqual({ ruleId: 2, reason: 'topDomains' })
+  })
+
+  test('topDomains and excludedTopDomains are carried to the engine', () => {
+    // Privacy Badger's shape: block a tracker's requests unless the page itself is the tracker.
+    const [top, excluded] = compileAll([
+      rule(1, { type: 'block' }, { urlFilter: 'x', topDomains: ['news.test'] }),
+      rule(
+        2,
+        { type: 'block' },
+        { requestDomains: ['tracker.test'], excludedTopDomains: ['tracker.test'] }
+      )
+    ])
+    expect(translateRule(top!)).toMatchObject({ condition: { topDomains: ['news.test'] } })
+    expect(translateRule(excluded!)).toMatchObject({
+      condition: { requestDomains: ['tracker.test'], excludedTopDomains: ['tracker.test'] }
+    })
+    expect((translateRule(excluded!) as EngineRule).condition.topDomains).toBeUndefined()
   })
 })
 
@@ -414,7 +429,7 @@ describe('DnrTranslator', () => {
     const sink = new RecordingSink()
     const translator = new DnrTranslator(sink)
     const rules = compileAll([
-      rule(1, { type: 'block' }, { urlFilter: 'x', topDomains: ['a.test'] }),
+      rule(1, { type: 'block' }, { urlFilter: 'x', responseHeaders: [{ header: 'x-ads' }] }),
       rule(
         2,
         { type: 'redirect', redirect: { transform: { scheme: 'https' } } },
@@ -424,7 +439,7 @@ describe('DnrTranslator', () => {
     const report = await translator.sync(
       input({ rulesets: [{ source: 'static', rulesetId: 'r1', rules }] })
     )
-    expect(report.skipped).toEqual([{ ruleId: 1, reason: 'topDomains' }])
+    expect(report.skipped).toEqual([{ ruleId: 1, reason: 'responseHeaderCondition' }])
     expect(report.transforms).toEqual([2])
   })
 })

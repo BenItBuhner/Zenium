@@ -94,6 +94,8 @@ export interface EngineRuleCondition {
   excludedInitiatorDomains?: string[]
   requestDomains?: string[]
   excludedRequestDomains?: string[]
+  topDomains?: string[]
+  excludedTopDomains?: string[]
   resourceTypes?: EngineResourceType[]
   excludedResourceTypes?: EngineResourceType[]
   /** HTTP methods in lowercase (`get`, `post`, ...). */

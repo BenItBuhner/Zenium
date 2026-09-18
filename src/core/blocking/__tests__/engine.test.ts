@@ -138,6 +138,57 @@ describe('RuleEngine conditions', () => {
     ).toBe('block')
   })
 
+  it('matches topDomains against the top-level document, falling back to the initiator', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('top', [
+        // Privacy Badger's shape: a tracker is blocked everywhere but on its own site.
+        block(1, { requestDomains: ['tracker.example'], excludedTopDomains: ['tracker.example'] }),
+        block(2, { urlFilter: '/on-news', topDomains: ['news.example'] })
+      ])
+    )
+    const tracker = 'https://cdn.tracker.example/p.js'
+    expect(e.decide(req(tracker, { documentUrl: 'https://www.news.example/story' })).action).toBe(
+      'block'
+    )
+    expect(e.decide(req(tracker, { documentUrl: 'https://www.tracker.example/' })).action).toBe(
+      'allow'
+    )
+    // A frame of the tracker inside a news page: the top-level document decides, not the initiator.
+    expect(
+      e.decide(
+        req(tracker, {
+          initiator: 'https://embed.tracker.example/',
+          documentUrl: 'https://www.news.example/story'
+        })
+      ).action
+    ).toBe('block')
+    expect(
+      e.decide(
+        req(tracker, {
+          initiator: 'https://www.news.example/',
+          documentUrl: 'https://www.tracker.example/'
+        })
+      ).action
+    ).toBe('allow')
+    // Without a top-level document the initiator stands in, as in Chrome.
+    expect(e.decide(req(tracker, { initiator: 'https://www.tracker.example/' })).action).toBe(
+      'allow'
+    )
+    expect(e.decide(req(tracker, { initiator: 'https://www.news.example/' })).action).toBe('block')
+    // Nothing known about the page: an exclusion list has nothing to exclude.
+    expect(e.decide(req(tracker)).action).toBe('block')
+
+    expect(
+      e.decide(req('https://a/on-news', { documentUrl: 'https://news.example/' })).action
+    ).toBe('block')
+    expect(
+      e.decide(req('https://a/on-news', { documentUrl: 'https://shop.example/' })).action
+    ).toBe('allow')
+    // A `topDomains` list needs a known top-level document (or initiator) to match at all.
+    expect(e.decide(req('https://a/on-news')).action).toBe('allow')
+  })
+
   it('computes third-party from the registrable domains when the host did not', () => {
     const e = new RuleEngine()
     e.setRuleSet(

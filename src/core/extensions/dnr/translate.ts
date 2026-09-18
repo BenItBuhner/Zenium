@@ -29,9 +29,8 @@
  * would close both gaps.
  *
  * Rules the engine cannot evaluate yet are left out of the set and reported: response header
- * conditions (they need a headers-received stage) and `topDomains`. `redirect.transform` rules
- * are emitted with the transform carried along; until the engine applies transforms they decide
- * nothing.
+ * conditions (they need a headers-received stage). `redirect.transform` rules are emitted with
+ * the transform carried along; until the engine applies transforms they decide nothing.
  */
 import {
   ENGINE_DNR_BAND_SIZE,
@@ -80,7 +79,7 @@ export interface TranslateExtension {
   installRank?: number
 }
 
-export type SkipReason = 'responseHeaderCondition' | 'topDomains'
+export type SkipReason = 'responseHeaderCondition'
 
 export interface SkippedRule {
   ruleId: number
@@ -150,10 +149,14 @@ function translateCondition(rule: CompiledRule): EngineRuleCondition {
   const excludedInitiatorDomains = list(rule.excludedInitiatorDomains)
   const requestDomains = list(rule.requestDomains)
   const excludedRequestDomains = list(rule.excludedRequestDomains)
+  const topDomains = list(rule.topDomains)
+  const excludedTopDomains = list(rule.excludedTopDomains)
   if (initiatorDomains) condition.initiatorDomains = initiatorDomains
   if (excludedInitiatorDomains) condition.excludedInitiatorDomains = excludedInitiatorDomains
   if (requestDomains) condition.requestDomains = requestDomains
   if (excludedRequestDomains) condition.excludedRequestDomains = excludedRequestDomains
+  if (topDomains) condition.topDomains = topDomains
+  if (excludedTopDomains) condition.excludedTopDomains = excludedTopDomains
   const resourceTypes = list(source.resourceTypes)
   const excludedResourceTypes = list(source.excludedResourceTypes)
   if (resourceTypes) condition.resourceTypes = resourceTypes
@@ -175,9 +178,6 @@ function translateCondition(rule: CompiledRule): EngineRuleCondition {
 export function translateRule(rule: CompiledRule): EngineRule | SkippedRule {
   if (rule.responseHeaders.length > 0 || rule.excludedResponseHeaders.length > 0) {
     return { ruleId: rule.id, reason: 'responseHeaderCondition' }
-  }
-  if (rule.topDomains.length > 0 || rule.excludedTopDomains.length > 0) {
-    return { ruleId: rule.id, reason: 'topDomains' }
   }
   const out: EngineRule = {
     id: rule.id,

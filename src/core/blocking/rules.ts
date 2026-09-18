@@ -114,6 +114,13 @@ export interface RuleCondition {
   requestDomains?: string[]
   excludedRequestDomains?: string[]
   /**
+   * Domain of the top-level document the request belongs to (`RequestContext.documentUrl`,
+   * else the initiator, as Chrome falls back). A rule with `topDomains` never matches a request
+   * whose top-level document is unknown.
+   */
+  topDomains?: string[]
+  excludedTopDomains?: string[]
+  /**
    * Zenium's addition to the declarativeNetRequest shape: the rule never matches a request
    * whose host is non-unique (`isNonUniqueHost` in `src/shared/nonUniqueHost.ts`: loopback,
    * private and other non-routable IP literals, names without a registrable suffix). Domain

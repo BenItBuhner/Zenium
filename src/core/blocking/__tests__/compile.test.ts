@@ -105,12 +105,14 @@ describe('compileRule', () => {
           urlFilter: 'x',
           tabIds: [1],
           excludedRequestDomains: ['a'],
+          excludedTopDomains: ['a'],
           excludedNonUniqueHosts: true
         }
       })
     ).toEqual([
       expect.stringMatching(/tabIds/),
       expect.stringMatching(/excludedRequestDomains/),
+      expect.stringMatching(/topDomains/),
       expect.stringMatching(/excludedNonUniqueHosts/)
     ])
     expect(
