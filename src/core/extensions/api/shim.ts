@@ -564,7 +564,12 @@ export function installExtensionApi(
   function createEvent(
     fullName: string,
     native: NativeEvent | undefined,
-    options: { nativeDelivers: boolean; nativeHandles?: (args: unknown[]) => boolean }
+    options: {
+      nativeDelivers: boolean
+      nativeHandles?: (args: unknown[]) => boolean
+      /** `EventSpec.filters`: the event takes URL filters; others ignore a second argument. */
+      filters?: boolean
+    }
   ): EventObject {
     const listeners = new Map<Listener, number | null>()
     const record: EventRecord = {
@@ -583,7 +588,7 @@ export function installExtensionApi(
       addListener(fn: unknown, ...rest: unknown[]): void {
         if (!isFunction(fn) || listeners.has(fn)) return
         if (record.nativeDelivers) safely(() => native?.addListener(fn, ...rest))
-        const filters = urlFilters(fullName, rest[0])
+        const filters = options.filters ? urlFilters(fullName, rest[0]) : null
         if (filters) {
           filterIds += 1
           listeners.set(fn, filterIds)
@@ -1293,7 +1298,8 @@ export function installExtensionApi(
       const keepNative = eventSpec.keepNative || Boolean(nsSpec.shape)
       if (keepNative && native && typeof native.addListener === 'function') continue
       const object = createEvent(fullName, native, {
-        nativeDelivers: Boolean(eventSpec.nativeInFrames) && host.kind === 'frame'
+        nativeDelivers: Boolean(eventSpec.nativeInFrames) && host.kind === 'frame',
+        filters: eventSpec.filters === true
       })
       for (const target of targets) define(target, name, object)
     }

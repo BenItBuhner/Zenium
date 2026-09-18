@@ -730,7 +730,9 @@ export class ExtensionService implements ExtensionHost {
   /**
    * Chrome's "Allow user scripts": makes `chrome.userScripts` available to the extension's
    * contexts and lets its registered user scripts run. The chrome.* layer hears the event and
-   * tells the extension's live contexts; nothing reloads.
+   * tells the extension's live contexts; a loaded extension reloads as well, because the
+   * managers (Tampermonkey, Violentmonkey) look for the API once, as their worker starts, and
+   * register their scripts from that first look.
    */
   setAllowUserScripts(id: string, allowed: boolean): void {
     const record = this.record(id)
@@ -739,6 +741,7 @@ export class ExtensionService implements ExtensionHost {
     this.persist()
     this.emit({ type: 'allowUserScripts', id: record.id, allowed })
     this.browser.state.commitVolatile()
+    if (this.loadedById.has(record.id)) void this.reload(record.id)
   }
 
   /** Unload and load again, picking up changes an unpacked folder saw on disk. */

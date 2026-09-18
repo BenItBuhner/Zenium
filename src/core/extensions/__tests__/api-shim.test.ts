@@ -262,6 +262,29 @@ describe('installExtensionApi', () => {
     ])
   })
 
+  it('ignores a second addListener argument on events without filter support, as Chromium does', () => {
+    installExtensionApi(host, API_SPEC)
+    const seen: unknown[] = []
+    const fn = (...args: unknown[]): void => void seen.push(args)
+    // Violentmonkey: `tabs.onUpdated.addListener(fn, false)` and `(fn, cond && { properties })`.
+    expect(() => g.chrome.tabs.onUpdated.addListener(fn, false)).not.toThrow()
+    expect(() =>
+      g.chrome.tabs.onUpdated.addListener(() => undefined, { properties: ['status'] })
+    ).not.toThrow()
+    expect(() => g.chrome.tabs.onRemoved.addListener(() => undefined, 'nope', 3)).not.toThrow()
+    expect(g.chrome.tabs.onUpdated.hasListener(fn)).toBe(true)
+    expect(host.notifications.filter((n) => n.kind === 'listen').map((n) => n.payload)).toEqual([
+      { event: 'tabs.onUpdated' },
+      { event: 'tabs.onRemoved' }
+    ])
+    host.push('tabs', 'onUpdated', 4, { status: 'complete' }, { id: 4 })
+    expect(seen).toEqual([[4, { status: 'complete' }, { id: 4 }]])
+    // Events with filter support keep validating the argument.
+    expect(() => g.chrome.webNavigation.onCommitted.addListener(() => undefined, false)).toThrow(
+      /No matching signature/
+    )
+  })
+
   it('defines the bridged namespaces only for extensions declaring their permission', () => {
     const manifest = {
       manifest_version: 3,

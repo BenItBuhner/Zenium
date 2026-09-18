@@ -45,6 +45,13 @@ export interface EventSpec {
    */
   permissions?: readonly string[]
   /**
+   * Chromium's `supportsFilters`: `addListener(callback, filters)` takes `events.UrlFilter`s
+   * under `filters.url` (`webNavigation`), validated on registration. Every other event ignores
+   * a second argument, whatever it is, as Chromium's binding does (Violentmonkey passes `false`
+   * to `tabs.onUpdated`).
+   */
+  filters?: boolean
+  /**
    * `webRequest` events: the `extraInfoSpec` values the event accepts (`blocking` among them
    * for the events with a blocking variant). The shim validates registrations against the list.
    */
@@ -323,15 +330,15 @@ export const API_SPEC: ApiSpec = {
       getAllFrames: { params: [object('details')] }
     },
     events: {
-      onBeforeNavigate: {},
-      onCommitted: {},
-      onDOMContentLoaded: {},
-      onCompleted: {},
-      onErrorOccurred: {},
-      onCreatedNavigationTarget: {},
-      onReferenceFragmentUpdated: {},
-      onTabReplaced: {},
-      onHistoryStateUpdated: {}
+      onBeforeNavigate: { filters: true },
+      onCommitted: { filters: true },
+      onDOMContentLoaded: { filters: true },
+      onCompleted: { filters: true },
+      onErrorOccurred: { filters: true },
+      onCreatedNavigationTarget: { filters: true },
+      onReferenceFragmentUpdated: { filters: true },
+      onTabReplaced: { filters: true },
+      onHistoryStateUpdated: { filters: true }
     },
     constants: {
       TransitionType: {
