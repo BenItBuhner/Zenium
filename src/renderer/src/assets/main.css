@@ -169,7 +169,8 @@
   --v2-font-body: 15px;
   --v2-font-small: 13px;
   --v2-line-body: 20px;
-  --v2-line-small: 18px;
+  /* 13 px text sits on the same 20 px line as 15 px text (v2 §4, §9.2): 18 is not used. */
+  --v2-line-small: 20px;
   --v2-weight-body: 400;
   --v2-weight-button: 500;
   --v2-weight-heading: 600;
