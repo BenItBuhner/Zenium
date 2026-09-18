@@ -12,6 +12,13 @@ import { ToastCard } from './ToastCard'
  * much of the frame's edges the cards cover, so the host clips the page out from under them and
  * lets touches through to them (`coverBandStore`). While it is mounted, messages follow the cards'
  * semantics (`claimMessageCards`).
+ *
+ * It is a frame surface, not a `ChromePortal` one (lib/portals.tsx): the cards belong to the
+ * content frame's box – they sit at its edges, clip to its rounded corners, recede with it under
+ * a sheet, and the strips they report are the frame's – and they layer above the page and the
+ * overlays but below sheets, dialogs and popovers, as Chrome's Messages do; the chrome layer is
+ * `fixed` over the whole window, above all of those, and never under a transform. Layer and
+ * cards are page surfaces (§9.29).
  */
 export function MessageLayer(): JSX.Element | null {
   const toasts = uiStore.use((s) => s.toasts)
@@ -37,7 +44,7 @@ export function MessageLayer(): JSX.Element | null {
 
   if (toasts.length === 0 && banners.length === 0) return null
   return (
-    <div className="zen-message-layer">
+    <div className="zen-message-layer" data-surface="page">
       {banners.length > 0 && (
         <div className="zen-message-stack" style={{ height: stackHeight }}>
           {banners.map((b, i) => (

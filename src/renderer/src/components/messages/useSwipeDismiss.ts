@@ -96,7 +96,14 @@ export function useSwipeDismiss(callbacks: SwipeDismissCallbacks): SwipeDismissH
       },
       onPointerUp: (e) => finish(e, false),
       onPointerCancel: (e) => finish(e, true),
-      onLostPointerCapture: (e) => finish(e, true),
+      onLostPointerCapture: (e) => {
+        // A touch is implicitly captured by the element it lands on – the card's text or its
+        // button – and taking it for the card fires `lostpointercapture` on that child, which
+        // bubbles here. Only the card's own capture going (the browser cancelling the gesture,
+        // the card leaving the tree) ends the drag.
+        if (e.target !== e.currentTarget) return
+        finish(e, true)
+      },
       onClickCapture: (e) => {
         if (!dragged.current) return
         dragged.current = false

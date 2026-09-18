@@ -70,6 +70,7 @@ export function BannerCard({ banner, slot, stackTop, stackBottom, onMeasure }: P
         if (el) onMeasure(banner.id, el.offsetHeight)
       }}
       className="zen-message zen-banner"
+      data-surface="page"
       data-glyph={Icon ? '' : undefined}
       data-action={banner.action ? '' : undefined}
       data-detail={banner.detail ? '' : undefined}
@@ -101,7 +102,7 @@ export function BannerCard({ banner, slot, stackTop, stackBottom, onMeasure }: P
         )}
         <button
           type="button"
-          className="zen-toolbar-button zen-message-close"
+          className="zen-message-close"
           aria-label="Dismiss"
           onClick={() => dismissBanner(banner.id, 'close')}
         >

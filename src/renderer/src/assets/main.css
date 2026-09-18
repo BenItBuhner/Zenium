@@ -1125,6 +1125,12 @@
     height: 28px;
     padding: 0 10px;
   }
+  /*
+   * The card's controls draw in the family of the surface they sit on (§9.29): the card root
+   * carries `data-surface="page"`, so the control roles resolve to the page ink, fills and
+   * accent. Disabled is §9.30's one number, .4 on the whole control, with no fill on hover or
+   * press; busy does not arise (an action is picked once and the card leaves).
+   */
   .zen-message-button {
     flex: none;
     display: inline-flex;
@@ -1132,8 +1138,8 @@
     height: var(--v2-control);
     padding: 0 12px;
     border-radius: var(--v2-radius-control);
-    background: var(--v2-fill);
-    color: var(--v2-accent);
+    background: var(--v2-control-fill);
+    color: var(--v2-control-accent);
     font-size: inherit;
     font-weight: var(--v2-weight-button);
     white-space: nowrap;
@@ -1141,11 +1147,15 @@
       background 120ms var(--zen-ease),
       transform 120ms var(--zen-ease);
   }
-  .zen-message-button:hover {
-    background: var(--v2-fill-hover);
+  .zen-message-button:hover:not(:disabled) {
+    background: var(--v2-control-fill-hover);
   }
-  .zen-message-button:active {
+  .zen-message-button:active:not(:disabled) {
     transform: scale(0.98);
+  }
+  .zen-message-button:disabled,
+  .zen-message-close:disabled {
+    opacity: 0.4;
   }
   .zen-message-button:focus-visible,
   .zen-message-close:focus-visible {
@@ -1159,7 +1169,9 @@
     stroke-width: var(--v2-icon-stroke);
     color: var(--v2-accent);
   }
+  /* A banner always trails its close, an icon button at 2 px margins: the row is control + 8 (§9.16, §9.21). */
   .zen-banner {
+    min-height: calc(var(--v2-control) + 8px);
     padding-left: 12px;
   }
   /* A title with a detail line is a two-line row (§9.2). */
@@ -1202,7 +1214,12 @@
     align-self: flex-start;
     margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
   }
+  /* A description wraps to at most two lines, then ellipsis (§9.2). */
   .zen-banner-detail {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
     font-size: var(--v2-font-small);
     line-height: var(--v2-line-small);
     color: var(--v2-text-deemphasized);
@@ -1227,9 +1244,31 @@
     height: var(--zen-banner-title-height);
     margin-top: var(--zen-message-text-inset);
   }
+  /*
+   * The close is a §9.3 icon button of the page family: the box is the hit area and the fill
+   * (44 on a phone, 28 at a mouse, 40 under a finger on a tablet), the glyph a row glyph, the
+   * fill's radius the control radius plus 2 (8 / 6, §9.3). In the phone's 48 row it sits at 2 px
+   * margins, as a sheet header's trailing control does (§9.16).
+   */
   .zen-message-close {
     flex: none;
-    color: var(--v2-text-deemphasized);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--v2-icon-button);
+    height: var(--v2-icon-button);
+    border-radius: calc(var(--v2-radius-control) + 2px);
+    color: var(--v2-control-text-deemphasized);
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  .zen-message-close:hover:not(:disabled) {
+    background: var(--v2-control-fill);
+  }
+  .zen-message-close:active:not(:disabled) {
+    background: var(--v2-control-fill-hover);
+    transform: scale(0.96);
   }
   .zen-message-close svg {
     width: var(--v2-icon);
