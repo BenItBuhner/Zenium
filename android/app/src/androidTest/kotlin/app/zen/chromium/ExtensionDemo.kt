@@ -422,16 +422,31 @@ class ExtensionDemo {
         }
         if (!stylusPopup) stage(STYLUS, "popup", "FAIL", "popup document stayed empty")
 
-        // 7. Return YouTube Dislike on a real watch page (network permitting).
+        // 7. Return YouTube Dislike on a real watch page (network permitting). m.youtube.com
+        // renders the like/dislike bar the extension decorates well after `load`, from its
+        // scripts, and the software-rendered emulator spends its CPU on decoding the video in the
+        // meantime (measured: the bar was there 10 s after load while the video was blocked, not
+        // after 13 s with it playing). The driver pauses the player once it plays, waits for the
+        // bar and then gives the extension 20 s to decorate it; its own elements end the wait.
+        val ytStarted = SystemClock.uptimeMillis()
         val ytTab = createTab("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
         val ytView = waitForView(ytTab)
-        waitFor(60_000, 1_000) {
-            val ryd = json(tabEval(ytView, RYD_REPORT))
-            if (ryd.optJSONArray("apiEntries")?.length() ?: 0 > 0 || ryd.optInt("elements") > 0 || (ryd.optString("readyState") == "complete" && ryd.optInt("groups") > 0)) true else null
+        var barSeenAt = 0L
+        var videoPaused = false
+        waitFor(90_000, 1_000) {
+            val report = json(tabEval(ytView, RYD_REPORT))
+            if (!videoPaused && report.optString("video") == "playing") videoPaused = tabEval(ytView, PAUSE_VIDEO) == "paused"
+            if (barSeenAt == 0L && report.optString("actionBar").isNotEmpty()) barSeenAt = SystemClock.uptimeMillis()
+            when {
+                report.optInt("elements") > 0 -> true
+                barSeenAt != 0L && SystemClock.uptimeMillis() - barSeenAt > 20_000 -> true
+                else -> null
+            }
         }
-        SystemClock.sleep(4_000)
+        SystemClock.sleep(1_500)
         shot("08-ryd-youtube")
         val ryd = json(tabEval(ytView, RYD_REPORT))
+        ryd.put("videoPausedByDriver", videoPaused)
         // On a WebView with worlds the extension's bootstrap statistics live in its world.
         val rydWorld = if (worlds) worldEval(ytView, RYD, WORLD_REPORT)?.let(::json) else null
         val worldGroups = rydWorld?.optJSONObject("stats")?.optJSONArray("groups")?.length() ?: 0
@@ -491,21 +506,30 @@ class ExtensionDemo {
         val apiRefused = "network: ${apiProbe.optString("url")} answered the emulator with status ${apiProbe.optInt("status")} and no Access-Control-Allow-Origin" +
             " (cf-mitigated=${apiProbe.optString("cfMitigated", "null")}, server=${apiProbe.optString("server", "null")})"
         val engineLine = "engine=${apiVerdict.optString("action")}" +
-            (apiVerdict.optString("filter").takeIf { it.isNotEmpty() }?.let { " by $it" } ?: "") +
-            (apiVerdict.optString("set").takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: "")
+            (apiVerdict.optString("filter").takeIf { it.isNotEmpty() && it != "null" }?.let { " by $it" } ?: "") +
+            (apiVerdict.optString("set").takeIf { it.isNotEmpty() && it != "null" }?.let { " ($it)" } ?: "")
+        // The page never rendered the bar the extension decorates: nothing of the extension's
+        // was exercised. The detail carries the page's state (its own console is in
+        // `youtubeConsole`) so a page broken by the runtime would not pass as a slow one.
+        val actionBar = ryd.optString("actionBar")
+        val noBar = "YouTube's watch page had not rendered its like/dislike bar ${(SystemClock.uptimeMillis() - ytStarted) / 1000} s after the navigation" +
+            " (readyState=${ryd.optString("readyState")}, title=${JSONObject.quote(ryd.optString("title"))}, video=${ryd.optString("video")}, paused by the driver=$videoPaused);" +
+            " nothing for the extension to decorate"
         stage(
             RYD, "coreFunction",
             when {
                 !onYouTube -> "N/A"
                 ryd.optInt("elements") > 0 -> "PASS"
                 apiWithoutCors -> "N/A"
+                actionBar.isEmpty() -> "N/A"
                 api > 0 -> "PARTIAL"
                 else -> "FAIL"
             },
             when {
                 !onYouTube -> offSite
                 ryd.optInt("elements") == 0 && apiWithoutCors -> apiRefused
-                else -> "api requests seen by the page=$api, dislike elements=${ryd.optInt("elements")}, api probe=${apiProbe.optInt("status")}/${apiProbe.optString("allowOrigin", "null")}, $engineLine"
+                ryd.optInt("elements") == 0 && actionBar.isEmpty() -> noBar
+                else -> "api requests seen by the page=$api, dislike elements=${ryd.optInt("elements")}, bar=$actionBar, api probe=${apiProbe.optInt("status")}/${apiProbe.optString("allowOrigin", "null")}, $engineLine"
             }
         )
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(ytTab)},"force":true}""")
@@ -1172,13 +1196,6 @@ class ExtensionDemo {
     private fun json(text: String): JSONObject = runCatching { JSONObject(text) }.getOrElse { JSONObject().put("raw", text) }
 
     /**
-     * A GET of `url` with `Origin: origin` from the emulator's own network stack (this thread, not
-     * the WebView's): the status, the `Access-Control-Allow-Origin` it came with (null without
-     * one), Cloudflare's `cf-mitigated` and the `server` header; `error` when nothing answered.
-     * Tells a network that refuses the runner (a challenge page carries no CORS header) from a
-     * WebView-side loss of the header.
-     */
-    /**
      * The request engine's decision for a subresource `url` of `documentUrl` whose type WebView
      * did not reveal (a `fetch`: the wildcard `Accept`, no telling extension), read from the
      * current snapshot without the side effects of an intercepted request.
@@ -1198,6 +1215,13 @@ class ExtensionDemo {
             .put("sets", snapshot.setCount)
     }
 
+    /**
+     * A GET of `url` with `Origin: origin` from the emulator's own network stack (this thread, not
+     * the WebView's): the status, the `Access-Control-Allow-Origin` it came with (null without
+     * one), Cloudflare's `cf-mitigated` and the `server` header; `error` when nothing answered.
+     * Tells a network that refuses the runner (a challenge page carries no CORS header) from a
+     * WebView-side loss of the header.
+     */
     private fun probeCors(url: String, origin: String): JSONObject {
         val out = JSONObject().put("url", url).put("origin", origin)
         return runCatching {
@@ -1329,10 +1353,21 @@ class ExtensionDemo {
             "(function(){try{return JSON.stringify({enabled:typeof isEnabledForUrl==='boolean'?isEnabledForUrl:null,frameId:typeof frameId==='undefined'?null:frameId," +
                 "normalMode:typeof normalMode==='undefined'?null:(normalMode?{keyMapping:normalMode.keyMapping?Object.keys(normalMode.keyMapping).length:0,passKeys:normalMode.passKeys||null}:'null'),handlers:typeof handlerStack==='undefined'?null:handlerStack.stack.length," +
                 "hud:typeof HUD,linkHints:typeof LinkHints,settingsLoaded:typeof Settings==='undefined'?null:Settings.isLoaded(),session:typeof chrome==='object'&&chrome.storage?typeof chrome.storage.session:null,runtimeId:typeof chrome==='object'&&chrome.runtime?chrome.runtime.id:null})}catch(e){return JSON.stringify({error:String(e&&e.message||e)})}})()"
+        /**
+         * The watch page as the main world sees it: the extension's elements (its rate bar wrapper,
+         * tooltip and text containers), its API requests in the resource timeline, the page's own
+         * like/dislike bar (the first of the mobile layout's selectors present, '' before it
+         * renders), the player's state, and the bootstrap statistics of the main-world groups.
+         */
         private const val RYD_REPORT =
-            "JSON.stringify({elements: document.querySelectorAll('[id*=\"return-youtube-dislike\"],[class*=\"ryd-\"],#ryd-dislike-text').length, " +
+            "JSON.stringify({elements: document.querySelectorAll('[id*=\"return-youtube-dislike\"],[class*=\"ryd-\"],[id^=\"ryd-\"],[data-ryd-ratebar-wrapper]').length, " +
                 "apiEntries: performance.getEntriesByType('resource').filter(function(e){return e.name.indexOf('returnyoutubedislike')>=0}).map(function(e){return {name:e.name,size:e.transferSize,duration:Math.round(e.duration)}}), " +
+                "actionBar: ['ytm-slim-video-action-bar-renderer','.slim-video-action-bar-actions','segmented-like-dislike-button-view-model','like-button-view-model','ytm-like-button-renderer'].find(function(s){return document.querySelector(s)}) || '', " +
+                "video: (function(v){return v ? (v.paused ? 'paused' : (v.currentTime > 0 ? 'playing' : 'idle')) : 'none'})(document.querySelector('video')), " +
                 "groups: (window.__zenExtStats && window.__zenExtStats.groups ? window.__zenExtStats.groups.length : 0), stats: window.__zenExtStats || null, readyState: document.readyState, title: document.title, url: location.href})"
+        /** Pauses the watch page's player (the emulator renders and decodes in software); answers with the player's state. */
+        private const val PAUSE_VIDEO =
+            "(function(){var v=document.querySelector('video');if(!v)return 'none';try{v.pause()}catch(e){}return v.paused?'paused':'playing'})()"
         /** In the probe's background: inject a function and a stylesheet into the active tab, report to `window.__late`. */
         private const val LATE_INJECT =
             "(function(){window.__late=null;chrome.tabs.query({active:true,currentWindow:true},function(tabs){var t=tabs&&tabs[0];" +
