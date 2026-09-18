@@ -170,6 +170,14 @@ class SafeBrowsingTest {
         assertNull(tables.lookup("example.com"))
         assertNull(SafeBrowsingTables.EMPTY.lookup("listed.example"))
         assertEquals(0, SafeBrowsingTables.EMPTY.entries)
+        // The reserved test hosts are listed even without tables, exactly, and count for nothing.
+        val test = SafeBrowsingTables.EMPTY.lookup("malware.zenium.test")!!
+        assertEquals(SafeBrowsingTables.TEST_FEED, test.feedId)
+        assertEquals("malware", test.threat)
+        assertEquals("malware.zenium.test", test.expression)
+        assertEquals("phishing", tables.lookup("phishing.zenium.test")!!.threat)
+        assertNull(tables.lookup("www.malware.zenium.test"))
+        assertNull(tables.lookup("zenium.test"))
     }
 
     @Test

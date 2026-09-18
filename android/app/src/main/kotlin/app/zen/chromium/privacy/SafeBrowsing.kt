@@ -124,8 +124,9 @@ class FeedTable(val id: String, val threat: String, val table: PrefixTable)
 class SafeBrowsingTables(val feeds: List<FeedTable>) {
     val entries: Int get() = feeds.sumOf { it.table.size }
 
-    /** The first feed listing `host` (or a parent of it), or null. */
+    /** The first feed listing `host` (or a parent of it), or null. The test hosts are always listed. */
     fun lookup(host: String): SafeBrowsingHit? {
+        TEST_HOSTS[host]?.let { return SafeBrowsingHit(TEST_FEED, it, host) }
         if (feeds.isEmpty()) return null
         for (expression in PrefixTable.hostExpressions(host)) {
             val prefix = PrefixTable.prefixOf(expression)
@@ -136,6 +137,10 @@ class SafeBrowsingTables(val feeds: List<FeedTable>) {
 
     companion object {
         val EMPTY = SafeBrowsingTables(emptyList())
+
+        /** `SAFE_BROWSING_TEST_HOSTS` in `src/core/safebrowsing/feeds.ts`: reserved names (RFC 6761) for trying the warning page. */
+        val TEST_HOSTS = mapOf("malware.zenium.test" to "malware", "phishing.zenium.test" to "phishing")
+        const val TEST_FEED = "test"
 
         /**
          * One persisted feed document (`FeedDocument` in `src/core/safebrowsing/service.ts`), or

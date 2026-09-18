@@ -19,7 +19,14 @@ import {
   SAFE_BROWSING_DIR,
   type FeedDocument
 } from './document'
-import { parseFeed, SAFE_BROWSING_FEEDS, safeBrowsingFeed, type SafeBrowsingFeed } from './feeds'
+import {
+  parseFeed,
+  SAFE_BROWSING_FEEDS,
+  SAFE_BROWSING_TEST_FEED,
+  SAFE_BROWSING_TEST_HOSTS,
+  safeBrowsingFeed,
+  type SafeBrowsingFeed
+} from './feeds'
 import { buildSearchRequest, parseSearchResponse, type GsbSearchRequest } from './gsb'
 import { hostExpressions, PrefixTable, prefixOf } from './prefixes'
 
@@ -227,18 +234,24 @@ export class SafeBrowsingService {
   lookupHost(host: string): SafeBrowsingHit | null {
     const cached = this.hostCache.get(host)
     if (cached !== undefined) return cached
-    let hit: SafeBrowsingHit | null = null
-    search: for (const expression of hostExpressions(host)) {
-      const prefix = prefixOf(expression)
-      for (const rt of this.feeds.values()) {
-        if (!rt.table.has(prefix)) continue
-        hit = { feedId: rt.feed.id, threat: rt.feed.threat, expression, remote: false }
-        break search
-      }
-    }
+    const hit = this.searchTables(host)
     if (this.hostCache.size >= HOST_CACHE_MAX) this.hostCache.clear()
     this.hostCache.set(host, hit)
     return hit
+  }
+
+  private searchTables(host: string): SafeBrowsingHit | null {
+    const test = SAFE_BROWSING_TEST_HOSTS[host]
+    if (test)
+      return { feedId: SAFE_BROWSING_TEST_FEED, threat: test, expression: host, remote: false }
+    for (const expression of hostExpressions(host)) {
+      const prefix = prefixOf(expression)
+      for (const rt of this.feeds.values()) {
+        if (!rt.table.has(prefix)) continue
+        return { feedId: rt.feed.id, threat: rt.feed.threat, expression, remote: false }
+      }
+    }
+    return null
   }
 
   /** The user chose to proceed: nothing on `url`'s host is stopped until the browser closes. */

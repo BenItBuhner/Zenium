@@ -123,6 +123,16 @@ describe('SafeBrowsingService', () => {
     expect(service.lookup('https://good.example/')).toBeNull()
     expect(service.lookup('zen://error')).toBeNull()
     expect(service.lookup('ftp://evil.example/')).toBeNull()
+    // The reserved test hosts are always listed, exactly (not their subdomains), off the feeds' count.
+    expect(service.lookup('http://malware.zenium.test:8080/x')).toEqual({
+      feedId: 'test',
+      threat: 'malware',
+      expression: 'malware.zenium.test',
+      remote: false
+    })
+    expect(service.lookup('https://phishing.zenium.test/')).toMatchObject({ threat: 'phishing' })
+    expect(service.lookup('https://www.malware.zenium.test/')).toBeNull()
+    expect(service.lookup('https://zenium.test/')).toBeNull()
     const status = service.status()
     expect(status.ready).toBe(true)
     expect(status.entries).toBe(2)

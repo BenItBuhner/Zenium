@@ -76,6 +76,20 @@ export function safeBrowsingFeed(id: string): SafeBrowsingFeed | undefined {
   return SAFE_BROWSING_FEEDS.find((f) => f.id === id)
 }
 
+/** The pseudo-feed a hit on {@link SAFE_BROWSING_TEST_HOSTS} is reported under. */
+export const SAFE_BROWSING_TEST_FEED = 'test'
+
+/**
+ * Hosts Safe Browsing always stops, so the warning page can be tried out
+ * (`http://malware.zenium.test/`, as Chrome has testsafebrowsing.appspot.com): `.test` is
+ * reserved for exactly this (RFC 6761) and never resolves on the Internet. Mirrored by
+ * `SafeBrowsingTables.TEST_HOSTS` in `privacy/SafeBrowsing.kt`.
+ */
+export const SAFE_BROWSING_TEST_HOSTS: Readonly<Record<string, SafeBrowsingThreat>> = {
+  'malware.zenium.test': 'malware',
+  'phishing.zenium.test': 'phishing'
+}
+
 const HOST_RE = /^(?=.{1,253}$)(?!-)[a-z0-9_-]{1,63}(?<!-)(\.(?!-)[a-z0-9_-]{1,63}(?<!-))+$/
 const IPV4_RE = /^\d{1,3}(?:\.\d{1,3}){3}$/
 

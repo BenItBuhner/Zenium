@@ -421,7 +421,7 @@ function postAction(action: InterstitialAction, target: string): string {
 /**
  * Safe Browsing's interstitial (Chrome's red page, in Zenium's words): the request engine
  * refused the navigation because the site is on a malware or phishing feed. "Proceed anyway"
- * excepts the origin until the browser closes.
+ * excepts the host until the browser closes.
  */
 export function safeBrowsingPageHtml(target: string, threat: SafeBrowsingThreat): string {
   const host = hostOf(target)
