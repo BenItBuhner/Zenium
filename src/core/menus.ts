@@ -649,6 +649,7 @@ export class Menus {
       const pasteAndGo: MenuItemTemplate = {
         label: isAddress ? 'Paste and Go' : 'Paste and Search',
         enabled: pasted.length > 0,
+        action: isAddress ? 'urlbar.pasteAndGo' : 'urlbar.pasteAndSearch',
         click: () => {
           // An open bar closes, as a submit does.
           this.browser.emit('urlbar.close', undefined, win)
@@ -670,9 +671,8 @@ export class Menus {
           pasteAndGo
         ])
       }
-      const fullUrls = this.fullUrlsItem(win)
       groups.push([
-        ...(fullUrls ? [fullUrls] : []),
+        this.fullUrlsItem(win),
         {
           label: 'Manage Search Engines…',
           click: () =>
@@ -689,20 +689,15 @@ export class Menus {
     if (params.selectionText.trim()) this.popup([{ label: 'Copy', role: 'copy' }], win, 'urlbar')
   }
 
-  /**
-   * Chrome's "Always show full URLs" toggle. It drives the address elision setting
-   * (`showFullUrls`), which the omnibox work adds: a build without the setting has nothing to
-   * toggle, so the item stays out until it is there.
-   */
-  private fullUrlsItem(win: ZenWindow): MenuItemTemplate | null {
-    const settings: Settings = this.browser.state.settings
-    if (!('showFullUrls' in settings) || typeof settings.showFullUrls !== 'boolean') return null
-    const shown = settings.showFullUrls
+  /** Chrome's "Always show full URLs": the address pill's elision setting (`showFullUrls`). */
+  private fullUrlsItem(win: ZenWindow): MenuItemTemplate {
+    const shown = Boolean(this.browser.state.settings.showFullUrls)
+    const patch: Partial<Settings> = { showFullUrls: !shown }
     return {
       label: 'Always Show Full URLs',
       type: 'checkbox',
       checked: shown,
-      click: () => this.browser.handleCommand(win, 'settings.update', { showFullUrls: !shown })
+      click: () => this.browser.handleCommand(win, 'settings.update', patch)
     }
   }
 

@@ -1015,6 +1015,7 @@ describe('the chrome context menus', () => {
       'Delete',
       'Select All',
       '-',
+      'Always Show Full URLs',
       'Manage Search Engines…'
     ])
     h.sent.length = 0
@@ -1075,18 +1076,21 @@ describe('the chrome context menus', () => {
     const h = pageHarness()
     h.clipboardText.value = 'https://example.org/'
     const menu = await show(h, chromeParams({ target: 'urlpill', tabId: h.tabId }))
-    expect(menu).toEqual(['Copy', 'Paste and Go', '-', 'Manage Search Engines…'])
+    expect(menu).toEqual([
+      'Copy',
+      'Paste and Go',
+      '-',
+      'Always Show Full URLs',
+      'Manage Search Engines…'
+    ])
     expect(item(h.shown(), 'Copy').action).toBe('tab.copyUrl')
   })
 
-  it('offers Always Show Full URLs once the build has the elision setting', async () => {
+  it('toggles Always Show Full URLs from the pill and the field', async () => {
     const h = pageHarness()
-    const params = chromeParams({ target: 'urlpill', tabId: h.tabId })
-    expect(await show(h, params)).not.toContain('Always Show Full URLs')
-    // The omnibox work adds `showFullUrls` to the settings; the item follows it.
-    const settings: Settings & { showFullUrls?: boolean } = h.browser.state.settings
-    settings.showFullUrls = false
-    let menu = await show(h, params)
+    const settings: Settings = h.browser.state.settings
+    expect(settings.showFullUrls).toBe(false)
+    const menu = await show(h, chromeParams({ target: 'urlpill', tabId: h.tabId }))
     expect(menu).toEqual([
       'Copy',
       'Paste and Search',
@@ -1099,15 +1103,24 @@ describe('the chrome context menus', () => {
     expect(toggle.checked).toBe(false)
     h.click('Always Show Full URLs')
     expect(settings.showFullUrls).toBe(true)
-    menu = await show(
+    await show(
       h,
       chromeParams({ target: 'urlbar', tabId: h.tabId, isEditable: true, editFlags: ALL_EDITS })
     )
-    expect(menu).toContain('Always Show Full URLs')
     toggle = item(h.shown(), 'Always Show Full URLs')
     expect(toggle.checked).toBe(true)
     h.click('Always Show Full URLs')
     expect(settings.showFullUrls).toBe(false)
+  })
+
+  it('names the omnibox actions on Paste and Go / Paste and Search for the shortcut hints', async () => {
+    const h = pageHarness()
+    h.clipboardText.value = 'https://example.org/'
+    await show(h, chromeParams({ target: 'urlpill', tabId: h.tabId }))
+    expect(item(h.shown(), 'Paste and Go').action).toBe('urlbar.pasteAndGo')
+    h.clipboardText.value = 'plain words'
+    await show(h, chromeParams({ target: 'urlpill', tabId: h.tabId }))
+    expect(item(h.shown(), 'Paste and Search').action).toBe('urlbar.pasteAndSearch')
   })
 
   it('shows the reload choices only while the tab’s DevTools are open', async () => {
