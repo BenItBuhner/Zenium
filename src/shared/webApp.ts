@@ -380,13 +380,36 @@ export function displayIcon(info: Pick<WebAppInfo, 'icons'>): string | null {
 
 /**
  * Whether the manifest describes something worth offering as an app: a name, an installable
- * icon, an https start URL and a display mode that asks for its own window (the same bar
- * Chromium sets for its install prompt).
+ * icon, a start URL in a secure context and a display mode that asks for its own window (the
+ * same bar Chromium sets for its install prompt).
  */
 export function isInstallable(info: WebAppInfo): boolean {
-  if (!info.startUrl.startsWith('https://')) return false
+  if (!isSecureContextUrl(info.startUrl)) return false
   if (!shortcutIcon(info)) return false
   return info.display !== 'browser'
+}
+
+/**
+ * A potentially trustworthy URL (W3C Secure Contexts): https, or plain http on a loopback host –
+ * `localhost`, its subdomains, `127.0.0.0/8` and `[::1]` – which is what Chromium installs from
+ * too, so an app under development on its own machine gets the same prompt as its deployment.
+ */
+export function isSecureContextUrl(url: string): boolean {
+  let u: URL
+  try {
+    u = new URL(url)
+  } catch {
+    return false
+  }
+  if (u.protocol === 'https:') return true
+  if (u.protocol !== 'http:') return false
+  const host = u.hostname
+  return (
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host === '[::1]' ||
+    /^127(?:\.\d{1,3}){3}$/.test(host)
+  )
 }
 
 // ---------------------------------------------------------------------------

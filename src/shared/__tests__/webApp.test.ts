@@ -6,6 +6,7 @@ import {
   fallbackShortcutTitle,
   iconSize,
   isInstallable,
+  isSecureContextUrl,
   isVectorIcon,
   isWithinScope,
   launcherName,
@@ -289,7 +290,7 @@ describe('icons', () => {
     expect(displayIcon({ icons: [] })).toBeNull()
   })
 
-  it('isInstallable wants https, a raster icon and its own window', () => {
+  it('isInstallable wants a secure context, a raster icon and its own window', () => {
     const base = parsed({
       name: 'App',
       display: 'standalone',
@@ -299,6 +300,23 @@ describe('icons', () => {
     expect(isInstallable({ ...base, display: 'browser' })).toBe(false)
     expect(isInstallable({ ...base, icons: [] })).toBe(false)
     expect(isInstallable({ ...base, startUrl: 'http://app.example.com/tools/editor' })).toBe(false)
+    // Plain http on a loopback host is a secure context (an app under development installs too).
+    expect(isInstallable({ ...base, startUrl: 'http://localhost:5173/' })).toBe(true)
+    expect(isInstallable({ ...base, startUrl: 'http://127.0.0.1:18131/app/' })).toBe(true)
+  })
+
+  it('isSecureContextUrl is https or http on a loopback host', () => {
+    expect(isSecureContextUrl('https://app.example.com/')).toBe(true)
+    expect(isSecureContextUrl('http://app.example.com/')).toBe(false)
+    expect(isSecureContextUrl('http://localhost/')).toBe(true)
+    expect(isSecureContextUrl('http://dev.localhost:3000/')).toBe(true)
+    expect(isSecureContextUrl('http://127.0.0.1/')).toBe(true)
+    expect(isSecureContextUrl('http://127.1.2.3:8080/x')).toBe(true)
+    expect(isSecureContextUrl('http://[::1]:8080/')).toBe(true)
+    expect(isSecureContextUrl('http://localhost.example.com/')).toBe(false)
+    expect(isSecureContextUrl('http://1270.0.0.1/')).toBe(false)
+    expect(isSecureContextUrl('file:///tmp/app/')).toBe(false)
+    expect(isSecureContextUrl('not a url')).toBe(false)
   })
 })
 
