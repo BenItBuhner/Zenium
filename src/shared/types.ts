@@ -3,7 +3,7 @@
  * Everything here must be JSON-serialisable (it crosses the IPC boundary).
  */
 import type { AppIconId } from './appIcon'
-import type { SiteInfo } from './siteInfo'
+import type { SiteInfo, SiteInfoSnapshot } from './siteInfo'
 import type { TranslatePreferences, TranslateSelectionResult, TranslateUIState } from './translate'
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
@@ -87,6 +87,11 @@ export interface HostCapabilities {
    * sheet); hosts without them keep the plain zoom menu.
    */
   pageControls: boolean
+  /**
+   * Private browsing as tabs inside the one window (`tab.newPrivate`): hosts without separate
+   * windows. Desktop hosts offer private windows instead (`windows`).
+   */
+  privateTabs: boolean
 }
 
 export interface Rect {
@@ -1497,6 +1502,111 @@ export interface PermissionRule {
   decision: 'allow' | 'deny'
 }
 
+/** The user's answer to a permission prompt; `dismiss` refuses this request without remembering. */
+export type PermissionPromptAnswer = 'allow' | 'block' | 'allow-once' | 'dismiss'
+
+/**
+ * A pending permission question the chrome shows over a tab, non-modal, one at a time per tab:
+ * "Allow example.com to use your camera?" with Allow / Block / Allow once, answered by
+ * `permissions.respond`. Withdrawn when the page navigates or the tab closes.
+ */
+export interface PermissionPrompt {
+  id: string
+  /** Tab whose page asked; null when the host could not say (the focused window shows it). */
+  tabId: string | null
+  origin: string
+  /** Base permission name (`camera`, `media`, `geolocation`), for the prompt's glyph. */
+  permission: string
+  message: string
+  detail: string
+  allowLabel: string
+  blockLabel: string
+  /** Whether "Allow once" (until the tab leaves the site) is offered. */
+  allowOnce: boolean
+  requestedAt: number
+}
+
+// ---------------------------------------------------------------------------
+// Clear browsing data and Safety check
+// ---------------------------------------------------------------------------
+
+/** Chrome's time ranges: the last hour, 24 hours, 7 days, 4 weeks, or everything. */
+export type BrowsingDataRange = 'hour' | 'day' | 'week' | 'month' | 'all'
+
+/**
+ * What "Clear browsing data" can remove. `history`, `cookies` and `cache` are Chrome's Basic
+ * set; the rest is Advanced. `cookies` covers cookies and every other kind of site data.
+ */
+export type BrowsingDataType =
+  | 'history'
+  | 'cookies'
+  | 'cache'
+  | 'downloads'
+  | 'passwords'
+  | 'autofill'
+  | 'sitePermissions'
+  | 'recentlyClosed'
+
+export const BROWSING_DATA_BASIC: readonly BrowsingDataType[] = ['history', 'cookies', 'cache']
+export const BROWSING_DATA_ADVANCED: readonly BrowsingDataType[] = [
+  'history',
+  'cookies',
+  'cache',
+  'downloads',
+  'passwords',
+  'autofill',
+  'sitePermissions',
+  'recentlyClosed'
+]
+
+/** The preview line of one type in the dialog: how much would go. */
+export interface BrowsingDataCount {
+  type: BrowsingDataType
+  /** Items of `unit` in the range; null when the engine cannot count this type. */
+  count: number | null
+  unit: 'visits' | 'sites' | 'bytes' | 'downloads' | 'logins' | 'entries' | 'permissions'
+  /** False when the engine cannot limit this type to the range: clearing removes all of it. */
+  rangeApplies: boolean
+  /** Why the type cannot be cleared right now (the vault is locked), or null. */
+  unavailable: string | null
+}
+
+export interface ClearBrowsingDataResult {
+  /** Types that were cleared. */
+  cleared: BrowsingDataType[]
+}
+
+export type SafetyState = 'safe' | 'info' | 'warning' | 'unavailable'
+
+/** One row of Safety check: a state for the glyph and a sentence for the row. */
+export interface SafetyCheckRow {
+  state: SafetyState
+  summary: string
+}
+
+export interface SafetyCheckResult {
+  checkedAt: number
+  updates: SafetyCheckRow & { currentVersion: string; latestVersion: string | null }
+  safeBrowsing: SafetyCheckRow & { configured: boolean; enabled: boolean | null }
+  passwords: SafetyCheckRow & {
+    compromised: number
+    weak: number
+    reused: number
+    /** The vault is locked or the checkup never ran: counts are unknown. */
+    known: boolean
+  }
+  /** Sites holding several granted permissions, or granted ones not visited for weeks. */
+  permissions: SafetyCheckRow & {
+    grantedSites: number
+    review: Array<{ origin: string; permissions: string[]; reason: 'many' | 'unused' }>
+  }
+  /** Sites allowed to send notifications, busiest first (`shown` counts this session). */
+  notifications: SafetyCheckRow & { sites: Array<{ origin: string; shown: number }> }
+  extensions: SafetyCheckRow & {
+    flagged: Array<{ id: string; name: string; reasons: string[] }>
+  }
+}
+
 export interface ClientCertificateInfo {
   fingerprint: string
   subject: string
@@ -1611,6 +1721,8 @@ export interface UIState {
   blockedPopups: Record<string, BlockedPopup[]>
   /** Every remembered per-site permission answer (Settings lists and revokes them). */
   permissionRules: PermissionRule[]
+  /** Pending permission prompts, oldest first; the chrome shows its active tab's first one. */
+  permissionPrompts: PermissionPrompt[]
   /** Pending HTTP authentication and client-certificate prompts, oldest first. */
   securityPrompts: SecurityPrompt[]
   /** Ad and tracker blocking: lists, their freshness and the session counter. */
@@ -1783,6 +1895,14 @@ export interface Commands {
   }
   'tab.activate': { args: { tabId: string }; result: void }
   'tab.close': { args: { tabId: string; force?: boolean }; result: void }
+  /**
+   * A private tab in this window (`capabilities.privateTabs`): the in-memory private container,
+   * no history, no persisted downloads; its session is wiped when the last private tab closes.
+   * Resolves with the tab id, or null on hosts that offer private windows instead.
+   */
+  'tab.newPrivate': { args: { url?: string }; result: string | null }
+  /** Close every private tab (and so end the private session). */
+  'tab.closePrivate': { args: void; result: void }
   'tab.closeOthers': { args: { tabId: string }; result: void }
   'tab.closeBelow': { args: { tabId: string }; result: void }
   'tab.closeAbove': { args: { tabId: string }; result: void }
@@ -1951,6 +2071,28 @@ export interface Commands {
   'site.clearData': { args: { tabId: string }; result: void }
   /** Forget one permission decision of the site (or all of them) and reload the page. */
   'site.resetPermissions': { args: { tabId: string; permission?: string }; result: void }
+  /**
+   * Everything the desktop site-information popover shows for a tab: `site.info` plus the
+   * requests the blocker refused on the page and whether the site is excepted from blocking.
+   */
+  'siteInfo.snapshot': { args: { tabId: string }; result: SiteInfoSnapshot | null }
+
+  /**
+   * Clear browsing data of the chosen types in the range. Passwords need re-authentication
+   * (`passphrase` carries the vault passphrase when the chrome was asked for it); when it fails
+   * nothing is cleared and the outcome says which step is needed.
+   */
+  'privacy.clearBrowsingData': {
+    args: { range: BrowsingDataRange; types: BrowsingDataType[]; passphrase?: string }
+    result: ReauthOutcome<ClearBrowsingDataResult>
+  }
+  /** How much of each type the range holds, for the dialog's preview lines. */
+  'privacy.clearBrowsingDataCounts': {
+    args: { range: BrowsingDataRange }
+    result: BrowsingDataCount[]
+  }
+  /** Run Safety check now: updates, Safe Browsing, passwords, permissions, notifications, extensions. */
+  'privacy.safetyCheck': { args: void; result: SafetyCheckResult }
 
   /** Take a fresh resource sample right now and return it. */
   'resources.snapshot': { args: void; result: ResourceSnapshot }
@@ -2303,6 +2445,28 @@ export interface Commands {
   /** Forget one remembered per-site answer; the site asks (or is blocked) again. */
   'permissions.forget': { args: { origin: string; permission: string }; result: void }
   'permissions.reset': { args: void; result: void }
+  /** Answer (or dismiss) a pending permission prompt. */
+  'permissions.respond': { args: { id: string; answer: PermissionPromptAnswer }; result: void }
+  /**
+   * Settings › Site settings: the default for a content type (`ask` and the built-in default
+   * both clear the stored default), and the sites with a decision of their own.
+   */
+  'permissions.setDefault': {
+    args: { permission: string; decision: 'allow' | 'deny' | 'ask' }
+    result: void
+  }
+  'permissions.defaults': { args: void; result: Record<string, 'allow' | 'deny' | 'ask'> }
+  'permissions.listForPermission': {
+    args: { permission: string }
+    result: Array<{ origin: string; decision: 'allow' | 'deny' }>
+  }
+  /** Decide for a site without a prompt (an exception row), or forget with null. */
+  'permissions.set': {
+    args: { origin: string; permission: string; decision: 'allow' | 'deny' | null }
+    result: void
+  }
+  /** Forget every decision of a site (Settings' per-site list). */
+  'permissions.resetOrigin': { args: { origin: string }; result: void }
   /** Answer a pending HTTP authentication or client-certificate prompt (null cancels). */
   'security.respond': {
     args: { id: string; response: SecurityPromptResponse | null }

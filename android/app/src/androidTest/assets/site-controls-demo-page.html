@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zenium site controls demo</title>
+<style>
+  body { margin: 0; padding: 24px 20px; font: 17px/1.45 system-ui, sans-serif; color: #1c1c1e; background: #fff; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 20px; color: #6b6b70; font-size: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 14px 0; border-top: 1px solid #e3e3e6; }
+  .row:last-of-type { border-bottom: 1px solid #e3e3e6; }
+  .row .k { flex: 1; }
+  .row .v { font-weight: 600; min-width: 96px; text-align: right; }
+  .yes { color: #1a7f37; }
+  .no { color: #b3261e; }
+  .wait { color: #6b6b70; }
+  .mode { display: inline-block; margin-top: 18px; padding: 6px 10px; border: 1px solid #c9c9ce; border-radius: 4px; font-size: 13px; color: #3a3a3f; }
+</style>
+</head>
+<body>
+<h1>Zenium site controls demo</h1>
+<p class="sub">What this site can see and do on this profile.</p>
+<div class="row"><span class="k">Site cookie</span><span class="v wait" id="cookie">…</span></div>
+<div class="row"><span class="k">Site storage</span><span class="v wait" id="storage">…</span></div>
+<div class="row"><span class="k">Location</span><span class="v wait" id="geo">not asked</span></div>
+<span class="mode" id="mode"></span>
+<script>
+  // The driver reads the outcome through the tab's title: `SC|cookie:yes|storage:no|geo:granted`.
+  var params = new URLSearchParams(location.search);
+  var report = { cookie: '-', storage: '-', geo: '-' };
+  function show(id, value, cls) {
+    var el = document.getElementById(id);
+    el.textContent = value;
+    el.className = 'v ' + cls;
+  }
+  function publish() {
+    document.title = 'SC|cookie:' + report.cookie + '|storage:' + report.storage + '|geo:' + report.geo;
+  }
+  if (params.get('set') === '1') {
+    document.cookie = 'zenium_demo=1; path=/; max-age=86400';
+    try { localStorage.setItem('zenium_demo', '1'); } catch (e) {}
+  }
+  var hasCookie = /(^|; )zenium_demo=1/.test(document.cookie);
+  var hasStorage = false;
+  try { hasStorage = localStorage.getItem('zenium_demo') === '1'; } catch (e) {}
+  report.cookie = hasCookie ? 'yes' : 'no';
+  report.storage = hasStorage ? 'yes' : 'no';
+  show('cookie', hasCookie ? 'present' : 'none', hasCookie ? 'yes' : 'no');
+  show('storage', hasStorage ? 'present' : 'none', hasStorage ? 'yes' : 'no');
+  document.getElementById('mode').textContent =
+    (params.get('private') === '1' ? 'Private tab' : 'Normal tab') +
+    (params.get('set') === '1' ? ' · this load stored a cookie and a storage key' : ' · this load only reads');
+  publish();
+  if (params.get('ask') === '1') {
+    show('geo', 'asking…', 'wait');
+    report.geo = 'asking';
+    publish();
+    navigator.geolocation.getCurrentPosition(
+      function () { report.geo = 'granted'; show('geo', 'granted', 'yes'); publish(); },
+      function (err) {
+        // 1 is PERMISSION_DENIED; 2 and 3 (unavailable, timeout) mean the permission was granted
+        // and the emulator had no fix to give.
+        report.geo = err.code === 1 ? 'denied' : 'granted-nofix' + err.code;
+        show('geo', err.code === 1 ? 'denied' : 'granted (no fix)', err.code === 1 ? 'no' : 'yes');
+        publish();
+      },
+      { timeout: 8000, maximumAge: 600000 }
+    );
+  }
+</script>
+</body>
+</html>

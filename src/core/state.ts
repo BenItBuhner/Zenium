@@ -20,6 +20,7 @@ import type {
   Mod,
   PasswordsStatus,
   PageEnvironment,
+  PermissionPrompt,
   PermissionRule,
   Platform,
   Rect,
@@ -36,7 +37,7 @@ import type {
   UIState
 } from '../shared/types'
 import type { TranslateUIState } from '../shared/translate'
-import { DEFAULT_CONTAINER_ID } from '../shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import {
   DEFAULT_CONTAINERS,
@@ -134,6 +135,7 @@ export interface StateExtras {
   defaultBrowser: DefaultBrowserStatus
   blockedPopups: Record<string, BlockedPopup[]>
   permissionRules: PermissionRule[]
+  permissionPrompts: PermissionPrompt[]
   securityPrompts: SecurityPrompt[]
   blocking: BlockingStatus
   translate: TranslateUIState
@@ -239,6 +241,7 @@ export class BrowserState {
     defaultBrowser: { isDefault: null, prompt: null },
     blockedPopups: {},
     permissionRules: [],
+    permissionPrompts: [],
     securityPrompts: [],
     blocking: emptyBlockingStatus(),
     translate: emptyTranslateState()
@@ -642,14 +645,20 @@ export class BrowserState {
     if (windows.length > 0) this.lastWindows = windows.map((w) => w.toPersisted())
     const persistedWindows: PersistedWindow[] =
       this.lastWindows.length > 0 ? this.lastWindows : this.restoredWindows
-    // Glance tabs and tabs of blank / private windows are transient – never persist them.
+    // Glance tabs, tabs of blank / private windows and private tabs are transient – never
+    // persist them.
     const transient = new Set<string>()
     for (const w of this.liveWindows()) if (w.glance) transient.add(w.glance.tabId)
     return {
       version: 3,
       spaces: m.spaces,
       tabs: Object.values(m.tabs)
-        .filter((t) => !transient.has(t.id) && !(t.spaceId && m.localSpaces[t.spaceId]))
+        .filter(
+          (t) =>
+            !transient.has(t.id) &&
+            !(t.spaceId && m.localSpaces[t.spaceId]) &&
+            t.containerId !== PRIVATE_CONTAINER_ID
+        )
         .map((t) => ({
           ...t,
           loading: false,

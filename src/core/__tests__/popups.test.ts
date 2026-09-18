@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Tab } from '../../shared/types'
 import type { Browser } from '../browser'
-import type { DialogHost, StoreIO } from '../platform'
+import type { PermissionPromptHost, StoreIO } from '../platform'
 import { PermissionService } from '../permissions'
 import { ACTIVATION_LIFESPAN_MS, PopupBlocker, UserActivation } from '../popups'
 
@@ -9,12 +9,8 @@ function fakeIo(): StoreIO {
   return { readSync: () => null, write: async () => undefined, writeSync: () => undefined }
 }
 
-function silentDialogs(): DialogHost {
-  return {
-    confirm: async () => false,
-    pickTextFiles: async () => [],
-    saveTextFile: async () => false
-  }
+function silentPrompts(): PermissionPromptHost {
+  return { show: async () => 'block', cancel: () => undefined }
 }
 
 interface Harness {
@@ -37,7 +33,7 @@ function harness(): Harness {
     t1: { id: 't1', url: 'https://opener.example/page', spaceId: 's1', containerId: 'c1' } as Tab,
     t2: { id: 't2', url: 'https://other.example/', spaceId: 's1', containerId: 'c1' } as Tab
   }
-  const permissions = new PermissionService(fakeIo(), silentDialogs())
+  const permissions = new PermissionService(fakeIo(), silentPrompts())
   const browser = {
     permissions,
     state: {

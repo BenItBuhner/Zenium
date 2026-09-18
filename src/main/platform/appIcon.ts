@@ -30,6 +30,12 @@ export function windowIcon(id: AppIconId): NativeImage {
   return nativeImage.createFromPath(join(dir, 'icon.png'))
 }
 
+/** The 512 PNG of a variant on disk (Windows toasts take an image path), or null when missing. */
+export function iconPngPath(id: AppIconId): string | null {
+  const path = join(iconsRoot(), appIconVariant(id).id, 'icon.png')
+  return existsSync(path) ? path : null
+}
+
 /** The Dock image of a variant: the 1024 PNG drawn on macOS's icon grid (margin included). */
 export function dockIcon(id: AppIconId): NativeImage {
   return nativeImage.createFromPath(join(iconsRoot(), appIconVariant(id).id, 'dock.png'))

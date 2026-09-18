@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { PermissionRule, Tab, UIState } from '@shared/types'
+import type { PermissionPrompt, PermissionRule, Tab, UIState } from '@shared/types'
 import {
   blockedPopupsOf,
+  currentPermissionPrompt,
   currentSecurityPrompt,
   describePermissionRule,
   originOf,
@@ -17,6 +18,7 @@ function state(patch: Partial<UIState>): UIState {
     permissionRules: [],
     blockedPopups: {},
     securityPrompts: [],
+    permissionPrompts: [],
     ...patch
   } as unknown as UIState
 }
@@ -117,5 +119,45 @@ describe('currentSecurityPrompt', () => {
     })
     expect(currentSecurityPrompt(proxy)?.id).toBe('p0')
     expect(currentSecurityPrompt(state({ tabs: { t1: tab } }))).toBe(null)
+  })
+})
+
+describe('currentPermissionPrompt', () => {
+  const prompt = (id: string, tabId: string | null): PermissionPrompt => ({
+    id,
+    tabId,
+    origin: 'https://news.example',
+    permission: 'camera',
+    message: 'Allow news.example to use your camera?',
+    detail: '',
+    allowLabel: 'Allow',
+    blockLabel: 'Block',
+    allowOnce: true,
+    requestedAt: 1
+  })
+
+  it('shows the active tab’s oldest prompt, or one without a tab, never another tab’s', () => {
+    const s = state({
+      tabs: { t1: tab },
+      permissionPrompts: [prompt('q2', 't2'), prompt('q1', 't1'), prompt('q3', 't1')]
+    })
+    expect(currentPermissionPrompt(s)?.id).toBe('q1')
+    expect(
+      currentPermissionPrompt(
+        state({ tabs: { t1: tab }, permissionPrompts: [prompt('q2', 't2'), prompt('q0', null)] })
+      )?.id
+    ).toBe('q0')
+    expect(currentPermissionPrompt(state({ tabs: { t1: tab } }))).toBe(null)
+  })
+
+  it('waits while a security prompt is up on the same tab', () => {
+    const s = state({
+      tabs: { t1: tab },
+      permissionPrompts: [prompt('q1', 't1')],
+      securityPrompts: [
+        { id: 'p1', kind: 'client-certificate', tabId: 't1', host: 'h', certificates: [] }
+      ]
+    })
+    expect(currentPermissionPrompt(s)).toBe(null)
   })
 })

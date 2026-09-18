@@ -31,6 +31,7 @@ import type {
   ClipboardHost,
   DialogHost,
   DownloadHost,
+  EngineDataCounts,
   ExtensionHost,
   ExternalProtocolHost,
   KdfParams,
@@ -72,12 +73,19 @@ export interface AndroidCapabilityInputs {
   sdkInt: number
   /** Kotlin named the extension install root: the store and the registry are there to use. */
   extensions: boolean
+  /**
+   * The WebView keeps separate profiles (Chrome 111+): containers and the private session have
+   * cookies, storage and cache of their own. Without it a "private" tab would browse on the
+   * default profile, so none is offered. Absent from an older boot payload: taken as supported.
+   */
+  profiles?: boolean
 }
 
 /** What the Android host can do for the chrome; a few points depend on the OS release. */
 export function androidCapabilities({
   sdkInt,
-  extensions
+  extensions,
+  profiles = true
 }: AndroidCapabilityInputs): HostCapabilities {
   return {
     windowControls: false,
@@ -103,7 +111,9 @@ export function androidCapabilities({
     passwords: true,
     defaultBrowser: true,
     requestBlocking: true,
-    pageControls: true
+    pageControls: true,
+    // One window: private browsing is a tab in it, on a throwaway WebView profile.
+    privateTabs: profiles
   }
 }
 
@@ -173,6 +183,8 @@ export interface BootInfo {
   signer: string | null
   /** The applicationId this APK was installed under (null in the preview host). */
   packageName: string | null
+  /** Whether the WebView supports multiple profiles (see `AndroidCapabilityInputs.profiles`). */
+  profiles?: boolean
   /** The launcher icon colour whose alias is enabled right now (the core re-applies its own). */
   appIcon?: string
   /** Persisted JSON documents by name (state.json, history.json, …). */
@@ -248,7 +260,15 @@ export interface HostEventPayloads {
   }
   /** Pause / Resume / Cancel pressed on the download's system notification. */
   'download.action': { id: string; op: 'pause' | 'resume' | 'cancel' }
-  'permission.request': { requestId: string; permission: string; url: string }
+  'permission.request': {
+    requestId: string
+    permission: string
+    url: string
+    /** The page's tab: the prompt queues under it and goes away when it navigates. */
+    tabId?: string
+    /** `media`: which capture devices the page asked for. */
+    mediaTypes?: Array<'video' | 'audio'>
+  }
   /** A server asked for HTTP credentials; answered with `auth.respond`. */
   'auth.request': { requestId: string; tabId: string; host: string; realm: string; url: string }
   'view.adopt': { viewId: string; parentTabId: string | null; active: boolean }
@@ -655,7 +675,8 @@ export class AndroidPlatform implements Platform {
     this.extensionsRoot = boot.extensionsRoot || null
     this.capabilities = androidCapabilities({
       sdkInt: boot.sdkInt,
-      extensions: this.extensionsRoot !== null
+      extensions: this.extensionsRoot !== null,
+      profiles: boot.profiles
     })
     this.bootEnvironment = boot.environment ?? null
     this.io = new AndroidStoreIO(bridge, boot.files)
@@ -747,7 +768,11 @@ export class AndroidPlatform implements Platform {
     this.sessions = {
       clearContainerData: (containerId) => bridge.call('profile.clear', { containerId }),
       clearPrivate: () => bridge.call('profile.clear', { containerId: PRIVATE_CONTAINER_ID }),
-      clearAuthCache: () => bridge.call('security.forgetSession', {})
+      clearAuthCache: () => bridge.call('security.forgetSession', {}),
+      clearBrowsingData: (containerIds, kinds) =>
+        bridge.call('profile.clearBrowsingData', { containerIds, kinds }),
+      browsingDataCounts: (containerIds) =>
+        bridge.call<EngineDataCounts>('profile.browsingDataCounts', { containerIds })
     }
     this.app = {
       quit: () => bridge.send('app.quit'),
@@ -960,7 +985,7 @@ export class AndroidPlatform implements Platform {
       case 'permission.request': {
         const p = payload as HostEventPayloads['permission.request']
         void browser.permissions
-          .decide(p.permission, p.url)
+          .decide(p.permission, p.url, { tabId: p.tabId, mediaTypes: p.mediaTypes })
           .then((allow) =>
             this.bridge.send('permission.respond', { requestId: p.requestId, allow })
           )

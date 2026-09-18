@@ -200,7 +200,8 @@ function overlayCoversContentBesidesStage(ui: UiState): boolean {
     ui.urlbar.open ||
     ui.drag !== null ||
     ui.siteInfoOpen ||
-    ui.securityPromptOpen
+    ui.securityPromptOpen ||
+    ui.permissionPromptOpen
   )
 }
 

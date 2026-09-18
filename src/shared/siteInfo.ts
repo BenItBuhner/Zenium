@@ -83,6 +83,25 @@ export interface SiteInfo {
   permissions: SitePermission[]
 }
 
+/** Ad and tracker blocking as the site-information popover reports it for one page. */
+export interface SiteBlocking {
+  /** Requests the blocker refused on the page since its document committed. */
+  blockedCount: number
+  /** Blocking is on (the master switch). */
+  enabled: boolean
+  /** The user excepted this site from blocking. */
+  excepted: boolean
+  /** The engine tracks blocking on this host at all (`capabilities.requestBlocking`). */
+  available: boolean
+}
+
+/** `site.info` plus what the desktop popover shows in addition: the blocking counter. */
+export interface SiteInfoSnapshot extends SiteInfo {
+  blocking: SiteBlocking
+  /** The tab is a private one (the popover says so and offers no per-site settings to keep). */
+  isPrivate: boolean
+}
+
 export interface SiteDescription {
   /** Scheme without the colon (`https`, `zen`, …). */
   scheme: string
