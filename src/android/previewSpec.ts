@@ -20,6 +20,15 @@ export const PREVIEW_OVERLAYS: readonly OverlayKind[] = [
 /** The furthest a held pull goes, as a multiple of the threshold (the disc is well out by then). */
 export const PREVIEW_PULL_MAX = 2.5
 
+/**
+ * A step taken on a page once it is open, in order: `tap` presses the first button whose label
+ * or text reads so (a row opens its sheet, a sheet's row stacks another, a destructive action
+ * asks first), `back` is one system back (the top sheet closes, a section pops), `overview` opens
+ * the tab overview over the page, `urlbar` opens the pill for editing.
+ */
+export type PreviewStep =
+  { kind: 'tap'; text: string } | { kind: 'back' } | { kind: 'overview' } | { kind: 'urlbar' }
+
 export type PreviewState =
   | { kind: 'idle' }
   | {
@@ -31,6 +40,8 @@ export type PreviewState =
       show?: string
       /** Text typed into the page's search field once it is open (the Settings landing). */
       search?: string
+      /** Steps taken after the page is open, searched and scrolled. */
+      then?: PreviewStep[]
     }
   | {
       kind: 'overlay'
@@ -81,7 +92,8 @@ const MAX_PREVIEW_BANNERS = 3
 /**
  * A preview state spec is a query string: `idle` (or anything unrecognised), `page=<id>` for an
  * internal page opened in its tab (`section=<id>` for one of its sections, `search=<text>` types
- * into its search field, `show=<text>` scrolls a row into view), `overlay=<kind>` for
+ * into its search field, `show=<text>` scrolls a row into view, `then=<steps>` takes steps on it
+ * afterwards, `;`-separated: `tap:<text>`, `back`, `overview`, `urlbar`), `overlay=<kind>` for
  * one of PREVIEW_OVERLAYS (with `section=<id>` to land on a Settings section and `show=<text>` to
  * scroll a row of the overlay into view), `menu=app` for the app menu sheet (with `show=<text>` to
  * scroll an item into view), `find=<text>` for the find bar with that text typed (`find=` opens it
@@ -109,6 +121,8 @@ export function parsePreviewSpec(spec: string): PreviewState {
     if (search) state.search = search
     const show = params.get('show')
     if (show) state.show = show
+    const then = parsePreviewSteps(params.get('then'))
+    if (then.length > 0) state.then = then
     return state
   }
   const overlay = params.get('overlay')
@@ -165,4 +179,20 @@ export function parsePreviewSpec(spec: string): PreviewState {
     }
   }
   return { kind: 'idle' }
+}
+
+/** The `then=` list: `tap:<text>;back;overview;urlbar`; blanks and unknown steps are dropped. */
+export function parsePreviewSteps(list: string | null): PreviewStep[] {
+  if (!list) return []
+  const steps: PreviewStep[] = []
+  for (const raw of list.split(';')) {
+    const step = raw.trim()
+    if (step.startsWith('tap:')) {
+      const text = step.slice('tap:'.length).trim()
+      if (text) steps.push({ kind: 'tap', text })
+    } else if (step === 'back' || step === 'overview' || step === 'urlbar') {
+      steps.push({ kind: step })
+    }
+  }
+  return steps
 }

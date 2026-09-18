@@ -14,7 +14,13 @@
 //
 // Options
 //   --out <dir>        where the PNGs go (required); files are <prefix><label>-<light|dark>.png
-//   --states <list>    comma-separated `label:state` pairs; a state is `idle`, `overlay=<kind>`
+//   --states <list>    comma-separated `label:state` pairs; a state is `idle`, `page=settings`
+//                      (the Settings tab; `&section=<id>` opens a section, `&search=<text>` types
+//                      into Find in Settings, `&show=<text>` scrolls a row into view, and
+//                      `&then=tap:<text>;back;overview;urlbar` takes steps on the open page –
+//                      a tap on a row opens its sheet, a second one stacks another, `back`
+//                      closes the top sheet, `overview` opens the tab overview, `urlbar` the pill
+//                      for editing), `overlay=<kind>`
 //                      (history, bookmarks, downloads, settings, addons, …; `&section=<id>` picks
 //                      a Settings section, `&show=<text>` scrolls a row into view), `menu=app`
 //                      (`&show=<text>` scrolls an item into view), `find=<text>`, `pull=<n>`,

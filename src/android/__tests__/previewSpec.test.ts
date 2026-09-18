@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { PREVIEW_OVERLAYS, PREVIEW_PULL_MAX, parsePreviewSpec } from '../previewSpec'
+import {
+  PREVIEW_OVERLAYS,
+  PREVIEW_PULL_MAX,
+  parsePreviewSpec,
+  parsePreviewSteps
+} from '../previewSpec'
 
 describe('parsePreviewSpec', () => {
   it('opens a known overlay by name', () => {
@@ -142,5 +147,51 @@ describe('parsePreviewSpec', () => {
       progress: 0.4,
       released: false
     })
+  })
+
+  it('opens an internal page in its tab, on a section, searched, scrolled, then stepped through', () => {
+    expect(parsePreviewSpec('page=settings')).toEqual({ kind: 'page', page: 'settings' })
+    expect(parsePreviewSpec('page=settings&section=look&search=dark&show=Enable%20Glance')).toEqual(
+      {
+        kind: 'page',
+        page: 'settings',
+        section: 'look',
+        search: 'dark',
+        show: 'Enable Glance'
+      }
+    )
+    // The page wins over an overlay and a find in the same spec; an unknown page is not a page.
+    expect(parsePreviewSpec('page=settings&overlay=history&find=x').kind).toBe('page')
+    expect(parsePreviewSpec('page=nope&find=x')).toEqual({ kind: 'find', text: 'x' })
+
+    expect(
+      parsePreviewSpec('page=settings&section=containers&then=tap:Work;tap:Delete%20container')
+    ).toEqual({
+      kind: 'page',
+      page: 'settings',
+      section: 'containers',
+      then: [
+        { kind: 'tap', text: 'Work' },
+        { kind: 'tap', text: 'Delete container' }
+      ]
+    })
+    expect(parsePreviewSpec('page=settings&then=overview')).toEqual({
+      kind: 'page',
+      page: 'settings',
+      then: [{ kind: 'overview' }]
+    })
+    expect(parsePreviewSpec('page=settings&then=urlbar;back')).toEqual({
+      kind: 'page',
+      page: 'settings',
+      then: [{ kind: 'urlbar' }, { kind: 'back' }]
+    })
+    // Blanks, an empty tap and unknown steps are dropped; no steps means no `then` at all.
+    expect(parsePreviewSteps(' tap:Colour scheme ; ; tap: ; wave ; back ')).toEqual([
+      { kind: 'tap', text: 'Colour scheme' },
+      { kind: 'back' }
+    ])
+    expect(parsePreviewSteps(null)).toEqual([])
+    expect(parsePreviewSpec('page=settings&then=')).toEqual({ kind: 'page', page: 'settings' })
+    expect(parsePreviewSpec('page=settings&then=wave')).toEqual({ kind: 'page', page: 'settings' })
   })
 })
