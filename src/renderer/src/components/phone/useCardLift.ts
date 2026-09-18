@@ -172,8 +172,15 @@ function vibrate(ms: number): void {
   }
 }
 
-/** A touch that has picked a card up must not scroll the grid; touch-action is too late for that. */
-function blockTouchScroll(e: TouchEvent): void {
+/**
+ * A touch that has picked a card up must not scroll the grid; touch-action is too late for that,
+ * so its touchmoves are cancelled instead. Listened for on the document and, once a card is in
+ * the hand, on the node the touch started on as well: Chromium keeps dispatching the touch's
+ * events to that node after React has taken it out of the document (the card re-mounted in
+ * another parent), and from a detached node they never reach the document – the grid's `pan-y`
+ * would take the touch over at the first re-mount and end the drag with a pointercancel.
+ */
+function blockTouchScroll(e: Event): void {
   if (e.cancelable) e.preventDefault()
 }
 
@@ -224,9 +231,11 @@ interface DragHandlers {
  * under the finger changes, and React re-mounts the card each time – a gesture that lived in the
  * component's hooks died with it, mid-drag, leaving the ghost in the hand and the last target
  * ringed for good. The session listens on the window, holds the pointer capture on the grid's
- * scroller (which stays put), and reads the card's callbacks from whichever mount of the card is
- * current. What the card is over is a `DropTargetState` (`lib/gestures/dropTarget.ts`); every
- * way the gesture can end – release, cancel, the overview leaving – goes through `end()`.
+ * scroller (which stays put), keeps the native scroll blocked on the node the touch started on
+ * (which the browser's touch events follow out of the document), and reads the card's callbacks
+ * from whichever mount of the card is current. What the card is over is a `DropTargetState`
+ * (`lib/gestures/dropTarget.ts`); every way the gesture can end – release, cancel, the overview
+ * leaving – goes through `end()`.
  */
 class DragSession {
   private drop: DropTargetState
@@ -234,6 +243,8 @@ class DragSession {
   private y: number
   private readonly x0: number
   private readonly y0: number
+  /** The node the touch started on; the browser's touch events follow it, not the pointer. */
+  private readonly anchor: EventTarget | null
   private autoscroll: number | null = null
   private dwell: ReturnType<typeof setTimeout> | null = null
   private ended = false
@@ -241,7 +252,7 @@ class DragSession {
   constructor(
     readonly pointerId: number,
     readonly tabId: string,
-    touch: { x0: number; y0: number; x: number; y: number },
+    touch: { x0: number; y0: number; x: number; y: number; anchor: EventTarget | null },
     private readonly velocity: VelocityTracker,
     public handlers: DragHandlers
   ) {
@@ -249,11 +260,13 @@ class DragSession {
     this.y0 = touch.y0
     this.x = touch.x
     this.y = touch.y
+    this.anchor = touch.anchor
     this.drop = beginDrag(handlers.tab.folderId ?? null)
     window.addEventListener('pointermove', this.onMove, true)
     window.addEventListener('pointerup', this.onUp, true)
     window.addEventListener('pointercancel', this.onCancel, true)
     document.addEventListener('touchmove', blockTouchScroll, { passive: false })
+    this.anchor?.addEventListener('touchmove', blockTouchScroll, { passive: false })
     // Every event of this pointer keeps coming, whatever happens to the card's element.
     const scroller = handlers.scroller()
     if (scroller) {
@@ -273,6 +286,7 @@ class DragSession {
     window.removeEventListener('pointerup', this.onUp, true)
     window.removeEventListener('pointercancel', this.onCancel, true)
     document.removeEventListener('touchmove', blockTouchScroll)
+    this.anchor?.removeEventListener('touchmove', blockTouchScroll)
     this.stopAutoscroll()
     this.clearDwell()
     if (session === this) session = null
@@ -467,6 +481,8 @@ interface Touch {
   y0: number
   x: number
   y: number
+  /** The node under the finger when it came down (see `blockTouchScroll`). */
+  anchor: EventTarget | null
   timer: ReturnType<typeof setTimeout> | null
   /** Finger position that maps to a swipe offset of zero. */
   swipeFrom: number | null
@@ -588,6 +604,7 @@ export function useCardLift({
       y0: e.clientY,
       x: e.clientX,
       y: e.clientY,
+      anchor: e.target,
       timer: null,
       swipeFrom: null,
       velocity: new VelocityTracker()

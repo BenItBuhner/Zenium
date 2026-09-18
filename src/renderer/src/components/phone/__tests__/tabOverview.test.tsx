@@ -251,6 +251,15 @@ function drag(x: number, y: number): void {
 const letGo = (x: number, y: number): void => pointer('pointerup', grid(), x, y)
 const interrupt = (x: number, y: number): void => pointer('pointercancel', grid(), x, y)
 
+/** A native touchmove as the browser sends it to the node the touch started on. */
+function touchmoveOn(target: EventTarget): Event {
+  const e = new Event('touchmove', { bubbles: true, cancelable: true })
+  act(() => {
+    target.dispatchEvent(e)
+  })
+  return e
+}
+
 /** Land the ghost: the grid shows `state`, the drop is confirmed, the springs run out. */
 function land(state: UIState): void {
   render(state)
@@ -308,6 +317,7 @@ describe('a card dragged out of its group', () => {
   it('leaves the group where it was let go, through the re-mount, and the hover clears', () => {
     render(grouped())
     expect(groupAround('m1')).toBe(`group:${GROUP}`)
+    const anchor = cellOf('m1').querySelector<HTMLElement>('[role="button"]')!
     pickUp('m1')
 
     // Out of the group onto the left edge of the first loose card: the slot before it.
@@ -320,12 +330,18 @@ describe('a card dragged out of its group', () => {
     expect(liftStore.get().slot).toEqual({ folderId: null, index: 0 })
     expect(groupAround('m1')).toBeNull()
     expect(cellOf('m1')).toBeTruthy()
+    expect(anchor.isConnected).toBe(false)
     // The gesture survived the re-mount…
     expect(activeLiftPointer()).toBe(POINTER)
+    // …and so did the block on the native scroll: Chromium keeps sending the touch's events to
+    // the node the finger came down on, detached or not, and they must still be cancelled there
+    // or the grid's pan-y would take the touch over and end the drag.
+    expect(touchmoveOn(anchor).defaultPrevented).toBe(true)
 
     // …and the release lands the card where the finger is: first among the loose tabs.
     letGo(edge.x, edge.y)
     expect(activeLiftPointer()).toBeNull()
+    expect(touchmoveOn(anchor).defaultPrevented).toBe(false)
     expect(liftStore.get()).toMatchObject({ phase: 'dropping', target: null })
     expect(commands()).toEqual([
       ['tab.move', { tabId: 'm1', spaceId: SPACE, section: 'regular', index: 1 }],
