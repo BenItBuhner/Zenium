@@ -495,6 +495,11 @@ export interface ClipboardHost {
   writeText(text: string): void
   /** Fetch an image and put it on the clipboard; resolves false when unsupported / failed. */
   writeImageFromUrl(url: string): Promise<boolean>
+  /**
+   * The clipboard's plain text ('' when it holds none). Hosts that cannot read the clipboard
+   * leave it out; the URL bar's paste-and-go actions then do nothing.
+   */
+  readText?(): Promise<string>
 }
 
 export interface ShellHost {
@@ -529,6 +534,12 @@ export interface NetHost {
       timeoutMs?: number
     }
   ): Promise<{ ok: boolean; status: number; text: string }>
+  /**
+   * Whether `host` resolves in DNS (Chrome's intranet probe behind "Did you mean to go to
+   * http://host/?"). Resolves false on any failure; hosts without a resolver leave it out and
+   * the URL bar offers no such row.
+   */
+  resolveHost?(host: string, options: { signal?: AbortSignal }): Promise<boolean>
 }
 
 /**

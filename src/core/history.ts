@@ -395,24 +395,63 @@ export class HistoryService {
       .map((s) => s.e)
   }
 
-  /** Inline autofill candidate: a visited host that starts with the typed text. */
-  autofill(query: string): string | null {
+  /**
+   * Inline autofill candidate for the typed text, Chrome's HistoryURL default match. Up to the
+   * host, it completes a visited host (`exam` → `example.org/`, the most frecent one); once a
+   * slash has been typed it completes the most frecent visited URL with that prefix
+   * (`example.org/d` → `example.org/docs/intro`). `fill` is the text the field shows (no scheme,
+   * no `www.` unless typed), `url` what Enter opens. Null for text with spaces or a scheme.
+   */
+  autofill(query: string): { fill: string; url: string } | null {
     const q = query.trim().toLowerCase()
     if (!q || /\s/.test(q) || q.includes(':')) return null
-    let best: { host: string; score: number } | null = null
+    const now = this.now()
+    const wantsPath = q.includes('/')
+    const best = new Map<string, { fill: string; url: string; score: number }>()
     for (const e of this.entries.values()) {
-      let host: string
+      if (!/^https?:\/\//i.test(e.url)) continue
+      let parsed: URL
       try {
-        host = new URL(e.url).host.toLowerCase()
+        parsed = new URL(e.url)
       } catch {
         continue
       }
+      const host = parsed.host.toLowerCase()
       const bare = host.replace(/^www\./, '')
-      if (!(host.startsWith(q) || bare.startsWith(q))) continue
-      const score = e.visitCount
-      if (!best || score > best.score) best = { host: bare.startsWith(q) ? bare : host, score }
+      const shownHost = host.startsWith(q) && !bare.startsWith(q) ? host : bare
+      const ageDays = (now - e.lastVisit) / DAY_MS
+      const frecency = e.visitCount + 3 * (e.typedCount ?? 0) + 2 / (1 + ageDays)
+      if (!wantsPath) {
+        if (!(host.startsWith(q) || bare.startsWith(q))) continue
+        const fill = `${shownHost}/`
+        const hit = best.get(fill)
+        // Every page of the host counts towards the host's completion.
+        if (hit) hit.score += frecency
+        else best.set(fill, { fill, url: `${parsed.protocol}//${host}/`, score: frecency })
+        continue
+      }
+      const path = `${parsed.pathname}${parsed.search}${parsed.hash}`
+      for (const candidate of new Set([`${host}${path}`, `${bare}${path}`])) {
+        if (!candidate.toLowerCase().startsWith(q)) continue
+        const hit = best.get(candidate)
+        if (hit) hit.score += frecency
+        else best.set(candidate, { fill: candidate, url: e.url, score: frecency })
+      }
     }
-    return best ? `${best.host}/` : null
+    let winner: { fill: string; url: string; score: number } | null = null
+    for (const c of best.values()) {
+      if (
+        !winner ||
+        c.score > winner.score ||
+        (c.score === winner.score && c.fill.length < winner.fill.length)
+      )
+        winner = c
+    }
+    if (!winner) return null
+    let fill = winner.fill
+    // Keep the user's casing for the part they typed, so the selection does not flicker.
+    fill = query.trim() + fill.slice(q.length)
+    return { fill, url: winner.url }
   }
 
   /**
