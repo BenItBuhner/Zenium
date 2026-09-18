@@ -178,7 +178,8 @@ class SiteInfoDemo {
                 SystemClock.sleep(1_200)
                 shot("05-clear-cookies-confirm")
                 tapLabel(f, "Confirm clear cookies")
-                SystemClock.sleep(3_000)
+                // The jar is cleared and read again through Kotlin: the emulator takes its time.
+                SystemClock.sleep(6_000)
                 shot("06-cookies-cleared")
             }
             tapLabel(f, BACK_LABEL)

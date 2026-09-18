@@ -13,6 +13,7 @@ import {
   Cookie,
   ExternalLink,
   Globe,
+  Loader2,
   Lock,
   LockOpen,
   MapPin,
@@ -535,7 +536,7 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
                   type="button"
                   className="zen-sheet-item"
                   data-danger
-                  disabled={actions.busy}
+                  aria-busy={actions.busy === 'cookies' || undefined}
                   onClick={() => setConfirm('cookies')}
                 >
                   <span className="zen-sheet-item-glyph" data-tone="danger">
@@ -565,7 +566,6 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
           kind={confirm}
           site={site.site || site.host}
           count={cookies.length}
-          busy={actions.busy}
           onCancel={() => setConfirm(null)}
           onConfirm={async () => {
             setConfirm(null)
@@ -794,14 +794,12 @@ function ConfirmSheet({
   kind,
   site,
   count,
-  busy,
   onCancel,
   onConfirm
 }: {
   kind: 'cookies' | 'data'
   site: string
   count: number
-  busy: boolean
   onCancel: () => void
   onConfirm: () => void | Promise<void>
 }): JSX.Element {
@@ -849,7 +847,6 @@ function ConfirmSheet({
           className="zen-v2-button"
           data-danger
           aria-label={words.confirmLabel}
-          disabled={busy}
           onClick={() => {
             decided.current = true
             // The sheet leaves first; the action runs once it is gone, then the reading refreshes.
@@ -1456,7 +1453,7 @@ function PermissionRows({
   kit
 }: {
   info: SiteInfo | null
-  busy: boolean
+  busy: Busy
   onReset: (permission: string) => Promise<void>
   kit: RowKit
 }): JSX.Element {
@@ -1482,10 +1479,15 @@ function PermissionRows({
                 type="button"
                 className={phone ? 'zen-v2-button' : 'zen-button'}
                 aria-label={`Reset ${label} permission`}
-                disabled={busy}
+                // Working (§9.30): full opacity, the label gives way to a spinner at the same width.
+                aria-busy={busy === `permission:${p.permission}` || undefined}
                 onClick={() => void onReset(p.permission)}
               >
-                Reset
+                {busy === `permission:${p.permission}` ? (
+                  <Loader2 className="zen-spin h-4 w-4" aria-hidden />
+                ) : (
+                  'Reset'
+                )}
               </button>
             }
           />
@@ -1499,32 +1501,37 @@ function PermissionRows({
 // Actions, and words for numbers
 // ---------------------------------------------------------------------------
 
+/** Which action is running, for the control that started it to show as busy (§9.30). */
+type Busy = 'cookies' | 'data' | `permission:${string}` | null
+
 function useActions(
   tab: Tab,
   site: SiteDescription
 ): {
-  busy: boolean
+  busy: Busy
   clearCookies: () => Promise<void>
   clearData: () => Promise<void>
   resetPermission: (permission?: string) => Promise<void>
   openSettings: () => void
 } {
-  const [busy, setBusy] = useState(false)
-  const act = async (work: () => Promise<void>): Promise<void> => {
+  const [busy, setBusy] = useState<Busy>(null)
+  // Busy is not disabled (§9.30): the working control keeps its look and says so; a second press
+  // while one action runs is simply ignored here.
+  const act = async (key: NonNullable<Busy>, work: () => Promise<void>): Promise<void> => {
     if (busy) return
-    setBusy(true)
+    setBusy(key)
     try {
       await work()
     } catch {
       pushToast('That did not work. Try again.', 'error')
     } finally {
-      setBusy(false)
+      setBusy(null)
     }
   }
   return {
     busy,
     clearCookies: () =>
-      act(async () => {
+      act('cookies', async () => {
         const { removed } = await cmd('site.clearCookies', { tabId: tab.id })
         pushToast(
           removed === 0
@@ -1534,13 +1541,13 @@ function useActions(
         refreshSiteInfo()
       }),
     clearData: () =>
-      act(async () => {
+      act('data', async () => {
         await cmd('site.clearData', { tabId: tab.id })
         pushToast(`Cleared everything ${site.site || 'this site'} stored`)
         refreshSiteInfo()
       }),
     resetPermission: (permission?: string) =>
-      act(async () => {
+      act(`permission:${permission ?? '*'}`, async () => {
         await cmd('site.resetPermissions', { tabId: tab.id, permission })
         refreshSiteInfo()
       }),
@@ -1674,7 +1681,7 @@ function FrameConfirm({
             aria-busy={busy || undefined}
             onClick={onConfirm}
           >
-            {action}
+            {busy ? <Loader2 className="zen-spin h-4 w-4" aria-hidden /> : action}
           </button>
         </div>
       </div>
