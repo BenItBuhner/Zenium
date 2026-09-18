@@ -74,6 +74,7 @@ class CorsProxyTest {
         server.route("/loop") { Response(301, headers = mapOf("Location" to "/loop")) }
         server.route("/cookie") { Response(200, "ok".toByteArray(), mapOf("Set-Cookie" to "sid=1; Path=/", "Content-Type" to "text/plain")) }
         server.route("/fail") { Response(500, "boom".toByteArray(), mapOf("Content-Type" to "text/plain; charset=utf-8")) }
+        server.route("/typed") { Response(200, "--b--".toByteArray(), mapOf("Content-Type" to "multipart/mixed; boundary=b; charset=\"utf-8\"")) }
         server.start()
     }
 
@@ -170,7 +171,17 @@ class CorsProxyTest {
         assertNull(reply.header("Content-Length"))
         assertNull(reply.header("Content-Encoding"))
         assertNull(reply.header("Connection"))
+        // The WebView writes Content-Type from the mime and charset; one in the map too came out doubled.
+        assertNull(reply.header("Content-Type"))
         assertEquals(1, reply.headers.keys.count { it.equals("Access-Control-Allow-Origin", true) })
+    }
+
+    @Test
+    fun `the content type keeps its parameters, the charset apart`() {
+        val reply = proxy.handle(request("GET", "/typed"), id, origin) ?: throw AssertionError("the server answered")
+        assertEquals("multipart/mixed; boundary=b", reply.mime)
+        assertEquals("utf-8", reply.charset)
+        assertNull(reply.header("Content-Type"))
     }
 
     @Test

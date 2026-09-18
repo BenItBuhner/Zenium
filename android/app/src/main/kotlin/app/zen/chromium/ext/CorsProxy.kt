@@ -177,9 +177,16 @@ class CorsProxy(private val cookies: Cookies, private val userAgent: () -> Strin
         redirected: Boolean
     ): Reply {
         val stream = (if (status >= 400) connection.errorStream else connection.inputStream) ?: ByteArrayInputStream(ByteArray(0))
+        // The WebView writes the Content-Type line itself from the mime and the charset (measured:
+        // one carried in the header map as well came out doubled, "application/json, application/json",
+        // where Chrome's page reads a single value), so the type keeps its other parameters (a
+        // multipart boundary) and the header map goes without it.
         val contentType = connection.contentType ?: "application/octet-stream"
-        val mime = contentType.substringBefore(';').trim().ifEmpty { "application/octet-stream" }
-        val charset = contentType.substringAfter("charset=", "").substringBefore(';').trim().ifEmpty { null }
+        val parameters = contentType.split(';').map { it.trim() }
+        val mime = parameters.filterIndexed { i, p -> i == 0 || !p.startsWith("charset=", ignoreCase = true) }
+            .filter { it.isNotEmpty() }.joinToString("; ").ifEmpty { "application/octet-stream" }
+        val charset = parameters.drop(1).firstOrNull { it.startsWith("charset=", ignoreCase = true) }
+            ?.substringAfter('=')?.trim()?.trim('"')?.ifEmpty { null }
         val headers = LinkedHashMap<String, String>()
         val exposed = ArrayList<String>()
         // The WebView files a response's cookies under the URL it asked for; after a redirect the
@@ -236,9 +243,12 @@ class CorsProxy(private val cookies: Cookies, private val userAgent: () -> Strin
             "host", "origin", "referer", "cookie", "accept-encoding", "content-length", "connection", "keep-alive",
             PROXY_HEADER.lowercase(Locale.ROOT), CREDENTIALS_HEADER.lowercase(Locale.ROOT)
         )
-        /** Response headers that would lie about the re-framed, decoded body, plus the server's own CORS answer. */
+        /**
+         * Response headers that would lie about the re-framed, decoded body, the one the WebView
+         * writes itself from the reply's mime and charset, plus the server's own CORS answer.
+         */
         private val DROPPED_RESPONSE_HEADERS = setOf(
-            "content-length", "content-encoding", "transfer-encoding", "connection", "keep-alive",
+            "content-length", "content-encoding", "transfer-encoding", "connection", "keep-alive", "content-type",
             "access-control-allow-origin", "access-control-allow-credentials", "access-control-expose-headers"
         )
     }
