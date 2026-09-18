@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, type PointerEvent as ReactPointerEv
 import type { Rect, Tab } from '@shared/types'
 import {
   beginDrag,
+  DRAG_SLOP,
   DROP_IDLE,
   dwellDeadline,
   elapseDrag,
@@ -9,6 +10,8 @@ import {
   leaveDrag,
   releaseDrag,
   sameSlot,
+  scrollDrag,
+  type DragPointer,
   type DropHover,
   type DropOutcome,
   type DropSlot,
@@ -16,7 +19,7 @@ import {
   type DropTargetState
 } from '@renderer/lib/gestures/dropTarget'
 import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
-import { SpringAnimation, type SpringConfig } from '@renderer/lib/motion/spring'
+import { SPRING_SNAPPY, SpringAnimation, type SpringConfig } from '@renderer/lib/motion/spring'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import { createStore } from '@renderer/lib/store'
 import { CardSwipe } from './cardSwipe'
@@ -24,14 +27,17 @@ import { CardSwipe } from './cardSwipe'
 /** Hold before a card comes off the grid. */
 const LONG_PRESS_MS = 380
 /** Movement (px) that turns a held card into a drag, or a touch into a scroll or a swipe. */
-const SLOP = 8
+const SLOP = DRAG_SLOP
 /** Distance from the edge of the grid within which a drag scrolls it. */
 const AUTOSCROLL_ZONE = 56
 /** How long a released hold waits for its click before opening the actions regardless. */
 const MENU_DELAY_MS = 250
 const AUTOSCROLL_SPEED = 14
 
-/** The ghost tracks the finger closely but not rigidly: a firm spring with a little give. */
+/**
+ * The ghost tracks the finger closely but not rigidly: a firm spring with a little give. Let go,
+ * it glides home on the grid's own `SPRING_SNAPPY` from the velocity it had (v2 §11.4).
+ */
 const SPRING_FOLLOW: SpringConfig = {
   stiffness: 640,
   damping: 46,
@@ -39,6 +45,9 @@ const SPRING_FOLLOW: SpringConfig = {
   restDelta: 0.3,
   restSpeed: 6
 }
+/** Scale of the card in the hand (v2 §11.4); over a merge target it tucks in further. */
+const LIFT_SCALE = 1.02
+const TUCK_SCALE = 0.84
 
 /**
  * Where a dragged card may land when it is dropped *on* something:
@@ -87,6 +96,8 @@ const IDLE: LiftState = {
 export const liftStore = createStore<LiftState>(IDLE, 'card-lift')
 
 let onSettled: (() => void) | null = null
+/** The ghost is flying into its slot (`settleLift` was called; the springs may retarget). */
+let landing = false
 
 const xSpring = new SpringAnimation(
   SPRING_FOLLOW,
@@ -117,6 +128,7 @@ function maybeSettled(): void {
   if (xSpring.running || ySpring.running || scaleSpring.running) return
   const done = onSettled
   onSettled = null
+  landing = false
   liftStore.set(IDLE)
   done?.()
 }
@@ -125,12 +137,13 @@ function stopSprings(): void {
   xSpring.stop()
   ySpring.stop()
   scaleSpring.stop()
+  landing = false
 }
 
 /** Scale of the ghost for the current situation. */
 function targetScale(phase: LiftPhase, target: LiftTarget | null): number {
-  if (phase === 'lifted') return 1.04
-  if (phase === 'dragging') return target ? 0.84 : 0.94
+  if (phase === 'lifted') return LIFT_SCALE
+  if (phase === 'dragging') return target ? TUCK_SCALE : LIFT_SCALE
   return 1
 }
 
@@ -142,17 +155,33 @@ function retargetScale(): void {
 }
 
 /**
- * The dropped card's new slot is known (the grid has re-laid itself out): fly the ghost there
- * and put the card back once it has landed. `then` runs when the gesture is over.
+ * The dropped card's new slot is known (the grid has re-laid itself out): fly the ghost there on
+ * the grid's own spring, from the velocity it had in the hand (v2 §11.4), and put the card back
+ * once it has landed. `then` runs when the gesture is over.
  */
 export function settleLift(to: Rect, then?: () => void): void {
   const s = liftStore.get()
   if (s.phase !== 'dropping' || !s.ghost) return
   onSettled = then ?? null
+  landing = true
   liftStore.set({ ghost: { ...s.ghost, width: to.width, height: to.height } })
-  xSpring.start(s.ghost.x, xSpring.current.v, to.x)
-  ySpring.start(s.ghost.y, ySpring.current.v, to.y)
+  xSpring.start(s.ghost.x, xSpring.current.v, to.x, SPRING_SNAPPY)
+  ySpring.start(s.ghost.y, ySpring.current.v, to.y, SPRING_SNAPPY)
   scaleSpring.start(s.scale, 0, 1)
+}
+
+/**
+ * The slot the ghost is flying into has moved (the card's stand-in is gliding – the cells below
+ * a group were let go once its height had settled): keep heading for where it is drawn now, so
+ * the ghost lands on the card wherever the glide has taken it. Nothing until `settleLift`.
+ */
+export function retargetLift(to: Rect): void {
+  const s = liftStore.get()
+  if (!landing || s.phase !== 'dropping' || !s.ghost) return
+  if (s.ghost.width !== to.width || s.ghost.height !== to.height)
+    liftStore.set({ ghost: { ...s.ghost, width: to.width, height: to.height } })
+  if (xSpring.destination !== to.x) xSpring.retarget(to.x)
+  if (ySpring.destination !== to.y) ySpring.retarget(to.y)
 }
 
 /** Drop everything without animation (the overview went away). */
@@ -261,7 +290,7 @@ class DragSession {
     this.x = touch.x
     this.y = touch.y
     this.anchor = touch.anchor
-    this.drop = beginDrag(handlers.tab.folderId ?? null)
+    this.drop = beginDrag(handlers.tab.folderId ?? null, { x: touch.x, y: touch.y })
     window.addEventListener('pointermove', this.onMove, true)
     window.addEventListener('pointerup', this.onUp, true)
     window.addEventListener('pointercancel', this.onCancel, true)
@@ -320,24 +349,25 @@ class DragSession {
     // The ghost keeps the grip the finger took on it, wherever the grid scrolls underneath.
     const toX = s.origin.x + (this.x - this.x0)
     const toY = s.origin.y + (this.y - this.y0)
+    // The follow spring, always: the last landing left the springs on the grid's.
     if (xSpring.running) xSpring.retarget(toX)
-    else xSpring.start(s.ghost?.x ?? toX, 0, toX)
+    else xSpring.start(s.ghost?.x ?? toX, 0, toX, SPRING_FOLLOW)
     if (ySpring.running) ySpring.retarget(toY)
-    else ySpring.start(s.ghost?.y ?? toY, 0, toY)
+    else ySpring.start(s.ghost?.y ?? toY, 0, toY, SPRING_FOLLOW)
   }
 
-  /** Ask the grid what the finger is over and run the drop-target machine on the answer. */
+  /**
+   * Ask the grid what the finger is over and run the drop-target machine on the answer – which
+   * counts only once the finger has moved past the slop from where it settled (v2 §11.4).
+   */
   private hover(now: number, mirror: boolean): void {
     const { tab, onHover } = this.handlers
     const current: LiftHover = { target: this.drop.target, slot: this.drop.slot }
     const next = onHover(tab, this.x, this.y, current)
-    if (next === null) {
-      // Off the grid: nothing is targeted, nothing waits to open.
-      this.drop = leaveDrag(this.drop)
-    } else {
-      const { vx, vy } = this.velocity.velocity(now)
-      this.drop = hoverDrag(this.drop, next, now, Math.hypot(vx, vy))
-    }
+    const { vx, vy } = this.velocity.velocity(now)
+    const pointer: DragPointer = { x: this.x, y: this.y, now, speed: Math.hypot(vx, vy) }
+    // Off the grid: nothing is targeted, nothing waits to open.
+    this.drop = next === null ? leaveDrag(this.drop, pointer) : hoverDrag(this.drop, next, pointer)
     if (mirror) this.mirror()
   }
 
@@ -389,7 +419,8 @@ class DragSession {
       const before = el.scrollTop
       el.scrollTop += delta
       if (el.scrollTop === before) return
-      // The slots moved under the finger.
+      // The slots moved under the finger – at the finger's own asking.
+      this.drop = scrollDrag(this.drop, 0, el.scrollTop - before)
       this.hover(performance.now(), true)
       this.autoscroll = requestAnimationFrame(tick)
     }
