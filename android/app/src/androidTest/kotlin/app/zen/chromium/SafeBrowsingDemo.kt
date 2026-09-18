@@ -383,12 +383,13 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
                 SystemClock.sleep(800)
                 shot("20-settings-https-only-sheet")
                 pressRow(always)
-                SystemClock.sleep(1_800)
+                awaitSheetGone("HTTPS-only mode")
+                note("  httpsOnly=${awaitPrivacySetting("httpsOnly", "always")} (read once the sheet had gone)")
             } else {
                 note("  (the picker sheet never showed '$always')")
-                closeSheetIfOpen()
+                closeSheetIfOpen("HTTPS-only mode")
+                note("  httpsOnly=${privacySetting("httpsOnly")}")
             }
-            note("  httpsOnly=${privacySetting("httpsOnly")}")
             shot("21-settings-https-only-always")
         } else {
             note("  (no value row 'HTTPS-only mode')")
@@ -429,12 +430,13 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
                 SystemClock.sleep(800)
                 shot("25-settings-cookies-sheet")
                 pressRow(COOKIES_BLOCK_LABEL)
-                SystemClock.sleep(1_800)
+                awaitSheetGone("Third-party cookies")
+                note("  thirdPartyCookies=${awaitPrivacySetting("thirdPartyCookies", "block")} (read once the sheet had gone)")
             } else {
                 note("  (the picker sheet never showed '$COOKIES_BLOCK_LABEL')")
-                closeSheetIfOpen()
+                closeSheetIfOpen("Third-party cookies")
+                note("  thirdPartyCookies=${privacySetting("thirdPartyCookies")}")
             }
-            note("  thirdPartyCookies=${privacySetting("thirdPartyCookies")}")
         } else {
             note("  (no value row 'Third-party cookies')")
         }
@@ -526,12 +528,45 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         return false
     }
 
+    /** The picker sheet titled `title` is up exactly while its handle button is in the tree. */
+    private fun sheetHandle(title: String): String = "Resize $title options"
+
     /**
-     * Back out of a picker sheet that is up – the chrome behind it is inert, so its chips leave
-     * the tree – and nothing when none is; Settings is reopened should back have taken it too.
+     * Wait for the picker sheet titled `title` to have gone after a pick. The check moves at once,
+     * but the sheet slides down first and the value is applied as it lands (PickerSheet: the pane
+     * under it never changes while it is up), which takes seconds under the emulator's software
+     * rendering – a value read straight after the press is still the old one.
      */
-    private fun closeSheetIfOpen() {
-        if (findNode { it == "Privacy and Security" } != null) return
+    private fun awaitSheetGone(title: String) {
+        val handle = sheetHandle(title)
+        val deadline = SystemClock.uptimeMillis() + 15_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (findNode { it == handle } == null) return
+            SystemClock.sleep(250)
+        }
+        note("  (the '$title' sheet is still up 15 s after the pick)")
+    }
+
+    /**
+     * Poll the privacy setting `key` until it reads `expected` – the store hears of a pick through
+     * the bridge a moment after the sheet has gone – for up to `timeoutMs`; the value read last.
+     */
+    private fun awaitPrivacySetting(key: String, expected: String, timeoutMs: Long = 6_000): Any? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var value = privacySetting(key)
+        while (value != expected && SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(300)
+            value = privacySetting(key)
+        }
+        return value
+    }
+
+    /**
+     * Back out of the picker sheet titled `title` should it still be up, and nothing when it is
+     * not; Settings is reopened should back have taken it too.
+     */
+    private fun closeSheetIfOpen(title: String) {
+        if (findNode { it == sheetHandle(title) } == null) return
         back()
         SystemClock.sleep(1_000)
         if (findNode { it == "Privacy and Security" } == null) openPrivacySettings()
