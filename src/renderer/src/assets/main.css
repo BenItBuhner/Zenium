@@ -3713,7 +3713,16 @@
     font-size: var(--v2-font-small);
     line-height: var(--v2-line-small);
   }
+  /*
+   * A manifest description runs to 512 characters; it clamps at four lines (80 at the 20 line)
+   * with an ellipsis so the sheet stays a decision surface and the footer stays in reach at the
+   * peek detent (§9.2's clamp, applied to body copy; design lead on #74).
+   */
   .zen-install-description {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
+    overflow: hidden;
     margin: 0;
     color: var(--v2-text-deemphasized);
     font-size: var(--v2-font-body);
