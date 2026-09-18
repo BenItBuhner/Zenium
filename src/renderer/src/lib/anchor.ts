@@ -2,6 +2,7 @@ import type { Rect } from '@shared/types'
 import {
   placePopover,
   viewportSize,
+  type PlacePopoverOptions,
   type PopoverAlignment,
   type PopoverBox,
   type PopoverExtent,
@@ -52,9 +53,10 @@ export function placeUnder(
   width: PopoverExtent,
   height?: number,
   viewport: Size = viewportSize(),
-  alignment?: PopoverAlignment
+  alignment?: PopoverAlignment,
+  options?: PlacePopoverOptions
 ): PopoverBox & { alignment: PopoverAlignment } {
-  return placePopover(anchor, anchor.bar ?? anchor, viewport, width, height, alignment)
+  return placePopover(anchor, anchor.bar ?? anchor, viewport, width, height, alignment, options)
 }
 
 /**

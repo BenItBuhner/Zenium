@@ -11,6 +11,7 @@ import {
   forgetBanner,
   forgetToast,
   openOverlay,
+  openZoom,
   pushToast,
   showBanner,
   uiStore
@@ -25,10 +26,11 @@ import { parsePreviewSpec } from './previewSpec'
  * `section=<id>` picks a Settings section, `show=<text>` scrolls the row with that text into
  * view), `menu=app` (the app menu sheet; `show=<text>` scrolls an item into view), `find=<text>`
  * (the find bar with that text typed), `pull=<n>` (the page held pulled down at n percent of the
- * refresh threshold; `pull=refresh` lets go past it), `error=<code>` (the active tab's load
- * failed with that Chromium `net::` code, `url=<target>` naming the URL that failed: the
- * zen://error page is up) or the message surfaces and the load bar:
- * `toast=<text>&action=<label>`, `banners=<n>`, `progress=<0…1>`. It comes in as the URL hash,
+ * refresh threshold; `pull=refresh` lets go past it), `zoom=<factor>` (the page zoom sheet at
+ * that factor), `error=<code>` (the active tab's load failed with that Chromium `net::` code,
+ * `url=<target>` naming the URL that failed: the zen://error page is up) or the message surfaces
+ * and the load bar: `toast=<text>&action=<label>`, `banners=<n>`, `progress=<0…1>`. It comes in
+ * as the URL hash,
  * `http://localhost:41734/#overlay=history`, or as `window.postMessage({ zenPreview: 'find=coffee' }, '*')`,
  * which also re-applies an unchanged state. Once applied it is echoed in `<html data-preview-state>`
  * so a driver can wait for it; `.github/scripts/android-preview-shots.mjs` is one.
@@ -55,7 +57,7 @@ function apply(spec: string): void {
     // (a `cancel` would spring home, and the next pull would catch that spring part-way).
     closeOverlay()
     closeMenu()
-    uiStore.set({ findOpen: false, findTabId: null })
+    uiStore.set({ findOpen: false, findTabId: null, zoomTabId: null })
     abortPull()
     clearMessages(tab?.loading ? tab.id : null)
 
@@ -80,6 +82,10 @@ function apply(spec: string): void {
         )
       })
       run('app.menu', {})
+    } else if (target.kind === 'zoom' && tab) {
+      if (target.factor !== null) run('tab.setZoomFactor', { tabId: tab.id, factor: target.factor })
+      openZoom(tab.id)
+      requestAnimationFrame(() => done(spec))
     } else if (target.kind === 'find' && tab) {
       uiStore.set({ findOpen: true, findTabId: tab.id })
       // The bar mounts on the next render; type into it the way a keyboard would.
