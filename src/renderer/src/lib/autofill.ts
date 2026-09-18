@@ -70,6 +70,24 @@ export function toggleAutofillPrompt(id: string): void {
   })
 }
 
+/** The desktop prompt's panel (`AutofillPrompts`), for the chip's Tab to step into. */
+const PROMPT_SELECTOR = '[data-af-prompt]'
+
+/**
+ * Move the keyboard into the open desktop prompt (v2 §9.22): its field when it has one (the
+ * login prompts' username), else the panel itself, a title-and-notice container named by its
+ * title. The chip's Tab steps in here, since a prompt the page raised took no focus on open; a
+ * prompt on its way into the chip takes none.
+ */
+export function enterAutofillPrompt(
+  panel = document.querySelector<HTMLElement>(PROMPT_SELECTOR)
+): boolean {
+  if (!panel || panel.dataset.closing) return false
+  const target = panel.querySelector<HTMLElement>('input, textarea') ?? panel
+  target.focus({ preventScroll: true })
+  return true
+}
+
 /**
  * A prompt is about to show over `tabId`'s page. The page's views hide under chrome that
  * overlaps them, so its snapshot stands in; a popover leaves the picture undimmed, a sheet or a
