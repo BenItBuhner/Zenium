@@ -80,6 +80,8 @@ export interface RecedeHandle {
 interface Entry {
   presence: number
   onFrame: ((frame: RecedeLayerFrame) => void) | undefined
+  /** The last frame this layer was told of, so it hears only of changes to its own. */
+  last: RecedeLayerFrame | null
 }
 
 const stack: Entry[] = []
@@ -89,8 +91,13 @@ function root(): HTMLElement | null {
   return typeof document === 'undefined' ? null : document.documentElement
 }
 
+function sameFrame(a: RecedeLayerFrame | null, b: RecedeLayerFrame): boolean {
+  return a !== null && a.recede === b.recede && a.scrim === b.scrim && a.inert === b.inert
+}
+
 function publish(): void {
-  const frame = recedeFrame(stack.map((e) => e.presence))
+  const entries = stack.slice()
+  const frame = recedeFrame(entries.map((e) => e.presence))
   const el = root()
   if (el) {
     if (stack.length > 0) {
@@ -101,16 +108,23 @@ function publish(): void {
       el.style.removeProperty('--zen-recede')
     }
   }
-  stack.forEach((entry, i) => entry.onFrame?.(frame.layers[i]))
+  // Told in stack order, each only of a change to its own frame: a sheet's presence moves its
+  // own scrim share and the recede of the sheets under it, never a sheet above it.
+  entries.forEach((entry, i) => {
+    const next = frame.layers[i]
+    if (sameFrame(entry.last, next)) return
+    entry.last = next
+    entry.onFrame?.(next)
+  })
 }
 
 /**
  * Put a sheet on the stack, above every sheet registered before it. Call `progress` from the
  * sheet's frame callback and `release` when the sheet unmounts; `onFrame` receives the sheet's
- * own recede, scrim share and inertness whenever the stack changes.
+ * own recede, scrim share and inertness whenever they change (at once on registering).
  */
 export function registerRecedeLayer(onFrame?: (frame: RecedeLayerFrame) => void): RecedeHandle {
-  const entry: Entry = { presence: 0, onFrame }
+  const entry: Entry = { presence: 0, onFrame, last: null }
   stack.push(entry)
   publish()
   let released = false

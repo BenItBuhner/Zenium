@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom'
 import type { Rect } from '@shared/types'
 import { useViewport } from './formFactor'
 import { registerRecedeLayer, type RecedeHandle, type RecedeLayerFrame } from './motion/recede'
-import { SPRING_GENTLE, SpringAnimation } from './motion/spring'
+import { SPRING_GENTLE, SpringAnimation, type SpringConfig } from './motion/spring'
 import type { Hold } from './pageView'
 import { closeAllPopovers } from './popoverStore'
 import { activePageCovered } from './ui'
@@ -166,6 +166,17 @@ export function chromeInertHeld(): boolean {
 /** How far (px) a phone host's slot rises into place as its progress runs 0 → 1. */
 export const SHEET_RISE_PX = 24
 
+/**
+ * The sheet spring for a 0…1 progress: `SPRING_GENTLE`'s motion, its rest thresholds – set in
+ * px for a sheet that travels some 400 px – scaled to the unit, so the value settles to within
+ * a thousandth instead of snapping the last 40 % of the way.
+ */
+export const SHEET_PROGRESS_SPRING: SpringConfig = {
+  ...SPRING_GENTLE,
+  restDelta: 0.001,
+  restSpeed: 0.02
+}
+
 const LAYER_AT_REST: RecedeLayerFrame = { recede: 0, scrim: 0, inert: false }
 
 interface SheetChassis {
@@ -203,10 +214,12 @@ function useSheetChassis(active: boolean, open: boolean): SheetChassis {
     const scrim = scrimRef.current
     const slot = slotRef.current
     const q = layer.current
+    // The spring overshoots a hair: the rise shows it, the opacities stop at their ends.
+    const share = Math.min(1, Math.max(0, p.current))
     // The stack shows one scrim: this one's share gives way as a sheet above fades its own in.
-    if (scrim) scrim.style.opacity = (p.current * (1 - q.recede)).toFixed(4)
+    if (scrim) scrim.style.opacity = (share * (1 - q.recede)).toFixed(4)
     if (slot) {
-      slot.style.opacity = p.current.toFixed(4)
+      slot.style.opacity = share.toFixed(4)
       slot.style.transform = `translate3d(0, ${((1 - p.current) * SHEET_RISE_PX).toFixed(2)}px, 0) scale(var(--zen-layer-scale, 1))`
       slot.style.setProperty('--zen-layer-recede', q.recede.toFixed(4))
       slot.toggleAttribute('inert', q.inert)
@@ -234,7 +247,7 @@ function useSheetChassis(active: boolean, open: boolean): SheetChassis {
 
   const motion = (): SpringAnimation =>
     (spring.current ??= new SpringAnimation(
-      SPRING_GENTLE,
+      SHEET_PROGRESS_SPRING,
       (x) => {
         p.current = x
         recede.current?.progress(x)
