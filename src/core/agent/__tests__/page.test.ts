@@ -15,22 +15,31 @@ function box(el: Element): DOMRect {
   return new DOMRect(x, y, w, h)
 }
 
-function installLayout(): void {
-  Element.prototype.getBoundingClientRect = function (this: Element) {
+/** Give `doc` (the top document or a frame's) the box-attribute layout above. */
+function installLayoutIn(doc: Document, size = { width: 1000, height: 800 }): void {
+  const win = doc.defaultView as (Window & typeof globalThis) | null
+  const proto = (win?.Element ?? Element).prototype
+  proto.getBoundingClientRect = function (this: Element) {
     return box(this)
   }
   ;(
-    document as unknown as { elementFromPoint: (x: number, y: number) => Element | null }
+    doc as unknown as { elementFromPoint: (x: number, y: number) => Element | null }
   ).elementFromPoint = (x: number, y: number) => {
     let hit: Element | null = null
-    for (const el of Array.from(document.querySelectorAll('[data-box]'))) {
+    for (const el of Array.from(doc.querySelectorAll('[data-box]'))) {
       const r = box(el)
       if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) hit = el
     }
-    return hit ?? document.body
+    return hit ?? doc.body
   }
-  Object.defineProperty(window, 'innerWidth', { value: 1000, configurable: true })
-  Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true })
+  if (win) {
+    Object.defineProperty(win, 'innerWidth', { value: size.width, configurable: true })
+    Object.defineProperty(win, 'innerHeight', { value: size.height, configurable: true })
+  }
+}
+
+function installLayout(): void {
+  installLayoutIn(document)
 }
 
 function runtime(): PageRuntime {
@@ -157,5 +166,125 @@ describe('page runtime', () => {
     expect(code).toContain('__zenAgentRuntime_v1')
     expect(code).toContain('rt.locateAt("agent",1,2)')
     expect(PAGE_RUNTIME_SOURCE).not.toMatch(/\brequire\(|\bimport\s/)
+  })
+})
+
+/**
+ * Frames. happy-dom gives a `srcdoc` iframe a same-origin document and leaves `contentDocument`
+ * null for another origin's `src` – the two cases the runtime distinguishes: the first is walked
+ * as part of the page, the second reported as a slot for the host to fill.
+ */
+describe('page runtime and frames', () => {
+  let rt: PageRuntime
+  let same: HTMLIFrameElement
+  let inner: Document
+
+  beforeEach(async () => {
+    installLayout()
+    document.body.innerHTML = `
+      <h1 data-box="20,20,400,40">Shop</h1>
+      <iframe id="same" title="Same-origin widget" data-box="100,100,400,300"
+        srcdoc="&lt;button id='inner' data-box='10,10,100,30'&gt;Inner&lt;/button&gt;&lt;input id='field' data-box='10,60,200,30' placeholder='Inner field'&gt;"></iframe>
+      <iframe id="other" title="Sign in with Google" name="gsi" data-box="100,500,400,200"></iframe>
+      <button id="pay" data-box="20,750,100,30">Pay</button>
+    `
+    await new Promise((r) => setTimeout(r, 20))
+    same = document.getElementById('same') as HTMLIFrameElement
+    inner = same.contentDocument!
+    installLayoutIn(inner, { width: 400, height: 300 })
+    // happy-dom does not link a frame's window back to its element; the runtime needs that link
+    // to place the frame's content in the top viewport.
+    Object.defineProperty(inner.defaultView, 'frameElement', { value: same, configurable: true })
+    // The other frame stands for a cross-origin one: its document is out of reach (a `src` on
+    // another origin would make happy-dom fetch it – this keeps the test off the network).
+    const other = document.getElementById('other')!
+    Object.defineProperty(other, 'contentDocument', { get: () => null, configurable: true })
+    Object.defineProperty(other, 'src', { value: 'https://other.example/gsi', configurable: true })
+    rt = runtime()
+  })
+
+  it('walks same-origin frames in place, with boxes in top-viewport coordinates', () => {
+    const snap = rt.snapshot({ agent: 'a', boxes: true })
+    expect(snap.tree).toMatch(/- iframe "Same-origin widget" \[box=100,100,400,300\] \[ref=e\d+\]/)
+    // The frame's elements sit one level under the iframe line.
+    expect(snap.tree).toContain('\n  - button "Inner" [box=110,110,100,30] [ref=e')
+    expect(snap.tree).toContain('\n  - textbox "Inner field" [box=110,160,200,30] [ref=e')
+    expect(snap.frames.map((f) => f.title)).toEqual(['Sign in with Google'])
+  })
+
+  it('locates elements of same-origin frames in top-viewport coordinates, by ref, text and point', () => {
+    const snap = rt.snapshot({ agent: 'a' })
+    const ref = /button "Inner" \[ref=(e\d+)\]/.exec(snap.tree)![1]
+    const byRef = rt.locate('a', ref, false)
+    expect(isLocation(byRef) && [byRef.x, byRef.y]).toEqual([160, 125])
+    const byText = rt.locate('a', 'text=Inner', false)
+    expect(isLocation(byText) && byText.ref).toBe(ref)
+    const at = rt.locateAt('a', 160, 125)
+    expect(isLocation(at) && at.tag).toBe('button')
+    expect(isLocation(at) && at.name).toBe('Inner')
+    expect(isLocation(at) && at.ref).toBe(ref)
+  })
+
+  it('reports a cross-origin iframe as a slot right after its line, at its top-viewport box', () => {
+    const snap = rt.snapshot({ agent: 'a' })
+    const lines = snap.tree.split('\n')
+    const frameLine = lines.findIndex((l) => l.includes('- iframe "Sign in with Google"'))
+    expect(frameLine).toBeGreaterThan(0)
+    expect(snap.frames).toHaveLength(1)
+    const slot = snap.frames[0]
+    expect(slot).toMatchObject({
+      index: frameLine + 1,
+      contentDepth: 1,
+      x: 100,
+      y: 500,
+      width: 400,
+      height: 200,
+      src: 'https://other.example/gsi',
+      name: 'gsi',
+      title: 'Sign in with Google'
+    })
+    expect(lines[frameLine]).toContain(`[ref=${slot.ref}]`)
+    // The same element, the same ref, when asked for the frames alone.
+    expect(rt.frames('a').map((f) => f.ref)).toEqual([slot.ref])
+    // A point inside the opaque frame is the frame itself: the host asks the frame's runtime.
+    const hit = rt.locateAt('a', 200, 600)
+    expect(isLocation(hit) && hit.tag).toBe('iframe')
+    expect(isLocation(hit) && hit.ref).toBe(slot.ref)
+  })
+
+  it('numbers refs from the host floor, reports its counter and a stable document token', () => {
+    const snap = rt.snapshot({ agent: 'a', minSeq: 50 })
+    const refs = [...snap.tree.matchAll(/\[ref=e(\d+)\]/g)].map((m) => Number(m[1]))
+    expect(Math.min(...refs)).toBe(50)
+    expect(snap.seq).toBe(Math.max(...refs))
+    expect(snap.docToken).toMatch(/^[a-z0-9]+$/)
+    expect(rt.snapshot({ agent: 'a' }).docToken).toBe(snap.docToken)
+    // Raising the floor later does not renumber what was handed out…
+    const again = rt.snapshot({ agent: 'a', minSeq: 90 })
+    expect(again.tree).toBe(snap.tree)
+    const pay = /button "Pay" \[ref=(e\d+)\]/.exec(snap.tree)![1]
+    expect(rt.locateAt('a', 30, 760)).toMatchObject({ ref: pay })
+    // …while an element seen for the first time is numbered above the new floor.
+    document.body.insertAdjacentHTML('beforeend', '<button data-box="500,750,80,30">New</button>')
+    const fresh = rt.locateAt('a', 510, 760)
+    expect(isLocation(fresh) && Number(fresh.ref!.slice(1))).toBeGreaterThanOrEqual(90)
+  })
+
+  it('offsets every box and slot into the top viewport when it runs inside a frame', () => {
+    const snap = rt.snapshot({ agent: 'a', boxes: true, offset: { x: 1000, y: 20 } })
+    expect(snap.tree).toMatch(/- heading "Shop" \[level=1\] \[box=1020,40,400,40\]/)
+    expect(snap.frames[0]).toMatchObject({ x: 1100, y: 520 })
+  })
+
+  it('leaves the iframe line out under interactiveOnly but keeps the slot at its place', () => {
+    const snap = rt.snapshot({ agent: 'a', interactiveOnly: true })
+    expect(snap.tree).not.toContain('- iframe')
+    expect(snap.tree).toContain('- button "Inner"')
+    const lines = snap.tree.split('\n')
+    const slot = snap.frames[0]
+    expect(slot.contentDepth).toBe(0)
+    // Between the same-origin frame's field and the Pay button, where the iframe stands.
+    expect(lines[slot.index - 1]).toContain('Inner field')
+    expect(lines[slot.index]).toContain('"Pay"')
   })
 })

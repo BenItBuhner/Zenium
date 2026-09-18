@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import type { AgentInputEvent, TabView } from '../../platform'
 import type { Tab } from '../../../shared/types'
 import { createTabRecord } from '../../model'
+import { TabFrames } from '../frames'
 import { RpcError } from '../jsonrpc'
+import type { ToolResult } from '../protocol'
 import { withUnknownArgsNote } from '../service'
+import { signInPage, type FakePage } from './fakePage'
 import {
   AGENT_TOOLS,
   ARG_ALIASES,
@@ -332,6 +336,183 @@ describe('wrapScript', () => {
     expect(looksLikeStatements("history.forward(); 'forwarded'")).toBe(true)
     expect(looksLikeStatements('document.title;')).toBe(false)
     expect(looksLikeStatements('if (a) b()')).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A live page: the fake frames of `fakePage.ts` behind a tab view, driven by the page tools.
+// ---------------------------------------------------------------------------
+
+interface Live {
+  ctx: ToolContext
+  page: FakePage
+  input: AgentInputEvent[]
+  /** The tab a click "opened" through the cursor calls, to check the overlay stays in the top frame. */
+  cursor: Array<{ x: number; y: number; action: string }>
+}
+
+function liveContext(page: FakePage, opts: { visible?: boolean } = {}): Live {
+  const t = tab('tab_live', 'https://shop.example/checkout', 'space_a')
+  const input: AgentInputEvent[] = []
+  const cursor: Live['cursor'] = []
+  const view = {
+    executeJavaScript: (code: string, frameId?: number) => page.eval(frameId ?? 0, code),
+    frames: () => page.frames() ?? undefined,
+    sendInput: async (e: AgentInputEvent) => {
+      input.push(e)
+    },
+    isVisible: () => opts.visible ?? true,
+    isDestroyed: () => false
+  } as unknown as TabView
+  if (page.frames() === null) delete (view as { frames?: unknown }).frames
+  const session = {
+    id: page.agent,
+    name: 'Tester',
+    color: '#000',
+    mode: 'foreground' as const,
+    currentTabId: t.id,
+    tabIds: new Set([t.id])
+  }
+  const frames = new Map<string, TabFrames>()
+  const ctx = {
+    browser: {
+      state: { model: { tabs: { [t.id]: t }, essentialTabIds: [], spaces: [], folders: {} } },
+      tabs: { tab: (id: string) => (id === t.id ? t : undefined), view: () => view }
+    },
+    agents: {
+      settings: { showCursor: true },
+      resolveTab: () => t,
+      prepare: async () => view,
+      evalPage: (v: TabView, code: string) => v.executeJavaScript(code),
+      frameState: (_s: unknown, tabId: string) => {
+        let state = frames.get(tabId)
+        if (!state) frames.set(tabId, (state = new TabFrames()))
+        return state
+      },
+      cursor: async (
+        _s: unknown,
+        _tab: string,
+        _v: unknown,
+        x: number,
+        y: number,
+        action: string
+      ) => {
+        cursor.push({ x, y, action })
+      },
+      waitForLoad: async () => true,
+      driver: () => session,
+      visibleTabs: () => [t],
+      agentWindow: () => ({ activeSpaceId: 'space_a' })
+    },
+    session
+  }
+  return { ctx: ctx as unknown as ToolContext, page, input, cursor }
+}
+
+function textOf(result: ToolResult): string {
+  return (result.content[0] as { text: string }).text
+}
+
+function run(name: string, ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult> {
+  return AGENT_TOOLS.find((t) => t.definition.name === name)!.run(ctx, args)
+}
+
+describe('page tools and cross-origin frames', () => {
+  it('browser_snapshot lists the frame content under its iframe line', async () => {
+    const { ctx } = liveContext(signInPage())
+    const out = textOf(await run('browser_snapshot', ctx, { boxes: true }))
+    expect(out).toContain('- iframe "Sign in with Google" [box=100,150,400,300] [ref=e2]')
+    expect(out).toContain('  - button "Sign in with Google" [box=120,210,200,40] [ref=e4]')
+    expect(out).toContain('  - textbox "Email" [box=120,270,300,30] [ref=e5]')
+    expect(out).toContain('5 elements')
+  })
+
+  it("browser_click on a frame ref sends real input at the button's top-viewport point", async () => {
+    const live = liveContext(signInPage())
+    await run('browser_snapshot', live.ctx, {})
+    const out = textOf(await run('browser_click', live.ctx, { target: 'e4' }))
+    expect(out).toMatch(
+      /^Clicked button "Sign in with Google" \[ref=e4\] in frame "Sign in with Google"\./
+    )
+    expect(live.input).toEqual([
+      { type: 'click', x: 220, y: 230, button: 'left', clickCount: 1, modifiers: [] }
+    ])
+    // The cursor overlay is drawn in the top document at the same point.
+    expect(live.cursor).toEqual([
+      { x: 220, y: 230, action: 'move' },
+      { x: 220, y: 230, action: 'click' }
+    ])
+    // Nothing synthetic was dispatched inside the frame.
+    expect(live.page.frame(7).log.map((l) => l.method)).not.toContain('clickJs')
+  })
+
+  it('browser_click at coordinates inside the frame names what is there and clicks it', async () => {
+    const live = liveContext(signInPage())
+    const out = textOf(await run('browser_click', live.ctx, { x: 200, y: 230 }))
+    expect(out).toMatch(
+      /^Clicked button "Sign in with Google" \[ref=e\d+\] in frame "Sign in with Google" at \(200, 230\)\./
+    )
+    expect(live.input[0]).toMatchObject({ type: 'click', x: 200, y: 230 })
+  })
+
+  it("browser_type fills through the frame's own runtime after a real click focused the field", async () => {
+    const live = liveContext(signInPage())
+    await run('browser_snapshot', live.ctx, {})
+    const out = textOf(
+      await run('browser_type', live.ctx, { target: 'e5', text: 'me@example.com' })
+    )
+    expect(out).toMatch(/^Typed "me@example.com" into textbox "Email" \[ref=e5\] in frame/)
+    expect(live.input[0]).toMatchObject({ type: 'click', x: 270, y: 285 })
+    const fill = live.page.frame(7).log.find((l) => l.method === 'fill')
+    expect(fill?.args).toEqual([live.page.agent, 'e5', 'me@example.com', true])
+    expect(live.page.frame(0).log.map((l) => l.method)).not.toContain('fill')
+  })
+
+  it("browser_select_option runs in the option's frame", async () => {
+    const page = signInPage()
+    page.frame(7).spec.elements.push({
+      id: 'lang',
+      tag: 'select',
+      role: 'combobox',
+      name: 'Language',
+      box: { x: 20, y: 200, width: 100, height: 30 }
+    })
+    const live = liveContext(page)
+    await run('browser_snapshot', live.ctx, {})
+    const out = textOf(
+      await run('browser_select_option', live.ctx, { target: '#lang', values: 'de' })
+    )
+    expect(out).toMatch(/^Selected "de" in combobox "Language"/)
+    const sel = live.page.frame(7).log.find((l) => l.method === 'select')
+    expect(sel?.args).toEqual([live.page.agent, '#lang', ['de']])
+  })
+
+  it('a hidden tab (background mode) clicks synthetically inside the frame instead', async () => {
+    const live = liveContext(signInPage(), { visible: false })
+    await run('browser_snapshot', live.ctx, {})
+    await run('browser_click', live.ctx, { target: 'e4' })
+    expect(live.input).toEqual([])
+    const click = live.page.frame(7).log.find((l) => l.method === 'clickJs')
+    expect(click?.args).toEqual([live.page.agent, 'e4', 1])
+  })
+
+  it('explains a ref whose frame has gone instead of failing obscurely', async () => {
+    const live = liveContext(signInPage())
+    await run('browser_snapshot', live.ctx, {})
+    live.page.detach(7)
+    await expect(run('browser_click', live.ctx, { target: 'e4' })).rejects.toThrow(
+      /frame that element was in is gone.*take a new browser_snapshot/
+    )
+  })
+
+  it('works as before on hosts without frame support: the iframe stays opaque', async () => {
+    const live = liveContext(signInPage(false))
+    const out = textOf(await run('browser_snapshot', live.ctx, {}))
+    expect(out).toContain('- iframe "Sign in with Google" [ref=e2]')
+    expect(out).not.toContain('Email')
+    const click = textOf(await run('browser_click', live.ctx, { x: 200, y: 230 }))
+    expect(click).toMatch(/^Clicked iframe "Sign in with Google" \[ref=e2\] at \(200, 230\)\./)
+    expect(live.input[0]).toMatchObject({ type: 'click', x: 200, y: 230 })
   })
 })
 
