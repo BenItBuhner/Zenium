@@ -3,9 +3,11 @@ import {
   installExtensionApi,
   type EventDelivery,
   type InvokeResult,
-  type ShimHost
+  type ShimHost,
+  type ShimOptions
 } from '../core/extensions/api/shim'
 import { API_SPEC } from '../core/extensions/api/spec'
+import { USER_SCRIPTS_CHANNELS } from '../shared/userScripts'
 
 /**
  * The Zenium `chrome.*` / `browser.*` layer for extension contexts. Registered on every
@@ -62,18 +64,42 @@ function eventDelivery(raw: unknown): EventDelivery | undefined {
 }
 
 /**
+ * The extension's per-extension toggles (`chrome.userScripts` behind "Allow user scripts"),
+ * asked synchronously so the shim installs with them: a toggled namespace that is off throws on
+ * access from the first script on. Off when the host cannot be asked.
+ */
+function togglesFromHost(): Record<string, boolean> {
+  const toggles: Record<string, boolean> = { userScripts: false }
+  try {
+    const raw: unknown = ipcRenderer.sendSync(USER_SCRIPTS_CHANNELS.toggles)
+    if (raw !== null && typeof raw === 'object') {
+      for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+        if (typeof value === 'boolean') toggles[key] = value
+      }
+    }
+  } catch {
+    /* no host: every toggled namespace stays off */
+  }
+  return toggles
+}
+
+/**
  * With context isolation the shim runs in the extension's world through `executeInMainWorld`
  * (the function is serialised, which is why the shim is one self-contained function); without it
  * the preload already shares the extension's globals.
  */
 function install(kind: 'frame' | 'worker'): void {
   const host = makeHost(kind)
+  const options: ShimOptions = { toggles: togglesFromHost() }
   try {
     if (!process.contextIsolated) {
-      installExtensionApi(host, API_SPEC)
+      installExtensionApi(host, API_SPEC, options)
       return
     }
-    contextBridge.executeInMainWorld({ func: installExtensionApi, args: [host, API_SPEC] })
+    contextBridge.executeInMainWorld({
+      func: installExtensionApi,
+      args: [host, API_SPEC, options]
+    })
   } catch (error) {
     console.error('[zenium] extension API layer failed to install', error)
   }

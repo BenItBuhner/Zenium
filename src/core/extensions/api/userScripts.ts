@@ -102,7 +102,9 @@ function sources(value: unknown, id: string): UserScriptSource[] {
         `Script with ID '${id}' must specify exactly one of 'code' or 'file' as a js source.`
       )
     }
-    return hasCode ? { code: item.code as string } : { file: (item.file as string).replace(/^\/+/, '') }
+    return hasCode
+      ? { code: item.code as string }
+      : { file: (item.file as string).replace(/^\/+/, '') }
   })
 }
 
@@ -274,7 +276,8 @@ export function resetWorldConfig(
   worldId: unknown
 ): UserScriptWorldConfig[] {
   if (worldId !== undefined && worldId !== null) {
-    if (typeof worldId !== 'string') throw new TypeError("Error at parameter 'worldId': expected string.")
+    if (typeof worldId !== 'string')
+      throw new TypeError("Error at parameter 'worldId': expected string.")
     checkWorldId(worldId)
   }
   const target = typeof worldId === 'string' ? worldId : undefined
@@ -343,13 +346,18 @@ export function planUserScripts(
   if (!options.hostAccess(frame.url)) return []
   const plans = new Map<string, WorldPlan>()
   for (const script of state.scripts) {
-    if (!contentScriptAppliesTo(script, { url: frame.url, isTopFrame: frame.isTopFrame, precursorUrl: null }))
+    if (
+      !contentScriptAppliesTo(script, {
+        url: frame.url,
+        isTopFrame: frame.isTopFrame,
+        precursorUrl: null
+      })
+    )
       continue
     const key = script.world === 'MAIN' ? 'MAIN' : `USER_SCRIPT:${script.worldId ?? ''}`
     let plan = plans.get(key)
     if (!plan) {
-      const config =
-        script.world === 'MAIN' ? null : worldConfigFor(state.worlds, script.worldId)
+      const config = script.world === 'MAIN' ? null : worldConfigFor(state.worlds, script.worldId)
       plan = {
         world: script.world,
         worldId: script.world === 'MAIN' ? null : (script.worldId ?? null),
@@ -408,11 +416,15 @@ export function normalizeInjection(raw: unknown): UserScriptInjection {
   if (target.frameIds !== undefined) {
     if (!Array.isArray(target.frameIds) || !target.frameIds.every(Number.isInteger))
       throw new TypeError("'target.frameIds' must be integers.")
-    if (out.target.allFrames) throw new Error("Cannot specify 'allFrames' if 'frameIds' is specified.")
+    if (out.target.allFrames)
+      throw new Error("Cannot specify 'allFrames' if 'frameIds' is specified.")
     out.target.frameIds = target.frameIds as number[]
   }
   if (target.documentIds !== undefined) {
-    if (!Array.isArray(target.documentIds) || !target.documentIds.every((d) => typeof d === 'string'))
+    if (
+      !Array.isArray(target.documentIds) ||
+      !target.documentIds.every((d) => typeof d === 'string')
+    )
       throw new TypeError("'target.documentIds' must be strings.")
     if (out.target.frameIds) throw new Error("Cannot specify both 'frameIds' and 'documentIds'.")
     if (out.target.allFrames)
@@ -430,6 +442,22 @@ export function parseUserScriptsState(text: string): UserScriptsState {
   } catch {
     return emptyUserScriptsState()
   }
+  return userScriptsStateFrom(parsed)
+}
+
+/** The persisted shape (`serializeUserScriptsState`), for stores that keep parsed JSON. */
+export interface PersistedUserScripts {
+  version: 1
+  scripts: RegisteredUserScript[]
+  worlds: UserScriptWorldConfig[]
+}
+
+export function persistedUserScripts(state: UserScriptsState): PersistedUserScripts {
+  return { version: 1, scripts: state.scripts, worlds: state.worlds }
+}
+
+/** A parsed persisted document, validated entry by entry; anything else is an empty state. */
+export function userScriptsStateFrom(parsed: unknown): UserScriptsState {
   if (!isRecord(parsed) || parsed.version !== 1) return emptyUserScriptsState()
   const state = emptyUserScriptsState()
   if (Array.isArray(parsed.scripts)) {
@@ -452,5 +480,5 @@ export function parseUserScriptsState(text: string): UserScriptsState {
 }
 
 export function serializeUserScriptsState(state: UserScriptsState): string {
-  return JSON.stringify({ version: 1, scripts: state.scripts, worlds: state.worlds })
+  return JSON.stringify(persistedUserScripts(state))
 }

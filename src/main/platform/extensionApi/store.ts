@@ -6,6 +6,7 @@ import type { Alarm } from '../../../core/extensions/api/alarms'
 import type { PermissionSet } from '../../../core/extensions/api/permissions'
 import type { ScopedValues } from '../../../core/extensions/api/privacy'
 import type { StorageItems } from '../../../core/extensions/api/storage'
+import type { PersistedUserScripts } from '../../../core/extensions/api/userScripts'
 import { FileStoreIO } from '../storeIo'
 
 interface PersistedApi {
@@ -39,8 +40,9 @@ function emptyPersisted(): PersistedApi {
 /**
  * Everything the browser layer remembers about extensions across restarts: one document for the
  * small per-extension records, one document per extension for `storage.sync` (shared by every
- * container partition the extension is loaded into), and read-only `storage.managed` policy
- * files dropped into `<userData>/extensions/managed/<id>.json`.
+ * container partition the extension is loaded into), one per extension for its registered
+ * `chrome.userScripts` (whole userscripts, as large as `storage.sync`), and read-only
+ * `storage.managed` policy files dropped into `<userData>/extensions/managed/<id>.json`.
  */
 export class ApiStore {
   private readonly main: JsonStore<PersistedApi>
@@ -50,6 +52,8 @@ export class ApiStore {
     string,
     { store: JsonStore<StorageItems>; items: StorageItems }
   >()
+  private readonly userScriptsIo: StoreIO
+  private readonly userScriptsStores = new Map<string, JsonStore<PersistedUserScripts>>()
   private readonly managedDir: string
 
   constructor(io: StoreIO, userDataDir: string) {
@@ -58,6 +62,7 @@ export class ApiStore {
     this.data =
       loaded && loaded.version === 1 ? { ...emptyPersisted(), ...loaded } : emptyPersisted()
     this.syncIo = new FileStoreIO(join(userDataDir, 'zen', 'extension-sync'))
+    this.userScriptsIo = new FileStoreIO(join(userDataDir, 'zen', 'extension-user-scripts'))
     this.managedDir = join(userDataDir, 'extensions', 'managed')
   }
 
@@ -144,10 +149,32 @@ export class ApiStore {
     delete this.data.privacy?.[extensionId]
     this.save()
     this.syncStores.get(extensionId)?.store.write({})
+    this.setUserScripts(extensionId, null)
   }
 
   private save(): void {
     this.main.write(this.data)
+  }
+
+  // --- chrome.userScripts ------------------------------------------------------
+
+  /** The persisted registrations and world configurations, unvalidated (the host validates). */
+  userScripts(extensionId: string): unknown {
+    return this.userScriptsStore(extensionId).readSync()
+  }
+
+  /** Null: the extension is gone for good, its document is emptied. */
+  setUserScripts(extensionId: string, state: PersistedUserScripts | null): void {
+    this.userScriptsStore(extensionId).write(state ?? { version: 1, scripts: [], worlds: [] })
+  }
+
+  private userScriptsStore(extensionId: string): JsonStore<PersistedUserScripts> {
+    let store = this.userScriptsStores.get(extensionId)
+    if (!store) {
+      store = new JsonStore<PersistedUserScripts>(this.userScriptsIo, `${extensionId}.json`, 300)
+      this.userScriptsStores.set(extensionId, store)
+    }
+    return store
   }
 
   // --- storage.sync ------------------------------------------------------------
@@ -195,5 +222,6 @@ export class ApiStore {
   flushSync(): void {
     this.main.flushSync()
     for (const entry of this.syncStores.values()) entry.store.flushSync()
+    for (const store of this.userScriptsStores.values()) store.flushSync()
   }
 }
