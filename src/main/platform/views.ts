@@ -1098,6 +1098,12 @@ export class ElectronTabViewHost implements TabViewHost {
    * The new tab adopts `guest`, the opener-linked page Chromium made for a script `window.open`;
    * a window opened from a link has no page yet and gets a fresh one in the opener's session,
    * pointed at the URL. Returns the page Electron should consider the child window's.
+   *
+   * The adopted page is given the tab page preferences again: Electron applies a `webPreferences`
+   * handed in next to an existing `webContents` to that page (`CreateFromWebPreferences`), and
+   * without them the page preload the window-open handler named never runs in the pop-up – no
+   * tab-modal dialogs, no password forms, no `window.chrome` completion, so a "Sign in with
+   * Google" pop-up was refused where the same page in a tab was not.
    */
   openTicket(
     ticket: WindowOpenTicket,
@@ -1107,7 +1113,7 @@ export class ElectronTabViewHost implements TabViewHost {
   ): WebContents {
     const view = new ElectronTabView(
       guest
-        ? new WebContentsView({ webContents: guest })
+        ? new WebContentsView({ webContents: guest, webPreferences: pageWebPreferences() })
         : new WebContentsView({
             webPreferences: pageWebPreferences(opener.webContents.session)
           }),

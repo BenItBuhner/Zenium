@@ -1,5 +1,6 @@
 package app.zen.chromium.blocking
 
+import app.zen.chromium.privacy.NonUniqueHost
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -32,6 +33,8 @@ class DnrRule(
     private val excludedInitiatorDomains: List<String>?,
     private val requestDomains: List<String>?,
     private val excludedRequestDomains: List<String>?,
+    /** Zenium's addition to the shape: never match a non-unique host (`excludedNonUniqueHosts` in `rules.ts`). */
+    private val excludedNonUniqueHosts: Boolean,
     private val typeMask: Int,
     private val excludedTypeMask: Int,
     private val methods: Set<String>?,
@@ -57,6 +60,7 @@ class DnrRule(
         if (tabIds != null && (tab == null || tab !in tabIds)) return false
         if (excludedTabIds != null && tab != null && tab in excludedTabIds) return false
         if (!matchesDomains(req.host, requestDomains, excludedRequestDomains)) return false
+        if (excludedNonUniqueHosts && NonUniqueHost.isNonUnique(req.host)) return false
         if (initiatorDomains != null || excludedInitiatorDomains != null) {
             val initiator = if (req.type == ResourceType.MAIN_FRAME) "" else req.documentHost
             if (initiatorDomains != null && initiator.isEmpty()) return false
@@ -134,6 +138,7 @@ class DnrRule(
                 excludedInitiatorDomains = strings(c, "excludedInitiatorDomains"),
                 requestDomains = strings(c, "requestDomains"),
                 excludedRequestDomains = strings(c, "excludedRequestDomains"),
+                excludedNonUniqueHosts = c.optBoolean("excludedNonUniqueHosts", false),
                 typeMask = typeMask(c, "resourceTypes"),
                 excludedTypeMask = typeMask(c, "excludedResourceTypes"),
                 methods = strings(c, "requestMethods")?.toHashSet(),

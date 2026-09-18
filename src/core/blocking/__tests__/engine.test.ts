@@ -44,6 +44,33 @@ describe('RuleEngine conditions', () => {
     expect(e.decide(req('https://anything.example/')).action).toBe('block')
   })
 
+  it('leaves non-unique hosts alone when the condition says so', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(set('a', [block(1, { urlFilter: '|http://', excludedNonUniqueHosts: true })]))
+    for (const url of [
+      'http://localhost:3000/',
+      'http://app.localhost/',
+      'http://127.0.0.1/',
+      'http://[::1]:8080/',
+      'http://10.1.2.3/',
+      'http://172.16.0.9/',
+      'http://192.168.1.1/admin',
+      'http://169.254.169.254/',
+      'http://[fe80::1]/',
+      'http://[fd00::1]/',
+      'http://0.0.0.0/',
+      'http://intranet/',
+      'http://printer.local/',
+      'http://nas.home.arpa/'
+    ])
+      expect(e.decide(req(url)).action, url).toBe('allow')
+    for (const url of ['http://example.com/', 'http://8.8.8.8/', 'http://[2606:4700::1111]/'])
+      expect(e.decide(req(url)).action, url).toBe('block')
+    // Without the flag the same hosts match as any other.
+    e.setRuleSet(set('a', [block(1, { urlFilter: '|http://' })]))
+    expect(e.decide(req('http://192.168.1.1/admin')).action).toBe('block')
+  })
+
   it('filters on resource types, methods, tab ids and initiator domains', () => {
     const e = new RuleEngine()
     e.setRuleSet(

@@ -123,6 +123,10 @@ export function compileRule(rule: Rule): { filters: string[]; unsupported: strin
     unsupported.push(
       'excludedRequestDomains cannot be expressed; the filter is broader than the rule'
     )
+  if (c.excludedNonUniqueHosts)
+    unsupported.push(
+      'excludedNonUniqueHosts cannot be expressed; the filter is broader than the rule'
+    )
   if ((rule.priority ?? 1) > 1)
     unsupported.push('rule priority is flattened (filter text has none)')
 
