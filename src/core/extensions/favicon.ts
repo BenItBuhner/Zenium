@@ -65,39 +65,6 @@ export function faviconQuery(request: FaviconRequest): string {
   return params.toString()
 }
 
-/**
- * `policy` (one `Content-Security-Policy` value of an extension page) with `origin` allowed as
- * an image source. Chrome's `_favicon/` is `'self'` to the page; Zenium's lives on its served
- * origin, which a page restricting `img-src` (OneTab: `img-src 'self' data: https://t2.gstatic.com`)
- * would refuse, `*` included (a wildcard matches web schemes only). An `img-src` gets the origin
- * appended (`'none'` gives way to it); a policy restricting only `default-src` gets an `img-src`
- * of that list plus the origin; one restricting neither comes back as it was.
- */
-export function allowImageSource(policy: string, origin: string): string {
-  const directives = policy
-    .split(';')
-    .map((d) => d.trim())
-    .filter((d) => d.length > 0)
-  const indexOf = (name: string): number =>
-    directives.findIndex((d) => d.split(/\s+/)[0].toLowerCase() === name)
-  const img = indexOf('img-src')
-  if (img !== -1) {
-    directives[img] = withSource(directives[img], origin)
-    return directives.join('; ')
-  }
-  const fallback = indexOf('default-src')
-  if (fallback === -1) return policy
-  directives.push(withSource(directives[fallback].replace(/^\S+/, 'img-src'), origin))
-  return directives.join('; ')
-}
-
-function withSource(directive: string, origin: string): string {
-  const [name, ...sources] = directive.split(/\s+/)
-  if (sources.some((s) => s.toLowerCase() === origin.toLowerCase())) return directive
-  const kept = sources.filter((s) => s.toLowerCase() !== "'none'")
-  return [name, ...kept, origin].join(' ')
-}
-
 /** Chrome's stand-in for a page without an icon: a grey globe. */
 export const DEFAULT_FAVICON_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">' +

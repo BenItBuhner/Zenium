@@ -121,18 +121,9 @@ export class ExtensionResourceOrigin {
    * one is granted is the redirecting handler's check).
    */
   faviconUrl(request: FaviconRequest): string | undefined {
-    if (!this.faviconOrigin(request.extensionId)) return undefined
-    return `${this.urlFor(request.extensionId, FAVICON_PATH)}?${faviconQuery(request)}`
-  }
-
-  /**
-   * The origin the extension's favicons are served from (what its pages' CSP must allow as an
-   * image source), under the same conditions as {@link faviconUrl}.
-   */
-  faviconOrigin(extensionId: string): string | undefined {
-    const served = this.lookup(extensionId)
+    const served = this.lookup(request.extensionId)
     if (!served || !declaresFavicon(served)) return undefined
-    return `${EXTENSION_RESOURCE_SCHEME}://${extensionId}.${this.token}`
+    return `${this.urlFor(request.extensionId, FAVICON_PATH)}?${faviconQuery(request)}`
   }
 
   /**

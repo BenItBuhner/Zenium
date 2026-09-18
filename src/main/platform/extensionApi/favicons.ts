@@ -13,7 +13,6 @@
 import { net } from 'electron'
 import type { BookmarkService } from '../../../core/bookmarks'
 import {
-  allowImageSource,
   decodeDataUrl,
   isFaviconResource,
   parseFaviconRequest,
@@ -114,19 +113,10 @@ export class ExtensionFavicons implements FaviconProvider {
   }
 }
 
-/** The extension whose document `url` is, when it is one. */
-function documentExtensionId(url: string): string | undefined {
-  const match = /^chrome-extension:\/\/([a-p]{32})\//.exec(url)
-  return match?.[1]
-}
-
 /**
- * The pipeline handler. Before the request: a `_favicon/` request of an extension that holds
- * the `favicon` permission (`allowed`) is redirected to the served origin's route; one of an
- * extension without it, of no loaded extension, or without a page is cancelled rather than
- * left hanging. On the headers of such an extension's own documents: the served origin is let
- * through the page's `Content-Security-Policy` as an image source, where Chrome's `_favicon/`
- * counts as `'self'`.
+ * The pipeline handler: a `_favicon/` request of an extension that holds the `favicon`
+ * permission (`allowed`) is redirected to the served origin's route; one of an extension
+ * without it, of no loaded extension, or without a page is cancelled rather than left hanging.
  */
 export function faviconRequestHandler(
   origin: ExtensionResourceOrigin,
@@ -140,19 +130,6 @@ export function faviconRequestHandler(
       if (!wanted) return isFaviconResource(details.url) ? { cancel: true } : undefined
       const target = allowed(wanted.extensionId) ? origin.faviconUrl(wanted) : undefined
       return target ? { redirectURL: target } : { cancel: true }
-    },
-    onHeadersReceived(request, headers, details) {
-      const { type } = request.ctx
-      if (type !== 'main_frame' && type !== 'sub_frame') return undefined
-      const extensionId = documentExtensionId(details.url)
-      if (!extensionId || !allowed(extensionId)) return undefined
-      const source = origin.faviconOrigin(extensionId)
-      if (!source) return undefined
-      for (const name of Object.keys(headers)) {
-        if (name.toLowerCase() !== 'content-security-policy') continue
-        headers[name] = headers[name].map((policy) => allowImageSource(policy, source))
-      }
-      return undefined
     }
   }
 }
