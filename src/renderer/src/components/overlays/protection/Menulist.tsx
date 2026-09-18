@@ -38,11 +38,12 @@ export function Menulist<V extends string>({
   label: string
   disabled?: boolean
 }): JSX.Element {
-  const [open, setOpen] = useState(false)
+  // The open popover's anchor: the control itself, taken from the press that opened it.
+  const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const current = options.find((o) => o.value === value) ?? options[0]
   const close = (byKey: boolean): void => {
-    setOpen(false)
+    setAnchor(null)
     if (byKey) trigger.current?.focus()
   }
   return (
@@ -53,16 +54,16 @@ export function Menulist<V extends string>({
         className="zen-v2-menulist"
         aria-label={label}
         aria-haspopup="listbox"
-        aria-expanded={open}
+        aria-expanded={anchor !== null}
         disabled={disabled}
-        onClick={() => setOpen((o) => !o)}
+        onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}
       >
         <span>{current?.label}</span>
         <ChevronDown aria-hidden />
       </button>
-      {open && trigger.current && (
+      {anchor && (
         <MenulistPopup
-          anchor={trigger.current}
+          anchor={anchor}
           value={value}
           options={options}
           label={label}
@@ -100,7 +101,12 @@ function MenulistPopup<V extends string>({
   const rect = toRect(anchor.getBoundingClientRect())
   const bar = toRect((anchor.closest('.zen-privacy-row') ?? anchor).getBoundingClientRect())
   const viewport = viewportSize()
-  const box = placePopover(rect, { ...bar, y: rect.y, height: rect.height }, viewport, POPOVER_WIDTH.list)
+  const box = placePopover(
+    rect,
+    { ...bar, y: rect.y, height: rect.height },
+    viewport,
+    POPOVER_WIDTH.list
+  )
   const height = options.length * ROW + PADDING * 2 + 2
   const opensUp = box.maxHeight < height && rect.y > viewport.height - (rect.y + rect.height)
   const list = useRef<HTMLUListElement>(null)

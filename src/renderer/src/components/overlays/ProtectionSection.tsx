@@ -15,6 +15,7 @@ import {
   type ThirdPartyCookieMode
 } from '@shared/privacy'
 import { run } from '@renderer/lib/api'
+import { usePhone } from '@renderer/lib/formFactor'
 import {
   customResolverProblem,
   feedDetail,
@@ -41,8 +42,7 @@ import {
   List,
   Part,
   RadioRow,
-  Row,
-  usePhone
+  Row
 } from './protection/controls'
 import { Menulist } from './protection/Menulist'
 
@@ -286,7 +286,9 @@ function ApiKeyField({
       secret
       disabled={disabled}
       problem={(text) =>
-        isValidApiKey(text) ? null : 'A key is letters, digits, dashes and underscores, up to 128 of them'
+        isValidApiKey(text)
+          ? null
+          : 'A key is letters, digits, dashes and underscores, up to 128 of them'
       }
       description={remoteLookupsText(status, value)}
       onSave={(safeBrowsingApiKey) => setP({ safeBrowsingApiKey })}
