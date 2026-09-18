@@ -15,6 +15,38 @@ export interface PageSnapshotOptions {
   filter?: string | null
   boxes?: boolean
   maxChars?: number
+  /**
+   * Refs handed out by this call are numbered from here on, so that refs stay unique across the
+   * runtimes of a page's frames (the host raises the floor past every ref it has seen).
+   */
+  minSeq?: number
+  /**
+   * Where this document's viewport sits in the top document's viewport: added to every reported
+   * box, so a frame's snapshot speaks top-viewport coordinates like the top document's.
+   */
+  offset?: { x: number; y: number }
+}
+
+/**
+ * An `<iframe>` this document's script cannot enter (a cross-origin frame): the host snapshots
+ * it through the frame's own runtime and splices the result in at `index`.
+ */
+export interface PageFrameSlot {
+  /** The `<iframe>` element's ref in this document's runtime. */
+  ref: string
+  /** The line of `tree` before which the frame's own lines belong (right after the iframe's). */
+  index: number
+  /** Indentation depth for the frame's lines. */
+  contentDepth: number
+  /** The frame's viewport (the element's content box), in top-viewport CSS px. */
+  x: number
+  y: number
+  width: number
+  height: number
+  /** The element's resolved `src` ('' for `srcdoc` and blank frames). */
+  src: string
+  name: string
+  title: string
 }
 
 export interface PageSnapshot {
@@ -25,6 +57,12 @@ export interface PageSnapshot {
   tree: string
   refs: number
   truncated: boolean
+  /** Cross-origin frames met on the way, in tree order. */
+  frames: PageFrameSlot[]
+  /** The runtime's ref counter after this call (the last `eN` it may have handed out). */
+  seq: number
+  /** Identifies the document: a new value means every earlier ref of this frame is gone. */
+  docToken: string
 }
 
 export interface PageLocation {
@@ -69,9 +107,19 @@ export interface PageCursorOptions {
 
 export interface PageRuntime {
   snapshot(opts: PageSnapshotOptions): PageSnapshot
-  locate(agent: string, target: string, scroll: boolean): PageLocation | { error: string }
-  /** The element under a viewport point (CSS px); the location keeps the given coordinates. */
-  locateAt(agent: string, x: number, y: number): PageLocation | { error: string }
+  locate(
+    agent: string,
+    target: string,
+    scroll: boolean,
+    minSeq?: number
+  ): PageLocation | { error: string }
+  /**
+   * The element under a viewport point (CSS px); the location keeps the given coordinates.
+   * Same-origin iframes are entered; a cross-origin one is the hit itself (tag `iframe`).
+   */
+  locateAt(agent: string, x: number, y: number, minSeq?: number): PageLocation | { error: string }
+  /** The rendered cross-origin iframes of this document (and of its same-origin frames). */
+  frames(agent: string, minSeq?: number): PageFrameSlot[]
   /** Synthetic hover (pointer/mouse over + move) for pages that are not on screen. */
   hoverJs(agent: string, target: string | null, x: number, y: number): PageActionResult
   fill(agent: string, target: string, text: string, clear: boolean): PageActionResult
@@ -108,6 +156,8 @@ export function zenAgentPageRuntime(): PageRuntime {
     seq: number
   }
   const REF_STATES: Record<string, RefState> = {}
+  /** One value per document: refs live and die with the runtime instance, hence with it. */
+  const DOC_TOKEN = Math.random().toString(36).slice(2, 12) + Date.now().toString(36)
   const MARK = 'data-zen-agent'
   const SKIP = new Set([
     'SCRIPT',
@@ -229,10 +279,13 @@ export function zenAgentPageRuntime(): PageRuntime {
   /**
    * A stable handle for an element: the same element keeps the same ref across snapshots, so a
    * ref handed out earlier still resolves until the element leaves the page. Disconnected
-   * elements are pruned so ids do not leak.
+   * elements are pruned so ids do not leak. `minSeq` is the host's floor: every frame of a page
+   * has a runtime of its own, and numbering each from where the others stopped keeps one `eN`
+   * meaning one element across the whole page.
    */
-  function refFor(agent: string, el: Element): string {
+  function refFor(agent: string, el: Element, minSeq?: number): string {
     const s = refState(agent)
+    if (minSeq && s.seq < minSeq - 1) s.seq = minSeq - 1
     const existing = s.byEl.get(el)
     if (existing && s.byId.get(existing) === el) return existing
     if (s.byId.size > 4000) {
@@ -242,6 +295,139 @@ export function zenAgentPageRuntime(): PageRuntime {
     s.byId.set(id, el)
     s.byEl.set(el, id)
     return id
+  }
+
+  // --- frames ----------------------------------------------------------------------------
+  // A same-origin iframe is part of this document as far as the script is concerned: it is
+  // walked, its elements get refs here and their boxes are translated into this viewport. A
+  // cross-origin one is opaque; the host runs the runtime inside it and stitches the two.
+
+  /** The document a same-origin iframe shows; null when the frame is opaque to this script. */
+  function innerDocument(el: Element): Document | null {
+    if (el.tagName !== 'IFRAME') return null
+    try {
+      const doc = (el as HTMLIFrameElement).contentDocument
+      return doc && doc.documentElement ? doc : null
+    } catch {
+      return null
+    }
+  }
+
+  const px = (v: string): number => parseFloat(v) || 0
+
+  /** A frame element's viewport – its content box – in the owning document's viewport. */
+  function frameViewport(el: Element): { x: number; y: number; width: number; height: number } {
+    const r = el.getBoundingClientRect()
+    const cs = (el.ownerDocument.defaultView ?? window).getComputedStyle(el)
+    const left = px(cs.borderLeftWidth) + px(cs.paddingLeft)
+    const top = px(cs.borderTopWidth) + px(cs.paddingTop)
+    return {
+      x: r.left + left,
+      y: r.top + top,
+      width: Math.max(0, r.width - left - px(cs.borderRightWidth) - px(cs.paddingRight)),
+      height: Math.max(0, r.height - top - px(cs.borderBottomWidth) - px(cs.paddingBottom))
+    }
+  }
+
+  /** Where a same-origin nested document's viewport sits in this document's viewport. */
+  function docOffset(doc: Document): { x: number; y: number } {
+    let x = 0
+    let y = 0
+    let cur: Document = doc
+    for (let i = 0; cur !== document && i < 16; i++) {
+      const owner = cur.defaultView?.frameElement
+      if (!owner) break
+      const v = frameViewport(owner)
+      x += v.x
+      y += v.y
+      cur = owner.ownerDocument
+    }
+    return { x, y }
+  }
+
+  /** An element's box in this document's viewport, wherever in the same-origin frame tree it is. */
+  function rectOf(el: Element): DOMRect {
+    const r = el.getBoundingClientRect()
+    if (el.ownerDocument === document) return r
+    const o = docOffset(el.ownerDocument)
+    return new DOMRect(r.left + o.x, r.top + o.y, r.width, r.height)
+  }
+
+  /** `elementFromPoint` that ignores the agent's own cursor overlay. */
+  function topElementFromPoint(x: number, y: number): Element | null {
+    let el = document.elementFromPoint(x, y)
+    while (el && (el.hasAttribute(MARK) || el.closest(`[${MARK}]`))) {
+      const overlay = el.closest(`[${MARK}]`) as HTMLElement | null
+      if (!overlay) break
+      overlay.style.display = 'none'
+      el = document.elementFromPoint(x, y)
+      overlay.style.display = ''
+    }
+    return el
+  }
+
+  /**
+   * The element under a point of this document's viewport, entering same-origin iframes on the
+   * way down; an opaque iframe is the answer itself. The coordinates come back in the hit
+   * document's viewport.
+   */
+  function deepElementFromPoint(
+    x: number,
+    y: number
+  ): { el: Element | null; x: number; y: number } {
+    let doc: Document = document
+    let lx = x
+    let ly = y
+    for (let i = 0; i < 16; i++) {
+      const el = doc === document ? topElementFromPoint(lx, ly) : doc.elementFromPoint(lx, ly)
+      if (!el) return { el: null, x: lx, y: ly }
+      const inner = innerDocument(el)
+      if (!inner) return { el, x: lx, y: ly }
+      const v = frameViewport(el)
+      lx -= v.x
+      ly -= v.y
+      doc = inner
+    }
+    return { el: null, x: lx, y: ly }
+  }
+
+  function frameSlot(
+    agent: string,
+    el: Element,
+    minSeq: number | undefined,
+    index: number,
+    contentDepth: number,
+    offset: { x: number; y: number }
+  ): PageFrameSlot {
+    const v = frameViewport(el)
+    const o = docOffset(el.ownerDocument)
+    return {
+      ref: refFor(agent, el, minSeq),
+      index,
+      contentDepth,
+      x: Math.round(v.x + o.x + offset.x),
+      y: Math.round(v.y + o.y + offset.y),
+      width: Math.round(v.width),
+      height: Math.round(v.height),
+      src: (el as HTMLIFrameElement).src || '',
+      name: el.getAttribute('name') ?? '',
+      title: el.getAttribute('title') ?? ''
+    }
+  }
+
+  function frames(agent: string, minSeq?: number): PageFrameSlot[] {
+    const out: PageFrameSlot[] = []
+    const walk = (doc: Document, depth: number): void => {
+      if (depth > 16) return
+      for (const el of Array.from(doc.querySelectorAll('iframe'))) {
+        if (!isRendered(el) || !hasBox(el)) continue
+        const inner = innerDocument(el)
+        if (inner) walk(inner, depth + 1)
+        else out.push(frameSlot(agent, el, minSeq, -1, 0, { x: 0, y: 0 }))
+      }
+    }
+    walk(document, 0)
+    return out
   }
 
   function isRendered(el: Element): boolean {
@@ -358,7 +544,12 @@ export function zenAgentPageRuntime(): PageRuntime {
     return { name: '', fromContent: false }
   }
 
-  function attrsOf(el: Element, role: string, boxes: boolean): string {
+  function attrsOf(
+    el: Element,
+    role: string,
+    boxes: boolean,
+    offset: { x: number; y: number } = { x: 0, y: 0 }
+  ): string {
     const out: string[] = []
     const tag = el.tagName
     if (role === 'heading') {
@@ -405,9 +596,9 @@ export function zenAgentPageRuntime(): PageRuntime {
       out.push('[disabled]')
     if (tag === 'DETAILS') out.push((el as HTMLDetailsElement).open ? '[expanded]' : '[collapsed]')
     if (boxes) {
-      const r = el.getBoundingClientRect()
+      const r = rectOf(el)
       out.push(
-        `[box=${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)},${Math.round(r.height)}]`
+        `[box=${Math.round(r.left + offset.x)},${Math.round(r.top + offset.y)},${Math.round(r.width)},${Math.round(r.height)}]`
       )
     }
     return out.length ? ' ' + out.join(' ') : ''
@@ -415,24 +606,55 @@ export function zenAgentPageRuntime(): PageRuntime {
 
   function snapshot(opts: PageSnapshotOptions): PageSnapshot {
     const lines: string[] = []
+    const slots: PageFrameSlot[] = []
     const maxChars = opts.maxChars ?? 30000
     const filter = opts.filter ? opts.filter.toLowerCase() : null
     const boxes = Boolean(opts.boxes)
     const interactiveOnly = Boolean(opts.interactiveOnly)
+    const offset = opts.offset ?? { x: 0, y: 0 }
+    const minSeq = opts.minSeq
     let chars = 0
     let truncated = false
     let n = 0
 
-    const emit = (line: string, depth: number): void => {
-      if (truncated) return
-      if (filter && !line.toLowerCase().includes(filter)) return
+    /** Adds the line unless filtered out or over budget; tells whether it went in. */
+    const emit = (line: string, depth: number): boolean => {
+      if (truncated) return false
+      if (filter && !line.toLowerCase().includes(filter)) return false
       const text = '  '.repeat(depth) + line
       chars += text.length + 1
       if (chars > maxChars) {
         truncated = true
-        return
+        return false
       }
       lines.push(text)
+      return true
+    }
+
+    /**
+     * An iframe: same-origin content is walked in place; a cross-origin frame becomes a slot the
+     * host fills from the frame's own runtime. Under `interactiveOnly` the frame line itself is
+     * left out, like every other container, but its content still counts.
+     */
+    const frame = (el: HTMLElement, depth: number): void => {
+      const inner = innerDocument(el)
+      let ref: string | null = null
+      let shown = false
+      if (!interactiveOnly) {
+        n++
+        ref = refFor(opts.agent, el, minSeq)
+        const { name } = nameOf(el, 'iframe')
+        shown = emit(
+          `- iframe${name ? ` ${q(name)}` : ''}${attrsOf(el, 'iframe', boxes, offset)} [ref=${ref}]`,
+          depth
+        )
+      }
+      const contentDepth = shown ? depth + 1 : depth
+      if (inner) {
+        if (inner.body) for (const c of Array.from(inner.body.childNodes)) visit(c, contentDepth)
+        return
+      }
+      slots.push(frameSlot(opts.agent, el, minSeq, lines.length, contentDepth, offset))
     }
 
     const visit = (node: Node, depth: number): void => {
@@ -463,6 +685,10 @@ export function zenAgentPageRuntime(): PageRuntime {
         return
       }
       if (!hasBox(el) && !el.shadowRoot && !(el.childElementCount > 0)) return
+      if (el.tagName === 'IFRAME') {
+        frame(el, depth)
+        return
+      }
       const effectiveRole = role ?? 'clickable'
       if (interactiveOnly && !interactive && effectiveRole !== 'heading') {
         children()
@@ -470,11 +696,11 @@ export function zenAgentPageRuntime(): PageRuntime {
       }
       const { name, fromContent } = nameOf(el, effectiveRole)
       n++
-      const ref = refFor(opts.agent, el)
+      const ref = refFor(opts.agent, el, minSeq)
       let line = `- ${effectiveRole}`
       if (name)
         line += ` ${q(name, effectiveRole === 'paragraph' || effectiveRole === 'listitem' || effectiveRole === 'code' || effectiveRole === 'blockquote' ? 400 : 120)}`
-      line += attrsOf(el, effectiveRole, boxes)
+      line += attrsOf(el, effectiveRole, boxes, offset)
       line += ` [ref=${ref}]`
       emit(line, depth)
       if (LEAF_ROLES.has(effectiveRole)) return
@@ -493,22 +719,20 @@ export function zenAgentPageRuntime(): PageRuntime {
         for (const c of Array.from(el.childNodes)) inner(c)
         return
       }
-      if (el.tagName === 'IFRAME') {
-        try {
-          const doc = (el as HTMLIFrameElement).contentDocument
-          if (doc?.body) for (const c of Array.from(doc.body.childNodes)) visit(c, depth + 1)
-        } catch {
-          /* cross-origin */
-        }
-        return
-      }
       const before = lines.length
       if (el.shadowRoot) for (const c of Array.from(el.shadowRoot.childNodes)) visit(c, depth + 1)
       for (const c of Array.from(el.childNodes)) visit(c, depth + 1)
       if (lines.length === before && !name && !interactive && !filter) {
-        // An unnamed container with nothing inside adds noise – drop it again.
+        // An unnamed container with nothing inside adds noise – drop it again. Frame slots
+        // recorded under it (a frame whose line was left out) move up with it.
         lines.pop()
         n--
+        for (const s of slots) {
+          if (s.index >= before) {
+            s.index = before - 1
+            s.contentDepth = Math.max(0, s.contentDepth - 1)
+          }
+        }
       }
     }
 
@@ -528,7 +752,10 @@ export function zenAgentPageRuntime(): PageRuntime {
       },
       tree: lines.join('\n'),
       refs: n,
-      truncated
+      truncated,
+      frames: slots,
+      seq: refState(opts.agent).seq,
+      docToken: DOC_TOKEN
     }
   }
 
@@ -637,7 +864,7 @@ export function zenAgentPageRuntime(): PageRuntime {
     ref: string | null
   ): PageLocation {
     const role = roleOf(el) ?? (isInteractive(el) ? 'clickable' : 'generic')
-    const hit = document.elementFromPoint(x, y)
+    const hit = deepElementFromPoint(x, y).el
     const covered = Boolean(hit && hit !== el && !el.contains(hit) && !hit.contains(el))
     const input = el as HTMLInputElement
     return {
@@ -662,26 +889,22 @@ export function zenAgentPageRuntime(): PageRuntime {
     }
   }
 
-  function locateAt(agent: string, x: number, y: number): PageLocation | { error: string } {
+  function locateAt(
+    agent: string,
+    x: number,
+    y: number,
+    minSeq?: number
+  ): PageLocation | { error: string } {
     if (!Number.isFinite(x) || !Number.isFinite(y))
       return { error: 'x and y must be numbers (CSS pixels from the top-left of the viewport)' }
     if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight)
       return {
         error: `(${Math.round(x)}, ${Math.round(y)}) is outside the viewport, which is ${innerWidth}×${innerHeight} CSS px – scroll first or pick a point inside it`
       }
-    let el = document.elementFromPoint(x, y)
-    while (el && (el.hasAttribute(MARK) || el.closest(`[${MARK}]`))) {
-      // Our own cursor overlay never counts as "what is under the pointer".
-      const overlay = el.closest(`[${MARK}]`) as HTMLElement | null
-      if (!overlay) break
-      overlay.style.display = 'none'
-      el = document.elementFromPoint(x, y)
-      overlay.style.display = ''
-    }
+    const { el } = deepElementFromPoint(x, y)
     if (!el) return { error: `Nothing is rendered at (${Math.round(x)}, ${Math.round(y)})` }
-    const r = el.getBoundingClientRect()
-    const loc = describeLocation(el, Math.round(x), Math.round(y), r, null)
-    loc.ref = refFor(agent, el)
+    const loc = describeLocation(el, Math.round(x), Math.round(y), rectOf(el), null)
+    loc.ref = refFor(agent, el, minSeq)
     loc.covered = false
     return loc
   }
@@ -693,8 +916,11 @@ export function zenAgentPageRuntime(): PageRuntime {
       if (!(found instanceof Element)) return { ok: false, error: found.error }
       el = found
     } else {
-      el = document.elementFromPoint(x, y)
+      const hit = deepElementFromPoint(x, y)
+      el = hit.el
       if (!el) return { ok: false, error: `Nothing is rendered at (${x}, ${y})` }
+      x = hit.x
+      y = hit.y
     }
     const init = { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window }
     const pointer = { ...init, pointerId: 1, pointerType: 'mouse', isPrimary: true }
@@ -707,8 +933,8 @@ export function zenAgentPageRuntime(): PageRuntime {
     return { ok: true }
   }
 
-  function centre(el: Element): { x: number; y: number; r: DOMRect } {
-    const r = el.getBoundingClientRect()
+  /** The point to click in a box: its centre, kept inside the box for tiny elements. */
+  function centre(r: DOMRect): { x: number; y: number; r: DOMRect } {
     const x = Math.min(Math.max(r.left + r.width / 2, r.left + 1), r.right - 1)
     const y = Math.min(Math.max(r.top + r.height / 2, r.top + 1), r.bottom - 1)
     return { x: Math.round(x), y: Math.round(y), r }
@@ -717,20 +943,21 @@ export function zenAgentPageRuntime(): PageRuntime {
   function locate(
     agent: string,
     target: string,
-    scroll: boolean
+    scroll: boolean,
+    minSeq?: number
   ): PageLocation | { error: string } {
     const el = resolve(agent, target)
     if (!(el instanceof Element)) return el
     if (!isRendered(el)) return { error: 'Element is hidden' }
-    let { x, y, r } = centre(el)
+    let { x, y, r } = centre(rectOf(el))
     const inside = (): boolean =>
       r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth
     if (scroll && !inside()) {
       el.scrollIntoView({ block: 'center', inline: 'center' })
-      ;({ x, y, r } = centre(el))
+      ;({ x, y, r } = centre(rectOf(el)))
     }
     const t = normalizeTarget(target)
-    return describeLocation(el, x, y, r, /^e\d+$/.test(t) ? t : refFor(agent, el))
+    return describeLocation(el, x, y, r, /^e\d+$/.test(t) ? t : refFor(agent, el, minSeq))
   }
 
   function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
@@ -857,7 +1084,7 @@ export function zenAgentPageRuntime(): PageRuntime {
   }
 
   function inViewport(el: Element): boolean {
-    const r = el.getBoundingClientRect()
+    const r = rectOf(el)
     return r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth
   }
 
@@ -867,7 +1094,8 @@ export function zenAgentPageRuntime(): PageRuntime {
     const h = el as HTMLElement
     if (!inViewport(el) && typeof el.scrollIntoView === 'function')
       el.scrollIntoView({ block: 'center', inline: 'center' })
-    const { x, y } = centre(el)
+    // Event coordinates are those of the element's own document, whichever frame that is.
+    const { x, y } = centre(el.getBoundingClientRect())
     const init = {
       bubbles: true,
       cancelable: true,
@@ -1149,6 +1377,7 @@ export function zenAgentPageRuntime(): PageRuntime {
     snapshot,
     locate,
     locateAt,
+    frames,
     hoverJs,
     fill,
     submit,
