@@ -11,6 +11,7 @@ import { existsSync, promises as fs, readFileSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import type {
   ExtensionInfo,
+  ExtensionPromptRequest,
   ExtensionSource,
   ExtensionUpdateCheck,
   ExtensionUpdateState,
@@ -115,6 +116,9 @@ const ICON_FETCH_TIMEOUT_MS = 5_000
 
 /** The prompt's shape is shared with the Android host (`core/extensions/hostStore.ts`). */
 export type { ConfirmInstall, InstallConfirmation }
+
+/** What the chrome's dialog is asked: an install prompt or a running extension's `request`. */
+type PromptRequest = Omit<ExtensionPromptRequest, 'requestId'>
 
 export type InstallOutcome =
   | { status: 'installed'; record: ExtensionRecord }
@@ -1120,18 +1124,36 @@ export class ExtensionService implements ExtensionHost {
     this.prompts.respond(requestId, accept)
   }
 
-  private async nativeConfirm(request: InstallConfirmation, win?: ZenWindow): Promise<boolean> {
+  /**
+   * A running extension's `permissions.request` (the API layer already found the new permissions
+   * warrant a prompt): Chrome's "wants additional permissions" question through the chrome's
+   * dialog, the same way as the install prompts; the native box when no window can show it.
+   */
+  confirmPermissionRequest(id: string, warnings: string[], win?: ZenWindow): Promise<boolean> {
+    const record = this.record(id)
+    const request: PromptRequest = {
+      kind: 'request',
+      name: record?.name || id,
+      icon: record ? this.icon(record.path, record.version, readManifest(record.path)) : null,
+      warnings
+    }
+    return win?.alive ? this.prompts.ask(request, win) : this.nativeConfirm(request, win)
+  }
+
+  private async nativeConfirm(request: PromptRequest, win?: ZenWindow): Promise<boolean> {
     const lines = request.warnings.map((w) => `\u2022 ${w}`)
     const message =
       request.kind === 'permissions'
         ? `"${request.name}" needs new permissions`
-        : request.kind === 'update'
-          ? `Update "${request.name}"?`
-          : `Add "${request.name}"?`
+        : request.kind === 'request'
+          ? `"${request.name}" wants additional permissions`
+          : request.kind === 'update'
+            ? `Update "${request.name}"?`
+            : `Add "${request.name}"?`
     const detail =
       lines.length > 0 ? `It can:\n${lines.join('\n')}` : 'It needs no special permissions.'
     const buttons =
-      request.kind === 'permissions'
+      request.kind === 'permissions' || request.kind === 'request'
         ? ['Allow', 'Cancel']
         : request.kind === 'update'
           ? ['Update extension', 'Cancel']

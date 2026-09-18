@@ -12,6 +12,12 @@ import {
 } from '../../../core/extensions/api/permissions'
 import { matchesAnyPattern } from '../../../core/extensions/api/matchPattern'
 import {
+  newWarnings,
+  permissionWarnings,
+  type PermissionWarningSource
+} from '../../../core/extensions/permissionMessages'
+import { warningPlatform } from '../extensions'
+import {
   ApiError,
   type ApiContext,
   type ApiHost,
@@ -24,8 +30,9 @@ const TAB_REVEALING = ['tabs', 'webNavigation']
 
 /**
  * `chrome.permissions`: the granted set of each extension, seeded from the manifest's required
- * permissions and persisted, with `request` going through the platform's native confirmation
- * until the toolbar has its own prompt.
+ * permissions and persisted. `request` asks the user through the browser's own prompt, and only
+ * when the new permissions add a warning, as Chrome does (a request that is no privilege
+ * increase is granted without a question).
  */
 export class PermissionsApi {
   private readonly granted = new Map<string, PermissionSet>()
@@ -106,20 +113,12 @@ export class PermissionsApi {
     const grants = this.grants(ctx.extensionId)
     const missing = missingPermissions(grants, wanted)
     if (missing.permissions.length === 0 && missing.origins.length === 0) return true
-    const lines = [
-      ...missing.permissions.map((p) => `Use the "${p}" browser feature`),
-      ...missing.origins.map((o) => `Read and change data on ${describeOrigin(o)}`)
-    ]
-    const accepted = await this.host.confirm(
-      {
-        message: `"${ctx.extension.manifest.name}" wants additional permissions`,
-        detail: lines.join('\n'),
-        okLabel: 'Allow'
-      },
-      ctx.window
-    )
-    if (!accepted) return false
     const next = addPermissionSets(grants, missing)
+    const warnings = addedWarnings(ctx.extension, grants, next)
+    if (warnings.length > 0) {
+      const accepted = await this.host.confirmPermissions(ctx.extensionId, warnings, ctx.window)
+      if (!accepted) return false
+    }
     this.granted.set(ctx.extensionId, next)
     this.host.store.setGrants(ctx.extensionId, next)
     this.host.dispatch(ctx.extensionId, 'permissions', 'onAdded', [missing])
@@ -151,10 +150,29 @@ export class PermissionsApi {
   }
 }
 
-function describeOrigin(pattern: string): string {
-  if (pattern === '<all_urls>' || pattern === '*://*/*') return 'all websites'
-  const match = /^[^:]+:\/\/([^/]+)/.exec(pattern)
-  if (!match) return pattern
-  const host = match[1]
-  return host.startsWith('*.') ? `${host.slice(2)} and its subdomains` : host
+/**
+ * Chrome's prompt lines for what a request adds: the install-style warnings of the manifest with
+ * the grants after the request, less those the grants of today already produce (Chrome's
+ * privilege-increase check). Empty when nothing new would be shown, so no prompt is due.
+ */
+export function addedWarnings(
+  ext: LoadedExtension,
+  before: PermissionSet,
+  after: PermissionSet
+): string[] {
+  const mv3 = ext.manifest.manifest_version !== 2
+  // The manifest's other keys (content scripts, devtools_page, overrides) count in both sets and
+  // cancel out; MV2 lists its host patterns among `permissions`, MV3 under `host_permissions`.
+  const source = (grants: PermissionSet): PermissionWarningSource => ({
+    ...ext.manifest,
+    permissions: mv3 ? grants.permissions : [...grants.permissions, ...grants.origins],
+    host_permissions: mv3 ? grants.origins : undefined,
+    optional_permissions: undefined,
+    optional_host_permissions: undefined
+  })
+  const platform = warningPlatform()
+  return newWarnings(
+    permissionWarnings(source(before), platform),
+    permissionWarnings(source(after), platform)
+  ).flatMap((w) => [w.message, ...w.details.map((d) => `  ${d}`)])
 }

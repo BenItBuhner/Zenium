@@ -14,9 +14,14 @@ function loaded(manifest: ExtensionManifest, id = 'stylus'): LoadedExtension {
   } as unknown as LoadedExtension
 }
 
-function world(stored?: PermissionSet): {
+function world(
+  stored?: PermissionSet,
+  answer = true
+): {
   api: PermissionsApi
   saved: Map<string, PermissionSet>
+  prompts: Array<{ id: string; warnings: string[] }>
+  dispatched: Array<{ event: string; args: unknown[] }>
   ctx: (ext: LoadedExtension) => ApiContext
 } {
   const saved = new Map<string, PermissionSet>()
@@ -27,11 +32,22 @@ function world(stored?: PermissionSet): {
       saved.set(id, grants)
     }
   }
-  const host = { store } as unknown as ApiHost
+  const prompts: Array<{ id: string; warnings: string[] }> = []
+  const dispatched: Array<{ event: string; args: unknown[] }> = []
+  const host = {
+    store,
+    confirmPermissions: async (id: string, warnings: string[]) => {
+      prompts.push({ id, warnings })
+      return answer
+    },
+    dispatch: (_id: string, _namespace: string, event: string, args: unknown[]) => {
+      dispatched.push({ event, args })
+    }
+  } as unknown as ApiHost
   const api = new PermissionsApi(host)
   const ctx = (ext: LoadedExtension): ApiContext =>
     ({ extensionId: ext.id, extension: ext }) as unknown as ApiContext
-  return { api, saved, ctx }
+  return { api, saved, prompts, dispatched, ctx }
 }
 
 const stylusLike: ExtensionManifest = {
@@ -87,5 +103,73 @@ describe('PermissionsApi and manifest versions', () => {
       permissions: ['webRequest', 'webRequestBlocking'],
       origins: ['<all_urls>']
     })
+  })
+})
+
+const oneTabLike: ExtensionManifest = {
+  manifest_version: 3,
+  name: 'OneTab',
+  version: '2.18',
+  permissions: ['tabs', 'storage', 'contextMenus'],
+  optional_permissions: ['tabGroups', 'bookmarks', 'alarms'],
+  optional_host_permissions: ['https://example.com/*']
+}
+
+describe('permissions.request', () => {
+  it("asks through the browser's prompt with Chrome's warning for what the request adds", async () => {
+    const w = world()
+    const ext = loaded(oneTabLike, 'onetab')
+    w.api.load(ext)
+    const granted = await w.api.handlers.request(w.ctx(ext), { permissions: ['tabGroups'] })
+    expect(granted).toBe(true)
+    expect(w.prompts).toEqual([{ id: 'onetab', warnings: ['View and manage your tab groups'] }])
+    expect(w.api.grants('onetab').permissions).toContain('tabGroups')
+    expect(w.saved.get('onetab')?.permissions).toContain('tabGroups')
+    expect(w.dispatched).toEqual([
+      { event: 'onAdded', args: [{ permissions: ['tabGroups'], origins: [] }] }
+    ])
+  })
+
+  it('lists a new host the way the install prompt would', async () => {
+    const w = world()
+    const ext = loaded(oneTabLike, 'onetab')
+    w.api.load(ext)
+    await w.api.handlers.request(w.ctx(ext), {
+      permissions: ['bookmarks'],
+      origins: ['https://example.com/*']
+    })
+    expect(w.prompts[0]?.warnings).toEqual([
+      'Read and change your data on example.com',
+      'Read and change your bookmarks'
+    ])
+  })
+
+  it('grants a request that adds no warning without asking, as Chrome does', async () => {
+    const w = world()
+    const ext = loaded(oneTabLike, 'onetab')
+    w.api.load(ext)
+    expect(await w.api.handlers.request(w.ctx(ext), { permissions: ['alarms'] })).toBe(true)
+    expect(w.prompts).toEqual([])
+    expect(w.api.grants('onetab').permissions).toContain('alarms')
+    expect(w.dispatched.map((d) => d.event)).toEqual(['onAdded'])
+  })
+
+  it('grants nothing and fires no event when the user refuses', async () => {
+    const w = world(undefined, false)
+    const ext = loaded(oneTabLike, 'onetab')
+    w.api.load(ext)
+    expect(await w.api.handlers.request(w.ctx(ext), { permissions: ['tabGroups'] })).toBe(false)
+    expect(w.prompts).toHaveLength(1)
+    expect(w.api.grants('onetab').permissions).not.toContain('tabGroups')
+    expect(w.dispatched).toEqual([])
+  })
+
+  it('answers true at once for permissions already held', async () => {
+    const w = world()
+    const ext = loaded(oneTabLike, 'onetab')
+    w.api.load(ext)
+    expect(await w.api.handlers.request(w.ctx(ext), { permissions: ['tabs'] })).toBe(true)
+    expect(w.prompts).toEqual([])
+    expect(w.dispatched).toEqual([])
   })
 })
