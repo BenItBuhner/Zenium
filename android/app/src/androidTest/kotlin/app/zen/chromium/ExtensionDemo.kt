@@ -35,6 +35,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 
 /**
  * Drives the extension runtime on an emulator for the `android-ext-runtime-demo` workflow: the
@@ -1044,18 +1045,31 @@ class ExtensionDemo {
         report.put("menuVia", via)
         report.put("itemShown", item != null)
         report.put("menuLabels", menuLabels())
-        SystemClock.sleep(800)
+        // The row is in the document from the moment the sheet mounts, at its closed position,
+        // and the sheet then springs up: a point taken at first sight is where the row was, not
+        // where it comes to rest (measured: on WebView 156 the first point lay at y=3476 on a
+        // 1600 px screen and the dispatcher dropped the tap as outside every window; on 113 a
+        // point taken mid-flight landed a row lower, in the Boosts submenu). Aim once it stands
+        // still, at the row the accessibility tree reports, else at the document's rectangle.
+        val target = if (item != null) settledMenuItemPoint(MENU_LINK_LABEL) else null
+        report.put("itemPoint", target?.let { JSONObject().put("x", it.first).put("y", it.second) } ?: JSONObject.NULL)
+        report.put("geometry", menuGeometry(MENU_LINK_LABEL))
         shot("08-context-menu")
         var clicked: JSONObject? = null
+        var picked = "none"
         if (item != null && bg != null) {
-            tap(item.first, item.second)
-            clicked = waitFor(6_000, 250) { menuClick(bg, clicksBefore) }
+            if (target != null) {
+                tap(target.first, target.second)
+                picked = "tap"
+                clicked = waitFor(6_000, 250) { menuClick(bg, clicksBefore) }
+            }
             if (clicked == null) {
-                pickMenuItem(MENU_LINK_LABEL)
-                report.put("pickedInDocument", true)
+                val row = pickMenuItem(MENU_LINK_LABEL)
+                picked = if (row) "$picked, then a click in the document" else "$picked, then no row left to click"
                 clicked = waitFor(6_000, 250) { menuClick(bg, clicksBefore) }
             }
         }
+        report.put("picked", picked)
         if (menuLabels().length() > 0) {
             ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
             SystemClock.sleep(800)
@@ -1066,12 +1080,12 @@ class ExtensionDemo {
         stage(
             PROBE_ID, "contextMenus",
             when {
-                item != null && right && via == "long-press" && !report.has("pickedInDocument") -> "PASS"
+                item != null && right && via == "long-press" && picked == "tap" -> "PASS"
                 item != null && right -> "PARTIAL"
                 item != null -> "PARTIAL"
                 else -> "FAIL"
             },
-            report.toString().take(700)
+            report.toString().take(900)
         )
         SystemClock.sleep(600)
     }
@@ -1419,6 +1433,55 @@ class ExtensionDemo {
         return screenPoint(view, json(raw))
     }
 
+    /**
+     * The centre of the menu row labelled `label` once the sheet has come to rest: the row the
+     * accessibility tree reports (screen bounds from the WebView itself), else the document's
+     * rectangle, unchanged over three readings 300 ms apart and on the screen. Null when the row
+     * never stood still on screen within the wait, or is gone.
+     */
+    private fun settledMenuItemPoint(label: String): Pair<Float, Float>? {
+        var last: Pair<Float, Float>? = null
+        var still = 0
+        val deadline = SystemClock.uptimeMillis() + 8_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            val point = findByLabel(label)?.let { it.exactCenterX() to it.exactCenterY() } ?: menuItemPoint(label) ?: return null
+            val onScreen = point.first in 0f..(width - 1).toFloat() && point.second in 0f..(height - 1).toFloat()
+            still = if (last != null && abs(point.first - last.first) < 0.5f && abs(point.second - last.second) < 0.5f) still + 1 else 0
+            if (onScreen && still >= 2) return point
+            last = point
+            SystemClock.sleep(300)
+        }
+        return null
+    }
+
+    /** What the driver aims with: the chrome view's placement and scale, the row's rectangle in the document and on the accessibility tree. */
+    private fun menuGeometry(label: String): JSONObject {
+        val geometry = JSONObject()
+        var chrome: WebView? = null
+        instrumentation.runOnMainSync { chrome = host.chrome }
+        val view = chrome ?: return geometry
+        instrumentation.runOnMainSync {
+            val location = IntArray(2)
+            view.getLocationOnScreen(location)
+            @Suppress("DEPRECATION")
+            geometry.put("scale", view.scale).put("density", view.resources.displayMetrics.density)
+                .put("view", JSONObject().put("x", location[0]).put("y", location[1]).put("width", view.width).put("height", view.height))
+        }
+        geometry.put(
+            "document",
+            json(
+                tabEval(
+                    view,
+                    "JSON.stringify((function(){var s=document.querySelector('.zen-sheet');var b=Array.prototype.find.call(document.querySelectorAll('button.zen-sheet-item'),function(el){return el.textContent.trim()===${JSONObject.quote(label)}});" +
+                        "var r=b?b.getBoundingClientRect():null;var sr=s?s.getBoundingClientRect():null;return {innerWidth:innerWidth,innerHeight:innerHeight,devicePixelRatio:devicePixelRatio," +
+                        "row:r?{left:r.left,top:r.top,width:r.width,height:r.height}:null,sheet:sr?{top:sr.top,height:sr.height,transform:s.style.transform,locked:s.getAttribute('data-locked')}:null}})())"
+                )
+            )
+        )
+        geometry.put("a11y", findByLabel(label)?.let { JSONObject().put("left", it.left).put("top", it.top).put("right", it.right).put("bottom", it.bottom) } ?: JSONObject.NULL)
+        return geometry
+    }
+
     private fun menuLabels(): JSONArray {
         var chrome: WebView? = null
         instrumentation.runOnMainSync { chrome = host.chrome }
@@ -1427,11 +1490,12 @@ class ExtensionDemo {
         return runCatching { JSONArray(raw) }.getOrDefault(JSONArray())
     }
 
-    private fun pickMenuItem(label: String) {
+    /** Clicks the menu row labelled `label` in the chrome's document; false when there is no such row (the menu is gone, or in a submenu). */
+    private fun pickMenuItem(label: String): Boolean {
         var chrome: WebView? = null
         instrumentation.runOnMainSync { chrome = host.chrome }
-        val view = chrome ?: return
-        tabEval(view, "(function(){var b=Array.prototype.find.call(document.querySelectorAll('button.zen-sheet-item'),function(el){return el.textContent.trim()===${JSONObject.quote(label)}});if(b)b.click();return String(!!b)})()")
+        val view = chrome ?: return false
+        return tabEval(view, "(function(){var b=Array.prototype.find.call(document.querySelectorAll('button.zen-sheet-item'),function(el){return el.textContent.trim()===${JSONObject.quote(label)}});if(b)b.click();return String(!!b)})()") == "true"
     }
 
     /** The next `contextMenus.onClicked` the background recorded after `before`, or null. */
