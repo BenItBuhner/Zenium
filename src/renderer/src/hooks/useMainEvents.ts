@@ -19,6 +19,7 @@ import {
   openOverlay,
   openUrlbar,
   openZoom,
+  overlayAvailable,
   pushToast,
   showExternalProtocol,
   showMenu,
@@ -71,11 +72,9 @@ export function useMainEvents(): void {
       onEvent('overlay.open', ({ kind, folderId, section }) => {
         const ui = uiStore.get()
         // Settings is a tab where the host has page tabs; the Shortcuts and Sync overlays are
-        // its sections. The core routes its own callers, this covers a host's stray request.
-        if (
-          (kind === 'settings' || kind === 'shortcuts' || kind === 'sync') &&
-          browserStore.get().state?.capabilities.pageTabs
-        ) {
+        // its sections. The core routes its own callers through `page.open`; a stray request
+        // for the overlay goes the same way (`openOverlay` refuses the kind on such a host).
+        if (!overlayAvailable(kind)) {
           closeUrlbar()
           openSettings(kind === 'settings' ? (section ?? null) : kind)
           return

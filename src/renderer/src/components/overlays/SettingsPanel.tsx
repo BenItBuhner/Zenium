@@ -27,11 +27,10 @@ import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
 import { resolveDownloadSettings } from '@shared/downloads'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
-import { useViewport } from '@renderer/lib/formFactor'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
 import { activeTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
-import { openBarEditor, openOverlay, uiStore } from '@renderer/lib/ui'
+import { openOverlay, uiStore } from '@renderer/lib/ui'
 import { cn, relativeTime } from '@renderer/lib/utils'
 import { ContainerIcon } from '../ContainerIcon'
 import { Button } from '../ui/button'
@@ -174,8 +173,9 @@ export function SettingsBody({
   const setSection = onSection
   const s = state.settings
   const set = (patch: Partial<Settings>): void => run('settings.update', patch)
-  // The section list scrolls down on desktop and sideways as a row of chips on phones.
-  const fadeNav = useFadeEdges<HTMLElement>({ axis: 'auto', size: 24 })
+  // The section list scrolls down beside the content; on a phone Settings is its own tab
+  // (`pages/settings`), never this panel.
+  const fadeNav = useFadeEdges<HTMLElement>({ axis: 'y', size: 24 })
   const fadeContent = useFadeEdges<HTMLDivElement>({ axis: 'y' })
   return (
     <div className="flex h-full">
@@ -205,7 +205,6 @@ export function SettingsBody({
               set={set}
               platform={state.platform}
               caps={state.capabilities}
-              activeTabId={activeTab(state)?.id ?? null}
             />
           )}
           {section === 'accessibility' && <AccessibilitySection state={state} set={set} />}
@@ -242,17 +241,13 @@ function LookSection({
   s,
   set,
   platform,
-  caps,
-  activeTabId
+  caps
 }: {
   s: Settings
   set: (p: Partial<Settings>) => void
   platform: Platform
   caps: HostCapabilities
-  activeTabId: string | null
 }): JSX.Element {
-  // The bar and its editor only exist in the phone layout.
-  const phone = useViewport().formFactor === 'phone'
   return (
     <>
       <Group title="Appearance">
@@ -369,20 +364,6 @@ function LookSection({
             ]}
           />
         </Row>
-        {phone && (
-          <Row
-            label="Navigation bar"
-            hint="Choose the controls beside the address bar and their order. Holding a control in the bar opens this too."
-          >
-            <Button
-              variant="secondary"
-              className="zen-v2-button shrink-0"
-              onClick={() => void openBarEditor(activeTabId)}
-            >
-              Customise
-            </Button>
-          </Row>
-        )}
       </Group>
       {caps.pullToRefresh && (
         <Group title="Pages">

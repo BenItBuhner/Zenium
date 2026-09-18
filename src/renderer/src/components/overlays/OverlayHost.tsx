@@ -14,18 +14,24 @@ import { SettingsPanel } from './SettingsPanel'
 import { SpaceEditor } from './SpaceEditor'
 import { ThemePicker } from './ThemePicker'
 
-/** Renders whichever chrome overlay is open over the content area. */
+/**
+ * Renders whichever chrome overlay is open over the content area. The Settings panel (and the
+ * Shortcuts and Sync overlays, its sections) is the desktop's, on a host without page tabs:
+ * where the host has them Settings is a tab (`pages/settings`), and no phone ever draws the
+ * panel – `openOverlay` routes the kind to `page.open` before it reaches the store.
+ */
 export function OverlayHost({ state, ui }: { state: UIState; ui: UiState }): JSX.Element | null {
   // History and bookmarks are lists a phone reads and touches differently (rows, swipes, a
   // selection header); desktop and tablet keep their panels.
   const phone = useViewport().formFactor === 'phone'
+  const pageTabs = state.capabilities.pageTabs
   switch (ui.overlay) {
     case 'settings':
-      return <SettingsPanel state={state} />
+      return pageTabs ? null : <SettingsPanel state={state} />
     case 'shortcuts':
-      return <SettingsPanel state={state} initialSection="shortcuts" />
+      return pageTabs ? null : <SettingsPanel state={state} initialSection="shortcuts" />
     case 'sync':
-      return <SettingsPanel state={state} initialSection="sync" />
+      return pageTabs ? null : <SettingsPanel state={state} initialSection="sync" />
     case 'history':
       return phone ? <PhoneHistoryPanel state={state} /> : <HistoryPage state={state} />
     case 'bookmarks':

@@ -22,7 +22,7 @@ import {
   uiStore
 } from '@renderer/lib/ui'
 import type { HostGlobal } from './boot'
-import { parsePreviewSpec, type PreviewState, type PreviewStep } from './previewSpec'
+import { parsePreviewSpec, type PreviewStep } from './previewSpec'
 
 /** A pause between steps for a sheet to mount, slide in and settle before the next tap. */
 const STEP_SETTLE_MS = 450
@@ -40,9 +40,9 @@ const SHEET_LEAVE_MS = 1500
  * into view, `then=tap:<text>;back;overview;urlbar` takes steps on the open page in order: a tap
  * on a row opens its sheet and a second tap stacks one, `back` closes the top sheet, `overview`
  * opens the tab overview, `urlbar` the pill for editing), `overlay=<kind>` (history, bookmarks,
- * downloads, addons, …; `overlay=settings`
- * opens the Settings tab on this host, with `section=<id>`; `show=<text>` scrolls the row with
- * that text into view), `menu=app` (the app menu sheet; `show=<text>` scrolls an item into
+ * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
+ * `page=settings`; `show=<text>` scrolls the row with that text into view), `menu=app` (the app
+ * menu sheet; `show=<text>` scrolls an item into
  * view), `find=<text>` (the find bar with that text typed), `pull=<n>` (the page held pulled down
  * at n percent of the refresh threshold; `pull=refresh` lets go past it), `zoom=<factor>` (the
  * page zoom sheet at that factor), `error=<code>` (the active tab's load failed with that
@@ -109,7 +109,7 @@ function closeSheets(then: () => void, deadline = performance.now() + SHEET_LEAV
 function reach(spec: string): void {
   const state = browserStore.get().state
   const tab = state ? activeTab(state) : null
-  const target = asPageState(parsePreviewSpec(spec))
+  const target = parsePreviewSpec(spec)
 
   if (target.kind === 'page') {
     // The page tab is the state: reached once the active tab is a page tab, then a frame for the
@@ -182,24 +182,6 @@ function reach(spec: string): void {
 function failLoad(tabId: string, code: number, url: string): void {
   const host = (window as unknown as { __zenHost: HostGlobal }).__zenHost
   host.viewEvent(tabId, 'failLoad', JSON.stringify({ code, description: '', url }))
-}
-
-/**
- * The Settings, Shortcuts and Sync overlays are the Settings tab on a host with page tabs: an
- * `overlay=settings` recipe from before the tab lands on the same page.
- */
-function asPageState(target: PreviewState): PreviewState {
-  if (target.kind !== 'overlay' || !browserStore.get().state?.capabilities.pageTabs) return target
-  const sectionOf: Partial<Record<typeof target.overlay, string>> = {
-    shortcuts: 'shortcuts',
-    sync: 'sync'
-  }
-  if (target.overlay !== 'settings' && !sectionOf[target.overlay]) return target
-  const page: Extract<PreviewState, { kind: 'page' }> = { kind: 'page', page: 'settings' }
-  const section = target.section ?? sectionOf[target.overlay]
-  if (section) page.section = section
-  if (target.show) page.show = target.show
-  return page
 }
 
 /** Type `text` into the first element matching `selector` the way a keyboard would. */

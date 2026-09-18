@@ -15,7 +15,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { isPageTab, openPage, openSettings } = await import('../pages')
 const { backStore, handleSystemBack, refreshBackState, rootBackAction } = await import('../back')
-const { browserStore, uiStore } = await import('../ui')
+const { browserStore, openOverlay, overlayAvailable, uiStore } = await import('../ui')
 
 function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {
   return {
@@ -214,5 +214,40 @@ describe('opening a page', () => {
       { id: 'settings', section: 'look' }
     ])
     expect(invoke.mock.calls.every(([name]) => name === 'page.open')).toBe(true)
+  })
+})
+
+describe('the Settings overlay on a host with page tabs', () => {
+  beforeEach(() => {
+    invoke.mockClear()
+    uiStore.set({ overlay: 'none', overlaySection: null })
+  })
+  afterEach(() => browserStore.set({ state: null }))
+
+  it('is not an overlay there: Settings, Shortcuts and Sync open the page’s tab through page.open instead', async () => {
+    browserStore.set({ state: state([tab('a', 'https://a.test/')], 'a') })
+    expect(overlayAvailable('settings')).toBe(false)
+    expect(overlayAvailable('shortcuts')).toBe(false)
+    expect(overlayAvailable('sync')).toBe(false)
+    expect(overlayAvailable('history')).toBe(true)
+    await openOverlay('settings', 'a', null, null, 'privacy')
+    await openOverlay('shortcuts', 'a')
+    await openOverlay('sync', 'a')
+    expect(uiStore.get().overlay).toBe('none')
+    expect(invoke.mock.calls.filter(([name]) => name === 'page.open').map(([, a]) => a)).toEqual([
+      { id: 'settings', section: 'privacy' },
+      { id: 'settings', section: 'shortcuts' },
+      { id: 'settings', section: 'sync' }
+    ])
+    expect(invoke.mock.calls.some(([name]) => name === 'overlay.snapshot')).toBe(false)
+  })
+
+  it('stays the desktop’s overlay where the host has no page tabs', async () => {
+    const s = state([tab('a', 'https://a.test/')], 'a')
+    browserStore.set({ state: { ...s, capabilities: { pageTabs: false } } as unknown as UIState })
+    expect(overlayAvailable('settings')).toBe(true)
+    await openOverlay('shortcuts', 'a')
+    expect(uiStore.get().overlay).toBe('shortcuts')
+    expect(invoke.mock.calls.some(([name]) => name === 'page.open')).toBe(false)
   })
 })

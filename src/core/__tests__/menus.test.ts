@@ -317,6 +317,22 @@ describe('the app menu', () => {
     expect(appMenu(h)).not.toContain('Keyboard Shortcuts')
   })
 
+  it('opens Keyboard Shortcuts through page.open: the Settings overlay on its Shortcuts section on the desktop (a tablet with page tabs gets the tab)', () => {
+    const desktop = pageHarness(DESKTOP)
+    appMenu(desktop)
+    desktop.sent.length = 0
+    desktop.click('Keyboard Shortcuts')
+    expect(desktop.sent).toContain('overlay.open')
+    expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe(PAGE_URL)
+
+    const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
+    appMenu(tablet)
+    tablet.sent.length = 0
+    tablet.click('Keyboard Shortcuts')
+    expect(tablet.browser.tabs.activeTabFor(tablet.win)?.url).toBe('zen://settings/shortcuts')
+    expect(tablet.sent).not.toContain('overlay.open')
+  })
+
   it('on a phone drops what only a desktop window can use', () => {
     const menu = appMenu(harness(ANDROID, 'phone'))
     for (const label of DESKTOP_ONLY) expect(menu).not.toContain(label)

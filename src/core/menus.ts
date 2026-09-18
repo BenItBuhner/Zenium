@@ -2041,7 +2041,7 @@ export class Menus {
         }),
         ...desktop({
           label: 'Keyboard Shortcuts',
-          click: () => this.browser.emit('overlay.open', { kind: 'shortcuts' }, win)
+          click: () => void this.browser.pages.open('settings', 'shortcuts', win)
         }),
         {
           label: 'Settings',

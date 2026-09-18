@@ -31,16 +31,23 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('#find=x')).toEqual({ kind: 'find', text: 'x' })
   })
 
-  it('lands on a Settings section when one is named', () => {
-    expect(parsePreviewSpec('overlay=settings&section=accessibility')).toEqual({
+  it('lands on an overlay’s section when one is named', () => {
+    expect(parsePreviewSpec('overlay=history&section=host:a.test')).toEqual({
       kind: 'overlay',
-      overlay: 'settings',
-      section: 'accessibility'
+      overlay: 'history',
+      section: 'host:a.test'
     })
-    expect(parsePreviewSpec('overlay=settings&section=')).toEqual({
+    expect(parsePreviewSpec('overlay=history&section=')).toEqual({
       kind: 'overlay',
-      overlay: 'settings'
+      overlay: 'history'
     })
+  })
+
+  it('knows no Settings, Shortcuts or Sync overlay: on this host Settings is a tab (page=settings)', () => {
+    expect(parsePreviewSpec('overlay=settings')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('overlay=settings&section=accessibility')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('overlay=shortcuts')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('overlay=sync')).toEqual({ kind: 'idle' })
   })
 
   it('opens the zoom sheet at a factor, or as it is', () => {
@@ -93,14 +100,14 @@ describe('parsePreviewSpec', () => {
   })
 
   it('scrolls a row of an overlay into view when asked', () => {
-    expect(parsePreviewSpec('overlay=settings&show=Pull%20to%20refresh')).toEqual({
+    expect(parsePreviewSpec('overlay=addons&show=Dark%20Reader')).toEqual({
       kind: 'overlay',
-      overlay: 'settings',
-      show: 'Pull to refresh'
+      overlay: 'addons',
+      show: 'Dark Reader'
     })
-    expect(parsePreviewSpec('overlay=settings&show=')).toEqual({
+    expect(parsePreviewSpec('overlay=addons&show=')).toEqual({
       kind: 'overlay',
-      overlay: 'settings'
+      overlay: 'addons'
     })
   })
 

@@ -1,20 +1,20 @@
 import type { OverlayKind } from '@shared/types'
 import { INTERNAL_PAGE_IDS, type InternalPageId } from '@shared/internalPages'
 
-/** The overlays a preview state may open by name. */
+/**
+ * The overlays a preview state may open by name. Settings (with the Shortcuts and Sync overlays,
+ * its sections) is not one: on this host it is a tab, `page=settings`.
+ */
 export const PREVIEW_OVERLAYS: readonly OverlayKind[] = [
-  'settings',
   'history',
   'bookmarks',
   'downloads',
   'theme',
   'onboarding',
-  'shortcuts',
   'space-editor',
   'boosts',
   'addons',
-  'live-folder',
-  'sync'
+  'live-folder'
 ]
 
 /** The furthest a held pull goes, as a multiple of the threshold (the disc is well out by then). */
@@ -46,7 +46,7 @@ export type PreviewState =
   | {
       kind: 'overlay'
       overlay: OverlayKind
-      /** Settings section to land on. */
+      /** The overlay's section to land on (History's `host:<host>`). */
       section?: string
       /** Text of an element in the overlay to scroll into view once it is open. */
       show?: string
@@ -94,8 +94,8 @@ const MAX_PREVIEW_BANNERS = 3
  * internal page opened in its tab (`section=<id>` for one of its sections, `search=<text>` types
  * into its search field, `show=<text>` scrolls a row into view, `then=<steps>` takes steps on it
  * afterwards, `;`-separated: `tap:<text>`, `back`, `overview`, `urlbar`), `overlay=<kind>` for
- * one of PREVIEW_OVERLAYS (with `section=<id>` to land on a Settings section and `show=<text>` to
- * scroll a row of the overlay into view), `menu=app` for the app menu sheet (with `show=<text>` to
+ * one of PREVIEW_OVERLAYS (with `section=<id>` for an overlay that has sections and `show=<text>`
+ * to scroll a row of the overlay into view), `menu=app` for the app menu sheet (with `show=<text>` to
  * scroll an item into view), `find=<text>` for the find bar with that text typed (`find=` opens it
  * empty), `pull=<n>` for the active page held pulled down at n percent of the refresh threshold
  * (`pull=refresh` pulls past it and lets go), `zoom=<factor>` for the page zoom sheet with the
