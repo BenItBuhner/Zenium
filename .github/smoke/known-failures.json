@@ -1,0 +1,4 @@
+{
+  "about": "Known failures the desktop smoke (.github/smoke/smoke.mjs) tolerates. A failure matching an entry is reported under its id and does not fail the job; everything else does. The PR that fixes a bug removes its entry; this list is normally empty. Fields: id, kind (one of FAILURE_KINDS in known-failures.mjs, or an array), pattern (case-insensitive regex over the failure message and source), optional platforms/archs/labels/scenarios/steps filters, fixedBy, note.",
+  "entries": []
+}

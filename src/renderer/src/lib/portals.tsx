@@ -17,9 +17,11 @@ export {
   closeAllPopovers,
   openPopover,
   openPopoverCount,
+  subscribePopovers,
   useLightDismiss,
   type DismissReason,
   type LightDismissOptions,
+  type PopoverChange,
   type PopoverRegistration
 } from './popoverStore'
 
@@ -111,6 +113,11 @@ export function holdChromeInert(): () => void {
     for (const el of inertMarked) el.removeAttribute('inert')
     inertMarked.clear()
   }
+}
+
+/** Whether a hold on the window chrome is in force right now: a frame dialog is open. */
+export function chromeInertHeld(): boolean {
+  return inertHolds > 0
 }
 
 /**

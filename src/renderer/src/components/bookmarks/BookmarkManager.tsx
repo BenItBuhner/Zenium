@@ -622,6 +622,7 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
         title="Bookmarks"
         variant="full"
         className="zen-bm-page"
+        testId="bookmarks-manager"
         actions={
           <div className="flex items-center gap-1.5">
             {tab && !tab.url.startsWith('zen://') && (

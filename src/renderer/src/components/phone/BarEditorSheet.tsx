@@ -460,18 +460,6 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [])
-  // The header gets its hairline once the rows have scrolled under it, and loses it at the top.
-  useEffect(() => {
-    const sc = scroller()
-    const sheetEl = sc?.closest<HTMLElement>('.zen-sheet')
-    if (!sc || !sheetEl) return
-    const sync = (): void => {
-      sheetEl.dataset.scrolled = String(sc.scrollTop > 0)
-    }
-    sync()
-    sc.addEventListener('scroll', sync, { passive: true })
-    return () => sc.removeEventListener('scroll', sync)
-  }, [])
 
   const ctx = barContext(state, false)
   const shown = held?.draft ?? layout
@@ -494,18 +482,19 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
       handleLabel="Resize editor"
       className="zen-bar-editor"
       header={
-        <div className="flex h-9 items-center gap-1 pl-3">
-          <h2 className="zen-bar-title min-w-0 flex-1 truncate">Navigation Bar</h2>
+        <>
+          <h2 className="zen-sheet-title">Navigation Bar</h2>
           <button
             type="button"
-            className="zen-toolbar-button h-11 w-11 shrink-0"
+            className="zen-sheet-header-control"
+            data-side="trailing"
             aria-label="Reset to defaults"
             disabled={isDefaultPhoneBar(layout)}
             onClick={() => edit(defaultPhoneBar())}
           >
             <RotateCcw className="h-5 w-5" strokeWidth={1.75} />
           </button>
-        </div>
+        </>
       }
     >
       <div

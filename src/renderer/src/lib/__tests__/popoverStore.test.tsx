@@ -7,8 +7,10 @@ import {
   closeAllPopovers,
   openPopover,
   openPopoverCount,
+  subscribePopovers,
   useLightDismiss,
-  type DismissReason
+  type DismissReason,
+  type PopoverChange
 } from '../portals'
 
 /*
@@ -455,5 +457,46 @@ describe('useLightDismiss: scroll, resize, one at a time', () => {
     unregister()
     expect(openPopoverCount()).toBe(0)
     el.remove()
+  })
+})
+
+describe('subscribePopovers: chrome that is not a popover but keeps one at a time (the tab hover card)', () => {
+  it('hears a popover open, the registry closing popovers, and closeAllPopovers with none open', () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const heard: PopoverChange[] = []
+    const stop = subscribePopovers((change) => heard.push(change))
+    const unregister = openPopover({ element: () => el, close: () => undefined })
+    expect(heard).toEqual(['open'])
+    // A press outside: closed by the registry, reported with its reason.
+    pointer('pointerdown', document.body)
+    expect(heard).toEqual(['open', 'outside'])
+    expect(openPopoverCount()).toBe(0)
+    // A frame dialog opening clears the layer whether or not a popover was up.
+    closeAllPopovers('all')
+    expect(heard).toEqual(['open', 'outside', 'all'])
+    // A popover taking itself out (Escape, a row chosen) is not an event.
+    openPopover({ element: () => el, close: () => undefined })()
+    expect(heard).toEqual(['open', 'outside', 'all', 'open'])
+    stop()
+    openPopover({ element: () => el, close: () => undefined })
+    expect(heard).toHaveLength(4)
+    unregister()
+    el.remove()
+  })
+
+  it('a popover opening by command over another reports the open (the replaced one closes first)', () => {
+    const a = document.createElement('div')
+    const b = document.createElement('div')
+    document.body.append(a, b)
+    const heard: PopoverChange[] = []
+    const stop = subscribePopovers((change) => heard.push(change))
+    openPopover({ element: () => a, close: () => undefined })
+    openPopover({ element: () => b, close: () => undefined })
+    expect(heard).toEqual(['open', 'replaced', 'open'])
+    expect(openPopoverCount()).toBe(1)
+    stop()
+    a.remove()
+    b.remove()
   })
 })

@@ -4,7 +4,9 @@ import type { PermissionPrompt, PermissionPromptAnswer } from '../../shared/type
 import {
   PermissionService,
   decisionKey,
+  displayOrigin,
   permissionPromptCopy,
+  permissionSite,
   qualifiedPermission,
   schemeOf,
   type PermissionChange,
@@ -105,13 +107,109 @@ describe('PermissionService: what is asked', () => {
     expect(p.stored('popups', PAGE)).toBeNull()
   })
 
-  it('refuses opaque and unparsable origins', async () => {
+  it('refuses opaque and unparsable origins whatever a site would be asked about', async () => {
     const d = prompts(true)
     const p = new PermissionService(fakeIo(), d)
     expect(await p.decide('camera', 'not a url')).toBe(false)
     expect(await p.decide('camera', 'data:text/html,hi')).toBe(false)
+    expect(await p.decide('geolocation', 'zen://settings')).toBe(false)
+    expect(await p.decide('media', 'chrome-error://chromewebdata/')).toBe(false)
+    expect(p.check('notifications', 'about:blank')).toBe(false)
+    expect(d.asked).toEqual([])
     p.remember('popups', 'about:blank', 'allow')
+    p.set('geolocation', 'zen://settings', 'allow')
     expect(p.rules()).toEqual([])
+    expect(p.stored('popups', 'about:blank')).toBeNull()
+  })
+
+  it('grants pages without a site what the catalogue grants without a prompt', async () => {
+    const d = prompts(true)
+    const p = new PermissionService(fakeIo(), d)
+    for (const url of ['zen://settings', 'chrome-error://chromewebdata/', 'about:blank']) {
+      expect(await p.decide('fullscreen', url)).toBe(true)
+      expect(p.check('pointerLock', url)).toBe(true)
+      expect(p.resolve('keyboardLock', url)).toBe('allow')
+      expect(p.check('screen-wake-lock', url)).toBe(true)
+      expect(await p.decide('usb', url)).toBe(false)
+    }
+    // Not a URL at all: nothing, as before.
+    expect(await p.decide('fullscreen', 'not a url')).toBe(false)
+    expect(p.check('fullscreen', '')).toBe(false)
+    // The user's default for the permission still rules such pages.
+    p.chooseDefault('fullscreen', 'deny')
+    expect(await p.decide('fullscreen', 'zen://settings')).toBe(false)
+    expect(d.asked).toEqual([])
+  })
+})
+
+describe('PermissionService: local files', () => {
+  const FILE_PAGE = 'file:///home/me/pages/index.html'
+
+  it('enters fullscreen and locks the pointer from a local file, as Chrome allows', async () => {
+    const d = prompts(true)
+    const p = new PermissionService(fakeIo(), d)
+    expect(await p.decide('fullscreen', FILE_PAGE)).toBe(true)
+    expect(await p.decide('pointerLock', FILE_PAGE)).toBe(true)
+    expect(await p.decide('keyboardLock', FILE_PAGE)).toBe(true)
+    expect(await p.decide('clipboard-sanitized-write', FILE_PAGE)).toBe(true)
+    // The engine's check handler asks with the origin URL Chromium gives a file: page.
+    expect(p.check('fullscreen', 'file:///')).toBe(true)
+    expect(await p.decide('usb', FILE_PAGE)).toBe(false)
+    expect(d.asked).toEqual([])
+    p.chooseDefault('fullscreen', 'deny')
+    expect(await p.decide('fullscreen', FILE_PAGE)).toBe(false)
+  })
+
+  it('asks a local file about prompted types and remembers the answer for every local file', async () => {
+    const d = prompts(true)
+    const p = new PermissionService(fakeIo(), d)
+    expect(await p.decide('geolocation', FILE_PAGE)).toBe(true)
+    expect(d.asked.length).toBe(1)
+    expect(d.asked[0].origin).toBe('file://')
+    expect(d.asked[0].message).toBe('Allow file:/// to know your location?')
+    expect(p.check('geolocation', 'file:///')).toBe(true)
+    expect(p.stored('geolocation', 'file:///tmp/other.html')).toBe('allow')
+    expect(p.rules()).toEqual([{ origin: 'file://', permission: 'geolocation', decision: 'allow' }])
+    expect(p.listForOrigin(FILE_PAGE)).toEqual([{ permission: 'geolocation', decision: 'allow' }])
+    expect(p.listForPermission('geolocation')).toEqual([{ origin: 'file://', decision: 'allow' }])
+    p.resetOrigin('file://')
+    expect(p.listForOrigin(FILE_PAGE)).toEqual([])
+    expect(await p.decide('geolocation', FILE_PAGE)).toBe(true)
+    expect(d.asked.length).toBe(2)
+  })
+
+  it('keeps an "Allow once" while the tab stays on local files', async () => {
+    const d = prompts('allow-once')
+    const p = new PermissionService(fakeIo(), d)
+    expect(await p.decide('camera', FILE_PAGE, { tabId: 't1', mediaTypes: ['video'] })).toBe(true)
+    expect(p.check('camera', 'file:///', { tabId: 't1' })).toBe(true)
+    p.onTabNavigated('t1', 'file:///home/me/pages/next.html')
+    expect(p.check('camera', 'file:///', { tabId: 't1' })).toBe(true)
+    p.onTabNavigated('t1', 'https://example.com/')
+    expect(p.check('camera', 'file:///', { tabId: 't1' })).toBe(false)
+    expect(p.rules()).toEqual([])
+  })
+})
+
+describe('permissionSite', () => {
+  it('is the origin of a web page, one site for local files and nothing for the rest', () => {
+    expect(permissionSite('https://example.com/a?b')).toBe('https://example.com')
+    expect(permissionSite('http://localhost:8080/x')).toBe('http://localhost:8080')
+    expect(permissionSite('file:///home/me/a.html')).toBe('file://')
+    expect(permissionSite('file:///')).toBe('file://')
+    expect(permissionSite('file://')).toBe('file://')
+    expect(permissionSite('zen://settings')).toBeNull()
+    expect(permissionSite('chrome-error://chromewebdata/')).toBeNull()
+    expect(permissionSite('data:text/html,hi')).toBeNull()
+    expect(permissionSite('about:blank')).toBeNull()
+    expect(permissionSite('')).toBeNull()
+    expect(permissionSite('not a url')).toBeNull()
+  })
+
+  it('names the local-file site the way Chrome does', () => {
+    expect(displayOrigin('file://')).toBe('file:///')
+    expect(displayOrigin('https://example.com')).toBe('example.com')
+    expect(displayOrigin('http://example.com')).toBe('http://example.com')
   })
 })
 

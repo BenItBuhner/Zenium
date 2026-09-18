@@ -57,6 +57,9 @@ describe('describeSite', () => {
     }
     expect(describeSite('file:///home/me/page.html').state).toBe('local')
     expect(describeSite('file:///home/me/page.html').web).toBe(false)
+    // Local files share one permissions site (Chrome's "file:///"); other siteless pages have none.
+    expect(describeSite('file:///home/me/page.html').origin).toBe('file://')
+    expect(describeSite('zen://settings').origin).toBe('')
     expect(describeSite('not a url').state).toBe('unknown')
     expect(describeSite('data:text/html,hi').state).toBe('unknown')
   })
