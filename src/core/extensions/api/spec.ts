@@ -708,6 +708,33 @@ export const API_SPEC: ApiSpec = {
     },
     events: {}
   },
+  // Speech through a hidden page's `speechSynthesis`; `speak`'s `onEvent` is relayed by the shim.
+  tts: {
+    methods: {
+      speak: { params: [string('utterance'), object('options', true)] },
+      stop: { params: [] },
+      pause: { params: [] },
+      resume: { params: [] },
+      isSpeaking: { params: [] },
+      getVoices: { params: [] }
+    },
+    events: { onVoicesChanged: {} },
+    constants: {
+      EventType: {
+        START: 'start',
+        END: 'end',
+        WORD: 'word',
+        SENTENCE: 'sentence',
+        MARKER: 'marker',
+        INTERRUPTED: 'interrupted',
+        CANCELLED: 'cancelled',
+        ERROR: 'error',
+        PAUSE: 'pause',
+        RESUME: 'resume'
+      },
+      VoiceGender: { MALE: 'male', FEMALE: 'female' }
+    }
+  },
   // Zenium's folders are the groups; `tabs.group` / `tabs.ungroup` are declared on `tabs`.
   tabGroups: {
     methods: {

@@ -70,6 +70,8 @@ import { StorageApi } from './storage'
 import { TabGroupsApi } from './tabGroups'
 import { TabsApi } from './tabs'
 import { TopSitesApi } from './topSites'
+import { TtsApi } from './tts'
+import { electronSpeechEngine } from './ttsBridge'
 import {
   ApiError,
   extensionIdFromUrl,
@@ -172,6 +174,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly omnibox: OmniboxApi
   readonly privacy: PrivacyApi
   readonly browsingData: BrowsingDataApi
+  readonly tts: TtsApi
 
   private readonly namespaces: Record<string, NamespaceHandlers>
   private readonly extensions = new Map<string, LoadedExtension>()
@@ -236,6 +239,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.omnibox = new OmniboxApi(this)
     this.privacy = new PrivacyApi(this)
     this.browsingData = new BrowsingDataApi(this, electronDataClearer)
+    this.tts = new TtsApi(this, electronSpeechEngine())
     this.namespaces = {
       tabs: { ...this.tabs.handlers, ...this.tabGroups.tabHandlers },
       windows: this.windows.handlers,
@@ -262,7 +266,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       identity: this.identity.handlers,
       omnibox: this.omnibox.handlers,
       privacy: this.privacy.handlers,
-      browsingData: this.browsingData.handlers
+      browsingData: this.browsingData.handlers,
+      tts: this.tts.handlers
     }
     // A tab's outermost document changed: `activeTab` grants for another origin end and the
     // declarativeNetRequest action counts start over.
@@ -420,6 +425,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.sidePanel.unload(ext.id)
     this.identity.unload(ext.id)
     this.omnibox.unload(ext.id)
+    this.tts.unload(ext.id)
     this.declarativeNetRequest.unload(ext.id)
     this.contextMenus.forget(ext.id)
     this.notifications.forget(ext.id)

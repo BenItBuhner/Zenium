@@ -819,6 +819,61 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // tts: `speak`'s `onEvent` stays on this side, keyed by a token the host echoes back
+  // ---------------------------------------------------------------------------
+
+  if (spec.tts) {
+    const ttsHandlers = new Map<string, Listener>()
+    const ttsPrefix = Math.random().toString(36).slice(2)
+    let ttsTokens = 0
+    let ttsRelay: EventObject | null = null
+    const ttsQualified =
+      'tts.speak(string utterance, optional object options, optional function callback)'
+    /** The hidden `tts.onEvent` listener: registered with the host on the first `onEvent`. */
+    const relayEvents = (): void => {
+      if (ttsRelay) return
+      ttsRelay = createEvent('tts.onEvent', undefined, { nativeDelivers: false })
+      ttsRelay.addListener((token: unknown, event: unknown) => {
+        if (typeof token !== 'string') return
+        const handler = ttsHandlers.get(token)
+        if (!handler) return
+        if (isObject(event) && event.isFinalEvent === true) ttsHandlers.delete(token)
+        callListener(handler, [event])
+      })
+    }
+    for (const root of roots) {
+      const tts = namespaceOn(root, 'tts')
+      define(tts, 'speak', function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const [utterance, options] = normalizeArgs(ttsQualified, raw, [
+          { name: 'utterance', type: 'string' },
+          { name: 'options', type: 'object', optional: true }
+        ])
+        let token: string | null = null
+        let sent: unknown = options
+        if (isObject(options)) {
+          const { onEvent, ...rest } = options
+          sent = rest
+          if (isFunction(onEvent)) {
+            ttsTokens += 1
+            token = `${ttsPrefix}:${ttsTokens}`
+            ttsHandlers.set(token, onEvent)
+            relayEvents()
+          }
+        }
+        const work = invoke('tts', 'speak', [utterance, sent, token]).then(
+          () => undefined,
+          (error: unknown) => {
+            if (token) ttsHandlers.delete(token)
+            throw error
+          }
+        )
+        return settle(ttsQualified, work, callback)
+      })
+    }
+  }
+
   /** A click on an item created with `onclick`: Chrome calls that handler besides `onClicked`. */
   function menuClicked(args: unknown[]): void {
     const info = args[0]
