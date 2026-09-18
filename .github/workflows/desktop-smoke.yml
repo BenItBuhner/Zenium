@@ -1,13 +1,15 @@
 name: Desktop smoke (Windows, macOS)
 
-# Boots the packaged desktop app on GitHub-hosted Windows and macOS runners and walks through it
-# with Playwright for Electron (.github/smoke/smoke.mjs): first launch and onboarding, a tab on
-# example.com, find bar, zoom, full screen, a second and a private window, Settings, the page
-# context menu, a second instance handing its URL over, quit and session restore, plus 1.5x DPI
-# and OS dark mode screenshots. Windows additionally installs the NSIS build silently, boots the
-# installed executable and uninstalls it. Every JS error, crash and blocking dialog fails the run
-# unless .github/smoke/known-failures.json names it. Screenshots, logs and result.json per build
-# are uploaded as artifacts. The Linux smoke runs in ci.yml on every push and pull request.
+# Boots the packaged desktop app on GitHub-hosted Windows and macOS runners with Playwright for
+# Electron (.github/smoke/smoke.mjs) and keeps to the basics so the jobs stay short: first launch
+# and onboarding, one visible window titled Zenium, a tab on example.com through the URL bar, a
+# graceful quit that marks the profile cleanly exited, the profile coming back without a "Restore
+# pages?" bar, plus 1.5x DPI and OS dark mode screenshots. Windows additionally installs the NSIS
+# build silently, boots the installed executable and uninstalls it. Every JS error, crash and
+# blocking dialog fails the run unless .github/smoke/known-failures.json names it. Screenshots,
+# logs and result.json per build are uploaded as artifacts. The Linux smoke in ci.yml runs on
+# every push and pull request and carries the long walkthrough (Chrome-preset shortcuts, window
+# questions, the crash-restore pair).
 
 on:
   workflow_dispatch:

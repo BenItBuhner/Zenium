@@ -84,12 +84,14 @@ jobs:
         # Playwright for Electron drives dist/linux-unpacked/zenium (the devDependency ships no
         # browsers; nothing to download). --no-sandbox: the unpacked build's chrome-sandbox helper
         # is not setuid and ubuntu-latest denies unprivileged user namespaces. Every profile lives
-        # under a temporary XDG_CONFIG_HOME; the walkthrough, its screenshots and result.json land
-        # in smoke-out/unpacked. Known bugs are named through .github/smoke/known-failures.json.
+        # under a temporary XDG_CONFIG_HOME; the scenarios, their screenshots and result.json land
+        # in smoke-out/unpacked. boot and restore run on every platform; the crash pair (a killed
+        # run, then "Restore pages?") and the Chrome-preset shortcut walkthrough run here only.
+        # Known bugs are named through .github/smoke/known-failures.json.
         run: >
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label unpacked
-          --out "$SMOKE_OUT" --scenarios boot,restore --extra-args=--no-sandbox
+          --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough --extra-args=--no-sandbox
       - name: Verdict (log and step summary)
         if: always()
         run: node .github/smoke/verdict.mjs --out "$SMOKE_OUT" --expect unpacked --title linux-x64
