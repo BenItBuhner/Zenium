@@ -51,11 +51,15 @@ class PrivacyFlags(
         return hostInSites(host, httpsOnlyAllowed)
     }
 
-    /** The user chose to proceed to `url`'s origin past a Safe Browsing warning. */
+    /**
+     * The user chose to proceed to `url`'s host past a Safe Browsing warning (the core keys the
+     * bypasses on the lowercase host, without scheme or port: `bypassKey` in `safebrowsing/service.ts`).
+     */
     fun isBypassed(url: String): Boolean {
         if (safeBrowsingBypassed.isEmpty()) return false
-        val origin = Domains.originOf(url) ?: return false
-        return safeBrowsingBypassed.contains(origin)
+        if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) return false
+        val host = Domains.hostnameOf(url) ?: return false
+        return safeBrowsingBypassed.contains(host)
     }
 
     /** The request headers the privacy signals add, by their wire names. */

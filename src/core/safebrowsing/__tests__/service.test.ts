@@ -130,17 +130,23 @@ describe('SafeBrowsingService', () => {
     expect(status.feeds.map((x) => x.id)).toEqual(SAFE_BROWSING_FEEDS.map((x) => x.id))
   })
 
-  it('is silent when switched off and remembers session bypasses per origin', () => {
+  it('is silent when switched off and remembers session bypasses per host', () => {
     const f = fake()
-    f.io.files.set(feedFile('urlhaus'), JSON.stringify(document('urlhaus', ['evil.example'])))
+    f.io.files.set(
+      feedFile('urlhaus'),
+      JSON.stringify(document('urlhaus', ['evil.example', 'sub.evil.example']))
+    )
     const service = start(f)
     expect(service.lookup('http://evil.example/a')).not.toBeNull()
     expect(service.bypass('http://evil.example/a#x')).toBe(true)
     expect(service.lookup('http://evil.example/b')).toBeNull()
     expect(service.isBypassed('http://evil.example/')).toBe(true)
-    // Another origin of the same host (scheme, port) is still stopped.
-    expect(service.lookup('https://evil.example/b')).not.toBeNull()
-    expect(service.bypasses()).toEqual(['http://evil.example'])
+    // The same host over https or another port (HTTPS-only mode's upgrade, a redirect) is let
+    // through too; a subdomain the feed lists on its own is not.
+    expect(service.lookup('https://evil.example/b')).toBeNull()
+    expect(service.lookup('http://EVIL.example:8080/b')).toBeNull()
+    expect(service.lookup('https://sub.evil.example/')).not.toBeNull()
+    expect(service.bypasses()).toEqual(['evil.example'])
     expect(service.bypass('zen://error')).toBe(false)
     f.settings.safeBrowsingEnabled = false
     expect(service.lookup('https://evil.example/')).toBeNull()
@@ -324,8 +330,9 @@ describe('helpers', () => {
     expect(parseFeedDocument(null, 'urlhaus')).toBeNull()
   })
 
-  it('keys bypasses on the origin and compares documents without their fragment', () => {
-    expect(bypassKey('https://a.example:8443/x?y#z')).toBe('https://a.example:8443')
+  it('keys bypasses on the host and compares documents without their fragment', () => {
+    expect(bypassKey('https://A.example:8443/x?y#z')).toBe('a.example')
+    expect(bypassKey('http://a.example/')).toBe('a.example')
     expect(bypassKey('zen://error')).toBeNull()
     expect(bypassKey('nope')).toBeNull()
     expect(sameDocument('https://a/x#1', 'https://a/x#2')).toBe(true)

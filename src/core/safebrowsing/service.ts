@@ -62,12 +62,16 @@ const PENDING_BLOCK_TTL_MS = 60_000
 const REMOTE_CACHE_MAX = 2000
 const HOST_CACHE_MAX = 4096
 
-/** The origin bypasses are keyed on (`scheme://host[:port]`), or null for URLs without one. */
+/**
+ * The host bypasses are keyed on (lowercase, no scheme or port: the feeds list hosts, and the
+ * user's answer is about the site, whichever way HTTPS-only mode or the site's redirects reach
+ * it), or null for URLs without one.
+ */
 export function bypassKey(url: string): string | null {
   try {
     const parsed = new URL(url)
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
-    return parsed.origin
+    return parsed.hostname.toLowerCase() || null
   } catch {
     return null
   }
@@ -237,7 +241,7 @@ export class SafeBrowsingService {
     return hit
   }
 
-  /** The user chose to proceed: nothing on `url`'s origin is stopped until the browser closes. */
+  /** The user chose to proceed: nothing on `url`'s host is stopped until the browser closes. */
   bypass(url: string): boolean {
     const key = bypassKey(url)
     if (!key) return false
@@ -251,7 +255,7 @@ export class SafeBrowsingService {
     return key !== null && this.bypassed.has(key)
   }
 
-  /** Origins bypassed this session, for the status card. */
+  /** Hosts bypassed this session, for the status card and the Android guard. */
   bypasses(): string[] {
     return [...this.bypassed].sort()
   }

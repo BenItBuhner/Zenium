@@ -422,7 +422,8 @@ describe('PrivacyService: Safe Browsing interstitial', () => {
     })
     expect(view.jumps).toEqual([0])
 
-    // "Proceed anyway" bypasses the origin for the session and reloads the page.
+    // "Proceed anyway" bypasses the host for the session and reloads the page; HTTPS-only
+    // mode's upgrade of that reload is covered by the same answer.
     f.browser.handlePageMessage(view.tabId, {
       type: 'interstitial',
       action: 'proceed',
@@ -430,9 +431,10 @@ describe('PrivacyService: Safe Browsing interstitial', () => {
     })
     expect(f.browser.privacy.safeBrowsing.isBypassed('http://evil.example/other')).toBe(true)
     expect(f.browser.privacy.safeBrowsing.lookup('http://evil.example/other')).toBeNull()
+    expect(f.browser.privacy.safeBrowsing.lookup('https://evil.example/payload')).toBeNull()
     expect(view.loads[view.loads.length - 1]).toBe('http://evil.example/payload')
     // The Android guard learns of the bypass from the flags, pushed before the reload.
-    expect(f.applied[f.applied.length - 1].safeBrowsingBypassed).toEqual(['http://evil.example'])
+    expect(f.applied[f.applied.length - 1].safeBrowsingBypassed).toEqual(['evil.example'])
   })
 
   it('leaves for a blank page when the tab has no history to go back to', () => {

@@ -11,7 +11,7 @@ import org.junit.Test
 /** The policy the core pushes (`PrivacyFlags` in `src/shared/privacy.ts`), as the host reads and answers it. */
 class PrivacyFlagsTest {
     private val pushed = JSONObject(
-        """{"safeBrowsing":true,"safeBrowsingBypassed":["https://evil.example","http://phish.example:8080"],
+        """{"safeBrowsing":true,"safeBrowsingBypassed":["evil.example","phish.example"],
             "httpsOnly":"always","httpsOnlyAllowed":["Legacy.example","intranet.corp"],
             "thirdPartyCookies":"block","thirdPartyCookieExceptions":["shop.example"],
             "gpc":true,"dnt":false,"secureDnsMode":"automatic","secureDnsServers":[]}"""
@@ -21,7 +21,7 @@ class PrivacyFlagsTest {
     fun `parses the core's document, keeping the defaults for what is missing or malformed`() {
         val flags = PrivacyFlags.parse(pushed)
         assertTrue(flags.safeBrowsing)
-        assertEquals(setOf("https://evil.example", "http://phish.example:8080"), flags.safeBrowsingBypassed)
+        assertEquals(setOf("evil.example", "phish.example"), flags.safeBrowsingBypassed)
         assertEquals("always", flags.httpsOnly)
         assertEquals(listOf("legacy.example", "intranet.corp"), flags.httpsOnlyAllowed)
         assertEquals("block", flags.thirdPartyCookies)
@@ -84,15 +84,17 @@ class PrivacyFlagsTest {
     }
 
     @Test
-    fun `Safe Browsing bypasses are keyed on the origin, as the core keys them`() {
+    fun `Safe Browsing bypasses are keyed on the host, as the core keys them`() {
         val flags = PrivacyFlags.parse(pushed)
         assertTrue(flags.isBypassed("https://evil.example/landing?x=1"))
         assertTrue(flags.isBypassed("https://EVIL.example:443/other"))
-        assertFalse(flags.isBypassed("http://evil.example/"))
-        assertFalse(flags.isBypassed("https://sub.evil.example/"))
+        // Scheme and port do not matter (HTTPS-only mode's upgrade of a bypassed page must pass too).
+        assertTrue(flags.isBypassed("http://evil.example/"))
         assertTrue(flags.isBypassed("http://phish.example:8080/login"))
-        assertFalse(flags.isBypassed("http://phish.example/login"))
+        // A subdomain is another host.
+        assertFalse(flags.isBypassed("https://sub.evil.example/"))
         assertFalse(flags.isBypassed("zen://error"))
+        assertFalse(flags.isBypassed("zen://evil.example"))
         assertFalse(PrivacyFlags.DEFAULT.isBypassed("https://evil.example/"))
     }
 
@@ -132,6 +134,6 @@ class PrivacyFlagsTest {
         assertEquals(stored.dnt, read.dnt)
         assertSame(PrivacyFlags.DEFAULT, PrivacyFlags.DEFAULT.withoutSession())
         // The full document keeps the bypasses, sorted.
-        assertEquals("http://phish.example:8080", flags.toJson().getJSONArray("safeBrowsingBypassed").getString(0))
+        assertEquals("evil.example", flags.toJson().getJSONArray("safeBrowsingBypassed").getString(0))
     }
 }
