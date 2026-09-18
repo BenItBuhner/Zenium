@@ -62,12 +62,13 @@ import {
   getSpace,
   orderedTabsForSpace,
   reorderContainer,
-  reorderSpace
+  reorderSpace,
+  tabVisibleIn
 } from './model'
 import { getDomain, inputToUrl } from '../shared/url'
 import { overlayForUrl } from '../shared/zenPages'
 import { openAllPrompt, sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
-import { buildSearchUrl, matchEngineKeyword } from '../shared/search'
+import { buildSearchUrl, matchKeyword } from '../shared/search'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
@@ -1157,10 +1158,26 @@ export class Browser {
     if (!text) return
     if (!win.isPrivate && this.extensions.omniboxSubmit(input, newTab, background, win)) return
     const engines = this.state.searchEngines
-    const keyword = matchEngineKeyword(text, engines)
+    const keyword = matchKeyword(text, engines)
     let url: string | null = null
     let upgradedFrom: string | undefined
+    if (keyword?.kind === 'scope') {
+      // `@bookmarks foo` / `@history foo` open the manager; `@tabs foo` switches to the tab.
+      if (keyword.scope === 'tabs') {
+        const q = keyword.query.trim().toLowerCase()
+        const hit = Object.values(this.state.model.tabs).find(
+          (t) =>
+            tabVisibleIn(t, win.id) &&
+            (!q || `${t.customTitle ?? ''} ${t.title} ${t.url}`.toLowerCase().includes(q))
+        )
+        if (hit) this.tabs.activateTab(hit.id, win)
+        return
+      }
+      this.emit('overlay.open', { kind: keyword.scope }, win)
+      return
+    }
     if (keyword) {
+      if (!keyword.query.trim()) return
       url = buildSearchUrl(keyword.engine, keyword.query)
     } else {
       url = inputToUrl(text)
@@ -1202,6 +1219,25 @@ export class Browser {
       return
     }
     this.tabs.navigate(target.id, url, { upgradedFrom })
+  }
+
+  /**
+   * Chrome's "Paste and go" / "Paste and search" (URL-bar context menu, `urlbar.pasteAndGo` and
+   * `urlbar.pasteAndSearch`): the clipboard's text goes where typed text would, or is searched
+   * with the default engine whatever it looks like. Nothing happens for an empty clipboard.
+   */
+  async pasteAndGo(tabId: string | null, alwaysSearch: boolean, win: ZenWindow): Promise<void> {
+    const read = this.platform.clipboard.readText
+    if (!read) return
+    const text = (await read.call(this.platform.clipboard)).trim().replace(/\s+/g, ' ')
+    if (!text) return
+    if (alwaysSearch) {
+      const engines = this.state.searchEngines
+      const engine = engines.find((e) => e.id === this.state.settings.searchEngineId) ?? engines[0]
+      this.submitUrlbar(buildSearchUrl(engine, text), false, tabId, false, win)
+      return
+    }
+    this.submitUrlbar(text, false, tabId, false, win)
   }
 
   // ---------------------------------------------------------------------------
@@ -1450,6 +1486,8 @@ export class Browser {
       'urlbar.suggest': ({ query, tabId }, win) => this.suggestions.suggest(query, tabId, win),
       'urlbar.submit': ({ input, newTab, tabId, background }, win) =>
         this.submitUrlbar(input, newTab, tabId, Boolean(background), win),
+      'urlbar.pasteAndGo': ({ tabId }, win) => void this.pasteAndGo(tabId, false, win),
+      'urlbar.pasteAndSearch': ({ tabId }, win) => void this.pasteAndGo(tabId, true, win),
       'urlbar.runCommand': ({ action }, win) =>
         this.actions.run(action as AnyAction, { sourceTabId: null, win }),
       'urlbar.cancel': (_a, win) => this.extensions.omniboxCancel(win),

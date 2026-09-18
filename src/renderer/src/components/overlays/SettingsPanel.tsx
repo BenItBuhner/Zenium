@@ -624,6 +624,15 @@ function SearchSection({
           onCheckedChange={(v) => set({ searchSuggestions: v })}
         />
       </Row>
+      <Row
+        label="Always show full URLs"
+        hint="Keep the scheme and www. in the address bar instead of hiding them."
+      >
+        <Switch
+          checked={Boolean(state.settings.showFullUrls)}
+          onCheckedChange={(v) => set({ showFullUrls: v })}
+        />
+      </Row>
       <Row label="Engine keywords" hint={state.searchEngines.map((e) => e.keyword).join(' · ')}>
         <span className="text-[11.5px] text-[var(--zen-muted)]">Type a keyword, then a space</span>
       </Row>

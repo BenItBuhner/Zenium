@@ -150,6 +150,12 @@ export class Actions {
         return this.browser.emit('urlbar.toggle', { mode: 'edit' }, win)
       case 'urlbar.search':
         return this.browser.emit('urlbar.toggle', { mode: 'search' }, win)
+      case 'urlbar.pasteAndGo':
+        void this.browser.pasteAndGo(target?.id ?? null, false, win)
+        return
+      case 'urlbar.pasteAndSearch':
+        void this.browser.pasteAndGo(target?.id ?? null, true, win)
+        return
       case 'find.open':
         if (target) this.browser.emit('find.open', { tabId: target.id }, win)
         return
